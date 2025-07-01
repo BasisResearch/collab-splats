@@ -1,5 +1,5 @@
 # from .rade_gs_config import RaDeGSModelConfig
 
-from .rade_gs_config import method_template
+from .rade_gs_config import rade_gs_method
 
-__all__ = ["method_template"]
+__all__ = ["rade_gs_method"]

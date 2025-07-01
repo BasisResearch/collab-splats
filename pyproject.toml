@@ -1,32 +1,27 @@
 [project]
-name = "sugar_nerfstudio"
+name = "rade_gs"
 version = "0.0.1"
-description = "SuGaR nerfstudio"
+description = "A nerfstudio implementation of RaDe-GS"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE" }
-keywords = ["gaussian splatting", "mesh generation"]
+keywords = ["gaussian splatting", "depth rasterization", "mesh"]
 authors = [
-    { name = "Tommy Botch", email = "tlb.gr@dartmouth.edu" },
+    { name = "Tommy Botch", email = "tommy@basis.ai" },
 ]
 
 dependencies = [
-    "nerfstudio",
-    "open3d",
-    "trimesh",
-    "torch",
-    "torchvision",
-    "torchtyping",
     "einops",
-    "gdown",
     "ftfy",
+    "gdown",
     "matplotlib",
+    "nerfstudio",
     "numpy",
-    "scikit-image",
     "pillow",
     "regex",
+    "torchtyping",
     "tqdm",
-    "git+https://github.com/brian-xu/gsplat-rade.git"
+    "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
 ]
 
 [project.optional-dependencies]
@@ -38,15 +33,12 @@ dev = [
 [tool.black]
 line-length = 120
 
-[project.urls]
-"Source" = "https://github.com/vuer-ai/feature-splatting"
-
 [project.entry-points."nerfstudio.method_configs"]
-feature-splatting = "sugar.sugar_config:sugar_method"
+rade-gs = "rade_gs.configs.rade_gs_method:rade_gs_method"
 
 [tool.setuptools.packages]
-find = { include = ["sugar", "sugar.*"] }
+find = { include = ["rade_gs", "rade_gs.*"] }
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools<70.0"]
 build-backend = "setuptools.build_meta"

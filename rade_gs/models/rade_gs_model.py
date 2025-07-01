@@ -1,0 +1,331 @@
+"""
+Template Model File
+
+Currently this subclasses the Nerfacto model. Consider subclassing from the base Model.
+"""
+from dataclasses import dataclass, field
+from typing import Type, Dict, Union, List
+
+import torch 
+
+try:
+    from gsplat.rendering import rasterization
+except ImportError:
+    print("Please install gsplat>=1.0.0")
+
+from gsplat.strategy import DefaultStrategy
+
+from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat  # for subclassing Nerfacto model
+
+@dataclass
+class RadegsModelConfig(SplatfactoModelConfig):
+    """Template Model Configuration.
+
+    Add your custom model config parameters here.
+    """
+
+    _target: Type = field(default_factory=lambda: RadegsModel)
+
+    use_depth_normal_loss: bool = True
+    """Whether to use depth normal loss"""
+
+    # RaDeGS specific parameters
+    depth_normal_lambda: float = 1.0
+    """Weight for depth normal loss"""
+
+    depth_ratio: float = 0.6
+    """Ratio for depth normal loss"""
+
+
+class RadegsModel(SplatfactoModel):
+    """Template Model."""
+
+    config: RadegsModelConfig
+
+    def populate_modules(self):
+        super().populate_modules()
+
+    # TODO: Override any potential functions/methods to implement your own method
+    # or subclass from "Model" and define all mandatory fields.
+    # the following functions depths_double_to_points and depth_double_to_normal are adopted from https://github.com/hugoycj/2dgs-gaustudio/blob/main/utils/graphics_utils.py
+
+    def get_outputs(self, camera: Cameras) -> Dict[str, Union[torch.Tensor, List]]:
+        """Takes in a camera and returns a dictionary of outputs.
+
+        Args:
+            camera: The camera(s) for which output images are rendered. It should have
+            all the needed information to compute the outputs.
+
+        Returns:
+            Outputs of model. (ie. rendered colors)
+        """
+        if not isinstance(camera, Cameras):
+            print("Called get_outputs with not a camera")
+            return {}
+
+        if self.training:
+            assert camera.shape[0] == 1, "Only one camera at a time"
+            optimized_camera_to_world = self.camera_optimizer.apply_to_camera(camera)
+        else:
+            optimized_camera_to_world = camera.camera_to_worlds
+
+        # cropping
+        if self.crop_box is not None and not self.training:
+            crop_ids = self.crop_box.within(self.means).squeeze()
+            if crop_ids.sum() == 0:
+                return self.get_empty_outputs(
+                    int(camera.width.item()), int(camera.height.item()), self.background_color
+                )
+        else:
+            crop_ids = None
+
+        if crop_ids is not None:
+            opacities_crop = self.opacities[crop_ids]
+            means_crop = self.means[crop_ids]
+            features_dc_crop = self.features_dc[crop_ids]
+            features_rest_crop = self.features_rest[crop_ids]
+            scales_crop = self.scales[crop_ids]
+            quats_crop = self.quats[crop_ids]
+        else:
+            opacities_crop = self.opacities
+            means_crop = self.means
+            features_dc_crop = self.features_dc
+            features_rest_crop = self.features_rest
+            scales_crop = self.scales
+            quats_crop = self.quats
+
+        colors_crop = torch.cat((features_dc_crop[:, None, :], features_rest_crop), dim=1)
+
+        camera_scale_fac = self._get_downscale_factor()
+        camera.rescale_output_resolution(1 / camera_scale_fac)
+        viewmat = get_viewmat(optimized_camera_to_world)
+        K = camera.get_intrinsics_matrices().cuda()
+        W, H = int(camera.width.item()), int(camera.height.item())
+        self.last_size = (H, W)
+        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
+
+        # apply the compensation of screen space blurring to gaussians
+        if self.config.rasterize_mode not in ["antialiased", "classic"]:
+            raise ValueError("Unknown rasterize_mode: %s", self.config.rasterize_mode)
+
+        if self.config.output_depth_during_training or not self.training:
+            render_mode = "RGB+ED"
+        else:
+            render_mode = "RGB"
+
+        if self.config.sh_degree > 0:
+            sh_degree_to_use = min(self.step // self.config.sh_degree_interval, self.config.sh_degree)
+        else:
+            colors_crop = torch.sigmoid(colors_crop).squeeze(1)  # [N, 1, 3] -> [N, 3]
+            sh_degree_to_use = None
+
+        # Modified rasterization function from https://github.com/brian-xu/gsplat-rade/blob/main/gsplat/rendering.py
+        # Enables returning depth and normal maps for computing of loss
+
+        # Rendered contains the following:
+        # - rgb: [N, 3]
+        # - alphas: [N, 1]
+        # - expected_depths: [N, 3]
+        # - median_depths: [N, 1]
+        # - expected_normals: [N, 1]
+        # - meta (set to self.info)
+        render, alpha, expected_depths, median_depths, expected_normals, self.info = rasterization(
+            means=means_crop,
+            quats=quats_crop,  # rasterization does normalization internally
+            scales=torch.exp(scales_crop),
+            opacities=torch.sigmoid(opacities_crop).squeeze(-1),
+            colors=colors_crop,
+            viewmats=viewmat,  # [1, 4, 4]
+            Ks=K,  # [1, 3, 3]
+            width=W,
+            height=H,
+            packed=False,
+            near_plane=0.01,
+            far_plane=1e10,
+            render_mode=render_mode,
+            sh_degree=sh_degree_to_use,
+            sparse_grad=False,
+            absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
+            rasterize_mode=self.config.rasterize_mode,
+            return_depth_normal=True,
+            # set some threshold to disregrad small gaussians for faster rendering.
+            # radius_clip=3.0,
+        )
+
+        # if self.training:
+        #     self.strategy.step_pre_backward(
+        #         self.gauss_params, self.optimizers, self.strategy_state, self.step, self.info
+        #     )
+        
+        alpha = alpha[:, ...]
+
+        background = self._get_background_color()
+        rgb = render[:, ..., :3] + (1 - alpha) * background
+        rgb = torch.clamp(rgb, 0.0, 1.0)
+
+        # apply bilateral grid
+        if self.config.use_bilateral_grid and self.training:
+            if camera.metadata is not None and "cam_idx" in camera.metadata:
+                rgb = self._apply_bilateral_grid(rgb, camera.metadata["cam_idx"], H, W)
+        
+        if render_mode == "RGB+ED":
+            depth_im = render[:, ..., 3:4]
+            depth_im = torch.where(alpha > 0, depth_im, depth_im.detach().max()).squeeze(0)
+        else:
+            depth_im = None
+
+        if background.shape[0] == 3 and not self.training:
+            background = background.expand(H, W, 3)
+
+        # Calculate depth_middepth_normal --> used for depth_normal_loss
+        # Tensor shape: [2, H, W, 3]
+        depth_middepth_normal = self.depth_double_to_normal(camera, expected_depths, median_depths)
+
+        return {
+            "rgb": rgb.squeeze(0),
+            'depth_im': depth_im, # depth_im is typical depth map of rasterization
+            'accumulation': alpha.squeeze(0),
+            "expected_depth": expected_depths.squeeze(0), # these are the new depth maps
+            "median_depth": median_depths.squeeze(0),
+            "expected_normals": expected_normals.squeeze(0),
+            "depth_middepth_normal": depth_middepth_normal,
+            "background": background,
+            "info": self.info,
+        }
+
+    def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
+        """Computes and returns the losses dict.
+
+        Args:
+            outputs: the output to compute loss dict to
+            batch: ground truth batch corresponding to outputs
+            metrics_dict: dictionary of metrics, some of which we can use for loss
+        """
+        # This returns the following losses:
+        # Always:
+        # - loss_dict["rgb_loss"] = rgb loss (SSIM + L1)
+        # During training:
+        # - loss_dict["tv_loss"] = total variation loss (cameras)
+        loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
+
+        if self.config.use_depth_normal_loss:
+            # Calculate normal error map based on expected normals and depth_middepth_normal
+            normal_error_map = (1 - (outputs["expected_normals"].unsqueeze(0) * outputs["depth_middepth_normal"]).sum(dim=0))
+
+            # Calculate depth_normal_loss
+            depth_normal_loss = (1 - self.config.depth_ratio) * normal_error_map[0].mean() + self.config.depth_ratio * normal_error_map[1].mean()
+
+            # Scale by lambda
+            depth_normal_loss = self.config.depth_normal_lambda * depth_normal_loss
+
+            # Add to loss dict
+            loss_dict["depth_normal_loss"] = depth_normal_loss
+
+        return loss_dict
+
+    # def step_post_backward(self, step):
+    #     assert step == self.step
+    #     if isinstance(self.strategy, DefaultStrategy):
+    #         self.strategy.step_post_backward(
+    #             params=self.gauss_params,
+    #             optimizers=self.optimizers,
+    #             state=self.strategy_state,
+    #             step=self.step,
+    #             info=self.info,
+    #             packed=False,
+    #         )
+    #     elif isinstance(self.strategy, MCMCStrategy):
+    #         self.strategy.step_post_backward(
+    #             params=self.gauss_params,
+    #             optimizers=self.optimizers,
+    #             state=self.strategy_state,
+    #             step=step,
+    #             info=self.info,
+    #             lr=self.schedulers["means"].get_last_lr()[0],  # the learning rate for the "means" attribute of the GS
+    #         )
+    #     elif isinstance(self.strategy, RaDeGSStrategy):
+    #         pass
+    #     else:
+    #         raise ValueError(f"Unknown strategy {self.strategy}")
+
+    def depth_double_to_normal(self, camera: Cameras, depth1: torch.Tensor, depth2: torch.Tensor):
+        """Convert two depth maps to normal maps using camera parameters.
+
+        Args:
+            camera (Cameras): Camera object containing intrinsics and other parameters
+            depth1 (torch.Tensor): First depth map
+            depth2 (torch.Tensor): Second depth map
+
+        Returns:
+            torch.Tensor: Normal maps derived from the depth maps, shape (2, H, W, 3)
+        """
+        points1, points2 = self._depths_double_to_points(camera, depth1, depth2)
+        return self._point_double_to_normal(points1, points2)
+    
+    def _depths_double_to_points(self, camera: Cameras, depthmap1: torch.Tensor, depthmap2: torch.Tensor):
+        """Convert two depth maps to 3D points using camera parameters.
+
+        Args:
+            camera (Cameras): Camera object containing intrinsics and other parameters
+            depthmap1 (torch.Tensor): First depth map
+            depthmap2 (torch.Tensor): Second depth map
+
+        Returns:
+            tuple(torch.Tensor, torch.Tensor): Two sets of 3D points in camera space,
+                each with shape (3, H_scaled, W_scaled)
+        """
+        # Get width and height
+        W, H = camera.width.item(), camera.height.item()
+        W_scaled = W // self._get_downscale_factor()
+        H_scaled = H // self._get_downscale_factor()
+
+        # Get inverse of camera intrinsics matrix
+        intrinsics_inv = torch.inverse(camera.get_intrinsics_matrices()).to(camera.device)
+
+        # Create pixel coordinate grid (adding 0.5 to get center of pixels)
+        grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
+
+        # Stack coordinates and reshape to proper format
+        points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
+        points = self._downscale_if_required(points)
+        points = points.reshape(3, -1).float().cuda()
+
+        # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
+        rays_d = intrinsics_inv @ points
+        # Scale rays by depth to get 3D points
+        points1 = depthmap1.reshape(1,-1) * rays_d
+        points2 = depthmap2.reshape(1,-1) * rays_d
+
+        # Reshape points to final format (3, H, W)
+        points1 = points1.reshape(H_scaled,W_scaled,3).permute(2,0,1)
+        points2 = points2.reshape(H_scaled,W_scaled,3).permute(2,0,1)
+        
+        return points1, points2
+
+    def _point_double_to_normal(self, points1: torch.Tensor, points2: torch.Tensor):
+        """Calculate normal maps from two sets of 3D points using cross products of spatial derivatives.
+
+        Args:
+            points1 (torch.Tensor): First set of 3D points, shape (3, H, W)
+            points2 (torch.Tensor): Second set of 3D points, shape (3, H, W)
+
+        Returns:
+            torch.Tensor: Normal maps derived from the points, shape (2, H, W, 3)
+        """
+        # Stack points along first dimension
+        points = torch.stack([points1, points2],dim=0)
+        output = torch.zeros_like(points)
+        
+        # Calculate spatial derivatives using central differences
+        dx = points[...,2:, 1:-1] - points[...,:-2, 1:-1]  # x direction derivatives
+        dy = points[...,1:-1, 2:] - points[...,1:-1, :-2]  # y direction derivatives
+        
+        # Calculate normal vectors using cross product and normalize
+        normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
+        
+        # Insert normal vectors into output tensor (excluding borders)
+        output[...,1:-1, 1:-1] = normal_map
+        
+        # Return with dimensions rearranged to (2, H, W, 3)
+        return output.permute(0, 2, 3, 1)

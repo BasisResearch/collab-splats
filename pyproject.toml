@@ -1,0 +1,52 @@
+[project]
+name = "sugar_nerfstudio"
+version = "0.0.1"
+description = "SuGaR nerfstudio"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+keywords = ["gaussian splatting", "mesh generation"]
+authors = [
+    { name = "Tommy Botch", email = "tlb.gr@dartmouth.edu" },
+]
+
+dependencies = [
+    "nerfstudio",
+    "open3d",
+    "trimesh",
+    "torch",
+    "torchvision",
+    "torchtyping",
+    "einops",
+    "gdown",
+    "ftfy",
+    "matplotlib",
+    "numpy",
+    "scikit-image",
+    "pillow",
+    "regex",
+    "tqdm",
+    "git+https://github.com/brian-xu/gsplat-rade.git"
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+]
+
+[tool.black]
+line-length = 120
+
+[project.urls]
+"Source" = "https://github.com/vuer-ai/feature-splatting"
+
+[project.entry-points."nerfstudio.method_configs"]
+feature-splatting = "sugar.sugar_config:sugar_method"
+
+[tool.setuptools.packages]
+find = { include = ["sugar", "sugar.*"] }
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

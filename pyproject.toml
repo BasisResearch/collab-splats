@@ -16,7 +16,7 @@ dependencies = [
     "gdown",
     "matplotlib",
     "nerfstudio",
-    "numpy",
+    "numpy<2.0.0",
     "pillow",
     "regex",
     "torchtyping",

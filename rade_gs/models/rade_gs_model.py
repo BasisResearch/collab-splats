@@ -20,7 +20,7 @@ from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat  # for subclassing Nerfacto model
 
 from gsplat.cuda._wrapper import fully_fused_projection
-from rade_gs.utils.camera_utils import convert_to_colmap_camera
+from rade_gs.utils import convert_to_colmap_camera, depth_double_to_normal
 
 @dataclass
 class RadegsModelConfig(SplatfactoModelConfig):
@@ -182,7 +182,7 @@ class RadegsModel(SplatfactoModel):
 
         # Calculate depth_middepth_normal --> used for depth_normal_loss
         # Tensor shape: [2, H, W, 3]
-        depth_middepth_normal = self.depth_double_to_normal(camera, expected_depths, median_depths)
+        depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
 
         return {
             "rgb": rgb.squeeze(0),

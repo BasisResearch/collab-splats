@@ -27,6 +27,9 @@ class RadegsModelConfig(SplatfactoModelConfig):
 
     _target: Type = field(default_factory=lambda: RadegsModel)
 
+    regularization_from_iter: int = 15000
+    """Regularization starts from this iteration"""
+
     use_depth_normal_loss: bool = True
     """Whether to use depth normal loss"""
 
@@ -209,7 +212,8 @@ class RadegsModel(SplatfactoModel):
         # - loss_dict["tv_loss"] = total variation loss (cameras)
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
 
-        if self.config.use_depth_normal_loss:
+        # If we want to use depth normal loss and we're past the regularization start iteration
+        if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
             # Calculate normal error map based on expected normals and depth_middepth_normal
             normal_error_map = (1 - (outputs["expected_normals"].unsqueeze(0) * outputs["depth_middepth_normal"]).sum(dim=0))
 

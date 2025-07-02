@@ -6,6 +6,7 @@ Currently this subclasses the Nerfacto model. Consider subclassing from the base
 from dataclasses import dataclass, field
 from typing import Type, Dict, Union, List
 
+import math
 import torch 
 
 try:
@@ -17,6 +18,9 @@ from gsplat.strategy import DefaultStrategy
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat  # for subclassing Nerfacto model
+
+from gsplat.cuda._wrapper import fully_fused_projection
+from rade_gs.utils.camera_utils import convert_to_colmap_camera
 
 @dataclass
 class RadegsModelConfig(SplatfactoModelConfig):
@@ -52,7 +56,7 @@ class RadegsModel(SplatfactoModel):
     # TODO: Override any potential functions/methods to implement your own method
     # or subclass from "Model" and define all mandatory fields.
     # the following functions depths_double_to_points and depth_double_to_normal are adopted from https://github.com/hugoycj/2dgs-gaustudio/blob/main/utils/graphics_utils.py
-
+    
     def get_outputs(self, camera: Cameras) -> Dict[str, Union[torch.Tensor, List]]:
         """Takes in a camera and returns a dictionary of outputs.
 
@@ -69,9 +73,9 @@ class RadegsModel(SplatfactoModel):
 
         if self.training:
             assert camera.shape[0] == 1, "Only one camera at a time"
-            optimized_camera_to_world = self.camera_optimizer.apply_to_camera(camera)
-        else:
-            optimized_camera_to_world = camera.camera_to_worlds
+        #     optimized_camera_to_world = self.camera_optimizer.apply_to_camera(camera)
+        # else:
+        #     optimized_camera_to_world = camera.camera_to_worlds
 
         # cropping
         if self.crop_box is not None and not self.training:
@@ -102,11 +106,17 @@ class RadegsModel(SplatfactoModel):
 
         camera_scale_fac = self._get_downscale_factor()
         camera.rescale_output_resolution(1 / camera_scale_fac)
-        viewmat = get_viewmat(optimized_camera_to_world)
-        K = camera.get_intrinsics_matrices().cuda()
+
+        # viewmat = get_viewmat(optimized_camera_to_world)
+        # K = camera.get_intrinsics_matrices().cuda()
+
         W, H = int(camera.width.item()), int(camera.height.item())
         self.last_size = (H, W)
-        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
+
+        # Get visible gaussian mask
+        voxel_visible_mask = self._prefilter_voxel(camera)
+        
+        # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
 
         # apply the compensation of screen space blurring to gaussians
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
@@ -133,29 +143,18 @@ class RadegsModel(SplatfactoModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
-        render, alpha, expected_depths, median_depths, expected_normals, self.info = rasterization(
-            means=means_crop,
-            quats=quats_crop,  # rasterization does normalization internally
-            scales=torch.exp(scales_crop),
-            opacities=torch.sigmoid(opacities_crop).squeeze(-1),
-            colors=colors_crop,
-            viewmats=viewmat,  # [1, 4, 4]
-            Ks=K,  # [1, 3, 3]
-            width=W,
-            height=H,
-            packed=False,
-            near_plane=0.01,
-            far_plane=1e10,
-            render_mode=render_mode,
-            sh_degree=sh_degree_to_use,
-            sparse_grad=False,
-            absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
-            rasterize_mode=self.config.rasterize_mode,
-            return_depth_normal=True,
-            # set some threshold to disregrad small gaussians for faster rendering.
-            # radius_clip=3.0,
+        render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
+            camera, 
+            means_crop,
+            quats_crop,
+            scales_crop,
+            opacities_crop,
+            colors_crop,
+            render_mode,
+            sh_degree_to_use,
+            voxel_visible_mask
         )
-
+        
         # if self.training:
         #     self.strategy.step_pre_backward(
         #         self.gauss_params, self.optimizers, self.strategy_state, self.step, self.info
@@ -253,83 +252,242 @@ class RadegsModel(SplatfactoModel):
     #     else:
     #         raise ValueError(f"Unknown strategy {self.strategy}")
 
-    def depth_double_to_normal(self, camera: Cameras, depth1: torch.Tensor, depth2: torch.Tensor):
-        """Convert two depth maps to normal maps using camera parameters.
-
-        Args:
-            camera (Cameras): Camera object containing intrinsics and other parameters
-            depth1 (torch.Tensor): First depth map
-            depth2 (torch.Tensor): Second depth map
-
-        Returns:
-            torch.Tensor: Normal maps derived from the depth maps, shape (2, H, W, 3)
+    def _prefilter_voxel(self, camera: Cameras):
         """
-        points1, points2 = self._depths_double_to_points(camera, depth1, depth2)
-        return self._point_double_to_normal(points1, points2)
+        Render the scene.
+
+        Background tensor (bg_color) must be on GPU!
+
+        Taken from https://github.com/brian-xu/scaffold-gs-nerfstudio
+        """
+
+        colmap_camera = convert_to_colmap_camera(camera)
+
+        means = self.means
+        scales = torch.exp(self.scales)
+        quats = self.quats
+
+        # Set up rasterization configuration
+        tanfovx = math.tan(colmap_camera.FoVx * 0.5)
+        tanfovy = math.tan(colmap_camera.FoVy * 0.5)
+        focal_length_x = colmap_camera.image_width / (2 * tanfovx)
+        focal_length_y = colmap_camera.image_height / (2 * tanfovy)
+
+        Ks = torch.tensor(
+            [
+                [focal_length_x, 0, colmap_camera.image_width / 2.0],
+                [0, focal_length_y, colmap_camera.image_height / 2.0],
+                [0, 0, 1],
+            ],
+            device=self.device,
+        )[None]
+        viewmats = colmap_camera.world_view_transform.transpose(0, 1)[None]
+
+        N = means.shape[0]
+        C = viewmats.shape[0]
+        
+        assert means.shape == (N, 3), means.shape
+        assert quats.shape == (N, 4), quats.shape
+        assert scales.shape == (N, 3), scales.shape
+        assert viewmats.shape == (C, 4, 4), viewmats.shape
+        assert Ks.shape == (C, 3, 3), Ks.shape
+
+        # Project Gaussians to 2D. Directly pass in {quats, scales} is faster than precomputing covars.
+        proj_results = fully_fused_projection(
+            means,
+            None,  # covars,
+            quats,
+            scales,
+            viewmats,
+            Ks,
+            int(colmap_camera.image_width),
+            int(colmap_camera.image_height),
+            eps2d=0.3,
+            packed=False,
+            near_plane=0.01,
+            far_plane=1e10,
+            radius_clip=0.0,
+            sparse_grad=False,
+            calc_compensations=False,
+        )
+
+        # The results are with shape [C, N, ...]. Only the elements with radii > 0 are valid.
+        radii, means2d, depths, conics, compensations, ray_ts, ray_planes, normals = (
+            proj_results
+        )
+        camera_ids, gaussian_ids = None, None
+
+        return torch.sum(radii, dim=-1).squeeze() > 0
+
+    def _render(
+        self,
+        camera: Cameras,
+        means: torch.Tensor,
+        quats: torch.Tensor,
+        scales: torch.Tensor,
+        opacities: torch.Tensor,
+        color: torch.Tensor,
+        bg_color: torch.Tensor,
+        render_mode: str,
+        sh_degree_to_use: int,
+        visible_mask: torch.Tensor,
+    ):
+        """
+        Render the scene.
+
+        Background tensor (bg_color) must be on GPU!
+        """
+
+        colmap_camera = convert_to_colmap_camera(camera)
+        background = self._get_background_color()
+
+        if visible_mask:
+            means = means[visible_mask]
+            quats = quats[visible_mask]
+            scales = scales[visible_mask]
+            opacities = opacities[visible_mask]
+            color = color[visible_mask]
+        else:
+            means = means
+            quats = quats
+            scales = scales
+            opacities = opacities
+            color = color
+
+        # Set up rasterization configuration
+        tanfovx = math.tan(colmap_camera.FoVx * 0.5)
+        tanfovy = math.tan(colmap_camera.FoVy * 0.5)
+
+        focal_length_x = colmap_camera.image_width / (2 * tanfovx)
+        focal_length_y = colmap_camera.image_height / (2 * tanfovy)
+
+        K = torch.tensor(
+            [
+                [focal_length_x, 0, colmap_camera.image_width / 2.0],
+                [0, focal_length_y, colmap_camera.image_height / 2.0],
+                [0, 0, 1],
+            ],
+            device="cuda",
+        )
+
+        viewmat = colmap_camera.world_view_transform.transpose(0, 1)  # [4, 4]
+        
+        # Items are:
+        # - render_colors: [N, 3]
+        # - render_alphas: [N, 1]
+        # - expected_depths: [N, 3]
+        # - median_depths: [N, 1]
+        # - expected_normals: [N, 1]
+        # - info: dict
+        rendered = rasterization(
+            means=means,  # [N, 3]
+            quats=quats,  # [N, 4]
+            scales=scales,  # [N, 3]
+            opacities=opacities,  # [N,]
+            colors=color,
+            viewmats=viewmat[None],  # [1, 4, 4]
+            Ks=K[None],  # [1, 3, 3]
+            backgrounds=background[None],
+            width=int(colmap_camera.image_width),
+            height=int(colmap_camera.image_height),
+            packed=False,
+            near_plane=0.01,
+            far_plane=1e10,
+            render_mode=render_mode,
+            sh_degree=sh_degree_to_use,
+            sparse_grad=False,
+            absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
+            rasterize_mode=self.config.rasterize_mode,
+            # set some threshold to disregrad small gaussians for faster rendering.
+            radius_clip=3.0,
+            # Output depth and normal maps
+            return_depth_normal=True,
+        )
+        
+        # Permute the rendered items to be [3, H, W]
+        render, alpha, expected_depths, median_depths, expected_normals, meta = [
+            item[0].permute(2, 0, 1) for item in rendered if isinstance(item, torch.Tensor) else item
+        ]
+
+        return render, alpha, expected_depths, median_depths, expected_normals, meta
+
+    # def depth_double_to_normal(self, camera: Cameras, depth1: torch.Tensor, depth2: torch.Tensor):
+    #     """Convert two depth maps to normal maps using camera parameters.
+
+    #     Args:
+    #         camera (Cameras): Camera object containing intrinsics and other parameters
+    #         depth1 (torch.Tensor): First depth map
+    #         depth2 (torch.Tensor): Second depth map
+
+    #     Returns:
+    #         torch.Tensor: Normal maps derived from the depth maps, shape (2, H, W, 3)
+    #     """
+    #     points1, points2 = self._depths_double_to_points(camera, depth1, depth2)
+    #     return self._point_double_to_normal(points1, points2)
     
-    def _depths_double_to_points(self, camera: Cameras, depthmap1: torch.Tensor, depthmap2: torch.Tensor):
-        """Convert two depth maps to 3D points using camera parameters.
+    # def _depths_double_to_points(self, camera: Cameras, depthmap1: torch.Tensor, depthmap2: torch.Tensor):
+    #     """Convert two depth maps to 3D points using camera parameters.
 
-        Args:
-            camera (Cameras): Camera object containing intrinsics and other parameters
-            depthmap1 (torch.Tensor): First depth map
-            depthmap2 (torch.Tensor): Second depth map
+    #     Args:
+    #         camera (Cameras): Camera object containing intrinsics and other parameters
+    #         depthmap1 (torch.Tensor): First depth map
+    #         depthmap2 (torch.Tensor): Second depth map
 
-        Returns:
-            tuple(torch.Tensor, torch.Tensor): Two sets of 3D points in camera space,
-                each with shape (3, H_scaled, W_scaled)
-        """
-        # Get width and height
-        W, H = camera.width.item(), camera.height.item()
-        W_scaled = W // self._get_downscale_factor()
-        H_scaled = H // self._get_downscale_factor()
+    #     Returns:
+    #         tuple(torch.Tensor, torch.Tensor): Two sets of 3D points in camera space,
+    #             each with shape (3, H_scaled, W_scaled)
+    #     """
+    #     # Get width and height
+    #     W, H = camera.width.item(), camera.height.item()
+    #     W_scaled = W // self._get_downscale_factor()
+    #     H_scaled = H // self._get_downscale_factor()
 
-        # Get inverse of camera intrinsics matrix
-        intrinsics_inv = torch.inverse(camera.get_intrinsics_matrices()).to(camera.device)
+    #     # Get inverse of camera intrinsics matrix
+    #     intrinsics_inv = torch.inverse(camera.get_intrinsics_matrices()).to(camera.device)
 
-        # Create pixel coordinate grid (adding 0.5 to get center of pixels)
-        grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
+    #     # Create pixel coordinate grid (adding 0.5 to get center of pixels)
+    #     grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
 
-        # Stack coordinates and reshape to proper format
-        points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
-        points = self._downscale_if_required(points)
-        points = points.reshape(3, -1).float().cuda()
+    #     # Stack coordinates and reshape to proper format
+    #     points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
+    #     points = self._downscale_if_required(points)
+    #     points = points.reshape(3, -1).float().cuda()
 
-        # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
-        rays_d = intrinsics_inv @ points
-        # Scale rays by depth to get 3D points
-        points1 = depthmap1.reshape(1,-1) * rays_d
-        points2 = depthmap2.reshape(1,-1) * rays_d
+    #     # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
+    #     rays_d = intrinsics_inv @ points
+    #     # Scale rays by depth to get 3D points
+    #     points1 = depthmap1.reshape(1,-1) * rays_d
+    #     points2 = depthmap2.reshape(1,-1) * rays_d
 
-        # Reshape points to final format (3, H, W)
-        points1 = points1.reshape(H_scaled,W_scaled,3).permute(2,0,1)
-        points2 = points2.reshape(H_scaled,W_scaled,3).permute(2,0,1)
+    #     # Reshape points to final format (3, H, W)
+    #     points1 = points1.reshape(H_scaled,W_scaled,3).permute(2,0,1)
+    #     points2 = points2.reshape(H_scaled,W_scaled,3).permute(2,0,1)
         
-        return points1, points2
+    #     return points1, points2
 
-    def _point_double_to_normal(self, points1: torch.Tensor, points2: torch.Tensor):
-        """Calculate normal maps from two sets of 3D points using cross products of spatial derivatives.
+    # def _point_double_to_normal(self, points1: torch.Tensor, points2: torch.Tensor):
+    #     """Calculate normal maps from two sets of 3D points using cross products of spatial derivatives.
 
-        Args:
-            points1 (torch.Tensor): First set of 3D points, shape (3, H, W)
-            points2 (torch.Tensor): Second set of 3D points, shape (3, H, W)
+    #     Args:
+    #         points1 (torch.Tensor): First set of 3D points, shape (3, H, W)
+    #         points2 (torch.Tensor): Second set of 3D points, shape (3, H, W)
 
-        Returns:
-            torch.Tensor: Normal maps derived from the points, shape (2, H, W, 3)
-        """
-        # Stack points along first dimension
-        points = torch.stack([points1, points2],dim=0)
-        output = torch.zeros_like(points)
+    #     Returns:
+    #         torch.Tensor: Normal maps derived from the points, shape (2, H, W, 3)
+    #     """
+    #     # Stack points along first dimension
+    #     points = torch.stack([points1, points2],dim=0)
+    #     output = torch.zeros_like(points)
         
-        # Calculate spatial derivatives using central differences
-        dx = points[...,2:, 1:-1] - points[...,:-2, 1:-1]  # x direction derivatives
-        dy = points[...,1:-1, 2:] - points[...,1:-1, :-2]  # y direction derivatives
+    #     # Calculate spatial derivatives using central differences
+    #     dx = points[...,2:, 1:-1] - points[...,:-2, 1:-1]  # x direction derivatives
+    #     dy = points[...,1:-1, 2:] - points[...,1:-1, :-2]  # y direction derivatives
         
-        # Calculate normal vectors using cross product and normalize
-        normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
+    #     # Calculate normal vectors using cross product and normalize
+    #     normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
         
-        # Insert normal vectors into output tensor (excluding borders)
-        output[...,1:-1, 1:-1] = normal_map
+    #     # Insert normal vectors into output tensor (excluding borders)
+    #     output[...,1:-1, 1:-1] = normal_map
         
-        # Return with dimensions rearranged to (2, H, W, 3)
-        return output.permute(0, 2, 3, 1)
+    #     # Return with dimensions rearranged to (2, H, W, 3)
+    #     return output.permute(0, 2, 3, 1)

@@ -102,7 +102,7 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
 def focal2fov(focal, pixels):
     return 2 * math.atan(pixels / (2 * focal))
 
-def convert_to_colmap_camera(camera: NerfstudioCamera):
+def convert_to_colmap_camera(camera: Cameras):
     # NeRF 'transform_matrix' is a camera-to-world transform
     c2w = torch.eye(4).to(camera.camera_to_worlds)
     c2w[:3, :] = camera.camera_to_worlds[0]

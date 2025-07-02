@@ -327,7 +327,6 @@ class RadegsModel(SplatfactoModel):
         scales: torch.Tensor,
         opacities: torch.Tensor,
         color: torch.Tensor,
-        bg_color: torch.Tensor,
         render_mode: str,
         sh_degree_to_use: int,
         visible_mask: torch.Tensor,

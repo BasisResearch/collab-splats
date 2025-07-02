@@ -340,7 +340,7 @@ class RadegsModel(SplatfactoModel):
         colmap_camera = convert_to_colmap_camera(camera)
         background = self._get_background_color()
 
-        if visible_mask:
+        if visible_mask is not None:
             means = means[visible_mask]
             quats = quats[visible_mask]
             scales = scales[visible_mask]

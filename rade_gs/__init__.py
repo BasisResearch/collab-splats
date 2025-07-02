@@ -3,5 +3,10 @@
 __version__ = "0.0.1"
 
 from rade_gs.models.rade_gs_model import RadegsModel, RadegsModelConfig
+from rade_gs.submodules.tetra_triangulation.tetranerf.utils.extension import cpp
 
-__all__ = ["RadegsModelConfig", "RadegsModel"]
+__all__ = [
+    "RadegsModelConfig",
+    "RadegsModel",
+    "cpp",
+]

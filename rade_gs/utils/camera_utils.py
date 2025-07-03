@@ -150,137 +150,137 @@ def build_rotation(r):
 #### RaDe-GS functions for camera ######
 ########################################
 
-# def depth_double_to_normal(camera: Cameras, depth1: torch.Tensor, depth2: torch.Tensor):
-#     """Convert two depth maps to normal maps using camera parameters.
+def depth_double_to_normal(camera: Cameras, depth1: torch.Tensor, depth2: torch.Tensor):
+    """Convert two depth maps to normal maps using camera parameters.
 
-#     Args:
-#         camera (Cameras): Camera object containing intrinsics and other parameters
-#         depth1 (torch.Tensor): First depth map
-#         depth2 (torch.Tensor): Second depth map
+    Args:
+        camera (Cameras): Camera object containing intrinsics and other parameters
+        depth1 (torch.Tensor): First depth map
+        depth2 (torch.Tensor): Second depth map
 
-#     Returns:
-#         torch.Tensor: Normal maps derived from the depth maps, shape (2, H, W, 3)
-#     """
-#     points1, points2 = _depths_double_to_points(camera, depth1, depth2)
-#     return _point_double_to_normal(points1, points2)
+    Returns:
+        torch.Tensor: Normal maps derived from the depth maps, shape (2, H, W, 3)
+    """
+    points1, points2 = _depths_double_to_points(camera, depth1, depth2)
+    return _point_double_to_normal(points1, points2)
 
-# def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2: torch.Tensor):
-#     """Convert two depth maps to 3D points using camera parameters.
+def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2: torch.Tensor):
+    """Convert two depth maps to 3D points using camera parameters.
 
-#     Args:
-#         camera (Cameras): Camera object containing intrinsics and other parameters
-#         depthmap1 (torch.Tensor): First depth map
-#         depthmap2 (torch.Tensor): Second depth map
+    Args:
+        camera (Cameras): Camera object containing intrinsics and other parameters
+        depthmap1 (torch.Tensor): First depth map
+        depthmap2 (torch.Tensor): Second depth map
 
-#     Returns:
-#         tuple(torch.Tensor, torch.Tensor): Two sets of 3D points in camera space,
-#             each with shape (3, H_scaled, W_scaled)
-#     """
+    Returns:
+        tuple(torch.Tensor, torch.Tensor): Two sets of 3D points in camera space,
+            each with shape (3, H_scaled, W_scaled)
+    """
 
-#     colmap_camera: ColmapCamera = convert_to_colmap_camera(camera)
-#     W, H = colmap_camera.image_width, colmap_camera.image_height
-#     fx = W / (2 * math.tan(colmap_camera.FoVx / 2.0))
-#     fy = H / (2 * math.tan(colmap_camera.FoVy / 2.0))
+    colmap_camera: ColmapCamera = convert_to_colmap_camera(camera)
+    W, H = colmap_camera.image_width, colmap_camera.image_height
+    fx = W / (2 * math.tan(colmap_camera.FoVx / 2.0))
+    fy = H / (2 * math.tan(colmap_camera.FoVy / 2.0))
 
-#     intrinsics_inv = torch.tensor(
-#         [[1/fx, 0.,-W/(2 * fx)],
-#         [0., 1/fy, -H/(2 * fy),],
-#         [0., 0., 1.0]]
-#     ).float().cuda()
+    intrinsics_inv = torch.tensor(
+        [[1/fx, 0.,-W/(2 * fx)],
+        [0., 1/fy, -H/(2 * fy),],
+        [0., 0., 1.0]]
+    ).float().cuda()
 
-#     # # Get width and height
-#     # W, H = camera.width.item(), camera.height.item()
-#     # W_scaled = W // self._get_downscale_factor()
-#     # H_scaled = H // self._get_downscale_factor()
+    # # Get width and height
+    # W, H = camera.width.item(), camera.height.item()
+    # W_scaled = W // self._get_downscale_factor()
+    # H_scaled = H // self._get_downscale_factor()
 
-#     # # Get inverse of camera intrinsics matrix
-#     # intrinsics_inv = torch.inverse(camera.get_intrinsics_matrices()).to(camera.device)
+    # # Get inverse of camera intrinsics matrix
+    # intrinsics_inv = torch.inverse(camera.get_intrinsics_matrices()).to(camera.device)
 
-#     # Create pixel coordinate grid (adding 0.5 to get center of pixels)
-#     grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
+    # Create pixel coordinate grid (adding 0.5 to get center of pixels)
+    grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
 
-#     # Stack coordinates and reshape to proper format
-#     points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
-#     # points = self._downscale_if_required(points)
-#     points = points.reshape(3, -1).float().cuda()
+    # Stack coordinates and reshape to proper format
+    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
+    # points = self._downscale_if_required(points)
+    points = points.reshape(3, -1).float().cuda()
 
-#     # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
-#     rays_d = intrinsics_inv @ points
-#     # Scale rays by depth to get 3D points
-#     points1 = depthmap1.reshape(1,-1) * rays_d
-#     points2 = depthmap2.reshape(1,-1) * rays_d
+    # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
+    rays_d = intrinsics_inv @ points
+    # Scale rays by depth to get 3D points
+    points1 = depthmap1.reshape(1,-1) * rays_d
+    points2 = depthmap2.reshape(1,-1) * rays_d
 
-#     # Reshape points to final format (3, H, W)
-#     points1 = points1.reshape(H,W,3).permute(2,0,1)
-#     points2 = points2.reshape(H,W,3).permute(2,0,1)
-#     # points1 = points1.reshape(H_scaled,W_scaled,3).permute(2,0,1)
-#     # points2 = points2.reshape(H_scaled,W_scaled,3).permute(2,0,1)
+    # Reshape points to final format (3, H, W)
+    points1 = points1.reshape(H,W,3).permute(2,0,1)
+    points2 = points2.reshape(H,W,3).permute(2,0,1)
+    # points1 = points1.reshape(H_scaled,W_scaled,3).permute(2,0,1)
+    # points2 = points2.reshape(H_scaled,W_scaled,3).permute(2,0,1)
     
-#     return points1, points2
+    return points1, points2
 
-# def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
-#     """Calculate normal maps from two sets of 3D points using cross products of spatial derivatives.
+def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
+    """Calculate normal maps from two sets of 3D points using cross products of spatial derivatives.
 
-#     Args:
-#         points1 (torch.Tensor): First set of 3D points, shape (3, H, W)
-#         points2 (torch.Tensor): Second set of 3D points, shape (3, H, W)
+    Args:
+        points1 (torch.Tensor): First set of 3D points, shape (3, H, W)
+        points2 (torch.Tensor): Second set of 3D points, shape (3, H, W)
 
-#     Returns:
-#         torch.Tensor: Normal maps derived from the points, shape (2, H, W, 3)
-#     """
-#     # Stack points along first dimension
-#     points = torch.stack([points1, points2],dim=0)
-#     output = torch.zeros_like(points)
+    Returns:
+        torch.Tensor: Normal maps derived from the points, shape (2, H, W, 3)
+    """
+    # Stack points along first dimension
+    points = torch.stack([points1, points2],dim=0)
+    output = torch.zeros_like(points)
     
-#     # Calculate spatial derivatives using central differences
-#     dx = points[...,2:, 1:-1] - points[...,:-2, 1:-1]  # x direction derivatives
-#     dy = points[...,1:-1, 2:] - points[...,1:-1, :-2]  # y direction derivatives
+    # Calculate spatial derivatives using central differences
+    dx = points[...,2:, 1:-1] - points[...,:-2, 1:-1]  # x direction derivatives
+    dy = points[...,1:-1, 2:] - points[...,1:-1, :-2]  # y direction derivatives
     
-#     # Calculate normal vectors using cross product and normalize
-#     normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
+    # Calculate normal vectors using cross product and normalize
+    normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
     
-#     # Insert normal vectors into output tensor (excluding borders)
-#     output[...,1:-1, 1:-1] = normal_map
+    # Insert normal vectors into output tensor (excluding borders)
+    output[...,1:-1, 1:-1] = normal_map
     
-#     # Return with dimensions rearranged to (2, H, W, 3)
-#     return output.permute(0, 2, 3, 1)
+    # Return with dimensions rearranged to (2, H, W, 3)
+    return output.permute(0, 2, 3, 1)
 
 
 #########################################
 ######## Take from scaffold-gs ##########
 #########################################
 
-# the following functions depths_double_to_points and depth_double_to_normal are adopted from https://github.com/hugoycj/2dgs-gaustudio/blob/main/utils/graphics_utils.py
-def _depths_double_to_points(camera: Cameras, depthmap1, depthmap2):
-    colmap_camera: ColmapCamera = convert_to_colmap_camera(camera)
-    W, H = colmap_camera.image_width, colmap_camera.image_height
-    fx = W / (2 * math.tan(colmap_camera.FoVx / 2.0))
-    fy = H / (2 * math.tan(colmap_camera.FoVy / 2.0))
-    intrins_inv = torch.tensor(
-        [[1/fx, 0.,-W/(2 * fx)],
-        [0., 1/fy, -H/(2 * fy),],
-        [0., 0., 1.0]]
-    ).float().cuda()
-    grid_x, grid_y = torch.meshgrid(
-        torch.arange(W) + 0.5, torch.arange(H) + 0.5, indexing="xy"
-    )
-    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).reshape(3, -1).float().cuda()
-    rays_d = intrins_inv @ points
-    points1 = depthmap1.reshape(1, -1) * rays_d
-    points2 = depthmap2.reshape(1, -1) * rays_d
-    return points1.reshape(3, H, W), points2.reshape(3, H, W)
+# # the following functions depths_double_to_points and depth_double_to_normal are adopted from https://github.com/hugoycj/2dgs-gaustudio/blob/main/utils/graphics_utils.py
+# def _depths_double_to_points(camera: Cameras, depthmap1, depthmap2):
+#     colmap_camera: ColmapCamera = convert_to_colmap_camera(camera)
+#     W, H = colmap_camera.image_width, colmap_camera.image_height
+#     fx = W / (2 * math.tan(colmap_camera.FoVx / 2.0))
+#     fy = H / (2 * math.tan(colmap_camera.FoVy / 2.0))
+#     intrins_inv = torch.tensor(
+#         [[1/fx, 0.,-W/(2 * fx)],
+#         [0., 1/fy, -H/(2 * fy),],
+#         [0., 0., 1.0]]
+#     ).float().cuda()
+#     grid_x, grid_y = torch.meshgrid(
+#         torch.arange(W) + 0.5, torch.arange(H) + 0.5, indexing="xy"
+#     )
+#     points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).reshape(3, -1).float().cuda()
+#     rays_d = intrins_inv @ points
+#     points1 = depthmap1.reshape(1, -1) * rays_d
+#     points2 = depthmap2.reshape(1, -1) * rays_d
+#     return points1.reshape(3, H, W), points2.reshape(3, H, W)
 
 
-def _point_double_to_normal(points1, points2):
-    points = torch.stack([points1, points2], dim=0)
-    output = torch.zeros_like(points)
-    dx = points[..., 2:, 1:-1] - points[..., :-2, 1:-1]
-    dy = points[..., 1:-1, 2:] - points[..., 1:-1, :-2]
-    normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
-    output[..., 1:-1, 1:-1] = normal_map
-    return output
+# def _point_double_to_normal(points1, points2):
+#     points = torch.stack([points1, points2], dim=0)
+#     output = torch.zeros_like(points)
+#     dx = points[..., 2:, 1:-1] - points[..., :-2, 1:-1]
+#     dy = points[..., 1:-1, 2:] - points[..., 1:-1, :-2]
+#     normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
+#     output[..., 1:-1, 1:-1] = normal_map
+#     return output
 
 
-def depth_double_to_normal(camera: Cameras, depth1, depth2):
-    points1, points2 = _depths_double_to_points(camera, depth1, depth2)
-    return _point_double_to_normal(points1, points2)
+# def depth_double_to_normal(camera: Cameras, depth1, depth2):
+#     points1, points2 = _depths_double_to_points(camera, depth1, depth2)
+#     return _point_double_to_normal(points1, points2)

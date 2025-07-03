@@ -35,7 +35,7 @@ rade_gs_method = MethodSpecification(
             ),
             model=RadegsModelConfig(
                 use_depth_normal_loss=True,
-                depth_normal_lambda=1.0,
+                depth_normal_lambda=0.05,
                 depth_ratio=0.6,
             ),
         ),

@@ -15,6 +15,7 @@ except ImportError:
     print("Please install gsplat>=1.0.0")
 
 from gsplat.strategy import DefaultStrategy
+from einops import rearrange
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat  # for subclassing Nerfacto model
@@ -38,11 +39,14 @@ class RadegsModelConfig(SplatfactoModelConfig):
     """Whether to use depth normal loss"""
 
     # RaDeGS specific parameters
-    depth_normal_lambda: float = 1.0
+    depth_normal_lambda: float = 0.05 #1.0
     """Weight for depth normal loss"""
 
     depth_ratio: float = 0.6
     """Ratio for depth normal loss"""
+
+    use_absgrad: bool = False
+    """Whether to use absolute gradient for rasterization"""
 
 
 class RadegsModel(SplatfactoModel):
@@ -154,47 +158,69 @@ class RadegsModel(SplatfactoModel):
             sh_degree_to_use,
             voxel_visible_mask
         )
-        
+
+        # Calculate depth_middepth_normal --> used for depth_normal_loss
+        # Tensor shape: [2, H, W, 3]
+        depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
+        normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=1)
+
+        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
+
+        rgb = rearrange(render, "c h w -> h w c")
+        rgb = torch.clamp(rgb, 0.0, 1.0)
+
+        depth = rearrange(expected_depths, "c h w -> h w c")[..., 0]
+        accumulation = depth
+        normal = (rearrange(expected_normals, "c h w -> h w c") + 1) / 2
+
         # if self.training:
         #     self.strategy.step_pre_backward(
         #         self.gauss_params, self.optimizers, self.strategy_state, self.step, self.info
         #     )
         
-        alpha = alpha[:, ...]
+        # alpha = alpha[:, ...]
 
-        background = self._get_background_color()
-        rgb = render[:, ..., :3] + (1 - alpha) * background
-        rgb = torch.clamp(rgb, 0.0, 1.0)
+        # background = self._get_background_color()
+        # rgb = render[:, ..., :3] + (1 - alpha) * background
+        # rgb = torch.clamp(rgb, 0.0, 1.0)
 
-        # apply bilateral grid
-        if self.config.use_bilateral_grid and self.training:
-            if camera.metadata is not None and "cam_idx" in camera.metadata:
-                rgb = self._apply_bilateral_grid(rgb, camera.metadata["cam_idx"], H, W)
+        # # apply bilateral grid
+        # if self.config.use_bilateral_grid and self.training:
+        #     if camera.metadata is not None and "cam_idx" in camera.metadata:
+        #         rgb = self._apply_bilateral_grid(rgb, camera.metadata["cam_idx"], H, W)
         
-        if render_mode == "RGB+ED":
-            depth_im = render[:, ..., 3:4]
-            depth_im = torch.where(alpha > 0, depth_im, depth_im.detach().max()).squeeze(0)
-        else:
-            depth_im = None
+        # if render_mode == "RGB+ED":
+        #     depth_im = render[:, ..., 3:4]
+        #     depth_im = torch.where(alpha > 0, depth_im, depth_im.detach().max()).squeeze(0)
+        # else:
+        #     depth_im = None
 
         if background.shape[0] == 3 and not self.training:
             background = background.expand(H, W, 3)
 
-        # Calculate depth_middepth_normal --> used for depth_normal_loss
-        # Tensor shape: [2, H, W, 3]
-        depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
-
         return {
             "rgb": rgb.squeeze(0),
-            'depth': depth_im, # depth_im is typical depth map of rasterization
-            'accumulation': alpha.squeeze(0),
-            "expected_depth": expected_depths.squeeze(0), # these are the new depth maps
-            "median_depth": median_depths.squeeze(0),
-            "expected_normals": expected_normals.squeeze(0),
-            "depth_middepth_normal": depth_middepth_normal,
+            'depth': depth.unsqueeze(-1), # depth_im is typical depth map of rasterization
+            "normal": normal.squeeze(0),
+            "accumulation": accumulation.unsqueeze(-1),
             "background": background,
-            "info": self.info,
+            "normal_error_map": normal_error_map.squeeze(0),
+            # "info": self.info,
+            # 'accumulation': alpha.squeeze(0),
+            # "expected_depth": expected_depths.squeeze(0), # these are the new depth maps
+            # "median_depth": median_depths.squeeze(0),
         }
+        # return {
+        #     "rgb": rgb.squeeze(0),
+        #     'depth': depth_im, # depth_im is typical depth map of rasterization
+        #     'accumulation': alpha.squeeze(0),
+        #     "expected_depth": expected_depths.squeeze(0), # these are the new depth maps
+        #     "median_depth": median_depths.squeeze(0),
+        #     "expected_normals": expected_normals.squeeze(0),
+        #     "depth_middepth_normal": depth_middepth_normal,
+        #     "background": background,
+        #     "info": self.info,
+        # }
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
         """Computes and returns the losses dict.
@@ -214,11 +240,13 @@ class RadegsModel(SplatfactoModel):
         # If we want to use depth normal loss and we're past the regularization start iteration
         if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
             # Calculate normal error map based on expected normals and depth_middepth_normal
-            normal_error_map = (1 - (outputs["expected_normals"].unsqueeze(0) * outputs["depth_middepth_normal"]).sum(dim=0))
+            # normal_error_map = (1 - (outputs["expected_normals"].unsqueeze(0) * outputs["depth_middepth_normal"]).sum(dim=0))
 
             # Calculate depth_normal_loss
-            depth_normal_loss = (1 - self.config.depth_ratio) * normal_error_map[0].mean() + self.config.depth_ratio * normal_error_map[1].mean()
+            # depth_normal_loss = (1 - self.config.depth_ratio) * normal_error_map[0].mean() + self.config.depth_ratio * normal_error_map[1].mean()
 
+            depth_normal_loss = (1 - self.config.depth_ratio) * outputs["normal_error_map"][0].mean() + self.config.depth_ratio * outputs["normal_error_map"][1].mean()
+            
             # Scale by lambda
             depth_normal_loss = self.config.depth_normal_lambda * depth_normal_loss
 
@@ -328,7 +356,7 @@ class RadegsModel(SplatfactoModel):
         opacities: torch.Tensor,
         color: torch.Tensor,
         render_mode: str,
-        sh_degree_to_use: int,
+        sh_degree_to_use: int | None,
         visible_mask: torch.Tensor,
     ):
         """
@@ -390,17 +418,27 @@ class RadegsModel(SplatfactoModel):
             width=int(colmap_camera.image_width),
             height=int(colmap_camera.image_height),
             packed=False,
-            near_plane=0.01,
-            far_plane=1e10,
-            render_mode=render_mode,
-            sh_degree=sh_degree_to_use,
-            sparse_grad=False,
-            absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
-            rasterize_mode=self.config.rasterize_mode,
+            # near_plane=0.01,
+            # far_plane=1e10,
+            # render_mode=render_mode,
+            # sh_degree=sh_degree_to_use,
+            render_mode="RGB",
+            sh_degree=None,
+
+            # sparse_grad=False,
+            # absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
+            # rasterize_mode=self.config.rasterize_mode,
             # set some threshold to disregrad small gaussians for faster rendering.
-            radius_clip=3.0,
+            # radius_clip=3.0,
             # Output depth and normal maps
             return_depth_normal=True,
         )
 
+        # Testing using exact method that scaffold-gs uses
+        render = render[0].permute(2, 0, 1)
+        alpha = alpha[0].permute(2, 0, 1)
+        expected_depths = expected_depths[0].permute(2, 0, 1)
+        median_depths = median_depths[0].permute(2, 0, 1)
+        expected_normals = expected_normals[0].permute(2, 0, 1)
+    
         return render, alpha, expected_depths, median_depths, expected_normals, meta

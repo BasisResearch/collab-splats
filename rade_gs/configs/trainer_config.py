@@ -1,6 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional, Dict, Any
-from pathlib import Path
+from typing import Literal
 
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.engine.trainer import TrainerConfig

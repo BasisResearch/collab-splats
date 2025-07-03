@@ -190,8 +190,8 @@ class RadegsModel(SplatfactoModel):
         
         return {
             "rgb": rgb.squeeze(0),
-            'depth': expected_depths[..., 0], # depth_im is typical depth map of rasterization
-            "median_depth": median_depths[..., 0],
+            'depth': expected_depths.squeeze(0), # depth_im is typical depth map of rasterization
+            "median_depth": median_depths.squeeze(0),
             'accumulation': alpha.squeeze(0),
             "normals": normals.squeeze(0),
             "normal_error_map": normal_error_map.squeeze(0),

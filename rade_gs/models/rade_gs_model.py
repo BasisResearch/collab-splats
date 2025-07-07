@@ -8,6 +8,7 @@ from typing import Type, Dict, Union, List
 
 import math
 import torch 
+from torch.nn import functional as F
 
 try:
     from gsplat.rendering import rasterization
@@ -21,6 +22,7 @@ from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig,
 
 from gsplat.cuda._wrapper import fully_fused_projection
 from rade_gs.utils import convert_to_colmap_camera, depth_double_to_normal
+from rade_gs.utils.camera_utils import build_rotation
 
 @dataclass
 class RadegsModelConfig(SplatfactoModelConfig):
@@ -56,10 +58,46 @@ class RadegsModel(SplatfactoModel):
     def populate_modules(self):
         super().populate_modules()
 
+        # # Initialize normals 
+        # with torch.no_grad():
+        #     if (self.seed_points is not None and len(self.seed_points) == 3):  # type: ignore
+        #         CONSOLE.print(
+        #             "[bold yellow]Initialising Gaussian normals from intial seed points"
+        #         )
+        #         self.normals_seed = self.seed_points[-1].float()  # type: ignore
+        #         self.normals_seed = self.normals_seed / torch.norm(self.normals_seed, dim=-1, keepdim=True)
+
+        #         normals = torch.nn.Parameter(self.normals_seed.detach())
+        #     else:
+        #         scales = self.gauss_params['scales']
+        #         rots = build_rotation(self.gauss_params['quats'])
+
+        #         # init random normals based on the above scales and quats
+        #         normals = F.one_hot(torch.argmin(scales, dim=-1), num_classes=3).float()
+        #         normals = torch.bmm(rots, normals[:, :, None]).squeeze(-1)
+        #         normals = F.normalize(normals, dim=1)
+        #         normals = torch.nn.Parameter(normals.detach())
+        
+        # self.gauss_params['normals'] = normals
+
     # TODO: Override any potential functions/methods to implement your own method
     # or subclass from "Model" and define all mandatory fields.
     # the following functions depths_double_to_points and depth_double_to_normal are adopted from https://github.com/hugoycj/2dgs-gaustudio/blob/main/utils/graphics_utils.py
-    
+    @property
+    def normals(self):
+        # Transform out of log space
+        scales = torch.exp(self.scales)
+
+        # 1. Choose axis of smallest scale (most elongated Gaussian direction)
+        normals = F.one_hot(torch.argmin(scales, dim=-1), num_classes=3).float()
+
+        # 2. Rotate to world space
+        rots = build_rotation(self.quats)
+        normals = torch.bmm(rots, normals[:, :, None]).squeeze(-1)
+        normals = F.normalize(normals, dim=1)
+        
+        return normals
+
     def get_outputs(self, camera: Cameras) -> Dict[str, Union[torch.Tensor, List]]:
         """Takes in a camera and returns a dictionary of outputs.
 

@@ -17,8 +17,8 @@ from nerfstudio.plugins.types import MethodSpecification
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
 
 # Custom configs
-from rade_gs.models.rade_gs_model import RadegsModelConfig
-from rade_gs.utils.trainer_config import _TrainerConfig
+from ns_extension.models.rade_gs_model import RadegsModelConfig
+from ns_extension.utils.trainer_config import _TrainerConfig
 
 rade_gs_method = MethodSpecification(
     config=_TrainerConfig(

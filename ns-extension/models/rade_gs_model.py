@@ -15,14 +15,14 @@ try:
 except ImportError:
     print("Please install gsplat>=1.0.0")
 
-from gsplat.strategy import DefaultStrategy
+from gsplat.cuda._wrapper import fully_fused_projection
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat  # for subclassing Nerfacto model
 
-from gsplat.cuda._wrapper import fully_fused_projection
-from rade_gs.utils import convert_to_colmap_camera, depth_double_to_normal
-from rade_gs.utils.camera_utils import build_rotation
+
+from ns_extension.utils import convert_to_colmap_camera, depth_double_to_normal
+from ns_extension.utils.camera_utils import build_rotation
 
 @dataclass
 class RadegsModelConfig(SplatfactoModelConfig):
@@ -58,31 +58,8 @@ class RadegsModel(SplatfactoModel):
     def populate_modules(self):
         super().populate_modules()
 
-        # # Initialize normals 
-        # with torch.no_grad():
-        #     if (self.seed_points is not None and len(self.seed_points) == 3):  # type: ignore
-        #         CONSOLE.print(
-        #             "[bold yellow]Initialising Gaussian normals from intial seed points"
-        #         )
-        #         self.normals_seed = self.seed_points[-1].float()  # type: ignore
-        #         self.normals_seed = self.normals_seed / torch.norm(self.normals_seed, dim=-1, keepdim=True)
-
-        #         normals = torch.nn.Parameter(self.normals_seed.detach())
-        #     else:
-        #         scales = self.gauss_params['scales']
-        #         rots = build_rotation(self.gauss_params['quats'])
-
-        #         # init random normals based on the above scales and quats
-        #         normals = F.one_hot(torch.argmin(scales, dim=-1), num_classes=3).float()
-        #         normals = torch.bmm(rots, normals[:, :, None]).squeeze(-1)
-        #         normals = F.normalize(normals, dim=1)
-        #         normals = torch.nn.Parameter(normals.detach())
-        
-        # self.gauss_params['normals'] = normals
-
     # TODO: Override any potential functions/methods to implement your own method
     # or subclass from "Model" and define all mandatory fields.
-    # the following functions depths_double_to_points and depth_double_to_normal are adopted from https://github.com/hugoycj/2dgs-gaustudio/blob/main/utils/graphics_utils.py
     @property
     def normals(self):
         # Transform out of log space
@@ -157,7 +134,7 @@ class RadegsModel(SplatfactoModel):
         # Get visible gaussian mask
         voxel_visible_mask = self._prefilter_voxel(camera)
         
-        # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
+        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
 
         # apply the compensation of screen space blurring to gaussians
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
@@ -202,12 +179,12 @@ class RadegsModel(SplatfactoModel):
             )
 
         # Calculate depth_middepth_normal --> used for depth_normal_loss
-        # Tensor shape: [2, H, W, 3]
+        # Tensor shape: [2, 3, H, W]
         depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
 
         # Sum over channels (keep views) then take the dot product with the normal map
         # results in an  angular error map per view (depth and middept)
-        normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1)
+        normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=1)
         normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
         camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
@@ -265,31 +242,6 @@ class RadegsModel(SplatfactoModel):
 
         return loss_dict
 
-    # def step_post_backward(self, step):
-    #     assert step == self.step
-    #     if isinstance(self.strategy, DefaultStrategy):
-    #         self.strategy.step_post_backward(
-    #             params=self.gauss_params,
-    #             optimizers=self.optimizers,
-    #             state=self.strategy_state,
-    #             step=self.step,
-    #             info=self.info,
-    #             packed=False,
-    #         )
-    #     elif isinstance(self.strategy, MCMCStrategy):
-    #         self.strategy.step_post_backward(
-    #             params=self.gauss_params,
-    #             optimizers=self.optimizers,
-    #             state=self.strategy_state,
-    #             step=step,
-    #             info=self.info,
-    #             lr=self.schedulers["means"].get_last_lr()[0],  # the learning rate for the "means" attribute of the GS
-    #         )
-    #     elif isinstance(self.strategy, RaDeGSStrategy):
-    #         pass
-    #     else:
-    #         raise ValueError(f"Unknown strategy {self.strategy}")
-
     def _prefilter_voxel(self, camera: Cameras):
         """
         Render the scene.
@@ -306,8 +258,8 @@ class RadegsModel(SplatfactoModel):
         quats = self.quats
 
         # Set up rasterization configuration
-        tanfovx = math.tan(colmap_camera.FoVx * 0.5)
-        tanfovy = math.tan(colmap_camera.FoVy * 0.5)
+        tanfovx = math.tan(colmap_camera.fovx * 0.5)
+        tanfovy = math.tan(colmap_camera.fovy * 0.5)
         focal_length_x = colmap_camera.image_width / (2 * tanfovx)
         focal_length_y = colmap_camera.image_height / (2 * tanfovy)
 
@@ -319,6 +271,7 @@ class RadegsModel(SplatfactoModel):
             ],
             device=self.device,
         )[None]
+
         viewmats = colmap_camera.world_view_transform.transpose(0, 1)[None]
 
         N = means.shape[0]
@@ -392,8 +345,8 @@ class RadegsModel(SplatfactoModel):
             color = color
 
         # Set up rasterization configuration
-        tanfovx = math.tan(colmap_camera.FoVx * 0.5)
-        tanfovy = math.tan(colmap_camera.FoVy * 0.5)
+        tanfovx = math.tan(colmap_camera.fovx * 0.5)
+        tanfovy = math.tan(colmap_camera.fovy * 0.5)
 
         focal_length_x = colmap_camera.image_width / (2 * tanfovx)
         focal_length_y = colmap_camera.image_height / (2 * tanfovy)
@@ -435,7 +388,7 @@ class RadegsModel(SplatfactoModel):
             sparse_grad=False,
             absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
             rasterize_mode=self.config.rasterize_mode,
-            # set some threshold to disregrad small gaussians for faster rendering.
+            # set some threshold to disregard small gaussians for faster rendering.
             radius_clip=3.0,
             # Output depth and normal maps
             return_depth_normal=True,

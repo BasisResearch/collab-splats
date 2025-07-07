@@ -1,7 +1,7 @@
 [project]
 name = "rade_gs"
 version = "0.0.1"
-description = "A nerfstudio implementation of RaDe-GS"
+description = "ns-extension: Extension tools and models for nerfstudio"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE" }
@@ -34,10 +34,10 @@ dev = [
 line-length = 120
 
 [project.entry-points."nerfstudio.method_configs"]
-rade-gs = "rade_gs.configs.rade_gs_method:rade_gs_method"
+rade-gs = "ns_extension.configs.rade_gs_method:rade_gs_method"
 
 [tool.setuptools.packages]
-find = { include = ["rade_gs", "rade_gs.*"] }
+find = { include = ["ns_extension", "ns_extension.*"] }
 
 [build-system]
 requires = ["setuptools<70.0"]

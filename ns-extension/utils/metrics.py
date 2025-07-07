@@ -10,6 +10,7 @@ from torch import nn
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
+from ns_extension.utils.utils import calculate_accuracy, calculate_completeness, mean_angular_error
 
 class PDMetrics(nn.Module):
     """Computation of error metrics between predicted and ground truth point clouds
@@ -37,45 +38,6 @@ class PDMetrics(nn.Module):
         cmp_score = self.cmp(pred_points, gt_points)
 
         return (acc_score, cmp_score)
-
-
-def calculate_accuracy(reconstructed_points, reference_points, percentile=90):
-    """
-    Calculat accuracy: How far away 90% of the reconstructed point clouds are from the reference point cloud.
-    """
-    tree = cKDTree(reference_points)
-    distances, _ = tree.query(reconstructed_points)
-    return np.percentile(distances, percentile)
-
-
-def calculate_completeness(reconstructed_points, reference_points, threshold=0.05):
-    """
-    calucate completeness: What percentage of the reference point cloud is within
-    a specific distance of the reconstructed point cloud.
-    """
-    tree = cKDTree(reconstructed_points)
-    distances, _ = tree.query(reference_points)
-    within_threshold = np.sum(distances < threshold) / len(distances)
-    return within_threshold * 100
-
-
-def mean_angular_error(pred: torch.Tensor, gt: torch.Tensor) -> torch.Tensor:
-    """Compute the mean angular error between predicted and reference normals
-
-    Args:
-        predicted_normals: [B, C, H, W] tensor of predicted normals
-        reference_normals : [B, C, H, W] tensor of gt normals
-
-    Returns:
-        mae: [B, H, W] mean angular error
-    """
-    dot_products = torch.sum(gt * pred, dim=1)  # over the C dimension
-    # Clamp the dot product to ensure valid cosine values (to avoid nans)
-    dot_products = torch.clamp(dot_products, -1.0, 1.0)
-    # Calculate the angle between the vectors (in radians)
-    mae = torch.acos(dot_products)
-    return mae
-
 
 class RGBMetrics(nn.Module):
     """Computation of error metrics between predicted and ground truth images
@@ -118,7 +80,7 @@ class DepthMetrics(nn.Module):
         https://arxiv.org/abs/1806.01260
 
     Returns:
-        abs_rel: normalized avg absolute realtive error
+        abs_rel: normalized avg absolute relative error
         sqrt_rel: normalized square-root of absolute error
         rmse: root mean square error
         rmse_log: root mean square error in log space

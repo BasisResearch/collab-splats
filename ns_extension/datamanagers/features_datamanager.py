@@ -191,6 +191,11 @@ class FeatureSplattingDataManager(FullImageDatamanager):
 
         del extractor, segmentation
         pytorch_gc()
+
+        # Stack features along batch dimension
+        for k in features_dict.keys():
+            features_dict[k] = torch.stack(features_dict[k], dim=0)  # BCHW
+
         return features_dict
 
     def split_train_test_features(self, features_dict: Dict[str, Float[torch.Tensor, "n h w c"]]) -> Tuple[Dict[str, Float[torch.Tensor, "n h w c"]], Dict[str, Float[torch.Tensor, "n h w c"]]]:

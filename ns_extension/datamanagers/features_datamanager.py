@@ -168,7 +168,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             # Apply segmentation masks over features
             masks = segmentation.segment(image)
 
-            if not masks:
+            if masks is None:
                 # Add an all-zero tensor if no object is detected
                 features_dict['samclip'].append(torch.zeros((features.shape[0], final_H, final_W)))
                 continue

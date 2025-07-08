@@ -26,10 +26,8 @@ from nerfstudio.data.datamanagers.full_images_datamanager import (
 )
 from nerfstudio.utils.rich_utils import CONSOLE
 
-from ns_extension.utils.features import DINOFeatureExtractor, MaskCLIPExtractor
+from ns_extension.utils.features import DINOFeatureExtractor, MaskCLIPExtractor, pytorch_gc
 from ns_extension.utils.segmentation import Segmentation, aggregate_masked_features
-from ns_extension.utils.utils import pytorch_gc
-
 
 @dataclass
 class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):

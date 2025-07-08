@@ -184,6 +184,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             # Clear memory after each image
             del features, masks
             torch.cuda.empty_cache()
+            gc.collect()
 
         del extractor, segmentation
         pytorch_gc()

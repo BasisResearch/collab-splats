@@ -121,8 +121,13 @@ class MaskCLIPExtractor(nn.Module):
     """
     def __init__(self, model_name: str = 'ViT-L/14@336px', cache_dir: str = TORCH_HOME, device: str = "cpu"):
         super().__init__()
-        self.model, _ = maskclip_onnx.clip.load(model_name, download_root=cache_dir).to(device)
+
+        # Load model
+        self.model, _ = maskclip_onnx.clip.load(model_name, download_root=cache_dir)
+        self.model = self.model.to(device)
         self.model.eval()
+
+        # Setup preprocessing information
         self.patch_size = self.model.visual.patch_size
         self.transform = T.Compose([
             T.ToTensor(),

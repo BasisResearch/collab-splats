@@ -19,6 +19,28 @@ from torchmetrics.image import (
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from ns_extension.utils.utils import mean_angular_error
 
+class DepthNormalConsistencyLoss(nn.Module):
+    """
+    Loss function for depth/normal consistency.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, pred, gt):
+        depth_loss = self.depth_loss(pred["depth"], gt["depth"])
+        normal_loss = self.normal_loss(pred["normal"], gt["normal"])
+        return depth_loss + normal_loss
+
+#####################################################################
+############# Depth loss -- for comparison to GT depth ##############
+#####################################################################
+
+"""
+The following loss functions are used to train depth/normals as parameters
+of the GS model. In contrast to DepthNormalConsistencyLoss, these compare
+the predicted depth/normals to the GT depth/normals.
+"""
 
 class DepthLossType(Enum):
     """Enum for specifying depth loss"""
@@ -432,7 +454,7 @@ class LocalPearsonDepthLoss(nn.Module):
         return _loss / n_corr  #
 
 ########################################
-########## Normal loss ################
+########## Normal loss #################
 ########################################
 
 class NormalLossType(Enum):

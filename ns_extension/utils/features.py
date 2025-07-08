@@ -19,6 +19,7 @@ import numpy as np
 import cv2
 from PIL import Image
 import maskclip_onnx
+from pathlib import Path
 
 import gc
 from huggingface_hub import hf_hub_download
@@ -130,7 +131,7 @@ class MaskCLIPExtractor(nn.Module):
         self.device = device
 
     def preprocess(self, image, resolution: int = 1024) -> torch.Tensor:
-        if isinstance(image, str):
+        if isinstance(image, str) or isinstance(image, Path):
             image = Image.open(image)
         elif isinstance(image, np.ndarray):
             image = Image.fromarray(image)
@@ -181,7 +182,7 @@ class DINOFeatureExtractor(nn.Module):
         ])
 
     def preprocess(self, image) -> torch.Tensor:
-        if isinstance(image, str):
+        if isinstance(image, str) or isinstance(image, Path):
             image = Image.open(image)
         elif isinstance(image, np.ndarray):
             image = Image.fromarray(image)

@@ -166,6 +166,7 @@ class MaskCLIPExtractor(nn.Module):
 
 class DINOFeatureExtractor(nn.Module):
     def __init__(self, model_name: str = "dinov2_vits14", resolution=800, device: str = "cpu"):
+        super().__init__()
         self.model_name = model_name
         self.device = device
 

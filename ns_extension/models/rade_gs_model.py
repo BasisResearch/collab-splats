@@ -159,15 +159,15 @@ class RadegsModel(SplatfactoModel):
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
         render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
-            camera, 
-            means_crop,
-            quats_crop,
-            scales_crop,
-            opacities_crop,
-            colors_crop,
-            render_mode,
-            sh_degree_to_use,
-            voxel_visible_mask
+            camera=camera, 
+            means=means_crop,
+            quats=quats_crop,
+            scales=scales_crop,
+            opacities=opacities_crop,
+            color=colors_crop,
+            render_mode=render_mode,
+            sh_degree_to_use=sh_degree_to_use,
+            visible_mask=voxel_visible_mask
         )
 
         if self.training:

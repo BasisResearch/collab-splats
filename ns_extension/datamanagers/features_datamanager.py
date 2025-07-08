@@ -150,7 +150,9 @@ class FeatureSplattingDataManager(FullImageDatamanager):
 
             # Extract features
             inputs = extractor.preprocess(image)
-            features = extractor.forward(inputs)
+            features = extractor.forward(inputs[None])[0]
+
+            # Segment image and apply masks over features
             masks = segmentation.segment(image)
             features = aggregate_masked_features(
                 features, 

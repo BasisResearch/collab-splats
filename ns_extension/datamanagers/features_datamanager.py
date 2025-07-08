@@ -1,0 +1,237 @@
+"""
+Datamanager for extracting and managing image features for feature splatting.
+
+This module provides functionality to:
+1. Extract DINO and CLIP features from images
+2. Cache features to disk for faster loading
+3. Split features into train/eval sets
+4. Provide features during training/evaluation
+
+Based on https://github.com/vuer-ai/feature-splatting/blob/main/feature_splatting/feature_splatting_datamgr.py
+"""
+
+import gc
+from dataclasses import dataclass, field
+from typing import Dict, Literal, Tuple, Type, List, Optional
+from PIL import Image
+from tqdm import trange
+
+import torch
+from jaxtyping import Float
+
+from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.data.datamanagers.full_images_datamanager import (
+    FullImageDatamanager,
+    FullImageDatamanagerConfig,
+)
+from nerfstudio.utils.rich_utils import CONSOLE
+
+from ns_extension.utils.features import DINOFeatureExtractor, MaskCLIPExtractor
+from ns_extension.utils.segmentation import Segmentation, aggregate_masked_features
+from ns_extension.utils.utils import pytorch_gc
+
+
+@dataclass
+class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
+    """Configuration for the FeatureSplattingDataManager."""
+
+    _target: Type = field(default_factory=lambda: FeatureSplattingDataManager)
+
+    feature_type: Literal["CLIP", "DINO", "SAMCLIP"] = "SAMCLIP"
+    """Type of features to extract - CLIP, DINO or SAMCLIP."""
+
+    enable_cache: bool = True
+    """Whether to cache extracted features to disk."""
+
+    segmentation_backend: str = "mobilesamv2"
+    """Segmentation model to use for mask generation."""
+
+
+class FeatureSplattingDataManager(FullImageDatamanager):
+    """DataManager that handles feature extraction and management for feature splatting."""
+
+    config: FeatureSplattingDataManagerConfig
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the data manager and extract/load features."""
+        super().__init__(*args, **kwargs)
+
+        # Extract or load cached features for all images
+        self.features_dict = self.setup()
+        self._set_metadata(self.features_dict)
+
+        # Split features into train and eval sets
+        self.train_features, self.eval_features = self.split_train_test_features(self.features_dict)
+
+        # Cleanup
+        del self.features_dict
+        torch.cuda.empty_cache()
+        gc.collect()
+    
+    def setup(self) -> Dict[str, Float[torch.Tensor, "n h w c"]]:
+        """Set up feature extraction or load from cache.
+        
+        Returns:
+            Dict mapping feature types to tensors of extracted features.
+        """
+        # Get all image paths
+        image_filenames = self.train_dataset.image_filenames + self.eval_dataset.image_filenames
+
+        # Set up cache path
+        cache_dir = self.config.dataparser.data
+        cache_path = cache_dir / f"feature-splatting_{self.config.feature_type.lower()}-features.pt"
+
+        # Try loading from cache if enabled
+        if self.config.enable_cache and cache_path.exists():
+            cache_dict = torch.load(cache_path)
+
+            if cache_dict.get("image_filenames") != image_filenames:
+                CONSOLE.print("Image filenames have changed, cache invalidated...")
+            else:
+                return cache_dict["features_dict"]
+        else:
+            CONSOLE.print("Cache does not exist, extracting features...")
+
+        # Extract features
+        CONSOLE.print(f"Extracting {self.config.feature_type} features for {len(image_filenames)} images...")
+        features_dict = self.extract_features(image_filenames)
+
+        # Cache features if enabled
+        if self.config.enable_cache:
+            cache_dict = {
+                "image_filenames": image_filenames,
+                "features_dict": features_dict
+            }
+            cache_dir.mkdir(exist_ok=True)
+            torch.save(cache_dict, cache_path)
+            CONSOLE.print(f"Saved {self.config.feature_type} features to cache at {cache_path}")
+        
+        return features_dict
+
+    def extract_features(self, image_filenames: List[str]) -> Dict[str, Float[torch.Tensor, "n h w c"]]:
+        """Extract DINO and CLIP features from images.
+        
+        Args:
+            image_filenames: List of paths to images to process.
+            
+        Returns:
+            Dictionary mapping feature types to lists of feature tensors.
+        """
+        features_dict = {'dinov2': [], 'samclip': []}
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Extract DINO features
+        extractor = DINOFeatureExtractor(device=device)
+        for i in trange(len(image_filenames), desc="Extracting DINO features"):
+            image, target_H, target_W = extractor.preprocess(image_filenames[i])
+            features = extractor.forward(image)
+            features = extractor.reshape(features, target_H, target_W)
+            features_dict['dinov2'].append(features)
+
+        del extractor
+        pytorch_gc()
+
+        # Extract CLIP features with segmentation masks
+        extractor = MaskCLIPExtractor(device=device)
+        segmentation = Segmentation(
+            backend=self.config.segmentation_backend,
+            strategy=self.config.segmentation_strategy,
+            device=device,
+        )
+
+        for i in trange(len(image_filenames), desc="Extracting CLIP features"):
+            # Load and process image
+            image = Image.open(image_filenames[i])
+            H, W = image.size[:2]
+
+            # Calculate resolutions
+            object_W = self.config.obj_resolution
+            object_H = H * object_W // W
+            final_W = self.config.final_resolution
+            final_H = H * final_W // W
+
+            # Extract features
+            inputs = extractor.preprocess(image)
+            features = extractor.forward(inputs)
+            masks = segmentation.segment(image)
+            features = aggregate_masked_features(
+                features, 
+                masks,
+                resolution=(object_H, object_W),
+                final_resolution=(final_H, final_W)
+            )
+            features_dict['samclip'].append(features)
+
+        del extractor, segmentation
+        pytorch_gc()
+        return features_dict
+
+    def split_train_test_features(self, features_dict: Dict[str, Float[torch.Tensor, "n h w c"]]) -> Tuple[Dict[str, Float[torch.Tensor, "n h w c"]], Dict[str, Float[torch.Tensor, "n h w c"]]]:
+        """Split features into training and evaluation sets.
+        
+        Args:
+            features_dict: Dictionary of all extracted features.
+            
+        Returns:
+            Tuple of (train_features, eval_features) dictionaries.
+        """
+        train_size = len(self.train_dataset)
+        eval_size = len(self.eval_dataset)
+        total_size = train_size + eval_size
+    
+        # Validate feature lengths
+        for feature_name, features in features_dict.items():
+            if len(features) != total_size:
+                raise ValueError(f"Feature {feature_name} has length {len(features)}, expected {total_size}")
+        
+        train_features = {name: features[:train_size] for name, features in features_dict.items()}
+        eval_features = {name: features[train_size:] for name, features in features_dict.items()}
+
+        return train_features, eval_features
+
+    def _set_metadata(self, features_dict: Dict[str, Float[torch.Tensor, "n h w c"]]):
+        """Set feature metadata in the dataset.
+        
+        Args:
+            features_dict: Dictionary of extracted features.
+        """
+        feature_dims = {model: features[model].shape[1:] for model, features in features_dict.items()}
+        metadata = {
+            "feature_type": self.config.feature_type,
+            "feature_dims": feature_dims,
+        }
+        self.train_dataset.metadata.update(metadata)
+
+    def next_train(self, step: int) -> Tuple[Cameras, Dict]:
+        """Get next training batch with features.
+        
+        Args:
+            step: Current training step.
+            
+        Returns:
+            Tuple of (camera, data dict with features).
+        """
+        camera, data = super().next_train(step)
+        camera_idx = camera.metadata['cam_idx']
+        features_dict = {}
+        for model_name, features in self.train_features.items():
+            features_dict[model_name] = features[camera_idx]
+        data["features_dict"] = features_dict
+        return camera, data
+    
+    def next_eval(self, step: int) -> Tuple[Cameras, Dict]:
+        """Get next evaluation batch with features.
+        
+        Args:
+            step: Current evaluation step.
+            
+        Returns:
+            Tuple of (camera, data dict with features).
+        """
+        camera, data = super().next_eval(step)
+        camera_idx = camera.metadata['cam_idx']
+        features_dict = {}
+        for model_name, features in self.eval_features.items():
+            features_dict[model_name] = features[camera_idx]
+        data["features_dict"] = features_dict
+        return camera, data

@@ -167,6 +167,12 @@ class FeatureSplattingDataManager(FullImageDatamanager):
 
             # Apply segmentation masks over features
             masks = segmentation.segment(image)
+
+            if not masks:
+                # Add an all-zero tensor if no object is detected
+                features_dict['samclip'].append(torch.zeros((features.shape[0], final_H, final_W)))
+                continue
+            
             features = aggregate_masked_features(
                 features, 
                 masks,
@@ -174,6 +180,10 @@ class FeatureSplattingDataManager(FullImageDatamanager):
                 final_resolution=(final_H, final_W)
             )
             features_dict['samclip'].append(features)
+
+            # Clear memory after each image
+            del features, masks
+            torch.cuda.empty_cache()
 
         del extractor, segmentation
         pytorch_gc()

@@ -161,9 +161,12 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             inputs = extractor.preprocess(image)
             features = extractor.forward(inputs[None])[0]
 
-            # Segment image and apply masks over features
-            _image = resize_image(image, self.config.sam_resolution)
-            masks = segmentation.segment(_image)
+            # Prepare image for segmentation
+            image = resize_image(image, self.config.sam_resolution) # Resize image to SAM resolution
+            image = np.asarray(image) # Convert to numpy array
+
+            # Apply segmentation masks over features
+            masks = segmentation.segment(image)
             features = aggregate_masked_features(
                 features, 
                 masks,

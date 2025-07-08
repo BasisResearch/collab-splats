@@ -125,9 +125,6 @@ class RadegsModel(SplatfactoModel):
         camera_scale_fac = self._get_downscale_factor()
         camera.rescale_output_resolution(1 / camera_scale_fac)
 
-        # viewmat = get_viewmat(optimized_camera_to_world)
-        # K = camera.get_intrinsics_matrices().cuda()
-
         W, H = int(camera.width.item()), int(camera.height.item())
         self.last_size = (H, W)
 
@@ -303,12 +300,10 @@ class RadegsModel(SplatfactoModel):
         )
 
         # The results are with shape [C, N, ...]. Only the elements with radii > 0 are valid.
-        radii, means2d, depths, conics, compensations, ray_ts, ray_planes, normals = (
-            proj_results
-        )
-        camera_ids, gaussian_ids = None, None
+        radii = proj_results[0]
+        mask = torch.sum(radii, dim=-1).squeeze() > 0
 
-        return torch.sum(radii, dim=-1).squeeze() > 0
+        return mask
 
     def _render(
         self,

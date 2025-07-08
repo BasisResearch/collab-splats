@@ -17,20 +17,24 @@ from torchmetrics.image import (
 )
 
 from nerfstudio.field_components.field_heads import FieldHeadNames
+from nerfstudio.cameras.cameras import Cameras
+
 from ns_extension.utils.utils import mean_angular_error
 
-class DepthNormalConsistencyLoss(nn.Module):
-    """
-    Loss function for depth/normal consistency.
-    """
+# class NormalConsistencyLoss(nn.Module):
+#     """
+#     Loss function for normal consistency. Ensures splats align with
+#     the surface by measuring consistency between normal directions
+#     of Gaussians and the depth map.
+#     """
 
-    def __init__(self):
-        super().__init__()
+#     def __init__(self):
+#         super().__init__()
 
-    def forward(self, pred, gt):
-        depth_loss = self.depth_loss(pred["depth"], gt["depth"])
-        normal_loss = self.normal_loss(pred["normal"], gt["normal"])
-        return depth_loss + normal_loss
+#     def forward(self, camera: Cameras, depth: torch.Tensor, normals: torch.Tensor):
+#         # depth_loss = self.depth_loss(pred["depth"], gt["depth"])
+#         # normal_loss = self.normal_loss(pred["normal"], gt["normal"])
+#         # return depth_loss + normal_loss
 
 #####################################################################
 ############# Depth loss -- for comparison to GT depth ##############

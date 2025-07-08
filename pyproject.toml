@@ -1,5 +1,5 @@
 [project]
-name = "rade_gs"
+name = "ns_extension"
 version = "0.0.1"
 description = "ns-extension: Extension tools and models for nerfstudio"
 readme = "README.md"

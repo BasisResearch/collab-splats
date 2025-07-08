@@ -127,7 +127,7 @@ class MaskCLIPExtractor(nn.Module):
         self.model = self.model.to(device)
         self.model.eval()
 
-        # Setup preprocessing information
+        # Setup preprocessing
         self.patch_size = self.model.visual.patch_size
         self.transform = T.Compose([
             T.ToTensor(),
@@ -146,9 +146,7 @@ class MaskCLIPExtractor(nn.Module):
             raise ValueError(f"Unsupported image type: {type(image)}")
         
         image = resize_image(image, longest_edge=resolution)
-        image = self.transform(image).to(self.device)
-
-        return image
+        return self.transform(image).to(self.device)
         
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -163,8 +161,12 @@ class MaskCLIPExtractor(nn.Module):
         b, _, input_size_h, input_size_w = image.shape
         patch_h = input_size_h // self.patch_size
         patch_w = input_size_w // self.patch_size
-        features = self.model.get_patch_encodings(image).to(torch.float32)
-        return features.reshape(b, patch_h, patch_w, -1).permute(0, 3, 1, 2)
+
+        with torch.no_grad():
+            features = self.model.get_patch_encodings(image).to(torch.float32)
+            features = features.reshape(b, patch_h, patch_w, -1).permute(0, 3, 1, 2)
+        
+        return features
 
 ########################################################
 ########## DINO Feature Extraction Utils ###############

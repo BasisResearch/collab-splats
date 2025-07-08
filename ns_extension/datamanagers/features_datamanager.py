@@ -26,7 +26,7 @@ from nerfstudio.data.datamanagers.full_images_datamanager import (
 )
 from nerfstudio.utils.rich_utils import CONSOLE
 
-from ns_extension.utils.features import DINOFeatureExtractor, MaskCLIPExtractor, pytorch_gc
+from ns_extension.utils.features import DINOFeatureExtractor, MaskCLIPExtractor, pytorch_gc, resize_image
 from ns_extension.utils.segmentation import Segmentation, aggregate_masked_features
 
 @dataclass
@@ -43,6 +43,15 @@ class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
 
     segmentation_backend: str = "mobilesamv2"
     """Segmentation model to use for mask generation."""
+
+    sam_resolution: int = 1024
+    """Resolution of SAM features."""
+
+    obj_resolution: int = 100
+    """Resolution of object-level features."""
+
+    final_resolution: int = 64
+    """Resolution of final features."""
 
 
 class FeatureSplattingDataManager(FullImageDatamanager):
@@ -153,7 +162,8 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             features = extractor.forward(inputs[None])[0]
 
             # Segment image and apply masks over features
-            masks = segmentation.segment(image)
+            _image = resize_image(image, self.config.sam_resolution)
+            masks = segmentation.segment(_image)
             features = aggregate_masked_features(
                 features, 
                 masks,

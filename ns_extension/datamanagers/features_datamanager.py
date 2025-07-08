@@ -133,6 +133,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             image, target_H, target_W = extractor.preprocess(image_filenames[i])
             features = extractor.forward(image)
             features = extractor.reshape(features, target_H, target_W)
+            features = features.detach().cpu()
             features_dict['dinov2'].append(features)
 
         del extractor
@@ -179,6 +180,8 @@ class FeatureSplattingDataManager(FullImageDatamanager):
                 resolution=(object_H, object_W),
                 final_resolution=(final_H, final_W)
             )
+
+            features = features.detach().cpu()
             features_dict['samclip'].append(features)
 
             # Clear memory after each image

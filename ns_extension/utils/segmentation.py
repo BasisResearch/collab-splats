@@ -102,52 +102,82 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
     Outputs:
         - sam_mask: SAM mask
     """
-    # Grab the object masks
+    # Get object detections
     obj_results = get_object_masks(image, obj_model)
-
+    
     if not obj_results:
         return None
-
-    # Set image for predictor
+    
+    # Setup predictor
     predictor.set_image(image)
-
-    # Apply bounding boxes to each object
+    
+    # Prepare input boxes
     input_boxes = obj_results[0].boxes.xyxy
     input_boxes = input_boxes.cpu().numpy()
     input_boxes = predictor.transform.apply_boxes(input_boxes, predictor.original_size)
     input_boxes = torch.from_numpy(input_boxes).cuda()
-
-    # Get features for each image
+    
+    # Early return if no boxes
+    if len(input_boxes) == 0:
+        return None
+    
+    # Get base embeddings (don't pre-allocate for large batches)
     image_embedding = predictor.features
-    image_embedding = torch.repeat_interleave(image_embedding, batch_size, dim=0)
     prompt_embedding = mobile_sam.prompt_encoder.get_dense_pe()
-    prompt_embedding = torch.repeat_interleave(prompt_embedding, batch_size, dim=0)
-
-    sam_mask = []
-
-    # Use bounding boxes to perform segmentation
-    for (boxes,) in batch_iterator(batch_size, input_boxes):
+    
+    sam_masks = []
+    
+    # Process in batches
+    for boxes_batch in batch_iterator(batch_size, input_boxes):
+        boxes = boxes_batch[0]
+        current_batch_size = boxes.shape[0]
+        
         with torch.no_grad():
-                image_embedding = image_embedding[0:boxes.shape[0],:,:,:]
-                prompt_embedding = prompt_embedding[0:boxes.shape[0],:,:,:]
-                sparse_embeddings, dense_embeddings = mobile_sam.prompt_encoder(
-                    points=None,
-                    boxes=boxes,
-                    masks=None,)
-                low_res_masks, _ = mobile_sam.mask_decoder(
-                    image_embeddings=image_embedding,
-                    image_pe=prompt_embedding,
-                    sparse_prompt_embeddings=sparse_embeddings,
-                    dense_prompt_embeddings=dense_embeddings,
-                    multimask_output=False,
-                    simple_type=True,
-                )
-                low_res_masks = predictor.model.postprocess_masks(low_res_masks, predictor.input_size, predictor.original_size)
-                sam_mask_pre = (low_res_masks > -1) * 1.0
-                sam_mask.append(sam_mask_pre.squeeze(1))
-
-    sam_mask = torch.cat(sam_mask)
-    return sam_mask
+            # Create embeddings for current batch size only
+            _image_embedding = image_embedding.repeat(current_batch_size, 1, 1, 1)
+            _prompt_embedding = prompt_embedding.repeat(current_batch_size, 1, 1, 1)
+            
+            # Generate sparse and dense embeddings
+            sparse_embeddings, dense_embeddings = mobile_sam.prompt_encoder(
+                points=None,
+                boxes=boxes,
+                masks=None,
+            )
+            
+            # Get low resolution masks
+            low_res_masks, _ = mobile_sam.mask_decoder(
+                image_embeddings=_image_embedding,
+                image_pe=_prompt_embedding,
+                sparse_prompt_embeddings=sparse_embeddings,
+                dense_prompt_embeddings=dense_embeddings,
+                multimask_output=False,
+                simple_type=True,
+            )
+            
+            # Post-process masks
+            low_res_masks = predictor.model.postprocess_masks(
+                low_res_masks, predictor.input_size, predictor.original_size
+            )
+            
+            # Apply threshold and convert to binary
+            sam_mask_batch = (low_res_masks > mobile_sam.mask_threshold) * 1.0
+            sam_mask_batch = sam_mask_batch.squeeze(1)
+            
+            # Move to CPU immediately to free GPU memory
+            sam_masks.append(sam_mask_batch.cpu())
+            
+            # Explicit cleanup of GPU tensors
+            del image_embedding, prompt_embedding, sparse_embeddings, dense_embeddings
+            del low_res_masks, sam_mask_batch
+            
+        # Clear GPU cache after each batch
+        torch.cuda.empty_cache()
+    
+    # Concatenate all masks (this happens on CPU, then move to GPU if needed)
+    sam_masks = torch.cat(sam_masks, dim=0)
+    
+    # Move back to GPU if needed, or keep on CPU
+    return sam_masks.cuda() if torch.cuda.is_available() else sam_masks
 
 ########################################################
 ########## Feature Aggregation Utils ###################

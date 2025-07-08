@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Literal, Tuple, Type, List, Optional
 from PIL import Image
 from tqdm import trange
-
+import numpy as np
 import torch
 from jaxtyping import Float
 

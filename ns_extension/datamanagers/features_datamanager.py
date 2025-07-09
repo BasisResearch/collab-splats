@@ -12,14 +12,12 @@ Based on https://github.com/vuer-ai/feature-splatting/blob/main/feature_splattin
 
 import gc
 from dataclasses import dataclass, field
-from typing import Dict, Literal, Tuple, Type, List, Optional
+from typing import Dict, Literal, Tuple, Type, List
 from PIL import Image
 from tqdm import trange
 import numpy as np
 import torch
 from jaxtyping import Float
-
-from enum import Enum
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.datamanagers.full_images_datamanager import (

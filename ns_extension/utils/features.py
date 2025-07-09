@@ -13,10 +13,8 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as T
 import torch.nn.functional as F
-from tqdm import trange
 from typing import List, Tuple, Any, Generator
 import numpy as np
-import cv2
 from PIL import Image
 import maskclip_onnx
 from pathlib import Path
@@ -178,6 +176,8 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
             
         Returns:
             torch.Tensor: Extracted features of shape (B, C, H/patch_size, W/patch_size)
+
+        Seems like it needs to be on GPU otherwise throws an error due to precision (specific to maskclip_onnx)
         """
         b, _, input_size_h, input_size_w = image.shape
         patch_h = input_size_h // self.patch_size

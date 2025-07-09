@@ -15,7 +15,9 @@ try:
 except ImportError:
     print("Please install gsplat>=1.0.0")
 
+from gsplat.strategy import DefaultStrategy
 from gsplat.cuda._wrapper import fully_fused_projection
+
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat  # for subclassing Nerfacto model

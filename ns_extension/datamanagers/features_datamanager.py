@@ -88,7 +88,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
 
         # Set up cache path
         cache_dir = self.config.dataparser.data
-        cache_path = cache_dir / f"feature-splatting_{self.config.feature_type.lower()}-features.pt"
+        cache_path = cache_dir / f"feature-splatting_{self.config.main_features.lower()}-features.pt"
 
         # Try loading from cache if enabled
         if self.config.enable_cache and cache_path.exists():
@@ -102,7 +102,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             CONSOLE.print("Cache does not exist, extracting features...")
 
         # Extract features
-        CONSOLE.print(f"Extracting {self.config.feature_type} features for {len(image_filenames)} images...")
+        CONSOLE.print(f"Extracting {self.config.main_features} features for {len(image_filenames)} images...")
         features_dict = self.extract_features(image_filenames)
 
         # Cache features if enabled
@@ -113,7 +113,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             }
             cache_dir.mkdir(exist_ok=True)
             torch.save(cache_dict, cache_path)
-            CONSOLE.print(f"Saved {self.config.feature_type} features to cache at {cache_path}")
+            CONSOLE.print(f"Saved {self.config.main_features} features to cache at {cache_path}")
         
         return features_dict
 
@@ -239,7 +239,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         """
         feature_dims = {model_name: features.shape[1:] for model_name, features in features_dict.items()}
         metadata = {
-            "feature_type": self.config.feature_type,
+            "feature_type": self.config.main_features,
             "feature_dims": feature_dims,
         }
         self.train_dataset.metadata.update(metadata)

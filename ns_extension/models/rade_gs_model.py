@@ -18,10 +18,8 @@ except ImportError:
 from gsplat.strategy import DefaultStrategy
 from gsplat.cuda._wrapper import fully_fused_projection
 
-
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat  # for subclassing Nerfacto model
-
+from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig
 
 from ns_extension.utils import convert_to_colmap_camera, depth_double_to_normal
 from ns_extension.utils.camera_utils import build_rotation
@@ -122,6 +120,10 @@ class RadegsModel(SplatfactoModel):
             scales_crop = self.scales
             quats_crop = self.quats
 
+        # features_dc_crop.shape: [N, 3]
+        # features_rest_crop.shape: [N, X, 3] --> X = (sh_degree + 1)**2 - 1
+        # colors_crop.shape: [N, X + 1, 3]
+        # At DEG0 = 0, DEG1 = 3, DEG2 = 8, DEG3 = 15
         colors_crop = torch.cat((features_dc_crop[:, None, :], features_rest_crop), dim=1)
 
         camera_scale_fac = self._get_downscale_factor()
@@ -166,7 +168,7 @@ class RadegsModel(SplatfactoModel):
             quats=quats_crop,
             scales=scales_crop,
             opacities=opacities_crop,
-            color=colors_crop,
+            colors=colors_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,
             visible_mask=voxel_visible_mask
@@ -314,7 +316,7 @@ class RadegsModel(SplatfactoModel):
         quats: torch.Tensor,
         scales: torch.Tensor,
         opacities: torch.Tensor,
-        color: torch.Tensor,
+        colors: torch.Tensor,
         render_mode: str,
         sh_degree_to_use: int,
         visible_mask: torch.Tensor,
@@ -333,13 +335,13 @@ class RadegsModel(SplatfactoModel):
             quats = quats[visible_mask]
             scales = scales[visible_mask]
             opacities = opacities[visible_mask]
-            color = color[visible_mask]
+            colors = colors[visible_mask]
         else:
             means = means
             quats = quats
             scales = scales
             opacities = opacities
-            color = color
+            colors = colors
 
         # Set up rasterization configuration
         tanfovx = math.tan(colmap_camera.fovx * 0.5)
@@ -371,7 +373,7 @@ class RadegsModel(SplatfactoModel):
             quats=quats,  # [N, 4]
             scales=torch.exp(scales),  # [N, 3]
             opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
-            colors=color,
+            colors=colors,
             viewmats=viewmat[None],  # [1, 4, 4]
             Ks=K[None],  # [1, 3, 3]
             backgrounds=background[None],

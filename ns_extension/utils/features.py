@@ -13,12 +13,11 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as T
 import torch.nn.functional as F
-from typing import List, Tuple, Any, Generator
+from typing import List, Tuple, Any, Generator, Dict, Optional
 import numpy as np
 from PIL import Image
 import maskclip_onnx
 from pathlib import Path
-
 import gc
 from huggingface_hub import hf_hub_download
 
@@ -188,7 +187,100 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
             features = features.reshape(b, patch_h, patch_w, -1).permute(0, 3, 1, 2)
         
         return features
+    
+    def encode_text(self, text: List[str]) -> torch.Tensor:
+        """
+        Compute CLIP embeddings based on a set of queries.
 
+        Args:
+            text (List[str]): List of text queries to encode.
+
+        Returns:
+            torch.Tensor: Encoded text features of shape (B, D), where B is the number of queries and D is the embedding dimension.
+        """
+
+        # Tokenize text and compute embeddings
+        tokens = maskclip_onnx.clip.tokenize(text).to(self.device)
+        embed = self.model.encode_text(tokens).float()
+
+        # Normalize embeddings
+        embed /= embed.norm(dim=-1, keepdim=True)
+        return embed 
+
+    def compute_similarity(
+        self, 
+        features: torch.Tensor,
+        positive: List[str], 
+        negative: Optional[List[str]] = None, 
+        softmax_temp: float = 0.05,
+        method: str = "standard"
+    ) -> torch.Tensor:
+        """
+        Compute similarity probability map between image features and text queries.
+        
+        Args:
+            features (torch.Tensor): Image features of shape (C, H, W)
+            positive (List[str]): List of positive text queries
+            negative (List[str], optional): List of negative text queries. 
+                                                   If None, uses default negatives.
+            softmax_temp (float): Temperature parameter for softmax
+            method (str): Method to use for computing similarity.
+                          "standard" uses standard softmax.
+                          "pairwise" uses pairwise softmax.
+        Returns:
+            torch.Tensor: Similarity probability map of shape (H, W, 1)
+        """
+        # Use default negatives if none provided
+        if negative is None:
+            negative = ["object"]
+        
+        # Encode all text queries
+        queries = positive + negative
+        text_embeddings = self.encode_text(queries)
+        
+        # Compute raw similarities: (N, H, W)
+        raw_similarities = torch.einsum("chw,nc->nhw", features, text_embeddings)
+        
+        # Flatten spatial dimensions: (N, H*W)
+        raw_similarities = raw_similarities.reshape(raw_similarities.shape[0], -1)
+        
+        # Apply softmax with temperature
+        probs = (raw_similarities / softmax_temp).softmax(dim=0)
+        
+        # Sum positive probabilities and reshape
+        num_positive = len(positive)
+
+        if method == "standard":
+            similarity = probs[:num_positive].sum(dim=0) # Similarity map
+        elif method == "pairwise":
+            # Pairwise softmax: average positive vs each negative individually
+            pos_similarities = raw_similarities[:num_positive]  # (num_positive, num_pixels)
+            neg_similarities = raw_similarities[num_positive:]  # (num_negative, num_pixels)
+            
+            # Average positive similarities
+            avg_pos_similarity = pos_similarities.mean(dim=0, keepdim=True)  # (1, num_pixels)
+            
+            # Broadcast to match negative shape
+            broadcasted_pos = avg_pos_similarity.expand(neg_similarities.shape[0], -1)  # (num_negative, num_pixels)
+            
+            # Create pairs: positive vs each negative
+            paired_similarities = torch.cat([broadcasted_pos, neg_similarities], dim=0)  # (2*num_negative, num_pixels)
+            
+            # Compute pairwise softmax
+            probs = (paired_similarities / softmax_temp).softmax(dim=0)
+            
+            # Extract positive probabilities and take minimum across pairs
+            pos_pair_probs = probs[:neg_similarities.shape[0]]  # First half are positive probs
+            pos_similarity = pos_pair_probs.min(dim=0)[0]  # Take minimum across all pairs
+            
+            # Handle NaN values 
+            similarity = torch.nan_to_num(pos_similarity, nan=0.0)
+            
+        else:
+            raise ValueError(f"Unknown method: {method}. Choose 'standard' or 'pairwise'")
+
+        return similarity.reshape(features.shape[1:] + (1,))  # (H, W, 1)
+    
 ######################################################################
 ############### DINO Feature Extraction Utils ########################
 ######################################################################
@@ -242,3 +334,76 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         features_chw = features_hwc.permute((2, 0, 1))
 
         return features_chw
+
+######################################################################
+################### Decoder utilities ################################
+######################################################################
+
+class TwoLayerMLP(nn.Module):
+    """
+    A two-layer MLP implemented using 1x1 convolutions for reconstructing feature maps.
+    The network consists of:
+    - A shared hidden 1x1 convolution layer (acts as the intermediate representation).
+    - A set of task-specific output branches, each also a 1x1 convolution, producing different feature maps.
+    
+    Attributes:
+        hidden_conv (nn.Conv2d): Shared hidden layer.
+        feature_branch_dict (nn.ModuleDict): Dictionary of output branches, one for each model type.
+    """
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        features_dim_dict: Dict[str, Tuple[int, int, int]]
+    ):
+        """
+        Args:
+            input_dim (int): Number of input channels.
+            hidden_dim (int): Number of channels in the intermediate hidden layer.
+            feature_dim_dict (dict): Dictionary mapping feature names to output shapes (C, H, W). 
+                                     Only the channel dimension (C) is used here.
+        """
+        super().__init__()
+        self.hidden_conv = nn.Conv2d(input_dim, hidden_dim, kernel_size=1)
+
+        # Create a branch for each model type
+        self.feature_branch_dict = nn.ModuleDict({
+            model: nn.Conv2d(hidden_dim, feat_shape[0], kernel_size=1)
+            for model, feat_shape in features_dim_dict.items()
+        })
+
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Standard forward pass using 2D convolution.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, C_in, H, W)
+        
+        Returns:
+            dict: Dictionary mapping feature names to output tensors of shape (B, C_out, H, W)
+        """
+        x = F.relu(self.hidden_conv(x))
+        return {model: conv(x) for model, conv in self.feature_branch_dict.items()}
+
+    @torch.no_grad()
+    def per_gaussian_forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass using fully-connected (linear) layers assuming `x` is a flattened per-Gaussian input.
+        This mimics convolution using linear operations by flattening weights.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (N, C_in), where N is number of Gaussians.
+        
+        Returns:
+            outputs: Dictionary mapping feature names to output tensors of shape (N, C_out)
+        """
+        # Flatten 1x1 conv weights into (C_out, C_in)
+        w_hidden = self.hidden_conv.weight.view(self.hidden_conv.out_channels, -1)
+        x = F.relu(F.linear(x, w_hidden, self.hidden_conv.bias))
+        
+        outputs = {}
+        for model, conv in self.feature_branch_dict.items():
+            w_out = conv.weight.view(conv.out_channels, -1)
+            outputs[model] = F.linear(x, w_out, conv.bias)
+        
+        return outputs

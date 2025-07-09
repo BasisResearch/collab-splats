@@ -35,10 +35,10 @@ class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
 
     _target: Type = field(default_factory=lambda: FeatureSplattingDataManager)
 
-    main_features: Literal["samclip"] = "samclip"
+    main_features: Literal["SAMCLIP", "CLIP"] = "SAMCLIP"
     """Type of features to extract - SAMCLIP or CLIP."""
 
-    regularization_features: Literal["dinov2", None] = "dinov2"
+    regularization_features: Literal["DINOV2", None] = "DINOV2"
     """Type of features to use for regularization."""
 
     enable_cache: bool = True
@@ -136,7 +136,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             # Create extractor for regularization features --> extract
             extractor = BaseFeatureExtractor.get(self.config.regularization_features)(device=device)
 
-            for i in trange(len(image_filenames), desc="Extracting DINO features"):
+            for i in trange(len(image_filenames), desc=f"Extracting {self.config.regularization_features} features"):
                 image, target_H, target_W = extractor.preprocess(image_filenames[i])
                 features = extractor.forward(image)
                 features = extractor.reshape(features, target_H, target_W)

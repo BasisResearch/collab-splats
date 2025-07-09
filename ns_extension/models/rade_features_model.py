@@ -19,6 +19,7 @@ from gsplat.strategy import DefaultStrategy
 from gsplat.cuda._wrapper import fully_fused_projection, spherical_harmonics
 
 from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.data.scene_box import OrientedBox
 
 from ns_extension.utils import convert_to_colmap_camera, depth_double_to_normal
 from ns_extension.models.rade_gs_model import RadegsModelConfig, RadegsModel

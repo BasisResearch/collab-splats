@@ -58,7 +58,6 @@ class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
     final_resolution: int = 64
     """Resolution of final features."""
 
-
 class FeatureSplattingDataManager(FullImageDatamanager):
     """DataManager that handles feature extraction and management for feature splatting."""
 
@@ -156,6 +155,9 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             strategy=self.config.segmentation_strategy,
             device=device,
         )
+
+        # Add empty list for main features
+        features_dict[self.config.main_features] = []
 
         for i in trange(len(image_filenames), desc="Extracting CLIP features"):
             # Load and process image

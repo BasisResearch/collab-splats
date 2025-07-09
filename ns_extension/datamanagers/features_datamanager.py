@@ -19,6 +19,8 @@ import numpy as np
 import torch
 from jaxtyping import Float
 
+from enum import Enum
+
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.datamanagers.full_images_datamanager import (
     FullImageDatamanager,
@@ -26,7 +28,7 @@ from nerfstudio.data.datamanagers.full_images_datamanager import (
 )
 from nerfstudio.utils.rich_utils import CONSOLE
 
-from ns_extension.utils.features import DINOFeatureExtractor, MaskCLIPExtractor, pytorch_gc, resize_image
+from ns_extension.utils.features import BaseFeatureExtractor, pytorch_gc, resize_image
 from ns_extension.utils.segmentation import Segmentation, aggregate_masked_features
 
 @dataclass
@@ -35,8 +37,11 @@ class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
 
     _target: Type = field(default_factory=lambda: FeatureSplattingDataManager)
 
-    feature_type: Literal["CLIP", "DINO", "SAMCLIP"] = "SAMCLIP"
-    """Type of features to extract - CLIP, DINO or SAMCLIP."""
+    main_features: Literal["samclip"] = "samclip"
+    """Type of features to extract - SAMCLIP or CLIP."""
+
+    regularization_features: Literal["dinov2", None] = "dinov2"
+    """Type of features to use for regularization."""
 
     enable_cache: bool = True
     """Whether to cache extracted features to disk."""
@@ -124,23 +129,28 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         Returns:
             Dictionary mapping feature types to lists of feature tensors.
         """
-        features_dict = {'dinov2': [], 'samclip': []}
+
+        features_dict = {}
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # Extract DINO features
-        extractor = DINOFeatureExtractor(device=device)
-        for i in trange(len(image_filenames), desc="Extracting DINO features"):
-            image, target_H, target_W = extractor.preprocess(image_filenames[i])
-            features = extractor.forward(image)
-            features = extractor.reshape(features, target_H, target_W)
-            features = features.detach().cpu()
-            features_dict['dinov2'].append(features)
+        if self.config.regularization_features is not None:
+            features_dict[self.config.regularization_features] = []
 
-        del extractor
-        pytorch_gc()
+            # Create extractor for regularization features --> extract
+            extractor = BaseFeatureExtractor.get(self.config.regularization_features)(device=device)
 
-        # Extract CLIP features with segmentation masks
-        extractor = MaskCLIPExtractor(device=device)
+            for i in trange(len(image_filenames), desc="Extracting DINO features"):
+                image, target_H, target_W = extractor.preprocess(image_filenames[i])
+                features = extractor.forward(image)
+                features = extractor.reshape(features, target_H, target_W)
+                features = features.detach().cpu()
+                features_dict[self.config.regularization_features].append(features)
+
+            del extractor
+            pytorch_gc()
+
+        # Extract main features with segmentation masks
+        extractor = BaseFeatureExtractor.get(self.config.main_features)(device=device)
         segmentation = Segmentation(
             backend=self.config.segmentation_backend,
             strategy=self.config.segmentation_strategy,
@@ -171,7 +181,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
 
             if masks is None:
                 # Add an all-zero tensor if no object is detected
-                features_dict['samclip'].append(torch.zeros((features.shape[0], final_H, final_W)))
+                features_dict[self.config.main_features].append(torch.zeros((features.shape[0], final_H, final_W)))
                 continue
             
             features = aggregate_masked_features(
@@ -182,7 +192,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             )
 
             features = features.detach().cpu()
-            features_dict['samclip'].append(features)
+            features_dict[self.config.main_features].append(features)
 
             # Clear memory after each image
             del features, masks

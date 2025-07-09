@@ -107,11 +107,32 @@ def batch_iterator(batch_size: int, *args) -> Generator[List[Any], None, None]:
     for b in range(n_batches):
         yield [arg[b * batch_size : (b + 1) * batch_size] for arg in args]
 
-########################################################
-########## CLIP Feature Extraction Utils ###############
-########################################################
+######################################################################
+########## Define BaseFeatureExtractor for registration ##############
+######################################################################
 
-class MaskCLIPExtractor(nn.Module):
+class BaseFeatureExtractor(nn.Module):
+    _registry = {}
+
+    @classmethod
+    def register(cls, name: str):
+        def decorator(subclass):
+            cls._registry[name] = subclass
+            return subclass
+        return decorator
+
+    @classmethod
+    def get(cls, name: str):
+        if name not in cls._registry:
+            raise ValueError(f"Unknown extractor '{name}'. Available: {list(cls._registry.keys())}")
+        return cls._registry[name]
+
+######################################################################
+############### CLIP Feature Extraction Utils ########################
+######################################################################
+
+@BaseFeatureExtractor.register("samclip")
+class MaskCLIPExtractor(BaseFeatureExtractor):
     """
     A module that extracts patch-level features from images using a CLIP model.
     
@@ -168,11 +189,12 @@ class MaskCLIPExtractor(nn.Module):
         
         return features
 
-########################################################
-########## DINO Feature Extraction Utils ###############
-########################################################
+######################################################################
+############### DINO Feature Extraction Utils ########################
+######################################################################
 
-class DINOFeatureExtractor(nn.Module):
+@BaseFeatureExtractor.register("dinov2")
+class DINOFeatureExtractor(BaseFeatureExtractor):
     def __init__(self, model_name: str = "dinov2_vits14", resolution=800, device: str = "cpu"):
         super().__init__()
         self.model_name = model_name

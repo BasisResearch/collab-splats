@@ -88,7 +88,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
 
         # Set up cache path
         cache_dir = self.config.dataparser.data
-        cache_path = cache_dir / f"feature-splatting_{self.config.main_features.lower()}-features.pt"
+        cache_path = cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
 
         # Try loading from cache if enabled
         if self.config.enable_cache and cache_path.exists():
@@ -136,7 +136,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             # Create extractor for regularization features --> extract
             extractor = BaseFeatureExtractor.get(self.config.regularization_features)(device=device)
 
-            for i in trange(len(image_filenames), desc=f"Extracting {self.config.regularization_features.capitalize()} features"):
+            for i in trange(len(image_filenames), desc=f"Extracting {self.config.regularization_features} features"):
                 image, target_H, target_W = extractor.preprocess(image_filenames[i])
                 features = extractor.forward(image)
                 features = extractor.reshape(features, target_H, target_W)
@@ -157,7 +157,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         # Add empty list for main features
         features_dict[self.config.main_features] = []
 
-        for i in trange(len(image_filenames), desc=f"Extracting {self.config.main_features.capitalize()} features"):
+        for i in trange(len(image_filenames), desc=f"Extracting {self.config.main_features} features"):
             # Load and process image
             image = Image.open(image_filenames[i])
             H, W = image.height, image.width
@@ -224,7 +224,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         # Validate feature lengths
         for model_name, features in features_dict.items():
             if len(features) != total_size:
-                raise ValueError(f"Feature {model_name.capitalize()} has length {len(features)}, expected {total_size}")
+                raise ValueError(f"Feature {model_name} has length {len(features)}, expected {total_size}")
         
         train_features = {model_name: features[:train_size] for model_name, features in features_dict.items()}
         eval_features = {model_name: features[train_size:] for model_name, features in features_dict.items()}

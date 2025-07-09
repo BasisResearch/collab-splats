@@ -62,10 +62,10 @@ class RadegsFeaturesModelConfig(RadegsModelConfig):
     """Size of the hidden layer in the decoder MLP."""
 
     #### Text query parameters ####
-    positive_queries: Optional[List[str]] = [""]
+    positive_queries: Optional[List[str]] = field(default_factory=lambda: [""])
     """Positive text queries."""
 
-    negative_queries: Optional[List[str]] = ["object"]
+    negative_queries: Optional[List[str]] = field(default_factory=lambda: ["object"])
     """Negative text queries. Default is 'object'."""
 
     similarity_method: str = "pairwise"

@@ -9,6 +9,7 @@ from typing import Type, Dict, Union, List, Optional
 import math
 import torch 
 from torch.nn import functional as F
+from torch.nn import Parameter
 
 try:
     from gsplat.rendering import rasterization

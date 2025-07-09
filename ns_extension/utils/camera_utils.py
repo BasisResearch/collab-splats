@@ -236,8 +236,8 @@ def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
     # Insert normal vectors into output tensor (excluding borders)
     output[...,1:-1, 1:-1] = normal_map
     
-    # Return with dimensions rearranged to (2, 3, H, W)
-    return output
+    # Return with dimensions rearranged to (2, H, W, 3)
+    return output.permute(0, 3, 1, 2)
 
 ########################################
 #### Taken from dn-splatter ############

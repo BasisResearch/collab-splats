@@ -216,8 +216,8 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             if len(features) != total_size:
                 raise ValueError(f"Feature {feature_name} has length {len(features)}, expected {total_size}")
         
-        train_features = {name: features[:train_size] for name, features in features_dict.items()}
-        eval_features = {name: features[train_size:] for name, features in features_dict.items()}
+        train_features = {model: features[:train_size] for model, features in features_dict.items()}
+        eval_features = {model: features[train_size:] for model, features in features_dict.items()}
 
         return train_features, eval_features
 
@@ -227,7 +227,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         Args:
             features_dict: Dictionary of extracted features.
         """
-        feature_dims = {model: features[model].shape[1:] for model, features in features_dict.items()}
+        feature_dims = {model: features.shape[1:] for model, features in features_dict.items()}
         metadata = {
             "feature_type": self.config.feature_type,
             "feature_dims": feature_dims,
@@ -246,8 +246,8 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         camera, data = super().next_train(step)
         camera_idx = camera.metadata['cam_idx']
         features_dict = {}
-        for model_name, features in self.train_features.items():
-            features_dict[model_name] = features[camera_idx]
+        for model, features in self.train_features.items():
+            features_dict[model] = features[camera_idx]
         data["features_dict"] = features_dict
         return camera, data
     
@@ -263,7 +263,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         camera, data = super().next_eval(step)
         camera_idx = camera.metadata['cam_idx']
         features_dict = {}
-        for model_name, features in self.eval_features.items():
-            features_dict[model_name] = features[camera_idx]
+        for model, features in self.eval_features.items():
+            features_dict[model] = features[camera_idx]
         data["features_dict"] = features_dict
         return camera, data

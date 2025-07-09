@@ -178,7 +178,7 @@ class RadegsModel(SplatfactoModel):
             )
 
         # Calculate depth_middepth_normal --> used for depth_normal_loss
-        # Tensor shape: [2, 3, H, W]
+        # Tensor shape: [2, H, W, 3]
         depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
 
         # Sum over channels (keep views) then take the dot product with the normal map

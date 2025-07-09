@@ -150,7 +150,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         for i in trange(len(image_filenames), desc="Extracting CLIP features"):
             # Load and process image
             image = Image.open(image_filenames[i])
-            H, W = image.size[:2]
+            H, W = image.height, image.width
 
             # Calculate resolutions
             object_W = self.config.obj_resolution

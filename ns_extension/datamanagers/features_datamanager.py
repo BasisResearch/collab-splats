@@ -35,10 +35,10 @@ class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
 
     _target: Type = field(default_factory=lambda: FeatureSplattingDataManager)
 
-    main_features: Literal["SAMCLIP", "CLIP"] = "SAMCLIP"
+    main_features: Literal["samclip"] = "samclip"
     """Type of features to extract - SAMCLIP or CLIP."""
 
-    regularization_features: Literal["DINOV2", None] = "DINOV2"
+    regularization_features: Literal["dinov2", None] = "dinov2"
     """Type of features to use for regularization."""
 
     enable_cache: bool = True
@@ -136,7 +136,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             # Create extractor for regularization features --> extract
             extractor = BaseFeatureExtractor.get(self.config.regularization_features)(device=device)
 
-            for i in trange(len(image_filenames), desc=f"Extracting {self.config.regularization_features} features"):
+            for i in trange(len(image_filenames), desc=f"Extracting {self.config.regularization_features.capitalize()} features"):
                 image, target_H, target_W = extractor.preprocess(image_filenames[i])
                 features = extractor.forward(image)
                 features = extractor.reshape(features, target_H, target_W)
@@ -157,7 +157,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         # Add empty list for main features
         features_dict[self.config.main_features] = []
 
-        for i in trange(len(image_filenames), desc="Extracting CLIP features"):
+        for i in trange(len(image_filenames), desc=f"Extracting {self.config.main_features.capitalize()} features"):
             # Load and process image
             image = Image.open(image_filenames[i])
             H, W = image.height, image.width
@@ -222,9 +222,9 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         total_size = train_size + eval_size
     
         # Validate feature lengths
-        for feature_name, features in features_dict.items():
+        for model_name, features in features_dict.items():
             if len(features) != total_size:
-                raise ValueError(f"Feature {feature_name} has length {len(features)}, expected {total_size}")
+                raise ValueError(f"Feature {model_name.capitalize()} has length {len(features)}, expected {total_size}")
         
         train_features = {model_name: features[:train_size] for model_name, features in features_dict.items()}
         eval_features = {model_name: features[train_size:] for model_name, features in features_dict.items()}

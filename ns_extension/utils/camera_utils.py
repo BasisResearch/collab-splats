@@ -220,7 +220,7 @@ def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
         points2 (torch.Tensor): Second set of 3D points, shape (3, H, W)
 
     Returns:
-        torch.Tensor: Normal maps derived from the points, shape (2, 3, H, W)
+        torch.Tensor: Normal maps derived from the points, shape (2, H, W, 3)
     """
     # Stack points along first dimension
     points = torch.stack([points1, points2],dim=0)
@@ -237,7 +237,7 @@ def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
     output[...,1:-1, 1:-1] = normal_map
     
     # Return with dimensions rearranged to (2, H, W, 3)
-    return output.permute(0, 3, 1, 2)
+    return output
 
 ########################################
 #### Taken from dn-splatter ############

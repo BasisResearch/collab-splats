@@ -224,7 +224,7 @@ class RadegsFeaturesModel(RadegsModel):
         # Get visible gaussian mask
         voxel_visible_mask = self._prefilter_voxel(camera)
         
-        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
+        # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
 
         # apply the compensation of screen space blurring to gaussians
         if self.config.rasterize_mode not in ["antialiased", "classic"]:

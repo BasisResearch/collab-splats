@@ -192,13 +192,20 @@ def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2
         [0., 0., 1.0]]
     ).float().cuda()
     
-    # Create pixel coordinate grid (adding 0.5 to get center of pixels)
-    grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
+    # # Create pixel coordinate grid (adding 0.5 to get center of pixels)
+    # grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
 
-    # Stack coordinates and reshape to proper format
-    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0) #.permute(1, 2, 0)
-    points = points.reshape(3, -1).float().cuda()
+    # # Stack coordinates and reshape to proper format
+    # points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
+    # points = points.reshape(3, -1).float().cuda()
 
+    # CRITICAL FIX: Create meshgrid to match depth map indexing
+    # Use (H, W) indexing to match typical image/depth map format
+    grid_y, grid_x = torch.meshgrid(torch.arange(H) + 0.5, torch.arange(W) + 0.5, indexing='ij')
+    
+    # Stack as [x, y, 1] for proper camera projection
+    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).reshape(3, -1).float().cuda()
+    
     # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
     rays_d = intrinsics_inv @ points
 

@@ -4,7 +4,7 @@ Template Model File
 Currently this subclasses the Nerfacto model. Consider subclassing from the base Model.
 """
 from dataclasses import dataclass, field
-from typing import Type, Dict, Union, List
+from typing import Type, Dict, Union, List, Optional
 
 import math
 import torch 
@@ -341,8 +341,8 @@ class RadegsModel(SplatfactoModel):
         colors: torch.Tensor,
         render_mode: str,
         sh_degree_to_use: int,
-        visible_mask: torch.Tensor = None,
         camera_params: Dict[str, torch.Tensor],
+        visible_mask: Optional[torch.Tensor] = None,
     ):
         """
         Render the scene.

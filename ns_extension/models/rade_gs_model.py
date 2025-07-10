@@ -373,8 +373,8 @@ class RadegsModel(SplatfactoModel):
         render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
             means=means,  # [N, 3]
             quats=quats,  # [N, 4]
-            scales=torch.exp(scales),  # [N, 3]
-            opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
+            scales=scales,#torch.exp(scales),  # [N, 3]
+            opacities=opacities.squeeze(-1), #torch.sigmoid(opacities.squeeze(-1)),  # [N,]
             colors=colors,
             viewmats=camera_params["viewmats"],  # [1, 4, 4]
             Ks=camera_params["Ks"],  # [1, 3, 3]

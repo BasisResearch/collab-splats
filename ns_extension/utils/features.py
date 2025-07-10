@@ -200,7 +200,7 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         """
 
         # Tokenize text and compute embeddings
-        tokens = maskclip_onnx.clip.tokenize(text).to(self.device)
+        tokens = self.model.tokenize(text).to(self.device)
         embed = self.model.encode_text(tokens).float()
 
         # Normalize embeddings

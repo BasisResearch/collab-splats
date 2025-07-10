@@ -80,7 +80,6 @@ class RadegsFeaturesModel(RadegsModel):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        super().populate_modules()
 
         # Moving this from populate models to here because we need 
         # the device initialized before we can populate text encoder
@@ -112,6 +111,14 @@ class RadegsFeaturesModel(RadegsModel):
         # Populate text encoder if it's a CLIP model
         if "clip" in self.kwargs["metadata"]["feature_type"].lower():
             self.text_encoder = BaseFeatureExtractor.get(self.kwargs["metadata"]["feature_type"])(device=self.device)
+
+            # Register it as a submodule and turn off the gradients
+            self.add_module("text_encoder", self.text_encoder)
+
+            for param in self.text_encoder.parameters():
+                param.requires_grad = False
+
+            # Track the similarity function
             self.similarity_fx = self.text_encoder.compute_similarity
         else:
             self.similarity_fx = None

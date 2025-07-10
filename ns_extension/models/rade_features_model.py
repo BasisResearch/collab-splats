@@ -346,7 +346,7 @@ class RadegsFeaturesModel(RadegsModel):
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
         dirs = means - colmap_camera.camera_center # directions of the gaussians
         colors = spherical_harmonics(
-            degrees_to_use=sh_degree_to_use,
+            degrees_to_use=sh_degree_to_use if sh_degree_to_use is not None else 0,
             dirs=dirs,
             coeffs=colors, # Current spherical harmonics coefficients
         )

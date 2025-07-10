@@ -151,7 +151,6 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
             T.ToTensor(),
             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
-        self.device = device
 
     def preprocess(self, image, resolution: int = 1024) -> torch.Tensor:
         if isinstance(image, str) or isinstance(image, Path):
@@ -164,7 +163,7 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
             raise ValueError(f"Unsupported image type: {type(image)}")
         
         image = resize_image(image, longest_edge=resolution)
-        return self.transform(image).to(self.device)
+        return self.transform(image).to(self.model.device)
         
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -200,7 +199,7 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         """
 
         # Tokenize text and compute embeddings
-        tokens = maskclip_onnx.clip.tokenize(text).to(self.device)
+        tokens = maskclip_onnx.clip.tokenize(text).to(self.model.device)
         embed = self.model.encode_text(tokens).float()
 
         # Normalize embeddings
@@ -290,8 +289,6 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
     def __init__(self, model_name: str = "dinov2_vits14", resolution=800, device: str = "cpu"):
         super().__init__()
         self.model_name = model_name
-        self.device = device
-
         self.model = load_torchhub_model('facebookresearch/dinov2', model_name).to(device)
         self.model.eval()
 
@@ -317,7 +314,7 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
 
         # Setup for DINO --> interpolating overall image to be evenly divisible by patch size
         image, target_H, target_W = interpolate_to_patch_size(image, self.model.patch_size)
-        image = image.to(self.device)
+        image = image.to(self.model.device)
 
         return image, target_H, target_W
 

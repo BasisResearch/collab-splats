@@ -275,7 +275,7 @@ class RadegsFeaturesModel(RadegsModel):
 
         # Sum over channels (keep views) then take the dot product with the normal map
         # results in an  angular error map per view (depth and middept)
-        normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=1)
+        normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1)
         normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
         camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    

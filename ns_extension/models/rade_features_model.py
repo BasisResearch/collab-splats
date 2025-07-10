@@ -236,7 +236,7 @@ class RadegsFeaturesModel(RadegsModel):
             quats=quats_crop,
             scales=scales_crop,
             opacities=opacities_crop,
-            color=colors_crop,
+            colors=colors_crop,
             features=distill_features_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,

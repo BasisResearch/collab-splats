@@ -255,7 +255,6 @@ class RadegsFeaturesModel(RadegsModel):
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
         render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
-            camera=camera, 
             means=means_crop,
             quats=quats_crop,
             scales=scales_crop,
@@ -277,12 +276,13 @@ class RadegsFeaturesModel(RadegsModel):
         # Tensor shape: [2, H, W, 3]
         if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
             depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
+            
+            # Sum over channels (keep views) then take the dot product with the normal map
+            # results in an  angular error map per view (depth and middept)
             normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
         else:
             normal_error_map = torch.zeros(2, *expected_normals.shape[:2], device=expected_normals.device)
-
-        # Sum over channels (keep views) then take the dot product with the normal map
-        # results in an  angular error map per view (depth and middept)
+        
         normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
         camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    

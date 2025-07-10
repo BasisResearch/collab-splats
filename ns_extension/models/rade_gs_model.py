@@ -382,7 +382,7 @@ class RadegsModel(SplatfactoModel):
             height=int(camera_params["image_height"]),
             packed=False,
             near_plane=0.01,
-            far_plane=1e5,
+            far_plane=1e10,
             render_mode=render_mode,
             sh_degree=sh_degree_to_use,
             sparse_grad=False,

@@ -345,18 +345,15 @@ class RadegsFeaturesModel(RadegsModel):
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
         dirs = means - colmap_camera.camera_center # directions of the gaussians
-
-        # If we're not using SH, we need to set it to 0 and add a channel dimension to the colors
-        if sh_degree_to_use is None:
-            sh_degree_to_use = 0
-            colors = colors.unsqueeze(1)
-
+        
         colors = spherical_harmonics(
-            degrees_to_use=sh_degree_to_use,
+            degrees_to_use=sh_degree_to_use if sh_degree_to_use is not None else 0,
             dirs=dirs,
-            coeffs=colors, # Current spherical harmonics coefficients
+            coeffs=colors if sh_degree_to_use is not None else colors.unsqueeze(1), # Current spherical harmonics coefficients
         )
 
+        # Squeeze back just in case
+        colors = colors.squeeze(1)
         colors = torch.clamp_min(colors + 0.5, 0.0)
 
         # Now fuse our features with the colors for rendering

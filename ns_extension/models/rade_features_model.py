@@ -221,8 +221,11 @@ class RadegsFeaturesModel(RadegsModel):
         W, H = int(camera.width.item()), int(camera.height.item())
         self.last_size = (H, W)
 
+        # Get camera parameters of colmap camera for rasterization
+        camera_params = self._get_camera_parameters(camera)
+
         # Get visible gaussian mask
-        voxel_visible_mask = self._prefilter_voxel(camera)
+        voxel_visible_mask = self._prefilter_voxel(camera_params)
         
         # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
 
@@ -261,7 +264,8 @@ class RadegsFeaturesModel(RadegsModel):
             features=distill_features_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,
-            visible_mask=voxel_visible_mask
+            visible_mask=voxel_visible_mask,
+            camera_params=camera_params,
         )
 
         if self.training:
@@ -271,11 +275,14 @@ class RadegsFeaturesModel(RadegsModel):
 
         # Calculate depth_middepth_normal --> used for depth_normal_loss
         # Tensor shape: [2, H, W, 3]
-        depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
+        if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
+            depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
+            normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
+        else:
+            normal_error_map = torch.zeros(2, *expected_normals.shape[:2], device=expected_normals.device)
 
         # Sum over channels (keep views) then take the dot product with the normal map
         # results in an  angular error map per view (depth and middept)
-        normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
         normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
         camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
@@ -310,7 +317,6 @@ class RadegsFeaturesModel(RadegsModel):
         
     def _render(
         self,
-        camera: Cameras,
         means: torch.Tensor,
         quats: torch.Tensor,
         scales: torch.Tensor,
@@ -320,6 +326,7 @@ class RadegsFeaturesModel(RadegsModel):
         render_mode: str,
         sh_degree_to_use: int,
         visible_mask: torch.Tensor,
+        camera_params: Dict[str, torch.Tensor],
     ):
         """
         Render the scene.
@@ -327,7 +334,6 @@ class RadegsFeaturesModel(RadegsModel):
         Background tensor (bg_color) must be on GPU!
         """
 
-        colmap_camera = convert_to_colmap_camera(camera)
         background = self._get_background_color()
 
         if visible_mask is not None:
@@ -345,28 +351,10 @@ class RadegsFeaturesModel(RadegsModel):
             colors = colors
             features = features
 
-        # Set up rasterization configuration
-        tanfovx = math.tan(colmap_camera.fovx * 0.5)
-        tanfovy = math.tan(colmap_camera.fovy * 0.5)
-
-        focal_length_x = colmap_camera.image_width / (2 * tanfovx)
-        focal_length_y = colmap_camera.image_height / (2 * tanfovy)
-
-        K = torch.tensor(
-            [
-                [focal_length_x, 0, colmap_camera.image_width / 2.0],
-                [0, focal_length_y, colmap_camera.image_height / 2.0],
-                [0, 0, 1],
-            ],
-            device=self.device,
-        )
-
-        viewmat = colmap_camera.world_view_transform.transpose(0, 1)  # [4, 4]
-
         # We need a hack to get features into model gsplat for rendering
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
-        dirs = means - colmap_camera.camera_center # directions of the gaussians
+        dirs = means - camera_params["camera_center"] # directions of the gaussians
         
         colors = spherical_harmonics(
             degrees_to_use=sh_degree_to_use if sh_degree_to_use is not None else 0,
@@ -394,10 +382,10 @@ class RadegsFeaturesModel(RadegsModel):
             scales=torch.exp(scales),  # [N, 3]
             opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
             colors=fused_features,
-            viewmats=viewmat[None],  # [1, 4, 4]
-            Ks=K[None],  # [1, 3, 3]
-            width=int(colmap_camera.image_width),
-            height=int(colmap_camera.image_height),
+            viewmats=camera_params["viewmats"],  # [1, 4, 4]
+            Ks=camera_params["Ks"],  # [1, 3, 3]
+            width=int(camera_params["image_width"]),
+            height=int(camera_params["image_height"]),
             packed=False,
             near_plane=0.01,
             far_plane=1e10,

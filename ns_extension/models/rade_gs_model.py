@@ -129,11 +129,12 @@ class RadegsModel(SplatfactoModel):
         W, H = int(camera.width.item()), int(camera.height.item())
         self.last_size = (H, W)
 
-        # Get visible gaussian mask
-        voxel_visible_mask = self._prefilter_voxel(camera)
-        
-        # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
+        # Get camera parameters of colmap camera for rasterization
+        camera_params = self._get_camera_parameters(camera)
 
+        # Get visible gaussian mask
+        voxel_visible_mask = self._prefilter_voxel(camera_params)
+        
         # apply the compensation of screen space blurring to gaussians
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
             raise ValueError("Unknown rasterize_mode: %s", self.config.rasterize_mode)
@@ -160,7 +161,6 @@ class RadegsModel(SplatfactoModel):
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
         render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
-            camera=camera, 
             means=means_crop,
             quats=quats_crop,
             scales=scales_crop,
@@ -168,7 +168,8 @@ class RadegsModel(SplatfactoModel):
             colors=colors_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,
-            visible_mask=voxel_visible_mask
+            visible_mask=voxel_visible_mask,
+            camera_params=camera_params,
         )
 
         if self.training:
@@ -178,11 +179,16 @@ class RadegsModel(SplatfactoModel):
 
         # Calculate depth_middepth_normal --> used for depth_normal_loss
         # Tensor shape: [2, H, W, 3]
-        depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
+        if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
+            depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
 
-        # Sum over channels (keep views) then take the dot product with the normal map
-        # results in an  angular error map per view (depth and middept)
-        normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
+            # Sum over channels (keep views) then take the dot product with the normal map
+            # results in an  angular error map per view (depth and middept)
+            normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
+        else:
+            # Create zero tensor with shape [2, H, W] to match depth_middepth_normal structure
+            normal_error_map = torch.zeros(2, *expected_normals.shape[:2], device=expected_normals.device)
+
         normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
         camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
@@ -242,20 +248,15 @@ class RadegsModel(SplatfactoModel):
 
         return loss_dict
 
-    def _prefilter_voxel(self, camera: Cameras):
+    def _get_camera_parameters(self, camera: Cameras) -> Dict[str, torch.Tensor]:
         """
-        Render the scene.
+        Get the camera parameters for rasterization.
 
-        Background tensor (bg_color) must be on GPU!
-
-        Taken from https://github.com/brian-xu/scaffold-gs-nerfstudio
+        Returns:
+            Ks: [1, 3, 3]
+            viewmats: [1, 4, 4]
         """
-
         colmap_camera = convert_to_colmap_camera(camera)
-
-        means = self.means
-        scales = torch.exp(self.scales)
-        quats = self.quats
 
         # Set up rasterization configuration
         tanfovx = math.tan(colmap_camera.fovx * 0.5)
@@ -274,14 +275,37 @@ class RadegsModel(SplatfactoModel):
 
         viewmats = colmap_camera.world_view_transform.transpose(0, 1)[None]
 
+        camera_params = {
+            "Ks": Ks,
+            "viewmats": viewmats,
+            "image_width": colmap_camera.image_width,
+            "image_height": colmap_camera.image_height,
+            "camera_center": colmap_camera.camera_center,
+        }
+        
+        return camera_params
+    
+    def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor]):
+        """
+        Render the scene.
+
+        Background tensor (bg_color) must be on GPU!
+
+        Taken from https://github.com/brian-xu/scaffold-gs-nerfstudio
+        """
+
+        means = self.means
+        scales = torch.exp(self.scales)
+        quats = self.quats
+
         N = means.shape[0]
-        C = viewmats.shape[0]
+        C = camera_params["viewmats"].shape[0]
         
         assert means.shape == (N, 3), means.shape
         assert quats.shape == (N, 4), quats.shape
         assert scales.shape == (N, 3), scales.shape
-        assert viewmats.shape == (C, 4, 4), viewmats.shape
-        assert Ks.shape == (C, 3, 3), Ks.shape
+        assert camera_params["viewmats"].shape == (C, 4, 4), camera_params["viewmats"].shape
+        assert camera_params["Ks"].shape == (C, 3, 3), camera_params["Ks"].shape
 
         # Project Gaussians to 2D. Directly pass in {quats, scales} is faster than precomputing covars.
         proj_results = fully_fused_projection(
@@ -289,10 +313,10 @@ class RadegsModel(SplatfactoModel):
             None,  # covars,
             quats,
             scales,
-            viewmats,
-            Ks,
-            int(colmap_camera.image_width),
-            int(colmap_camera.image_height),
+            camera_params["viewmats"],
+            camera_params["Ks"],
+            int(camera_params["image_width"]),
+            int(camera_params["image_height"]),
             eps2d=0.3,
             packed=False,
             near_plane=0.01,
@@ -310,7 +334,6 @@ class RadegsModel(SplatfactoModel):
 
     def _render(
         self,
-        camera: Cameras,
         means: torch.Tensor,
         quats: torch.Tensor,
         scales: torch.Tensor,
@@ -319,14 +342,13 @@ class RadegsModel(SplatfactoModel):
         render_mode: str,
         sh_degree_to_use: int,
         visible_mask: torch.Tensor,
+        camera_params: Dict[str, torch.Tensor],
     ):
         """
         Render the scene.
 
         Background tensor (bg_color) must be on GPU!
         """
-
-        colmap_camera = convert_to_colmap_camera(camera)
 
         if visible_mask is not None:
             means = means[visible_mask]
@@ -340,24 +362,6 @@ class RadegsModel(SplatfactoModel):
             scales = scales
             opacities = opacities
             colors = colors
-
-        # Set up rasterization configuration
-        tanfovx = math.tan(colmap_camera.fovx * 0.5)
-        tanfovy = math.tan(colmap_camera.fovy * 0.5)
-
-        focal_length_x = colmap_camera.image_width / (2 * tanfovx)
-        focal_length_y = colmap_camera.image_height / (2 * tanfovy)
-
-        K = torch.tensor(
-            [
-                [focal_length_x, 0, colmap_camera.image_width / 2.0],
-                [0, focal_length_y, colmap_camera.image_height / 2.0],
-                [0, 0, 1],
-            ],
-            device=self.device,
-        )
-
-        viewmat = colmap_camera.world_view_transform.transpose(0, 1)  # [4, 4]
         
         # Items are:
         # - render_colors: [N, 3]
@@ -372,10 +376,10 @@ class RadegsModel(SplatfactoModel):
             scales=torch.exp(scales),  # [N, 3]
             opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
             colors=colors,
-            viewmats=viewmat[None],  # [1, 4, 4]
-            Ks=K[None],  # [1, 3, 3]
-            width=int(colmap_camera.image_width),
-            height=int(colmap_camera.image_height),
+            viewmats=camera_params["viewmats"],  # [1, 4, 4]
+            Ks=camera_params["Ks"],  # [1, 3, 3]
+            width=int(camera_params["image_width"]),
+            height=int(camera_params["image_height"]),
             packed=False,
             near_plane=0.01,
             far_plane=1e10,

@@ -17,7 +17,7 @@ from nerfstudio.plugins.types import MethodSpecification
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
 
 # Custom configs
-from ns_extension.models.rade_gs_model import RadegsModelConfig
+from ns_extension.models.rade_features_model import RadegsFeaturesModelConfig
 from ns_extension.datamanagers.features_datamanager import FeatureSplattingDataManagerConfig
 from ns_extension.utils.trainer_config import _TrainerConfig
 

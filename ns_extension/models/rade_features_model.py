@@ -374,7 +374,7 @@ class RadegsFeaturesModel(RadegsModel):
             colors=fused_features,
             viewmats=viewmat[None],  # [1, 4, 4]
             Ks=K[None],  # [1, 3, 3]
-            backgrounds=background[None],
+            # backgrounds=background[None], # Need to remove this for now?
             width=int(colmap_camera.image_width),
             height=int(colmap_camera.image_height),
             packed=False,

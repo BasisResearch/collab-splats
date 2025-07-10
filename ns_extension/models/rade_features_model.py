@@ -80,9 +80,11 @@ class RadegsFeaturesModel(RadegsModel):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        super().populate_modules()
 
         # Moving this from populate models to here because we need 
         # the device initialized before we can populate text encoder
+        
         # Initialize per-Gaussian features
         distill_features = torch.nn.Parameter(torch.zeros((self.means.shape[0], self.config.features_latent_dim)))
         self.gauss_params["distill_features"] = distill_features

@@ -55,6 +55,10 @@ class RadegsModel(SplatfactoModel):
 
     config: RadegsModelConfig
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        super().populate_modules()
+
     # TODO: Override any potential functions/methods to implement your own method
     # or subclass from "Model" and define all mandatory fields.
     @property

@@ -47,6 +47,9 @@ class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
     segmentation_backend: str = "mobilesamv2"
     """Segmentation model to use for mask generation."""
 
+    segmentation_strategy: str = "object"
+    """Segmentation strategy to use for mask generation."""
+
     sam_resolution: int = 1024
     """Resolution of SAM features."""
 

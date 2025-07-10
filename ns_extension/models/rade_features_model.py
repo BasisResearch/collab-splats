@@ -105,8 +105,8 @@ class RadegsFeaturesModel(RadegsModel):
     ########################################################
 
     def populate_text_encoder(self):
-        # Populate text encoder if it's a CLIP model and we're not training
-        if "clip" in self.kwargs["metadata"]["feature_type"].lower() and not self.training:
+        # Populate text encoder if it's a CLIP model
+        if "clip" in self.kwargs["metadata"]["feature_type"].lower():
             self.text_encoder = BaseFeatureExtractor.get(self.kwargs["metadata"]["feature_type"])(device=self.device)
             self.similarity_fx = self.text_encoder.compute_similarity
         else:

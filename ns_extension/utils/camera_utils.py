@@ -180,7 +180,7 @@ def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2
         tuple(torch.Tensor, torch.Tensor): Two sets of 3D points in camera space,
             each with shape (3, H_scaled, W_scaled)
     """
-
+    
     colmap_camera: ColmapCamera = convert_to_colmap_camera(camera)
     W, H = colmap_camera.image_width, colmap_camera.image_height
     fx = W / (2 * math.tan(colmap_camera.fovx / 2.0))
@@ -195,9 +195,8 @@ def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2
     # Create pixel coordinate grid (adding 0.5 to get center of pixels)
     grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
 
-    # Stack coordinates and reshape to proper format
-    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
-    points = points.reshape(3, -1).float().cuda()
+    # Stack coordinates and reshape - follow original structure exactly
+    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).reshape(3, -1).float().cuda()
 
     # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
     rays_d = intrinsics_inv @ points
@@ -206,9 +205,9 @@ def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2
     points1 = depthmap1.reshape(1,-1) * rays_d
     points2 = depthmap2.reshape(1,-1) * rays_d
 
-    # Reshape points to final format (3, H, W)
-    points1 = points1.reshape(H,W,3).permute(2,0,1)
-    points2 = points2.reshape(H,W,3).permute(2,0,1)
+    # Reshape points to final format (3, H, W) - match original exactly
+    points1 = points1.reshape(3, H, W)
+    points2 = points2.reshape(3, H, W)
     
     return points1, points2
 

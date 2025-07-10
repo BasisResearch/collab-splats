@@ -394,8 +394,8 @@ class RadegsFeaturesModel(RadegsModel):
             sparse_grad=False,
             absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
             rasterize_mode=self.config.rasterize_mode,
-            # set some threshold to disregard small gaussians for faster rendering.
-            radius_clip=3.0,
+            # # set some threshold to disregard small gaussians for faster rendering.
+            # radius_clip=3.0,
             # Output depth and normal maps
             return_depth_normal=True,
         )

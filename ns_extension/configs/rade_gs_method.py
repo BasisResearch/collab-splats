@@ -38,6 +38,7 @@ rade_gs_method = MethodSpecification(
                 use_depth_normal_loss=True,
                 depth_normal_lambda=0.05,
                 depth_ratio=0.6,
+                sh_degree=0,
             ),
         ),
         optimizers={

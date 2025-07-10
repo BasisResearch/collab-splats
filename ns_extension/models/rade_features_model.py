@@ -334,8 +334,6 @@ class RadegsFeaturesModel(RadegsModel):
         Background tensor (bg_color) must be on GPU!
         """
 
-        background = self._get_background_color()
-
         if visible_mask is not None:
             means = means[visible_mask]
             quats = quats[visible_mask]
@@ -354,18 +352,19 @@ class RadegsFeaturesModel(RadegsModel):
         # We need a hack to get features into model gsplat for rendering
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
-        dirs = means - camera_params["camera_center"] # directions of the gaussians
+        if sh_degree_to_use is not None:
+            dirs = means - camera_params["camera_center"] # directions of the gaussians
+            
+            colors = spherical_harmonics(
+                degrees_to_use=sh_degree_to_use,
+                dirs=dirs,
+                coeffs=colors, # Current spherical harmonics coefficients
+            )
+
+            # Squeeze back just in case
+            colors = colors.squeeze(1)
+            colors = torch.clamp_min(colors + 0.5, 0.0)
         
-        colors = spherical_harmonics(
-            degrees_to_use=sh_degree_to_use if sh_degree_to_use is not None else 0,
-            dirs=dirs,
-            coeffs=colors if sh_degree_to_use is not None else colors.unsqueeze(1), # Current spherical harmonics coefficients
-        )
-
-        # Squeeze back just in case
-        colors = colors.squeeze(1)
-        colors = torch.clamp_min(colors + 0.5, 0.0)
-
         # Now fuse our features with the colors for rendering
         fused_features = torch.cat((colors, features), dim=-1)
 

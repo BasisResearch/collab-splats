@@ -128,6 +128,15 @@ class RadegsFeaturesModel(RadegsModel):
     def distill_features(self):
         return self.gauss_params["distill_features"]
 
+    # @property
+    # def similarity(self):
+    #     # Grab the features and pass them through the decoder
+    #     features = self.distill_features
+    #     features = self.decoder.per_gaussian_forward(features)
+
+
+
+
     def decode_features(self, features: torch.Tensor, resize_factor: float = 1.0) -> torch.Tensor:
         """
         Decode features from latent space back to model dimensionality.

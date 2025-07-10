@@ -344,7 +344,7 @@ class RadegsFeaturesModel(RadegsModel):
         # We need a hack to get features into model gsplat for rendering
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
-        dirs = means - camera.camera_center # directions of the gaussians
+        dirs = means - colmap_camera.camera_center # directions of the gaussians
         colors = spherical_harmonics(
             degrees_to_use=sh_degree_to_use,
             dirs=dirs,

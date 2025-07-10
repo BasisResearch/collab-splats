@@ -196,7 +196,7 @@ def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2
     grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
 
     # Stack coordinates and reshape to proper format
-    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).permute(1, 2, 0)
+    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0) #.permute(1, 2, 0)
     points = points.reshape(3, -1).float().cuda()
 
     # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates

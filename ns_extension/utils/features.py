@@ -156,7 +156,7 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
     def to(self, device: str):
         self.model = self.model.to(device)
         self.device = device
-        return self
+        return super().to(device)
 
     def preprocess(self, image, resolution: int = 1024) -> torch.Tensor:
         if isinstance(image, str) or isinstance(image, Path):
@@ -310,7 +310,7 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
     def to(self, device: str):
         self.model = self.model.to(device)
         self.device = device
-        return self
+        return super().to(device)
 
     def preprocess(self, image) -> torch.Tensor:
         if isinstance(image, str) or isinstance(image, Path):

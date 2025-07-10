@@ -336,7 +336,7 @@ class RadegsFeaturesModel(RadegsModel):
                 [0, focal_length_y, colmap_camera.image_height / 2.0],
                 [0, 0, 1],
             ],
-            device="cuda",
+            device=self.device,
         )
 
         viewmat = colmap_camera.world_view_transform.transpose(0, 1)  # [4, 4]

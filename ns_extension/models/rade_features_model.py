@@ -112,7 +112,8 @@ class RadegsFeaturesModel(RadegsModel):
         if "clip" in self.kwargs["metadata"]["feature_type"].lower():
             self.text_encoder = BaseFeatureExtractor.get(self.kwargs["metadata"]["feature_type"])(device=self.device)
 
-            # Register it as a submodule and turn off the gradients
+            # Register it as a submodule and turn off the gradients -->
+            # This handles moving to the correct device
             self.add_module("text_encoder", self.text_encoder)
 
             for param in self.text_encoder.parameters():

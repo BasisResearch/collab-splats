@@ -151,12 +151,12 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
             T.ToTensor(),
             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
-        self.device = device
 
-    def to(self, device: str):
-        self.model = self.model.to(device)
-        self.device = device
-        return super().to(device)
+    @property
+    def device(self) -> torch.device:
+        for param in self.model.parameters():
+            return param.device
+        return torch.device("cpu")
 
     def preprocess(self, image, resolution: int = 1024) -> torch.Tensor:
         if isinstance(image, str) or isinstance(image, Path):
@@ -305,12 +305,12 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
             T.ToTensor(),
             T.Normalize(mean=[0.5], std=[0.5]),
         ])
-        self.device = device
 
-    def to(self, device: str):
-        self.model = self.model.to(device)
-        self.device = device
-        return super().to(device)
+    @property
+    def device(self) -> torch.device:
+        for param in self.model.parameters():
+            return param.device
+        return torch.device("cpu")
 
     def preprocess(self, image) -> torch.Tensor:
         if isinstance(image, str) or isinstance(image, Path):

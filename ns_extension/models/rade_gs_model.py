@@ -133,7 +133,7 @@ class RadegsModel(SplatfactoModel):
         camera_params = self._get_camera_parameters(camera)
 
         # Get visible gaussian mask
-        voxel_visible_mask = self._prefilter_voxel(camera_params)
+        # voxel_visible_mask = self._prefilter_voxel(camera_params)
         
         # apply the compensation of screen space blurring to gaussians
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
@@ -168,7 +168,7 @@ class RadegsModel(SplatfactoModel):
             colors=colors_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,
-            visible_mask=voxel_visible_mask,
+            # visible_mask=voxel_visible_mask,
             camera_params=camera_params,
         )
 
@@ -341,7 +341,7 @@ class RadegsModel(SplatfactoModel):
         colors: torch.Tensor,
         render_mode: str,
         sh_degree_to_use: int,
-        visible_mask: torch.Tensor,
+        visible_mask: torch.Tensor = None,
         camera_params: Dict[str, torch.Tensor],
     ):
         """

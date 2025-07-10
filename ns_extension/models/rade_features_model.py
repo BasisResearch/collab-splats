@@ -302,7 +302,8 @@ class RadegsFeaturesModel(RadegsModel):
             "median_depth": median_depths.squeeze(0),
             'accumulation': alpha.squeeze(0),
             "normals": normals.squeeze(0),
-            "normal_error_map": normal_error_map.squeeze(0),
+            "depth_normal_error_map": normal_error_map[0].unsqueeze(-1), # [H, W, 1]
+            "middepth_normal_error_map": normal_error_map[1].unsqueeze(-1), # [H, W, 1]
             "background": background,
             'features': features.squeeze(0),
         }
@@ -378,7 +379,7 @@ class RadegsFeaturesModel(RadegsModel):
         colors = torch.clamp_min(colors + 0.5, 0.0)
 
         # Now fuse our features with the colors for rendering
-        fused_features = torch.cat((colors, features), dim=1)
+        fused_features = torch.cat((colors, features), dim=-1)
 
         # Items are:
         # - render_colors: [N, 3 + feature_dim]

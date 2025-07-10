@@ -207,7 +207,8 @@ class RadegsModel(SplatfactoModel):
             "median_depth": median_depths.squeeze(0),
             'accumulation': alpha.squeeze(0),
             "normals": normals.squeeze(0),
-            "normal_error_map": normal_error_map.squeeze(0),
+            "depth_normal_error_map": normal_error_map[0].unsqueeze(-1), # [H, W, 1]
+            "middepth_normal_error_map": normal_error_map[1].unsqueeze(-1), # [H, W, 1]
             "background": background,
         }
 
@@ -230,7 +231,8 @@ class RadegsModel(SplatfactoModel):
         if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
             
             # Calculate depth_normal_loss
-            depth_normal_loss = (1 - self.config.depth_ratio) * outputs["normal_error_map"][0].mean() + self.config.depth_ratio * outputs["normal_error_map"][1].mean()
+            depth_normal_loss = (1 - self.config.depth_ratio) * outputs["depth_normal_error_map"].mean() + \
+                self.config.depth_ratio * outputs["middepth_normal_error_map"].mean()
 
             # Scale by lambda
             depth_normal_loss = self.config.depth_normal_lambda * depth_normal_loss

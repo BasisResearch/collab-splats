@@ -49,6 +49,9 @@ class RadegsModelConfig(SplatfactoModelConfig):
     render_mode: str = "RGB"
     """Render mode --> we always return depth anyways"""
 
+    prefilter_voxel: bool = False
+    """Whether to prefilter the voxel"""
+
 
 class RadegsModel(SplatfactoModel):
     """Template Model."""
@@ -133,7 +136,10 @@ class RadegsModel(SplatfactoModel):
         camera_params = self._get_camera_parameters(camera)
 
         # Get visible gaussian mask
-        # voxel_visible_mask = self._prefilter_voxel(camera_params)
+        if self.config.prefilter_voxel:
+            voxel_visible_mask = self._prefilter_voxel(camera_params)
+        else:
+            voxel_visible_mask = None
         
         # apply the compensation of screen space blurring to gaussians
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
@@ -169,7 +175,7 @@ class RadegsModel(SplatfactoModel):
             colors=colors_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,
-            # visible_mask=voxel_visible_mask,
+            visible_mask=voxel_visible_mask,
             camera_params=camera_params,
         )
 
@@ -215,9 +221,9 @@ class RadegsModel(SplatfactoModel):
             background = background.expand(H, W, 3)
 
         # Threshold out by alpha values
-        expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max()).squeeze(0)
-        median_depths = torch.where(alpha > 0, median_depths, median_depths.detach().max()).squeeze(0)
-        normals = torch.where(alpha > 0, normals, normals.detach().max()).squeeze(0)
+        expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max())
+        median_depths = torch.where(alpha > 0, median_depths, median_depths.detach().max())
+        normals = torch.where(alpha > 0, normals, normals.detach().max())
         
         return {
             "rgb": rgb.squeeze(0),

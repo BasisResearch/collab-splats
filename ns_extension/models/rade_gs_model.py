@@ -143,7 +143,8 @@ class RadegsModel(SplatfactoModel):
             "image_height": H,
             # "camera_center": camera.camera_center,
         }
-
+        
+        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
         # Get visible gaussian mask
         # voxel_visible_mask = self._prefilter_voxel(camera_params)
         
@@ -205,7 +206,7 @@ class RadegsModel(SplatfactoModel):
 
         # normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
-        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
+        # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
 
         alpha = alpha[:, ...]
 

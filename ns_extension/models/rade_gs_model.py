@@ -310,7 +310,7 @@ class RadegsModel(SplatfactoModel):
         
         return camera_params
     
-    def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor], depth_filter: float = 0.2):
+    def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor], depth_filter: float = 0.01):
         """
         Render the scene.
 

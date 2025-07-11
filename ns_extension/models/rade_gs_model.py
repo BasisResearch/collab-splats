@@ -134,17 +134,16 @@ class RadegsModel(SplatfactoModel):
         self.last_size = (H, W)
 
         # Get camera parameters of colmap camera for rasterization
-        # camera_params = self._get_camera_parameters(camera)
+        camera_params = self._get_camera_parameters(camera)
 
-        camera_params = {
-            "Ks": K,
-            "viewmats": viewmat,
-            "image_width": W,
-            "image_height": H,
-            # "camera_center": camera.camera_center,
-        }
-        
-        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
+        # camera_params = {
+        #     "Ks": K,
+        #     "viewmats": viewmat,
+        #     "image_width": W,
+        #     "image_height": H,
+        #     # "camera_center": camera.camera_center,
+        # }
+
         # Get visible gaussian mask
         # voxel_visible_mask = self._prefilter_voxel(camera_params)
         
@@ -206,7 +205,7 @@ class RadegsModel(SplatfactoModel):
 
         # normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
-        # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
+        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
 
         alpha = alpha[:, ...]
 

@@ -182,9 +182,6 @@ class RadegsFeaturesModel(RadegsModel):
 
         if self.training:
             assert camera.shape[0] == 1, "Only one camera at a time"
-        #     optimized_camera_to_world = self.camera_optimizer.apply_to_camera(camera)
-        # else:
-        #     optimized_camera_to_world = camera.camera_to_worlds
 
         # cropping
         if self.crop_box is not None and not self.training:
@@ -225,9 +222,13 @@ class RadegsFeaturesModel(RadegsModel):
         camera_params = self._get_camera_parameters(camera)
 
         # Get visible gaussian mask
-        voxel_visible_mask = self._prefilter_voxel(camera_params)
-        
-        # camera.rescale_output_resolution(camera_scale_fac)  # type: ignore
+        if self.config.prefilter_voxel:
+            voxel_visible_mask = self._prefilter_voxel(
+                camera_params=camera_params,
+                depth_filter=self.config.min_depth_filter
+            )
+        else:
+            voxel_visible_mask = None
 
         # apply the compensation of screen space blurring to gaussians
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
@@ -276,13 +277,14 @@ class RadegsFeaturesModel(RadegsModel):
         # Tensor shape: [2, H, W, 3]
         if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
             depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
-            
+
             # Sum over channels (keep views) then take the dot product with the normal map
             # results in an  angular error map per view (depth and middept)
             normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
         else:
+            # Create zero tensor with shape [2, H, W] to match depth_middepth_normal structure
             normal_error_map = torch.zeros(2, *expected_normals.shape[:2], device=expected_normals.device)
-        
+
         normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
         camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
@@ -298,15 +300,27 @@ class RadegsFeaturesModel(RadegsModel):
             if camera.metadata is not None and "cam_idx" in camera.metadata:
                 rgb = self._apply_bilateral_grid(rgb, camera.metadata["cam_idx"], H, W)
 
+        if render_mode == "RGB+ED":
+            depth_im = render[:, ..., 3:4]
+            depth_im = torch.where(alpha > 0, depth_im, depth_im.detach().max()).squeeze(0)
+        else:
+            depth_im = None
+
         if background.shape[0] == 3 and not self.training:
             background = background.expand(H, W, 3)
 
         features = render[:, ..., 3:3 + self.config.features_latent_dim]
+
+        # Threshold out by alpha values
+        expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max())
+        median_depths = torch.where(alpha > 0, median_depths, median_depths.detach().max())
+        normals = torch.where(alpha > 0, normals, normals.detach().max())
         
         return {
             "rgb": rgb.squeeze(0),
             'depth': expected_depths.squeeze(0), # depth_im is typical depth map of rasterization
             "median_depth": median_depths.squeeze(0),
+            'depth_im': depth_im,
             'accumulation': alpha.squeeze(0),
             "normals": normals.squeeze(0),
             "depth_normal_error_map": normal_error_map[0, ...].unsqueeze(-1), # [H, W, 1]

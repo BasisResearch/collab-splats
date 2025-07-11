@@ -52,6 +52,9 @@ class RadegsModelConfig(SplatfactoModelConfig):
     prefilter_voxel: bool = False
     """Whether to prefilter the voxel"""
 
+    min_depth_filter: float = 0.2
+    """Minimum depth filter for prefilter_voxel"""
+
 
 class RadegsModel(SplatfactoModel):
     """Template Model."""
@@ -137,7 +140,10 @@ class RadegsModel(SplatfactoModel):
 
         # Get visible gaussian mask
         if self.config.prefilter_voxel:
-            voxel_visible_mask = self._prefilter_voxel(camera_params)
+            voxel_visible_mask = self._prefilter_voxel(
+                camera_params=camera_params,
+                depth_filter=self.config.min_depth_filter
+            )
         else:
             voxel_visible_mask = None
         
@@ -304,7 +310,7 @@ class RadegsModel(SplatfactoModel):
         
         return camera_params
     
-    def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor]):
+    def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor], depth_filter: float = 0.2):
         """
         Render the scene.
 
@@ -346,8 +352,15 @@ class RadegsModel(SplatfactoModel):
         )
 
         # The results are with shape [C, N, ...]. Only the elements with radii > 0 are valid.
-        radii = proj_results[0]
+        radii, means2d, depths, conics, compensations, ray_ts, ray_planes, normals = (
+            proj_results
+        )
+
+        # The results are with shape [C, N, ...]. Only the elements with radii > 0 are valid.
         mask = torch.sum(radii, dim=-1).squeeze() > 0
+
+        # Filter out voxels that are too close to the camera
+        mask = torch.logical_and(mask, depths > depth_filter)
 
         return mask
 

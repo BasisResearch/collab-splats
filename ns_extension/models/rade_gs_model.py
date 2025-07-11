@@ -19,7 +19,7 @@ from gsplat.strategy import DefaultStrategy
 from gsplat.cuda._wrapper import fully_fused_projection
 
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig
+from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat
 
 from ns_extension.utils import convert_to_colmap_camera, depth_double_to_normal
 from ns_extension.utils.camera_utils import build_rotation
@@ -88,9 +88,9 @@ class RadegsModel(SplatfactoModel):
 
         if self.training:
             assert camera.shape[0] == 1, "Only one camera at a time"
-        #     optimized_camera_to_world = self.camera_optimizer.apply_to_camera(camera)
-        # else:
-        #     optimized_camera_to_world = camera.camera_to_worlds
+            optimized_camera_to_world = self.camera_optimizer.apply_to_camera(camera)
+        else:
+            optimized_camera_to_world = camera.camera_to_worlds
 
         # cropping
         if self.crop_box is not None and not self.training:
@@ -126,11 +126,23 @@ class RadegsModel(SplatfactoModel):
         camera_scale_fac = self._get_downscale_factor()
         camera.rescale_output_resolution(1 / camera_scale_fac)
 
+        # TLB adding
+        viewmat = get_viewmat(camera.camera_to_worlds)
+        K = camera.get_intrinsics_matrices().cuda()
+
         W, H = int(camera.width.item()), int(camera.height.item())
         self.last_size = (H, W)
 
         # Get camera parameters of colmap camera for rasterization
-        camera_params = self._get_camera_parameters(camera)
+        # camera_params = self._get_camera_parameters(camera)
+
+        camera_params = {
+            "Ks": K,
+            "viewmats": viewmat,
+            "image_width": W,
+            "image_height": H,
+            # "camera_center": camera.camera_center,
+        }
 
         # Get visible gaussian mask
         # voxel_visible_mask = self._prefilter_voxel(camera_params)
@@ -256,42 +268,42 @@ class RadegsModel(SplatfactoModel):
 
         return loss_dict
 
-    def _get_camera_parameters(self, camera: Cameras) -> Dict[str, torch.Tensor]:
-        """
-        Get the camera parameters for rasterization.
+    # def _get_camera_parameters(self, camera: Cameras) -> Dict[str, torch.Tensor]:
+    #     """
+    #     Get the camera parameters for rasterization.
 
-        Returns:
-            Ks: [1, 3, 3]
-            viewmats: [1, 4, 4]
-        """
-        colmap_camera = convert_to_colmap_camera(camera)
+    #     Returns:
+    #         Ks: [1, 3, 3]
+    #         viewmats: [1, 4, 4]
+    #     """
+    #     colmap_camera = convert_to_colmap_camera(camera)
 
-        # Set up rasterization configuration
-        tanfovx = math.tan(colmap_camera.fovx * 0.5)
-        tanfovy = math.tan(colmap_camera.fovy * 0.5)
-        focal_length_x = colmap_camera.image_width / (2 * tanfovx)
-        focal_length_y = colmap_camera.image_height / (2 * tanfovy)
+    #     # Set up rasterization configuration
+    #     tanfovx = math.tan(colmap_camera.fovx * 0.5)
+    #     tanfovy = math.tan(colmap_camera.fovy * 0.5)
+    #     focal_length_x = colmap_camera.image_width / (2 * tanfovx)
+    #     focal_length_y = colmap_camera.image_height / (2 * tanfovy)
 
-        Ks = torch.tensor(
-            [
-                [focal_length_x, 0, colmap_camera.image_width / 2.0],
-                [0, focal_length_y, colmap_camera.image_height / 2.0],
-                [0, 0, 1],
-            ],
-            device=self.device,
-        )[None]
+    #     Ks = torch.tensor(
+    #         [
+    #             [focal_length_x, 0, colmap_camera.image_width / 2.0],
+    #             [0, focal_length_y, colmap_camera.image_height / 2.0],
+    #             [0, 0, 1],
+    #         ],
+    #         device=self.device,
+    #     )[None]
 
-        viewmats = colmap_camera.world_view_transform.transpose(0, 1)[None]
+    #     viewmats = colmap_camera.world_view_transform.transpose(0, 1)[None]
 
-        camera_params = {
-            "Ks": Ks,
-            "viewmats": viewmats,
-            "image_width": colmap_camera.image_width,
-            "image_height": colmap_camera.image_height,
-            "camera_center": colmap_camera.camera_center,
-        }
+    #     camera_params = {
+    #         "Ks": Ks,
+    #         "viewmats": viewmats,
+    #         "image_width": colmap_camera.image_width,
+    #         "image_height": colmap_camera.image_height,
+    #         "camera_center": colmap_camera.camera_center,
+    #     }
         
-        return camera_params
+    #     return camera_params
     
     def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor]):
         """

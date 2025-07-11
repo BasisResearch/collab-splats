@@ -378,7 +378,8 @@ class RadegsModel(SplatfactoModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - info: dict
-        render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
+        # render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
+        render, alpha, meta = rasterization(
             means=means,  # [N, 3]
             quats=quats,  # [N, 4]
             scales=torch.exp(scales),  # [N, 3]
@@ -402,4 +403,6 @@ class RadegsModel(SplatfactoModel):
             return_depth_normal=False,
         )
 
-        return render, alpha, expected_depths, median_depths, expected_normals, meta
+        return render, alpha, meta
+
+        # return render, alpha, expected_depths, median_depths, expected_normals, meta

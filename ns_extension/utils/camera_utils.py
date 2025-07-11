@@ -34,7 +34,7 @@ class ColmapCamera:
         image_width,
         image_height,
         znear=0.01,
-        zfar=1e4,
+        zfar=1e3,
         trans=np.array([0.0, 0.0, 0.0]),
         scale=1.0,
     ):

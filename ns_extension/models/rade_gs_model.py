@@ -360,7 +360,7 @@ class RadegsModel(SplatfactoModel):
         mask = torch.sum(radii, dim=-1).squeeze() > 0
 
         # Filter out voxels that are too close to the camera
-        mask = torch.logical_and(mask, depths > depth_filter)
+        mask = torch.logical_and(mask, depths > depth_filter).squeeze()
 
         return mask
 

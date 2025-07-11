@@ -33,6 +33,8 @@ class ColmapCamera:
         fovy,
         image_width,
         image_height,
+        znear=0.01,
+        zfar=1000.0,
         trans=np.array([0.0, 0.0, 0.0]),
         scale=1.0,
     ):
@@ -43,8 +45,8 @@ class ColmapCamera:
 
         self.image_width = image_width
         self.image_height = image_height
-        self.zfar = 100.0
-        self.znear = 0.01
+        self.zfar = zfar
+        self.znear = znear
         self.trans = trans
         self.scale = scale
 

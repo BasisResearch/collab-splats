@@ -219,7 +219,7 @@ class RadegsModel(SplatfactoModel):
 
         if render_mode == "RGB+ED":
             # expected_depths = render[:, ..., 3:4]
-            expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max()).squeeze(0)
+            # expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max()).squeeze(0)
 
             depth_im = render[:, ..., 3:4]
             depth_im = torch.where(alpha > 0, depth_im, depth_im.detach().max()).squeeze(0)

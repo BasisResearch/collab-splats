@@ -160,7 +160,9 @@ class RadegsModel(SplatfactoModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
-        render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
+        # render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
+
+        render, alpha, self.info = self._render(
             means=means_crop,
             quats=quats_crop,
             scales=scales_crop,
@@ -177,19 +179,19 @@ class RadegsModel(SplatfactoModel):
                 self.gauss_params, self.optimizers, self.strategy_state, self.step, self.info
             )
 
-        # Calculate depth_middepth_normal --> used for depth_normal_loss
-        # Tensor shape: [2, H, W, 3]
-        if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
-            depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
+        # # Calculate depth_middepth_normal --> used for depth_normal_loss
+        # # Tensor shape: [2, H, W, 3]
+        # if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
+        #     depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
 
-            # Sum over channels (keep views) then take the dot product with the normal map
-            # results in an  angular error map per view (depth and middept)
-            normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
-        else:
-            # Create zero tensor with shape [2, H, W] to match depth_middepth_normal structure
-            normal_error_map = torch.zeros(2, *expected_normals.shape[:2], device=expected_normals.device)
+        #     # Sum over channels (keep views) then take the dot product with the normal map
+        #     # results in an  angular error map per view (depth and middept)
+        #     normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
+        # else:
+        #     # Create zero tensor with shape [2, H, W] to match depth_middepth_normal structure
+        #     normal_error_map = torch.zeros(2, *expected_normals.shape[:2], device=expected_normals.device)
 
-        normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
+        # normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
         
         camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
 
@@ -204,17 +206,23 @@ class RadegsModel(SplatfactoModel):
             if camera.metadata is not None and "cam_idx" in camera.metadata:
                 rgb = self._apply_bilateral_grid(rgb, camera.metadata["cam_idx"], H, W)
 
+        if render_mode == "RGB+ED":
+            expected_depths = render[:, ..., 3:4]
+            expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max()).squeeze(0)
+        else:
+            expected_depths = None
+
         if background.shape[0] == 3 and not self.training:
             background = background.expand(H, W, 3)
         
         return {
             "rgb": rgb.squeeze(0),
             'depth': expected_depths.squeeze(0), # depth_im is typical depth map of rasterization
-            "median_depth": median_depths.squeeze(0),
+            # "median_depth": median_depths.squeeze(0),
             'accumulation': alpha.squeeze(0),
-            "normals": normals.squeeze(0),
-            "depth_normal_error_map": normal_error_map[0, ...].unsqueeze(-1), # [H, W, 1]
-            "middepth_normal_error_map": normal_error_map[1, ...].unsqueeze(-1), # [H, W, 1]
+            # "normals": normals.squeeze(0),
+            # "depth_normal_error_map": normal_error_map[0, ...].unsqueeze(-1), # [H, W, 1]
+            # "middepth_normal_error_map": normal_error_map[1, ...].unsqueeze(-1), # [H, W, 1]
             "background": background,
         }
 
@@ -233,18 +241,18 @@ class RadegsModel(SplatfactoModel):
         # - loss_dict["tv_loss"] = total variation loss (cameras)
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
 
-        # If we want to use depth normal loss and we're past the regularization start iteration
-        if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
+        # # If we want to use depth normal loss and we're past the regularization start iteration
+        # if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
             
-            # Calculate depth_normal_loss
-            depth_normal_loss = (1 - self.config.depth_ratio) * outputs["depth_normal_error_map"].mean() + \
-                self.config.depth_ratio * outputs["middepth_normal_error_map"].mean()
+        #     # Calculate depth_normal_loss
+        #     depth_normal_loss = (1 - self.config.depth_ratio) * outputs["depth_normal_error_map"].mean() + \
+        #         self.config.depth_ratio * outputs["middepth_normal_error_map"].mean()
 
-            # Scale by lambda
-            depth_normal_loss = self.config.depth_normal_lambda * depth_normal_loss
+        #     # Scale by lambda
+        #     depth_normal_loss = self.config.depth_normal_lambda * depth_normal_loss
 
-            # Add to loss dict
-            loss_dict["depth_normal_loss"] = depth_normal_loss
+        #     # Add to loss dict
+        #     loss_dict["depth_normal_loss"] = depth_normal_loss
 
         return loss_dict
 
@@ -391,7 +399,7 @@ class RadegsModel(SplatfactoModel):
             # # set some threshold to disregard small gaussians for faster rendering.
             # radius_clip=3.0,
             # Output depth and normal maps
-            return_depth_normal=True,
+            return_depth_normal=False,
         )
 
         return render, alpha, expected_depths, median_depths, expected_normals, meta

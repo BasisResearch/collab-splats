@@ -34,7 +34,7 @@ class ColmapCamera:
         image_width,
         image_height,
         znear=0.01,
-        zfar=1e10,
+        zfar=1000.0,
         trans=np.array([0.0, 0.0, 0.0]),
         scale=1.0,
     ):
@@ -45,8 +45,8 @@ class ColmapCamera:
 
         self.image_width = image_width
         self.image_height = image_height
-        self.zfar = zfar
         self.znear = znear
+        self.zfar = zfar
         self.trans = trans
         self.scale = scale
 
@@ -66,6 +66,26 @@ class ColmapCamera:
             )
         ).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
+
+def convert_to_colmap_camera(camera: Cameras):
+    # NeRF 'transform_matrix' is a camera-to-world transform
+    c2w = torch.eye(4).to(camera.camera_to_worlds)
+    c2w[:3, :] = camera.camera_to_worlds[0]
+    # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+    c2w[:3, 1:3] *= -1
+
+    # get the world-to-camera transform and set R, T
+    w2c = torch.linalg.inv(c2w)
+    R = w2c[:3, :3].T  # R is stored transposed due to 'glm' in CUDA code
+    T = w2c[:3, 3]
+
+    K = camera.get_intrinsics_matrices().cuda()
+    W, H = int(camera.width.item()), int(camera.height.item())
+    fovx = focal2fov(K[0, 0, 0], W)
+    fovy = focal2fov(K[0, 1, 1], H)
+
+    return ColmapCamera(R=R, T=T, fovx=fovx, fovy=fovy, image_height=H, image_width=W)
+
 
 def get_world2view_transform(R, t, translate=torch.tensor([0.0, 0.0, 0.0]), scale=1.0):
     Rt = torch.zeros((4, 4))
@@ -107,25 +127,6 @@ def get_projection_matrix(znear, zfar, fovx, fovy):
 
 def focal2fov(focal, pixels):
     return 2 * math.atan(pixels / (2 * focal))
-
-def convert_to_colmap_camera(camera: Cameras):
-    # NeRF 'transform_matrix' is a camera-to-world transform
-    c2w = torch.eye(4).to(camera.camera_to_worlds)
-    c2w[:3, :] = camera.camera_to_worlds[0]
-    # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
-    c2w[:3, 1:3] *= -1
-
-    # get the world-to-camera transform and set R, T
-    w2c = torch.linalg.inv(c2w)
-    R = w2c[:3, :3].T  # R is stored transposed due to 'glm' in CUDA code
-    T = w2c[:3, 3]
-
-    K = camera.get_intrinsics_matrices().cuda()
-    W, H = int(camera.width.item()), int(camera.height.item())
-    fovx = focal2fov(K[0, 0, 0], W)
-    fovy = focal2fov(K[0, 1, 1], H)
-
-    return ColmapCamera(R=R, T=T, fovx=fovx, fovy=fovy, image_height=H, image_width=W)
 
 def build_rotation(r):
     norm = torch.sqrt(

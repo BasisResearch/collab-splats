@@ -172,9 +172,8 @@ class RadegsModel(SplatfactoModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
-        # render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
-
-        render, alpha, self.info = self._render(
+        render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
+        # render, alpha, self.info = self._render(
             means=means_crop,
             quats=quats_crop,
             scales=scales_crop,
@@ -219,7 +218,7 @@ class RadegsModel(SplatfactoModel):
                 rgb = self._apply_bilateral_grid(rgb, camera.metadata["cam_idx"], H, W)
 
         if render_mode == "RGB+ED":
-            expected_depths = render[:, ..., 3:4]
+            # expected_depths = render[:, ..., 3:4]
             expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max()).squeeze(0)
         else:
             expected_depths = None
@@ -390,8 +389,8 @@ class RadegsModel(SplatfactoModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - info: dict
-        # render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
-        render, alpha, meta = rasterization(
+        render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
+        # render, alpha, meta = rasterization(
             means=means,  # [N, 3]
             quats=quats,  # [N, 4]
             scales=torch.exp(scales),  # [N, 3]
@@ -412,9 +411,9 @@ class RadegsModel(SplatfactoModel):
             # # set some threshold to disregard small gaussians for faster rendering.
             # radius_clip=3.0,
             # Output depth and normal maps
-            return_depth_normal=False,
+            return_depth_normal=True,
         )
 
-        return render, alpha, meta
+        # return render, alpha, meta
 
-        # return render, alpha, expected_depths, median_depths, expected_normals, meta
+        return render, alpha, expected_depths, median_depths, expected_normals, meta

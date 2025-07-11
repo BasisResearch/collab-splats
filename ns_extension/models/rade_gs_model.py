@@ -127,7 +127,7 @@ class RadegsModel(SplatfactoModel):
         camera.rescale_output_resolution(1 / camera_scale_fac)
 
         # TLB adding
-        viewmat = get_viewmat(camera.camera_to_worlds)
+        viewmat = get_viewmat(optimized_camera_to_world)
         K = camera.get_intrinsics_matrices().cuda()
 
         W, H = int(camera.width.item()), int(camera.height.item())

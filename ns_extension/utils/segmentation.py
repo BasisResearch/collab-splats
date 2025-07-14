@@ -8,6 +8,8 @@ class Segmentation:
     def __init__(self, backend: str = 'mobile_sam', strategy: str = 'object', device: str = "cpu"):
         if backend == 'mobilesamv2':
             self.mobilesamv2, self.object_model, self.predictor = load_mobile_sam(device=device)
+        elif backend == 'ultralytics':
+            pass
         else:
             raise ValueError(f"Backend {backend} not supported")
 

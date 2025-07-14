@@ -1,10 +1,14 @@
-# rade_gs
-RaDe-GS implemented for nerfstudio
+# ns-extension
 
-STILL TESTING
+Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
 
 ## Installation
 
+### Docker
+
+We provide a docker image setup for running nerfstudio with ns-extension (along with other abilities!) at ```tommybotch/collab-environment:latest```
+
+### Conda
 Follow the [NerfStudio instllation instructions](https://docs.nerf.studio/quickstart/installation.html) to install a conda environment. For convenience, here are the commands I've used to successfully build a nerfstudio environment.
 
 **Note:** This requires cuda developer tools -- specifically nvcc
@@ -36,7 +40,7 @@ conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y
 conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0'
 ```
 
-Now is where pain begins... tinycuda-nn is the big snag point of installation
+Now is where pain begins... tinycuda-nn is the big snag point of installation -- it will also take the most amount of time.
 
 ```bash
 # Note which CUDA architectures to build for
@@ -45,7 +49,7 @@ export TCNN_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}
 pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
 
-Lastly install gsplat-rade and nerfstudio -- this gsplat version **is required** to run this code, as it contains the CUDA kernel for calculating depth and normal maps. 
+Install gsplat-rade and nerfstudio -- this gsplat version **is required** to run this code, as it contains the CUDA kernel for calculating depth and normal maps. 
 
 ```bash
 # Install specific gsplat version
@@ -53,25 +57,28 @@ pip install git+https://github.com/brian-xu/gsplat-rade.git
 
 # Install nerfstudio
 pip install nerfstudio
+
+# Bump the numpy version back down (nerfstudio upgrades for some reason)
+conda install -c conda-forge 'numpy<2.0.0'
 ```
 
-### Optional additions
-
-There are a number of "nice-to-haves" for additional functionality. Currently working on building out tools for feature-splatting with RaDe as the base model. 
+Lastly, install ns-extension -- currently doing direct clone and egg installation due to private repository
 
 ```bash
-
+## If public repository could do -- pip install git+https://github.com/BasisResearch/ns-extension
+git clone https://github.com/BasisResearch/ns-extension
+cd ns-extension
+pip install -e .
 ```
 
-here are the commands I run to install nerfstudio on two machines.
+## Usage
 
+ns-extension is built to integrate different gaussian splatting codebases that enable depth and normal map creation. Specifically, it implements the depth-normal consistency loss
 
-Needs to run the following additional extensions
+Two models are currently offered:
+- **rade-gs:** the baseline extension model that enables depth and normal map creation within the rasterization process. This is built on top of [gsplat-rade](https://github.com/brian-xu/gsplat-rade) and is heavily inspired by the [scaffold-gs-nerfstudio](https://github.com/brian-xu/scaffold-gs-nerfstudio) implementation.
+- **rade-features:**  extends rade-gs to enable splatting of ANN feature spaces. This draws inspiration from the original [feature-splatting-ns](https://github.com/vuer-ai/feature-splatting) implementation but contains additional functionality.
 
-```
+### Train a splatting model
 
-conda install cmake
-conda install conda-forge::gmp
-conda install conda-forge::cgal
-
-```ls
+We provide an example script to train a splatting model. 

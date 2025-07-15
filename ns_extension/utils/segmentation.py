@@ -188,7 +188,7 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
             y_indices, x_indices = np.where(_mask)
             y_min, y_max = y_indices.min(), y_indices.max()
             x_min, x_max = x_indices.min(), x_indices.max()
-            xywh = [float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min)]
+            xywh = [x_min, y_min, x_max - x_min, y_max - y_min]
 
             results.append({
                 "segmentation": masks[i],
@@ -197,7 +197,7 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
                 "predicted_iou": float(iou_preds[i]),
                 "point_coords": [],  # since we're using box prompts
                 "stability_score": float(confs[i]),  # reuse detector conf if nothing else
-                "crop_box": [0.0, 0.0, float(width), float(height)],  # no cropping here
+                "crop_box": [0, 0, width, height],  # no cropping here
             })
 
     # Convert masks to tensor

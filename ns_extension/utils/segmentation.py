@@ -129,17 +129,19 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
     if not obj_results or len(obj_results[0].boxes) == 0:
         return []
     
+
+    # Setup predictor
+    predictor.set_image(image)
+    image_embedding = predictor.features
+    prompt_embedding = mobile_sam.prompt_encoder.get_dense_pe()
+
+    # Get boxes and confs
     boxes_xyxy = obj_results[0].boxes.xyxy.cpu().numpy()
     boxes_conf = obj_results[0].boxes.conf.cpu().numpy()
 
     # Convert boxes to original resolution
     transformed_boxes = predictor.transform.apply_boxes(boxes_xyxy, predictor.original_size)
     transformed_boxes = torch.from_numpy(transformed_boxes).to("cuda")
-
-    # Step 2: Prepare predictor
-    predictor.set_image(image)
-    image_embedding = predictor.features
-    prompt_embedding = mobile_sam.prompt_encoder.get_dense_pe()
 
     results = []
 

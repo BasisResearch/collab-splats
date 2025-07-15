@@ -1,6 +1,7 @@
 import os
 import torch
 from torch.nn import functional as F
+import numpy as np
 
 from mobile_sam import SamAutomaticMaskGenerator
 from typing import Tuple

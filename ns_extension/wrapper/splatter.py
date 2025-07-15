@@ -143,7 +143,7 @@ class Splatter:
         # Return and store the processed_data_path
         if transforms_path.exists() and not self.config.get('overwrite', False):
             print(f"transforms.json already exists at {transforms_path}")
-            print("To rerun preprocessing, set overwrite=True in config")
+            print("To rerun preprocessing, set overwrite=True")
             self.config['preproc_data_path'] = preproc_data_path
             return
 
@@ -191,7 +191,7 @@ class Splatter:
 
         if model_exists and not overwrite:
             print(f"Output already exists for {method}")
-            print("To rerun feature extraction, set overwrite=True in config")
+            print("To rerun feature extraction, set overwrite=True")
             self.config['model_path'] = model_path
             return
 

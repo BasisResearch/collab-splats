@@ -180,7 +180,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             image = np.asarray(image) # Convert to numpy array
 
             # Apply segmentation masks over features
-            masks = segmentation.segment(image)
+            masks, _ = segmentation.segment(image)
 
             if masks is None:
                 # Add an all-zero tensor if no object is detected

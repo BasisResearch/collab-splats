@@ -1,0 +1,41 @@
+import sys
+from ns_extension.wrapper import Splatter, SplatterConfig
+
+test_configs = {
+    'rats': {
+        'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
+        'frame_proportion': 0.25,
+    },
+    'birds': {
+        'file_path': '/workspace/fieldwork-data/birds/2024-02-08/SplatsSD/C0049.MP4',
+        'frame_proportion': 0.25
+    }
+}
+
+METHODS = ['rade-features'] #'rade-gs'] #'feature-splatting',
+
+if __name__ == "__main__":
+
+    for species, config in test_configs.items():
+        for method in METHODS:
+            print (f"Running {method} for {species}")
+            
+            config['method'] = method
+
+            # Create the splatter
+            config = SplatterConfig(**config)
+            splatter = Splatter(config)
+
+            # Create the colmap
+            splatter.preprocess()
+
+            # Train the splatting model -- can pass additional arguments to ns-train
+            kwargs = {
+                "pipeline.model.output-depth-during-training": True,
+                "pipeline.model.rasterize-mode": "antialiased",
+                "pipeline.model.use_scale_regularization": True,
+            }
+
+            splatter.extract_features(overwrite=True, kwargs=kwargs)
+
+        sys.exit()

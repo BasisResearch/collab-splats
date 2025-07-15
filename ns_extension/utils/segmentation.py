@@ -1,14 +1,30 @@
+import os
 import torch
-from mobile_sam import SamAutomaticMaskGenerator
 from torch.nn import functional as F
+
+from mobile_sam import SamAutomaticMaskGenerator
 from typing import Tuple
 from .features import batch_iterator, load_torchhub_model
+
+##TLB --> need to figure out how to use ultralytics here
+# from ultralytics import SAM
+
+# TORCH_HOME = os.getenv('TORCH_HOME', os.path.expanduser('~/.cache/torch'))
+
+# ULTRALYTICS_SAM_MODELS = {
+#     'mobile_sam': os.path.join(TORCH_HOME, 'ultralytics', 'mobile_sam.pt'),
+#     'sam2.1_t': os.path.join(TORCH_HOME, 'ultralytics', 'sam2.1_t.pt'),
+#     'sam2.1_s': os.path.join(TORCH_HOME, 'ultralytics', 'sam2.1_s.pt'),
+#     'sam2.1_b': os.path.join(TORCH_HOME, 'ultralytics', 'sam2.1_b.pt'),
+# }
 
 class Segmentation:
     def __init__(self, backend: str = 'mobile_sam', strategy: str = 'object', device: str = "cpu"):
         if backend == 'mobilesamv2':
-            self.mobilesamv2, self.object_model, self.predictor = load_mobile_sam(device=device)
+            self.seg_model, self.object_model, self.predictor = load_mobile_sam(device=device)
         elif backend == 'ultralytics':
+            pass
+        elif backend == 'grounded_sam':
             pass
         else:
             raise ValueError(f"Backend {backend} not supported")
@@ -17,15 +33,15 @@ class Segmentation:
         self.strategy = strategy
 
     def segment(self, image):
-
         if self.backend == 'mobilesamv2':
             if self.strategy == 'object':
-                return object_segment_image(image, self.mobilesamv2, self.object_model, self.predictor)
+                return object_segment_image(image, self.seg_model, self.object_model, self.predictor)
             elif self.strategy == 'auto':
-                return auto_segment_image(image, self.mobilesamv2)
+                return auto_segment_image(image, self.seg_model)
             else:
                 raise ValueError(f"Strategy {self.strategy} not supported")
-
+        elif self.backend == 'ultralytics':
+            pass
         elif self.backend == 'grounded_sam':
             pass
         # if self.method == 'object':
@@ -69,13 +85,13 @@ def auto_segment_image(image, mobile_sam, kwargs: dict = {}):
         **kwargs
     )
 
-    masks = mask_generator.generate(image)
+    results = mask_generator.generate(image)
 
     # Convert masks to tensor
-    masks = [torch.tensor(mask['segmentation']).to(torch.float32) for mask in masks]
+    masks = [torch.tensor(mask['segmentation']).to(torch.float32) for mask in results]
     masks = torch.stack(masks)
     
-    return masks
+    return masks, results
 
 def get_object_masks(image, obj_model, kwargs: dict = {}):
     """
@@ -104,50 +120,46 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
     Outputs:
         - sam_mask: SAM mask
     """
+
+    height, width = image.shape[:2]
+    
     # Get object detections
     obj_results = get_object_masks(image, obj_model)
     
-    if not obj_results:
-        return None
+    if not obj_results or len(obj_results[0].boxes) == 0:
+        return []
     
-    # Setup predictor
+    boxes_xyxy = obj_results[0].boxes.xyxy.cpu().numpy()
+    boxes_conf = obj_results[0].boxes.conf.cpu().numpy()
+
+    # Convert boxes to original resolution
+    transformed_boxes = predictor.transform.apply_boxes(boxes_xyxy, predictor.original_size)
+    transformed_boxes = torch.from_numpy(transformed_boxes).to("cuda")
+
+    # Step 2: Prepare predictor
     predictor.set_image(image)
-    
-    # Prepare input boxes
-    input_boxes = obj_results[0].boxes.xyxy
-    input_boxes = input_boxes.cpu().numpy()
-    input_boxes = predictor.transform.apply_boxes(input_boxes, predictor.original_size)
-    input_boxes = torch.from_numpy(input_boxes).cuda()
-    
-    # Early return if no boxes
-    if len(input_boxes) == 0:
-        return None
-    
-    # Get base embeddings (don't pre-allocate for large batches)
     image_embedding = predictor.features
     prompt_embedding = mobile_sam.prompt_encoder.get_dense_pe()
-    
-    sam_masks = []
-    
-    # Process in batches
-    for boxes_batch in batch_iterator(batch_size, input_boxes):
+
+    results = []
+
+    # Step 3: Loop through boxes in batches
+    for boxes_batch, conf_batch in zip(batch_iterator(batch_size, transformed_boxes), batch_iterator(batch_size, boxes_conf)):
         boxes = boxes_batch[0]
-        current_batch_size = boxes.shape[0]
-        
+        confs = conf_batch[0]
+        B = boxes.shape[0]
+
         with torch.no_grad():
-            # Create embeddings for current batch size only
-            _image_embedding = image_embedding.repeat(current_batch_size, 1, 1, 1)
-            _prompt_embedding = prompt_embedding.repeat(current_batch_size, 1, 1, 1)
-            
-            # Generate sparse and dense embeddings
+            _image_embedding = image_embedding.repeat(B, 1, 1, 1)
+            _prompt_embedding = prompt_embedding.repeat(B, 1, 1, 1)
+
             sparse_embeddings, dense_embeddings = mobile_sam.prompt_encoder(
                 points=None,
                 boxes=boxes,
                 masks=None,
             )
-            
-            # Get low resolution masks
-            low_res_masks, _ = mobile_sam.mask_decoder(
+
+            low_res_masks, iou_preds = mobile_sam.mask_decoder(
                 image_embeddings=_image_embedding,
                 image_pe=_prompt_embedding,
                 sparse_prompt_embeddings=sparse_embeddings,
@@ -155,31 +167,41 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
                 multimask_output=False,
                 simple_type=True,
             )
-            
-            # Post-process masks
-            low_res_masks = predictor.model.postprocess_masks(
+
+            masks = predictor.model.postprocess_masks(
                 low_res_masks, predictor.input_size, predictor.original_size
             )
-            
-            # Apply threshold and convert to binary
-            sam_mask_batch = (low_res_masks > mobile_sam.mask_threshold) * 1.0
-            sam_mask_batch = sam_mask_batch.squeeze(1)
-            
-            # Move to CPU immediately to free GPU memory
-            sam_masks.append(sam_mask_batch.cpu())
-            
-            # Explicit cleanup of GPU tensors
-            del image_embedding, prompt_embedding, sparse_embeddings, dense_embeddings
-            del low_res_masks, sam_mask_batch
-            
-        # Clear GPU cache after each batch
-        torch.cuda.empty_cache()
+            masks = masks > mobile_sam.mask_threshold
+            masks = masks.squeeze(1).cpu().numpy()
+            iou_preds = iou_preds.squeeze(1).cpu().numpy()
+
+        for i in range(B):
+            mask = masks[i].astype(np.uint8)
+            area = int(mask.sum())
+            if area == 0:
+                continue
+
+            # Bounding box from mask (not just original box)
+            y_indices, x_indices = np.where(mask)
+            y_min, y_max = y_indices.min(), y_indices.max()
+            x_min, x_max = x_indices.min(), x_indices.max()
+            xywh = [float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min)]
+
+            results.append({
+                "segmentation": mask,
+                "bbox": xywh,
+                "area": area,
+                "predicted_iou": float(iou_preds[i]),
+                "point_coords": [],  # since we're using box prompts
+                "stability_score": float(confs[i]),  # reuse detector conf if nothing else
+                "crop_box": [0.0, 0.0, float(width), float(height)],  # no cropping here
+            })
+
+    # Convert masks to tensor
+    masks = [torch.tensor(mask['segmentation']).to(torch.float32) for mask in results]
+    masks = torch.stack(masks)
     
-    # Concatenate all masks (this happens on CPU, then move to GPU if needed)
-    sam_masks = torch.cat(sam_masks, dim=0)
-    
-    # Move back to GPU if needed, or keep on CPU
-    return sam_masks.cuda() if torch.cuda.is_available() else sam_masks
+    return masks, results
 
 ########################################################
 ########## Feature Aggregation Utils ###################

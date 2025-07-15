@@ -179,19 +179,19 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
             iou_preds = iou_preds.squeeze(1).cpu().numpy()
 
         for i in range(B):
-            mask = masks[i].astype(np.uint8)
-            area = int(mask.sum())
+            _mask = masks[i].astype(np.uint8)
+            area = int(_mask.sum())
             if area == 0:
                 continue
 
             # Bounding box from mask (not just original box)
-            y_indices, x_indices = np.where(mask)
+            y_indices, x_indices = np.where(_mask)
             y_min, y_max = y_indices.min(), y_indices.max()
             x_min, x_max = x_indices.min(), x_indices.max()
             xywh = [float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min)]
 
             results.append({
-                "segmentation": mask,
+                "segmentation": masks[i],
                 "bbox": xywh,
                 "area": area,
                 "predicted_iou": float(iou_preds[i]),

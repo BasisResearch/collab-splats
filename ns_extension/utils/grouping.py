@@ -111,3 +111,28 @@ class GroupingClassifier(nn.Module):
 #     for i in range(num_masks):
 #         color_mask[mask == i+1] = random_colors[i]
 #     return color_mask
+
+    def create_patch_mask(self, image, num_patches):
+        image_height, image_width = image.shape[:2]
+        
+        patch_width = math.ceil(image_width / num_patches)
+        patch_height = math.ceil(image_height / num_patches)
+        
+        # Create flattened coordinates
+        total_pixels = image_height * image_width
+        y_coords = torch.arange(image_height).unsqueeze(1).expand(-1, image_width).flatten()
+        x_coords = torch.arange(image_width).unsqueeze(0).expand(image_height, -1).flatten()
+        
+        # Calculate patch indices for all pixels at once
+        patch_y_indices = torch.clamp(y_coords // patch_height, 0, num_patches - 1)
+        patch_x_indices = torch.clamp(x_coords // patch_width, 0, num_patches - 1)
+        
+        # Create sparse representation
+        flatten_patch_mask = torch.zeros((num_patches, num_patches, total_pixels), 
+                                    dtype=torch.bool)
+        
+        # Use indexing to set values
+        pixel_indices = torch.arange(total_pixels)
+        flatten_patch_mask[patch_y_indices, patch_x_indices, pixel_indices] = True
+        
+        return flatten_patch_mask

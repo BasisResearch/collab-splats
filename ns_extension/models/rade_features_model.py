@@ -223,7 +223,6 @@ class RadegsFeaturesModel(RadegsModel):
         if self.config.prefilter_voxel:
             voxel_visible_mask = self._prefilter_voxel(
                 camera_params=camera_params,
-                depth_filter=self.config.min_depth_filter
             )
         else:
             voxel_visible_mask = None
@@ -245,7 +244,6 @@ class RadegsFeaturesModel(RadegsModel):
 
         # Modified rasterization function from https://github.com/brian-xu/gsplat-rade/blob/main/gsplat/rendering.py
         # Enables returning depth and normal maps for computing of loss
-        return_packed = self.config.return_packed_info and not self.training
 
         # Rendered contains the following:
         # - rgb: [N, 3]
@@ -265,7 +263,6 @@ class RadegsFeaturesModel(RadegsModel):
             sh_degree_to_use=sh_degree_to_use,
             visible_mask=voxel_visible_mask,
             camera_params=camera_params,
-            packed=return_packed,
         )
 
         if self.training:
@@ -341,7 +338,6 @@ class RadegsFeaturesModel(RadegsModel):
         sh_degree_to_use: int,
         visible_mask: torch.Tensor,
         camera_params: Dict[str, torch.Tensor],
-        packed: bool = False,
     ):
         """
         Render the scene.
@@ -400,7 +396,7 @@ class RadegsFeaturesModel(RadegsModel):
             Ks=camera_params["Ks"],  # [1, 3, 3]
             width=int(camera_params["image_width"]),
             height=int(camera_params["image_height"]),
-            packed=packed,
+            packed=False,
             near_plane=0.01,
             far_plane=1e10,
             render_mode=render_mode,

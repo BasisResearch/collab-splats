@@ -52,9 +52,6 @@ class RadegsModelConfig(SplatfactoModelConfig):
     prefilter_voxel: bool = False
     """Whether to prefilter the voxel"""
 
-    min_depth_filter: float = 0.2
-    """Minimum depth filter for prefilter_voxel"""
-
 
 class RadegsModel(SplatfactoModel):
     """Template Model."""
@@ -94,10 +91,7 @@ class RadegsModel(SplatfactoModel):
 
         if self.training:
             assert camera.shape[0] == 1, "Only one camera at a time"
-            optimized_camera_to_world = self.camera_optimizer.apply_to_camera(camera)
-        else:
-            optimized_camera_to_world = camera.camera_to_worlds
-
+        
         # cropping
         if self.crop_box is not None and not self.training:
             crop_ids = self.crop_box.within(self.means).squeeze()
@@ -142,7 +136,6 @@ class RadegsModel(SplatfactoModel):
         if self.config.prefilter_voxel:
             voxel_visible_mask = self._prefilter_voxel(
                 camera_params=camera_params,
-                depth_filter=self.config.min_depth_filter
             )
         else:
             voxel_visible_mask = None
@@ -172,8 +165,6 @@ class RadegsModel(SplatfactoModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
-        return_packed = self.config.return_packed_info and not self.training
-
         render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
         # render, alpha, self.info = self._render(
             means=means_crop,
@@ -185,7 +176,6 @@ class RadegsModel(SplatfactoModel):
             sh_degree_to_use=sh_degree_to_use,
             visible_mask=voxel_visible_mask,
             camera_params=camera_params,
-            packed=return_packed,
         )
 
         if self.training:
@@ -313,7 +303,7 @@ class RadegsModel(SplatfactoModel):
         
         return camera_params
     
-    def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor], depth_filter: float = 0.01):
+    def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor]):
         """
         Render the scene.
 
@@ -362,9 +352,6 @@ class RadegsModel(SplatfactoModel):
         # The results are with shape [C, N, ...]. Only the elements with radii > 0 are valid.
         mask = torch.sum(radii, dim=-1).squeeze() > 0
 
-        # Filter out voxels that are too close to the camera
-        mask = torch.logical_and(mask, depths > depth_filter).squeeze()
-
         return mask
 
     def _render(
@@ -378,7 +365,6 @@ class RadegsModel(SplatfactoModel):
         sh_degree_to_use: int,
         camera_params: Dict[str, torch.Tensor],
         visible_mask: Optional[torch.Tensor] = None,
-        packed: bool = False,
     ):
         """
         Render the scene.
@@ -416,7 +402,7 @@ class RadegsModel(SplatfactoModel):
             Ks=camera_params["Ks"],  # [1, 3, 3]
             width=int(camera_params["image_width"]),
             height=int(camera_params["image_height"]),
-            packed=packed,
+            packed=False,
             near_plane=0.01,
             far_plane=1e10,
             render_mode=render_mode,

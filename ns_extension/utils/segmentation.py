@@ -192,8 +192,8 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
 
             results.append({
                 "segmentation": masks[i],
-                "bbox": xywh,
                 "area": area,
+                "bbox": xywh,
                 "predicted_iou": float(iou_preds[i]),
                 "point_coords": [],  # since we're using box prompts
                 "stability_score": float(confs[i]),  # reuse detector conf if nothing else

@@ -172,6 +172,8 @@ class RadegsModel(SplatfactoModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
+        return_packed = self.config.return_packed_info and not self.training
+
         render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
         # render, alpha, self.info = self._render(
             means=means_crop,
@@ -183,6 +185,7 @@ class RadegsModel(SplatfactoModel):
             sh_degree_to_use=sh_degree_to_use,
             visible_mask=voxel_visible_mask,
             camera_params=camera_params,
+            packed=return_packed,
         )
 
         if self.training:
@@ -375,6 +378,7 @@ class RadegsModel(SplatfactoModel):
         sh_degree_to_use: int,
         camera_params: Dict[str, torch.Tensor],
         visible_mask: Optional[torch.Tensor] = None,
+        packed: bool = False,
     ):
         """
         Render the scene.
@@ -412,7 +416,7 @@ class RadegsModel(SplatfactoModel):
             Ks=camera_params["Ks"],  # [1, 3, 3]
             width=int(camera_params["image_width"]),
             height=int(camera_params["image_height"]),
-            packed=False,
+            packed=packed,
             near_plane=0.01,
             far_plane=1e10,
             render_mode=render_mode,

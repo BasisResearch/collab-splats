@@ -135,8 +135,6 @@ class RadegsFeaturesModel(RadegsModel):
     #     features = self.decoder.per_gaussian_forward(features)
 
 
-
-
     def decode_features(self, features: torch.Tensor, resize_factor: float = 1.0) -> torch.Tensor:
         """
         Decode features from latent space back to model dimensionality.
@@ -247,6 +245,7 @@ class RadegsFeaturesModel(RadegsModel):
 
         # Modified rasterization function from https://github.com/brian-xu/gsplat-rade/blob/main/gsplat/rendering.py
         # Enables returning depth and normal maps for computing of loss
+        return_packed = self.config.return_packed_info and not self.training
 
         # Rendered contains the following:
         # - rgb: [N, 3]
@@ -266,6 +265,7 @@ class RadegsFeaturesModel(RadegsModel):
             sh_degree_to_use=sh_degree_to_use,
             visible_mask=voxel_visible_mask,
             camera_params=camera_params,
+            packed=return_packed,
         )
 
         if self.training:
@@ -341,6 +341,7 @@ class RadegsFeaturesModel(RadegsModel):
         sh_degree_to_use: int,
         visible_mask: torch.Tensor,
         camera_params: Dict[str, torch.Tensor],
+        packed: bool = False,
     ):
         """
         Render the scene.
@@ -399,7 +400,7 @@ class RadegsFeaturesModel(RadegsModel):
             Ks=camera_params["Ks"],  # [1, 3, 3]
             width=int(camera_params["image_width"]),
             height=int(camera_params["image_height"]),
-            packed=False,
+            packed=packed,
             near_plane=0.01,
             far_plane=1e10,
             render_mode=render_mode,

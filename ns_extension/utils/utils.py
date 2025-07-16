@@ -7,6 +7,31 @@ import numpy as np
 from scipy.spatial import cKDTree
 import torch
 
+def project_gaussians(model, camera):
+    """
+    Project gaussians onto 2D image and prepare lookup data.
+    """
+
+    _ = model.get_outputs(camera)
+    meta = model.info
+    W, H = meta["width"], meta["height"]
+
+    # gaussians where the radius is greater than 1.0 can be seen in the camera frustum
+    radii = model.info['radii'].squeeze()
+    gaussian_ids = torch.where(torch.sum(radii > 1.0, axis=1))[0]
+
+    # Convert 2D coords to flat pixel indices
+    xy_rounded = torch.round(meta['means2d']).squeeze().long()
+    x = torch.clamp(xy_rounded[:, 0], 0, W)
+    y = torch.clamp(xy_rounded[:, 1], 0, H)
+    projected_flattened = x + y * W                      # (M,)
+
+    return {
+        "proj_flattened": projected_flattened.squeeze().detach().cpu(),                      # (M,)
+        "proj_depths": meta['depths'].squeeze().detach().cpu(),                                      # (M,)
+        "gaussian_ids": gaussian_ids.squeeze().detach().cpu(),                 # (M,)
+    }
+
 def calculate_accuracy(reconstructed_points, reference_points, percentile=90):
     """
     Calculate accuracy: How far away 90% of the reconstructed point clouds are from the reference point cloud.

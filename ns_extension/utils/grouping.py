@@ -25,6 +25,11 @@ Steps:
 import torch
 from torch import nn
 
+import numpy as np
+import math
+
+from ns_extension.utils.utils import project_gaussians
+
 class GroupingClassifier(nn.Module):
     def __init__(self, num_masks: int, num_gaussians: int):
         super(GroupingClassifier, self).__init__()
@@ -34,6 +39,40 @@ class GroupingClassifier(nn.Module):
         self.num_gaussians = num_gaussians
         self.classifier = nn.Conv2d(in_channels=num_masks, out_channels=num_gaussians, kernel_size=1)
 
+    #########################################################
+    ############## Mask initialization ######################
+    #########################################################
+
+    def set_patch_mask(self, image, num_patches: int = 32):
+        """
+        Provided an image of given dimensions, create an array of patches.
+        """
+        # Get image dimensions
+        H, W = image.shape[:2]
+
+        # Get patch dimensions
+        patch_width = math.ceil(W / num_patches)
+        patch_height = math.ceil(H / num_patches)
+        
+        # Create flattened coordinates
+        total_pixels = H * W
+        y_coords = torch.arange(H).unsqueeze(1).expand(-1, W).flatten()
+        x_coords = torch.arange(W).unsqueeze(0).expand(H, -1).flatten()
+        
+        # Calculate patch indices for all pixels at once
+        patch_y_indices = torch.clamp(y_coords // patch_height, 0, num_patches - 1)
+        patch_x_indices = torch.clamp(x_coords // patch_width, 0, num_patches - 1)
+        
+        # Create sparse representation
+        flatten_patch_mask = torch.zeros((num_patches, num_patches, total_pixels), 
+                                    dtype=torch.bool)
+        
+        # Use indexing to set values
+        pixel_indices = torch.arange(total_pixels)
+        flatten_patch_mask[patch_y_indices, patch_x_indices, pixel_indices] = True
+        
+        return flatten_patch_mask
+    
     def create_composite_mask(self, results, confidence_threshold=0.85):
         """
         Creates a composite mask from the results of the segmentation model.
@@ -59,6 +98,7 @@ class GroupingClassifier(nn.Module):
         masks, confs = zip(*selected_masks)
 
         # Create empty image to store mask ids
+        H, W = masks[0].shape[:2]
         mask_id = np.zeros((H, W), dtype=np.uint8)
 
         sorted_idxs = np.argsort(confs)
@@ -79,7 +119,7 @@ class GroupingClassifier(nn.Module):
 
         return composite_mask
 
-    def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
+    def mask_id_to_binary_mask(self, composite_mask: np.ndarray) -> np.ndarray:
         """
         Convert an image with integer mask IDs to a binary mask array.
 
@@ -97,6 +137,110 @@ class GroupingClassifier(nn.Module):
         binary_masks = (composite_mask[None, ...] == unique_ids[:, None, None])
         return binary_masks
 
+    #########################################################
+    ############## Gaussian selection #######################
+    #########################################################
+
+    def select_front_gaussians(self, model, camera, composite_mask, front_percentage: float = 0.5):
+        """
+        JIT-compiled version using torch.compile (PyTorch 2.0+).
+        Maintains original structure and comments while adding compilation optimization.
+        Now with separated helper functions for better code organization.
+        """
+        
+        # Project gaussians onto 2d image
+        proj_results = project_gaussians(model, camera)
+        
+        # Prepare masks = Decimate the composite mask into individual masks
+        binary_masks = self.mask_id_to_binary_mask(composite_mask)
+        flattened_masks = torch.tensor(binary_masks).flatten(start_dim=1)  # (N, H*W)
+
+        # Pre-extract proj_results for compiled function
+        proj_flattened = proj_results['proj_flattened']
+        proj_depths = proj_results['proj_depths']
+
+        # Compute the gaussian lookup table
+        max_gaussian_id = proj_results['gaussian_ids'].max() if len(proj_results['gaussian_ids']) > 0 else 0
+        valid_gaussian_mask = torch.zeros(max_gaussian_id + 1, dtype=torch.bool, device=proj_results['gaussian_ids'].device)
+        valid_gaussian_mask[proj_results['gaussian_ids']] = True
+
+        front_gaussians = []
+
+        for mask in tqdm(flattened_masks, total=len(flattened_masks), desc="Processing masks"):
+            # Use compiled function for main processing
+            result = self.process_mask_gaussians(
+                mask, 
+                proj_results, 
+                valid_gaussian_mask, 
+                front_percentage=front_percentage
+            )
+            
+            front_gaussians.append(result)
+
+        return front_gaussians
+
+    @torch.compile(mode="max-autotune")
+    def process_mask_gaussians(self, mask, proj_results: Dict[str, torch.Tensor], valid_gaussian_mask: torch.Tensor, front_percentage: float = 0.5):
+        """
+        JIT-compiled function for processing a single mask.
+        Optimized for performance with torch.compile.
+        """
+        # Find intersection between object mask and patch masks
+        patch_intersections = mask.unsqueeze(0).unsqueeze(0) & self.patch_mask
+
+        # Find non-empty patches
+        patch_sums = patch_intersections.sum(dim=2)
+        non_empty_patches = (patch_sums > 0).nonzero(as_tuple=False)
+
+        if len(non_empty_patches) == 0:
+            return torch.tensor([], dtype=torch.long, device=mask.device)
+        
+        # Extract all patches at once
+        mask_gaussians = []
+        patches_data = patch_intersections[non_empty_patches[:, 0], non_empty_patches[:, 1]]
+
+        # Go through each non-empty patch and get the front gaussians
+        for patch_idx, current_patch in enumerate(patches_data):
+            # Projected flattened are the pixel coordinates of each gaussian --> current patch is the pixels of the mask
+            # Grab gaussians in the current patch
+            patch_gaussians = current_patch[proj_results['proj_flattened']].nonzero().squeeze(-1)
+            
+            if len(patch_gaussians) == 0:
+                continue
+
+            # Filter valid gaussians using pre-computed mask
+            overlap_mask = valid_gaussian_mask[patch_gaussians]
+
+            if not overlap_mask.all():
+                invalid_count = (~overlap_mask).sum()
+                print(f"Found {invalid_count} gaussians not in the IDs")
+                print("Gaussians not in the IDs: ", patch_gaussians[~overlap_mask])
+
+            # Note: Error checking moved outside compiled function for better performance
+            patch_gaussians = patch_gaussians[overlap_mask]
+
+            if len(patch_gaussians) == 0:
+                continue
+            
+            # Grab the depths of the gaussians in the patch
+            num_front_gaussians = max(int(front_percentage * len(patch_gaussians)), 1)
+            
+            if num_front_gaussians < len(patch_gaussians):
+                # Use partial sorting for better performance
+                patch_depths = proj_results['proj_depths'][patch_gaussians]
+                _, front_indices = torch.topk(patch_depths, num_front_gaussians, largest=False)
+                selected_gaussians = patch_gaussians[front_indices]
+            else:
+                selected_gaussians = patch_gaussians
+            
+            mask_gaussians.append(selected_gaussians)
+
+        if len(mask_gaussians) > 0:
+            mask_gaussians = torch.cat(mask_gaussians)
+            return mask_gaussians
+        else:
+            return torch.tensor([], dtype=torch.long, device=mask.device)
+
     def associate_masks(self):
         pass
 
@@ -112,27 +256,3 @@ class GroupingClassifier(nn.Module):
 #         color_mask[mask == i+1] = random_colors[i]
 #     return color_mask
 
-    def create_patch_mask(self, image, num_patches):
-        image_height, image_width = image.shape[:2]
-        
-        patch_width = math.ceil(image_width / num_patches)
-        patch_height = math.ceil(image_height / num_patches)
-        
-        # Create flattened coordinates
-        total_pixels = image_height * image_width
-        y_coords = torch.arange(image_height).unsqueeze(1).expand(-1, image_width).flatten()
-        x_coords = torch.arange(image_width).unsqueeze(0).expand(image_height, -1).flatten()
-        
-        # Calculate patch indices for all pixels at once
-        patch_y_indices = torch.clamp(y_coords // patch_height, 0, num_patches - 1)
-        patch_x_indices = torch.clamp(x_coords // patch_width, 0, num_patches - 1)
-        
-        # Create sparse representation
-        flatten_patch_mask = torch.zeros((num_patches, num_patches, total_pixels), 
-                                    dtype=torch.bool)
-        
-        # Use indexing to set values
-        pixel_indices = torch.arange(total_pixels)
-        flatten_patch_mask[patch_y_indices, patch_x_indices, pixel_indices] = True
-        
-        return flatten_patch_mask

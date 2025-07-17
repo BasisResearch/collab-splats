@@ -285,7 +285,7 @@ class Splatter:
         mesh_dir = self.config['output_path'] / self.config['method'] / "mesh" 
 
         # Create the mesh
-        if mesh_dir.exists() and not overwrite:
+        if not mesh_dir.exists() or overwrite:
 
             # Initialize the mesher
             mesher = Open3DTSDFFusion(
@@ -293,7 +293,7 @@ class Splatter:
                 features_name=features_name,
                 output_dir=mesh_dir
             )
-            
+
             self.config['mesh_info'] = mesher.main()
         else:
             # HARDCODING FOR NOW TLB FIX

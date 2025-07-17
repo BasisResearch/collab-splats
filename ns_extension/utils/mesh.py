@@ -101,6 +101,19 @@ def find_depth_edges(depth_im, threshold=0.01, dilation_itr=3):
 ########## Feature Aggregation Utils ###################
 ########################################################
 
+def normals2vertex(mesh, points, normals, k=5, sdf_trunc=0.03):
+    """
+    Map point cloud normals to mesh vertices using KNN over a KDTree.
+    Same as features2vertex but with normalization for unit vectors.
+    """
+    mesh_normals = features2vertex(mesh, points, normals, k, sdf_trunc)
+    
+    # Normalize to unit vectors (critical for normals!)
+    norms = np.linalg.norm(mesh_normals, axis=1, keepdims=True)
+    mesh_normals = mesh_normals / (norms + 1e-8)  # avoid division by zero
+    
+    return mesh_normals
+
 def features2vertex(mesh, points, features, k=5, sdf_trunc=0.03):
     """
     Map point cloud features to mesh vertices using KNN over a KDTree.
@@ -1036,6 +1049,8 @@ class Open3DTSDFFusion(GSMeshExporter):
     """Name of the rgb map in the outputs"""
     depth_name: str = "depth"
     """Name of the depth map in the outputs"""
+    normals_name: str = "normals"
+    """Name of the normal map in the outputs"""
     features_name: str = "distill_features"
     """Name of the features map in the outputs"""
     k: int = 5
@@ -1149,6 +1164,22 @@ class Open3DTSDFFusion(GSMeshExporter):
             mesh_0.remove_unreferenced_vertices()
             mesh_0.remove_degenerate_triangles()
 
+            if self.normals_name is not None and self.normals_name in pipeline.model.gauss_params.keys():
+                print (f"Mapping normals to mesh")
+                means = pipeline.model.means.detach().cpu().numpy()
+                normals = pipeline.model.gauss_params[self.normals_name].detach().cpu().numpy()
+                
+                mesh_normals = normals2vertex(
+                    points=means,
+                    normals=normals,    
+                    mesh=mesh,
+                    k=self.k,
+                    sdf_trunc=self.sdf_trunc
+                )
+
+                mesh.vertex_normals = o3d.utility.Vector3dVector(mesh_normals)
+
+
             mesh_path = self.output_dir / "Open3dTSDFfusion_mesh.ply"
 
             o3d.io.write_triangle_mesh(
@@ -1161,6 +1192,7 @@ class Open3DTSDFFusion(GSMeshExporter):
             )
 
             if self.features_name is not None and self.features_name in pipeline.model.gauss_params.keys():
+                print (f"Mapping features to mesh")
                 means = pipeline.model.means.detach().cpu().numpy()
                 features = pipeline.model.gauss_params[self.features_name].detach().cpu().numpy()
                 

@@ -275,7 +275,7 @@ class Splatter:
         self.config['model_path'] = selected_run.as_posix()
         self.config['model_config_path'] = (selected_run / "config.yml").as_posix()
 
-    def mesh(self, features_name: Optional[str] = None, overwrite: bool = False) -> None:
+    def mesh(self, features_name: Optional[str] = "distill_features", overwrite: bool = False) -> None:
         """Generate a mesh from the splatter data.
         
         This function handles mesh generation from the preprocessed data.

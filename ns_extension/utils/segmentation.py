@@ -131,9 +131,8 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
     obj_results = get_object_masks(image, obj_model)
     
     if not obj_results or len(obj_results[0].boxes) == 0:
-        return []
+        return None
     
-
     # Setup predictor
     predictor.set_image(image)
     image_embedding = predictor.features

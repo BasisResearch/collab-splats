@@ -283,19 +283,20 @@ class Splatter:
         self._select_run()
 
         mesh_dir = self.config['output_path'] / self.config['method'] / "mesh" 
-        
-        # Initialize the mesher
-        mesher = Open3DTSDFFusion(
-            load_config=Path(self.config['model_config_path']),
-            features_name=features_name,
-            output_dir=mesh_dir
-        )
 
         # Create the mesh
         if mesh_dir.exists() and not overwrite:
+
+            # Initialize the mesher
+            mesher = Open3DTSDFFusion(
+                load_config=Path(self.config['model_config_path']),
+                features_name=features_name,
+                output_dir=mesh_dir
+            )
+            
             self.config['mesh_info'] = mesher.main()
         else:
-            # HARDCODING FOR NOW TLB FIX THIS
+            # HARDCODING FOR NOW TLB FIX
             self.config['mesh_info'] = {
                 'mesh': mesh_dir / "Open3dTSDFfusion_mesh.ply",
                 'features': mesh_dir / "mesh_features.pt"

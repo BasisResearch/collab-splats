@@ -286,6 +286,7 @@ class Splatter:
         mesher = Open3DTSDFFusion(
             load_config=Path(self.config['model_config_path']),
             features_name=features_name,
+            output_dir=self.config['output_path'] / self.config['method'] / "mesh" / features_name
         )
 
         # Create the mesh

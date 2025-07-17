@@ -88,6 +88,9 @@ def auto_segment_image(image, mobile_sam, kwargs: dict = {}):
 
     results = mask_generator.generate(image)
 
+    if len(results) == 0:
+        return None
+
     # Convert masks to tensor
     masks = [torch.tensor(mask['segmentation']).to(torch.float32) for mask in results]
     masks = torch.stack(masks)
@@ -199,6 +202,9 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
                 "stability_score": float(confs[i]),  # reuse detector conf if nothing else
                 "crop_box": [0, 0, width, height],  # no cropping here
             })
+
+    if len(results) == 0:
+        return None
 
     # Convert masks to tensor
     masks = [torch.tensor(mask['segmentation']).to(torch.float32) for mask in results]

@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import Optional, TypedDict, Set, Dict, Any, Union
 import cv2
 
+from nerfstudio.utils.eval_utils import eval_setup
+from ns_extension.utils.mesh import Open3DTSDFFusion
+from ns_extension.utils.plotting import load_and_plot_ply
+
 DEFAULT_TIMEOUT = 3600
 
 class SplatterConfig(TypedDict):
@@ -220,6 +224,19 @@ class Splatter:
             - 3D: Volume-based feature extraction
         """
 
+        selected_run = self._select_run()
+
+        self.config['model_path'] = selected_run.as_posix()
+
+        cmd = (
+            f"ns-viewer "
+            f"--load-config {self.config['model_path']}/config.yml "
+        )
+        
+        subprocess.run(cmd, shell=True, timeout=DEFAULT_TIMEOUT)
+
+    def _select_run(self) -> Path:
+        """Select a run from the available runs."""
         # Find all runs with config.yml files
         output_dir = Path(str(self.config['output_path']), self.config['method'])
 
@@ -253,11 +270,59 @@ class Splatter:
             except ValueError:
                 print("Please enter a valid number")
 
+        return selected_run
+
+    def mesh(self, features_name: str = "distill_features", overwrite: bool = False) -> None:
+        """Generate a mesh from the splatter data.
+        
+        This function handles mesh generation from the preprocessed data.
+        """
+        selected_run = self._select_run()
+
         self.config['model_path'] = selected_run.as_posix()
 
-        cmd = (
-            f"ns-viewer "
-            f"--load-config {self.config['model_path']}/config.yml "
+        mesher = Open3DTSDFFusion(load_config=Path(self.config['model_path']))
+        self.config['mesh_info'] = mesher.main(features_name=features_name)
+
+    def query_mesh(self, positive_queries: List[str] = [""], negative_queries: List[str] = ["object"]) -> None:
+        """Query the mesh for features."""
+
+        if not self.config.get('model_path'):
+            selected_run = self._select_run()
+            self.config['model_path'] = selected_run.as_posix()
+        elif self.config.get('model') is None:
+            _, pipeline, _,  _ = eval_setup(self.config['model_path'])
+            self.model = pipeline.model
+
+        if self.config.get('mesh_info') is None:
+            raise ValueError("Mesh information not found. Please run mesh() first.")
+        elif self.config.get('mesh_info').get('features') is None:
+            raise ValueError("Features not found. Please run mesh() with features_name specified.")
+
+        features = torch.load(self.config['mesh_info']['features'])
+
+        decoded_features = self.model.decoder.per_gaussian_forward(
+            features.to(self.model.device).to(torch.float32)
         )
-        
-        subprocess.run(cmd, shell=True, timeout=DEFAULT_TIMEOUT)
+
+        similarity_map = self.model.similarity_fx(
+            features=decoded_features[self.model.main_features_name].unsqueeze(0).permute(2, 1, 0), 
+            positive=positive_queries, 
+            negative=negative_queries,
+            method='pairwise'
+        ).squeeze(-1).detach().cpu().numpy()
+
+        del features
+
+        return similarity_map
+
+
+    def plot_mesh(self, attribute: Optional[np.ndarray] = None) -> None:
+        """Plot the mesh."""
+        if self.config.get('mesh_info') is None:
+            raise ValueError("Mesh information not found. Please run mesh() first.")
+        elif self.config.get('mesh_info').get('mesh') is None:
+            raise ValueError("Mesh not found. Please run mesh() first.")
+
+        mesh_path = self.config['mesh_info']['mesh']
+        load_and_plot_ply(mesh_path, attribute)

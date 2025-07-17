@@ -9,7 +9,7 @@ Provides additional functionality for exporting features to meshes.
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Tuple, Union, List
 
 import numpy as np
 import open3d as o3d
@@ -1036,7 +1036,11 @@ class Open3DTSDFFusion(GSMeshExporter):
     """Name of the rgb map in the outputs"""
     depth_name: str = "depth"
     """Name of the depth map in the outputs"""
-    sdf_truc: float = 0.03
+    features_name: str = "distill_features"
+    """Name of the features map in the outputs"""
+    k: int = 5
+    """Number of nearest neighbors to use for weighting"""
+    sdf_trunc: float = 0.03
     """TSDF truncation"""
     depth_trunc: float = 20
     """Depth at which to truncate"""
@@ -1056,7 +1060,7 @@ class Open3DTSDFFusion(GSMeshExporter):
 
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
             voxel_length=self.voxel_size,
-            sdf_trunc=self.sdf_truc,
+            sdf_trunc=self.sdf_trunc,
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
 
@@ -1078,7 +1082,10 @@ class Open3DTSDFFusion(GSMeshExporter):
                     obb_box=crop_box,
                 )
                 assert self.depth_name in outputs
+
                 depth_map = outputs[self.depth_name]
+                rgb_map = outputs[self.rgb_name]
+
                 c2w = torch.eye(4, dtype=torch.float, device=depth_map.device)
                 c2w[:3, :4] = camera.camera_to_worlds.squeeze(0)
                 c2w = c2w @ torch.diag(
@@ -1094,7 +1101,7 @@ class Open3DTSDFFusion(GSMeshExporter):
                     cx=camera.cx.item(),
                     cy=camera.cy.item(),
                 )
-                rgb_map = outputs["rgb"]
+
                 if mask is not None:
                     depth_map[~mask] = 0
 
@@ -1142,13 +1149,37 @@ class Open3DTSDFFusion(GSMeshExporter):
             mesh_0.remove_unreferenced_vertices()
             mesh_0.remove_degenerate_triangles()
 
+            mesh_path = self.output_dir / "Open3dTSDFfusion_mesh.ply"
+
             o3d.io.write_triangle_mesh(
-                str(self.output_dir / "Open3dTSDFfusion_mesh.ply"),
+                str(mesh_path),
                 mesh,
             )
+            
             CONSOLE.print(
                 f"Finished computing mesh: {str(self.output_dir / 'Open3dTSDFfusion.ply')}"
             )
+
+            if self.features_name is not None and self.features_name in pipeline.model.gauss_params.keys():
+                means = pipeline.model.means.detach().cpu().numpy()
+                features = pipeline.model.gauss_params[self.features_name].detach().cpu().numpy()
+                
+                mesh_features = features2vertex(
+                    points=means,
+                    features=features,
+                    mesh=mesh,
+                    k=self.k,
+                    sdf_trunc=self.sdf_trunc
+                )
+
+                features_path = self.output_dir / "mesh_features.pt"
+                torch.save(mesh_features, features_path)
+                return {
+                    'mesh': mesh_path, 
+                    'features': features_path
+                }
+            else:
+                return {'mesh': mesh_path}
 
 Commands = tyro.conf.FlagConversionOff[
     Union[

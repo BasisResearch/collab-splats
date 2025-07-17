@@ -274,7 +274,7 @@ class Splatter:
 
         return selected_run
 
-    def mesh(self, features_name: str = "distill_features", overwrite: bool = False) -> None:
+    def mesh(self, features_name: Optional[str] = None, overwrite: bool = False) -> None:
         """Generate a mesh from the splatter data.
         
         This function handles mesh generation from the preprocessed data.
@@ -283,8 +283,14 @@ class Splatter:
 
         self.config['model_path'] = selected_run.as_posix()
 
-        mesher = Open3DTSDFFusion(load_config=Path(self.config['model_path']))
-        self.config['mesh_info'] = mesher.main(features_name=features_name)
+        # Initialize the mesher
+        mesher = Open3DTSDFFusion(
+            load_config=Path(self.config['model_path']),
+            features_name=features_name,
+        )
+
+        # Create the mesh
+        self.config['mesh_info'] = mesher.main()
 
     def query_mesh(self, positive_queries: List[str] = [""], negative_queries: List[str] = ["object"]) -> None:
         """Query the mesh for features."""

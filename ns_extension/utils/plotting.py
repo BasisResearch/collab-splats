@@ -1,7 +1,6 @@
 import pyvista as pv
 from typing import Optional, Union
 import numpy as np
-import torch
 
 # Basic loading and plotting
 def load_and_plot_ply(mesh_path: str, attribute: Optional[np.ndarray] = None):

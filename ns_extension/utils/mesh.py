@@ -176,7 +176,7 @@ def features2vertex(mesh, points, features, k=5, sdf_trunc=0.03):
     nonzero_mask = vertex_weight_sum.squeeze() > 0
     features_kNN[nonzero_mask] /= vertex_weight_sum[nonzero_mask]
 
-    return features_kNN
+    return torch.tensor(features_kNN)
 
 ########################################################
 ################ Meshing classes #######################

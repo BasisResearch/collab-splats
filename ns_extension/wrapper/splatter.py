@@ -237,7 +237,7 @@ class Splatter:
         
         subprocess.run(cmd, shell=True, timeout=DEFAULT_TIMEOUT)
 
-    def _select_run(self) -> Path:
+    def _select_run(self) -> None:
         """Select a run from the available runs."""
         # Find all runs with config.yml files
         output_dir = Path(str(self.config['output_path']), self.config['method'])
@@ -272,20 +272,19 @@ class Splatter:
             except ValueError:
                 print("Please enter a valid number")
 
-        return selected_run
+        self.config['model_path'] = selected_run.as_posix()
+        self.config['model_config_path'] = (selected_run / "config.yml").as_posix()
 
     def mesh(self, features_name: Optional[str] = None, overwrite: bool = False) -> None:
         """Generate a mesh from the splatter data.
         
         This function handles mesh generation from the preprocessed data.
         """
-        selected_run = self._select_run()
-
-        self.config['model_path'] = selected_run.as_posix()
-
+        self._select_run()
+        
         # Initialize the mesher
         mesher = Open3DTSDFFusion(
-            load_config=Path(self.config['model_path']),
+            load_config=Path(self.config['model_config_path']),
             features_name=features_name,
         )
 
@@ -295,11 +294,11 @@ class Splatter:
     def query_mesh(self, positive_queries: List[str] = [""], negative_queries: List[str] = ["object"]) -> None:
         """Query the mesh for features."""
 
-        if not self.config.get('model_path'):
-            selected_run = self._select_run()
-            self.config['model_path'] = selected_run.as_posix()
+        if not self.config.get('model_config_path'):
+            self._select_run()
         elif self.config.get('model') is None:
-            _, pipeline, _,  _ = eval_setup(self.config['model_path'])
+            print(f"Loading model from {self.config['model_config_path']}")
+            _, pipeline, _,  _ = eval_setup(self.config['model_config_path'])
             self.model = pipeline.model
 
         if self.config.get('mesh_info') is None:

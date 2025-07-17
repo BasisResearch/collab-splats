@@ -21,7 +21,7 @@ def load_and_plot_ply(mesh_path: str, attribute: Optional[np.ndarray] = None):
     if attribute is not None:
         plotter.add_mesh(mesh, scalars=attribute, rgb=False)
     else:
-        plotter.add_mesh(mesh, scalars="rgb", rgb=True)
+        plotter.add_mesh(mesh, scalars="RGB", rgb=True)
     
     plotter.show_axes()
     plotter.show()

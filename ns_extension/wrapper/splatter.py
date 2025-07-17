@@ -281,16 +281,25 @@ class Splatter:
         This function handles mesh generation from the preprocessed data.
         """
         self._select_run()
+
+        mesh_dir = self.config['output_path'] / self.config['method'] / "mesh" 
         
         # Initialize the mesher
         mesher = Open3DTSDFFusion(
             load_config=Path(self.config['model_config_path']),
             features_name=features_name,
-            output_dir=self.config['output_path'] / self.config['method'] / "mesh" /
+            output_dir=mesh_dir
         )
 
         # Create the mesh
-        self.config['mesh_info'] = mesher.main()
+        if mesh_dir.exists() and not overwrite:
+            self.config['mesh_info'] = mesher.main()
+        else:
+            # HARDCODING FOR NOW TLB FIX THIS
+            self.config['mesh_info'] = {
+                'mesh': mesh_dir / "Open3dTSDFfusion_mesh.ply",
+                'features': mesh_dir / "mesh_features.pt"
+            }
 
     def query_mesh(self, positive_queries: List[str] = [""], negative_queries: List[str] = ["object"]) -> None:
         """Query the mesh for features."""

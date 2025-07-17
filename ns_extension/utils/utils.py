@@ -7,17 +7,17 @@ import numpy as np
 from scipy.spatial import cKDTree
 import torch
 
-def project_gaussians(model, camera):
+def project_gaussians(meta: dict):
     """
     Project gaussians onto 2D image and prepare lookup data.
+
+    meta = output from fully_fused_projection or rasterization
     """
 
-    _ = model.get_outputs(camera)
-    meta = model.info
     W, H = meta["width"], meta["height"]
 
     # gaussians where the radius is greater than 1.0 can be seen in the camera frustum
-    radii = model.info['radii'].squeeze()
+    radii = meta['radii'].squeeze()
     gaussian_ids = torch.where(torch.sum(radii > 1.0, axis=1))[0]
 
     # Convert 2D coords to flat pixel indices

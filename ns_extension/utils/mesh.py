@@ -1,4 +1,10 @@
-"""Various GS mesh exporters"""
+"""
+Various GS mesh exporters
+
+Sourced from dn-splatter: https://github.com/maturk/dn-splatter/blob/main/dn_splatter/export_mesh.py
+
+Provides additional functionality for exporting features to meshes.
+"""
 
 import random
 from dataclasses import dataclass
@@ -12,6 +18,7 @@ import torch.nn.functional as F
 import tyro
 from tqdm import tqdm
 from typing_extensions import Annotated
+from scipy.spatial import cKDTree
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel
@@ -90,6 +97,77 @@ def find_depth_edges(depth_im, threshold=0.01, dilation_itr=3):
     dilated_edges = (dilated_edges > 0.0) * 1.0
     return dilated_edges
 
+########################################################
+########## Feature Aggregation Utils ###################
+########################################################
+
+def features2vertex(mesh, points, features, k=5, sdf_trunc=0.03):
+    """
+    Map point cloud features to mesh vertices using KNN over a KDTree.
+
+    Args:
+        mesh: final cleaned mesh after culling (mesh_0)
+        points: (N, 3) array of input point cloud
+        features: (N, D) array of per-point features
+        k: number of nearest neighbors to use for weighting
+        sdf_trunc: truncation distance for SDF
+    
+    Returns:
+        features_kNN: (M, D) array of per-vertex features
+    """
+
+    vertices = np.asarray(mesh.vertices)
+
+    # Build tree
+    tree = cKDTree(vertices)
+
+    # Query nearest vertex for each point
+    distances, indices = tree.query(points, k=k)  # shape: (N,)
+
+    # Mask points where nearest vertex is within truncation distance
+    # Use distance to closest vertex (distance[:, 0]) for truncation mask
+    valid_mask = distances[:, 0] <= sdf_trunc
+
+    if not np.any(valid_mask):
+        # No points within truncation distance, return zeros
+        return np.zeros((len(vertices), features.shape[1]))
+
+    # Filter distances, indices, and features by valid points
+    distances = distances[valid_mask]
+    indices = indices[valid_mask]
+    features = features[valid_mask]
+
+    # Weighting with Gaussian kernel
+    sigma = np.mean(distances)  # or set manually
+    weights = np.exp(- (distances**2) / (2 * sigma**2))
+    weights /= weights.sum(axis=1, keepdims=True)  # normalize
+
+    # Aggregate features per vertex
+    features_kNN = np.zeros((len(vertices), features.shape[1]))
+
+    # Use a counts array to normalize contributions per vertex later
+    vertex_weight_sum = np.zeros((len(vertices), 1))
+
+    # Accumulate weighted features
+    for i in range(k):
+        vertex_indices = indices[:, i]
+        weighted_feats = features * weights[:, i:i+1]
+
+        # Accumulate weighted features
+        np.add.at(features_kNN, vertex_indices, weighted_feats)
+
+        # Accumulate weights for normalization
+        np.add.at(vertex_weight_sum, vertex_indices, weights[:, i:i+1])
+
+    # Normalize aggregated features by summed weights (avoid div by zero)
+    nonzero_mask = vertex_weight_sum.squeeze() > 0
+    features_kNN[nonzero_mask] /= vertex_weight_sum[nonzero_mask]
+
+    return features_kNN
+
+########################################################
+################ Meshing classes #######################
+########################################################
 
 @dataclass
 class GSMeshExporter:
@@ -294,9 +372,12 @@ class GaussiansToPoisson(GSMeshExporter):
                 pcd = pcd.select_by_index(ind)
 
             CONSOLE.print("Computing Mesh... this may take a while.")
-            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                pcd, depth=self.poisson_depth
-            )
+
+            with o3d.utility.VerbosityContextManager(
+                o3d.utility.VerbosityLevel.Debug) as cm:
+                mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                    pcd, depth=self.poisson_depth
+                )
             vertices_to_remove = densities < np.quantile(densities, 0.01)
             mesh.remove_vertices_by_mask(vertices_to_remove)
             CONSOLE.print("[bold green]:white_check_mark: Computing Mesh")
@@ -667,12 +748,12 @@ class LevelSetExtractor(GSMeshExporter):
                     pcd_clean,
                 )
                 CONSOLE.print("Computing Mesh... this may take a while.")
-                (
-                    mesh,
-                    densities,
-                ) = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                    pcd_clean, depth=self.poisson_depth
-                )
+
+                with o3d.utility.VerbosityContextManager(
+                    o3d.utility.VerbosityLevel.Debug) as cm:
+                    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                        pcd, depth=self.poisson_depth
+                    )
 
                 vertices_to_remove = densities < np.quantile(densities, 0.01)
                 mesh.remove_vertices_by_mask(vertices_to_remove)

@@ -2,13 +2,13 @@ import sys
 from ns_extension.wrapper import Splatter, SplatterConfig
 
 test_configs = {
-    'rats': {
-        'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
-        'frame_proportion': 0.25,
-    },
+    # 'rats': {
+    #     'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
+    #     'frame_proportion': 0.25,
+    # },
     'birds': {
-        'file_path': '/workspace/fieldwork-data/birds/2024-02-08/SplatsSD/C0049.MP4',
-        'frame_proportion': 0.25
+        'file_path': '/workspace/fieldwork-data/birds/2024-05-18/SplatsSD/C0064.MP4',
+        'frame_proportion': 0.25,
     }
 }
 

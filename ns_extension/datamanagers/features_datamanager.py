@@ -180,12 +180,14 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             image = np.asarray(image) # Convert to numpy array
 
             # Apply segmentation masks over features
-            masks, _ = segmentation.segment(image)
+            seg_outputs = segmentation.segment(image)
 
-            if masks is None:
+            if seg_outputs is None:
                 # Add an all-zero tensor if no object is detected
                 features_dict[self.config.main_features].append(torch.zeros((features.shape[0], final_H, final_W)))
                 continue
+            else:
+                masks = seg_outputs[0]
             
             features = aggregate_masked_features(
                 features, 

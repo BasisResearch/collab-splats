@@ -79,6 +79,6 @@ Two models are currently offered:
 - **rade-gs:** the baseline extension model that enables depth and normal map creation within the rasterization process. This is built on top of [gsplat-rade](https://github.com/brian-xu/gsplat-rade) and is heavily inspired by the [scaffold-gs-nerfstudio](https://github.com/brian-xu/scaffold-gs-nerfstudio) implementation.
 - **rade-features:**  extends rade-gs to enable splatting of ANN feature spaces. This draws inspiration from the original [feature-splatting-ns](https://github.com/vuer-ai/feature-splatting) implementation but contains additional functionality.
 
-### Train a splatting model
+Within the class ```Splatter``` we provide the ability to preprocess, train, and visualize splatting models within nerfstudio. We also enable meshing as a post-processing strategy for all splatting outputs.
 
-We provide an example script to train a splatting model. 
+For examples of these different functionalities, please navigate to the ```examples/``` directory.

@@ -286,7 +286,7 @@ class Splatter:
         mesher = Open3DTSDFFusion(
             load_config=Path(self.config['model_config_path']),
             features_name=features_name,
-            output_dir=self.config['output_path'] / self.config['method'] / "mesh" / features_name
+            output_dir=self.config['output_path'] / self.config['method'] / "mesh" /
         )
 
         # Create the mesh
@@ -299,7 +299,7 @@ class Splatter:
             self._select_run()
         elif self.config.get('model') is None:
             print(f"Loading model from {self.config['model_config_path']}")
-            _, pipeline, _,  _ = eval_setup(self.config['model_config_path'])
+            _, pipeline, _,  _ = eval_setup(Path(self.config['model_config_path']))
             self.model = pipeline.model
 
         if self.config.get('mesh_info') is None:

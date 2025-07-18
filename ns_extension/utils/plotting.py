@@ -1,9 +1,9 @@
-import pyvista as pv
 from typing import Optional, Union
 import numpy as np
+import pyvista as pv
 
 # Basic loading and plotting
-def load_and_plot_ply(mesh_path: str, attribute: Optional[np.ndarray] = None):
+def load_and_plot_ply(mesh_path: str, attribute: Optional[Union[str, np.ndarray]] = None, rgb: bool = True):
     """
     Load a PLY mesh file and display it with basic visualization
     """
@@ -17,11 +17,6 @@ def load_and_plot_ply(mesh_path: str, attribute: Optional[np.ndarray] = None):
     
     # Create a plotter and add the mesh
     plotter = pv.Plotter()
-
-    if attribute is not None:
-        plotter.add_mesh(mesh, scalars=attribute, rgb=False)
-    else:
-        plotter.add_mesh(mesh, scalars="RGB", rgb=True)
-    
+    plotter.add_mesh(mesh, scalars=attribute, rgb=rgb)
     plotter.show_axes()
     plotter.show()

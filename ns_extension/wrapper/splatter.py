@@ -312,12 +312,17 @@ class Splatter:
                 'features': mesh_dir / "mesh_features.pt"
             }
 
-    def query_mesh(self, positive_queries: List[str] = [""], negative_queries: List[str] = ["object"]) -> None:
+    def query_mesh(
+        self, 
+        positive_queries: List[str] = [""], 
+        negative_queries: List[str] = ["object"], 
+        method: str = "pairwise"
+    ) -> None:
         """Query the mesh for features."""
 
         if not self.config.get('model_config_path'):
             self._select_run()
-        elif self.config.get('model') is None:
+        elif getattr(self, 'model', None) is None:
             print(f"Loading model from {self.config['model_config_path']}")
             _, pipeline, _,  _ = eval_setup(Path(self.config['model_config_path']))
             self.model = pipeline.model
@@ -337,7 +342,7 @@ class Splatter:
             features=decoded_features[self.model.main_features_name].unsqueeze(0).permute(2, 1, 0), 
             positive=positive_queries, 
             negative=negative_queries,
-            method='pairwise'
+            method=method
         ).squeeze(-1).detach().cpu().numpy()
 
         del features

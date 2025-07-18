@@ -10,6 +10,9 @@ import numpy as np
 from ns_extension.utils.mesh import Open3DTSDFFusion
 from ns_extension.utils.plotting import load_and_plot_ply
 
+# Needs to be loaded after?
+from nerfstudio.utils.eval_utils import eval_setup
+
 DEFAULT_TIMEOUT = 3600
 
 class SplatterConfig(TypedDict):
@@ -39,7 +42,8 @@ class ValidationError(Exception):
     pass
 
 class Splatter:
-    
+    # Valid processing methods for each dtype
+
     SPLATTING_METHODS: Set[str] = {
         "splatfacto",
         "feature-splatting",
@@ -322,7 +326,6 @@ class Splatter:
             self._select_run()
         elif getattr(self, 'model', None) is None:
             print(f"Loading model from {self.config['model_config_path']}")
-            from nerfstudio.utils.eval_utils import eval_setup # Fixes circular import
             _, pipeline, _,  _ = eval_setup(Path(self.config['model_config_path']))
             self.model = pipeline.model
 

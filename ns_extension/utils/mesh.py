@@ -23,6 +23,7 @@ from scipy.spatial import cKDTree
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.data.scene_box import OrientedBox
+from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
 
 from ns_extension.utils.camera_utils import (
@@ -52,6 +53,7 @@ Methods for extracting meshes from GS:
     - backproject depths and integrate points into voxels for tsdf fusion
     - run marching cubes algorithm
 """
+
 
 def pick_indices_at_random(valid_mask, samples_per_frame):
     indices = torch.nonzero(torch.ravel(valid_mask))
@@ -183,7 +185,6 @@ def features2vertex(mesh, points, features, k=5, sdf_trunc=0.03):
 @dataclass
 class GSMeshExporter:
     """Base class for GS mesh exporters"""
-    from nerfstudio.utils.eval_utils import eval_setup
 
     load_config: Path
     """Path to the trained config YAML file."""

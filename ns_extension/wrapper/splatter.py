@@ -226,13 +226,11 @@ class Splatter:
             - 3D: Volume-based feature extraction
         """
 
-        selected_run = self._select_run()
-
-        self.config['model_path'] = selected_run.as_posix()
+        self._select_run()
 
         cmd = (
             f"ns-viewer "
-            f"--load-config {self.config['model_path']}/config.yml "
+            f"--load-config {self.config['model_config_path'] } "
         )
         
         subprocess.run(cmd, shell=True, timeout=DEFAULT_TIMEOUT)

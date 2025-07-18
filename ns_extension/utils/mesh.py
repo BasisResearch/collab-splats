@@ -1166,7 +1166,8 @@ class Open3DTSDFFusion(GSMeshExporter):
 
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and \
-                (self.normals_name in pipeline.model.gauss_params.keys() or getattr(pipeline.model, "normals")):
+                (self.normals_name in pipeline.model.gauss_params.keys() or \
+                    getattr(pipeline.model, "normals", None) is not None):
 
                 print (f"Mapping normals to mesh")
                 means = pipeline.model.means.detach().cpu().numpy()

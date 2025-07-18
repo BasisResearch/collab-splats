@@ -350,7 +350,7 @@ class Splatter:
         return similarity_map
 
 
-    def plot_mesh(self, attribute: Optional[np.ndarray] = None) -> None:
+    def plot_mesh(self, attribute: Optional[str, np.ndarray] = None, rgb: bool = True) -> None:
         """Plot the mesh."""
         if self.config.get('mesh_info') is None:
             raise ValueError("Mesh information not found. Please run mesh() first.")
@@ -358,4 +358,4 @@ class Splatter:
             raise ValueError("Mesh not found. Please run mesh() first.")
 
         mesh_path = self.config['mesh_info']['mesh']
-        load_and_plot_ply(mesh_path, attribute)
+        load_and_plot_ply(mesh_path, attribute, rgb=rgb)

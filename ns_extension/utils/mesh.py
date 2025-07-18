@@ -1164,20 +1164,23 @@ class Open3DTSDFFusion(GSMeshExporter):
             mesh_0.remove_unreferenced_vertices()
             mesh_0.remove_degenerate_triangles()
 
-            # if self.normals_name is not None and self.normals_name in pipeline.model.gauss_params.keys():
-            #     print (f"Mapping normals to mesh")
-            #     means = pipeline.model.means.detach().cpu().numpy()
-            #     normals = pipeline.model.gauss_params[self.normals_name].detach().cpu().numpy()
-                
-            #     mesh_normals = normals2vertex(
-            #         points=means,
-            #         normals=normals,    
-            #         mesh=mesh,
-            #         k=self.k,
-            #         sdf_trunc=self.sdf_trunc
-            #     )
+            # If normals name was provided and it's in the model, use it
+            if self.normals_name is not None and \
+                (self.normals_name in pipeline.model.gauss_params.keys() or getattr(pipeline.model, "normals")):
 
-            #     mesh.vertex_normals = o3d.utility.Vector3dVector(mesh_normals)
+                print (f"Mapping normals to mesh")
+                means = pipeline.model.means.detach().cpu().numpy()
+                normals = pipeline.model.gauss_params[self.normals_name].detach().cpu().numpy()
+                
+                mesh_normals = normals2vertex(
+                    points=means,
+                    normals=normals,    
+                    mesh=mesh,
+                    k=self.k,
+                    sdf_trunc=self.sdf_trunc
+                )
+
+                mesh.vertex_normals = o3d.utility.Vector3dVector(mesh_normals)
 
 
             mesh_path = self.output_dir / "Open3dTSDFfusion_mesh.ply"

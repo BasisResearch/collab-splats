@@ -273,7 +273,15 @@ class Splatter:
         self.config['model_path'] = selected_run.as_posix()
         self.config['model_config_path'] = (selected_run / "config.yml").as_posix()
 
-    def mesh(self, features_name: Optional[str] = "distill_features", depth_trunc: Optional[float] = 3.0, overwrite: bool = False) -> None:
+    def mesh(
+        self, 
+        depth_name: str = "depth",
+        normals_name: str = "normals",
+        features_name: Optional[str] = "distill_features", 
+        sdf_trunc: Optional[float] = 0.03,
+        depth_trunc: Optional[float] = 3.0, 
+        overwrite: bool = False,
+    ) -> None:
         """Generate a mesh from the splatter data.
         
         This function handles mesh generation from the preprocessed data.
@@ -288,8 +296,11 @@ class Splatter:
             # Initialize the mesher
             mesher = Open3DTSDFFusion(
                 load_config=Path(self.config['model_config_path']),
+                depth_name=depth_name,
+                normals_name=normals_name,
                 features_name=features_name,
                 depth_trunc=depth_trunc,
+                sdf_trunc=sdf_trunc,
                 output_dir=mesh_dir
             )
 

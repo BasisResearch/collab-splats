@@ -349,8 +349,7 @@ class Splatter:
 
         return similarity_map
 
-
-    def plot_mesh(self, attribute: Optional[str, np.ndarray] = None, rgb: bool = True) -> None:
+    def plot_mesh(self, attribute: Optional[Union[str, np.ndarray]] = None, rgb: bool = True) -> None:
         """Plot the mesh."""
         if self.config.get('mesh_info') is None:
             raise ValueError("Mesh information not found. Please run mesh() first.")

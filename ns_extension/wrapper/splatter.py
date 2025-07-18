@@ -39,7 +39,7 @@ class ValidationError(Exception):
     pass
 
 class Splatter:
-
+    
     SPLATTING_METHODS: Set[str] = {
         "splatfacto",
         "feature-splatting",
@@ -321,8 +321,8 @@ class Splatter:
         if not self.config.get('model_config_path'):
             self._select_run()
         elif getattr(self, 'model', None) is None:
-            from nerfstudio.utils.eval_utils import eval_setup # Fixes circular import
             print(f"Loading model from {self.config['model_config_path']}")
+            from nerfstudio.utils.eval_utils import eval_setup # Fixes circular import
             _, pipeline, _,  _ = eval_setup(Path(self.config['model_config_path']))
             self.model = pipeline.model
 

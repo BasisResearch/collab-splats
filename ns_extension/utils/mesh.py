@@ -23,7 +23,6 @@ from scipy.spatial import cKDTree
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.data.scene_box import OrientedBox
-from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
 
 from ns_extension.utils.camera_utils import (

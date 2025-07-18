@@ -7,11 +7,7 @@ import cv2
 import torch
 import numpy as np
 
-from ns_extension.utils.mesh import Open3DTSDFFusion
 from ns_extension.utils.plotting import load_and_plot_ply
-
-# Needs to be loaded after?
-from nerfstudio.utils.eval_utils import eval_setup
 
 DEFAULT_TIMEOUT = 3600
 
@@ -294,6 +290,7 @@ class Splatter:
 
         # Create the mesh
         if not mesh_dir.exists() or overwrite:
+            from ns_extension.utils.mesh import Open3DTSDFFusion
 
             # Initialize the mesher
             mesher = Open3DTSDFFusion(
@@ -326,6 +323,7 @@ class Splatter:
             self._select_run()
         elif getattr(self, 'model', None) is None:
             print(f"Loading model from {self.config['model_config_path']}")
+            from nerfstudio.utils.eval_utils import eval_setup
             _, pipeline, _,  _ = eval_setup(Path(self.config['model_config_path']))
             self.model = pipeline.model
 

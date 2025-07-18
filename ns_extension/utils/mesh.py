@@ -54,7 +54,6 @@ Methods for extracting meshes from GS:
     - run marching cubes algorithm
 """
 
-
 def pick_indices_at_random(valid_mask, samples_per_frame):
     indices = torch.nonzero(torch.ravel(valid_mask))
     if samples_per_frame < len(indices):
@@ -185,6 +184,7 @@ def features2vertex(mesh, points, features, k=5, sdf_trunc=0.03):
 @dataclass
 class GSMeshExporter:
     """Base class for GS mesh exporters"""
+    from nerfstudio.utils.eval_utils import eval_setup
 
     load_config: Path
     """Path to the trained config YAML file."""

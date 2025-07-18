@@ -7,7 +7,6 @@ import cv2
 import torch
 import numpy as np
 
-from nerfstudio.utils.eval_utils import eval_setup
 from ns_extension.utils.mesh import Open3DTSDFFusion
 from ns_extension.utils.plotting import load_and_plot_ply
 
@@ -41,6 +40,7 @@ class ValidationError(Exception):
 
 class Splatter:
     # Valid processing methods for each dtype
+    from nerfstudio.utils.eval_utils import eval_setup
 
     SPLATTING_METHODS: Set[str] = {
         "splatfacto",

@@ -101,12 +101,12 @@ def find_depth_edges(depth_im, threshold=0.01, dilation_itr=3):
 ########## Feature Aggregation Utils ###################
 ########################################################
 
-def normals2vertex(mesh, points, normals, k=5, sdf_trunc=0.03):
+def normals2vertex(mesh_vertices, points, normals, k=5, sdf_trunc=0.03):
     """
     Map point cloud normals to mesh vertices using KNN over a KDTree.
     Same as features2vertex but with normalization for unit vectors.
     """
-    mesh_normals = features2vertex(mesh, points, normals, k, sdf_trunc)
+    mesh_normals = features2vertex(mesh_vertices, points, normals, k, sdf_trunc)
     
     # Normalize to unit vectors (critical for normals!)
     norms = np.linalg.norm(mesh_normals, axis=1, keepdims=True)
@@ -114,7 +114,7 @@ def normals2vertex(mesh, points, normals, k=5, sdf_trunc=0.03):
     
     return mesh_normals
 
-def features2vertex(mesh, points, features, k=5, sdf_trunc=0.03):
+def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     """
     Map point cloud features to mesh vertices using KNN over a KDTree.
 
@@ -129,7 +129,7 @@ def features2vertex(mesh, points, features, k=5, sdf_trunc=0.03):
         features_kNN: (M, D) array of per-vertex features
     """
 
-    vertices = np.asarray(mesh.vertices)
+    vertices = np.asarray(mesh_vertices)
 
     # Build tree
     tree = cKDTree(vertices)
@@ -1174,9 +1174,9 @@ class Open3DTSDFFusion(GSMeshExporter):
                 normals = getattr(pipeline.model, self.normals_name).detach().cpu().numpy()
                 
                 mesh_normals = normals2vertex(
+                    mesh_vertices=mesh.vertices,
                     points=means,
                     normals=normals,    
-                    mesh=mesh,
                     k=self.k,
                     sdf_trunc=self.sdf_trunc
                 )
@@ -1201,9 +1201,9 @@ class Open3DTSDFFusion(GSMeshExporter):
                 features = pipeline.model.gauss_params[self.features_name].detach().cpu().numpy()
                 
                 mesh_features = features2vertex(
+                    mesh_vertices=mesh.vertices,
                     points=means,
                     features=features,
-                    mesh=mesh,
                     k=self.k,
                     sdf_trunc=self.sdf_trunc
                 )

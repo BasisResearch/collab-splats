@@ -215,6 +215,36 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
 ############### Aggregation Utils ######################
 ########################################################
 
+def create_patch_mask(image, num_patches: int = 32):
+    """
+    Provided an image of given dimensions, create an array of patches.
+    """
+    # Get image dimensions
+    H, W = image.shape[:2]
+
+    # Get patch dimensions
+    patch_width = math.ceil(W / num_patches)
+    patch_height = math.ceil(H / num_patches)
+    
+    # Create flattened coordinates
+    total_pixels = H * W
+    y_coords = torch.arange(H).unsqueeze(1).expand(-1, W).flatten()
+    x_coords = torch.arange(W).unsqueeze(0).expand(H, -1).flatten()
+    
+    # Calculate patch indices for all pixels at once
+    patch_y_indices = torch.clamp(y_coords // patch_height, 0, num_patches - 1)
+    patch_x_indices = torch.clamp(x_coords // patch_width, 0, num_patches - 1)
+    
+    # Create sparse representation
+    flatten_patch_mask = torch.zeros((num_patches, num_patches, total_pixels), 
+                                dtype=torch.bool)
+    
+    # Use indexing to set values
+    pixel_indices = torch.arange(total_pixels)
+    flatten_patch_mask[patch_y_indices, patch_x_indices, pixel_indices] = True
+    
+    return flatten_patch_mask
+
 def create_composite_mask(results, confidence_threshold=0.85):
     """
     Creates a composite mask from the results of the segmentation model.

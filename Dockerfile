@@ -128,6 +128,8 @@ RUN apt-get update && \
         libqt5core5a \
         libqt5gui5 \
         libqt5widgets5 \
+        libgl1-mesa-glx \
+        xvfb \
         python3.10 \
         python3.10-dev \
         python-is-python3 \

@@ -118,7 +118,7 @@ class Splatter:
         print("Available methods:")
         print("  ", sorted(cls.SPLATTING_METHODS))
 
-    def preprocess(self) -> None:
+    def preprocess(self, overwrite: bool = False, kwargs: Optional[Dict[str, Any]] = None) -> None:
         """Preprocess the data in the splatter.
         
         This function handles any necessary data preprocessing steps based on the
@@ -172,6 +172,10 @@ class Splatter:
             f"--output-dir {preproc_data_path.as_posix()} "
             f"{num_frames_target}"
         )
+
+        if kwargs is not None:
+            kwargs_cmds = ' '.join([f"--{k} {v}" for k, v in kwargs.items()])
+            cmd += kwargs_cmds
 
         subprocess.run(cmd, shell=True)
         

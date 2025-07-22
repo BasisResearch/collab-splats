@@ -1,5 +1,5 @@
 [project]
-name = "ns_extension"
+name = "collab_splats"
 version = "0.0.1"
 description = "ns-extension: Extension tools and models for nerfstudio"
 readme = "README.md"
@@ -34,11 +34,11 @@ dev = [
 line-length = 120
 
 [project.entry-points."nerfstudio.method_configs"]
-rade-gs = "ns_extension.configs.rade_gs_method:rade_gs_method"
-rade-features = "ns_extension.configs.rade_features_method:rade_features_method"
+rade-gs = "collab_splats.configs.rade_gs_method:rade_gs_method"
+rade-features = "collab_splats.configs.rade_features_method:rade_features_method"
 
 [tool.setuptools.packages]
-find = { include = ["ns_extension", "ns_extension.*"] }
+find = { include = ["collab_splats", "collab_splats.*"] }
 
 [build-system]
 requires = ["setuptools<70.0"]

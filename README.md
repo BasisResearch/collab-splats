@@ -1,4 +1,4 @@
-# ns-extension
+# collab-splats
 
 Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
 
@@ -6,7 +6,7 @@ Extension tools for nerfstudio enabling depth/normal derivation and meshing (amo
 
 ### Docker
 
-We provide a docker image setup for running nerfstudio with ns-extension (along with other abilities!) at ```tommybotch/collab-environment:latest```
+We provide a docker image setup for running nerfstudio with collab-splats (along with other abilities!) at ```tommybotch/collab-environment:latest```
 
 ### Conda
 Follow the [NerfStudio instllation instructions](https://docs.nerf.studio/quickstart/installation.html) to install a conda environment. For convenience, here are the commands I've used to successfully build a nerfstudio environment.
@@ -62,18 +62,18 @@ pip install nerfstudio
 conda install -c conda-forge 'numpy<2.0.0'
 ```
 
-Lastly, install ns-extension -- currently doing direct clone and egg installation due to private repository
+Lastly, install collab-splats -- currently doing direct clone and egg installation due to private repository
 
 ```bash
-## If public repository could do -- pip install git+https://github.com/BasisResearch/ns-extension
-git clone https://github.com/BasisResearch/ns-extension
-cd ns-extension
+## If public repository could do -- pip install git+https://github.com/BasisResearch/collab-splats
+git clone https://github.com/BasisResearch/collab-splats/
+cd collab-splats
 pip install -e .
 ```
 
 ## Usage
 
-ns-extension is built to integrate different gaussian splatting codebases that enable depth and normal map creation. Specifically, it implements the depth-normal consistency loss
+collab-splats is built to integrate different gaussian splatting codebases that enable depth and normal map creation. Specifically, it implements the depth-normal consistency loss
 
 Two models are currently offered:
 - **rade-gs:** the baseline extension model that enables depth and normal map creation within the rasterization process. This is built on top of [gsplat-rade](https://github.com/brian-xu/gsplat-rade) and is heavily inspired by the [scaffold-gs-nerfstudio](https://github.com/brian-xu/scaffold-gs-nerfstudio) implementation.

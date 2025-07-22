@@ -32,8 +32,8 @@ if __name__ == "__main__":
 
             # Create the colmap
             preproc_kwargs = {
-                "sfm_tool": "hloc",
-                "refine_pixsfm": True,
+                # "sfm_tool": "hloc",
+                # "refine_pixsfm": "", # This is a flag currently so doesn't need to be given "True" afai can tell
             }
 
             splatter.preprocess(kwargs=preproc_kwargs)

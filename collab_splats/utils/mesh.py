@@ -26,7 +26,7 @@ from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
 
-from ns_extension.utils.camera_utils import (
+from collab_splats.utils.camera_utils import (
     get_colored_points_from_depth,
     get_means3d_backproj,
     project_pix,

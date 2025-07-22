@@ -39,7 +39,7 @@ ENV PATH="/opt/conda/bin:$PATH"
 # Copy environment files
 COPY env.yml /tmp/env.yml
 COPY requirements.txt /tmp/requirements.txt
-COPY ns-extension/ /tmp/ns-extension
+COPY ../collab-splats/ /tmp/collab-splats
 
 # Set CUDA architectures
 # 61 = GTX 10xx -- e.g. 1080Ti (Pascal SM61)
@@ -74,28 +74,15 @@ RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
     conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
     pip install -r /tmp/requirements.txt && \
 
-    # Hack to install our version of rade_gs atm
+    # Hack to install our version of gsplat-rade
     export CC=/usr/bin/gcc-11 && \
     export CXX=/usr/bin/g++-11 && \
     export CUDA_HOME=/opt/conda/envs/nerfstudio && \
     export PATH=\${CUDA_HOME}/bin:\${PATH} && \
     export LD_LIBRARY_PATH=\${CUDA_HOME}/lib64:\${LD_LIBRARY_PATH} && \
 
-    ## TLB figure out how to change this to consider that this is now part of ns-extension
-    cd /tmp/ns-extension && \
-    pip install -e . && \
-    cd /tmp/ns-extension/ns_extension/submodules/tetra_triangulation/ && \
-    cmake . \
-    -DCMAKE_C_COMPILER=/usr/bin/gcc-11 \
-    -DCMAKE_CXX_COMPILER=/usr/bin/g++-11 \
-    -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/gcc-11 \
-    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && \
-    make"
-    # pip install /tmp/rade_gs"
-    # cd /tmp/rade_gs/rade_gs/submodules/tetra_triangulation/ && \
-    # cmake . && \
-    # make && \
-    # pip install /tmp/rade_gs"
+    cd /tmp/collab-splats && \
+    pip install -e ."
 
 ##################################################
 #           Get pre-built components             #

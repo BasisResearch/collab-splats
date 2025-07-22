@@ -21,8 +21,8 @@ from gsplat.cuda._wrapper import fully_fused_projection
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel, SplatfactoModelConfig, get_viewmat
 
-from ns_extension.utils import convert_to_colmap_camera, depth_double_to_normal
-from ns_extension.utils.camera_utils import build_rotation
+from collab_splats.utils import convert_to_colmap_camera, depth_double_to_normal
+from collab_splats.utils.camera_utils import build_rotation
 
 @dataclass
 class RadegsModelConfig(SplatfactoModelConfig):

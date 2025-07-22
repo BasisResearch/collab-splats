@@ -19,7 +19,7 @@ from torchmetrics.image import (
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.cameras.cameras import Cameras
 
-from ns_extension.utils.utils import mean_angular_error
+from collab_splats.utils.utils import mean_angular_error
 
 # class NormalConsistencyLoss(nn.Module):
 #     """

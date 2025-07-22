@@ -17,12 +17,13 @@ from nerfstudio.plugins.types import MethodSpecification
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
 
 # Custom configs
-from ns_extension.models.rade_gs_model import RadegsModelConfig
-from ns_extension.utils.trainer_config import _TrainerConfig
+from collab_splats.models.rade_features_model import RadegsFeaturesModelConfig
+from collab_splats.datamanagers.features_datamanager import FeatureSplattingDataManagerConfig
+from collab_splats.utils.trainer_config import _TrainerConfig
 
-rade_gs_method = MethodSpecification(
+rade_features_method = MethodSpecification(
     config=_TrainerConfig(
-        method_name="rade-gs",  # TODO: rename to your own model
+        method_name="rade-features",  # TODO: rename to your own model
         steps_per_eval_image=100,
         steps_per_eval_batch=0,
         steps_per_save=2000,
@@ -30,15 +31,15 @@ rade_gs_method = MethodSpecification(
         max_num_iterations=30000,
         mixed_precision=False,
         pipeline=VanillaPipelineConfig(
-            datamanager=FullImageDatamanagerConfig(
+            datamanager=FeatureSplattingDataManagerConfig(
                 dataparser=NerfstudioDataParserConfig(load_3D_points=True),
                 cache_images_type="uint8",
             ),
-            model=RadegsModelConfig(
+            model=RadegsFeaturesModelConfig(
                 use_depth_normal_loss=True,
                 depth_normal_lambda=0.05,
                 depth_ratio=0.6,
-                # sh_degree=3,
+                sh_degree=0,
             ),
         ),
         optimizers={
@@ -65,7 +66,21 @@ rade_gs_method = MethodSpecification(
                 "optimizer": AdamOptimizerConfig(lr=0.005, eps=1e-15),
                 "scheduler": None,
             },
-            "quats": {"optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), "scheduler": None},
+            "quats": {
+                "optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), 
+                "scheduler": None
+            },
+            "distill_features": {
+                "optimizer": AdamOptimizerConfig(lr=0.0025, eps=1e-15),
+                "scheduler": ExponentialDecaySchedulerConfig(
+                    lr_final=5e-4,
+                    max_steps=10000,
+                ),
+            },
+            "decoder": {
+                "optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15),
+                "scheduler": None,
+            },
             "camera_opt": {
                 "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
                 "scheduler": ExponentialDecaySchedulerConfig(
@@ -82,5 +97,5 @@ rade_gs_method = MethodSpecification(
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
         vis="viewer",
     ),
-    description="RaDeGS enables creation of high-quality meshes from gaussian splats.",
+    description="RaDe-Features combines RaDe-GS with feature splatting.",
 )

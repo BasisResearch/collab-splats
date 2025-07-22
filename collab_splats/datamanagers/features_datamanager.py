@@ -26,8 +26,8 @@ from nerfstudio.data.datamanagers.full_images_datamanager import (
 )
 from nerfstudio.utils.rich_utils import CONSOLE
 
-from ns_extension.utils.features import BaseFeatureExtractor, pytorch_gc, resize_image
-from ns_extension.utils.segmentation import Segmentation, aggregate_masked_features
+from collab_splats.utils.features import BaseFeatureExtractor, pytorch_gc, resize_image
+from collab_splats.utils.segmentation import Segmentation, aggregate_masked_features
 
 @dataclass
 class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):

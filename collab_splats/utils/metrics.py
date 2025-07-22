@@ -10,7 +10,7 @@ from torch import nn
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
-from ns_extension.utils.utils import calculate_accuracy, calculate_completeness, mean_angular_error
+from collab_splats.utils.utils import calculate_accuracy, calculate_completeness, mean_angular_error
 
 class PDMetrics(nn.Module):
     """Computation of error metrics between predicted and ground truth point clouds

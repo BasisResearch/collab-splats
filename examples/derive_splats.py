@@ -7,7 +7,11 @@ test_configs = {
     #     'frame_proportion': 0.25,
     # },
     'birds': {
-        'file_path': '/workspace/fieldwork-data/birds/2024-05-18/SplatsSD/C0064.MP4',
+        'file_path': '/workspace/fieldwork-data/birds/2024-05-18/SplatsSD/C0065.MP4',
+        'frame_proportion': 0.25,
+    },
+    'birds': {
+        'file_path': '/workspace/fieldwork-data/birds/2024-05-19/SplatsSD/C0067.MP4',
         'frame_proportion': 0.25,
     }
 }
@@ -38,4 +42,4 @@ if __name__ == "__main__":
 
             splatter.extract_features(overwrite=True, kwargs=kwargs)
 
-        sys.exit()
+        # sys.exit()

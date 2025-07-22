@@ -28,7 +28,8 @@ from torch import nn
 import numpy as np
 import math
 
-from ns_extension.utils.utils import project_gaussians
+from collab_splats.utils.segmentation import create_patch_mask, create_composite_mask, mask_id_to_binary_mask
+from collab_splats.utils.utils import project_gaussians
 
 class GroupingClassifier(nn.Module):
     def __init__(self, num_masks: int, num_gaussians: int):
@@ -42,100 +43,6 @@ class GroupingClassifier(nn.Module):
     #########################################################
     ############## Mask initialization ######################
     #########################################################
-
-    def set_patch_mask(self, image, num_patches: int = 32):
-        """
-        Provided an image of given dimensions, create an array of patches.
-        """
-        # Get image dimensions
-        H, W = image.shape[:2]
-
-        # Get patch dimensions
-        patch_width = math.ceil(W / num_patches)
-        patch_height = math.ceil(H / num_patches)
-        
-        # Create flattened coordinates
-        total_pixels = H * W
-        y_coords = torch.arange(H).unsqueeze(1).expand(-1, W).flatten()
-        x_coords = torch.arange(W).unsqueeze(0).expand(H, -1).flatten()
-        
-        # Calculate patch indices for all pixels at once
-        patch_y_indices = torch.clamp(y_coords // patch_height, 0, num_patches - 1)
-        patch_x_indices = torch.clamp(x_coords // patch_width, 0, num_patches - 1)
-        
-        # Create sparse representation
-        flatten_patch_mask = torch.zeros((num_patches, num_patches, total_pixels), 
-                                    dtype=torch.bool)
-        
-        # Use indexing to set values
-        pixel_indices = torch.arange(total_pixels)
-        flatten_patch_mask[patch_y_indices, patch_x_indices, pixel_indices] = True
-        
-        return flatten_patch_mask
-    
-    def create_composite_mask(self, results, confidence_threshold=0.85):
-        """
-        Creates a composite mask from the results of the segmentation model.
-        
-        Inputs:
-            results: list of dicts, each containing a mask and a confidence score
-            confidence_threshold: float, the minimum confidence score for a mask to be included in the composite mask
-
-        Outputs:
-            composite_mask: numpy array, the composite mask
-        """
-
-        selected_masks = []
-        for mask in results:
-            if mask['predicted_iou'] < confidence_threshold:
-                continue
-
-            selected_masks.append(
-                (mask['segmentation'], mask['predicted_iou'])
-            )
-        
-        # Store the masks and confidences
-        masks, confs = zip(*selected_masks)
-
-        # Create empty image to store mask ids
-        H, W = masks[0].shape[:2]
-        mask_id = np.zeros((H, W), dtype=np.uint8)
-
-        sorted_idxs = np.argsort(confs)
-        for i, idx in enumerate(sorted_idxs, start=1):
-            current_mask = masks[idx - 1]
-            mask_id[current_mask == 1] = i
-
-        # Find mask indices after having calculated overlap based on ranked confidence
-        mask_indices = np.unique(mask_id)
-        mask_indices = np.setdiff1d(mask_indices, [0]) # remove 0 item
-
-        composite_mask = np.zeros((H, W), dtype=np.uint8)
-
-        for i, idx in enumerate(mask_indices, start=1):
-            mask = (mask_id == idx)
-            if mask.sum() > 0 and (mask.sum() / masks[idx-1].sum()) > 0.1:
-                composite_mask[mask] = i
-
-        return composite_mask
-
-    def mask_id_to_binary_mask(self, composite_mask: np.ndarray) -> np.ndarray:
-        """
-        Convert an image with integer mask IDs to a binary mask array.
-
-        Args:
-            mask_id (np.ndarray): An (H, W) array where each unique positive integer 
-                                represents a separate object mask.
-
-        Returns:
-            np.ndarray: A (N, H, W) boolean array where N is the number of masks and each 
-                        slice contains a binary mask.
-        """
-        unique_ids = np.unique(composite_mask)
-        unique_ids = unique_ids[unique_ids > 0]  # Ignore background (assumed to be 0)
-
-        binary_masks = (composite_mask[None, ...] == unique_ids[:, None, None])
-        return binary_masks
 
     #########################################################
     ############## Gaussian selection #######################
@@ -152,12 +59,8 @@ class GroupingClassifier(nn.Module):
         proj_results = project_gaussians(model, camera)
         
         # Prepare masks = Decimate the composite mask into individual masks
-        binary_masks = self.mask_id_to_binary_mask(composite_mask)
+        binary_masks = mask_id_to_binary_mask(composite_mask)
         flattened_masks = torch.tensor(binary_masks).flatten(start_dim=1)  # (N, H*W)
-
-        # Pre-extract proj_results for compiled function
-        proj_flattened = proj_results['proj_flattened']
-        proj_depths = proj_results['proj_depths']
 
         # Compute the gaussian lookup table
         max_gaussian_id = proj_results['gaussian_ids'].max() if len(proj_results['gaussian_ids']) > 0 else 0

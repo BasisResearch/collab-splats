@@ -7,7 +7,7 @@ import cv2
 import torch
 import numpy as np
 
-from ns_extension.utils.plotting import load_and_plot_ply
+from collab_splats.utils.plotting import load_and_plot_ply
 
 DEFAULT_TIMEOUT = 3600
 

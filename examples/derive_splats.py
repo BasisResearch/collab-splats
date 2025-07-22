@@ -1,5 +1,5 @@
 import sys
-from ns_extension.wrapper import Splatter, SplatterConfig
+from collab_splats.wrapper import Splatter, SplatterConfig
 
 test_configs = {
     # 'rats': {

@@ -170,7 +170,7 @@ class Splatter:
             f"{input_type} "
             f"--data {file_path.as_posix()} "
             f"--output-dir {preproc_data_path.as_posix()} "
-            f"{num_frames_target}"
+            f"{num_frames_target} "
         )
 
         if kwargs is not None:

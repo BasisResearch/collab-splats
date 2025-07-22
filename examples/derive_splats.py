@@ -31,15 +31,20 @@ if __name__ == "__main__":
             splatter = Splatter(config)
 
             # Create the colmap
-            splatter.preprocess()
+            preproc_kwargs = {
+                "sfm_tool": "hloc",
+                "refine_pixsfm": True,
+            }
+
+            splatter.preprocess(kwargs=preproc_kwargs)
 
             # Train the splatting model -- can pass additional arguments to ns-train
-            kwargs = {
+            feature_kwargs = {
                 "pipeline.model.output-depth-during-training": True,
                 "pipeline.model.rasterize-mode": "antialiased",
                 "pipeline.model.use_scale_regularization": True,
             }
 
-            splatter.extract_features(overwrite=True, kwargs=kwargs)
+            splatter.extract_features(overwrite=True, kwargs=feature_kwargs)
 
         # sys.exit()

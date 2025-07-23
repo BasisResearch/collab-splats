@@ -21,6 +21,7 @@ dependencies = [
     "regex",
     "torchtyping",
     "tqdm",
+    "meshlib",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
 ]
 

@@ -145,7 +145,7 @@ class Splatter:
 
         # If the transforms exists and we don't want to overwrite
         # Return and store the processed_data_path
-        if transforms_path.exists() and not self.config.get('overwrite', False):
+        if transforms_path.exists() and not overwrite:
             print(f"transforms.json already exists at {transforms_path}")
             print("To rerun preprocessing, set overwrite=True")
             self.config['preproc_data_path'] = preproc_data_path

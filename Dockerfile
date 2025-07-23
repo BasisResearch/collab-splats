@@ -1,13 +1,8 @@
-# Docker multi-stage build
 # syntax=docker/dockerfile:1
-# Build with the following commands:
-# docker build --platform=linux/amd64 --progress=plain -t tommybotch/collab-splats .
-
 ARG UBUNTU_VERSION=22.04
 ARG NVIDIA_CUDA_VERSION=11.8.0
 ARG CUDA_ARCHITECTURES="90;89;86;80;75;70;61"
 ARG NERFSTUDIO_VERSION=""
-ARG NUMBER_OF_CORES=8
 
 ##################################################
 #           Builder stage (for compilation)      #
@@ -15,10 +10,6 @@ ARG NUMBER_OF_CORES=8
 
 FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} as builder
 ARG CUDA_ARCHITECTURES
-ARG NUMBER_OF_CORES
-
-# Use faster apt mirror
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirror.math.princeton.edu/pub/ubuntu/|g' /etc/apt/sources.list
 
 # Install build dependencies
 RUN apt-get update && \
@@ -32,25 +23,6 @@ RUN apt-get update && \
         cmake \
         ninja-build \
         git \
-        libboost-program-options-dev \
-        libboost-filesystem-dev \
-        libboost-graph-dev \
-        libboost-system-dev \
-        libboost-test-dev \
-        libsuitesparse-dev \
-        libflann-dev \
-        libfreeimage-dev \
-        libmetis-dev \
-        libgoogle-glog-dev \
-        libgflags-dev \
-        libsqlite3-dev \
-        libglew-dev \
-        qtbase5-dev \
-        libqt5opengl5-dev \
-        libcgal-dev \
-        libatlas-base-dev \
-        libsuitesparse-dev \
-        libhdf5-dev \  
         && rm -rf /var/lib/apt/lists/*
 
 # Install conda in builder stage
@@ -64,45 +36,6 @@ ENV PATH="/opt/conda/bin:$PATH"
 COPY ./env.yml /tmp/env.yml
 COPY ./requirements.txt /tmp/requirements.txt
 COPY ./ /opt/collab-splats
-
-## Building dependencies from source (found here: https://github.com/cvg/pixel-perfect-sfm/issues/41)
-
-# Eigen
-RUN git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git /opt/eigen && \
-    cd /opt/eigen && \
-    mkdir build && cd build && \
-    cmake .. && \
-    make install
-
-# Ceres Solver - Build with LTO disabled
-RUN git clone https://ceres-solver.googlesource.com/ceres-solver /opt/ceres-solver && \
-    cd /opt/ceres-solver && \
-    git checkout 2.1.0rc2 && \
-    mkdir build && cd build && \
-    cmake .. \
-        -DBUILD_TESTING=OFF \
-        -DBUILD_EXAMPLES=OFF \
-        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
-        -DCMAKE_CXX_FLAGS="-fno-lto -O2" \
-        -DCMAKE_C_FLAGS="-fno-lto -O2" \
-        -G Ninja && \
-    ninja -j${NUMBER_OF_CORES} && \
-    ninja install
-
-# COLMAP (with CUDA and Ninja)
-RUN git clone https://github.com/colmap/colmap.git /opt/colmap && \
-    cd /opt/colmap && \
-    git checkout 3.8 && \
-    mkdir build && cd build && \
-    cmake .. \
-        -DCUDA_ENABLED=ON \
-        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
-        -DCMAKE_CXX_FLAGS="-fno-lto -O2" \
-        -DCMAKE_C_FLAGS="-fno-lto -O2" \
-        -G Ninja && \
-    ninja -j${NUMBER_OF_CORES} && \
-    ninja install
 
 # Set CUDA architectures
 # 61 = GTX 10xx -- e.g. 1080Ti (Pascal SM61)
@@ -121,65 +54,50 @@ RUN conda config --set always_yes true && \
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
 # Build everything in conda environment --> last step is to install buildtools
-RUN /bin/bash -c \
-    "source /opt/conda/etc/profile.d/conda.sh && \
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
     conda env create -n nerfstudio -f /tmp/env.yml && \
     conda activate nerfstudio && \
-    \
-    # Set compiler versions and disable LTO globally
+
+    # Hack to install our version of rade_gs atm
     export CC=/usr/bin/gcc-11 && \
     export CXX=/usr/bin/g++-11 && \
     export CUDA_HOME=/opt/conda/envs/nerfstudio && \
     export PATH=\${CUDA_HOME}/bin:\${PATH} && \
     export LD_LIBRARY_PATH=\${CUDA_HOME}/lib64:\${LD_LIBRARY_PATH} && \
-    \
-    # Comprehensive LTO and optimization flags
-    export CXXFLAGS='-fno-lto -O2 -fPIC' && \
-    export CFLAGS='-fno-lto -O2 -fPIC' && \
-    export LDFLAGS='-fno-lto' && \
-    export CMAKE_CXX_FLAGS='-fno-lto -O2 -fPIC' && \
-    export CMAKE_C_FLAGS='-fno-lto -O2 -fPIC' && \
-    export CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF && \
-    \
-    # Control parallelization to avoid build issues
-    export MAKEFLAGS='-j2' && \
-    export CMAKE_BUILD_PARALLEL_LEVEL=2 && \
-    export MAX_JOBS=2 && \
-    \
-    # Install torch and other dependencies
+
+    # Install torch and cuda toolkit
     pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118 && \
     conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y && \
-    conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0' && \
-    \
-    # Install hloc and pixel-perfect-sfm
-    git clone https://github.com/cvg/pixel-perfect-sfm --recursive /opt/pixel-perfect-sfm && \
-    cd /opt/pixel-perfect-sfm && \
-    pip install -r requirements.txt && \
-    \
-    # Now install hloc
+    pip install 'kornia>=0.6.11' --no-deps && \
+        
+    # Install hloc
     git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
     cd /opt/hloc && \
-    git checkout v1.4 && \
-    pip install -e . && \
-    \
-    # Install pixsfm with explicit compiler flags
-    cd /opt/pixel-perfect-sfm && \
-    CMAKE_ARGS='-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DCMAKE_CXX_FLAGS=\"-fno-lto -O2 -fPIC\" -DCMAKE_C_FLAGS=\"-fno-lto -O2 -fPIC\"' pip install -e . --no-cache-dir -v && \
-    \
-    # Bump pycolmap to 0.6.0
-    pip install pycolmap==0.6.0 && \ 
-    \
-    # Install gsplat-rade with proper flags
+    pip install . --no-cache-dir --no-deps && \
+    cd ~ && \
+
+    # Now bump back down to numpy 1.26.4
+    conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0' && \
+    
+    # pip install --no-cache-dir pycolmap==0.6.1 pyceres==2.1 omegaconf==2.3.0 && \
+
+    # # Install hloc and pixel-perfect-sfm
+    # git clone https://github.com/cvg/pixel-perfect-sfm --recursive /opt/pixel-perfect-sfm && \
+    # cd /opt/pixel-perfect-sfm && \
+    # pip install -e . --no-cache-dir && \
+
+
+    # Install gsplat-rade
     pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch && \
     export TORCH_CUDA_ARCH_LIST=\"\$(echo \"${CUDA_ARCHITECTURES}\" | tr ';' '\n' | awk '\$0 > 70 {print substr(\$0,1,1)\".\"substr(\$0,2)}' | tr '\n' ' ' | sed 's/ \$//')\" && \
-    CMAKE_ARGS='-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DCMAKE_CXX_FLAGS=\"-fno-lto -O2 -fPIC\" -DCMAKE_C_FLAGS=\"-fno-lto -O2 -fPIC\"' pip install git+https://github.com/brian-xu/gsplat-rade.git && \
+    pip install git+https://github.com/brian-xu/gsplat-rade.git && \
     pip install nerfstudio && \
-    \
+
     # Bump the conda version back down --> nerfstudio upgrades for some reason in previous step
     conda install -c conda-forge 'numpy<2.0.0' && \ 
     conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
     pip install -r /tmp/requirements.txt && \
-    \
+
     cd /opt/collab-splats && \
     pip install -e ."
 
@@ -191,7 +109,7 @@ RUN /bin/bash -c \
 FROM continuumio/miniconda3:latest as conda-source
 
 # Get nerfstudio components
-# FROM ghcr.io/nerfstudio-project/nerfstudio:1.1.5 as nerfstudio
+FROM ghcr.io/nerfstudio-project/nerfstudio:1.1.5 as nerfstudio
 
 ##################################################
 #           Runtime stage                        #
@@ -234,25 +152,18 @@ RUN apt-get update && \
         && rm -rf /var/lib/apt/lists/*
 
 # Copy conda installation from conda-source
-COPY --from=conda-source /opt/conda/ /opt/conda/
+COPY --from=conda-source /opt/conda/ /opt/conda
 
 # Copy compiled conda environment from builder
 COPY --from=builder /opt/conda/envs/nerfstudio/ /opt/conda/envs/nerfstudio/
 
-# Copy collab-splats project source
+# Copy rade_gs from builder for during development --> otherwise we need to run pip install . (instead of -e)
 COPY --from=builder /opt/collab-splats /opt/collab-splats
+COPY --from=builder /opt/hloc /opt/hloc
 
-# Copy COLMAP (compiled from source)
-COPY --from=builder /usr/local/bin/colmap /usr/local/bin/
-COPY --from=builder /usr/local/lib/libcolmap* /usr/local/lib/
-COPY --from=builder /usr/local/include/colmap /usr/local/include/colmap
-
-# Copy Ceres (compiled from source)
-COPY --from=builder /usr/local/lib/libceres* /usr/local/lib/
-COPY --from=builder /usr/local/include/ceres /usr/local/include/ceres
-
-# Copy Eigen (header-only)
-COPY --from=builder /usr/local/include/eigen3 /usr/local/include/eigen3
+# Copy colmap from nerfstudio
+COPY --from=nerfstudio /usr/local/bin/colmap /usr/local/bin/
+COPY --from=nerfstudio /usr/local/lib/libcolmap* /usr/local/lib/
 
 # Set CUDA environment variables
 ENV CUDA_HOME=/usr/local/cuda

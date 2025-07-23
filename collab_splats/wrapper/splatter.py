@@ -294,7 +294,7 @@ class Splatter:
 
         # Create the mesh
         if not mesh_dir.exists() or overwrite:
-            from ns_extension.utils.mesh import Open3DTSDFFusion
+            from collab_splats.utils.mesh import Open3DTSDFFusion
 
             # Initialize the mesher
             mesher = Open3DTSDFFusion(

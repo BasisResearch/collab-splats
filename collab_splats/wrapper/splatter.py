@@ -351,13 +351,13 @@ class Splatter:
             output_dir = self.config["mesh_info"]["mesh"].parent
             output_path = output_dir / output_fn
             
-            # Map to open3d format 
-            if similarity_map.ndim == 1:
-                similarity_cast = similarity_map[:, np.newaxis]
+            # # Map to open3d format 
+            # if similarity_map.ndim == 1:
+            #     similarity_cast = similarity_map[:, np.newaxis]
             
             # Normalize and pad to RGB
-            similarity_colors = np.zeros((len(similarity_cast), 3))
-            similarity_cast = similarity_cast.astype(np.float64)
+            similarity_colors = np.zeros((len(similarity_map), 3))
+            similarity_cast = similarity_map.astype(np.float64)
             if np.max(similarity_cast) > 0:
                 similarity_cast /= np.max(similarity_cast)
             

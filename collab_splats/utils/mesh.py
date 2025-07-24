@@ -154,7 +154,7 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 
     # If no neighbors within threshold, return zeros
     if not np.any(valid_mask):
-        return torch.ten(features_kNN)
+        return features_kNN
 
     # Compute Gaussian weights for neighbors
     sigma = np.maximum(np.mean(distances[valid_mask]), 1e-8)  # avoid zero sigma

@@ -82,3 +82,7 @@ Two models are currently offered:
 Within the class ```Splatter``` we provide the ability to preprocess, train, and visualize splatting models within nerfstudio. We also enable meshing as a post-processing strategy for all splatting outputs.
 
 For examples of these different functionalities, please navigate to the ```examples/``` directory.
+
+## Problems
+
+Things aren't showing up in plots? Check [VSCode forwarding settings](https://github.com/pyvista/pyvista/issues/5296#issuecomment-1971079419)

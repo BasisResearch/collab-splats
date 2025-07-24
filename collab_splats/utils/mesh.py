@@ -26,6 +26,7 @@ from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
 
+import open3d as o3d
 import meshlib.mrmeshpy as mm
 
 from collab_splats.utils.camera_utils import (
@@ -241,6 +242,92 @@ def clean_repair_mesh(mesh_path: str, max_hole_size: float = 3.0, max_edge_split
             
     return mesh
 
+def align_pcd_floor(pcd: o3d.geometry.PointCloud, dist_threshold: float = 0.02, 
+                   ransac_n: int = 3, num_iterations: int = 1000) -> o3d.geometry.PointCloud:
+    """Align the point cloud to the floor plane and optionally cull points below the floor.
+    
+    Args:
+        pcd: Input point cloud
+        dist_threshold: Distance threshold for RANSAC plane fitting
+        cull_below_floor: Whether to remove points below the floor plane
+        z_threshold: How far below the floor plane to cull points (in meters)
+    
+    Returns:
+        Tuple of (aligned_pcd, kept_indices) where kept_indices are the indices 
+        of points that were retained after culling (if enabled)
+    """
+    # Uses RANSAC to sample points, finding plane with largest support
+    # given sampling
+    floor = get_floor_plane(pcd, dist_threshold=dist_threshold, ransac_n=ransac_n, num_iterations=num_iterations)
+    a, b, c, d = floor
+
+    # Normalize the normal vector
+    normal = np.array([a, b, c])
+    normal /= np.linalg.norm(normal)
+    
+    # Ensure normal points upward
+    if normal[2] < 0:
+        normal = -normal
+        d = -d  # Flip d when we flip the normal
+
+    # # Optionally cull points below the floor plane BEFORE alignment
+    # if indices is None:
+    #     indices = np.arange(len(pcd.points))  # Initialize with all indices
+    
+    # if cull_below_floor:
+    #     # For plane ax + by + cz + d = 0, points with ax + by + cz + d < 0 are "below"
+    #     # (assuming normal points upward)
+    #     points = np.asarray(pcd.points)
+    #     distances_to_plane = points @ normal + d / np.linalg.norm([a, b, c])  # signed distances
+        
+    #     # Keep points that are above the specified threshold below the floor
+    #     # Negative z_threshold means we keep points that are z_threshold distance below the floor
+    #     above_threshold_mask = distances_to_plane >= -z_threshold
+    #     kept_indices = np.where(above_threshold_mask)[0]
+        
+    #     # # Filter the point cloud
+    #     pcd = pcd.select_by_index(kept_indices)
+    #     indices = indices[kept_indices]
+
+    #     # print (f"Removed {len(kept_indices)} points below the floor")
+        
+    #     # # If we have colors, they'll be filtered automatically with select_by_index
+    #     # # Same for normals and other attributes
+
+    # Compute rotation to align the normal with Z-axis
+    z_axis = np.array([0, 0, 1])
+    rotation_axis = np.cross(normal, z_axis)
+    rotation_angle = np.arccos(np.clip(np.dot(normal, z_axis), -1.0, 1.0))
+
+    if np.linalg.norm(rotation_axis) < 1e-6:
+        R = np.eye(3)
+    else:
+        rotation_axis /= np.linalg.norm(rotation_axis)
+        axis_angle = rotation_axis * rotation_angle
+        R = pcd.get_rotation_matrix_from_axis_angle(axis_angle)
+
+    # Rotate first (no center -> about origin)
+    pcd.rotate(R, center=(0, 0, 0))
+
+    # Recompute floor plane after rotation
+    new_plane = get_floor_plane(pcd, dist_threshold=dist_threshold, ransac_n=ransac_n, num_iterations=num_iterations)
+    _, _, _, d_new = new_plane
+
+    # Translate the floor to z=0 (d is distance from origin along Z after alignment)
+    pcd.translate((0, 0, -d_new))  # since now normal ≈ [0,0,1], use d_new directly
+
+    return pcd
+
+def get_floor_plane(pcd: o3d.geometry.PointCloud, dist_threshold: float = 0.02, ransac_n: int = 3, num_iterations: int = 1000):
+    """
+    Get the floor plane from the point cloud.
+    """
+    plane_model, _ = pcd.segment_plane(
+        distance_threshold=dist_threshold,
+        ransac_n=ransac_n,
+        num_iterations=num_iterations
+    )
+    return plane_model
 
 
 ########################################################
@@ -1259,6 +1346,8 @@ class Open3DTSDFFusion(GSMeshExporter):
                 rgb = features2vertex(cleaned_mesh.vertices, mesh.vertices, np.asarray(mesh.vertex_colors))
                 cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(rgb)
                 mesh = cleaned_mesh
+
+                cleaned_mesh = align_pcd_floor(cleaned_mesh)
 
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and \

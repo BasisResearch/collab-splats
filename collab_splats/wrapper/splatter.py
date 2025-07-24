@@ -361,9 +361,15 @@ class Splatter:
         print(f"Number of points: {mesh.n_points}")
         print(f"Number of cells: {mesh.n_cells}")
         print(f"Bounds: {mesh.bounds}")
+
+        # Create a plotter and add the mesh
+        plotter = pv.Plotter()
+        plotter.add_mesh(mesh, scalars=attribute, rgb=rgb)
+        plotter.show_axes()
+        plotter.show()
     
         # Create a plotter and add the mesh
-        mesh.plot(scalars=attribute, rgb=rgb)
+        # mesh.plot(scalars=attribute, rgb=rgb)
         # plotter = pv.Plotter()
         # plotter.add_mesh(mesh, scalars=attribute, rgb=rgb)
         # plotter.show_axes()

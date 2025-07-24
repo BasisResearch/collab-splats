@@ -16,7 +16,7 @@ import open3d as o3d
 import torch
 import torch.nn.functional as F
 import tyro
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from typing_extensions import Annotated
 from scipy.spatial import cKDTree
 
@@ -25,6 +25,8 @@ from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
+
+import meshlib.mrmeshpy as mm
 
 from collab_splats.utils.camera_utils import (
     get_colored_points_from_depth,
@@ -178,6 +180,69 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 
     return torch.tensor(features_kNN)
 
+
+########################################################
+############## Mesh cleaning / repair ##################
+########################################################
+
+def clean_repair_mesh(mesh_path: str, max_hole_size: float = 3.0, max_edge_splits: int = 10000):
+    
+    # Load mesh
+    mesh = mm.loadMesh(mesh_path)
+    
+    # Identify all connected components
+    components = mm.getAllComponents(mesh)
+
+    # Determine component sizes
+    sizes = [mask.count() for mask in components]  # count: faces or vertices
+    largest_idx = max(range(len(sizes)), key=lambda i: sizes[i])
+
+    # Create a new mesh for the largest component
+    largest_mask = components[largest_idx]
+    part = mm.Mesh()
+    part.addPartByMask(mesh, largest_mask)
+
+    # Set the mesh to the largest component
+    mesh = part
+    avg_edge_length = 0.0
+    num_edges = 0
+
+    for i in trange(mesh.topology.undirectedEdgeSize(), desc="Calculating average edge length"):
+        dir_edge = mm.EdgeId(i*2)
+        org = mesh.topology.org(dir_edge)
+        dest = mesh.topology.dest(dir_edge)
+        avg_edge_length += (mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]).length()
+        num_edges = num_edges + 1
+    avg_edge_length = avg_edge_length/num_edges
+
+    # Find all holes
+    hole_ids = mesh.topology.findHoleRepresentiveEdges()
+    fill_params = mm.FillHoleParams()
+    # fill_params.metric = mm.getUniversalMetric(mesh)
+
+    # Fill all holes
+    num_holes = len(hole_ids)
+    for he in tqdm(hole_ids, desc=f"Filling holes ({num_holes})", total=num_holes):
+        if mesh.holePerimiter( he ) < max_hole_size:
+            new_faces = mm.FaceBitSet()
+            fill_params.outNewFaces = new_faces
+            mm.fillHole( mesh, he, fill_params )
+
+            new_verts = mm.VertBitSet()
+            subdiv_settings = mm.SubdivideSettings()
+            subdiv_settings.maxEdgeLen = avg_edge_length
+            subdiv_settings.maxEdgeSplits = max_edge_splits
+            subdiv_settings.region = new_faces
+            subdiv_settings.newVerts = new_verts
+            mm.subdivideMesh(mesh,subdiv_settings)
+            mm.positionVertsSmoothly(mesh,new_verts)
+        else:
+            print(f"Skipping hole {he} of perimeter {mesh.holePerimiter( he )}")
+            
+    return mesh
+
+
+
 ########################################################
 ################ Meshing classes #######################
 ########################################################
@@ -197,6 +262,13 @@ class GSMeshExporter:
     """Cropbox rotation for the mesh."""
     cropbox_scale: Optional[Annotated[Tuple[float, float, float], "sx, sy, sz"]] = None
     """Cropbox scale for the mesh."""
+
+    clean_repair: bool = True
+    """Clean and repair the mesh."""
+    clean_max_hole_size: float = 3.0
+    """Maximum hole size for cleaning."""
+    clean_max_edge_splits: int = 10000
+    """Maximum edge splits for cleaning."""
 
     def cropbox(self) -> Optional[OrientedBox]:
         """Returns the cropbox for the mesh."""
@@ -1163,6 +1235,30 @@ class Open3DTSDFFusion(GSMeshExporter):
             mesh_0.remove_triangles_by_mask(triangles_to_remove)
             mesh_0.remove_unreferenced_vertices()
             mesh_0.remove_degenerate_triangles()
+
+            if self.clean_repair:
+                # Write out to a temporary file for cleaning
+                mesh_path = (self.output_dir / "temp_mesh.ply").as_posix()
+
+                o3d.io.write_triangle_mesh(
+                    mesh_path,
+                    mesh,
+                )
+
+                # Clean and repair the mesh then save
+                cleaned_mesh = clean_repair_mesh(
+                    mesh_path, 
+                    max_hole_size=self.clean_max_hole_size, 
+                    max_edge_splits=self.clean_max_edge_splits
+                )
+
+                mm.saveMesh(cleaned_mesh, mesh_path)
+                
+                # Load the mesh and map colors to the cleaned mesh
+                cleaned_mesh = o3d.io.read_triangle_mesh(mesh_path)
+                rgb = features2vertex(cleaned_mesh.points, mesh.points, np.asarray(mesh.vertex_colors))
+                cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(rgb)
+                mesh = cleaned_mesh
 
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and \

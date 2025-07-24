@@ -7,6 +7,7 @@ import cv2
 import torch
 import numpy as np
 import pyvista as pv
+import open3d as o3d
 
 DEFAULT_TIMEOUT = 3600
 

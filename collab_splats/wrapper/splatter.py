@@ -279,11 +279,6 @@ class Splatter:
         self, 
         mesher_type: str = "Open3DTSDFFusion",
         mesher_kwargs: Optional[Dict[str, Any]] = None,
-        # depth_name: str = "depth",
-        # normals_name: str = "normals",
-        # features_name: Optional[str] = "distill_features", 
-        # sdf_trunc: Optional[float] = 0.03,
-        # depth_trunc: Optional[float] = 3.0, 
         overwrite: bool = False,
     ) -> None:
         """Generate a mesh from the splatter data.
@@ -306,17 +301,6 @@ class Splatter:
                 output_dir=mesh_dir,
                 **mesher_kwargs
             )
-
-            # # Initialize the mesher
-            # mesher = Open3DTSDFFusion(
-            #     load_config=Path(self.config['model_config_path']),
-            #     depth_name=depth_name,
-            #     normals_name=normals_name,
-            #     features_name=features_name,
-            #     depth_trunc=depth_trunc,
-            #     sdf_trunc=sdf_trunc,
-            #     output_dir=mesh_dir
-            # )
 
             self.config['mesh_info'] = mesher.main()
         else:
@@ -372,4 +356,16 @@ class Splatter:
             raise ValueError("Mesh not found. Please run mesh() first.")
 
         mesh_path = self.config['mesh_info']['mesh']
-        load_and_plot_ply(mesh_path, attribute, rgb=rgb)
+        mesh = pv.read(mesh_path)
+        
+        # Print basic information about the mesh
+        print(f"Number of points: {mesh.n_points}")
+        print(f"Number of cells: {mesh.n_cells}")
+        print(f"Bounds: {mesh.bounds}")
+    
+        # Create a plotter and add the mesh
+        mesh.plot(scalars=attribute, rgb=rgb)
+        # plotter = pv.Plotter()
+        # plotter.add_mesh(mesh, scalars=attribute, rgb=rgb)
+        # plotter.show_axes()
+        # plotter.show()

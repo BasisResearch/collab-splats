@@ -1279,7 +1279,6 @@ class Open3DTSDFFusion(GSMeshExporter):
 
                 mesh.vertex_normals = o3d.utility.Vector3dVector(mesh_normals)
 
-
             mesh_path = self.output_dir / "Open3dTSDFfusion_mesh.ply"
 
             o3d.io.write_triangle_mesh(

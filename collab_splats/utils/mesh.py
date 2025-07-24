@@ -135,10 +135,10 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     vertices = np.asarray(mesh_vertices)
 
     # Build tree
-    tree = cKDTree(vertices)
+    tree = cKDTree(points)
 
     # Query nearest vertex for each point
-    distances, indices = tree.query(points, k=k)  # shape: (N,)
+    distances, indices = tree.query(vertices, k=k)  # shape: (N,)
 
     # Mask points where nearest vertex is within truncation distance
     # Use distance to closest vertex (distance[:, 0]) for truncation mask

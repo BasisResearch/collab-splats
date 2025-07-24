@@ -350,13 +350,26 @@ class Splatter:
         if output_fn is not None:
             output_dir = self.config["mesh_info"]["mesh"].parent
             output_path = output_dir / output_fn
+            
+            # Map to open3d format 
+            if similarity_map.ndim == 1:
+                similarity_cast = similarity_map[:, np.newaxis]
+            
+            # Normalize and pad to RGB
+            similarity_colors = np.zeros((len(similarity_cast), 3))
+            similarity_cast = similarity_cast.astype(np.float64)
+            if np.max(similarity_cast) > 0:
+                similarity_cast /= np.max(similarity_cast)
+            
+            # Map it to colors
+            similarity_colors[:, :similarity_map.shape[1]] = similarity_cast
 
             # Load the mesh and add the similarity map as a vertex color 
             mesh = o3d.io.read_triangle_mesh(self.config["mesh_info"]["mesh"])
-            mesh.vertex_colors = o3d.utility.Vector3dVector(similarity_map)
+            mesh.vertex_colors = o3d.utility.Vector3dVector(similarity_colors)
             o3d.io.write_triangle_mesh(output_path, mesh)
         
-        return similarity_map
+        return similarity_colors
 
     def plot_mesh(self, attribute: Optional[Union[str, np.ndarray]] = None, rgb: bool = True) -> None:
         """Plot the mesh."""

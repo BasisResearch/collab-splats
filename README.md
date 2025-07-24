@@ -35,8 +35,26 @@ pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https
 
 # Install cuda developer tools 
 conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y
+```
 
-# Downgrade setuptools to avoid tinycuda-nn error --> also need a numpy 1.X.X version
+Install hloc toolbox for SFM options.
+
+```bash
+# Install hloc
+git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
+cd /opt/hloc && \
+git checkout v1.4 && \
+git submodule update --init --recursive && \
+pip install -e . --no-cache-dir && \
+cd ~ && \
+
+# Bump down for hloc interface
+pip install --no-cache-dir pycolmap==0.4.0 && \ 
+```
+
+Downgrade setuptools to avoid tinycuda-nn error --> also need a numpy 1.X.X version
+
+```bash
 conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0'
 ```
 

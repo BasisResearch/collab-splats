@@ -119,65 +119,56 @@ def normals2vertex(mesh_vertices, points, normals, k=5, sdf_trunc=0.03):
 
 def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     """
-    Map point cloud features to mesh vertices using KNN over a KDTree.
+    Map point cloud features (attached to points) onto mesh vertices.
+    Assumes points are already aligned to mesh coordinate frame.
 
     Args:
-        mesh: final cleaned mesh after culling (mesh_0)
-        points: (N, 3) array of input point cloud
-        features: (N, D) array of per-point features
-        k: number of nearest neighbors to use for weighting
-        sdf_trunc: truncation distance for SDF
-    
+        mesh_vertices: (M, 3) ndarray of vertex positions (already aligned)
+        points: (N, 3) ndarray of point positions (Gaussians), aligned
+        features: (N, D) ndarray of features per point
+        k: number of neighbors to consider
+        sdf_trunc: truncation distance for filtering neighbors
+
     Returns:
-        features_kNN: (M, D) array of per-vertex features
+        features_kNN: (M, D) torch tensor of aggregated features per vertex
     """
 
     vertices = np.asarray(mesh_vertices)
 
-    # Build tree
+    # Build KDTree on points (Gaussian means)
     tree = cKDTree(points)
 
-    # Query nearest vertex for each point
-    distances, indices = tree.query(vertices, k=k)  # shape: (N,)
+    # Query nearest points for each mesh vertex
+    distances, indices = tree.query(vertices, k=k)
 
-    # Mask points where nearest vertex is within truncation distance
-    # Use distance to closest vertex (distance[:, 0]) for truncation mask
+    # Handle case when k=1 to maintain dims
+    if k == 1:
+        distances = distances[:, np.newaxis]
+        indices = indices[:, np.newaxis]
+
+    # Mask: consider only neighbors within truncation distance
     valid_mask = distances[:, 0] <= sdf_trunc
 
+    # Initialize output feature array
+    features_kNN = np.zeros((len(vertices), features.shape[1]), dtype=np.float32)
+
+    # If no neighbors within threshold, return zeros
     if not np.any(valid_mask):
-        # No points within truncation distance, return zeros
-        return np.zeros((len(vertices), features.shape[1]))
+        return torch.ten(features_kNN)
 
-    # Filter distances, indices, and features by valid points
-    distances = distances[valid_mask]
-    indices = indices[valid_mask]
-    features = features[valid_mask]
-
-    # Weighting with Gaussian kernel
-    sigma = np.mean(distances)  # or set manually
+    # Compute Gaussian weights for neighbors
+    sigma = np.maximum(np.mean(distances[valid_mask]), 1e-8)  # avoid zero sigma
     weights = np.exp(- (distances**2) / (2 * sigma**2))
-    weights /= weights.sum(axis=1, keepdims=True)  # normalize
 
-    # Aggregate features per vertex
-    features_kNN = np.zeros((len(vertices), features.shape[1]))
+    # Normalize weights along neighbors dimension
+    weights_sum = weights.sum(axis=1, keepdims=True)
+    weights /= weights_sum + 1e-8
 
-    # Use a counts array to normalize contributions per vertex later
-    vertex_weight_sum = np.zeros((len(vertices), 1))
-
-    # Accumulate weighted features
+    # Aggregate weighted features per vertex
     for i in range(k):
-        vertex_indices = indices[:, i]
-        weighted_feats = features * weights[:, i:i+1]
-
-        # Accumulate weighted features
-        np.add.at(features_kNN, vertex_indices, weighted_feats)
-
-        # Accumulate weights for normalization
-        np.add.at(vertex_weight_sum, vertex_indices, weights[:, i:i+1])
-
-    # Normalize aggregated features by summed weights (avoid div by zero)
-    nonzero_mask = vertex_weight_sum.squeeze() > 0
-    features_kNN[nonzero_mask] /= vertex_weight_sum[nonzero_mask]
+        neighbor_indices = indices[:, i]
+        weighted_feats = features[neighbor_indices] * weights[:, i:i+1]
+        features_kNN += weighted_feats
 
     return torch.tensor(features_kNN)
 

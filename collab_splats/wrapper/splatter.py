@@ -277,12 +277,14 @@ class Splatter:
 
     def mesh(
         self, 
-        depth_name: str = "depth",
-        normals_name: str = "normals",
-        features_name: Optional[str] = "distill_features", 
-        sdf_trunc: Optional[float] = 0.03,
-        depth_trunc: Optional[float] = 3.0, 
-        overwrite: bool = False,
+        mesher_type: str = "Open3DTSDFFusion",
+        mesher_kwargs: Optional[Dict[str, Any]] = None,
+        # depth_name: str = "depth",
+        # normals_name: str = "normals",
+        # features_name: Optional[str] = "distill_features", 
+        # sdf_trunc: Optional[float] = 0.03,
+        # depth_trunc: Optional[float] = 3.0, 
+        # overwrite: bool = False,
     ) -> None:
         """Generate a mesh from the splatter data.
         
@@ -294,18 +296,27 @@ class Splatter:
 
         # Create the mesh
         if not mesh_dir.exists() or overwrite:
-            from collab_splats.utils.mesh import Open3DTSDFFusion
+            from collab_splats.utils import mesh
 
+            print (f"Initializing mesher {mesher_type}")
+            
             # Initialize the mesher
-            mesher = Open3DTSDFFusion(
+            mesher = getattr(mesh, mesher_type)(
                 load_config=Path(self.config['model_config_path']),
-                depth_name=depth_name,
-                normals_name=normals_name,
-                features_name=features_name,
-                depth_trunc=depth_trunc,
-                sdf_trunc=sdf_trunc,
-                output_dir=mesh_dir
+                output_dir=mesh_dir,
+                **mesher_kwargs
             )
+
+            # # Initialize the mesher
+            # mesher = Open3DTSDFFusion(
+            #     load_config=Path(self.config['model_config_path']),
+            #     depth_name=depth_name,
+            #     normals_name=normals_name,
+            #     features_name=features_name,
+            #     depth_trunc=depth_trunc,
+            #     sdf_trunc=sdf_trunc,
+            #     output_dir=mesh_dir
+            # )
 
             self.config['mesh_info'] = mesher.main()
         else:

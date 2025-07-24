@@ -311,9 +311,10 @@ def align_geometry_floor(geometry: Union[o3d.geometry.PointCloud, o3d.geometry.T
     _, _, _, d_new = new_plane
 
     # Translate the geometry so floor is at z=0
-    geometry.translate((0, 0, -d_new))
+    translation = np.array([0, 0, -d_new])
+    geometry.translate(translation)
 
-    return geometry
+    return geometry, R, translation
 
 def get_floor_plane(pcd: o3d.geometry.PointCloud, dist_threshold: float = 0.02, 
                    ransac_n: int = 3, num_iterations: int = 1000):
@@ -1238,6 +1239,9 @@ class Open3DTSDFFusion(GSMeshExporter):
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
 
+        # Grab the means from the model
+        means = pipeline.model.means.detach().cpu().numpy()
+
         with torch.no_grad():
             cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
             # TODO: do eval dataset as well
@@ -1349,7 +1353,8 @@ class Open3DTSDFFusion(GSMeshExporter):
 
             # Align the mesh to the floor plane
             if self.align_floor:
-                mesh = align_geometry_floor(mesh)
+                mesh, R, translation = align_geometry_floor(mesh)
+                means = means @ R.T + translation
 
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and \
@@ -1357,7 +1362,6 @@ class Open3DTSDFFusion(GSMeshExporter):
                     getattr(pipeline.model, self.normals_name, None) is not None):
 
                 print (f"Mapping normals to mesh")
-                means = pipeline.model.means.detach().cpu().numpy()
                 normals = getattr(pipeline.model, self.normals_name).detach().cpu().numpy()
                 
                 mesh_normals = normals2vertex(

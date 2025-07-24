@@ -313,7 +313,8 @@ class Splatter:
         self, 
         positive_queries: List[str] = [""], 
         negative_queries: List[str] = ["object"], 
-        method: str = "pairwise"
+        method: str = "pairwise",
+        output_fn: Optional[str] = None
     ) -> None:
         """Query the mesh for features."""
 
@@ -345,11 +346,20 @@ class Splatter:
 
         del features
 
+        if output_fn is not None:
+            output_dir = self.config["mesh_info"]["mesh"].parent
+            output_path = output_dir / output_fn
+
+            # Load the mesh and add the similarity map as a vertex color 
+            mesh = o3d.io.read_triangle_mesh(self.config["mesh_info"]["mesh"])
+            mesh.vertex_colors = o3d.utility.Vector3dVector(similarity_map)
+            o3d.io.write_triangle_mesh(output_path, mesh)
+        
         return similarity_map
 
     def plot_mesh(self, attribute: Optional[Union[str, np.ndarray]] = None, rgb: bool = True) -> None:
         """Plot the mesh."""
-        if self.config.get('mesh_info') is None:
+        if self.config.get("mesh_info") is None:
             raise ValueError("Mesh information not found. Please run mesh() first.")
         elif self.config.get('mesh_info').get('mesh') is None:
             raise ValueError("Mesh not found. Please run mesh() first.")

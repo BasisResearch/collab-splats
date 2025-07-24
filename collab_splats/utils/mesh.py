@@ -1256,7 +1256,7 @@ class Open3DTSDFFusion(GSMeshExporter):
                 
                 # Load the mesh and map colors to the cleaned mesh
                 cleaned_mesh = o3d.io.read_triangle_mesh(mesh_path)
-                rgb = features2vertex(cleaned_mesh.points, mesh.points, np.asarray(mesh.vertex_colors))
+                rgb = features2vertex(cleaned_mesh.vertices, mesh.vertices, np.asarray(mesh.vertex_colors))
                 cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(rgb)
                 mesh = cleaned_mesh
 

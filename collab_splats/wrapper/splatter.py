@@ -284,7 +284,7 @@ class Splatter:
         # features_name: Optional[str] = "distill_features", 
         # sdf_trunc: Optional[float] = 0.03,
         # depth_trunc: Optional[float] = 3.0, 
-        # overwrite: bool = False,
+        overwrite: bool = False,
     ) -> None:
         """Generate a mesh from the splatter data.
         
@@ -299,7 +299,7 @@ class Splatter:
             from collab_splats.utils import mesh
 
             print (f"Initializing mesher {mesher_type}")
-            
+
             # Initialize the mesher
             mesher = getattr(mesh, mesher_type)(
                 load_config=Path(self.config['model_config_path']),

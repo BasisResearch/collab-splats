@@ -354,6 +354,9 @@ class GSMeshExporter:
     clean_max_edge_splits: int = 10000
     """Maximum edge splits for cleaning."""
 
+    align_floor: bool = True
+    """Align the mesh to the floor plane."""
+
     def cropbox(self) -> Optional[OrientedBox]:
         """Returns the cropbox for the mesh."""
         if self.cropbox_pos is None and self.cropbox_rpy is None and self.cropbox_scale is None:
@@ -1344,7 +1347,9 @@ class Open3DTSDFFusion(GSMeshExporter):
                 cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(rgb)
                 mesh = cleaned_mesh
 
-                cleaned_mesh = align_geometry_floor(cleaned_mesh)
+            # Align the mesh to the floor plane
+            if self.align_floor:
+                mesh = align_geometry_floor(mesh)
 
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and \

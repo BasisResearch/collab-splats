@@ -68,24 +68,21 @@ RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
     # Install torch and cuda toolkit
     pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118 && \
     conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y && \
-    pip install 'kornia>=0.6.11' --no-deps && \
-        
+    pip install 'kornia>=0.6.11' && \
+  
     # Install hloc
     git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
     cd /opt/hloc && \
-    pip install . --no-cache-dir --no-deps && \
+    git checkout v1.4 && \
+    git submodule update --init --recursive && \
+    pip install -e . --no-cache-dir && \
     cd ~ && \
+
+    # Bump down for hloc interface
+    pip install --no-cache-dir pycolmap==0.4.0 && \ 
 
     # Now bump back down to numpy 1.26.4
     conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0' && \
-    
-    # pip install --no-cache-dir pycolmap==0.6.1 pyceres==2.1 omegaconf==2.3.0 && \
-
-    # # Install hloc and pixel-perfect-sfm
-    # git clone https://github.com/cvg/pixel-perfect-sfm --recursive /opt/pixel-perfect-sfm && \
-    # cd /opt/pixel-perfect-sfm && \
-    # pip install -e . --no-cache-dir && \
-
 
     # Install gsplat-rade
     pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch && \

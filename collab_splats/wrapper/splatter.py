@@ -6,8 +6,7 @@ from typing import Optional, TypedDict, Set, Dict, Any, Union, List
 import cv2
 import torch
 import numpy as np
-
-from collab_splats.utils.plotting import load_and_plot_ply
+import pyvista as pv
 
 DEFAULT_TIMEOUT = 3600
 

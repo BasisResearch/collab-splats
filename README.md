@@ -6,7 +6,7 @@ Extension tools for nerfstudio enabling depth/normal derivation and meshing (amo
 
 ### Docker
 
-We provide a docker image setup for running nerfstudio with collab-splats (along with other abilities!) at ```tommybotch/collab-environment:latest```
+We provide a docker image setup for running nerfstudio with collab-splats (along with other abilities!) at ```tommybotch/collab-splats:latest```
 
 ### Conda
 Follow the [NerfStudio instllation instructions](https://docs.nerf.studio/quickstart/installation.html) to install a conda environment. For convenience, here are the commands I've used to successfully build a nerfstudio environment.

@@ -186,48 +186,59 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 ############## Mesh cleaning / repair ##################
 ########################################################
 
-def clean_repair_mesh(mesh_path: str, max_hole_size: float = 3.0, max_edge_splits: int = 10000):
-    
+def clean_repair_mesh(
+    mesh_path: str,
+    max_hole_size: float = 3.0,
+    max_edge_splits: int = 10000,
+    min_mask_size: int = None  # if None, selects only the largest
+):
     # Load mesh
     mesh = mm.loadMesh(mesh_path)
-    
+
     # Identify all connected components
     components = mm.getAllComponents(mesh)
 
     # Determine component sizes
-    sizes = [mask.count() for mask in components]  # count: faces or vertices
-    largest_idx = max(range(len(sizes)), key=lambda i: sizes[i])
+    sizes = [mask.count() for mask in components]
 
-    # Create a new mesh for the largest component
-    largest_mask = components[largest_idx]
-    part = mm.Mesh()
-    part.addPartByMask(mesh, largest_mask)
+    # Select which masks to keep
+    if min_mask_size is None:
+        # Default: keep only the largest mask
+        selected_indices = [max(range(len(sizes)), key=lambda i: sizes[i])]
+    else:
+        # Keep all masks with count >= min_mask_count
+        selected_indices = [i for i, s in enumerate(sizes) if s >= min_mask_size]
+        if not selected_indices:
+            raise ValueError(f"No mesh components found with count >= {min_mask_size}.")
 
-    # Set the mesh to the largest component
-    mesh = part
+    # Merge selected components into a single mesh
+    combined = mm.Mesh()
+    for idx in selected_indices:
+        combined.addPartByMask(mesh, components[idx])
+
+    mesh = combined
+
+    # Compute average edge length
     avg_edge_length = 0.0
     num_edges = 0
 
     for i in trange(mesh.topology.undirectedEdgeSize(), desc="Calculating average edge length"):
-        dir_edge = mm.EdgeId(i*2)
+        dir_edge = mm.EdgeId(i * 2)
         org = mesh.topology.org(dir_edge)
         dest = mesh.topology.dest(dir_edge)
         avg_edge_length += (mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]).length()
-        num_edges = num_edges + 1
-    avg_edge_length = avg_edge_length/num_edges
+        num_edges += 1
+    avg_edge_length /= num_edges
 
-    # Find all holes
+    # Fill holes
     hole_ids = mesh.topology.findHoleRepresentiveEdges()
     fill_params = mm.FillHoleParams()
-    # fill_params.metric = mm.getUniversalMetric(mesh)
 
-    # Fill all holes
-    num_holes = len(hole_ids)
-    for he in tqdm(hole_ids, desc=f"Filling holes ({num_holes})", total=num_holes):
-        if mesh.holePerimiter( he ) < max_hole_size:
+    for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
+        if mesh.holePerimiter(he) < max_hole_size:
             new_faces = mm.FaceBitSet()
             fill_params.outNewFaces = new_faces
-            mm.fillHole( mesh, he, fill_params )
+            mm.fillHole(mesh, he, fill_params)
 
             new_verts = mm.VertBitSet()
             subdiv_settings = mm.SubdivideSettings()
@@ -235,11 +246,11 @@ def clean_repair_mesh(mesh_path: str, max_hole_size: float = 3.0, max_edge_split
             subdiv_settings.maxEdgeSplits = max_edge_splits
             subdiv_settings.region = new_faces
             subdiv_settings.newVerts = new_verts
-            mm.subdivideMesh(mesh,subdiv_settings)
-            mm.positionVertsSmoothly(mesh,new_verts)
+            mm.subdivideMesh(mesh, subdiv_settings)
+            mm.positionVertsSmoothly(mesh, new_verts)
         else:
-            print(f"Skipping hole {he} of perimeter {mesh.holePerimiter( he )}")
-            
+            print(f"Skipping hole {he} of perimeter {mesh.holePerimiter(he)}")
+
     return mesh
 
 def align_geometry_floor(geometry: Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh], 
@@ -354,6 +365,8 @@ class GSMeshExporter:
     """Maximum hole size for cleaning."""
     clean_max_edge_splits: int = 10000
     """Maximum edge splits for cleaning."""
+    min_mask_size: int = 1000
+    """Minimum mask size for cleaning."""
 
     align_floor: bool = True
     """Align the mesh to the floor plane."""
@@ -1340,7 +1353,8 @@ class Open3DTSDFFusion(GSMeshExporter):
                 cleaned_mesh = clean_repair_mesh(
                     mesh_path, 
                     max_hole_size=self.clean_max_hole_size, 
-                    max_edge_splits=self.clean_max_edge_splits
+                    max_edge_splits=self.clean_max_edge_splits,
+                    min_mask_size=self.min_mask_size
                 )
 
                 mm.saveMesh(cleaned_mesh, mesh_path)

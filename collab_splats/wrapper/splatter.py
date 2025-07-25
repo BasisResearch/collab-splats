@@ -256,21 +256,24 @@ class Splatter:
         print("\nAvailable runs:")
         for i, run in enumerate(sorted_runs):
             print(f"[{i}] {run.name}")
-            
-        # Prompt user to select a run
-        while True:
-            try:
-                selection = input("\nSelect run number (or press Enter for most recent): ").strip()
-                if selection == "":
-                    selected_run = sorted_runs[-1]
-                    break
-                idx = int(selection)
-                if 0 <= idx < len(sorted_runs):
-                    selected_run = sorted_runs[idx]
-                    break
-                print(f"Please enter a number between 0 and {len(sorted_runs)-1}")
-            except ValueError:
-                print("Please enter a valid number")
+
+        if len(sorted_runs) == 1:
+            selected_run = sorted_runs[0]
+        else:
+            # Prompt user to select a run
+            while True:
+                try:
+                    selection = input("\nSelect run number (or press Enter for most recent): ").strip()
+                    if selection == "":
+                        selected_run = sorted_runs[-1]
+                        break
+                    idx = int(selection)
+                    if 0 <= idx < len(sorted_runs):
+                        selected_run = sorted_runs[idx]
+                        break
+                    print(f"Please enter a number between 0 and {len(sorted_runs)-1}")
+                except ValueError:
+                    print("Please enter a valid number")
 
         self.config['model_path'] = selected_run.as_posix()
         self.config['model_config_path'] = (selected_run / "config.yml").as_posix()

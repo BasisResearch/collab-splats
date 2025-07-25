@@ -50,19 +50,19 @@ if __name__ == "__main__":
 
             splatter.extract_features(kwargs=feature_kwargs)
 
-            # # Mesh the splatting model
-            # mesher_kwargs = {
-            #     'depth_name': "median_depth",
-            #     'depth_trunc': 1.0, # Should be between 1.0 and 3.0
-            #     'voxel_size': 0.005, 
-            #     'normals_name': "normals",
-            #     'features_name': "distill_features", 
-            #     'sdf_trunc': 0.03,
-            #     'clean_repair': True,
-            #     'align_floor': True,
-            # }
+            # Mesh the splatting model
+            mesher_kwargs = {
+                'depth_name': "median_depth",
+                'depth_trunc': 1.0, # Should be between 1.0 and 3.0
+                'voxel_size': 0.005, 
+                'normals_name': "normals",
+                'features_name': "distill_features", 
+                'sdf_trunc': 0.03,
+                'clean_repair': True,
+                'align_floor': True,
+            }
 
-            # splatter.mesh(
-            #     mesher_type="Open3DTSDFFusion",
-            #     mesher_kwargs=mesher_kwargs,
-            # )
+            splatter.mesh(
+                mesher_type="Open3DTSDFFusion",
+                mesher_kwargs=mesher_kwargs,
+            )

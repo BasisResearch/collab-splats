@@ -1370,6 +1370,14 @@ class Open3DTSDFFusion(GSMeshExporter):
                 mesh, R, translation = align_geometry_floor(mesh)
                 means = means @ R.T + translation
 
+                # Save alignment parameters
+                alignment = {
+                    "R": R,
+                    "translation": translation,
+                }
+                alignment_path = self.output_dir / "alignment.npz"
+                np.savez(alignment_path, **alignment)
+
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and \
                 (self.normals_name in pipeline.model.gauss_params.keys() or \

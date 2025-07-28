@@ -25,6 +25,7 @@ from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
+from nerfstudio.utils.spherical_harmonics import SH2RGB
 
 import open3d as o3d
 import meshlib.mrmeshpy as mm
@@ -1246,14 +1247,25 @@ class Open3DTSDFFusion(GSMeshExporter):
         model: SplatfactoModel = pipeline.model
         crop_box = self.cropbox()
 
+        # Grab the means from the model
+        print (f"Saving splats pointcloud")
+        means = pipeline.model.means.detach().cpu().numpy()
+        colors = pipeline.model.features_dc.detach().cpu().numpy()
+        colors = SH2RGB(colors)
+
+        # Pass xyz to Open3D.o3d.geometry.PointCloud and visualize
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(means)
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+        o3d.io.write_point_cloud(str(self.output_dir / "splats.ply"), pcd)
+
+        print (f"Fitting TSDF volume")
+
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
             voxel_length=self.voxel_size,
             sdf_trunc=self.sdf_trunc,
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
-
-        # Grab the means from the model
-        means = pipeline.model.means.detach().cpu().numpy()
 
         with torch.no_grad():
             cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
@@ -1375,6 +1387,7 @@ class Open3DTSDFFusion(GSMeshExporter):
                     "R": R,
                     "translation": translation,
                 }
+                
                 alignment_path = self.output_dir / "alignment.npz"
                 np.savez(alignment_path, **alignment)
 

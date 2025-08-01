@@ -15,16 +15,17 @@ dependencies = [
     "ftfy",
     "gdown",
     "matplotlib",
-    "nerfstudio",
     "numpy<2.0.0",
+    "scipy==1.11.4", # Require to play nice w/ numpy
+    "lightning",
     "pillow",
     "regex",
-    "torchtyping",
     "tqdm",
     "meshlib",
     "dotenv",
-    "lightning",
+    "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
+    "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
 ]
 
 [project.optional-dependencies]

@@ -6,30 +6,33 @@ Taken from dn-splatter
 import numpy as np
 from scipy.spatial import cKDTree
 import torch
+from typing import Dict
 
-def project_gaussians(meta: dict):
+def project_gaussians(meta: dict) -> Dict[str, torch.Tensor]:
     """
-    Project gaussians onto 2D image and prepare lookup data.
-
-    meta = output from fully_fused_projection or rasterization
+    Projects Gaussians into 2D image space and prepares full-resolution lookup tensors.
+    Returns full-length arrays indexed by global Gaussian ID, and a list of visible IDs.
     """
 
     W, H = meta["width"], meta["height"]
+    N = meta["radii"].shape[0]
 
-    # gaussians where the radius is greater than 1.0 can be seen in the camera frustum
-    radii = meta['radii'].squeeze()
-    gaussian_ids = torch.where(torch.sum(radii > 1.0, axis=1))[0]
+    # Visibility based on Gaussian radius threshold
+    radii = meta['radii'].squeeze()  # shape (N, 2) or (N, D)
+    valid_mask = (radii > 1.0).sum(dim=1) > 0  # shape (N,)
+    gaussian_ids = valid_mask.nonzero(as_tuple=False).squeeze()  # global indices of visible Gaussians
 
-    # Convert 2D coords to flat pixel indices
-    xy_rounded = torch.round(meta['means2d']).squeeze().long()
-    x = torch.clamp(xy_rounded[:, 0], 0, W)
-    y = torch.clamp(xy_rounded[:, 1], 0, H)
-    projected_flattened = x + y * W                      # (M,)
+    # Compute flat image coordinates for all Gaussians
+    xy_rounded = torch.round(meta['means2d']).squeeze().long()  # shape (N, 2)
+    x = torch.clamp(xy_rounded[:, 0], 0, W - 1)
+    y = torch.clamp(xy_rounded[:, 1], 0, H - 1)
+    projected_flattened = x + y * W  # shape (N,)
 
     return {
-        "proj_flattened": projected_flattened.squeeze().detach().cpu(),                      # (M,)
-        "proj_depths": meta['depths'].squeeze().detach().cpu(),                                      # (M,)
-        "gaussian_ids": gaussian_ids.squeeze().detach().cpu(),                 # (M,)
+        "proj_flattened": projected_flattened.detach().cpu(),     # (N,)
+        "proj_depths": meta['depths'].squeeze().detach().cpu(),   # (N,)
+        "valid_mask": valid_mask.detach().cpu(),                  # (N,)
+        "gaussian_ids": gaussian_ids.detach().cpu(),              # (M,) global indices of valid Gaussians
     }
 
 def calculate_accuracy(reconstructed_points, reference_points, percentile=90):

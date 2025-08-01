@@ -1,3 +1,4 @@
+from pathlib import Path
 from collab_splats.wrapper import Splatter, SplatterConfig
 
 test_configs = {
@@ -22,17 +23,13 @@ test_configs = {
         'frame_proportion': 0.1,
     },
     'birds_006': {
-        'file_path': '/workspace/fieldwork-data/birds/2023-05-27/SplatsSD/GH010097.MP4',
-        'frame_proportion': 0.25,
+        'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010097.MP4',
+        'frame_proportion': 0.14,
     },
     'birds_007': {
-        'file_path': '/workspace/fieldwork-data/birds/2023-05-27/SplatsSD/GH010105.MP4',
+        'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010105.MP4',
         'frame_proportion': 0.25,
     },
-    # 'birds_008': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2023-05-27/SplatsSD/GH010105.MP4',
-    #     'frame_proportion': 0.25,
-    # },
     # 'rats_001': {
     #     'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
     #     'frame_proportion': 0.25,
@@ -45,7 +42,7 @@ if __name__ == "__main__":
 
     for species, config in test_configs.items():
         for method in METHODS:
-            print (f"Running {method} for {species}")
+            print (f"Running {method} for {species} video {Path(config['file_path']).name}")
             
             config['method'] = method
 

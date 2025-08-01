@@ -17,6 +17,12 @@ cd collab-splats
 pip install -e .
 ```
 
+For use of gcloud data interfaces, please also install collab-data
+
+```bash
+pip install git+https://github.com/BasisResearch/collab-data.git
+```
+
 ### Conda
 
 Follow the [NerfStudio instllation instructions](https://docs.nerf.studio/quickstart/installation.html) to install a conda environment. For convenience, here are the commands I've used to successfully build a nerfstudio environment.
@@ -94,13 +100,16 @@ conda install -c conda-forge 'cmake>3.5' ninja gmp cgal ipykernel
 pip install -r /tmp/requirements.txt"
 ```
 
-Lastly, install collab-splats -- currently doing direct clone and egg installation due to private repository
+Lastly, install collab-splats -- currently doing direct clone and egg installation due to private repository. For full functionality, you can optionally install collab-data
 
 ```bash
 ## If public repository could do -- pip install git+https://github.com/BasisResearch/collab-splats
 git clone https://github.com/BasisResearch/collab-splats/
 cd collab-splats
 pip install -e .
+
+# Optional install of collab-data
+pip install git+https://github.com/BasisResearch/collab-data.git
 ```
 
 ## Usage

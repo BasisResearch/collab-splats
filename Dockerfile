@@ -35,7 +35,7 @@ ENV PATH="/opt/conda/bin:$PATH"
 # Copy environment files
 COPY ./env.yml /tmp/env.yml
 COPY ./requirements.txt /tmp/requirements.txt
-COPY ./ /opt/collab-splats
+# COPY ./ /opt/collab-splats
 
 # Set CUDA architectures
 # 61 = GTX 10xx -- e.g. 1080Ti (Pascal SM61)
@@ -53,50 +53,121 @@ RUN conda config --set always_yes true && \
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
-# Build everything in conda environment --> last step is to install buildtools
+
+# Create conda environment
 RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda env create -n nerfstudio -f /tmp/env.yml && \
+    conda env create -n nerfstudio -f /tmp/env.yml"
+
+# Set up build environment variables (cached separately)
+ENV CC=/usr/bin/gcc-11
+ENV CXX=/usr/bin/g++-11
+ENV CUDA_HOME=/opt/conda/envs/nerfstudio
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
+
+# Install torch and cuda toolkit (cached separately)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
     conda activate nerfstudio && \
-
-    # Hack to install our version of rade_gs atm
-    export CC=/usr/bin/gcc-11 && \
-    export CXX=/usr/bin/g++-11 && \
-    export CUDA_HOME=/opt/conda/envs/nerfstudio && \
-    export PATH=\${CUDA_HOME}/bin:\${PATH} && \
-    export LD_LIBRARY_PATH=\${CUDA_HOME}/lib64:\${LD_LIBRARY_PATH} && \
-
-    # Install torch and cuda toolkit
     pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118 && \
     conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y && \
-    pip install 'kornia>=0.6.11' && \
-  
-    # Install hloc
+    pip install 'kornia>=0.6.11'"
+
+# Install and setup hloc (cached separately)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate nerfstudio && \
     git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
     cd /opt/hloc && \
     git checkout v1.4 && \
     git submodule update --init --recursive && \
-    pip install -e . --no-cache-dir && \
-    cd ~ && \
+    pip install -e . --no-cache-dir"
 
-    # Bump down for hloc interface
-    pip install --no-cache-dir pycolmap==0.4.0 && \ 
+# Install pycolmap for hloc interface (cached separately)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate nerfstudio && \
+    pip install --no-cache-dir pycolmap==0.4.0"
 
-    # Now bump back down to numpy 1.26.4
-    conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0' && \
+# Fix numpy version after hloc (cached separately)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate nerfstudio && \
+    conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0'"
 
-    # Install gsplat-rade
-    pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch && \
+# Install tiny-cuda-nn (cached separately - this is slow)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate nerfstudio && \
     export TORCH_CUDA_ARCH_LIST=\"\$(echo \"${CUDA_ARCHITECTURES}\" | tr ';' '\n' | awk '\$0 > 70 {print substr(\$0,1,1)\".\"substr(\$0,2)}' | tr '\n' ' ' | sed 's/ \$//')\" && \
-    pip install git+https://github.com/brian-xu/gsplat-rade.git && \
-    pip install nerfstudio && \
+    pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch"
 
-    # Bump the conda version back down --> nerfstudio upgrades for some reason in previous step
-    conda install -c conda-forge 'numpy<2.0.0' && \ 
+# Install gsplat-rade (cached separately - this is the slowest)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate nerfstudio && \
+    export TORCH_CUDA_ARCH_LIST=\"\$(echo \"${CUDA_ARCHITECTURES}\" | tr ';' '\n' | awk '\$0 > 70 {print substr(\$0,1,1)\".\"substr(\$0,2)}' | tr '\n' ' ' | sed 's/ \$//')\" && \
+    pip install git+https://github.com/brian-xu/gsplat-rade.git"
+
+# Install nerfstudio from GitHub (this layer will rebuild when you change it)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate nerfstudio && \
+    git clone https://github.com/nerfstudio-project/nerfstudio.git /opt/nerfstudio && \
+    cd /opt/nerfstudio && \
+    pip install . --no-cache-dir"
+
+# Final package installations and numpy fix (cached separately)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate nerfstudio && \
     conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
     pip install -r /tmp/requirements.txt && \
+    conda install -c conda-forge 'numpy<2.0.0' --force-reinstall"
+# # Build everything in conda environment --> last step is to install buildtools
+# RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+#     conda env create -n nerfstudio -f /tmp/env.yml && \
+#     conda activate nerfstudio && \
 
-    cd /opt/collab-splats && \
-    pip install -e ."
+#     # Hack to install our version of rade_gs atm
+#     export CC=/usr/bin/gcc-11 && \
+#     export CXX=/usr/bin/g++-11 && \
+#     export CUDA_HOME=/opt/conda/envs/nerfstudio && \
+#     export PATH=\${CUDA_HOME}/bin:\${PATH} && \
+#     export LD_LIBRARY_PATH=\${CUDA_HOME}/lib64:\${LD_LIBRARY_PATH} && \
+
+#     # Install torch and cuda toolkit
+#     pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118 && \
+#     conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y && \
+#     pip install 'kornia>=0.6.11' && \
+  
+#     # Install hloc
+#     git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
+#     cd /opt/hloc && \
+#     git checkout v1.4 && \
+#     git submodule update --init --recursive && \
+#     pip install -e . --no-cache-dir && \
+#     cd ~ && \
+
+#     # Bump down for hloc interface
+#     pip install --no-cache-dir pycolmap==0.4.0 && \ 
+
+#     # Now bump back down to numpy 1.26.4
+#     conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0' && \
+
+#     # Install tiny-cuda-nn
+#     pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch && \
+#     export TORCH_CUDA_ARCH_LIST=\"\$(echo \"${CUDA_ARCHITECTURES}\" | tr ';' '\n' | awk '\$0 > 70 {print substr(\$0,1,1)\".\"substr(\$0,2)}' | tr '\n' ' ' | sed 's/ \$//')\" && \
+    
+#     # Install gsplat-rade
+#     pip install git+https://github.com/brian-xu/gsplat-rade.git && \
+
+#     # Changing to clone from github (newer features useful)
+#     git clone https://github.com/nerfstudio-project/nerfstudio.git /opt/nerfstudio && \
+#     cd /opt/nerfstudio && \
+#     pip install -e . && \
+
+#     # pip install nerfstudio && \
+
+#     # Bump the conda version back down --> nerfstudio upgrades for some reason in previous step
+#     conda install -c conda-forge 'numpy<2.0.0' && \ 
+#     conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
+#     pip install -r /tmp/requirements.txt"
+
+#     # cd /opt/collab-splats && \
+#     # pip install -e ."
 
 ##################################################
 #           Get pre-built components             #
@@ -155,8 +226,11 @@ COPY --from=conda-source /opt/conda/ /opt/conda
 COPY --from=builder /opt/conda/envs/nerfstudio/ /opt/conda/envs/nerfstudio/
 
 # Copy rade_gs from builder for during development --> otherwise we need to run pip install . (instead of -e)
-COPY --from=builder /opt/collab-splats /opt/collab-splats
+# COPY --from=builder /opt/collab-splats /opt/collab-splats
 COPY --from=builder /opt/hloc /opt/hloc
+
+# Copy nerfstudio from builder
+COPY --from=builder /opt/nerfstudio /opt/nerfstudio
 
 # Copy colmap from nerfstudio
 COPY --from=nerfstudio /usr/local/bin/colmap /usr/local/bin/

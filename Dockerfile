@@ -113,9 +113,9 @@ RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
 # Final package installations and numpy fix (cached separately)
 RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
     conda activate nerfstudio && \
+    conda install -c conda-forge 'numpy<2.0.0' && \
     conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
-    pip install -r /tmp/requirements.txt && \
-    conda install -c conda-forge 'numpy<2.0.0' --force-reinstall"
+    pip install -r /tmp/requirements.txt"
 # # Build everything in conda environment --> last step is to install buildtools
 # RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
 #     conda env create -n nerfstudio -f /tmp/env.yml && \

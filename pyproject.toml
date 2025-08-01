@@ -23,6 +23,7 @@ dependencies = [
     "tqdm",
     "meshlib",
     "dotenv",
+    "lightning",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
 ]
 

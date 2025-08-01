@@ -8,7 +8,17 @@ Extension tools for nerfstudio enabling depth/normal derivation and meshing (amo
 
 We provide a docker image setup for running nerfstudio with collab-splats (along with other abilities!) at ```tommybotch/collab-splats:latest```
 
+Once the docker image is loaded, please clone and install the repository as follows
+
+```bash
+## If public repository could do -- pip install git+https://github.com/BasisResearch/collab-splats
+git clone https://github.com/BasisResearch/collab-splats/
+cd collab-splats
+pip install -e .
+```
+
 ### Conda
+
 Follow the [NerfStudio instllation instructions](https://docs.nerf.studio/quickstart/installation.html) to install a conda environment. For convenience, here are the commands I've used to successfully build a nerfstudio environment.
 
 **Note:** This requires cuda developer tools -- specifically nvcc
@@ -41,15 +51,15 @@ Install hloc toolbox for SFM options.
 
 ```bash
 # Install hloc
-git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
-cd /opt/hloc && \
-git checkout v1.4 && \
-git submodule update --init --recursive && \
-pip install -e . --no-cache-dir && \
-cd ~ && \
+git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc
+cd /opt/hloc
+git checkout v1.4
+git submodule update --init --recursive
+pip install -e . --no-cache-dir
+cd ~
 
 # Bump down for hloc interface
-pip install --no-cache-dir pycolmap==0.4.0 && \ 
+pip install --no-cache-dir pycolmap==0.4.0 
 ```
 
 Downgrade setuptools to avoid tinycuda-nn error --> also need a numpy 1.X.X version
@@ -73,11 +83,15 @@ Install gsplat-rade and nerfstudio -- this gsplat version **is required** to run
 # Install specific gsplat version
 pip install git+https://github.com/brian-xu/gsplat-rade.git
 
-# Install nerfstudio
-pip install nerfstudio
+# Install nerfstudio from github (newer features available that are useful)
+git clone https://github.com/nerfstudio-project/nerfstudio.git /opt/nerfstudio
+cd /opt/nerfstudio
+pip install . --no-cache-dir
 
 # Bump the numpy version back down (nerfstudio upgrades for some reason)
 conda install -c conda-forge 'numpy<2.0.0'
+conda install -c conda-forge 'cmake>3.5' ninja gmp cgal ipykernel
+pip install -r /tmp/requirements.txt"
 ```
 
 Lastly, install collab-splats -- currently doing direct clone and egg installation due to private repository

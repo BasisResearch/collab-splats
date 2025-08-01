@@ -1357,25 +1357,25 @@ class Open3DTSDFFusion(GSMeshExporter):
 
             if self.clean_repair:
                 # Write out to a temporary file for cleaning
-                mesh_path = (self.output_dir / "temp_mesh.ply").as_posix()
+                temp_mesh_path = (self.output_dir / "temp_mesh.ply").as_posix()
 
                 o3d.io.write_triangle_mesh(
-                    mesh_path,
+                    temp_mesh_path,
                     mesh,
                 )
 
                 # Clean and repair the mesh then save
                 cleaned_mesh = clean_repair_mesh(
-                    mesh_path, 
+                    temp_mesh_path, 
                     max_hole_size=self.clean_max_hole_size, 
                     max_edge_splits=self.clean_max_edge_splits,
                     min_mask_size=self.min_mask_size
                 )
 
-                mm.saveMesh(cleaned_mesh, mesh_path)
+                mm.saveMesh(cleaned_mesh, temp_mesh_path)
                 
                 # Load the mesh and map colors to the cleaned mesh
-                cleaned_mesh = o3d.io.read_triangle_mesh(mesh_path)
+                cleaned_mesh = o3d.io.read_triangle_mesh(temp_mesh_path)
                 rgb = features2vertex(cleaned_mesh.vertices, mesh.vertices, np.asarray(mesh.vertex_colors))
                 cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(rgb)
                 mesh = cleaned_mesh
@@ -1422,6 +1422,9 @@ class Open3DTSDFFusion(GSMeshExporter):
             CONSOLE.print(
                 f"Finished computing mesh: {str(self.output_dir / 'Open3dTSDFfusion.ply')}"
             )
+
+            # Clean up
+            os.remove(temp_mesh_path)
 
             if self.features_name is not None and self.features_name in pipeline.model.gauss_params.keys():
                 print (f"Mapping features to mesh")

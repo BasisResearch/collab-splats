@@ -217,6 +217,7 @@ RUN apt-get update && \
         htop \
         tmux \
         openssh-server \
+        less \
         && rm -rf /var/lib/apt/lists/*
 
 # Copy conda installation from conda-source

@@ -6,6 +6,7 @@ Sourced from dn-splatter: https://github.com/maturk/dn-splatter/blob/main/dn_spl
 Provides additional functionality for exporting features to meshes.
 """
 
+import os
 import random
 from dataclasses import dataclass
 from pathlib import Path

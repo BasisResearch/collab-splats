@@ -9,3 +9,6 @@ load_config = Path(load_config)
 
 grouping_params = GroupingParams(segmentation_backend='mobilesamv2', segmentation_strategy='object', front_percentage=0.2, iou_threshold=0.1, num_patches=32)
 grouping_classifier = GroupingClassifier(load_config=load_config, params=grouping_params)
+
+# Builds the memory bank by associating front gaussians across frames
+grouping_classifier.associate()

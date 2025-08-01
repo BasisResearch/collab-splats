@@ -6,7 +6,6 @@ Currently this subclasses the Nerfacto model. Consider subclassing from the base
 from dataclasses import dataclass, field
 from typing import Type, Dict, Union, List, Optional
 
-import math
 import torch 
 from torch.nn import functional as F
 from torch.nn import Parameter
@@ -22,7 +21,7 @@ from gsplat.cuda._wrapper import spherical_harmonics
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.scene_box import OrientedBox
 
-from collab_splats.utils import convert_to_colmap_camera, depth_double_to_normal
+from collab_splats.utils import depth_double_to_normal
 from collab_splats.models.rade_gs_model import RadegsModelConfig, RadegsModel
 from collab_splats.utils.features import TwoLayerMLP, BaseFeatureExtractor
 

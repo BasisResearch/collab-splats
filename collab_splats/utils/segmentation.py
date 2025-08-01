@@ -2,6 +2,7 @@ import os
 import torch
 from torch.nn import functional as F
 import numpy as np
+import math
 
 from mobile_sam import SamAutomaticMaskGenerator
 from typing import Tuple
@@ -259,7 +260,8 @@ def create_composite_mask(results, confidence_threshold=0.85):
 
     selected_masks = []
     for mask in results:
-        if mask['predicted_iou'] < confidence_threshold:
+        # Errors seems to happen above 1.0
+        if mask['predicted_iou'] < confidence_threshold or mask['predicted_iou'] > 1.:
             continue
 
         selected_masks.append(

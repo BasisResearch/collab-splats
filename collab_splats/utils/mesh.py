@@ -25,6 +25,9 @@ from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
+
+# This will be depricated at some point
+# from nerfstudio.models.splatfacto import 
 from nerfstudio.utils.spherical_harmonics import SH2RGB
 
 import open3d as o3d

@@ -67,7 +67,6 @@ class GroupingClassifier(nn.Module):
 
         # Load pipeline and segmentation
         self._load_models()
-        
 
         self.params
 
@@ -158,6 +157,7 @@ class GroupingClassifier(nn.Module):
         with torch.no_grad():
             # cameras: Cameras = self.pipeline.datamanager.train_dataset.cameras
 
+            #TLB --> this needs to go through images sequentially
             for camera, data in tqdm(
                 self.pipeline.datamanager.train_imagebatch_stream, # Need to use cached_train since it undistorts the images
                 desc="Processing frames",
@@ -345,7 +345,12 @@ class GroupingClassifier(nn.Module):
         else:
             return torch.tensor([], dtype=torch.long, device=mask.device)
 
+    #########################################################
+    ################# Model training ########################
+    #########################################################
 
+    def mesh(self):
+        pass
 
 # def get_n_different_colors(n: int) -> np.ndarray:
 #     np.random.seed(0)

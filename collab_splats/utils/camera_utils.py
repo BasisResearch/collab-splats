@@ -246,7 +246,12 @@ def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
 ########################################
 
 # opengl to opencv transformation matrix
-OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+OPENGL_TO_OPENCV = np.array([
+    [1, 0, 0, 0], 
+    [0, -1, 0, 0], 
+    [0, 0, -1, 0], 
+    [0, 0, 0, 1]
+])
 
 # ndc space is x to the right y up. uv space is x to the right, y down.
 def pix2ndc_x(x, W):

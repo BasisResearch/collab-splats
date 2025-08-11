@@ -11,6 +11,8 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional, Tuple, Union, List
+import yaml
+import pickle
 
 import numpy as np
 import open3d as o3d
@@ -19,7 +21,10 @@ import torch.nn.functional as F
 import tyro
 from tqdm import tqdm, trange
 from typing_extensions import Annotated
+
 from scipy.spatial import cKDTree
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel
@@ -62,6 +67,27 @@ Methods for extracting meshes from GS:
     - run marching cubes algorithm
 """
 
+# opengl to opencv transformation matrix (for world coordinates)
+NERFSTUDIO_TRANSFORMS = {
+    'opengl': {
+        'up': np.array([0, 0, 1]), 
+        'transform': np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0], # Y-forward
+            [0, 0, 1, 0], # Z-up
+            [0, 0, 0, 1]
+        ])
+    },
+    'open3d': {
+        'up': np.array([0, 1, 0]), 
+        'transform': np.array([
+            [1, 0, 0, 0],
+            [0, 0, 1, 0], # Y-up
+            [0, -1, 0, 0], # Z-back (negative forward)
+            [0, 0, 0, 1]
+        ])
+    }
+}
 
 def pick_indices_at_random(valid_mask, samples_per_frame):
     indices = torch.nonzero(torch.ravel(valid_mask))
@@ -258,9 +284,13 @@ def clean_repair_mesh(
 
     return mesh
 
-def align_geometry_floor(geometry: Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh], 
-                        dist_threshold: float = 0.02, ransac_n: int = 3, 
-                        num_iterations: int = 1000, num_sample_points: int = 10000) -> Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh]:
+def align_geometry_floor(
+    geometry: Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh], 
+    dist_threshold: float = 0.02, 
+    ransac_n: int = 3, 
+    num_iterations: int = 1000, 
+    num_sample_points: int = 10000
+) -> Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh]:
     """Align point cloud or triangle mesh to the floor plane.
     
     Args:
@@ -345,6 +375,61 @@ def get_floor_plane(pcd: o3d.geometry.PointCloud, dist_threshold: float = 0.02,
     return plane_model
 
 ########################################################
+############## Mesh Clustering Utils ###################
+########################################################
+
+def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_radius=0.03):
+    """
+    Clusters the mesh into connected components based on similarity values.
+    """
+
+    vertices = np.asarray(mesh.vertices)
+
+    # Pre-filter by similarity
+    valid_mask = similarity_values > similarity_threshold
+    valid_indices = np.where(valid_mask)[0]
+    valid_vertices = vertices[valid_indices]
+    
+    if len(valid_vertices) == 0:
+        return []
+    
+    # Build KDTree on all mesh vertices
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(vertices)
+    kdtree = o3d.geometry.KDTreeFlann(pcd)
+    
+    # Build adjacency matrix efficiently
+    n_valid = len(valid_indices)
+    valid_set = set(valid_indices)
+    adjacency = np.zeros((n_valid, n_valid), dtype=bool)
+    
+    # Map original indices to compressed indices
+    idx_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(valid_indices)}
+    
+    # For each valid vertex, find spatial neighbors that are also valid
+    for i, orig_idx in tqdm(enumerate(valid_indices), desc="Building adjacency matrix"):
+        [_, neighbors, _] = kdtree.search_radius_vector_3d(vertices[orig_idx], spatial_radius)
+        
+        for neighbor_idx in neighbors:
+            if neighbor_idx in valid_set and neighbor_idx != orig_idx:
+                j = idx_map[neighbor_idx]
+                adjacency[i, j] = True
+    
+    adjacency_sparse = csr_matrix(adjacency)
+    n_components, labels = connected_components(adjacency_sparse)
+    
+    # Convert back to original indices
+    clusters = []
+    for cluster_id in range(n_components):
+        cluster_mask = labels == cluster_id
+        cluster_vertices = valid_indices[cluster_mask]
+        if len(cluster_vertices) > 10:  # Minimum size filter
+            clusters.append(cluster_vertices.tolist())
+    
+    clusters = [np.asarray(c) for c in clusters]
+    return clusters
+
+########################################################
 ################ Meshing classes #######################
 ########################################################
 
@@ -370,11 +455,18 @@ class GSMeshExporter:
     """Maximum hole size for cleaning."""
     clean_max_edge_splits: int = 10000
     """Maximum edge splits for cleaning."""
-    min_mask_size: int = 1000
+    min_mask_size: int = None
     """Minimum mask size for cleaning."""
 
     align_floor: bool = True
     """Align the mesh to the floor plane."""
+
+    output_coord_system: str = "open3d"
+    """Output coordinate system for the mesh.
+    Options:
+        - open3d: OpenCV coordinate system (x right, y up, z back)
+        - opengl: OpenGL coordinate system (x right, z up, y forward)
+    """
 
     def cropbox(self) -> Optional[OrientedBox]:
         """Returns the cropbox for the mesh."""
@@ -1238,6 +1330,10 @@ class Open3DTSDFFusion(GSMeshExporter):
     depth_trunc: float = 20
     """Depth at which to truncate"""
 
+    @property
+    def name(self):
+        return "Open3dTSDFfusion"
+
     def main(self):
         import open3d as o3d
 
@@ -1245,6 +1341,36 @@ class Open3DTSDFFusion(GSMeshExporter):
             self.output_dir.mkdir(parents=True)
 
         _, pipeline, _, _ = eval_setup(self.load_config)
+
+            # Get the transform matrix for the specified coordinate system
+        world_transform = NERFSTUDIO_TRANSFORMS[self.output_coord_system]['transform']
+        up = NERFSTUDIO_TRANSFORMS[self.output_coord_system]['up']
+
+        transforms = {
+            'coord_system': self.output_coord_system,
+            'world_transform': world_transform,
+            # 'world_up': up,
+            'mesh_transform': np.eye(4),
+        }
+
+        # Save parameters to yaml file
+        params = {
+            'mesh_method': self.name,
+            'voxel_size': self.voxel_size,
+            'rgb_name': self.rgb_name, 
+            'depth_name': self.depth_name,
+            'normals_name': self.normals_name,
+            'features_name': self.features_name,
+            'k': self.k,
+            'sdf_trunc': self.sdf_trunc,
+            'depth_trunc': self.depth_trunc,
+            'output_coord_system': self.output_coord_system,
+            'transforms': transforms
+        }
+
+        # Save to yaml file
+        with open(self.output_dir / 'mesh_params.yaml', 'w') as f:
+            yaml.dump(params, f)
 
         assert isinstance(pipeline.model, SplatfactoModel)
 
@@ -1261,6 +1387,11 @@ class Open3DTSDFFusion(GSMeshExporter):
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(means)
         pcd.colors = o3d.utility.Vector3dVector(colors)
+
+        # Transform to specified coordinate system
+        # pcd.transform(world_transform)
+
+        # Write out
         o3d.io.write_point_cloud(str(self.output_dir / "splats.ply"), pcd)
 
         print (f"Fitting TSDF volume")
@@ -1335,8 +1466,8 @@ class Open3DTSDFFusion(GSMeshExporter):
                 )
 
             mesh = volume.extract_triangle_mesh()
-
             mesh_0 = mesh
+            
             with o3d.utility.VerbosityContextManager(
                 o3d.utility.VerbosityLevel.Debug
             ) as cm:
@@ -1381,20 +1512,6 @@ class Open3DTSDFFusion(GSMeshExporter):
                 cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(rgb)
                 mesh = cleaned_mesh
 
-            # Align the mesh to the floor plane
-            if self.align_floor:
-                mesh, R, translation = align_geometry_floor(mesh)
-                means = means @ R.T + translation
-
-                # Save alignment parameters
-                alignment = {
-                    "R": R,
-                    "translation": translation,
-                }
-                
-                alignment_path = self.output_dir / "alignment.npz"
-                np.savez(alignment_path, **alignment)
-
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and \
                 (self.normals_name in pipeline.model.gauss_params.keys() or \
@@ -1413,20 +1530,6 @@ class Open3DTSDFFusion(GSMeshExporter):
 
                 mesh.vertex_normals = o3d.utility.Vector3dVector(mesh_normals)
 
-            mesh_path = self.output_dir / "Open3dTSDFfusion_mesh.ply"
-
-            o3d.io.write_triangle_mesh(
-                str(mesh_path),
-                mesh,
-            )
-            
-            CONSOLE.print(
-                f"Finished computing mesh: {str(self.output_dir / 'Open3dTSDFfusion.ply')}"
-            )
-
-            # Clean up
-            os.remove(temp_mesh_path)
-
             if self.features_name is not None and self.features_name in pipeline.model.gauss_params.keys():
                 print (f"Mapping features to mesh")
                 features = pipeline.model.gauss_params[self.features_name].detach().cpu().numpy()
@@ -1441,10 +1544,40 @@ class Open3DTSDFFusion(GSMeshExporter):
 
                 features_path = self.output_dir / "mesh_features.pt"
                 torch.save(mesh_features, features_path)
-                return {
-                    'mesh': mesh_path, 
-                    'features': features_path
-                }
+            else:
+                features_path = None
+
+            # Align the mesh to the floor plane
+            if self.align_floor:
+                mesh, R, translation = align_geometry_floor(mesh)
+                means = means @ R.T + translation
+
+                # Save alignment parameters
+                mesh_transform = np.concatenate([
+                    R,
+                    translation[..., None]
+                ], axis=-1)
+                mesh_transform = np.concatenate([mesh_transform, np.array([[0, 0, 0, 1]])], axis=0)
+
+                # Update the mesh transform
+                transforms['mesh_transform'] = mesh_transform
+
+            # Transform the mesh to the specified world coordinate system
+            # mesh.transform(world_transform)
+            
+            mesh_path = self.output_dir / "mesh.ply"
+            o3d.io.write_triangle_mesh(mesh_path, mesh)
+
+            with open(self.output_dir / "transforms.pkl", "wb") as f:
+                pickle.dump(transforms, f)
+            
+            # Clean up
+            os.remove(temp_mesh_path)
+
+            CONSOLE.print(f"Finished computing mesh!")
+
+            if features_path is not None:
+                return {'mesh': mesh_path, 'features': features_path}
             else:
                 return {'mesh': mesh_path}
 

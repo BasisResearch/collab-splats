@@ -1,5 +1,7 @@
 import os   
 import glob
+import json
+import pickle
 import subprocess
 from pathlib import Path
 from typing import Optional, TypedDict, Set, Dict, Any, Union, List
@@ -234,6 +236,9 @@ class Splatter:
             f"ns-viewer "
             f"--load-config {self.config['model_config_path'] } "
         )
+
+        if self.config.get('websocket_port') is not None:
+            cmd += f"--websocket-port {self.config['websocket_port']} "
         
         subprocess.run(cmd, shell=True, timeout=DEFAULT_TIMEOUT)
 
@@ -309,7 +314,7 @@ class Splatter:
         else:
             # HARDCODING FOR NOW TLB FIX
             self.config['mesh_info'] = {
-                'mesh': mesh_dir / "Open3dTSDFfusion_mesh.ply",
+                'mesh': mesh_dir / "mesh.ply",
                 'features': mesh_dir / "mesh_features.pt"
             }
 
@@ -390,3 +395,54 @@ class Splatter:
         print(f"Bounds: {mesh.bounds}")
         # Create a plotter and add the mesh
         mesh.plot(scalars=attribute, rgb=rgb)
+
+    #########################################################
+    ############ Load mesh transforms / cameras #############
+    #########################################################
+
+    def load_mesh_transform(self):
+        mesh_dir = self.config['mesh_info']['mesh'].parent
+        mesh_transform_fn = mesh_dir / "transforms.pkl"
+        with open(mesh_transform_fn, 'rb') as f:
+            mesh_transform = pickle.load(f)
+        return mesh_transform
+
+    def load_aligned_cameras(self, align_mesh: bool = False):
+        """
+        Load the colmap cameras and align them to the splat or mesh (if specified).
+        """
+
+        # Get the preproc and model directories
+        preproc_dir = Path(self.config['preproc_data_path'])
+        model_dir = Path(self.config['model_path'])
+
+        # Load the transforms
+        transforms_json = preproc_dir/ "transforms.json"
+        nerfstudio_transforms_path = model_dir / "dataparser_transforms.json" # This is the nerfstudio transform
+        
+        # Camera transforms (poses)
+        with open(transforms_json, 'r') as f:
+            transforms = json.load(f)
+
+        # Nerfstudio transforms aligned to camera
+        with open(nerfstudio_transforms_path, 'r') as f:
+            nerfstudio_transforms = json.load(f)
+
+        # Compose into 4x4 matrix 
+        transform = np.stack(nerfstudio_transforms['transform'])
+
+        # Add the translation to the transform
+        transform = np.concatenate([
+            transform,
+            np.array([0, 0, 0, 1])[np.newaxis]
+        ], axis=0)
+
+        # Apply to cameras
+        camera_poses = np.stack([f['transform_matrix'] for f in transforms['frames']])  # Load from your camera pose files or nerfstudio transforms
+        camera_poses[..., :3, 3] *= nerfstudio_transforms['scale']
+
+        if align_mesh:
+            mesh_transform = self.load_mesh_transform()
+            camera_poses = mesh_transform['mesh_transform'] @ camera_poses
+
+        return camera_poses

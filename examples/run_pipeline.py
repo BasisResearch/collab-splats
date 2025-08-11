@@ -3,9 +3,10 @@ from collab_splats.wrapper import Splatter, SplatterConfig
 
 test_configs = {
     # 'birds_001': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4',
-    #     'frame_proportion': 0.25,
+    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-23/SplatsSD/GH010070.MP4',
+    #     'frame_proportion': 0.125,
     # },
+
     # 'birds_002': {
     #     'file_path': '/workspace/fieldwork-data/birds/2024-05-18/SplatsSD/C0065.MP4',
     #     'frame_proportion': 0.25,
@@ -14,22 +15,26 @@ test_configs = {
     #     'file_path': '/workspace/fieldwork-data/birds/2024-05-19/SplatsSD/C0067.MP4',
     #     'frame_proportion': 0.25,
     # },
-    # 'birds_004': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4',
-    #     'frame_proportion': 0.25,
-    # },
+    'birds_004': {
+        'file_path': '/workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4',
+        'frame_proportion': 0.25,
+    },
     'birds_005': {
         'file_path': '/workspace/fieldwork-data/birds/2024-06-01/SplatsSD/GH010164.MP4',
         'frame_proportion': 0.1,
     },
-    'birds_006': {
-        'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010097.MP4',
-        'frame_proportion': 0.14,
-    },
-    'birds_007': {
-        'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010105.MP4',
-        'frame_proportion': 0.25,
-    },
+    # 'birds_006': {
+    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010097.MP4',
+    #     'frame_proportion': 0.14,
+    # },
+    # 'birds_007': {
+    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010105.MP4',
+    #     'frame_proportion': 0.25,
+    # },
+    # 'birds_008': {
+    #     'file_path': '/workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4',
+    #     'frame_proportion': 0.25,
+    # },
     # 'rats_001': {
     #     'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
     #     'frame_proportion': 0.25,
@@ -39,6 +44,7 @@ test_configs = {
 METHODS = ['rade-features'] #'rade-gs'] #'feature-splatting',
 
 if __name__ == "__main__":
+    
 
     for species, config in test_configs.items():
         for method in METHODS:
@@ -56,7 +62,7 @@ if __name__ == "__main__":
                 # "refine_pixsfm": "", # This is a flag currently so doesn't need to be given "True" afai can tell
             }
 
-            splatter.preprocess(kwargs=preproc_kwargs)
+            splatter.preprocess(kwargs=preproc_kwargs) #, overwrite=True)
 
             # Train the splatting model -- can pass additional arguments to ns-train
             feature_kwargs = {
@@ -65,7 +71,7 @@ if __name__ == "__main__":
                 "pipeline.model.use_scale_regularization": True,
             }
 
-            splatter.extract_features(kwargs=feature_kwargs)
+            splatter.extract_features(kwargs=feature_kwargs) #, overwrite=True)
 
             # Mesh the splatting model
             mesher_kwargs = {
@@ -82,4 +88,5 @@ if __name__ == "__main__":
             splatter.mesh(
                 mesher_type="Open3DTSDFFusion",
                 mesher_kwargs=mesher_kwargs,
+                overwrite=True
             )

@@ -14,7 +14,9 @@ Once the docker image is loaded, please clone and install the repository as foll
 ## If public repository could do -- pip install git+https://github.com/BasisResearch/collab-splats
 git clone https://github.com/BasisResearch/collab-splats/
 cd collab-splats
-pip install -e .
+
+# This performs pip install -e .
+bash setup.sh
 ```
 
 For use of gcloud data interfaces, please also install collab-data
@@ -106,7 +108,9 @@ Lastly, install collab-splats -- currently doing direct clone and egg installati
 ## If public repository could do -- pip install git+https://github.com/BasisResearch/collab-splats
 git clone https://github.com/BasisResearch/collab-splats/
 cd collab-splats
-pip install -e .
+
+# Runs pip install -e .
+bash setup.sh
 
 # Optional install of collab-data
 pip install git+https://github.com/BasisResearch/collab-data.git

@@ -167,6 +167,8 @@ Within the class ```Splatter``` we provide the ability to preprocess, train, and
 
 For examples of these different functionalities, please navigate to the ```examples/``` directory.
 
+The Docker image contains an example splat video at `/opt/data/C0043.MP4`.
+
 ## Problems
 
 Things aren't showing up in plots? Check [VSCode forwarding settings](https://github.com/pyvista/pyvista/issues/5296#issuecomment-1971079419)

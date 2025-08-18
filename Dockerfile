@@ -11,7 +11,7 @@ ARG NERFSTUDIO_VERSION=""
 FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} as builder
 ARG CUDA_ARCHITECTURES
 
-# Install build dependencies
+# Install build dependencies including rclone
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         wget \
@@ -24,6 +24,9 @@ RUN apt-get update && \
         ninja-build \
         git \
         && rm -rf /var/lib/apt/lists/*
+
+# Install rclone
+RUN curl https://rclone.org/install.sh | bash
 
 # Install conda in builder stage
 RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
@@ -116,6 +119,15 @@ RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
     conda install -c conda-forge 'numpy<2.0.0' && \
     conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
     pip install -r /tmp/requirements.txt"
+
+# Copy example data from GCS using rclone
+# Expects the API key to be provided at build time as a build context file
+COPY api-key.json /tmp/api-key.json
+RUN mkdir -p /opt/data && \
+    rclone config create collab-data "google cloud storage" service_account_file=/tmp/api-key.json && \
+    rclone copy collab-data:fieldwork_processed/2024_02_06-session_0001/SplatsSD/C0043.MP4 /opt/data/ && \
+    rm -f /tmp/api-key.json && \
+    rm -rf ~/.config/rclone
 # # Build everything in conda environment --> last step is to install buildtools
 # RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
 #     conda env create -n nerfstudio -f /tmp/env.yml && \
@@ -220,6 +232,9 @@ RUN apt-get update && \
         less \
         && rm -rf /var/lib/apt/lists/*
 
+# Install rclone for runtime use (without keys)
+RUN curl https://rclone.org/install.sh | bash
+
 # Copy conda installation from conda-source
 COPY --from=conda-source /opt/conda/ /opt/conda
 
@@ -232,6 +247,9 @@ COPY --from=builder /opt/hloc /opt/hloc
 
 # Copy nerfstudio from builder
 COPY --from=builder /opt/nerfstudio /opt/nerfstudio
+
+# Copy example data from builder
+COPY --from=builder /opt/data /opt/data
 
 # Copy colmap from nerfstudio
 COPY --from=nerfstudio /usr/local/bin/colmap /usr/local/bin/

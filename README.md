@@ -25,6 +25,45 @@ For use of gcloud data interfaces, please also install collab-data
 pip install git+https://github.com/BasisResearch/collab-data.git
 ```
 
+#### Building the docker image
+
+The Docker image includes an example video file (`C0043.MP4`) downloaded from Google Cloud Storage during the build process. Follow these steps to build the image:
+
+**Prerequisites:**
+1. Obtain a Google Cloud Storage service account key with access to the `collab-data` bucket
+2. Save the key as a JSON file
+
+**Build Steps:**
+
+1. **Place the service account key file:**
+   ```bash
+   # Copy your GCS service account key to the build directory
+   cp /path/to/your/service-account-key.json ./api-key.json
+   ```
+   **Important:** The key file MUST be named exactly `api-key.json` and placed in the same directory as the Dockerfile.
+
+2. **Build the Docker image:**
+   ```bash
+   docker build --platform=linux/amd64 -t collab-splats:latest .
+   ```
+
+3. **Clean up the key file after build:**
+   ```bash
+   rm ./api-key.json
+   ```
+
+**What happens during build:**
+- The Docker build process installs rclone
+- Uses your service account key to configure GCS access
+- Downloads `fieldwork_processed/2024_02_06-session_0001/SplatsSD/C0043.MP4` to `/opt/data/` in the image
+- Securely removes all credentials from the final image
+- The final image contains rclone (without any stored credentials) and the example video file
+
+**Security Notes:**
+- The service account key is only used during build time
+- No credentials are stored in the final Docker image
+- The key file and rclone configuration are completely removed after the download completes
+
 ### Conda
 
 Follow the [NerfStudio instllation instructions](https://docs.nerf.studio/quickstart/installation.html) to install a conda environment. For convenience, here are the commands I've used to successfully build a nerfstudio environment.
@@ -127,6 +166,8 @@ Two models are currently offered:
 Within the class ```Splatter``` we provide the ability to preprocess, train, and visualize splatting models within nerfstudio. We also enable meshing as a post-processing strategy for all splatting outputs.
 
 For examples of these different functionalities, please navigate to the ```examples/``` directory.
+
+The Docker image contains an example splat video at `/opt/data/C0043.MP4`.
 
 ## Problems
 

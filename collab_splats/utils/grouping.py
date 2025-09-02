@@ -21,6 +21,9 @@ Steps:
             - Mask ID = tensor of ALL indices of that mask (i.e., all gaussians in that mask)
             - Num masks == number of masks in the memory bank
 
+
+TLB notes for improvement:
+- Adaptive memory bank: favors large masks currently --> this wont be great for outdoor scenes which are noisy
 """
 
 import torch
@@ -200,6 +203,10 @@ class GroupingClassifier(nn.Module):
     ############## Association of gaussians #################
     #########################################################
 
+    def _reset_associations(self):
+        self._memory_bank = []
+        self.total_masks = 0
+
     def associate(self):
         """
         Builds a memory bank associating Gaussians across multiple views using segmentation masks.
@@ -234,21 +241,23 @@ class GroupingClassifier(nn.Module):
 
                 patch_mask = create_patch_mask(image)
                 _, results = self.segmentation.segment(image.detach().cpu().numpy())
+
+                # Merge masks into single mask --> save out
                 composite_mask = create_composite_mask(results)
+                cv2.imwrite(raw_dir / f"{image_name}", composite_mask)
 
-                cv2.imwrite(raw_dir / f"{image_name}.png", composite_mask)
-
+                # Select front gaussians for each mask and assign labels
                 mask_gaussians = self.select_front_gaussians(
                     meta=self.model.info,
                     composite_mask=composite_mask,
                     patch_mask=patch_mask
                 )
-
+                                
                 labels = self._assign_labels(mask_gaussians)
 
                 # Use the labels to convert the composite mask to show the associated labels
                 associated_mask = convert_matched_mask(labels, composite_mask) 
-                cv2.imwrite(associated_dir / f"{image_name}.png", associated_mask)
+                cv2.imwrite(associated_dir / f"{image_name}", associated_mask)
 
                 self._update_memory_bank(labels, mask_gaussians)
 

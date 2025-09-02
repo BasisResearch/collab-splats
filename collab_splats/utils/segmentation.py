@@ -288,6 +288,8 @@ def create_composite_mask(results, confidence_threshold=0.85):
 
     for i, idx in enumerate(mask_indices, start=1):
         mask = (mask_id == idx)
+
+        print (f"Mask {i} has {mask.sum()} pixels")
         if mask.sum() > 0 and (mask.sum() / masks[idx-1].sum()) > 0.1:
             composite_mask[mask] = i
 
@@ -306,6 +308,8 @@ def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
                     slice contains a binary mask.
     """
     unique_ids = np.unique(composite_mask)
+
+    # This could be redundant since the background is already removed in making the composite mask
     unique_ids = unique_ids[unique_ids > 0]  # Ignore background (assumed to be 0)
 
     binary_masks = (composite_mask[None, ...] == unique_ids[:, None, None])

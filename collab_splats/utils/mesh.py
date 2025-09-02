@@ -221,7 +221,7 @@ def clean_repair_mesh(
     mesh_path: str,
     max_hole_size: float = 3.0,
     max_edge_splits: int = 10000,
-    min_mask_size: int = None  # if None, selects only the largest
+    use_largest: bool = False  # if True, selects only the largest
 ):
     # Load mesh
     mesh = mm.loadMesh(mesh_path)
@@ -232,21 +232,34 @@ def clean_repair_mesh(
     # Determine component sizes
     sizes = [mask.count() for mask in components]
 
-    # Select which masks to keep
-    if min_mask_size is None:
-        # Default: keep only the largest mask
-        selected_indices = [max(range(len(sizes)), key=lambda i: sizes[i])]
-    else:
-        # Keep all masks with count >= min_mask_count
-        selected_indices = [i for i, s in enumerate(sizes) if s >= min_mask_size]
-        if not selected_indices:
-            raise ValueError(f"No mesh components found with count >= {min_mask_size}.")
+    # Always find largest cluster
+    largest_idx = max(range(len(sizes)), key=lambda i: sizes[i])
 
-    # Merge selected components into a single mesh
+    # Add the largest component
     combined = mm.Mesh()
-    for idx in selected_indices:
-        combined.addPartByMask(mesh, components[idx])
+    combined.addPartByMask(mesh, components[largest_idx])
 
+    # Remove the largest component from list of idxs
+    if not use_largest:
+        idxs = list(range(len(sizes)))
+        idxs.remove(largest_idx)
+
+        # Add the remaining components if they fall within the bounds
+        combined_bounds = combined.getBoundingBox()
+        n_removed = 0
+
+        ## THIS IS REALLY HACKY AND INEFFIENCT CHANGE SOMETIME
+        for idx in tqdm(idxs, desc="Finding components within bounds"):
+            _temp = mm.Mesh()
+            _temp.addPartByMask(mesh, components[idx])
+
+            if combined_bounds.contains(_temp.getBoundingBox()):
+                # print (f"Adding component {idx} to combined mesh")
+                combined.addPartByMask(mesh, components[idx])
+            else:
+                n_removed += 1
+    
+    print (f"Removed {n_removed} components")
     mesh = combined
 
     # Compute average edge length
@@ -455,8 +468,8 @@ class GSMeshExporter:
     """Maximum hole size for cleaning."""
     clean_max_edge_splits: int = 10000
     """Maximum edge splits for cleaning."""
-    min_mask_size: int = None
-    """Minimum mask size for cleaning."""
+    clean_use_largest: bool = False
+    """Use the largest component only."""
 
     align_floor: bool = True
     """Align the mesh to the floor plane."""
@@ -1466,26 +1479,6 @@ class Open3DTSDFFusion(GSMeshExporter):
                 )
 
             mesh = volume.extract_triangle_mesh()
-            mesh_0 = mesh
-            
-            with o3d.utility.VerbosityContextManager(
-                o3d.utility.VerbosityLevel.Debug
-            ) as cm:
-                (
-                    triangle_clusters,
-                    cluster_n_triangles,
-                    cluster_area,
-                ) = mesh_0.cluster_connected_triangles()
-
-            triangle_clusters = np.asarray(triangle_clusters)
-            cluster_n_triangles = np.asarray(cluster_n_triangles)
-            cluster_area = np.asarray(cluster_area)
-            n_cluster = np.sort(cluster_n_triangles.copy())[-50]
-            n_cluster = max(n_cluster, 50)  # filter meshes smaller than 50
-            triangles_to_remove = cluster_n_triangles[triangle_clusters] < n_cluster
-            mesh_0.remove_triangles_by_mask(triangles_to_remove)
-            mesh_0.remove_unreferenced_vertices()
-            mesh_0.remove_degenerate_triangles()
 
             if self.clean_repair:
                 # Write out to a temporary file for cleaning
@@ -1501,7 +1494,7 @@ class Open3DTSDFFusion(GSMeshExporter):
                     temp_mesh_path, 
                     max_hole_size=self.clean_max_hole_size, 
                     max_edge_splits=self.clean_max_edge_splits,
-                    min_mask_size=self.min_mask_size
+                    use_largest=self.clean_use_largest
                 )
 
                 mm.saveMesh(cleaned_mesh, temp_mesh_path)
@@ -1572,7 +1565,7 @@ class Open3DTSDFFusion(GSMeshExporter):
                 pickle.dump(transforms, f)
             
             # Clean up
-            os.remove(temp_mesh_path)
+            # os.remove(temp_mesh_path)
 
             CONSOLE.print(f"Finished computing mesh!")
 

@@ -311,6 +311,33 @@ def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
     binary_masks = (composite_mask[None, ...] == unique_ids[:, None, None])
     return binary_masks
 
+def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
+    """
+    Convert a mask with sequential IDs to use the matched label IDs.
+
+    Args:
+        labels: Tensor of shape (N,) containing the matched label for each mask ID
+        masks: Array of shape (H,W) containing sequential mask IDs from 1 to N
+
+    Returns:
+        Array of shape (H,W) with mask IDs replaced by their matched labels
+    """
+    # Validate input - number of labels should match max mask ID
+    assert labels.shape[0] == np.max(masks), "Number of labels must match number of unique masks"
+
+    # Create output array with uint16 to handle potential large label values
+    matched_mask = np.zeros(masks.shape, dtype=np.uint16)
+
+    # Replace each mask ID with its matched label
+    # Add 1 since mask IDs start at 1 but label indices start at 0
+    for label_idx in range(labels.shape[0]):
+        mask_id = label_idx + 1
+        matched_label = labels[label_idx].item() + 1
+        matched_mask[masks == mask_id] = matched_label
+
+    # Convert to uint8 since we expect small label values
+    return matched_mask.astype(np.uint8)
+
 def aggregate_masked_features(features: torch.Tensor, masks: torch.Tensor, resolution: Tuple[int, int], final_resolution: Tuple[int, int]) -> torch.Tensor:
     """
     Aggregate features based on SAM segmentation masks.

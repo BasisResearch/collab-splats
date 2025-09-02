@@ -27,12 +27,17 @@ import torch
 from dataclasses import dataclass
 from typing import Dict
 from torch import nn
+from torch.utils.data import DataLoader
+from itertools import islice
+import random
+from copy import deepcopy
+import cv2
 from tqdm.notebook import tqdm
 
 from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.utils.eval_utils import eval_setup
 
-from collab_splats.utils.segmentation import Segmentation, create_patch_mask, create_composite_mask, mask_id_to_binary_mask
+from collab_splats.utils.segmentation import Segmentation, create_patch_mask, create_composite_mask, mask_id_to_binary_mask, convert_matched_mask
 from collab_splats.utils.utils import project_gaussians
 
 @dataclass
@@ -59,6 +64,10 @@ class GroupingClassifier(nn.Module):
         self.params = params
         self.total_masks = 0
 
+        # Config is where the model directory is --> we want one above
+        self.output_dir = load_config.parent.parent / 'grouping'
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         # eval_setup(load_config)
         # self.num_masks = num_masks
         # self.num_gaussians = num_gaussians
@@ -68,7 +77,7 @@ class GroupingClassifier(nn.Module):
         # Load pipeline and segmentation
         self._load_models()
 
-        self.params
+        self.params = params
 
     @property
     def memory_bank(self):
@@ -145,6 +154,48 @@ class GroupingClassifier(nn.Module):
         del self.pipeline
         torch.cuda.empty_cache()
 
+    def fixed_indices_dataloader(self, split="train") -> list[tuple]:
+        """ Returns evaluation data in strict dataset order as a list of (camera, data) tuples.
+        Works for both cached and disk modes without loading everything into memory.
+        This solution disables the internal shuffling temporarily. """
+        print(f"Loading {split} ordered data...")
+
+        if split == "train":
+            dataset = self.pipeline.datamanager.train_dataset
+        else:
+            dataset = self.pipeline.datamanager.eval_dataset
+
+        # --- Disk mode ---
+        if self.pipeline.datamanager.config.cache_images == "disk":
+            # Temporarily disable internal shuffling
+            original_shuffle = random.Random.shuffle
+            random.Random.shuffle = lambda self, x: x  # no-op
+
+            dataloader = DataLoader(
+                getattr(self.pipeline.datamanager, f"{split}_imagebatch_stream"),
+                batch_size=1,
+                num_workers=0,
+                collate_fn=lambda x: x[0],
+            )
+            items = list(islice(dataloader, len(dataset)))
+
+            # Restore original shuffle
+            random.Random.shuffle = original_shuffle
+            return items
+
+        else:
+            cached_data = getattr(self.pipeline.datamanager, f"{split}_cached")
+            # --- Cached mode ---
+            data = [d.copy() for d in cached_data]  # copy cached data
+            _cameras = deepcopy(dataset.cameras).to(self.pipeline.device)
+            cameras = []
+            for i in range(len(dataset)):
+                data[i]["image"] = data[i]["image"].to(self.pipeline.device)
+                cameras.append(_cameras[i : i + 1])  # maintain batch dimension
+
+            assert len(dataset.cameras.shape) == 1, "Assumes single batch dimension"
+            return list(zip(cameras, data))
+        
     #########################################################
     ############## Association of gaussians #################
     #########################################################
@@ -153,23 +204,39 @@ class GroupingClassifier(nn.Module):
         """
         Builds a memory bank associating Gaussians across multiple views using segmentation masks.
         """
+
+        dataloader = self.fixed_indices_dataloader(split="train")
+
+        # Save both raw and associated masks as images
+        raw_dir = self.output_dir / "masks" / "raw"
+        associated_dir = self.output_dir / "masks" / "associated"
         
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        associated_dir.mkdir(parents=True, exist_ok=True)
+
         with torch.no_grad():
             # cameras: Cameras = self.pipeline.datamanager.train_dataset.cameras
 
             #TLB --> this needs to go through images sequentially
             for camera, data in tqdm(
-                self.pipeline.datamanager.train_imagebatch_stream, # Need to use cached_train since it undistorts the images
+                dataloader, # Need to use cached_train since it undistorts the images
                 desc="Processing frames",
-                total=len(self.pipeline.datamanager.train_dataset)
+                total=len(dataloader)
             ):
+                print (f"Processing frame {camera.metadata['cam_idx']}")
+                
                 image = data['image']
+
+                image_path = self.pipeline.datamanager.train_dataset.image_filenames[camera.metadata['cam_idx']]
+                image_name = image_path.name
 
                 _ = self.model.get_outputs(camera=camera)
 
                 patch_mask = create_patch_mask(image)
                 _, results = self.segmentation.segment(image.detach().cpu().numpy())
                 composite_mask = create_composite_mask(results)
+
+                cv2.imwrite(raw_dir / f"{image_name}.png", composite_mask)
 
                 mask_gaussians = self.select_front_gaussians(
                     meta=self.model.info,
@@ -178,7 +245,14 @@ class GroupingClassifier(nn.Module):
                 )
 
                 labels = self._assign_labels(mask_gaussians)
+
+                # Use the labels to convert the composite mask to show the associated labels
+                associated_mask = convert_matched_mask(labels, composite_mask) 
+                cv2.imwrite(associated_dir / f"{image_name}.png", associated_mask)
+
                 self._update_memory_bank(labels, mask_gaussians)
+
+                break
 
     def _assign_labels(self, mask_gaussians: list[torch.Tensor]) -> torch.Tensor:
         """
@@ -274,15 +348,17 @@ class GroupingClassifier(nn.Module):
                 proj_results, 
                 mask, 
                 patch_mask,
-                front_percentage=front_percentage
+                front_percentage=front_percentage,
+                debug=self.params.debug
             )
             
             front_gaussians.append(result)
 
         return front_gaussians
 
+    @staticmethod
     @torch.compile(mode="max-autotune")
-    def process_mask_gaussians(self,  proj_results: Dict[str, torch.Tensor], mask: torch.Tensor, patch_mask: torch.Tensor, front_percentage: float = 0.5):
+    def process_mask_gaussians(proj_results: Dict[str, torch.Tensor], mask: torch.Tensor, patch_mask: torch.Tensor, front_percentage: float = 0.5, debug: bool = False):
         """
         JIT-compiled function for processing a single mask.
         Optimized for performance with torch.compile.
@@ -304,7 +380,7 @@ class GroupingClassifier(nn.Module):
         patches_data = patch_intersections[non_empty_patches[:, 0], non_empty_patches[:, 1]]
 
         # Go through each non-empty patch and get the front gaussians
-        for patch_idx, current_patch in enumerate(patches_data):
+        for _, current_patch in enumerate(patches_data):
             # Projected flattened are the pixel coordinates of each gaussian --> current patch is the pixels of the mask
             # Grab gaussians in the current patch
             patch_gaussians = current_patch[proj_results['proj_flattened']].nonzero().squeeze(-1)
@@ -315,7 +391,7 @@ class GroupingClassifier(nn.Module):
             # Filter valid gaussians using global valid mask
             overlap_mask = proj_results['valid_mask'][patch_gaussians]
 
-            if not overlap_mask.all() and self.params.debug:
+            if not overlap_mask.all() and debug:
                 invalid_count = (~overlap_mask).sum()
                 print(f"Found {invalid_count} gaussians not in the IDs")
                 print("Gaussians not in the IDs: ", patch_gaussians[~overlap_mask])
@@ -363,4 +439,3 @@ class GroupingClassifier(nn.Module):
 #     for i in range(num_masks):
 #         color_mask[mask == i+1] = random_colors[i]
 #     return color_mask
-

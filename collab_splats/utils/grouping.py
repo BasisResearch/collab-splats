@@ -26,25 +26,48 @@ TLB notes for improvement:
 - Adaptive memory bank: favors large masks currently --> this wont be great for outdoor scenes which are noisy
 """
 
-import torch
-from dataclasses import dataclass
-from typing import Dict
-from torch import nn
-from torch.utils.data import DataLoader
-from itertools import islice
+# Standard library imports
 import random
 from copy import deepcopy
-import cv2
-from tqdm.notebook import tqdm
+from dataclasses import dataclass
+from itertools import islice
+from typing import Dict
+import pickle
 
+# Third party imports
+from tqdm import tqdm
+import cv2
+import numpy as np
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
+from lightning.fabric import Fabric
+import pytorch_lightning as pl
+from pytorch_lightning.utilities.types import STEP_OUTPUT, EPOCH_OUTPUT
+
+# Silence Python warnings
+import os, warnings, logging
+
+warnings.filterwarnings("ignore")
+os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
+logging.getLogger().setLevel(logging.ERROR)
+
+# Nerfstudio imports
 from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.utils.eval_utils import eval_setup
 
-from collab_splats.utils.segmentation import Segmentation, create_patch_mask, create_composite_mask, mask_id_to_binary_mask, convert_matched_mask
+# Local imports
+from collab_splats.utils.segmentation import (
+    Segmentation,
+    create_composite_mask,
+    create_patch_mask,
+    convert_matched_mask,
+    mask_id_to_binary_mask,
+)
 from collab_splats.utils.utils import project_gaussians
 
 @dataclass
-class GroupingParams:
+class GroupingConfig:
     segmentation_backend: str
     segmentation_strategy: str
     front_percentage: float = 0.2
@@ -56,15 +79,56 @@ class GroupingParams:
     identity_dim: int = 16
     lr: float = 5e-4
 
+    # Lightning training parameters
+    max_epochs: int = 10
+    val_check_interval: float = 1.0
+    log_every_n_steps: int = 10
+    precision: int = 16
+    accelerator: str = "gpu"
+    devices: int = 1
+    
+    # Callback parameters
+    save_top_k: int = 3
+    monitor: str = "val_loss"
+    mode: str = "min"
+    patience: int = 5
+
     debug: bool = False
 
+class GroupingDataModule(pl.LightningDataModule):
+    """Data module for GroupingClassifier training."""
+    
+    def __init__(self, train_dataloader, val_dataloader=None, test_dataloader=None, batch_size=1, num_workers=0):
+        super().__init__()
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
+        self.test_dataloader = test_dataloader
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+    
+    def setup(self, stage=None):
+        """Setup data for training/validation/testing."""
+        pass
+    
+    def train_dataloader(self):
+        """Return training dataloader."""
+        return self.train_dataloader
+    
+    def val_dataloader(self):
+        """Return validation dataloader."""
+        return self.val_dataloader
+    
+    def test_dataloader(self):
+        """Return test dataloader."""
+        return self.test_dataloader
+
 @dataclass
-class GroupingClassifier(nn.Module):
-    def __init__(self, load_config: str, params: GroupingParams):
+class GroupingClassifier(pl.LightningModule):
+    def __init__(self, load_config: str, config: GroupingConfig):
         super().__init__()
 
         self.load_config = load_config
-        self.params = params
+        self.config = config
         self.total_masks = 0
 
         # Config is where the model directory is --> we want one above
@@ -75,19 +139,25 @@ class GroupingClassifier(nn.Module):
         # self.num_masks = num_masks
         # self.num_gaussians = num_gaussians
         # self.classifier = nn.Conv2d(in_channels=num_masks, out_channels=num_gaussians, kernel_size=1)
-        self._memory_bank = []
+        self._memory_bank: list[set[int]] = self.load_memory_bank()
 
         # Load pipeline and segmentation
         self._load_models()
 
-        self.params = params
-
     @property
-    def memory_bank(self):
-        return self._memory_bank
+    def memory_bank(self) -> list[torch.Tensor]:
+        """
+        Expose memory bank as list of tensors (on-demand conversion).
+        """
+        return [
+            torch.tensor(list(g), dtype=torch.long, device="cpu")
+            for g in self._memory_bank
+        ]
 
     @property
     def identities(self):
+        if not hasattr(self, "params"):
+            self.setup_train()
         return self.params.identities
 
     #########################################################
@@ -100,8 +170,8 @@ class GroupingClassifier(nn.Module):
     
     def setup_train(self):
         n_gaussians = self.model.num_points
-        src_dim = self.model.info[self.src_feature].shape[-1]
-        identities = torch.nn.Parameter(n_gaussians, self.identity_dim)
+        src_dim = self.model.gauss_params[self.config.src_feature].shape[-1]
+        identities = torch.nn.Parameter(torch.zeros((n_gaussians, self.config.identity_dim)))
 
         self.params = torch.nn.ParameterDict(
             {
@@ -112,12 +182,12 @@ class GroupingClassifier(nn.Module):
         # In projection is simple linear projection followed by nonlinearity
         # We piggyback off an existing feature and use that as a method to create identities
         self.in_proj = nn.Sequential(
-            nn.Linear(src_dim, self.identity_dim),
+            nn.Linear(src_dim, self.config.identity_dim),
             nn.ReLU(),
         )
 
         # Fit identity of gaussians by predicting masks within each view
-        self.classifier = torch.nn.Conv2d(self.identity_dim, self.total_masks, kernel_size=1)
+        self.classifier = torch.nn.Conv2d(self.config.identity_dim, self.total_masks, kernel_size=1)
 
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
         self.optimizer = torch.optim.Adam(self.classifier.parameters(), lr=self.config.lr)
@@ -143,8 +213,8 @@ class GroupingClassifier(nn.Module):
         if not hasattr(self, "segmentation"):
             print("Loading segmentation module...")
             self.segmentation = Segmentation(
-                backend=self.params.segmentation_backend,
-                strategy=self.params.segmentation_strategy,
+                backend=self.config.segmentation_backend,
+                strategy=self.config.segmentation_strategy,
                 device=self.model.device
             )
         else:
@@ -217,34 +287,55 @@ class GroupingClassifier(nn.Module):
         # Save both raw and associated masks as images
         raw_dir = self.output_dir / "masks" / "raw"
         associated_dir = self.output_dir / "masks" / "associated"
+        progress_path = self.output_dir / "processed_frames.pkl"
         
         raw_dir.mkdir(parents=True, exist_ok=True)
         associated_dir.mkdir(parents=True, exist_ok=True)
 
+        # Load already processed frames if available
+        if progress_path.exists():
+            with open(progress_path, "rb") as f:
+                processed_frames = pickle.load(f)
+        else:
+            processed_frames = set()
+  
         with torch.no_grad():
-            # cameras: Cameras = self.pipeline.datamanager.train_dataset.cameras
-
-            #TLB --> this needs to go through images sequentially
-            for camera, data in tqdm(
-                dataloader, # Need to use cached_train since it undistorts the images
-                desc="Processing frames",
-                total=len(dataloader)
-            ):
-                print (f"Processing frame {camera.metadata['cam_idx']}")
-                
+            for camera, data in tqdm(dataloader, desc="Processing frames", total=len(dataloader)):
+                # Get image and camera index
                 image = data['image']
+                camera_idx = camera.metadata['cam_idx']
 
-                image_path = self.pipeline.datamanager.train_dataset.image_filenames[camera.metadata['cam_idx']]
+                # Get image info
+                image_path = self.pipeline.datamanager.train_dataset.image_filenames[camera_idx]
                 image_name = image_path.name
 
+                # We require images for training the model so need to check that they exist --> need to check for undistorted images as well
+                raw_image_path = raw_dir / f"{image_name}"
+                associated_image_path = associated_dir / f"{image_name}"
+                images_exist = raw_image_path.exists() and associated_image_path.exists()
+
+                # Skip if already processed
+                if camera_idx in processed_frames and images_exist:
+                    continue
+
+                # Get model outputs
                 _ = self.model.get_outputs(camera=camera)
 
+                # Create patch mask
                 patch_mask = create_patch_mask(image)
-                _, results = self.segmentation.segment(image.detach().cpu().numpy())
+                segmentation_results = self.segmentation.segment(image.detach().cpu().numpy())
+
+                # Ensure objects were found
+                if segmentation_results is None:
+                    # Add to processed frames
+                    processed_frames.add(camera_idx)
+                    continue
+
+                _, results = segmentation_results
 
                 # Merge masks into single mask --> save out
                 composite_mask = create_composite_mask(results)
-                cv2.imwrite(raw_dir / f"{image_name}", composite_mask)
+                cv2.imwrite(raw_image_path, composite_mask)
 
                 # Select front gaussians for each mask and assign labels
                 mask_gaussians = self.select_front_gaussians(
@@ -256,12 +347,18 @@ class GroupingClassifier(nn.Module):
                 labels = self._assign_labels(mask_gaussians)
 
                 # Use the labels to convert the composite mask to show the associated labels
-                associated_mask = convert_matched_mask(labels, composite_mask) 
-                cv2.imwrite(associated_dir / f"{image_name}", associated_mask)
+                associated_mask = convert_matched_mask(labels, composite_mask)
+                cv2.imwrite(associated_image_path, associated_mask)
 
                 self._update_memory_bank(labels, mask_gaussians)
 
-                break
+                # Mark frame as processed and save progress + memory bank
+                processed_frames.add(camera_idx)
+                
+                with open(progress_path, "wb") as f:
+                    pickle.dump(processed_frames, f)
+                
+                self.save_memory_bank()
 
     def _assign_labels(self, mask_gaussians: list[torch.Tensor]) -> torch.Tensor:
         """
@@ -303,33 +400,65 @@ class GroupingClassifier(nn.Module):
             selected = torch.argmax(overlaps)
 
             # If no label matches above the threshold → assign new label
-            if overlaps[selected] < self.params.iou_threshold:
+            if overlaps[selected] < self.config.iou_threshold:
                 selected = self.total_masks
                 self.total_masks += 1
 
             labels[i] = selected
 
         return labels
-    
+        
     def _update_memory_bank(self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]):
         """
-        Updates the memory_bank with newly assigned or updated Gaussians per label.
+        Updates the memory bank with newly assigned or updated Gaussians per label.
 
-        Assumes self.total_masks is up-to-date and labels are valid.
+        The memory bank stores sets of Gaussian indices for each unique label. When updating,
+        new labels get a new set entry, while existing labels have their sets updated with 
+        the new Gaussian indices.
 
         Args:
-            labels (Tensor): Assigned labels for each mask.
-            mask_gaussians (list[Tensor]): Gaussian indices per mask.
+            labels (torch.Tensor): Tensor of label assignments for each mask
+            mask_gaussians (list[torch.Tensor]): List of tensors containing Gaussian indices 
+                                                belonging to each mask
+
+        Note:
+            The memory bank (_memory_bank) is stored as a list of sets for efficient 
+            uniqueness checking and updates.
         """
         for label, gaussians in zip(labels.tolist(), mask_gaussians):
-            if label >= len(self.memory_bank):
-                # New label → initialize memory
-                self.memory_bank.append(gaussians)
+            gaussians_set = set(gaussians.tolist())
+            if label >= len(self._memory_bank):
+                self._memory_bank.append(gaussians_set)
             else:
-                # Existing label → merge and deduplicate
-                combined = torch.cat([self.memory_bank[label], gaussians])
-                self.memory_bank[label] = torch.unique(combined)
+                self._memory_bank[label].update(gaussians_set)
 
+    # ------------------ Saving / Loading ------------------
+
+    def save_memory_bank(self):
+        """
+        Save memory bank to disk using pickle.
+        """
+        path = self.output_dir / "memory_bank.pkl"
+
+        with open(path, "wb") as f:
+            pickle.dump(self._memory_bank, f)
+
+    def load_memory_bank(self):
+        """
+        Load memory bank from disk using pickle.
+        """
+        path = self.output_dir / "memory_bank.pkl"
+
+        if not path.exists():
+            print(f"Memory bank not found at {path}")
+            return []
+
+        with open(path, "rb") as f:
+            bank = pickle.load(f)
+
+        print(f"Memory bank loaded from {path}")
+        return bank
+    
     #########################################################
     ############## Gaussian selection #######################
     #########################################################
@@ -349,16 +478,16 @@ class GroupingClassifier(nn.Module):
 
         # Collect front gaussians
         front_gaussians = []
-
-        for mask in tqdm(flattened_masks, total=len(flattened_masks), desc="Processing masks"):
-
+        
+        for mask in flattened_masks: # total=len(flattened_masks), desc="Processing masks"): # total=len(flattened_masks), desc="Processing masks"):
+            
             # Use compiled function for main processing
             result = self.process_mask_gaussians(
                 proj_results, 
                 mask, 
                 patch_mask,
                 front_percentage=front_percentage,
-                debug=self.params.debug
+                debug=self.config.debug
             )
             
             front_gaussians.append(result)
@@ -430,12 +559,168 @@ class GroupingClassifier(nn.Module):
         else:
             return torch.tensor([], dtype=torch.long, device=mask.device)
 
+
     #########################################################
     ################# Model training ########################
     #########################################################
 
-    def mesh(self):
-        pass
+    def train_classifier(self, dataloader=None, epochs: int = 10, use_lightning: bool = True):
+        """
+        Train the mask classifier with a 
+
+        Args:
+            dataloader: torch DataLoader yielding (features, labels).
+                        If None, you need to provide it externally.
+            epochs (int): number of epochs to train for.
+            use_lightning (bool): If True, use Lightning Trainer. If False, use Fabric.
+        """
+        if dataloader is None:
+            raise ValueError("Must provide a dataloader to train_classifier.")
+
+            # Use Lightning Trainer
+            from pytorch_lightning import Trainer
+            from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+            
+            # Setup callbacks
+            checkpoint_callback = ModelCheckpoint(
+                dirpath=self.output_dir / "checkpoints",
+                filename="grouping-{epoch:02d}-{val_loss:.2f}",
+                save_top_k=3,
+                monitor="val_loss",
+                mode="min"
+            )
+            
+            early_stop_callback = EarlyStopping(
+                monitor="val_loss",
+                patience=5,
+                mode="min"
+            )
+            
+            # Create trainer
+            trainer = Trainer(
+                max_epochs=epochs,
+                callbacks=[checkpoint_callback, early_stop_callback],
+                accelerator=self.config.accelerator if torch.cuda.is_available() else "cpu",
+                devices=self.config.devices,
+                precision=self.config.precision,
+                log_every_n_steps=self.config.log_every_n_steps,
+                val_check_interval=self.config.val_check_interval
+            )
+            
+            # Train
+            trainer.fit(self, dataloader)
+    
+    #########################################################
+    ################# Lightning Methods #####################
+    #########################################################
+    
+    def configure_optimizers(self):
+        """Configure optimizers for Lightning training."""
+        if self.classifier is None:
+            self.setup_train()
+        
+        optimizer = torch.optim.Adam(self.classifier.parameters(), lr=self.config.lr)
+        return optimizer
+    
+    def training_step(self, batch, batch_idx):
+        """Single training step for Lightning."""
+        if self.classifier is None:
+            self.setup_train()
+        
+        feats, labels = batch
+        identities = self.in_proj(feats)
+        logits = self.classifier(identities)
+        loss = self.loss_fn(logits, labels).mean()
+        
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        """Single validation step for Lightning."""
+        if self.classifier is None:
+            self.setup_train()
+        
+        feats, labels = batch
+        identities = self.in_proj(feats)
+        logits = self.classifier(identities)
+        loss = self.loss_fn(logits, labels).mean()
+        
+        # Calculate accuracy
+        predictions = torch.argmax(logits, dim=1)
+        accuracy = (predictions == labels).float().mean()
+        
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_accuracy', accuracy, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        """Single test step for Lightning."""
+        if self.classifier is None:
+            self.setup_train()
+        
+        feats, labels = batch
+        identities = self.in_proj(feats)
+        logits = self.classifier(identities)
+        loss = self.loss_fn(logits, labels).mean()
+        
+        # Calculate accuracy
+        predictions = torch.argmax(logits, dim=1)
+        accuracy = (predictions == labels).float().mean()
+        
+        self.log('test_loss', loss, on_step=False, on_epoch=True)
+        self.log('test_accuracy', accuracy, on_step=False, on_epoch=True)
+        return loss
+    
+    def on_train_start(self):
+        """Called when training starts."""
+        if not hasattr(self, 'classifier') or self.classifier is None:
+            self.setup_train()
+    
+    def on_validation_start(self):
+        """Called when validation starts."""
+        if not hasattr(self, 'classifier') or self.classifier is None:
+            self.setup_train()
+    
+    def on_test_start(self):
+        """Called when testing starts."""
+        if not hasattr(self, 'classifier') or self.classifier is None:
+            self.setup_train()
+    
+    def create_trainer(self, **kwargs):
+        """Create a Lightning Trainer with default configuration."""
+        from pytorch_lightning import Trainer
+        from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+        
+        # Setup callbacks
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=self.output_dir / "checkpoints",
+            filename="grouping-{epoch:02d}-{val_loss:.2f}",
+            save_top_k=self.config.save_top_k,
+            monitor=self.config.monitor,
+            mode=self.config.mode
+        )
+        
+        early_stop_callback = EarlyStopping(
+            monitor=self.config.monitor,
+            patience=self.config.patience,
+            mode=self.config.mode
+        )
+        
+        # Default trainer configuration
+        trainer_config = {
+            "max_epochs": self.config.max_epochs,
+            "callbacks": [checkpoint_callback, early_stop_callback],
+            "accelerator": self.config.accelerator if torch.cuda.is_available() else "cpu",
+            "devices": self.config.devices,
+            "precision": self.config.precision,
+            "log_every_n_steps": self.config.log_every_n_steps,
+            "val_check_interval": self.config.val_check_interval
+        }
+        
+        # Update with any provided kwargs
+        trainer_config.update(kwargs)
+        
+        return Trainer(**trainer_config)
 
 # def get_n_different_colors(n: int) -> np.ndarray:
 #     np.random.seed(0)

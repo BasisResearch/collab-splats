@@ -14,11 +14,52 @@
 
 
 import math
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 import numpy as np
 import torch
 
 from nerfstudio.cameras.cameras import Cameras
+
+####################################################
+####### Helper function for camera preparation #####
+####################################################
+
+def get_camera_parameters(camera: Cameras, device: torch.device) -> Dict[str, torch.Tensor]:
+    """
+    Get the camera parameters for rasterization.
+
+    Returns:
+        Ks: [1, 3, 3]
+        viewmats: [1, 4, 4]
+    """
+    colmap_camera = convert_to_colmap_camera(camera)
+
+    # Set up rasterization configuration
+    tanfovx = math.tan(colmap_camera.fovx * 0.5)
+    tanfovy = math.tan(colmap_camera.fovy * 0.5)
+    focal_length_x = colmap_camera.image_width / (2 * tanfovx)
+    focal_length_y = colmap_camera.image_height / (2 * tanfovy)
+
+    Ks = torch.tensor(
+        [
+            [focal_length_x, 0, colmap_camera.image_width / 2.0],
+            [0, focal_length_y, colmap_camera.image_height / 2.0],
+            [0, 0, 1],
+        ],
+        device=device,
+    )[None]
+
+    viewmats = colmap_camera.world_view_transform.transpose(0, 1)[None]
+
+    camera_params = {
+        "Ks": Ks,
+        "viewmats": viewmats,
+        "image_width": colmap_camera.image_width,
+        "image_height": colmap_camera.image_height,
+        "camera_center": colmap_camera.camera_center,
+    }
+    
+    return camera_params
 
 ####################################################
 ####### Functions taken from scaffold-gs ###########
@@ -128,6 +169,7 @@ def get_projection_matrix(znear, zfar, fovx, fovy):
 def focal2fov(focal, pixels):
     return 2 * math.atan(pixels / (2 * focal))
 
+# TLB --> I think we can get this through nerfstudio look into removing
 def build_rotation(r):
     norm = torch.sqrt(
         r[:, 0] * r[:, 0] + r[:, 1] * r[:, 1] + r[:, 2] * r[:, 2] + r[:, 3] * r[:, 3]

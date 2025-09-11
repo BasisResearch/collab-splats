@@ -3,8 +3,11 @@ import torch
 from torch.nn import functional as F
 import numpy as np
 import math
-
 from mobile_sam import SamAutomaticMaskGenerator
+import logging
+
+logging.getLogger("ultralytics").setLevel(logging.WARNING)
+
 from typing import Tuple
 from .features import batch_iterator, load_torchhub_model
 
@@ -33,13 +36,13 @@ class Segmentation:
 
         self.backend = backend
         self.strategy = strategy
-
-    def segment(self, image):
+        
+    def segment(self, image, **kwargs):
         if self.backend == 'mobilesamv2':
             if self.strategy == 'object':
-                return object_segment_image(image, self.seg_model, self.object_model, self.predictor)
+                return object_segment_image(image, self.seg_model, self.object_model, self.predictor, **kwargs)
             elif self.strategy == 'auto':
-                return auto_segment_image(image, self.seg_model)
+                return auto_segment_image(image, self.seg_model, **kwargs)
             else:
                 raise ValueError(f"Strategy {self.strategy} not supported")
         elif self.backend == 'ultralytics':
@@ -77,7 +80,7 @@ def load_mobile_sam(mobilesam_encoder_name: str = 'mobilesamv2_efficientvit_l2',
 
     return mobilesamv2, ObjAwareModel, predictor
 
-def auto_segment_image(image, mobile_sam, kwargs: dict = {}):
+def auto_segment_image(image, mobile_sam, **kwargs):
     """
     Automatically segments an image using MobileSAM. Provides
     an open alternative to the object-aware segmentation method
@@ -98,7 +101,7 @@ def auto_segment_image(image, mobile_sam, kwargs: dict = {}):
     
     return masks, results
 
-def get_object_masks(image, obj_model, kwargs: dict = {}):
+def get_object_masks(image, obj_model, **kwargs):
     """
     Grabs object bounding boxes from an object-aware model
 
@@ -109,10 +112,14 @@ def get_object_masks(image, obj_model, kwargs: dict = {}):
         - iou: float = 0.5
         - verbose: bool = False
     """
+    # Set default verbose to False to reduce output
+    if 'verbose' not in kwargs:
+        kwargs['verbose'] = False
+    
     obj_results = obj_model(image, **kwargs)
     return obj_results
 
-def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: int = 320):
+def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: int = 320, **kwargs):
     """
     Uses object-bounding boxes to perform segmentation over an image
 
@@ -129,7 +136,7 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
     height, width = image.shape[:2]
     
     # Get object detections
-    obj_results = get_object_masks(image, obj_model)
+    obj_results = get_object_masks(image, obj_model, **kwargs)
     
     if not obj_results or len(obj_results[0].boxes) == 0:
         return None
@@ -285,13 +292,15 @@ def create_composite_mask(results, confidence_threshold=0.85):
     mask_indices = np.setdiff1d(mask_indices, [0]) # remove 0 item
 
     composite_mask = np.zeros((H, W), dtype=np.uint8)
+    current_label = 1  # ensures consecutive numbering
 
-    for i, idx in enumerate(mask_indices, start=1):
+    # Rewriting to ensure consecutive numbering (e.g., not corresponding to the indices of the masks)
+    for idx in mask_indices:
         mask = (mask_id == idx)
 
-        print (f"Mask {i} has {mask.sum()} pixels")
-        if mask.sum() > 0 and (mask.sum() / masks[idx-1].sum()) > 0.1:
-            composite_mask[mask] = i
+        if mask.sum() > 0 and (mask.sum() / masks[idx - 1].sum()) > 0.1:
+            composite_mask[mask] = current_label
+            current_label += 1
 
     return composite_mask
 

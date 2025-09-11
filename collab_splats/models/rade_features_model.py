@@ -16,12 +16,11 @@ except ImportError:
     print("Please install gsplat>=1.0.0")
 
 from gsplat.strategy import DefaultStrategy
-from gsplat.cuda._wrapper import spherical_harmonics
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.scene_box import OrientedBox
 
-from collab_splats.utils import depth_double_to_normal
+from collab_splats.utils import get_camera_parameters, depth_double_to_normal, create_fused_features
 from collab_splats.models.rade_gs_model import RadegsModelConfig, RadegsModel
 from collab_splats.utils.features import TwoLayerMLP, BaseFeatureExtractor
 
@@ -216,7 +215,7 @@ class RadegsFeaturesModel(RadegsModel):
         self.last_size = (H, W)
 
         # Get camera parameters of colmap camera for rasterization
-        camera_params = self._get_camera_parameters(camera)
+        camera_params = get_camera_parameters(camera, device=self.device)
 
         # Get visible gaussian mask
         if self.config.prefilter_voxel:
@@ -244,6 +243,15 @@ class RadegsFeaturesModel(RadegsModel):
         # Modified rasterization function from https://github.com/brian-xu/gsplat-rade/blob/main/gsplat/rendering.py
         # Enables returning depth and normal maps for computing of loss
 
+        # Fuse the features outside rasterization to keep rendering the same
+        colors_crop = create_fused_features(
+            means=means_crop,
+            colors=colors_crop,
+            features=distill_features_crop,
+            camera_params=camera_params,
+            sh_degree_to_use=sh_degree_to_use,
+        )
+
         # Rendered contains the following:
         # - rgb: [N, 3]
         # - alphas: [N, 1]
@@ -257,7 +265,7 @@ class RadegsFeaturesModel(RadegsModel):
             scales=scales_crop,
             opacities=opacities_crop,
             colors=colors_crop,
-            features=distill_features_crop,
+            # features=distill_features_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,
             visible_mask=voxel_visible_mask,
@@ -325,91 +333,91 @@ class RadegsFeaturesModel(RadegsModel):
             'features': features.squeeze(0),
         }
         
-    def _render(
-        self,
-        means: torch.Tensor,
-        quats: torch.Tensor,
-        scales: torch.Tensor,
-        opacities: torch.Tensor,
-        colors: torch.Tensor,
-        features: torch.Tensor,
-        render_mode: str,
-        sh_degree_to_use: int,
-        visible_mask: torch.Tensor,
-        camera_params: Dict[str, torch.Tensor],
-    ):
-        """
-        Render the scene.
+    # def _render(
+    #     self,
+    #     means: torch.Tensor,
+    #     quats: torch.Tensor,
+    #     scales: torch.Tensor,
+    #     opacities: torch.Tensor,
+    #     colors: torch.Tensor,
+    #     features: torch.Tensor,
+    #     render_mode: str,
+    #     sh_degree_to_use: int,
+    #     visible_mask: torch.Tensor,
+    #     camera_params: Dict[str, torch.Tensor],
+    # ):
+    #     """
+    #     Render the scene.
 
-        Background tensor (bg_color) must be on GPU!
-        """
+    #     Background tensor (bg_color) must be on GPU!
+    #     """
 
-        if visible_mask is not None:
-            means = means[visible_mask]
-            quats = quats[visible_mask]
-            scales = scales[visible_mask]
-            opacities = opacities[visible_mask]
-            colors = colors[visible_mask]
-            features = features[visible_mask]
-        else:
-            means = means
-            quats = quats
-            scales = scales
-            opacities = opacities
-            colors = colors
-            features = features
+    #     if visible_mask is not None:
+    #         means = means[visible_mask]
+    #         quats = quats[visible_mask]
+    #         scales = scales[visible_mask]
+    #         opacities = opacities[visible_mask]
+    #         colors = colors[visible_mask]
+    #         features = features[visible_mask]
+    #     else:
+    #         means = means
+    #         quats = quats
+    #         scales = scales
+    #         opacities = opacities
+    #         colors = colors
+    #         features = features
 
-        # We need a hack to get features into model gsplat for rendering
-        # Convert the SH coefficients to RGB via gsplat
-        # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
-        if sh_degree_to_use is not None:
-            dirs = means - camera_params["camera_center"] # directions of the gaussians
+    #     # We need a hack to get features into model gsplat for rendering
+    #     # Convert the SH coefficients to RGB via gsplat
+    #     # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
+    #     if sh_degree_to_use is not None:
+    #         dirs = means - camera_params["camera_center"] # directions of the gaussians
             
-            colors = spherical_harmonics(
-                degrees_to_use=sh_degree_to_use,
-                dirs=dirs,
-                coeffs=colors, # Current spherical harmonics coefficients
-            )
+    #         colors = spherical_harmonics(
+    #             degrees_to_use=sh_degree_to_use,
+    #             dirs=dirs,
+    #             coeffs=colors, # Current spherical harmonics coefficients
+    #         )
 
-            # Squeeze back just in case
-            colors = colors.squeeze(1)
-            colors = torch.clamp_min(colors + 0.5, 0.0)
+    #         # Squeeze back just in case
+    #         colors = colors.squeeze(1)
+    #         colors = torch.clamp_min(colors + 0.5, 0.0)
         
-        # Now fuse our features with the colors for rendering
-        fused_features = torch.cat((colors, features), dim=-1)
+    #     # Now fuse our features with the colors for rendering
+    #     fused_features = torch.cat((colors, features), dim=-1)
 
-        # Items are:
-        # - render_colors: [N, 3 + feature_dim]
-        # - render_alphas: [N, 1]
-        # - expected_depths: [N, 3]
-        # - median_depths: [N, 1]
-        # - expected_normals: [N, 1]
-        # - info: dict
-        render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
-            means=means,  # [N, 3]
-            quats=quats,  # [N, 4]
-            scales=torch.exp(scales),  # [N, 3]
-            opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
-            colors=fused_features,
-            viewmats=camera_params["viewmats"],  # [1, 4, 4]
-            Ks=camera_params["Ks"],  # [1, 3, 3]
-            width=int(camera_params["image_width"]),
-            height=int(camera_params["image_height"]),
-            packed=False,
-            near_plane=0.01,
-            far_plane=1e10,
-            render_mode=render_mode,
-            sh_degree=None, # We've computed this in advance --> hacking to use the features
-            sparse_grad=False,
-            absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
-            rasterize_mode=self.config.rasterize_mode,
-            # # set some threshold to disregard small gaussians for faster rendering.
-            # radius_clip=3.0,
-            # Output depth and normal maps
-            return_depth_normal=True,
-        )
+    #     # Items are:
+    #     # - render_colors: [N, 3 + feature_dim]
+    #     # - render_alphas: [N, 1]
+    #     # - expected_depths: [N, 3]
+    #     # - median_depths: [N, 1]
+    #     # - expected_normals: [N, 1]
+    #     # - info: dict
+    #     render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
+    #         means=means,  # [N, 3]
+    #         quats=quats,  # [N, 4]
+    #         scales=torch.exp(scales),  # [N, 3]
+    #         opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
+    #         colors=fused_features,
+    #         viewmats=camera_params["viewmats"],  # [1, 4, 4]
+    #         Ks=camera_params["Ks"],  # [1, 3, 3]
+    #         width=int(camera_params["image_width"]),
+    #         height=int(camera_params["image_height"]),
+    #         packed=False,
+    #         near_plane=0.01,
+    #         far_plane=1e10,
+    #         render_mode=render_mode,
+    #         sh_degree=None, # We've computed this in advance --> hacking to use the features
+    #         sparse_grad=False,
+    #         absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
+    #         rasterize_mode=self.config.rasterize_mode,
+    #         # # set some threshold to disregard small gaussians for faster rendering.
+    #         # radius_clip=3.0,
+    #         # Output depth and normal maps
+    #         return_depth_normal=True,
+    #     )
 
-        return render, alpha, expected_depths, median_depths, expected_normals, meta
+    #     return render, alpha, expected_depths, median_depths, expected_normals, meta
 
     ########################################################
     ########### Visualization functions ####################

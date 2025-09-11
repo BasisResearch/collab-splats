@@ -6,7 +6,43 @@ Taken from dn-splatter
 import numpy as np
 from scipy.spatial import cKDTree
 import torch
-from typing import Dict
+from typing import Dict, Optional
+
+from gsplat.cuda._wrapper import spherical_harmonics
+
+def create_fused_features(
+    means: torch.Tensor,
+    colors: torch.Tensor, 
+    features: torch.Tensor,
+    camera_params: Dict[str, torch.Tensor],
+    sh_degree_to_use: Optional[int] = None,
+) -> torch.Tensor:
+    """
+    Prepares features for rendering by concatenating features with the
+    pre-rendered spherical harmonics. Functions as a hack to get features
+    into the model gsplat for rendering.
+
+    Convert the SH coefficients to RGB via gsplat
+    Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
+    """
+
+    if sh_degree_to_use is not None:
+        dirs = means - camera_params["camera_center"] # directions of the gaussians
+            
+        colors = spherical_harmonics(
+            degrees_to_use=sh_degree_to_use,
+            dirs=dirs,
+            coeffs=colors, # Current spherical harmonics coefficients
+        )
+
+        # Squeeze back just in case
+        colors = colors.squeeze(1)
+        colors = torch.clamp_min(colors + 0.5, 0.0)
+        
+    # Now fuse our features with the colors for rendering
+    fused_features = torch.cat((colors, features), dim=-1)
+
+    return fused_features
 
 def project_gaussians(meta: dict) -> Dict[str, torch.Tensor]:
     """

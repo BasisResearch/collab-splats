@@ -9,6 +9,7 @@ from collab_splats.models.rade_features_model import (
     RadegsFeaturesModel,
 )
 
+
 def make_scene_box(aabb_scale: float = 1.0) -> SceneBox:
     return SceneBox(
         aabb=torch.tensor(

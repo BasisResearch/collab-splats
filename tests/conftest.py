@@ -1,5 +1,4 @@
 # tests/conftest.py
-import pytest
 import torch
 
 # Disable TorchDynamo globally for tests to avoid PyTorch/Transformers import issues

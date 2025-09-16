@@ -37,23 +37,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
-      # Install CPU PyTorch first
-      - name: Install torch + torchvision
+      # Install torch first
+      - name: Install torch
         run: |
           pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
 
-      # Install collab-data (private repo)
+      # Install collab-splats with dev deps
+      - name: Install collab-splats
+        run: |
+          bash setup.sh
+          pip install --no-build-isolation .[dev]
+
+      # Install collab-data
       - name: Install collab-data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
-
-      # Run setup.sh and install collab-splats with dev dependencies
-      - name: Install collab-splats
-        run: |
-          bash setup.sh
-          pip install --no-build-isolation .[dev]
       
       # Run tests
       - name: Test

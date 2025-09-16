@@ -56,6 +56,7 @@ dev = [
   "black",
   "isort",
   "flake8>=6.0",
+  "types-PyYAML",
 ]
 
 [tool.black]

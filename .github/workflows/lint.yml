@@ -32,24 +32,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Install dev dependencies for linting
+      # Install dev dependencies (linting only)
       - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
           pip install .[dev]
 
-      # Run ruff
+      # Run linting tools
       - name: Lint with ruff
         run: ruff check collab_splats
 
-      # Run flake8
       - name: Lint with flake8
         run: flake8 collab_splats
 
-      # Run black check
       - name: Format check with black
         run: black --check collab_splats
 
-      # Run isort check
       - name: Check imports with isort
         run: isort --check-only collab_splats

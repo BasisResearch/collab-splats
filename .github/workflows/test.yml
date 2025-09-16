@@ -53,8 +53,8 @@ jobs:
       - name: Install collab-splats
         run: |
           bash setup.sh
-          pip install .[dev]
-
+          pip install --no-build-isolation .[dev]
+      
       # Run tests
       - name: Test
         run: |

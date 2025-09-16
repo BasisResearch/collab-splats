@@ -38,9 +38,10 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
 
       # Install minimal dependencies for linting
-      - name: Install lint dependencies
+      - name: Install collab-splats
         run: |
-          pip install .[dev]
+          bash setup.sh
+          pip install --no-build-isolation .[dev]
 
       # Run lint
       - name: Lint

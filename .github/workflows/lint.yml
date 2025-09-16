@@ -4,18 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10"]
+        python-version: ['3.10']
 
     steps:
-      # Checkout code
+      # Checkout repo
       - uses: actions/checkout@v4
 
       # Cache pip dependencies
@@ -28,39 +27,22 @@ jobs:
             pip-
 
       # Set up Python
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Install dev dependencies (testing only)
-      - name: Upgrade pip
+      # Upgrade pip/setuptools/wheel
+      - name: Upgrade pip and build tools
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel
 
-      # Set up GitHub token for private repo access
-      - name: Set up GitHub token
-        run: echo "${{ secrets.GITHUB_TOKEN }}" > ~/.token
-
-      # Install dev dependencies + CPU PyTorch
-      - name: Install dev dependencies + torch (CPU)
+      # Install minimal dependencies for linting
+      - name: Install lint dependencies
         run: |
-          pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-          pip install --upgrade pip setuptools wheel
-      
-      - name: Install collab-data
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
-
-      - name: Install repository w/ dev dependencies
-        run: |
-          cd collab-splats
-          bash setup.sh
           pip install .[dev]
 
+      # Run lint
       - name: Lint
         run: |
-          cd collab-splats
           make lint

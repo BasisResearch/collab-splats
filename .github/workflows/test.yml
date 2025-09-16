@@ -27,44 +27,34 @@ jobs:
           key: pip-${{ hashFiles('**/pyproject.toml') }}
           restore-keys: |
             pip-      
-      
+
       # Setup Python
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Google Auth
-      - name: Google Auth
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: '${{ secrets.GCP_SERVICE_KEY }}' 
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          version: '>= 363.0.0'
-    
-      - name: Use gcloud CLI
-        run: gcloud info          
-
-      # Prepare GCP config
-      - name: Create config-local folder
-        run: mkdir config-local
-      
-      - name: Copy GCP credentials
-        run: echo '${{ secrets.GCP_SERVICE_KEY }}' > ./config-local/collab-data-463313-c340ad86b28e.json
-      
-      - name: Set environment variables
+      # Install dev dependencies (testing only)
+      - name: Install dev dependencies
         run: |
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/config-local/collab-data-463313-c340ad86b28e.json" >> $GITHUB_ENV
-          echo "GITHUB_ACTION=true" >> $GITHUB_ENV
-           
-      # Main Environment Setup
-      - name: Run setup.sh
-        run: bash ./setup.sh
-                
+          python -m pip install --upgrade pip
+          pip install .[dev]
+      
+      # Set up GitHub token for private repo access
+      - name: Set up GitHub token
+        run: echo "${{ secrets.GITHUB_TOKEN }}" > ~/.token
+      
+      - name: Install collab-data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
+
+      - name: Install repository
+        run: |
+          cd collab-splats
+          bash setup.sh
+  
       # Install dev dependencies + CPU PyTorch
       - name: Install dev dependencies + torch (CPU)
         run: |
@@ -73,7 +63,7 @@ jobs:
           pip install .[dev]
       
       # Run tests
-      - name: Run tests
-        env:
-          MKL_NUM_THREADS: 1
-        run: ./scripts/test.sh
+      - name: Test
+        run: |
+          cd collab-splats
+          make test

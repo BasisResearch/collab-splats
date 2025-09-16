@@ -1,4 +1,4 @@
-name: Test
+name: Test Notebooks
 
 on:
   push:
@@ -7,9 +7,10 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test_notebooks:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10']
     

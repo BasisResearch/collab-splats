@@ -4,35 +4,52 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   lint:
     runs-on: ubuntu-latest
-    container:
-      image: tommybotch/collab-splats:latest
-      options: --entrypoint "" # Remove entrypoint to run commands in the container
+    strategy:
+      matrix:
+        python-version: ["3.10"]
 
     steps:
+      # Checkout code
       - uses: actions/checkout@v4
 
-      # Set up GitHub token for private repo access
-      - name: Set up GitHub token
-        run: echo "${{ secrets.GITHUB_TOKEN }}" > ~/.token
+      # Cache pip dependencies
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            pip-
 
-      - name: Install repository
-        run: |
-          cd collab-splats
-          bash setup.sh
+      # Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install collab-data
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Install dev dependencies for linting
+      - name: Install dev dependencies
         run: |
-          pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
+          python -m pip install --upgrade pip
+          pip install .[dev]
 
-      - name: Lint
-        run: |
-          cd collab-splats
-          make lint
+      # Run ruff
+      - name: Lint with ruff
+        run: ruff check collab_splats
+
+      # Run flake8
+      - name: Lint with flake8
+        run: flake8 collab_splats
+
+      # Run black check
+      - name: Format check with black
+        run: black --check collab_splats
+
+      # Run isort check
+      - name: Check imports with isort
+        run: isort --check-only collab_splats

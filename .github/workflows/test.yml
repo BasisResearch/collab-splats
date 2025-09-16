@@ -34,10 +34,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
+      # Pin NumPy to 1.x to avoid compatibility issues
+      - name: Install compatible NumPy
+        run: |
+          pip install "numpy<2.0"
+
       # Install torch first
       - name: Install torch
         run: |
           pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+      # Set environment variables for CPU-only build
+      - name: Set build environment for CPU-only
+        run: |
+          echo "BUILD_NO_CUDA=1" >> $GITHUB_ENV
+          echo "FORCE_CUDA=0" >> $GITHUB_ENV
 
       # Install collab-splats with dev deps
       - name: Install collab-splats

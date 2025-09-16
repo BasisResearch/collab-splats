@@ -53,8 +53,7 @@ jobs:
       # Install collab-splats with dev deps
       - name: Install collab-splats
         run: |
-          bash setup.sh
-          pip install --no-build-isolation .[dev]
+          pip install --no-build-isolation -e .[dev]
 
       # # Install collab-data
       # - name: Install collab-data

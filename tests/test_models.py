@@ -9,9 +9,6 @@ from collab_splats.models.rade_features_model import (
     RadegsFeaturesModel,
 )
 
-# Disable TorchDynamo to prevent Transformer/PyTorch import errors in CI
-torch._dynamo.disable()
-
 def make_scene_box(aabb_scale: float = 1.0) -> SceneBox:
     return SceneBox(
         aabb=torch.tensor(

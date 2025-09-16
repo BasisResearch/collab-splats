@@ -46,8 +46,13 @@ jobs:
       - name: Install dev dependencies + torch (CPU)
         run: |
           pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install --upgrade pip setuptools wheel
+          # Install collab-splats without dependencies first
+          cd collab-splats
+          pip install --no-deps .
+          # Then install remaining dev dependencies
           pip install .[dev]
-      
+        
       - name: Install collab-data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

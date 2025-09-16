@@ -8,26 +8,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-22.04
-
-    env:
-      CUDA_ARCHITECTURES: "90;89;86;80;75;70;61"
-      CUDA_HOME: /usr/local/cuda
-      PATH: /usr/local/cuda/bin:$PATH
-      LD_LIBRARY_PATH: /usr/local/cuda/lib64:$LD_LIBRARY_PATH
-
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10']
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git cmake ninja-build wget curl unzip
-          sudo apt-get install -y nvidia-cuda-toolkit
-
-      # Cache pip dependencies
-      - name: Cache pip
+      - name: pip cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -35,8 +24,7 @@ jobs:
           restore-keys: |
             pip-
 
-      # Set up Python
-      - name: Setup Python ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -54,8 +42,16 @@ jobs:
       # Install collab-splats with dev deps
       - name: Install collab-splats
         run: |
-          pip install --no-build-isolation -e .[dev]
+          bash setup.sh
+          pip install --no-build-isolation .[dev]
 
+      # # Install collab-data
+      # - name: Install collab-data
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: |
+      #     pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
+      
       # Run tests
       - name: Test
         run: |

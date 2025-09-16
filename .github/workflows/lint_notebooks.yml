@@ -36,7 +36,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade setuptools
-          pip install mypy ruff black isort flake8 types-PyYAML
+          pip install nbqa mypy ruff black isort flake8 types-PyYAML \
+            sphinx sphinxcontrib-bibtex sphinx_rtd_theme myst-parser nbsphinx \
+            pytest pytest-cov pytest-xdist pytest-benchmark nbval
 
       - name: Run lint.sh
         run: |

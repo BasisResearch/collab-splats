@@ -1,23 +1,21 @@
-name: Test notebooks
+name: Test
 
 on:
-    push: 
-      branches: [main]
-    pull_request:
-      branches:
-        - main
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  test_notebooks:
-    runs-on: ${{ matrix.os }}
+  test:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10']  # 3.8]
-        os: [ubuntu-latest]
-
+        python-version: ['3.10']
+    
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: pip cache
         uses: actions/cache@v4
         with:
@@ -26,52 +24,38 @@ jobs:
           restore-keys: |
             pip-
 
-      - name: Install ExifTool
-        run: sudo apt-get update && sudo apt-get install -y exiftool
-
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Upgrade pip/setuptools/wheel
+      - name: Upgrade pip and build tools
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
 
-      - name: Google Auth
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: '${{ secrets.GCP_SERVICE_KEY }}' 
+      # Pin NumPy to 1.x to avoid compatibility issues
+      - name: Install compatible NumPy
+        run: |
+          pip install "numpy<2.0"
 
-      - name: 'Set up Cloud SDK'
-        uses: 'google-github-actions/setup-gcloud@v2'
-        with:
-          version: '>= 363.0.0'
-    
-      - name: 'Use gcloud CLI'
-        run: 'gcloud info'          
-          
-      - name: Create config-local folder
+      # Install torch first
+      - name: Install torch
         run: |
-                mkdir config-local
-      
-      - name: Copy GCP credentials
+          pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+      # Set environment variables for CPU-only build
+      - name: Set build environment for CPU-only
         run: |
-                echo '${{ secrets.GCP_SERVICE_KEY }}' > ./config-local/collab-data-463313-c340ad86b28e.json
-      
-      - name: set environment variables
+          echo "BUILD_NO_CUDA=1" >> $GITHUB_ENV
+          echo "FORCE_CUDA=0" >> $GITHUB_ENV
+
+      # Install collab-splats with dev deps
+      - name: Install collab-splats
         run: |
-                export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/config-local/collab-data-463313-c340ad86b28e.json"
-                export GITHUB_ACTION=true
-      
-      - name: Main Environment Setup 
+          pip install --no-build-isolation -e .[dev]
+
+      # Run tests
+      - name: Test
         run: |
-          chmod +x ./setup.sh
-          ./setup.sh
-        
-      - name: Install Python dependencies
-        run: |
-            pip install --upgrade pip
-            pip install -e .[dev]
-    
-      - name: Run Notebook Test
-        run: | 
-          ./scripts/test_notebooks.sh
+          make test-notebooks

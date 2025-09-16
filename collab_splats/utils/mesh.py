@@ -6,11 +6,10 @@ Sourced from dn-splatter: https://github.com/maturk/dn-splatter/blob/main/dn_spl
 Provides additional functionality for exporting features to meshes.
 """
 
-import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional, Tuple, Union, List
+from typing import Literal, Optional, Tuple, Union
 import yaml
 import pickle
 
@@ -33,10 +32,9 @@ from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
 
 # This will be depricated at some point
-# from nerfstudio.models.splatfacto import 
+# from nerfstudio.models.splatfacto import
 from nerfstudio.utils.spherical_harmonics import SH2RGB
 
-import open3d as o3d
 import meshlib.mrmeshpy as mm
 
 from collab_splats.utils.camera_utils import (
@@ -69,25 +67,30 @@ Methods for extracting meshes from GS:
 
 # opengl to opencv transformation matrix (for world coordinates)
 NERFSTUDIO_TRANSFORMS = {
-    'opengl': {
-        'up': np.array([0, 0, 1]), 
-        'transform': np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0], # Y-forward
-            [0, 0, 1, 0], # Z-up
-            [0, 0, 0, 1]
-        ])
+    "opengl": {
+        "up": np.array([0, 0, 1]),
+        "transform": np.array(
+            [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],  # Y-forward
+                [0, 0, 1, 0],  # Z-up
+                [0, 0, 0, 1],
+            ]
+        ),
     },
-    'open3d': {
-        'up': np.array([0, 1, 0]), 
-        'transform': np.array([
-            [1, 0, 0, 0],
-            [0, 0, 1, 0], # Y-up
-            [0, -1, 0, 0], # Z-back (negative forward)
-            [0, 0, 0, 1]
-        ])
-    }
+    "open3d": {
+        "up": np.array([0, 1, 0]),
+        "transform": np.array(
+            [
+                [1, 0, 0, 0],
+                [0, 0, 1, 0],  # Y-up
+                [0, -1, 0, 0],  # Z-back (negative forward)
+                [0, 0, 0, 1],
+            ]
+        ),
+    },
 }
+
 
 def pick_indices_at_random(valid_mask, samples_per_frame):
     indices = torch.nonzero(torch.ravel(valid_mask))
@@ -131,9 +134,11 @@ def find_depth_edges(depth_im, threshold=0.01, dilation_itr=3):
     dilated_edges = (dilated_edges > 0.0) * 1.0
     return dilated_edges
 
+
 ########################################################
 ########## Feature Aggregation Utils ###################
 ########################################################
+
 
 def normals2vertex(mesh_vertices, points, normals, k=5, sdf_trunc=0.03):
     """
@@ -141,12 +146,13 @@ def normals2vertex(mesh_vertices, points, normals, k=5, sdf_trunc=0.03):
     Same as features2vertex but with normalization for unit vectors.
     """
     mesh_normals = features2vertex(mesh_vertices, points, normals, k, sdf_trunc)
-    
+
     # Normalize to unit vectors (critical for normals!)
     norms = np.linalg.norm(mesh_normals, axis=1, keepdims=True)
     mesh_normals = mesh_normals / (norms + 1e-8)  # avoid division by zero
-    
+
     return mesh_normals
+
 
 def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     """
@@ -158,7 +164,7 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
         features: (N, D) array of per-point features
         k: number of nearest neighbors to use for weighting
         sdf_trunc: truncation distance for SDF
-    
+
     Returns:
         features_kNN: (M, D) array of per-vertex features
     """
@@ -186,7 +192,7 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 
     # Weighting with Gaussian kernel
     sigma = np.mean(distances)  # or set manually
-    weights = np.exp(- (distances**2) / (2 * sigma**2))
+    weights = np.exp(-(distances**2) / (2 * sigma**2))
     weights /= weights.sum(axis=1, keepdims=True)  # normalize
 
     # Aggregate features per vertex
@@ -198,13 +204,13 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     # Accumulate weighted features
     for i in trange(k, desc="Mapping features to vertices"):
         vertex_indices = indices[:, i]
-        weighted_feats = features * weights[:, i:i+1]
+        weighted_feats = features * weights[:, i : i + 1]
 
         # Accumulate weighted features
         np.add.at(features_kNN, vertex_indices, weighted_feats)
 
         # Accumulate weights for normalization
-        np.add.at(vertex_weight_sum, vertex_indices, weights[:, i:i+1])
+        np.add.at(vertex_weight_sum, vertex_indices, weights[:, i : i + 1])
 
     # Normalize aggregated features by summed weights (avoid div by zero)
     nonzero_mask = vertex_weight_sum.squeeze() > 0
@@ -217,11 +223,12 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 ############## Mesh cleaning / repair ##################
 ########################################################
 
+
 def clean_repair_mesh(
     mesh_path: str,
     max_hole_size: float = 3.0,
     max_edge_splits: int = 10000,
-    use_largest: bool = False  # if True, selects only the largest
+    use_largest: bool = False,  # if True, selects only the largest
 ):
     # Load mesh
     mesh = mm.loadMesh(mesh_path)
@@ -258,19 +265,23 @@ def clean_repair_mesh(
                 combined.addPartByMask(mesh, components[idx])
             else:
                 n_removed += 1
-    
-    print (f"Removed {n_removed} components")
+
+    print(f"Removed {n_removed} components")
     mesh = combined
 
     # Compute average edge length
     avg_edge_length = 0.0
     num_edges = 0
 
-    for i in trange(mesh.topology.undirectedEdgeSize(), desc="Calculating average edge length"):
+    for i in trange(
+        mesh.topology.undirectedEdgeSize(), desc="Calculating average edge length"
+    ):
         dir_edge = mm.EdgeId(i * 2)
         org = mesh.topology.org(dir_edge)
         dest = mesh.topology.dest(dir_edge)
-        avg_edge_length += (mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]).length()
+        avg_edge_length += (
+            mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]
+        ).length()
         num_edges += 1
     avg_edge_length /= num_edges
 
@@ -297,44 +308,51 @@ def clean_repair_mesh(
 
     return mesh
 
+
 def align_geometry_floor(
-    geometry: Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh], 
-    dist_threshold: float = 0.02, 
-    ransac_n: int = 3, 
-    num_iterations: int = 1000, 
-    num_sample_points: int = 10000
+    geometry: Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh],
+    dist_threshold: float = 0.02,
+    ransac_n: int = 3,
+    num_iterations: int = 1000,
+    num_sample_points: int = 10000,
 ) -> Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh]:
     """Align point cloud or triangle mesh to the floor plane.
-    
+
     Args:
         geometry: Input geometry (PointCloud or TriangleMesh)
         dist_threshold: Distance threshold for RANSAC plane fitting
         ransac_n: Number of points to sample for RANSAC
         num_iterations: Number of RANSAC iterations
         num_sample_points: Number of points to sample from mesh surface (only used for meshes)
-    
+
     Returns:
         Aligned geometry (same type as input)
     """
     # Determine input type and get point cloud for plane detection
     is_mesh = isinstance(geometry, o3d.geometry.TriangleMesh)
-    
+
     if is_mesh:
         # For mesh: sample points from surface for robust plane detection
-        pcd_for_plane_detection = geometry.sample_points_uniformly(number_of_points=num_sample_points)
+        pcd_for_plane_detection = geometry.sample_points_uniformly(
+            number_of_points=num_sample_points
+        )
     else:
         # For point cloud: use directly
         pcd_for_plane_detection = geometry
-    
+
     # Find the floor plane
-    floor = get_floor_plane(pcd_for_plane_detection, dist_threshold=dist_threshold, 
-                           ransac_n=ransac_n, num_iterations=num_iterations)
+    floor = get_floor_plane(
+        pcd_for_plane_detection,
+        dist_threshold=dist_threshold,
+        ransac_n=ransac_n,
+        num_iterations=num_iterations,
+    )
     a, b, c, d = floor
 
     # Normalize the normal vector
     normal = np.array([a, b, c])
     normal /= np.linalg.norm(normal)
-    
+
     # Ensure normal points upward
     if normal[2] < 0:
         normal = -normal
@@ -361,12 +379,18 @@ def align_geometry_floor(
 
     # Recompute floor plane after rotation
     if is_mesh:
-        rotated_pcd_for_plane_detection = geometry.sample_points_uniformly(number_of_points=num_sample_points)
+        rotated_pcd_for_plane_detection = geometry.sample_points_uniformly(
+            number_of_points=num_sample_points
+        )
     else:
         rotated_pcd_for_plane_detection = geometry
-        
-    new_plane = get_floor_plane(rotated_pcd_for_plane_detection, dist_threshold=dist_threshold, 
-                               ransac_n=ransac_n, num_iterations=num_iterations)
+
+    new_plane = get_floor_plane(
+        rotated_pcd_for_plane_detection,
+        dist_threshold=dist_threshold,
+        ransac_n=ransac_n,
+        num_iterations=num_iterations,
+    )
     _, _, _, d_new = new_plane
 
     # Translate the geometry so floor is at z=0
@@ -375,23 +399,32 @@ def align_geometry_floor(
 
     return geometry, R, translation
 
-def get_floor_plane(pcd: o3d.geometry.PointCloud, dist_threshold: float = 0.02, 
-                   ransac_n: int = 3, num_iterations: int = 1000):
+
+def get_floor_plane(
+    pcd: o3d.geometry.PointCloud,
+    dist_threshold: float = 0.02,
+    ransac_n: int = 3,
+    num_iterations: int = 1000,
+):
     """
     Get the floor plane from the point cloud.
     """
     plane_model, _ = pcd.segment_plane(
         distance_threshold=dist_threshold,
         ransac_n=ransac_n,
-        num_iterations=num_iterations
+        num_iterations=num_iterations,
     )
     return plane_model
+
 
 ########################################################
 ############## Mesh Clustering Utils ###################
 ########################################################
 
-def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_radius=0.03):
+
+def mesh_clustering(
+    mesh, similarity_values, similarity_threshold=0.8, spatial_radius=0.03
+):
     """
     Clusters the mesh into connected components based on similarity values.
     """
@@ -402,35 +435,37 @@ def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_r
     valid_mask = similarity_values > similarity_threshold
     valid_indices = np.where(valid_mask)[0]
     valid_vertices = vertices[valid_indices]
-    
+
     if len(valid_vertices) == 0:
         return []
-    
+
     # Build KDTree on all mesh vertices
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(vertices)
     kdtree = o3d.geometry.KDTreeFlann(pcd)
-    
+
     # Build adjacency matrix efficiently
     n_valid = len(valid_indices)
     valid_set = set(valid_indices)
     adjacency = np.zeros((n_valid, n_valid), dtype=bool)
-    
+
     # Map original indices to compressed indices
     idx_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(valid_indices)}
-    
+
     # For each valid vertex, find spatial neighbors that are also valid
     for i, orig_idx in tqdm(enumerate(valid_indices), desc="Building adjacency matrix"):
-        [_, neighbors, _] = kdtree.search_radius_vector_3d(vertices[orig_idx], spatial_radius)
-        
+        [_, neighbors, _] = kdtree.search_radius_vector_3d(
+            vertices[orig_idx], spatial_radius
+        )
+
         for neighbor_idx in neighbors:
             if neighbor_idx in valid_set and neighbor_idx != orig_idx:
                 j = idx_map[neighbor_idx]
                 adjacency[i, j] = True
-    
+
     adjacency_sparse = csr_matrix(adjacency)
     n_components, labels = connected_components(adjacency_sparse)
-    
+
     # Convert back to original indices
     clusters = []
     for cluster_id in range(n_components):
@@ -438,13 +473,15 @@ def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_r
         cluster_vertices = valid_indices[cluster_mask]
         if len(cluster_vertices) > 10:  # Minimum size filter
             clusters.append(cluster_vertices.tolist())
-    
+
     clusters = [np.asarray(c) for c in clusters]
     return clusters
+
 
 ########################################################
 ################ Meshing classes #######################
 ########################################################
+
 
 @dataclass
 class GSMeshExporter:
@@ -483,7 +520,11 @@ class GSMeshExporter:
 
     def cropbox(self) -> Optional[OrientedBox]:
         """Returns the cropbox for the mesh."""
-        if self.cropbox_pos is None and self.cropbox_rpy is None and self.cropbox_scale is None:
+        if (
+            self.cropbox_pos is None
+            and self.cropbox_rpy is None
+            and self.cropbox_scale is None
+        ):
             return None
 
         if self.cropbox_pos is None:
@@ -542,20 +583,19 @@ class GaussiansToPoisson(GSMeshExporter):
 
             colors = torch.clamp(model.colors.clone(), 0.0, 1.0).cpu().data.float()
 
-            assert positions.shape[0] == normals.shape[0]  # type: ignore
-
+            assert positions.shape[0] == normals.shape[0]
             if self.use_masks:
-                outs = pipeline.datamanager.dataparser.get_dataparser_outputs(  # type: ignore
+                outs = pipeline.datamanager.dataparser.get_dataparser_outputs(
                     split="train"
-                ).mask_filenames  # type: ignore
+                ).mask_filenames
                 assert outs is not None
                 # apply depth consistency check
-                cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
+                cameras: Cameras = pipeline.datamanager.train_dataset.cameras
                 for image_idx, data in tqdm(
-                    enumerate(pipeline.datamanager.train_dataset),  # type: ignore
+                    enumerate(pipeline.datamanager.train_dataset),
                     desc="Processing masks",
-                    total=len(pipeline.datamanager.train_dataset)
-                ):  # type: ignore
+                    total=len(pipeline.datamanager.train_dataset),
+                ):
                     mask = data["mask"]
                     camera = cameras[image_idx : image_idx + 1].to("cpu")
                     c2w = torch.eye(4, dtype=torch.float)
@@ -570,10 +610,10 @@ class GaussiansToPoisson(GSMeshExporter):
                         p=positions,
                         fx=camera.fx.item(),
                         fy=camera.fy.item(),
-                        cx=camera.cx.item(),  # type: ignore
-                        cy=camera.cy.item(),  # type: ignore
+                        cx=camera.cx.item(),
+                        cy=camera.cy.item(),
                         c2w=c2w,
-                        device="cpu",  # type: ignore
+                        device="cpu",
                         return_z_depths=True,
                     )
                     uv_depth[:, :2] = uv = torch.floor(uv_depth[:, :2] - 0.5).long()
@@ -597,12 +637,11 @@ class GaussiansToPoisson(GSMeshExporter):
                     mask = torch.ones(positions.shape[0], dtype=torch.bool)
                     mask[indices_to_remove] = 0
                     positions = positions[mask]
-                    normals = normals[mask]  # type: ignore
+                    normals = normals[mask]
                     opacities = opacities[mask]
                     colors = colors[mask]
 
-            assert positions.shape[0] == normals.shape[0]  # type: ignore
-
+            assert positions.shape[0] == normals.shape[0]
             if self.min_opacity is not None:
                 mask = (opacities > self.min_opacity)[..., 0]
                 mask = torch.BoolTensor(mask)
@@ -610,7 +649,7 @@ class GaussiansToPoisson(GSMeshExporter):
                     f"Removing {torch.count_nonzero(~mask)} / {opacities.shape[0]} gaussians with too small opacity"
                 )
                 positions = positions[mask]
-                normals = normals[mask]  # type: ignore
+                normals = normals[mask]
                 colors = colors[mask]
 
             if self.mask_color is not None:
@@ -625,7 +664,7 @@ class GaussiansToPoisson(GSMeshExporter):
                     f"Removing {torch.count_nonzero(~mask)} gaussians with mask color"
                 )
                 positions = positions[mask]
-                normals = normals[mask]  # type: ignore
+                normals = normals[mask]
                 colors = colors[mask]
 
             if self.densify_gaussians is not None:
@@ -670,9 +709,12 @@ class GaussiansToPoisson(GSMeshExporter):
             CONSOLE.print("Computing Mesh... this may take a while.")
 
             with o3d.utility.VerbosityContextManager(
-                o3d.utility.VerbosityLevel.Debug) as cm:
-                mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                    pcd, depth=self.poisson_depth
+                o3d.utility.VerbosityLevel.Debug
+            ) as _cm:
+                mesh, densities = (
+                    o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                        pcd, depth=self.poisson_depth
+                    )
                 )
             vertices_to_remove = densities < np.quantile(densities, 0.01)
             mesh.remove_vertices_by_mask(vertices_to_remove)
@@ -733,19 +775,19 @@ class DepthAndNormalMapsPoisson(GSMeshExporter):
         crop_box = self.cropbox()
 
         with torch.no_grad():
-            cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
+            cameras: Cameras = pipeline.datamanager.train_dataset.cameras
             # TODO: do eval dataset as well
-            num_frames = len(pipeline.datamanager.train_dataset)  # type: ignore
+            num_frames = len(pipeline.datamanager.train_dataset)
             samples_per_frame = (self.total_points + num_frames) // (num_frames)
             print("samples per frame: ", samples_per_frame)
             points = []
             normals = []
             colors = []
             for image_idx, data in tqdm(
-                enumerate(pipeline.datamanager.train_dataset),  # type: ignore
+                enumerate(pipeline.datamanager.train_dataset),
                 desc="Processing frames",
-                total=num_frames
-            ):  # type: ignore
+                total=num_frames,
+            ):
                 mask = None
                 if "mask" in data:
                     mask = data["mask"]
@@ -785,8 +827,8 @@ class DepthAndNormalMapsPoisson(GSMeshExporter):
                     rgbs=outputs["rgb"],
                     fx=camera.fx.item(),
                     fy=camera.fy.item(),
-                    cx=camera.cx.item(),  # type: ignore
-                    cy=camera.cy.item(),  # type: ignore
+                    cx=camera.cx.item(),
+                    cy=camera.cy.item(),
                     img_size=(W, H),
                     c2w=c2w,
                     mask=indices,
@@ -818,8 +860,8 @@ class DepthAndNormalMapsPoisson(GSMeshExporter):
                         depths=depth_map * 0.99,
                         fx=camera.fx.item(),
                         fy=camera.fy.item(),
-                        cx=camera.cx.item(),  # type: ignore
-                        cy=camera.cy.item(),  # type: ignore
+                        cx=camera.cx.item(),
+                        cy=camera.cy.item(),
                         img_size=(W, H),
                         c2w=c2w,
                         device=c2w.device,
@@ -881,9 +923,12 @@ class DepthAndNormalMapsPoisson(GSMeshExporter):
             )
             CONSOLE.print("Computing Mesh... this may take a while.")
             with o3d.utility.VerbosityContextManager(
-                o3d.utility.VerbosityLevel.Debug) as cm:
-                mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                    pcd, depth=self.poisson_depth
+                o3d.utility.VerbosityLevel.Debug
+            ) as _cm:
+                mesh, densities = (
+                    o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                        pcd, depth=self.poisson_depth
+                    )
                 )
             vertices_to_remove = densities < np.quantile(densities, 0.01)
             mesh.remove_vertices_by_mask(vertices_to_remove)
@@ -896,6 +941,7 @@ class DepthAndNormalMapsPoisson(GSMeshExporter):
                 str(self.output_dir / "DepthAndNormalMapsPoisson_poisson_mesh.ply"),
                 mesh,
             )
+
 
 @dataclass
 class LevelSetExtractor(GSMeshExporter):
@@ -910,9 +956,9 @@ class LevelSetExtractor(GSMeshExporter):
     """If dataset has masks, use these to limit surface sampling regions."""
     surface_levels: Tuple[float, float, float] = (0.1, 0.3, 0.5)
     """Surface levels to extract"""
-    return_normal: Literal[
-        "analytical", "closest_gaussian", "average"
-    ] = "closest_gaussian"
+    return_normal: Literal["analytical", "closest_gaussian", "average"] = (
+        "closest_gaussian"
+    )
     """Normal mode"""
     poisson_depth: int = 9
     """Poisson Octree max depth, higher values increase mesh detail"""
@@ -931,8 +977,8 @@ class LevelSetExtractor(GSMeshExporter):
         # assert hasattr(pipeline.model,"compute_level_surface_points_from_camera_fast")
 
         with torch.no_grad():
-            cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
-            num_frames = len(pipeline.datamanager.train_dataset)  # type: ignore
+            cameras: Cameras = pipeline.datamanager.train_dataset.cameras
+            num_frames = len(pipeline.datamanager.train_dataset)
             samples_per_frame = (self.total_points + num_frames) // (num_frames)
             surface_levels_outputs = {}
             for surface_level in self.surface_levels:
@@ -946,8 +992,8 @@ class LevelSetExtractor(GSMeshExporter):
             for image_idx, data in tqdm(
                 enumerate(pipeline.datamanager.train_dataset),
                 desc="Computing surface levels",
-                total=num_frames
-            ):  # type: ignore
+                total=num_frames,
+            ):
                 print(
                     "image:",
                     image_idx,
@@ -963,8 +1009,7 @@ class LevelSetExtractor(GSMeshExporter):
                     num_samples=samples_per_frame,
                     surface_levels=self.surface_levels,
                     return_normal=self.return_normal,
-                )  # type: ignore
-
+                )
                 for surface_level in self.surface_levels:
                     img_surface_points = frame_outputs[surface_level]["points"]
                     img_surface_colors = frame_outputs[surface_level]["colors"]
@@ -1046,9 +1091,12 @@ class LevelSetExtractor(GSMeshExporter):
                 CONSOLE.print("Computing Mesh... this may take a while.")
 
                 with o3d.utility.VerbosityContextManager(
-                    o3d.utility.VerbosityLevel.Debug) as cm:
-                    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                        pcd, depth=self.poisson_depth
+                    o3d.utility.VerbosityLevel.Debug
+                ) as _cm:
+                    mesh, densities = (
+                        o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                            pcd, depth=self.poisson_depth
+                        )
                     )
 
                 vertices_to_remove = densities < np.quantile(densities, 0.01)
@@ -1115,8 +1163,7 @@ class MarchingCubesMesh(GSMeshExporter):
 
         CONSOLE.print("Extracting mesh with marching cubes... which may take a while")
         with torch.no_grad():
-            cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
-
+            cameras: Cameras = pipeline.datamanager.train_dataset.cameras
             # compute scene radius
             centers = cameras.camera_to_worlds[..., :, 3]
             avg_center = cameras.camera_to_worlds[..., :, 3].mean(dim=0, keepdim=True)
@@ -1135,7 +1182,9 @@ class MarchingCubesMesh(GSMeshExporter):
             if crop_box is not None:
                 mask = crop_box.within(grid_coords)
             else:
-                mask = torch.ones(grid_coords.shape[0], dtype=torch.bool, device=grid_coords.device)
+                mask = torch.ones(
+                    grid_coords.shape[0], dtype=torch.bool, device=grid_coords.device
+                )
 
             # Only query densities for points inside cropbox
             samples = grid_coords[mask].to(model.device)
@@ -1147,18 +1196,22 @@ class MarchingCubesMesh(GSMeshExporter):
                 densities_inside = []
                 for batch_index in range(0, total_samples, self.batch_size):
                     CONSOLE.print(
-                        f"[bold green]Processing batch {batch_index // self.batch_size} / {total_samples//self.batch_size}"
+                        f"[bold green]Processing batch {batch_index // self.batch_size} / {total_samples // self.batch_size}"
                     )
                     batch_samples = samples[batch_index : batch_index + self.batch_size]
                     batch_densities = model.get_density(batch_samples)
                     densities_inside.append(batch_densities)
                 densities_inside = torch.cat(densities_inside, dim=0)
                 densities_flat[mask] = densities_inside
-                densities = densities_flat.reshape(self.resolution, self.resolution, self.resolution)
+                densities = densities_flat.reshape(
+                    self.resolution, self.resolution, self.resolution
+                )
 
             # Optionally, mask out-of-cropbox voxels to a low value so marching cubes ignores them
             if crop_box is not None:
-                densities[~mask.reshape(self.resolution, self.resolution, self.resolution)] = -1e6
+                densities[
+                    ~mask.reshape(self.resolution, self.resolution, self.resolution)
+                ] = -1e6
 
             CONSOLE.print(
                 f"Computing mesh for surface level {self.isosurface_threshold}"
@@ -1245,26 +1298,23 @@ class TSDFFusion(GSMeshExporter):
         )
 
         with torch.no_grad():
-            cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
+            cameras: Cameras = pipeline.datamanager.train_dataset.cameras
             # TODO: do eval dataset as well
-            num_frames = len(pipeline.datamanager.train_dataset)  # type: ignore
+            num_frames = len(pipeline.datamanager.train_dataset)
             samples_per_frame = (self.total_points + num_frames) // (num_frames)
             print("samples per frame: ", samples_per_frame)
             points = []
             colors = []
             for image_idx, data in tqdm(
-                enumerate(pipeline.datamanager.train_dataset),  # type: ignore
+                enumerate(pipeline.datamanager.train_dataset),
                 desc="Processing frames",
-                total=len(pipeline.datamanager.train_dataset)
+                total=len(pipeline.datamanager.train_dataset),
             ):
                 mask = None
                 if "mask" in data:
                     mask = data["mask"]
                 camera = cameras[image_idx : image_idx + 1]
-                outputs = model.get_outputs_for_camera(
-                    camera=camera,
-                    obb_box=crop_box
-                )
+                outputs = model.get_outputs_for_camera(camera=camera, obb_box=crop_box)
                 assert self.depth_name in outputs
                 depth_map = outputs[self.depth_name]
                 c2w = torch.eye(4, dtype=torch.float, device=depth_map.device)
@@ -1275,7 +1325,7 @@ class TSDFFusion(GSMeshExporter):
                 c2w = c2w[:3, :4]
                 H, W = camera.height.item(), camera.width.item()
 
-                indices = random.sample(range(H * W), samples_per_frame)
+                _indices = random.sample(range(H * W), samples_per_frame)
 
                 if mask is not None:
                     depth_map[~mask] = 0
@@ -1284,8 +1334,8 @@ class TSDFFusion(GSMeshExporter):
                     rgbs=outputs[self.rgb_name],
                     fx=camera.fx.item(),
                     fy=camera.fy.item(),
-                    cx=camera.cx.item(),  # type: ignore
-                    cy=camera.cy.item(),  # type: ignore
+                    cx=camera.cx.item(),
+                    cy=camera.cy.item(),
                     img_size=(W, H),
                     c2w=c2w,
                     # mask=indices,
@@ -1319,6 +1369,7 @@ class TSDFFusion(GSMeshExporter):
             CONSOLE.print(
                 f"Finished computing mesh: {str(self.output_dir / 'TSDFfusion.ply')}"
             )
+
 
 @dataclass
 class Open3DTSDFFusion(GSMeshExporter):
@@ -1355,34 +1406,34 @@ class Open3DTSDFFusion(GSMeshExporter):
 
         _, pipeline, _, _ = eval_setup(self.load_config)
 
-            # Get the transform matrix for the specified coordinate system
-        world_transform = NERFSTUDIO_TRANSFORMS[self.output_coord_system]['transform']
-        up = NERFSTUDIO_TRANSFORMS[self.output_coord_system]['up']
+        # Get the transform matrix for the specified coordinate system
+        world_transform = NERFSTUDIO_TRANSFORMS[self.output_coord_system]["transform"]
+        _up = NERFSTUDIO_TRANSFORMS[self.output_coord_system]["up"]
 
         transforms = {
-            'coord_system': self.output_coord_system,
-            'world_transform': world_transform,
+            "coord_system": self.output_coord_system,
+            "world_transform": world_transform,
             # 'world_up': up,
-            'mesh_transform': np.eye(4),
+            "mesh_transform": np.eye(4),
         }
 
         # Save parameters to yaml file
         params = {
-            'mesh_method': self.name,
-            'voxel_size': self.voxel_size,
-            'rgb_name': self.rgb_name, 
-            'depth_name': self.depth_name,
-            'normals_name': self.normals_name,
-            'features_name': self.features_name,
-            'k': self.k,
-            'sdf_trunc': self.sdf_trunc,
-            'depth_trunc': self.depth_trunc,
-            'output_coord_system': self.output_coord_system,
-            'transforms': transforms
+            "mesh_method": self.name,
+            "voxel_size": self.voxel_size,
+            "rgb_name": self.rgb_name,
+            "depth_name": self.depth_name,
+            "normals_name": self.normals_name,
+            "features_name": self.features_name,
+            "k": self.k,
+            "sdf_trunc": self.sdf_trunc,
+            "depth_trunc": self.depth_trunc,
+            "output_coord_system": self.output_coord_system,
+            "transforms": transforms,
         }
 
         # Save to yaml file
-        with open(self.output_dir / 'mesh_params.yaml', 'w') as f:
+        with open(self.output_dir / "mesh_params.yaml", "w") as f:
             yaml.dump(params, f)
 
         assert isinstance(pipeline.model, SplatfactoModel)
@@ -1391,7 +1442,7 @@ class Open3DTSDFFusion(GSMeshExporter):
         crop_box = self.cropbox()
 
         # Grab the means from the model
-        print (f"Saving splats pointcloud")
+        print("Saving splats pointcloud")
         means = pipeline.model.means.detach().cpu().numpy()
         colors = pipeline.model.features_dc.detach().cpu().numpy()
         colors = SH2RGB(colors)
@@ -1407,7 +1458,7 @@ class Open3DTSDFFusion(GSMeshExporter):
         # Write out
         o3d.io.write_point_cloud(str(self.output_dir / "splats.ply"), pcd)
 
-        print (f"Fitting TSDF volume")
+        print("Fitting TSDF volume")
 
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
             voxel_length=self.voxel_size,
@@ -1416,13 +1467,14 @@ class Open3DTSDFFusion(GSMeshExporter):
         )
 
         with torch.no_grad():
-            cameras: Cameras = pipeline.datamanager.train_dataset.cameras  # type: ignore
-            # TODO: do eval dataset as well
+            cameras: Cameras = (
+                pipeline.datamanager.train_dataset.cameras
+            )  # TODO: do eval dataset as well
 
             for image_idx, data in tqdm(
-                enumerate(pipeline.datamanager.train_dataset),  # type: ignore
+                enumerate(pipeline.datamanager.train_dataset),
                 desc="Processing frames",
-                total=len(pipeline.datamanager.train_dataset)
+                total=len(pipeline.datamanager.train_dataset),
             ):
                 mask = None
                 if "mask" in data:
@@ -1491,48 +1543,60 @@ class Open3DTSDFFusion(GSMeshExporter):
 
                 # Clean and repair the mesh then save
                 cleaned_mesh = clean_repair_mesh(
-                    temp_mesh_path, 
-                    max_hole_size=self.clean_max_hole_size, 
+                    temp_mesh_path,
+                    max_hole_size=self.clean_max_hole_size,
                     max_edge_splits=self.clean_max_edge_splits,
-                    use_largest=self.clean_use_largest
+                    use_largest=self.clean_use_largest,
                 )
 
                 mm.saveMesh(cleaned_mesh, temp_mesh_path)
-                
+
                 # Load the mesh and map colors to the cleaned mesh
                 cleaned_mesh = o3d.io.read_triangle_mesh(temp_mesh_path)
-                rgb = features2vertex(cleaned_mesh.vertices, mesh.vertices, np.asarray(mesh.vertex_colors))
+                rgb = features2vertex(
+                    cleaned_mesh.vertices, mesh.vertices, np.asarray(mesh.vertex_colors)
+                )
                 cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(rgb)
                 mesh = cleaned_mesh
 
             # If normals name was provided and it's in the model, use it
-            if self.normals_name is not None and \
-                (self.normals_name in pipeline.model.gauss_params.keys() or \
-                    getattr(pipeline.model, self.normals_name, None) is not None):
+            if self.normals_name is not None and (
+                self.normals_name in pipeline.model.gauss_params.keys()
+                or getattr(pipeline.model, self.normals_name, None) is not None
+            ):
+                print("Mapping normals to mesh")
+                normals = (
+                    getattr(pipeline.model, self.normals_name).detach().cpu().numpy()
+                )
 
-                print (f"Mapping normals to mesh")
-                normals = getattr(pipeline.model, self.normals_name).detach().cpu().numpy()
-                
                 mesh_normals = normals2vertex(
                     mesh_vertices=mesh.vertices,
                     points=means,
-                    normals=normals,    
+                    normals=normals,
                     k=self.k,
-                    sdf_trunc=self.sdf_trunc
+                    sdf_trunc=self.sdf_trunc,
                 )
 
                 mesh.vertex_normals = o3d.utility.Vector3dVector(mesh_normals)
 
-            if self.features_name is not None and self.features_name in pipeline.model.gauss_params.keys():
-                print (f"Mapping features to mesh")
-                features = pipeline.model.gauss_params[self.features_name].detach().cpu().numpy()
-                
+            if (
+                self.features_name is not None
+                and self.features_name in pipeline.model.gauss_params.keys()
+            ):
+                print("Mapping features to mesh")
+                features = (
+                    pipeline.model.gauss_params[self.features_name]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+
                 mesh_features = features2vertex(
                     mesh_vertices=mesh.vertices,
                     points=means,
                     features=features,
                     k=self.k,
-                    sdf_trunc=self.sdf_trunc
+                    sdf_trunc=self.sdf_trunc,
                 )
 
                 features_path = self.output_dir / "mesh_features.pt"
@@ -1546,33 +1610,33 @@ class Open3DTSDFFusion(GSMeshExporter):
                 means = means @ R.T + translation
 
                 # Save alignment parameters
-                mesh_transform = np.concatenate([
-                    R,
-                    translation[..., None]
-                ], axis=-1)
-                mesh_transform = np.concatenate([mesh_transform, np.array([[0, 0, 0, 1]])], axis=0)
+                mesh_transform = np.concatenate([R, translation[..., None]], axis=-1)
+                mesh_transform = np.concatenate(
+                    [mesh_transform, np.array([[0, 0, 0, 1]])], axis=0
+                )
 
                 # Update the mesh transform
-                transforms['mesh_transform'] = mesh_transform
+                transforms["mesh_transform"] = mesh_transform
 
             # Transform the mesh to the specified world coordinate system
             # mesh.transform(world_transform)
-            
+
             mesh_path = self.output_dir / "mesh.ply"
             o3d.io.write_triangle_mesh(mesh_path, mesh)
 
             with open(self.output_dir / "transforms.pkl", "wb") as f:
                 pickle.dump(transforms, f)
-            
+
             # Clean up
             # os.remove(temp_mesh_path)
 
-            CONSOLE.print(f"Finished computing mesh!")
+            CONSOLE.print("Finished computing mesh!")
 
             if features_path is not None:
-                return {'mesh': mesh_path, 'features': features_path}
+                return {"mesh": mesh_path, "features": features_path}
             else:
-                return {'mesh': mesh_path}
+                return {"mesh": mesh_path}
+
 
 Commands = tyro.conf.FlagConversionOff[
     Union[

@@ -8,7 +8,7 @@ Steps:
 2. Associate masks --> creates the memory bank?
     - Front percentage (0.2)
     - Overlap threshold (0.1)
-    - For each camera --> 
+    - For each camera -->
         - If no masks, initialize a memory bank for the first view's masks
         - Get gaussian idxs and zcoords (for depth grouping) for the current view
         - Find front gaussians:
@@ -28,7 +28,8 @@ TLB notes for improvement:
 
 import torch
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, List, Any
+from pathlib import Path
 from torch import nn
 from torch.utils.data import DataLoader
 from itertools import islice
@@ -40,8 +41,15 @@ from tqdm.notebook import tqdm
 from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.utils.eval_utils import eval_setup
 
-from collab_splats.utils.segmentation import Segmentation, create_patch_mask, create_composite_mask, mask_id_to_binary_mask, convert_matched_mask
+from collab_splats.utils.segmentation import (
+    Segmentation,
+    create_patch_mask,
+    create_composite_mask,
+    mask_id_to_binary_mask,
+    convert_matched_mask,
+)
 from collab_splats.utils.utils import project_gaussians
+
 
 @dataclass
 class GroupingParams:
@@ -52,11 +60,12 @@ class GroupingParams:
     num_patches: int = 32
 
     # Identity parameters
-    src_feature: str = 'features_rest' # which feature to use as base for the identity
+    src_feature: str = "features_rest"  # which feature to use as base for the identity
     identity_dim: int = 16
     lr: float = 5e-4
 
     debug: bool = False
+
 
 @dataclass
 class GroupingClassifier(nn.Module):
@@ -68,14 +77,14 @@ class GroupingClassifier(nn.Module):
         self.total_masks = 0
 
         # Config is where the model directory is --> we want one above
-        self.output_dir = load_config.parent.parent / 'grouping'
+        self.output_dir = Path(load_config).parent.parent / "grouping"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # eval_setup(load_config)
         # self.num_masks = num_masks
         # self.num_gaussians = num_gaussians
         # self.classifier = nn.Conv2d(in_channels=num_masks, out_channels=num_gaussians, kernel_size=1)
-        self._memory_bank = []
+        self._memory_bank: List[Any] = []
 
         # Load pipeline and segmentation
         self._load_models()
@@ -97,7 +106,7 @@ class GroupingClassifier(nn.Module):
     def setup(self):
         self.memory_bank = []
         self._load_models()
-    
+
     def setup_train(self):
         n_gaussians = self.model.num_points
         src_dim = self.model.info[self.src_feature].shape[-1]
@@ -117,14 +126,18 @@ class GroupingClassifier(nn.Module):
         )
 
         # Fit identity of gaussians by predicting masks within each view
-        self.classifier = torch.nn.Conv2d(self.identity_dim, self.total_masks, kernel_size=1)
+        self.classifier = torch.nn.Conv2d(
+            self.identity_dim, self.total_masks, kernel_size=1
+        )
 
-        self.loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
-        self.optimizer = torch.optim.Adam(self.classifier.parameters(), lr=self.config.lr)
+        self.loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
+        self.optimizer = torch.optim.Adam(
+            self.classifier.parameters(), lr=self.config.lr
+        )
 
     def _load_models(self):
         """Load NeRF pipeline only if not already loaded."""
-        
+
         # Load pipeline and model if not present
         if not hasattr(self, "pipeline") or not hasattr(self, "model"):
             print("Loading NeRF pipeline and model...")
@@ -132,7 +145,6 @@ class GroupingClassifier(nn.Module):
             assert isinstance(pipeline.model, SplatfactoModel)
             self.pipeline = pipeline
             self.model: SplatfactoModel = pipeline.model
-            
 
             self.pipeline.datamanager.config.cache_images = "disk"
             self.pipeline.datamanager.setup_train()
@@ -145,7 +157,7 @@ class GroupingClassifier(nn.Module):
             self.segmentation = Segmentation(
                 backend=self.params.segmentation_backend,
                 strategy=self.params.segmentation_strategy,
-                device=self.model.device
+                device=self.model.device,
             )
         else:
             print("Segmentation module already loaded. Skipping.")
@@ -158,9 +170,9 @@ class GroupingClassifier(nn.Module):
         torch.cuda.empty_cache()
 
     def fixed_indices_dataloader(self, split="train") -> list[tuple]:
-        """ Returns evaluation data in strict dataset order as a list of (camera, data) tuples.
+        """Returns evaluation data in strict dataset order as a list of (camera, data) tuples.
         Works for both cached and disk modes without loading everything into memory.
-        This solution disables the internal shuffling temporarily. """
+        This solution disables the internal shuffling temporarily."""
         print(f"Loading {split} ordered data...")
 
         if split == "train":
@@ -172,7 +184,11 @@ class GroupingClassifier(nn.Module):
         if self.pipeline.datamanager.config.cache_images == "disk":
             # Temporarily disable internal shuffling
             original_shuffle = random.Random.shuffle
-            random.Random.shuffle = lambda self, x: x  # no-op
+
+            def no_op_shuffle(self, x):
+                pass
+
+            random.Random.shuffle = no_op_shuffle  # type: ignore
 
             dataloader = DataLoader(
                 getattr(self.pipeline.datamanager, f"{split}_imagebatch_stream"),
@@ -183,7 +199,7 @@ class GroupingClassifier(nn.Module):
             items = list(islice(dataloader, len(dataset)))
 
             # Restore original shuffle
-            random.Random.shuffle = original_shuffle
+            random.Random.shuffle = original_shuffle  # type: ignore
             return items
 
         else:
@@ -198,7 +214,7 @@ class GroupingClassifier(nn.Module):
 
             assert len(dataset.cameras.shape) == 1, "Assumes single batch dimension"
             return list(zip(cameras, data))
-        
+
     #########################################################
     ############## Association of gaussians #################
     #########################################################
@@ -217,24 +233,26 @@ class GroupingClassifier(nn.Module):
         # Save both raw and associated masks as images
         raw_dir = self.output_dir / "masks" / "raw"
         associated_dir = self.output_dir / "masks" / "associated"
-        
+
         raw_dir.mkdir(parents=True, exist_ok=True)
         associated_dir.mkdir(parents=True, exist_ok=True)
 
         with torch.no_grad():
             # cameras: Cameras = self.pipeline.datamanager.train_dataset.cameras
 
-            #TLB --> this needs to go through images sequentially
+            # TLB --> this needs to go through images sequentially
             for camera, data in tqdm(
-                dataloader, # Need to use cached_train since it undistorts the images
+                dataloader,  # Need to use cached_train since it undistorts the images
                 desc="Processing frames",
-                total=len(dataloader)
+                total=len(dataloader),
             ):
-                print (f"Processing frame {camera.metadata['cam_idx']}")
-                
-                image = data['image']
+                print(f"Processing frame {camera.metadata['cam_idx']}")
 
-                image_path = self.pipeline.datamanager.train_dataset.image_filenames[camera.metadata['cam_idx']]
+                image = data["image"]
+
+                image_path = self.pipeline.datamanager.train_dataset.image_filenames[
+                    camera.metadata["cam_idx"]
+                ]
                 image_name = image_path.name
 
                 _ = self.model.get_outputs(camera=camera)
@@ -250,13 +268,13 @@ class GroupingClassifier(nn.Module):
                 mask_gaussians = self.select_front_gaussians(
                     meta=self.model.info,
                     composite_mask=composite_mask,
-                    patch_mask=patch_mask
+                    patch_mask=patch_mask,
                 )
-                                
+
                 labels = self._assign_labels(mask_gaussians)
 
                 # Use the labels to convert the composite mask to show the associated labels
-                associated_mask = convert_matched_mask(labels, composite_mask) 
+                associated_mask = convert_matched_mask(labels, composite_mask)
                 cv2.imwrite(associated_dir / f"{image_name}", associated_mask)
 
                 self._update_memory_bank(labels, mask_gaussians)
@@ -270,7 +288,7 @@ class GroupingClassifier(nn.Module):
         it is assigned a new label, and total_masks is incremented.
 
         Args:
-            mask_gaussians (list[Tensor]): Each tensor contains the indices of Gaussians 
+            mask_gaussians (list[Tensor]): Each tensor contains the indices of Gaussians
             associated with a single mask in the current view.
 
         Returns:
@@ -310,8 +328,10 @@ class GroupingClassifier(nn.Module):
             labels[i] = selected
 
         return labels
-    
-    def _update_memory_bank(self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]):
+
+    def _update_memory_bank(
+        self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]
+    ):
         """
         Updates the memory_bank with newly assigned or updated Gaussians per label.
 
@@ -334,7 +354,13 @@ class GroupingClassifier(nn.Module):
     ############## Gaussian selection #######################
     #########################################################
 
-    def select_front_gaussians(self, meta: Dict[str, torch.Tensor], composite_mask: torch.Tensor, patch_mask: torch.Tensor, front_percentage: float = 0.5):
+    def select_front_gaussians(
+        self,
+        meta: Dict[str, torch.Tensor],
+        composite_mask: torch.Tensor,
+        patch_mask: torch.Tensor,
+        front_percentage: float = 0.5,
+    ):
         """
         JIT-compiled version using torch.compile (PyTorch 2.0+).
         Maintains original structure and comments while adding compilation optimization.
@@ -342,7 +368,7 @@ class GroupingClassifier(nn.Module):
         """
 
         proj_results = project_gaussians(meta)
-                
+
         # Prepare masks = Decimate the composite mask into individual masks
         binary_masks = mask_id_to_binary_mask(composite_mask)
         flattened_masks = torch.tensor(binary_masks).flatten(start_dim=1)  # (N, H*W)
@@ -350,24 +376,31 @@ class GroupingClassifier(nn.Module):
         # Collect front gaussians
         front_gaussians = []
 
-        for mask in tqdm(flattened_masks, total=len(flattened_masks), desc="Processing masks"):
-
+        for mask in tqdm(
+            flattened_masks, total=len(flattened_masks), desc="Processing masks"
+        ):
             # Use compiled function for main processing
             result = self.process_mask_gaussians(
-                proj_results, 
-                mask, 
+                proj_results,
+                mask,
                 patch_mask,
                 front_percentage=front_percentage,
-                debug=self.params.debug
+                debug=self.params.debug,
             )
-            
+
             front_gaussians.append(result)
 
         return front_gaussians
 
     @staticmethod
     @torch.compile(mode="max-autotune")
-    def process_mask_gaussians(proj_results: Dict[str, torch.Tensor], mask: torch.Tensor, patch_mask: torch.Tensor, front_percentage: float = 0.5, debug: bool = False):
+    def process_mask_gaussians(
+        proj_results: Dict[str, torch.Tensor],
+        mask: torch.Tensor,
+        patch_mask: torch.Tensor,
+        front_percentage: float = 0.5,
+        debug: bool = False,
+    ):
         """
         JIT-compiled function for processing a single mask.
         Optimized for performance with torch.compile.
@@ -383,22 +416,26 @@ class GroupingClassifier(nn.Module):
 
         if len(non_empty_patches) == 0:
             return torch.tensor([], dtype=torch.long, device=mask.device)
-        
+
         # Extract all patches at once
         mask_gaussians = []
-        patches_data = patch_intersections[non_empty_patches[:, 0], non_empty_patches[:, 1]]
+        patches_data = patch_intersections[
+            non_empty_patches[:, 0], non_empty_patches[:, 1]
+        ]
 
         # Go through each non-empty patch and get the front gaussians
         for _, current_patch in enumerate(patches_data):
             # Projected flattened are the pixel coordinates of each gaussian --> current patch is the pixels of the mask
             # Grab gaussians in the current patch
-            patch_gaussians = current_patch[proj_results['proj_flattened']].nonzero().squeeze(-1)
-            
+            patch_gaussians = (
+                current_patch[proj_results["proj_flattened"]].nonzero().squeeze(-1)
+            )
+
             if len(patch_gaussians) == 0:
                 continue
 
             # Filter valid gaussians using global valid mask
-            overlap_mask = proj_results['valid_mask'][patch_gaussians]
+            overlap_mask = proj_results["valid_mask"][patch_gaussians]
 
             if not overlap_mask.all() and debug:
                 invalid_count = (~overlap_mask).sum()
@@ -410,18 +447,20 @@ class GroupingClassifier(nn.Module):
 
             if len(patch_gaussians) == 0:
                 continue
-            
+
             # Grab the depths of the gaussians in the patch
             num_front_gaussians = max(int(front_percentage * len(patch_gaussians)), 1)
-            
+
             if num_front_gaussians < len(patch_gaussians):
                 # Use partial sorting for better performance
-                patch_depths = proj_results['proj_depths'][patch_gaussians]
-                _, front_indices = torch.topk(patch_depths, num_front_gaussians, largest=False)
+                patch_depths = proj_results["proj_depths"][patch_gaussians]
+                _, front_indices = torch.topk(
+                    patch_depths, num_front_gaussians, largest=False
+                )
                 selected_gaussians = patch_gaussians[front_indices]
             else:
                 selected_gaussians = patch_gaussians
-            
+
             mask_gaussians.append(selected_gaussians)
 
         if len(mask_gaussians) > 0:
@@ -436,6 +475,7 @@ class GroupingClassifier(nn.Module):
 
     def mesh(self):
         pass
+
 
 # def get_n_different_colors(n: int) -> np.ndarray:
 #     np.random.seed(0)

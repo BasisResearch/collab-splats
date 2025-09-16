@@ -4,17 +4,37 @@ from typing import Literal
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.engine.trainer import TrainerConfig
 
+
 @dataclass
 class _ExperimentConfig(ExperimentConfig):
     """Patched experiment config to disable viewer."""
-    vis: Literal[ 
-        "viewer", "wandb", "tensorboard", "comet", "viewer+wandb", "viewer+tensorboard", "viewer+comet", "viewer_legacy", None
+
+    vis: Literal[
+        "viewer",
+        "wandb",
+        "tensorboard",
+        "comet",
+        "viewer+wandb",
+        "viewer+tensorboard",
+        "viewer+comet",
+        "viewer_legacy",
+        None,
     ] = None
-    """Which visualizer to use.""" 
+    """Which visualizer to use."""
+
 
 class _TrainerConfig(TrainerConfig):
     """Patched trainer config to disable viewer."""
-    vis: Literal[ 
-        "viewer", "wandb", "tensorboard", "comet", "viewer+wandb", "viewer+tensorboard", "viewer+comet", "viewer_legacy", None
+
+    vis: Literal[
+        "viewer",
+        "wandb",
+        "tensorboard",
+        "comet",
+        "viewer+wandb",
+        "viewer+tensorboard",
+        "viewer+comet",
+        "viewer_legacy",
+        None,
     ] = None
-    """Which visualizer to use.""" 
+    """Which visualizer to use."""

@@ -21,6 +21,7 @@ dependencies = [
     "pillow",
     "regex",
     "tqdm",
+    "nerfstudio",
     "meshlib==3.0.6.229",
     "dotenv",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",

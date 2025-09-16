@@ -1,0 +1,77 @@
+name: Test notebooks
+
+on:
+    push: 
+      branches: [main]
+    pull_request:
+      branches:
+        - main
+
+jobs:
+  test_notebooks:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        python-version: ['3.10']  # 3.8]
+        os: [ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            pip-
+
+      - name: Install ExifTool
+        run: sudo apt-get update && sudo apt-get install -y exiftool
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_SERVICE_KEY }}' 
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          version: '>= 363.0.0'
+    
+      - name: 'Use gcloud CLI'
+        run: 'gcloud info'          
+          
+      - name: Create config-local folder
+        run: |
+                mkdir config-local
+      
+      - name: Copy GCP credentials
+        run: |
+                echo '${{ secrets.GCP_SERVICE_KEY }}' > ./config-local/collab-data-463313-c340ad86b28e.json
+      
+      - name: set environment variables
+        run: |
+                export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/config-local/collab-data-463313-c340ad86b28e.json"
+                export GITHUB_ACTION=true
+      
+      - name: Main Environment Setup 
+        run: |
+          chmod +x ./setup.sh
+          ./setup.sh
+        
+      - name: Install Python dependencies
+        run: |
+            pip install --upgrade pip
+            pip install -e .[dev]
+    
+      - name: Run Notebook Test
+        run: | 
+          ./scripts/test_notebooks.sh

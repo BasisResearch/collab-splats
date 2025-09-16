@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: tommybotch/collab-splats:latest
+      options: --entrypoint "" # Remove entrypoint to run commands in the container
 
     steps:
       - uses: actions/checkout@v4

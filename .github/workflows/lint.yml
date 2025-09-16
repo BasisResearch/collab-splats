@@ -16,14 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Set up GitHub token for private repo access
+      - name: Set up GitHub token
+        run: echo "${{ secrets.GITHUB_TOKEN }}" > ~/.token
+
       - name: Install repository
         run: |
           cd collab-splats
           bash setup.sh
 
       - name: Install collab-data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pip install git+https://github.com/BasisResearch/collab-data.git
+          pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
 
       - name: Lint
         run: |

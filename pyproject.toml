@@ -23,7 +23,6 @@ dependencies = [
     "tqdm",
     "nerfstudio",
     "huggingface_hub",
-    "transformers",
     "ultralytics",
     "fairscale",
     "gradio",

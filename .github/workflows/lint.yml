@@ -8,7 +8,13 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    env:
+      CUDA_ARCHITECTURES: "90;89;86;80;75;70;61"
+      CUDA_HOME: /usr/local/cuda
+      PATH: /usr/local/cuda/bin:$PATH
+      LD_LIBRARY_PATH: /usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
     strategy:
       matrix:
         python-version: ['3.10']
@@ -37,6 +43,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git cmake ninja-build wget curl unzip
+          sudo apt-get install -y nvidia-cuda-toolkit
+          echo "export CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
+          echo "export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      # Upgrade pip/setuptools/wheel
+      - name: Upgrade pip and build tools
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
       # Install torch first
       - name: Install torch
         run: |
@@ -45,16 +64,8 @@ jobs:
       # Install collab-splats with dev deps
       - name: Install collab-splats
         run: |
-          bash setup.sh
-          pip install --no-build-isolation .[dev]
+          pip install --no-build-isolation -e .[dev]
 
-      # Install collab-data
-      - name: Install collab-data
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
-      
       # Run lint
       - name: Lint
         run: |

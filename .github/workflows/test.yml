@@ -54,7 +54,7 @@ jobs:
       - name: Install collab-splats
         run: |
           pip install --no-build-isolation -e .[dev]
-          pip install -r /tmp/requirements.txt
+          pip install -r requirements.txt
 
       # # Install collab-data
       # - name: Install collab-data

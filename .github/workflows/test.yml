@@ -35,14 +35,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       # Install dev dependencies (testing only)
-      - name: Install dev dependencies
+      - name: Upgrade pip
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
-      
+
       # Set up GitHub token for private repo access
       - name: Set up GitHub token
         run: echo "${{ secrets.GITHUB_TOKEN }}" > ~/.token
+
+      # Install dev dependencies + CPU PyTorch
+      - name: Install dev dependencies + torch (CPU)
+        run: |
+          pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install .[dev]
       
       - name: Install collab-data
         env:
@@ -55,13 +60,6 @@ jobs:
           cd collab-splats
           bash setup.sh
   
-      # Install dev dependencies + CPU PyTorch
-      - name: Install dev dependencies + torch (CPU)
-        run: |
-          python -m pip install --upgrade pip
-          pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-          pip install .[dev]
-      
       # Run tests
       - name: Test
         run: |

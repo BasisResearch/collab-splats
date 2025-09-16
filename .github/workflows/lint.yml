@@ -33,26 +33,31 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Install dev dependencies (linting only)
-      - name: Install dev dependencies
+      # Install dev dependencies (testing only)
+      - name: Upgrade pip
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
-      
+
       # Set up GitHub token for private repo access
       - name: Set up GitHub token
         run: echo "${{ secrets.GITHUB_TOKEN }}" > ~/.token
 
-      - name: Install repository
+      # Install dev dependencies + CPU PyTorch
+      - name: Install dev dependencies + torch (CPU)
         run: |
-          cd collab-splats
-          bash setup.sh
-
+          pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install .[dev]
+      
       - name: Install collab-data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
+
+      - name: Install repository
+        run: |
+          cd collab-splats
+          bash setup.sh
 
       - name: Lint
         run: |

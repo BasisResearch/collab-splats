@@ -48,6 +48,11 @@ jobs:
         run: |
           pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
           pip install --upgrade pip setuptools wheel
+          # # Install collab-splats without dependencies first
+          # cd collab-splats
+          # pip install --no-deps .
+          # # Then install remaining dev dependencies
+          # pip install .[dev]
       
       - name: Install collab-data
         env:
@@ -55,10 +60,11 @@ jobs:
         run: |
           pip install git+https://x-access-token:${GITHUB_TOKEN}@github.com/BasisResearch/collab-data.git
 
-      - name: Install repository
+      - name: Install repository w/ dev dependencies
         run: |
           cd collab-splats
           bash setup.sh
+          pip install .[dev]
   
       # Run tests
       - name: Test

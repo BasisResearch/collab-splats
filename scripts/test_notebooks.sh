@@ -13,7 +13,7 @@ EXCLUDED_NOTEBOOKS=(
     "docs/data/gcloud_data_interface.ipynb"
     "docs/splats/derive_splats.ipynb"
     "docs/splats/create_mesh.ipynb"
-    "docs/splats/visualization.ipynb"
+    # "docs/splats/visualization.ipynb"  # Commented out to allow testing
 )
 
 # Build the ignore flags

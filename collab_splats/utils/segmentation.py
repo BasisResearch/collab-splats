@@ -1,4 +1,3 @@
-import os
 import torch
 from torch.nn import functional as F
 import numpy as np
@@ -23,13 +22,18 @@ from .features import batch_iterator, load_torchhub_model
 #     'sam2.1_b': os.path.join(TORCH_HOME, 'ultralytics', 'sam2.1_b.pt'),
 # }
 
+
 class Segmentation:
-    def __init__(self, backend: str = 'mobile_sam', strategy: str = 'object', device: str = "cpu"):
-        if backend == 'mobilesamv2':
-            self.seg_model, self.object_model, self.predictor = load_mobile_sam(device=device)
-        elif backend == 'ultralytics':
+    def __init__(
+        self, backend: str = "mobile_sam", strategy: str = "object", device: str = "cpu"
+    ):
+        if backend == "mobilesamv2":
+            self.seg_model, self.object_model, self.predictor = load_mobile_sam(
+                device=device
+            )
+        elif backend == "ultralytics":
             pass
-        elif backend == 'grounded_sam':
+        elif backend == "grounded_sam":
             pass
         else:
             raise ValueError(f"Backend {backend} not supported")
@@ -38,16 +42,18 @@ class Segmentation:
         self.strategy = strategy
         
     def segment(self, image, **kwargs):
-        if self.backend == 'mobilesamv2':
-            if self.strategy == 'object':
-                return object_segment_image(image, self.seg_model, self.object_model, self.predictor, **kwargs)
-            elif self.strategy == 'auto':
+        if self.backend == "mobilesamv2":
+            if self.strategy == "object":
+                return object_segment_image(
+                    image, self.seg_model, self.object_model, self.predictor, **kwargs
+                )
+            elif self.strategy == "auto":
                 return auto_segment_image(image, self.seg_model, **kwargs)
             else:
                 raise ValueError(f"Strategy {self.strategy} not supported")
-        elif self.backend == 'ultralytics':
+        elif self.backend == "ultralytics":
             pass
-        elif self.backend == 'grounded_sam':
+        elif self.backend == "grounded_sam":
             pass
         # if self.method == 'object':
         #     return object_segment_image(image)
@@ -55,11 +61,15 @@ class Segmentation:
         #     return auto_segment_image(image)
         # else:
 
+
 ########################################################
 ########## MobileSAM Segmentation Utils ################
 ########################################################
 
-def load_mobile_sam(mobilesam_encoder_name: str = 'mobilesamv2_efficientvit_l2', device: str = "cpu"):
+
+def load_mobile_sam(
+    mobilesam_encoder_name: str = "mobilesamv2_efficientvit_l2", device: str = "cpu"
+):
     """
     Loading models from feature-splatting repo
 
@@ -74,21 +84,21 @@ def load_mobile_sam(mobilesam_encoder_name: str = 'mobilesamv2_efficientvit_l2',
         - ObjAwareModel: YOLOv8 model
         - predictor: SAMPredictor object
     """
-    mobilesamv2, ObjAwareModel, predictor = load_torchhub_model("RogerQi/MobileSAMV2", mobilesam_encoder_name)
+    mobilesamv2, ObjAwareModel, predictor = load_torchhub_model(
+        "RogerQi/MobileSAMV2", mobilesam_encoder_name
+    )
     mobilesamv2.to(device=device)
     mobilesamv2.eval()
 
     return mobilesamv2, ObjAwareModel, predictor
+
 
 def auto_segment_image(image, mobile_sam, **kwargs):
     """
     Automatically segments an image using MobileSAM. Provides
     an open alternative to the object-aware segmentation method
     """
-    mask_generator = SamAutomaticMaskGenerator(
-        model=mobile_sam,
-        **kwargs
-    )
+    mask_generator = SamAutomaticMaskGenerator(model=mobile_sam, **kwargs)
 
     results = mask_generator.generate(image)
 
@@ -96,10 +106,11 @@ def auto_segment_image(image, mobile_sam, **kwargs):
         return None
 
     # Convert masks to tensor
-    masks = [torch.tensor(mask['segmentation']).to(torch.float32) for mask in results]
+    masks = [torch.tensor(mask["segmentation"]).to(torch.float32) for mask in results]
     masks = torch.stack(masks)
-    
+
     return masks, results
+
 
 def get_object_masks(image, obj_model, **kwargs):
     """
@@ -119,7 +130,10 @@ def get_object_masks(image, obj_model, **kwargs):
     obj_results = obj_model(image, **kwargs)
     return obj_results
 
-def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: int = 320, **kwargs):
+
+def object_segment_image(
+    image, mobile_sam, obj_model, predictor, batch_size: int = 320, **kwargs
+):
     """
     Uses object-bounding boxes to perform segmentation over an image
 
@@ -134,13 +148,13 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
     """
 
     height, width = image.shape[:2]
-    
+
     # Get object detections
     obj_results = get_object_masks(image, obj_model, **kwargs)
-    
+
     if not obj_results or len(obj_results[0].boxes) == 0:
         return None
-    
+
     # Setup predictor
     predictor.set_image(image)
     image_embedding = predictor.features
@@ -151,13 +165,18 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
     boxes_conf = obj_results[0].boxes.conf.cpu().numpy()
 
     # Convert boxes to original resolution
-    transformed_boxes = predictor.transform.apply_boxes(boxes_xyxy, predictor.original_size)
+    transformed_boxes = predictor.transform.apply_boxes(
+        boxes_xyxy, predictor.original_size
+    )
     transformed_boxes = torch.from_numpy(transformed_boxes).to("cuda")
 
     results = []
 
     # Step 3: Loop through boxes in batches
-    for boxes_batch, conf_batch in zip(batch_iterator(batch_size, transformed_boxes), batch_iterator(batch_size, boxes_conf)):
+    for boxes_batch, conf_batch in zip(
+        batch_iterator(batch_size, transformed_boxes),
+        batch_iterator(batch_size, boxes_conf),
+    ):
         boxes = boxes_batch[0]
         confs = conf_batch[0]
         B = boxes.shape[0]
@@ -200,28 +219,34 @@ def object_segment_image(image, mobile_sam, obj_model, predictor, batch_size: in
             x_min, x_max = x_indices.min(), x_indices.max()
             xywh = [x_min, y_min, x_max - x_min, y_max - y_min]
 
-            results.append({
-                "segmentation": masks[i],
-                "area": area,
-                "bbox": xywh,
-                "predicted_iou": float(iou_preds[i]),
-                "point_coords": [],  # since we're using box prompts
-                "stability_score": float(confs[i]),  # reuse detector conf if nothing else
-                "crop_box": [0, 0, width, height],  # no cropping here
-            })
+            results.append(
+                {
+                    "segmentation": masks[i],
+                    "area": area,
+                    "bbox": xywh,
+                    "predicted_iou": float(iou_preds[i]),
+                    "point_coords": [],  # since we're using box prompts
+                    "stability_score": float(
+                        confs[i]
+                    ),  # reuse detector conf if nothing else
+                    "crop_box": [0, 0, width, height],  # no cropping here
+                }
+            )
 
     if len(results) == 0:
         return None
 
     # Convert masks to tensor
-    masks = [torch.tensor(mask['segmentation']).to(torch.float32) for mask in results]
+    masks = [torch.tensor(mask["segmentation"]).to(torch.float32) for mask in results]
     masks = torch.stack(masks)
-    
+
     return masks, results
+
 
 ########################################################
 ############### Aggregation Utils ######################
 ########################################################
+
 
 def create_patch_mask(image, num_patches: int = 32):
     """
@@ -233,30 +258,32 @@ def create_patch_mask(image, num_patches: int = 32):
     # Get patch dimensions
     patch_width = math.ceil(W / num_patches)
     patch_height = math.ceil(H / num_patches)
-    
+
     # Create flattened coordinates
     total_pixels = H * W
     y_coords = torch.arange(H).unsqueeze(1).expand(-1, W).flatten()
     x_coords = torch.arange(W).unsqueeze(0).expand(H, -1).flatten()
-    
+
     # Calculate patch indices for all pixels at once
     patch_y_indices = torch.clamp(y_coords // patch_height, 0, num_patches - 1)
     patch_x_indices = torch.clamp(x_coords // patch_width, 0, num_patches - 1)
-    
+
     # Create sparse representation
-    flatten_patch_mask = torch.zeros((num_patches, num_patches, total_pixels), 
-                                dtype=torch.bool)
-    
+    flatten_patch_mask = torch.zeros(
+        (num_patches, num_patches, total_pixels), dtype=torch.bool
+    )
+
     # Use indexing to set values
     pixel_indices = torch.arange(total_pixels)
     flatten_patch_mask[patch_y_indices, patch_x_indices, pixel_indices] = True
-    
+
     return flatten_patch_mask
+
 
 def create_composite_mask(results, confidence_threshold=0.85):
     """
     Creates a composite mask from the results of the segmentation model.
-    
+
     Inputs:
         results: list of dicts, each containing a mask and a confidence score
         confidence_threshold: float, the minimum confidence score for a mask to be included in the composite mask
@@ -268,13 +295,11 @@ def create_composite_mask(results, confidence_threshold=0.85):
     selected_masks = []
     for mask in results:
         # Errors seems to happen above 1.0
-        if mask['predicted_iou'] < confidence_threshold or mask['predicted_iou'] > 1.:
+        if mask["predicted_iou"] < confidence_threshold or mask["predicted_iou"] > 1.0:
             continue
 
-        selected_masks.append(
-            (mask['segmentation'], mask['predicted_iou'])
-        )
-    
+        selected_masks.append((mask["segmentation"], mask["predicted_iou"]))
+
     # Store the masks and confidences
     masks, confs = zip(*selected_masks)
 
@@ -289,14 +314,14 @@ def create_composite_mask(results, confidence_threshold=0.85):
 
     # Find mask indices after having calculated overlap based on ranked confidence
     mask_indices = np.unique(mask_id)
-    mask_indices = np.setdiff1d(mask_indices, [0]) # remove 0 item
+    mask_indices = np.setdiff1d(mask_indices, [0])  # remove 0 item
 
     composite_mask = np.zeros((H, W), dtype=np.uint8)
     current_label = 1  # ensures consecutive numbering
 
     # Rewriting to ensure consecutive numbering (e.g., not corresponding to the indices of the masks)
     for idx in mask_indices:
-        mask = (mask_id == idx)
+        mask = mask_id == idx
 
         if mask.sum() > 0 and (mask.sum() / masks[idx - 1].sum()) > 0.1:
             composite_mask[mask] = current_label
@@ -304,16 +329,17 @@ def create_composite_mask(results, confidence_threshold=0.85):
 
     return composite_mask
 
+
 def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
     """
     Convert an image with integer mask IDs to a binary mask array.
 
     Args:
-        mask_id (np.ndarray): An (H, W) array where each unique positive integer 
+        mask_id (np.ndarray): An (H, W) array where each unique positive integer
                             represents a separate object mask.
 
     Returns:
-        np.ndarray: A (N, H, W) boolean array where N is the number of masks and each 
+        np.ndarray: A (N, H, W) boolean array where N is the number of masks and each
                     slice contains a binary mask.
     """
     unique_ids = np.unique(composite_mask)
@@ -321,8 +347,9 @@ def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
     # This could be redundant since the background is already removed in making the composite mask
     unique_ids = unique_ids[unique_ids > 0]  # Ignore background (assumed to be 0)
 
-    binary_masks = (composite_mask[None, ...] == unique_ids[:, None, None])
+    binary_masks = composite_mask[None, ...] == unique_ids[:, None, None]
     return binary_masks
+
 
 def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
     """
@@ -336,7 +363,9 @@ def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
         Array of shape (H,W) with mask IDs replaced by their matched labels
     """
     # Validate input - number of labels should match max mask ID
-    assert labels.shape[0] == np.max(masks), "Number of labels must match number of unique masks"
+    assert labels.shape[0] == np.max(masks), (
+        "Number of labels must match number of unique masks"
+    )
 
     # Create output array with uint16 to handle potential large label values
     matched_mask = np.zeros(masks.shape, dtype=np.uint16)
@@ -351,47 +380,54 @@ def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
     # Convert to uint8 since we expect small label values
     return matched_mask.astype(np.uint8)
 
-def aggregate_masked_features(features: torch.Tensor, masks: torch.Tensor, resolution: Tuple[int, int], final_resolution: Tuple[int, int]) -> torch.Tensor:
+
+def aggregate_masked_features(
+    features: torch.Tensor,
+    masks: torch.Tensor,
+    resolution: Tuple[int, int],
+    final_resolution: Tuple[int, int],
+) -> torch.Tensor:
     """
     Aggregate features based on SAM segmentation masks.
-    
+
     Args:
         features (torch.Tensor): Features for the whole image (C,H,W)
         masks (torch.Tensor): Segmentation masks from SAM (N,H,W)
         obj_resolution (int): Resolution for intermediate feature map
         final_resolution (int): Resolution for final output
-        
+
     Returns:
         torch.Tensor: Aggregated feature map (C,H,W)
     """
 
     # Interpolate CLIP features to object size
-    features = F.interpolate(features.unsqueeze(0), 
-                                size=resolution,
-                                mode='bilinear',
-                                align_corners=False)[0]
+    features = F.interpolate(
+        features.unsqueeze(0), size=resolution, mode="bilinear", align_corners=False
+    )[0]
 
-    # Interpolate masks to object size 
-    masks = F.interpolate(masks.unsqueeze(1),
-                        size=resolution,
-                        mode='nearest').bool()[:,0]
+    # Interpolate masks to object size
+    masks = F.interpolate(masks.unsqueeze(1), size=resolution, mode="nearest").bool()[
+        :, 0
+    ]
 
     masks = masks.to(features.device)
 
     # Use einsum for feature aggregation
     # Shape: (n_masks, h, w) * (c, h, w) -> (c, h, w)
-    weighted_features = torch.einsum('nhw,chw->chw', masks.float(), features)
-    
+    weighted_features = torch.einsum("nhw,chw->chw", masks.float(), features)
+
     # Count number of masks per pixel
     mask_counts = masks.sum(0).float()
-    
+
     # Normalize features by mask counts, avoiding division by zero
     aggregated_feat_map = weighted_features / (mask_counts + 1e-6).unsqueeze(0)
-    
+
     # Resize to final dimensions
-    aggregated_feat_map = F.interpolate(aggregated_feat_map.unsqueeze(0),
-                                    size=final_resolution,
-                                    mode='bilinear',
-                                    align_corners=False)[0]
-    
+    aggregated_feat_map = F.interpolate(
+        aggregated_feat_map.unsqueeze(0),
+        size=final_resolution,
+        mode="bilinear",
+        align_corners=False,
+    )[0]
+
     return aggregated_feat_map

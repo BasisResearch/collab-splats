@@ -3,6 +3,7 @@ Utils for calculating metrics
 
 Taken from dn-splatter
 """
+
 import numpy as np
 from scipy.spatial import cKDTree
 import torch
@@ -44,6 +45,7 @@ def create_fused_features(
 
     return fused_features
 
+
 def project_gaussians(meta: dict) -> Dict[str, torch.Tensor]:
     """
     Projects Gaussians into 2D image space and prepares full-resolution lookup tensors.
@@ -51,25 +53,28 @@ def project_gaussians(meta: dict) -> Dict[str, torch.Tensor]:
     """
 
     W, H = meta["width"], meta["height"]
-    N = meta["radii"].shape[0]
+    _num_gaussians = meta["radii"].shape[0]
 
     # Visibility based on Gaussian radius threshold
-    radii = meta['radii'].squeeze()  # shape (N, 2) or (N, D)
+    radii = meta["radii"].squeeze()  # shape (N, 2) or (N, D)
     valid_mask = (radii > 1.0).sum(dim=1) > 0  # shape (N,)
-    gaussian_ids = valid_mask.nonzero(as_tuple=False).squeeze()  # global indices of visible Gaussians
+    gaussian_ids = valid_mask.nonzero(
+        as_tuple=False
+    ).squeeze()  # global indices of visible Gaussians
 
     # Compute flat image coordinates for all Gaussians
-    xy_rounded = torch.round(meta['means2d']).squeeze().long()  # shape (N, 2)
+    xy_rounded = torch.round(meta["means2d"]).squeeze().long()  # shape (N, 2)
     x = torch.clamp(xy_rounded[:, 0], 0, W - 1)
     y = torch.clamp(xy_rounded[:, 1], 0, H - 1)
     projected_flattened = x + y * W  # shape (N,)
 
     return {
-        "proj_flattened": projected_flattened.detach().cpu(),     # (N,)
-        "proj_depths": meta['depths'].squeeze().detach().cpu(),   # (N,)
-        "valid_mask": valid_mask.detach().cpu(),                  # (N,)
-        "gaussian_ids": gaussian_ids.detach().cpu(),              # (M,) global indices of valid Gaussians
+        "proj_flattened": projected_flattened.detach().cpu(),  # (N,)
+        "proj_depths": meta["depths"].squeeze().detach().cpu(),  # (N,)
+        "valid_mask": valid_mask.detach().cpu(),  # (N,)
+        "gaussian_ids": gaussian_ids.detach().cpu(),  # (M,) global indices of valid Gaussians
     }
+
 
 def calculate_accuracy(reconstructed_points, reference_points, percentile=90):
     """
@@ -103,7 +108,7 @@ def mean_angular_error(pred: torch.Tensor, gt: torch.Tensor) -> torch.Tensor:
     """
     # Dot product of predicted and reference normals
     dot_products = torch.sum(gt * pred, dim=1)  # over the C dimension
-    
+
     # Clamp the dot product to ensure valid cosine values (to avoid nans)
     dot_products = torch.clamp(dot_products, -1.0, 1.0)
 

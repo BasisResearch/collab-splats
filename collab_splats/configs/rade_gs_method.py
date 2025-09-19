@@ -12,7 +12,9 @@ from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
 from nerfstudio.plugins.types import MethodSpecification
-from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
+from nerfstudio.data.datamanagers.full_images_datamanager import (
+    FullImageDatamanagerConfig,
+)
 
 # Custom configs
 from collab_splats.models.rade_gs_model import RadegsModelConfig
@@ -63,7 +65,10 @@ rade_gs_method = MethodSpecification(
                 "optimizer": AdamOptimizerConfig(lr=0.005, eps=1e-15),
                 "scheduler": None,
             },
-            "quats": {"optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), "scheduler": None},
+            "quats": {
+                "optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15),
+                "scheduler": None,
+            },
             "camera_opt": {
                 "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
                 "scheduler": ExponentialDecaySchedulerConfig(

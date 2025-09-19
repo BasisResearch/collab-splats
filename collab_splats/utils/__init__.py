@@ -9,12 +9,12 @@ from .utils import create_fused_features, project_gaussians
 from .trainer_config import _TrainerConfig, _ExperimentConfig
 
 __all__ = [
-    "ColmapCamera", 
+    "ColmapCamera",
     "project_gaussians",
     "create_fused_features",
     "get_camera_parameters",
     "convert_to_colmap_camera",
     "depth_double_to_normal",
     "_TrainerConfig",
-    "_ExperimentConfig"
+    "_ExperimentConfig",
 ]

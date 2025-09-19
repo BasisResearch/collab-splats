@@ -15,7 +15,9 @@ from nerfstudio.plugins.types import MethodSpecification
 
 # Custom configs
 from collab_splats.models.rade_features_model import RadegsFeaturesModelConfig
-from collab_splats.datamanagers.features_datamanager import FeatureSplattingDataManagerConfig
+from collab_splats.datamanagers.features_datamanager import (
+    FeatureSplattingDataManagerConfig,
+)
 from collab_splats.utils.trainer_config import _TrainerConfig
 
 rade_features_method = MethodSpecification(
@@ -64,8 +66,8 @@ rade_features_method = MethodSpecification(
                 "scheduler": None,
             },
             "quats": {
-                "optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), 
-                "scheduler": None
+                "optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15),
+                "scheduler": None,
             },
             "distill_features": {
                 "optimizer": AdamOptimizerConfig(lr=0.0025, eps=1e-15),

@@ -67,6 +67,7 @@ from collab_splats.utils.segmentation import (
 
 from collab_splats.utils import project_gaussians, create_fused_features
 
+
 @dataclass
 class GroupingConfig:
     segmentation_backend: str
@@ -82,13 +83,14 @@ class GroupingConfig:
 
     debug: bool = False
 
+
 @dataclass
 class GroupingClassifier(pl.LightningModule):
     def __init__(self, load_config: str, config: GroupingConfig):
         super().__init__()
 
         # Config is where the model directory is --> we want one above
-        self.output_dir = load_config.parent.parent / 'grouping'
+        self.output_dir = Path(load_config).parent.parent / "grouping"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Save the hyperparameters (including the output directory)
@@ -126,7 +128,7 @@ class GroupingClassifier(pl.LightningModule):
 
     def load_pipeline(self):
         """Load NeRF pipeline only if not already loaded."""
-        
+
         # Load pipeline and model if not present
         if not hasattr(self, "pipeline") or not hasattr(self, "model"):
             print("Loading NeRF pipeline and model...")
@@ -134,7 +136,6 @@ class GroupingClassifier(pl.LightningModule):
             assert isinstance(pipeline.model, SplatfactoModel)
             self.pipeline = pipeline
             self.model: SplatfactoModel = pipeline.model
-            
 
             self.pipeline.datamanager.config.cache_images = "disk"
             self.pipeline.datamanager.setup_train()
@@ -155,9 +156,9 @@ class GroupingClassifier(pl.LightningModule):
             print("Segmentation module already loaded. Skipping.")
 
     def fixed_indices_dataloader(self, split="train") -> list[tuple]:
-        """ Returns evaluation data in strict dataset order as a list of (camera, data) tuples.
+        """Returns evaluation data in strict dataset order as a list of (camera, data) tuples.
         Works for both cached and disk modes without loading everything into memory.
-        This solution disables the internal shuffling temporarily. """
+        This solution disables the internal shuffling temporarily."""
         print(f"Loading {split} ordered data...")
 
         if split == "train":
@@ -172,7 +173,11 @@ class GroupingClassifier(pl.LightningModule):
         if self.pipeline.datamanager.config.cache_images == "disk":
             # Temporarily disable internal shuffling
             original_shuffle = random.Random.shuffle
-            random.Random.shuffle = lambda self, x: x  # no-op
+
+            def no_op_shuffle(self, x):
+                pass
+
+            random.Random.shuffle = no_op_shuffle  # type: ignore
 
             dataloader = DataLoader(
                 getattr(self.pipeline.datamanager, f"{split}_imagebatch_stream"),
@@ -327,9 +332,9 @@ class GroupingClassifier(pl.LightningModule):
                 mask_gaussians = self.select_front_gaussians(
                     meta=self.model.info,
                     composite_mask=composite_mask,
-                    patch_mask=patch_mask
+                    patch_mask=patch_mask,
                 )
-                                
+
                 labels = self._assign_labels(mask_gaussians)
 
                 # Use the labels to convert the composite mask to show the associated labels
@@ -353,7 +358,7 @@ class GroupingClassifier(pl.LightningModule):
         it is assigned a new label, and total_masks is incremented.
 
         Args:
-            mask_gaussians (list[Tensor]): Each tensor contains the indices of Gaussians 
+            mask_gaussians (list[Tensor]): Each tensor contains the indices of Gaussians
             associated with a single mask in the current view.
 
         Returns:
@@ -449,7 +454,13 @@ class GroupingClassifier(pl.LightningModule):
     ############## Gaussian selection #######################
     #########################################################
 
-    def select_front_gaussians(self, meta: Dict[str, torch.Tensor], composite_mask: torch.Tensor, patch_mask: torch.Tensor, front_percentage: float = 0.5):
+    def select_front_gaussians(
+        self,
+        meta: Dict[str, torch.Tensor],
+        composite_mask: torch.Tensor,
+        patch_mask: torch.Tensor,
+        front_percentage: float = 0.5,
+    ):
         """
         JIT-compiled version using torch.compile (PyTorch 2.0+).
         Maintains original structure and comments while adding compilation optimization.
@@ -457,7 +468,7 @@ class GroupingClassifier(pl.LightningModule):
         """
 
         proj_results = project_gaussians(meta)
-                
+
         # Prepare masks = Decimate the composite mask into individual masks
         binary_masks = mask_id_to_binary_mask(composite_mask)
         flattened_masks = torch.tensor(binary_masks).flatten(start_dim=1)  # (N, H*W)
@@ -469,20 +480,26 @@ class GroupingClassifier(pl.LightningModule):
             
             # Use compiled function for main processing
             result = self.process_mask_gaussians(
-                proj_results, 
-                mask, 
+                proj_results,
+                mask,
                 patch_mask,
                 front_percentage=front_percentage,
                 debug=self.config.debug
             )
-            
+
             front_gaussians.append(result)
 
         return front_gaussians
 
     @staticmethod
     @torch.compile(mode="max-autotune")
-    def process_mask_gaussians(proj_results: Dict[str, torch.Tensor], mask: torch.Tensor, patch_mask: torch.Tensor, front_percentage: float = 0.5, debug: bool = False):
+    def process_mask_gaussians(
+        proj_results: Dict[str, torch.Tensor],
+        mask: torch.Tensor,
+        patch_mask: torch.Tensor,
+        front_percentage: float = 0.5,
+        debug: bool = False,
+    ):
         """
         JIT-compiled function for processing a single mask.
         Optimized for performance with torch.compile.
@@ -498,22 +515,26 @@ class GroupingClassifier(pl.LightningModule):
 
         if len(non_empty_patches) == 0:
             return torch.tensor([], dtype=torch.long, device=mask.device)
-        
+
         # Extract all patches at once
         mask_gaussians = []
-        patches_data = patch_intersections[non_empty_patches[:, 0], non_empty_patches[:, 1]]
+        patches_data = patch_intersections[
+            non_empty_patches[:, 0], non_empty_patches[:, 1]
+        ]
 
         # Go through each non-empty patch and get the front gaussians
         for _, current_patch in enumerate(patches_data):
             # Projected flattened are the pixel coordinates of each gaussian --> current patch is the pixels of the mask
             # Grab gaussians in the current patch
-            patch_gaussians = current_patch[proj_results['proj_flattened']].nonzero().squeeze(-1)
-            
+            patch_gaussians = (
+                current_patch[proj_results["proj_flattened"]].nonzero().squeeze(-1)
+            )
+
             if len(patch_gaussians) == 0:
                 continue
 
             # Filter valid gaussians using global valid mask
-            overlap_mask = proj_results['valid_mask'][patch_gaussians]
+            overlap_mask = proj_results["valid_mask"][patch_gaussians]
 
             if not overlap_mask.all() and debug:
                 invalid_count = (~overlap_mask).sum()
@@ -525,18 +546,20 @@ class GroupingClassifier(pl.LightningModule):
 
             if len(patch_gaussians) == 0:
                 continue
-            
+
             # Grab the depths of the gaussians in the patch
             num_front_gaussians = max(int(front_percentage * len(patch_gaussians)), 1)
-            
+
             if num_front_gaussians < len(patch_gaussians):
                 # Use partial sorting for better performance
-                patch_depths = proj_results['proj_depths'][patch_gaussians]
-                _, front_indices = torch.topk(patch_depths, num_front_gaussians, largest=False)
+                patch_depths = proj_results["proj_depths"][patch_gaussians]
+                _, front_indices = torch.topk(
+                    patch_depths, num_front_gaussians, largest=False
+                )
                 selected_gaussians = patch_gaussians[front_indices]
             else:
                 selected_gaussians = patch_gaussians
-            
+
             mask_gaussians.append(selected_gaussians)
 
         if len(mask_gaussians) > 0:
@@ -744,6 +767,7 @@ class GroupingClassifier(pl.LightningModule):
     #                 fabric.print(f"[epoch {epoch} | batch {batch_idx}] loss={loss.item():.4f}")
 
     #     fabric.print("Training complete ✅")
+
 
 # def get_n_different_colors(n: int) -> np.ndarray:
 #     np.random.seed(0)

@@ -65,6 +65,7 @@ def get_camera_parameters(camera: Cameras, device: torch.device) -> Dict[str, to
 ####### Functions taken from scaffold-gs ###########
 ####################################################
 
+
 class ColmapCamera:
     def __init__(
         self,
@@ -92,7 +93,9 @@ class ColmapCamera:
         self.scale = scale
 
         self.world_view_transform = (
-            torch.tensor(get_world2view_transform(R, T, trans, scale)).transpose(0, 1).cuda()
+            torch.tensor(get_world2view_transform(R, T, trans, scale))
+            .transpose(0, 1)
+            .cuda()
         )
         self.projection_matrix = (
             get_projection_matrix(
@@ -107,6 +110,7 @@ class ColmapCamera:
             )
         ).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
+
 
 def convert_to_colmap_camera(camera: Cameras):
     # NeRF 'transform_matrix' is a camera-to-world transform
@@ -141,6 +145,7 @@ def get_world2view_transform(R, t, translate=torch.tensor([0.0, 0.0, 0.0]), scal
     Rt = torch.linalg.inv(c2w)
     return Rt
 
+
 def get_projection_matrix(znear, zfar, fovx, fovy):
     """
     Returns an OpenGL projection matrix
@@ -166,24 +171,33 @@ def get_projection_matrix(znear, zfar, fovx, fovy):
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
 
+
 def focal2fov(focal, pixels):
     return 2 * math.atan(pixels / (2 * focal))
 
 # TLB --> I think we can get this through nerfstudio look into removing
-def build_rotation(r):
+
+def build_rotation(quats: torch.Tensor) -> torch.Tensor:
+    """Convert unit quaternions to rotation matrices.
+
+    Args:
+        quats: Tensor of shape (N, 4) in (w, x, y, z) order.
+
+    Returns:
+        Tensor of shape (N, 3, 3) rotation matrices.
+    """
     norm = torch.sqrt(
-        r[:, 0] * r[:, 0] + r[:, 1] * r[:, 1] + r[:, 2] * r[:, 2] + r[:, 3] * r[:, 3]
+        quats[:, 0] * quats[:, 0]
+        + quats[:, 1] * quats[:, 1]
+        + quats[:, 2] * quats[:, 2]
+        + quats[:, 3] * quats[:, 3]
     )
-
-    q = r / norm[:, None]
-
-    R = torch.zeros((q.size(0), 3, 3), device="cuda")
-
+    q = quats / norm[:, None]
+    R = torch.zeros((q.size(0), 3, 3), device=quats.device, dtype=quats.dtype)
     r = q[:, 0]
     x = q[:, 1]
     y = q[:, 2]
     z = q[:, 3]
-
     R[:, 0, 0] = 1 - 2 * (y * y + z * z)
     R[:, 0, 1] = 2 * (x * y - r * z)
     R[:, 0, 2] = 2 * (x * z + r * y)
@@ -195,9 +209,11 @@ def build_rotation(r):
     R[:, 2, 2] = 1 - 2 * (x * x + y * y)
     return R
 
+
 ########################################
 #### RaDe-GS functions for camera ######
 ########################################
+
 
 def depth_double_to_normal(camera: Cameras, depth1: torch.Tensor, depth2: torch.Tensor):
     """Convert two depth maps to normal maps using camera parameters.
@@ -213,7 +229,10 @@ def depth_double_to_normal(camera: Cameras, depth1: torch.Tensor, depth2: torch.
     points1, points2 = _depths_double_to_points(camera, depth1, depth2)
     return _point_double_to_normal(points1, points2)
 
-def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2: torch.Tensor):
+
+def _depths_double_to_points(
+    camera: Cameras, depthmap1: torch.Tensor, depthmap2: torch.Tensor
+):
     """Convert two depth maps to 3D points using camera parameters.
 
     Args:
@@ -225,36 +244,54 @@ def _depths_double_to_points(camera: Cameras, depthmap1: torch.Tensor, depthmap2
         tuple(torch.Tensor, torch.Tensor): Two sets of 3D points in camera space,
             each with shape (3, H_scaled, W_scaled)
     """
-    
+
     colmap_camera: ColmapCamera = convert_to_colmap_camera(camera)
     W, H = colmap_camera.image_width, colmap_camera.image_height
     fx = W / (2 * math.tan(colmap_camera.fovx / 2.0))
     fy = H / (2 * math.tan(colmap_camera.fovy / 2.0))
 
-    intrinsics_inv = torch.tensor(
-        [[1/fx, 0.,-W/(2 * fx)],
-        [0., 1/fy, -H/(2 * fy),],
-        [0., 0., 1.0]]
-    ).float().cuda()
-    
+    intrinsics_inv = (
+        torch.tensor(
+            [
+                [1 / fx, 0.0, -W / (2 * fx)],
+                [
+                    0.0,
+                    1 / fy,
+                    -H / (2 * fy),
+                ],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        .float()
+        .cuda()
+    )
+
     # Create pixel coordinate grid (adding 0.5 to get center of pixels)
-    grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
+    grid_x, grid_y = torch.meshgrid(
+        torch.arange(W) + 0.5, torch.arange(H) + 0.5, indexing="xy"
+    )
 
     # Stack coordinates and reshape - follow original structure exactly
-    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0).reshape(3, -1).float().cuda()
+    points = (
+        torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0)
+        .reshape(3, -1)
+        .float()
+        .cuda()
+    )
 
     # Calculate ray directions by multiplying inverse intrinsics with pixel coordinates
     rays_d = intrinsics_inv @ points
 
     # Scale rays by depth to get 3D points
-    points1 = depthmap1.reshape(1,-1) * rays_d
-    points2 = depthmap2.reshape(1,-1) * rays_d
+    points1 = depthmap1.reshape(1, -1) * rays_d
+    points2 = depthmap2.reshape(1, -1) * rays_d
 
     # Reshape points to final format (3, H, W) - match original exactly
     points1 = points1.reshape(3, H, W)
     points2 = points2.reshape(3, H, W)
-    
+
     return points1, points2
+
 
 def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
     """Calculate normal maps from two sets of 3D points using cross products of spatial derivatives.
@@ -267,33 +304,30 @@ def _point_double_to_normal(points1: torch.Tensor, points2: torch.Tensor):
         torch.Tensor: Normal maps derived from the points, shape (2, H, W, 3)
     """
     # Stack points along first dimension
-    points = torch.stack([points1, points2],dim=0)
+    points = torch.stack([points1, points2], dim=0)
     output = torch.zeros_like(points)
-    
+
     # Calculate spatial derivatives using central differences
-    dx = points[...,2:, 1:-1] - points[...,:-2, 1:-1]  # x direction derivatives
-    dy = points[...,1:-1, 2:] - points[...,1:-1, :-2]  # y direction derivatives
-    
+    dx = points[..., 2:, 1:-1] - points[..., :-2, 1:-1]  # x direction derivatives
+    dy = points[..., 1:-1, 2:] - points[..., 1:-1, :-2]  # y direction derivatives
+
     # Calculate normal vectors using cross product and normalize
     normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=1), dim=1)
-    
+
     # Insert normal vectors into output tensor (excluding borders)
-    output[...,1:-1, 1:-1] = normal_map
-    
+    output[..., 1:-1, 1:-1] = normal_map
+
     # Return with dimensions rearranged to (2, H, W, 3)
     return output.permute(0, 2, 3, 1)
+
 
 ########################################
 #### Taken from dn-splatter ############
 ########################################
 
 # opengl to opencv transformation matrix
-OPENGL_TO_OPENCV = np.array([
-    [1, 0, 0, 0], 
-    [0, -1, 0, 0], 
-    [0, 0, -1, 0], 
-    [0, 0, 0, 1]
-])
+OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+
 
 # ndc space is x to the right y up. uv space is x to the right, y down.
 def pix2ndc_x(x, W):
@@ -304,6 +338,7 @@ def pix2ndc_x(x, W):
 def pix2ndc_y(y, H):
     y = y.float()
     return 1 - (2 * y) / H
+
 
 # ndc is y up and x right. uv is y down and x right
 def ndc2pix_x(x, W):
@@ -348,6 +383,7 @@ def euclidean_to_z_depth(
     z_depth = z_depth.view(img_size[1], img_size[0], 1)
 
     return z_depth
+
 
 def get_camera_coords(img_size: tuple, pixel_offset: float = 0.5) -> torch.Tensor:
     """Generates camera pixel coordinates [W,H]
@@ -442,7 +478,7 @@ def project_pix(
         uv coords
     """
     if c2w is None:
-        c2w = torch.eye((p.shape[0], 4, 4), device=device)  # type: ignore
+        c2w = torch.eye((p.shape[0], 4, 4), device=device)
     if c2w.device != device:
         c2w = c2w.to(device)
 
@@ -515,5 +551,3 @@ def get_rays_x_y_1(H, W, focal, c2w):
 
     # return world coordinate rays_o and rays_d
     return rays_o, rays_d
-
-

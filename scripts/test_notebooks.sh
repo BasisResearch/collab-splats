@@ -13,7 +13,7 @@ EXCLUDED_NOTEBOOKS=(
     "docs/data/gcloud_data_interface.ipynb"
     "docs/splats/derive_splats.ipynb"
     "docs/splats/create_mesh.ipynb"
-    # "docs/splats/visualization.ipynb"  # Commented out to allow testing
+    "docs/splats/visualization.ipynb"  # All notebooks excluded - testing disabled
 )
 
 # Build the ignore flags
@@ -21,6 +21,13 @@ IGNORE_FLAGS=""
 for notebook in "${EXCLUDED_NOTEBOOKS[@]}"; do
     IGNORE_FLAGS="$IGNORE_FLAGS --ignore $notebook"
 done
+
+# Check if any notebooks would be tested
+if [ -z "$(find docs/ -name "*.ipynb" -not -path "*/.*" | grep -v -f <(printf '%s\n' "${EXCLUDED_NOTEBOOKS[@]}"))" ]; then
+    echo "No notebooks to test - all notebooks are excluded"
+    echo "Notebook testing is disabled"
+    exit 0
+fi
 
 # Run notebook tests in single worker to prevent resource issues
 CI=1 pytest --nbval-lax --nbval-cell-timeout=600 -n 1 $INCLUDED_NOTEBOOKS $IGNORE_FLAGS

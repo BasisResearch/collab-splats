@@ -1,6 +1,6 @@
 name: Test Notebooks
 
-on: [] # Disable for now
+on:
   push:
     branches: [main]
   pull_request:

@@ -13,7 +13,7 @@ format-notebooks:
 test: lint FORCE
 	bash ./scripts/test.sh
 
-# test-notebooks: lint FORCE
-# 	bash ./scripts/test_notebooks.sh
+test-notebooks: lint FORCE
+	bash ./scripts/test_notebooks.sh
 
 FORCE:

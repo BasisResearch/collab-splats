@@ -1,4 +1,7 @@
-from .features_datamanager import FeatureSplattingDataManagerConfig, FeatureSplattingDataManager
+from .features_datamanager import (
+    FeatureSplattingDataManagerConfig,
+    FeatureSplattingDataManager,
+)
 
 __all__ = [
     "FeatureSplattingDataManagerConfig",

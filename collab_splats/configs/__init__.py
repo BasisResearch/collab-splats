@@ -5,6 +5,6 @@ from .rade_features_method import rade_features_method
 # from .trainer_config import _TrainerConfig, _ExperimentConfig
 
 __all__ = [
-    "rade_gs_method", 
+    "rade_gs_method",
     "rade_features_method",
 ]

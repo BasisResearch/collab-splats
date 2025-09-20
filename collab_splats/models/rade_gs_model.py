@@ -136,7 +136,7 @@ class RadegsModel(SplatfactoModel):
         self.last_size = (H, W)
 
         # Get camera parameters of colmap camera for rasterization
-        camera_params = self._get_camera_parameters(camera)
+        camera_params = get_camera_parameters(camera)
 
         # Get visible gaussian mask
         if self.config.prefilter_voxel:

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from itertools import islice
 from typing import Dict
 import pickle
+from pathlib import Path
 
 # Third party imports
 from tqdm import tqdm
@@ -65,7 +66,7 @@ from collab_splats.utils.segmentation import (
     mask_id_to_binary_mask,
 )
 
-from collab_splats.utils import project_gaussians, create_fused_features
+from collab_splats.utils import project_gaussians, create_fused_features, get_camera_parameters
 
 
 @dataclass
@@ -78,7 +79,7 @@ class GroupingConfig:
 
     # Identity parameters
     # src_feature: str = 'features_rest' # which feature to use as base for the identity
-    identity_dim: int = 16
+    identity_dim: int = 13
     lr: float = 5e-4
 
     debug: bool = False
@@ -576,19 +577,13 @@ class GroupingClassifier(pl.LightningModule):
         # src_dim = self.model.gauss_params[self.config.src_feature].shape[-1]
         n_gaussians = self.model.num_points
         identities = torch.nn.Parameter(torch.zeros((n_gaussians, self.config.identity_dim)))
+        identities = identities.to(self.model.device)
 
         self.params = torch.nn.ParameterDict(
             {
                 "identities": identities,
             }
         )
-
-        # # In projection is simple linear projection followed by nonlinearity
-        # # We piggyback off an existing feature and use that as a method to create identities
-        # self.in_proj = nn.Sequential(
-        #     nn.Linear(src_dim, self.config.identity_dim),
-        #     nn.ReLU(),
-        # )
 
         # Fit identity of gaussians by predicting masks within each view
         self.classifier = torch.nn.Conv2d(self.config.identity_dim, self.total_masks, kernel_size=1)
@@ -630,7 +625,6 @@ class GroupingClassifier(pl.LightningModule):
 
     def _render_identities(self, camera: Cameras) -> torch.Tensor:
         """
-
         Rasterizes the identity embeddings -- operates similarly to the get_outputs
         method from the 3DGS model, but doesn't return other properties.
 
@@ -647,30 +641,32 @@ class GroupingClassifier(pl.LightningModule):
             print("Called _render_identities with not a camera")
             return {}
 
-        # Get colors
-        features_dc = model.features_dc
-        features_rest = model.features_rest
-
         # Prep the camera for rasterization --> get parameters
         camera_scale_fac = model._get_downscale_factor()
         camera.rescale_output_resolution(1 / camera_scale_fac)
-        camera_params = model._get_camera_parameters(camera)
 
+        # Get camera parameters for rendering (K, viewmats, etc.)
+        camera_params = get_camera_parameters(camera, device=model.device)
+
+        # Get colors
+        features_dc = model.features_dc
+        features_rest = model.features_rest
+        colors = torch.cat((features_dc[:, None, :], features_rest), dim=1)
+        
         # We need a hack to get features into model gsplat for rendering
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
         if model.config.sh_degree > 0:
             sh_degree_to_use = min(self.step // model.config.sh_degree_interval, model.config.sh_degree)
         else:
+            colors = torch.sigmoid(colors).squeeze(1)  # [N, 1, 3] -> [N, 3]
             sh_degree_to_use = None
         
         # Get the colors to pass into the fused features function
-        colors = torch.cat((features_dc[:, None, :], features_rest), dim=1)
-
         fused_features = create_fused_features(
             means=model.means,
             colors=colors,
-            features=self.params.identities, # Identities
+            features=self.identities, # Identities
             camera_params=camera_params,
             sh_degree_to_use=sh_degree_to_use,
         )

@@ -586,7 +586,7 @@ class GroupingClassifier(pl.LightningModule):
         )
 
         # Fit identity of gaussians by predicting masks within each view
-        self.classifier = torch.nn.Conv2d(self.config.identity_dim, self.total_masks, kernel_size=1)
+        self.classifier = torch.nn.Conv2d(self.config.identity_dim, self.total_masks, kernel_size=1).to(self.model.device)
 
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
         self.optimizer = torch.optim.Adam(self.classifier.parameters(), lr=self.config.lr)
@@ -598,30 +598,6 @@ class GroupingClassifier(pl.LightningModule):
 
         if hasattr(self, 'segmentation'):
             del self.segmentation
-
-    # @torch.no_grad()
-    # def per_gaussian_forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-    #     """
-    #     Forward pass using fully-connected (linear) layers assuming `x` is a flattened per-Gaussian input.
-    #     This mimics convolution using linear operations by flattening weights.
-        
-    #     Args:
-    #         x (torch.Tensor): Input tensor of shape (N, C_in), where N is number of Gaussians.
-        
-    #     Returns:
-    #         outputs: Dictionary mapping feature names to output tensors of shape (N, C_out)
-    #     """
-    #     pass
-        # # Flatten 1x1 conv weights into (C_out, C_in)
-        # w_hidden = self.hidden_conv.weight.view(self.hidden_conv.out_channels, -1)
-        # x = F.relu(F.linear(x, w_hidden, self.hidden_conv.bias))
-        
-        # outputs = {}
-        # for model, conv in self.feature_branch_dict.items():
-        #     w_out = conv.weight.view(conv.out_channels, -1)
-        #     outputs[model] = F.linear(x, w_out, conv.bias)
-        
-        # return outputs
 
     def _render_identities(self, camera: Cameras) -> torch.Tensor:
         """
@@ -657,7 +633,7 @@ class GroupingClassifier(pl.LightningModule):
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
         if model.config.sh_degree > 0:
-            sh_degree_to_use = min(self.step // model.config.sh_degree_interval, model.config.sh_degree)
+            sh_degree_to_use = min(model.step // model.config.sh_degree_interval, model.config.sh_degree)
         else:
             colors = torch.sigmoid(colors).squeeze(1)  # [N, 1, 3] -> [N, 3]
             sh_degree_to_use = None
@@ -675,8 +651,8 @@ class GroupingClassifier(pl.LightningModule):
         render, _, _, _, _, _ = self.model._render(
             means=self.model.means,
             quats=self.model.quats,
-            scales=torch.exp(self.model.scales),
-            opacities=torch.sigmoid(self.model.opacities.squeeze(-1)),
+            scales=self.model.scales,
+            opacities=self.model.opacities,
             colors=fused_features,
             render_mode="RGB",
             sh_degree_to_use=sh_degree_to_use,
@@ -685,8 +661,7 @@ class GroupingClassifier(pl.LightningModule):
 
         preds = render[:, ..., 3:3 + self.config.identity_dim]
 
-        return preds
-
+        return preds.squeeze(0)
 
     def forward(self, batch):
         """
@@ -698,9 +673,13 @@ class GroupingClassifier(pl.LightningModule):
         """
 
         camera, image, features = batch
-        outputs = self.model.get_outputs(camera=camera)
+        # outputs = self.model.get_outputs(camera=camera)
 
-        identities = self.in_proj(features)
+        # identities = self.in_proj(features)
+        identities = self._render_identities(camera)
+        identities = identities.permute(2, 0, 1) # [H, W, C] -> [C, H, W]
+
+        # Pass through classifier and get raw prediction logits
         logits = self.classifier(identities)
         return logits
 

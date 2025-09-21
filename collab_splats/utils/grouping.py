@@ -31,9 +31,10 @@ import random
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import islice
-from typing import Dict
+from typing import Dict, Tuple
 import pickle
 from pathlib import Path
+import shutil
 
 # Third party imports
 from tqdm import tqdm
@@ -42,6 +43,9 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
+
+from PIL import Image
+from functools import partial
 
 # Silence Python warnings
 import os, warnings, logging
@@ -68,7 +72,6 @@ from collab_splats.utils.segmentation import (
 
 from collab_splats.utils import project_gaussians, create_fused_features, get_camera_parameters
 
-
 @dataclass
 class GroupingConfig:
     segmentation_backend: str
@@ -93,6 +96,14 @@ class GroupingClassifier(pl.LightningModule):
         # Config is where the model directory is --> we want one above
         self.output_dir = Path(load_config).parent.parent / "grouping"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save both raw and associated masks as images
+        self.raw_mask_dir = self.output_dir / "masks" / "raw"
+        self.associated_mask_dir = self.output_dir / "masks" / "associated"
+
+        # Make directories
+        self.raw_mask_dir.mkdir(parents=True, exist_ok=True)
+        self.associated_mask_dir.mkdir(parents=True, exist_ok=True)
 
         # Save the hyperparameters (including the output directory)
         self.save_hyperparameters()
@@ -217,13 +228,8 @@ class GroupingClassifier(pl.LightningModule):
 
         if not hasattr(self, "segmentation"):
             self.load_segmentation()
-
-        # Create these in order to save out the masks
-        raw_dir = self.output_dir / "masks" / "raw"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-
+        
         # Get the ordered dataset
-
         ordered_dataset, filenames = self.fixed_indices_dataloader(split="train")
 
         for camera, data in tqdm(ordered_dataset, desc=f"Creating masks [train]"):
@@ -237,7 +243,7 @@ class GroupingClassifier(pl.LightningModule):
             image_name = image_path.name
 
             # Set the path to save the mask
-            save_path = raw_dir / f"{image_name}"
+            save_path = self.raw_mask_dir / f"{image_name}"
 
             if save_path.exists():
                 continue  # skip if already exists
@@ -247,6 +253,7 @@ class GroupingClassifier(pl.LightningModule):
 
             # Skip if no objects were found
             if segmentation_results is None:
+                print (f"No objects found in {image_name}, creating empty mask")
                 # Create empty mask
                 composite_mask = np.zeros((image.shape[1], image.shape[2]), dtype=np.uint8)
                 cv2.imwrite(str(save_path), composite_mask)
@@ -279,11 +286,6 @@ class GroupingClassifier(pl.LightningModule):
             self.load_segmentation()
         # dataloader = self.fixed_indices_dataloader(split="train")
 
-        # Save both raw and associated masks as images
-        raw_dir = self.output_dir / "masks" / "raw"
-        associated_dir = self.output_dir / "masks" / "associated"
-        associated_dir.mkdir(parents=True, exist_ok=True)
-
         progress_path = self.output_dir / "processed_frames.pkl"
 
         # Load already processed frames if available
@@ -307,8 +309,8 @@ class GroupingClassifier(pl.LightningModule):
                 image_name = image_path.name
 
                 # We require images for training the model so need to check that they exist --> need to check for undistorted images as well
-                raw_image_path = raw_dir / f"{image_name}"
-                associated_image_path = associated_dir / f"{image_name}"
+                raw_image_path = self.raw_mask_dir / f"{image_name}"
+                associated_image_path = self.associated_mask_dir / f"{image_name}"
                 image_exists = associated_image_path.exists()
 
                 # Load the composite mask
@@ -317,6 +319,8 @@ class GroupingClassifier(pl.LightningModule):
                 # Skip if no objects were found
                 if not np.any(composite_mask):
                     print (f"No objects found in {image_name}")
+                    # Copy the raw image to the associated image path
+                    shutil.copy(raw_image_path, associated_image_path)
                     continue
 
                 # Skip if already processed
@@ -755,3 +759,87 @@ class GroupingClassifier(pl.LightningModule):
 #     for i in range(num_masks):
 #         color_mask[mask == i+1] = random_colors[i]
 #     return color_mask
+
+# from dataclasses import fields, is_dataclass
+
+# def setup_datamanager_config(config, datamanager_cls, **kwargs):
+#     """
+#     Replace the datamanager config in a pipeline while preserving overlapping fields.
+#     Works even if config.pipeline.datamanager is a dict (from YAML).
+    
+#     Args:
+#         config: TrainerConfig or dict-loaded config
+#         datamanager_cls: The new datamanager config class (e.g., GroupingDataManagerConfig)
+#         **kwargs: Any additional fields to override in the new config
+#     """
+#     old_dm_config = config.pipeline.datamanager
+
+#     # Convert to dict if it’s a dataclass, or copy if it’s already a dict
+#     if is_dataclass(old_dm_config):
+#         old_dict = {f.name: getattr(old_dm_config, f.name) for f in fields(old_dm_config)}
+#     elif isinstance(old_dm_config, dict):
+#         old_dict = old_dm_config.copy()
+#     else:
+#         raise TypeError(f"Unsupported datamanager type: {type(old_dm_config)}")
+
+#     # Only keep fields that exist in the new datamanager class
+#     new_fields = {f.name for f in fields(datamanager_cls)}
+#     filtered_dict = {k: v for k, v in old_dict.items() if k in new_fields}
+
+#     # Merge with any explicit overrides
+#     filtered_dict.update(kwargs)
+
+#     # Instantiate new datamanager config
+#     new_dm_config = datamanager_cls(**filtered_dict)
+#     config.pipeline.datamanager = new_dm_config
+#     return config
+
+
+#########################################################
+############### Dataloading stuff #######################
+#########################################################
+
+class GroupingDataModule(pl.LightningDataModule):
+    """Lightning DataModule wrapping a Nerfstudio DataManager and associated masks."""
+
+    def __init__(self, datamanager, mask_dir, device="cpu",
+                 train_num_workers=0, val_num_workers=0):
+        super().__init__()
+        self.datamanager = datamanager
+        self.mask_dir = Path(mask_dir)
+        self.device = device
+        self.train_num_workers = train_num_workers
+        self.val_num_workers = val_num_workers
+
+    def _load_segmentation_processor(self, dataset, camera, data: Dict) -> Tuple:
+        """Load and attach a segmentation mask for a given camera view."""
+        # Mask filename matches the source image filename
+        image_name = dataset.image_filenames[data["image_idx"]].name
+        mask_path = self.mask_dir / image_name
+
+        if not mask_path.exists():
+            raise FileNotFoundError(f"Mask not found: {mask_path}")
+
+        # Load and normalize mask
+        segmentation = np.array(Image.open(mask_path).convert("L"), dtype=np.float32) / 255.0
+        segmentation = torch.from_numpy(segmentation).to(data["image"].device)
+
+        data["segmentation"] = segmentation
+        return camera, data
+
+    def _create_dataloader(self, dataset, num_workers: int):
+        processor = partial(self._load_segmentation_processor, dataset)
+        return DataLoader(
+            ImageBatchStream(
+                input_dataset=dataset,
+                custom_image_processor=processor,
+            ),
+            batch_size=None,
+            num_workers=num_workers,
+        )
+
+    def train_dataloader(self):
+        return self._create_dataloader(self.datamanager.train_dataset, self.train_num_workers)
+
+    def val_dataloader(self):
+        return self._create_dataloader(self.datamanager.eval_dataset, self.val_num_workers)

@@ -31,7 +31,7 @@ import random
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import islice
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, Union
 import pickle
 from pathlib import Path
 import shutil
@@ -40,9 +40,15 @@ import shutil
 from tqdm import tqdm
 import cv2
 import numpy as np
+
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
+
+# Pytorch lightning imports
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning import Trainer
 
 from PIL import Image
 from functools import partial
@@ -60,6 +66,7 @@ from gsplat.strategy import DefaultStrategy
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.utils.eval_utils import eval_setup
+from nerfstudio.data.utils.dataloaders import ImageBatchStream
 
 # Local imports
 from collab_splats.utils.segmentation import (
@@ -82,13 +89,17 @@ class GroupingConfig:
 
     # Identity parameters
     # src_feature: str = 'features_rest' # which feature to use as base for the identity
+    debug: bool = False
+
+    # Classifier training parameters
+    max_steps: int = 10000
+    log_every_n_steps: int = 10 # log every n steps
+    save_every_n_steps: int = 100 # save a checkpoint every n steps
+    accelerator: str = "gpu"
+    precision: int = 16 # 16 for mixed precision, 32 for full precision
     identity_dim: int = 13
     lr: float = 5e-4
 
-    debug: bool = False
-
-
-@dataclass
 class GroupingClassifier(pl.LightningModule):
     def __init__(self, load_config: str, config: GroupingConfig):
         super().__init__()
@@ -100,10 +111,12 @@ class GroupingClassifier(pl.LightningModule):
         # Save both raw and associated masks as images
         self.raw_mask_dir = self.output_dir / "masks" / "raw"
         self.associated_mask_dir = self.output_dir / "masks" / "associated"
+        self.checkpoint_dir = self.output_dir / "checkpoints"
 
         # Make directories
         self.raw_mask_dir.mkdir(parents=True, exist_ok=True)
         self.associated_mask_dir.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         # Save the hyperparameters (including the output directory)
         self.save_hyperparameters()
@@ -129,7 +142,7 @@ class GroupingClassifier(pl.LightningModule):
     @property
     def identities(self):
         if not hasattr(self, "params"):
-            self.setup_train()
+            self.setup()
 
         # Project the identities
         return self.params.identities
@@ -255,13 +268,13 @@ class GroupingClassifier(pl.LightningModule):
             if segmentation_results is None:
                 print (f"No objects found in {image_name}, creating empty mask")
                 # Create empty mask
-                composite_mask = np.zeros((image.shape[1], image.shape[2]), dtype=np.uint8)
+                composite_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint16)
                 cv2.imwrite(str(save_path), composite_mask)
                 continue
 
             # Create composite mask
             _, results = segmentation_results
-            composite_mask = create_composite_mask(results)
+            composite_mask = create_composite_mask(results).astype(np.uint16)
 
             # Save the composite mask
             cv2.imwrite(str(save_path), composite_mask)
@@ -314,7 +327,7 @@ class GroupingClassifier(pl.LightningModule):
                 image_exists = associated_image_path.exists()
 
                 # Load the composite mask
-                composite_mask = cv2.imread(raw_image_path)
+                composite_mask = cv2.imread(raw_image_path, cv2.IMREAD_UNCHANGED) # load as uint16 if provided
 
                 # Skip if no objects were found
                 if not np.any(composite_mask):
@@ -343,7 +356,7 @@ class GroupingClassifier(pl.LightningModule):
                 labels = self._assign_labels(mask_gaussians)
 
                 # Use the labels to convert the composite mask to show the associated labels
-                associated_mask = convert_matched_mask(labels, composite_mask)
+                associated_mask = convert_matched_mask(labels, composite_mask).astype(np.uint16)
                 cv2.imwrite(associated_image_path, associated_mask)
 
                 self._update_memory_bank(labels, mask_gaussians)
@@ -481,7 +494,7 @@ class GroupingClassifier(pl.LightningModule):
         # Collect front gaussians
         front_gaussians = []
         
-        for mask in flattened_masks: # total=len(flattened_masks), desc="Processing masks"): # total=len(flattened_masks), desc="Processing masks"):
+        for mask in flattened_masks:
             
             # Use compiled function for main processing
             result = self.process_mask_gaussians(
@@ -574,34 +587,8 @@ class GroupingClassifier(pl.LightningModule):
             return torch.tensor([], dtype=torch.long, device=mask.device)
 
     #########################################################
-    ################# Model training ########################
+    ################# Model rendering ########################
     #########################################################
-
-    def setup(self):
-        # src_dim = self.model.gauss_params[self.config.src_feature].shape[-1]
-        n_gaussians = self.model.num_points
-        identities = torch.nn.Parameter(torch.zeros((n_gaussians, self.config.identity_dim)))
-        identities = identities.to(self.model.device)
-
-        self.params = torch.nn.ParameterDict(
-            {
-                "identities": identities,
-            }
-        )
-
-        # Fit identity of gaussians by predicting masks within each view
-        self.classifier = torch.nn.Conv2d(self.config.identity_dim, self.total_masks, kernel_size=1).to(self.model.device)
-
-        self.loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
-        self.optimizer = torch.optim.Adam(self.classifier.parameters(), lr=self.config.lr)
-
-        # Freeze the base model parameters
-        if hasattr(self, 'model'):
-            for param in self.model.parameters():
-                param.requires_grad = False
-
-        if hasattr(self, 'segmentation'):
-            del self.segmentation
 
     def _render_identities(self, camera: Cameras) -> torch.Tensor:
         """
@@ -667,98 +654,138 @@ class GroupingClassifier(pl.LightningModule):
 
         return preds.squeeze(0)
 
-    def forward(self, batch):
-        """
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, H, W, src_dim)
-            Where src_dim is the dimension of the source feature
-        Returns:
-            torch.Tensor: Output tensor of shape (batch_size, self.total_masks)
-        """
+    #########################################################
+    ################# Model training ########################
+    #########################################################
 
-        camera, image, features = batch
-        # outputs = self.model.get_outputs(camera=camera)
+    def lift_segmentation(
+        self,
+    ):
+        """
+        Train the classifier and identity embeddings with checkpointing.
+        """
+        
+        # Initialize the datamodule for training (no validation module)
+        datamodule = GroupingDataModule(
+            datamanager=self.pipeline.datamanager,
+            mask_dir=self.associated_mask_dir,
+        )
 
-        # identities = self.in_proj(features)
+        # ModelCheckpoint callback
+        checkpoint_callback = ModelCheckpoint(
+            monitor="train_loss",
+            save_top_k=1,
+            mode="min",
+            filename="grouping-classifier",
+            dirpath=self.checkpoint_dir,
+            every_n_train_steps=self.config.save_every_n_steps,  # optional: save every 100 steps
+        )
+
+        # Create Trainer
+        trainer = Trainer(
+            max_steps=self.config.max_steps,
+            accelerator=self.config.accelerator,
+            precision=self.config.precision,
+            default_root_dir=self.checkpoint_dir,
+            callbacks=[checkpoint_callback],
+        )
+
+        # Resume if checkpoint exists
+        ckpt_path = None
+        last_ckpt = self.checkpoint_dir / "last.ckpt"
+        if last_ckpt.exists():
+            ckpt_path = str(last_ckpt)
+
+        # Start training
+        trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt_path)
+
+        return self, checkpoint_callback.best_model_path
+
+    def setup(self, stage: str = None):
+        """
+        Initialize trainable parameters and classifier. 
+
+        stage (str) is a required argument for pytorch lightning
+        """
+        # Load Splatfacto model (assumes pipeline already loaded)
+        if not hasattr(self, "model"):
+            self.load_pipeline()
+
+        # Identity embeddings (trainable)
+        n_gaussians = self.model.num_points
+        identities = torch.nn.Parameter(
+            torch.zeros((n_gaussians, self.config.identity_dim), device=self.model.device)
+        )
+        self.params = torch.nn.ParameterDict({"identities": identities})
+
+        # Classifier (trainable)
+        self.classifier = torch.nn.Conv2d(
+            self.config.identity_dim, self.total_masks, kernel_size=1
+        ).to(self.model.device)
+
+        # Loss function
+        self.loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
+
+        # Freeze Splatfacto base model
+        for p in self.model.parameters():
+            p.requires_grad = False
+
+    def forward(self, camera: Cameras) -> torch.Tensor:
+        """
+        Forward pass of the classifier --> renders the camera
+        viewpoint and creates identity embeddings. Then classifies
+        the rasterized identities.
+        """
         identities = self._render_identities(camera)
-        identities = identities.permute(2, 0, 1) # [H, W, C] -> [C, H, W]
+        identities = identities.permute(2, 0, 1)  # [H, W, C] -> [C, H, W]
+        return self.classifier(identities)
 
-        # Pass through classifier and get raw prediction logits
-        logits = self.classifier(identities)
+    @torch.no_grad()
+    def per_gaussian_forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass using fully-connected (linear) layers assuming `x` is a flattened per-Gaussian input.
+        This mimics convolution using linear operations by flattening weights.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (N, C_in), where N is number of Gaussians.
+
+        Returns:
+            outputs: Dictionary mapping feature names to output tensors of shape (N, C_out)
+        """
+        # Reshape classifier weights from Conv2d (C_out, C_in, 1, 1) -> (C_out, C_in)
+        w = self.classifier.weight.view(self.classifier.out_channels, -1)
+        b = self.classifier.bias
+
+        # Apply linear transformation (same as 1x1 conv but on per-Gaussian embeddings)
+        logits = F.linear(x, w, b)  # (N, C_out)
         return logits
 
-    def training_step(self, batch):
+    def training_step(self, batch, batch_idx: Optional[int] = None):
         """
-        Args:
-            batch (tuple): Tuple containing (features, labels)
-        Returns:
-            torch.Tensor: Loss tensor
+        Training step of the classifier --> computes the loss
+        between the predicted logits and the ground truth segmentation.
         """
-        feats, labels = batch
-        logits = self(feats)
-        loss = self.loss_fn(logits, labels)
-        self.log("train_loss", loss, prog_bar=True)
+        camera, data = batch
+
+        # Put on same device as model (required for rendering)
+        camera = camera.to(self.model.device)
+        seg = data["segmentation"].to(self.model.device)
+
+        # Forward pass
+        logits = self(camera)
+
+        # Compute loss
+        loss = self.loss_fn(logits.unsqueeze(0), seg.unsqueeze(0)).mean()
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+
         return loss
 
     def configure_optimizers(self):
-        trainable_params = list(self.classifier.parameters())
-        return torch.optim.Adam(trainable_params, lr=self.config.lr)
-
-    # def train_classifier(self, dataloader=None, epochs: int = 10):
-    #     """
-    #     Train the mask classifier with a lightweight Fabric loop.
-
-    #     Args:
-    #         dataloader: torch DataLoader yielding (features, labels).
-    #                     If None, you need to provide it externally.
-    #         epochs (int): number of epochs to train for.
-    #     """
-    #     if dataloader is None:
-    #         raise ValueError("Must provide a dataloader to train_classifier.")
-
-    #     # Initialize Fabric
-    #     fabric = Fabric(accelerator="cuda", devices=1, precision="16-mixed")
-
-    #     # Make sure classifier / proj / loss are initialized
-    #     if not hasattr(self, "classifier"):
-    #         self.setup_train()
-
-    #     optimizer = self.optimizer
-
-    #     # Fabric handles device placement + DDP wrapping
-    #     model, optimizer = fabric.setup(self, optimizer)
-    #     dataloader = fabric.setup_dataloaders(dataloader)
-
-    #     # Training loop
-    #     model.train()
-    #     for epoch in range(epochs):
-    #         for batch_idx, (feats, labels) in enumerate(dataloader):
-    #             optimizer.zero_grad()
-
-    #             identities = model.in_proj(feats)
-    #             logits = model.classifier(identities)
-
-    #             loss = model.loss_fn(logits, labels)
-    #             fabric.backward(loss)
-    #             optimizer.step()
-
-    #             if batch_idx % 10 == 0:
-    #                 fabric.print(f"[epoch {epoch} | batch {batch_idx}] loss={loss.item():.4f}")
-
-    #     fabric.print("Training complete ✅")
-
-
-# def get_n_different_colors(n: int) -> np.ndarray:
-#     np.random.seed(0)
-#     return np.random.randint(1, 256, (n, 3), dtype=np.uint8)
-
-# def visualize_mask(mask: np.ndarray) -> np.ndarray:
-#     color_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
-#     num_masks = np.max(mask)
-#     random_colors = get_n_different_colors(num_masks)
-#     for i in range(num_masks):
-#         color_mask[mask == i+1] = random_colors[i]
-#     return color_mask
+        """
+        Configures the optimizer to train the classifier and identity embeddings.
+        """
+        params = list(self.classifier.parameters()) + list(self.params.values())
+        return torch.optim.Adam(params, lr=self.config.lr)
 
 # from dataclasses import fields, is_dataclass
 
@@ -820,11 +847,16 @@ class GroupingDataModule(pl.LightningDataModule):
         if not mask_path.exists():
             raise FileNotFoundError(f"Mask not found: {mask_path}")
 
-        # Load and normalize mask
-        segmentation = np.array(Image.open(mask_path).convert("L"), dtype=np.float32) / 255.0
-        segmentation = torch.from_numpy(segmentation).to(data["image"].device)
-
+        # Load mask as integers
+        segmentation = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+        segmentation = segmentation.astype(np.int32)
+        
+        # Put on same device as camera (which is where the logits come from)
+        segmentation = torch.from_numpy(segmentation)
+        segmentation = segmentation.long() # set as long tensor
+        
         data["segmentation"] = segmentation
+        
         return camera, data
 
     def _create_dataloader(self, dataset, num_workers: int):

@@ -286,7 +286,7 @@ class RadegsFeaturesModel(RadegsModel):
             camera_params=camera_params,
             sh_degree_to_use=sh_degree_to_use,
         )
-
+        
         # Rendered contains the following:
         # - rgb: [N, 3]
         # - alphas: [N, 1]
@@ -300,7 +300,6 @@ class RadegsFeaturesModel(RadegsModel):
             scales=scales_crop,
             opacities=opacities_crop,
             colors=colors_crop,
-            # features=distill_features_crop,
             render_mode=render_mode,
             sh_degree_to_use=sh_degree_to_use,
             visible_mask=voxel_visible_mask,

@@ -13,7 +13,6 @@ import open3d as o3d
 
 DEFAULT_TIMEOUT = 3600
 
-
 class SplatterConfig(TypedDict):
     """Configuration for the Splatter class.
 

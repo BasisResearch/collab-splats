@@ -154,69 +154,143 @@ def normals2vertex(mesh_vertices, points, normals, k=5, sdf_trunc=0.03):
     return mesh_normals
 
 
-def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
+# def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
+#     """
+#     Map point cloud features to mesh vertices using KNN over a KDTree.
+
+#     Args:
+#         mesh: final cleaned mesh after culling (mesh_0)
+#         points: (N, 3) array of input point cloud
+#         features: (N, D) array of per-point features
+#         k: number of nearest neighbors to use for weighting
+#         sdf_trunc: truncation distance for SDF
+
+#     Returns:
+#         features_kNN: (M, D) array of per-vertex features
+#     """
+
+#     vertices = np.asarray(mesh_vertices)
+
+#     # Build tree
+#     tree = cKDTree(vertices)
+
+#     # Query nearest vertex for each point
+#     distances, indices = tree.query(points, k=k)  # shape: (N,)
+
+#     # Mask points where nearest vertex is within truncation distance
+#     # Use distance to closest vertex (distance[:, 0]) for truncation mask
+#     valid_mask = distances[:, 0] <= sdf_trunc
+
+#     if not np.any(valid_mask):
+#         # No points within truncation distance, return zeros
+#         return np.zeros((len(vertices), features.shape[1]))
+
+#     # Filter distances, indices, and features by valid points
+#     distances = distances[valid_mask]
+#     indices = indices[valid_mask]
+#     features = features[valid_mask]
+
+#     # Weighting with Gaussian kernel
+#     sigma = np.mean(distances)  # or set manually
+#     weights = np.exp(-(distances**2) / (2 * sigma**2))
+#     weights /= weights.sum(axis=1, keepdims=True)  # normalize
+
+#     # Aggregate features per vertex
+#     features_kNN = np.zeros((len(vertices), features.shape[1]))
+
+#     # Use a counts array to normalize contributions per vertex later
+#     vertex_weight_sum = np.zeros((len(vertices), 1))
+
+#     # Accumulate weighted features
+#     for i in trange(k, desc="Mapping features to vertices"):
+#         vertex_indices = indices[:, i]
+#         weighted_feats = features * weights[:, i : i + 1]
+
+#         # Accumulate weighted features
+#         np.add.at(features_kNN, vertex_indices, weighted_feats)
+
+#         # Accumulate weights for normalization
+#         np.add.at(vertex_weight_sum, vertex_indices, weights[:, i : i + 1])
+
+#     # Normalize aggregated features by summed weights (avoid div by zero)
+#     nonzero_mask = vertex_weight_sum.squeeze() > 0
+#     features_kNN[nonzero_mask] /= vertex_weight_sum[nonzero_mask]
+
+#     return torch.tensor(features_kNN)
+
+
+def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03, categorical=False):
     """
     Map point cloud features to mesh vertices using KNN over a KDTree.
 
     Args:
-        mesh: final cleaned mesh after culling (mesh_0)
+        mesh_vertices: (M, 3) array of mesh vertices
         points: (N, 3) array of input point cloud
-        features: (N, D) array of per-point features
-        k: number of nearest neighbors to use for weighting
+        features: (N, D) array of per-point features, or (N,) ints if categorical
+        k: number of nearest neighbors to use
         sdf_trunc: truncation distance for SDF
+        categorical: if True, treat features as categorical (majority vote)
 
     Returns:
-        features_kNN: (M, D) array of per-vertex features
+        features_kNN: (M, D) for continuous or (M,) ints for categorical
     """
-
     vertices = np.asarray(mesh_vertices)
 
-    # Build tree
+    # Build KDTree over mesh vertices
     tree = cKDTree(vertices)
+    distances, indices = tree.query(points, k=k)  # (N, k)
 
-    # Query nearest vertex for each point
-    distances, indices = tree.query(points, k=k)  # shape: (N,)
-
-    # Mask points where nearest vertex is within truncation distance
-    # Use distance to closest vertex (distance[:, 0]) for truncation mask
+    # Keep only points close enough to some vertex
     valid_mask = distances[:, 0] <= sdf_trunc
-
     if not np.any(valid_mask):
-        # No points within truncation distance, return zeros
-        return np.zeros((len(vertices), features.shape[1]))
+        return (
+            -np.ones(len(vertices), dtype=int) if categorical
+            else np.zeros((len(vertices), features.shape[1]))
+        )
 
-    # Filter distances, indices, and features by valid points
-    distances = distances[valid_mask]
-    indices = indices[valid_mask]
-    features = features[valid_mask]
+    distances, indices, features = distances[valid_mask], indices[valid_mask], features[valid_mask]
 
-    # Weighting with Gaussian kernel
-    sigma = np.mean(distances)  # or set manually
+    # Compute Gaussian weights
+    sigma = np.mean(distances)
     weights = np.exp(-(distances**2) / (2 * sigma**2))
-    weights /= weights.sum(axis=1, keepdims=True)  # normalize
+    weights /= weights.sum(axis=1, keepdims=True)
 
-    # Aggregate features per vertex
-    features_kNN = np.zeros((len(vertices), features.shape[1]))
+    if categorical:
+        return _aggregate_categorical(indices, features, weights, len(vertices))
+    else:
+        return _aggregate_continuous(indices, features, weights, len(vertices))
 
-    # Use a counts array to normalize contributions per vertex later
-    vertex_weight_sum = np.zeros((len(vertices), 1))
 
-    # Accumulate weighted features
-    for i in trange(k, desc="Mapping features to vertices"):
-        vertex_indices = indices[:, i]
-        weighted_feats = features * weights[:, i : i + 1]
+def _aggregate_continuous(indices, features, weights, num_vertices):
+    """Weighted average of continuous features."""
+    out = np.zeros((num_vertices, features.shape[1]))
+    weight_sum = np.zeros((num_vertices, 1))
 
-        # Accumulate weighted features
-        np.add.at(features_kNN, vertex_indices, weighted_feats)
+    for i in trange(indices.shape[1], desc="Mapping continuous features"):
+        v_idx = indices[:, i]
+        w_feats = features * weights[:, i : i + 1]
+        np.add.at(out, v_idx, w_feats)
+        np.add.at(weight_sum, v_idx, weights[:, i : i + 1])
 
-        # Accumulate weights for normalization
-        np.add.at(vertex_weight_sum, vertex_indices, weights[:, i : i + 1])
+    nonzero = weight_sum.squeeze() > 0
+    out[nonzero] /= weight_sum[nonzero]
+    return torch.tensor(out)
 
-    # Normalize aggregated features by summed weights (avoid div by zero)
-    nonzero_mask = vertex_weight_sum.squeeze() > 0
-    features_kNN[nonzero_mask] /= vertex_weight_sum[nonzero_mask]
 
-    return torch.tensor(features_kNN)
+def _aggregate_categorical(indices, features, weights, num_vertices):
+    """Weighted majority vote for categorical labels."""
+    votes = [{} for _ in range(num_vertices)]
+
+    for i in trange(indices.shape[1], desc="Mapping categorical features"):
+        for v_idx, feat, w in zip(indices[:, i], features, weights[:, i]):
+            votes[v_idx][feat] = votes[v_idx].get(feat, 0.0) + w
+
+    out = np.full(num_vertices, -1, dtype=int)  # -1 = unlabeled
+    for v_idx, v_votes in enumerate(votes):
+        if v_votes:
+            out[v_idx] = max(v_votes.items(), key=lambda kv: kv[1])[0]
+
+    return torch.tensor(out)
 
 
 ########################################################

@@ -377,8 +377,8 @@ def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
         matched_label = labels[label_idx].item() + 1
         matched_mask[masks == mask_id] = matched_label
 
-    # Convert to uint8 since we expect small label values
-    return matched_mask.astype(np.uint8)
+    # Keep as uint16 since we expect large label values
+    return matched_mask
 
 
 def aggregate_masked_features(

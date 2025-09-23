@@ -27,6 +27,7 @@ TLB notes for improvement:
 """
 
 # Standard library imports
+import sys
 import random
 from copy import deepcopy
 from dataclasses import dataclass
@@ -35,11 +36,14 @@ from typing import Dict, Tuple, Optional, Union
 import pickle
 from pathlib import Path
 import shutil
+import wandb
 
 # Third party imports
 from tqdm import tqdm
 import cv2
 import numpy as np
+import math
+import time
 
 import torch
 import torch.nn.functional as F
@@ -78,6 +82,35 @@ from collab_splats.utils.segmentation import (
 )
 
 from collab_splats.utils import project_gaussians, create_fused_features, get_camera_parameters
+
+@staticmethod
+def indices_to_bitmask(indices: torch.Tensor, N: int, device=None) -> torch.Tensor:
+    """
+    Converts a tensor of indices into a bit-packed mask tensor of length ceil(N/32)
+    """
+    num_ints = (N + 31) // 32
+    bitmask = torch.zeros(num_ints, dtype=torch.int32, device=device)
+    if indices.numel() == 0:
+        return bitmask
+    word_idx = indices // 32
+    bit_idx = indices % 32
+    bitmask[word_idx] |= 1 << bit_idx
+    return bitmask
+
+
+def popcount(x: torch.Tensor) -> torch.Tensor:
+    """
+    Counts number of set bits (1s) per element using bit shifting.
+    Simple and reliable approach for int32 tensors.
+    """
+    count = torch.zeros_like(x, dtype=torch.int32)
+    
+    # Check each of the 32 bits
+    for i in range(32):
+        bit_mask = 1 << i
+        count += ((x & bit_mask) != 0).int()
+    
+    return count
 
 @dataclass
 class GroupingConfig:
@@ -119,7 +152,9 @@ class GroupingClassifier(pl.LightningModule):
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         # Save the hyperparameters (including the output directory)
-        self.save_hyperparameters()
+        self.save_hyperparameters(
+            ignore=["pipeline", "model", "segmentation", "datamanager"]
+        )
 
         # Set variables
         self.load_config = load_config
@@ -130,22 +165,70 @@ class GroupingClassifier(pl.LightningModule):
         self._memory_bank, self.total_masks = self.load_memory_bank()
 
     @property
-    def memory_bank(self) -> list[torch.Tensor]:
-        """
-        Expose memory bank as list of tensors (on-demand conversion).
-        """
-        return [
-            torch.tensor(list(g), dtype=torch.long, device="cpu")
-            for g in self._memory_bank
-        ]
-
-    @property
     def identities(self):
         if not hasattr(self, "params"):
             self.setup()
 
         # Project the identities
         return self.params.identities
+
+    @property
+    def objects(self):
+        if not hasattr(self, "params"):
+            self.setup()
+
+        # Convert identities to classes
+        classes = self.per_gaussian_forward(self.identities)
+        
+        return classes
+
+    @property
+    def memory_bank(self) -> list[torch.Tensor]:
+        """
+        Expose memory bank as list of CPU tensors for compatibility / saving.
+        """
+        return [
+            torch.tensor(list(g), dtype=torch.long, device="cpu")
+            for g in self._memory_bank
+            ]
+
+    def save_memory_bank(self):
+        """
+        Save CPU memory bank to disk.
+        """
+        path = self.output_dir / "memory_bank.pkl"
+        with open(path, "wb") as f:
+            pickle.dump(self._memory_bank, f)
+
+    def load_memory_bank(self):
+        path = self.output_dir / "memory_bank.pkl"
+
+        if path.exists():
+            with open(path, "rb") as f:
+                memory_bank = pickle.load(f)
+            print(f"Memory bank loaded from {path} with {len(memory_bank)} masks")
+        else:
+            print(f"Memory bank not found at {path}, initializing empty memory bank")
+            memory_bank = []
+
+        # Determine device for bit-packed memory bank
+        if hasattr(self, "model") and torch.cuda.is_available():
+            device = self.model.device
+            N = int(self.model.num_points)
+            self._memory_bank_bit = [
+                indices_to_bitmask(torch.tensor(list(g), device=device), N, device=device)
+                for g in memory_bank
+            ]
+        else:
+            # CPU fallback: just use empty list
+            self._memory_bank_bit = []
+
+        return memory_bank, len(memory_bank)
+
+    def _reset_memory_bank(self):
+        self._memory_bank = []
+        self.total_masks = 0
+        self._memory_bank_bit = []
 
     #########################################################
     ################### Model loading #######################
@@ -284,8 +367,23 @@ class GroupingClassifier(pl.LightningModule):
     #########################################################
 
     def _reset_associations(self):
-        self._memory_bank = []
-        self.total_masks = 0
+        # Reset the memory bank
+        self._reset_memory_bank()
+
+        # Remove all files within the associated mask directory
+        if self.associated_mask_dir.exists():
+            shutil.rmtree(self.associated_mask_dir)
+        self.associated_mask_dir.mkdir(parents=True, exist_ok=True)
+
+        # Remove memory bank file if it exists
+        memory_bank_path = self.output_dir / "memory_bank.pkl"
+        if memory_bank_path.exists():
+            memory_bank_path.unlink()
+        
+        # Remove processed images file if it exists
+        processed_images_path = self.output_dir / "processed_frames.pkl"
+        if processed_images_path.exists():
+            processed_images_path.unlink()
 
     def associate(self):
         """
@@ -347,19 +445,34 @@ class GroupingClassifier(pl.LightningModule):
                 patch_mask = create_patch_mask(image)
 
                 # Select front gaussians for each mask and assign labels
+                start_time = time.time()
                 mask_gaussians = self.select_front_gaussians(
                     meta=self.model.info,
                     composite_mask=composite_mask,
                     patch_mask=patch_mask,
                 )
 
+                if self.config.debug:
+                    end_time = time.time()
+                    print(f"Time taken to select front gaussians: {end_time - start_time} seconds")
+
+                start_time = time.time()
                 labels = self._assign_labels(mask_gaussians)
+
+                if self.config.debug:
+                    end_time = time.time()
+                    print(f"Time taken to assign labels: {end_time - start_time} seconds")
 
                 # Use the labels to convert the composite mask to show the associated labels
                 associated_mask = convert_matched_mask(labels, composite_mask).astype(np.uint16)
                 cv2.imwrite(associated_image_path, associated_mask)
 
+                start_time = time.time()
                 self._update_memory_bank(labels, mask_gaussians)
+
+                if self.config.debug:
+                    end_time = time.time()
+                    print(f"Time taken to update memory bank: {end_time - start_time} seconds")
 
                 # Mark frame as processed and save progress + memory bank
                 processed_frames.add(camera_idx)
@@ -370,103 +483,225 @@ class GroupingClassifier(pl.LightningModule):
                 self.save_memory_bank()
 
     def _assign_labels(self, mask_gaussians: list[torch.Tensor]) -> torch.Tensor:
-        """
-        Assigns a label to each mask's Gaussian set.
-        If a mask doesn't sufficiently overlap with any existing label group (via IOCUR),
-        it is assigned a new label, and total_masks is incremented.
-
-        Args:
-            mask_gaussians (list[Tensor]): Each tensor contains the indices of Gaussians
-            associated with a single mask in the current view.
-
-        Returns:
-            Tensor: A tensor of shape (num_masks,) containing the assigned label for each mask.
-        """
+        device = self.model.device if torch.cuda.is_available() else "cpu"
+        N = int(self.model.num_points)
         num_masks = len(mask_gaussians)
 
-        # First view: assign each mask a unique label
         if self.total_masks == 0:
-            labels = torch.arange(num_masks, dtype=torch.long)
+            labels = torch.arange(num_masks, dtype=torch.long, device=device)
             self.total_masks = num_masks
             return labels
 
-        labels = torch.zeros(num_masks, dtype=torch.long)
+        # Debug: Check mask_gaussians
+        if self.config.debug:
+            print(f"Debug: num_masks = {num_masks}")
+            for i, g in enumerate(mask_gaussians):
+                print(f"  mask_gaussians[{i}] size: {len(g)}, sample indices: {g[:5] if len(g) > 0 else 'empty'}")
 
-        for i, gaussians in enumerate(mask_gaussians):
-            n_gaussians = len(gaussians)
-            overlaps = []
+        # Prepare mask bits
+        mask_bits = torch.stack([
+            indices_to_bitmask(g.to(device), N, device=device)
+            for g in mask_gaussians
+        ])
+        
+        # Debug: Check bitmask conversion
+        if self.config.debug:
+            print(f"Debug: mask_bits shape: {mask_bits.shape}")
+            for i in range(min(3, len(mask_bits))):
+                bit_count = popcount(mask_bits[i:i+1]).sum()
+                print(f"  mask_bits[{i}] popcount: {bit_count}, expected: {len(mask_gaussians[i])}")
 
-            # Compare against each label group in memory_bank
-            for bank in self.memory_bank:
-                union = torch.unique(torch.cat([bank, gaussians]))
-                intersection = len(bank) + n_gaussians - len(union)
+        labels = torch.zeros(num_masks, dtype=torch.long, device=device)
+        
+        # Calculate sizes correctly - count actual set bits, not tensor elements
+        cur_sizes = torch.tensor([
+            popcount(indices_to_bitmask(g.to(device), N, device=device)).sum().float()
+            for g in mask_gaussians
+        ], dtype=torch.float32, device=device)
+        
+        if self.config.debug:
+            print(f"Debug: cur_sizes: {cur_sizes.tolist()}")
 
-                # IOCUR: intersection / (intersection + current mask size)
-                io_cur = intersection / (n_gaussians + intersection + 1e-8)
-                overlaps.append(io_cur)
+        # Prepare memory bank chunks
+        bank_chunks = []
+        bank_sizes = []
+        if self._memory_bank_bit is not None and len(self._memory_bank_bit) > 0:
+            chunk_size = 128
+            for i in range(0, len(self._memory_bank_bit), chunk_size):
+                chunk = torch.stack(self._memory_bank_bit[i:i + chunk_size], dim=0)
+                bank_chunks.append(chunk)
+                # Pre-calculate sizes for efficiency
+                bank_sizes.append(popcount(chunk).sum(dim=1).float())
+            
+            if self.config.debug:
+                print(f"Debug: Created {len(bank_chunks)} bank chunks")
+        else:
+            if self.config.debug:
+                print("Debug: No memory bank or empty memory bank")
 
-            overlaps = torch.tensor(overlaps, dtype=torch.float32)
-            selected = torch.argmax(overlaps)
+        for i, cur_mask in enumerate(mask_bits):
+            max_iou = 0.0
+            selected_label = -1
 
-            # If no label matches above the threshold → assign new label
-            if overlaps[selected] < self.config.iou_threshold:
-                selected = self.total_masks
+            for chunk_idx, (chunk, ref_sizes) in enumerate(zip(bank_chunks, bank_sizes)):
+                # Compute intersection using bitwise AND - fix the broadcasting issue
+                intersections = popcount(cur_mask.unsqueeze(0) & chunk).sum(dim=1).float()
+                
+                # Compute union sizes: |A| + |B| - |A ∩ B|
+                union_sizes = cur_sizes[i] + ref_sizes - intersections
+                
+                # IoU computation with proper numerical stability
+                ious = intersections / (union_sizes + 1e-8)
+
+                # --- DEBUG OUTPUT ---
+                if self.config.debug and chunk_idx == 0:  # Only show first chunk
+                    print(f"\nMask {i}, Chunk {chunk_idx}")
+                    print("cur_size (bits):", cur_sizes[i].item())
+                    print("ref_sizes:", ref_sizes.tolist()[:5])  # Show first 5 only
+                    print("intersections:", intersections.tolist()[:5])
+                    print("union_sizes:", union_sizes.tolist()[:5])
+                    print("ious:", ious.tolist()[:5])
+                # -------------------
+
+                chunk_max, idx = torch.max(ious, dim=0)
+                if chunk_max > max_iou:
+                    max_iou = chunk_max
+                    selected_label = chunk_idx * chunk_size + idx.item()
+
+            if max_iou < self.config.iou_threshold:
+                selected_label = self.total_masks
                 self.total_masks += 1
 
-            labels[i] = selected
-
+            labels[i] = selected_label
+        # sys.exit(0)
         return labels
 
+        # return labels
+
     def _update_memory_bank(self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]):
-        """
-        Updates the memory bank with newly assigned or updated Gaussians per label.
+        device = self.model.device if torch.cuda.is_available() else "cpu"
+        N = int(self.model.num_points)
 
-        The memory bank stores sets of Gaussian indices for each unique label. When updating,
-        new labels get a new set entry, while existing labels have their sets updated with 
-        the new Gaussian indices.
+        if self._memory_bank_bit is None and torch.cuda.is_available():
+            # Initialize GPU bit bank if needed
+            self._memory_bank_bit = []
 
-        Args:
-            labels (torch.Tensor): Tensor of label assignments for each mask
-            mask_gaussians (list[torch.Tensor]): List of tensors containing Gaussian indices 
-                                                belonging to each mask
+        for label, g in zip(labels.tolist(), mask_gaussians):
+            g_tensor = g.to(device) if isinstance(g, torch.Tensor) else torch.tensor(list(g), device=device)
+            bitmask = indices_to_bitmask(g_tensor, N, device=device) if self._memory_bank_bit is not None else None
 
-        Note:
-            The memory bank (_memory_bank) is stored as a list of sets for efficient 
-            uniqueness checking and updates.
-        """
-        for label, gaussians in zip(labels.tolist(), mask_gaussians):
-            gaussians_set = set(gaussians.tolist())
+            if self._memory_bank_bit is not None:
+                if label >= len(self._memory_bank_bit):
+                    self._memory_bank_bit.append(bitmask)
+                else:
+                    self._memory_bank_bit[label] |= bitmask
+
+            # Always update CPU memory bank
             if label >= len(self._memory_bank):
-                self._memory_bank.append(gaussians_set)
+                self._memory_bank.append(set(g_tensor.tolist()))
             else:
-                self._memory_bank[label].update(gaussians_set)
+                if not isinstance(self._memory_bank[label], set):
+                    self._memory_bank[label] = set(self._memory_bank[label].tolist())
+                self._memory_bank[label].update(g_tensor.tolist())
+
+    # def _assign_labels(self, mask_gaussians: list[torch.Tensor]) -> torch.Tensor:
+    #     """
+    #     Assigns a label to each mask's Gaussian set.
+    #     If a mask doesn't sufficiently overlap with any existing label group (via IOCUR),
+    #     it is assigned a new label, and total_masks is incremented.
+
+    #     Args:
+    #         mask_gaussians (list[Tensor]): Each tensor contains the indices of Gaussians
+    #         associated with a single mask in the current view.
+
+    #     Returns:
+    #         Tensor: A tensor of shape (num_masks,) containing the assigned label for each mask.
+    #     """
+    #     num_masks = len(mask_gaussians)
+
+    #     # First view: assign each mask a unique label
+    #     if self.total_masks == 0:
+    #         labels = torch.arange(num_masks, dtype=torch.long)
+    #         self.total_masks = num_masks
+    #         return labels
+
+    #     labels = torch.zeros(num_masks, dtype=torch.long)
+
+    #     for i, gaussians in enumerate(mask_gaussians):
+    #         n_gaussians = len(gaussians)
+    #         overlaps = []
+
+    #         # Compare against each label group in memory_bank
+    #         for bank in self.memory_bank:
+    #             union = torch.unique(torch.cat([bank, gaussians]))
+    #             intersection = len(bank) + n_gaussians - len(union)
+
+    #             # IOCUR: intersection / (intersection + current mask size)
+    #             io_cur = intersection / (n_gaussians + intersection + 1e-8)
+    #             overlaps.append(io_cur)
+
+    #         overlaps = torch.tensor(overlaps, dtype=torch.float32)
+    #         selected = torch.argmax(overlaps)
+
+    #         # If no label matches above the threshold → assign new label
+    #         if overlaps[selected] < self.config.iou_threshold:
+    #             selected = self.total_masks
+    #             self.total_masks += 1
+
+    #         labels[i] = selected
+
+    #     return labels
+
+    # def _update_memory_bank(self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]):
+    #     """
+    #     Updates the memory bank with newly assigned or updated Gaussians per label.
+
+    #     The memory bank stores sets of Gaussian indices for each unique label. When updating,
+    #     new labels get a new set entry, while existing labels have their sets updated with 
+    #     the new Gaussian indices.
+
+    #     Args:
+    #         labels (torch.Tensor): Tensor of label assignments for each mask
+    #         mask_gaussians (list[torch.Tensor]): List of tensors containing Gaussian indices 
+    #                                             belonging to each mask
+
+    #     Note:
+    #         The memory bank (_memory_bank) is stored as a list of sets for efficient 
+    #         uniqueness checking and updates.
+    #     """
+    #     for label, gaussians in zip(labels.tolist(), mask_gaussians):
+    #         gaussians_set = set(gaussians.tolist())
+    #         if label >= len(self._memory_bank):
+    #             self._memory_bank.append(gaussians_set)
+    #         else:
+    #             self._memory_bank[label].update(gaussians_set)
 
     # ------------------ Saving / Loading ------------------
 
-    def save_memory_bank(self):
-        """
-        Save memory bank to disk using pickle.
-        """
-        path = self.output_dir / "memory_bank.pkl"
+    # def save_memory_bank(self):
+    #     """
+    #     Save memory bank to disk using pickle.
+    #     """
+    #     path = self.output_dir / "memory_bank.pkl"
 
-        with open(path, "wb") as f:
-            pickle.dump(self._memory_bank, f)
+    #     with open(path, "wb") as f:
+    #         pickle.dump(self._memory_bank, f)
 
-    def load_memory_bank(self):
-        """
-        Load memory bank from disk using pickle.
-        """
-        path = self.output_dir / "memory_bank.pkl"
+    # def load_memory_bank(self):
+    #     """
+    #     Load memory bank from disk using pickle.
+    #     """
+    #     path = self.output_dir / "memory_bank.pkl"
 
-        if not path.exists():
-            print(f"Memory bank not found at {path}, initializing empty memory bank")
-            return [], 0
+    #     if not path.exists():
+    #         print(f"Memory bank not found at {path}, initializing empty memory bank")
+    #         return [], 0
 
-        with open(path, "rb") as f:
-            memory_bank = pickle.load(f)
+    #     with open(path, "rb") as f:
+    #         memory_bank = pickle.load(f)
         
-        print (f"Memory bank loaded from {path} with {len(memory_bank)} masks")    
-        return memory_bank, len(memory_bank)
+    #     print (f"Memory bank loaded from {path} with {len(memory_bank)} masks")    
+    #     return memory_bank, len(memory_bank)
     
     #########################################################
     ############## Gaussian selection #######################
@@ -477,7 +712,6 @@ class GroupingClassifier(pl.LightningModule):
         meta: Dict[str, torch.Tensor],
         composite_mask: torch.Tensor,
         patch_mask: torch.Tensor,
-        front_percentage: float = 0.5,
     ):
         """
         JIT-compiled version using torch.compile (PyTorch 2.0+).
@@ -486,10 +720,19 @@ class GroupingClassifier(pl.LightningModule):
         """
 
         proj_results = project_gaussians(meta)
+        
+        # Get device from proj_results (should be GPU device)
+        device = proj_results["proj_flattened"].device
 
         # Prepare masks = Decimate the composite mask into individual masks
         binary_masks = mask_id_to_binary_mask(composite_mask)
-        flattened_masks = torch.tensor(binary_masks).flatten(start_dim=1)  # (N, H*W)
+        flattened_masks = torch.tensor(binary_masks, device=device).flatten(start_dim=1)  # (N, H*W)
+        
+        # Ensure patch_mask is on the same device
+        if isinstance(patch_mask, torch.Tensor):
+            patch_mask = patch_mask.to(device)
+        else:
+            patch_mask = torch.tensor(patch_mask, device=device)
 
         # Collect front gaussians
         front_gaussians = []
@@ -501,7 +744,7 @@ class GroupingClassifier(pl.LightningModule):
                 proj_results,
                 mask,
                 patch_mask,
-                front_percentage=front_percentage,
+                front_percentage=self.config.front_percentage,
                 debug=self.config.debug
             )
 
@@ -639,16 +882,17 @@ class GroupingClassifier(pl.LightningModule):
         )
 
         # Rasterize the image using the fused features
-        render, _, _, _, _, _ = self.model._render(
-            means=self.model.means,
-            quats=self.model.quats,
-            scales=self.model.scales,
-            opacities=self.model.opacities,
-            colors=fused_features,
-            render_mode="RGB",
-            sh_degree_to_use=sh_degree_to_use,
-            camera_params=camera_params,
-        )
+        with torch.set_grad_enabled(True):
+            render, _, _, _, _, _ = self.model._render(
+                means=self.model.means,
+                quats=self.model.quats,
+                scales=self.model.scales,
+                opacities=self.model.opacities,
+                colors=fused_features,
+                render_mode="RGB",
+                sh_degree_to_use=sh_degree_to_use,
+                camera_params=camera_params,
+            )
 
         preds = render[:, ..., 3:3 + self.config.identity_dim]
 
@@ -660,6 +904,8 @@ class GroupingClassifier(pl.LightningModule):
 
     def lift_segmentation(
         self,
+        logger: Optional[pl.loggers.Logger] = None,
+        ckpt_path: Optional[str] = None,
     ):
         """
         Train the classifier and identity embeddings with checkpointing.
@@ -679,6 +925,7 @@ class GroupingClassifier(pl.LightningModule):
             filename="grouping-classifier",
             dirpath=self.checkpoint_dir,
             every_n_train_steps=self.config.save_every_n_steps,  # optional: save every 100 steps
+            save_last=True,
         )
 
         # Create Trainer
@@ -688,14 +935,15 @@ class GroupingClassifier(pl.LightningModule):
             precision=self.config.precision,
             default_root_dir=self.checkpoint_dir,
             callbacks=[checkpoint_callback],
+            logger=logger,
         )
 
         # Resume if checkpoint exists
-        ckpt_path = None
         last_ckpt = self.checkpoint_dir / "last.ckpt"
-        if last_ckpt.exists():
+        if last_ckpt.exists() and ckpt_path is None:
             ckpt_path = str(last_ckpt)
 
+        print (ckpt_path)
         # Start training
         trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt_path)
 
@@ -703,28 +951,35 @@ class GroupingClassifier(pl.LightningModule):
 
     def setup(self, stage: str = None):
         """
-        Initialize trainable parameters and classifier. 
-
-        stage (str) is a required argument for pytorch lightning
+        Initialize trainable parameters and classifier.
+        Only creates them if they are not already present (e.g., after loading a checkpoint).
         """
-        # Load Splatfacto model (assumes pipeline already loaded)
+        # Load Splatfacto model if needed
         if not hasattr(self, "model"):
             self.load_pipeline()
 
-        # Identity embeddings (trainable)
-        n_gaussians = self.model.num_points
-        identities = torch.nn.Parameter(
-            torch.zeros((n_gaussians, self.config.identity_dim), device=self.model.device)
-        )
-        self.params = torch.nn.ParameterDict({"identities": identities})
+        # Identity embeddings
+        if not hasattr(self, "params"):
+            n_gaussians = self.model.num_points
 
-        # Classifier (trainable)
-        self.classifier = torch.nn.Conv2d(
-            self.config.identity_dim, self.total_masks, kernel_size=1
-        ).to(self.model.device)
+            # Initialize identities randomly and pass through RGB2SH
+            identities = torch.nn.Parameter(
+                # self.model.distill_features.clone()
+                torch.rand((n_gaussians, self.config.identity_dim), device=self.model.device) # don't think i need to pass through RGB2SH here
+            )
+
+            # Store identities
+            self.params = torch.nn.ParameterDict({"identities": identities})
+
+        # Classifier
+        if not hasattr(self, "classifier"):
+            self.classifier = torch.nn.Conv2d(
+                self.config.identity_dim, self.total_masks, kernel_size=1
+            ).to(self.model.device)
 
         # Loss function
-        self.loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
+        if not hasattr(self, "loss_fn"):
+            self.loss_fn = torch.nn.CrossEntropyLoss(reduction="none") #, ignore_index=0)
 
         # Freeze Splatfacto base model
         for p in self.model.parameters():
@@ -778,6 +1033,21 @@ class GroupingClassifier(pl.LightningModule):
         loss = self.loss_fn(logits.unsqueeze(0), seg.unsqueeze(0)).mean()
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
+        # Log ground truth and predicted segmentation
+        if batch_idx % 100 == 0:  # log every 100 batches
+            # Assuming seg and logits are HxW or BxHxW
+            pred = torch.argmax(logits, dim=0)  # predicted class per pixel
+            gt_img = seg.detach().cpu().numpy()
+            pred_img = pred.detach().cpu().numpy()
+
+            # Stack side by side
+            combined = np.concatenate([gt_img, pred_img], axis=1)  # H x (2*W)
+            combined = (combined * 255).astype(np.uint8)  # scale if needed
+
+            self.logger.experiment.log({
+                "segmentation_comparison": [wandb.Image(combined, caption=f"Batch {batch_idx}")]
+            })
+
         return loss
 
     def configure_optimizers(self):
@@ -801,7 +1071,7 @@ class GroupingClassifier(pl.LightningModule):
 #     """
 #     old_dm_config = config.pipeline.datamanager
 
-#     # Convert to dict if it’s a dataclass, or copy if it’s already a dict
+#     # Convert to dict if it's a dataclass, or copy if it's already a dict
 #     if is_dataclass(old_dm_config):
 #         old_dict = {f.name: getattr(old_dm_config, f.name) for f in fields(old_dm_config)}
 #     elif isinstance(old_dm_config, dict):

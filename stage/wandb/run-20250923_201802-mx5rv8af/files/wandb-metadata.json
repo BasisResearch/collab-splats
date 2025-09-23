@@ -1,0 +1,40 @@
+{
+  "os":  "Linux-5.15.0-94-generic-x86_64-with-glibc2.35",
+  "python":  "CPython 3.10.18",
+  "startedAt":  "2025-09-23T20:18:02.922234Z",
+  "program":  "/workspace/collab-splats/stage/test_grouping.ipynb",
+  "codePath":  "stage/test_grouping.ipynb",
+  "codePathLocal":  "test_grouping.ipynb",
+  "git":  {
+    "remote":  "https://github.com/BasisResearch/collab-splats.git",
+    "commit":  "90b100cc2b7530a46ddf0def5fda42c8a0d26c3f"
+  },
+  "email":  "thomas.l.botch@dartmouth.edu",
+  "root":  ".",
+  "host":  "bb5f29709d66",
+  "executable":  "/opt/conda/envs/nerfstudio/bin/python",
+  "cpu_count":  48,
+  "cpu_count_logical":  96,
+  "gpu":  "NVIDIA RTX A5000",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "107374182400",
+      "used":  "1431564288"
+    }
+  },
+  "memory":  {
+    "total":  "540650168320"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA RTX A5000",
+      "memoryTotal":  "25757220864",
+      "cudaCores":  8192,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-b5e760d3-3742-ee1b-ec3f-c7b91564566d"
+    }
+  ],
+  "cudaVersion":  "12.7",
+  "writerId":  "c7w5claqpmtajs9xfwiaj6uqrlna9ha9"
+}

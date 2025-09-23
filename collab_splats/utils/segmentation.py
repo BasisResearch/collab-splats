@@ -4,6 +4,7 @@ import numpy as np
 import math
 from mobile_sam import SamAutomaticMaskGenerator
 import logging
+from typing import Optional
 
 logging.getLogger("ultralytics").setLevel(logging.WARNING)
 
@@ -431,3 +432,28 @@ def aggregate_masked_features(
     )[0]
 
     return aggregated_feat_map
+
+########################################################
+############### Visualization ##########################
+########################################################
+
+def get_n_different_colors(n: int) -> np.ndarray:
+    np.random.seed(0)
+    return np.random.randint(1, 256, (n, 3), dtype=np.uint8)
+
+def visualize_mask(mask: np.ndarray, colors: Optional[np.ndarray] = None) -> np.ndarray:
+    """
+    Visualize a mask where each unique mask ID gets a unique color.
+    Background (0) stays black.
+    """
+    color_mask = np.zeros((*mask.shape, 3), dtype=np.uint8)
+    unique_ids = np.unique(mask)
+    unique_ids = unique_ids[unique_ids != 0]  # ignore background
+
+    if colors is None:
+        colors = get_n_different_colors(len(unique_ids))
+
+    for i, mask_id in enumerate(unique_ids):
+        color_mask[mask == mask_id] = colors[i]
+
+    return color_mask

@@ -79,6 +79,8 @@ from collab_splats.utils.segmentation import (
     create_patch_mask,
     convert_matched_mask,
     mask_id_to_binary_mask,
+    visualize_mask,
+    get_n_different_colors,
 )
 
 from collab_splats.utils import project_gaussians, create_fused_features, get_camera_parameters
@@ -131,7 +133,8 @@ class GroupingConfig:
     accelerator: str = "gpu"
     precision: int = 16 # 16 for mixed precision, 32 for full precision
     identity_dim: int = 13
-    lr: float = 5e-4
+    lr_classifier: float = 5e-4
+    lr_embeddings: float = 2.5e-3
 
 class GroupingClassifier(pl.LightningModule):
     def __init__(self, load_config: str, config: GroupingConfig):
@@ -212,9 +215,9 @@ class GroupingClassifier(pl.LightningModule):
             memory_bank = []
 
         # Determine device for bit-packed memory bank
-        if hasattr(self, "model") and torch.cuda.is_available():
-            device = self.model.device
-            N = int(self.model.num_points)
+        if hasattr(self, "pipeline") and torch.cuda.is_available():
+            device = self.pipeline.model.device
+            N = int(self.pipeline.model.num_points)
             self._memory_bank_bit = [
                 indices_to_bitmask(torch.tensor(list(g), device=device), N, device=device)
                 for g in memory_bank
@@ -238,12 +241,12 @@ class GroupingClassifier(pl.LightningModule):
         """Load NeRF pipeline only if not already loaded."""
 
         # Load pipeline and model if not present
-        if not hasattr(self, "pipeline") or not hasattr(self, "model"):
+        if not hasattr(self, "pipeline"): #or not hasattr(self, "pipeline.model"):
             print("Loading NeRF pipeline and model...")
             _, pipeline, _, _ = eval_setup(self.load_config)
             assert isinstance(pipeline.model, SplatfactoModel)
             self.pipeline = pipeline
-            self.model: SplatfactoModel = pipeline.model
+            # self.model = pipeline.model
 
             self.pipeline.datamanager.config.cache_images = "disk"
             self.pipeline.datamanager.setup_train()
@@ -258,7 +261,7 @@ class GroupingClassifier(pl.LightningModule):
             self.segmentation = Segmentation(
                 backend=self.config.segmentation_backend,
                 strategy=self.config.segmentation_strategy,
-                device=self.model.device
+                device=self.pipeline.model.device
             )
         else:
             print("Segmentation module already loaded. Skipping.")
@@ -439,7 +442,7 @@ class GroupingClassifier(pl.LightningModule):
                     continue
 
                 # Get model outputs
-                _ = self.model.get_outputs(camera=camera)
+                _ = self.pipeline.model.get_outputs(camera=camera)
 
                 # Create patch mask
                 patch_mask = create_patch_mask(image)
@@ -447,7 +450,7 @@ class GroupingClassifier(pl.LightningModule):
                 # Select front gaussians for each mask and assign labels
                 start_time = time.time()
                 mask_gaussians = self.select_front_gaussians(
-                    meta=self.model.info,
+                    meta=self.pipeline.model.info,
                     composite_mask=composite_mask,
                     patch_mask=patch_mask,
                 )
@@ -483,8 +486,8 @@ class GroupingClassifier(pl.LightningModule):
                 self.save_memory_bank()
 
     def _assign_labels(self, mask_gaussians: list[torch.Tensor]) -> torch.Tensor:
-        device = self.model.device if torch.cuda.is_available() else "cpu"
-        N = int(self.model.num_points)
+        device = self.pipeline.model.device if torch.cuda.is_available() else "cpu"
+        N = int(self.pipeline.model.num_points)
         num_masks = len(mask_gaussians)
 
         if self.total_masks == 0:
@@ -579,8 +582,8 @@ class GroupingClassifier(pl.LightningModule):
         # return labels
 
     def _update_memory_bank(self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]):
-        device = self.model.device if torch.cuda.is_available() else "cpu"
-        N = int(self.model.num_points)
+        device = self.pipeline.model.device if torch.cuda.is_available() else "cpu"
+        N = int(self.pipeline.model.num_points)
 
         if self._memory_bank_bit is None and torch.cuda.is_available():
             # Initialize GPU bit bank if needed
@@ -845,58 +848,69 @@ class GroupingClassifier(pl.LightningModule):
         """
 
         # Link the model locally for convenience
-        model = self.model
+        # model = self.pipeline.model
 
         if not isinstance(camera, Cameras):
             print("Called _render_identities with not a camera")
             return {}
 
         # Prep the camera for rasterization --> get parameters
-        camera_scale_fac = model._get_downscale_factor()
+        camera_scale_fac = self.pipeline.model._get_downscale_factor()
         camera.rescale_output_resolution(1 / camera_scale_fac)
 
         # Get camera parameters for rendering (K, viewmats, etc.)
-        camera_params = get_camera_parameters(camera, device=model.device)
+        camera_params = get_camera_parameters(camera, device=self.pipeline.model.device)
 
         # Get colors
-        features_dc = model.features_dc
-        features_rest = model.features_rest
+        features_dc = self.pipeline.model.features_dc
+        features_rest = self.pipeline.model.features_rest
         colors = torch.cat((features_dc[:, None, :], features_rest), dim=1)
         
         # We need a hack to get features into model gsplat for rendering
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
-        if model.config.sh_degree > 0:
-            sh_degree_to_use = min(model.step // model.config.sh_degree_interval, model.config.sh_degree)
+        if self.pipeline.model.config.sh_degree > 0:
+            sh_degree_to_use = min(self.pipeline.model.step // self.pipeline.model.config.sh_degree_interval, self.pipeline.model.config.sh_degree)
         else:
             colors = torch.sigmoid(colors).squeeze(1)  # [N, 1, 3] -> [N, 3]
             sh_degree_to_use = None
         
-        # Get the colors to pass into the fused features function
-        fused_features = create_fused_features(
-            means=model.means,
-            colors=colors,
-            features=self.identities, # Identities
-            camera_params=camera_params,
-            sh_degree_to_use=sh_degree_to_use,
-        )
+        # # Get the colors to pass into the fused features function
+        # fused_features = create_fused_features(
+        #     means=model.means,
+        #     colors=colors,
+        #     features=self.identities, # Identities
+        #     camera_params=camera_params,
+        #     sh_degree_to_use=sh_degree_to_use,
+        # )
 
         # Rasterize the image using the fused features
         with torch.set_grad_enabled(True):
-            render, _, _, _, _, _ = self.model._render(
-                means=self.model.means,
-                quats=self.model.quats,
-                scales=self.model.scales,
-                opacities=self.model.opacities,
-                colors=fused_features,
+            render, alpha, _, _, _, _ = self.pipeline.model._render(
+                means=self.pipeline.model.means,
+                quats=self.pipeline.model.quats,
+                scales=self.pipeline.model.scales,
+                opacities=self.pipeline.model.opacities,
+                # colors=fused_features,
+                colors=self.identities,
                 render_mode="RGB",
                 sh_degree_to_use=sh_degree_to_use,
                 camera_params=camera_params,
             )
 
-        preds = render[:, ..., 3:3 + self.config.identity_dim]
+        # # Grab RGB
+        # background = self.pipeline.model._get_background_color()
+        # rgb = render[:, ..., :3] + (1 - alpha) * background
+        # rgb = torch.clamp(rgb, 0.0, 1.0)
 
-        return preds.squeeze(0)
+        # Grab identity embeddings
+        # preds = render[:, ..., 3:3 + self.config.identity_dim]
+        preds = render[:, ..., :self.config.identity_dim]
+
+        return {
+            # "rgb": rgb.squeeze(0),
+            "identities": preds.squeeze(0),
+        }
 
     #########################################################
     ################# Model training ########################
@@ -906,6 +920,7 @@ class GroupingClassifier(pl.LightningModule):
         self,
         logger: Optional[pl.loggers.Logger] = None,
         ckpt_path: Optional[str] = None,
+        use_simulated: bool = False,
     ):
         """
         Train the classifier and identity embeddings with checkpointing.
@@ -915,6 +930,7 @@ class GroupingClassifier(pl.LightningModule):
         datamodule = GroupingDataModule(
             datamanager=self.pipeline.datamanager,
             mask_dir=self.associated_mask_dir,
+            use_simulated=use_simulated,
         )
 
         # ModelCheckpoint callback
@@ -955,34 +971,36 @@ class GroupingClassifier(pl.LightningModule):
         Only creates them if they are not already present (e.g., after loading a checkpoint).
         """
         # Load Splatfacto model if needed
-        if not hasattr(self, "model"):
+        if not hasattr(self, "pipeline"): # or not hasattr(self, "pipeline.model"):
             self.load_pipeline()
 
         # Identity embeddings
         if not hasattr(self, "params"):
-            n_gaussians = self.model.num_points
+            n_gaussians = self.pipeline.model.num_points
 
             # Initialize identities randomly and pass through RGB2SH
             identities = torch.nn.Parameter(
                 # self.model.distill_features.clone()
-                torch.rand((n_gaussians, self.config.identity_dim), device=self.model.device) # don't think i need to pass through RGB2SH here
+                torch.randn((n_gaussians, self.config.identity_dim), device=self.pipeline.model.device) # don't think i need to pass through RGB2SH here
             )
 
             # Store identities
             self.params = torch.nn.ParameterDict({"identities": identities})
 
+            self.colors = get_n_different_colors(self.total_masks)
+
         # Classifier
         if not hasattr(self, "classifier"):
             self.classifier = torch.nn.Conv2d(
                 self.config.identity_dim, self.total_masks, kernel_size=1
-            ).to(self.model.device)
+            ).to(self.pipeline.model.device)
 
         # Loss function
         if not hasattr(self, "loss_fn"):
             self.loss_fn = torch.nn.CrossEntropyLoss(reduction="none") #, ignore_index=0)
 
-        # Freeze Splatfacto base model
-        for p in self.model.parameters():
+        # Freeze Splatfacto base model --> change to only gaussian parameter freezing?
+        for p in self.pipeline.model.gauss_params.parameters():
             p.requires_grad = False
 
     def forward(self, camera: Cameras) -> torch.Tensor:
@@ -991,9 +1009,16 @@ class GroupingClassifier(pl.LightningModule):
         viewpoint and creates identity embeddings. Then classifies
         the rasterized identities.
         """
-        identities = self._render_identities(camera)
+        outputs = self._render_identities(camera)
+        
+        # Grab identity embeddings
+        identities = outputs["identities"]
         identities = identities.permute(2, 0, 1)  # [H, W, C] -> [C, H, W]
-        return self.classifier(identities)
+
+        outputs["logits"] = self.classifier(identities)
+
+        # Classify the identities
+        return outputs
 
     @torch.no_grad()
     def per_gaussian_forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -1023,14 +1048,22 @@ class GroupingClassifier(pl.LightningModule):
         camera, data = batch
 
         # Put on same device as model (required for rendering)
-        camera = camera.to(self.model.device)
-        seg = data["segmentation"].to(self.model.device)
+        camera = camera.to(self.pipeline.model.device)
+        seg = data["segmentation"].to(self.pipeline.model.device)
 
         # Forward pass
-        logits = self(camera)
-
+        outputs = self(camera)
+        logits = outputs["logits"]
+        
         # Compute loss
-        loss = self.loss_fn(logits.unsqueeze(0), seg.unsqueeze(0)).mean()
+        loss = self.loss_fn(
+            logits.unsqueeze(0), 
+            seg.unsqueeze(0)
+        ).mean()
+
+        # Normalize by number of classes
+        loss = loss / torch.log(torch.tensor(self.total_masks))
+
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
         # Log ground truth and predicted segmentation
@@ -1039,9 +1072,14 @@ class GroupingClassifier(pl.LightningModule):
             pred = torch.argmax(logits, dim=0)  # predicted class per pixel
             gt_img = seg.detach().cpu().numpy()
             pred_img = pred.detach().cpu().numpy()
+            # rgb_img = outputs["rgb"].detach().cpu().numpy()
 
-            # Stack side by side
-            combined = np.concatenate([gt_img, pred_img], axis=1)  # H x (2*W)
+            # Visualize the masks
+            gt_img = visualize_mask(gt_img, colors=self.colors)
+            pred_img = visualize_mask(pred_img, colors=self.colors)
+
+            # Stack side by side: RGB, GT, Pred
+            combined = np.concatenate([gt_img, pred_img], axis=1)  # H x (3*W)
             combined = (combined * 255).astype(np.uint8)  # scale if needed
 
             self.logger.experiment.log({
@@ -1054,8 +1092,15 @@ class GroupingClassifier(pl.LightningModule):
         """
         Configures the optimizer to train the classifier and identity embeddings.
         """
-        params = list(self.classifier.parameters()) + list(self.params.values())
-        return torch.optim.Adam(params, lr=self.config.lr)
+        # params = list(self.classifier.parameters()) + list(self.params.values())
+        # return torch.optim.Adam(params, lr=self.config.lr)
+
+        optimizer = torch.optim.Adam([
+            {'params': self.classifier.parameters(), 'lr': self.config.lr_classifier},
+            {'params': self.params.values(), 'lr': self.config.lr_embeddings}  # Higher learning rate for embeddings
+        ])
+
+        return optimizer
 
 # from dataclasses import fields, is_dataclass
 
@@ -1100,33 +1145,55 @@ class GroupingDataModule(pl.LightningDataModule):
     """Lightning DataModule wrapping a Nerfstudio DataManager and associated masks."""
 
     def __init__(self, datamanager, mask_dir, device="cpu",
-                 train_num_workers=0, val_num_workers=0):
+                 train_num_workers=0, val_num_workers=0, use_simulated=False):
         super().__init__()
         self.datamanager = datamanager
         self.mask_dir = Path(mask_dir)
         self.device = device
         self.train_num_workers = train_num_workers
         self.val_num_workers = val_num_workers
+        self.use_simulated = use_simulated # for testing
+
+    def _create_simulated_segmentation(self, image_idx: int, h: int = 256, w: int = 256) -> torch.Tensor:
+        """Create simple synthetic segmentation patterns for testing."""
+        # pattern_type = image_idx % 3
+        
+        # if pattern_type == 0:
+        # Horizontal stripes (3 classes)
+        segmentation = torch.arange(h).unsqueeze(1).repeat(1, w) // (h // 10)
+        # elif pattern_type == 1:
+        #     # Vertical stripes
+        #     segmentation = torch.arange(w).unsqueeze(0).repeat(h, 1) // (w // 3)
+        # else:
+        # Simple center vs border
+        # cy, cx = h // 2, w // 2
+        # y, x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing='ij')
+        # dist = ((y - cy) ** 2 + (x - cx) ** 2) ** 0.5
+        # segmentation = (dist > min(h, w) // 4).long()
+            
+        return segmentation.long()  # Ensure 3 classes: 0, 1, 2
 
     def _load_segmentation_processor(self, dataset, camera, data: Dict) -> Tuple:
         """Load and attach a segmentation mask for a given camera view."""
-        # Mask filename matches the source image filename
-        image_name = dataset.image_filenames[data["image_idx"]].name
-        mask_path = self.mask_dir / image_name
+        if self.use_simulated:
+            segmentation = self._create_simulated_segmentation(
+                data["image_idx"], 
+                h=data['image'].shape[0], 
+                w=data['image'].shape[1]
+            )
+        else:
+            # Original mask loading code
+            image_name = dataset.image_filenames[data["image_idx"]].name
+            mask_path = self.mask_dir / image_name
 
-        if not mask_path.exists():
-            raise FileNotFoundError(f"Mask not found: {mask_path}")
+            if not mask_path.exists():
+                raise FileNotFoundError(f"Mask not found: {mask_path}")
 
-        # Load mask as integers
-        segmentation = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
-        segmentation = segmentation.astype(np.int32)
-        
-        # Put on same device as camera (which is where the logits come from)
-        segmentation = torch.from_numpy(segmentation)
-        segmentation = segmentation.long() # set as long tensor
+            segmentation = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+            segmentation = segmentation.astype(np.int32)
+            segmentation = torch.from_numpy(segmentation).long()
         
         data["segmentation"] = segmentation
-        
         return camera, data
 
     def _create_dataloader(self, dataset, num_workers: int):

@@ -437,8 +437,7 @@ def aggregate_masked_features(
 ############### Visualization ##########################
 ########################################################
 
-def get_n_different_colors(n: int) -> np.ndarray:
-    np.random.seed(0)
+def get_n_different_colors(n: int, seed: int = 42) -> np.ndarray:
     return np.random.randint(1, 256, (n, 3), dtype=np.uint8)
 
 def visualize_mask(mask: np.ndarray, colors: Optional[np.ndarray] = None) -> np.ndarray:

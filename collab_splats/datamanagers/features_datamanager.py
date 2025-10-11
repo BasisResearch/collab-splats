@@ -95,19 +95,34 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             self.train_dataset.image_filenames + self.eval_dataset.image_filenames
         )
 
-        # Set up cache path
-        cache_dir = self.config.dataparser.data
-        cache_path = (
-            cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
-        )
+        # Determine cache directory from actual image locations instead of config
+        # This avoids issues when config.dataparser.data is empty Path() which resolves to CWD
+        if image_filenames:
+            # Get the common parent directory of all images
+            first_image = Path(image_filenames[0]).resolve()
+            cache_dir = first_image.parent
+            # Typically images are in a subdirectory like 'images', go up one level
+            if cache_dir.name in ['images', 'image', 'img', 'imgs']:
+                cache_dir = cache_dir.parent
+        else:
+            # Fallback to config if no images found
+            cache_dir = Path(self.config.dataparser.data).resolve()
+
+        cache_path = cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
+
+        # Normalize paths to absolute strings for consistent comparison
+        image_filenames_normalized = [str(Path(f).resolve()) for f in image_filenames]
 
         # Try loading from cache if enabled
         if self.config.enable_cache and cache_path.exists():
             cache_dict = torch.load(cache_path)
+            cached_filenames = cache_dict.get("image_filenames", [])
+            cached_filenames_normalized = [str(Path(f).resolve()) for f in cached_filenames]
 
-            if cache_dict.get("image_filenames") != image_filenames:
+            if cached_filenames_normalized != image_filenames_normalized:
                 CONSOLE.print("Image filenames have changed, cache invalidated...")
             else:
+                CONSOLE.print(f"Loading cached {self.config.main_features} features...")
                 return cache_dict["features_dict"]
         else:
             CONSOLE.print("Cache does not exist, extracting features...")
@@ -121,10 +136,10 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         # Cache features if enabled
         if self.config.enable_cache:
             cache_dict = {
-                "image_filenames": image_filenames,
+                "image_filenames": image_filenames_normalized,
                 "features_dict": features_dict,
             }
-            cache_dir.mkdir(exist_ok=True)
+            cache_dir.mkdir(exist_ok=True, parents=True)
             torch.save(cache_dict, cache_path)
             CONSOLE.print(
                 f"Saved {self.config.main_features} features to cache at {cache_path}"

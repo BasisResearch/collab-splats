@@ -15,6 +15,7 @@ dependencies = [
     "ftfy",
     "gdown",
     "matplotlib",
+    "seaborn",
     "numpy<2.0.0",
     "scipy==1.11.4", # Require to play nice w/ numpy
     "lightning",

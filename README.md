@@ -2,6 +2,13 @@
 
 Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
 
+### TLB --> TESTING CUML
+
+```
+conda install -c rapidsai -c nvidia -c conda-forge cuml=24.02 cupy cuda-version=11.8 numba
+
+```
+
 ## Installation
 
 ### Docker

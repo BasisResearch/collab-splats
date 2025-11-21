@@ -15,14 +15,14 @@ test_configs = {
     #     'file_path': '/workspace/fieldwork-data/birds/2024-05-19/SplatsSD/C0067.MP4',
     #     'frame_proportion': 0.25,
     # },
-    'birds_004': {
-        'file_path': '/workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4',
-        'frame_proportion': 0.25,
-    },
-    'birds_005': {
-        'file_path': '/workspace/fieldwork-data/birds/2024-06-01/SplatsSD/GH010164.MP4',
-        'frame_proportion': 0.1,
-    },
+    # 'birds_004': {
+    #     'file_path': '/workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4',
+    #     'frame_proportion': 0.25,
+    # },
+    # 'birds_005': {
+    #     'file_path': '/workspace/fieldwork-data/birds/2024-06-01/SplatsSD/GH010164.MP4',
+    #     'frame_proportion': 0.1,
+    # },
     # 'birds_006': {
     #     'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010097.MP4',
     #     'frame_proportion': 0.14,
@@ -35,10 +35,10 @@ test_configs = {
     #     'file_path': '/workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4',
     #     'frame_proportion': 0.25,
     # },
-    # 'rats_001': {
-    #     'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
-    #     'frame_proportion': 0.25,
-    # },
+    'rats_001': {
+        'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
+        'frame_proportion': 0.25,
+    },
 }
 
 METHODS = ['rade-features'] #'rade-gs'] #'feature-splatting',
@@ -81,6 +81,7 @@ if __name__ == "__main__":
                 'normals_name': "normals",
                 'features_name': "distill_features", 
                 'sdf_trunc': 0.03,
+                'k': 20,
                 'clean_repair': True,
                 'align_floor': True,
             }

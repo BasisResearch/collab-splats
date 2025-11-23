@@ -15,6 +15,7 @@ dependencies = [
     "ftfy",
     "gdown",
     "matplotlib",
+    "mergedeep",
     "numpy<2.0.0",
     "scipy==1.11.4", # Require to play nice w/ numpy
     "lightning",
@@ -33,6 +34,7 @@ dependencies = [
     "trame-vtk",
     "meshlib==3.0.6.229",
     "dotenv",
+    "pyyaml",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",

@@ -64,6 +64,11 @@ class Splatter:
         validated_config = self.validate_config(config)
         self.config: Dict[str, Any] = dict(validated_config)
 
+        # Optional pipeline configs (set by from_config_file)
+        self._preprocess_config: Optional[Dict[str, Any]] = None
+        self._training_config: Optional[Dict[str, Any]] = None
+        self._meshing_config: Optional[Dict[str, Any]] = None
+
     @classmethod
     def validate_config(cls, config: SplatterConfig) -> SplatterConfig:
         """Validate the splatter configuration.
@@ -129,6 +134,106 @@ class Splatter:
         print("Available methods:")
         print("  ", sorted(cls.SPLATTING_METHODS))
 
+    @classmethod
+    def from_config_file(
+        cls,
+        dataset: str,
+        config_dir: Union[str, Path],
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> "Splatter":
+        """
+        Create Splatter instance from YAML configuration.
+
+        Args:
+            dataset: Dataset config name (from datasets/ subdirectory)
+            config_dir: Directory containing config files (base.yaml and datasets/)
+            overrides: Optional runtime overrides
+
+        Returns:
+            Configured Splatter instance with pipeline configs attached
+
+        Example:
+            >>> splatter = Splatter.from_config_file(
+            ...     dataset='ants_001',
+            ...     config_dir='docs/splats/configs'
+            ... )
+            >>> splatter.run_pipeline(overwrite=True)
+        """
+        from collab_splats.wrapper.config import ConfigLoader
+
+        loader = ConfigLoader(config_dir)
+        config = loader.load(dataset=dataset, overrides=overrides)
+
+        # Store full config for later use
+        full_config = config.copy()
+
+        # Extract SplatterConfig fields
+        splatter_fields: Dict[str, Any] = {
+            "file_path": config["file_path"],
+            "method": config["method"],
+        }
+        # Add optional fields if present
+        if "frame_proportion" in config:
+            splatter_fields["frame_proportion"] = config["frame_proportion"]
+        if "min_frames" in config:
+            splatter_fields["min_frames"] = config["min_frames"]
+        if "output_path" in config:
+            splatter_fields["output_path"] = config["output_path"]
+
+        splatter_config: SplatterConfig = splatter_fields  # type: ignore
+        instance = cls(splatter_config)
+
+        # Attach configs for pipeline methods
+        instance._preprocess_config = full_config.get("preprocess", {})
+        instance._training_config = full_config.get("training", {})
+        instance._meshing_config = full_config.get("meshing", {})
+
+        return instance
+
+    def run_pipeline(self, overwrite: bool = False) -> None:
+        """
+        Run complete pipeline using stored configurations.
+
+        This method runs preprocessing, training, and meshing using
+        configurations loaded via from_config_file().
+
+        Args:
+            overwrite: Whether to overwrite existing outputs
+
+        Raises:
+            ValueError: If pipeline configs not found (must use from_config_file)
+        """
+        if self._preprocess_config is None:
+            raise ValueError(
+                "Pipeline configs not found. Use Splatter.from_config_file() "
+                "to load configurations before calling run_pipeline()"
+            )
+
+        print(f"\n{'=' * 80}")
+        print(f"Running {self.config['method']} pipeline")
+        print(f"File: {Path(self.config['file_path']).name}")
+        print(f"{'=' * 80}\n")
+
+        # Step 1: Preprocessing
+        print("[1/3] Preprocessing...")
+        self.preprocess(kwargs=self._preprocess_config, overwrite=overwrite)
+
+        # Step 2: Training
+        print("\n[2/3] Training...")
+        self.extract_features(kwargs=self._training_config, overwrite=overwrite)
+
+        # Step 3: Meshing
+        print("\n[3/3] Meshing...")
+        mesher_config = (self._meshing_config or {}).copy()
+        mesher_type = mesher_config.pop("mesher_type", "Open3DTSDFFusion")
+        self.mesh(
+            mesher_type=mesher_type, mesher_kwargs=mesher_config, overwrite=overwrite
+        )
+
+        print(f"\n{'=' * 80}")
+        print("Pipeline complete!")
+        print(f"{'=' * 80}\n")
+
     def preprocess(
         self,
         overwrite: bool = False,
@@ -142,7 +247,7 @@ class Splatter:
 
         Args:
             overwrite: If True, rerun preprocessing even if transforms.json exists
-            sfm_tool: Structure from motion tool to use ('colmap', 'hloc', 'vggt', 'fastvggt')
+            sfm_tool: Structure from motion tool to use ('colmap', 'hloc')
             kwargs: Additional arguments to pass to ns-process-data
         """
         file_path = self.config["file_path"]

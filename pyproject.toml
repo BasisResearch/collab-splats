@@ -32,17 +32,10 @@ dependencies = [
     "trame-vtk",
     "meshlib",
     "dotenv",
-    "hydra-core",
-    "omegaconf",
-    "onnxruntime",
-    "requests",
-    "trimesh",
-    "pydantic==2.10.6",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
-    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git",
-    "vggt @ git+https://github.com/facebookresearch/vggt.git"
+    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git"
 ]
 
 [project.optional-dependencies]

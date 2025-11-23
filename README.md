@@ -30,6 +30,34 @@ bash setup_nocuda.sh
 ```
 
 
+### Optional: FastVGGT for Accelerated Structure-from-Motion
+
+For ~4x faster structure-from-motion processing, you can optionally install FastVGGT by uncommenting the FastVGGT section in `setup.sh` before running it. Alternatively, if you've already run `setup.sh`, you can uncomment the FastVGGT section and run just that part:
+
+```bash
+# Edit setup.sh and uncomment the FastVGGT installation section (lines 11-64)
+# Then run the script
+bash setup.sh
+```
+
+This enables the `fastvggt` option in nerfstudio's `ns-process-data` tool:
+
+```bash
+# Standard VGGT (baseline)
+ns-process-data video --data video.mp4 --output-dir out --sfm-tool vggt
+
+# FastVGGT (~4x faster with default settings)
+ns-process-data video --data video.mp4 --output-dir out --sfm-tool fastvggt
+
+# FastVGGT with custom acceleration parameters
+ns-process-data video --data video.mp4 --output-dir out --sfm-tool fastvggt \
+  --vggt-merging 8 --vggt-merge-ratio 0.85
+```
+
+**Parameters:**
+- `--vggt-merging`: Token merging block index (0=disabled, 6=recommended, higher=more aggressive)
+- `--vggt-merge-ratio`: Merge ratio 0.0-1.0 (default 0.9, higher=faster but less accurate)
+
 #### Building the docker image
 
 The Docker image includes an example video file (`C0043.MP4`) downloaded from Google Cloud Storage during the build process. Follow these steps to build the image:

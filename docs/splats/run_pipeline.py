@@ -15,14 +15,14 @@ test_configs = {
     #     'file_path': '/workspace/fieldwork-data/birds/2024-05-19/SplatsSD/C0067.MP4',
     #     'frame_proportion': 0.25,
     # },
-    'birds_004': {
-        'file_path': '/workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4',
-        'frame_proportion': 0.25,
-    },
-    'birds_005': {
-        'file_path': '/workspace/fieldwork-data/birds/2024-06-01/SplatsSD/GH010164.MP4',
-        'frame_proportion': 0.1,
-    },
+    # 'birds_004': {
+    #     'file_path': '/workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4',
+    #     'frame_proportion': 0.25,
+    # },
+    # 'birds_005': {
+    #     'file_path': '/workspace/fieldwork-data/birds/2024-06-01/SplatsSD/GH010164.MP4',
+    #     'frame_proportion': 0.1,
+    # },
     # 'birds_006': {
     #     'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010097.MP4',
     #     'frame_proportion': 0.14,
@@ -39,6 +39,10 @@ test_configs = {
     #     'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
     #     'frame_proportion': 0.25,
     # },
+    'ants_001': {
+        'file_path': '/workspace/fieldwork-data/ants/2025-11-16/SplatsSD/GH010210.MP4',
+        'frame_proportion': 0.08,
+    },
 }
 
 METHODS = ['rade-features'] #'rade-gs'] #'feature-splatting',
@@ -68,16 +72,19 @@ if __name__ == "__main__":
             feature_kwargs = {
                 "pipeline.model.output-depth-during-training": True,
                 "pipeline.model.rasterize-mode": "antialiased",
-                "pipeline.model.use_scale_regularization": True,
+                "pipeline.model.use-scale-regularization": True,
+                "pipeline.model.random-scale": 1.0,
+                "pipeline.model.cull-alpha-thresh": 0.01,
+                "pipeline.model.collider-params": "near_plane 0.1 far_plane 1.0",
             }
 
-            splatter.extract_features(kwargs=feature_kwargs) #, overwrite=True)
+            splatter.extract_features(kwargs=feature_kwargs, overwrite=True)
 
             # Mesh the splatting model
             mesher_kwargs = {
                 'depth_name': "median_depth",
                 'depth_trunc': 1.0, # Should be between 1.0 and 3.0
-                'voxel_size': 0.005, 
+                'voxel_size': 0.01, 
                 'normals_name': "normals",
                 'features_name': "distill_features", 
                 'sdf_trunc': 0.03,

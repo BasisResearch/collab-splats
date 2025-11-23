@@ -244,7 +244,8 @@ def clean_repair_mesh(
 
     # Add the largest component
     combined = mm.Mesh()
-    combined.addPartByMask(mesh, components[largest_idx])
+    mesh_part = mm.MeshPart(mesh, components[largest_idx])
+    combined.addMeshPart(mesh_part)
 
     # Remove the largest component from list of idxs
     if not use_largest:
@@ -258,11 +259,13 @@ def clean_repair_mesh(
         ## THIS IS REALLY HACKY AND INEFFIENCT CHANGE SOMETIME
         for idx in tqdm(idxs, desc="Finding components within bounds"):
             _temp = mm.Mesh()
-            _temp.addPartByMask(mesh, components[idx])
+            temp_mesh_part = mm.MeshPart(mesh, components[idx])
+            _temp.addMeshPart(temp_mesh_part)
 
             if combined_bounds.contains(_temp.getBoundingBox()):
                 # print (f"Adding component {idx} to combined mesh")
-                combined.addPartByMask(mesh, components[idx])
+                mesh_part = mm.MeshPart(mesh, components[idx])
+                combined.addMeshPart(mesh_part)
             else:
                 n_removed += 1
 
@@ -1445,13 +1448,14 @@ class Open3DTSDFFusion(GSMeshExporter):
         print("Saving splats pointcloud")
         means = pipeline.model.means.detach().cpu().numpy()
         colors = pipeline.model.features_dc.detach().cpu().numpy()
+        normals = pipeline.model.normals.detach().cpu().numpy()
         colors = SH2RGB(colors)
 
         # Pass xyz to Open3D.o3d.geometry.PointCloud and visualize
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(means)
         pcd.colors = o3d.utility.Vector3dVector(colors)
-
+        pcd.normals = o3d.utility.Vector3dVector(normals)
         # Transform to specified coordinate system
         # pcd.transform(world_transform)
 

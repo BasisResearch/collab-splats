@@ -284,7 +284,9 @@ def _compute_avg_edge_length(mesh):
     return avg_edge_length / num_edges if num_edges > 0 else 0.0
 
 
-def _fill_holes_advanced(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits):
+def _fill_holes_advanced(
+    mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits
+):
     """Fill holes using advanced fillHoleNicely method (MeshLib 3.0.7+)."""
     print(f"Filling {len(hole_ids)} holes using advanced method...")
     for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
@@ -298,7 +300,7 @@ def _fill_holes_advanced(mesh, hole_ids, max_hole_size, avg_edge_length, max_edg
                 # Set metric (required in newer versions)
                 try:
                     settings.metric = mm.getUniversalMetric(mesh)
-                except:
+                except Exception:
                     pass
 
                 mm.fillHoleNicely(mesh, he, settings)
@@ -312,14 +314,16 @@ def _fill_holes_advanced(mesh, hole_ids, max_hole_size, avg_edge_length, max_edg
                 print(f"Warning: Fallback fill also failed: {e2}")
 
 
-def _fill_holes_standard(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits):
+def _fill_holes_standard(
+    mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits
+):
     """Fill holes using standard fillHole method with subdivision."""
     fill_params = mm.FillHoleParams()
 
     # Set metric if available (required in newer versions)
     try:
         fill_params.metric = mm.getUniversalMetric(mesh)
-    except:
+    except Exception:
         pass
 
     for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
@@ -341,7 +345,7 @@ def _fill_holes_standard(mesh, hole_ids, max_hole_size, avg_edge_length, max_edg
                 # Set smooth mode if available
                 try:
                     subdiv_settings.smoothMode = mm.SubdivideSettings.SmoothMode.Linear
-                except:
+                except (AttributeError, Exception):
                     pass
 
                 mm.subdivideMesh(mesh, subdiv_settings)
@@ -387,12 +391,18 @@ def clean_repair_mesh(
 
     if use_advanced_fill:
         try:
-            _fill_holes_advanced(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits)
+            _fill_holes_advanced(
+                mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits
+            )
         except Exception as e:
             print(f"Advanced fill failed ({e}), falling back to standard method...")
-            _fill_holes_standard(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits)
+            _fill_holes_standard(
+                mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits
+            )
     else:
-        _fill_holes_standard(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits)
+        _fill_holes_standard(
+            mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits
+        )
 
     return mesh
 

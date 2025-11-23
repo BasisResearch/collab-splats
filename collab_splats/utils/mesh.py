@@ -224,55 +224,49 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 ########################################################
 
 
-def clean_repair_mesh(
-    mesh_path: str,
-    max_hole_size: float = 3.0,
-    max_edge_splits: int = 10000,
-    use_largest: bool = False,  # if True, selects only the largest
-):
-    # Load mesh
-    mesh = mm.loadMesh(mesh_path)
+def _filter_mesh_components(mesh, use_largest=False):
+    """
+    Filter mesh to keep only largest component or components within bounds.
 
-    # Identify all connected components
+    Args:
+        mesh: Input mesh
+        use_largest: If True, keep only the largest component
+
+    Returns:
+        Filtered mesh and number of removed components
+    """
     components = mm.getAllComponents(mesh)
-
-    # Determine component sizes
     sizes = [mask.count() for mask in components]
-
-    # Always find largest cluster
     largest_idx = max(range(len(sizes)), key=lambda i: sizes[i])
 
-    # Add the largest component
+    # Start with largest component
     combined = mm.Mesh()
     mesh_part = mm.MeshPart(mesh, components[largest_idx])
     combined.addMeshPart(mesh_part)
 
-    # Remove the largest component from list of idxs
+    n_removed = 0
     if not use_largest:
         idxs = list(range(len(sizes)))
         idxs.remove(largest_idx)
-
-        # Add the remaining components if they fall within the bounds
         combined_bounds = combined.getBoundingBox()
-        n_removed = 0
 
-        ## THIS IS REALLY HACKY AND INEFFIENCT CHANGE SOMETIME
         for idx in tqdm(idxs, desc="Finding components within bounds"):
             _temp = mm.Mesh()
             temp_mesh_part = mm.MeshPart(mesh, components[idx])
             _temp.addMeshPart(temp_mesh_part)
 
             if combined_bounds.contains(_temp.getBoundingBox()):
-                # print (f"Adding component {idx} to combined mesh")
                 mesh_part = mm.MeshPart(mesh, components[idx])
                 combined.addMeshPart(mesh_part)
             else:
                 n_removed += 1
 
     print(f"Removed {n_removed} components")
-    mesh = combined
+    return combined, n_removed
 
-    # Compute average edge length
+
+def _compute_avg_edge_length(mesh):
+    """Compute average edge length of mesh."""
     avg_edge_length = 0.0
     num_edges = 0
 
@@ -286,28 +280,119 @@ def clean_repair_mesh(
             mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]
         ).length()
         num_edges += 1
-    avg_edge_length /= num_edges
+
+    return avg_edge_length / num_edges if num_edges > 0 else 0.0
+
+
+def _fill_holes_advanced(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits):
+    """Fill holes using advanced fillHoleNicely method (MeshLib 3.0.7+)."""
+    print(f"Filling {len(hole_ids)} holes using advanced method...")
+    for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
+        try:
+            perimeter = mesh.holePerimiter(he)
+            if perimeter < max_hole_size:
+                settings = mm.FillHoleNicelySettings()
+                settings.maxEdgeLen = avg_edge_length
+                settings.maxEdgeSplits = max_edge_splits
+
+                # Set metric (required in newer versions)
+                try:
+                    settings.metric = mm.getUniversalMetric(mesh)
+                except:
+                    pass
+
+                mm.fillHoleNicely(mesh, he, settings)
+            else:
+                print(f"Skipping hole {he} of perimeter {perimeter}")
+        except Exception as e:
+            print(f"Warning: Failed to fill hole {he}: {e}")
+            try:
+                mm.fillHoleTrivially(mesh, he)
+            except Exception as e2:
+                print(f"Warning: Fallback fill also failed: {e2}")
+
+
+def _fill_holes_standard(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits):
+    """Fill holes using standard fillHole method with subdivision."""
+    fill_params = mm.FillHoleParams()
+
+    # Set metric if available (required in newer versions)
+    try:
+        fill_params.metric = mm.getUniversalMetric(mesh)
+    except:
+        pass
+
+    for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
+        try:
+            perimeter = mesh.holePerimiter(he)
+            if perimeter < max_hole_size:
+                new_faces = mm.FaceBitSet()
+                fill_params.outNewFaces = new_faces
+                mm.fillHole(mesh, he, fill_params)
+
+                # Subdivide and smooth new faces
+                new_verts = mm.VertBitSet()
+                subdiv_settings = mm.SubdivideSettings()
+                subdiv_settings.maxEdgeLen = avg_edge_length
+                subdiv_settings.maxEdgeSplits = max_edge_splits
+                subdiv_settings.region = new_faces
+                subdiv_settings.newVerts = new_verts
+
+                # Set smooth mode if available
+                try:
+                    subdiv_settings.smoothMode = mm.SubdivideSettings.SmoothMode.Linear
+                except:
+                    pass
+
+                mm.subdivideMesh(mesh, subdiv_settings)
+                mm.positionVertsSmoothly(mesh, new_verts)
+            else:
+                print(f"Skipping hole {he} of perimeter {perimeter}")
+        except Exception as e:
+            print(f"Warning: Failed to fill hole {he}: {e}")
+
+
+def clean_repair_mesh(
+    mesh_path: str,
+    max_hole_size: float = 3.0,
+    max_edge_splits: int = 10000,
+    use_largest: bool = False,
+    use_advanced_fill: bool = True,
+):
+    """
+    Clean and repair mesh with component filtering and hole filling.
+    Compatible with MeshLib 3.0.6+ and 3.0.9+
+
+    Args:
+        mesh_path: Path to the mesh file
+        max_hole_size: Maximum hole perimeter to fill
+        max_edge_splits: Maximum number of edge splits for subdivision
+        use_largest: If True, only keep the largest component
+        use_advanced_fill: If True, use fillHoleNicely (recommended for MeshLib 3.0.7+)
+
+    Returns:
+        Cleaned and repaired mesh
+    """
+    # Load mesh
+    mesh = mm.loadMesh(mesh_path)
+
+    # Filter components
+    mesh, _ = _filter_mesh_components(mesh, use_largest)
+
+    # Compute average edge length for subdivision
+    avg_edge_length = _compute_avg_edge_length(mesh)
 
     # Fill holes
     hole_ids = mesh.topology.findHoleRepresentiveEdges()
-    fill_params = mm.FillHoleParams()
 
-    for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
-        if mesh.holePerimiter(he) < max_hole_size:
-            new_faces = mm.FaceBitSet()
-            fill_params.outNewFaces = new_faces
-            mm.fillHole(mesh, he, fill_params)
-
-            new_verts = mm.VertBitSet()
-            subdiv_settings = mm.SubdivideSettings()
-            subdiv_settings.maxEdgeLen = avg_edge_length
-            subdiv_settings.maxEdgeSplits = max_edge_splits
-            subdiv_settings.region = new_faces
-            subdiv_settings.newVerts = new_verts
-            mm.subdivideMesh(mesh, subdiv_settings)
-            mm.positionVertsSmoothly(mesh, new_verts)
-        else:
-            print(f"Skipping hole {he} of perimeter {mesh.holePerimiter(he)}")
+    if use_advanced_fill:
+        try:
+            _fill_holes_advanced(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits)
+        except Exception as e:
+            print(f"Advanced fill failed ({e}), falling back to standard method...")
+            _fill_holes_standard(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits)
+    else:
+        _fill_holes_standard(mesh, hole_ids, max_hole_size, avg_edge_length, max_edge_splits)
 
     return mesh
 

@@ -182,7 +182,7 @@ class Splatter:
             # If we have less than the minimum number of frames, as many as possible
             n_samples = n_frames if n_samples < self.config["min_frames"] else n_samples
 
-            print ("Number of frames to sample: ", n_samples)
+            print("Number of frames to sample: ", n_samples)
 
             # Create the command
             num_frames_target = f"--num-frames-target {n_samples}"
@@ -308,7 +308,11 @@ class Splatter:
         self.config["model_path"] = selected_run.as_posix()
         self.config["model_config_path"] = (selected_run / "config.yml").as_posix()
 
-    def load_model(self, config_path: Optional[Union[str, Path]] = None, test_mode: str = "inference"):
+    def load_model(
+        self,
+        config_path: Optional[Union[str, Path]] = None,
+        test_mode: str = "inference",
+    ):
         """
         Load a trained nerfstudio model.
 
@@ -335,7 +339,9 @@ class Splatter:
         print(f"Loading model from {config_path}")
 
         # Load using utility function
-        config, pipeline, checkpoint_path, step = load_checkpoint(config_path, test_mode=test_mode)
+        config, pipeline, checkpoint_path, step = load_checkpoint(
+            config_path, test_mode=test_mode
+        )
 
         # Store in instance
         self.model = pipeline.model

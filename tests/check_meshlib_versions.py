@@ -22,20 +22,20 @@ def print_version_info():
     print("=" * 70)
     try:
         # Try to get version
-        version = mm.__version__ if hasattr(mm, '__version__') else "Unknown"
+        version = mm.__version__ if hasattr(mm, "__version__") else "Unknown"
         print(f"Version: {version}")
-    except:
+    except Exception:
         print("Version: Could not determine")
 
     # Check for key features
     features = {
-        "fillHole": hasattr(mm, 'fillHole'),
-        "fillHoleNicely": hasattr(mm, 'fillHoleNicely'),
-        "fillHoleTrivially": hasattr(mm, 'fillHoleTrivially'),
-        "getAllComponents": hasattr(mm, 'getAllComponents'),
-        "subdivideMesh": hasattr(mm, 'subdivideMesh'),
-        "getUniversalMetric": hasattr(mm, 'getUniversalMetric'),
-        "FillHoleNicelySettings": hasattr(mm, 'FillHoleNicelySettings'),
+        "fillHole": hasattr(mm, "fillHole"),
+        "fillHoleNicely": hasattr(mm, "fillHoleNicely"),
+        "fillHoleTrivially": hasattr(mm, "fillHoleTrivially"),
+        "getAllComponents": hasattr(mm, "getAllComponents"),
+        "subdivideMesh": hasattr(mm, "subdivideMesh"),
+        "getUniversalMetric": hasattr(mm, "getUniversalMetric"),
+        "FillHoleNicelySettings": hasattr(mm, "FillHoleNicelySettings"),
     }
 
     print("\nAvailable Features:")
@@ -72,7 +72,9 @@ def test_basic_operations(mesh_path):
 
     try:
         mesh = mm.loadMesh(mesh_path)
-        print(f"✓ Load mesh: {len(mesh.points.vec)} vertices, {mesh.topology.faceSize()} faces")
+        print(
+            f"✓ Load mesh: {len(mesh.points.vec)} vertices, {mesh.topology.faceSize()} faces"
+        )
     except Exception as e:
         print(f"✗ Load mesh failed: {e}")
         return False
@@ -178,7 +180,7 @@ def test_hole_filling_with_metric(mesh_path):
         try:
             fill_params.metric = mm.getUniversalMetric(mesh)
             print("  Using metric parameter")
-        except:
+        except (AttributeError, Exception):
             print("  Metric parameter not available/required")
 
         new_faces = mm.FaceBitSet()
@@ -212,16 +214,17 @@ def test_hole_filling_nicely(mesh_path):
         # Try to set metric if available
         try:
             settings.metric = mm.getUniversalMetric(mesh)
-        except:
+        except (AttributeError, Exception):
             pass
 
         mm.fillHoleNicely(mesh, he, settings)
 
         # Check if hole was filled
         hole_ids_after = mesh.topology.findHoleRepresentiveEdges()
-        filled = len(hole_ids_after) < len(hole_ids)
 
-        print(f"✓ fillHoleNicely: Holes before={len(hole_ids)}, after={len(hole_ids_after)}")
+        print(
+            f"✓ fillHoleNicely: Holes before={len(hole_ids)}, after={len(hole_ids_after)}"
+        )
         return True
     except Exception as e:
         print(f"✗ fillHoleNicely failed: {e}")
@@ -238,7 +241,9 @@ def test_subdivision(mesh_path):
         mesh = mm.loadMesh(mesh_path)
 
         # Compute average edge length
-        avg_edge_length = mesh.averageEdgeLength() if hasattr(mesh, 'averageEdgeLength') else 0.1
+        avg_edge_length = (
+            mesh.averageEdgeLength() if hasattr(mesh, "averageEdgeLength") else 0.1
+        )
 
         # Create a region to subdivide (all faces)
         all_faces = mm.FaceBitSet()
@@ -256,7 +261,7 @@ def test_subdivision(mesh_path):
         try:
             subdiv_settings.smoothMode = mm.SubdivideSettings.SmoothMode.Linear
             print("  Using smoothMode parameter")
-        except:
+        except (AttributeError, Exception):
             print("  smoothMode parameter not available")
 
         mm.subdivideMesh(mesh, subdiv_settings)
@@ -286,7 +291,9 @@ def main():
     results.append(("Basic Operations", test_basic_operations(mesh_path)))
     results.append(("Component Operations", test_component_operations(mesh_path)))
     results.append(("Hole Filling (Original)", test_hole_filling_original(mesh_path)))
-    results.append(("Hole Filling (With Metric)", test_hole_filling_with_metric(mesh_path)))
+    results.append(
+        ("Hole Filling (With Metric)", test_hole_filling_with_metric(mesh_path))
+    )
     results.append(("Hole Filling (Nicely)", test_hole_filling_nicely(mesh_path)))
     results.append(("Subdivision", test_subdivision(mesh_path)))
 

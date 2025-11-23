@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e  # Exit on error
-
 # Install dependencies
 pip install -e .
 

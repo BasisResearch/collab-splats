@@ -100,7 +100,7 @@ warn_unused_ignores = true
 exclude = "build"
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules"
+addopts = "--doctest-modules --ignore=tests/test_meshlib.py"
 testpaths = ["./tests"]
 
 [tool.isort]

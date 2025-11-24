@@ -3,26 +3,26 @@ Minimal pipeline runner using YAML configs.
 
 Usage:
     # Run with default settings
-    python run_pipeline.py --dataset ants_001
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043
 
     # Override any config value
-    python run_pipeline.py --dataset ants_001 --set method=rade-gs frame_proportion=0.1
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --set method=rade-gs frame_proportion=0.1
 
     # Override nested values
-    python run_pipeline.py --dataset example --set preprocess.sfm_tool=colmap
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --set preprocess.sfm_tool=colmap
 
     # Overwrite existing outputs
-    python run_pipeline.py --dataset ants_001 --overwrite
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --overwrite
 
     # List available datasets
     python run_pipeline.py --list-datasets
 
 Examples:
-    # Use example dataset with high quality settings
-    python run_pipeline.py --dataset example --set training.pipeline.model.random-scale=1.0
+    # Use birds dataset with high quality settings
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --set training.pipeline.model.random-scale=1.0
 
     # Use ants dataset with colmap preprocessing
-    python run_pipeline.py --dataset ants_001 --set preprocess.sfm_tool=colmap
+    python run_pipeline.py --dataset ants_date-11162025_video-GH010210 --set preprocess.sfm_tool=colmap
 """
 import argparse
 from pathlib import Path

@@ -102,13 +102,15 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             first_image = Path(image_filenames[0]).resolve()
             cache_dir = first_image.parent
             # Typically images are in a subdirectory like 'images', go up one level
-            if cache_dir.name in ['images', 'image', 'img', 'imgs']:
+            if cache_dir.name in ["images", "image", "img", "imgs"]:
                 cache_dir = cache_dir.parent
         else:
             # Fallback to config if no images found
             cache_dir = Path(self.config.dataparser.data).resolve()
 
-        cache_path = cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
+        cache_path = (
+            cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
+        )
 
         # Normalize paths to absolute strings for consistent comparison
         image_filenames_normalized = [str(Path(f).resolve()) for f in image_filenames]
@@ -118,7 +120,9 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             CONSOLE.print(f"Found cached features at {cache_path}")
             cache_dict = torch.load(cache_path)
             cached_filenames = cache_dict.get("image_filenames", [])
-            cached_filenames_normalized = [str(Path(f).resolve()) for f in cached_filenames]
+            cached_filenames_normalized = [
+                str(Path(f).resolve()) for f in cached_filenames
+            ]
 
             if cached_filenames_normalized != image_filenames_normalized:
                 CONSOLE.print(

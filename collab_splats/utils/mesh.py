@@ -219,7 +219,9 @@ def normals2vertex(mesh_vertices, points, normals, k=5, sdf_trunc=0.03):
 #     return torch.tensor(features_kNN)
 
 
-def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03, categorical=False):
+def features2vertex(
+    mesh_vertices, points, features, k=5, sdf_trunc=0.03, categorical=False
+):
     """
     Map point cloud features to mesh vertices using KNN over a KDTree.
 
@@ -244,11 +246,16 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03, catego
     valid_mask = distances[:, 0] <= sdf_trunc
     if not np.any(valid_mask):
         return (
-            -np.ones(len(vertices), dtype=int) if categorical
+            -np.ones(len(vertices), dtype=int)
+            if categorical
             else np.zeros((len(vertices), features.shape[1]))
         )
 
-    distances, indices, features = distances[valid_mask], indices[valid_mask], features[valid_mask]
+    distances, indices, features = (
+        distances[valid_mask],
+        indices[valid_mask],
+        features[valid_mask],
+    )
 
     # Compute Gaussian weights
     sigma = np.mean(distances)

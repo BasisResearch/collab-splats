@@ -1,8 +1,8 @@
 from .camera_utils import (
-    ColmapCamera, 
-    convert_to_colmap_camera, 
-    depth_double_to_normal, 
-    get_camera_parameters
+    ColmapCamera,
+    convert_to_colmap_camera,
+    depth_double_to_normal,
+    get_camera_parameters,
 )
 
 from .utils import create_fused_features, project_gaussians

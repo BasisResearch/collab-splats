@@ -11,9 +11,10 @@ from typing import Dict, Optional
 
 from gsplat.cuda._wrapper import spherical_harmonics
 
+
 def create_fused_features(
     means: torch.Tensor,
-    colors: torch.Tensor, 
+    colors: torch.Tensor,
     features: torch.Tensor,
     camera_params: Dict[str, torch.Tensor],
     sh_degree_to_use: Optional[int] = None,
@@ -28,42 +29,44 @@ def create_fused_features(
     """
 
     if sh_degree_to_use is not None:
-        dirs = means - camera_params["camera_center"] # directions of the gaussians
-            
+        dirs = means - camera_params["camera_center"]  # directions of the gaussians
+
         colors = spherical_harmonics(
             degrees_to_use=sh_degree_to_use,
             dirs=dirs,
-            coeffs=colors, # Current spherical harmonics coefficients
+            coeffs=colors,  # Current spherical harmonics coefficients
         )
 
         # Squeeze back just in case
         colors = colors.squeeze(1)
         colors = torch.clamp_min(colors + 0.5, 0.0)
-        
+
     # Now fuse our features with the colors for rendering
     fused_features = torch.cat((colors, features), dim=-1)
 
     return fused_features
 
+
 def project_gaussians(meta: dict) -> Dict[str, torch.Tensor]:
     """Keep tensors on GPU - just remove .detach().cpu() calls"""
     W, H = meta["width"], meta["height"]
-    
+
     radii = meta["radii"].squeeze()
     valid_mask = (radii > 1.0).any(dim=1) if radii.dim() == 2 else (radii > 1.0)
     gaussian_ids = valid_mask.nonzero(as_tuple=False).squeeze(-1)
-    
+
     xy_rounded = torch.round(meta["means2d"]).squeeze().long()
     x = torch.clamp(xy_rounded[:, 0], 0, W - 1)
     y = torch.clamp(xy_rounded[:, 1], 0, H - 1)
     projected_flattened = x + y * W
-    
+
     return {
-        "proj_flattened": projected_flattened,     # Remove .detach().cpu()
-        "proj_depths": meta["depths"].squeeze(),   # Remove .detach().cpu()
-        "valid_mask": valid_mask,                  # Remove .detach().cpu()
-        "gaussian_ids": gaussian_ids,              # Remove .detach().cpu()
+        "proj_flattened": projected_flattened,  # Remove .detach().cpu()
+        "proj_depths": meta["depths"].squeeze(),  # Remove .detach().cpu()
+        "valid_mask": valid_mask,  # Remove .detach().cpu()
+        "gaussian_ids": gaussian_ids,  # Remove .detach().cpu()
     }
+
 
 # def project_gaussians(meta: dict) -> Dict[str, torch.Tensor]:
 #     """

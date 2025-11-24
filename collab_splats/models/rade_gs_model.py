@@ -7,7 +7,6 @@ Currently this subclasses the Nerfacto model. Consider subclassing from the base
 from dataclasses import dataclass, field
 from typing import Type, Dict, Union, List, Optional
 
-import math
 import torch
 from torch.nn import functional as F
 
@@ -136,7 +135,7 @@ class RadegsModel(SplatfactoModel):
         self.last_size = (H, W)
 
         # Get camera parameters of colmap camera for rasterization
-        camera_params = get_camera_parameters(camera)
+        camera_params = get_camera_parameters(camera, self.device)
 
         # Get visible gaussian mask
         if self.config.prefilter_voxel:
@@ -307,7 +306,7 @@ class RadegsModel(SplatfactoModel):
             loss_dict["depth_normal_loss"] = depth_normal_loss
 
         return loss_dict
-    
+
     def _prefilter_voxel(self, camera_params: Dict[str, torch.Tensor]):
         """
         Render the scene.

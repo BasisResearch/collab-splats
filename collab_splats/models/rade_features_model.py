@@ -12,16 +12,19 @@ from torch.nn import functional as F
 from torch.nn import Parameter
 
 try:
-    from gsplat.rendering import rasterization
+    from gsplat.rendering import rasterization  # noqa: F401
 except ImportError:
     print("Please install gsplat>=1.0.0")
 
-from gsplat.strategy import DefaultStrategy
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.scene_box import OrientedBox
 
-from collab_splats.utils import get_camera_parameters, depth_double_to_normal, create_fused_features
+from collab_splats.utils import (
+    get_camera_parameters,
+    depth_double_to_normal,
+    create_fused_features,
+)
 from collab_splats.models.rade_gs_model import RadegsModelConfig, RadegsModel
 from collab_splats.utils.features import TwoLayerMLP, BaseFeatureExtractor
 
@@ -286,7 +289,7 @@ class RadegsFeaturesModel(RadegsModel):
             camera_params=camera_params,
             sh_degree_to_use=sh_degree_to_use,
         )
-        
+
         # Rendered contains the following:
         # - rgb: [N, 3]
         # - alphas: [N, 1]
@@ -294,16 +297,18 @@ class RadegsFeaturesModel(RadegsModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
-        render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
-            means=means_crop,
-            quats=quats_crop,
-            scales=scales_crop,
-            opacities=opacities_crop,
-            colors=colors_crop,
-            render_mode=render_mode,
-            sh_degree_to_use=sh_degree_to_use,
-            visible_mask=voxel_visible_mask,
-            camera_params=camera_params,
+        render, alpha, expected_depths, median_depths, expected_normals, self.info = (
+            self._render(
+                means=means_crop,
+                quats=quats_crop,
+                scales=scales_crop,
+                opacities=opacities_crop,
+                colors=colors_crop,
+                render_mode=render_mode,
+                sh_degree_to_use=sh_degree_to_use,
+                visible_mask=voxel_visible_mask,
+                camera_params=camera_params,
+            )
         )
 
         if self.training:

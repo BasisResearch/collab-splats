@@ -1,15 +1,15 @@
 """
 Gaga --> gaussian grouping via multiview association + memory bank
 
-GaGa learns to associate gaussians across views based on a 
+GaGa learns to associate gaussians across views based on a
 memory bank of masks. It functions as a post-processing step
-to a trained 3D gaussian splat model. 
+to a trained 3D gaussian splat model.
 
 Within this implementation, we have separated the gaussian splat
 training from the mask association step. The GroupingClassifier
 therefore functions to do the following:
     1. Create segmentation masks for each view within the dataset
-    2. Associate masks across views 
+    2. Associate masks across views
         - Processes frames sequentially (this is critical for association)
         - Takes a percentage of gaussians within each mask
         - Associates those gaussians across views
@@ -18,7 +18,7 @@ therefore functions to do the following:
         - Assigns an identity embedding to each gaussian (mask ID)
 
 In the original paper, the authors directly rasterize the gaussians
-and learn the identity embeddings. 
+and learn the identity embeddings.
 
 
 TLB notes for improvement:
@@ -27,12 +27,11 @@ TLB notes for improvement:
 """
 
 # Standard library imports
-import sys
 import random
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import islice
-from typing import Dict, Tuple, Optional, Union
+from typing import Dict, Tuple, Optional
 import pickle
 from pathlib import Path
 import shutil
@@ -42,7 +41,6 @@ import wandb
 from tqdm import tqdm
 import cv2
 import numpy as np
-import math
 import time
 
 import torch
@@ -54,26 +52,26 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import Trainer
 
-from PIL import Image
 from functools import partial
 
 # Silence Python warnings
-import os, warnings, logging
+import os
+import warnings
+import logging
 
 warnings.filterwarnings("ignore")
 os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
 logging.getLogger().setLevel(logging.ERROR)
 
 # Nerfstudio imports
-from gsplat.strategy import DefaultStrategy
 
-from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.models.splatfacto import SplatfactoModel
-from nerfstudio.utils.eval_utils import eval_setup
-from nerfstudio.data.utils.dataloaders import ImageBatchStream
+from nerfstudio.cameras.cameras import Cameras  # noqa: E402
+from nerfstudio.models.splatfacto import SplatfactoModel  # noqa: E402
+from nerfstudio.utils.eval_utils import eval_setup  # noqa: E402
+from nerfstudio.data.utils.dataloaders import ImageBatchStream  # noqa: E402
 
 # Local imports
-from collab_splats.utils.segmentation import (
+from collab_splats.utils.segmentation import (  # noqa: E402
     Segmentation,
     create_composite_mask,
     create_patch_mask,
@@ -83,9 +81,9 @@ from collab_splats.utils.segmentation import (
     get_n_different_colors,
 )
 
-from collab_splats.utils import project_gaussians, create_fused_features, get_camera_parameters
+from collab_splats.utils import project_gaussians, get_camera_parameters  # noqa: E402
 
-@staticmethod
+
 def indices_to_bitmask(indices: torch.Tensor, N: int, device=None) -> torch.Tensor:
     """
     Converts a tensor of indices into a bit-packed mask tensor of length ceil(N/32)
@@ -106,13 +104,14 @@ def popcount(x: torch.Tensor) -> torch.Tensor:
     Simple and reliable approach for int32 tensors.
     """
     count = torch.zeros_like(x, dtype=torch.int32)
-    
+
     # Check each of the 32 bits
     for i in range(32):
         bit_mask = 1 << i
         count += ((x & bit_mask) != 0).int()
-    
+
     return count
+
 
 @dataclass
 class GroupingConfig:
@@ -128,13 +127,14 @@ class GroupingConfig:
 
     # Classifier training parameters
     max_steps: int = 10000
-    log_every_n_steps: int = 10 # log every n steps
-    save_every_n_steps: int = 100 # save a checkpoint every n steps
+    log_every_n_steps: int = 10  # log every n steps
+    save_every_n_steps: int = 100  # save a checkpoint every n steps
     accelerator: str = "gpu"
-    precision: int = 16 # 16 for mixed precision, 32 for full precision
+    precision: int = 16  # 16 for mixed precision, 32 for full precision
     identity_dim: int = 13
     lr_classifier: float = 5e-4
     lr_embeddings: float = 2.5e-3
+
 
 class GroupingClassifier(pl.LightningModule):
     def __init__(self, load_config: str, config: GroupingConfig):
@@ -182,7 +182,7 @@ class GroupingClassifier(pl.LightningModule):
 
         # Convert identities to classes
         classes = self.per_gaussian_forward(self.identities)
-        
+
         return classes
 
     @property
@@ -193,7 +193,7 @@ class GroupingClassifier(pl.LightningModule):
         return [
             torch.tensor(list(g), dtype=torch.long, device="cpu")
             for g in self._memory_bank
-            ]
+        ]
 
     def save_memory_bank(self):
         """
@@ -219,7 +219,9 @@ class GroupingClassifier(pl.LightningModule):
             device = self.pipeline.model.device
             N = int(self.pipeline.model.num_points)
             self._memory_bank_bit = [
-                indices_to_bitmask(torch.tensor(list(g), device=device), N, device=device)
+                indices_to_bitmask(
+                    torch.tensor(list(g), device=device), N, device=device
+                )
                 for g in memory_bank
             ]
         else:
@@ -241,7 +243,7 @@ class GroupingClassifier(pl.LightningModule):
         """Load NeRF pipeline only if not already loaded."""
 
         # Load pipeline and model if not present
-        if not hasattr(self, "pipeline"): #or not hasattr(self, "pipeline.model"):
+        if not hasattr(self, "pipeline"):  # or not hasattr(self, "pipeline.model"):
             print("Loading NeRF pipeline and model...")
             _, pipeline, _, _ = eval_setup(self.load_config)
             assert isinstance(pipeline.model, SplatfactoModel)
@@ -254,19 +256,19 @@ class GroupingClassifier(pl.LightningModule):
             print("Pipeline and model already loaded. Skipping.")
 
     def load_segmentation(self):
-        """Load segmentation module only if not already loaded."""  
+        """Load segmentation module only if not already loaded."""
         # Load segmentation if not present
         if not hasattr(self, "segmentation"):
             print("Loading segmentation module...")
             self.segmentation = Segmentation(
                 backend=self.config.segmentation_backend,
                 strategy=self.config.segmentation_strategy,
-                device=self.pipeline.model.device
+                device=self.pipeline.model.device,
             )
         else:
             print("Segmentation module already loaded. Skipping.")
 
-    def fixed_indices_dataloader(self, split="train") -> list[tuple]:
+    def fixed_indices_dataloader(self, split="train") -> tuple[list[tuple], list]:
         """Returns evaluation data in strict dataset order as a list of (camera, data) tuples.
         Works for both cached and disk modes without loading everything into memory.
         This solution disables the internal shuffling temporarily."""
@@ -276,7 +278,6 @@ class GroupingClassifier(pl.LightningModule):
             dataset = self.pipeline.datamanager.train_dataset
         else:
             dataset = self.pipeline.datamanager.eval_dataset
-
 
         filenames = dataset.image_filenames
 
@@ -299,7 +300,7 @@ class GroupingClassifier(pl.LightningModule):
             items = list(islice(dataloader, len(dataset)))
 
             # Restore original shuffle
-            random.Random.shuffle = original_shuffle
+            random.Random.shuffle = original_shuffle  # type: ignore
             return items, filenames
 
         else:
@@ -327,15 +328,14 @@ class GroupingClassifier(pl.LightningModule):
 
         if not hasattr(self, "segmentation"):
             self.load_segmentation()
-        
+
         # Get the ordered dataset
         ordered_dataset, filenames = self.fixed_indices_dataloader(split="train")
 
-        for camera, data in tqdm(ordered_dataset, desc=f"Creating masks [train]"):
-
+        for camera, data in tqdm(ordered_dataset, desc="Creating masks [train]"):
             # Grab the camera and data for the curret frame
-            image = data['image']
-            camera_idx = camera.metadata['cam_idx']
+            image = data["image"]
+            camera_idx = camera.metadata["cam_idx"]
 
             # Get image info
             image_path = filenames[camera_idx]
@@ -348,13 +348,17 @@ class GroupingClassifier(pl.LightningModule):
                 continue  # skip if already exists
 
             # Run segmentation
-            segmentation_results = self.segmentation.segment(image.detach().cpu().numpy())
+            segmentation_results = self.segmentation.segment(
+                image.detach().cpu().numpy()
+            )
 
             # Skip if no objects were found
             if segmentation_results is None:
-                print (f"No objects found in {image_name}, creating empty mask")
+                print(f"No objects found in {image_name}, creating empty mask")
                 # Create empty mask
-                composite_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint16)
+                composite_mask = np.zeros(
+                    (image.shape[0], image.shape[1]), dtype=np.uint16
+                )
                 cv2.imwrite(str(save_path), composite_mask)
                 continue
 
@@ -364,7 +368,7 @@ class GroupingClassifier(pl.LightningModule):
 
             # Save the composite mask
             cv2.imwrite(str(save_path), composite_mask)
-        
+
     #########################################################
     ############## Association of gaussians #################
     #########################################################
@@ -382,7 +386,7 @@ class GroupingClassifier(pl.LightningModule):
         memory_bank_path = self.output_dir / "memory_bank.pkl"
         if memory_bank_path.exists():
             memory_bank_path.unlink()
-        
+
         # Remove processed images file if it exists
         processed_images_path = self.output_dir / "processed_frames.pkl"
         if processed_images_path.exists():
@@ -395,7 +399,7 @@ class GroupingClassifier(pl.LightningModule):
 
         if not hasattr(self, "pipeline"):
             self.load_pipeline()
-        
+
         if not hasattr(self, "segmentation"):
             self.load_segmentation()
         # dataloader = self.fixed_indices_dataloader(split="train")
@@ -411,12 +415,14 @@ class GroupingClassifier(pl.LightningModule):
 
         # Get the ordered dataset
         ordered_dataset, filenames = self.fixed_indices_dataloader(split="train")
-  
+
         with torch.no_grad():
-            for camera, data in tqdm(ordered_dataset, desc="Processing frames", total=len(ordered_dataset)):
+            for camera, data in tqdm(
+                ordered_dataset, desc="Processing frames", total=len(ordered_dataset)
+            ):
                 # Get image and camera index
-                image = data['image']
-                camera_idx = camera.metadata['cam_idx']
+                image = data["image"]
+                camera_idx = camera.metadata["cam_idx"]
 
                 # Get image info
                 image_path = filenames[camera_idx]
@@ -428,11 +434,13 @@ class GroupingClassifier(pl.LightningModule):
                 image_exists = associated_image_path.exists()
 
                 # Load the composite mask
-                composite_mask = cv2.imread(raw_image_path, cv2.IMREAD_UNCHANGED) # load as uint16 if provided
+                composite_mask = cv2.imread(
+                    raw_image_path, cv2.IMREAD_UNCHANGED
+                )  # load as uint16 if provided
 
                 # Skip if no objects were found
                 if not np.any(composite_mask):
-                    print (f"No objects found in {image_name}")
+                    print(f"No objects found in {image_name}")
                     # Copy the raw image to the associated image path
                     shutil.copy(raw_image_path, associated_image_path)
                     continue
@@ -457,17 +465,23 @@ class GroupingClassifier(pl.LightningModule):
 
                 if self.config.debug:
                     end_time = time.time()
-                    print(f"Time taken to select front gaussians: {end_time - start_time} seconds")
+                    print(
+                        f"Time taken to select front gaussians: {end_time - start_time} seconds"
+                    )
 
                 start_time = time.time()
                 labels = self._assign_labels(mask_gaussians)
 
                 if self.config.debug:
                     end_time = time.time()
-                    print(f"Time taken to assign labels: {end_time - start_time} seconds")
+                    print(
+                        f"Time taken to assign labels: {end_time - start_time} seconds"
+                    )
 
                 # Use the labels to convert the composite mask to show the associated labels
-                associated_mask = convert_matched_mask(labels, composite_mask).astype(np.uint16)
+                associated_mask = convert_matched_mask(labels, composite_mask).astype(
+                    np.uint16
+                )
                 cv2.imwrite(associated_image_path, associated_mask)
 
                 start_time = time.time()
@@ -475,14 +489,16 @@ class GroupingClassifier(pl.LightningModule):
 
                 if self.config.debug:
                     end_time = time.time()
-                    print(f"Time taken to update memory bank: {end_time - start_time} seconds")
+                    print(
+                        f"Time taken to update memory bank: {end_time - start_time} seconds"
+                    )
 
                 # Mark frame as processed and save progress + memory bank
                 processed_frames.add(camera_idx)
-                
+
                 with open(progress_path, "wb") as f:
                     pickle.dump(processed_frames, f)
-                
+
                 self.save_memory_bank()
 
     def _assign_labels(self, mask_gaussians: list[torch.Tensor]) -> torch.Tensor:
@@ -499,29 +515,38 @@ class GroupingClassifier(pl.LightningModule):
         if self.config.debug:
             print(f"Debug: num_masks = {num_masks}")
             for i, g in enumerate(mask_gaussians):
-                print(f"  mask_gaussians[{i}] size: {len(g)}, sample indices: {g[:5] if len(g) > 0 else 'empty'}")
+                print(
+                    f"  mask_gaussians[{i}] size: {len(g)}, sample indices: {g[:5] if len(g) > 0 else 'empty'}"
+                )
 
         # Prepare mask bits
-        mask_bits = torch.stack([
-            indices_to_bitmask(g.to(device), N, device=device)
-            for g in mask_gaussians
-        ])
-        
+        mask_bits = torch.stack(
+            [indices_to_bitmask(g.to(device), N, device=device) for g in mask_gaussians]
+        )
+
         # Debug: Check bitmask conversion
         if self.config.debug:
             print(f"Debug: mask_bits shape: {mask_bits.shape}")
             for i in range(min(3, len(mask_bits))):
-                bit_count = popcount(mask_bits[i:i+1]).sum()
-                print(f"  mask_bits[{i}] popcount: {bit_count}, expected: {len(mask_gaussians[i])}")
+                bit_count = popcount(mask_bits[i : i + 1]).sum()
+                print(
+                    f"  mask_bits[{i}] popcount: {bit_count}, expected: {len(mask_gaussians[i])}"
+                )
 
         labels = torch.zeros(num_masks, dtype=torch.long, device=device)
-        
+
         # Calculate sizes correctly - count actual set bits, not tensor elements
-        cur_sizes = torch.tensor([
-            popcount(indices_to_bitmask(g.to(device), N, device=device)).sum().float()
-            for g in mask_gaussians
-        ], dtype=torch.float32, device=device)
-        
+        cur_sizes = torch.tensor(
+            [
+                popcount(indices_to_bitmask(g.to(device), N, device=device))
+                .sum()
+                .float()
+                for g in mask_gaussians
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+
         if self.config.debug:
             print(f"Debug: cur_sizes: {cur_sizes.tolist()}")
 
@@ -531,11 +556,11 @@ class GroupingClassifier(pl.LightningModule):
         if self._memory_bank_bit is not None and len(self._memory_bank_bit) > 0:
             chunk_size = 128
             for i in range(0, len(self._memory_bank_bit), chunk_size):
-                chunk = torch.stack(self._memory_bank_bit[i:i + chunk_size], dim=0)
+                chunk = torch.stack(self._memory_bank_bit[i : i + chunk_size], dim=0)
                 bank_chunks.append(chunk)
                 # Pre-calculate sizes for efficiency
                 bank_sizes.append(popcount(chunk).sum(dim=1).float())
-            
+
             if self.config.debug:
                 print(f"Debug: Created {len(bank_chunks)} bank chunks")
         else:
@@ -546,13 +571,17 @@ class GroupingClassifier(pl.LightningModule):
             max_iou = 0.0
             selected_label = -1
 
-            for chunk_idx, (chunk, ref_sizes) in enumerate(zip(bank_chunks, bank_sizes)):
+            for chunk_idx, (chunk, ref_sizes) in enumerate(
+                zip(bank_chunks, bank_sizes)
+            ):
                 # Compute intersection using bitwise AND - fix the broadcasting issue
-                intersections = popcount(cur_mask.unsqueeze(0) & chunk).sum(dim=1).float()
-                
+                intersections = (
+                    popcount(cur_mask.unsqueeze(0) & chunk).sum(dim=1).float()
+                )
+
                 # Compute union sizes: |A| + |B| - |A ∩ B|
                 union_sizes = cur_sizes[i] + ref_sizes - intersections
-                
+
                 # IoU computation with proper numerical stability
                 ious = intersections / (union_sizes + 1e-8)
 
@@ -581,7 +610,9 @@ class GroupingClassifier(pl.LightningModule):
 
         # return labels
 
-    def _update_memory_bank(self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]):
+    def _update_memory_bank(
+        self, labels: torch.Tensor, mask_gaussians: list[torch.Tensor]
+    ):
         device = self.pipeline.model.device if torch.cuda.is_available() else "cpu"
         N = int(self.pipeline.model.num_points)
 
@@ -590,8 +621,16 @@ class GroupingClassifier(pl.LightningModule):
             self._memory_bank_bit = []
 
         for label, g in zip(labels.tolist(), mask_gaussians):
-            g_tensor = g.to(device) if isinstance(g, torch.Tensor) else torch.tensor(list(g), device=device)
-            bitmask = indices_to_bitmask(g_tensor, N, device=device) if self._memory_bank_bit is not None else None
+            g_tensor = (
+                g.to(device)
+                if isinstance(g, torch.Tensor)
+                else torch.tensor(list(g), device=device)
+            )
+            bitmask = (
+                indices_to_bitmask(g_tensor, N, device=device)
+                if self._memory_bank_bit is not None
+                else None
+            )
 
             if self._memory_bank_bit is not None:
                 if label >= len(self._memory_bank_bit):
@@ -660,16 +699,16 @@ class GroupingClassifier(pl.LightningModule):
     #     Updates the memory bank with newly assigned or updated Gaussians per label.
 
     #     The memory bank stores sets of Gaussian indices for each unique label. When updating,
-    #     new labels get a new set entry, while existing labels have their sets updated with 
+    #     new labels get a new set entry, while existing labels have their sets updated with
     #     the new Gaussian indices.
 
     #     Args:
     #         labels (torch.Tensor): Tensor of label assignments for each mask
-    #         mask_gaussians (list[torch.Tensor]): List of tensors containing Gaussian indices 
+    #         mask_gaussians (list[torch.Tensor]): List of tensors containing Gaussian indices
     #                                             belonging to each mask
 
     #     Note:
-    #         The memory bank (_memory_bank) is stored as a list of sets for efficient 
+    #         The memory bank (_memory_bank) is stored as a list of sets for efficient
     #         uniqueness checking and updates.
     #     """
     #     for label, gaussians in zip(labels.tolist(), mask_gaussians):
@@ -702,10 +741,10 @@ class GroupingClassifier(pl.LightningModule):
 
     #     with open(path, "rb") as f:
     #         memory_bank = pickle.load(f)
-        
-    #     print (f"Memory bank loaded from {path} with {len(memory_bank)} masks")    
+
+    #     print (f"Memory bank loaded from {path} with {len(memory_bank)} masks")
     #     return memory_bank, len(memory_bank)
-    
+
     #########################################################
     ############## Gaussian selection #######################
     #########################################################
@@ -723,14 +762,16 @@ class GroupingClassifier(pl.LightningModule):
         """
 
         proj_results = project_gaussians(meta)
-        
+
         # Get device from proj_results (should be GPU device)
         device = proj_results["proj_flattened"].device
 
         # Prepare masks = Decimate the composite mask into individual masks
         binary_masks = mask_id_to_binary_mask(composite_mask)
-        flattened_masks = torch.tensor(binary_masks, device=device).flatten(start_dim=1)  # (N, H*W)
-        
+        flattened_masks = torch.tensor(binary_masks, device=device).flatten(
+            start_dim=1
+        )  # (N, H*W)
+
         # Ensure patch_mask is on the same device
         if isinstance(patch_mask, torch.Tensor):
             patch_mask = patch_mask.to(device)
@@ -739,16 +780,15 @@ class GroupingClassifier(pl.LightningModule):
 
         # Collect front gaussians
         front_gaussians = []
-        
+
         for mask in flattened_masks:
-            
             # Use compiled function for main processing
             result = self.process_mask_gaussians(
                 proj_results,
                 mask,
                 patch_mask,
                 front_percentage=self.config.front_percentage,
-                debug=self.config.debug
+                debug=self.config.debug,
             )
 
             front_gaussians.append(result)
@@ -865,16 +905,20 @@ class GroupingClassifier(pl.LightningModule):
         features_dc = self.pipeline.model.features_dc
         features_rest = self.pipeline.model.features_rest
         colors = torch.cat((features_dc[:, None, :], features_rest), dim=1)
-        
+
         # We need a hack to get features into model gsplat for rendering
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
         if self.pipeline.model.config.sh_degree > 0:
-            sh_degree_to_use = min(self.pipeline.model.step // self.pipeline.model.config.sh_degree_interval, self.pipeline.model.config.sh_degree)
+            sh_degree_to_use = min(
+                self.pipeline.model.step
+                // self.pipeline.model.config.sh_degree_interval,
+                self.pipeline.model.config.sh_degree,
+            )
         else:
             colors = torch.sigmoid(colors).squeeze(1)  # [N, 1, 3] -> [N, 3]
             sh_degree_to_use = None
-        
+
         # # Get the colors to pass into the fused features function
         # fused_features = create_fused_features(
         #     means=model.means,
@@ -905,7 +949,7 @@ class GroupingClassifier(pl.LightningModule):
 
         # Grab identity embeddings
         # preds = render[:, ..., 3:3 + self.config.identity_dim]
-        preds = render[:, ..., :self.config.identity_dim]
+        preds = render[:, ..., : self.config.identity_dim]
 
         return {
             # "rgb": rgb.squeeze(0),
@@ -925,7 +969,7 @@ class GroupingClassifier(pl.LightningModule):
         """
         Train the classifier and identity embeddings with checkpointing.
         """
-        
+
         # Initialize the datamodule for training (no validation module)
         datamodule = GroupingDataModule(
             datamanager=self.pipeline.datamanager,
@@ -959,19 +1003,19 @@ class GroupingClassifier(pl.LightningModule):
         if last_ckpt.exists() and ckpt_path is None:
             ckpt_path = str(last_ckpt)
 
-        print (ckpt_path)
+        print(ckpt_path)
         # Start training
         trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt_path)
 
         return self, checkpoint_callback.best_model_path
 
-    def setup(self, stage: str = None):
+    def setup(self, stage: Optional[str] = None):
         """
         Initialize trainable parameters and classifier.
         Only creates them if they are not already present (e.g., after loading a checkpoint).
         """
         # Load Splatfacto model if needed
-        if not hasattr(self, "pipeline"): # or not hasattr(self, "pipeline.model"):
+        if not hasattr(self, "pipeline"):  # or not hasattr(self, "pipeline.model"):
             self.load_pipeline()
 
         # Identity embeddings
@@ -981,7 +1025,10 @@ class GroupingClassifier(pl.LightningModule):
             # Initialize identities randomly and pass through RGB2SH
             identities = torch.nn.Parameter(
                 # self.model.distill_features.clone()
-                torch.randn((n_gaussians, self.config.identity_dim), device=self.pipeline.model.device) # don't think i need to pass through RGB2SH here
+                torch.randn(
+                    (n_gaussians, self.config.identity_dim),
+                    device=self.pipeline.model.device,
+                )  # don't think i need to pass through RGB2SH here
             )
 
             # Store identities
@@ -997,7 +1044,9 @@ class GroupingClassifier(pl.LightningModule):
 
         # Loss function
         if not hasattr(self, "loss_fn"):
-            self.loss_fn = torch.nn.CrossEntropyLoss(reduction="none") #, ignore_index=0)
+            self.loss_fn = torch.nn.CrossEntropyLoss(
+                reduction="none"
+            )  # , ignore_index=0)
 
         # Freeze Splatfacto base model --> change to only gaussian parameter freezing?
         for p in self.pipeline.model.gauss_params.parameters():
@@ -1010,7 +1059,7 @@ class GroupingClassifier(pl.LightningModule):
         the rasterized identities.
         """
         outputs = self._render_identities(camera)
-        
+
         # Grab identity embeddings
         identities = outputs["identities"]
         identities = identities.permute(2, 0, 1)  # [H, W, C] -> [C, H, W]
@@ -1054,12 +1103,9 @@ class GroupingClassifier(pl.LightningModule):
         # Forward pass
         outputs = self(camera)
         logits = outputs["logits"]
-        
+
         # Compute loss
-        loss = self.loss_fn(
-            logits.unsqueeze(0), 
-            seg.unsqueeze(0)
-        ).mean()
+        loss = self.loss_fn(logits.unsqueeze(0), seg.unsqueeze(0)).mean()
 
         # Normalize by number of classes
         loss = loss / torch.log(torch.tensor(self.total_masks))
@@ -1067,7 +1113,7 @@ class GroupingClassifier(pl.LightningModule):
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
         # Log ground truth and predicted segmentation
-        if batch_idx % 100 == 0:  # log every 100 batches
+        if batch_idx is not None and batch_idx % 100 == 0:  # log every 100 batches
             # Assuming seg and logits are HxW or BxHxW
             pred = torch.argmax(logits, dim=0)  # predicted class per pixel
             gt_img = seg.detach().cpu().numpy()
@@ -1082,9 +1128,13 @@ class GroupingClassifier(pl.LightningModule):
             combined = np.concatenate([gt_img, pred_img], axis=1)  # H x (3*W)
             combined = (combined * 255).astype(np.uint8)  # scale if needed
 
-            self.logger.experiment.log({
-                "segmentation_comparison": [wandb.Image(combined, caption=f"Batch {batch_idx}")]
-            })
+            self.logger.experiment.log(
+                {
+                    "segmentation_comparison": [
+                        wandb.Image(combined, caption=f"Batch {batch_idx}")
+                    ]
+                }
+            )
 
         return loss
 
@@ -1095,12 +1145,21 @@ class GroupingClassifier(pl.LightningModule):
         # params = list(self.classifier.parameters()) + list(self.params.values())
         # return torch.optim.Adam(params, lr=self.config.lr)
 
-        optimizer = torch.optim.Adam([
-            {'params': self.classifier.parameters(), 'lr': self.config.lr_classifier},
-            {'params': self.params.values(), 'lr': self.config.lr_embeddings}  # Higher learning rate for embeddings
-        ])
+        optimizer = torch.optim.Adam(
+            [
+                {
+                    "params": self.classifier.parameters(),
+                    "lr": self.config.lr_classifier,
+                },
+                {
+                    "params": self.params.values(),
+                    "lr": self.config.lr_embeddings,
+                },  # Higher learning rate for embeddings
+            ]
+        )
 
         return optimizer
+
 
 # from dataclasses import fields, is_dataclass
 
@@ -1108,7 +1167,7 @@ class GroupingClassifier(pl.LightningModule):
 #     """
 #     Replace the datamanager config in a pipeline while preserving overlapping fields.
 #     Works even if config.pipeline.datamanager is a dict (from YAML).
-    
+
 #     Args:
 #         config: TrainerConfig or dict-loaded config
 #         datamanager_cls: The new datamanager config class (e.g., GroupingDataManagerConfig)
@@ -1141,23 +1200,33 @@ class GroupingClassifier(pl.LightningModule):
 ############### Dataloading stuff #######################
 #########################################################
 
+
 class GroupingDataModule(pl.LightningDataModule):
     """Lightning DataModule wrapping a Nerfstudio DataManager and associated masks."""
 
-    def __init__(self, datamanager, mask_dir, device="cpu",
-                 train_num_workers=0, val_num_workers=0, use_simulated=False):
+    def __init__(
+        self,
+        datamanager,
+        mask_dir,
+        device="cpu",
+        train_num_workers=0,
+        val_num_workers=0,
+        use_simulated=False,
+    ):
         super().__init__()
         self.datamanager = datamanager
         self.mask_dir = Path(mask_dir)
         self.device = device
         self.train_num_workers = train_num_workers
         self.val_num_workers = val_num_workers
-        self.use_simulated = use_simulated # for testing
+        self.use_simulated = use_simulated  # for testing
 
-    def _create_simulated_segmentation(self, image_idx: int, h: int = 256, w: int = 256) -> torch.Tensor:
+    def _create_simulated_segmentation(
+        self, image_idx: int, h: int = 256, w: int = 256
+    ) -> torch.Tensor:
         """Create simple synthetic segmentation patterns for testing."""
         # pattern_type = image_idx % 3
-        
+
         # if pattern_type == 0:
         # Horizontal stripes (3 classes)
         segmentation = torch.arange(h).unsqueeze(1).repeat(1, w) // (h // 10)
@@ -1170,16 +1239,14 @@ class GroupingDataModule(pl.LightningDataModule):
         # y, x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing='ij')
         # dist = ((y - cy) ** 2 + (x - cx) ** 2) ** 0.5
         # segmentation = (dist > min(h, w) // 4).long()
-            
+
         return segmentation.long()  # Ensure 3 classes: 0, 1, 2
 
     def _load_segmentation_processor(self, dataset, camera, data: Dict) -> Tuple:
         """Load and attach a segmentation mask for a given camera view."""
         if self.use_simulated:
             segmentation = self._create_simulated_segmentation(
-                data["image_idx"], 
-                h=data['image'].shape[0], 
-                w=data['image'].shape[1]
+                data["image_idx"], h=data["image"].shape[0], w=data["image"].shape[1]
             )
         else:
             # Original mask loading code
@@ -1192,7 +1259,7 @@ class GroupingDataModule(pl.LightningDataModule):
             segmentation = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
             segmentation = segmentation.astype(np.int32)
             segmentation = torch.from_numpy(segmentation).long()
-        
+
         data["segmentation"] = segmentation
         return camera, data
 
@@ -1208,7 +1275,11 @@ class GroupingDataModule(pl.LightningDataModule):
         )
 
     def train_dataloader(self):
-        return self._create_dataloader(self.datamanager.train_dataset, self.train_num_workers)
+        return self._create_dataloader(
+            self.datamanager.train_dataset, self.train_num_workers
+        )
 
     def val_dataloader(self):
-        return self._create_dataloader(self.datamanager.eval_dataset, self.val_num_workers)
+        return self._create_dataloader(
+            self.datamanager.eval_dataset, self.val_num_workers
+        )

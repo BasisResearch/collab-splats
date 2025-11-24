@@ -8,8 +8,8 @@ from typing import Optional
 
 logging.getLogger("ultralytics").setLevel(logging.WARNING)
 
-from typing import Tuple
-from .features import batch_iterator, load_torchhub_model
+from typing import Tuple  # noqa: E402
+from .features import batch_iterator, load_torchhub_model  # noqa: E402
 
 ##TLB --> need to figure out how to use ultralytics here
 # from ultralytics import SAM
@@ -41,7 +41,7 @@ class Segmentation:
 
         self.backend = backend
         self.strategy = strategy
-        
+
     def segment(self, image, **kwargs):
         if self.backend == "mobilesamv2":
             if self.strategy == "object":
@@ -125,9 +125,9 @@ def get_object_masks(image, obj_model, **kwargs):
         - verbose: bool = False
     """
     # Set default verbose to False to reduce output
-    if 'verbose' not in kwargs:
-        kwargs['verbose'] = False
-    
+    if "verbose" not in kwargs:
+        kwargs["verbose"] = False
+
     obj_results = obj_model(image, **kwargs)
     return obj_results
 
@@ -433,12 +433,15 @@ def aggregate_masked_features(
 
     return aggregated_feat_map
 
+
 ########################################################
 ############### Visualization ##########################
 ########################################################
 
+
 def get_n_different_colors(n: int, seed: int = 42) -> np.ndarray:
     return np.random.randint(1, 256, (n, 3), dtype=np.uint8)
+
 
 def visualize_mask(mask: np.ndarray, colors: Optional[np.ndarray] = None) -> np.ndarray:
     """

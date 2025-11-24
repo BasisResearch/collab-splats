@@ -24,7 +24,10 @@ from nerfstudio.cameras.cameras import Cameras
 ####### Helper function for camera preparation #####
 ####################################################
 
-def get_camera_parameters(camera: Cameras, device: torch.device) -> Dict[str, torch.Tensor]:
+
+def get_camera_parameters(
+    camera: Cameras, device: torch.device
+) -> Dict[str, torch.Tensor]:
     """
     Get the camera parameters for rasterization.
 
@@ -58,8 +61,9 @@ def get_camera_parameters(camera: Cameras, device: torch.device) -> Dict[str, to
         "image_height": colmap_camera.image_height,
         "camera_center": colmap_camera.camera_center,
     }
-    
+
     return camera_params
+
 
 ####################################################
 ####### Functions taken from scaffold-gs ###########
@@ -175,7 +179,9 @@ def get_projection_matrix(znear, zfar, fovx, fovy):
 def focal2fov(focal, pixels):
     return 2 * math.atan(pixels / (2 * focal))
 
+
 # TLB --> I think we can get this through nerfstudio look into removing
+
 
 def build_rotation(quats: torch.Tensor) -> torch.Tensor:
     """Convert unit quaternions to rotation matrices.

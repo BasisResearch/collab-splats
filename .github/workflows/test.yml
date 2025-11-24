@@ -32,7 +32,7 @@ jobs:
       # Upgrade pip/setuptools/wheel
       - name: Upgrade pip and build tools
         run: |
-          python -m pip install --upgrade pip setuptools wheel scikit-build-core
+          python -m pip install --upgrade pip setuptools wheel scikit-build-core pybind11
 
       # Pin NumPy to 1.x to avoid compatibility issues
       - name: Install compatible NumPy

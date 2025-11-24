@@ -115,14 +115,21 @@ class FeatureSplattingDataManager(FullImageDatamanager):
 
         # Try loading from cache if enabled
         if self.config.enable_cache and cache_path.exists():
+            CONSOLE.print(f"Found cached features at {cache_path}")
             cache_dict = torch.load(cache_path)
             cached_filenames = cache_dict.get("image_filenames", [])
             cached_filenames_normalized = [str(Path(f).resolve()) for f in cached_filenames]
 
             if cached_filenames_normalized != image_filenames_normalized:
-                CONSOLE.print("Image filenames have changed, cache invalidated...")
+                CONSOLE.print(
+                    "[yellow]Cache invalidated: image filenames have changed[/yellow]"
+                )
+                CONSOLE.print(
+                    f"  Cached: {len(cached_filenames_normalized)} images, "
+                    f"Current: {len(image_filenames_normalized)} images"
+                )
             else:
-                CONSOLE.print(f"Loading cached {self.config.main_features} features...")
+                CONSOLE.print("[green]✓ Loading features from cache[/green]")
                 return cache_dict["features_dict"]
         else:
             CONSOLE.print("Cache does not exist, extracting features...")

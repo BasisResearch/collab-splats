@@ -7,6 +7,7 @@ from .camera_utils import (
 
 from .utils import create_fused_features, project_gaussians
 from .trainer_config import _TrainerConfig, _ExperimentConfig
+from .model_loading import load_checkpoint
 
 __all__ = [
     "ColmapCamera",
@@ -17,4 +18,5 @@ __all__ = [
     "depth_double_to_normal",
     "_TrainerConfig",
     "_ExperimentConfig",
+    "load_checkpoint",
 ]

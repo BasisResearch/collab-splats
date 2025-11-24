@@ -1,93 +1,87 @@
+"""
+Minimal pipeline runner using YAML configs.
+
+Usage:
+    # Run with default settings
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043
+
+    # Override any config value
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --set method=rade-gs frame_proportion=0.1
+
+    # Override nested values
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --set preprocess.sfm_tool=colmap
+
+    # Overwrite existing outputs
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --overwrite
+
+    # List available datasets
+    python run_pipeline.py --list-datasets
+
+Examples:
+    # Use birds dataset with high quality settings
+    python run_pipeline.py --dataset birds_date-02062024_video-C0043 --set training.pipeline.model.random-scale=1.0
+
+    # Use ants dataset with colmap preprocessing
+    python run_pipeline.py --dataset ants_date-11162025_video-GH010210 --set preprocess.sfm_tool=colmap
+"""
+import argparse
 from pathlib import Path
-from collab_splats.wrapper import Splatter, SplatterConfig
+from collab_splats.wrapper import Splatter, ConfigLoader, parse_cli_overrides
 
-test_configs = {
-    # 'birds_001': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-23/SplatsSD/GH010070.MP4',
-    #     'frame_proportion': 0.125,
-    # },
 
-    # 'birds_002': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-18/SplatsSD/C0065.MP4',
-    #     'frame_proportion': 0.25,
-    # },
-    # 'birds_003': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-19/SplatsSD/C0067.MP4',
-    #     'frame_proportion': 0.25,
-    # },
-    # 'birds_004': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4',
-    #     'frame_proportion': 0.25,
-    # },
-    # 'birds_005': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-06-01/SplatsSD/GH010164.MP4',
-    #     'frame_proportion': 0.1,
-    # },
-    # 'birds_006': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010097.MP4',
-    #     'frame_proportion': 0.14,
-    # },
-    # 'birds_007': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010105.MP4',
-    #     'frame_proportion': 0.25,
-    # },
-    # 'birds_008': {
-    #     'file_path': '/workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4',
-    #     'frame_proportion': 0.25,
-    # },
-    'rats_001': {
-        'file_path': '/workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4',
-        'frame_proportion': 0.25,
-    },
-}
+def main():
+    # Setup paths
+    script_dir = Path(__file__).parent
+    config_dir = script_dir / "configs"
 
-METHODS = ['rade-features'] #'rade-gs'] #'feature-splatting',
+    # Parse arguments
+    parser = argparse.ArgumentParser(
+        description="Run splatting pipeline with YAML configs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--dataset", type=str, help="Dataset config name")
+    parser.add_argument(
+        "--set",
+        nargs="*",
+        default=[],
+        help="Override config (e.g., --set method=rade-gs preprocess.sfm_tool=colmap)",
+    )
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite outputs")
+    parser.add_argument(
+        "--list-datasets", action="store_true", help="List available datasets"
+    )
+
+    args = parser.parse_args()
+
+    # Initialize loader
+    loader = ConfigLoader(config_dir)
+
+    # Handle list command
+    if args.list_datasets:
+        datasets = loader.list_datasets()
+        print("Available datasets:")
+        for d in datasets:
+            print(f"  - {d}")
+        return
+
+    # Require dataset
+    if not args.dataset:
+        parser.error("--dataset is required (or use --list-datasets)")
+
+    # Parse overrides
+    overrides = parse_cli_overrides(args.set) if args.set else None
+
+    # Create splatter from config
+    splatter = Splatter.from_config_file(
+        dataset=args.dataset,
+        config_dir=config_dir,
+        overrides=overrides,
+    )
+
+    # Run pipeline
+    splatter.run_pipeline(overwrite=args.overwrite)
+
 
 if __name__ == "__main__":
-    
-
-    for species, config in test_configs.items():
-        for method in METHODS:
-            print (f"Running {method} for {species} video {Path(config['file_path']).name}")
-            
-            config['method'] = method
-
-            # Create the splatter
-            config = SplatterConfig(**config)
-            splatter = Splatter(config)
-
-            # Create the colmap
-            preproc_kwargs = {
-                "sfm_tool": "hloc",
-                # "refine_pixsfm": "", # This is a flag currently so doesn't need to be given "True" afai can tell
-            }
-
-            splatter.preprocess(kwargs=preproc_kwargs) #, overwrite=True)
-
-            # Train the splatting model -- can pass additional arguments to ns-train
-            feature_kwargs = {
-                "pipeline.model.output-depth-during-training": True,
-                "pipeline.model.rasterize-mode": "antialiased",
-                "pipeline.model.use_scale_regularization": True,
-            }
-
-            splatter.extract_features(kwargs=feature_kwargs) #, overwrite=True)
-
-            # Mesh the splatting model
-            mesher_kwargs = {
-                'depth_name': "median_depth",
-                'depth_trunc': 1.0, # Should be between 1.0 and 3.0
-                'voxel_size': 0.005, 
-                'normals_name': "normals",
-                'features_name': "distill_features", 
-                'sdf_trunc': 0.03,
-                'k': 20,
-                'clean_repair': True,
-                'align_floor': True,
-            }
-
-            splatter.mesh(
-                mesher_type="Open3DTSDFFusion",
-                mesher_kwargs=mesher_kwargs,
-                overwrite=True
-            )
+    main()

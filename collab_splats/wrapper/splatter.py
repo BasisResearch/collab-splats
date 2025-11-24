@@ -63,6 +63,11 @@ class Splatter:
         validated_config = self.validate_config(config)
         self.config: Dict[str, Any] = dict(validated_config)
 
+        # Optional pipeline configs (set by from_config_file)
+        self._preprocess_config: Optional[Dict[str, Any]] = None
+        self._training_config: Optional[Dict[str, Any]] = None
+        self._meshing_config: Optional[Dict[str, Any]] = None
+
     @classmethod
     def validate_config(cls, config: SplatterConfig) -> SplatterConfig:
         """Validate the splatter configuration.
@@ -128,13 +133,121 @@ class Splatter:
         print("Available methods:")
         print("  ", sorted(cls.SPLATTING_METHODS))
 
+    @classmethod
+    def from_config_file(
+        cls,
+        dataset: str,
+        config_dir: Union[str, Path],
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> "Splatter":
+        """
+        Create Splatter instance from YAML configuration.
+
+        Args:
+            dataset: Dataset config name (from datasets/ subdirectory)
+            config_dir: Directory containing config files (base.yaml and datasets/)
+            overrides: Optional runtime overrides
+
+        Returns:
+            Configured Splatter instance with pipeline configs attached
+
+        Example:
+            >>> splatter = Splatter.from_config_file(
+            ...     dataset='ants_001',
+            ...     config_dir='docs/splats/configs'
+            ... )
+            >>> splatter.run_pipeline(overwrite=True)
+        """
+        from collab_splats.wrapper.config import ConfigLoader
+
+        loader = ConfigLoader(config_dir)
+        config = loader.load(dataset=dataset, overrides=overrides)
+
+        # Store full config for later use
+        full_config = config.copy()
+
+        # Extract SplatterConfig fields
+        splatter_fields: Dict[str, Any] = {
+            "file_path": config["file_path"],
+            "method": config["method"],
+        }
+        # Add optional fields if present
+        if "frame_proportion" in config:
+            splatter_fields["frame_proportion"] = config["frame_proportion"]
+        if "min_frames" in config:
+            splatter_fields["min_frames"] = config["min_frames"]
+        if "output_path" in config:
+            splatter_fields["output_path"] = config["output_path"]
+
+        splatter_config: SplatterConfig = splatter_fields  # type: ignore
+        instance = cls(splatter_config)
+
+        # Attach configs for pipeline methods
+        instance._preprocess_config = full_config.get("preprocess", {})
+        instance._training_config = full_config.get("training", {})
+        instance._meshing_config = full_config.get("meshing", {})
+
+        return instance
+
+    def run_pipeline(self, overwrite: bool = False) -> None:
+        """
+        Run complete pipeline using stored configurations.
+
+        This method runs preprocessing, training, and meshing using
+        configurations loaded via from_config_file().
+
+        Args:
+            overwrite: Whether to overwrite existing outputs
+
+        Raises:
+            ValueError: If pipeline configs not found (must use from_config_file)
+        """
+        if self._preprocess_config is None:
+            raise ValueError(
+                "Pipeline configs not found. Use Splatter.from_config_file() "
+                "to load configurations before calling run_pipeline()"
+            )
+
+        print(f"\n{'=' * 80}")
+        print(f"Running {self.config['method']} pipeline")
+        print(f"File: {Path(self.config['file_path']).name}")
+        print(f"{'=' * 80}\n")
+
+        # Step 1: Preprocessing
+        print("[1/3] Preprocessing...")
+        self.preprocess(kwargs=self._preprocess_config, overwrite=overwrite)
+
+        # Step 2: Training
+        print("\n[2/3] Training...")
+        self.extract_features(kwargs=self._training_config, overwrite=overwrite)
+
+        # Step 3: Meshing
+        print("\n[3/3] Meshing...")
+        mesher_config = (self._meshing_config or {}).copy()
+        mesher_type = mesher_config.pop("mesher_type", "Open3DTSDFFusion")
+        self.mesh(
+            mesher_type=mesher_type, mesher_kwargs=mesher_config, overwrite=overwrite
+        )
+
+        print(f"\n{'=' * 80}")
+        print("Pipeline complete!")
+        print(f"{'=' * 80}\n")
+
     def preprocess(
-        self, overwrite: bool = False, kwargs: Optional[Dict[str, Any]] = None
+        self,
+        overwrite: bool = False,
+        sfm_tool: str = "colmap",
+        kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Preprocess the data in the splatter.
 
         This function handles any necessary data preprocessing steps based on the
         configured method.
+
+        Args:
+            overwrite: If True, rerun preprocessing even if transforms.json exists
+            sfm_tool: Structure from motion tool to use ('colmap', 'hloc')
+            kwargs: Additional arguments to pass to ns-process-data
         """
         file_path = self.config["file_path"]
         output_path = self.config["output_path"]
@@ -173,6 +286,8 @@ class Splatter:
             # If we have less than the minimum number of frames, as many as possible
             n_samples = n_frames if n_samples < self.config["min_frames"] else n_samples
 
+            print("Number of frames to sample: ", n_samples)
+
             # Create the command
             num_frames_target = f"--num-frames-target {n_samples}"
         else:
@@ -184,6 +299,7 @@ class Splatter:
             f"{input_type} "
             f"--data {file_path.as_posix()} "
             f"--output-dir {preproc_data_path.as_posix()} "
+            f"--sfm-tool {sfm_tool} "
             f"{num_frames_target} "
         )
 
@@ -296,6 +412,52 @@ class Splatter:
         self.config["model_path"] = selected_run.as_posix()
         self.config["model_config_path"] = (selected_run / "config.yml").as_posix()
 
+    def load_model(
+        self,
+        config_path: Optional[Union[str, Path]] = None,
+        test_mode: str = "inference",
+    ):
+        """
+        Load a trained nerfstudio model.
+
+        Args:
+            config_path: Path to config.yml. If None, uses model_config_path from config or prompts selection
+            test_mode: Evaluation mode - "test", "val", or "inference" (default)
+
+        Returns:
+            Tuple of (config, pipeline, model)
+
+        Example:
+            >>> splatter = Splatter(config)
+            >>> config, pipeline, model = splatter.load_model("outputs/scene/rade-gs/config.yml")
+            >>> outputs = model.get_outputs(camera)
+        """
+        from collab_splats.utils import load_checkpoint
+
+        # Determine config path
+        if config_path is None:
+            if not self.config.get("model_config_path"):
+                self._select_run()
+            config_path = self.config["model_config_path"]
+
+        print(f"Loading model from {config_path}")
+
+        # Load using utility function
+        config, pipeline, checkpoint_path, step = load_checkpoint(
+            config_path, test_mode=test_mode
+        )
+
+        # Store in instance
+        self.model = pipeline.model
+        self.pipeline = pipeline
+        self.model_config = config
+        self.checkpoint_path = checkpoint_path
+        self.training_step = step
+
+        print(f"✓ Model loaded: {type(self.model).__name__} (step {step})")
+
+        return config, pipeline, self.model
+
     def mesh(
         self,
         mesher_type: str = "Open3DTSDFFusion",
@@ -308,13 +470,18 @@ class Splatter:
         """
         self._select_run()
 
-        mesh_dir = self.config["output_path"] / self.config["method"] / "mesh"
+        # Save mesh under the selected run directory
+        mesh_dir = Path(self.config["model_path"]) / "mesh"
 
         # Create the mesh
         if not mesh_dir.exists() or overwrite:
             from collab_splats.utils import mesh
 
             print(f"Initializing mesher {mesher_type}")
+
+            # Handle None mesher_kwargs
+            if mesher_kwargs is None:
+                mesher_kwargs = {}
 
             # Initialize the mesher
             mesher = getattr(mesh, mesher_type)(
@@ -340,14 +507,8 @@ class Splatter:
     ) -> None:
         """Query the mesh for features."""
 
-        if not self.config.get("model_config_path"):
-            self._select_run()
-        elif getattr(self, "model", None) is None:
-            print(f"Loading model from {self.config['model_config_path']}")
-            from nerfstudio.utils.eval_utils import eval_setup
-
-            _, pipeline, _, _ = eval_setup(Path(self.config["model_config_path"]))
-            self.model = pipeline.model
+        if getattr(self, "model", None) is None:
+            self.load_model()
 
         mesh_info = self.config.get("mesh_info")
         if mesh_info is None:

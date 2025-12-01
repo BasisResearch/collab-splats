@@ -15,8 +15,11 @@ Once the docker image is loaded, please clone and install the repository as foll
 git clone https://github.com/BasisResearch/collab-splats/
 cd collab-splats
 
-# This performs pip install -e .
-bash setup.sh
+# create virtual environment etc.
+pip install -e .
+
+# for development install, run
+# pip install -e .[dev]
 ```
 
 

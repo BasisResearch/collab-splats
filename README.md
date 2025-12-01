@@ -2,7 +2,12 @@
 
 Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
 
-See [ADD PAPER REFERENCE HERE]
+For more details, see the paper
+
+
+***I. Aitsahalia et al., “Inferring cognitive strategies from groups of animals in natural environments,” presented at the NeurIPS Workshop on Data on the Brain \& Mind Findings, 2025.***
+
+To reproduce the figures from the paper, see [`paper_figures.md`](./paper_figures.md)
 
 ## Installation
 

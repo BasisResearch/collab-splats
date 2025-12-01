@@ -12,12 +12,12 @@ Based on https://github.com/vuer-ai/feature-splatting/blob/main/feature_splattin
 
 import gc
 from dataclasses import dataclass, field
-from typing import Dict, Literal, Tuple, Type, List
+from typing import Dict, Literal, Tuple, Type, List, Union
+from pathlib import Path
 from PIL import Image
 from tqdm import trange
 import numpy as np
 import torch
-from jaxtyping import Float
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.datamanagers.full_images_datamanager import (
@@ -28,6 +28,7 @@ from nerfstudio.utils.rich_utils import CONSOLE
 
 from collab_splats.utils.features import BaseFeatureExtractor, pytorch_gc, resize_image
 from collab_splats.utils.segmentation import Segmentation, aggregate_masked_features
+
 
 @dataclass
 class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
@@ -59,6 +60,7 @@ class FeatureSplattingDataManagerConfig(FullImageDatamanagerConfig):
     final_resolution: int = 64
     """Resolution of final features."""
 
+
 class FeatureSplattingDataManager(FullImageDatamanager):
     """DataManager that handles feature extraction and management for feature splatting."""
 
@@ -73,25 +75,31 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         self._set_metadata(self.features_dict)
 
         # Split features into train and eval sets
-        self.train_features, self.eval_features = self.split_train_test_features(self.features_dict)
+        self.train_features, self.eval_features = self.split_train_test_features(
+            self.features_dict
+        )
 
         # Cleanup
         del self.features_dict
         torch.cuda.empty_cache()
         gc.collect()
-    
-    def setup(self) -> Dict[str, Float[torch.Tensor, "n h w c"]]:
+
+    def setup(self) -> Dict[str, torch.Tensor]:
         """Set up feature extraction or load from cache.
-        
+
         Returns:
             Dict mapping feature types to tensors of extracted features.
         """
         # Get all image paths
-        image_filenames = self.train_dataset.image_filenames + self.eval_dataset.image_filenames
+        image_filenames = (
+            self.train_dataset.image_filenames + self.eval_dataset.image_filenames
+        )
 
         # Set up cache path
         cache_dir = self.config.dataparser.data
-        cache_path = cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
+        cache_path = (
+            cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
+        )
 
         # Try loading from cache if enabled
         if self.config.enable_cache and cache_path.exists():
@@ -105,41 +113,52 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             CONSOLE.print("Cache does not exist, extracting features...")
 
         # Extract features
-        CONSOLE.print(f"Extracting {self.config.main_features} features for {len(image_filenames)} images...")
+        CONSOLE.print(
+            f"Extracting {self.config.main_features} features for {len(image_filenames)} images..."
+        )
         features_dict = self.extract_features(image_filenames)
 
         # Cache features if enabled
         if self.config.enable_cache:
             cache_dict = {
                 "image_filenames": image_filenames,
-                "features_dict": features_dict
+                "features_dict": features_dict,
             }
             cache_dir.mkdir(exist_ok=True)
             torch.save(cache_dict, cache_path)
-            CONSOLE.print(f"Saved {self.config.main_features} features to cache at {cache_path}")
-        
+            CONSOLE.print(
+                f"Saved {self.config.main_features} features to cache at {cache_path}"
+            )
+
         return features_dict
 
-    def extract_features(self, image_filenames: List[str]) -> Dict[str, Float[torch.Tensor, "n h w c"]]:
+    def extract_features(
+        self, image_filenames: List[Union[str, Path]]
+    ) -> Dict[str, torch.Tensor]:
         """Extract DINO and CLIP features from images.
-        
+
         Args:
             image_filenames: List of paths to images to process.
-            
+
         Returns:
             Dictionary mapping feature types to lists of feature tensors.
         """
 
-        features_dict = {}
+        features_dict: Dict[str, List[torch.Tensor]] = {}
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         if self.config.regularization_features is not None:
             features_dict[self.config.regularization_features] = []
 
             # Create extractor for regularization features --> extract
-            extractor = BaseFeatureExtractor.get(self.config.regularization_features)(device=device)
+            extractor = BaseFeatureExtractor.get(self.config.regularization_features)(
+                device=device
+            )
 
-            for i in trange(len(image_filenames), desc=f"Extracting {self.config.regularization_features} features"):
+            for i in trange(
+                len(image_filenames),
+                desc=f"Extracting {self.config.regularization_features} features",
+            ):
                 image, target_H, target_W = extractor.preprocess(image_filenames[i])
                 features = extractor.forward(image)
                 features = extractor.reshape(features, target_H, target_W)
@@ -160,7 +179,10 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         # Add empty list for main features
         features_dict[self.config.main_features] = []
 
-        for i in trange(len(image_filenames), desc=f"Extracting {self.config.main_features} features"):
+        for i in trange(
+            len(image_filenames),
+            desc=f"Extracting {self.config.main_features} features",
+        ):
             # Load and process image
             image = Image.open(image_filenames[i])
             H, W = image.height, image.width
@@ -176,24 +198,28 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             features = extractor.forward(inputs[None])[0]
 
             # Prepare image for segmentation
-            image = resize_image(image, self.config.sam_resolution) # Resize image to SAM resolution
-            image = np.asarray(image) # Convert to numpy array
+            image = resize_image(
+                image, self.config.sam_resolution
+            )  # Resize image to SAM resolution
+            image = np.asarray(image)  # Convert to numpy array
 
             # Apply segmentation masks over features
             seg_outputs = segmentation.segment(image)
-            
+
             # Add an all-zero tensor if no object is detected
             if seg_outputs is None:
-                features_dict[self.config.main_features].append(torch.zeros((features.shape[0], final_H, final_W)))
+                features_dict[self.config.main_features].append(
+                    torch.zeros((features.shape[0], final_H, final_W))
+                )
                 continue
-            
+
             masks = seg_outputs[0]
-            
+
             features = aggregate_masked_features(
-                features, 
+                features,
                 masks,
                 resolution=(object_H, object_W),
-                final_resolution=(final_H, final_W)
+                final_resolution=(final_H, final_W),
             )
 
             features = features.detach().cpu()
@@ -208,75 +234,93 @@ class FeatureSplattingDataManager(FullImageDatamanager):
         pytorch_gc()
 
         # Stack features along batch dimension
-        for k in features_dict.keys():
-            features_dict[k] = torch.stack(features_dict[k], dim=0)  # BCHW
+        for k, v in list(features_dict.items()):
+            features_dict[k] = torch.stack(v, dim=0)  # BCHW
 
         return features_dict
 
-    def split_train_test_features(self, features_dict: Dict[str, Float[torch.Tensor, "n h w c"]]) -> Tuple[Dict[str, Float[torch.Tensor, "n h w c"]], Dict[str, Float[torch.Tensor, "n h w c"]]]:
+    def split_train_test_features(
+        self, features_dict: Dict[str, torch.Tensor]
+    ) -> Tuple[
+        Dict[str, torch.Tensor],
+        Dict[str, torch.Tensor],
+    ]:
         """Split features into training and evaluation sets.
-        
+
         Args:
             features_dict: Dictionary of all extracted features.
-            
+
         Returns:
             Tuple of (train_features, eval_features) dictionaries.
         """
         train_size = len(self.train_dataset)
         eval_size = len(self.eval_dataset)
         total_size = train_size + eval_size
-    
+
         # Validate feature lengths
         for model_name, features in features_dict.items():
             if len(features) != total_size:
-                raise ValueError(f"Feature {model_name} has length {len(features)}, expected {total_size}")
-        
-        train_features = {model_name: features[:train_size] for model_name, features in features_dict.items()}
-        eval_features = {model_name: features[train_size:] for model_name, features in features_dict.items()}
+                raise ValueError(
+                    f"Feature {model_name} has length {len(features)}, expected {total_size}"
+                )
+
+        train_features = {
+            model_name: features[:train_size]
+            for model_name, features in features_dict.items()
+        }
+        eval_features = {
+            model_name: features[train_size:]
+            for model_name, features in features_dict.items()
+        }
 
         return train_features, eval_features
 
-    def _set_metadata(self, features_dict: Dict[str, Float[torch.Tensor, "n h w c"]]):
+    def _set_metadata(self, features_dict: Dict[str, torch.Tensor]):
         """Set feature metadata in the dataset.
-        
+
         Args:
             features_dict: Dictionary of extracted features.
         """
-        feature_dims = {model_name: features.shape[1:] for model_name, features in features_dict.items()}
+        feature_dims = {
+            model_name: features.shape[1:]
+            for model_name, features in features_dict.items()
+        }
         metadata = {
             "feature_type": self.config.main_features,
             "feature_dims": feature_dims,
         }
+        if getattr(self.train_dataset, "metadata", None) is None:
+            self.train_dataset.metadata = {}
         self.train_dataset.metadata.update(metadata)
 
     def next_train(self, step: int) -> Tuple[Cameras, Dict]:
         """Get next training batch with features.
-        
+
         Args:
             step: Current training step.
-            
+
         Returns:
             Tuple of (camera, data dict with features).
         """
         camera, data = super().next_train(step)
-        camera_idx = camera.metadata['cam_idx']
+        camera_idx = camera.metadata["cam_idx"]
         features_dict = {}
         for model_name, features in self.train_features.items():
             features_dict[model_name] = features[camera_idx]
         data["features_dict"] = features_dict
         return camera, data
-    
+
     def next_eval(self, step: int) -> Tuple[Cameras, Dict]:
         """Get next evaluation batch with features.
-        
+
         Args:
             step: Current evaluation step.
-            
+
         Returns:
             Tuple of (camera, data dict with features).
         """
         camera, data = super().next_eval(step)
-        camera_idx = camera.metadata['cam_idx']
+        camera_idx = camera.metadata["cam_idx"]
         features_dict = {}
         for model_name, features in self.eval_features.items():
             features_dict[model_name] = features[camera_idx]

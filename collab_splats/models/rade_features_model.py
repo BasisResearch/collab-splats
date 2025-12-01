@@ -3,10 +3,11 @@ Template Model File
 
 Currently this subclasses the Nerfacto model. Consider subclassing from the base Model.
 """
+
 from dataclasses import dataclass, field
 from typing import Type, Dict, Union, List, Optional
 
-import torch 
+import torch
 from torch.nn import functional as F
 from torch.nn import Parameter
 
@@ -24,6 +25,7 @@ from nerfstudio.data.scene_box import OrientedBox
 from collab_splats.utils import depth_double_to_normal
 from collab_splats.models.rade_gs_model import RadegsModelConfig, RadegsModel
 from collab_splats.utils.features import TwoLayerMLP, BaseFeatureExtractor
+
 
 @dataclass
 class RadegsFeaturesModelConfig(RadegsModelConfig):
@@ -44,7 +46,7 @@ class RadegsFeaturesModelConfig(RadegsModelConfig):
     # https://github.com/nerfstudio-project/gsplat/blob/main/gsplat/cuda/_wrapper.py#L431
     # gsplat's N-D implementation seems to have some bugs that cause padded tensors to have memory issues
 
-    # So this problem has to do with dim_sh (spherical harmonics degree) + features_latent_dim being evenly divisible 
+    # So this problem has to do with dim_sh (spherical harmonics degree) + features_latent_dim being evenly divisible
 
     # From gsplat docs:
     # **Support N-D Features**: If `sh_degree` is None,
@@ -56,7 +58,7 @@ class RadegsFeaturesModelConfig(RadegsModelConfig):
     # activated bases in the SH coefficients.
     #
     # TLB we're gonna start with 13 (so that it adds to 16 SH coefficients, but lets see if we can reduce)
-    features_latent_dim: int = 13 
+    features_latent_dim: int = 13
     """Latent dimensionality of the learned feature space."""
 
     mlp_hidden_dim: int = 64
@@ -72,6 +74,7 @@ class RadegsFeaturesModelConfig(RadegsModelConfig):
     similarity_method: str = "pairwise"
     """Method to use for computing similarity."""
 
+
 class RadegsFeaturesModel(RadegsModel):
     """Template Model."""
 
@@ -80,27 +83,35 @@ class RadegsFeaturesModel(RadegsModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Moving this from populate models to here because we need 
+        # Moving this from populate models to here because we need
         # the device initialized before we can populate text encoder
-        
+
         # Initialize per-Gaussian features
-        distill_features = torch.nn.Parameter(torch.zeros((self.means.shape[0], self.config.features_latent_dim)))
+        distill_features = torch.nn.Parameter(
+            torch.zeros((self.means.shape[0], self.config.features_latent_dim))
+        )
         self.gauss_params["distill_features"] = distill_features
 
         # Store information about the main features
         self.main_features_name = self.kwargs["metadata"]["feature_type"]
-        self.main_features_dims = self.kwargs["metadata"]["feature_dims"][self.main_features_name] # C, H, W
+        self.main_features_dims = self.kwargs["metadata"]["feature_dims"][
+            self.main_features_name
+        ]  # C, H, W
 
         # Initialize the decoder MLP
         self.decoder = TwoLayerMLP(
-            input_dim=self.config.features_latent_dim, # Input are the latents
-            hidden_dim=self.config.mlp_hidden_dim, # Size of the hidden layer
-            features_dim_dict=self.kwargs["metadata"]["feature_dims"] # Size of each feature branch
+            input_dim=self.config.features_latent_dim,  # Input are the latents
+            hidden_dim=self.config.mlp_hidden_dim,  # Size of the hidden layer
+            features_dim_dict=self.kwargs["metadata"][
+                "feature_dims"
+            ],  # Size of each feature branch
         )
 
         # Populate text encoder and set default text queries
         self.populate_text_encoder()
-        self.set_text_queries(self.config.positive_queries, self.config.negative_queries)
+        self.set_text_queries(
+            self.config.positive_queries, self.config.negative_queries
+        )
 
     ########################################################
     ############## Feature Properties #####################
@@ -109,7 +120,9 @@ class RadegsFeaturesModel(RadegsModel):
     def populate_text_encoder(self):
         # Populate text encoder if it's a CLIP model
         if "clip" in self.kwargs["metadata"]["feature_type"].lower():
-            self.text_encoder = BaseFeatureExtractor.get(self.kwargs["metadata"]["feature_type"])(device=self.device)
+            self.text_encoder = BaseFeatureExtractor.get(
+                self.kwargs["metadata"]["feature_type"]
+            )(device=self.device)
 
             # Register it as a submodule and turn off the gradients -->
             # This handles moving to the correct device
@@ -133,8 +146,9 @@ class RadegsFeaturesModel(RadegsModel):
     #     features = self.distill_features
     #     features = self.decoder.per_gaussian_forward(features)
 
-
-    def decode_features(self, features: torch.Tensor, resize_factor: float = 1.0) -> torch.Tensor:
+    def decode_features(
+        self, features: torch.Tensor, resize_factor: float = 1.0
+    ) -> torch.Tensor:
         """
         Decode features from latent space back to model dimensionality.
 
@@ -145,8 +159,16 @@ class RadegsFeaturesModel(RadegsModel):
         features = features.permute(2, 0, 1)
 
         # Reshape and upsample for rendering
-        features_shape = (int(self.main_features_dims[1] * resize_factor), int(self.main_features_dims[2] * resize_factor))
-        rendered_features = F.interpolate(features.unsqueeze(0), size=features_shape, mode="bilinear", align_corners=False)
+        features_shape = (
+            int(self.main_features_dims[1] * resize_factor),
+            int(self.main_features_dims[2] * resize_factor),
+        )
+        rendered_features = F.interpolate(
+            features.unsqueeze(0),
+            size=features_shape,
+            mode="bilinear",
+            align_corners=False,
+        )
 
         # Decode the features --> one branch per model type (i.e., decoding both from same embedding)
         rendered_features_dict = self.decoder(rendered_features)
@@ -154,8 +176,15 @@ class RadegsFeaturesModel(RadegsModel):
         # Interpolate the rest of the features
         for model_name, features_dim in self.kwargs["metadata"]["feature_dims"].items():
             if model_name != self.main_features_name:
-                rendered_features_dict[model_name] = F.interpolate(rendered_features_dict[model_name], size=features_dim[1:], mode="bilinear", align_corners=False)
-            rendered_features_dict[model_name] = rendered_features_dict[model_name].squeeze(0)
+                rendered_features_dict[model_name] = F.interpolate(
+                    rendered_features_dict[model_name],
+                    size=features_dim[1:],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            rendered_features_dict[model_name] = rendered_features_dict[
+                model_name
+            ].squeeze(0)
 
         return rendered_features_dict
 
@@ -185,7 +214,9 @@ class RadegsFeaturesModel(RadegsModel):
             crop_ids = self.crop_box.within(self.means).squeeze()
             if crop_ids.sum() == 0:
                 return self.get_empty_outputs(
-                    int(camera.width.item()), int(camera.height.item()), self.background_color
+                    int(camera.width.item()),
+                    int(camera.height.item()),
+                    self.background_color,
                 )
         else:
             crop_ids = None
@@ -207,7 +238,9 @@ class RadegsFeaturesModel(RadegsModel):
             quats_crop = self.quats
             distill_features_crop = self.distill_features
 
-        colors_crop = torch.cat((features_dc_crop[:, None, :], features_rest_crop), dim=1)
+        colors_crop = torch.cat(
+            (features_dc_crop[:, None, :], features_rest_crop), dim=1
+        )
 
         camera_scale_fac = self._get_downscale_factor()
         camera.rescale_output_resolution(1 / camera_scale_fac)
@@ -236,7 +269,9 @@ class RadegsFeaturesModel(RadegsModel):
             render_mode = "RGB"
 
         if self.config.sh_degree > 0:
-            sh_degree_to_use = min(self.step // self.config.sh_degree_interval, self.config.sh_degree)
+            sh_degree_to_use = min(
+                self.step // self.config.sh_degree_interval, self.config.sh_degree
+            )
         else:
             colors_crop = torch.sigmoid(colors_crop).squeeze(1)  # [N, 1, 3] -> [N, 3]
             sh_degree_to_use = None
@@ -251,39 +286,54 @@ class RadegsFeaturesModel(RadegsModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - meta (set to self.info)
-        render, alpha, expected_depths, median_depths, expected_normals, self.info = self._render(
-            means=means_crop,
-            quats=quats_crop,
-            scales=scales_crop,
-            opacities=opacities_crop,
-            colors=colors_crop,
-            features=distill_features_crop,
-            render_mode=render_mode,
-            sh_degree_to_use=sh_degree_to_use,
-            visible_mask=voxel_visible_mask,
-            camera_params=camera_params,
+        render, alpha, expected_depths, median_depths, expected_normals, self.info = (
+            self._render(
+                means=means_crop,
+                quats=quats_crop,
+                scales=scales_crop,
+                opacities=opacities_crop,
+                colors=colors_crop,
+                features=distill_features_crop,
+                render_mode=render_mode,
+                sh_degree_to_use=sh_degree_to_use,
+                visible_mask=voxel_visible_mask,
+                camera_params=camera_params,
+            )
         )
 
         if self.training:
             self.strategy.step_pre_backward(
-                self.gauss_params, self.optimizers, self.strategy_state, self.step, self.info
+                self.gauss_params,
+                self.optimizers,
+                self.strategy_state,
+                self.step,
+                self.info,
             )
 
         # Calculate depth_middepth_normal --> used for depth_normal_loss
         # Tensor shape: [2, H, W, 3]
-        if self.config.use_depth_normal_loss and self.step >= self.config.regularization_from_iter:
-            depth_middepth_normal = depth_double_to_normal(camera, expected_depths, median_depths)
+        if (
+            self.config.use_depth_normal_loss
+            and self.step >= self.config.regularization_from_iter
+        ):
+            depth_middepth_normal = depth_double_to_normal(
+                camera, expected_depths, median_depths
+            )
 
             # Sum over channels (keep views) then take the dot product with the normal map
             # results in an  angular error map per view (depth and middept)
-            normal_error_map = 1 - (expected_normals.unsqueeze(0) * depth_middepth_normal).sum(dim=-1).squeeze(0)
+            normal_error_map = 1 - (
+                expected_normals.unsqueeze(0) * depth_middepth_normal
+            ).sum(dim=-1).squeeze(0)
         else:
             # Create zero tensor with shape [2, H, W] to match depth_middepth_normal structure
-            normal_error_map = torch.zeros(2, *expected_normals.shape[:2], device=expected_normals.device)
+            normal_error_map = torch.zeros(
+                2, *expected_normals.shape[:2], device=expected_normals.device
+            )
 
-        normals = (expected_normals + 1) / 2 # Convert normals to 0-1 range
-        
-        camera.rescale_output_resolution(camera_scale_fac)  # type: ignore    
+        normals = (expected_normals + 1) / 2  # Convert normals to 0-1 range
+
+        camera.rescale_output_resolution(camera_scale_fac)
 
         alpha = alpha[:, ...]
 
@@ -298,34 +348,46 @@ class RadegsFeaturesModel(RadegsModel):
 
         if render_mode == "RGB+ED":
             depth_im = render[:, ..., 3:4]
-            depth_im = torch.where(alpha > 0, depth_im, depth_im.detach().max()).squeeze(0)
+            depth_im = torch.where(
+                alpha > 0, depth_im, depth_im.detach().max()
+            ).squeeze(0)
         else:
             depth_im = None
 
         if background.shape[0] == 3 and not self.training:
             background = background.expand(H, W, 3)
 
-        features = render[:, ..., 3:3 + self.config.features_latent_dim]
+        features = render[:, ..., 3 : 3 + self.config.features_latent_dim]
 
         # Threshold out by alpha values
-        expected_depths = torch.where(alpha > 0, expected_depths, expected_depths.detach().max())
-        median_depths = torch.where(alpha > 0, median_depths, median_depths.detach().max())
+        expected_depths = torch.where(
+            alpha > 0, expected_depths, expected_depths.detach().max()
+        )
+        median_depths = torch.where(
+            alpha > 0, median_depths, median_depths.detach().max()
+        )
         normals = torch.where(alpha > 0, normals, normals.detach().max())
-        
+
         return {
             "rgb": rgb.squeeze(0),
-            'depth': expected_depths.squeeze(0), # depth_im is typical depth map of rasterization
+            "depth": expected_depths.squeeze(
+                0
+            ),  # depth_im is typical depth map of rasterization
             "median_depth": median_depths.squeeze(0),
-            'depth_im': depth_im,
-            'accumulation': alpha.squeeze(0),
+            "depth_im": depth_im,
+            "accumulation": alpha.squeeze(0),
             "normals": normals.squeeze(0),
-            "depth_normal_error_map": normal_error_map[0, ...].unsqueeze(-1), # [H, W, 1]
-            "middepth_normal_error_map": normal_error_map[1, ...].unsqueeze(-1), # [H, W, 1]
+            "depth_normal_error_map": normal_error_map[0, ...].unsqueeze(
+                -1
+            ),  # [H, W, 1]
+            "middepth_normal_error_map": normal_error_map[1, ...].unsqueeze(
+                -1
+            ),  # [H, W, 1]
             "background": background,
-            'features': features.squeeze(0),
+            "features": features.squeeze(0),
         }
-        
-    def _render(
+
+    def _render(  # type: ignore[override]
         self,
         means: torch.Tensor,
         quats: torch.Tensor,
@@ -335,8 +397,8 @@ class RadegsFeaturesModel(RadegsModel):
         features: torch.Tensor,
         render_mode: str,
         sh_degree_to_use: int,
-        visible_mask: torch.Tensor,
         camera_params: Dict[str, torch.Tensor],
+        visible_mask: Optional[torch.Tensor] = None,
     ):
         """
         Render the scene.
@@ -363,18 +425,18 @@ class RadegsFeaturesModel(RadegsModel):
         # Convert the SH coefficients to RGB via gsplat
         # Found here: https://github.com/nerfstudio-project/gsplat/issues/529#issuecomment-2575128309
         if sh_degree_to_use is not None:
-            dirs = means - camera_params["camera_center"] # directions of the gaussians
-            
+            dirs = means - camera_params["camera_center"]  # directions of the gaussians
+
             colors = spherical_harmonics(
                 degrees_to_use=sh_degree_to_use,
                 dirs=dirs,
-                coeffs=colors, # Current spherical harmonics coefficients
+                coeffs=colors,  # Current spherical harmonics coefficients
             )
 
             # Squeeze back just in case
             colors = colors.squeeze(1)
             colors = torch.clamp_min(colors + 0.5, 0.0)
-        
+
         # Now fuse our features with the colors for rendering
         fused_features = torch.cat((colors, features), dim=-1)
 
@@ -385,28 +447,32 @@ class RadegsFeaturesModel(RadegsModel):
         # - median_depths: [N, 1]
         # - expected_normals: [N, 1]
         # - info: dict
-        render, alpha, expected_depths, median_depths, expected_normals, meta = rasterization(
-            means=means,  # [N, 3]
-            quats=quats,  # [N, 4]
-            scales=torch.exp(scales),  # [N, 3]
-            opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
-            colors=fused_features,
-            viewmats=camera_params["viewmats"],  # [1, 4, 4]
-            Ks=camera_params["Ks"],  # [1, 3, 3]
-            width=int(camera_params["image_width"]),
-            height=int(camera_params["image_height"]),
-            packed=False,
-            near_plane=0.01,
-            far_plane=1e10,
-            render_mode=render_mode,
-            sh_degree=None, # We've computed this in advance --> hacking to use the features
-            sparse_grad=False,
-            absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
-            rasterize_mode=self.config.rasterize_mode,
-            # # set some threshold to disregard small gaussians for faster rendering.
-            # radius_clip=3.0,
-            # Output depth and normal maps
-            return_depth_normal=True,
+        render, alpha, expected_depths, median_depths, expected_normals, meta = (
+            rasterization(
+                means=means,  # [N, 3]
+                quats=quats,  # [N, 4]
+                scales=torch.exp(scales),  # [N, 3]
+                opacities=torch.sigmoid(opacities.squeeze(-1)),  # [N,]
+                colors=fused_features,
+                viewmats=camera_params["viewmats"],  # [1, 4, 4]
+                Ks=camera_params["Ks"],  # [1, 3, 3]
+                width=int(camera_params["image_width"]),
+                height=int(camera_params["image_height"]),
+                packed=False,
+                near_plane=0.01,
+                far_plane=1e10,
+                render_mode=render_mode,
+                sh_degree=None,  # We've computed this in advance --> hacking to use the features
+                sparse_grad=False,
+                absgrad=self.strategy.absgrad
+                if isinstance(self.strategy, DefaultStrategy)
+                else False,
+                rasterize_mode=self.config.rasterize_mode,
+                # # set some threshold to disregard small gaussians for faster rendering.
+                # radius_clip=3.0,
+                # Output depth and normal maps
+                return_depth_normal=True,
+            )
         )
 
         return render, alpha, expected_depths, median_depths, expected_normals, meta
@@ -415,49 +481,59 @@ class RadegsFeaturesModel(RadegsModel):
     ########### Visualization functions ####################
     ########################################################
 
-    def set_text_queries(self, positive_queries: List[str], negative_queries: List[str] = None):
+    def set_text_queries(
+        self, positive_queries: List[str], negative_queries: Optional[List[str]] = None
+    ):
         """
         Sets the text queries for the text encoder.
         """
         self.positive_queries = positive_queries
-        self.negative_queries = negative_queries
+        self.negative_queries = negative_queries or []
 
-    def get_outputs_for_camera(self, camera: Cameras, obb_box: Optional[OrientedBox] = None) -> Dict[str, torch.Tensor]:
+    def get_outputs_for_camera(
+        self, camera: Cameras, obb_box: Optional[OrientedBox] = None
+    ) -> Dict[str, torch.Tensor]:
         """Takes in a camera, generates the raybundle, and computes the output of the model.
         Overridden for a camera-based gaussian model.
 
         Args:
             camera: generates raybundle
 
-        Not called during training, but used for visualization and rendering. Can be used to 
+        Not called during training, but used for visualization and rendering. Can be used to
         add outputs not needed during training.
         """
         # Call the super method to get the base outputs
         outs = super().get_outputs_for_camera(camera, obb_box)
 
         # This resize factor affects the resolution of similarity map. Maybe we should use a fixed size?
-        decoded_features_dict = self.decode_features(outs["features"], resize_factor=8.0)
+        decoded_features_dict = self.decode_features(
+            outs["features"], resize_factor=8.0
+        )
 
         # If we have a text encoder, compute a similarity map if requested
         if self.similarity_fx is not None:
             similarity_map = self.similarity_fx(
-                features=decoded_features_dict[self.main_features_name], 
-                positive=self.positive_queries, 
+                features=decoded_features_dict[self.main_features_name],
+                positive=self.positive_queries,
                 negative=self.negative_queries,
-                method=self.config.similarity_method
+                method=self.config.similarity_method,
             )
 
             # Upsample heatmap to match size of RGB image
             # It's a bit slow since we do it on full resolution; but interpolation seems to have aliasing issues
             assert similarity_map.shape[2] == 1
             if similarity_map.shape[:2] != outs["rgb"].shape[:2]:
-                similarity_map = F.interpolate(
+                similarity_map = (
+                    F.interpolate(
                         similarity_map.permute(2, 0, 1)[None],  # H,W,1 -> 1,1,H,W
-                        size=outs["rgb"].shape[:2], 
-                        mode="bilinear", 
-                        align_corners=False
-                    ).squeeze(0).permute(1, 2, 0)  # 1,1,H,W -> H,W,1
-                
+                        size=outs["rgb"].shape[:2],
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    .squeeze(0)
+                    .permute(1, 2, 0)
+                )  # 1,1,H,W -> H,W,1
+
                 # Assign to outputs
                 outs["similarity"] = similarity_map
         return outs
@@ -466,7 +542,9 @@ class RadegsFeaturesModel(RadegsModel):
     ############## Optimizer functions #####################
     ########################################################
 
-    def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
+    def get_loss_dict(
+        self, outputs, batch, metrics_dict=None
+    ) -> Dict[str, torch.Tensor]:
         """Computes and returns the losses dict.
 
         Args:
@@ -478,8 +556,10 @@ class RadegsFeaturesModel(RadegsModel):
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
 
         # Move features to device for loss computation
-        for model_name in batch['features_dict']:
-            batch['features_dict'][model_name] = batch['features_dict'][model_name].to(self.device)
+        for model_name in batch["features_dict"]:
+            batch["features_dict"][model_name] = batch["features_dict"][model_name].to(
+                self.device
+            )
 
         # Decoded features for each branch
         decoded_features_dict = self.decode_features(outputs["features"])
@@ -488,24 +568,25 @@ class RadegsFeaturesModel(RadegsModel):
         # Computed weighted cosine loss for each model
         for model_name, pred in decoded_features_dict.items():
             # Set weight for the current model type (whether its a main model or not)
-            weight = 1.0 if model_name == self.main_features_name else self.config.features_regularization_lambda
+            weight = (
+                1.0
+                if model_name == self.main_features_name
+                else self.config.features_regularization_lambda
+            )
 
             # Compute cosine loss (cosine similarity between predicted and ground truth features)
-            gt = batch['features_dict'][model_name]
-            features_loss += (1 - F.cosine_similarity(pred, gt, dim=0)).mean() * weight       
+            gt = batch["features_dict"][model_name]
+            features_loss += (1 - F.cosine_similarity(pred, gt, dim=0)).mean() * weight
 
         # Now scale the loss by the overall features loss lambda
         loss_dict["features_loss"] = features_loss * self.config.features_loss_lambda
 
         return loss_dict
-    
+
     def get_gaussian_param_groups(self) -> Dict[str, List[Parameter]]:
         # Here we explicitly use the means, scales as parameters so that the user can override this function and
         # specify more if they want to add more optimizable params to gaussians.
-        return {
-            name: [self.gauss_params[name]]
-            for name in self.gauss_params.keys()
-        }
+        return {name: [self.gauss_params[name]] for name in self.gauss_params.keys()}
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         # Gather Gaussian-related parameters

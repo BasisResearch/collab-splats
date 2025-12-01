@@ -3,7 +3,10 @@
 __version__ = "0.0.1"
 
 from collab_splats.models.rade_gs_model import RadegsModel, RadegsModelConfig
-from collab_splats.models.rade_features_model import RadegsFeaturesModel, RadegsFeaturesModelConfig
+from collab_splats.models.rade_features_model import (
+    RadegsFeaturesModel,
+    RadegsFeaturesModelConfig,
+)
 
 from collab_splats.wrapper.splatter import Splatter, SplatterConfig
 
@@ -20,5 +23,5 @@ __all__ = [
     "RadegsFeaturesModel",
     "ColmapCamera",
     "_TrainerConfig",
-    "_ExperimentConfig"
+    "_ExperimentConfig",
 ]

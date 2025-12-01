@@ -2,6 +2,8 @@
 
 Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
 
+See [ADD PAPER REFERENCE HERE]
+
 ## Installation
 
 ### Docker
@@ -11,15 +13,15 @@ We provide a docker image setup for running nerfstudio with collab-splats (along
 Once the docker image is loaded, please clone and install the repository as follows
 
 ```bash
-## If public repository could do -- pip install git+https://github.com/BasisResearch/collab-splats
+pip install git+https://github.com/BasisResearch/collab-splats
+```
+
+### Standalone setup w/o CUDA
+```bash
 git clone https://github.com/BasisResearch/collab-splats/
 cd collab-splats
-
-# create virtual environment etc.
-pip install -e .
-
-# for development install, run
-# pip install -e .[dev]
+uv venv --python=3.10 && source .venv/bin/activate && uv pip install pip
+bash setup_nocuda.sh
 ```
 
 

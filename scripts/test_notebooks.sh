@@ -10,7 +10,6 @@ INCLUDED_NOTEBOOKS="docs/"
 
 # Array of notebooks to exclude
 EXCLUDED_NOTEBOOKS=(
-    "docs/data/gcloud_data_interface.ipynb"
     "docs/splats/derive_splats.ipynb"
     "docs/splats/create_mesh.ipynb"
     "docs/splats/visualization.ipynb"  # All notebooks excluded - testing disabled

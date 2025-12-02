@@ -31,7 +31,7 @@ dependencies = [
     "trame",
     "trame-vuetify",
     "trame-vtk",
-    "meshlib==",
+    "meshlib==3.0.9.196",
     "dotenv",
     "pyyaml",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",

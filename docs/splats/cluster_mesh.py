@@ -734,9 +734,65 @@ def generate_colors(n_clusters):
     ], dtype=np.uint8)
 
 
-def visualize_all_clusters(pv_mesh, labels, n_clusters, dataset_name, output_path):
+def visualize_plain_mesh(pv_mesh, dataset_name, output_path):
+    """Create plain mesh visualization without clustering."""
+    print("\nRendering plain mesh...")
+    pv.start_xvfb()
+
+    plotter = pv.Plotter(off_screen=True, window_size=[3000, 3000])
+
+    # Use original mesh colors if available, otherwise use a default color
+    if "RGB" in pv_mesh.array_names:
+        plotter.add_mesh(
+            pv_mesh,
+            scalars="RGB",
+            rgb=True,
+            point_size=2,
+            render_points_as_spheres=True,
+            ambient=0.3,
+            diffuse=0.8,
+            specular=0.1,
+        )
+    else:
+        plotter.add_mesh(
+            pv_mesh,
+            color='lightgray',
+            point_size=2,
+            render_points_as_spheres=True,
+            ambient=0.3,
+            diffuse=0.8,
+            specular=0.1,
+        )
+
+    plotter.camera_position = [
+        VIZ_KWARGS.get("position", (2, 2, 1)),
+        VIZ_KWARGS.get("focal_point", (0, 0, 0)),
+        VIZ_KWARGS.get("view_up", (0, 0, 1)),
+    ]
+    plotter.camera.azimuth = VIZ_KWARGS.get("azimuth", 235)
+    plotter.camera.elevation = VIZ_KWARGS.get("elevation", 15)
+    plotter.camera.Zoom(VIZ_KWARGS.get("zoom", 0.9))
+
+    for light in VIZ_KWARGS.get("lighting", []):
+        plotter.add_light(pv.Light(**light))
+
+    img = plotter.screenshot()
+    plotter.close()
+
+    plt.figure(figsize=(12, 8))
+    plt.imshow(img)
+    plt.axis('off')
+    plt.title(f'{dataset_name} - Plain Mesh', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    print(f"✓ Saved: {output_path.name}")
+
+
+def visualize_all_clusters(pv_mesh, labels, n_clusters, dataset_name, algorithm_name, output_path, metrics=None):
     """Create view showing all clusters colored."""
-    print("\nRendering all clusters...")
+    print(f"\nRendering all clusters ({algorithm_name})...")
     pv.start_xvfb()
 
     colors = generate_colors(n_clusters)
@@ -774,7 +830,13 @@ def visualize_all_clusters(pv_mesh, labels, n_clusters, dataset_name, output_pat
     plt.figure(figsize=(12, 8))
     plt.imshow(img)
     plt.axis('off')
-    plt.title(f'{dataset_name} - All Clusters (K={n_clusters})', fontsize=14, fontweight='bold')
+
+    # Create title with metrics if available
+    title = f'{dataset_name} - {algorithm_name} All Clusters (K={n_clusters})'
+    if metrics:
+        title += f'\nSilhouette: {metrics["silhouette"]:.3f} | Davies-Bouldin: {metrics["davies_bouldin"]:.3f} | Calinski-Harabasz: {metrics["calinski_harabasz"]:.1f}'
+
+    plt.title(title, fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -782,9 +844,9 @@ def visualize_all_clusters(pv_mesh, labels, n_clusters, dataset_name, output_pat
     print(f"✓ Saved: {output_path.name}")
 
 
-def visualize_individual_clusters(pv_mesh, labels, n_clusters, dataset_name, output_path, grid_cols=4):
+def visualize_individual_clusters(pv_mesh, labels, n_clusters, dataset_name, algorithm_name, output_path, grid_cols=4):
     """Create multi-panel view with each cluster highlighted individually."""
-    print("\nRendering individual cluster panels...")
+    print(f"\nRendering individual cluster panels ({algorithm_name})...")
     pv.start_xvfb()
 
     colors = generate_colors(n_clusters)
@@ -845,7 +907,7 @@ def visualize_individual_clusters(pv_mesh, labels, n_clusters, dataset_name, out
         axes[idx].axis('off')
 
     fig.suptitle(
-        f'{dataset_name} - Individual Cluster Segments (K={n_clusters})',
+        f'{dataset_name} - {algorithm_name} Individual Cluster Segments (K={n_clusters})',
         fontsize=14,
         fontweight='bold'
     )
@@ -874,7 +936,7 @@ DATASETS = {
 
 
 def load_mesh_and_features(dataset_name, config):
-    """Load mesh, features, and create PyVista mesh."""
+    """Load mesh, features, and create PyVista mesh. Returns the splat directory for output."""
     print(f"\nInitializing {dataset_name}...")
 
     splatter_config = SplatterConfig(
@@ -884,6 +946,7 @@ def load_mesh_and_features(dataset_name, config):
     )
     splatter = Splatter(splatter_config)
 
+    # Check if preprocessing and features are already available
     splatter.preprocess()
     splatter.extract_features()
     splatter.mesh()
@@ -899,9 +962,13 @@ def load_mesh_and_features(dataset_name, config):
     mesh_vertices = np.asarray(mesh_o3d.vertices)
     pv_mesh = pv.read(str(mesh_path))
 
-    print(f"✓ Vertices: {len(mesh_vertices):,}, Features: {mesh_features.shape}")
+    # The splat directory is the parent of the mesh directory
+    splat_dir = mesh_path.parent.parent
 
-    return pv_mesh, mesh_features, mesh_vertices
+    print(f"✓ Vertices: {len(mesh_vertices):,}, Features: {mesh_features.shape}")
+    print(f"✓ Splat directory: {splat_dir}")
+
+    return pv_mesh, mesh_features, mesh_vertices, splat_dir
 
 
 def save_results(labels, n_clusters, dataset_name, output_dir, metadata=None):
@@ -941,116 +1008,222 @@ def process_dataset(dataset_name, args):
     config = DATASETS[dataset_name]
 
     # Load mesh and features
-    pv_mesh, features, positions = load_mesh_and_features(dataset_name, config)
+    pv_mesh, features, positions, splat_dir = load_mesh_and_features(dataset_name, config)
 
-    # Clustering pipeline
-    if args.load_labels:
-        print(f"\nLoading labels from: {args.load_labels}")
-        labels = np.load(args.load_labels)
-        n_clusters = len(np.unique(labels))
-        features_processed = features
-    else:
-        # Run clustering
-        labels, n_clusters, features_processed = cluster_features(
-            features=features,
-            positions=positions,
-            n_clusters=args.n_clusters if args.n_clusters != 'auto' else None,
-            algorithm=args.algorithm,
-            semantic_weight=args.semantic_weight,
-            use_gpu=args.use_gpu,
-            use_pca=args.use_pca,
-            pca_variance=args.pca_variance,
-            min_cluster_size=args.min_cluster_size,
-            min_samples=args.min_samples,
-            k_range=args.k_range,
-            graph_neighbors=args.graph_neighbors,
-            graph_spatial_weight=args.graph_spatial_weight,
-            verbose=True,
-        )
+    # Use splat_dir as the base output directory
+    output_dir = Path(splat_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Optional: lightweight spatial smoothing
-        if args.smooth:
-            print("\n--- STEP 3: POST-PROCESSING ---")
-            labels = spatial_smoothing_knn(
-                positions, labels,
-                k=args.smooth_k,
-                iterations=args.smooth_iterations,
-                verbose=True
-            )
+    # Create clustering subdirectory for all visualizations
+    plot_dir = output_dir / "clustering"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\n✓ Output directory set to: {output_dir}")
+    print(f"✓ Plot directory set to: {plot_dir}")
 
-        # Relabel consecutively
-        unique_labels = np.unique(labels)
-        label_map = {old: new for new, old in enumerate(unique_labels)}
-        labels = np.array([label_map[l] for l in labels])
-        n_clusters = len(unique_labels)
-
-        # Save results
-        save_results(labels, n_clusters, dataset_name, args.output_dir)
-
-    # Evaluation
-    if args.evaluate:
-        print("\n--- EVALUATION: CLUSTER QUALITY METRICS ---")
-        metrics = evaluate_clustering(
-            features=features_processed,
-            labels=labels,
-            sample_size=args.eval_sample_size,
-            verbose=True
-        )
-
-        # Save metrics
-        metrics_path = args.output_dir / f"{dataset_name}_metrics_k{n_clusters}.pkl"
-        with open(metrics_path, 'wb') as f:
-            pickle.dump(metrics, f)
-        print(f"✓ Saved metrics: {metrics_path.name}")
-
-    # Compare different semantic weights
-    if args.compare_weights and not args.load_labels:
-        print("\n--- COMPARISON: DIFFERENT SEMANTIC WEIGHTS ---")
-        weights_to_try = [0.70, 0.80, 0.85, 0.90, 0.95]
-        clusterings = {}
-
-        for weight in weights_to_try:
-            print(f"\nTrying semantic_weight={weight}...")
-            if args.use_gpu and CUML_AVAILABLE:
-                labels_temp, _ = gpu_semantic_spatial_clustering(
-                    features_processed, positions, n_clusters,
-                    semantic_weight=weight, verbose=False
-                )
-            else:
-                labels_temp, _ = semantic_spatial_clustering(
-                    features_processed, positions, n_clusters,
-                    semantic_weight=weight, verbose=False
-                )
-            clusterings[f'Semantic_{int(weight*100)}'] = labels_temp
-
-        # Compare
-        comparison = compare_clusterings(
-            features=features_processed,
-            clusterings=clusterings,
-            sample_size=args.eval_sample_size,
-            verbose=True
-        )
-
-        # Save comparison
-        comparison_path = args.output_dir / f"{dataset_name}_comparison_k{n_clusters}.pkl"
-        with open(comparison_path, 'wb') as f:
-            pickle.dump(comparison, f)
-        print(f"\n✓ Saved comparison: {comparison_path.name}")
-
-    # Visualization
+    # Plain mesh visualization (always create this first)
     if args.visualize:
-        print("\n--- VISUALIZATION ---")
+        print("\n--- PLAIN MESH VISUALIZATION ---")
+        plain_mesh_path = plot_dir / f"{dataset_name}_plain_mesh.png"
+        visualize_plain_mesh(pv_mesh, dataset_name, plain_mesh_path)
+
+    # Run KMeans clustering
+    print("\n" + "="*70)
+    print("RUNNING KMEANS CLUSTERING")
+    print("="*70)
+
+    kmeans_labels, kmeans_n_clusters, kmeans_features = cluster_features(
+        features=features,
+        positions=positions,
+        n_clusters='auto',  # Use elbow method
+        algorithm='kmeans',
+        semantic_weight=args.semantic_weight,
+        use_gpu=args.use_gpu,
+        use_pca=args.use_pca,
+        pca_variance=args.pca_variance,
+        k_range=args.k_range,
+        verbose=True,
+    )
+
+    # Optional: lightweight spatial smoothing for KMeans
+    if args.smooth:
+        print("\n--- POST-PROCESSING (KMeans) ---")
+        kmeans_labels = spatial_smoothing_knn(
+            positions, kmeans_labels,
+            k=args.smooth_k,
+            iterations=args.smooth_iterations,
+            verbose=True
+        )
+
+    # Relabel consecutively
+    unique_labels = np.unique(kmeans_labels)
+    label_map = {old: new for new, old in enumerate(unique_labels)}
+    kmeans_labels = np.array([label_map[l] for l in kmeans_labels])
+    kmeans_n_clusters = len(unique_labels)
+
+    # Save KMeans results
+    save_results(kmeans_labels, kmeans_n_clusters, dataset_name, plot_dir,
+                 metadata={'algorithm': 'kmeans', 'elbow_method': True})
+
+    # Compute KMeans metrics for visualization
+    kmeans_metrics_dict = None
+    if args.evaluate or args.visualize:
+        print("\n--- Computing KMeans metrics ---")
+        kmeans_metrics = evaluate_clustering(
+            features=kmeans_features,
+            labels=kmeans_labels,
+            sample_size=args.eval_sample_size,
+            verbose=False
+        )
+        kmeans_metrics_dict = {
+            'silhouette': kmeans_metrics['silhouette'],
+            'davies_bouldin': kmeans_metrics['davies_bouldin'],
+            'calinski_harabasz': kmeans_metrics['calinski_harabasz']
+        }
+
+    # KMeans visualization
+    if args.visualize:
+        print("\n--- KMEANS VISUALIZATION ---")
 
         if args.viz_all:
-            path = args.output_dir / f"{dataset_name}_all_clusters_k{n_clusters}.png"
-            visualize_all_clusters(pv_mesh, labels, n_clusters, dataset_name, path)
+            path = plot_dir / f"{dataset_name}_kmeans_all_clusters_k{kmeans_n_clusters}.png"
+            visualize_all_clusters(pv_mesh, kmeans_labels, kmeans_n_clusters,
+                                 dataset_name, "KMeans", path, kmeans_metrics_dict)
 
         if args.viz_panels:
-            path = args.output_dir / f"{dataset_name}_cluster_panels_k{n_clusters}.png"
-            visualize_individual_clusters(pv_mesh, labels, n_clusters, dataset_name, path, args.grid_cols)
+            path = plot_dir / f"{dataset_name}_kmeans_cluster_panels_k{kmeans_n_clusters}.png"
+            visualize_individual_clusters(pv_mesh, kmeans_labels, kmeans_n_clusters,
+                                        dataset_name, "KMeans", path, args.grid_cols)
+
+    # Run HDBSCAN clustering
+    print("\n" + "="*70)
+    print("RUNNING HDBSCAN CLUSTERING")
+    print("="*70)
+
+    hdbscan_labels, hdbscan_n_clusters, hdbscan_features = cluster_features(
+        features=features,
+        positions=positions,
+        algorithm='hdbscan',
+        semantic_weight=args.semantic_weight,
+        use_gpu=args.use_gpu,
+        use_pca=args.use_pca,
+        pca_variance=args.pca_variance,
+        min_cluster_size=args.min_cluster_size,
+        min_samples=args.min_samples,
+        verbose=True,
+    )
+
+    # Optional: lightweight spatial smoothing for HDBSCAN
+    if args.smooth:
+        print("\n--- POST-PROCESSING (HDBSCAN) ---")
+        hdbscan_labels = spatial_smoothing_knn(
+            positions, hdbscan_labels,
+            k=args.smooth_k,
+            iterations=args.smooth_iterations,
+            verbose=True
+        )
+
+    # Relabel consecutively
+    unique_labels = np.unique(hdbscan_labels)
+    label_map = {old: new for new, old in enumerate(unique_labels)}
+    hdbscan_labels = np.array([label_map[l] for l in hdbscan_labels])
+    hdbscan_n_clusters = len(unique_labels)
+
+    # Save HDBSCAN results
+    save_results(hdbscan_labels, hdbscan_n_clusters, dataset_name, plot_dir,
+                 metadata={'algorithm': 'hdbscan'})
+
+    # Compute HDBSCAN metrics for visualization
+    hdbscan_metrics_dict = None
+    if args.evaluate or args.visualize:
+        print("\n--- Computing HDBSCAN metrics ---")
+        hdbscan_metrics = evaluate_clustering(
+            features=hdbscan_features,
+            labels=hdbscan_labels,
+            sample_size=args.eval_sample_size,
+            verbose=False
+        )
+        hdbscan_metrics_dict = {
+            'silhouette': hdbscan_metrics['silhouette'],
+            'davies_bouldin': hdbscan_metrics['davies_bouldin'],
+            'calinski_harabasz': hdbscan_metrics['calinski_harabasz']
+        }
+
+    # HDBSCAN visualization
+    if args.visualize:
+        print("\n--- HDBSCAN VISUALIZATION ---")
+
+        if args.viz_all:
+            path = plot_dir / f"{dataset_name}_hdbscan_all_clusters_k{hdbscan_n_clusters}.png"
+            visualize_all_clusters(pv_mesh, hdbscan_labels, hdbscan_n_clusters,
+                                 dataset_name, "HDBSCAN", path, hdbscan_metrics_dict)
+
+        if args.viz_panels:
+            path = plot_dir / f"{dataset_name}_hdbscan_cluster_panels_k{hdbscan_n_clusters}.png"
+            visualize_individual_clusters(pv_mesh, hdbscan_labels, hdbscan_n_clusters,
+                                        dataset_name, "HDBSCAN", path, args.grid_cols)
+
+    # Evaluation - save metrics if computed
+    if args.evaluate:
+        print("\n--- EVALUATION: CLUSTER QUALITY METRICS ---")
+
+        # Save KMeans metrics (already computed if visualize was enabled)
+        if kmeans_metrics_dict is None:
+            print("\nKMeans metrics:")
+            kmeans_metrics = evaluate_clustering(
+                features=kmeans_features,
+                labels=kmeans_labels,
+                sample_size=args.eval_sample_size,
+                verbose=True
+            )
+        else:
+            print(f"\nKMeans metrics:")
+            print(f"Silhouette Score: {kmeans_metrics_dict['silhouette']:.3f} (higher is better, [-1, 1])")
+            print(f"Davies-Bouldin Index: {kmeans_metrics_dict['davies_bouldin']:.3f} (lower is better)")
+            print(f"Calinski-Harabasz Score: {kmeans_metrics_dict['calinski_harabasz']:.1f} (higher is better)")
+            # Convert dict back to full metrics format
+            kmeans_metrics = {
+                'silhouette': kmeans_metrics_dict['silhouette'],
+                'davies_bouldin': kmeans_metrics_dict['davies_bouldin'],
+                'calinski_harabasz': kmeans_metrics_dict['calinski_harabasz']
+            }
+
+        metrics_path = plot_dir / f"{dataset_name}_kmeans_metrics_k{kmeans_n_clusters}.pkl"
+        with open(metrics_path, 'wb') as f:
+            pickle.dump(kmeans_metrics, f)
+        print(f"✓ Saved KMeans metrics: {metrics_path.name}")
+
+        # Save HDBSCAN metrics (already computed if visualize was enabled)
+        if hdbscan_metrics_dict is None:
+            print("\nHDBSCAN metrics:")
+            hdbscan_metrics = evaluate_clustering(
+                features=hdbscan_features,
+                labels=hdbscan_labels,
+                sample_size=args.eval_sample_size,
+                verbose=True
+            )
+        else:
+            print(f"\nHDBSCAN metrics:")
+            print(f"Silhouette Score: {hdbscan_metrics_dict['silhouette']:.3f} (higher is better, [-1, 1])")
+            print(f"Davies-Bouldin Index: {hdbscan_metrics_dict['davies_bouldin']:.3f} (lower is better)")
+            print(f"Calinski-Harabasz Score: {hdbscan_metrics_dict['calinski_harabasz']:.1f} (higher is better)")
+            # Convert dict back to full metrics format
+            hdbscan_metrics = {
+                'silhouette': hdbscan_metrics_dict['silhouette'],
+                'davies_bouldin': hdbscan_metrics_dict['davies_bouldin'],
+                'calinski_harabasz': hdbscan_metrics_dict['calinski_harabasz']
+            }
+
+        metrics_path = plot_dir / f"{dataset_name}_hdbscan_metrics_k{hdbscan_n_clusters}.pkl"
+        with open(metrics_path, 'wb') as f:
+            pickle.dump(hdbscan_metrics, f)
+        print(f"✓ Saved HDBSCAN metrics: {metrics_path.name}")
 
     print(f"\n{'='*70}")
     print(f"✓ COMPLETED: {dataset_name}")
+    print(f"  - Plain mesh visualization")
+    print(f"  - KMeans clustering (K={kmeans_n_clusters})")
+    print(f"  - HDBSCAN clustering (K={hdbscan_n_clusters})")
+    print(f"  - All outputs saved to: {plot_dir}")
     print(f"{'='*70}")
 
 

@@ -6,7 +6,7 @@ This is a minimal test to quickly verify GPU acceleration is working.
 Run this before starting large clustering jobs.
 
 Usage:
-    python cuml_gpu_test.py
+    python test_cuml.py
 """
 
 import sys

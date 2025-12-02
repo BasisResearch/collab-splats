@@ -4,9 +4,9 @@ INCLUDED_NOTEBOOKS="docs/"
 
 # Array of notebooks to exclude
 EXCLUDED_NOTEBOOKS=(
-    # "docs/gnn/ModelSelection.ipynb"
-    # "docs/gnn/ModelSelection-food.ipynb"
-    # "docs/gnn/0b-Select_frames_2D.ipynb"
+    "docs/splats/derive_splats.ipynb"
+    "docs/splats/create_mesh.ipynb"
+    "docs/splats/visualization.ipynb"  # All notebooks excluded - testing disabled
 )
 
 # Build the nbqa-exclude pattern (regex with | separator)

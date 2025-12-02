@@ -15,6 +15,7 @@ dependencies = [
     "ftfy",
     "gdown",
     "matplotlib",
+    "mergedeep",
     "numpy<2.0.0",
     "scipy==1.11.4", # Require to play nice w/ numpy
     "lightning",
@@ -30,7 +31,7 @@ dependencies = [
     "trame",
     "trame-vuetify",
     "trame-vtk",
-    "meshlib",
+    "meshlib==3.0.9.196",
     "dotenv",
     "hydra-core",
     "omegaconf",
@@ -38,11 +39,11 @@ dependencies = [
     "requests",
     "trimesh",
     "pydantic==2.10.6",
+    "pyyaml",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
-    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git",
-    "vggt @ git+https://github.com/facebookresearch/vggt.git"
+    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git"
 ]
 
 [project.optional-dependencies]
@@ -74,6 +75,8 @@ dev = [
   "isort",
   "flake8>=6.0",
   "types-PyYAML",
+  "scikit-build-core",
+  "pybind11",
 ]
 
 [tool.black]
@@ -106,7 +109,7 @@ warn_unused_ignores = true
 exclude = "build"
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules"
+addopts = "--doctest-modules --ignore=tests/test_meshlib.py"
 testpaths = ["./tests"]
 
 [tool.isort]

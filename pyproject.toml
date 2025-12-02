@@ -31,7 +31,7 @@ dependencies = [
     "trame",
     "trame-vuetify",
     "trame-vtk",
-    "meshlib",
+    "meshlib==",
     "dotenv",
     "pyyaml",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
@@ -69,6 +69,8 @@ dev = [
   "isort",
   "flake8>=6.0",
   "types-PyYAML",
+  "scikit-build-core",
+  "pybind11",
 ]
 
 [tool.black]

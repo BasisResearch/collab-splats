@@ -128,58 +128,6 @@ RUN mkdir -p /opt/data && \
     rclone copy collab-data:fieldwork_processed/2024_02_06-session_0001/SplatsSD/C0043.MP4 /opt/data/ && \
     rm -f /tmp/api-key.json && \
     rm -rf ~/.config/rclone
-# # Build everything in conda environment --> last step is to install buildtools
-# RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-#     conda env create -n nerfstudio -f /tmp/env.yml && \
-#     conda activate nerfstudio && \
-
-#     # Hack to install our version of rade_gs atm
-#     export CC=/usr/bin/gcc-11 && \
-#     export CXX=/usr/bin/g++-11 && \
-#     export CUDA_HOME=/opt/conda/envs/nerfstudio && \
-#     export PATH=\${CUDA_HOME}/bin:\${PATH} && \
-#     export LD_LIBRARY_PATH=\${CUDA_HOME}/lib64:\${LD_LIBRARY_PATH} && \
-
-#     # Install torch and cuda toolkit
-#     pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118 && \
-#     conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y && \
-#     pip install 'kornia>=0.6.11' && \
-  
-#     # Install hloc
-#     git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
-#     cd /opt/hloc && \
-#     git checkout v1.4 && \
-#     git submodule update --init --recursive && \
-#     pip install -e . --no-cache-dir && \
-#     cd ~ && \
-
-#     # Bump down for hloc interface
-#     pip install --no-cache-dir pycolmap==0.4.0 && \ 
-
-#     # Now bump back down to numpy 1.26.4
-#     conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0' && \
-
-#     # Install tiny-cuda-nn
-#     pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch && \
-#     export TORCH_CUDA_ARCH_LIST=\"\$(echo \"${CUDA_ARCHITECTURES}\" | tr ';' '\n' | awk '\$0 > 70 {print substr(\$0,1,1)\".\"substr(\$0,2)}' | tr '\n' ' ' | sed 's/ \$//')\" && \
-    
-#     # Install gsplat-rade
-#     pip install git+https://github.com/brian-xu/gsplat-rade.git && \
-
-#     # Changing to clone from github (newer features useful)
-#     git clone https://github.com/nerfstudio-project/nerfstudio.git /opt/nerfstudio && \
-#     cd /opt/nerfstudio && \
-#     pip install -e . && \
-
-#     # pip install nerfstudio && \
-
-#     # Bump the conda version back down --> nerfstudio upgrades for some reason in previous step
-#     conda install -c conda-forge 'numpy<2.0.0' && \ 
-#     conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
-#     pip install -r /tmp/requirements.txt"
-
-#     # cd /opt/collab-splats && \
-#     # pip install -e ."
 
 ##################################################
 #           Get pre-built components             #

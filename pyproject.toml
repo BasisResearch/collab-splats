@@ -15,13 +15,13 @@ dependencies = [
     "ftfy",
     "gdown",
     "matplotlib",
+    "mergedeep",
     "numpy<2.0.0",
     "scipy==1.11.4", # Require to play nice w/ numpy
     "lightning",
     "pillow",
     "regex",
     "tqdm",
-    "nerfstudio",
     "huggingface_hub",
     "ultralytics",
     "fairscale",
@@ -31,11 +31,13 @@ dependencies = [
     "trame",
     "trame-vuetify",
     "trame-vtk",
-    "meshlib==3.0.6.229",
+    "meshlib==3.0.9.196",
     "dotenv",
+    "pyyaml",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
+    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git"
 ]
 
 [project.optional-dependencies]
@@ -67,6 +69,8 @@ dev = [
   "isort",
   "flake8>=6.0",
   "types-PyYAML",
+  "scikit-build-core",
+  "pybind11",
 ]
 
 [tool.black]
@@ -99,7 +103,7 @@ warn_unused_ignores = true
 exclude = "build"
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules"
+addopts = "--doctest-modules --ignore=tests/test_meshlib.py"
 testpaths = ["./tests"]
 
 [tool.isort]

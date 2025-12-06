@@ -19,19 +19,22 @@ class SplatterConfig(TypedDict):
 
     Required Keys:
         file_path: Path to the input file for processing (e.g. video, images, etc.)
-        dtype: Specifies if the data is 2D or 3D
         method: Processing method to use (different methods for 2D and 3D)
+        input_type: Type of input data - either "video" or "images"
 
     Optional Keys:
         output_path: Path for output data
             - preproc: preprocessed images
             - model_ckpts: derived model images
             - If output_path is not specified, will default to the grandparent directory of the input file
-        overwrite: If True, will rerun preprocessing even if transforms.json exists
+        frame_proportion: Proportion of frames to sample from video (only applies to video input)
+        min_frames: Minimum number of frames to sample from video (only applies to video input)
+        websocket_port: Port for websocket connection
     """
 
     file_path: Union[str, Path]
     method: str
+    input_type: str
     output_path: Optional[Union[str, Path]]
     frame_proportion: Optional[float]
     min_frames: Optional[int]
@@ -84,11 +87,19 @@ class Splatter:
         ######### Check fields of config ###########
         ############################################
 
-        required_fields = {"file_path", "method"}
+        required_fields = {"file_path", "method", "input_type"}
         missing_fields = required_fields - set(config.keys())
 
         if missing_fields:
             raise ValidationError(f"Missing required fields: {missing_fields}")
+
+        # Validate input_type
+        valid_input_types = {"video", "images"}
+        if config["input_type"] not in valid_input_types:
+            raise ValidationError(
+                f"Invalid input_type '{config['input_type']}'. "
+                f"Valid types are: {sorted(valid_input_types)}"
+            )
 
         # Validate method based on dtype
         valid_methods = cls.SPLATTING_METHODS
@@ -106,16 +117,64 @@ class Splatter:
         file_path = Path(config["file_path"])
 
         if not file_path.exists():
-            raise ValidationError(f"File not found: {file_path}")
+            raise ValidationError(f"Path not found: {file_path}")
+
+        # Validate file_path based on input_type
+        if config["input_type"] == "video":
+            if not file_path.is_file():
+                raise ValidationError(
+                    f"For input_type='video', file_path must be a file, not a directory: {file_path}"
+                )
+            # Validate video file extension
+            valid_video_extensions = {".mp4", ".mov", ".avi", ".MP4", ".MOV", ".AVI"}
+            if file_path.suffix not in valid_video_extensions:
+                raise ValidationError(
+                    f"Invalid video file extension '{file_path.suffix}'. "
+                    f"Valid extensions are: {sorted(valid_video_extensions)}"
+                )
+
+            # Validate that the file is actually a readable video
+            video_capture = cv2.VideoCapture(file_path.as_posix())
+            if not video_capture.isOpened():
+                video_capture.release()
+                raise ValidationError(
+                    f"Cannot open video file: {file_path}. "
+                    f"File may be corrupted or not a valid video format."
+                )
+
+            # Check if video has frames
+            frame_count = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            video_capture.release()
+
+            if frame_count <= 0:
+                raise ValidationError(
+                    f"Video file appears to have no frames: {file_path}"
+                )
+
+            print(f"✓ Valid video file with {frame_count} frames")
+
+        elif config["input_type"] == "images":
+            if not file_path.is_dir():
+                raise ValidationError(
+                    f"For input_type='images', file_path must be a directory: {file_path}"
+                )
 
         # If so, set the file path
         config["file_path"] = file_path
 
-        # If we don't specify an output path, default to the grandparent directory of the input file
+        # If we don't specify an output path, default to a sibling directory structure
         if config.get("output_path") is None:
-            default_output_path = os.path.join(
-                file_path.parent.parent, "environment", file_path.stem
-            )
+            if config["input_type"] == "video":
+                # For video files: grandparent directory / environment / filename_stem
+                default_output_path = os.path.join(
+                    file_path.parent.parent, "environment", file_path.stem
+                )
+            else:  # images
+                # For image directories: parent directory / environment / parent_directory_name
+                # This ensures consistent naming (e.g., /workspace/bicycle/images -> /workspace/bicycle/environment/bicycle)
+                default_output_path = os.path.join(
+                    file_path.parent, "environment", file_path.parent.name
+                )
             config.setdefault("output_path", Path(default_output_path))
 
         if config.get("min_frames") is None:
@@ -171,6 +230,7 @@ class Splatter:
         splatter_fields: Dict[str, Any] = {
             "file_path": config["file_path"],
             "method": config["method"],
+            "input_type": config["input_type"],
         }
         # Add optional fields if present
         if "frame_proportion" in config:
@@ -252,20 +312,7 @@ class Splatter:
         """
         file_path = self.config["file_path"]
         output_path = self.config["output_path"]
-
-        # Determine input type based on file extension
-        ext = file_path.suffix.lower()
-        if ext in [".mp4", ".mov", ".avi"]:
-            input_type = "video"
-        elif ext in [".jpg", ".jpeg", ".png"]:
-            if "360" in str(file_path):
-                input_type = (
-                    "images --camera-type equirectangular --images-per-equirect 14"
-                )
-            else:
-                input_type = "images"
-        else:
-            raise ValueError(f"Unsupported file extension: {ext}")
+        input_type = self.config["input_type"]
 
         # Set the output path to same directory as input fil
         preproc_data_path = output_path / "preproc"
@@ -279,20 +326,20 @@ class Splatter:
             self.config["preproc_data_path"] = preproc_data_path
             return
 
-        if self.config.get("frame_proportion") is not None:
+        # Handle frame sampling for video input only
+        num_frames_target = ""
+        if input_type == "video" and self.config.get("frame_proportion") is not None:
             video_capture = cv2.VideoCapture(file_path.as_posix())
             n_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
             n_samples = int(n_frames * self.config["frame_proportion"])
 
-            # If we have less than the minimum number of frames, as many as possible
+            # If we have less than the minimum number of frames, use as many as possible
             n_samples = n_frames if n_samples < self.config["min_frames"] else n_samples
 
             print("Number of frames to sample: ", n_samples)
 
             # Create the command
             num_frames_target = f"--num-frames-target {n_samples}"
-        else:
-            num_frames_target = ""
 
         # TLB --> we should bump up number of frames to max
         cmd = (
@@ -413,6 +460,53 @@ class Splatter:
         self.config["model_path"] = selected_run.as_posix()
         self.config["model_config_path"] = (selected_run / "config.yml").as_posix()
 
+    def inspect_data(self) -> Dict[str, Any]:
+        """
+        Inspect preprocessing outputs - cameras and point cloud.
+        
+        Returns:
+            Dictionary with cameras and points for visualization
+            
+        Example:
+            >>> splatter = Splatter(config)
+            >>> splatter.preprocess()
+            >>> data = splatter.inspect_data()
+            >>> print(f"Cameras: {data['camera_positions'].shape}")
+            >>> print(f"Points: {data['points'].shape}")
+        """
+        from nerfstudio.data.dataparsers.colmap_dataparser import ColmapDataParserConfig
+        
+        if not self.config.get("preproc_data_path"):
+            raise ValueError("Must run preprocess() first")
+        
+        # Load dataparser
+        config = ColmapDataParserConfig(data=self.config["preproc_data_path"])
+        dataparser = config.setup()
+        outputs = dataparser.get_dataparser_outputs(split="train")
+        
+        # Extract cameras
+        camera_positions = outputs.cameras.camera_to_worlds[:, :3, 3].numpy()
+        
+        # Extract point cloud
+        points = outputs.metadata.get("points3D_xyz")
+        colors = outputs.metadata.get("points3D_rgb")
+        
+        if points is not None:
+            points = points.numpy()
+            colors = colors.numpy()
+            print(f"Loaded {len(points)} points and {len(camera_positions)} cameras")
+        else:
+            print(f"❌ No points loaded! Only {len(camera_positions)} cameras found")
+            points = None
+            colors = None
+        
+        return {
+            "camera_positions": camera_positions,
+            "points": points,
+            "colors": colors,
+            "dataparser_outputs": outputs,  # Full outputs if needed
+        }
+    
     def load_model(
         self,
         config_path: Optional[Union[str, Path]] = None,

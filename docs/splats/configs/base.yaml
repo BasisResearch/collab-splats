@@ -5,6 +5,7 @@
 # Splatter Settings
 # ============================================================================
 method: rade-features
+input_type: video  # Required: "video" or "images"
 frame_proportion: 0.25
 min_frames: 100
 

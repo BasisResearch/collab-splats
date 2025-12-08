@@ -1,0 +1,18 @@
+# Bicycle image dataset
+# This is an image directory dataset with existing preprocessed images
+
+file_path: /workspace/bicycle/images
+input_type: images
+
+# Output will be: /workspace/bicycle/environment/bicycle/preproc/
+# Original images stay at: /workspace/bicycle/images/ (not copied)
+
+# Note: For image datasets, all 194 images will be processed
+# frame_proportion and min_frames do not apply to image directories
+
+# Preprocessing settings
+preprocess:
+  sfm_tool: hloc
+  matching-method: vocab_tree  # Recommended for image datasets
+  # feature-type: superpoint
+  # matcher-type: superglue

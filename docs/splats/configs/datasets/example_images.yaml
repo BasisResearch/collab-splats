@@ -1,0 +1,25 @@
+# Example dataset configuration for image directory
+# Inherits from base.yaml
+
+file_path: /path/to/image_directory
+input_type: images
+
+# Note: frame_proportion and min_frames don't apply to image directories
+# All images in the directory will be processed
+
+# Example: Override preprocessing settings for images
+# preprocess:
+#   sfm_tool: hloc
+#   matching-method: vocab_tree  # Default for images
+#   feature-type: superpoint
+#   matcher-type: superglue
+
+# Example: Training settings
+# training:
+#   pipeline.model.random-scale: 1.0
+#   pipeline.model.cull-alpha-thresh: 0.01
+
+# Example: Meshing settings
+# meshing:
+#   voxel_size: 0.005
+#   sdf_trunc: 0.015

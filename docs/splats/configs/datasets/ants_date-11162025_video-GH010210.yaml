@@ -2,6 +2,7 @@
 # Inherits from base.yaml and overrides specific values
 
 file_path: /workspace/fieldwork-data/ants/2025-11-16/SplatsSD/GH010210.MP4
+input_type: video
 frame_proportion: 0.08
 
 # Optional: Override training parameters for this specific dataset

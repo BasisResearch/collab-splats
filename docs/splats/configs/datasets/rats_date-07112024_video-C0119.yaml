@@ -1,4 +1,5 @@
 # Rats dataset - July 11, 2024 - C0119
 
 file_path: /workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4
+input_type: video
 frame_proportion: 0.25

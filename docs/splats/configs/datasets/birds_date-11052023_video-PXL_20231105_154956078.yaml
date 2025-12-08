@@ -1,4 +1,5 @@
 # Birds dataset - November 5, 2023 - PXL_20231105_154956078
 
 file_path: /workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4
+input_type: video
 frame_proportion: 0.25

@@ -1,4 +1,5 @@
 # Birds dataset - May 23, 2024 - GH010070
 
 file_path: /workspace/fieldwork-data/birds/2024-05-23/SplatsSD/GH010070.MP4
+input_type: video
 frame_proportion: 0.125

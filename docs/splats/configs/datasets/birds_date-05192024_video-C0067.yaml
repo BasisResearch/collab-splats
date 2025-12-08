@@ -1,4 +1,5 @@
 # Birds dataset - May 19, 2024 - C0067
 
 file_path: /workspace/fieldwork-data/birds/2024-05-19/SplatsSD/C0067.MP4
+input_type: video
 frame_proportion: 0.25

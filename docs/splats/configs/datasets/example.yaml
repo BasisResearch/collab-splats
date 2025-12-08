@@ -2,6 +2,7 @@
 # Inherits from base.yaml
 
 file_path: /opt/data/C0043.MP4
+input_type: video
 frame_proportion: 0.25
 
 # Example: Override preprocessing to use colmap instead of hloc

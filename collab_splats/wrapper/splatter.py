@@ -698,35 +698,47 @@ class Splatter:
 
         # Get the preproc and model directories
         preproc_dir = Path(self.config["preproc_data_path"])
-        model_dir = Path(self.config["model_path"])
+
+        if self.config.get("model_path") is not None:
+            model_dir = Path(self.config["model_path"])
+        else:
+            model_dir = None
+            print(f"No model directory exists")
 
         # Load the transforms
         transforms_json = preproc_dir / "transforms.json"
-        nerfstudio_transforms_path = (
-            model_dir / "dataparser_transforms.json"
-        )  # This is the nerfstudio transform
 
-        # Camera transforms (poses)
+        # All camera transforms (poses)
         with open(transforms_json, "r") as f:
             transforms = json.load(f)
 
-        # Nerfstudio transforms aligned to camera
-        with open(nerfstudio_transforms_path, "r") as f:
-            nerfstudio_transforms = json.load(f)
-
-        # Compose into 4x4 matrix
-        transform = np.stack(nerfstudio_transforms["transform"])
-
-        # Add the translation to the transform
-        transform = np.concatenate(
-            [transform, np.array([0, 0, 0, 1])[np.newaxis]], axis=0
-        )
-
-        # Apply to cameras
+        # Grab all camera poses
         camera_poses = np.stack(
             [f["transform_matrix"] for f in transforms["frames"]]
-        )  # Load from your camera pose files or nerfstudio transforms
-        camera_poses[..., :3, 3] *= nerfstudio_transforms["scale"]
+        ) 
+
+        if model_dir is not None and model_dir.exists():
+            nerfstudio_transforms_path = (
+                model_dir / "dataparser_transforms.json"
+            )  # This is the nerfstudio transform
+
+            # Nerfstudio transforms aligned to camera
+            with open(nerfstudio_transforms_path, "r") as f:
+                nerfstudio_transforms = json.load(f)
+
+            # Compose into 4x4 matrix
+            transform = np.stack(nerfstudio_transforms["transform"])
+
+            # Add the translation to the transform
+            transform = np.concatenate(
+                [transform, np.array([0, 0, 0, 1])[np.newaxis]], axis=0
+            )
+        
+            # Load from your camera pose files or nerfstudio transforms
+            camera_poses[..., :3, 3] *= nerfstudio_transforms["scale"]
+        else:
+            print(f"No model directory found at {model_dir}")
+            print (f"Cameras will be in COLMAP coordinates (not nerfstudio coordinates)")
 
         if align_mesh:
             mesh_transform = self.load_mesh_transform()

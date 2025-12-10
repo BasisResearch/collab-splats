@@ -6,6 +6,7 @@ Sourced from dn-splatter: https://github.com/maturk/dn-splatter/blob/main/dn_spl
 Provides additional functionality for exporting features to meshes.
 """
 
+import gc
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,9 +31,9 @@ from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
+from nerfstudio.pipelines.base_pipeline import Pipeline
 
 # This will be depricated at some point
-# from nerfstudio.models.splatfacto import
 from nerfstudio.utils.spherical_harmonics import SH2RGB
 
 import meshlib.mrmeshpy as mm
@@ -664,12 +665,20 @@ def mesh_clustering(
 
 @dataclass
 class GSMeshExporter:
-    """Base class for GS mesh exporters"""
+    """Base class for GS mesh exporters
 
-    load_config: Path
-    """Path to the trained config YAML file."""
+    Either `pipeline` or `load_config` must be provided:
+    - If `pipeline` is provided, it will be used directly (recommended for memory efficiency)
+    - If `load_config` is provided, the pipeline will be loaded from the config file
+    - If both are provided, `pipeline` takes precedence
+    """
+
+    load_config: Optional[Path] = None
+    """Path to the trained config YAML file. Required if pipeline is not provided."""
     output_dir: Path = Path("./mesh_exports/")
     """Path to the output directory."""
+    pipeline: Optional[Pipeline] = None
+    """Optional pre-loaded pipeline object. If provided, load_config will be ignored."""
 
     cropbox_pos: Optional[Annotated[Tuple[float, float, float], "x, y, z"]] = None
     """Cropbox position for the mesh."""
@@ -719,6 +728,32 @@ class GSMeshExporter:
             scale=self.cropbox_scale,
         )
 
+    def _ensure_pipeline_loaded(self) -> Pipeline:
+        """Ensure pipeline is loaded and return it.
+
+        If pipeline is already set, returns it directly.
+        Otherwise, loads from load_config if provided.
+
+        Returns:
+            Loaded pipeline object
+
+        Raises:
+            ValueError: If neither pipeline nor load_config is provided
+        """
+        if self.pipeline is not None:
+            return self.pipeline
+
+        if self.load_config is None:
+            raise ValueError(
+                "Either 'pipeline' or 'load_config' must be provided. "
+                "Pass a pre-loaded pipeline object or a path to the config file."
+            )
+
+        # Load pipeline from config
+        CONSOLE.print(f"Loading pipeline from {self.load_config}")
+        _, self.pipeline, _, _ = eval_setup(self.load_config)
+        return self.pipeline
+
 
 @dataclass
 class GaussiansToPoisson(GSMeshExporter):
@@ -747,7 +782,8 @@ class GaussiansToPoisson(GSMeshExporter):
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
 
-        _, pipeline, _, _ = eval_setup(self.load_config)
+        # Ensure pipeline is loaded (either from parameter or config)
+        pipeline = self._ensure_pipeline_loaded()
 
         assert isinstance(pipeline.model, SplatfactoModel)
 
@@ -946,7 +982,8 @@ class DepthAndNormalMapsPoisson(GSMeshExporter):
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
 
-        _, pipeline, _, _ = eval_setup(self.load_config)
+        # Ensure pipeline is loaded (either from parameter or config)
+        pipeline = self._ensure_pipeline_loaded()
 
         assert isinstance(pipeline.model, SplatfactoModel)
 
@@ -1146,7 +1183,8 @@ class LevelSetExtractor(GSMeshExporter):
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
 
-        _, pipeline, _, _ = eval_setup(self.load_config)
+        # Ensure pipeline is loaded (either from parameter or config)
+        pipeline = self._ensure_pipeline_loaded()
 
         assert isinstance(pipeline.model, SplatfactoModel)
 
@@ -1333,7 +1371,8 @@ class MarchingCubesMesh(GSMeshExporter):
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
 
-        _, pipeline, _, _ = eval_setup(self.load_config)
+        # Ensure pipeline is loaded (either from parameter or config)
+        pipeline = self._ensure_pipeline_loaded()
 
         assert isinstance(pipeline.model, SplatfactoModel)
 
@@ -1443,7 +1482,7 @@ class MarchingCubesMesh(GSMeshExporter):
 @dataclass
 class TSDFFusion(GSMeshExporter):
     """
-    Backproject depths and run TSDF fusion
+    Backproject depths and run TSDF fusion using VDBFusion (more memory-efficient than Open3D)
     """
 
     voxel_size: float = 0.01
@@ -1458,6 +1497,8 @@ class TSDFFusion(GSMeshExporter):
     """Total target surface samples"""
     target_triangles: Optional[int] = None
     """Target number of triangles to simplify mesh to."""
+    render_downscale_factor: float = 1.0
+    """Downscale factor for rendering (1.0=full res, 2.0=half res, 4.0=quarter res). Higher values reduce memory usage."""
 
     def main(self):
         import vdbfusion
@@ -1465,7 +1506,8 @@ class TSDFFusion(GSMeshExporter):
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
 
-        _, pipeline, _, _ = eval_setup(self.load_config)
+        # Ensure pipeline is loaded (either from parameter or config)
+        pipeline = self._ensure_pipeline_loaded()
 
         assert isinstance(pipeline.model, SplatfactoModel)
 
@@ -1493,6 +1535,11 @@ class TSDFFusion(GSMeshExporter):
                 if "mask" in data:
                     mask = data["mask"]
                 camera = cameras[image_idx : image_idx + 1]
+
+                # MEMORY FIX: Apply rendering downscale if specified
+                if self.render_downscale_factor > 1.0:
+                    camera = camera.rescale_output_resolution(1.0 / self.render_downscale_factor)
+
                 outputs = model.get_outputs_for_camera(camera=camera, obb_box=crop_box)
                 assert self.depth_name in outputs
                 depth_map = outputs[self.depth_name]
@@ -1526,6 +1573,14 @@ class TSDFFusion(GSMeshExporter):
                     xyzs.double().cpu().numpy(),
                     extrinsic=c2w[:3, 3].double().cpu().numpy(),
                 )
+
+                # MEMORY FIX: Explicitly delete temporary objects to free memory
+                del xyzs, rgbs, depth_map, outputs, camera, c2w
+
+                # Aggressive garbage collection every 10 frames
+                if image_idx % 10 == 0:
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
             vertices, faces = TSDFvolume.extract_triangle_mesh(min_weight=5)
 
@@ -1566,13 +1621,13 @@ class Open3DTSDFFusion(GSMeshExporter):
     """Name of the normal map in the outputs"""
     features_name: str = "distill_features"
     """Name of the features map in the outputs"""
-    k: int = 5
+    k: int = 100
     """Number of nearest neighbors to use for weighting"""
     sdf_trunc: float = 0.03
     """TSDF truncation"""
     depth_trunc: float = 20
     """Depth at which to truncate"""
-
+    
     @property
     def name(self):
         return "Open3dTSDFfusion"
@@ -1583,7 +1638,8 @@ class Open3DTSDFFusion(GSMeshExporter):
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
 
-        _, pipeline, _, _ = eval_setup(self.load_config)
+        # Ensure pipeline is loaded (either from parameter or config)
+        self._ensure_pipeline_loaded()
 
         # Get the transform matrix for the specified coordinate system
         world_transform = NERFSTUDIO_TRANSFORMS[self.output_coord_system]["transform"]
@@ -1615,16 +1671,18 @@ class Open3DTSDFFusion(GSMeshExporter):
         with open(self.output_dir / "mesh_params.yaml", "w") as f:
             yaml.dump(params, f)
 
-        assert isinstance(pipeline.model, SplatfactoModel)
+        # Make sure the model is a SplatfactoModel
+        assert isinstance(self.pipeline.model, SplatfactoModel)
 
-        model: SplatfactoModel = pipeline.model
         crop_box = self.cropbox()
+
+        print (crop_box)
 
         # Grab the means from the model
         print("Saving splats pointcloud")
-        means = pipeline.model.means.detach().cpu().numpy()
-        colors = pipeline.model.features_dc.detach().cpu().numpy()
-        normals = pipeline.model.normals.detach().cpu().numpy()
+        means = self.pipeline.model.means.detach().cpu().numpy()
+        colors = self.pipeline.model.features_dc.detach().cpu().numpy()
+        normals = self.pipeline.model.normals.detach().cpu().numpy()
         colors = SH2RGB(colors)
 
         # Pass xyz to Open3D.o3d.geometry.PointCloud and visualize
@@ -1637,6 +1695,7 @@ class Open3DTSDFFusion(GSMeshExporter):
 
         # Write out
         o3d.io.write_point_cloud(str(self.output_dir / "splats.ply"), pcd)
+        
 
         print("Fitting TSDF volume")
 
@@ -1648,22 +1707,24 @@ class Open3DTSDFFusion(GSMeshExporter):
 
         with torch.no_grad():
             cameras: Cameras = (
-                pipeline.datamanager.train_dataset.cameras
+                self.pipeline.datamanager.train_dataset.cameras
             )  # TODO: do eval dataset as well
 
             for image_idx, data in tqdm(
-                enumerate(pipeline.datamanager.train_dataset),
+                enumerate(self.pipeline.datamanager.train_dataset),
                 desc="Processing frames",
-                total=len(pipeline.datamanager.train_dataset),
+                total=len(self.pipeline.datamanager.train_dataset),
             ):
                 mask = None
                 if "mask" in data:
                     mask = data["mask"]
                 camera = cameras[image_idx : image_idx + 1]
-                outputs = model.get_outputs_for_camera(
+
+                outputs = self.pipeline.model.get_outputs_for_camera(
                     camera=camera,
                     obb_box=crop_box,
                 )
+
                 assert self.depth_name in outputs
 
                 depth_map = outputs[self.depth_name]
@@ -1710,6 +1771,14 @@ class Open3DTSDFFusion(GSMeshExporter):
                     extrinsic=np.linalg.inv(c2w.cpu().numpy()),
                 )
 
+                # MEMORY FIX: Explicitly delete temporary objects to free memory
+                del rgbd, depth_map, rgb_map, outputs, camera, c2w, intrinsic
+
+                # Aggressive garbage collection every 10 frames
+                if image_idx % 10 == 0:
+                    gc.collect()
+                    torch.cuda.empty_cache()
+
             mesh = volume.extract_triangle_mesh()
 
             if self.clean_repair:
@@ -1741,12 +1810,12 @@ class Open3DTSDFFusion(GSMeshExporter):
 
             # If normals name was provided and it's in the model, use it
             if self.normals_name is not None and (
-                self.normals_name in pipeline.model.gauss_params.keys()
-                or getattr(pipeline.model, self.normals_name, None) is not None
+                self.normals_name in self.pipeline.model.gauss_params.keys()
+                or getattr(self.pipeline.model, self.normals_name, None) is not None
             ):
                 print("Mapping normals to mesh")
                 normals = (
-                    getattr(pipeline.model, self.normals_name).detach().cpu().numpy()
+                    getattr(self.pipeline.model, self.normals_name).detach().cpu().numpy()
                 )
 
                 mesh_normals = normals2vertex(
@@ -1761,11 +1830,11 @@ class Open3DTSDFFusion(GSMeshExporter):
 
             if (
                 self.features_name is not None
-                and self.features_name in pipeline.model.gauss_params.keys()
+                and self.features_name in self.pipeline.model.gauss_params.keys()
             ):
                 print("Mapping features to mesh")
                 features = (
-                    pipeline.model.gauss_params[self.features_name]
+                    self.pipeline.model.gauss_params[self.features_name]
                     .detach()
                     .cpu()
                     .numpy()

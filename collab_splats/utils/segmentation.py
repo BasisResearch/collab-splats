@@ -39,6 +39,7 @@ class Segmentation:
         else:
             raise ValueError(f"Backend {backend} not supported")
 
+        print (self.seg_model.device)
         self.backend = backend
         self.strategy = strategy
 

@@ -106,23 +106,40 @@ class FeatureSplattingDataManager(FullImageDatamanager):
                 cache_dir = cache_dir.parent
         else:
             # Fallback to config if no images found
+            print (self.config.dataparser.data)
             cache_dir = Path(self.config.dataparser.data).resolve()
 
         cache_path = (
             cache_dir / f"feature-splatting_{self.config.main_features}-features.pt"
         )
 
-        # Normalize paths to absolute strings for consistent comparison
-        image_filenames_normalized = [str(Path(f).resolve()) for f in image_filenames]
+        # print (cache_dir)
+        # print (cache_path)
+        # Normalize paths to relative strings (relative to cache_dir) for CWD-independent comparison
+        # This ensures cache works regardless of which directory the script is run from
+        base_dir = cache_dir
+        image_filenames_normalized = [
+            str(Path(f).resolve().relative_to(base_dir)) for f in image_filenames
+        ]
 
+
+        
         # Try loading from cache if enabled
         if self.config.enable_cache and cache_path.exists():
             CONSOLE.print(f"Found cached features at {cache_path}")
             cache_dict = torch.load(cache_path)
             cached_filenames = cache_dict.get("image_filenames", [])
-            cached_filenames_normalized = [
-                str(Path(f).resolve()) for f in cached_filenames
-            ]
+            # Normalize cached paths: if they're absolute, make them relative to base_dir
+            # This handles both old caches (absolute paths) and new caches (relative paths)
+            cached_filenames_normalized = []
+            for f in cached_filenames:
+                f_path = Path(f)
+                if f_path.is_absolute():
+                    # Old cache format with absolute paths - convert to relative
+                    cached_filenames_normalized.append(str(f_path.relative_to(base_dir)))
+                else:
+                    # New cache format already has relative paths
+                    cached_filenames_normalized.append(str(f_path))
 
             if cached_filenames_normalized != image_filenames_normalized:
                 CONSOLE.print(

@@ -461,18 +461,25 @@ class Splatter:
 
     def mesh(
         self,
-        mesher_type: str = "Open3DTSDFFusion",
-        mesher_kwargs: Optional[Dict[str, Any]] = None,
+        kwargs: Optional[Dict[str, Any]] = None,
         overwrite: bool = False,
     ) -> None:
         """Generate a mesh from the splatter data.
 
         This function handles mesh generation from the preprocessed data.
+        If a pipeline is already loaded (via load_model), it will be passed
+        to the mesher to avoid duplicate loading and reduce memory usage.
         """
         self._select_run()
 
         # Save mesh under the selected run directory
         mesh_dir = Path(self.config["model_path"]) / "mesh"
+
+        mesher_config = (self._meshing_config or {}).copy()
+        mesher_type = mesher_config.pop("mesher_type", "Open3DTSDFFusion")
+
+        if kwargs is not None:
+            mesher_config.update(kwargs)
 
         # Create the mesh
         if not mesh_dir.exists() or overwrite:
@@ -480,16 +487,22 @@ class Splatter:
 
             print(f"Initializing mesher {mesher_type}")
 
-            # Handle None mesher_kwargs
-            if mesher_kwargs is None:
-                mesher_kwargs = {}
-
-            # Initialize the mesher
-            mesher = getattr(mesh, mesher_type)(
-                load_config=Path(self.config["model_config_path"]),
-                output_dir=mesh_dir,
-                **mesher_kwargs,
-            )
+            
+            # If pipeline is already loaded, pass it to avoid duplicate loading
+            # This significantly reduces memory usage
+            if hasattr(self, "pipeline") and self.pipeline is not None:
+                print("Using pre-loaded pipeline (memory-efficient mode)")
+                mesher = getattr(mesh, mesher_type)(output_dir=mesh_dir,
+                    pipeline=self.pipeline,
+                    **mesher_config,
+                )
+            else:
+                print("Loading pipeline from config")
+                mesher = getattr(mesh, mesher_type)(
+                    load_config=Path(self.config["model_config_path"]),
+                    output_dir=mesh_dir,
+                    **mesher_config,
+                )
 
             self.config["mesh_info"] = mesher.main()
         else:

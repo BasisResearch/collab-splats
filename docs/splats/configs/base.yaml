@@ -13,6 +13,7 @@ min_frames: 100
 # ============================================================================
 preprocess:
   sfm_tool: hloc
+  num-downscales: 1 # Limits number of COLMAP downscales generated
   # refine_pixsfm: true  # Optional: Enable pixel-perfect SfM refinement
 
 # ============================================================================

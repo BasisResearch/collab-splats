@@ -37,6 +37,7 @@ dependencies = [
     "dotenv",
     "open_clip_torch",
     "pyyaml",
+    "pycolmap>=3.13", # Add to solve hloc errors
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",

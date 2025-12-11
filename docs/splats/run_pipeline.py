@@ -80,10 +80,7 @@ def main():
     )
 
     # Run pipeline
-    splatter.preprocess()
-    splatter.extract_features() #overwrite=args.overwrite)
-    splatter.mesh(overwrite=args.overwrite)
-    # splatter.run_pipeline(overwrite=args.overwrite)
+    splatter.run_pipeline(overwrite=args.overwrite)
 
 
 if __name__ == "__main__":

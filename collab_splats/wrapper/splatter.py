@@ -216,19 +216,15 @@ class Splatter:
 
         # Step 1: Preprocessing
         print("[1/3] Preprocessing...")
-        self.preprocess(kwargs=self._preprocess_config, overwrite=overwrite)
+        self.preprocess(overwrite=overwrite)
 
-        # Step 2: Training
+        # Step 2: Training --> uses _training_config by default
         print("\n[2/3] Training...")
-        self.extract_features(kwargs=self._training_config, overwrite=overwrite)
+        self.extract_features(overwrite=overwrite)
 
-        # Step 3: Meshing
+        # Step 3: Meshing --> uses _meshing_config by default
         print("\n[3/3] Meshing...")
-        mesher_config = (self._meshing_config or {}).copy()
-        mesher_type = mesher_config.pop("mesher_type", "Open3DTSDFFusion")
-        self.mesh(
-            mesher_type=mesher_type, mesher_kwargs=mesher_config, overwrite=overwrite
-        )
+        self.mesh(overwrite=overwrite)
 
         print(f"\n{'=' * 80}")
         print("Pipeline complete!")
@@ -237,7 +233,6 @@ class Splatter:
     def preprocess(
         self,
         overwrite: bool = False,
-        sfm_tool: str = "colmap",
         kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Preprocess the data in the splatter.
@@ -247,11 +242,17 @@ class Splatter:
 
         Args:
             overwrite: If True, rerun preprocessing even if transforms.json exists
-            sfm_tool: Structure from motion tool to use ('colmap', 'hloc')
             kwargs: Additional arguments to pass to ns-process-data
         """
         file_path = self.config["file_path"]
         output_path = self.config["output_path"]
+
+        assert self._preprocess_config is not None, "Preprocess config not found"
+
+        preprocess_config = (self._preprocess_config or {}).copy()
+        
+        if kwargs is not None:
+            preprocess_config.update(kwargs)
 
         # Determine input type based on file extension
         ext = file_path.suffix.lower()
@@ -300,13 +301,12 @@ class Splatter:
             f"{input_type} "
             f"--data {file_path.as_posix()} "
             f"--output-dir {preproc_data_path.as_posix()} "
-            f"--sfm-tool {sfm_tool} "
             f"{num_frames_target} "
         )
 
-        if kwargs is not None:
-            kwargs_cmds = " ".join([f"--{k} {v}" for k, v in kwargs.items()])
-            cmd += kwargs_cmds
+        # Use preprocess config for ns-process-data
+        kwargs_cmds = " ".join([f"--{k} {v}" for k, v in preprocess_config.items()])
+        cmd += kwargs_cmds
 
         subprocess.run(cmd, shell=True)
 
@@ -321,6 +321,11 @@ class Splatter:
         Feature extraction is performed according to the configured dtype and method.
         """
         method = self.config["method"]
+
+        training_config = (self._training_config or {}).copy()
+        
+        if kwargs is not None:
+            training_config.update(kwargs)
 
         # Check that preprocessing was completed before extracting features
         if self.config["preproc_data_path"] is None:
@@ -345,9 +350,9 @@ class Splatter:
             "--viewer.quit-on-train-completion True "  # This quits the function once training is complete
         )
 
-        if kwargs is not None:
-            kwargs_cmds = " ".join([f"--{k} {v}" for k, v in kwargs.items()])
-            cmd += kwargs_cmds
+        # Use training config for ns-train
+        kwargs_cmds = " ".join([f"--{k} {v}" for k, v in training_config.items()])
+        cmd += kwargs_cmds
 
         self.config["model_path"] = model_path
         subprocess.run(cmd, shell=True)

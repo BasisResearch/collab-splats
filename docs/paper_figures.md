@@ -1,6 +1,6 @@
 # Paper
 
-***I. Aitsahalia et al., "Inferring cognitive strategies from groups of animals in natural environments," presented at the NeurIPS Workshop on Data on the Brain \& Mind Findings, 2025.***
+***I. Aitsahalia et al.,  ["Inferring cognitive strategies from groups of animals in natural environments"](https://openreview.net/pdf?id=mUPCoCIxLK), presented at the NeurIPS Workshop on Data on the Brain \& Mind Findings, 2025.***
 
 ## Figures from the paper
 

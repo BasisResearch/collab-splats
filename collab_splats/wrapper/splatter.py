@@ -357,16 +357,19 @@ class Splatter:
         self.config["model_path"] = model_path
         subprocess.run(cmd, shell=True)
 
-    def viewer(self) -> None:
+    def viewer(self, use_latest_run: bool = False) -> None:
         """Display or visualize the splatter data.
 
         This function handles feature extraction from the preprocessed data.
         The specific feature extraction pipeline depends on config['dtype']:
             - 2D: Image-based feature extraction
             - 3D: Volume-based feature extraction
+
+        Args:
+            use_latest_run: If True, automatically select the most recent run without prompting
         """
 
-        self._select_run()
+        self._select_run(use_latest_run=use_latest_run)
 
         cmd = f"ns-viewer --load-config {self.config['model_config_path']} "
 
@@ -375,8 +378,12 @@ class Splatter:
 
         subprocess.run(cmd, shell=True, timeout=DEFAULT_TIMEOUT)
 
-    def _select_run(self) -> None:
-        """Select a run from the available runs."""
+    def _select_run(self, use_latest_run: bool = False) -> None:
+        """Select a run from the available runs.
+
+        Args:
+            use_latest_run: If True, automatically select the most recent run without prompting
+        """
         # Find all runs with config.yml files
         output_dir = Path(str(self.config["output_path"]), self.config["method"])
 
@@ -395,8 +402,11 @@ class Splatter:
         for i, run in enumerate(sorted_runs):
             print(f"[{i}] {run.name}")
 
-        if len(sorted_runs) == 1:
-            selected_run = sorted_runs[0]
+        if len(sorted_runs) == 1 or use_latest_run:
+            # Automatically select the most recent run
+            selected_run = sorted_runs[-1]
+            if use_latest_run:
+                print(f"\nUsing latest run: {selected_run.name}")
         else:
             # Prompt user to select a run
             while True:
@@ -422,6 +432,7 @@ class Splatter:
         self,
         config_path: Optional[Union[str, Path]] = None,
         test_mode: str = "inference",
+        use_latest_run: bool = False,
     ):
         """
         Load a trained nerfstudio model.
@@ -429,6 +440,7 @@ class Splatter:
         Args:
             config_path: Path to config.yml. If None, uses model_config_path from config or prompts selection
             test_mode: Evaluation mode - "test", "val", or "inference" (default)
+            use_latest_run: If True, automatically select the most recent run without prompting
 
         Returns:
             Tuple of (config, pipeline, model)
@@ -443,7 +455,7 @@ class Splatter:
         # Determine config path
         if config_path is None:
             if not self.config.get("model_config_path"):
-                self._select_run()
+                self._select_run(use_latest_run=use_latest_run)
             config_path = self.config["model_config_path"]
 
         print(f"Loading model from {config_path}")
@@ -475,16 +487,19 @@ class Splatter:
         If a pipeline is already loaded (via load_model), it will be passed
         to the mesher to avoid duplicate loading and reduce memory usage.
         """
-        self._select_run()
-
-        # Save mesh under the selected run directory
-        mesh_dir = Path(self.config["model_path"]) / "mesh"
-
         mesher_config = (self._meshing_config or {}).copy()
+        use_latest_run = mesher_config.pop("use_latest_run", False)
         mesher_type = mesher_config.pop("mesher_type", "Open3DTSDFFusion")
 
         if kwargs is not None:
+            # Extract use_latest_run from kwargs before updating mesher_config
+            use_latest_run = kwargs.pop("use_latest_run", use_latest_run)
             mesher_config.update(kwargs)
+
+        self._select_run(use_latest_run=use_latest_run)
+
+        # Save mesh under the selected run directory
+        mesh_dir = Path(self.config["model_path"]) / "mesh"
 
         # Create the mesh
         if not mesh_dir.exists() or overwrite:

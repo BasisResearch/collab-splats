@@ -32,6 +32,7 @@ training:
 # ============================================================================
 meshing:
   mesher_type: Open3DTSDFFusion
+  use_latest_run: true  # Optional: Automatically use the latest run without prompting
   depth_name: median_depth
   depth_trunc: 1.0
   voxel_size: 0.01

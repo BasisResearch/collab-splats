@@ -1,0 +1,6 @@
+{
+  "tree": ["green", "leaves", "bark", "trunk"],
+  "feeder": ["bird feeder", "container", "food"],
+  "brush": ["leaves", "plants", "thicket", "bramble"],
+  "gravel": ["gravel", "rock", "concrete"]
+}

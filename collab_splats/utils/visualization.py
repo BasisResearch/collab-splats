@@ -51,7 +51,9 @@ def visualize_splat(
         aligned_poses: List of 4x4 transformation matrices
     """
     # Create PyVista plotter
-    plotter = pv.Plotter()
+    # Use off_screen mode if specified (required for headless environments)
+    off_screen = viz_kwargs.get("off_screen", False)
+    plotter = pv.Plotter(off_screen=off_screen)
 
     # Either a mesh or a point cloud
     if isinstance(mesh, str):

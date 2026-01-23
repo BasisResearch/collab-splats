@@ -32,6 +32,23 @@ For use of gcloud data interfaces, please also install collab-data
 pip install git+https://github.com/BasisResearch/collab-data.git
 ```
 
+Once installed, you can use the GCS helper functions to sync Splatter data:
+
+```python
+from collab_splats.wrapper import Splatter
+from collab_splats.utils import push_to_gcs, pull_from_gcs
+
+# Upload results after processing
+splatter = Splatter.from_config_file('config.yaml')
+splatter.run_pipeline()
+push_to_gcs(splatter)
+
+# Or download existing data
+pull_from_gcs(splatter, include=['mesh'])
+```
+
+See [docs/QUICK_START_GCS.md](docs/QUICK_START_GCS.md) for details.
+
 #### Building the docker image
 
 The Docker image includes an example video file (`C0043.MP4`) downloaded from Google Cloud Storage during the build process. Follow these steps to build the image:

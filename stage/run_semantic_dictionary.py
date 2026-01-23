@@ -150,9 +150,25 @@ def create_categorical_mesh(all_clusters, semantic_dictionary, query_dir, cluste
     else:
         print("Warning: No vertices found in mesh")
 
-    # Save cluster labels to cluster directory
-    np.save(cluster_dir / "cluster_labels.npy", cluster_labels)
-    print(f"Saved cluster labels to {cluster_dir / 'cluster_labels.npy'}")
+    # Create label mapping JSON
+    label_mapping = {
+        "label_to_category": {},
+        "categories": {}
+    }
+
+    for category_id, (category, category_clusters) in enumerate(all_clusters.items()):
+        label_mapping["label_to_category"][str(category_id)] = category
+        label_mapping["categories"][category] = {
+            "label_id": category_id,
+            "num_clusters": len(category_clusters),
+            "cluster_ids": [cluster_id for cluster_id, _ in category_clusters]
+        }
+
+    # Save label mapping to JSON file
+    label_mapping_path = cluster_dir / "cluster_labels.json"
+    with open(label_mapping_path, 'w') as f:
+        json.dump(label_mapping, f, indent=2)
+    print(f"Saved cluster label mapping to {label_mapping_path}")
 
     return categorical_mesh, cluster_labels, num_vertices, num_clustered
 
@@ -449,7 +465,7 @@ def main():
     print(f"  - query-*.ply (individual category query meshes)")
     print(f"\nCluster files saved to: {cluster_dir}")
     print(f"  - all_clusters.ply (mesh with semantic clusters)")
-    print(f"  - cluster_labels.npy (numpy array of cluster labels)")
+    print(f"  - cluster_labels.json (mapping of numeric labels to category names)")
     print(f"  - rgb_mesh_view.png (original fitted splat)")
     print(f"  - semantic_clusters_view.png (semantic segmentation view)")
     print(f"  - cluster_views/ (directory with category PNGs - one per semantic category)")

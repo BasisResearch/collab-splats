@@ -8,6 +8,7 @@ from .camera_utils import (
 from .utils import create_fused_features, project_gaussians
 from .trainer_config import _TrainerConfig, _ExperimentConfig
 from .model_loading import load_checkpoint
+from .gcs_helpers import push_to_gcs, pull_from_gcs
 
 __all__ = [
     "ColmapCamera",
@@ -19,4 +20,6 @@ __all__ = [
     "_TrainerConfig",
     "_ExperimentConfig",
     "load_checkpoint",
+    "push_to_gcs",
+    "pull_from_gcs",
 ]

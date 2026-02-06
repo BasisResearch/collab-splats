@@ -826,6 +826,7 @@ def export_predictions_to_colmap_internal(
     # Build COLMAP reconstruction
     if verbose:
         CONSOLE.print(f"[bold cyan]Building COLMAP reconstruction...")
+    
     reconstruction = build_colmap_reconstruction(
         points_3d=downsampled_points,
         points_rgb=downsampled_colors,
@@ -1321,6 +1322,7 @@ def run_mapanything_pipeline(
     shared_camera: bool = True,
     cleanup_after: bool = False,
     verbose: bool = True,
+    create_mesh: bool = False,
     **kwargs
 ) -> Dict[str, Path]:
     """Run the complete MapAnything pipeline from images to nerfstudio format.
@@ -1332,6 +1334,7 @@ def run_mapanything_pipeline(
     4. Export to COLMAP
     5. Rescale to original dimensions
     6. Convert to nerfstudio format
+    7. (Optional) Create 3D mesh/point cloud
 
     Args:
         image_dir: Directory containing input images
@@ -1341,13 +1344,32 @@ def run_mapanything_pipeline(
         shared_camera: Whether to use shared camera for all images
         cleanup_after: Whether to cleanup GPU memory after inference
         verbose: Whether to print progress information
+        create_mesh: Whether to create a 3D mesh/point cloud GLB file
         **kwargs: Additional arguments for individual pipeline steps
+
+            COLMAP Export Parameters:
+            - spatial_filter_percentile: (min, max) percentiles for spatial filtering
+              e.g., (2, 98) removes top/bottom 2% outliers
+            - spatial_filter_max_extent: Absolute max extent in meters
+
+            Mesh Creation Parameters (used when create_mesh=True):
+            - mesh_filename: Filename for mesh output (default: "mesh.glb")
+            - mesh_conf_percentile: Confidence percentile threshold (0-100)
+              None = no filtering, 50 = keep top 50%, 70 = keep top 30%
+            - mesh_filter_frames: Frame filter ("all", "0:", "N:")
+            - mesh_as_mesh: True = triangulated mesh, False = point cloud (default: True)
+            - mesh_mask_ambiguous: Filter ambiguous predictions (default: True)
+            - mesh_mask_black_bg: Remove black background (default: True)
+            - mesh_mask_white_bg: Remove white background (default: False)
+            - mesh_show_cam: Show camera frustums (default: True)
 
     Returns:
         Dictionary with paths to key outputs:
             - 'colmap_dir': COLMAP reconstruction directory
             - 'transforms_json': Nerfstudio transforms.json path
             - 'point_cloud': Point cloud PLY file path
+            - 'preproc_dir': Preprocessing directory
+            - 'mesh': Mesh GLB file path (only if create_mesh=True)
     """
     image_dir = Path(image_dir)
     output_dir = Path(output_dir)
@@ -1387,7 +1409,7 @@ def run_mapanything_pipeline(
     # Step 5: Rescale to original dimensions
     rescaled_dir = rescale_to_original_dimensions(
         colmap_sparse_dir, image_paths, model_width, model_height,
-        output_dir, shared_camera=shared_camera, verbose=verbose
+        preproc_dir, shared_camera=shared_camera, verbose=verbose
     )
 
     rescaled_sparse_dir = rescaled_dir / "colmap" / "sparse" / "0"
@@ -1396,6 +1418,34 @@ def run_mapanything_pipeline(
     transforms_path = convert_to_nerfstudio_format(
         rescaled_sparse_dir, preproc_dir, verbose=verbose
     )
+
+    # Step 7: (Optional) Create mesh
+    mesh_path = None
+    if create_mesh:
+        # Extract mesh parameters from kwargs with defaults
+        mesh_filename = kwargs.get('mesh_filename', 'mesh.glb')
+        mesh_conf_percentile = kwargs.get('mesh_conf_percentile', 60.0)
+        mesh_filter_frames = kwargs.get('mesh_filter_frames', 'all')
+        mesh_as_mesh = kwargs.get('mesh_as_mesh', True)
+        mesh_mask_ambiguous = kwargs.get('mesh_mask_ambiguous', True)
+        mesh_mask_black_bg = kwargs.get('mesh_mask_black_bg', True)
+        mesh_mask_white_bg = kwargs.get('mesh_mask_white_bg', False)
+        mesh_show_cam = kwargs.get('mesh_show_cam', True)
+
+        mesh_path = preproc_dir / mesh_filename
+        create_mesh_from_mapanything(
+            outputs=outputs,
+            views=views,
+            output_path=mesh_path,
+            filter_by_frames=mesh_filter_frames,
+            as_mesh=mesh_as_mesh,
+            mask_ambiguous=mesh_mask_ambiguous,
+            conf_percentile=mesh_conf_percentile,
+            mask_black_bg=mesh_mask_black_bg,
+            mask_white_bg=mesh_mask_white_bg,
+            show_cam=mesh_show_cam,
+            verbose=verbose,
+        )
 
     # Cleanup if requested
     if cleanup_after:
@@ -1408,10 +1458,187 @@ def run_mapanything_pipeline(
         CONSOLE.print(f"COLMAP reconstruction: {rescaled_sparse_dir}")
         CONSOLE.print(f"Nerfstudio transforms: {transforms_path}")
         CONSOLE.print(f"Point cloud: {preproc_dir / 'sparse_pc.ply'}")
+        if mesh_path:
+            CONSOLE.print(f"Mesh: {mesh_path}")
 
-    return {
+    results = {
         'colmap_dir': rescaled_sparse_dir,
         'transforms_json': transforms_path,
         'point_cloud': preproc_dir / 'sparse_pc.ply',
         'preproc_dir': preproc_dir,
     }
+
+    if mesh_path:
+        results['mesh'] = mesh_path
+
+    return results
+
+
+# ============================================================================
+# Mesh Generation
+# ============================================================================
+
+def create_mesh_from_mapanything(
+    outputs: List[Dict],
+    views: List[Dict],
+    output_path: Union[str, Path],
+    filter_by_frames: str = "all",
+    as_mesh: bool = True,
+    mask_ambiguous: bool = True,
+    conf_percentile: Optional[float] = 50.0,
+    mask_black_bg: bool = True,
+    mask_white_bg: bool = False,
+    show_cam: bool = True,
+    verbose: bool = True,
+) -> Path:
+    """Create a 3D mesh/point cloud from MapAnything outputs and export to GLB.
+
+    This function converts MapAnything predictions into a 3D mesh using the
+    predictions_to_glb function from MapAnything's visualization utilities.
+
+    Args:
+        outputs: List of output dictionaries from run_mapanything_inference()
+        views: List of preprocessed view dictionaries from load_and_preprocess_images()
+        output_path: Path to save the GLB file
+        filter_by_frames: Frame filter specification:
+            - "all": Use all frames
+            - "0:": Use only first frame
+            - "N:": Use only frame N
+        as_mesh: If True, create triangulated mesh; if False, create point cloud
+        mask_ambiguous: If True, filter ambiguous predictions using final_mask
+        conf_percentile: Percentile threshold for confidence filtering (0-100)
+            - None: No confidence filtering
+            - 50: Keep top 50% most confident points
+            - 80: Keep top 20% most confident points
+        mask_black_bg: Remove black background pixels
+        mask_white_bg: Remove white background pixels
+        show_cam: Include camera frustum visualization
+        verbose: Print progress information
+
+    Returns:
+        Path to the exported GLB file
+
+    Raises:
+        ImportError: If MapAnything visualization utilities are not available
+
+    Example:
+        >>> model = load_mapanything_model()
+        >>> views, image_paths = load_and_preprocess_images("images/")
+        >>> outputs = run_mapanything_inference(model, views)
+        >>> mesh_path = create_mesh_from_mapanything(
+        ...     outputs, views, "output.glb",
+        ...     conf_percentile=60, mask_ambiguous=True
+        ... )
+    """
+    try:
+        from mapanything.utils.hf_utils.viz import predictions_to_glb
+        from mapanything.utils.geometry import closed_form_pose_inverse
+    except ImportError as e:
+        raise ImportError(
+            "MapAnything visualization utilities not found. Install with:\n"
+            "pip install git+https://github.com/facebookresearch/map-anything.git"
+        ) from e
+
+    output_path = Path(output_path)
+
+    if verbose:
+        CONSOLE.print(f"[bold cyan]Creating mesh from MapAnything outputs")
+        CONSOLE.print(f"  Output path: {output_path}")
+        CONSOLE.print(f"  Mesh type: {'triangulated mesh' if as_mesh else 'point cloud'}")
+        CONSOLE.print(f"  Frame filter: {filter_by_frames}")
+        if conf_percentile is not None:
+            CONSOLE.print(f"  Confidence filter: top {100 - conf_percentile:.0f}%")
+
+    # Prepare predictions dictionary in the format expected by predictions_to_glb
+    num_frames = len(outputs)
+
+    # Stack all 3D points (S, H, W, 3)
+    world_points_list = []
+    masks_list = []
+    conf_list = []
+
+    for output in outputs:
+        pts3d = output['pts3d'][0].cpu().numpy()  # (H, W, 3)
+        world_points_list.append(pts3d)
+
+        mask = output['mask'][0].cpu().numpy().astype(bool)  # Can be (H, W) or (H, W, 1)
+        if mask.ndim == 3:
+            mask = mask.squeeze(-1)  # Remove trailing dimension if present
+        masks_list.append(mask)
+
+        # Get confidence if available
+        if 'conf' in output:
+            conf = output['conf'][0].cpu().numpy()
+            if conf.ndim == 3:
+                conf = conf.squeeze(-1)  # Remove trailing dimension if present
+            conf_list.append(conf)
+
+    world_points = np.stack(world_points_list, axis=0)  # (S, H, W, 3)
+    final_mask = np.stack(masks_list, axis=0)  # (S, H, W)
+
+    # Stack images (S, H, W, 3)
+    images_list = []
+    for view in views:
+        img = view['img']  # Can be (3, H, W) or (1, 3, H, W) or (B, 3, H, W) tensor
+
+        # Handle different tensor shapes
+        if img.ndim == 4:
+            # Shape is (B, 3, H, W) - take first item
+            img = img[0]  # Now (3, H, W)
+        elif img.ndim == 3:
+            # Shape is already (3, H, W)
+            pass
+        else:
+            raise ValueError(f"Unexpected image tensor shape: {img.shape}")
+
+        img_np = img.permute(1, 2, 0).cpu().numpy()  # (H, W, 3)
+        images_list.append(img_np)
+    images = np.stack(images_list, axis=0)  # (S, H, W, 3)
+
+    # Extract camera extrinsics (world2cam, not cam2world)
+    # predictions_to_glb expects world-to-camera matrices (S, 4, 4) for proper inversion
+    extrinsics_list = []
+    for output in outputs:
+        cam2world = output['camera_poses'][0].cpu().numpy()  # (4, 4)
+        world2cam = closed_form_pose_inverse(cam2world[None])[0]  # (4, 4)
+        extrinsics_list.append(world2cam)  # Keep full (4, 4) matrix
+    extrinsics = np.stack(extrinsics_list, axis=0)  # (S, 4, 4)
+
+    # Build predictions dictionary
+    predictions = {
+        'world_points': world_points,
+        'images': images,
+        'extrinsic': extrinsics,
+        'final_mask': final_mask,
+    }
+
+    # Add confidence if available
+    if conf_list:
+        predictions['conf'] = np.stack(conf_list, axis=0)  # (S, H, W)
+
+    if verbose:
+        CONSOLE.print(f"  Processing {num_frames} frames")
+        CONSOLE.print(f"  Image resolution: {world_points.shape[1]}x{world_points.shape[2]}")
+
+    # Create mesh scene
+    scene = predictions_to_glb(
+        predictions,
+        filter_by_frames=filter_by_frames,
+        mask_black_bg=mask_black_bg,
+        mask_white_bg=mask_white_bg,
+        show_cam=show_cam,
+        mask_ambiguous=mask_ambiguous,
+        as_mesh=as_mesh,
+        conf_percentile=conf_percentile,
+    )
+
+    # Export to GLB
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    scene.export(str(output_path))
+
+    if verbose:
+        CONSOLE.print(f"[bold green]✓ Mesh exported to: {output_path}")
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        CONSOLE.print(f"  File size: {file_size_mb:.2f} MB")
+
+    return output_path

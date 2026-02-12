@@ -1,0 +1,34 @@
+# Bicycle dataset with MapAnything preprocessing
+# This configuration uses existing MapAnything-generated preprocessing outputs
+
+file_path: /workspace/bicycle/images_4
+input_type: images
+method: rade-gs
+
+# Output paths
+# Environment will be: /workspace/bicycle/environment/bicycle_mapanything/
+# Preprocessing data already exists at: /workspace/bicycle/environment/bicycle_mapanything/preproc/
+
+# Skip preprocessing since MapAnything already generated transforms.json and COLMAP data
+# The preproc directory should contain:
+#   - transforms.json (camera poses and intrinsics)
+#   - colmap/ (COLMAP reconstruction)
+#   - sparse_pc.ply (point cloud)
+
+# Training settings for rade-gs
+training:
+  pipeline.model.cull-alpha-thresh: 0.005
+  pipeline.model.output-depth-during-training: true
+  pipeline.model.rasterize-mode: antialiased
+
+# Meshing settings
+meshing:
+  mesher_type: Open3DTSDFFusion
+  depth_name: median_depth
+  depth_trunc: 1.0
+  voxel_size: 0.01
+  normals_name: normals
+  features_name: distill_features
+  sdf_trunc: 0.03
+  clean_repair: true
+  align_floor: false  # MapAnything provides metric scale, don't align

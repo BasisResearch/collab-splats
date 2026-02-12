@@ -290,7 +290,20 @@ def run_mapanything_inference(
             peak_memory_gb = torch.cuda.max_memory_allocated() / (1024**3)
             CONSOLE.print(f"  Peak GPU memory: {peak_memory_gb:.2f} GB")
 
-    return outputs
+    # Aggregate all keys present in any output prediction
+    output_keys = set().union(*(pred.keys() for pred in outputs))
+
+    # Stack and process results for each key
+    results = {}
+    for key in output_keys:
+        key_values = [pred[key] for pred in outputs]
+        # stacked = torch.stack(key_values).cpu().numpy()
+        results[key] = torch.stack(key_values).cpu().squeeze(-1)
+
+        # If first dimension is singleton, squeeze it out for consistency
+        # results[key] = np.squeeze(stacked, axis=0) if stacked.shape[0] == 1 else stacked
+
+    return results
 
 
 # ============================================================================
@@ -708,6 +721,7 @@ def export_predictions_to_colmap_internal(
     processed_views: List[Dict],
     image_names: List[str],
     output_dir: Union[str, Path],
+    images_dir: Optional[Union[str, Path]] = None,
     voxel_fraction: float = 0.01,
     voxel_size: Optional[float] = None,
     spatial_filter_percentile: Optional[Tuple[float, float]] = None,
@@ -730,14 +744,15 @@ def export_predictions_to_colmap_internal(
         outputs: List of prediction dictionaries from model.infer()
         processed_views: List of preprocessed view dictionaries
         image_names: List of original image file names
-        output_dir: Directory to save COLMAP outputs
+        output_dir: Directory to save COLMAP sparse reconstruction
+        images_dir: Directory to save processed images. If None, uses output_dir/images/
         voxel_fraction: Fraction of IQR-based scene extent for voxel size (default: 0.01 = 1%)
         voxel_size: Explicit voxel size in meters (overrides voxel_fraction if provided)
         spatial_filter_percentile: Optional (min, max) percentile range for spatial filtering
             e.g., (1.0, 99.0) to remove top/bottom 1% outliers
         spatial_filter_max_extent: Optional absolute max extent in meters
         save_ply: Whether to save a PLY file of the point cloud
-        save_images: Whether to save processed images to output_dir/images/
+        save_images: Whether to save processed images
         skip_point2d: If True, skip Point2D backprojection for faster export
         verbose: Whether to print progress information
 
@@ -841,7 +856,7 @@ def export_predictions_to_colmap_internal(
     )
 
     # Save reconstruction
-    sparse_dir = output_dir / "sparse" / "0"
+    sparse_dir = output_dir / "colmap" / "sparse" / "0"
     sparse_dir.mkdir(parents=True, exist_ok=True)
     reconstruction.write(str(sparse_dir))
 
@@ -861,8 +876,11 @@ def export_predictions_to_colmap_internal(
 
     # Optionally save processed images
     if save_images:
-        images_dir = output_dir / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
+        if images_dir is None:
+            images_save_dir = output_dir / "images"
+        else:
+            images_save_dir = Path(images_dir)
+        images_save_dir.mkdir(parents=True, exist_ok=True)
 
         for i in range(num_frames):
             img_no_norm = outputs[i]["img_no_norm"][0].cpu().numpy()  # (H, W, 3) in [0, 1]
@@ -870,11 +888,11 @@ def export_predictions_to_colmap_internal(
             img_pil = Image.fromarray(img_uint8)
 
             # Save with original image name
-            img_path = images_dir / image_names[i]
+            img_path = images_save_dir / image_names[i]
             img_pil.save(str(img_path), quality=95)
 
         if verbose:
-            CONSOLE.print(f"  Saved {num_frames} processed images to: {images_dir}")
+            CONSOLE.print(f"  Saved {num_frames} processed images to: {images_save_dir}")
 
     return reconstruction
 
@@ -889,6 +907,7 @@ def export_to_colmap(
     image_names: List[str],
     output_dir: Union[str, Path],
     model: Any,
+    images_dir: Optional[Union[str, Path]] = None,
     voxel_fraction: float = 0.02,
     voxel_size: Optional[float] = None,
     save_ply: bool = True,
@@ -899,12 +918,26 @@ def export_to_colmap(
 ) -> Path:
     """Export MapAnything outputs to COLMAP format.
 
+    Creates the following directory structure:
+        output_dir/
+        └── colmap/
+            └── sparse/
+                └── 0/
+                    ├── cameras.bin
+                    ├── images.bin
+                    ├── points3D.bin
+                    └── points.ply     (if save_ply=True)
+
+        images_dir/
+        └── *.jpg                      (if save_images=True)
+
     Args:
         outputs: Outputs from run_mapanything_inference()
         views: Preprocessed views from load_and_preprocess_images()
         image_names: List of image filenames (e.g., ["image001.jpg", ...])
-        output_dir: Output directory for COLMAP files
+        output_dir: Base output directory (COLMAP files saved to output_dir/colmap/sparse/0/)
         model: MapAnything model (needed for data_norm_type)
+        images_dir: Directory to save processed images. If None, uses output_dir/colmap/images/
         voxel_fraction: Voxel size as fraction of scene extent for downsampling
         voxel_size: Explicit voxel size in meters (overrides voxel_fraction if set)
         save_ply: Whether to save point cloud as PLY file
@@ -914,7 +947,7 @@ def export_to_colmap(
         **kwargs: Additional arguments passed to export_predictions_to_colmap()
 
     Returns:
-        Path to the COLMAP sparse reconstruction directory (sparse/0/)
+        Path to the COLMAP sparse reconstruction directory (output_dir/colmap/sparse/0/)
 
     Raises:
         ImportError: If MapAnything export utilities are not installed
@@ -941,6 +974,7 @@ def export_to_colmap(
         processed_views=views,
         image_names=image_names,
         output_dir=output_dir,
+        images_dir=images_dir,
         voxel_fraction=voxel_fraction,
         voxel_size=voxel_size,
         # data_norm_type=model.encoder.data_norm_type,
@@ -950,8 +984,8 @@ def export_to_colmap(
         **kwargs
     )
 
-    # MapAnything exports to sparse/, we need sparse/0/ for nerfstudio
-    sparse_dir = output_dir / "sparse" / "0"
+    # Return path to sparse directory
+    sparse_dir = output_dir / "colmap" / "sparse" / "0"
     if verbose:
         CONSOLE.print(f"[bold green]✓ Exported to COLMAP format")
         CONSOLE.print(f"  Output: {sparse_dir}")
@@ -1118,7 +1152,7 @@ def rescale_to_original_dimensions(
         **kwargs: Additional arguments passed to _rescale_reconstruction_to_original_dimensions()
 
     Returns:
-        Path to output directory containing rescaled reconstruction
+        Path to rescaled sparse reconstruction directory (output_dir/colmap/sparse/0/)
 
     Raises:
         ValueError: If COLMAP reconstruction cannot be loaded
@@ -1180,7 +1214,7 @@ def rescale_to_original_dimensions(
     if verbose:
         CONSOLE.print(f"[bold green]✓ Wrote rescaled reconstruction to: {output_sparse_dir}")
 
-    return output_dir
+    return output_sparse_dir
 
 
 # ============================================================================
@@ -1376,7 +1410,6 @@ def run_mapanything_pipeline(
 
     # Setup directories
     preproc_dir = output_dir / "preproc"
-    colmap_dir = preproc_dir / "colmap"
 
     if verbose:
         CONSOLE.print("[bold magenta]" + "="*70)
@@ -1399,20 +1432,19 @@ def run_mapanything_pipeline(
     # Step 3: Run inference
     outputs = run_mapanything_inference(model, views, verbose=verbose, **kwargs)
 
-    # Step 4: Export to COLMAP
+    # Step 4: Export to COLMAP (creates preproc/colmap/sparse/0/ and preproc/images/)
     colmap_sparse_dir = export_to_colmap(
-        outputs, views, image_names, colmap_dir, model,
+        outputs, views, image_names, preproc_dir, model,
+        images_dir=preproc_dir / "images",
         voxel_fraction=voxel_fraction,
         verbose=verbose
     )
 
     # Step 5: Rescale to original dimensions
-    rescaled_dir = rescale_to_original_dimensions(
+    rescaled_sparse_dir = rescale_to_original_dimensions(
         colmap_sparse_dir, image_paths, model_width, model_height,
         preproc_dir, shared_camera=shared_camera, verbose=verbose
     )
-
-    rescaled_sparse_dir = rescaled_dir / "colmap" / "sparse" / "0"
 
     # Step 6: Convert to nerfstudio format
     transforms_path = convert_to_nerfstudio_format(

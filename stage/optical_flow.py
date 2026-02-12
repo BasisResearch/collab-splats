@@ -29,6 +29,13 @@ Usage:
         save_metadata_json=True
     )
 
+    # Export specific frames by index
+    selector.export_frames_by_indices(
+        'path/to/video.mp4',
+        frame_indices=range(0, 100, 5),  # Every 5th frame from 0-100
+        output_dir='output/frames'
+    )
+
     # Extract metrics for analysis
     plot_data = extract_metrics(metrics)
 
@@ -37,13 +44,14 @@ Author: Based on VGGT-SLAM optical flow keyframe selection
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 # ============================================================================
@@ -630,6 +638,97 @@ class OpticalFlowFrameSelector:
 
         return should_select, score, components
 
+    def export_frames_by_indices(
+        self,
+        video_path: Union[str, Path],
+        frame_indices: Union[List[int], range],
+        output_dir: Union[str, Path],
+        apply_rotation: bool = True,
+    ) -> None:
+        """
+        Export specific frames from a video by their indices.
+
+        Args:
+            video_path: Path to input video file
+            frame_indices: List or range of frame indices to export (e.g., [0, 10, 20] or range(0, 100))
+            output_dir: Directory to save frames (will be cleared before writing)
+            apply_rotation: Whether to apply rotation correction based on video metadata
+        """
+        video_path = Path(video_path)
+        output_dir = Path(output_dir)
+
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video not found: {video_path}")
+
+        # Convert range to list if needed
+        if isinstance(frame_indices, range):
+            frame_indices = list(frame_indices)
+
+        # Remove and recreate output directory
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Detect video rotation
+        video_rotation = None
+        if apply_rotation:
+            video_rotation = get_video_rotation(video_path)
+            if video_rotation is not None and self.verbose:
+                rotation_degrees = {
+                    cv2.ROTATE_90_CLOCKWISE: 90,
+                    cv2.ROTATE_180: 180,
+                    cv2.ROTATE_90_COUNTERCLOCKWISE: 270
+                }.get(video_rotation, 0)
+                print(f"Detected video rotation: {rotation_degrees}° (will be corrected when saving frames)")
+
+        # Open video
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open video: {video_path}")
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if self.verbose:
+            print(f"\nExporting {len(frame_indices)} frames from: {video_path.name}")
+            print(f"  Total video frames: {total_frames}")
+            print(f"  Output directory: {output_dir}")
+
+        # Sort indices for efficient sequential reading
+        sorted_indices = sorted(frame_indices)
+
+        # Export frames
+        frames_saved = 0
+        pbar = tqdm(total=len(sorted_indices), desc="Exporting frames", disable=not self.verbose)
+
+        for idx in sorted_indices:
+            if idx >= total_frames:
+                if self.verbose:
+                    print(f"Warning: Frame index {idx} exceeds video length ({total_frames}), skipping")
+                continue
+
+            # Load frame
+            frame = load_frame(cap, idx)
+            if frame is None:
+                if self.verbose:
+                    print(f"Warning: Failed to load frame {idx}, skipping")
+                continue
+
+            # Apply rotation if needed
+            if apply_rotation and video_rotation is not None:
+                frame = rotate_frame(frame, video_rotation)
+
+            # Save frame
+            output_path = output_dir / f"frame_{idx:06d}.jpg"
+            cv2.imwrite(str(output_path), frame)
+            frames_saved += 1
+            pbar.update(1)
+
+        pbar.close()
+        cap.release()
+
+        if self.verbose:
+            print(f"✓ Exported {frames_saved} frames to: {output_dir}")
+
     def process_video(
         self,
         video_path: Union[str, Path],
@@ -660,6 +759,20 @@ class OpticalFlowFrameSelector:
         # Reset state
         self.reset()
 
+        # Detect video rotation from metadata
+        video_rotation = get_video_rotation(video_path)
+        if video_rotation is not None:
+            rotation_degrees = {
+                cv2.ROTATE_90_CLOCKWISE: 90,
+                cv2.ROTATE_180: 180,
+                cv2.ROTATE_90_COUNTERCLOCKWISE: 270
+            }.get(video_rotation, 0)
+            if self.verbose:
+                print(f"Detected video rotation: {rotation_degrees}° (will be corrected when saving frames)")
+        else:
+            if self.verbose:
+                print("No rotation metadata detected")
+
         # Open video
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -682,6 +795,9 @@ class OpticalFlowFrameSelector:
             if output_dir is None:
                 output_dir = video_path.parent / f"{video_path.stem}_selected"
             output_dir = Path(output_dir)
+            # Remove and recreate directory to ensure clean state
+            if output_dir.exists():
+                shutil.rmtree(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
         # Process frames
@@ -714,8 +830,10 @@ class OpticalFlowFrameSelector:
 
                 # Save frame if requested
                 if save_selected_frames:
+                    # Apply rotation correction before saving
+                    frame_to_save = rotate_frame(frame, video_rotation)
                     output_path = output_dir / f"frame_{frame_idx:06d}.jpg"
-                    cv2.imwrite(str(output_path), frame)
+                    cv2.imwrite(str(output_path), frame_to_save)
 
             frame_idx += 1
             pbar.update(1)
@@ -830,6 +948,9 @@ class OpticalFlowFrameSelector:
             if output_dir is None:
                 output_dir = image_dir.parent / f"{image_dir.name}_selected"
             output_dir = Path(output_dir)
+            # Remove and recreate directory to ensure clean state
+            if output_dir.exists():
+                shutil.rmtree(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
         # Process images

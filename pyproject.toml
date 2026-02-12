@@ -47,7 +47,6 @@ dependencies = [
     "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
     "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git",
-    "vggt @ git+https://github.com/Linketic/VGGT-X.git",
 ]
 
 [project.optional-dependencies]

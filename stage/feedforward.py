@@ -22,17 +22,21 @@ Plan here:
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict, Union
+import time
 
 import cv2
 import numpy as np
 import torch
 
 # MapAnything's built-in API
-from mapanything.models import init_model_from_config
+from mapanything.models import init_model_from_config, get_available_models
 from mapanything.utils.image import load_images
+from mapanything.utils.inference import postprocess_model_outputs_for_inference
 
 # Optional: optical flow for frame selection
 from optical_flow import OpticalFlowFrameSelector
+
+from collab_splats.wrapper.config import ConfigLoader
 
 def validate_input_views(views: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Validate input views structure for inference.
@@ -170,6 +174,7 @@ class Reconstructor:
         self.model = None
         self.views = None
         self.outputs = None
+        self._loaded_image_paths = None  # Track which images are loaded
 
     @classmethod
     def from_config_file(
@@ -197,8 +202,6 @@ class Reconstructor:
             >>> rec.setup_inference()  # Load model + images
             >>> rec.infer()
         """
-        from collab_splats.wrapper.config import ConfigLoader
-
         loader = ConfigLoader(config_dir)
         config = loader.load(dataset=dataset, overrides=overrides)
 
@@ -277,11 +280,11 @@ class Reconstructor:
         # Set default output path following Splatter pattern
         if config.get("output_path") is None:
             if input_type == "images":
-                # For image directories: parent / environment / directory_name
-                default_output_path = file_path.parent / "environment" / file_path.name
+                # For image directories: parent.parent / environment / directory_name
+                default_output_path = file_path.parent.parent / "environment" / file_path.name
             else:
-                # For video/image files: parent / environment / stem
-                default_output_path = file_path.parent / "environment" / file_path.stem
+                # For video/image files: parent.parent / environment / stem
+                default_output_path = file_path.parent.parent / "environment" / file_path.stem
             config["output_path"] = default_output_path
 
         config["output_path"] = Path(config["output_path"])
@@ -295,11 +298,85 @@ class Reconstructor:
     @staticmethod
     def available_models() -> None:
         """Print available models from MapAnything."""
-        from mapanything.models import get_available_models
-
         models = get_available_models()
         print("Available models:")
         print("  ", sorted(models))
+
+    #########################################################
+    ############### Preprocessing Methods ###################
+    #########################################################
+
+    def preprocess(
+        self,
+        use_optical_flow: Optional[bool] = None,
+        max_images: Optional[int] = None,
+        optical_flow_kwargs: Optional[Dict[str, Any]] = None,
+        overwrite: bool = False,
+    ) -> None:
+        """Extract and select frames with optional optical flow decimation.
+
+        This method only extracts/selects frames to disk. It does NOT load them into memory.
+        Call setup_inference() to load the model and images before running inference.
+
+        Args:
+            use_optical_flow: Whether to use optical flow for frame selection
+            max_images: Maximum number of images to process
+            optical_flow_kwargs: Parameters for OpticalFlowFrameSelector. Can include:
+                - Selector init params: min_disparity, max_features, motion_weight, coverage_weight,
+                  histogram_similarity_threshold, adaptive_threshold, rotation_threshold, verbose
+                - Process params: selection_threshold, save_metadata_json
+            overwrite: If False and output directory exists with images, skip processing and use existing frames
+
+        Example:
+            >>> recon.preprocess(
+            ...     use_optical_flow=True,
+            ...     optical_flow_kwargs={
+            ...         'min_disparity': 60.0,
+            ...         'motion_weight': 0.5,
+            ...         'coverage_weight': 0.5,
+            ...         'selection_threshold': 0.5,
+            ...         'verbose': True
+            ...     },
+            ...     overwrite=False
+            ... )
+        """
+        file_path = self.config["file_path"]
+        input_type = self.config["input_type"]
+        use_optical_flow = use_optical_flow if use_optical_flow is not None else self.config["use_optical_flow"]
+        max_images = max_images or self.config.get("max_images")
+        optical_flow_kwargs = optical_flow_kwargs or {}
+
+        # Determine output directory based on input type
+        if input_type == "video":
+            output_dir = self.config["output_path"] / "preproc" / "images"
+        elif input_type == "images":
+            output_dir = file_path  # For image directories, use the source directory
+        else:  # single image
+            output_dir = None
+
+        # Check if we can skip processing
+        if not overwrite and output_dir is not None and output_dir.exists():
+            existing_paths = self._get_images(output_dir)
+            if existing_paths:
+                print(f"⚠ Output directory already exists with {len(existing_paths)} images: {output_dir}")
+                print(f"  Skipping preprocessing. Use overwrite=True to reprocess.")
+                self.config["image_paths"] = existing_paths
+                return
+
+        # Get image paths based on input type
+        if input_type == "video":
+            paths = self._process_video(
+                file_path, output_dir, max_images, use_optical_flow, optical_flow_kwargs, overwrite=overwrite
+            )
+        elif input_type == "image":
+            print(f"Selected single image: {file_path}")
+            paths = [file_path]
+        else:  # input_type == "images"
+            paths = self._process_images(file_path, max_images, use_optical_flow, optical_flow_kwargs)
+
+        # Store paths for later loading
+        self.config["image_paths"] = paths
+        print(f"✓ Frame selection complete: {len(paths)} images ready")
 
     def _get_images(self, directory: Path) -> List[Path]:
         """Get sorted image paths from directory."""
@@ -317,14 +394,52 @@ class Reconstructor:
         return [paths[i] for i in indices]
 
     def _process_video(
-        self, video_path: Path, output_dir: Path, max_images: Optional[int], use_optical_flow: bool, optical_flow_kwargs: Optional[Dict[str, Any]] = None
+        self,
+        video_path: Path,
+        output_dir: Path,
+        max_images: Optional[int],
+        use_optical_flow: bool,
+        optical_flow_kwargs: Optional[Dict[str, Any]] = None,
+        overwrite: bool = False
     ) -> List[Path]:
-        """Extract and select frames from video."""
+        """Extract and select frames from video.
+
+        Args:
+            video_path: Path to video file
+            output_dir: Directory to save frames
+            max_images: Maximum number of frames to extract
+            use_optical_flow: Whether to use optical flow for selection
+            optical_flow_kwargs: Parameters for optical flow selector (both init and process_video params)
+            overwrite: If True, delete existing frames before processing
+
+        Returns:
+            List of paths to extracted frames
+        """
+        if overwrite and output_dir.exists():
+            import shutil
+            print(f"Removing existing frames: {output_dir}")
+            shutil.rmtree(output_dir)
+
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Extracting frames from video: {video_path}")
 
         optical_flow_kwargs = optical_flow_kwargs or {}
-        selector = OpticalFlowFrameSelector(**optical_flow_kwargs)
+
+        # Separate parameters for __init__ and process_video()
+        init_params = {
+            'min_disparity', 'max_features', 'motion_weight', 'coverage_weight',
+            'histogram_similarity_threshold', 'adaptive_threshold', 'rotation_threshold', 'verbose'
+        }
+        process_params = {
+            'selection_threshold', 'save_metadata_json'
+        }
+
+        # Split kwargs
+        selector_init_kwargs = {k: v for k, v in optical_flow_kwargs.items() if k in init_params}
+        selector_process_kwargs = {k: v for k, v in optical_flow_kwargs.items() if k in process_params}
+
+        # Create selector with init parameters
+        selector = OpticalFlowFrameSelector(**selector_init_kwargs)
 
         if use_optical_flow:
             # Use optical flow for frame selection
@@ -335,6 +450,7 @@ class Reconstructor:
                 max_frames=max_images,  # max_frames is optional in optical flow
                 save_selected_frames=True,
                 output_dir=output_dir,
+                **selector_process_kwargs  # Pass process_video specific params
             )
         else:
             # Use uniform decimation
@@ -349,9 +465,23 @@ class Reconstructor:
         return self._get_images(output_dir)
 
     def _process_images(
-        self, image_dir: Path, max_images: Optional[int], use_optical_flow: bool, optical_flow_kwargs: Optional[Dict[str, Any]] = None
+        self,
+        image_dir: Path,
+        max_images: Optional[int],
+        use_optical_flow: bool,
+        optical_flow_kwargs: Optional[Dict[str, Any]] = None
     ) -> List[Path]:
-        """Select images from directory."""
+        """Select images from directory.
+
+        Args:
+            image_dir: Directory containing images
+            max_images: Maximum number of images to select
+            use_optical_flow: Whether to use optical flow for selection
+            optical_flow_kwargs: Parameters for optical flow selector
+
+        Returns:
+            List of selected image paths
+        """
         paths = self._get_images(image_dir)
         if not paths:
             raise ValueError(f"No images found in {image_dir}")
@@ -368,51 +498,19 @@ class Reconstructor:
 
         return self._select_subset(paths, max_images)
 
-    def preprocess(
-        self,
-        use_optical_flow: Optional[bool] = None,
-        max_images: Optional[int] = None,
-        optical_flow_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Extract and select frames with optional optical flow decimation.
+    #########################################################
+    ############### Inference Methods #######################
+    #########################################################
 
-        This method only extracts/selects frames to disk. It does NOT load them into memory.
-        Call setup_inference() to load the model and images before running inference.
-
-        Args:
-            use_optical_flow: Whether to use optical flow for frame selection
-            max_images: Maximum number of images to process
-            optical_flow_kwargs: Parameters for OpticalFlowFrameSelector (min_disparity, motion_weight, coverage_weight)
-        """
-        file_path = self.config["file_path"]
-        input_type = self.config["input_type"]
-        use_optical_flow = use_optical_flow if use_optical_flow is not None else self.config["use_optical_flow"]
-        max_images = max_images or self.config.get("max_images")
-        optical_flow_kwargs = optical_flow_kwargs or {}
-
-        # Get image paths based on input type
-        if input_type == "video":
-            paths = self._process_video(
-                file_path, self.config["output_path"] / "frames", max_images, use_optical_flow, optical_flow_kwargs
-            )
-        elif input_type == "image":
-            print(f"Selected single image: {file_path}")
-            paths = [file_path]
-        else:  # input_type == "images"
-            paths = self._process_images(file_path, max_images, use_optical_flow, optical_flow_kwargs)
-
-        # Store paths for later loading
-        self.config["image_paths"] = paths
-        print(f"✓ Frame selection complete: {len(paths)} images ready")
-
-    def setup_inference(self, device: str = "cuda", **load_images_kwargs) -> None:
+    def setup_inference(self, device: Optional[str] = None, force_reload: bool = False, **load_images_kwargs) -> None:
         """Load model and images in preparation for inference.
 
         Both model loading and image loading are heavy operations that should
         happen right before inference to maximize efficiency.
 
         Args:
-            device: Device to load model on
+            device: Device to load model on. If None, auto-detects ("cuda" if available, else "cpu")
+            force_reload: If True, reload model and images even if already loaded
             **load_images_kwargs: Additional arguments passed to MapAnything's load_images()
 
         Raises:
@@ -421,38 +519,76 @@ class Reconstructor:
         if "image_paths" not in self.config:
             raise RuntimeError("No image paths found. Call preprocess() first to select frames.")
 
+        # Auto-detect device if not specified
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"Auto-detected device: {device}")
+
         model_name = self.config["model_name"]
         paths = self.config["image_paths"]
+
+        # Check if already loaded
+        model_loaded = self.model is not None
+        images_loaded = self.views is not None and len(self.views) == len(paths)
+        images_match = (
+            images_loaded and
+            hasattr(self, '_loaded_image_paths') and
+            self._loaded_image_paths == paths
+        )
+
+        if not force_reload and model_loaded and images_match:
+            print("⚠ Model and images already loaded, skipping setup.")
+            print(f"  Model: {model_name}")
+            print(f"  Images: {len(self.views)}")
+            print(f"  Use force_reload=True to reload anyway.")
+            return
 
         print("Setting up inference environment")
         print("="*70)
 
-        # Load model
-        print(f"Loading model: {model_name}")
-        self.model = init_model_from_config(model_name, device=device)
-        self.model.eval()
-        print(f"✓ Model loaded")
+        # Load model if needed
+        if force_reload or not model_loaded:
+            print(f"Loading model: {model_name}")
+            self.model = init_model_from_config(model_name, device=device)
+            self.model.eval()
+            print(f"✓ Model loaded")
+        else:
+            print(f"✓ Model already loaded: {model_name}")
 
-        # Load images into memory
-        print(f"Loading {len(paths)} images into memory")
-        self.views = load_images([str(p) for p in paths], **load_images_kwargs)
-        print(f"✓ Images loaded")
+        # Load images if needed
+        if force_reload or not images_match:
+            print(f"Loading {len(paths)} images into memory")
+            self.views = load_images([str(p) for p in paths], **load_images_kwargs)
+            self._loaded_image_paths = paths  # Track which images are loaded
+            print(f"✓ Images loaded")
+        else:
+            print(f"✓ Images already loaded: {len(self.views)} images")
 
         print("="*70)
         print(f"✓ Ready for inference: {len(self.views)} images")
         print("="*70)
 
-    def load_model(self, device: str = "cuda") -> Any:
+    def load_model(self, device: Optional[str] = None, force_reload: bool = False) -> Any:
         """Load model only (for backward compatibility).
 
         Consider using setup_inference() instead for the recommended workflow.
 
         Args:
-            device: Device to load model on
+            device: Device to load model on. If None, auto-detects ("cuda" if available, else "cpu")
+            force_reload: If True, reload model even if already loaded
 
         Returns:
             Loaded model
         """
+        if not force_reload and self.model is not None:
+            print(f"⚠ Model already loaded, skipping. Use force_reload=True to reload anyway.")
+            return self.model
+
+        # Auto-detect device if not specified
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"Auto-detected device: {device}")
+
         model_name = self.config["model_name"]
         print(f"Loading model: {model_name}")
         self.model = init_model_from_config(model_name, device=device)
@@ -465,6 +601,9 @@ class Reconstructor:
         use_amp: bool = True,
         amp_dtype: str = "bf16",
         device: Optional[str] = None,
+        force_rerun: bool = False,
+        verbose: bool = True,
+        postprocess: bool = True,
         **kwargs
     ) -> List[Dict]:
         """Run inference using MapAnything's unified forward() interface.
@@ -476,10 +615,24 @@ class Reconstructor:
             use_amp: Whether to use automatic mixed precision. Defaults to True.
             amp_dtype: The dtype for mixed precision ("fp16", "bf16", "fp32"). Defaults to "bf16".
             device: Device to run inference on. Defaults to model's device.
-            **kwargs: Additional model-specific arguments passed to forward().
-                Available kwargs depend on the model. Common MapAnything options include:
+            force_rerun: If True, rerun inference even if outputs already exist
+            verbose: Whether to print verbose output
+            postprocess: Whether to apply post-processing to outputs. Defaults to True.
+            **kwargs: Additional arguments for inference and post-processing.
+                Model-specific inference kwargs (passed to forward()):
                 - memory_efficient_inference: bool
                 - minibatch_size: int
+
+                Post-processing kwargs (used when postprocess=True):
+                - apply_mask: bool (default: True) - Apply mask to outputs
+                - mask_edges: bool (default: True) - Mask edges based on discontinuities
+                - edge_normal_threshold: float (default: 5.0) - Surface normal threshold
+                - edge_depth_threshold: float (default: 0.03) - Depth discontinuity threshold
+                - apply_confidence_mask: bool (default: False) - Apply confidence-based masking
+                - confidence_percentile: float (default: 10) - Percentile threshold for confidence
+                - use_multiview_confidence: bool (default: False) - Compute multi-view depth consistency
+                - multiview_conf_depth_abs_thresh: float (default: 0.02) - Absolute depth threshold
+                - multiview_conf_depth_rel_thresh: float (default: 0.02) - Relative depth threshold
 
         Returns:
             List of prediction dictionaries
@@ -494,8 +647,25 @@ class Reconstructor:
         if self.views is None:
             raise RuntimeError("Images not loaded. Call preprocess() first")
 
+        # Check if inference already run
+        if not force_rerun and self.outputs is not None:
+            print("⚠ Inference outputs already exist, skipping rerun.")
+            print(f"  Using cached outputs from {len(self.outputs)} images")
+            print(f"  Use force_rerun=True to recompute.")
+            return self.outputs
+
         # Validate and prepare views
         validated_views = validate_input_views(self.views)
+
+        # Separate post-processing kwargs from model inference kwargs
+        postprocess_params = {
+            'apply_mask', 'mask_edges', 'edge_normal_threshold', 'edge_depth_threshold',
+            'apply_confidence_mask', 'confidence_percentile', 'use_multiview_confidence',
+            'multiview_conf_depth_abs_thresh', 'multiview_conf_depth_rel_thresh'
+        }
+
+        postprocess_kwargs = {k: kwargs.pop(k) for k in list(kwargs.keys()) if k in postprocess_params}
+        model_kwargs = kwargs  # Remaining kwargs are for the model
 
         print(f"Running inference on {len(validated_views)} images")
 
@@ -511,12 +681,111 @@ class Reconstructor:
         # Determine mixed precision dtype
         dtype = get_autocast_dtype(use_amp, amp_dtype)
 
+        # Track timing and memory
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+
+        start_time = time.time()
+
         # Run inference with MapAnything's unified forward() interface
         # All model wrappers (mapanything, vggt, dust3r, mast3r, etc.) use forward()
         self.model.eval()
         with torch.no_grad():
             with torch.autocast(device.type, enabled=use_amp, dtype=dtype):
-                self.outputs = self.model(validated_views, **kwargs)
+                outputs = self.model(validated_views, **model_kwargs)
 
-        print(f"✓ Inference complete")
+        # Synchronize and calculate timing
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        inference_time = time.time() - start_time
+
+        # Set defaults for post-processing parameters
+        pp_defaults = {
+            'apply_mask': True,
+            'mask_edges': True,
+            'edge_normal_threshold': 5.0,
+            'edge_depth_threshold': 0.03,
+            'apply_confidence_mask': False,
+            'confidence_percentile': 10,
+            'use_multiview_confidence': False,
+            'multiview_conf_depth_abs_thresh': 0.02,
+            'multiview_conf_depth_rel_thresh': 0.02,
+        }
+        # Merge user-provided kwargs with defaults
+        pp_config = {**pp_defaults, **postprocess_kwargs}
+
+        # Apply post-processing if requested
+        if postprocess:
+            if verbose:
+                print("Applying post-processing...")
+
+            outputs = postprocess_model_outputs_for_inference(
+                raw_outputs=outputs,
+                input_views=validated_views,
+                **pp_config
+            )
+
+        # Aggregate and stack results
+        output_keys = sorted(set().union(*(pred.keys() for pred in outputs)))
+        results = {
+            key: torch.stack([pred[key] for pred in outputs]).cpu().squeeze(1)
+            for key in output_keys
+        }
+
+        # Print unified summary
+        n_frames = len(validated_views)
+        sep = "=" * 70
+
+        print(f"\n{sep}")
+        print(f"✓ Inference Complete")
+        print(sep)
+        print(f"Performance:")
+        print(f"  • Total time        : {inference_time:.2f}s")
+        print(f"  • Time per frame    : {inference_time / n_frames:.3f}s")
+        print(f"  • Throughput (FPS)  : {n_frames / inference_time:.2f}")
+
+        if torch.cuda.is_available():
+            peak_memory_gb = torch.cuda.max_memory_allocated() / (1024**3)
+            print(f"  • Peak GPU memory   : {peak_memory_gb:.2f} GB")
+
+        if verbose:
+            if postprocess:
+                print(f"\nPost-Processing:")
+                print(f"  • Masking           : {'Enabled' if pp_config['apply_mask'] else 'Disabled'}")
+                if pp_config['apply_mask']:
+                    print(f"  • Edge masking      : {'Enabled' if pp_config['mask_edges'] else 'Disabled'}")
+                    if pp_config['mask_edges']:
+                        print(f"    - Normal thresh   : {pp_config['edge_normal_threshold']}")
+                        print(f"    - Depth thresh    : {pp_config['edge_depth_threshold']}")
+                    print(f"  • Confidence mask   : {'Enabled' if pp_config['apply_confidence_mask'] else 'Disabled'}")
+                    if pp_config['apply_confidence_mask']:
+                        print(f"    - Percentile      : {pp_config['confidence_percentile']}")
+                print(f"  • Multiview conf    : {'Enabled' if pp_config['use_multiview_confidence'] else 'Disabled'}")
+                if pp_config['use_multiview_confidence']:
+                    print(f"    - Abs thresh      : {pp_config['multiview_conf_depth_abs_thresh']}")
+                    print(f"    - Rel thresh      : {pp_config['multiview_conf_depth_rel_thresh']}")
+            else:
+                print(f"\nPost-Processing: Disabled")
+
+            if output_keys:
+                print(f"\nOutput Tensors:")
+                for key in output_keys:
+                    shape_str = " × ".join(str(dim) for dim in results[key].shape)
+                    print(f"  • {key:<20} : [{shape_str}]")
+
+        print(f"{sep}\n")
+
+        self.outputs = results
         return self.outputs
+
+    #########################################################
+    ############### Pointcloud Methods ######################
+    #########################################################
+
+    ### TO-DO: Implement pointcloud refinement
+    # 1. Backproject points to world based on depth
+    # 2. Filter points based on confidence
+    # 3. Bundle adjustment?
+    # MIGHT WANT TO CONSIDER USING COLMAP HERE

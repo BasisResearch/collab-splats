@@ -45,7 +45,6 @@ Author: Based on VGGT-SLAM optical flow keyframe selection
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -53,82 +52,8 @@ import cv2
 import numpy as np
 from tqdm.auto import tqdm
 
-
-# ============================================================================
-# Video Utilities
-# ============================================================================
-
-def get_video_rotation(video_path: Union[str, Path]) -> Optional[int]:
-    """
-    Detect video rotation from metadata using ffprobe.
-
-    Many drone videos are recorded in portrait mode but have rotation metadata
-    indicating they should be displayed rotated. This function reads that metadata.
-
-    Args:
-        video_path: Path to the video file
-
-    Returns:
-        cv2.ROTATE_* constant (90_CLOCKWISE, 180, or 90_COUNTERCLOCKWISE) or None
-    """
-    try:
-        # Use ffprobe to get rotation metadata
-        cmd = [
-            'ffprobe', '-v', 'quiet', '-print_format', 'json',
-            '-show_streams', str(video_path)
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        metadata = json.loads(result.stdout)
-
-        # Check for rotation in video stream
-        for stream in metadata.get('streams', []):
-            if stream.get('codec_type') == 'video':
-                rotation = stream.get('tags', {}).get('rotate', '0')
-                rotation = int(rotation)
-
-                # Map rotation degrees to cv2.rotate codes
-                if rotation == 90:
-                    return cv2.ROTATE_90_CLOCKWISE
-                elif rotation == 180:
-                    return cv2.ROTATE_180
-                elif rotation == 270:
-                    return cv2.ROTATE_90_COUNTERCLOCKWISE
-    except Exception:
-        pass
-
-    return None
-
-
-def rotate_frame(frame: np.ndarray, rotation_code: Optional[int]) -> np.ndarray:
-    """
-    Apply rotation to a frame if rotation_code is not None.
-
-    Args:
-        frame: BGR image (H, W, 3)
-        rotation_code: cv2.ROTATE_* constant or None
-
-    Returns:
-        Rotated frame or original frame if rotation_code is None
-    """
-    if rotation_code is not None and frame is not None:
-        return cv2.rotate(frame, rotation_code)
-    return frame
-
-
-def load_frame(cap: cv2.VideoCapture, frame_idx: int) -> Optional[np.ndarray]:
-    """
-    Load a specific frame from an open video capture.
-
-    Args:
-        cap: OpenCV VideoCapture object
-        frame_idx: Frame index to load
-
-    Returns:
-        BGR frame (H, W, 3) or None if loading failed
-    """
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    ret, frame = cap.read()
-    return frame if ret else None
+# Import video utilities from preproc_utils
+from preproc_utils import get_video_rotation, load_frame, rotate_frame
 
 
 # ============================================================================

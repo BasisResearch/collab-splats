@@ -21,12 +21,65 @@ Usage:
 """
 
 import json
+import os
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Union
 
 import cv2
 import numpy as np
+
+
+# ============================================================================
+# Video Stream Utilities
+# ============================================================================
+
+@contextmanager
+def video_only_stream(video_path: Union[str, Path]):
+    """
+    Context manager that yields a path to a temporary video-only copy of the input.
+
+    Strips audio and telemetry streams (e.g. GoPro GPMF) before handing the
+    file to OpenCV. This prevents the FFmpeg packet read limit error that occurs
+    when a multi-stream container has too many non-video packets between video
+    frames relative to OPENCV_FFMPEG_READ_ATTEMPTS (default 4096).
+
+    Uses stream copy (-c:v copy), so no re-encoding takes place.
+
+    Args:
+        video_path: Path to the source video file
+
+    Yields:
+        Path to a temporary video-only file (deleted on context exit)
+
+    Example:
+        with video_only_stream('GH010210.MP4') as clean:
+            cap = cv2.VideoCapture(str(clean))
+    """
+    video_path = Path(video_path)
+    tmp_path = None
+    try:
+        fd, tmp = tempfile.mkstemp(suffix=video_path.suffix)
+        os.close(fd)
+        tmp_path = Path(tmp)
+
+        subprocess.run(
+            [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-map', '0:v:0',
+                '-c:v', 'copy',
+                str(tmp_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        yield tmp_path
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
 
 
 # ============================================================================

@@ -53,7 +53,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 # Import video utilities from preproc_utils
-from preproc_utils import get_video_rotation, load_frame, rotate_frame
+from preproc_utils import get_video_rotation, load_frame, rotate_frame, video_only_stream
 
 
 # ============================================================================
@@ -606,50 +606,53 @@ class OpticalFlowFrameSelector:
                 }.get(video_rotation, 0)
                 print(f"Detected video rotation: {rotation_degrees}° (will be corrected when saving frames)")
 
-        # Open video
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            raise RuntimeError(f"Failed to open video: {video_path}")
-
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
         if self.verbose:
             print(f"\nExporting {len(frame_indices)} frames from: {video_path.name}")
-            print(f"  Total video frames: {total_frames}")
             print(f"  Output directory: {output_dir}")
 
         # Sort indices for efficient sequential reading
         sorted_indices = sorted(frame_indices)
 
-        # Export frames
+        # Export frames inside a video-only stream to avoid multi-stream FFmpeg issues
         frames_saved = 0
         pbar = tqdm(total=len(sorted_indices), desc="Exporting frames", disable=not self.verbose)
 
-        for idx in sorted_indices:
-            if idx >= total_frames:
-                if self.verbose:
-                    print(f"Warning: Frame index {idx} exceeds video length ({total_frames}), skipping")
-                continue
+        with video_only_stream(video_path) as clean_path:
+            cap = cv2.VideoCapture(str(clean_path))
+            if not cap.isOpened():
+                raise RuntimeError(f"Failed to open video: {video_path}")
 
-            # Load frame
-            frame = load_frame(cap, idx)
-            if frame is None:
-                if self.verbose:
-                    print(f"Warning: Failed to load frame {idx}, skipping")
-                continue
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-            # Apply rotation if needed
-            if apply_rotation and video_rotation is not None:
-                frame = rotate_frame(frame, video_rotation)
+            if self.verbose:
+                print(f"  Total video frames: {total_frames}")
 
-            # Save frame
-            output_path = output_dir / f"frame_{idx:06d}.jpg"
-            cv2.imwrite(str(output_path), frame)
-            frames_saved += 1
-            pbar.update(1)
+            for idx in sorted_indices:
+                if idx >= total_frames:
+                    if self.verbose:
+                        print(f"Warning: Frame index {idx} exceeds video length ({total_frames}), skipping")
+                    continue
+
+                # Load frame
+                frame = load_frame(cap, idx)
+                if frame is None:
+                    if self.verbose:
+                        print(f"Warning: Failed to load frame {idx}, skipping")
+                    continue
+
+                # Apply rotation if needed
+                if apply_rotation and video_rotation is not None:
+                    frame = rotate_frame(frame, video_rotation)
+
+                # Save frame
+                output_path = output_dir / f"frame_{idx:06d}.jpg"
+                cv2.imwrite(str(output_path), frame)
+                frames_saved += 1
+                pbar.update(1)
+
+            cap.release()
 
         pbar.close()
-        cap.release()
 
         if self.verbose:
             print(f"✓ Exported {frames_saved} frames to: {output_dir}")
@@ -698,23 +701,6 @@ class OpticalFlowFrameSelector:
             if self.verbose:
                 print("No rotation metadata detected")
 
-        # Open video
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            raise RuntimeError(f"Failed to open video: {video_path}")
-
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-
-        if max_frames is not None:
-            total_frames = min(total_frames, max_frames)
-
-        if self.verbose:
-            print(f"\nProcessing video: {video_path.name}")
-            print(f"  Total frames: {total_frames}")
-            print(f"  FPS: {fps:.2f}")
-            print(f"  Selection threshold: {selection_threshold}")
-
         # Setup output directory if saving frames
         if save_selected_frames:
             if output_dir is None:
@@ -725,46 +711,63 @@ class OpticalFlowFrameSelector:
                 shutil.rmtree(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Process frames
+        # Process frames inside a video-only stream to avoid multi-stream FFmpeg issues
         selected_indices = []
         all_scores = []
         all_components = []
 
-        frame_idx = 0
-        pbar = tqdm(total=total_frames, desc="Processing frames", disable=not self.verbose)
+        with video_only_stream(video_path) as clean_path:
+            cap = cv2.VideoCapture(str(clean_path))
+            if not cap.isOpened():
+                raise RuntimeError(f"Failed to open video: {video_path}")
 
-        while True:
-            ret, frame = cap.read()
-            if not ret or (max_frames and frame_idx >= max_frames):
-                break
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
 
-            # Check if frame should be selected
-            should_select, score, components = self.should_select_frame(
-                frame, threshold=selection_threshold
-            )
+            if max_frames is not None:
+                total_frames = min(total_frames, max_frames)
 
-            all_scores.append(score)
-            all_components.append(components)
+            if self.verbose:
+                print(f"\nProcessing video: {video_path.name}")
+                print(f"  Total frames: {total_frames}")
+                print(f"  FPS: {fps:.2f}")
+                print(f"  Selection threshold: {selection_threshold}")
 
-            if should_select:
-                selected_indices.append(frame_idx)
+            frame_idx = 0
+            pbar = tqdm(total=total_frames, desc="Processing frames", disable=not self.verbose)
 
-                # Update keyframe reference
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                self._update_keyframe(gray)
+            while True:
+                ret, frame = cap.read()
+                if not ret or (max_frames and frame_idx >= max_frames):
+                    break
 
-                # Save frame if requested
-                if save_selected_frames:
-                    # Apply rotation correction before saving
-                    frame_to_save = rotate_frame(frame, video_rotation)
-                    output_path = output_dir / f"frame_{frame_idx:06d}.jpg"
-                    cv2.imwrite(str(output_path), frame_to_save)
+                # Check if frame should be selected
+                should_select, score, components = self.should_select_frame(
+                    frame, threshold=selection_threshold
+                )
 
-            frame_idx += 1
-            pbar.update(1)
+                all_scores.append(score)
+                all_components.append(components)
 
-        pbar.close()
-        cap.release()
+                if should_select:
+                    selected_indices.append(frame_idx)
+
+                    # Update keyframe reference
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    self._update_keyframe(gray)
+
+                    # Save frame if requested
+                    if save_selected_frames:
+                        # Apply rotation correction before saving
+                        frame_to_save = rotate_frame(frame, video_rotation)
+                        output_path = output_dir / f"frame_{frame_idx:06d}.jpg"
+                        cv2.imwrite(str(output_path), frame_to_save)
+
+                frame_idx += 1
+                pbar.update(1)
+
+            pbar.close()
+            cap.release()
 
         # Compute adaptive threshold if enabled
         if self.adaptive_threshold and len(self.stats['disparities']) > 0:

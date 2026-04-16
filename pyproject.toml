@@ -96,8 +96,8 @@ line-length = 120
 collab-dashboard = "collab_splats.dashboard.__main__:main"
 
 [project.entry-points."nerfstudio.method_configs"]
-rade-gs = "collab_splats.configs.rade_gs_method:rade_gs_method"
-rade-features = "collab_splats.configs.rade_features_method:rade_features_method"
+rade-gs = "collab_splats.nerfstudio.method_configs.rade_gs:rade_gs_method"
+rade-features = "collab_splats.nerfstudio.method_configs.rade_features:rade_features_method"
 
 [tool.setuptools.packages]
 find = { include = ["collab_splats", "collab_splats.*"] }

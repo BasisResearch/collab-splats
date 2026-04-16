@@ -3,7 +3,7 @@ import pytest
 
 from nerfstudio.data.scene_box import SceneBox
 
-from collab_splats.models.rade_gs_model import RadegsModelConfig, RadegsModel
+from collab_splats.nerfstudio.models.rade_gs import RadegsModelConfig, RadegsModel
 from collab_splats.models.rade_features_model import (
     RadegsFeaturesModelConfig,
     RadegsFeaturesModel,

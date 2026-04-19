@@ -62,6 +62,8 @@ def infer_batch_size(mem_per_image_gb: float, headroom: float = 0.3) -> int:
     Returns:
         Batch size >= 1. Returns 1 if CUDA is unavailable.
     """
+    if mem_per_image_gb <= 0:
+        raise ValueError(f"mem_per_image_gb must be positive, got {mem_per_image_gb}")
     if torch.cuda.is_available():
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
         return max(1, int(vram_gb * headroom / mem_per_image_gb))

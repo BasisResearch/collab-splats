@@ -1,0 +1,76 @@
+<h2>Training vs Explore — active tab indicator</h2>
+<p class="subtitle">Panel's tab underline is subtle. Which treatment makes the active mode obvious?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Mode badge in content header (recommended)</h3>
+      <p>A colored pill at the top of the main content area, changes with the active tab.</p>
+      <div class="mockup" style="margin-top:0.75rem">
+        <div class="mockup-header">collab-splats Semantic Explorer</div>
+        <div class="mockup-body" style="padding:0">
+          <div style="display:flex;border-bottom:1px solid #ddd;background:#fff">
+            <div style="padding:10px 20px;border-bottom:3px solid #2596be;font-weight:600;color:#2596be;font-size:14px">Training</div>
+            <div style="padding:10px 20px;color:#999;font-size:14px">Explore</div>
+          </div>
+          <div style="padding:12px">
+            <div style="display:inline-flex;align-items:center;gap:6px;background:#e8f4fd;border:1px solid #2596be;border-radius:20px;padding:4px 12px;margin-bottom:12px">
+              <span style="width:8px;height:8px;border-radius:50%;background:#2596be;display:inline-block"></span>
+              <span style="font-size:12px;font-weight:600;color:#2596be;text-transform:uppercase;letter-spacing:0.5px">Training Mode</span>
+            </div>
+            <div style="background:#f5f5f5;border-radius:4px;padding:12px;font-size:12px;color:#888">
+              Output path · [Launch Splatter] · [Stop] · training log…
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Icons + labels on tabs</h3>
+      <p>Add emoji/icon to tab labels: "⚙ Training" and "🔍 Explore". No code change to content areas.</p>
+      <div class="mockup" style="margin-top:0.75rem">
+        <div class="mockup-header">collab-splats Semantic Explorer</div>
+        <div class="mockup-body" style="padding:0">
+          <div style="display:flex;border-bottom:1px solid #ddd;background:#fff">
+            <div style="padding:10px 20px;border-bottom:3px solid #2596be;font-weight:600;color:#2596be;font-size:14px">⚙ Training</div>
+            <div style="padding:10px 20px;color:#999;font-size:14px">🔍 Explore</div>
+          </div>
+          <div style="padding:12px;font-size:12px;color:#888;background:#f9f9f9">
+            Output path · [Launch Splatter] · [Stop] · training log…
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons" style="margin-top:0.5rem">
+        <div class="pros"><h4>Pros</h4><ul><li>Minimal code change</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Still relies on tab underline being noticed</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Status bar shows active mode</h3>
+      <p>Existing status pane (already at top of main area) always shows current mode: "Ready · Training" or "Ready · Explore".</p>
+      <div class="mockup" style="margin-top:0.75rem">
+        <div class="mockup-header">collab-splats Semantic Explorer</div>
+        <div class="mockup-body" style="padding:8px">
+          <div style="background:#e8f4fd;border-left:4px solid #2596be;padding:6px 10px;font-size:12px;margin-bottom:8px">
+            Ready &nbsp;·&nbsp; <strong>Mode: Training</strong>
+          </div>
+          <div style="display:flex;border-bottom:1px solid #ddd">
+            <div style="padding:8px 16px;border-bottom:2px solid #2596be;font-size:13px;font-weight:600">Training</div>
+            <div style="padding:8px 16px;color:#999;font-size:13px">Explore</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:1rem">⭐ Recommended: <strong>A</strong> — unambiguous, no reliance on subtle tab underline</p>

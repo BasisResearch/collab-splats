@@ -1,0 +1,41 @@
+# Base configuration for Splatter workflows
+# All dataset configs inherit from this and can override any values
+
+# ============================================================================
+# Splatter Settings
+# ============================================================================
+method: rade-features
+frame_proportion: 0.25
+min_frames: 100
+
+# ============================================================================
+# Preprocessing (Structure from Motion)
+# ============================================================================
+preprocess:
+  sfm_tool: hloc
+  # refine_pixsfm: true  # Optional: Enable pixel-perfect SfM refinement
+
+# ============================================================================
+# Training (Model & Pipeline Parameters)
+# ============================================================================
+training:
+  pipeline.model.output-depth-during-training: true
+  pipeline.model.rasterize-mode: antialiased
+  pipeline.model.use-scale-regularization: true
+  # pipeline.model.random-scale: 1.0
+  # pipeline.model.cull-alpha-thresh: 0.01
+  # pipeline.model.collider-params: near_plane 0.1 far_plane 1.0
+
+# ============================================================================
+# Meshing (3D Reconstruction)
+# ============================================================================
+meshing:
+  mesher_type: Open3DTSDFFusion
+  depth_name: median_depth
+  depth_trunc: 1.0
+  voxel_size: 0.01
+  normals_name: normals
+  features_name: distill_features
+  sdf_trunc: 0.03
+  clean_repair: true
+  align_floor: true

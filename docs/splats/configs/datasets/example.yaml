@@ -1,0 +1,20 @@
+# Example dataset configuration using Docker image video
+# Inherits from base.yaml
+
+file_path: /opt/data/C0043.MP4
+frame_proportion: 0.25
+
+# Example: Override preprocessing to use colmap instead of hloc
+# preprocess:
+#   sfm_tool: colmap
+
+# Example: Use higher quality training settings
+# training:
+#   pipeline.model.random-scale: 1.0
+#   pipeline.model.cull-alpha-thresh: 0.01
+#   pipeline.model.collider-params: near_plane 0.1 far_plane 1.0
+
+# Example: Higher resolution meshing
+# meshing:
+#   voxel_size: 0.005
+#   sdf_trunc: 0.015

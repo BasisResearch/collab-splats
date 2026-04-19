@@ -4,12 +4,13 @@ import json
 import pickle
 import subprocess
 from pathlib import Path
-from typing import Optional, TypedDict, Set, Dict, Any, Union, List
+from typing import Optional, Literal, TypedDict, Set, Dict, Any, Union, List
 import cv2
 import torch
 import numpy as np
 import pyvista as pv
 import open3d as o3d
+from collab_splats.pointcloud import get_creator
 
 DEFAULT_TIMEOUT = 3600
 
@@ -36,6 +37,8 @@ class SplatterConfig(TypedDict):
     frame_proportion: Optional[float]
     min_frames: Optional[int]
     websocket_port: Optional[int]
+    pointcloud_method: Optional[str]  # "sfm" | "feedforward"; default "sfm"
+    frame_selection: Optional[Literal["fps", "optical_flow"]]  # default "fps"
 
 
 class ValidationError(Exception):
@@ -89,8 +92,7 @@ class Splatter:
         valid_methods = cls.SPLATTING_METHODS
         if config["method"] not in valid_methods:
             raise ValidationError(
-                f"Invalid method '{config['method']}'. "
-                f"Valid methods are: {sorted(valid_methods)}"
+                f"Invalid method '{config['method']}'. " f"Valid methods are: {sorted(valid_methods)}"
             )
 
         ############################################
@@ -108,15 +110,17 @@ class Splatter:
 
         # If we don't specify an output path, default to the grandparent directory of the input file
         if config.get("output_path") is None:
-            default_output_path = os.path.join(
-                file_path.parent.parent, "environment", file_path.stem
-            )
+            default_output_path = os.path.join(file_path.parent.parent, "environment", file_path.stem)
             config.setdefault("output_path", Path(default_output_path))
 
         if config.get("min_frames") is None:
-            config.setdefault(
-                "min_frames", 300
-            )  # Default number of video frames to use for COLMAP
+            config.setdefault("min_frames", 300)  # Default number of video frames to use for COLMAP
+
+        if config.get("pointcloud_method") is None:
+            config.setdefault("pointcloud_method", "sfm")
+        else:
+            # Validate against registry
+            get_creator(config["pointcloud_method"])  # raises KeyError if unknown
 
         return config
 
@@ -129,9 +133,108 @@ class Splatter:
         print("Available methods:")
         print("  ", sorted(cls.SPLATTING_METHODS))
 
-    def preprocess(
-        self, overwrite: bool = False, kwargs: Optional[Dict[str, Any]] = None
-    ) -> None:
+    @classmethod
+    def from_config_file(
+        cls,
+        dataset: str,
+        config_dir: Union[str, Path],
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> "Splatter":
+        """
+        Create Splatter instance from YAML configuration.
+
+        Args:
+            dataset: Dataset config name (from datasets/ subdirectory)
+            config_dir: Directory containing config files (base.yaml and datasets/)
+            overrides: Optional runtime overrides
+
+        Returns:
+            Configured Splatter instance with pipeline configs attached
+
+        Example:
+            >>> splatter = Splatter.from_config_file(
+            ...     dataset='ants_001',
+            ...     config_dir='docs/splats/configs'
+            ... )
+            >>> splatter.run_pipeline(overwrite=True)
+        """
+        from collab_splats.wrapper.config import ConfigLoader
+
+        loader = ConfigLoader(config_dir)
+        config = loader.load(dataset=dataset, overrides=overrides)
+
+        # Store full config for later use
+        full_config = config.copy()
+
+        # Extract SplatterConfig fields
+        splatter_fields: Dict[str, Any] = {
+            "file_path": config["file_path"],
+            "method": config["method"],
+            "input_type": config["input_type"],
+        }
+        # Add optional fields if present
+        if "frame_proportion" in config:
+            splatter_fields["frame_proportion"] = config["frame_proportion"]
+        if "min_frames" in config:
+            splatter_fields["min_frames"] = config["min_frames"]
+        if "output_path" in config:
+            splatter_fields["output_path"] = config["output_path"]
+        if "pointcloud_method" in config:
+            splatter_fields["pointcloud_method"] = config["pointcloud_method"]
+
+        splatter_config: SplatterConfig = splatter_fields  # type: ignore
+        instance = cls(splatter_config)
+
+        # Attach configs for pipeline methods
+        instance._preprocess_config = full_config.get("preprocess", {})
+        instance._training_config = full_config.get("training", {})
+        instance._meshing_config = full_config.get("meshing", {})
+
+        return instance
+
+    def run_pipeline(self, overwrite: bool = False) -> None:
+        """
+        Run complete pipeline using stored configurations.
+
+        This method runs preprocessing, training, and meshing using
+        configurations loaded via from_config_file().
+
+        Args:
+            overwrite: Whether to overwrite existing outputs
+
+        Raises:
+            ValueError: If pipeline configs not found (must use from_config_file)
+        """
+        if self._preprocess_config is None:
+            raise ValueError(
+                "Pipeline configs not found. Use Splatter.from_config_file() "
+                "to load configurations before calling run_pipeline()"
+            )
+
+        print(f"\n{'=' * 80}")
+        print(f"Running {self.config['method']} pipeline")
+        print(f"File: {Path(self.config['file_path']).name}")
+        print(f"{'=' * 80}\n")
+
+        # Step 1: Preprocessing
+        print("[1/3] Preprocessing...")
+        self.preprocess(kwargs=self._preprocess_config, overwrite=overwrite)
+
+        # Step 2: Training
+        print("\n[2/3] Training...")
+        self.extract_features(kwargs=self._training_config, overwrite=overwrite)
+
+        # Step 3: Meshing
+        print("\n[3/3] Meshing...")
+        mesher_config = (self._meshing_config or {}).copy()
+        mesher_type = mesher_config.pop("mesher_type", "Open3DTSDFFusion")
+        self.mesh(mesher_type=mesher_type, mesher_kwargs=mesher_config, overwrite=overwrite)
+
+        print(f"\n{'=' * 80}")
+        print("Pipeline complete!")
+        print(f"{'=' * 80}\n")
+
+    def preprocess(self, overwrite: bool = False, kwargs: Optional[Dict[str, Any]] = None) -> None:
         """Preprocess the data in the splatter.
 
         This function handles any necessary data preprocessing steps based on the
@@ -146,9 +249,7 @@ class Splatter:
             input_type = "video"
         elif ext in [".jpg", ".jpeg", ".png"]:
             if "360" in str(file_path):
-                input_type = (
-                    "images --camera-type equirectangular --images-per-equirect 14"
-                )
+                input_type = "images --camera-type equirectangular --images-per-equirect 14"
             else:
                 input_type = "images"
         else:
@@ -179,11 +280,40 @@ class Splatter:
         else:
             num_frames_target = ""
 
+        # If optical_flow frame selection is requested, pre-extract frames and redirect
+        # ns-process-data to images mode using the sampled frame directory.
+        if input_type == "video" and self.config.get("frame_selection") == "optical_flow":
+            from collab_splats.semantics.frame_sampling import sample_frames_optical_flow
+
+            tmp_dir = Path(self.config["output_path"]) / "tmp_frames"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+
+            # Determine target frame count (mirrors frame_proportion logic above)
+            video_capture = cv2.VideoCapture(file_path.as_posix())
+            n_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            video_capture.release()
+            if self.config.get("frame_proportion") is not None:
+                n_samples = int(n_frames * self.config["frame_proportion"])
+                n_samples = n_frames if n_samples < self.config["min_frames"] else n_samples
+            else:
+                n_samples = n_frames
+
+            sampled_frames = sample_frames_optical_flow(file_path.as_posix(), max_frames=min(n_samples, 200))
+            for i, frame in enumerate(sampled_frames):
+                cv2.imwrite(str(tmp_dir / f"{i:05d}.jpg"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+            # Switch to images mode pointing at the pre-extracted frame directory
+            input_type = "images"
+            data_source = tmp_dir.as_posix()
+            num_frames_target = ""  # already sampled exactly what we need
+        else:
+            data_source = file_path.as_posix()
+
         # TLB --> we should bump up number of frames to max
         cmd = (
             f"ns-process-data "
             f"{input_type} "
-            f"--data {file_path.as_posix()} "
+            f"--data {data_source} "
             f"--output-dir {preproc_data_path.as_posix()} "
             f"{num_frames_target} "
         )
@@ -197,9 +327,26 @@ class Splatter:
         # Store the preprocessed data path in the config
         self.config["preproc_data_path"] = preproc_data_path
 
-    def extract_features(
-        self, overwrite: bool = False, kwargs: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def create_pointcloud(self, **creator_kwargs):
+        """Run pointcloud creation using the configured backend.
+
+        Uses ``config["pointcloud_method"]`` (default ``"sfm"``) to select the
+        backend via the registry.  Returns a ``PointcloudResult`` — camera poses
+        are in cam2world OpenGL convention, no ``transforms.json`` needed.
+        """
+        # Use preprocessed frame dir if available (set by preprocess()); fall back to file_path
+        # for image-type inputs where file_path is already a frame directory.
+        if self.config.get("preproc_data_path"):
+            image_dir = Path(self.config["preproc_data_path"])
+        else:
+            if self.config.get("input_type") == "video":
+                raise RuntimeError("call preprocess() before create_pointcloud() for video input")
+            image_dir = Path(self.config["file_path"])
+        output_dir = Path(self.config["output_path"]) / "preproc"
+        creator_cls = get_creator(self.config["pointcloud_method"])
+        return creator_cls(**creator_kwargs).create(image_dir=image_dir, output_dir=output_dir)
+
+    def extract_features(self, overwrite: bool = False, kwargs: Optional[Dict[str, Any]] = None) -> None:
         """Extract features from the preprocessed data.
 
         Feature extraction is performed according to the configured dtype and method.
@@ -280,9 +427,7 @@ class Splatter:
             # Prompt user to select a run
             while True:
                 try:
-                    selection = input(
-                        "\nSelect run number (or press Enter for most recent): "
-                    ).strip()
+                    selection = input("\nSelect run number (or press Enter for most recent): ").strip()
                     if selection == "":
                         selected_run = sorted_runs[-1]
                         break
@@ -354,21 +499,15 @@ class Splatter:
         if mesh_info is None:
             raise ValueError("Mesh information not found. Please run mesh() first.")
         elif mesh_info.get("features") is None:
-            raise ValueError(
-                "Features not found. Please run mesh() with features_name specified."
-            )
+            raise ValueError("Features not found. Please run mesh() with features_name specified.")
 
         features = torch.load(self.config["mesh_info"]["features"])
 
-        decoded_features = self.model.decoder.per_gaussian_forward(
-            features.to(self.model.device).to(torch.float32)
-        )
+        decoded_features = self.model.decoder.per_gaussian_forward(features.to(self.model.device).to(torch.float32))
 
         similarity_map = (
             self.model.similarity_fx(
-                features=decoded_features[self.model.main_features_name]
-                .unsqueeze(0)
-                .permute(2, 1, 0),
+                features=decoded_features[self.model.main_features_name].unsqueeze(0).permute(2, 1, 0),
                 positive=positive_queries,
                 negative=negative_queries,
                 method=method,
@@ -405,9 +544,7 @@ class Splatter:
 
         return similarity_colors
 
-    def plot_mesh(
-        self, attribute: Optional[Union[str, np.ndarray]] = None, rgb: bool = True
-    ) -> None:
+    def plot_mesh(self, attribute: Optional[Union[str, np.ndarray]] = None, rgb: bool = True) -> None:
         """Plot the mesh."""
         mesh_info = self.config.get("mesh_info")
         if mesh_info is None:
@@ -447,9 +584,7 @@ class Splatter:
 
         # Load the transforms
         transforms_json = preproc_dir / "transforms.json"
-        nerfstudio_transforms_path = (
-            model_dir / "dataparser_transforms.json"
-        )  # This is the nerfstudio transform
+        nerfstudio_transforms_path = model_dir / "dataparser_transforms.json"  # This is the nerfstudio transform
 
         # Camera transforms (poses)
         with open(transforms_json, "r") as f:
@@ -463,9 +598,7 @@ class Splatter:
         transform = np.stack(nerfstudio_transforms["transform"])
 
         # Add the translation to the transform
-        transform = np.concatenate(
-            [transform, np.array([0, 0, 0, 1])[np.newaxis]], axis=0
-        )
+        transform = np.concatenate([transform, np.array([0, 0, 0, 1])[np.newaxis]], axis=0)
 
         # Apply to cameras
         camera_poses = np.stack(

@@ -144,9 +144,11 @@ class BaseFeatureExtractor(nn.Module):
         return cls._registry[name]
 
     def forward_batch(self, preprocessed: list) -> torch.Tensor:
+        """Run inference on a pre-processed batch. Subclasses must override."""
         raise NotImplementedError(f"{type(self).__name__} must implement forward_batch()")
 
     def reshape_batch(self, batch: torch.Tensor, idx: int, *args) -> torch.Tensor:
+        """Reshape flat patch tokens to spatial feature maps. Subclasses must override."""
         raise NotImplementedError(f"{type(self).__name__} must implement reshape_batch()")
 
 
@@ -164,6 +166,8 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         clip_model_name (str): Name of the CLIP model to use. Defaults to 'ViT-L/14@336px'.
         cache_dir (str): Directory to cache model weights. Defaults to TORCH_HOME.
     """
+
+    MEM_PER_IMAGE_GB: float = 2.0  # CLIP ViT-L/14@336px at 1024px
 
     def __init__(
         self,
@@ -190,16 +194,6 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
                 T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
             ]
         )
-
-    MEM_PER_IMAGE_GB: float = 3.0  # CLIP ViT-L/14@336px
-
-    def forward_batch(self, preprocessed: list) -> torch.Tensor:
-        """Batch inference. preprocessed: list of (C,H,W) tensors from preprocess()."""
-        images = torch.stack(preprocessed)  # (B, C, H, W)
-        return self.forward(images)  # (B, C_feat, pH, pW)
-
-    def reshape_batch(self, batch: torch.Tensor, idx: int, *_) -> torch.Tensor:
-        return batch[idx]  # (C_feat, pH, pW) — already correctly shaped
 
     @property
     def device(self) -> torch.device:
@@ -319,6 +313,8 @@ BaseFeatureExtractor._registry["clip-vit"] = MaskCLIPExtractor
 
 @BaseFeatureExtractor.register("dinov2")
 class DINOFeatureExtractor(BaseFeatureExtractor):
+    MEM_PER_IMAGE_GB: float = 1.5  # DINOv2 ViTS14 at 800px
+
     def __init__(
         self, model_name: str = "dinov2_vits14", resolution=800, device: str = "cpu"
     ):
@@ -336,17 +332,6 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
                 T.Normalize(mean=[0.5], std=[0.5]),
             ]
         )
-
-    MEM_PER_IMAGE_GB: float = 1.5  # DINOv2 ViTS14 at 800px
-
-    def forward_batch(self, preprocessed: list) -> torch.Tensor:
-        """Batch inference. preprocessed: list of (tensor_1CHW, H, W) from preprocess()."""
-        images = torch.cat([img for img, _, _ in preprocessed])  # (B, C, H, W)
-        with torch.no_grad():
-            return self.model.forward_features(images)["x_norm_patchtokens"]  # (B, N, D)
-
-    def reshape_batch(self, batch: torch.Tensor, idx: int, target_H: int, target_W: int) -> torch.Tensor:
-        return self.reshape(batch[idx], target_H, target_W)  # (C, H_patches, W_patches)
 
     @property
     def device(self) -> torch.device:
@@ -420,6 +405,8 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
     Algorithm from Talk2DINO (https://github.com/lorebianchi98/Talk2DINO).
     """
 
+    MEM_PER_IMAGE_GB: float = 1.5  # Talk2DINO ViT-B at square-cropped resolution
+
     def __init__(
         self,
         hf_model_id: str = "lorebianchi98/Talk2DINOv3-ViTB",
@@ -437,8 +424,6 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
         self._model = AutoModel.from_pretrained(hf_model_id, trust_remote_code=True).to(device).eval()
         self.patch_size: int = getattr(self._model.config, "patch_size", 14)
         self._device = torch.device(device)
-
-    MEM_PER_IMAGE_GB: float = 1.0  # Talk2DINO ViTB
 
     def forward_batch(self, preprocessed: list) -> torch.Tensor:
         """Batch inference. preprocessed: list of PIL Images from preprocess()."""

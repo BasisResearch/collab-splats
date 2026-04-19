@@ -16,6 +16,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import torch
 import numpy as np
 import panel as pn
 import param
@@ -26,6 +27,8 @@ from collab_splats.dashboard.video_discovery import discover_videos, yaml_name_f
 from collab_splats.utils.frame_sampling import sample_frames_fps, sample_frames_optical_flow
 
 CONFIGS_DIR = Path(__file__).parents[2] / "docs" / "splats" / "configs"
+
+_DEFAULT_DEVICE: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 _TAB_CSS = """
 .bk-tab.bk-active {
@@ -173,23 +176,39 @@ class SemanticsDashboard(param.Parameterized):
         )
         self.extract_frames_btn = pn.widgets.Button(name="Extract Frames", button_type="primary", width=160)
         self.frame_count_txt = pn.pane.HTML("")
-        self.frame_slider = pn.widgets.IntSlider(name="Frame index", value=0, start=0, end=0, width=700)
-        self.current_frame_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
-        self.extractor_dd = pn.widgets.Select(name="Extractor", options=extractor_names, width=200)
-        self.device_dd = pn.widgets.Select(name="Device", options=["cpu", "cuda"], width=100)
-        self.extract_features_btn = pn.widgets.Button(name="Extract Features", button_type="primary", width=160)
-        self.feature_overlay_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
-        self.seg_strategy_dd = pn.widgets.Select(name="Strategy", options=["object", "auto"], width=200)
-        self.seg_device_dd = pn.widgets.Select(name="Device", options=["cpu", "cuda"], width=100)
-        self.seg_btn = pn.widgets.Button(name="Segment", button_type="primary", width=100)
-        self.seg_output_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
+        self.frame_slider = pn.widgets.IntSlider(
+            name="Frame index", value=0, start=0, end=0, width=700
+        )
+        self.current_frame_pane = pn.pane.PNG(None, width=700)
+        self.extractor_dd = pn.widgets.Select(
+            name="Extractor", options=extractor_names, width=200
+        )
+        self.device_dd = pn.widgets.Select(
+            name="Device", options=["cpu", "cuda"], value=_DEFAULT_DEVICE, width=100
+        )
+        self.extract_features_btn = pn.widgets.Button(
+            name="Extract Features", button_type="primary", width=160
+        )
+        self.feature_overlay_pane = pn.pane.PNG(None, width=700)
+        self.seg_strategy_dd = pn.widgets.Select(
+            name="Strategy", options=["object", "auto"], width=200
+        )
+        self.seg_device_dd = pn.widgets.Select(
+            name="Device", options=["cpu", "cuda"], value=_DEFAULT_DEVICE, width=100
+        )
+        self.seg_btn = pn.widgets.Button(
+            name="Segment", button_type="primary", width=100
+        )
+        self.seg_output_pane = pn.pane.PNG(None, width=700)
         self.seg_count_txt = pn.pane.HTML("")
         self.hf_model_dd = pn.widgets.Select(
             name="Talk2DINO model",
             options=["lorebianchi98/Talk2DINOv3-ViTB", "lorebianchi98/Talk2DINO-ViTB"],
             width=300,
         )
-        self.query_device_dd = pn.widgets.Select(name="Device", options=["cpu", "cuda"], width=100)
+        self.query_device_dd = pn.widgets.Select(
+            name="Device", options=["cpu", "cuda"], value=_DEFAULT_DEVICE, width=100
+        )
         self.text_pairs_input = pn.widgets.TextAreaInput(
             name="Text pairs (JSON)",
             value='{"object": [["object", "thing"], ["background", "empty"]]}',

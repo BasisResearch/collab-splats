@@ -52,6 +52,22 @@ def pytorch_gc():
     gc.collect()
 
 
+def infer_batch_size(mem_per_image_gb: float, headroom: float = 0.3) -> int:
+    """Compute a safe batch size from available VRAM.
+
+    Args:
+        mem_per_image_gb: Estimated GPU memory per image in GB (use extractor.MEM_PER_IMAGE_GB).
+        headroom: Fraction of VRAM to use for batch data; remainder reserved for model weights.
+
+    Returns:
+        Batch size >= 1. Returns 1 if CUDA is unavailable.
+    """
+    if torch.cuda.is_available():
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        return max(1, int(vram_gb * headroom / mem_per_image_gb))
+    return 1
+
+
 def resize_image(image: Image.Image, longest_edge: int) -> Image.Image:
     """
     Resize an image while maintaining aspect ratio so its longest edge equals the specified length.

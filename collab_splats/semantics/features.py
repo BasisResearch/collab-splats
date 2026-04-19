@@ -167,7 +167,15 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         cache_dir (str): Directory to cache model weights. Defaults to TORCH_HOME.
     """
 
-    MEM_PER_IMAGE_GB: float = 2.0  # CLIP ViT-L/14@336px at 1024px
+    MEM_PER_IMAGE_GB: float = 3.0  # CLIP ViT-L/14@336px
+
+    def forward_batch(self, preprocessed: list) -> torch.Tensor:
+        """Batch inference. preprocessed: list of (C,H,W) tensors from preprocess()."""
+        images = torch.stack(preprocessed)  # (B, C, H, W)
+        return self.forward(images)  # (B, C_feat, pH, pW)
+
+    def reshape_batch(self, batch: torch.Tensor, idx: int, *_) -> torch.Tensor:
+        return batch[idx]  # (C_feat, pH, pW) — already correctly shaped
 
     def __init__(
         self,
@@ -405,7 +413,7 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
     Algorithm from Talk2DINO (https://github.com/lorebianchi98/Talk2DINO).
     """
 
-    MEM_PER_IMAGE_GB: float = 1.5  # Talk2DINO ViT-B at square-cropped resolution
+    MEM_PER_IMAGE_GB: float = 1.0  # Talk2DINO ViTB
 
     def __init__(
         self,

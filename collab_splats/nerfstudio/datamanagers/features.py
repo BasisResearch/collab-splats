@@ -26,6 +26,7 @@ from nerfstudio.data.datamanagers.full_images_datamanager import (
 )
 from nerfstudio.utils.rich_utils import CONSOLE
 
+from collab_splats.semantics.features import BaseFeatureExtractor, infer_batch_size
 from collab_splats.utils.features import BaseFeatureExtractor, pytorch_gc, resize_image
 from collab_splats.utils.segmentation import Segmentation, aggregate_masked_features
 
@@ -155,15 +156,15 @@ class FeatureSplattingDataManager(FullImageDatamanager):
                 device=device
             )
 
-            for i in trange(
-                len(image_filenames),
-                desc=f"Extracting {self.config.regularization_features} features",
-            ):
-                image, target_H, target_W = extractor.preprocess(image_filenames[i])
-                features = extractor.forward(image)
-                features = extractor.reshape(features, target_H, target_W)
-                features = features.detach().cpu()
-                features_dict[self.config.regularization_features].append(features)
+            batch_size = infer_batch_size(extractor.MEM_PER_IMAGE_GB)
+            name = self.config.regularization_features
+            for start in trange(0, len(image_filenames), batch_size, desc=f"Extracting {name} features"):
+                batch_paths = image_filenames[start : start + batch_size]
+                preprocessed = [extractor.preprocess(p) for p in batch_paths]
+                features_batch = extractor.forward_batch(preprocessed)
+                for j, (_, target_H, target_W) in enumerate(preprocessed):
+                    features = extractor.reshape_batch(features_batch, j, target_H, target_W)
+                    features_dict[name].append(features.detach().cpu())
 
             del extractor
             pytorch_gc()

@@ -349,6 +349,21 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         features_chw = features_hwc.permute((2, 0, 1))
         return features_chw
 
+    def forward_batch(self, preprocessed: list) -> torch.Tensor:
+        """Batch inference. preprocessed: list of (tensor_1CHW, H, W) from preprocess().
+
+        All images in the batch must have the same spatial resolution after preprocessing.
+        This holds for video-frame datasets (same camera → same resolution).
+        """
+        tensors = torch.cat([t for t, _, _ in preprocessed], dim=0).to(self.device)
+        with torch.no_grad():
+            features = self.model.forward_features(tensors)["x_norm_patchtokens"]
+        return features
+
+    def reshape_batch(self, batch: torch.Tensor, idx: int, target_H: int, target_W: int) -> torch.Tensor:
+        return self.reshape(batch[idx], target_H, target_W)
+
+
 
 ######################################################################
 ############### Talk2DINO Feature Extraction Utils ###################

@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Always follow:
+- At the start of every conversation always call /brainstorming -- use superpowers to accomplish tasks.
+- Before anything, look through superpowers/WORKLOG.md
+
 ## Installation and Setup
 
 This repository requires specific CUDA dependencies and nerfstudio integration. Use the provided setup script:

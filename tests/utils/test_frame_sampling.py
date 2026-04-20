@@ -3,7 +3,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from collab_splats.semantics.frame_sampling import (
+from collab_splats.utils.frame_sampling import (
     _rotation_map,
     sample_frames_optical_flow,
     sample_frames_fps,

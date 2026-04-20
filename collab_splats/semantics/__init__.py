@@ -27,7 +27,7 @@ from .segmentation import (
     aggregate_masked_features,
 )
 from .protocols import SupportsTextQuery
-from .frame_sampling import (
+from collab_splats.utils.frame_sampling import (
     OpticalFlowFrameSelector,
     sample_frames_fps,
     sample_frames_optical_flow,

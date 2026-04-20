@@ -49,7 +49,8 @@ except ImportError:
 ### Done
 - `collab_splats/semantics/` — features, segmentation, protocols, frame_sampling
 - `collab_splats/nerfstudio/` — models, method_configs, datamanagers (moved from top-level)
-- `collab_splats/utils/` — backward-compat shims only
+- `collab_splats/utils/` — camera_utils + frame_sampling (moved from semantics — general preprocessing, not semantics-specific)
+- `frame_sampling` re-exported from `collab_splats.semantics` for backwards compat; canonical path is `collab_splats.utils.frame_sampling`
 - `collab_splats/wrapper/config.py` — ConfigLoader
 - Bug fix: `maskclip_onnx` bare import guard
 - Bug fix: `pytorch_gc()` CPU crash guard
@@ -97,7 +98,7 @@ Steps:
 ### Setup steps (do after PR1 has MapAnythingCreator or when ready to stub)
 - [ ] `git checkout -b refactor/dashboard-complete` from `refactor/core-modules`
 - [ ] `git checkout refactor/dashboard-optical-flow -- collab_splats/dashboard/ tests/dashboard/`
-- [ ] Verify imports: dashboard already uses `collab_splats.semantics.frame_sampling` (correct)
+- [ ] Verify imports: dashboard uses `collab_splats.semantics.frame_sampling` → update to `collab_splats.utils.frame_sampling`
 - [ ] Apply CUDA auto-detect: `import torch`, `_DEFAULT_DEVICE`, set `value=_DEFAULT_DEVICE` on 3 dropdowns
 - [ ] Add MapAnything stub tab with try/except import guard
 - [ ] `pytest tests/dashboard/ -v` — all pass
@@ -163,6 +164,7 @@ Source: `tlb-improve-mesh` branch (WIP MapAnything + feedforward meshing)
 - Cherry-picked batching commits from `refactor/semantics` → 25 pass, 1 skip, 0 new failures
 - Deleted `refactor/semantics` (fully absorbed)
 - **Next:** Start PR1 remaining tasks (pointcloud skeleton → NerfstudioSfmCreator → MapAnythingCreator → registry), then create PR2 branch
+- Moved `frame_sampling` from `semantics/` → `utils/` (general preprocessing, not semantics-specific); re-exported from semantics for compat; test moved to `tests/utils/`
 
 ---
 
@@ -174,3 +176,4 @@ Source: `tlb-improve-mesh` branch (WIP MapAnything + feedforward meshing)
 | `refactor/semantics` branch | Absorbing into PR1 — see rebase task above | local branch |
 | `tlb-grouping-segmentation`, `tlb-improve-splatter` | Separate plan TBD | local branches |
 | `stash@{0}` | WIP meshing on main — review before Phase 3 | `git stash list` |
+| **Nerfstudio env failures** | 5 tests in `tests/nerfstudio/test_imports.py` fail with `ModuleNotFoundError: No module named 'nerfstudio.models.splatfacto'` + 1 GPU smoke test (`tests/pointcloud/test_mapanything_creator.py::test_mapanything_create_smoke`). Pre-existing, not caused by any PR1 change. Likely nerfstudio version mismatch in dev env vs. what codebase expects. Fix: audit installed nerfstudio version vs. import paths, or pin correct version in `setup.sh`. | `tests/nerfstudio/test_imports.py`, `tests/pointcloud/test_mapanything_creator.py` |

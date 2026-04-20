@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -10,25 +11,45 @@ import numpy as np
 import pycolmap
 
 
+class CoordinateFrame(str, Enum):
+    COLMAP = "colmap"         # w2c, OpenCV axes, world -Y up
+    NERFSTUDIO = "nerfstudio" # c2w, OpenGL axes, world +Z up
+
+
 @dataclass
 class PointcloudResult:
-    points: np.ndarray                     # (N, 3) float32, world XYZ
-    colors: np.ndarray                     # (N, 3) uint8, RGB
-    confidence: np.ndarray | None          # (N,) float32 — MapAnything only
-    camera_poses: np.ndarray | None        # (M, 4, 4) float32, cam2world OpenGL
-    camera_intrinsics: np.ndarray | None   # (M, 3, 3) float32, K per image
-    colmap_reconstruction: Any | None      # pycolmap.Reconstruction — NS interop only
+    points: np.ndarray                    # (N, 3) float32, world XYZ
+    colors: np.ndarray                    # (N, 3) uint8, RGB
+    confidence: np.ndarray | None = None  # (N,) float32 — feedforward only
+    camera_poses: np.ndarray | None = None       # (M, 4, 4) float32
+    camera_intrinsics: np.ndarray | None = None  # (M, 3, 3) float32, K per image
+    colmap_reconstruction: Any | None = None     # pycolmap.Reconstruction — BA + pycolmap API
+    frame: CoordinateFrame = CoordinateFrame.NERFSTUDIO
+    world_transform: np.ndarray | None = None
+    # (3, 4) applied_transform: COLMAP world → nerfstudio world.
+    # Matches transforms.json["applied_transform"].
+    # None when keep_original_world_coordinate=True.
 
 
 class BasePointcloudCreator(ABC):
     @abstractmethod
-    def create(self, image_dir: Path, output_dir: Path, **kwargs) -> PointcloudResult:
-        """images in image_dir → sparse pointcloud + camera poses.
+    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
+        """images in image_dir → sparse pointcloud + camera poses written to output_dir.
+
+        Produces:
+            {output_dir}/colmap/sparse/0/{cameras,images,points3D}.bin
+            {output_dir}/transforms.json
+            {output_dir}/sparse_pc.ply
 
         Raises:
             RuntimeError: if reconstruction fails
+            FileNotFoundError: if image_dir does not exist
         """
         ...
+
+    def _write_transforms(self, sparse_dir: Path, output_dir: Path) -> None:
+        from nerfstudio.process_data.colmap_utils import colmap_to_json
+        colmap_to_json(recon_dir=sparse_dir, output_dir=output_dir)
 
 
 def _colmap_recon_to_result(

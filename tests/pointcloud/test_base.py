@@ -3,6 +3,7 @@ import pytest
 import pycolmap
 import open3d as o3d
 from collab_splats.pointcloud.base import (
+    CoordinateFrame,
     PointcloudResult,
     BasePointcloudCreator,
     _colmap_recon_to_result,
@@ -74,3 +75,42 @@ def test_utils_clean_pcd_returns_tuple():
     result_pcd, indices = clean_pcd(pcd)
     assert isinstance(result_pcd, o3d.geometry.PointCloud)
     assert isinstance(indices, np.ndarray)
+
+
+def test_coordinate_frame_values():
+    assert CoordinateFrame.COLMAP == "colmap"
+    assert CoordinateFrame.NERFSTUDIO == "nerfstudio"
+    assert isinstance(CoordinateFrame.COLMAP, str)
+
+
+def test_result_has_frame_and_world_transform():
+    r = PointcloudResult(
+        points=np.zeros((5, 3), dtype=np.float32),
+        colors=np.zeros((5, 3), dtype=np.uint8),
+        confidence=None,
+        camera_poses=None,
+        camera_intrinsics=None,
+        colmap_reconstruction=None,
+    )
+    assert r.frame == CoordinateFrame.NERFSTUDIO
+    assert r.world_transform is None
+
+
+def test_result_explicit_frame():
+    r = PointcloudResult(
+        points=np.zeros((5, 3), dtype=np.float32),
+        colors=np.zeros((5, 3), dtype=np.uint8),
+        confidence=None,
+        camera_poses=None,
+        camera_intrinsics=None,
+        colmap_reconstruction=None,
+        frame=CoordinateFrame.COLMAP,
+    )
+    assert r.frame == CoordinateFrame.COLMAP
+
+
+def test_base_creator_abstract_method_is_reconstruct():
+    import inspect
+    abstract_methods = BasePointcloudCreator.__abstractmethods__
+    assert "reconstruct" in abstract_methods
+    assert "create" not in abstract_methods

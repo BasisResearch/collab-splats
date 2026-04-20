@@ -142,6 +142,24 @@ class SemanticsDashboard(param.Parameterized):
         self.status_pane = pn.pane.HTML("<p>Ready</p>", width=800, height=30)
         self.loading_modal = pn.pane.HTML("", visible=False, sizing_mode="stretch_both")
 
+        # Progress bar for frame extraction
+        self.progress_bar = pn.widgets.Progress(
+            name="Extracting frames",
+            value=0,
+            max=100,
+            bar_color="info",
+            sizing_mode="stretch_width",
+            visible=False,
+        )
+        self.progress_label = pn.pane.HTML("", visible=False)
+
+        # Extraction thread state
+        self._extraction_progress: tuple[int, int] = (0, 1)
+        self._extraction_lock = threading.Lock()
+        self._extraction_done = False
+        self._extraction_error: str | None = None
+        self._extraction_cb: Any = None
+
         # Training tab widgets
         self.output_path_input = pn.widgets.TextInput(name="Output path", value="/workspace/outputs", width=700)
         self.launch_btn = pn.widgets.Button(name="Launch Splatter", button_type="primary", width=160)
@@ -459,30 +477,84 @@ class SemanticsDashboard(param.Parameterized):
         if video_path is None:
             self._update_status("Select a video first.", error=True)
             return
-        try:
-            self._show_loading(f"Extracting frames from {video_path.name}...")
-            if self.sampling_mode_dd.value == "Optical Flow":
-                self._frames = sample_frames_optical_flow(
-                    str(video_path),
-                    min_disparity=self.min_disparity_slider.value,
-                    max_frames=200,
-                    motion_weight=self.motion_weight_slider.value,
-                    coverage_weight=self.coverage_weight_slider.value,
-                )
-            else:
-                self._frames = sample_frames_fps(str(video_path), self.fps_slider.value)
-            n = len(self._frames)
-            self.frame_slider.end = max(0, n - 1)
-            self.frame_slider.value = 0
-            self.frame_count_txt.object = f"<p>{n} frames extracted</p>"
-            if self._frames:
-                self._current_frame = self._frames[0]
-                self.current_frame_pane.object = _to_png_bytes(self._frames[0])
-            self._update_status(f"Extracted {n} frames")
-        except Exception as e:
-            self._update_status(f"Frame extraction failed: {e}", error=True)
-        finally:
-            self._hide_loading()
+
+        # Reset state
+        self._extraction_done = False
+        self._extraction_error = None
+        with self._extraction_lock:
+            self._extraction_progress = (0, 1)
+
+        self.progress_bar.value = 0
+        self.progress_bar.visible = True
+        self.progress_label.object = "<small>Starting…</small>"
+        self.progress_label.visible = True
+        self._update_status(f"Extracting frames from {video_path.name}…")
+
+        def on_progress(current: int, total: int) -> None:
+            with self._extraction_lock:
+                self._extraction_progress = (current, max(1, total))
+
+        sampling_mode = self.sampling_mode_dd.value
+
+        def run_extraction() -> None:
+            try:
+                if sampling_mode == "Optical Flow":
+                    result = sample_frames_optical_flow(
+                        str(video_path),
+                        min_disparity=self.min_disparity_slider.value,
+                        max_frames=200,
+                        motion_weight=self.motion_weight_slider.value,
+                        coverage_weight=self.coverage_weight_slider.value,
+                        on_progress=on_progress,
+                    )
+                else:
+                    result = sample_frames_fps(
+                        str(video_path),
+                        self.fps_slider.value,
+                        on_progress=on_progress,
+                    )
+                self._frames = result
+            except Exception as e:
+                self._frames = []
+                self._extraction_error = str(e)
+            finally:
+                self._extraction_done = True
+
+        threading.Thread(target=run_extraction, daemon=True).start()
+        self._extraction_cb = pn.state.add_periodic_callback(
+            self._poll_extraction_progress, period=200
+        )
+
+    def _poll_extraction_progress(self) -> None:
+        with self._extraction_lock:
+            current, total = self._extraction_progress
+
+        pct = int(current / total * 100)
+        self.progress_bar.value = min(pct, 100)
+        self.progress_label.object = f"<small>{pct}%</small>"
+
+        if not self._extraction_done:
+            return
+
+        # Extraction finished — tear down
+        self.progress_bar.visible = False
+        self.progress_label.visible = False
+        if self._extraction_cb is not None:
+            self._extraction_cb.stop()
+            self._extraction_cb = None
+
+        if self._extraction_error:
+            self._update_status(f"Frame extraction failed: {self._extraction_error}", error=True)
+            return
+
+        n = len(self._frames)
+        self.frame_slider.end = max(0, n - 1)
+        self.frame_slider.value = 0
+        self.frame_count_txt.object = f"<p>{n} frames extracted</p>"
+        if self._frames:
+            self._current_frame = self._frames[0]
+            self.current_frame_pane.object = _to_png_bytes(self._frames[0])
+        self._update_status(f"Extracted {n} frames")
 
     def _on_frame_slider_change(self, event: Any) -> None:
         idx = int(self.frame_slider.value)
@@ -674,6 +746,7 @@ class SemanticsDashboard(param.Parameterized):
 
         explore_inner_tabs = pn.Tabs(
             ("① Frames", pn.Column(
+                pn.Row(self.progress_bar, self.progress_label),
                 pn.Row(frames_controls, self.current_frame_pane),
                 self.frame_slider,
             )),

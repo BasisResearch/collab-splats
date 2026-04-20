@@ -478,11 +478,16 @@ class SemanticsDashboard(param.Parameterized):
             self._update_status("Select a video first.", error=True)
             return
 
+        # Stop any in-flight extraction before starting a new one
+        if self._extraction_cb is not None:
+            self._extraction_cb.stop()
+            self._extraction_cb = None
+
         # Reset state
-        self._extraction_done = False
         self._extraction_error = None
         with self._extraction_lock:
             self._extraction_progress = (0, 1)
+            self._extraction_done = False
 
         self.progress_bar.value = 0
         self.progress_bar.visible = True
@@ -495,22 +500,26 @@ class SemanticsDashboard(param.Parameterized):
                 self._extraction_progress = (current, max(1, total))
 
         sampling_mode = self.sampling_mode_dd.value
+        min_disparity = self.min_disparity_slider.value
+        motion_weight = self.motion_weight_slider.value
+        coverage_weight = self.coverage_weight_slider.value
+        fps = self.fps_slider.value
 
         def run_extraction() -> None:
             try:
                 if sampling_mode == "Optical Flow":
                     result = sample_frames_optical_flow(
                         str(video_path),
-                        min_disparity=self.min_disparity_slider.value,
+                        min_disparity=min_disparity,
                         max_frames=200,
-                        motion_weight=self.motion_weight_slider.value,
-                        coverage_weight=self.coverage_weight_slider.value,
+                        motion_weight=motion_weight,
+                        coverage_weight=coverage_weight,
                         on_progress=on_progress,
                     )
                 else:
                     result = sample_frames_fps(
                         str(video_path),
-                        self.fps_slider.value,
+                        fps,
                         on_progress=on_progress,
                     )
                 self._frames = result
@@ -518,7 +527,8 @@ class SemanticsDashboard(param.Parameterized):
                 self._frames = []
                 self._extraction_error = str(e)
             finally:
-                self._extraction_done = True
+                with self._extraction_lock:
+                    self._extraction_done = True
 
         threading.Thread(target=run_extraction, daemon=True).start()
         self._extraction_cb = pn.state.add_periodic_callback(
@@ -526,35 +536,44 @@ class SemanticsDashboard(param.Parameterized):
         )
 
     def _poll_extraction_progress(self) -> None:
-        with self._extraction_lock:
-            current, total = self._extraction_progress
+        try:
+            with self._extraction_lock:
+                current, total = self._extraction_progress
+                done = self._extraction_done
 
-        pct = int(current / total * 100)
-        self.progress_bar.value = min(pct, 100)
-        self.progress_label.object = f"<small>{pct}%</small>"
+            pct = int(current / total * 100)
+            self.progress_bar.value = min(pct, 100)
+            self.progress_label.object = f"<small>{pct}%</small>"
 
-        if not self._extraction_done:
-            return
+            if not done:
+                return
 
-        # Extraction finished — tear down
-        self.progress_bar.visible = False
-        self.progress_label.visible = False
-        if self._extraction_cb is not None:
-            self._extraction_cb.stop()
-            self._extraction_cb = None
+            # Extraction finished — tear down
+            self.progress_bar.visible = False
+            self.progress_label.visible = False
+            if self._extraction_cb is not None:
+                self._extraction_cb.stop()
+                self._extraction_cb = None
 
-        if self._extraction_error:
-            self._update_status(f"Frame extraction failed: {self._extraction_error}", error=True)
-            return
+            if self._extraction_error:
+                self._update_status(f"Frame extraction failed: {self._extraction_error}", error=True)
+                return
 
-        n = len(self._frames)
-        self.frame_slider.end = max(0, n - 1)
-        self.frame_slider.value = 0
-        self.frame_count_txt.object = f"<p>{n} frames extracted</p>"
-        if self._frames:
-            self._current_frame = self._frames[0]
-            self.current_frame_pane.object = _to_png_bytes(self._frames[0])
-        self._update_status(f"Extracted {n} frames")
+            n = len(self._frames)
+            self.frame_slider.end = max(0, n - 1)
+            self.frame_slider.value = 0
+            self.frame_count_txt.object = f"<p>{n} frames extracted</p>"
+            if self._frames:
+                self._current_frame = self._frames[0]
+                self.current_frame_pane.object = _to_png_bytes(self._frames[0])
+            self._update_status(f"Extracted {n} frames")
+        except Exception:
+            # Ensure teardown even if polling raises
+            self.progress_bar.visible = False
+            self.progress_label.visible = False
+            if self._extraction_cb is not None:
+                self._extraction_cb.stop()
+                self._extraction_cb = None
 
     def _on_frame_slider_change(self, event: Any) -> None:
         idx = int(self.frame_slider.value)

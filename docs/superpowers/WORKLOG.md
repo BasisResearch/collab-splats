@@ -8,11 +8,11 @@ Living cross-session log. Update at start/end of each session. Replaces `PROGRES
 
 | Branch | Status | Notes |
 |--------|--------|-------|
-| `refactor/core-modules` | ⏳ awaiting merge (PR1) | 23 pass, 2 skip |
-| `refactor/dashboard-complete` | 🔒 not started (PR2) | blocked on design — see below |
+| `refactor/core-modules` | ⏳ awaiting merge (PR1) | 25 pass, 1 skip (batching absorbed) |
+| `refactor/dashboard-complete` | 🔒 not started (PR2) | design complete — ready to create |
 | `refactor/dashboard-optical-flow` | 🗂 source only | snapshot into PR2, then delete |
 | `dashboard` | 🗂 source only | cherry-pick `cb22e58` (CUDA auto-detect), then delete |
-| `refactor/semantics` | 🔀 absorb into PR1 | rebase onto core-modules, validate, then merge |
+| `refactor/semantics` | ✅ deleted | absorbed into PR1 via cherry-pick |
 | `tlb-grouping-segmentation` | 🧊 parked | separate plan TBD |
 | `tlb-improve-splatter` | 🧊 parked | separate plan TBD |
 
@@ -78,7 +78,10 @@ Steps:
   - Clean → proceed. Conflicts → assess cost; if large, keep separate.
 - [ ] **If clean:** fast-forward or cherry-pick commits onto `refactor/core-modules`
 - [ ] **Run full test suite:** `pytest tests/ -v` — all pass
-- [ ] **Delete `refactor/semantics`** branch (absorbed)
+- [x] **Validate rebase** — full rebase conflicted (both branches created pointcloud/); used cherry-pick of batching-only commits instead
+- [x] **Cherry-pick applied** — 6 of 10 commits landed (4 skipped: already in core-modules or superseded)
+- [x] **Tests pass** — 25 pass, 1 skip; 6 pre-existing failures (nerfstudio env + GPU smoke test)
+- [x] **Delete `refactor/semantics`** branch (absorbed)
 - [ ] **Update PR1 description** to include batching protocol
 
 ---
@@ -156,7 +159,10 @@ Source: `tlb-improve-mesh` branch (WIP MapAnything + feedforward meshing)
 - Retired `PROGRESS.md` + `plans/2026-04-19-phase1-pr2-dashboard-complete.md` → this doc
 - Decided: absorb `refactor/semantics` (batching work) into PR1 — two big PRs only
 - Decided: `refactor/nerfstudio-submodule` safe to delete now (0 unique commits)
-- **Next:** (1) Delete nerfstudio-submodule branch/worktree, (2) attempt semantics rebase onto core-modules, (3) if clean, absorb + run tests
+- Deleted `refactor/nerfstudio-submodule` (worktree + branch)
+- Cherry-picked batching commits from `refactor/semantics` → 25 pass, 1 skip, 0 new failures
+- Deleted `refactor/semantics` (fully absorbed)
+- **Next:** Start PR1 remaining tasks (pointcloud skeleton → NerfstudioSfmCreator → MapAnythingCreator → registry), then create PR2 branch
 
 ---
 

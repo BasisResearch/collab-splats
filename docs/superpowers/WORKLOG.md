@@ -8,10 +8,10 @@ Living cross-session log. Update at start/end of each session. Replaces `PROGRES
 
 | Branch | Status | Notes |
 |--------|--------|-------|
-| `refactor/core-modules` | ⏳ awaiting merge (PR1) | 25 pass, 1 skip (batching absorbed) |
-| `refactor/dashboard-complete` | 🔒 not started (PR2) | design complete — ready to create |
-| `refactor/dashboard-optical-flow` | 🗂 source only | snapshot into PR2, then delete |
-| `dashboard` | 🗂 source only | cherry-pick `cb22e58` (CUDA auto-detect), then delete |
+| `refactor/core-modules` | ⏳ awaiting merge (PR1) | 25 pass, 1 skip; feedforward integration specced |
+| `refactor/dashboard-complete` | ⏳ in progress (PR2) | session 3: sequential extraction, orientation, max_frames, slider fix — 59 pass |
+| `refactor/dashboard-optical-flow` | ✅ deleted | absorbed into PR2 via cherry-pick |
+| `dashboard` | ✅ deleted | absorbed into PR2 via cherry-pick |
 | `refactor/semantics` | ✅ deleted | absorbed into PR1 via cherry-pick |
 | `tlb-grouping-segmentation` | 🧊 parked | separate plan TBD |
 | `tlb-improve-splatter` | 🧊 parked | separate plan TBD |
@@ -55,13 +55,43 @@ except ImportError:
 - Bug fix: `maskclip_onnx` bare import guard
 - Bug fix: `pytorch_gc()` CPU crash guard
 
+<<<<<<< HEAD
 ### Remaining
 - [ ] **Task 1:** `pointcloud/` skeleton — `base.py`, `utils.py`, `__init__.py`, shim, tests
 - [ ] **Task 2:** `NerfstudioSfmCreator` (`pointcloud/sfm.py`) — hloc + pycolmap backends
 - [ ] **Task 3:** `MapAnythingCreator` (`pointcloud/feedforward.py`) — feedforward reconstruction
 - [ ] **Task 4:** Registry + Splatter integration — `get_creator()`, `pointcloud_method` config key
+=======
+### Remaining — Phase 1 tasks (complete)
+- [x] **Task 1:** `pointcloud/` skeleton — `base.py`, `utils.py`, `__init__.py`, shim, tests
+- [x] **Task 2:** `NerfstudioSfmCreator` (`pointcloud/sfm.py`) — hloc + pycolmap backends
+- [x] **Task 3:** `MapAnythingCreator` (`pointcloud/feedforward.py`) — feedforward stub
+- [x] **Task 4:** Registry + Splatter integration — `get_creator()`, `pointcloud_method` config key
+>>>>>>> 3b16c68 (docs: feedforward integration design spec + WORKLOG update)
 
-Full task details: `plans/2026-04-19-phase1-pr1-core-modules.md` (REFACTOR.md at repo root)
+### Remaining — Phase 2: Feedforward Integration (in design)
+Spec: `docs/superpowers/specs/2026-04-20-pointcloud-feedforward-design.md`
+Supersedes Phase 1 pointcloud design.
+
+- [ ] **Task 5:** Refactor `base.py` — `CoordinateFrame` enum; `PointcloudResult` + `frame`/`world_transform` fields; fix `_colmap_recon_to_result()` (add transform B); add `_write_transforms()`; rename `create()` → `reconstruct()`
+- [ ] **Task 6:** Refactor `sfm.py` — split `NerfstudioSfmCreator` → `ColmapCreator` + `HlocCreator`; fix output path bug (`sparse/0/` → `colmap/sparse/0/`); hloc direct (no nerfstudio dep)
+- [ ] **Task 7:** Refactor `feedforward.py` — add `BaseFeedforwardCreator`; refactor `MapAnythingCreator` → `_run_inference()`; add `VGGTXCreator`
+- [ ] **Task 8:** Move `vggt_utils.py` from nerfstudio fork → `stage/vggt_utils.py`; delete `stage/feedforward.py` + `stage/optical_flow.py`
+- [ ] **Task 9:** Update `__init__.py` registry: `{"colmap", "hloc", "mapanything", "vggtx"}`; update tests
+
+**Source files** (on `tlb-improve-mesh`, bring over to `refactor/core-modules`):
+- `stage/mapanything_utils.py` — keep, used by `MapAnythingCreator._run_inference()`
+- `stage/preproc_utils.py` — keep, image loading utils
+- `nerfstudio/process_data/vggt_utils.py` — move to `stage/vggt_utils.py`
+
+**Key bugs fixed in this phase:**
+| Bug | File | Fix |
+|-----|------|-----|
+| Wrong output path | `sfm.py:50` | `sparse/0/` → `colmap/sparse/0/` |
+| Missing world reorientation | `base.py` | Apply transform B + populate `world_transform` |
+| No disk output | `feedforward.py` | `_run_inference()` writes binary; base writes `transforms.json` |
+
+**Open question** (must verify before Task 7): Does `run_mapanything_pipeline()` write binary to `output_dir/colmap/sparse/0/`? Check `stage/mapanything_utils.py` on `tlb-improve-mesh`.
 
 ### Pending: Absorb `refactor/semantics` into PR1
 
@@ -165,6 +195,17 @@ Source: `tlb-improve-mesh` branch (WIP MapAnything + feedforward meshing)
 - Deleted `refactor/semantics` (fully absorbed)
 - **Next:** Start PR1 remaining tasks (pointcloud skeleton → NerfstudioSfmCreator → MapAnythingCreator → registry), then create PR2 branch
 - Moved `frame_sampling` from `semantics/` → `utils/` (general preprocessing, not semantics-specific); re-exported from semantics for compat; test moved to `tests/utils/`
+
+### 2026-04-20 (session 3)
+- Designed feedforward pointcloud integration — MapAnythingCreator + VGGTXCreator
+- Confirmed `tlb-improve-mesh` = source for stage/ feedforward utilities; `tlb-improve-splatter` = parked
+- Key decisions: 4-creator registry (`colmap/hloc/mapanything/vggtx`), `BaseFeedforwardCreator` template, unified disk output contract (`colmap/sparse/0/*.bin` + `transforms.json`)
+- Identified 3 bugs: wrong output path in `ColmapCreator`, missing world reorientation (transform B) in `_colmap_recon_to_result()`, no disk output from `MapAnythingCreator`
+- Added `CoordinateFrame` enum + `world_transform` field to `PointcloudResult` for coordinate system metadata
+- `HlocCreator` calls hloc directly — no nerfstudio dep (nerfstudio remains only for `ns-train`)
+- Eliminated `stage/feedforward.py` (`Reconstructor`) — superseded by `BaseFeedforwardCreator`
+- Spec written: `docs/superpowers/specs/2026-04-20-pointcloud-feedforward-design.md`
+- **Next:** Review spec → invoke writing-plans → implement Tasks 5–9 on `refactor/core-modules`
 
 ---
 

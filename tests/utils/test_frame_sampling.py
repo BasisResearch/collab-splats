@@ -4,23 +4,10 @@ import pytest
 cv2 = pytest.importorskip("cv2")
 
 from collab_splats.utils.frame_sampling import (
-    _rotation_map,
     sample_frames_optical_flow,
     sample_frames_fps,
     OpticalFlowFrameSelector,
 )
-
-
-def test_rotation_90_maps_to_clockwise():
-    assert _rotation_map()[90] == cv2.ROTATE_90_CLOCKWISE
-
-
-def test_rotation_270_maps_to_counterclockwise():
-    assert _rotation_map()[270] == cv2.ROTATE_90_COUNTERCLOCKWISE
-
-
-def test_rotation_180_unchanged():
-    assert _rotation_map()[180] == cv2.ROTATE_180
 
 
 def test_fps_sampler_returns_empty_for_missing_file():

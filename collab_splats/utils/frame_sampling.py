@@ -5,25 +5,6 @@ from typing import Dict, Optional, Tuple, Union
 import numpy as np
 
 
-def _rotation_map():
-    import cv2
-
-    return {
-        90: cv2.ROTATE_90_CLOCKWISE,
-        180: cv2.ROTATE_180,
-        270: cv2.ROTATE_90_COUNTERCLOCKWISE,
-    }
-
-
-def _apply_rotation(frame: np.ndarray, rotation: int) -> np.ndarray:
-    import cv2
-
-    code = _rotation_map().get(rotation)
-    if code is not None:
-        return cv2.rotate(frame, code)
-    return frame
-
-
 def sample_frames_fps(video_path: str, fps: float) -> list[np.ndarray]:
     """Extract frames at a fixed FPS rate."""
     try:
@@ -32,8 +13,6 @@ def sample_frames_fps(video_path: str, fps: float) -> list[np.ndarray]:
         return []
 
     cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
-    rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META))
     native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     interval = max(1, int(round(native_fps / fps)))
     frames = []
@@ -43,7 +22,6 @@ def sample_frames_fps(video_path: str, fps: float) -> list[np.ndarray]:
         if not ret:
             break
         if idx % interval == 0:
-            frame = _apply_rotation(frame, rotation)
             frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         idx += 1
     cap.release()
@@ -416,8 +394,6 @@ def sample_frames_optical_flow(
         coverage_weight=coverage_weight,
     )
     cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
-    rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META))
     frames = []
     while len(frames) < max_frames:
         ret, frame = cap.read()
@@ -425,7 +401,7 @@ def sample_frames_optical_flow(
             break
         should_select, _, _ = selector.should_select_frame(frame)
         if should_select:
-            frames.append(cv2.cvtColor(_apply_rotation(frame, rotation), cv2.COLOR_BGR2RGB))
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             selector.accept_frame(frame)
     cap.release()
     return frames

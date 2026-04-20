@@ -84,11 +84,11 @@ def test_sampling_mode_dd_enabled_in_task7():
     assert dashboard.sampling_mode_dd.disabled is False
 
 
-def test_flow_threshold_slider_exists_and_initially_hidden():
+def test_min_disparity_slider_exists_and_initially_hidden():
     dashboard = SemanticsDashboard()
-    assert hasattr(dashboard, "flow_threshold_slider")
-    assert dashboard.flow_threshold_slider.visible is False
-    assert dashboard.flow_threshold_slider.value == 0.5
+    assert hasattr(dashboard, "min_disparity_slider")
+    assert dashboard.min_disparity_slider.visible is False
+    assert dashboard.min_disparity_slider.value == 50.0
 
 
 def test_explore_inner_tabs_exist(tmp_path):

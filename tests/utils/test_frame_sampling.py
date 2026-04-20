@@ -92,17 +92,17 @@ def _make_mock_cap(total_frames=90, fps=30.0):
     return mock_cap
 
 
-def test_fps_sampler_uses_seek(monkeypatch):
+def test_fps_sampler_uses_sequential_read(monkeypatch):
     mock_cap = _make_mock_cap(total_frames=90, fps=30.0)
-    # After 3 seeks (frames 0, 30, 60) make read return False to stop
-    read_results = [(True, np.zeros((48, 64, 3), dtype=np.uint8))] * 3 + [(False, None)]
+    # 90 frames at 30fps, target 1fps → interval=30, expect 3 frames kept
+    read_results = [(True, np.zeros((48, 64, 3), dtype=np.uint8))] * 90 + [(False, None)]
     mock_cap.read.side_effect = read_results
 
     mock_cv2 = MagicMock()
     mock_cv2.VideoCapture = MagicMock(return_value=mock_cap)
     mock_cv2.CAP_PROP_FPS = cv2.CAP_PROP_FPS
     mock_cv2.CAP_PROP_FRAME_COUNT = cv2.CAP_PROP_FRAME_COUNT
-    mock_cv2.CAP_PROP_POS_FRAMES = cv2.CAP_PROP_POS_FRAMES
+    mock_cv2.CAP_PROP_ORIENTATION_AUTO = cv2.CAP_PROP_ORIENTATION_AUTO
     mock_cv2.COLOR_BGR2RGB = cv2.COLOR_BGR2RGB
     mock_cv2.cvtColor = cv2.cvtColor
 
@@ -111,8 +111,8 @@ def test_fps_sampler_uses_seek(monkeypatch):
 
     seek_calls = [c for c in mock_cap.set.call_args_list
                   if c.args[0] == cv2.CAP_PROP_POS_FRAMES]
-    assert len(seek_calls) >= 1, "Must use CAP_PROP_POS_FRAMES seeks"
-    assert len(frames) <= 3
+    assert len(seek_calls) == 0, "Sequential read must not use CAP_PROP_POS_FRAMES seeks"
+    assert len(frames) == 3
 
 
 def test_fps_sampler_calls_on_progress(monkeypatch):

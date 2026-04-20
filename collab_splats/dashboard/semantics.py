@@ -23,7 +23,7 @@ from PIL import Image
 
 from collab_splats.dashboard.config_panel import ConfigPanel
 from collab_splats.dashboard.video_discovery import discover_videos, yaml_name_for_video
-from collab_splats.semantics.frame_sampling import sample_frames_fps, sample_frames_optical_flow
+from collab_splats.utils.frame_sampling import sample_frames_fps, sample_frames_optical_flow
 
 CONFIGS_DIR = Path(__file__).parents[2] / "docs" / "splats" / "configs"
 

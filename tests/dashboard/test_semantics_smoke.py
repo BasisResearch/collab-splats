@@ -118,21 +118,21 @@ def test_explore_inner_tabs_exist(tmp_path):
 
 
 def test_frame_sampling_module_importable():
-    from collab_splats.semantics.frame_sampling import sample_frames_fps, sample_frames_optical_flow
+    from collab_splats.utils.frame_sampling import sample_frames_fps, sample_frames_optical_flow
 
     assert callable(sample_frames_fps)
     assert callable(sample_frames_optical_flow)
 
 
 def test_sample_frames_fps_empty_path_returns_empty():
-    from collab_splats.semantics.frame_sampling import sample_frames_fps
+    from collab_splats.utils.frame_sampling import sample_frames_fps
 
     result = sample_frames_fps("/nonexistent/video.mp4", fps=1.0)
     assert result == []
 
 
 def test_sample_frames_optical_flow_empty_path_returns_empty():
-    from collab_splats.semantics.frame_sampling import sample_frames_optical_flow
+    from collab_splats.utils.frame_sampling import sample_frames_optical_flow
 
     result = sample_frames_optical_flow("/nonexistent/video.mp4")
     assert result == []

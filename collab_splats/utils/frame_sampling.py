@@ -376,7 +376,11 @@ class OpticalFlowFrameSelector:
         ).flatten()
 
     def accept_frame(self, frame_bgr: np.ndarray) -> None:
-        """Update keyframe reference after selecting a frame. Pass the original BGR frame."""
+        """Update keyframe reference after selecting a frame.
+
+        Args:
+            frame_bgr: BGR frame used for OF analysis — may be downscaled from original.
+        """
         import cv2
 
         self._initialize_keyframe(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY))

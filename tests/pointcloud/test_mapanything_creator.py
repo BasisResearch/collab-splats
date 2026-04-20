@@ -1,5 +1,8 @@
 import numpy as np
 import pytest
+
+pytest.importorskip("stage", reason="stage package not installed")
+
 from unittest.mock import MagicMock
 from collab_splats.pointcloud.feedforward import MapAnythingCreator
 from collab_splats.pointcloud.base import PointcloudResult

@@ -12,7 +12,7 @@ Living cross-session log. Update at start/end of each session. Replaces `PROGRES
 | `refactor/dashboard-complete` | 🔒 not started (PR2) | blocked on design — see below |
 | `refactor/dashboard-optical-flow` | 🗂 source only | snapshot into PR2, then delete |
 | `dashboard` | 🗂 source only | cherry-pick `cb22e58` (CUDA auto-detect), then delete |
-| `refactor/semantics` | 🧊 parked | Phase 2 batching work |
+| `refactor/semantics` | 🔀 absorb into PR1 | rebase onto core-modules, validate, then merge |
 | `tlb-grouping-segmentation` | 🧊 parked | separate plan TBD |
 | `tlb-improve-splatter` | 🧊 parked | separate plan TBD |
 
@@ -62,6 +62,25 @@ except ImportError:
 
 Full task details: `plans/2026-04-19-phase1-pr1-core-modules.md` (REFACTOR.md at repo root)
 
+### Pending: Absorb `refactor/semantics` into PR1
+
+Decision: collapse Phase 2 batching work into PR1 so we ship two clean PRs (core + dashboard) instead of a phased plan. Dashboard gets `forward_batch`/`infer_batch_size` on day 1.
+
+`refactor/semantics` has 10 unique commits:
+- `infer_batch_size()` VRAM-aware batch size utility
+- `forward_batch`/`reshape_batch` protocol on `BaseFeatureExtractor` + all extractors (MaskCLIP, Talk2DINO, DINO)
+- Batch regularization in datamanager
+- Optical flow test tightening
+- Semantics module usage guide
+
+Steps:
+- [ ] **Validate rebase:** `git checkout refactor/semantics && git rebase refactor/core-modules`
+  - Clean → proceed. Conflicts → assess cost; if large, keep separate.
+- [ ] **If clean:** fast-forward or cherry-pick commits onto `refactor/core-modules`
+- [ ] **Run full test suite:** `pytest tests/ -v` — all pass
+- [ ] **Delete `refactor/semantics`** branch (absorbed)
+- [ ] **Update PR1 description** to include batching protocol
+
 ---
 
 ## PR2 — Dashboard (`refactor/dashboard-complete`)
@@ -94,11 +113,18 @@ MapAnything tab stubbed — activates when pointcloud module lands
 
 ---
 
+## Cleanup — Safe Now
+
+- [ ] Delete `refactor/nerfstudio-submodule` — 0 unique commits vs `core-modules`, fully absorbed
+  ```bash
+  git worktree remove .worktrees/nerfstudio-submodule
+  git branch -d refactor/nerfstudio-submodule
+  ```
+
 ## Post-merge Cleanup (after both PRs merged to main)
 
-- [ ] Delete `refactor/dashboard-optical-flow` (fully absorbed)
-- [ ] Delete `dashboard` branch (CUDA fix absorbed)
-- [ ] Delete `refactor/nerfstudio-submodule` worktree + branch (absorbed by PR1)
+- [ ] Delete `refactor/dashboard-optical-flow` (fully absorbed into PR2)
+- [ ] Delete `dashboard` branch (CUDA fix absorbed into PR2)
 - [ ] Review `stash@{0}` — WIP meshing on main before Phase 3
 
 ---
@@ -106,9 +132,8 @@ MapAnything tab stubbed — activates when pointcloud module lands
 ## Phase 2 — Dashboard Iteration (not started)
 
 After Phase 1 merged + field-tested:
-- `infer_batch_size()` VRAM-aware batching wired in
-- `forward_batch` / `reshape_batch` for all extractors (MaskCLIP, Talk2DINO)
 - UX iteration from field feedback
+- ~~`infer_batch_size()`, `forward_batch`/`reshape_batch`~~ → absorbed into PR1
 
 ## Phase 3 — Feature Extension (not started)
 
@@ -129,7 +154,9 @@ Source: `tlb-improve-mesh` branch (WIP MapAnything + feedforward meshing)
 - Decided: parallel stacked PRs, PR2 branches from `refactor/core-modules`
 - Decided: dashboard = integration test harness, MapAnything stub pattern
 - Retired `PROGRESS.md` + `plans/2026-04-19-phase1-pr2-dashboard-complete.md` → this doc
-- **Next:** Start PR1 Task 1 (pointcloud skeleton) or create PR2 branch + snapshot dashboard files
+- Decided: absorb `refactor/semantics` (batching work) into PR1 — two big PRs only
+- Decided: `refactor/nerfstudio-submodule` safe to delete now (0 unique commits)
+- **Next:** (1) Delete nerfstudio-submodule branch/worktree, (2) attempt semantics rebase onto core-modules, (3) if clean, absorb + run tests
 
 ---
 
@@ -138,6 +165,6 @@ Source: `tlb-improve-mesh` branch (WIP MapAnything + feedforward meshing)
 | Item | Reason | Where |
 |------|--------|-------|
 | `Segmentor` shim in `utils/segmentation.py` | Out of scope PR1 | `collab_splats/utils/segmentation.py` |
-| `refactor/semantics` branch (9 commits) | Phase 2 batching work | local branch |
+| `refactor/semantics` branch | Absorbing into PR1 — see rebase task above | local branch |
 | `tlb-grouping-segmentation`, `tlb-improve-splatter` | Separate plan TBD | local branches |
 | `stash@{0}` | WIP meshing on main — review before Phase 3 | `git stash list` |

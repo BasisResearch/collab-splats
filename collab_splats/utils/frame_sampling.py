@@ -5,6 +5,21 @@ from typing import Callable, Dict, Optional, Tuple, Union
 import numpy as np
 
 
+def _apply_rotation(frame: np.ndarray, degrees: int) -> np.ndarray:
+    """Rotate frame to correct for container rotation metadata."""
+    try:
+        import cv2
+    except ImportError:
+        return frame
+    if degrees == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    if degrees == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    if degrees == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return frame
+
+
 def sample_frames_fps(
     video_path: str,
     fps: float,
@@ -23,7 +38,7 @@ def sample_frames_fps(
         return []
 
     cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META))
     native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     interval = max(1, int(round(native_fps / fps)))
@@ -35,7 +50,7 @@ def sample_frames_fps(
             if not ret:
                 break
             if idx % interval == 0:
-                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                frames.append(cv2.cvtColor(_apply_rotation(frame, rotation), cv2.COLOR_BGR2RGB))
                 if max_frames is not None and len(frames) >= max_frames:
                     break
             if on_progress is not None:
@@ -416,7 +431,7 @@ def sample_frames_optical_flow(
         coverage_weight=coverage_weight,
     )
     cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META))
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frames = []
     frames_decoded = 0
@@ -429,6 +444,7 @@ def sample_frames_optical_flow(
             if on_progress is not None:
                 on_progress(frames_decoded, total)
 
+            frame = _apply_rotation(frame, rotation)
             scale = min(1.0, 480.0 / frame.shape[1])
             small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
 

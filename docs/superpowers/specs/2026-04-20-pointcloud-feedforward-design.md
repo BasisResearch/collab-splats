@@ -29,7 +29,7 @@ Phase 1 established the skeleton but left several issues unresolved:
 2. Two clean SfM creators: `ColmapCreator` + `HlocCreator` (no nerfstudio dep)
 3. All four creators share a unified disk output contract
 4. `PointcloudResult` carries correct coordinate metadata and `world_transform`
-5. Eliminate `stage/feedforward.py`; relocate `vggt_utils.py` to `stage/`
+5. Eliminate `stage/feedforward.py`; copy `vggt_utils.py` to `stage/` (original kept in nerfstudio fork)
 
 ---
 
@@ -191,11 +191,11 @@ c2w[2, :] *= -1                          # negate new row 2
 
 | File | Action |
 |---|---|
-| `stage/feedforward.py` | **Delete** — replaced by `BaseFeedforwardCreator` |
+| `stage/feedforward.py` | **Delete** — but absorb `feedforward_to_pointcloud()` + `prepare_outputs_for_export()` logic first |
 | `stage/mapanything_utils.py` | Keep — used by `MapAnythingCreator._run_inference()` |
-| `stage/vggt_utils.py` | **Add** — moved from `nerfstudio/process_data/vggt_utils.py` in fork |
+| `stage/vggt_utils.py` | **Add** — copied from `nerfstudio/process_data/vggt_utils.py` in fork (original kept) |
 | `stage/preproc_utils.py` | Keep — image loading utilities |
-| `stage/optical_flow.py` | **Delete** — absorbed into `collab_splats/utils/frame_sampling.py` |
+| `stage/optical_flow.py` | **Delete** — confirmed absorbed into `collab_splats/utils/frame_sampling.py` |
 
 `BaseFeedforwardCreator` imports `stage/` via `sys.path` insert at repo root (same pattern as current `MapAnythingCreator`). Frame sampling uses `collab_splats.utils.frame_sampling`, not `stage/optical_flow.py`.
 
@@ -215,7 +215,14 @@ c2w[2, :] *= -1                          # negate new row 2
 
 `run_mapanything_pipeline()` (the stage convenience function) includes step 6 (`convert_to_nerfstudio_format()` → writes `transforms.json`). **Do not call `run_mapanything_pipeline()`** — call individual steps 1–4 to avoid double-write. `BaseFeedforwardCreator.reconstruct()` calls `_write_transforms()` exactly once.
 
-Confidence threshold (`conf_threshold: float = 1.5`) and subsample factor (`subsample_factor: int = 1`) remain on `MapAnythingCreator` as before.
+**Inference params on `MapAnythingCreator`** (from notebook `FeedforwardMeshing.ipynb`):
+- `confidence_percentile: float = 35.0` — passed to `run_mapanything_inference()`; keeps points above this confidence percentile (keep top 65%)
+- `use_multiview_confidence: bool = True` — multi-view depth consistency filter
+- `minibatch_size: int = 1` — memory-efficient inference; increase if VRAM allows
+
+`conf_threshold=1.5` and `subsample_factor=1` from Phase 1 were artifacts of `Reconstructor.feedforward_to_pointcloud()` — not used in actual notebook workflows. Drop them.
+
+**`stage/feedforward.py` absorption required before deletion:** `feedforward_to_pointcloud()` contains the logic that builds `(points, colors, confidence)` arrays from raw depth map outputs. This is NOT in `mapanything_utils.py`. Absorb this logic into `MapAnythingCreator._run_inference()` (or a helper in `mapanything_utils.py`) before deleting the file. `prepare_outputs_for_export()` (returns extrinsics dict for `build_colmap_reconstruction()`) must also be absorbed.
 
 ---
 
@@ -239,7 +246,7 @@ This removes the nerfstudio dep for the SfM input path. nerfstudio remains only 
 | `collab_splats/pointcloud/sfm.py` | Split `NerfstudioSfmCreator` → `ColmapCreator` + `HlocCreator`; fix output path; hloc calls directly |
 | `collab_splats/pointcloud/feedforward.py` | Add `BaseFeedforwardCreator`; refactor `MapAnythingCreator` → `_run_inference()`; add `VGGTXCreator` |
 | `collab_splats/pointcloud/__init__.py` | Update registry: `"colmap"`, `"hloc"`, `"mapanything"`, `"vggtx"` |
-| `stage/vggt_utils.py` | New file (moved from nerfstudio fork) |
+| `stage/vggt_utils.py` | New file (copied from nerfstudio fork — original kept) |
 | `stage/feedforward.py` | Deleted |
 | `stage/optical_flow.py` | Deleted |
 | `tests/pointcloud/` | Update tests for new class names + registry keys; add `VGGTXCreator` smoke test |

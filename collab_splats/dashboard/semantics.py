@@ -179,7 +179,7 @@ class SemanticsDashboard(param.Parameterized):
         self.frame_slider = pn.widgets.IntSlider(
             name="Frame index", value=0, start=0, end=0, width=700
         )
-        self.current_frame_pane = pn.pane.PNG(None, width=700)
+        self.current_frame_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
         self.extractor_dd = pn.widgets.Select(
             name="Extractor", options=extractor_names, width=200
         )
@@ -189,7 +189,7 @@ class SemanticsDashboard(param.Parameterized):
         self.extract_features_btn = pn.widgets.Button(
             name="Extract Features", button_type="primary", width=160
         )
-        self.feature_overlay_pane = pn.pane.PNG(None, width=700)
+        self.feature_overlay_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
         self.seg_strategy_dd = pn.widgets.Select(
             name="Strategy", options=["object", "auto"], width=200
         )
@@ -199,7 +199,7 @@ class SemanticsDashboard(param.Parameterized):
         self.seg_btn = pn.widgets.Button(
             name="Segment", button_type="primary", width=100
         )
-        self.seg_output_pane = pn.pane.PNG(None, width=700)
+        self.seg_output_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
         self.seg_count_txt = pn.pane.HTML("")
         self.hf_model_dd = pn.widgets.Select(
             name="Talk2DINO model",

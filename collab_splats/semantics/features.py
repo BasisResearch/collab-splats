@@ -21,7 +21,12 @@ import torchvision.transforms as T
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
-import maskclip_onnx
+try:
+    import maskclip_onnx
+    _MASKCLIP_AVAILABLE = True
+except ImportError:
+    maskclip_onnx = None  # type: ignore[assignment]
+    _MASKCLIP_AVAILABLE = False
 
 TORCH_HOME = os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
 
@@ -159,6 +164,10 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         cache_dir: str = TORCH_HOME,
         device: str = "cpu",
     ):
+        if not _MASKCLIP_AVAILABLE:
+            raise ImportError(
+                "maskclip_onnx is not installed. Install with: pip install maskclip_onnx"
+            )
         super().__init__()
 
         # Load model

@@ -1,30 +1,48 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 
 
-def sample_frames_fps(video_path: str, fps: float) -> list[np.ndarray]:
-    """Extract frames at a fixed FPS rate."""
+def sample_frames_fps(
+    video_path: str,
+    fps: float,
+    on_progress: Callable[[int, int], None] | None = None,
+    max_frames: int | None = None,
+) -> list[np.ndarray]:
+    """Extract frames at a fixed FPS rate using sequential decoding.
+
+    on_progress: called as on_progress(frame_index, total_frames) after each
+        decoded frame, where total_frames is from CAP_PROP_FRAME_COUNT.
+    max_frames: stop after collecting this many frames; None means no cap.
+    """
     try:
         import cv2
     except ImportError:
         return []
 
     cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
     native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     interval = max(1, int(round(native_fps / fps)))
     frames = []
     idx = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if idx % interval == 0:
-            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        idx += 1
-    cap.release()
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if idx % interval == 0:
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                if max_frames is not None and len(frames) >= max_frames:
+                    break
+            if on_progress is not None:
+                on_progress(idx, total)
+            idx += 1
+    finally:
+        cap.release()
     return frames
 
 
@@ -374,12 +392,16 @@ def sample_frames_optical_flow(
     max_frames: int = 200,
     motion_weight: float = 0.6,
     coverage_weight: float = 0.4,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> list[np.ndarray]:
     """Select keyframes using sparse Lucas-Kanade optical flow.
 
     Combines motion (disparity + rotation) and visual diversity (histogram
     similarity) into a 0–1 score. Selects frames scoring >= 0.5.
+    OF analysis runs at max 480px wide for speed; selected frames kept full-res.
 
+    on_progress: called as on_progress(frames_decoded, total_frames) after
+        each decoded frame, where total_frames is from CAP_PROP_FRAME_COUNT.
     min_disparity: mean pixel displacement threshold for motion detection.
         Higher = fewer frames. Typical range: 10–200px.
     """
@@ -394,14 +416,26 @@ def sample_frames_optical_flow(
         coverage_weight=coverage_weight,
     )
     cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frames = []
-    while len(frames) < max_frames:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        should_select, _, _ = selector.should_select_frame(frame)
-        if should_select:
-            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            selector.accept_frame(frame)
-    cap.release()
+    frames_decoded = 0
+    try:
+        while len(frames) < max_frames:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frames_decoded += 1
+            if on_progress is not None:
+                on_progress(frames_decoded, total)
+
+            scale = min(1.0, 480.0 / frame.shape[1])
+            small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
+
+            should_select, _, _ = selector.should_select_frame(small)
+            if should_select:
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                selector.accept_frame(small)
+    finally:
+        cap.release()
     return frames

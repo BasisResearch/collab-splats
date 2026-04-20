@@ -177,7 +177,7 @@ class SemanticsDashboard(param.Parameterized):
         self.extract_frames_btn = pn.widgets.Button(name="Extract Frames", button_type="primary", width=160)
         self.frame_count_txt = pn.pane.HTML("")
         self.frame_slider = pn.widgets.IntSlider(
-            name="Frame index", value=0, start=0, end=0, width=700
+            name="Frame index", value=0, start=0, end=0, sizing_mode="stretch_width"
         )
         self.current_frame_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
         self.extractor_dd = pn.widgets.Select(
@@ -644,7 +644,6 @@ class SemanticsDashboard(param.Parameterized):
             self.advanced_accordion,
             self.extract_frames_btn,
             self.frame_count_txt,
-            self.frame_slider,
             width=300,
         )
 
@@ -674,7 +673,10 @@ class SemanticsDashboard(param.Parameterized):
         )
 
         explore_inner_tabs = pn.Tabs(
-            ("① Frames", pn.Row(frames_controls, self.current_frame_pane)),
+            ("① Frames", pn.Column(
+                pn.Row(frames_controls, self.current_frame_pane),
+                self.frame_slider,
+            )),
             ("② Features", pn.Row(features_controls, self.feature_overlay_pane)),
             ("③ Segmentation", pn.Row(seg_controls, self.seg_output_pane)),
             ("④ Query", pn.Row(query_controls, self.query_gallery)),

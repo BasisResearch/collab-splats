@@ -152,3 +152,33 @@ def test_fps_sampler_no_progress_arg_ok(monkeypatch):
     with patch.dict(sys.modules, {"cv2": mock_cv2}):
         frames = sample_frames_fps("fake.mp4", fps=30.0)
     assert isinstance(frames, list)
+
+
+def test_optical_flow_calls_on_progress(tiny_video):
+    calls = []
+    sample_frames_optical_flow(
+        tiny_video, max_frames=5, on_progress=lambda c, t: calls.append((c, t))
+    )
+    assert len(calls) >= 1
+    assert all(t > 0 for _, t in calls), "total must come from CAP_PROP_FRAME_COUNT"
+    assert all(c > 0 for c, _ in calls), "current must increment"
+
+
+def test_optical_flow_resizes_for_analysis(tiny_video, monkeypatch):
+    """Low-res resize must be called when frame width > 480."""
+    # Patch cv2.resize at the point where it's imported/used
+    import cv2 as _cv2
+
+    resize_calls = []
+    original_resize = _cv2.resize
+
+    def spy_resize(src, dsize, **kwargs):
+        resize_calls.append(src.shape)
+        return original_resize(src, dsize, **kwargs)
+
+    # Patch resize globally in cv2 module
+    monkeypatch.setattr(_cv2, "resize", spy_resize)
+
+    # tiny_video is 64px wide — below 480 threshold, resize must NOT be called
+    sample_frames_optical_flow(tiny_video, max_frames=3)
+    assert len(resize_calls) == 0, "Must not resize frames already <= 480px wide"

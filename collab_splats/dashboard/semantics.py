@@ -168,6 +168,7 @@ class SemanticsDashboard(param.Parameterized):
 
         # Explore tab widgets
         self.fps_slider = pn.widgets.IntSlider(name="FPS to extract", value=5, start=1, end=30, width=350)
+        self.max_frames_slider = pn.widgets.IntSlider(name="Max frames", value=200, start=10, end=2000, step=10, width=350)
         self.sampling_mode_dd = pn.widgets.Select(
             name="Sampling mode",
             options=["FPS", "Optical Flow"],
@@ -195,7 +196,7 @@ class SemanticsDashboard(param.Parameterized):
         self.extract_frames_btn = pn.widgets.Button(name="Extract Frames", button_type="primary", width=160)
         self.frame_count_txt = pn.pane.HTML("")
         self.frame_slider = pn.widgets.IntSlider(
-            name="Frame index", value=0, start=0, end=0, sizing_mode="stretch_width"
+            name="Frame index", value=0, start=0, end=1, sizing_mode="stretch_width"
         )
         self.current_frame_pane = pn.pane.PNG(None, max_width=640, max_height=480, sizing_mode="scale_both")
         self.extractor_dd = pn.widgets.Select(
@@ -504,6 +505,7 @@ class SemanticsDashboard(param.Parameterized):
         motion_weight = self.motion_weight_slider.value
         coverage_weight = self.coverage_weight_slider.value
         fps = self.fps_slider.value
+        max_frames = self.max_frames_slider.value
 
         def run_extraction() -> None:
             try:
@@ -511,7 +513,7 @@ class SemanticsDashboard(param.Parameterized):
                     result = sample_frames_optical_flow(
                         str(video_path),
                         min_disparity=min_disparity,
-                        max_frames=200,
+                        max_frames=max_frames,
                         motion_weight=motion_weight,
                         coverage_weight=coverage_weight,
                         on_progress=on_progress,
@@ -521,6 +523,7 @@ class SemanticsDashboard(param.Parameterized):
                         str(video_path),
                         fps,
                         on_progress=on_progress,
+                        max_frames=max_frames,
                     )
                 self._frames = result
             except Exception as e:
@@ -560,7 +563,7 @@ class SemanticsDashboard(param.Parameterized):
                 return
 
             n = len(self._frames)
-            self.frame_slider.end = max(0, n - 1)
+            self.frame_slider.end = max(1, n - 1)
             self.frame_slider.value = 0
             self.frame_count_txt.object = f"<p>{n} frames extracted</p>"
             if self._frames:
@@ -729,7 +732,10 @@ class SemanticsDashboard(param.Parameterized):
         )
 
         frames_controls = pn.Column(
+            self.progress_bar,
+            self.progress_label,
             self.fps_slider,
+            self.max_frames_slider,
             self.sampling_mode_dd,
             self.min_disparity_slider,
             self.advanced_accordion,
@@ -765,7 +771,6 @@ class SemanticsDashboard(param.Parameterized):
 
         explore_inner_tabs = pn.Tabs(
             ("① Frames", pn.Column(
-                pn.Row(self.progress_bar, self.progress_label),
                 pn.Row(frames_controls, self.current_frame_pane),
                 self.frame_slider,
             )),

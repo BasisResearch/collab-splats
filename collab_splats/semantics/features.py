@@ -46,8 +46,9 @@ def load_torchhub_model(repo_id: str, model_name: str):
 
 
 def pytorch_gc():
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
     gc.collect()
 
 

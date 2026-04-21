@@ -1,7 +1,13 @@
 import pyvista as pv
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Optional, Union, List
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Union, List
+
+if TYPE_CHECKING:
+    import torch
+    from matplotlib.axes import Axes
+    from collab_splats.semantics.features import BaseFeatureExtractor
 
 # Main visualization code - adaptation of your original
 MESH_KWARGS = {
@@ -32,6 +38,69 @@ CAMERA_KWARGS = {
     "n_poses": 3,
     "color": "red",
 }
+
+
+def compute_heatmap(
+    image: np.ndarray,
+    sim_map: Union["torch.Tensor", np.ndarray],
+    alpha: float = 0.5,
+    colormap: str = "viridis",
+) -> np.ndarray:
+    import torch
+
+    if isinstance(sim_map, torch.Tensor):
+        sim_map = sim_map.detach().cpu().numpy()
+    sim_map = np.squeeze(sim_map)  # (H,W)
+
+    h, w = image.shape[:2]
+    if sim_map.shape != (h, w):
+        import cv2
+
+        sim_map = cv2.resize(sim_map, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    eps = 1e-8
+    sim_map = (sim_map - sim_map.min()) / (sim_map.max() - sim_map.min() + eps)
+
+    cmap = plt.get_cmap(colormap)
+    heatmap_rgb = (cmap(sim_map)[:, :, :3] * 255).astype(np.uint8)
+
+    blended = (1 - alpha) * image.astype(float) + alpha * heatmap_rgb.astype(float)
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def plot_heatmap(
+    heatmap: np.ndarray,
+    title: Optional[str] = None,
+    ax: Optional["Axes"] = None,
+    save_path: Optional[Union[str, Path]] = None,
+) -> None:
+    created_fig = ax is None
+    if created_fig:
+        _, ax = plt.subplots()
+    ax.imshow(heatmap)
+    if title:
+        ax.set_title(title)
+    ax.axis("off")
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches="tight")
+    elif created_fig:
+        plt.show()
+
+
+def query_heatmap(
+    image: np.ndarray,
+    text: str,
+    extractor: "BaseFeatureExtractor",
+    alpha: float = 0.5,
+    colormap: str = "viridis",
+) -> np.ndarray:
+    from PIL import Image
+
+    pil_image = Image.fromarray(image)
+    text_emb = extractor.encode_text([text])
+    features = extractor.forward([pil_image])
+    sim_map = extractor.compute_similarity(features[0], text_emb)
+    return compute_heatmap(image, sim_map, alpha=alpha, colormap=colormap)
 
 
 # Main visualization code - adaptation of your original

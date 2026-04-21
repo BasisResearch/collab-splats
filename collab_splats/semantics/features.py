@@ -54,6 +54,26 @@ def _open_image(image) -> Image.Image:
     raise ValueError(f"Unsupported image type: {type(image)}")
 
 
+def _apply_similarity_method(
+    raw_similarities: torch.Tensor,
+    num_positive: int,
+    softmax_temp: float,
+    method: str,
+) -> torch.Tensor:
+    """Shared standard/pairwise similarity branching. Input: (num_queries, N). Output: (N,)."""
+    if method == "standard":
+        probs = (raw_similarities / softmax_temp).softmax(dim=0)
+        return probs[:num_positive].sum(dim=0)
+    if method == "pairwise":
+        pos_similarities = raw_similarities[:num_positive]
+        neg_similarities = raw_similarities[num_positive:]
+        avg_pos = pos_similarities.mean(dim=0, keepdim=True)
+        paired = torch.cat([avg_pos.expand(neg_similarities.shape[0], -1), neg_similarities], dim=0)
+        probs = (paired / softmax_temp).softmax(dim=0)
+        return torch.nan_to_num(probs[: neg_similarities.shape[0]].min(dim=0)[0], nan=0.0)
+    raise ValueError(f"Unknown method: {method}. Choose 'standard' or 'pairwise'")
+
+
 ########################################################
 ########## General feature extraction utils ############
 ########################################################
@@ -318,31 +338,12 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         """
         if negative is None:
             negative = _DEFAULT_NEGATIVE
-
         queries = positive + negative
         text_embeddings = self.encode_text(queries)
-
         raw_similarities = torch.einsum("chw,nc->nhw", features, text_embeddings)
         raw_similarities = raw_similarities.reshape(raw_similarities.shape[0], -1)
-        probs = (raw_similarities / softmax_temp).softmax(dim=0)
-        num_positive = len(positive)
-
-        if method == "standard":
-            similarity = probs[:num_positive].sum(dim=0)
-        elif method == "pairwise":
-            pos_similarities = raw_similarities[:num_positive]
-            neg_similarities = raw_similarities[num_positive:]
-            avg_pos_similarity = pos_similarities.mean(dim=0, keepdim=True)
-            broadcasted_pos = avg_pos_similarity.expand(neg_similarities.shape[0], -1)
-            paired_similarities = torch.cat([broadcasted_pos, neg_similarities], dim=0)
-            probs = (paired_similarities / softmax_temp).softmax(dim=0)
-            pos_pair_probs = probs[: neg_similarities.shape[0]]
-            pos_similarity = pos_pair_probs.min(dim=0)[0]
-            similarity = torch.nan_to_num(pos_similarity, nan=0.0)
-        else:
-            raise ValueError(f"Unknown method: {method}. Choose 'standard' or 'pairwise'")
-
-        return similarity.reshape(features.shape[1:] + (1,))  # (H, W, 1)
+        similarity = _apply_similarity_method(raw_similarities, len(positive), softmax_temp, method)
+        return similarity.reshape(features.shape[1:] + (1,))
 
 
 # Register backward-compatible alias expected by tests/metadata
@@ -539,30 +540,13 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
         """
         if negative is None:
             negative = _DEFAULT_NEGATIVE
-
         queries = positive + negative
         with torch.no_grad():
             text_embeddings = self._model.encode_text(queries)
-
         text_embeddings = F.normalize(text_embeddings, dim=-1)
         features_norm = F.normalize(features, dim=-1)
-        raw_similarities = text_embeddings @ features_norm.T  # (num_queries, N_patches)
-        num_positive = len(positive)
-
-        if method == "standard":
-            probs = (raw_similarities / softmax_temp).softmax(dim=0)
-            return probs[:num_positive].sum(dim=0)
-        elif method == "pairwise":
-            pos_similarities = raw_similarities[:num_positive]
-            neg_similarities = raw_similarities[num_positive:]
-            avg_pos = pos_similarities.mean(dim=0, keepdim=True)
-            broadcasted_pos = avg_pos.expand(neg_similarities.shape[0], -1)
-            paired = torch.cat([broadcasted_pos, neg_similarities], dim=0)
-            probs = (paired / softmax_temp).softmax(dim=0)
-            pos_pair_probs = probs[: neg_similarities.shape[0]]
-            return torch.nan_to_num(pos_pair_probs.min(dim=0)[0], nan=0.0)
-        else:
-            raise ValueError(f"Unknown method: {method}. Choose 'standard' or 'pairwise'")
+        raw_similarities = text_embeddings @ features_norm.T
+        return _apply_similarity_method(raw_similarities, len(positive), softmax_temp, method)
 
     def compute_semantic_heatmap(
         self,

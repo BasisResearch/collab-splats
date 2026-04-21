@@ -1,5 +1,6 @@
 import pytest
 import numpy as np
+import torch
 from pathlib import Path
 from PIL import Image
 import collab_splats.semantics.features as feat_mod
@@ -57,3 +58,21 @@ def test_open_image_from_pil_returns_same():
 def test_open_image_invalid_type():
     with pytest.raises(ValueError, match="Unsupported image type"):
         feat_mod._open_image(42)
+
+
+def test_apply_similarity_method_standard_shape():
+    raw = torch.rand(3, 6)
+    result = feat_mod._apply_similarity_method(raw, num_positive=2, softmax_temp=0.05, method="standard")
+    assert result.shape == (6,)
+
+
+def test_apply_similarity_method_pairwise_shape():
+    raw = torch.rand(3, 6)
+    result = feat_mod._apply_similarity_method(raw, num_positive=1, softmax_temp=0.05, method="pairwise")
+    assert result.shape == (6,)
+
+
+def test_apply_similarity_method_unknown_raises():
+    raw = torch.rand(2, 4)
+    with pytest.raises(ValueError, match="Unknown method"):
+        feat_mod._apply_similarity_method(raw, num_positive=1, softmax_temp=0.05, method="bad")

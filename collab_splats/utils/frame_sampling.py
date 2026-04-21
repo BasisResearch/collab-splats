@@ -5,6 +5,44 @@ from typing import Callable, Dict, Optional, Tuple, Union
 import numpy as np
 
 
+def _get_rotation_degrees(video_path: str) -> int:
+    """Return CW rotation degrees needed to display video correctly, via ffprobe.
+
+    Uses ffprobe tags.rotate (MP4 container standard) — stable across all OpenCV
+    versions. CAP_PROP_ORIENTATION_AUTO and CAP_PROP_ORIENTATION_META apply
+    rotation in version-dependent directions and must not be relied upon.
+    """
+    import json
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", video_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        for s in json.loads(r.stdout).get("streams", []):
+            if s.get("codec_type") == "video":
+                rotate = s.get("tags", {}).get("rotate")
+                if rotate:
+                    return int(rotate)
+    except Exception:
+        pass
+    return 0
+
+
+def _apply_rotation(frame: np.ndarray, degrees: int) -> np.ndarray:
+    try:
+        import cv2
+    except ImportError:
+        return frame
+    if degrees == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    if degrees == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    if degrees == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return frame
+
+
 def sample_frames_fps(
     video_path: str,
     fps: float,
@@ -22,7 +60,9 @@ def sample_frames_fps(
     except ImportError:
         return []
 
+    rotation = _get_rotation_degrees(video_path)
     cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
     native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     interval = max(1, int(round(native_fps / fps)))
@@ -34,7 +74,7 @@ def sample_frames_fps(
             if not ret:
                 break
             if idx % interval == 0:
-                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                frames.append(cv2.cvtColor(_apply_rotation(frame, rotation), cv2.COLOR_BGR2RGB))
                 if max_frames is not None and len(frames) >= max_frames:
                     break
             if on_progress is not None:
@@ -413,12 +453,14 @@ def sample_frames_optical_flow(
     except ImportError:
         return []
 
+    rotation = _get_rotation_degrees(video_path)
     selector = OpticalFlowFrameSelector(
         min_disparity=min_disparity,
         motion_weight=motion_weight,
         coverage_weight=coverage_weight,
     )
     cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frames = []
     frames_decoded = 0
@@ -431,6 +473,7 @@ def sample_frames_optical_flow(
             if on_progress is not None:
                 on_progress(frames_decoded, total)
 
+            frame = _apply_rotation(frame, rotation)
             scale = min(1.0, 480.0 / frame.shape[1])
             small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
 

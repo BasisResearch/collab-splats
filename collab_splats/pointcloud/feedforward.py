@@ -264,7 +264,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
     use_global_alignment=False (default): per-frame depth only.
     use_global_alignment=True: cross-camera alignment via _run_global_alignment().
-    Validate alignment before enabling — see vggt_utils.py notes.
+    Validate alignment before enabling — see _vggt.py notes.
     """
 
     use_global_alignment: bool = False

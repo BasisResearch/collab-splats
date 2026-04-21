@@ -1,8 +1,10 @@
 import numpy as np
 import pytest
+from pathlib import Path
+from unittest.mock import patch, MagicMock
 from PIL import Image
-from collab_splats.pointcloud.sfm import NerfstudioSfmCreator
-from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.sfm import ColmapCreator
+from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
 
 
 @pytest.fixture
@@ -13,31 +15,63 @@ def tiny_image_dir(tmp_path):
     return tmp_path
 
 
-def test_sfm_defaults():
-    c = NerfstudioSfmCreator()
-    assert c.use_hloc is True
-    assert c.feature_type == "superpoint_aachen"
-    assert c.matcher_type == "superglue"
-    assert c.num_matched == 50
+def test_colmap_creator_defaults():
+    c = ColmapCreator()
     assert c.camera_model == "SIMPLE_RADIAL"
     assert c.single_camera is False
 
 
-def test_sfm_pycolmap_mode():
-    c = NerfstudioSfmCreator(use_hloc=False, single_camera=True)
-    assert c.use_hloc is False
+def test_colmap_creator_single_camera():
+    c = ColmapCreator(single_camera=True)
     assert c.single_camera is True
 
 
-def test_sfm_create_result_or_graceful_error(tiny_image_dir, tmp_path):
-    """Synthetic images likely fail SfM — accept either valid result or RuntimeError."""
-    creator = NerfstudioSfmCreator(use_hloc=False, single_camera=True)
+def test_colmap_creator_output_path(tiny_image_dir, tmp_path):
+    """ColmapCreator must write binary files to output_dir/colmap/sparse/0/."""
+    out = tmp_path / "out"
+
+    mock_recon = MagicMock()
+    mock_recon.images = {}
+    mock_recon.cameras = {}
+    mock_recon.points3D = {}
+
+    with patch("collab_splats.pointcloud.sfm.pycolmap.extract_features"), \
+         patch("collab_splats.pointcloud.sfm.pycolmap.match_exhaustive"), \
+         patch("collab_splats.pointcloud.sfm.pycolmap.incremental_mapping", return_value={0: mock_recon}), \
+         patch.object(ColmapCreator, "_write_transforms") as mock_wt:
+        creator = ColmapCreator()
+        creator.reconstruct(tiny_image_dir, out)
+        sparse_dir = out / "colmap" / "sparse" / "0"
+        mock_wt.assert_called_once_with(sparse_dir, out)
+
+
+def test_colmap_creator_no_reconstruction_raises(tiny_image_dir, tmp_path):
+    out = tmp_path / "out"
+    with patch("collab_splats.pointcloud.sfm.pycolmap.extract_features"), \
+         patch("collab_splats.pointcloud.sfm.pycolmap.match_exhaustive"), \
+         patch("collab_splats.pointcloud.sfm.pycolmap.incremental_mapping", return_value={}):
+        creator = ColmapCreator()
+        with pytest.raises(RuntimeError, match="reconstruction failed"):
+            creator.reconstruct(tiny_image_dir, out)
+
+
+def test_colmap_creator_missing_image_dir_raises(tmp_path):
+    creator = ColmapCreator()
+    with pytest.raises(FileNotFoundError):
+        creator.reconstruct(tmp_path / "nonexistent", tmp_path / "out")
+
+
+@pytest.mark.gpu
+def test_colmap_creator_smoke(tiny_image_dir, tmp_path):
+    out = tmp_path / "out"
+    creator = ColmapCreator(single_camera=True)
     try:
-        result = creator.create(tiny_image_dir, tmp_path / "out")
+        result = creator.reconstruct(tiny_image_dir, out)
         assert isinstance(result, PointcloudResult)
+        assert result.frame == CoordinateFrame.NERFSTUDIO
+        assert result.world_transform is not None
         assert result.points.shape[1] == 3
-        assert result.colors.dtype == np.uint8
         if result.camera_poses is not None:
             assert result.camera_poses.shape[1:] == (4, 4)
     except RuntimeError as e:
-        assert "reconstruction" in str(e).lower() or "colmap" in str(e).lower()
+        assert "reconstruction failed" in str(e).lower()

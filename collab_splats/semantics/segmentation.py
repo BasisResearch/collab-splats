@@ -2,6 +2,7 @@
 Segmentation utilities using MobileSAM and related models.
 """
 
+import logging
 import math
 from typing import Tuple
 
@@ -11,6 +12,8 @@ from torch.nn import functional as F
 from mobile_sam import SamAutomaticMaskGenerator
 
 from collab_splats.semantics.features import batch_iterator, load_torchhub_model
+
+logger = logging.getLogger(__name__)
 
 
 class Segmentation:
@@ -270,7 +273,7 @@ def create_composite_mask(results, confidence_threshold=0.85):
 
     for i, idx in enumerate(mask_indices, start=1):
         mask = mask_id == idx
-        print(f"Mask {i} has {mask.sum()} pixels")
+        logger.debug("Mask %d has %d pixels", i, mask.sum())
         if mask.sum() > 0 and (mask.sum() / masks[idx - 1].sum()) > 0.1:
             composite_mask[mask] = i
 

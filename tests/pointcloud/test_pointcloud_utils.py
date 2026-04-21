@@ -2,12 +2,6 @@ import numpy as np
 import pytest
 from collab_splats.pointcloud.utils import filter_points_by_spatial_extent, voxel_downsample_point_cloud
 
-try:
-    import open3d
-    HAS_OPEN3D = True
-except ImportError:
-    HAS_OPEN3D = False
-
 
 def test_filter_removes_outliers():
     rng = np.random.default_rng(0)
@@ -27,7 +21,6 @@ def test_filter_empty():
     assert out_pts.shape == (0, 3)
 
 
-@pytest.mark.skipif(not HAS_OPEN3D, reason="open3d not installed")
 def test_voxel_downsample_reduces_points():
     rng = np.random.default_rng(1)
     pts = rng.standard_normal((10000, 3)).astype(np.float32)

@@ -6,14 +6,9 @@ import numpy as np
 from typing import Optional, Union, Tuple
 from tqdm import trange
 
-try:
-    import open3d as o3d
-except ImportError:
-    o3d = None
-
 
 def clean_pcd(
-    pcd: o3d.geometry.PointCloud,
+    pcd,
     voxel_size: float = 0.015,
     radius: float = 0.05,
     max_distance: float = 1.0,
@@ -21,10 +16,11 @@ def clean_pcd(
     outlier_removal: bool = True,
     distance_removal: bool = True,
     reference: str = "centroid",
-) -> Tuple[o3d.geometry.PointCloud, np.ndarray]:
+):
     """
     Enhanced cleaning with opacity and scale-based filtering.
     """
+    import open3d as o3d
 
     indices = np.arange(len(pcd.points))
 
@@ -86,12 +82,12 @@ def clean_pcd(
 
 
 def remove_far_points(
-    pcd: o3d.geometry.PointCloud,
+    pcd,
     max_distance: Optional[float] = None,
     n_points: Optional[int] = None,
     reference: str = "centroid",
     return_mask: bool = False,
-) -> Union[o3d.geometry.PointCloud, Tuple[o3d.geometry.PointCloud, np.ndarray]]:
+):
     """
     Removes farthest points from a point cloud based on either a distance threshold
     or by keeping a fixed number of closest points to a reference point.
@@ -100,6 +96,8 @@ def remove_far_points(
         - Point cloud with filtered points
         - (optional) Boolean mask of selected points
     """
+    import open3d as o3d
+
     if max_distance is None and n_points is None:
         raise ValueError("You must specify either `max_distance` or `n_points`.")
 
@@ -145,6 +143,7 @@ def density_filter(pcd, radius=0.03, percentile=10):
     """
     Remove points in sparse regions using local density.
     """
+    import open3d as o3d
 
     # Find points in sparse regions using local density
     print("Finding sparse regions...")
@@ -237,7 +236,7 @@ def voxel_downsample_point_cloud(
     voxel_size: Optional[float] = None,
     verbose: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Downsample point cloud with scene-adaptive or explicit voxel size.
+    """Downsample point cloud with scene-adaptive or explicit voxel size (pure numpy).
 
     If voxel_size is provided, it is used directly. Otherwise, the voxel size
     is computed adaptively using the interquartile range (IQR) of point positions:
@@ -257,18 +256,7 @@ def voxel_downsample_point_cloud(
         Tuple of (downsampled_points, downsampled_colors)
             - downsampled_points: (M, 3) array of downsampled 3D points
             - downsampled_colors: (M, 3) array of corresponding colors (uint8)
-
-    Raises:
-        ImportError: If open3d is not installed
     """
-    try:
-        import open3d as o3d
-    except ImportError as e:
-        raise ImportError(
-            "open3d is required for voxel downsampling. "
-            "Install it with: pip install open3d"
-        ) from e
-
     if len(points) == 0:
         return points, colors
 
@@ -306,25 +294,26 @@ def voxel_downsample_point_cloud(
             print(f"  Scene extent (IQR-based): {scene_extent:.3f}m, full extent: {full_extent:.3f}m")
             print(f"  Adaptive voxel size: {voxel_size:.4f}m")
 
-    # Normalize colors to [0, 1] if needed
-    if colors.dtype == np.uint8:
-        colors_normalized = colors.astype(np.float64) / 255.0
-    else:
-        colors_normalized = colors.astype(np.float64)
-        if colors_normalized.max() > 1.0:
-            colors_normalized = colors_normalized / 255.0
+    # Pure numpy voxel downsampling
+    points_float = points.astype(np.float64)
 
-    # Create Open3D point cloud
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
-    pcd.colors = o3d.utility.Vector3dVector(colors_normalized)
+    # Compute voxel grid coordinates
+    voxel_coords = np.floor(points_float / voxel_size).astype(np.int32)
 
-    # Voxel downsample
-    pcd_downsampled = pcd.voxel_down_sample(voxel_size)
+    # Create unique voxel identifiers
+    # Use a large prime to hash coordinates
+    voxel_ids = (
+        voxel_coords[:, 0] * 73856093 ^
+        voxel_coords[:, 1] * 19349663 ^
+        voxel_coords[:, 2] * 83492791
+    )
 
-    # Extract downsampled points and colors
-    downsampled_points = np.asarray(pcd_downsampled.points)
-    downsampled_colors = (np.asarray(pcd_downsampled.colors) * 255).astype(np.uint8)
+    # Find unique voxels and get one representative point per voxel
+    unique_voxels, unique_indices = np.unique(voxel_ids, return_index=True)
+
+    # Extract downsampled points and colors using the indices
+    downsampled_points = points[unique_indices]
+    downsampled_colors = colors[unique_indices]
 
     if verbose:
         print(f"  Downsampled from {len(points)} to {len(downsampled_points)} points")

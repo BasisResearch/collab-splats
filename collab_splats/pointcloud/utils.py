@@ -300,16 +300,8 @@ def voxel_downsample_point_cloud(
     # Compute voxel grid coordinates
     voxel_coords = np.floor(points_float / voxel_size).astype(np.int32)
 
-    # Create unique voxel identifiers
-    # Use a large prime to hash coordinates
-    voxel_ids = (
-        voxel_coords[:, 0] * 73856093 ^
-        voxel_coords[:, 1] * 19349663 ^
-        voxel_coords[:, 2] * 83492791
-    )
-
     # Find unique voxels and get one representative point per voxel
-    unique_voxels, unique_indices = np.unique(voxel_ids, return_index=True)
+    _, unique_indices = np.unique(voxel_coords, axis=0, return_index=True)
 
     # Extract downsampled points and colors using the indices
     downsampled_points = points[unique_indices]

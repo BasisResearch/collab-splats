@@ -222,7 +222,7 @@ def _run_vggt_inference(
     # Move to CPU float32
     extrinsic = extrinsic.cpu().float().numpy().squeeze(0)
     intrinsic = intrinsic.cpu().float().numpy().squeeze(0)
-    intrinsic_downsampled = extrinsic_ds.cpu().float().numpy().squeeze(0)
+    intrinsic_downsampled = intrinsic_ds.cpu().float().numpy().squeeze(0)
     depth_map = predictions["depth"].squeeze(0).cpu().float().numpy()
     depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy()
 

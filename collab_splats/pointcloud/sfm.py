@@ -49,3 +49,52 @@ class ColmapCreator(BasePointcloudCreator):
         recon.write_binary(str(sparse_dir))
         self._write_transforms(sparse_dir, output_dir)
         return _colmap_recon_to_result(recon)
+
+
+@dataclass
+class HlocCreator(BasePointcloudCreator):
+    """Pointcloud via hloc (SuperPoint+SuperGlue feature matching). No nerfstudio dependency."""
+
+    retrieval_conf: str = "netvlad"
+    feature_conf: str = "superpoint_aachen"
+    matcher_conf: str = "superglue"
+
+    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
+        from hloc import extract_features, match_features, pairs_from_retrieval, reconstruction
+
+        image_dir, output_dir = Path(image_dir), Path(output_dir)
+        if not image_dir.exists():
+            raise FileNotFoundError(f"image_dir not found: {image_dir}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        sparse_dir = output_dir / "colmap" / "sparse" / "0"
+        hloc_dir = output_dir / "colmap" / "hloc"
+        hloc_dir.mkdir(parents=True, exist_ok=True)
+
+        retrieval_path = extract_features.main(
+            extract_features.confs[self.retrieval_conf], image_dir, hloc_dir
+        )
+        pairs_path = hloc_dir / "pairs.txt"
+        pairs_from_retrieval.main(retrieval_path, pairs_path)
+
+        feature_path = extract_features.main(
+            extract_features.confs[self.feature_conf], image_dir, hloc_dir
+        )
+        match_path = match_features.main(
+            match_features.confs[self.matcher_conf],
+            pairs_path,
+            features=feature_path,
+            matches=hloc_dir / "matches.h5",
+        )
+        recon = reconstruction.main(
+            sfm_dir=sparse_dir,
+            image_dir=image_dir,
+            pairs=pairs_path,
+            features=feature_path,
+            matches=match_path,
+        )
+        if recon is None:
+            raise RuntimeError("reconstruction failed — hloc returned None")
+
+        self._write_transforms(sparse_dir, output_dir)
+        return _colmap_recon_to_result(recon)

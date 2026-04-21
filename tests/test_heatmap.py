@@ -124,6 +124,19 @@ class TestPlotHeatmap:
         plot_heatmap(heatmap)
         plt.close("all")
 
+    def test_saves_to_disk_with_external_ax(self):
+        heatmap = self._heatmap()
+        fig, ax = plt.subplots()
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            path = f.name
+        try:
+            plot_heatmap(heatmap, ax=ax, save_path=path)
+            assert os.path.exists(path)
+            assert os.path.getsize(path) > 0
+        finally:
+            os.unlink(path)
+            plt.close(fig)
+
 
 def test_query_heatmap_importable():
     from collab_splats.utils.visualization import query_heatmap

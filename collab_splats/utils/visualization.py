@@ -82,7 +82,7 @@ def plot_heatmap(
         ax.set_title(title)
     ax.axis("off")
     if save_path is not None:
-        plt.savefig(save_path, bbox_inches="tight")
+        ax.figure.savefig(save_path, bbox_inches="tight")
     elif created_fig:
         plt.show()
 

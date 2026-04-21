@@ -160,10 +160,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             name = self.config.regularization_features
             for start in trange(0, len(image_filenames), batch_size, desc=f"Extracting {name} features"):
                 batch_paths = image_filenames[start : start + batch_size]
-                preprocessed = [extractor.preprocess(p) for p in batch_paths]
-                features_batch = extractor.forward_batch(preprocessed)
-                for j, (_, target_H, target_W) in enumerate(preprocessed):
-                    features = extractor.reshape_batch(features_batch, j, target_H, target_W)
+                for features in extractor.forward(batch_paths):
                     features_dict[name].append(features.detach().cpu())
 
             del extractor
@@ -195,8 +192,7 @@ class FeatureSplattingDataManager(FullImageDatamanager):
             final_H = H * final_W // W
 
             # Extract features
-            inputs = extractor.preprocess(image)
-            features = extractor.forward(inputs[None])[0]
+            [features] = extractor.forward([image])
 
             # Prepare image for segmentation
             image = resize_image(

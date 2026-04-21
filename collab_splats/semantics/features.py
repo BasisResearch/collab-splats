@@ -205,13 +205,9 @@ class BaseFeatureExtractor(nn.Module):
             )
         return cls._registry[name]
 
-    def forward_batch(self, preprocessed: list) -> torch.Tensor:
-        """Run inference on a pre-processed batch. Subclasses must override."""
-        raise NotImplementedError(f"{type(self).__name__} must implement forward_batch()")
-
-    def reshape_batch(self, batch: torch.Tensor, idx: int, *args) -> torch.Tensor:
-        """Reshape flat patch tokens to spatial feature maps. Subclasses must override."""
-        raise NotImplementedError(f"{type(self).__name__} must implement reshape_batch()")
+    def forward(self, images: list) -> list[torch.Tensor]:
+        """Preprocess, run inference, reshape. Returns one feature tensor per image."""
+        raise NotImplementedError(f"{type(self).__name__} must implement forward()")
 
 
 ######################################################################
@@ -230,14 +226,6 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
     """
 
     MEM_PER_IMAGE_GB: float = 3.0  # CLIP ViT-L/14@336px
-
-    def forward_batch(self, preprocessed: list) -> torch.Tensor:
-        """Batch inference. preprocessed: list of (C,H,W) tensors from preprocess()."""
-        images = torch.stack(preprocessed)  # (B, C, H, W)
-        return self.forward(images)  # (B, C_feat, pH, pW)
-
-    def reshape_batch(self, batch: torch.Tensor, idx: int, *_) -> torch.Tensor:
-        return batch[idx]  # (C_feat, pH, pW) — already correctly shaped
 
     def __init__(
         self,
@@ -276,27 +264,17 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         image = resize_image(image, longest_edge=resolution)
         return self.transform(image).to(self.device)
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
-        """
-        Extract patch features from input images.
-
-        Args:
-            img (torch.Tensor): Input image tensor of shape (B, C, H, W)
-
-        Returns:
-            torch.Tensor: Extracted features of shape (B, C, H/patch_size, W/patch_size)
-
-        Seems like it needs to be on GPU otherwise throws an error due to precision (specific to maskclip_onnx)
-        """
-        b, _, input_size_h, input_size_w = image.shape
-        patch_h = input_size_h // self.patch_size
-        patch_w = input_size_w // self.patch_size
-
+    def forward(self, images: list) -> list[torch.Tensor]:
+        """Preprocess images, extract patch features, return one (C, pH, pW) tensor per image."""
+        preprocessed = [self.preprocess(img) for img in images]
+        stacked = torch.stack(preprocessed)  # (B, C, H, W)
+        b, _, H, W = stacked.shape
+        patch_h = H // self.patch_size
+        patch_w = W // self.patch_size
         with torch.no_grad():
-            features = self.model.get_patch_encodings(image).to(torch.float32)
+            features = self.model.get_patch_encodings(stacked).to(torch.float32)
             features = features.reshape(b, patch_h, patch_w, -1).permute(0, 3, 1, 2)
-
-        return features
+        return list(features)  # list of (C_feat, pH, pW)
 
     def encode_text(self, text: List[str]) -> torch.Tensor:
         """
@@ -393,32 +371,19 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
 
         return image, target_H, target_W
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad():
-            features = self.model.forward_features(image)["x_norm_patchtokens"][0]
-        return features
-
-    def reshape(self, features: torch.Tensor, target_H: int, target_W: int) -> torch.Tensor:
-        features = features.cpu()
-        features_hwc = features.reshape(
-            (target_H // self.model.patch_size, target_W // self.model.patch_size, -1)
-        )
-        features_chw = features_hwc.permute((2, 0, 1))
-        return features_chw
-
-    def forward_batch(self, preprocessed: list) -> torch.Tensor:
-        """Batch inference. preprocessed: list of (tensor_1CHW, H, W) from preprocess().
-
-        All images in the batch must have the same spatial resolution after preprocessing.
-        This holds for video-frame datasets (same camera → same resolution).
-        """
+    def forward(self, images: list) -> list[torch.Tensor]:
+        """Preprocess images, extract patch features, return one (C, pH, pW) tensor per image."""
+        preprocessed = [self.preprocess(img) for img in images]
         tensors = torch.cat([t for t, _, _ in preprocessed], dim=0).to(self.device)
         with torch.no_grad():
             features = self.model.forward_features(tensors)["x_norm_patchtokens"]
-        return features
+        return [self._reshape(features[i], H, W) for i, (_, H, W) in enumerate(preprocessed)]
 
-    def reshape_batch(self, batch: torch.Tensor, idx: int, target_H: int, target_W: int) -> torch.Tensor:
-        return self.reshape(batch[idx], target_H, target_W)
+    def _reshape(self, features: torch.Tensor, target_H: int, target_W: int) -> torch.Tensor:
+        features = features.cpu()
+        return features.reshape(
+            target_H // self.model.patch_size, target_W // self.model.patch_size, -1
+        ).permute(2, 0, 1)  # (C, pH, pW)
 
 
 
@@ -460,16 +425,6 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
         self.patch_size: int = getattr(self._model.config, "patch_size", 14)
         self._device = torch.device(device)
 
-    def forward_batch(self, preprocessed: list) -> torch.Tensor:
-        """Batch inference. preprocessed: list of PIL Images from preprocess()."""
-        with torch.no_grad():
-            result = self._model.encode_image(preprocessed)
-        # encode_image may return tensor (B,N,D) or list of (N,D) tensors
-        return result if isinstance(result, torch.Tensor) else torch.stack(result)
-
-    def reshape_batch(self, batch: torch.Tensor, idx: int, *_) -> torch.Tensor:
-        return batch[idx]  # (N_patches, D) patch tokens
-
     @property
     def device(self) -> torch.device:
         return self._device
@@ -493,20 +448,14 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
         )
         return image
 
-    def forward(self, image: Image.Image) -> torch.Tensor:
-        """
-        Extract patch tokens from a preprocessed PIL image.
-
-        Args:
-            image: PIL Image (should be square, output of preprocess())
-
-        Returns:
-            torch.Tensor: patch tokens of shape (N_patches, D)
-        """
-        if not isinstance(image, Image.Image):
-            raise ValueError("Talk2DinoExtractor.forward() expects a PIL Image (use preprocess() first)")
+    def forward(self, images: list) -> list[torch.Tensor]:
+        """Preprocess images, extract patch tokens, return one (N_patches, D) tensor per image."""
+        preprocessed = [self.preprocess(img) for img in images]
         with torch.no_grad():
-            return self._model.encode_image([image])[0]
+            result = self._model.encode_image(preprocessed)
+        if isinstance(result, torch.Tensor):
+            return list(result)  # (B, N_patches, D) → list of (N_patches, D)
+        return result
 
     def encode_text(self, texts: List[str]) -> torch.Tensor:
         """

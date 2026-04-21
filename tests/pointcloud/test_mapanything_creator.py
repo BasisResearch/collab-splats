@@ -25,50 +25,40 @@ def test_mapanything_missing_image_dir_raises(tmp_path):
 
 
 def test_mapanything_run_inference_passes_inference_params(tmp_path):
-    """Test that _run_inference passes parameters to run_mapanything_inference."""
     image_dir = tmp_path / "images"
     image_dir.mkdir()
     output_dir = tmp_path / "out"
-    sparse_path = output_dir / "colmap" / "sparse" / "0"
+    n, p = 2, 10
 
+    mock_8tuple = (
+        np.zeros((p, 3), dtype=np.float32),
+        np.zeros((p, 3), dtype=np.uint8),
+        np.eye(4)[None, :3, :].repeat(n, axis=0).astype(np.float32),
+        np.eye(3)[None].repeat(n, axis=0).astype(np.float32),
+        [image_dir / f"frame_{i:04d}.jpg" for i in range(n)],
+        np.zeros((n, 6), dtype=np.float32),
+        518, 336,
+    )
     mock_recon = MagicMock()
     mock_recon.images = {}
     mock_recon.cameras = {}
     mock_recon.points3D = {}
 
-    # Use a mock for sys.modules to avoid stage import issues
-    import sys
-    mock_stage = MagicMock()
-    mock_utils = MagicMock()
-    mock_utils.load_mapanything_model.return_value = MagicMock()
-    mock_utils.load_and_preprocess_images.return_value = (
-        [{"img": np.zeros((3, 518, 336))}],
-        [image_dir / "img.jpg"]
-    )
-    mock_utils.run_mapanything_inference.return_value = [{}]
-    mock_utils.export_to_colmap.return_value = sparse_path
-    mock_utils.rescale_to_original_dimensions.return_value = sparse_path
+    with patch("collab_splats.pointcloud._mapanything.run_mapanything",
+               return_value=mock_8tuple) as mock_run, \
+         patch("collab_splats.pointcloud.feedforward.build_pycolmap_reconstruction",
+               return_value=mock_recon), \
+         patch("collab_splats.pointcloud.feedforward._rescale_reconstruction_to_original_dimensions",
+               return_value=mock_recon), \
+         patch("pycolmap.Reconstruction", return_value=mock_recon), \
+         patch.object(MapAnythingCreator, "_write_transforms"):
+        creator = MapAnythingCreator(confidence_percentile=50.0, minibatch_size=2)
+        creator._run_inference(image_dir, output_dir)
 
-    sys.modules['stage'] = mock_stage
-    sys.modules['stage.mapanything_utils'] = mock_utils
-
-    try:
-        with patch("pycolmap.Reconstruction", return_value=mock_recon), \
-             patch.object(MapAnythingCreator, "_write_transforms"):
-            creator = MapAnythingCreator(confidence_percentile=50.0, minibatch_size=2)
-            creator._run_inference(image_dir, output_dir)
-
-            # Verify inference was called with correct parameters
-            call_kwargs = mock_utils.run_mapanything_inference.call_args[1]
-            assert call_kwargs["confidence_percentile"] == 50.0
-            assert call_kwargs["minibatch_size"] == 2
-            assert call_kwargs["use_multiview_confidence"] is True
-            assert call_kwargs["apply_mask"] is True
-            assert call_kwargs["mask_edges"] is True
-            assert call_kwargs["apply_confidence_mask"] is True
-    finally:
-        sys.modules.pop('stage', None)
-        sys.modules.pop('stage.mapanything_utils', None)
+        _, kwargs = mock_run.call_args
+        assert kwargs["confidence_percentile"] == 50.0
+        assert kwargs["minibatch_size"] == 2
+        assert kwargs["use_multiview_confidence"] is True
 
 
 @pytest.mark.gpu

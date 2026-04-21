@@ -29,6 +29,7 @@ except ImportError:
     _MASKCLIP_AVAILABLE = False
 
 TORCH_HOME = os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
+_DEFAULT_NEGATIVE: list[str] = ["object"]
 
 ########################################################
 ########## General feature extraction utils ############
@@ -301,7 +302,7 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
             torch.Tensor: Similarity probability map of shape (H, W, 1)
         """
         if negative is None:
-            negative = ["object"]
+            negative = _DEFAULT_NEGATIVE
 
         queries = positive + negative
         text_embeddings = self.encode_text(queries)
@@ -538,7 +539,7 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
             torch.Tensor: similarity scores of shape (N_patches,)
         """
         if negative is None:
-            negative = ["object"]
+            negative = _DEFAULT_NEGATIVE
 
         queries = positive + negative
         with torch.no_grad():

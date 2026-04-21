@@ -94,3 +94,29 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         )
 
         return pycolmap.Reconstruction(str(rescaled_sparse_dir))
+
+
+@dataclass
+class VGGTXCreator(BaseFeedforwardCreator):
+    """Pointcloud via VGGT-X feedforward pose + depth estimation.
+
+    use_global_alignment=False (default): per-frame depth only.
+    use_global_alignment=True: cross-camera alignment via _run_global_alignment().
+    Validate alignment before enabling — see vggt_utils.py notes.
+    """
+
+    use_global_alignment: bool = False
+
+    def _run_inference(self, image_dir: Path, output_dir: Path) -> pycolmap.Reconstruction:
+        _add_stage_to_path()
+        from stage.vggt_utils import run_vggt
+
+        colmap_dir = output_dir / "colmap"
+        run_vggt(
+            image_dir=str(image_dir),
+            colmap_dir=str(colmap_dir),
+            use_global_alignment=self.use_global_alignment,
+        )
+
+        sparse_dir = colmap_dir / "sparse" / "0"
+        return pycolmap.Reconstruction(str(sparse_dir))

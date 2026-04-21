@@ -31,6 +31,29 @@ except ImportError:
 TORCH_HOME = os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
 _DEFAULT_NEGATIVE: list[str] = ["object"]
 
+
+def _open_image(image) -> Image.Image:
+    """
+    Load an image from various input types into a PIL Image.
+
+    Args:
+        image: Input image as str path, Path object, ndarray, or PIL Image.
+
+    Returns:
+        PIL Image.Image
+
+    Raises:
+        ValueError: If image type is not supported.
+    """
+    if isinstance(image, (str, Path)):
+        return Image.open(image)
+    if isinstance(image, np.ndarray):
+        return Image.fromarray(image)
+    if isinstance(image, Image.Image):
+        return image
+    raise ValueError(f"Unsupported image type: {type(image)}")
+
+
 ########################################################
 ########## General feature extraction utils ############
 ########################################################
@@ -229,15 +252,7 @@ class MaskCLIPExtractor(BaseFeatureExtractor):
         return torch.device("cpu")
 
     def preprocess(self, image, resolution: int = 1024) -> torch.Tensor:
-        if isinstance(image, str) or isinstance(image, Path):
-            image = Image.open(image).convert("RGB")
-        elif isinstance(image, np.ndarray):
-            image = Image.fromarray(image).convert("RGB")
-        elif isinstance(image, Image.Image):
-            pass  # Already a PIL image
-        else:
-            raise ValueError(f"Unsupported image type: {type(image)}")
-
+        image = _open_image(image).convert("RGB")
         image = resize_image(image, longest_edge=resolution)
         return self.transform(image).to(self.device)
 
@@ -367,15 +382,7 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         return torch.device("cpu")
 
     def preprocess(self, image) -> Tuple[torch.Tensor, int, int]:
-        if isinstance(image, str) or isinstance(image, Path):
-            image = Image.open(image)
-        elif isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        elif isinstance(image, Image.Image):
-            pass  # Already a PIL image
-        else:
-            raise ValueError(f"Unsupported image type: {type(image)}")
-
+        image = _open_image(image)
         image = resize_image(image, longest_edge=self.resolution)
         image = self.transform(image)[:3].unsqueeze(0)
 
@@ -472,15 +479,7 @@ class Talk2DinoExtractor(BaseFeatureExtractor):
 
         Returns PIL Image ready for encode_image / forward.
         """
-        if isinstance(image, (str, Path)):
-            image = Image.open(image).convert("RGB")
-        elif isinstance(image, np.ndarray):
-            image = Image.fromarray(image).convert("RGB")
-        elif isinstance(image, Image.Image):
-            image = image.convert("RGB")
-        else:
-            raise ValueError(f"Unsupported image type: {type(image)}")
-
+        image = _open_image(image).convert("RGB")
         w, h = image.size
         crop_size = min(w, h)
         image = image.crop(

@@ -38,7 +38,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
 
 
 def _add_stage_to_path() -> None:
-    repo_root = Path(__file__).parents[3]
+    repo_root = Path(__file__).parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 

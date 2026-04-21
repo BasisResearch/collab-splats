@@ -55,29 +55,24 @@ except ImportError:
 - Bug fix: `maskclip_onnx` bare import guard
 - Bug fix: `pytorch_gc()` CPU crash guard
 
-<<<<<<< HEAD
-### Remaining
-- [ ] **Task 1:** `pointcloud/` skeleton — `base.py`, `utils.py`, `__init__.py`, shim, tests
-- [ ] **Task 2:** `NerfstudioSfmCreator` (`pointcloud/sfm.py`) — hloc + pycolmap backends
-- [ ] **Task 3:** `MapAnythingCreator` (`pointcloud/feedforward.py`) — feedforward reconstruction
-- [ ] **Task 4:** Registry + Splatter integration — `get_creator()`, `pointcloud_method` config key
-=======
-### Remaining — Phase 1 tasks (complete)
+### Phase 1 tasks (complete)
 - [x] **Task 1:** `pointcloud/` skeleton — `base.py`, `utils.py`, `__init__.py`, shim, tests
 - [x] **Task 2:** `NerfstudioSfmCreator` (`pointcloud/sfm.py`) — hloc + pycolmap backends
 - [x] **Task 3:** `MapAnythingCreator` (`pointcloud/feedforward.py`) — feedforward stub
 - [x] **Task 4:** Registry + Splatter integration — `get_creator()`, `pointcloud_method` config key
->>>>>>> 3b16c68 (docs: feedforward integration design spec + WORKLOG update)
 
-### Remaining — Phase 2: Feedforward Integration (in design)
+### Phase 2: Feedforward Integration (complete)
 Spec: `docs/superpowers/specs/2026-04-20-pointcloud-feedforward-design.md`
-Supersedes Phase 1 pointcloud design.
+Plan: `docs/superpowers/plans/2026-04-20-feedforward-integration.md`
 
-- [ ] **Task 5:** Refactor `base.py` — `CoordinateFrame` enum; `PointcloudResult` + `frame`/`world_transform` fields; fix `_colmap_recon_to_result()` (add transform B); add `_write_transforms()`; rename `create()` → `reconstruct()`
-- [ ] **Task 6:** Refactor `sfm.py` — split `NerfstudioSfmCreator` → `ColmapCreator` + `HlocCreator`; fix output path bug (`sparse/0/` → `colmap/sparse/0/`); hloc direct (no nerfstudio dep)
-- [ ] **Task 7:** Refactor `feedforward.py` — add `BaseFeedforwardCreator`; refactor `MapAnythingCreator` → `_run_inference()`; add `VGGTXCreator`
-- [ ] **Task 8:** Move `vggt_utils.py` from nerfstudio fork → `stage/vggt_utils.py`; delete `stage/feedforward.py` + `stage/optical_flow.py`
-- [ ] **Task 9:** Update `__init__.py` registry: `{"colmap", "hloc", "mapanything", "vggtx"}`; update tests
+- [x] **Task 1:** Copy `stage/mapanything_utils.py`, `stage/preproc_utils.py`, `stage/vggt_utils.py` from source branches
+- [x] **Task 2:** `base.py` — `CoordinateFrame` enum; `frame`/`world_transform` fields; rename `create()` → `reconstruct()`; add `_write_transforms()`
+- [x] **Task 3:** `base.py` — fix `_colmap_recon_to_result()` (apply transform B, populate `world_transform`/`frame`)
+- [x] **Task 4:** `sfm.py` — `ColmapCreator` with correct `colmap/sparse/0/` output path
+- [x] **Task 5:** `sfm.py` — `HlocCreator` with direct hloc calls, no nerfstudio dep
+- [x] **Task 6:** `feedforward.py` — `BaseFeedforwardCreator` template + `MapAnythingCreator` (confidence_percentile=35.0)
+- [x] **Task 7:** `feedforward.py` — `VGGTXCreator` (use_global_alignment=False default)
+- [x] **Task 8:** Registry `{"colmap", "hloc", "mapanything", "vggtx"}`; update tests
 
 **Source files** (on `tlb-improve-mesh`, bring over to `refactor/core-modules`):
 - `stage/mapanything_utils.py` — keep, used by `MapAnythingCreator._run_inference()`
@@ -206,6 +201,19 @@ Source: `tlb-improve-mesh` branch (WIP MapAnything + feedforward meshing)
 - Eliminated `stage/feedforward.py` (`Reconstructor`) — superseded by `BaseFeedforwardCreator`
 - Spec written: `docs/superpowers/specs/2026-04-20-pointcloud-feedforward-design.md`
 - **Next:** Review spec → invoke writing-plans → implement Tasks 5–9 on `refactor/core-modules`
+
+### 2026-04-20 (session 4)
+- Implemented Phase 2 feedforward integration (8 tasks) via subagent-driven development
+- Copied `stage/mapanything_utils.py`, `stage/preproc_utils.py`, `stage/vggt_utils.py` from `tlb-improve-mesh` + nerfstudio fork
+- Fixed `_colmap_recon_to_result()`: apply transform B (`_WORLD_TRANSFORM`), populate `frame=NERFSTUDIO` + `world_transform`
+- `ColmapCreator` splits from `NerfstudioSfmCreator`; output path bug fixed (`colmap/sparse/0/`)
+- `HlocCreator` calls hloc directly — no nerfstudio dep; hloc imports lazy inside `reconstruct()`
+- `BaseFeedforwardCreator` template: `reconstruct()` calls `_run_inference()` then `_write_transforms()` once
+- `MapAnythingCreator` refactored: `confidence_percentile=35.0` (not old `conf_threshold=1.5`); correct `stage/mapanything_utils` pipeline
+- `VGGTXCreator` added: `use_global_alignment=False` default; calls `run_vggt(image_dir, colmap_dir=output_dir/"colmap")`
+- Bug caught in review: `parents[3]` → `parents[2]` in `_add_stage_to_path()` (was inserting `/workspace` not repo root)
+- Registry updated to `{"colmap", "hloc", "mapanything", "vggtx"}`; old `"sfm"/"feedforward"` keys removed
+- **Next:** PR1 ready for review — open PR against `main`; then start PR2 (`refactor/dashboard-complete`)
 
 ---
 

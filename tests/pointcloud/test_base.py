@@ -30,17 +30,16 @@ def test_base_creator_is_abstract():
 
 
 def test_colmap_recon_to_result_convention():
-    """_colmap_recon_to_result must output cam2world OpenGL poses.
-    Build a minimal Reconstruction with identity w2c, verify flipped Y/Z output.
+    """_colmap_recon_to_result applies both OpenCV→OpenGL (A) and COLMAP→nerfstudio world (B).
+
+    Identity w2c → expected c2w after both transforms:
+        [[1,  0,  0, 0],
+         [0,  0, -1, 0],
+         [0,  1,  0, 0],
+         [0,  0,  0, 1]]
     """
     recon = pycolmap.Reconstruction()
-
-    cam = pycolmap.Camera(
-        model="SIMPLE_PINHOLE",
-        width=64,
-        height=64,
-        params=[50.0, 32.0, 32.0],  # f, cx, cy
-    )
+    cam = pycolmap.Camera(model="SIMPLE_PINHOLE", width=64, height=64, params=[50.0, 32.0, 32.0])
     cam.camera_id = 1
     recon.add_camera(cam)
 
@@ -48,7 +47,7 @@ def test_colmap_recon_to_result_convention():
     img.image_id = 1
     img.cam_from_world = pycolmap.Rigid3d()  # identity w2c
     recon.add_image(img)
-    recon.register_image(img.image_id)  # mark as registered so _colmap_recon_to_result includes it
+    recon.register_image(img.image_id)
 
     recon.add_point3D(
         xyz=np.array([0.0, 0.0, 1.0]),
@@ -58,14 +57,25 @@ def test_colmap_recon_to_result_convention():
 
     result = _colmap_recon_to_result(recon)
 
-    assert result.camera_poses is not None
-    c2w = result.camera_poses[0]
-    assert c2w.shape == (4, 4)
-    np.testing.assert_array_almost_equal(c2w[3], [0.0, 0.0, 0.0, 1.0])
-    # identity w2c → c2w = I (OpenCV) → flip Y,Z cols → cols 1,2 negated
-    expected = np.eye(4, dtype=np.float32)
-    expected[:3, 1:3] *= -1
-    np.testing.assert_array_almost_equal(c2w, expected, decimal=5)
+    assert result.frame == CoordinateFrame.NERFSTUDIO
+    assert result.world_transform is not None
+    assert result.world_transform.shape == (3, 4)
+
+    pose = result.camera_poses[0]
+    expected = np.array([
+        [1,  0,  0, 0],
+        [0,  0, -1, 0],
+        [0,  1,  0, 0],
+        [0,  0,  0, 1],
+    ], dtype=np.float32)
+    np.testing.assert_allclose(pose, expected, atol=1e-5)
+
+    expected_world_transform = np.array([
+        [1,  0, 0, 0],
+        [0,  0, 1, 0],
+        [0, -1, 0, 0],
+    ], dtype=np.float32)
+    np.testing.assert_allclose(result.world_transform, expected_world_transform, atol=1e-5)
 
 
 def test_utils_clean_pcd_returns_tuple():

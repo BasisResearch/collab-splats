@@ -52,41 +52,52 @@ class BasePointcloudCreator(ABC):
         colmap_to_json(recon_dir=sparse_dir, output_dir=output_dir)
 
 
+# Standard COLMAP world (-Y up) → nerfstudio world (+Z up) rotation, stored as (3, 4).
+# Matches transforms.json["applied_transform"] for standard COLMAP data.
+_WORLD_TRANSFORM = np.array([
+    [1,  0, 0, 0],
+    [0,  0, 1, 0],
+    [0, -1, 0, 0],
+], dtype=np.float32)
+
+
 def _colmap_recon_to_result(
     recon: pycolmap.Reconstruction,
     confidence: np.ndarray | None = None,
 ) -> PointcloudResult:
-    """Convert pycolmap.Reconstruction to PointcloudResult.
+    """Convert pycolmap.Reconstruction to PointcloudResult in nerfstudio world frame.
 
-    Camera poses normalized to cam2world OpenGL:
-        COLMAP w2c (OpenCV) → inv → c2w (OpenCV) → c2w[:,1:3]*=-1 → c2w (OpenGL)
-    Mirrors nerfstudio/data/dataparsers/colmap_dataparser.py:167-169.
+    Applies two transforms to each camera pose:
+      A — OpenCV → OpenGL camera axes: c2w[:3, 1:3] *= -1
+      B — COLMAP world (-Y) → nerfstudio world (+Z): row-swap + negate
     """
     pts3d = recon.points3D
-    if not pts3d:
-        raise RuntimeError("reconstruction produced 0 points")
+    if pts3d:
+        points = np.array([p.xyz for p in pts3d.values()], dtype=np.float32)
+        colors = np.array([p.color for p in pts3d.values()], dtype=np.uint8)
+    else:
+        points = np.zeros((0, 3), dtype=np.float32)
+        colors = np.zeros((0, 3), dtype=np.uint8)
 
-    points = np.array([p.xyz for p in pts3d.values()], dtype=np.float32)
-    colors = np.array([p.color for p in pts3d.values()], dtype=np.uint8)
+    poses = []
+    intrinsics = []
+    for image in recon.images.values():
+        if not image.registered:
+            continue
+        w2c_34 = image.cam_from_world.matrix()            # (3, 4)
+        w2c = np.vstack([w2c_34, [0.0, 0.0, 0.0, 1.0]])  # (4, 4)
+        c2w = np.linalg.inv(w2c)
 
-    images = sorted(
-        (i for i in recon.images.values() if i.registered),
-        key=lambda i: i.image_id,
-    )
-    cameras = recon.cameras
+        # Transform A: OpenCV → OpenGL camera axes
+        c2w[:3, 1:3] *= -1
 
-    poses, intrinsics = [], []
-    for img in images:
-        R = img.cam_from_world.rotation.matrix()
-        t = img.cam_from_world.translation
-        w2c = np.eye(4, dtype=np.float32)
-        w2c[:3, :3] = R
-        w2c[:3, 3] = t
-        c2w = np.linalg.inv(w2c).astype(np.float32)
-        c2w[:3, 1:3] *= -1  # OpenCV → OpenGL: flip Y and Z
-        poses.append(c2w)
+        # Transform B: COLMAP world (-Y up) → nerfstudio world (+Z up)
+        c2w = c2w[np.array([0, 2, 1, 3]), :]
+        c2w[2, :] *= -1
 
-        cam = cameras[img.camera_id]
+        poses.append(c2w.astype(np.float32))
+
+        cam = recon.cameras[image.camera_id]
         fx = getattr(cam, "focal_length_x", None) or cam.focal_length
         fy = getattr(cam, "focal_length_y", None) or cam.focal_length
         cx, cy = cam.principal_point_x, cam.principal_point_y
@@ -100,4 +111,6 @@ def _colmap_recon_to_result(
         camera_poses=np.stack(poses) if poses else None,
         camera_intrinsics=np.stack(intrinsics) if intrinsics else None,
         colmap_reconstruction=recon,
+        frame=CoordinateFrame.NERFSTUDIO,
+        world_transform=_WORLD_TRANSFORM.copy(),
     )

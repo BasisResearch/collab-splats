@@ -10,7 +10,14 @@ from .base import FeedforwardResult, BaseFeedforwardCreator, build_pycolmap_reco
 # ── Concrete creators ─────────────────────────────────────────────────────────
 from .vggtx import VGGTXCreator
 from .mapanything import MapAnythingCreator
-from .vggt_omega import VGGTOmegaCreator
+
+# vggt-omega is an optional backend — only available if setup_feedforward.sh
+# was run with the vggt-omega submodule initialized.  Hard import lives in
+# vggt_omega.py itself; here we expose it only when the package is present.
+try:
+    from .vggt_omega import VGGTOmegaCreator
+except ImportError:
+    pass
 
 # ── Internal helpers (re-exported for wrappers and tests) ─────────────────────
 # _raw_to_world_points re-exported for wrappers.py BundleAdjustment, which calls it

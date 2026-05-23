@@ -1,7 +1,13 @@
 # collab_splats/pointcloud/__init__.py
 from .base import BasePointcloudCreator, CoordinateFrame, PointcloudResult, _colmap_recon_to_result
 from .sfm import ColmapCreator, HlocCreator
-from .feedforward import BaseFeedforwardCreator, MapAnythingCreator, VGGTXCreator, VGGTOmegaCreator
+from .feedforward import BaseFeedforwardCreator, MapAnythingCreator, VGGTXCreator
+
+try:
+    from .feedforward import VGGTOmegaCreator
+    _OMEGA_AVAILABLE = True
+except ImportError:
+    _OMEGA_AVAILABLE = False
 from .bundle_adjustment import BundleAdjustmentConfig, run_bundle_adjustment
 from .loop_closure import LoopClosureConfig
 from .wrappers import BundleAdjustment, LoopClosure
@@ -20,8 +26,9 @@ _REGISTRY: dict[str, type[BasePointcloudCreator]] = {
     "hloc":        HlocCreator,
     "mapanything": MapAnythingCreator,
     "vggtx":       VGGTXCreator,
-    "vggt_omega":  VGGTOmegaCreator,
 }
+if _OMEGA_AVAILABLE:
+    _REGISTRY["vggt_omega"] = VGGTOmegaCreator
 
 
 def get_creator(name: str) -> type[BasePointcloudCreator]:
@@ -77,7 +84,6 @@ __all__ = [
     "LoopClosureConfig",
     "MapAnythingCreator",
     "PointcloudResult",
-    "VGGTOmegaCreator",
     "VGGTXCreator",
     "XFeatExtractor",
     "compute_obb_from_points",

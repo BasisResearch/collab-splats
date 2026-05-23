@@ -100,11 +100,11 @@ def test_score_queries_bounds():
 
 
 def test_maskclip_default_resolution():
-    """MaskCLIPExtractor stores default_resolution at init."""
+    """MaskCLIPExtractor stores image_resolution at init."""
     pytest.importorskip("maskclip_onnx")
     from collab_splats.semantics.features import MaskCLIPExtractor
-    extractor = MaskCLIPExtractor(resolution=512)
-    assert extractor.default_resolution == 512
+    extractor = MaskCLIPExtractor(image_resolution=512)
+    assert extractor._image_resolution == 512
 
 
 def test_maskclip_is_queryable():

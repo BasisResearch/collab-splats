@@ -81,6 +81,25 @@ def compute_semantic_contrast(
     raise ValueError(f"Unknown reduction '{reduction}'. Choose 'max' or 'pool'.")
 
 
+########################################################################
+# Shared token utilities
+########################################################################
+
+
+def _tokens_to_feature_map(
+    tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int
+) -> torch.Tensor:
+    """Reshape (N, D) patch tokens to (D, H_p, W_p), L2-normalized along channel dim."""
+    ph = input_h // patch_size
+    pw = input_w // patch_size
+    assert tokens.shape[0] == ph * pw, (
+        f"Expected {ph * pw} tokens for {input_h}x{input_w} "
+        f"(patch_size={patch_size}), got {tokens.shape[0]}"
+    )
+    feat = tokens.reshape(ph, pw, -1).permute(2, 0, 1)  # (D, H_p, W_p)
+    return F.normalize(feat, dim=0)
+
+
 ########################################################
 ########## Patch alignment #############################
 ########################################################

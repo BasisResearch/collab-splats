@@ -1,5 +1,10 @@
 .DS_Store
 .env
+.worktrees/
+vendor/*
+!vendor/README.md
+scratch/
+evals/results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -209,4 +214,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 config-local/
-data/
+evals/data/docs/.cache/
+
+# Populated by setup scripts / git submodule update — not tracked directly
+third_party/

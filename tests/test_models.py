@@ -3,8 +3,8 @@ import pytest
 
 from nerfstudio.data.scene_box import SceneBox
 
-from collab_splats.models.rade_gs_model import RadegsModelConfig, RadegsModel
-from collab_splats.models.rade_features_model import (
+from collab_splats.nerfstudio.models.rade_gs import RadegsModelConfig, RadegsModel
+from collab_splats.nerfstudio.models.rade_features import (
     RadegsFeaturesModelConfig,
     RadegsFeaturesModel,
 )
@@ -24,9 +24,9 @@ def make_scene_box(aabb_scale: float = 1.0) -> SceneBox:
 
 def make_features_metadata(channels: int = 8, height: int = 4, width: int = 4):
     return {
-        "feature_type": "clip-vit",
+        "feature_type": "maskclip",
         "feature_dims": {
-            "clip-vit": (channels, height, width),
+            "maskclip": (channels, height, width),
             "dinov2": (channels, height, width),
         },
     }
@@ -61,3 +61,61 @@ def test_radegs_features_model(scene_box, features_metadata):
         metadata=features_metadata,
     )
     assert model is not None
+
+
+def test_populate_text_encoder_talk2dino(scene_box):
+    """populate_text_encoder wires up similarity_fx for talk2dino feature type."""
+    from unittest.mock import patch, MagicMock
+    import torch.nn as nn
+
+    class _FakeEncoder(nn.Module):
+        def score_queries(self, *args, **kwargs):
+            pass
+
+    mock_encoder_cls = MagicMock(return_value=_FakeEncoder())
+
+    cfg = RadegsFeaturesModelConfig(output_depth_during_training=False)
+    cfg.sh_degree = 0
+
+    metadata = {
+        "feature_type": "talk2dino",
+        "feature_dims": {
+            "talk2dino": (8, 4, 4),
+        },
+    }
+
+    with patch(
+        "collab_splats.nerfstudio.models.rade_features.BaseFeatureExtractor.get",
+        return_value=mock_encoder_cls,
+    ):
+        model = RadegsFeaturesModel(
+            cfg,
+            scene_box=scene_box,
+            num_train_data=1,
+            metadata=metadata,
+        )
+
+    assert model.similarity_fx is not None
+    assert model.similarity_fx == model.text_encoder.score_queries
+
+
+def test_populate_text_encoder_non_queryable(scene_box):
+    """Non-queryable feature types leave similarity_fx as None."""
+    cfg = RadegsFeaturesModelConfig(output_depth_during_training=False)
+    cfg.sh_degree = 0
+
+    metadata = {
+        "feature_type": "dinov2",
+        "feature_dims": {
+            "dinov2": (8, 4, 4),
+        },
+    }
+
+    model = RadegsFeaturesModel(
+        cfg,
+        scene_box=scene_box,
+        num_train_data=1,
+        metadata=metadata,
+    )
+
+    assert model.similarity_fx is None

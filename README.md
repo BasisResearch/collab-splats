@@ -2,6 +2,8 @@
 
 Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
 
+**Documentation:** https://basisresearch.github.io/collab-splats/ — tutorials and API reference. Enable via GitHub repo → Settings → Pages → `gh-pages` branch after first merge to `main`.
+
 ## Installation
 
 ### Docker

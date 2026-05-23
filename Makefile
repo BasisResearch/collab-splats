@@ -16,4 +16,10 @@ test: lint FORCE
 test-notebooks: lint FORCE
 	bash ./scripts/test_notebooks.sh
 
+docs: FORCE
+	LC_ALL=C.UTF-8 LANG=C.UTF-8 sphinx-build -b html docs/source docs/_build/html --keep-going
+
+docs-serve: FORCE
+	python -m http.server 8080 --directory docs/_build/html
+
 FORCE:

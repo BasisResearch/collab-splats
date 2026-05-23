@@ -1,0 +1,20 @@
+name: vggt-long
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - libopencv     # required by the optional DBoW2 loop detector
+  - eigen=3.4.0   # required by the optional C++ Sim3 solver
+  - pip:
+      # PyTorch must match VGGT-Long's pinned torch / CUDA combo.
+      # Install line documented in third_party/VGGT-Long/README.md:
+      #   pip install torch==2.5.1 torchvision==0.20.1 \
+      #       --index-url https://download.pytorch.org/whl/cu118
+      - torch==2.5.1
+      - torchvision==0.20.1
+      # Bulk dependencies straight from the repo's requirements.txt.
+      - -r ../../third_party/VGGT-Long/requirements.txt

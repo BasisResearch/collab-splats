@@ -1,0 +1,9 @@
+[submodule "third_party/VGGT-SLAM"]
+	path = third_party/VGGT-SLAM
+	url = https://github.com/MIT-SPARK/VGGT-SLAM
+[submodule "third_party/VGGT-X"]
+	path = third_party/VGGT-X
+	url = https://github.com/Linketic/VGGT-X.git
+[submodule "third_party/vggt-omega"]
+	path = third_party/vggt-omega
+	url = https://github.com/facebookresearch/vggt-omega.git

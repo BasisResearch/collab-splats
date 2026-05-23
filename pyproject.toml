@@ -11,39 +11,100 @@ authors = [
 ]
 
 dependencies = [
+    # setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,
+    # which setuptools 70+ removed. See [build-system] comment.
+    "setuptools<70.0",
     "einops",
     "ftfy",
     "gdown",
     "matplotlib",
-    "numpy<2.0.0",
-    "scipy==1.11.4", # Require to play nice w/ numpy
+    "mergedeep",
+    "numpy>=1.26",
+    "zarr>=2.16",
+    "numcodecs",
+    "scipy>=1.11",
     "lightning",
     "pillow",
     "regex",
     "tqdm",
-    "nerfstudio",
     "huggingface_hub",
     "ultralytics",
-    "fairscale",
     "gradio",
     "pyvista",
     "pyntcloud",
     "trame",
     "trame-vuetify",
     "trame-vtk",
-    "meshlib==3.0.6.229",
-    "dotenv",
+    "meshlib>=3.1",
+    "python-dotenv",
+    "hydra-core",
+    "omegaconf",
+    "onnxruntime",
+    "requests",
+    "trimesh",
+    "pydantic==2.10.6",
+    "pyyaml",
+    "pycolmap>=3.1",
+    "transformers>=4.30,<5.0",
+    "timm>=0.9,<2.0",
+    "opencv-python",
+    "scikit-learn",
+    "roma",
+    "kornia",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
-    "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
+    # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
+    # mobilesamv2/efficientvit/models/nn/drop.py imports torchpack.distributed at module level,
+    # so it must be installed before any import of mobilesamv2.
+    "torchpack",
+    # gsplat-rade fork (version 1.4.0) must be pre-installed with --no-build-isolation
+    # before this package. See setup_nerfstudio.sh. Git URL removed here because pip
+    # always rebuilds git-URL deps even if already installed, failing without build isolation.
+    "gsplat>=1.4.0",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
+    "pypose",
+    # bae requires --no-build-isolation at build time (setup.py imports torch at
+    # top level to query CUDA ABI). Pre-installed by Dockerfile.cu121 Stage 2.
+    # Git URL removed: pip rebuilds git-URL deps even if installed, failing without
+    # build isolation. bae==0.2.3 is pre-installed at /opt/bae.
+    "bae>=0.2.3",
+    "clip @ git+https://github.com/openai/CLIP.git",
 ]
 
 [project.optional-dependencies]
+feedforward = [
+    # vggt-x and mapanything — git deps, install via setup_feedforward.sh
+    # vggt @ third_party/VGGT-X submodule (--no-deps, pinned commit)
+    # mapanything @ git+https://github.com/facebookresearch/map-anything.git (--no-deps)
+    # lightglue @ git+https://github.com/cvg/LightGlue.git (--no-deps, mapanything colmap extra)
+    "uniception==0.1.7",
+    "viser>=0.2.23",
+    "evo",
+    "pyliblzfse",
+    "safetensors",
+    "natsort",
+    "orjson",
+    "pillow-heif",
+    "plyfile",
+    "tensorboard",
+    "python-box",
+    "open3d",
+    # rerun-sdk excluded: only used in mapanything viz/dataset code, not in reconstruction pipeline
+    "gtsam-develop",
+    # salad (Dominic101/salad) installed via setup_feedforward.sh.
+    # pytorch-metric-learning is salad's only non-torch runtime dep.
+    "pytorch-metric-learning",
+]
+
+dashboard = [
+  "panel>=1.3.0",
+  "param>=2.0.0",
+]
+
 docs = [
   "setuptools",
   "sphinx",
   "sphinxcontrib-bibtex",
-  "sphinx_rtd_theme",
+  "pydata-sphinx-theme",
   "myst-parser",
   "nbsphinx",
 ]
@@ -52,7 +113,7 @@ dev = [
   "setuptools",
   "sphinx",
   "sphinxcontrib-bibtex",
-  "sphinx_rtd_theme",
+  "pydata-sphinx-theme",
   "myst-parser",
   "nbsphinx",
   "pytest",
@@ -72,14 +133,21 @@ dev = [
 [tool.black]
 line-length = 120
 
+[project.scripts]
+collab-dashboard = "collab_splats.dashboard.__main__:main"
+
 [project.entry-points."nerfstudio.method_configs"]
-rade-gs = "collab_splats.configs.rade_gs_method:rade_gs_method"
-rade-features = "collab_splats.configs.rade_features_method:rade_features_method"
+rade-gs = "collab_splats.nerfstudio.method_configs.rade_gs:rade_gs_method"
+rade-features = "collab_splats.nerfstudio.method_configs.rade_features:rade_features_method"
 
 [tool.setuptools.packages]
 find = { include = ["collab_splats", "collab_splats.*"] }
 
 [build-system]
+# setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,
+# which setuptools 70+ removed (pkg_resources.packaging dropped as a submodule).
+# The standalone `packaging` package is still available; only the shim was removed.
+# Do not upgrade past 69.x until maskclip_onnx is updated or replaced.
 requires = ["setuptools<70.0"]
 build-backend = "setuptools.build_meta"
 
@@ -99,8 +167,12 @@ warn_unused_ignores = true
 exclude = "build"
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules"
+addopts = "--doctest-modules --ignore=tests/test_meshlib.py"
 testpaths = ["./tests"]
+pythonpath = ["."]
+markers = [
+    "slow: requires network access or GPU (deselect with -m 'not slow')",
+]
 
 [tool.isort]
 profile = "black"

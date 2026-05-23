@@ -1,0 +1,335 @@
+#!/usr/bin/env python
+"""Ground-truth evaluation runner for collab-splats BA/LC pipelines.
+
+Usage:
+    python evals/eval_gt.py \\
+        --dataset   7scenes \\
+        --seq_dir   /data/7scenes/chess/seq-01 \\
+        --output_dir ./eval_results/chess_seq01 \\
+        --max_frames 500 \\
+        --conditions baseline ba lc
+
+For long sequences that exceed GPU memory in a single forward pass, use
+``--submap_size N`` to enable windowed inference.  ``baseline`` becomes
+windowed VGGT-X (LC pipeline with loop detection disabled) and ``ba``
+wraps that with bundle adjustment.  ``lc`` always uses the full LC loop
+regardless of this flag.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from datasets import get_dataset
+
+from collab_splats.pointcloud import get_creator
+from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
+from collab_splats.pointcloud.loop_closure.eval import ate_translation, rpe, auc_at_threshold
+from collab_splats.pointcloud.loop_closure.retrieval import LoopClosureConfig
+from collab_splats.pointcloud.wrappers import BundleAdjustment, LoopClosure
+
+_FIXED_CONDITIONS = {"baseline", "ba", "lc"}
+_COLORS = {"gt": "black", "baseline": "tab:red", "ba": "tab:blue", "lc": "tab:green"}
+
+
+def _validate_condition(cond: str) -> None:
+    """Raise ValueError if cond is not a recognised condition string."""
+    if cond in _FIXED_CONDITIONS:
+        return
+    m = re.fullmatch(r"ba_track-density-(\d+)", cond)
+    if m:
+        n = int(m.group(1))
+        if n <= 0:
+            raise ValueError(
+                f"ba_track-density-{{N}} requires N > 0, got {cond!r}"
+            )
+        return
+    raise ValueError(
+        f"Unknown condition {cond!r}. "
+        f"Valid: {sorted(_FIXED_CONDITIONS)} or ba_track-density-{{N}} (e.g. ba_track-density-4096)"
+    )
+
+
+def _default_output_dir(dataset: str, seq_dir: Path) -> Path:
+    """Auto-generate a timestamped output directory under evals/results/."""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path("evals/results") / dataset / seq_dir.name / f"run-{ts}"
+
+
+def _prepare_image_dir(image_paths: list[Path]) -> Path:
+    """Symlink image_paths into a fresh temp dir named 000000.png, 000001.png, ..."""
+    tmp = Path(tempfile.mkdtemp(prefix="collab_eval_"))
+    for i, src in enumerate(image_paths):
+        (tmp / f"{i:06d}.png").symlink_to(src.resolve())
+    return tmp
+
+
+def _cam_positions(poses: np.ndarray) -> np.ndarray:
+    """Convert (N,4,4) world-to-cam poses to (N,3) camera positions in world."""
+    R = poses[:, :3, :3]
+    t = poses[:, :3, 3]
+    return np.einsum("nij,nj->ni", R.transpose(0, 2, 1), -t)
+
+
+def _make_creator(condition: str, submap_size: int | None = None):
+    """Build a creator for the given condition.
+
+    Conditions:
+        baseline             VGGT-X feedforward, no refinement
+        ba                   + bundle adjustment (max_query_pts=2048, query_frame_num=5)
+        ba_track-density-N   + bundle adjustment with N query pts; query_frame_num=max(5, N//512)
+        lc                   full loop closure pipeline
+
+    When submap_size is set, baseline and ba use windowed inference (LoopClosure with
+    detection disabled) so sequences exceeding GPU memory can be processed in windows.
+    lc always uses the full loop-closure pipeline regardless of submap_size.
+    """
+    base = get_creator("vggtx")()
+    if condition == "lc":
+        return LoopClosure(base)
+    m = re.fullmatch(r"ba_track-density-(\d+)", condition)
+    if m:
+        n = int(m.group(1))
+        cfg = BundleAdjustmentConfig(
+            max_query_pts=n,
+            query_frame_num=max(5, n // 512),
+        )
+        if submap_size is not None:
+            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
+            windowed = LoopClosure(base, config=_no_lc_cfg)
+            return BundleAdjustment(windowed, config=cfg)
+        return BundleAdjustment(base, config=cfg)
+    if submap_size is not None:
+        # Windowed mode: use LC pipeline but with LC detection disabled so that
+        # baseline = windowed VGGT-X, ba = windowed VGGT-X + bundle adjustment.
+        _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
+        windowed = LoopClosure(base, config=_no_lc_cfg)
+        if condition == "ba":
+            return BundleAdjustment(windowed)
+        return windowed  # baseline
+    # Default: single-pass (fits in GPU for short sequences)
+    if condition == "ba":
+        return BundleAdjustment(base)
+    return base
+
+
+def _run_condition(name: str, image_dir: Path, output_dir: Path, submap_size: int | None = None) -> np.ndarray:
+    """Wrap VGGTXCreator with BA/LC as appropriate, run, return (N,4,4) extrinsics."""
+    creator = _make_creator(name, submap_size=submap_size)
+    creator.reconstruct(image_dir, output_dir)
+    if creator.outputs is None:
+        raise RuntimeError(f"Condition '{name}' produced no outputs")
+    return creator.outputs.extrinsics  # (N, 4, 4) world-to-cam
+
+
+def _save_outputs(
+    metrics: dict,
+    trajectories: dict[str, np.ndarray],
+    output_dir: Path,
+) -> None:
+    """Write metrics.json, trajectories.npz, and two plot PNGs."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # metrics.json — drop non-serializable per_frame array
+    metrics_json = {}
+    for cond, m in metrics.items():
+        metrics_json[cond] = {
+            "ate": {k: v for k, v in m["ate"].items() if k != "per_frame"},
+            "rpe": m["rpe"],
+            "auc_30": m["auc"]["auc_30"],
+            "time_s": m.get("time_s", None),
+        }
+    (output_dir / "metrics.json").write_text(json.dumps(metrics_json, indent=2))
+
+    # trajectories.npz — poses + pre-computed per-frame ATE for notebook
+    npz_data = {"gt": trajectories["gt"]}
+    for cond in metrics:
+        if cond in trajectories:
+            npz_data[f"pred_{cond}"] = trajectories[cond]
+        per_frame = metrics[cond]["ate"].get("per_frame")
+        if per_frame is not None:
+            npz_data[f"ate_per_frame_{cond}"] = per_frame
+    np.savez(output_dir / "trajectories.npz", **npz_data)
+
+    # Plots
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(exist_ok=True)
+    _plot_trajectory(trajectories, plots_dir / "trajectory.png")
+    _plot_ate_per_frame(metrics, trajectories["gt"], plots_dir / "ate_per_frame.png")
+
+
+def _plot_trajectory(trajectories: dict, out_path: Path) -> None:
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
+    for name, poses in trajectories.items():
+        pos = _cam_positions(poses)
+        ax.plot(pos[:, 0], pos[:, 1], pos[:, 2],
+                label=name, color=_COLORS.get(name, "gray"),
+                linewidth=2 if name == "gt" else 1)
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.set_zlabel("Z (m)")
+    ax.set_title("Camera Trajectory")
+    ax.legend()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_ate_per_frame(metrics: dict, gt: np.ndarray, out_path: Path) -> None:
+    fig, ax = plt.subplots(figsize=(12, 4))
+    for cond, m in metrics.items():
+        per_frame = m["ate"].get("per_frame")
+        if per_frame is None:
+            continue
+        rmse = m["ate"]["rmse"]
+        ax.plot(per_frame, label=f"{cond} (RMSE={rmse:.3f}m)",
+                color=_COLORS.get(cond, "gray"))
+    ax.set_xlabel("Frame")
+    ax.set_ylabel("ATE (m)")
+    ax.set_title("Per-frame Absolute Trajectory Error")
+    ax.legend()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset",    required=True,
+                        help="Dataset name: 7scenes | tum | kitti | waymo | co3dv2")
+    parser.add_argument("--seq_dir",    type=Path, required=True,
+                        help="Path to sequence directory")
+    parser.add_argument("--output_dir", type=Path, default=None,
+                        help="Where to write results "
+                             "(default: evals/results/{dataset}/{seq_name}/run-{timestamp})")
+    parser.add_argument("--max_frames", type=int, default=500)
+    parser.add_argument("--submap_size", type=int, default=None,
+                        help="Frames per window for windowed inference. Required for sequences "
+                             "too long for single-pass GPU inference (e.g. >200 frames). "
+                             "baseline→windowed VGGT-X, ba→windowed+BA, lc→full LC pipeline.")
+    parser.add_argument("--conditions", nargs="+", default=["baseline", "ba", "lc"],
+                        help="Conditions: baseline | ba | lc | ba_track-density-{N}")
+    # Internal flag: run exactly one condition as a subprocess and write results
+    # to --_result_file as JSON.  Not part of the public API.
+    parser.add_argument("--_condition",   default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--_image_dir",   type=Path, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--_result_file", type=Path, default=None, help=argparse.SUPPRESS)
+    return parser
+
+
+def _subprocess_mode(args: argparse.Namespace) -> None:
+    """Run one condition and write {extrinsics, time_s} JSON to --_result_file."""
+    _validate_condition(args._condition)
+    cond = args._condition
+    image_dir = args._image_dir
+    result_file = args._result_file
+
+    t0 = time.perf_counter()
+    pred = _run_condition(cond, image_dir, args.output_dir / cond,
+                          submap_size=args.submap_size)
+    elapsed = time.perf_counter() - t0
+
+    # Serialise extrinsics as a nested list so json can handle it.
+    result_file.write_text(json.dumps({
+        "extrinsics": pred.tolist(),
+        "time_s": round(elapsed, 2),
+    }))
+    print(f"  ATE/RPE computed by parent process | time={elapsed:.1f}s")
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+
+    for cond in (args.conditions or []):
+        _validate_condition(cond)
+    if args._condition is not None:
+        _validate_condition(args._condition)
+
+    # ── subprocess leaf ────────────────────────────────────────────────────────
+    if args._condition is not None:
+        _subprocess_mode(args)
+        return
+
+    # ── auto-name output dir if not provided ──────────────────────────────────
+    if args.output_dir is None:
+        args.output_dir = _default_output_dir(args.dataset, args.seq_dir)
+        print(f"Output directory: {args.output_dir}")
+
+    # ── orchestrator ───────────────────────────────────────────────────────────
+    dataset = get_dataset(args.dataset)(args.seq_dir, max_frames=args.max_frames)
+    mode = f"windowed(submap_size={args.submap_size})" if args.submap_size else "single-pass"
+    print(f"Dataset: {args.dataset} | {len(dataset.images)} frames | {args.conditions} | mode={mode}")
+
+    tmp_image_dir = _prepare_image_dir(dataset.images)
+    result_dir = Path(tempfile.mkdtemp(prefix="collab_eval_results_"))
+    try:
+        metrics: dict = {}
+        trajectories: dict[str, np.ndarray] = {"gt": dataset.gt_poses}
+
+        for cond in args.conditions:
+            print(f"\n=== Condition: {cond} ===")
+            result_file = result_dir / f"{cond}.json"
+
+            # Each condition runs in its own subprocess so the GPU starts clean.
+            # The heavy VGGT-1B model (~8 GB) and VGGSfM tracker are fully freed
+            # between conditions — Python GC cannot guarantee this in-process.
+            cmd = [
+                sys.executable, __file__,
+                "--dataset",    args.dataset,
+                "--seq_dir",    str(args.seq_dir),
+                "--output_dir", str(args.output_dir),
+                "--max_frames", str(args.max_frames),
+                "--_condition",   cond,
+                "--_image_dir",   str(tmp_image_dir),
+                "--_result_file", str(result_file),
+            ]
+            if args.submap_size is not None:
+                cmd += ["--submap_size", str(args.submap_size)]
+
+            t0 = time.perf_counter()
+            proc = subprocess.run(cmd, check=True)
+            elapsed = time.perf_counter() - t0
+
+            result_json = json.loads(result_file.read_text())
+            pred = np.array(result_json["extrinsics"], dtype=np.float32)
+            time_s = result_json.get("time_s", round(elapsed, 2))
+
+            metrics[cond] = {
+                "ate": ate_translation(pred, dataset.gt_poses),
+                "rpe": rpe(pred, dataset.gt_poses),
+                "auc": auc_at_threshold(pred, dataset.gt_poses),
+                "time_s": time_s,
+            }
+            trajectories[cond] = pred
+            print(f"  ATE RMSE: {metrics[cond]['ate']['rmse']:.4f}m")
+            print(f"  RPE trans RMSE: {metrics[cond]['rpe']['trans_rmse']:.4f}m")
+            print(f"  AUC@30: {metrics[cond]['auc']['auc_30']:.1f}")
+            print(f"  Time: {time_s}s")
+    finally:
+        shutil.rmtree(tmp_image_dir, ignore_errors=True)
+        shutil.rmtree(result_dir, ignore_errors=True)
+
+    _save_outputs(metrics, trajectories, args.output_dir)
+    print(f"\nResults written to {args.output_dir}/")
+    print(json.dumps(
+        {c: {"ate_rmse": m["ate"]["rmse"], "rpe_trans": m["rpe"]["trans_rmse"]}
+         for c, m in metrics.items()},
+        indent=2,
+    ))
+
+
+if __name__ == "__main__":
+    main()

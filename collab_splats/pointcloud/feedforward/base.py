@@ -1,0 +1,689 @@
+"""Shared types, helpers, and abstract pipeline for feedforward pointcloud creators.
+
+Provides:
+  FeedforwardResult                        — typed output dataclass for all feedforward backends
+  _extrinsics_3x4_to_4x4                  — append homogeneous row to (N,3,4) extrinsics
+  _raw_to_world_points                     — unproject depth maps to subsampled world-space grids
+  build_pycolmap_reconstruction            — build a pycolmap Reconstruction from pts+cameras
+  _rescale_reconstruction_to_original_dims — rescale camera params from model resolution to original
+  BaseFeedforwardCreator                   — abstract 5-step template-method pipeline
+"""
+from __future__ import annotations
+
+import copy
+import time
+from abc import abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pycolmap
+import torch
+import zarr
+from rich.console import Console
+from zarr.codecs import BloscCodec
+
+from ..base import BasePointcloudCreator, PointcloudResult
+from ..utils import colmap_reconstruction_to_result, cross_frame_attention_ratio
+
+console = Console()
+
+
+# ── Output type ───────────────────────────────────────────────────────────────
+
+@dataclass
+class FeedforwardResult:
+    """Typed output from a feedforward creator's ``_postprocess`` step.
+
+    All arrays are float32 unless noted. Shapes assume N images and P output points.
+    Optional fields ``images``, ``conf``, ``world_points`` are always populated by
+    feedforward creators and consumed by ``BundleAdjustment``.
+    """
+
+    pts3d: np.ndarray            # (P, 3) float32 — world-space XYZ points
+    colors: np.ndarray           # (P, 3) uint8 — RGB, range [0, 255]
+    extrinsics: np.ndarray       # (N, 4, 4) float32 — world-to-camera homogeneous transform
+                                 #   rows 0-2: [R|t], row 3: [0, 0, 0, 1]
+    intrinsics: np.ndarray       # (N, 3, 3) float32 — camera intrinsics K
+    image_paths: list[Path]      # length N — source image paths, ordered to match extrinsics
+    original_coords: np.ndarray  # (N, 6) float32 — [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
+                                 #   tl = model crop top-left in original pixels
+                                 #   cr = model crop bottom-right in original pixels
+                                 #   orig_w/h = full original image dimensions
+    model_width: int             # model inference resolution width (pixels)
+    model_height: int            # model inference resolution height (pixels)
+    # Populated by feedforward creators; consumed by BundleAdjustment wrapper.
+    images: "torch.Tensor | None" = None        # (N, 3, H, W) normalised RGB for track extraction
+    conf: "torch.Tensor | None" = None           # (N, H, W) confidence scores
+    world_points: "np.ndarray | None" = None     # (N, H, W, 3) world-space points per pixel
+    features: "np.ndarray | None" = None      # (P, D) float32 — feature vector per point, index-aligned with pts3d
+    pixel_indices: "np.ndarray | None" = None  # (P, 3) int32 — [frame_id, row, col] source pixel for each point
+
+    def save(self, path: Path) -> None:
+        """Save to compressed .npz. images/conf/world_points excluded (too large)."""
+        # Collect required arrays into a flat dict for np.savez_compressed
+        arrays: dict = dict(
+            pts3d=self.pts3d,
+            colors=self.colors,
+            extrinsics=self.extrinsics,
+            intrinsics=self.intrinsics,
+            original_coords=self.original_coords,
+            image_paths=np.array([str(p) for p in self.image_paths]),
+            model_width=np.array(self.model_width),
+            model_height=np.array(self.model_height),
+        )
+        # Append optional arrays if present
+        if self.features is not None:
+            arrays["features"] = self.features
+        if self.pixel_indices is not None:
+            arrays["pixel_indices"] = self.pixel_indices
+        np.savez_compressed(path, **arrays)
+
+    @classmethod
+    def load(cls, path: Path) -> "FeedforwardResult":
+        """Load from .npz saved by save(). images/conf/world_points will be None."""
+        # Deserialize all saved keys; optional keys default to None if absent
+        d = np.load(path, allow_pickle=False)
+        return cls(
+            pts3d=d["pts3d"],
+            colors=d["colors"],
+            extrinsics=d["extrinsics"],
+            intrinsics=d["intrinsics"],
+            original_coords=d["original_coords"],
+            image_paths=[Path(str(p)) for p in d["image_paths"]],
+            model_width=int(d["model_width"]),
+            model_height=int(d["model_height"]),
+            features=d["features"] if "features" in d else None,
+            pixel_indices=d["pixel_indices"] if "pixel_indices" in d else None,
+        )
+
+    def save_zarr(self, path: Path) -> None:
+        """Save to a zarr v3 store with lz4 compression.
+
+        Unlike save(), this backend also persists world_points (chunked by frame)
+        and images (tensor → numpy, chunked by frame). images/conf are excluded
+        from load_zarr to avoid loading large tensors inadvertently.
+
+        Args:
+            path: Directory path for the zarr store (created if absent).
+        """
+        lz4 = BloscCodec(cname="lz4")
+        store = zarr.open(str(path), mode="w")
+
+        # Store scalar metadata and image paths in attrs
+        store.attrs["image_paths"] = [str(p) for p in self.image_paths]
+        store.attrs["model_width"] = self.model_width
+        store.attrs["model_height"] = self.model_height
+
+        # Save required arrays with lz4 compression
+        for name, arr in (
+            ("pts3d", self.pts3d),
+            ("colors", self.colors),
+            ("extrinsics", self.extrinsics),
+            ("intrinsics", self.intrinsics),
+            ("original_coords", self.original_coords),
+        ):
+            store.create_array(name, data=arr, chunks=arr.shape, compressors=lz4)
+
+        # Save optional dense arrays
+        if self.features is not None:
+            store.create_array("features", data=self.features, chunks=self.features.shape, compressors=lz4)
+        if self.pixel_indices is not None:
+            store.create_array("pixel_indices", data=self.pixel_indices, chunks=self.pixel_indices.shape, compressors=lz4)
+
+        # Save world_points chunked by frame: (1, H, W, 3)
+        if self.world_points is not None:
+            wp = self.world_points  # (N, H, W, 3)
+            chunks = (1, wp.shape[1], wp.shape[2], wp.shape[3])
+            store.create_array("world_points", data=wp, chunks=chunks, compressors=lz4)
+
+        # Save images (tensor → numpy) chunked by frame: (1, 3, H, W)
+        # Cast bfloat16 → float32 first; zarr/numpy do not support bfloat16.
+        if self.images is not None:
+            imgs = self.images
+            if isinstance(imgs, torch.Tensor):
+                if imgs.dtype == torch.bfloat16:
+                    imgs = imgs.to(torch.float32)
+                imgs = imgs.detach().cpu().numpy()
+            chunks = (1, imgs.shape[1], imgs.shape[2], imgs.shape[3])
+            store.create_array("images", data=imgs, chunks=chunks, compressors=lz4)
+
+    @classmethod
+    def load_zarr(cls, path: Path) -> "FeedforwardResult":
+        """Load from a zarr v3 store saved by save_zarr().
+
+        images and conf are always returned as None (too large for general loading).
+
+        Args:
+            path: Directory path of the zarr store.
+
+        Returns:
+            FeedforwardResult with all persisted fields restored.
+        """
+        store = zarr.open(str(path), mode="r")
+        attrs = dict(store.attrs)
+
+        # Load required arrays
+        pts3d = store["pts3d"][:]
+        colors = store["colors"][:]
+        extrinsics = store["extrinsics"][:]
+        intrinsics = store["intrinsics"][:]
+        original_coords = store["original_coords"][:]
+        image_paths = [Path(p) for p in attrs["image_paths"]]
+        model_width = int(attrs["model_width"])
+        model_height = int(attrs["model_height"])
+
+        # Load optional arrays; absent keys → None
+        features = store["features"][:] if "features" in store else None
+        pixel_indices = store["pixel_indices"][:] if "pixel_indices" in store else None
+        world_points = store["world_points"][:] if "world_points" in store else None
+
+        return cls(
+            pts3d=pts3d,
+            colors=colors,
+            extrinsics=extrinsics,
+            intrinsics=intrinsics,
+            original_coords=original_coords,
+            image_paths=image_paths,
+            model_width=model_width,
+            model_height=model_height,
+            features=features,
+            pixel_indices=pixel_indices,
+            world_points=world_points,
+            images=None,  # too large; load separately if needed
+            conf=None,
+        )
+
+
+# ── Geometry helpers ──────────────────────────────────────────────────────────
+
+def _extrinsics_3x4_to_4x4(extrinsics_3x4: np.ndarray) -> np.ndarray:
+    """Append a [0, 0, 0, 1] bottom row to convert (N, 3, 4) → (N, 4, 4).
+
+    Args:
+        extrinsics_3x4: (N, 3, 4) float32 world-to-camera [R|t] matrices.
+
+    Returns:
+        (N, 4, 4) float32 homogeneous world-to-camera matrices.
+    """
+    n = extrinsics_3x4.shape[0]
+    bottom = np.tile(np.array([[0, 0, 0, 1]], dtype=np.float32), (n, 1, 1))  # (N, 1, 4)
+    return np.concatenate([extrinsics_3x4, bottom], axis=1)                   # (N, 4, 4)
+
+
+def _raw_to_world_points(raw: dict, subsample: int = 8) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Extract world-space 3D points from raw _forward output dict.
+
+    Builds a subsampled grid of world-space points from depth + intrinsics + extrinsics.
+    Used by BundleAdjustment for track extraction — NOT the final point cloud (which uses
+    full-resolution unprojection in each backend's _postprocess). subsample=8 balances
+    coverage vs memory for long sequences.
+
+    Args:
+        raw:       Dict with keys 'depth', 'extrinsic', 'intrinsics_downsampled',
+                   and optionally 'depth_conf'.
+        subsample: Pixel stride for the output grid. Higher = fewer points.
+
+    Returns:
+        (all_pts, all_conf) — (K, P, 3) world-space points and (K, P) confidence,
+        or (None, None) if required keys are absent.
+    """
+    # Guard: return None if required depth/pose/intrinsics keys are absent
+    if not all(k in raw for k in ("depth", "extrinsic", "intrinsics_downsampled")):
+        return None, None
+
+    # Unpack depth, intrinsics, extrinsics, and optional confidence
+    depth = raw["depth"]
+    intr = raw["intrinsics_downsampled"]
+    extr_3x4 = raw["extrinsic"]
+    conf_map = raw.get("depth_conf")
+
+    if depth.ndim == 4:
+        depth = depth.squeeze(-1)  # VGGT-X returns (K, H, W, 1); MapAnything (K, H, W)
+    K, H, W = depth.shape
+
+    # Invert extrinsics (world2cam) to get cam2world transforms for unprojection
+    extr_4x4 = _extrinsics_3x4_to_4x4(extr_3x4)
+    cam2world = np.linalg.inv(extr_4x4.astype(np.float64)).astype(np.float32)
+
+    # Build subsampled pixel grid (us × vs) for sparse world-point extraction
+    us = np.arange(0, W, subsample)
+    vs = np.arange(0, H, subsample)
+    uu, vv = np.meshgrid(us, vs)
+    uu, vv = uu.ravel(), vv.ravel()
+    P = len(uu)
+
+    # Pre-allocate output buffers
+    all_pts = np.zeros((K, P, 3), dtype=np.float32)
+    all_conf = np.zeros((K, P), dtype=np.float32) if conf_map is not None else None
+
+    # Unproject each frame's sampled pixels to world space via depth + intrinsics + cam2world
+    for ki in range(K):
+        z = depth[ki][vv, uu]
+        fx, fy = intr[ki, 0, 0], intr[ki, 1, 1]
+        cx, cy = intr[ki, 0, 2], intr[ki, 1, 2]
+        x_c = (uu - cx) * z / fx
+        y_c = (vv - cy) * z / fy
+        pts_cam = np.stack([x_c, y_c, z, np.ones_like(z)], axis=-1)
+        all_pts[ki] = (cam2world[ki] @ pts_cam.T).T[:, :3]
+        if conf_map is not None and all_conf is not None:
+            all_conf[ki] = conf_map[ki][vv, uu]
+
+    return all_pts, all_conf
+
+
+# ── COLMAP reconstruction builders ────────────────────────────────────────────
+
+def build_pycolmap_reconstruction(
+    pts3d: np.ndarray,
+    colors: np.ndarray,
+    extrinsics: np.ndarray,
+    intrinsics: np.ndarray,
+    image_width: int,
+    image_height: int,
+    image_names: list[str],
+    camera_model: str = "PINHOLE",
+) -> pycolmap.Reconstruction:
+    """Build a pycolmap Reconstruction from pointcloud + camera data.
+
+    Creates one camera and one image per entry in ``image_names``.  Points are
+    added as free 3D points with no ``Point2D`` track observations — feedforward
+    methods do not produce feature matches, so there are no 2D-3D correspondences
+    to record.  This means the reconstruction is valid for writing to disk and
+    converting to ``transforms.json``, but cannot be used as input to COLMAP BA.
+
+    Args:
+        pts3d:        (P, 3) float32 or float64 world-space point positions.
+        colors:       (P, 3) uint8 or float32 [0,1] RGB colors.
+                      Float inputs are clipped and scaled to uint8 automatically.
+        extrinsics:   (N, 3, 4) or (N, 4, 4) float32 world-to-camera matrices.
+                      The first 3 rows are used; the 4th row is ignored.
+        intrinsics:   (N, 3, 3) float32 camera intrinsics K per image.
+        image_width:  Width in pixels of the model inference resolution.
+        image_height: Height in pixels of the model inference resolution.
+        image_names:  Length-N list of image filenames (basename only, no path).
+        camera_model: pycolmap camera model string.
+                      ``"PINHOLE"`` — params [fx, fy, cx, cy].
+                      ``"SIMPLE_PINHOLE"`` — params [f, cx, cy], f = mean(fx, fy).
+
+    Returns:
+        pycolmap.Reconstruction with cameras, images, and 3D points.
+        Call ``_rescale_reconstruction_to_original_dimensions`` before writing
+        to disk if the model resolution differs from the original image size.
+    """
+    recon = pycolmap.Reconstruction()
+    exts = extrinsics[:, :3, :] if extrinsics.shape[1] == 4 else extrinsics
+
+    # Convert colors to uint8
+    colors_u8 = (
+        colors if colors.dtype == np.uint8
+        else (np.clip(colors, 0, 1) * 255).astype(np.uint8)
+    )
+
+    # Add points — feedforward has no 2D feature tracks, so Track() is empty
+    for xyz, rgb in zip(pts3d, colors_u8):
+        recon.add_point3D(xyz.astype(np.float64), pycolmap.Track(), rgb)
+
+    # Add one camera + image per frame
+    for i, name in enumerate(image_names):
+        camera_id = i + 1
+        image_id = i + 1
+
+        K = intrinsics[i]
+        if camera_model == "PINHOLE":
+            params = [K[0, 0], K[1, 1], K[0, 2], K[1, 2]]
+        else:  # SIMPLE_PINHOLE
+            params = [(K[0, 0] + K[1, 1]) / 2.0, K[0, 2], K[1, 2]]
+
+        camera = pycolmap.Camera(
+            model=camera_model,
+            width=image_width,
+            height=image_height,
+            params=params,
+            camera_id=camera_id,
+        )
+        # add_camera_with_trivial_rig creates a matching rig entry required by
+        # pycolmap >=4.0 before calling add_image_with_trivial_frame.
+        recon.add_camera_with_trivial_rig(camera)
+
+        R = exts[i, :3, :3].astype(np.float64)
+        t = exts[i, :3, 3].astype(np.float64)
+        cam_from_world = pycolmap.Rigid3d(pycolmap.Rotation3d(R), t)
+
+        image = pycolmap.Image(name=name, camera_id=camera_id, image_id=image_id)
+        # add_image_with_trivial_frame creates image + frame and registers the
+        # pose atomically — required by pycolmap >=4.0 (cam_from_world is now
+        # read-only; it lives on the Frame, not the Image).
+        recon.add_image_with_trivial_frame(image, cam_from_world)
+
+    return recon
+
+
+def _rescale_reconstruction_to_original_dimensions(
+    reconstruction: Any,
+    image_paths: list[Path],
+    original_image_sizes: np.ndarray,
+    image_size: tuple[int, int],
+    shared_camera: bool = False,
+    shift_point2d_to_original_res: bool = False,
+    verbose: bool = False,
+) -> Any:
+    """Rescale a reconstruction from model resolution to original image dimensions.
+
+    Feedforward models run inference at a fixed resolution (e.g. 518px). This
+    function maps camera intrinsics and image dimensions back to the original
+    image size so the reconstruction is metrically consistent with the source data.
+
+    Args:
+        reconstruction:             pycolmap Reconstruction object.
+        image_paths:                List of Path objects for the images.
+        original_image_sizes:       (N, 6) array with format
+                                    [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h].
+        image_size:                 Model inference resolution as (width, height).
+        shared_camera:              If True, use a single shared camera for all images.
+        shift_point2d_to_original_res: If True, shift Point2D observations to original res.
+        verbose:                    Print progress if True.
+    """
+    if verbose:
+        original_width, original_height = original_image_sizes[0, -2:]
+        console.log(
+            f"Rescaling reconstruction from {image_size[0]}x{image_size[1]} "
+            f"to original dimensions"
+        )
+        console.log(f"  Original image sizes (WxH): {int(original_width)}x{int(original_height)}")
+
+    # Initialise per-loop shared-camera bookkeeping (used only when shared_camera=True)
+    rescale_camera = True
+    shared_intrinsics = None
+    shared_width = None
+    shared_height = None
+
+    # Rescale intrinsics and image dimensions for each frame
+    for pyimageid in reconstruction.images:
+        pyimage = reconstruction.images[pyimageid]
+        pycamera = reconstruction.cameras[pyimage.camera_id]
+
+        pyimage.name = image_paths[pyimageid - 1].name
+
+        pred_params = copy.deepcopy(pycamera.params)
+
+        real_image_size = original_image_sizes[pyimageid - 1, -2:]
+        # scale_x/scale_y: ratio of original image size to model inference size.
+        # Multiplying camera params by these factors maps from model-resolution
+        # pixel coordinates back to original-resolution pixel coordinates.
+        scale_x = real_image_size[0] / image_size[0]
+        scale_y = real_image_size[1] / image_size[1]
+
+        if rescale_camera and (not shared_camera or shared_intrinsics is None):
+            if pycamera.model.name == "SIMPLE_PINHOLE":
+                pred_params[0] *= max(scale_x, scale_y)
+            elif pycamera.model.name in ("PINHOLE", "OPENCV", "RADIAL", "OPENCV_FISHEYE"):
+                pred_params[0] *= scale_x
+                pred_params[1] *= scale_y
+
+            pred_params[-2] *= scale_x
+            pred_params[-1] *= scale_y
+
+            if shared_camera:
+                shared_intrinsics = pred_params
+                shared_width = int(real_image_size[0])
+                shared_height = int(real_image_size[1])
+
+                pycamera.params = shared_intrinsics
+                pycamera.width = shared_width
+                pycamera.height = shared_height
+            else:
+                pycamera.params = pred_params
+                pycamera.width = int(real_image_size[0])
+                pycamera.height = int(real_image_size[1])
+
+        # Propagate shared intrinsics to subsequent frames when shared_camera=True
+        if shared_camera and shared_intrinsics is not None:
+            pycamera.params = shared_intrinsics
+            pycamera.width = shared_width
+            pycamera.height = shared_height
+
+        # Shift Point2D observations from model-resolution to original-resolution coords
+        if shift_point2d_to_original_res:
+            top_left = original_image_sizes[pyimageid - 1, :2]
+            scale_x = real_image_size[0] / image_size[0]
+            scale_y = real_image_size[1] / image_size[1]
+            for point2D in pyimage.points2D:
+                point2D.xy = (point2D.xy - top_left) * np.array([scale_x, scale_y])
+
+    if verbose:
+        console.log("Rescaled reconstruction to original dimensions")
+
+    return reconstruction
+
+
+# ── Abstract pipeline ─────────────────────────────────────────────────────────
+
+@dataclass
+class BaseFeedforwardCreator(BasePointcloudCreator):
+    """Template Method pipeline for feedforward pointcloud creators.
+
+    Runs a fixed 5-step pipeline: load_model → setup_inference → run_inference
+    → postprocess → build_colmap.  Subclasses implement the four abstract methods
+    below; the base class handles device detection, GPU memory cleanup, state
+    storage, and COLMAP reconstruction (shared across all feedforward methods).
+
+    Abstract methods — contract each subclass must satisfy:
+
+    ``_load_model(device: str) -> Any``
+        Load the model from a pretrained checkpoint, move to ``device``, set to
+        eval mode, and return it.  Do not store GPU state outside the returned
+        model object.
+
+    ``_preprocess(image_dir: Path) -> tuple[Any, list[Path], np.ndarray]``
+        Load and preprocess images from ``image_dir``.  Return:
+          views           — model-specific input batch (tensor or list of dicts)
+          image_paths     — ordered list of image Paths (length N)
+          original_coords — (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
+
+    ``_forward(model, views, **kwargs) -> Any``
+        Run the model forward pass under ``torch.no_grad()``.  Return raw outputs
+        as a dict or any structure ``_postprocess`` expects.  The base class calls
+        ``torch.cuda.empty_cache()`` immediately after this returns.
+
+    ``_postprocess(raw_outputs, **kwargs) -> FeedforwardResult``
+        Convert raw model outputs to a ``FeedforwardResult``.  This is where
+        depth unprojection, confidence filtering, and optional postprocessing
+        (e.g., global alignment) happen.
+
+    ``_verify_loop_candidate(frame1, frame2, verify_match_ratio) -> tuple[bool, np.ndarray | None]``
+        Re-run model on a 2-frame pair to verify a loop closure candidate.
+        Return (accepted, fresh_poses_2x4x4) or (False, None) if rejected.
+
+    Attributes:
+        camera_model: pycolmap camera model string for COLMAP reconstruction.
+                      Use ``"PINHOLE"`` (fx, fy, cx, cy) or ``"SIMPLE_PINHOLE"``
+                      (f, cx, cy — single focal length).
+        extractor_name: registered BaseFeatureExtractor name, e.g. "dinov2"; None = skip feature lifting
+
+    Inspection-only attrs set after run_inference() when LC enabled:
+        _lc_submaps: list[Submap]        submaps built during LC inference
+        _lc_loop_submaps: list[Submap]   verified loop-closure submaps (each 2 frames)
+        _lc_overlap_frames: int          cfg.submap_overlap value used
+        _lc_all_matches: list[LoopMatch] all post-NMS candidates; .accepted=True for accepted ones
+    Consumer: collab_splats.pointcloud.loop_closure.eval.capture_pose_graph_loss
+    These are not stable API; refactor cautiously.
+    """
+
+    camera_model: str = "PINHOLE"
+    extractor_name: str | None = None
+
+    model: Any = field(default=None, init=False, repr=False)
+    views: Any = field(default=None, init=False, repr=False)
+    image_paths: list[Path] | None = field(default=None, init=False, repr=False)
+    original_coords: np.ndarray | None = field(default=None, init=False, repr=False)
+    raw_outputs: Any = field(default=None, init=False, repr=False)
+    outputs: FeedforwardResult | None = field(default=None, init=False, repr=False)
+
+    # ── Pipeline orchestration ────────────────────────────────────────────────
+
+    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
+        image_dir, output_dir = Path(image_dir), Path(output_dir)
+        if not image_dir.exists():
+            raise FileNotFoundError(f"image_dir not found: {image_dir}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.load_model()
+        self.setup_inference(image_dir)
+        self.run_inference()
+        self.postprocess()
+        return self.build_colmap(output_dir)
+
+    def load_model(self, device: str | None = None) -> None:
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        t0 = time.perf_counter()
+        console.log(f"Loading model ({device})...")
+        self.model = self._load_model(device)
+        console.log(f"  done in {time.perf_counter() - t0:.1f}s")
+
+    def setup_inference(self, image_dir: Path) -> None:
+        t0 = time.perf_counter()
+        console.log("Preprocessing images...")
+        self.views, self.image_paths, self.original_coords = self._preprocess(Path(image_dir))
+        console.log(f"  → {len(self.image_paths)} images  done in {time.perf_counter() - t0:.1f}s")
+
+    def run_inference(self, **kwargs: Any) -> None:
+        t0 = time.perf_counter()
+        console.log("Running inference...")
+        self.raw_outputs = self._forward(self.model, self.views, **kwargs)
+        # Clear GPU cache after forward pass to free memory before postprocessing
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        console.log(f"  done in {time.perf_counter() - t0:.1f}s")
+
+    def postprocess(self, **kwargs: Any) -> None:
+        t0 = time.perf_counter()
+        console.log("Postprocessing...")
+        self.outputs = self._postprocess(self.raw_outputs, **kwargs)
+        n_pts = len(self.outputs.pts3d)
+        console.log(f"  → {n_pts:,} pts  done in {time.perf_counter() - t0:.1f}s")
+
+    def build_colmap(self, output_dir: Path) -> PointcloudResult:
+        t0 = time.perf_counter()
+        console.log("Building COLMAP reconstruction...")
+        o = self.outputs
+        # Build pycolmap Reconstruction from points + cameras at model resolution
+        recon = build_pycolmap_reconstruction(
+            o.pts3d, o.colors, o.extrinsics, o.intrinsics,
+            o.model_width, o.model_height,
+            [p.name for p in o.image_paths],
+            camera_model=self.camera_model,
+        )
+        # Rescale intrinsics and image dims back to original image resolution
+        recon = _rescale_reconstruction_to_original_dimensions(
+            recon, o.image_paths, o.original_coords,
+            (o.model_width, o.model_height),
+        )
+        # Write binary COLMAP reconstruction to disk and export transforms.json
+        sparse_dir = Path(output_dir) / "colmap" / "sparse" / "0"
+        sparse_dir.mkdir(parents=True, exist_ok=True)
+        recon.write_binary(str(sparse_dir))
+        self._write_transforms(sparse_dir, Path(output_dir))
+        console.log(f"  done in {time.perf_counter() - t0:.1f}s")
+        return colmap_reconstruction_to_result(recon)
+
+    # ── Abstract interface ────────────────────────────────────────────────────
+
+    @abstractmethod
+    def _load_model(self, device: str) -> Any:
+        ...
+
+    @abstractmethod
+    def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]:
+        ...
+
+    @abstractmethod
+    def _forward(self, model: Any, views: Any, **kwargs: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
+        ...
+
+    @abstractmethod
+    def extract_intermediate_features(
+        self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Capture cross-frame transformer activations via a per-call forward hook.
+
+        Register a forward hook on the QKV projection of the cross-frame attention
+        block at ``layer_index``, run the model on ``frames``, capture activations,
+        then remove the hook.  The hook is removed in a finally block — guaranteed
+        even if the forward raises.
+
+        Args:
+            frames:      (N, C, H, W) preprocessed frames on the correct device.
+            layer_index: Cross-frame block index.  -1 = last block (default).
+                         VGGTx indexes into aggregator.global_blocks;
+                         MapAnything into info_sharing.self_attention_blocks.
+            **kwargs:    Backend-specific forward kwargs.
+                         MapAnything: minibatch_size (int),
+                                      memory_efficient_inference (bool).
+                         VGGTx: unused.
+
+        Returns:
+            dict with at minimum:
+              "q":  (B, heads, N_tokens, head_dim) — query projections
+              "k":  (B, heads, N_tokens, head_dim) — key projections
+            VGGTx additionally includes:
+              "poses": (2, 4, 4) float32 np.ndarray — pre-decoded camera extrinsics.
+            MapAnything omits "poses"; _verify_loop_candidate returns None for poses.
+        """
+        ...
+
+    def _verify_loop_candidate(
+        self,
+        frame1: Any,
+        frame2: Any,
+        verify_match_ratio: float = 0.85,
+        layer_index: int = -1,
+        **kwargs: Any,
+    ) -> tuple[bool, Any]:
+        """Verify a loop closure candidate via cross-frame attention gate.
+
+        Args:
+            frame1, frame2:      Preprocessed frames (C, H, W).
+            verify_match_ratio:  Accept threshold (default 0.85, matches VGGT-SPARK).
+            layer_index:         Transformer block to tap (default -1 = last).
+            **kwargs:            Forwarded to extract_intermediate_features (e.g.
+                                 minibatch_size=2 for MapAnything).
+
+        Returns:
+            (accepted, poses_or_None).  poses is (2, 4, 4) float32 np.ndarray when
+            the backend includes a "poses" key; None otherwise — caller uses submap poses.
+        """
+        # Run the model once to capture cross-frame activations
+        features = self.extract_intermediate_features(
+            torch.stack([frame1, frame2]), layer_index=layer_index, **kwargs
+        )
+        # Compute the cross-frame attention ratio gate
+        ratio = cross_frame_attention_ratio(features["k"], features["q"])
+        if ratio < verify_match_ratio:
+            return False, None
+        # "poses" is optional — VGGTx includes it (pre-decoded), MapAnything does not
+        return True, features.get("poses")
+
+    @abstractmethod
+    def _reproject_ba(
+        self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Re-derive world-space point cloud using bundle-adjusted camera poses.
+
+        Called by the BundleAdjustment wrapper after it refines extrinsics.
+        Each backend re-projects its raw depth/point data under the new poses.
+
+        Args:
+            raw_outputs:    Raw model outputs stored from _forward().
+            extrinsics_3x4: (N, 3, 4) refined world-to-camera matrices.
+            intrinsics:     (N, 3, 3) refined camera intrinsics.
+
+        Returns:
+            (pts3d, colors) — (P, 3) float32 and (P, 3) uint8.
+        """
+        ...

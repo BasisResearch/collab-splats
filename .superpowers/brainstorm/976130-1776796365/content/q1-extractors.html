@@ -1,0 +1,26 @@
+<h2>feature_extraction notebook — which extractors?</h2>
+<p class="subtitle">The notebook walks: video → first frame → features → visualize → text query</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>All three extractors</h3>
+      <p><code>samclip</code>, <code>dinov2</code>, <code>talk2dino</code> — each in its own section. Shows the full registry. Longer notebook.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>talk2dino only</h3>
+      <p>Richest API: patch features + text similarity in one extractor. Focused, runnable end-to-end. Best for demos.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>talk2dino primary + samclip/dinov2 as alternatives</h3>
+      <p>Deep walkthrough of talk2dino, then brief code cells showing how to swap in the others via the registry.</p>
+    </div>
+  </div>
+</div>

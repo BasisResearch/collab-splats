@@ -2,99 +2,86 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Always follow:
+- Use rtk tools /workspace/.claude/RTK.md
+- At the start of every conversation always call /brainstorming -- use superpowers to accomplish tasks.
+- Before anything, read worklog/STATE.md (current state), then latest entries in worklog/WORKLOG.md, then worklog/decisions/NNN-*.md as referenced.
+- Active spec/plan for in-flight work lives in worklog/{specs,plans}/. Completed work is archived to worklog/history/.
+- Architecture decisions: worklog/decisions/NNN-slug.md (sequential numbering).
+- User-facing module docs live in docs/ (mirrors code tree).
+- Superpowers information belongs in worklog/ directory
+
 ## Installation and Setup
 
-This repository requires specific CUDA dependencies and nerfstudio integration. Use the provided setup script:
-
 ```bash
-# Install the package in development mode
-bash setup.sh
+bash setup.sh                    # core install (nerfstudio env)
+bash setup_feedforward.sh        # VGGT-X + MapAnything
 ```
 
-For Docker-based development:
-```bash
-# Uses docker image: tommybotch/collab-splats:latest
-git clone https://github.com/BasisResearch/collab-splats/
-cd collab-splats
-bash setup.sh
-```
+## Development Environment
+
+- **Python env:** `python` = base conda py3.13 (wrong for this project). Always use `/opt/conda/envs/nerfstudio/bin/python` (py3.11).
+- **Memory:** container cgroup cap 46.6 GB. Heavy inference/eval → run in tmux, not notebooks.
+- **Side shells:** don't run parallel processes during heavy eval runs (OOM risk).
 
 ## Architecture Overview
 
-**collab-splats** is a nerfstudio extension that enables depth/normal derivation and meshing for Gaussian Splatting models. The codebase is structured around two main architectural patterns:
+Core pipeline: video/images → pointcloud (VGGT-X or MapAnything) → optional BA → optional LC → mesh/features.
 
-### Core Components
+```
+collab_splats/
+  pointcloud/              # main reconstruction pipeline
+    base.py                # BasePointcloudCreator, PointcloudResult
+    feedforward/           # BaseFeedforwardCreator (5-step template method), VGGTXCreator, MapAnythingCreator, FeedforwardResult
+    bundle_adjustment.py   # Levenberg-Marquardt BA
+    wrappers.py            # BundleAdjustment + LoopClosure wrappers (proxy outputs/raw_outputs to base)
+    loop_closure/          # pose graph + Sim3 alignment
+    localization.py        # BaseRetrievalExtractor, DinoSaladExtractor (localization stage 1)
+    utils.py               # lift_features, reproject_pixels, colmap_reconstruction_to_result
+  semantics/               # 2D feature extraction
+    features.py            # BaseFeatureExtractor + RegistryMixin; registered DINOv2/SAM extractors
+    frame_sampling.py      # re-exported here; canonical at utils/frame_sampling.py
+  mesh/                    # TSDF + Poisson meshing (base, poisson, tsdf, utils)
+  nerfstudio/              # nerfstudio method configs, models, datamanagers
+  dashboard/               # interactive video/scene browser
+  utils/
+    torch_utils.py         # RegistryMixin, pytorch_gc, infer_batch_size, batch_iterator, get_device
+    frame_sampling.py      # optical-flow + FPS keyframe selection
+evals/
+  eval_gt.py               # compute script — CLI/tmux only, never run in notebook
+  datasets.py              # dataset loaders (7-Scenes, CO3Dv2)
+  results/                 # gitignored
+```
 
-1. **Models** (`collab_splats/models/`):
-   - `rade_gs_model.py`: Baseline depth/normal-enabled Gaussian splatting built on gsplat-rade
-   - `rade_features_model.py`: Extended version supporting ANN feature space splatting
+## Code Style
 
-2. **Wrapper Interface** (`collab_splats/wrapper/splatter.py`):
-   - `Splatter` class: High-level interface for preprocessing, training, and visualization
-   - `SplatterConfig`: Configuration system for different splatting workflows
-   - Supports methods: `splatfacto`, `feature-splatting`, `rade-gs`, `rade-features`
+- **Inline block comments:** each logical block of code gets a short comment explaining what it does. Comment at block level, not every line.
+- `logging` not `print()` — use `logger.debug()` / `logger.info()` throughout module code
+- `########`-style section dividers in long files
+- `RegistryMixin` for registry pattern (from `utils/torch_utils.py`)
+- Template-method pattern for abstract pipelines (see `BaseFeedforwardCreator`)
+- Typed `@dataclass` for pipeline outputs (`FeedforwardResult`, `PointcloudResult`)
+- Hard imports — no stub backends; let missing deps raise `ImportError` at import time
 
-3. **Data Management** (`collab_splats/datamanagers/`):
-   - `features_datamanager.py`: Handles feature-based data loading and processing
+## Testing
 
-4. **Utilities** (`collab_splats/utils/`):
-   - `mesh.py`: Post-processing meshing functionality
-   - `segmentation.py` + `grouping.py`: Gaussian grouping and segmentation tools
-   - `visualization.py`: PyVista-based 3D visualization
-   - `camera_utils.py`: COLMAP camera integration
+- Flat test functions — no class-based unless shared fixture state requires it
+- `tests/` mirrors `collab_splats/` structure
+- Run: `/opt/conda/envs/nerfstudio/bin/python -m pytest tests/`
 
-### NerfStudio Integration
+## Evaluation
 
-The package registers two method configs with nerfstudio:
-- `rade-gs`: Entry point in `collab_splats.configs.rade_gs_method:rade_gs_method`
-- `rade-features`: Entry point in `collab_splats.configs.rade_features_method:rade_features_method`
+- `evals/eval_gt.py` = compute (CLI/tmux only); notebooks in `docs/` = visualization only
+- Results: `evals/results/` (gitignored); pass `--submap_size 50` for >100-frame sequences
 
-### Dependencies
+## Commit Conventions
 
-Key external dependencies:
-- **gsplat-rade**: Custom CUDA kernels for depth/normal rasterization
-- **meshlib**: 3D mesh processing (pinned to v3.0.6.229)
-- **mobile_sam**: Segmentation backend
-- **nerfstudio**: Base framework integration
+Conventional commits with scope: `feat(pointcloud):`, `fix(ba):`, `refactor(semantics):`, `docs(worklog):`
 
 ## Development Commands
 
-### Code Formatting
 ```bash
-# Format code with black (line length: 120)
-black .
-
-# Sort imports
-isort .
+black . && isort .                                                  # format
+/opt/conda/envs/nerfstudio/bin/python -m pytest tests/             # test
+/opt/conda/envs/nerfstudio/bin/python evals/eval_gt.py --help      # eval
 ```
-
-### Testing
-Tests are primarily notebook-based in `tests/` directory:
-- `test_rade_gs.ipynb`: Model testing
-- `test_grouping.ipynb`: Gaussian grouping functionality
-- `test_meshing.ipynb`: Mesh generation testing
-
-Run Python tests directly:
-```bash
-python tests/test_grouping.py
-```
-
-### Example Workflows
-Key examples in `examples/` directory:
-- `derive_splats.ipynb`: Basic splatting pipeline
-- `create_mesh.ipynb`: Mesh generation from splats
-- `visualization.ipynb`: 3D visualization workflows
-- `run_pipeline.py`: Batch processing script
-
-## Key Configuration Patterns
-
-The `SplatterConfig` TypedDict defines the main configuration interface:
-- `file_path`: Input data path (video, images, etc.)
-- `method`: Processing method selection
-- `output_path`: Optional output directory (defaults to input parent)
-- `frame_proportion`: Video frame sampling rate
-- `overwrite`: Force reprocessing flag
-
-## Troubleshooting
-
-For visualization issues (plots not showing), check VSCode port forwarding settings as noted in the README.

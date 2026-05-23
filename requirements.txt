@@ -2,7 +2,6 @@
 huggingface_hub
 transformers
 ultralytics
-fairscale # Required for recognize-anything
 gradio
 
 # 3D visualization and mesh processing
@@ -16,6 +15,7 @@ trame-vtk
 torchtyping==0.1.5
 
 # Git repositories
-git+https://github.com/BasisResearch/feature-splatting.git
 git+https://github.com/ChaoningZhang/MobileSAM.git
-git+https://github.com/xinyu1205/recognize-anything.git
+
+# Retrieval / CLIP
+open-clip-torch

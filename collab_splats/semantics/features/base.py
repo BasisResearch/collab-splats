@@ -363,6 +363,8 @@ class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
         if is_points:
             features = features.T.unsqueeze(-1)  # (D, P, 1)
         text_embs = self.encode_text(queries)
+        # Move features to the text encoder's device (forward returns CPU tensors)
+        features = features.to(text_embs.device)
         out = torch.einsum("chw,nc->nhw", features, text_embs)
         return out.squeeze(-1) if is_points else out
 

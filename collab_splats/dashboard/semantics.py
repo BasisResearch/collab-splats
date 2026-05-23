@@ -599,19 +599,8 @@ class SemanticsDashboard(param.Parameterized):
             extractor = cls(device=device)
             pil = Image.fromarray(self._current_frame)
 
-            if extractor_name == "talk2dino":
-                pil_pre = extractor.preprocess(pil)
-                feats = extractor.forward(pil_pre)
-                n = feats.shape[0]
-                g = int(n**0.5)
-                feat_np = feats.cpu().float().numpy().reshape(g, g, -1).transpose(2, 0, 1)
-            elif extractor_name == "dinov2":
-                tensor, H, W = extractor.preprocess(pil)
-                feats = extractor.forward(tensor)
-                feat_np = extractor.reshape(feats, H, W).numpy()
-            else:
-                tensor = extractor.preprocess(pil).unsqueeze(0)
-                feat_np = extractor.forward(tensor)[0].cpu().float().numpy()
+            # All extractors: forward([pil]) returns [(D, H_p, W_p)]
+            feat_np = extractor.forward([pil])[0].cpu().float().numpy()
 
             pca_rgb = _pca_to_rgb(feat_np)
             overlay = _overlay_pca(self._current_frame, pca_rgb)
@@ -660,15 +649,15 @@ class SemanticsDashboard(param.Parameterized):
             from collab_splats.semantics.features import Talk2DinoExtractor
 
             extractor = Talk2DinoExtractor(model_name=self.hf_model_dd.value, device=self.query_device_dd.value)
-            image_pil = extractor.preprocess(Image.fromarray(self._current_frame))
-            with torch.no_grad():
-                img_embed = extractor._model.encode_image([image_pil])[0]
+            pil = Image.fromarray(self._current_frame)
+            # forward returns [(D, H_p, W_p)]; score_queries accepts spatial map directly
+            img_embed = extractor.forward([pil])[0]  # (D, H_p, W_p) on CPU
 
-            num_patches = img_embed.shape[0]
-            grid_size = int(math.isqrt(num_patches))
+            grid_size = img_embed.shape[1]  # H_p
             img_size = grid_size * extractor.patch_size
 
-            img_np = np.array(image_pil).transpose(2, 0, 1).astype(np.float32)
+            # Resize original PIL to match feature grid for overlay
+            img_np = np.array(pil.resize((img_size, img_size), Image.BILINEAR)).transpose(2, 0, 1).astype(np.float32)
             img_np = (
                 F.interpolate(
                     torch.tensor(img_np).unsqueeze(0),

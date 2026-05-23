@@ -101,9 +101,9 @@ class FeedforwardResult:
     def save_zarr(self, path: Path) -> None:
         """Save to a zarr v3 store with lz4 compression.
 
-        Unlike save(), this backend also persists world_points (chunked by frame)
-        and images (tensor → numpy, chunked by frame). images/conf are excluded
-        from load_zarr to avoid loading large tensors inadvertently.
+        Unlike save(), this backend also persists world_points (chunked by frame),
+        conf (chunked by frame), and images (tensor → numpy, chunked by frame).
+        images is excluded from load_zarr to avoid loading large tensors inadvertently.
 
         Args:
             path: Directory path for the zarr store (created if absent).
@@ -138,6 +138,16 @@ class FeedforwardResult:
             chunks = (1, wp.shape[1], wp.shape[2], wp.shape[3])
             store.create_array("world_points", data=wp, chunks=chunks, compressors=lz4)
 
+        # Save conf (N, H, W) chunked by frame; cast bfloat16 → float32 (zarr limitation).
+        if self.conf is not None:
+            conf_np = self.conf
+            if isinstance(conf_np, torch.Tensor):
+                if conf_np.dtype == torch.bfloat16:
+                    conf_np = conf_np.to(torch.float32)
+                conf_np = conf_np.detach().cpu().numpy()
+            chunks = (1, conf_np.shape[1], conf_np.shape[2])
+            store.create_array("conf", data=conf_np, chunks=chunks, compressors=lz4)
+
         # Save images (tensor → numpy) chunked by frame: (1, 3, H, W)
         # Cast bfloat16 → float32 first; zarr/numpy do not support bfloat16.
         if self.images is not None:
@@ -153,7 +163,8 @@ class FeedforwardResult:
     def load_zarr(cls, path: Path) -> "FeedforwardResult":
         """Load from a zarr v3 store saved by save_zarr().
 
-        images and conf are always returned as None (too large for general loading).
+        images is always returned as None (too large for general loading).
+        conf is restored as a torch.Tensor if present in the store.
 
         Args:
             path: Directory path of the zarr store.
@@ -178,6 +189,7 @@ class FeedforwardResult:
         features = store["features"][:] if "features" in store else None
         pixel_indices = store["pixel_indices"][:] if "pixel_indices" in store else None
         world_points = store["world_points"][:] if "world_points" in store else None
+        conf = torch.from_numpy(store["conf"][:]) if "conf" in store else None
 
         return cls(
             pts3d=pts3d,
@@ -192,7 +204,7 @@ class FeedforwardResult:
             pixel_indices=pixel_indices,
             world_points=world_points,
             images=None,  # too large; load separately if needed
-            conf=None,
+            conf=conf,
         )
 
 
@@ -513,6 +525,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
 
     camera_model: str = "PINHOLE"
     extractor_name: str | None = None
+    max_points: int = 500_000
 
     model: Any = field(default=None, init=False, repr=False)
     views: Any = field(default=None, init=False, repr=False)
@@ -534,6 +547,18 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         self.run_inference()
         self.postprocess()
         return self.build_colmap(output_dir)
+
+    def run(self, image_dir: Path, device: str | None = None) -> FeedforwardResult:
+        """Run the full inference pipeline and return outputs.
+
+        Convenience wrapper for load_model → setup_inference → run_inference → postprocess.
+        Use reconstruct() instead if you also need COLMAP output written to disk.
+        """
+        self.load_model(device=device)
+        self.setup_inference(image_dir)
+        self.run_inference()
+        self.postprocess()
+        return self.outputs
 
     def load_model(self, device: str | None = None) -> None:
         device = device or ("cuda" if torch.cuda.is_available() else "cpu")

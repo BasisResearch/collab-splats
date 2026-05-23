@@ -84,7 +84,6 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
     dtypes. torch 2.4 enforces this strictly; 2.1.2 allowed bf16/float32 mismatch.
     """
     import torch
-    import open3d as o3d
 
     n, h, w = 2, 4, 4
     raw_outputs = [
@@ -108,10 +107,6 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
         for _ in range(n)
     ]
 
-    fake_pcd = o3d.geometry.PointCloud()
-    fake_pcd.points = o3d.utility.Vector3dVector(np.zeros((5, 3)))
-    fake_pcd.colors = o3d.utility.Vector3dVector(np.zeros((5, 3)))
-
     creator = MapAnythingCreator()
     creator._processed_views = [{"img": torch.zeros(1, 3, h, w)} for _ in range(n)]
     creator.image_paths = [Path(f"/fake/img_{i}.jpg") for i in range(n)]
@@ -119,16 +114,7 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
 
     with patch("collab_splats.pointcloud.feedforward.mapanything"
                ".postprocess_model_outputs_for_inference",
-               return_value=fake_processed) as mock_post, \
-         patch("collab_splats.pointcloud.feedforward.mapanything.collect_pts3d_from_outputs",
-               return_value=(
-                   np.zeros((5, 3), dtype=np.float32),
-                   np.zeros((5, 3), dtype=np.uint8),
-                   np.zeros((n, 3, 4), dtype=np.float32),
-                   np.zeros((n, 3, 3), dtype=np.float32),
-               )), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.voxel_downsample",
-               return_value=(fake_pcd, None)):
+               return_value=fake_processed) as mock_post:
         creator._postprocess(raw_outputs)
 
     # raw_outputs is mutated in-place before postprocess is called;
@@ -150,7 +136,6 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
     Mocks are placed at model.forward() and mapanything.utils.inference functions.
     """
     import torch
-    import open3d as o3d
     from PIL import Image as PILImage
 
     image_dir = tmp_path / "imgs"
@@ -193,10 +178,6 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
         for _ in range(n)
     ]
 
-    fake_pcd = o3d.geometry.PointCloud()
-    fake_pcd.points = o3d.utility.Vector3dVector(np.zeros((5, 3)))
-    fake_pcd.colors = o3d.utility.Vector3dVector(np.zeros((5, 3)))
-
     param = torch.zeros(1)
     mock_model = MagicMock()
     mock_model.parameters.side_effect = lambda: iter([param])
@@ -209,16 +190,7 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
          patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
                return_value=fake_processed), \
          patch("collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
-               return_value=fake_post), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.collect_pts3d_from_outputs",
-               return_value=(
-                   np.zeros((5, 3), dtype=np.float32),
-                   np.zeros((5, 3), dtype=np.uint8),
-                   np.zeros((n, 3, 4), dtype=np.float32),
-                   np.zeros((n, 3, 3), dtype=np.float32),
-               )), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.voxel_downsample",
-               return_value=(fake_pcd, None)):
+               return_value=fake_post):
 
         creator = MapAnythingCreator()
         creator.model = mock_model

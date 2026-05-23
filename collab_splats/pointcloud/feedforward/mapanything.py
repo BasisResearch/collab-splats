@@ -1,8 +1,7 @@
 """MapAnything feedforward backend: inference utilities and creator.
 
 Provides:
-  collect_pts3d_from_outputs — extract pts3d/colors/extrinsics/intrinsics from processed outputs
-  MapAnythingCreator         — feedforward creator using MapAnything depth + pose estimation
+  MapAnythingCreator — feedforward creator using MapAnything depth + pose estimation
 """
 from __future__ import annotations
 
@@ -11,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import open3d as o3d
 import torch
 from PIL import Image as PILImage
+from vggt.utils.helper import randomly_limit_trues
 
 # timm 0.6.x compat: uniception (mapanything dep) imports `from timm.layers import DropPath`
 # which does not exist in timm<0.9. Re-export it from timm.models.layers before the import.
@@ -32,54 +31,53 @@ from mapanything.utils.inference import (
     validate_input_views_for_inference,
 )
 
-from ..utils import voxel_downsample
 from .base import BaseFeedforwardCreator, FeedforwardResult, _extrinsics_3x4_to_4x4, console
 
 
 # ── Inference utilities ────────────────────────────────────────────────────────
 
-def collect_pts3d_from_outputs(
-    outputs: list[dict],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Extract pts3d, colors, extrinsics, intrinsics from MapAnything output dicts.
+def _reproject_mapanything(
+    raw_outputs: list[dict],
+    extrinsics_3x4: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Re-project MapAnything camera-frame points to world frame using given extrinsics.
+
+    Args:
+        raw_outputs:    list[dict] from _forward(); each dict contains pts3d_cam,
+                        mask, depth_z, img_no_norm (float32, unmasked).
+        extrinsics_3x4: (N, 3, 4) world-to-camera matrices.
 
     Returns:
-        pts3d:      (P, 3) float32 world-space points (all frames concatenated)
-        colors:     (P, 3) uint8 RGB
-        extrinsics: (N, 3, 4) float32 world2cam [R|t]
-        intrinsics: (N, 3, 3) float32 K matrices
+        (pts3d, colors) — (P, 3) float32 world-space points and (P, 3) uint8 RGB.
     """
-    all_points: list[np.ndarray] = []
+    all_pts: list[np.ndarray] = []
     all_colors: list[np.ndarray] = []
-    intrinsics_list: list[np.ndarray] = []
-    extrinsics_list: list[np.ndarray] = []
 
-    for pred in outputs:
-        pts3d = pred["pts3d"][0].cpu().numpy()
-        mask = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)
+    for i, pred in enumerate(raw_outputs):
+        # Extract camera-frame points and validity components
+        pts3d_cam = pred["pts3d_cam"][0].cpu().numpy()                  # (H, W, 3)
+        mask = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)   # (H, W)
+        depth_z = pred["depth_z"][0].squeeze(-1).cpu().numpy()          # (H, W)
 
-        depth_z = pred["depth_z"][0].squeeze(-1).cpu().numpy()
-        valid_depth_mask = depth_z > 0
-        combined_mask = mask & valid_depth_mask
+        # Combine validity mask with positive-depth check
+        combined_mask = mask & (depth_z > 0)
 
-        img_no_norm = pred["img_no_norm"][0].cpu().numpy()
-        colors = (img_no_norm * 255).astype(np.uint8)
+        # Refined world2cam → cam2world for re-projection into world frame
+        ext_4x4 = np.concatenate([extrinsics_3x4[i], [[0, 0, 0, 1]]], axis=0)  # (4, 4)
+        cam2world = closed_form_pose_inverse(ext_4x4[None])[0]                   # (4, 4)
 
-        all_points.append(pts3d[combined_mask])
-        all_colors.append(colors[combined_mask])
+        # Apply mask and transform camera-frame points to world frame
+        pts_flat = pts3d_cam[combined_mask]                                       # (K, 3)
+        pts_world = (cam2world[:3, :3] @ pts_flat.T + cam2world[:3, 3:]).T       # (K, 3)
 
-        intrinsics_list.append(pred["intrinsics"][0].cpu().numpy())
+        # Extract colors for surviving pixels
+        img_no_norm = pred["img_no_norm"][0].cpu().numpy()                        # (H, W, 3)
+        colors = (img_no_norm[combined_mask] * 255).astype(np.uint8)              # (K, 3)
 
-        cam2world = pred["camera_poses"][0].cpu().numpy()
-        world2cam = closed_form_pose_inverse(cam2world[None])[0]
-        extrinsics_list.append(world2cam[:3, :4])
+        all_pts.append(pts_world.astype(np.float32))
+        all_colors.append(colors)
 
-    pts3d_all = np.concatenate(all_points, axis=0)
-    colors_all = np.concatenate(all_colors, axis=0)
-    intrinsics = np.stack(intrinsics_list)
-    extrinsics = np.stack(extrinsics_list)
-
-    return pts3d_all, colors_all, extrinsics, intrinsics
+    return np.concatenate(all_pts, axis=0), np.concatenate(all_colors, axis=0)
 
 
 # ── Creator ───────────────────────────────────────────────────────────────────
@@ -194,29 +192,46 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             confidence_percentile=self.confidence_percentile,
         )
 
-        # Extract pts3d, colors, extrinsics, intrinsics from processed per-frame dicts
-        pts3d, colors, extrinsics, intrinsics = collect_pts3d_from_outputs(processed)
+        # Build per-frame masks + point/color grids in one pass — mirrors VGGTX conf_mask pattern.
+        # postprocess_model_outputs_for_inference already baked confidence + edge masking into
+        # pred["mask"], so combined_mask = mask & (depth_z > 0) is the full validity mask.
+        masks, pts3d_grid, colors_grid = [], [], []
+        images_list, conf_list = [], []
+        extrinsics_list, intrinsics_list = [], []
 
-        # Populate BA fields: per-frame images, confidence, and world-point grid
-        _images = torch.stack(
-            [p["img_no_norm"][0].cpu().permute(2, 0, 1) for p in processed]
-        )
-        if processed[0].get("conf") is not None:
-            conf_list = [p["conf"][0] for p in processed]
-            _conf = torch.stack([c[0] if c.ndim == 3 else c for c in conf_list])
-        else:
-            _conf = None
-        _world_points = np.stack(
-            [p["pts3d"][0].cpu().numpy() for p in processed]
-        )  # (N, H, W, 3)
+        for pred in processed:
+            m = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)       # (H, W)
+            dz = pred["depth_z"][0].squeeze(-1).cpu().numpy()                # (H, W)
+            masks.append(m & (dz > 0))
+            pts3d_grid.append(pred["pts3d"][0].cpu().numpy())                # (H, W, 3)
+            colors_grid.append(
+                (pred["img_no_norm"][0].cpu().numpy() * 255).astype(np.uint8)
+            )                                                                  # (H, W, 3)
+            images_list.append(pred["img_no_norm"][0].cpu().permute(2, 0, 1))  # (C, H, W)
+            if pred.get("conf") is not None:
+                c = pred["conf"][0]
+                conf_list.append(c[0] if c.ndim == 3 else c)
+            cam2world = pred["camera_poses"][0].cpu().numpy()
+            extrinsics_list.append(closed_form_pose_inverse(cam2world[None])[0][:3, :4])
+            intrinsics_list.append(pred["intrinsics"][0].cpu().numpy())
 
-        # Voxel downsample to reduce point cloud density
-        _pcd = o3d.geometry.PointCloud()
-        _pcd.points = o3d.utility.Vector3dVector(pts3d)
-        _pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
-        _pcd, _ = voxel_downsample(_pcd, adaptive=False)
-        pts3d = np.asarray(_pcd.points, dtype=np.float32)
-        colors = (np.asarray(_pcd.colors) * 255).astype(np.uint8)
+        combined_mask = np.stack(masks)           # (N, H, W) bool
+        stacked_pts3d = np.stack(pts3d_grid)      # (N, H, W, 3)
+        stacked_colors = np.stack(colors_grid)    # (N, H, W, 3)
+
+        # Apply cross-frame random subsampling — same as VGGTX randomly_limit_trues on conf_mask
+        if int(combined_mask.sum()) > self.max_points:
+            combined_mask = randomly_limit_trues(combined_mask, self.max_points)
+
+        pts3d = stacked_pts3d[combined_mask].astype(np.float32)
+        colors = stacked_colors[combined_mask]
+        pixel_indices = np.stack(np.where(combined_mask), axis=1).astype(np.int32)  # (P, 3)
+
+        _world_points = stacked_pts3d                        # full (N, H, W, 3) grid for BA
+        _images = torch.stack(images_list)                   # (N, C, H, W)
+        _conf = torch.stack(conf_list) if conf_list else None
+        extrinsics = np.stack(extrinsics_list)               # (N, 3, 4)
+        intrinsics = np.stack(intrinsics_list)               # (N, 3, 3)
 
         # Convert extrinsics to 4×4 homogeneous form
         extrinsics_4x4 = _extrinsics_3x4_to_4x4(extrinsics)
@@ -224,6 +239,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         return FeedforwardResult(
             pts3d=pts3d,
             colors=colors,
+            pixel_indices=pixel_indices,
             extrinsics=extrinsics_4x4,
             intrinsics=intrinsics,
             image_paths=self.image_paths,
@@ -312,31 +328,4 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         Returns:
             (pts3d, colors) — (P, 3) float32 world-space points and (P, 3) uint8 RGB.
         """
-        all_pts: list[np.ndarray] = []
-        all_colors: list[np.ndarray] = []
-
-        for i, pred in enumerate(raw_outputs):
-            # Extract camera-frame points and validity components
-            pts3d_cam = pred["pts3d_cam"][0].cpu().numpy()                  # (H, W, 3)
-            mask = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)   # (H, W)
-            depth_z = pred["depth_z"][0].squeeze(-1).cpu().numpy()          # (H, W)
-
-            # Combine validity mask with positive-depth check
-            combined_mask = mask & (depth_z > 0)
-
-            # Refined world2cam → cam2world for re-projection into world frame
-            ext_4x4 = np.concatenate([extrinsics_3x4[i], [[0, 0, 0, 1]]], axis=0)  # (4, 4)
-            cam2world = closed_form_pose_inverse(ext_4x4[None])[0]                   # (4, 4)
-
-            # Apply mask and transform camera-frame points to world frame
-            pts_flat = pts3d_cam[combined_mask]                                       # (K, 3)
-            pts_world = (cam2world[:3, :3] @ pts_flat.T + cam2world[:3, 3:]).T       # (K, 3)
-
-            # Extract colors for surviving pixels
-            img_no_norm = pred["img_no_norm"][0].cpu().numpy()                        # (H, W, 3)
-            colors = (img_no_norm[combined_mask] * 255).astype(np.uint8)              # (K, 3)
-
-            all_pts.append(pts_world.astype(np.float32))
-            all_colors.append(colors)
-
-        return np.concatenate(all_pts, axis=0), np.concatenate(all_colors, axis=0)
+        return _reproject_mapanything(raw_outputs, extrinsics_3x4)

@@ -117,14 +117,14 @@ class VGGTXCreator(BaseFeedforwardCreator):
                               Reduce if OOM on long sequences.
         conf_threshold:       Depth confidence percentile cutoff (0–100).
                               Points whose confidence is below this percentile
-                              are discarded.  50.0 = keep the top 50 %.
+                              are discarded.  35.0 = keep the top 65 %.
     """
 
     camera_model: str = "SIMPLE_PINHOLE"
     model_name: str = "facebook/VGGT-1B"
     use_global_alignment: bool = False
     chunk_size: int = 256
-    conf_threshold: float = 50.0
+    conf_threshold: float = 35.0
     image_preproc: str = "ratio"
 
     def __post_init__(self) -> None:
@@ -211,17 +211,28 @@ class VGGTXCreator(BaseFeedforwardCreator):
         """
         images = views
         device = next(model.parameters()).device
-        dtype = next(model.parameters()).dtype
+        device_type = device.type
+        # Match aggregator's internal dtype selection: bf16 on Ampere+, fp16 otherwise.
+        # Model params are fp32 but aggregator overrides dtype unconditionally at line 221;
+        # passing fp32 images causes camera/register tokens to be cast to fp32 before that
+        # override, making assembled tokens fp32 while aggregator asserts bf16 — assertion fails.
+        dtype = (
+            torch.bfloat16
+            if device_type == "cuda" and torch.cuda.get_device_capability(device)[0] >= 8
+            else torch.float16
+        )
 
-        # Move images to model device and dtype
+        # Cast images to model dtype before forward; aggregator asserts tokens.dtype == dtype
+        # at line 270 and token assembly happens before autocast can override it.
         images = images.to(device, dtype=dtype)
 
         width, height = self.original_coords[0, -2:]
         image_shape = images.shape[-2:]
 
-        # Run forward pass under no_grad
+        # bf16/f16 autocast scoped to model forward only; downstream numpy ops need float32.
         with torch.no_grad():
-            predictions = model(images.unsqueeze(0))
+            with torch.autocast(device_type, dtype=dtype):
+                predictions = model(images.unsqueeze(0))
 
         # Decode pose encoding at model resolution (for BA) and original resolution
         extrinsic_ds, intrinsic_ds = pose_encoding_to_extri_intri(
@@ -278,6 +289,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
             extrinsic=extrinsic,
             intrinsic=intrinsic,
             conf_threshold=self.conf_threshold,
+            max_points=self.max_points,
         )
 
         # Lift semantic features to 3D if an extractor is configured
@@ -351,6 +363,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
             extrinsic=extrinsics_3x4,
             intrinsic=intrinsics,
             conf_threshold=self.conf_threshold,
+            max_points=self.max_points,
         )
         return pts3d, colors  # pixel_indices unused; post-BA uses stored indices
 

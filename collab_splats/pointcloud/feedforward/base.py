@@ -2,7 +2,6 @@
 
 Provides:
   FeedforwardResult                        — typed output dataclass for all feedforward backends
-  _extrinsics_3x4_to_4x4                  — append homogeneous row to (N,3,4) extrinsics
   _raw_to_world_points                     — unproject depth maps to subsampled world-space grids
   build_pycolmap_reconstruction            — build a pycolmap Reconstruction from pts+cameras
   _rescale_reconstruction_to_original_dims — rescale camera params from model resolution to original
@@ -26,6 +25,7 @@ from zarr.codecs import BloscCodec
 
 from ..base import BasePointcloudCreator, PointcloudResult
 from ..utils import colmap_reconstruction_to_result, cross_frame_attention_ratio, reproject_pixels
+from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 
 console = Console()
 
@@ -244,20 +244,6 @@ class FeedforwardResult:
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
 
-def _extrinsics_3x4_to_4x4(extrinsics_3x4: np.ndarray) -> np.ndarray:
-    """Append a [0, 0, 0, 1] bottom row to convert (N, 3, 4) → (N, 4, 4).
-
-    Args:
-        extrinsics_3x4: (N, 3, 4) float32 world-to-camera [R|t] matrices.
-
-    Returns:
-        (N, 4, 4) float32 homogeneous world-to-camera matrices.
-    """
-    n = extrinsics_3x4.shape[0]
-    bottom = np.tile(np.array([[0, 0, 0, 1]], dtype=np.float32), (n, 1, 1))  # (N, 1, 4)
-    return np.concatenate([extrinsics_3x4, bottom], axis=1)                   # (N, 4, 4)
-
-
 def _raw_to_world_points(raw: dict, subsample: int = 8) -> tuple[np.ndarray | None, np.ndarray | None]:
     """Extract world-space 3D points from raw _forward output dict.
 
@@ -290,8 +276,8 @@ def _raw_to_world_points(raw: dict, subsample: int = 8) -> tuple[np.ndarray | No
     K, H, W = depth.shape
 
     # Invert extrinsics (world2cam) to get cam2world transforms for unprojection
-    extr_4x4 = _extrinsics_3x4_to_4x4(extr_3x4)
-    cam2world = np.linalg.inv(extr_4x4.astype(np.float64)).astype(np.float32)
+    extr_4x4 = extrinsics_to_homogeneous(extr_3x4)
+    cam2world = invert_poses(extr_4x4.astype(np.float64)).astype(np.float32)
 
     # Build subsampled pixel grid (us × vs) for sparse world-point extraction
     us = np.arange(0, W, subsample)

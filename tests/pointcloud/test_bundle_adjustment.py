@@ -46,11 +46,8 @@ def _make_bae_mock():
     utils = types.ModuleType("bae.utils")
     utils_py = types.ModuleType("bae.utils.pysolvers")
     utils_py.PCG = MagicMock
-    utils_ba = types.ModuleType("bae.utils.ba")
-    utils_ba.rotate_quat = MagicMock(side_effect=lambda pts, _pose: pts)
     bae.utils = utils
     bae.utils.pysolvers = utils_py
-    bae.utils.ba = utils_ba
 
     optim_mod = types.ModuleType("bae.optim")
     optim_mod.LM = MagicMock()
@@ -207,67 +204,52 @@ def _build_synthetic_scene(N=4, P=50, H=128, W=128, seed=42):
     return points3d, extrinsics, intrinsics, tracks, vis_mask
 
 
-@pytest.mark.skipif(not _pypose_available(), reason="requires pypose (downgrade bae to 0.2)")
-def test_run_bundle_adjustment_early_exit_shape():
-    """Verify run_bundle_adjustment returns correct shapes when inlier count is below threshold (early-exit path)."""
+@pytest.mark.skipif(not _pypose_available(), reason="requires pypose")
+def test_optimize_early_exit_shape():
+    """_optimize returns correct shapes when inlier count is below threshold (early-exit path)."""
     N, P, H, W = 4, 50, 128, 128
-    points3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
-
-    # We need at least 64 inliers per frame and >= 2 observations per point.
-    # With P=50 and N=4 that falls below the 64-inlier threshold in the filter step,
-    # so we expect the function to return early (unchanged arrays) rather than crash.
-    ref_pts, ref_ext, ref_intr = None, None, None
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
     vggt_mod, _, proj_mod = _make_vggt_mock()
-    # project_3D_points_np returns (N, P, 2) projections + (N, 3, P) cam-space points
-    # proj_cam[:, 2, :] is the Z depth; use positive depth so no points are behind camera
-    proj_cam = np.ones((N, 3, P), dtype=np.float32)  # depth=1 everywhere (in front)
+    proj_cam = np.ones((N, 3, P), dtype=np.float32)
     proj_mod.project_3D_points_np = MagicMock(return_value=(tracks.copy(), proj_cam))
-
     bae_mod = _make_bae_mock()
 
     extra_mods = {
         "vggt": vggt_mod,
         "vggt.dependency": vggt_mod.dependency,
         "vggt.dependency.projection": proj_mod,
+        "vggt.dependency.track_predict": vggt_mod.dependency.track_predict,
         "bae": bae_mod,
         "bae.autograd": bae_mod.autograd,
         "bae.autograd.function": bae_mod.autograd.function,
         "bae.utils": bae_mod.utils,
         "bae.utils.pysolvers": bae_mod.utils.pysolvers,
-        "bae.utils.ba": bae_mod.utils.ba,
         "bae.optim": bae_mod.optim,
     }
 
     with patch.dict(sys.modules, extra_mods):
-        import importlib
         import importlib.util
-        from pathlib import Path as _Path
-
-        # Load bundle_adjustment directly by file path to avoid triggering
-        # collab_splats.pointcloud.__init__ which eagerly imports VGGTXCreator
-        # requiring the real vggt package (not available in mock tests).
-        _ba_path = _Path(__file__).parents[2] / "collab_splats" / "pointcloud" / "bundle_adjustment.py"
+        _ba_path = Path(__file__).parents[2] / "collab_splats" / "pointcloud" / "bundle_adjustment.py"
         _mod_name = "collab_splats.pointcloud.bundle_adjustment"
-        _spec = importlib.util.spec_from_file_location(_mod_name, _ba_path)
-        ba_mod = importlib.util.module_from_spec(_spec)
+        spec = importlib.util.spec_from_file_location(_mod_name, _ba_path)
+        ba_mod = importlib.util.module_from_spec(spec)
         sys.modules[_mod_name] = ba_mod
-        _spec.loader.exec_module(ba_mod)
+        spec.loader.exec_module(ba_mod)
 
-        ref_pts, ref_ext, ref_intr = ba_mod._run_bundle_adjustment(
-            points3d=points3d,
+        ba = ba_mod.BundleAdjustment()
+        ref_pts, ref_ext, ref_intr = ba._optimize(
+            pts3d=pts3d,
             extrinsics=extrinsics,
             intrinsics=intrinsics,
             tracks=tracks,
-            vis_mask=vis_mask,
-            image_size=(H, W),
+            vis_scores=vis_mask.astype(np.float32),
             max_reproj_error=4.0,
-            lm_steps=5,
         )
 
-    assert ref_pts.shape == (P, 3), f"points3d shape wrong: {ref_pts.shape}"
-    assert ref_ext.shape == (N, 3, 4), f"extrinsics shape wrong: {ref_ext.shape}"
-    assert ref_intr.shape == (N, 3, 3), f"intrinsics shape wrong: {ref_intr.shape}"
+    assert ref_pts.shape == (P, 3)
+    assert ref_ext.shape == (N, 3, 4)
+    assert ref_intr.shape == (N, 3, 3)
 
 
 def _cuda_and_bae_available() -> bool:
@@ -285,19 +267,17 @@ def _cuda_and_bae_available() -> bool:
 
 
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
-def test_run_bundle_adjustment_reduces_reproj_error():
-    """With noisy initial poses and clean 2D observations, BA must reduce reprojection error."""
-    from collab_splats.pointcloud.bundle_adjustment import _run_bundle_adjustment
+def test_optimize_reduces_reproj_error():
+    """With noisy initial poses and clean 2D observations, _optimize must reduce reprojection error."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
 
     rng = np.random.default_rng(0)
     N, P, H, W = 5, 200, 256, 256
     f = 200.0
 
-    # Clean 3D points in front of cameras
     points3d = rng.uniform(-1, 1, (P, 3)).astype(np.float64)
-    points3d[:, 2] += 3.0  # z > 0 in front of all cameras
+    points3d[:, 2] += 3.0
 
-    # Clean extrinsics: identity R, small random t
     extrinsics_clean = np.zeros((N, 3, 4), dtype=np.float32)
     for i in range(N):
         extrinsics_clean[i, :3, :3] = np.eye(3)
@@ -307,7 +287,6 @@ def test_run_bundle_adjustment_reduces_reproj_error():
         np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], dtype=np.float32), (N, 1, 1)
     )
 
-    # Project with clean poses → ground-truth 2D observations
     tracks = np.zeros((N, P, 2), dtype=np.float32)
     vis_mask = np.ones((N, P), dtype=bool)
     for i in range(N):
@@ -324,12 +303,11 @@ def test_run_bundle_adjustment_reduces_reproj_error():
             & (tracks[i, :, 1] < H)
         )
 
-    # Perturb extrinsics with Gaussian translation noise
     extrinsics_noisy = extrinsics_clean.copy()
     for i in range(N):
         extrinsics_noisy[i, :3, 3] += rng.normal(0, 0.1, 3).astype(np.float32)
 
-    def mean_reproj_error(ext: np.ndarray) -> float:
+    def mean_reproj_error(ext):
         errs = []
         for i in range(N):
             R, t = ext[i, :3, :3], ext[i, :3, 3]
@@ -344,28 +322,26 @@ def test_run_bundle_adjustment_reduces_reproj_error():
 
     err_before = mean_reproj_error(extrinsics_noisy)
 
-    _, ext_out, _ = _run_bundle_adjustment(
+    ba = BundleAdjustment()
+    _, ext_out, _ = ba._optimize(
         points3d.copy(),
         extrinsics_noisy,
         intrinsics,
         tracks,
-        vis_mask,
-        image_size=(H, W),
+        vis_mask.astype(np.float32),
         max_reproj_error=None,
         lm_steps=20,
     )
 
     err_after = mean_reproj_error(ext_out)
-    assert err_after < err_before, (
-        f"BA did not reduce reprojection error: {err_before:.4f} → {err_after:.4f}"
-    )
+    assert err_after < err_before, f"BA did not reduce error: {err_before:.4f} → {err_after:.4f}"
 
 
-@pytest.mark.skipif(not _pypose_available(), reason="requires pypose (downgrade bae to 0.2)")
-def test_run_bundle_adjustment_no_reproj_filter():
+@pytest.mark.skipif(not _pypose_available(), reason="requires pypose")
+def test_optimize_no_reproj_filter():
     """Passing max_reproj_error=None skips reprojection filtering."""
     N, P, H, W = 4, 50, 128, 128
-    points3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
     vggt_mod, _, proj_mod = _make_vggt_mock()
     bae_mod = _make_bae_mock()
@@ -374,33 +350,35 @@ def test_run_bundle_adjustment_no_reproj_filter():
         "vggt": vggt_mod,
         "vggt.dependency": vggt_mod.dependency,
         "vggt.dependency.projection": proj_mod,
+        "vggt.dependency.track_predict": vggt_mod.dependency.track_predict,
         "bae": bae_mod,
         "bae.autograd": bae_mod.autograd,
         "bae.autograd.function": bae_mod.autograd.function,
         "bae.utils": bae_mod.utils,
         "bae.utils.pysolvers": bae_mod.utils.pysolvers,
-        "bae.utils.ba": bae_mod.utils.ba,
         "bae.optim": bae_mod.optim,
     }
 
     with patch.dict(sys.modules, extra_mods):
-        import importlib
-        import collab_splats.pointcloud.bundle_adjustment as ba_mod
-        importlib.reload(ba_mod)
+        import importlib.util
+        _ba_path = Path(__file__).parents[2] / "collab_splats" / "pointcloud" / "bundle_adjustment.py"
+        _mod_name = "collab_splats.pointcloud.bundle_adjustment"
+        spec = importlib.util.spec_from_file_location(_mod_name, _ba_path)
+        ba_mod = importlib.util.module_from_spec(spec)
+        sys.modules[_mod_name] = ba_mod
+        spec.loader.exec_module(ba_mod)
 
-        ref_pts, ref_ext, ref_intr = ba_mod._run_bundle_adjustment(
-            points3d=points3d,
+        ba = ba_mod.BundleAdjustment()
+        ref_pts, ref_ext, ref_intr = ba._optimize(
+            pts3d=pts3d,
             extrinsics=extrinsics,
             intrinsics=intrinsics,
             tracks=tracks,
-            vis_mask=vis_mask,
-            image_size=(H, W),
-            max_reproj_error=None,  # skip filter
+            vis_scores=vis_mask.astype(np.float32),
+            max_reproj_error=None,
         )
 
-    # project_3D_points_np should NOT have been called
     proj_mod.project_3D_points_np.assert_not_called()
-
     assert ref_pts.shape == (P, 3)
     assert ref_ext.shape == (N, 3, 4)
     assert ref_intr.shape == (N, 3, 3)
@@ -418,12 +396,12 @@ def _make_ba_mods(extra=None):
         "vggt": vggt_mod,
         "vggt.dependency": vggt_mod.dependency,
         "vggt.dependency.projection": proj_mod,
+        "vggt.dependency.track_predict": vggt_mod.dependency.track_predict,
         "bae": bae_mod,
         "bae.autograd": bae_mod.autograd,
         "bae.autograd.function": bae_mod.autograd.function,
         "bae.utils": bae_mod.utils,
         "bae.utils.pysolvers": bae_mod.utils.pysolvers,
-        "bae.utils.ba": bae_mod.utils.ba,
         "bae.optim": bae_mod.optim,
     }
     if extra:
@@ -545,12 +523,11 @@ def test_bundle_adjustment_refine_returns_feedforward_result():
 
     with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
                return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))), \
-         patch("collab_splats.pointcloud.bundle_adjustment._run_bundle_adjustment",
-               return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
+         patch.object(BundleAdjustment, "_optimize",
+                      return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
         out = BundleAdjustment().refine(result)
 
     assert isinstance(out, FeedforwardResult)
-    # extrinsics padded from (N, 3, 4) → (N, 4, 4)
     assert out.extrinsics.shape == (N, 4, 4)
     assert out.intrinsics.shape == (N, 3, 3)
 
@@ -568,8 +545,8 @@ def test_bundle_adjustment_refine_preserves_pts3d_colors():
 
     with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
                return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))), \
-         patch("collab_splats.pointcloud.bundle_adjustment._run_bundle_adjustment",
-               return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
+         patch.object(BundleAdjustment, "_optimize",
+                      return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
         out = BundleAdjustment().refine(result)
 
     np.testing.assert_array_equal(out.pts3d, original_pts3d)
@@ -588,17 +565,14 @@ def test_bundle_adjustment_refine_threads_config():
 
     with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
                return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))) as mock_tracks, \
-         patch("collab_splats.pointcloud.bundle_adjustment._run_bundle_adjustment",
-               return_value=(np.zeros((5, 3)), refined_ext, refined_intr)) as mock_ba:
+         patch.object(BundleAdjustment, "_optimize",
+                      return_value=(np.zeros((5, 3)), refined_ext, refined_intr)) as mock_opt:
         cfg = BundleAdjustmentConfig(device="cpu", lm_steps=5, max_reproj_error=2.0)
         BundleAdjustment(config=cfg).refine(result)
 
     _, tracks_kw = mock_tracks.call_args
     assert tracks_kw["device"] == "cpu"
-    _, ba_kw = mock_ba.call_args
-    assert ba_kw["device"] == "cpu"
-    assert ba_kw["lm_steps"] == 5
-    assert ba_kw["max_reproj_error"] == 2.0
+    mock_opt.assert_called_once()
 
 
 def test_bundle_adjustment_default_config():

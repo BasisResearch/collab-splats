@@ -85,7 +85,9 @@ def test_vggt_omega_creator_defaults():
     assert c.model_path is None
     assert c.model_repo == "facebook/VGGT-Omega"
     assert c.model_filename == "vggt_omega_1b_512.pt"
-    assert c.image_resolution == 512
+    assert c.resolution == 512  # None → resolved to 512
+    assert c.resize_mode == "balanced"
+    assert c.enable_text_alignment is False
     assert c.conf_threshold == 50.0
 
 
@@ -188,7 +190,7 @@ def test_preprocess_returns_correct_shapes(tmp_path):
     for i in range(3):
         PIL.Image.new("RGB", (64, 64), color=i * 80).save(tmp_path / f"frame_{i:04d}.jpg")
 
-    creator = VGGTOmegaCreator(image_resolution=64)
+    creator = VGGTOmegaCreator(resolution=64)
     with patch("collab_splats.pointcloud.feedforward.vggt_omega.load_and_preprocess_images",
                return_value=torch.zeros(3, 3, 64, 64)):
         views, image_paths, original_coords = creator._preprocess(tmp_path)
@@ -433,11 +435,11 @@ def test_extract_intermediate_features_hook_removed_on_error():
 
 
 ########################################################################
-########## _reproject_ba ###############################################
+########## _reproject ##################################################
 ########################################################################
 
-def test_reproject_ba_returns_pts3d_colors(tmp_path):
-    """_reproject_ba returns (pts3d, colors) tuple."""
+def test_reproject_returns_pts3d_colors(tmp_path):
+    """_reproject returns (pts3d, colors) tuple."""
     n = 2
     raw = _make_raw_outputs(n)
     extrinsics_3x4 = np.tile(np.eye(4)[:3], (n, 1, 1)).astype(np.float32)
@@ -450,7 +452,117 @@ def test_reproject_ba_returns_pts3d_colors(tmp_path):
     creator = VGGTOmegaCreator()
     with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
                return_value=(pts, colors, pixel_indices)):
-        result_pts, result_colors = creator._reproject_ba(raw, extrinsics_3x4, intrinsics)
+        result_pts, result_colors = creator._reproject(raw, extrinsics_3x4, intrinsics)
 
     assert result_pts.shape == (5, 3)
     assert result_colors.shape == (5, 3)
+
+
+########################################################################
+########## resolution / resize_mode / enable_text_alignment ############
+########################################################################
+
+def test_enable_text_alignment_auto_sets_resolution_256():
+    """resolution=None + enable_text_alignment=True → resolved to 256."""
+    c = VGGTOmegaCreator(enable_text_alignment=True)
+    assert c.resolution == 256
+
+
+def test_enable_text_alignment_auto_sets_resolution_512():
+    """resolution=None + enable_text_alignment=False → resolved to 512."""
+    c = VGGTOmegaCreator(enable_text_alignment=False)
+    assert c.resolution == 512
+
+
+def test_explicit_resolution_not_overridden():
+    """Explicit resolution=768 is preserved regardless of enable_text_alignment."""
+    c = VGGTOmegaCreator(resolution=768, enable_text_alignment=True)
+    assert c.resolution == 768
+
+
+def test_invalid_resize_mode_raises():
+    """__post_init__ raises ValueError for unknown resize_mode."""
+    with pytest.raises(ValueError, match="resize_mode"):
+        VGGTOmegaCreator(resize_mode="bogus")
+
+
+def test_resize_mode_balanced_default():
+    """Default resize_mode is 'balanced'."""
+    c = VGGTOmegaCreator()
+    assert c.resize_mode == "balanced"
+
+
+def test_load_model_passes_enable_alignment_true(tmp_path):
+    """_load_model passes enable_alignment=True to VGGTOmega when flag is set."""
+    ckpt_path = tmp_path / "fake.pt"
+    torch.save({}, ckpt_path)
+    creator = VGGTOmegaCreator(model_path=str(ckpt_path), enable_text_alignment=True)
+
+    mock_instance = MagicMock()
+    mock_instance.eval.return_value = mock_instance
+    mock_instance.to.return_value = mock_instance
+
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
+               return_value=mock_instance) as mock_cls:
+        creator._load_model("cpu")
+
+    mock_cls.assert_called_once_with(enable_alignment=True)
+
+
+def test_load_model_passes_enable_alignment_false(tmp_path):
+    """_load_model passes enable_alignment=False by default."""
+    ckpt_path = tmp_path / "fake.pt"
+    torch.save({}, ckpt_path)
+    creator = VGGTOmegaCreator(model_path=str(ckpt_path))
+
+    mock_instance = MagicMock()
+    mock_instance.eval.return_value = mock_instance
+    mock_instance.to.return_value = mock_instance
+
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
+               return_value=mock_instance) as mock_cls:
+        creator._load_model("cpu")
+
+    mock_cls.assert_called_once_with(enable_alignment=False)
+
+
+def test_postprocess_passes_max_points():
+    """_postprocess passes max_points=self.max_points to unproject_and_filter_points."""
+    n, h, w = 2, 4, 4
+    raw = _make_raw_outputs(n, h, w)
+    pts = np.zeros((5, 3), dtype=np.float32)
+    colors = np.zeros((5, 3), dtype=np.uint8)
+    pixel_indices = np.zeros((5, 3), dtype=np.int32)
+
+    creator = VGGTOmegaCreator(max_points=123_456)
+    creator.image_paths = [Path(f"/fake/{i}.jpg") for i in range(n)]
+    creator.original_coords = np.zeros((n, 6), dtype=np.float32)
+    creator.model = MagicMock()
+    creator.model.parameters = lambda: iter([nn.Parameter(torch.zeros(1))])
+
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
+               return_value=(pts, colors, pixel_indices)) as mock_unproj:
+        creator._postprocess(raw)
+
+    call_kwargs = mock_unproj.call_args[1]
+    assert call_kwargs.get("max_points") == 123_456
+
+
+def test_reproject_passes_max_points():
+    """_reproject passes max_points=self.max_points to unproject_and_filter_points."""
+    n = 2
+    raw = _make_raw_outputs(n)
+    extrinsics_3x4 = np.tile(np.eye(4)[:3], (n, 1, 1)).astype(np.float32)
+    intrinsics = np.tile(np.eye(3), (n, 1, 1)).astype(np.float32)
+    pts = np.zeros((5, 3), dtype=np.float32)
+    colors = np.zeros((5, 3), dtype=np.uint8)
+    pixel_indices = np.zeros((5, 3), dtype=np.int32)
+
+    creator = VGGTOmegaCreator(max_points=99_000)
+
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
+               return_value=(pts, colors, pixel_indices)) as mock_unproj:
+        creator._reproject(raw, extrinsics_3x4, intrinsics)
+
+    call_kwargs = mock_unproj.call_args[1]
+    assert call_kwargs.get("max_points") == 99_000

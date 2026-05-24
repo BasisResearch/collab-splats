@@ -212,8 +212,8 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
         assert creator.outputs.extrinsics.shape == (n, 4, 4)
 
 
-def test_reproject_ba_output_shapes():
-    """_reproject_ba returns (P,3) float32 pts3d and (P,3) uint8 colors."""
+def test_reproject_output_shapes():
+    """_reproject returns (P,3) float32 pts3d and (P,3) uint8 colors."""
     import torch
     creator = MapAnythingCreator()
     n, h, w = 2, 4, 4
@@ -229,7 +229,7 @@ def test_reproject_ba_output_shapes():
     extrinsics_3x4 = np.tile(np.eye(4)[:3, :], (n, 1, 1)).astype(np.float32)
     intrinsics = np.tile(np.eye(3), (n, 1, 1)).astype(np.float32)
 
-    pts3d, colors = creator._reproject_ba(raw_outputs, extrinsics_3x4, intrinsics)
+    pts3d, colors = creator._reproject(raw_outputs, extrinsics_3x4, intrinsics)
 
     assert pts3d.shape == (n * h * w, 3), f"Expected ({n*h*w}, 3), got {pts3d.shape}"
     assert pts3d.dtype == np.float32
@@ -237,7 +237,7 @@ def test_reproject_ba_output_shapes():
     assert colors.dtype == np.uint8
 
 
-def test_reproject_ba_depth_mask_filters_zero_depth():
+def test_reproject_depth_mask_filters_zero_depth():
     """Points with depth_z <= 0 are excluded from output."""
     import torch
     creator = MapAnythingCreator()
@@ -254,13 +254,13 @@ def test_reproject_ba_depth_mask_filters_zero_depth():
     extrinsics_3x4 = np.eye(4)[:3, :][np.newaxis].astype(np.float32)
     intrinsics = np.eye(3)[np.newaxis].astype(np.float32)
 
-    pts3d, colors = creator._reproject_ba(raw_outputs, extrinsics_3x4, intrinsics)
+    pts3d, colors = creator._reproject(raw_outputs, extrinsics_3x4, intrinsics)
 
     expected_count = h * w - (h // 2) * w
     assert pts3d.shape[0] == expected_count
 
 
-def test_reproject_ba_identity_extrinsic_preserves_cam_points():
+def test_reproject_identity_extrinsic_preserves_cam_points():
     """Identity extrinsic (world2cam=I) → world pts == pts3d_cam."""
     import torch
     creator = MapAnythingCreator()
@@ -279,7 +279,7 @@ def test_reproject_ba_identity_extrinsic_preserves_cam_points():
     extrinsics_3x4 = np.eye(4)[:3, :][np.newaxis].astype(np.float32)
     intrinsics = np.eye(3)[np.newaxis].astype(np.float32)
 
-    pts3d, _ = creator._reproject_ba(raw_outputs, extrinsics_3x4, intrinsics)
+    pts3d, _ = creator._reproject(raw_outputs, extrinsics_3x4, intrinsics)
 
     expected = np.array([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.], [0., 1., 2.]], dtype=np.float32)
     np.testing.assert_allclose(pts3d, expected, atol=1e-5)
@@ -505,3 +505,72 @@ def test_mapanything_run_inference_loop_closure_smoke(tmp_path):
     creator.load_model()
     creator.setup_inference(bicycle)
     creator.run_inference()
+
+
+########################################################################
+########## resize_mode + resolution ####################################
+########################################################################
+
+def test_mapanything_resize_mode_default():
+    """Default resize_mode is 'fixed'."""
+    c = MapAnythingCreator()
+    assert c.resize_mode == "fixed"
+    assert c.resolution == 518
+
+
+def test_mapanything_invalid_resize_mode_raises():
+    """__post_init__ raises ValueError for unknown resize_mode."""
+    with pytest.raises(ValueError, match="resize_mode"):
+        MapAnythingCreator(resize_mode="bogus")
+
+
+def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(tmp_path):
+    """resize_mode='fixed' passes resize_mode='fixed_mapping' + resolution_set to load_images."""
+    from PIL import Image as PILImage
+    img_dir = tmp_path / "imgs"
+    img_dir.mkdir()
+    for i in range(2):
+        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(img_dir / f"f{i}.jpg")
+
+    fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
+    fake_views = [fake_view, fake_view]
+
+    c = MapAnythingCreator(resize_mode="fixed", resolution=518)
+    with patch("collab_splats.pointcloud.feedforward.mapanything.load_images",
+               return_value=fake_views) as mock_li, \
+         patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+               return_value=fake_views), \
+         patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+               return_value=fake_views):
+        c._preprocess(img_dir)
+
+    call_kwargs = mock_li.call_args[1]
+    assert call_kwargs.get("resize_mode") == "fixed_mapping"
+    assert call_kwargs.get("resolution_set") == 518
+    assert "size" not in call_kwargs
+
+
+def test_mapanything_preprocess_longest_side_calls_load_images_with_size(tmp_path):
+    """resize_mode='longest_side' passes resize_mode='longest_side' + size= to load_images."""
+    from PIL import Image as PILImage
+    img_dir = tmp_path / "imgs"
+    img_dir.mkdir()
+    for i in range(2):
+        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(img_dir / f"f{i}.jpg")
+
+    fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
+    fake_views = [fake_view, fake_view]
+
+    c = MapAnythingCreator(resize_mode="longest_side", resolution=512)
+    with patch("collab_splats.pointcloud.feedforward.mapanything.load_images",
+               return_value=fake_views) as mock_li, \
+         patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+               return_value=fake_views), \
+         patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+               return_value=fake_views):
+        c._preprocess(img_dir)
+
+    call_kwargs = mock_li.call_args[1]
+    assert call_kwargs.get("resize_mode") == "longest_side"
+    assert call_kwargs.get("size") == 512
+    assert "resolution_set" not in call_kwargs

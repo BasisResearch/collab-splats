@@ -82,6 +82,14 @@ def _reproject_mapanything(
 
 # ── Creator ───────────────────────────────────────────────────────────────────
 
+# Maps our public resize_mode values to mapanything's load_images resize_mode strings
+_MA_RESIZE_MODE_MAP: dict[str, str] = {
+    "fixed": "fixed_mapping",
+    "longest_side": "longest_side",
+    "square": "square",
+}
+
+
 @dataclass
 class MapAnythingCreator(BaseFeedforwardCreator):
     """Pointcloud via MapAnything feedforward depth + pose estimation.
@@ -101,13 +109,32 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                                   inter-frame agreement.
         minibatch_size:           Number of images processed per inference step.
                                   Reduce if running out of GPU memory.
+        resize_mode:              Image resize strategy for ``load_images``.
+                                  ``"fixed"`` (default): auto-selects the best HxW from a
+                                  lookup table of patch-size-compatible resolutions based on
+                                  the batch's average aspect ratio. ``resolution`` selects
+                                  the lookup table (518 = DINOv2-aligned, 512 = ViT).
+                                  ``"longest_side"``: resize so the longest side equals
+                                  ``resolution`` px, preserving aspect ratio. Use when GPU
+                                  memory is constrained.
+                                  ``"square"``: resize all images to ``resolution × resolution``.
+        resolution:               Lookup-table selector for ``"fixed"`` (518 or 512); target
+                                  size in pixels for ``"longest_side"`` and ``"square"``.
     """
 
     model_name: str = "facebook/map-anything"
     confidence_percentile: float = 35.0
     use_multiview_confidence: bool = True
     minibatch_size: int = 1
+    resize_mode: str = "fixed"   # "fixed" (aspect-ratio lookup table), "longest_side", "square"
+    resolution: int = 518         # resolution_set= for "fixed"; size= for "longest_side"/"square"
     _processed_views: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.resize_mode not in _MA_RESIZE_MODE_MAP:
+            raise ValueError(
+                f"resize_mode must be one of {sorted(_MA_RESIZE_MODE_MAP)}, got {self.resize_mode!r}"
+            )
 
     def _load_model(self, device: str) -> Any:
         # Load pretrained model, move to device, set eval mode
@@ -124,7 +151,20 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             raise FileNotFoundError(f"No images found in {image_dir}")
 
         # Load images via MapAnything's loader; derive model resolution from first image
-        views = load_images([str(p) for p in image_paths])
+        # Map our public resize_mode to load_images' upstream name; pass resolution as the right kwarg
+        upstream_mode = _MA_RESIZE_MODE_MAP[self.resize_mode]
+        if self.resize_mode == "fixed":
+            views = load_images(
+                [str(p) for p in image_paths],
+                resize_mode=upstream_mode,
+                resolution_set=self.resolution,
+            )
+        else:
+            views = load_images(
+                [str(p) for p in image_paths],
+                resize_mode=upstream_mode,
+                size=self.resolution,
+            )
         model_h: int = views[0]["img"].shape[-2]
         model_w: int = views[0]["img"].shape[-1]
 

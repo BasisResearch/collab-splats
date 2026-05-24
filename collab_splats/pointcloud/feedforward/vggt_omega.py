@@ -98,24 +98,44 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     and LoopClosure wrappers via the standard BaseFeedforwardCreator interface.
 
     Attributes:
-        camera_model:    pycolmap camera model.  Defaults to ``"PINHOLE"`` because
-                         Omega predicts separate fx/fy via FoV encoding.
-        model_path:      Local path to a ``vggt_omega_1b_512.pt`` checkpoint.
-                         ``None`` → auto-download from HuggingFace on first run.
-        model_repo:      HuggingFace repo ID for checkpoint download.
-        model_filename:  Checkpoint filename to download from ``model_repo``.
-        image_resolution: Target resolution for ``load_and_preprocess_images``.
-                          512 for the standard checkpoint, 256 for text-aligned.
-        conf_threshold:  Depth confidence percentile cutoff (0–100).  Points
-                         below this percentile are discarded.  50.0 = top 50%.
+        camera_model:          pycolmap camera model.  Defaults to ``"PINHOLE"`` because
+                               Omega predicts separate fx/fy via FoV encoding.
+        model_path:            Local path to a ``vggt_omega_1b_512.pt`` checkpoint.
+                               ``None`` → auto-download from HuggingFace on first run.
+        model_repo:            HuggingFace repo ID for checkpoint download.
+        model_filename:        Checkpoint filename to download from ``model_repo``.
+        resolution:            Target image resolution.  ``None`` → auto (512 for the
+                               standard checkpoint, 256 for text-aligned).  Explicit
+                               values pass through unchanged regardless of
+                               ``enable_text_alignment``.
+        resize_mode:           Image resize strategy passed as ``mode=`` to
+                               ``load_and_preprocess_images``.  ``"balanced"`` (default):
+                               smart crop/pad preserving aspect ratio.  ``"max_size"``:
+                               resize longest side to ``resolution``, no crop.
+        conf_threshold:        Depth confidence percentile cutoff (0–100).  Points
+                               below this percentile are discarded.  50.0 = top 50%.
+        enable_text_alignment: Load the text-aligned checkpoint variant via
+                               ``VGGTOmega(enable_alignment=True)``.  Auto-sets
+                               ``resolution=256`` when ``resolution`` is ``None``.
     """
 
     camera_model: str = "PINHOLE"
     model_path: str | None = None
     model_repo: str = VGGT_OMEGA_HF_REPO
     model_filename: str = VGGT_OMEGA_DEFAULT_FILENAME
-    image_resolution: int = VGGT_OMEGA_DEFAULT_RESOLUTION
+    resolution: int | None = None        # None → auto (512 standard, 256 text-aligned); explicit overrides
+    resize_mode: str = "balanced"        # mode= passed to load_and_preprocess_images
     conf_threshold: float = 50.0
+    enable_text_alignment: bool = False  # VGGTOmega(enable_alignment=True); sets resolution=256 when None
+
+    def __post_init__(self) -> None:
+        if self.resize_mode not in {"balanced", "max_size"}:
+            raise ValueError(
+                f"resize_mode must be one of {{'balanced', 'max_size'}}, got {self.resize_mode!r}"
+            )
+        if self.resolution is None:
+            self.resolution = 256 if self.enable_text_alignment else 512
+            logger.debug("VGGTOmegaCreator: resolved resolution=%d", self.resolution)
 
     def _load_model(self, device: str) -> Any:
         """Load VGGT-Omega from local path or HuggingFace, move to device."""
@@ -138,7 +158,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             ))
 
         # Instantiate model, load checkpoint weights, move to device in eval mode
-        model = VGGTOmega()
+        model = VGGTOmega(enable_alignment=self.enable_text_alignment)
         model.load_state_dict(torch.load(str(ckpt_path), map_location="cpu"))
         model.eval()
         model = model.to(device, dtype=dtype)
@@ -157,9 +177,9 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         # Compute crop transform for each image (replicated from Omega's load_fn)
         original_coords = _compute_omega_original_coords(image_paths)
 
-        # Load and preprocess images to model resolution via Omega's balanced resize
+        # Load and preprocess images to model resolution via Omega's resize
         image_names = [str(p) for p in image_paths]
-        images = load_and_preprocess_images(image_names, image_resolution=self.image_resolution)
+        images = load_and_preprocess_images(image_names, image_resolution=self.resolution, mode=self.resize_mode)
 
         return images, image_paths, original_coords
 
@@ -210,6 +230,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             extrinsic=extrinsic,
             intrinsic=raw_outputs["intrinsics_downsampled"],
             conf_threshold=self.conf_threshold,
+            max_points=self.max_points,
         )
 
         # Resolve model spatial dimensions; handle (N, H, W, 1) and (N, H, W) depth formats
@@ -251,7 +272,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             depth=raw_outputs["depth"].squeeze(-1) if raw_outputs["depth"].ndim == 4 else raw_outputs["depth"],
         )
 
-    def _reproject_ba(
+    def _reproject(
         self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Re-derive world-space points using bundle-adjusted camera poses."""
@@ -263,6 +284,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             extrinsic=extrinsics_3x4,
             intrinsic=intrinsics,
             conf_threshold=self.conf_threshold,
+            max_points=self.max_points,
         )
         return pts3d, colors  # pixel_indices unused; post-BA uses stored indices
 

@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from pathlib import Path
 import numpy as np
 import torch
@@ -15,28 +15,28 @@ def _make_image_dir(tmp_path, n=2):
     return tmp_path
 
 
-def test_vggtx_creator_default_preproc_is_ratio():
+def test_vggtx_creator_default_preproc_is_max_size():
     from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
     c = VGGTXCreator()
-    assert c.image_preproc == "ratio"
+    assert c.resize_mode == "max_size"
 
 
 def test_vggtx_creator_accepts_square_preproc():
     from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
-    c = VGGTXCreator(image_preproc="square")
-    assert c.image_preproc == "square"
+    c = VGGTXCreator(resize_mode="square")
+    assert c.resize_mode == "square"
 
 
 def test_vggtx_creator_rejects_invalid_preproc():
     from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
-    with pytest.raises(ValueError, match="image_preproc"):
-        VGGTXCreator(image_preproc="invalid")
+    with pytest.raises(ValueError, match="resize_mode"):
+        VGGTXCreator(resize_mode="invalid")
 
 
-def test_preprocess_ratio_calls_ratio_fn(tmp_path):
+def test_preprocess_max_size_calls_ratio_fn(tmp_path):
     from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
     img_dir = _make_image_dir(tmp_path)
-    c = VGGTXCreator(image_preproc="ratio")
+    c = VGGTXCreator(resize_mode="max_size")
     fake = _make_fake_images()
     with patch("collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images_ratio", return_value=fake) as m, \
          patch("collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images_square") as ms:
@@ -48,7 +48,7 @@ def test_preprocess_ratio_calls_ratio_fn(tmp_path):
 def test_preprocess_square_calls_square_fn(tmp_path):
     from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
     img_dir = _make_image_dir(tmp_path)
-    c = VGGTXCreator(image_preproc="square")
+    c = VGGTXCreator(resize_mode="square")
     fake = _make_fake_images()
     with patch("collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images_square", return_value=fake) as m, \
          patch("collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images_ratio") as mr:

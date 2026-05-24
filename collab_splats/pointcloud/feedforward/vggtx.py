@@ -118,6 +118,10 @@ class VGGTXCreator(BaseFeedforwardCreator):
         conf_threshold:       Depth confidence percentile cutoff (0–100).
                               Points whose confidence is below this percentile
                               are discarded.  35.0 = keep the top 65 %.
+        resize_mode:          Preprocessing mode.
+                              ``"max_size"`` (default): resize longest side to
+                              ``VGGTX_IMG_LOAD_RESOLUTION`` (518), preserving AR.
+                              ``"square"``: center-crop + resize to 518×518.
     """
 
     camera_model: str = "SIMPLE_PINHOLE"
@@ -125,12 +129,12 @@ class VGGTXCreator(BaseFeedforwardCreator):
     use_global_alignment: bool = False
     chunk_size: int = 256
     conf_threshold: float = 35.0
-    image_preproc: str = "ratio"
+    resize_mode: str = "max_size"
 
     def __post_init__(self) -> None:
-        if self.image_preproc not in ("ratio", "square"):
+        if self.resize_mode not in ("max_size", "square"):
             raise ValueError(
-                f"image_preproc must be 'ratio' or 'square', got {self.image_preproc!r}"
+                f"resize_mode must be 'max_size' or 'square', got {self.resize_mode!r}"
             )
 
     def _load_model(self, device: str) -> Any:
@@ -160,8 +164,8 @@ class VGGTXCreator(BaseFeedforwardCreator):
         """Load and preprocess images from directory into VGGT-X input format.
 
         Sorts images by filename, resizes to VGGTX_IMG_LOAD_RESOLUTION preserving
-        aspect ratio (``image_preproc='ratio'``) or square-cropping
-        (``image_preproc='square'``).  Stores original dimensions in
+        aspect ratio (``resize_mode='max_size'``) or square-cropping
+        (``resize_mode='square'``).  Stores original dimensions in
         ``original_coords`` for later rescaling.
 
         Args:
@@ -186,7 +190,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
         # Load and preprocess images to model resolution; store original crop coordinates
         image_names = [str(p) for p in image_paths]
-        if self.image_preproc == "ratio":
+        if self.resize_mode == "max_size":
             images, original_coords = load_and_preprocess_images_ratio(
                 image_names, VGGTX_IMG_LOAD_RESOLUTION
             )

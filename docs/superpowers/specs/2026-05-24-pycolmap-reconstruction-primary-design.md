@@ -106,8 +106,6 @@ Both types expose the same names for shared concepts. The direction of change:
 ## Proposed `PointcloudResult`
 
 ```python
-from functools import cached_property
-
 @dataclass
 class PointcloudResult:
     """Sparse reconstruction output: pycolmap.Reconstruction + scene metadata.
@@ -115,11 +113,6 @@ class PointcloudResult:
     reconstruction is the primary store for cameras, images, and 3D points.
     frame declares the coordinate system of the world origin in reconstruction.
     image_paths defines the canonical frame ordering for extrinsics/intrinsics.
-
-    The four cached_property fields (points, colors, extrinsics, intrinsics) are
-    computed once on first access and stored on the instance. PointcloudResult is
-    treated as immutable after construction — do not mutate reconstruction afterward
-    or the cache will be stale.
     """
 
     reconstruction: pycolmap.Reconstruction          # primary — always set
@@ -128,32 +121,32 @@ class PointcloudResult:
     confidence: np.ndarray | None = None             # (P,) float32 — feedforward per-point
     world_transform: np.ndarray | None = None        # (3, 4) applied COLMAP→nerfstudio axis swap
 
-    @cached_property
+    @property
     def points(self) -> np.ndarray:
         """(P, 3) float32 world XYZ of the tracked sparse point set, ordered by point3D_id.
 
         P is the filtered sparse set — smaller than FeedforwardResult.points which
         contains all feedforward model output including untracked points.
-        Computed once and cached; do not mutate reconstruction.points3D after first access.
+        Recomputes on each access from reconstruction.points3D — always reflects
+        current reconstruction state.
         """
         pts3d = self.reconstruction.points3D
         if not pts3d:
             return np.zeros((0, 3), dtype=np.float32)
         return np.array([p.xyz for p in pts3d.values()], dtype=np.float32)
 
-    @cached_property
+    @property
     def colors(self) -> np.ndarray:
-        """(P, 3) uint8 RGB, same order as points. Cached — see points docstring."""
+        """(P, 3) uint8 RGB, same order as points."""
         pts3d = self.reconstruction.points3D
         if not pts3d:
             return np.zeros((0, 3), dtype=np.uint8)
         return np.array([p.color for p in pts3d.values()], dtype=np.uint8)
 
-    @cached_property
+    @property
     def extrinsics(self) -> np.ndarray:
-        """(N, 4, 4) float32 w2c transforms, ordered by image_paths. Cached."""
-        images = self.reconstruction.images
-        name_to_image = {img.name: img for img in images.values()}
+        """(N, 4, 4) float32 w2c transforms, ordered by image_paths."""
+        name_to_image = {img.name: img for img in self.reconstruction.images.values()}
         result = []
         for path in self.image_paths:
             img = name_to_image[path.name]
@@ -165,17 +158,15 @@ class PointcloudResult:
             result.append(E)
         return np.stack(result) if result else np.zeros((0, 4, 4), dtype=np.float32)
 
-    @cached_property
+    @property
     def intrinsics(self) -> np.ndarray:
         """(N, 3, 3) float32 K matrices (PINHOLE/linear part only), ordered by image_paths.
 
         Distortion params are NOT captured here. Access reconstruction.cameras[id]
         directly for the full pycolmap.Camera when distortion-correct projection is needed.
-        Cached — see points docstring.
         """
-        images = self.reconstruction.images
+        name_to_image = {img.name: img for img in self.reconstruction.images.values()}
         cameras = self.reconstruction.cameras
-        name_to_image = {img.name: img for img in images.values()}
         result = []
         for path in self.image_paths:
             img = name_to_image[path.name]
@@ -188,9 +179,7 @@ class PointcloudResult:
         return np.stack(result) if result else np.zeros((0, 3, 3), dtype=np.float32)
 ```
 
-All four derived properties use `cached_property` — computed once on first access, stored on the instance dict. `dataclasses.replace(result, ...)` produces a new instance with a cold cache, which is correct.
-
-Note: `extrinsics` and `intrinsics` build a `{name: Image}` index inline rather than calling a helper — avoids rebuilding the index twice when both are accessed.
+Plain `@property` on all four — recomputes from `reconstruction` on every access, always reflects current state. No caching, no invalidation, no frozen constraint. Access patterns (tests, CameraLocalizer init, PLY export) are not tight loops; recompute cost at N≤200 frames / P≤50k points is negligible.
 
 ---
 
@@ -263,6 +252,6 @@ from the K matrix on every query call. After this change, `CameraLocalizer` rece
 
 1. **`intrinsics` property vs non-PINHOLE models** — for any camera model with distortion, the `intrinsics` property silently drops distortion. This is the same behavior as today (storing K matrix). Risk: callers that think they're doing correct projection but aren't. Mitigation: docstring on the property is explicit; the full Camera is always available via `reconstruction.cameras`.
 
-2. **`points`/`colors`/`extrinsics`/`intrinsics` cost** — all four use `cached_property`: O(P) or O(N) work on first access only, O(1) thereafter. `dataclasses.replace()` produces a new instance with cold cache — callers that replace fields and immediately re-access will pay the cost once.
+2. **`points`/`colors`/`extrinsics`/`intrinsics` cost** — plain properties, O(P) or O(N) on every access. Actual access patterns (tests, CameraLocalizer init, PLY export) are not tight loops — recompute cost is negligible. If a hot-path caller needs repeated access, assign to a local variable. No caching added until profiling shows a real need.
 
 3. **`confidence` alignment** — `confidence` is `(P,)` indexed by position in `image_paths` ordering, but `points`/`colors` are indexed by `point3D_id` ordering. These are not the same ordering. This misalignment pre-exists and is out of scope — tracked separately.

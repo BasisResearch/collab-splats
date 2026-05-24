@@ -23,7 +23,7 @@ if not hasattr(_tl, "DropPath"):
 del _tl, _tml
 
 from mapanything.models import MapAnything
-from mapanything.utils.geometry import closed_form_pose_inverse
+from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 from mapanything.utils.image import load_images
 from mapanything.utils.inference import (
     postprocess_model_outputs_for_inference,
@@ -31,7 +31,7 @@ from mapanything.utils.inference import (
     validate_input_views_for_inference,
 )
 
-from .base import BaseFeedforwardCreator, FeedforwardResult, _extrinsics_3x4_to_4x4, console
+from .base import BaseFeedforwardCreator, FeedforwardResult, console
 
 
 # ── Inference utilities ────────────────────────────────────────────────────────
@@ -63,8 +63,8 @@ def _reproject_mapanything(
         combined_mask = mask & (depth_z > 0)
 
         # Refined world2cam → cam2world for re-projection into world frame
-        ext_4x4 = np.concatenate([extrinsics_3x4[i], [[0, 0, 0, 1]]], axis=0)  # (4, 4)
-        cam2world = closed_form_pose_inverse(ext_4x4[None])[0]                   # (4, 4)
+        ext_4x4 = extrinsics_to_homogeneous(extrinsics_3x4[i])   # (4, 4)
+        cam2world = invert_poses(ext_4x4)                          # (4, 4)
 
         # Apply mask and transform camera-frame points to world frame
         pts_flat = pts3d_cam[combined_mask]                                       # (K, 3)
@@ -213,7 +213,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                 c = pred["conf"][0]
                 conf_list.append(c[0] if c.ndim == 3 else c)
             cam2world = pred["camera_poses"][0].cpu().numpy()
-            extrinsics_list.append(closed_form_pose_inverse(cam2world[None])[0][:3, :4])
+            extrinsics_list.append(invert_poses(cam2world)[:3, :4])
             intrinsics_list.append(pred["intrinsics"][0].cpu().numpy())
 
         combined_mask = np.stack(masks)           # (N, H, W) bool
@@ -236,7 +236,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         intrinsics = np.stack(intrinsics_list)               # (N, 3, 3)
 
         # Convert extrinsics to 4×4 homogeneous form
-        extrinsics_4x4 = _extrinsics_3x4_to_4x4(extrinsics)
+        extrinsics_4x4 = extrinsics_to_homogeneous(extrinsics)
 
         return FeedforwardResult(
             pts3d=pts3d,

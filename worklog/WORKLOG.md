@@ -4,6 +4,22 @@
 > - [STATE.md](STATE.md) for current state (branches, in-flight, blockers, parked)
 > - [ROADMAP.md](ROADMAP.md) for future phases + architecture overview
 
+## 2026-05-24
+
+### ba-module-cleanup
+
+Spec: `docs/superpowers/specs/2026-05-24-ba-module-cleanup-design.md`
+Plan: `docs/superpowers/plans/2026-05-24-ba-module-cleanup.md`
+
+- Dropped all lazy imports; moved `torch`, `torch.nn`, `pypose`, `bae.*`, `vggt.*` to hard imports at top of file
+- Collapsed `_run_bundle_adjustment` (220 lines, called once) into `BundleAdjustment._optimize()` — reads `self.config` directly
+- Lifted `ReprojNonBatched` inner class → module-level `_BAModel(nn.Module)` with injected `shared_camera` flag
+- Lifted conditional same-name closures → module-level `_reproject_per_camera` / `_reproject_shared` decorated with `@map_transform`
+- Removed dead `image_size` parameter; removed inner `rotate_quat` wrapper (inlined as `pp.SE3(...).Act(pts)`)
+- Reordered module: public API (config + class) first, helpers below
+- Updated tests: removed `image_size` from call sites, patched `_optimize` instead of `_run_bundle_adjustment`, removed stale `bae.utils.ba.rotate_quat` mock
+- ~34% line reduction (438 → ~290 lines)
+
 ## 2026-05-23
 
 ### sl4-loop-closure — COMPLETE

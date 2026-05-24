@@ -12,10 +12,11 @@ from PIL import Image as PILImage
 from scipy.spatial import cKDTree
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
-from tqdm import tqdm, trange
+from tqdm.auto import tqdm, trange
 
 from collab_splats.mesh.base import MeshResult
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.utils.geometry import invert_poses
 
 try:
     import meshlib.mrmeshpy as mm
@@ -463,7 +464,7 @@ def _feedforward_to_tsdf_inputs(
         img = PILImage.open(path).convert("RGB").resize((W, H), PILImage.BILINEAR)
         rgbs[i] = np.asarray(img, dtype=np.float32) / 255.0
 
-    c2w = np.linalg.inv(result.extrinsics).astype(np.float32)
+    c2w = invert_poses(result.extrinsics).astype(np.float32)
 
     return depths, rgbs, c2w, result.intrinsics.copy()
 

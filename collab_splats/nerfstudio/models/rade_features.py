@@ -23,7 +23,7 @@ from gsplat.cuda._wrapper import spherical_harmonics
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.scene_box import OrientedBox
 
-from collab_splats.utils import depth_double_to_normal
+from collab_splats.nerfstudio.utils.camera_utils import depth_double_to_normal
 from .rade_gs import RadegsModelConfig, RadegsModel
 from collab_splats.semantics.features import BaseFeatureExtractor
 

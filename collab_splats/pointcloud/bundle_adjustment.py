@@ -20,6 +20,7 @@ from bae.optim import LM
 from bae.utils.pysolvers import PCG
 from vggt.dependency.track_predict import predict_tracks
 from vggt.dependency.projection import project_3D_points_np
+from collab_splats.utils.geometry import extrinsics_to_homogeneous
 
 if TYPE_CHECKING:
     from .feedforward.base import FeedforwardResult
@@ -46,7 +47,7 @@ class BundleAdjustmentConfig:
     min_inliers_per_frame: int = 64
     max_query_pts: int = 2048           # track extraction: max query points
     query_frame_num: int = 5            # track extraction: number of query frames
-    device: str | None = None           # target device; None = auto (CUDA if available, else CPU)
+    device: str | None = None           # CUDA device (e.g. "cuda", "cuda:1"); None = auto. CPU unsupported (bae LM is CUDA-only)
     capture_loss_history: bool = False  # record per-step LM loss; read via BundleAdjustment._last_loss_history
 
 
@@ -90,9 +91,7 @@ class BundleAdjustment:
         )
 
         # Pad (N, 3, 4) extrinsics back to (N, 4, 4) for FeedforwardResult convention
-        n = refined_extrinsics.shape[0]
-        bottom_row = np.tile([[0, 0, 0, 1]], (n, 1, 1)).astype(np.float32)
-        refined_extrinsics_4x4 = np.concatenate([refined_extrinsics, bottom_row], axis=1)
+        refined_extrinsics_4x4 = extrinsics_to_homogeneous(refined_extrinsics)
         return replace(result, extrinsics=refined_extrinsics_4x4, intrinsics=refined_intrinsics)
 
     def _optimize(
@@ -114,7 +113,6 @@ class BundleAdjustment:
             refined_intrinsics:   (N, 3, 3) float32
         """
         cfg = self.config
-        device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
         # _UNSET means "caller didn't pass" — fall back to config; explicit None means "skip filter"
         max_reproj = cfg.max_reproj_error if max_reproj_error is _UNSET else max_reproj_error
         n_steps = lm_steps if lm_steps is not None else cfg.lm_steps
@@ -150,6 +148,16 @@ class BundleAdjustment:
         if len(active_frames) < 2 or len(active_pts) < 2:
             return refined_pts3d, refined_extrinsics, refined_intrinsics
 
+        # bae LM optimizer is CUDA-only (CuSparse spgemm); reject CPU with a clear message.
+        # Done here, after early-exit, so the no-device early-exit path stays CPU-runnable.
+        device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if "cuda" not in device:
+            raise RuntimeError(
+                f"Bundle adjustment requires a CUDA device (got {device!r}). "
+                "The bae LM optimizer uses a CUDA-only sparse matmul (CuSparse); "
+                "CPU bundle adjustment is not supported."
+            )
+
         frame_idx, pt_idx = np.where(vis[np.ix_(active_frames, active_pts)])
         global_frame_idx = active_frames[frame_idx]
         global_pt_idx = active_pts[pt_idx]
@@ -157,10 +165,7 @@ class BundleAdjustment:
 
         # Build SE3 camera tensor from (K, 3, 4) extrinsics; pad to (K, 4, 4) for mat2SE3
         ext_sub = extrinsics[active_frames].astype(np.float64)
-        ext_4x4 = np.concatenate(
-            [ext_sub, np.tile(np.array([[[0, 0, 0, 1]]], dtype=np.float64), (len(active_frames), 1, 1))],
-            axis=1,
-        )
+        ext_4x4 = extrinsics_to_homogeneous(ext_sub)
         cameras_se3 = pp.mat2SE3(torch.tensor(ext_4x4, dtype=torch.float64, device=device))
 
         # SIMPLE_PINHOLE: average fx/fy as single focal length per camera

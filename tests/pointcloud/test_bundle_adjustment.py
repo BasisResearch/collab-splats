@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -508,3 +509,102 @@ def test_get_default_solver_falls_back_to_pcg_cudss_import_error():
 
     mock_pcg_class.assert_called_once()
     assert solver is mock_pcg_instance
+
+
+# ---------------------------------------------------------------------------
+# Tests for BundleAdjustment class
+# ---------------------------------------------------------------------------
+
+def _make_ff_result_for_ba(N=2, H=8, W=8):
+    """Minimal FeedforwardResult for BundleAdjustment tests."""
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    return FeedforwardResult(
+        pts3d=np.zeros((10, 3), dtype=np.float32),
+        colors=np.zeros((10, 3), dtype=np.uint8),
+        extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
+        intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
+        image_paths=[Path(f"img{i}.jpg") for i in range(N)],
+        original_coords=np.zeros((N, 6), dtype=np.float32),
+        model_width=W,
+        model_height=H,
+        images=torch.zeros(N, 3, H, W),
+        conf=torch.ones(N, H, W),
+        world_points=np.zeros((N, H, W, 3), dtype=np.float32),
+    )
+
+
+def test_bundle_adjustment_refine_returns_feedforward_result():
+    """refine() must return a FeedforwardResult with updated extrinsics/intrinsics."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+    N, H, W = 2, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
+    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
+               return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))), \
+         patch("collab_splats.pointcloud.bundle_adjustment._run_bundle_adjustment",
+               return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
+        out = BundleAdjustment().refine(result)
+
+    assert isinstance(out, FeedforwardResult)
+    # extrinsics padded from (N, 3, 4) → (N, 4, 4)
+    assert out.extrinsics.shape == (N, 4, 4)
+    assert out.intrinsics.shape == (N, 3, 3)
+
+
+def test_bundle_adjustment_refine_preserves_pts3d_colors():
+    """refine() must not change pts3d, colors, or pixel_indices."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
+
+    N, H, W = 2, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+    original_pts3d = result.pts3d.copy()
+    original_colors = result.colors.copy()
+    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
+    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
+               return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))), \
+         patch("collab_splats.pointcloud.bundle_adjustment._run_bundle_adjustment",
+               return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
+        out = BundleAdjustment().refine(result)
+
+    np.testing.assert_array_equal(out.pts3d, original_pts3d)
+    np.testing.assert_array_equal(out.colors, original_colors)
+    assert out.pixel_indices is None
+
+
+def test_bundle_adjustment_refine_threads_config():
+    """Config params and device are passed through to both private functions."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 2, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
+    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
+               return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))) as mock_tracks, \
+         patch("collab_splats.pointcloud.bundle_adjustment._run_bundle_adjustment",
+               return_value=(np.zeros((5, 3)), refined_ext, refined_intr)) as mock_ba:
+        cfg = BundleAdjustmentConfig(device="cpu", lm_steps=5, max_reproj_error=2.0)
+        BundleAdjustment(config=cfg).refine(result)
+
+    _, tracks_kw = mock_tracks.call_args
+    assert tracks_kw["device"] == "cpu"
+    _, ba_kw = mock_ba.call_args
+    assert ba_kw["device"] == "cpu"
+    assert ba_kw["lm_steps"] == 5
+    assert ba_kw["max_reproj_error"] == 2.0
+
+
+def test_bundle_adjustment_default_config():
+    """BundleAdjustment() with no args uses default BundleAdjustmentConfig."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    ba = BundleAdjustment()
+    assert isinstance(ba.config, BundleAdjustmentConfig)
+    assert ba.config.device is None
+    assert ba.config.lm_steps == 40

@@ -387,8 +387,51 @@ def _run_bundle_adjustment(
 
 
 ########################################################
-########## Public aliases #############################
+########## BundleAdjustment class #####################
 ########################################################
-# Public names expected by wrappers.py and pointcloud/__init__.py.
-extract_tracks_vggsfm = _extract_tracks_vggsfm
-run_bundle_adjustment = _run_bundle_adjustment
+
+
+class BundleAdjustment:
+    """Refines camera poses via VGGSfM track extraction + LM bundle adjustment.
+
+    Method-agnostic: works with any FeedforwardResult regardless of source creator.
+    Does NOT reproject pts3d — call creator.reproject(result) after if needed.
+    """
+
+    def __init__(self, config: "BundleAdjustmentConfig | None" = None) -> None:
+        self.config = config or BundleAdjustmentConfig()
+
+    def refine(self, result: "FeedforwardResult") -> "FeedforwardResult":
+        """Refine poses; return updated FeedforwardResult with new extrinsics/intrinsics.
+
+        Only extrinsics and intrinsics are updated. pts3d, colors, and pixel_indices
+        are unchanged — call creator.reproject(result) after to re-extract pts3d.
+        """
+        cfg = self.config
+        extrinsics_3x4 = result.extrinsics[:, :3, :]
+        image_size = (result.model_height, result.model_width)
+
+        # Extract 2D tracks via VGGSfM tracker; conf+world_points guide keypoint sampling
+        tracks, vis_scores, pts3d_kp = _extract_tracks_vggsfm(
+            result.images, result.conf, result.world_points,
+            max_query_pts=cfg.max_query_pts,
+            query_frame_num=cfg.query_frame_num,
+            device=cfg.device,
+        )
+
+        # Run LM bundle adjustment to refine poses and intrinsics
+        _, refined_ext, refined_intr = _run_bundle_adjustment(
+            pts3d_kp, extrinsics_3x4, result.intrinsics,
+            tracks, vis_scores, image_size,
+            max_reproj_error=cfg.max_reproj_error,
+            lm_steps=cfg.lm_steps,
+            shared_camera=cfg.shared_camera,
+            min_inliers_per_frame=cfg.min_inliers_per_frame,
+            device=cfg.device,
+        )
+
+        # Pad refined (N, 3, 4) extrinsics to (N, 4, 4) for FeedforwardResult convention
+        n = refined_ext.shape[0]
+        bottom = np.tile([[0, 0, 0, 1]], (n, 1, 1)).astype(np.float32)
+        refined_ext_4x4 = np.concatenate([refined_ext, bottom], axis=1)
+        return replace(result, extrinsics=refined_ext_4x4, intrinsics=refined_intr)

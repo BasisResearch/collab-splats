@@ -13,6 +13,7 @@ import numpy as np
 import pyvista as pv
 import open3d as o3d
 from collab_splats.semantics.features import BaseFeatureExtractor
+from collab_splats.utils.geometry import extrinsics_to_homogeneous
 from collab_splats.utils.torch_utils import get_device
 from nerfstudio.utils.eval_utils import eval_setup
 
@@ -300,7 +301,7 @@ class Splatter:
             else:
                 n_samples = n_frames
 
-            sampled_frames = sample_frames_optical_flow(file_path.as_posix(), max_frames=min(n_samples, 200))
+            sampled_frames = sample_frames_optical_flow(file_path.as_posix(), max_frames=min(n_samples, 200), verbose=False)
             for i, frame in enumerate(sampled_frames):
                 cv2.imwrite(str(tmp_dir / f"{i:05d}.jpg"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
@@ -723,7 +724,7 @@ class Splatter:
         transform = np.stack(nerfstudio_transforms["transform"])
 
         # Add the translation to the transform
-        transform = np.concatenate([transform, np.array([0, 0, 0, 1])[np.newaxis]], axis=0)
+        transform = extrinsics_to_homogeneous(transform)
 
         # Apply to cameras
         camera_poses = np.stack(

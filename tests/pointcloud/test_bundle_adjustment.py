@@ -218,8 +218,10 @@ def test_run_bundle_adjustment_early_exit_shape():
     ref_pts, ref_ext, ref_intr = None, None, None
 
     vggt_mod, _, proj_mod = _make_vggt_mock()
-    # project_3D_points_np returns (N, P, 2) projections + dummy cam points
-    proj_mod.project_3D_points_np = MagicMock(return_value=(tracks.copy(), None))
+    # project_3D_points_np returns (N, P, 2) projections + (N, 3, P) cam-space points
+    # proj_cam[:, 2, :] is the Z depth; use positive depth so no points are behind camera
+    proj_cam = np.ones((N, 3, P), dtype=np.float32)  # depth=1 everywhere (in front)
+    proj_mod.project_3D_points_np = MagicMock(return_value=(tracks.copy(), proj_cam))
 
     bae_mod = _make_bae_mock()
 
@@ -238,8 +240,18 @@ def test_run_bundle_adjustment_early_exit_shape():
 
     with patch.dict(sys.modules, extra_mods):
         import importlib
-        import collab_splats.pointcloud.bundle_adjustment as ba_mod
-        importlib.reload(ba_mod)
+        import importlib.util
+        from pathlib import Path as _Path
+
+        # Load bundle_adjustment directly by file path to avoid triggering
+        # collab_splats.pointcloud.__init__ which eagerly imports VGGTXCreator
+        # requiring the real vggt package (not available in mock tests).
+        _ba_path = _Path(__file__).parents[2] / "collab_splats" / "pointcloud" / "bundle_adjustment.py"
+        _mod_name = "collab_splats.pointcloud.bundle_adjustment"
+        _spec = importlib.util.spec_from_file_location(_mod_name, _ba_path)
+        ba_mod = importlib.util.module_from_spec(_spec)
+        sys.modules[_mod_name] = ba_mod
+        _spec.loader.exec_module(ba_mod)
 
         ref_pts, ref_ext, ref_intr = ba_mod.run_bundle_adjustment(
             points3d=points3d,
@@ -391,3 +403,108 @@ def test_run_bundle_adjustment_no_reproj_filter():
     assert ref_pts.shape == (P, 3)
     assert ref_ext.shape == (N, 3, 4)
     assert ref_intr.shape == (N, 3, 3)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _get_default_solver — solver auto-selection logic
+# ---------------------------------------------------------------------------
+
+def _make_ba_mods(extra=None):
+    """Build sys.modules patch dict for loading bundle_adjustment under mocks."""
+    bae_mod = _make_bae_mock()
+    vggt_mod, _, proj_mod = _make_vggt_mock()
+    mods = {
+        "vggt": vggt_mod,
+        "vggt.dependency": vggt_mod.dependency,
+        "vggt.dependency.projection": proj_mod,
+        "bae": bae_mod,
+        "bae.autograd": bae_mod.autograd,
+        "bae.autograd.function": bae_mod.autograd.function,
+        "bae.utils": bae_mod.utils,
+        "bae.utils.pysolvers": bae_mod.utils.pysolvers,
+        "bae.utils.ba": bae_mod.utils.ba,
+        "bae.optim": bae_mod.optim,
+    }
+    if extra:
+        mods.update(extra)
+    return mods
+
+
+def _load_ba(mods):
+    """Exec bundle_adjustment.py under the given sys.modules patch and return the module.
+
+    Must be called inside a patch.dict(sys.modules, mods) context.
+    Registers the module in sys.modules before exec so @dataclass can find its own module.
+    """
+    import importlib.util
+    from pathlib import Path
+    _ba_path = Path(__file__).parents[2] / "collab_splats" / "pointcloud" / "bundle_adjustment.py"
+    _mod_name = "collab_splats.pointcloud.bundle_adjustment"
+    spec = importlib.util.spec_from_file_location(_mod_name, _ba_path)
+    ba_mod = importlib.util.module_from_spec(spec)
+    sys.modules[_mod_name] = ba_mod
+    spec.loader.exec_module(ba_mod)
+    return ba_mod
+
+
+def test_get_default_solver_prefers_cudss_when_available():
+    """CuDSS instantiated (and wrapped) when CUDA available and bae.sparse.solve importable."""
+    mock_cudss_instance = MagicMock(name="cudss_instance")
+    mock_cudss_class = MagicMock(name="CuDirectSparseSolver", return_value=mock_cudss_instance)
+    mock_solve_mod = types.ModuleType("bae.sparse.solve")
+    mock_solve_mod.CuDirectSparseSolver = mock_cudss_class
+
+    mods = _make_ba_mods({"bae.sparse.solve": mock_solve_mod})
+    with patch.dict(sys.modules, mods), patch("torch.cuda.is_available", return_value=True):
+        ba_mod = _load_ba(mods)
+        solver = ba_mod._get_default_solver()
+
+    mock_cudss_class.assert_called_once()
+    assert solver is mock_cudss_instance
+
+
+def test_get_default_solver_falls_back_to_pcg_no_cuda():
+    """PCG instantiated when CUDA unavailable."""
+    mods = _make_ba_mods()
+    mock_pcg_instance = MagicMock(name="pcg_instance")
+    mock_pcg_class = MagicMock(name="PCG", return_value=mock_pcg_instance)
+    mods["bae.utils.pysolvers"].PCG = mock_pcg_class
+
+    with patch.dict(sys.modules, mods), patch("torch.cuda.is_available", return_value=False):
+        ba_mod = _load_ba(mods)
+        solver = ba_mod._get_default_solver()
+
+    mock_pcg_class.assert_called_once()
+    assert solver is mock_pcg_instance
+
+
+def test_get_default_solver_cpu_device_forces_pcg():
+    """device='cpu' must always return PCG, even when CUDA is available."""
+    mods = _make_ba_mods()
+    mock_pcg_instance = MagicMock(name="pcg_instance")
+    mock_pcg_class = MagicMock(name="PCG", return_value=mock_pcg_instance)
+    mods["bae.utils.pysolvers"].PCG = mock_pcg_class
+
+    with patch.dict(sys.modules, mods), patch("torch.cuda.is_available", return_value=True):
+        ba_mod = _load_ba(mods)
+        solver = ba_mod._get_default_solver(device="cpu")
+
+    mock_pcg_class.assert_called_once()
+    assert solver is mock_pcg_instance
+
+
+def test_get_default_solver_falls_back_to_pcg_cudss_import_error():
+    """PCG instantiated when CUDA available but bae.sparse.solve raises ImportError."""
+    # Set bae.sparse.solve to None — Python treats None entries as blocked imports,
+    # raising ImportError. Without this, a prior test's real import may be cached.
+    mods = _make_ba_mods({"bae.sparse.solve": None})
+    mock_pcg_instance = MagicMock(name="pcg_instance")
+    mock_pcg_class = MagicMock(name="PCG", return_value=mock_pcg_instance)
+    mods["bae.utils.pysolvers"].PCG = mock_pcg_class
+
+    with patch.dict(sys.modules, mods), patch("torch.cuda.is_available", return_value=True):
+        ba_mod = _load_ba(mods)
+        solver = ba_mod._get_default_solver()
+
+    mock_pcg_class.assert_called_once()
+    assert solver is mock_pcg_instance

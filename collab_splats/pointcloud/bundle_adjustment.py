@@ -10,7 +10,8 @@ functions so this module can be imported even if those packages are absent.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 
 import numpy as np
 
@@ -28,6 +29,29 @@ class BundleAdjustmentConfig:
     min_inliers_per_frame: int = 64
     max_query_pts: int = 2048      # track extraction: max query points
     query_frame_num: int = 5       # track extraction: number of query frames
+    device: "str | None" = None    # target device; None = auto (CUDA if available, else CPU)
+
+
+########################################################
+########## Solver selection ############################
+########################################################
+def _get_default_solver(device: str | None = None) -> Any:
+    """Return CuDSS when CUDA is requested and available, else PCG.
+
+    Args:
+        device: resolved device string; ``None`` auto-detects CUDA.
+                ``"cpu"`` always returns PCG even when CUDA is present.
+    """
+    import torch
+    resolved = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    if "cuda" in resolved:
+        try:
+            from bae.sparse.solve import CuDirectSparseSolver
+            return CuDirectSparseSolver()
+        except (ImportError, RuntimeError):
+            pass
+    from bae.utils.pysolvers import PCG
+    return PCG()
 
 
 ########################################################
@@ -41,8 +65,15 @@ def extract_tracks_vggsfm(
     max_query_pts: int = 2048,
     query_frame_num: int = 5,
     fine_tracking: bool = False,
+    device: "str | None" = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Predict cross-frame 2D tracks via VGGSfM (ALIKED+SP keypoints).
+
+    Args:
+        device: Target device for the tracker (e.g. ``"cuda"``, ``"cpu"``).
+                ``None`` auto-selects CUDA when available, CPU otherwise.
+                Tensor inputs keep their existing device; only numpy inputs are
+                moved to this device.
 
     Returns:
         tracks:     (N, P, 2) float32 — 2D pixel coords per frame per point.
@@ -52,12 +83,14 @@ def extract_tracks_vggsfm(
     import torch
     from vggt.dependency.track_predict import predict_tracks
 
+    # Resolve target device: caller-supplied > auto-detect CUDA > CPU.
+    # predict_tracks inherits device from images.device — it does NOT self-relocate.
+    target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
     # Accept either a torch.Tensor or a numpy array (the windowed LC path stores
     # merged images as numpy in raw_outputs["images"]).
     if isinstance(images, np.ndarray):
-        images = torch.from_numpy(images)
-        # Keep on CPU — predict_tracks manages its own device placement and moving
-        # all N frames to GPU before calling it doubles peak memory.
+        images = torch.from_numpy(images).to(target_device)
 
     device = images.device
     # VGGSfM tracker uses grid_sample which is not implemented for BFloat16 on CUDA.
@@ -139,6 +172,7 @@ def run_bundle_adjustment(
     lm_steps: int = 40,
     shared_camera: bool = False,
     min_inliers_per_frame: int = 64,
+    solver=None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run BAE LM bundle adjustment to refine 3D points and camera poses.
 
@@ -151,9 +185,13 @@ def run_bundle_adjustment(
     import torch.nn as nn
     import pypose as pp
     from bae.autograd.function import TrackingTensor, map_transform
-    from bae.utils.pysolvers import PCG
-    from bae.utils.ba import rotate_quat
     from bae.optim import LM
+
+    # rotate_quat: apply SE3 pose to 3D points (world → camera frame).
+    # Not present in the installed bae version; implement via pypose SE3.Act.
+    def rotate_quat(pts, pose):
+        """Apply SE3 transform to pts. Equivalent to bae.utils.ba.rotate_quat."""
+        return pose.Act(pts)
     from vggt.dependency.projection import project_3D_points_np
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -301,10 +339,10 @@ def run_bundle_adjustment(
     ########## Step 6: Optimise with LM ###################
     ########################################################
     with torch.enable_grad():
-        model = ReprojNonBatched(cameras_params, points_tensor, shared_intr).to(device)
+        model = ReprojNonBatched(cameras_params, points_tensor, shared_intr)
 
         strategy = pp.optim.strategy.TrustRegion(up=2.0, down=0.5**4)
-        optimizer = LM(model, strategy=strategy, solver=PCG(), reject=10)
+        optimizer = LM(model, strategy=strategy, solver=solver if solver is not None else _get_default_solver(), reject=10)
         scheduler = pp.optim.scheduler.StopOnPlateau(
             optimizer, steps=lm_steps, patience=3, decreasing=1e-3, verbose=False
         )
@@ -334,13 +372,11 @@ def run_bundle_adjustment(
     # Update focal lengths in intrinsics
     if shared_camera and model.shared_intr is not None:
         focal_val = float(model.shared_intr.data.detach().cpu().numpy().mean())
-        for ki in unique_keyframe:
-            refined_intrinsics[ki, 0, 0] = focal_val
-            refined_intrinsics[ki, 1, 1] = focal_val
+        refined_intrinsics[unique_keyframe, 0, 0] = focal_val
+        refined_intrinsics[unique_keyframe, 1, 1] = focal_val
     elif not shared_camera:
         opt_focal = opt_cam[:, 7]  # (K,)
-        for i, ki in enumerate(unique_keyframe):
-            refined_intrinsics[ki, 0, 0] = float(opt_focal[i])
-            refined_intrinsics[ki, 1, 1] = float(opt_focal[i])
+        refined_intrinsics[unique_keyframe, 0, 0] = opt_focal
+        refined_intrinsics[unique_keyframe, 1, 1] = opt_focal
 
     return refined_points3d, refined_extrinsics, refined_intrinsics

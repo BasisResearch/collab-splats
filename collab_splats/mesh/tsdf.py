@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 try:
     import meshlib.mrmeshpy as mm
@@ -18,6 +18,7 @@ except ImportError:
 
 from collab_splats.mesh.base import BaseMeshCreator, MeshResult
 from collab_splats.mesh.utils import clean_repair_mesh
+from collab_splats.utils.geometry import extract_intrinsics, invert_poses
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ class Open3DTSDFFusion(BaseMeshCreator):
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
 
+        w2c = invert_poses(c2w)  # (N, 4, 4) — precompute all at once
+
         for i in tqdm(range(N), desc="TSDF integration"):
             rgb_u8 = (np.ascontiguousarray(rgbs[i]) * 255).astype(np.uint8)
             depth_f32 = np.ascontiguousarray(depths[i]).astype(np.float32)
@@ -80,12 +83,9 @@ class Open3DTSDFFusion(BaseMeshCreator):
                 convert_rgb_to_intensity=False,
             )
 
-            fx = float(intrinsics[i, 0, 0])
-            fy = float(intrinsics[i, 1, 1])
-            cx = float(intrinsics[i, 0, 2])
-            cy = float(intrinsics[i, 1, 2])
+            fx, fy, cx, cy = extract_intrinsics(intrinsics[i])
             intrinsic_o3d = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fy, cx, cy)
-            extrinsic = np.linalg.inv(c2w[i])
+            extrinsic = w2c[i]
 
             volume.integrate(rgbd, intrinsic=intrinsic_o3d, extrinsic=extrinsic)
 

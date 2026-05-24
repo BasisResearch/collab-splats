@@ -7,7 +7,7 @@ import torch
 
 from nerfstudio.utils.eval_utils import eval_setup
 
-from collab_splats.utils.camera_utils import OPENGL_TO_OPENCV
+from collab_splats.utils.geometry import OPENGL_TO_OPENCV
 
 def extract_mesh_inputs(
     load_config: Path,

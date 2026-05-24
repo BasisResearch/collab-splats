@@ -90,10 +90,10 @@ def test_vggtx_no_use_ba_field():
     assert "use_ba" not in field_names
 
 
-def test_vggtx_has_reproject_ba():
-    """VGGTXCreator must implement _reproject_ba."""
+def test_vggtx_has_reproject():
+    """VGGTXCreator must implement _reproject."""
     from collab_splats.pointcloud.feedforward import VGGTXCreator
-    assert hasattr(VGGTXCreator, "_reproject_ba")
+    assert hasattr(VGGTXCreator, "_reproject")
 
 
 def test_mapanything_no_use_ba_field():
@@ -104,10 +104,10 @@ def test_mapanything_no_use_ba_field():
     assert "use_ba" not in field_names
 
 
-def test_mapanything_has_reproject_ba():
-    """MapAnythingCreator must implement _reproject_ba."""
+def test_mapanything_has_reproject():
+    """MapAnythingCreator must implement _reproject."""
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
-    assert hasattr(MapAnythingCreator, "_reproject_ba")
+    assert hasattr(MapAnythingCreator, "_reproject")
 
 
 def _make_mock_creator(ff_result):
@@ -115,7 +115,7 @@ def _make_mock_creator(ff_result):
     m = MagicMock()
     m.outputs = ff_result
     m.raw_outputs = {}
-    m._reproject_ba.return_value = (ff_result.pts3d, ff_result.colors)
+    m._reproject.return_value = (ff_result.pts3d, ff_result.colors)
     return m
 
 

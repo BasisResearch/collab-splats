@@ -171,7 +171,7 @@ class BundleAdjustment(BasePointcloudCreator):
             pts3d = np.einsum("pij,pj->pi", R1.transpose(0, 2, 1), pts3d_cam - t1).astype(np.float32)
             colors = result.colors
         else:
-            pts3d, colors = self.base._reproject_ba(
+            pts3d, colors = self.base._reproject(
                 self.base.raw_outputs, refined_ext_3x4, refined_intr
             )
 
@@ -221,8 +221,9 @@ class LoopClosure:
     def build_colmap(self, output_dir: Path) -> PointcloudResult:
         return self.base.build_colmap(output_dir)
 
-    def _reproject_ba(self, raw_outputs: Any, ext: Any, intr: Any) -> Any:
-        return self.base._reproject_ba(raw_outputs, ext, intr)
+    def _reproject(self, raw_outputs: Any, ext: Any, intr: Any) -> Any:
+        """Delegate _reproject to base creator."""
+        return self.base._reproject(raw_outputs, ext, intr)
 
     @property
     def outputs(self) -> Any:

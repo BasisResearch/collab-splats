@@ -336,9 +336,10 @@ class VGGTXCreator(BaseFeedforwardCreator):
             images=images,
             conf=conf,
             world_points=world_points,
+            depth=raw_outputs["depth"].squeeze(-1) if raw_outputs["depth"].ndim == 4 else raw_outputs["depth"],
         )
 
-    def _reproject_ba(
+    def _reproject(
         self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Re-derive world-space points using bundle-adjusted camera poses.

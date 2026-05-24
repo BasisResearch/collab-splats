@@ -196,13 +196,14 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         # postprocess_model_outputs_for_inference already baked confidence + edge masking into
         # pred["mask"], so combined_mask = mask & (depth_z > 0) is the full validity mask.
         masks, pts3d_grid, colors_grid = [], [], []
-        images_list, conf_list = [], []
+        images_list, conf_list, depth_list = [], [], []
         extrinsics_list, intrinsics_list = [], []
 
         for pred in processed:
             m = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)       # (H, W)
             dz = pred["depth_z"][0].squeeze(-1).cpu().numpy()                # (H, W)
             masks.append(m & (dz > 0))
+            depth_list.append(dz)
             pts3d_grid.append(pred["pts3d"][0].cpu().numpy())                # (H, W, 3)
             colors_grid.append(
                 (pred["img_no_norm"][0].cpu().numpy() * 255).astype(np.uint8)
@@ -230,6 +231,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         _world_points = stacked_pts3d                        # full (N, H, W, 3) grid for BA
         _images = torch.stack(images_list)                   # (N, C, H, W)
         _conf = torch.stack(conf_list) if conf_list else None
+        _depth = np.stack(depth_list).astype(np.float32)    # (N, H, W) depth_z values
         extrinsics = np.stack(extrinsics_list)               # (N, 3, 4)
         intrinsics = np.stack(intrinsics_list)               # (N, 3, 3)
 
@@ -249,6 +251,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             images=_images,
             conf=_conf,
             world_points=_world_points,
+            depth=_depth,
         )
 
     def extract_intermediate_features(
@@ -308,7 +311,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
 
         return captured
 
-    def _reproject_ba(
+    def _reproject(
         self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Re-derive world-space points using bundle-adjusted camera poses.

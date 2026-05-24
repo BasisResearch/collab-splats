@@ -13,7 +13,7 @@ from __future__ import annotations
 import copy
 import time
 from abc import abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +57,7 @@ class FeedforwardResult:
     images: "torch.Tensor | None" = None        # (N, 3, H, W) normalised RGB for track extraction
     conf: "torch.Tensor | None" = None           # (N, H, W) confidence scores
     world_points: "np.ndarray | None" = None     # (N, H, W, 3) world-space points per pixel
+    depth: "np.ndarray | None" = None            # (N, H, W) float32 depth maps (normalised to 3-D across backends)
     features: "np.ndarray | None" = None      # (P, D) float32 — feature vector per point, index-aligned with pts3d
     pixel_indices: "np.ndarray | None" = None  # (P, 3) int32 — [frame_id, row, col] source pixel for each point
 
@@ -132,6 +133,11 @@ class FeedforwardResult:
         if self.pixel_indices is not None:
             store.create_array("pixel_indices", data=self.pixel_indices, chunks=self.pixel_indices.shape, compressors=lz4)
 
+        # Save depth (N, H, W) chunked by frame
+        if self.depth is not None:
+            chunks = (1, self.depth.shape[1], self.depth.shape[2])
+            store.create_array("depth", data=self.depth, chunks=chunks, compressors=lz4)
+
         # Save world_points chunked by frame: (1, H, W, 3)
         if self.world_points is not None:
             wp = self.world_points  # (N, H, W, 3)
@@ -189,6 +195,7 @@ class FeedforwardResult:
         features = store["features"][:] if "features" in store else None
         pixel_indices = store["pixel_indices"][:] if "pixel_indices" in store else None
         world_points = store["world_points"][:] if "world_points" in store else None
+        depth = store["depth"][:] if "depth" in store else None
         conf = torch.from_numpy(store["conf"][:]) if "conf" in store else None
 
         return cls(
@@ -203,6 +210,7 @@ class FeedforwardResult:
             features=features,
             pixel_indices=pixel_indices,
             world_points=world_points,
+            depth=depth,
             images=None,  # too large; load separately if needed
             conf=conf,
         )
@@ -694,13 +702,24 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         # "poses" is optional — VGGTx includes it (pre-decoded), MapAnything does not
         return True, features.get("poses")
 
+    def reproject(self, result: "FeedforwardResult") -> "FeedforwardResult":
+        """Re-extract pts3d/colors using refined poses stored in result.
+
+        Uses self.raw_outputs from the last run() or run_inference() call.
+        Only call when result.pixel_indices is not None.
+        """
+        pts3d, colors = self._reproject(
+            self.raw_outputs, result.extrinsics[:, :3, :], result.intrinsics
+        )
+        return replace(result, pts3d=pts3d, colors=colors)
+
     @abstractmethod
-    def _reproject_ba(
+    def _reproject(
         self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Re-derive world-space point cloud using bundle-adjusted camera poses.
+        """Re-derive world-space point cloud using refined camera poses.
 
-        Called by the BundleAdjustment wrapper after it refines extrinsics.
+        Called by reproject() after BundleAdjustment refines extrinsics.
         Each backend re-projects its raw depth/point data under the new poses.
 
         Args:

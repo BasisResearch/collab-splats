@@ -22,14 +22,13 @@ from vggt_omega.models import VGGTOmega
 from vggt_omega.utils.load_fn import load_and_preprocess_images
 from vggt_omega.utils.pose_enc import encoding_to_camera
 
-from ..utils import lift_features
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
-    _extrinsics_3x4_to_4x4,
     _raw_to_world_points,
 )
 from .vggtx import unproject_and_filter_points
+from collab_splats.utils.geometry import extrinsics_to_homogeneous
 
 logger = logging.getLogger(__name__)
 
@@ -213,13 +212,6 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             conf_threshold=self.conf_threshold,
         )
 
-        # Lift semantic features to 3D if an extractor is configured
-        if self.extractor_name:
-            device = str(next(self.model.parameters()).device)
-            features = lift_features(raw_outputs["images"], pixel_indices, self.extractor_name, device)
-        else:
-            features = None
-
         # Resolve model spatial dimensions; handle (N, H, W, 1) and (N, H, W) depth formats
         depth = raw_outputs["depth"]
         if depth.ndim == 4:
@@ -237,7 +229,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         conf = torch.from_numpy(raw_outputs["depth_conf"])
         images = raw_outputs["images"]
 
-        extrinsic_4x4 = _extrinsics_3x4_to_4x4(extrinsic)
+        extrinsic_4x4 = extrinsics_to_homogeneous(extrinsic)
 
         # LC merged outputs carry deduped global poses — one entry per input frame
         extrinsic_4x4_out = raw_outputs.get("extrinsic_global_4x4", extrinsic_4x4)
@@ -246,7 +238,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             pts3d=pts3d,
             colors=colors,
             pixel_indices=pixel_indices,
-            features=features,
+            features=None,
             extrinsics=extrinsic_4x4_out,
             intrinsics=intrinsic,
             image_paths=self.image_paths,
@@ -256,6 +248,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             images=images,
             conf=conf,
             world_points=world_points,
+            depth=raw_outputs["depth"].squeeze(-1) if raw_outputs["depth"].ndim == 4 else raw_outputs["depth"],
         )
 
     def _reproject_ba(
@@ -307,5 +300,5 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             predictions["pose_enc"].detach(), image_shape
         )
         ext_3x4 = ext_3x4.cpu().float().numpy().squeeze(0)  # (2, 3, 4)
-        captured["poses"] = _extrinsics_3x4_to_4x4(ext_3x4)  # (2, 4, 4)
+        captured["poses"] = extrinsics_to_homogeneous(ext_3x4)  # (2, 4, 4)
         return captured

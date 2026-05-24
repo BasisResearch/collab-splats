@@ -20,8 +20,8 @@ from vggt.utils.load_fn import load_and_preprocess_images_square, load_and_prepr
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 from ..postproc import run_global_alignment
-from ..utils import lift_features
-from .base import BaseFeedforwardCreator, FeedforwardResult, _extrinsics_3x4_to_4x4, _raw_to_world_points, console
+from .base import BaseFeedforwardCreator, FeedforwardResult, _raw_to_world_points, console
+from collab_splats.utils.geometry import extrinsics_to_homogeneous
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -292,13 +292,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
             max_points=self.max_points,
         )
 
-        # Lift semantic features to 3D if an extractor is configured
-        if self.extractor_name:
-            device = str(next(self.model.parameters()).device)
-            features = lift_features(raw_outputs["images"], pixel_indices, self.extractor_name, device)
-        else:
-            features = None
-
         # Model spatial dimensions used to reshape world-point grid for BA
         model_h = int(raw_outputs["depth"].shape[1])
         model_w = int(raw_outputs["depth"].shape[2])
@@ -315,7 +308,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
         conf = torch.from_numpy(raw_outputs["depth_conf"])
         images = raw_outputs["images"]
 
-        extrinsic_4x4 = _extrinsics_3x4_to_4x4(extrinsic)
+        extrinsic_4x4 = extrinsics_to_homogeneous(extrinsic)
 
         # LC merged outputs carry the deduped global poses so that
         # FeedforwardResult.extrinsics has exactly one entry per input frame,
@@ -326,7 +319,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
             pts3d=pts3d,
             colors=colors,
             pixel_indices=pixel_indices,
-            features=features,
+            features=None,
             extrinsics=extrinsic_4x4_out,
             intrinsics=intrinsic,
             image_paths=self.image_paths,
@@ -424,5 +417,5 @@ class VGGTXCreator(BaseFeedforwardCreator):
             predictions["pose_enc"].detach(), image_shape
         )
         ext_3x4 = ext_3x4.cpu().float().numpy().squeeze(0)  # (2, 3, 4)
-        captured["poses"] = _extrinsics_3x4_to_4x4(ext_3x4)  # (2, 4, 4)
+        captured["poses"] = extrinsics_to_homogeneous(ext_3x4)  # (2, 4, 4)
         return captured

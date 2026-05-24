@@ -1,21 +1,24 @@
-"""Bundle adjustment utilities for collab-splats.
+"""Bundle adjustment for collab-splats.
 
-Two public functions:
-- extract_tracks_vggsfm: Predict cross-frame 2D tracks via VGGSfM tracker.
-- run_bundle_adjustment: Run BAE LM bundle adjustment to refine poses and points.
+Public API:
+- BundleAdjustmentConfig: configuration dataclass
+- BundleAdjustment:       refines camera poses via VGGSfM tracks + LM BA
 
-Heavy dependencies (torch, pypose, bae, vggt) are imported lazily inside the
-functions so this module can be imported even if those packages are absent.
+Heavy dependencies (torch, pypose, bae, vggt) are imported lazily inside
+methods so this module can be imported even if those packages are absent.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-__all__ = ["BundleAdjustmentConfig", "extract_tracks_vggsfm", "run_bundle_adjustment"]
+if TYPE_CHECKING:
+    from .feedforward.base import FeedforwardResult
+
+__all__ = ["BundleAdjustment", "BundleAdjustmentConfig"]
 
 
 ########################################################
@@ -57,7 +60,7 @@ def _get_default_solver(device: str | None = None) -> Any:
 ########################################################
 ########## Track extraction ############################
 ########################################################
-def extract_tracks_vggsfm(
+def _extract_tracks_vggsfm(
     images: "torch.Tensor",  # (N, 3, H, W) float — normalised RGB
     conf: "torch.Tensor | None",  # (N, H, W) confidence scores
     world_points: "np.ndarray | None",  # (N, H, W, 3) for confidence-guided sampling
@@ -160,7 +163,7 @@ def extract_tracks_vggsfm(
 ########################################################
 ########## Bundle adjustment (LM) #####################
 ########################################################
-def run_bundle_adjustment(
+def _run_bundle_adjustment(
     points3d: np.ndarray,       # (P, 3)   initial 3D point positions
     extrinsics: np.ndarray,     # (N, 3, 4) world2cam [R|t]
     intrinsics: np.ndarray,     # (N, 3, 3) camera intrinsics K
@@ -173,6 +176,7 @@ def run_bundle_adjustment(
     shared_camera: bool = False,
     min_inliers_per_frame: int = 64,
     solver=None,
+    device: "str | None" = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run BAE LM bundle adjustment to refine 3D points and camera poses.
 
@@ -194,7 +198,7 @@ def run_bundle_adjustment(
         return pose.Act(pts)
     from vggt.dependency.projection import project_3D_points_np
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     # Work on copies so we don't mutate the caller's arrays.
     vis_mask = vis_mask.copy().astype(bool)
@@ -342,7 +346,7 @@ def run_bundle_adjustment(
         model = ReprojNonBatched(cameras_params, points_tensor, shared_intr)
 
         strategy = pp.optim.strategy.TrustRegion(up=2.0, down=0.5**4)
-        optimizer = LM(model, strategy=strategy, solver=solver if solver is not None else _get_default_solver(), reject=10)
+        optimizer = LM(model, strategy=strategy, solver=solver if solver is not None else _get_default_solver(device=device), reject=10)
         scheduler = pp.optim.scheduler.StopOnPlateau(
             optimizer, steps=lm_steps, patience=3, decreasing=1e-3, verbose=False
         )
@@ -380,3 +384,11 @@ def run_bundle_adjustment(
         refined_intrinsics[unique_keyframe, 1, 1] = opt_focal
 
     return refined_points3d, refined_extrinsics, refined_intrinsics
+
+
+########################################################
+########## Public aliases #############################
+########################################################
+# Public names expected by wrappers.py and pointcloud/__init__.py.
+extract_tracks_vggsfm = _extract_tracks_vggsfm
+run_bundle_adjustment = _run_bundle_adjustment

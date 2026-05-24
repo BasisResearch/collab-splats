@@ -8,7 +8,7 @@ try:
     _OMEGA_AVAILABLE = True
 except ImportError:
     _OMEGA_AVAILABLE = False
-from .bundle_adjustment import BundleAdjustmentConfig, run_bundle_adjustment
+from .bundle_adjustment import BundleAdjustmentConfig
 from .loop_closure import LoopClosureConfig
 from .wrappers import BundleAdjustment, LoopClosure
 from .localization import (
@@ -90,5 +90,4 @@ __all__ = [
     "get_points_in_mask",
     "get_creator",
     "make_creator",
-    "run_bundle_adjustment",
 ]

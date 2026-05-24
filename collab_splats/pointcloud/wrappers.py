@@ -9,10 +9,9 @@ from typing import Any
 import numpy as np
 
 from .base import BasePointcloudCreator, PointcloudResult
-from .bundle_adjustment import BundleAdjustmentConfig, extract_tracks_vggsfm, run_bundle_adjustment
+from .bundle_adjustment import BundleAdjustmentConfig, _extract_tracks_vggsfm, _run_bundle_adjustment
 from .feedforward import FeedforwardResult
 from .loop_closure import LoopClosureConfig
-from .utils import reproject_pixels
 
 __all__ = ["BundleAdjustment", "LoopClosure"]
 
@@ -30,6 +29,30 @@ class BundleAdjustment(BasePointcloudCreator):
     ) -> None:
         self.base = base
         self.config = config or BundleAdjustmentConfig()
+
+    def refine(self, result: FeedforwardResult, output_dir: Path) -> PointcloudResult:
+        """Run BA on a pre-computed FeedforwardResult without re-running inference.
+
+        Works for any backend (VGGTX, VGGTOmega, MapAnything). Requires
+        result.images, result.conf, result.world_points, and result.pixel_indices
+        to be populated — all are stored by save_zarr() and restored by load_zarr()
+        (images must be loaded separately from the zarr store and set on the result).
+
+        Args:
+            result:     Pre-computed result with images, conf, world_points populated.
+            output_dir: Directory to write the COLMAP reconstruction.
+
+        Returns:
+            PointcloudResult with bundle-adjusted poses and point cloud.
+        """
+        output_dir = Path(output_dir)
+        # Set result on base so _apply_ba and build_colmap can access it.
+        # raw_outputs is not needed by _apply_ba (backend-agnostic reprojection uses
+        # world_points), but the dedup-rows LC path reads it as a dict — provide empty dict.
+        self.base.outputs = result
+        self.base.raw_outputs = {}
+        self._apply_ba()
+        return self.base.build_colmap(output_dir)
 
     def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
         import torch
@@ -114,14 +137,14 @@ class BundleAdjustment(BasePointcloudCreator):
         }
 
         # Extract 2D tracks across frames — VGGSfM tracker requires square input (padded in extract_tracks_vggsfm)
-        tracks, vis_scores, pts3d_kp = extract_tracks_vggsfm(
+        tracks, vis_scores, pts3d_kp = _extract_tracks_vggsfm(
             images, conf, world_points,
             **track_params,
         )
         extrinsics_3x4 = result.extrinsics[:, :3, :]  # (N, 3, 4)
 
         # Run Levenberg-Marquardt BA to refine poses and 3D points
-        _, refined_ext_3x4, refined_intr = run_bundle_adjustment(
+        _, refined_ext_3x4, refined_intr = _run_bundle_adjustment(
             pts3d_kp,
             extrinsics_3x4,
             intrinsics,
@@ -131,17 +154,22 @@ class BundleAdjustment(BasePointcloudCreator):
             **cfg_dict,
         )
 
-        if result.pixel_indices is not None:
-            # Reproject stored source pixels with refined poses — deterministic,
-            # avoids re-running stochastic randomly_limit_trues so the point set
-            # stays index-aligned with pre-BA colors and features.
-            pts3d = reproject_pixels(
-                self.base.raw_outputs["depth"],
-                result.pixel_indices,
-                refined_ext_3x4,
-                refined_intr,
-            )
-            colors = result.colors  # source pixels unchanged; only world positions shift
+        if result.pixel_indices is not None and result.world_points is not None:
+            # Backend-agnostic reprojection: world_points → camera frame (old poses) →
+            # world frame (new poses).  Preserves pixel_indices so the point set stays
+            # index-aligned with pre-BA colors and features.
+            fi = result.pixel_indices[:, 0]
+            ri = result.pixel_indices[:, 1]
+            ci = result.pixel_indices[:, 2]
+            old_pts = result.world_points[fi, ri, ci].astype(np.float64)   # (P, 3)
+            ext0 = result.extrinsics[:, :3, :]                              # (N, 3, 4)
+            R0 = ext0[fi, :, :3].astype(np.float64)                        # (P, 3, 3)
+            t0 = ext0[fi, :, 3].astype(np.float64)                         # (P, 3)
+            pts3d_cam = np.einsum("pij,pj->pi", R0, old_pts) + t0          # (P, 3)
+            R1 = refined_ext_3x4[fi, :, :3].astype(np.float64)             # (P, 3, 3)
+            t1 = refined_ext_3x4[fi, :, 3].astype(np.float64)              # (P, 3)
+            pts3d = np.einsum("pij,pj->pi", R1.transpose(0, 2, 1), pts3d_cam - t1).astype(np.float32)
+            colors = result.colors
         else:
             pts3d, colors = self.base._reproject_ba(
                 self.base.raw_outputs, refined_ext_3x4, refined_intr
@@ -236,7 +264,7 @@ class LoopClosure:
 
         import torch
         from rich.console import Console
-        from tqdm import tqdm
+        from tqdm.auto import tqdm
 
         from collab_splats.pointcloud.loop_closure import Submap
         from collab_splats.pointcloud.loop_closure.closure import find_loop_closures

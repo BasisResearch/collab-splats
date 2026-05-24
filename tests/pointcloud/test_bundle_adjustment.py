@@ -96,7 +96,7 @@ def test_extract_tracks_vggsfm_shape():
         import collab_splats.pointcloud.bundle_adjustment as ba_mod
         importlib.reload(ba_mod)
 
-        tracks, vis_scores, pts3d = ba_mod.extract_tracks_vggsfm(
+        tracks, vis_scores, pts3d = ba_mod._extract_tracks_vggsfm(
             images,
             conf=conf,
             world_points=None,
@@ -149,7 +149,7 @@ def test_extract_tracks_vggsfm_conf_4d():
         import collab_splats.pointcloud.bundle_adjustment as ba_mod
         importlib.reload(ba_mod)
 
-        tracks, vis_scores, pts3d = ba_mod.extract_tracks_vggsfm(
+        tracks, vis_scores, pts3d = ba_mod._extract_tracks_vggsfm(
             images, conf=conf_4d, world_points=None
         )
 
@@ -253,7 +253,7 @@ def test_run_bundle_adjustment_early_exit_shape():
         sys.modules[_mod_name] = ba_mod
         _spec.loader.exec_module(ba_mod)
 
-        ref_pts, ref_ext, ref_intr = ba_mod.run_bundle_adjustment(
+        ref_pts, ref_ext, ref_intr = ba_mod._run_bundle_adjustment(
             points3d=points3d,
             extrinsics=extrinsics,
             intrinsics=intrinsics,
@@ -286,7 +286,7 @@ def _cuda_and_bae_available() -> bool:
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
 def test_run_bundle_adjustment_reduces_reproj_error():
     """With noisy initial poses and clean 2D observations, BA must reduce reprojection error."""
-    from collab_splats.pointcloud.bundle_adjustment import run_bundle_adjustment
+    from collab_splats.pointcloud.bundle_adjustment import _run_bundle_adjustment
 
     rng = np.random.default_rng(0)
     N, P, H, W = 5, 200, 256, 256
@@ -343,7 +343,7 @@ def test_run_bundle_adjustment_reduces_reproj_error():
 
     err_before = mean_reproj_error(extrinsics_noisy)
 
-    _, ext_out, _ = run_bundle_adjustment(
+    _, ext_out, _ = _run_bundle_adjustment(
         points3d.copy(),
         extrinsics_noisy,
         intrinsics,
@@ -387,7 +387,7 @@ def test_run_bundle_adjustment_no_reproj_filter():
         import collab_splats.pointcloud.bundle_adjustment as ba_mod
         importlib.reload(ba_mod)
 
-        ref_pts, ref_ext, ref_intr = ba_mod.run_bundle_adjustment(
+        ref_pts, ref_ext, ref_intr = ba_mod._run_bundle_adjustment(
             points3d=points3d,
             extrinsics=extrinsics,
             intrinsics=intrinsics,

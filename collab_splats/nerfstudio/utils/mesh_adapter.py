@@ -7,7 +7,7 @@ import torch
 
 from nerfstudio.utils.eval_utils import eval_setup
 
-from collab_splats.utils.geometry import OPENGL_TO_OPENCV
+from collab_splats.utils.geometry import OPENGL_TO_OPENCV, extrinsics_to_homogeneous
 
 def extract_mesh_inputs(
     load_config: Path,
@@ -44,10 +44,8 @@ def extract_mesh_inputs(
 
             # nerfstudio camera_to_worlds is (N, 3, 4); take [0] to get (3, 4), then pad to (4, 4)
             c2w_34 = camera.camera_to_worlds[0].cpu().numpy()
-            c2w_44 = np.eye(4, dtype=np.float32)
-            c2w_44[:3] = c2w_34
             # nerfstudio stores c2w in OpenGL convention (Y-up, Z-back); TSDF expects OpenCV (Y-down, Z-forward)
-            c2w_44 = c2w_44 @ OPENGL_TO_OPENCV.astype(np.float32)
+            c2w_44 = (extrinsics_to_homogeneous(c2w_34) @ OPENGL_TO_OPENCV).astype(np.float32)
 
             K = np.eye(3, dtype=np.float32)
             K[0, 0] = camera.fx.item()

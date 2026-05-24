@@ -17,7 +17,6 @@ import numpy as np
 OPENGL_TO_OPENCV: np.ndarray = np.array(
     [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float64
 )
-OPENCV_TO_OPENGL: np.ndarray = OPENGL_TO_OPENCV.copy()  # same values (self-inverse); independent copy
 
 ########################################################################
 ########## Geometry helpers ############################################

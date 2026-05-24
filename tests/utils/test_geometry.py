@@ -2,7 +2,6 @@ import numpy as np
 import pytest
 from collab_splats.utils.geometry import (
     OPENGL_TO_OPENCV,
-    OPENCV_TO_OPENGL,
     extrinsics_to_homogeneous,
     invert_poses,
     extract_intrinsics,
@@ -85,15 +84,8 @@ def test_opengl_to_opencv_shape():
     assert OPENGL_TO_OPENCV.shape == (4, 4)
 
 
-def test_opencv_opengl_same_values():
-    np.testing.assert_array_equal(OPENGL_TO_OPENCV, OPENCV_TO_OPENGL)
-
-
 def test_opengl_to_opencv_flips_yz():
     expected = np.diag([1, -1, -1, 1]).astype(np.float64)
     np.testing.assert_array_equal(OPENGL_TO_OPENCV, expected)
 
 
-def test_opencv_opengl_independent_objects():
-    # Must be independent copies, not same object
-    assert OPENGL_TO_OPENCV is not OPENCV_TO_OPENGL

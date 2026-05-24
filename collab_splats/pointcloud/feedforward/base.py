@@ -25,7 +25,7 @@ from rich.console import Console
 from zarr.codecs import BloscCodec
 
 from ..base import BasePointcloudCreator, PointcloudResult
-from ..utils import colmap_reconstruction_to_result, cross_frame_attention_ratio
+from ..utils import colmap_reconstruction_to_result, cross_frame_attention_ratio, reproject_pixels
 
 console = Console()
 
@@ -166,14 +166,17 @@ class FeedforwardResult:
             store.create_array("images", data=imgs, chunks=chunks, compressors=lz4)
 
     @classmethod
-    def load_zarr(cls, path: Path) -> "FeedforwardResult":
+    def load_zarr(cls, path: Path, load_images: bool = False) -> "FeedforwardResult":
         """Load from a zarr v3 store saved by save_zarr().
 
-        images is always returned as None (too large for general loading).
+        images defaults to None (large tensor; skipped to avoid accidental loads).
+        Pass load_images=True to restore the (N, 3, H, W) tensor — required for
+        post-load feature lifting so the extractor sees the same FOV as the depth map.
         conf is restored as a torch.Tensor if present in the store.
 
         Args:
             path: Directory path of the zarr store.
+            load_images: If True and "images" is in the store, load and return as a torch.Tensor.
 
         Returns:
             FeedforwardResult with all persisted fields restored.
@@ -197,6 +200,12 @@ class FeedforwardResult:
         world_points = store["world_points"][:] if "world_points" in store else None
         depth = store["depth"][:] if "depth" in store else None
         conf = torch.from_numpy(store["conf"][:]) if "conf" in store else None
+        # Opt-in image load: skipped by default to avoid pulling large tensor into memory
+        images = (
+            torch.from_numpy(store["images"][:])
+            if load_images and "images" in store
+            else None
+        )
 
         return cls(
             pts3d=pts3d,
@@ -211,9 +220,26 @@ class FeedforwardResult:
             pixel_indices=pixel_indices,
             world_points=world_points,
             depth=depth,
-            images=None,  # too large; load separately if needed
+            images=images,
             conf=conf,
         )
+
+    def reproject(self) -> "FeedforwardResult":
+        """Re-project pts3d under current extrinsics using stored source pixels and depth."""
+        if self.depth is None or self.pixel_indices is None:
+            raise ValueError(
+                "reproject() requires depth and pixel_indices; load via load_zarr() "
+                "or ensure the creator's _postprocess populated both fields."
+            )
+        # Reproject stored source pixels under new extrinsics — deterministic,
+        # point set stays index-aligned with colors and features.
+        pts3d = reproject_pixels(
+            self.depth,
+            self.pixel_indices,
+            self.extrinsics[:, :3, :],
+            self.intrinsics,
+        )
+        return replace(self, pts3d=pts3d)
 
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
@@ -520,7 +546,6 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         camera_model: pycolmap camera model string for COLMAP reconstruction.
                       Use ``"PINHOLE"`` (fx, fy, cx, cy) or ``"SIMPLE_PINHOLE"``
                       (f, cx, cy — single focal length).
-        extractor_name: registered BaseFeatureExtractor name, e.g. "dinov2"; None = skip feature lifting
 
     Inspection-only attrs set after run_inference() when LC enabled:
         _lc_submaps: list[Submap]        submaps built during LC inference
@@ -532,7 +557,6 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     """
 
     camera_model: str = "PINHOLE"
-    extractor_name: str | None = None
     max_points: int = 500_000
 
     model: Any = field(default=None, init=False, repr=False)
@@ -703,10 +727,11 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         return True, features.get("poses")
 
     def reproject(self, result: "FeedforwardResult") -> "FeedforwardResult":
-        """Re-extract pts3d/colors using refined poses stored in result.
+        """Re-extract pts3d/colors via full depth unprojection under refined poses.
 
         Uses self.raw_outputs from the last run() or run_inference() call.
-        Only call when result.pixel_indices is not None.
+        Prefer result.reproject() when depth and pixel_indices are populated —
+        no creator state needed, deterministic point set.
         """
         pts3d, colors = self._reproject(
             self.raw_outputs, result.extrinsics[:, :3, :], result.intrinsics

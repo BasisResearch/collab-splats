@@ -36,11 +36,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from datasets import get_dataset
 
-from collab_splats.pointcloud import get_creator
-from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
+from collab_splats.pointcloud import BundleAdjustment, BundleAdjustmentConfig, get_creator
 from collab_splats.pointcloud.loop_closure.eval import ate_translation, rpe, auc_at_threshold
-from collab_splats.pointcloud.loop_closure.retrieval import LoopClosureConfig
-from collab_splats.pointcloud.wrappers import BundleAdjustment, LoopClosure
+from collab_splats.pointcloud.loop_closure import LoopClosureConfig
+from collab_splats.pointcloud.wrappers import LoopClosure
 
 _FIXED_CONDITIONS = {"baseline", "ba", "lc"}
 _COLORS = {"gt": "black", "baseline": "tab:red", "ba": "tab:blue", "lc": "tab:green"}
@@ -86,21 +85,14 @@ def _cam_positions(poses: np.ndarray) -> np.ndarray:
 
 
 def _make_creator(condition: str, submap_size: int | None = None):
-    """Build a creator for the given condition.
+    """Build a (creator, ba_config) pair for the given condition.
 
-    Conditions:
-        baseline             VGGT-X feedforward, no refinement
-        ba                   + bundle adjustment (max_query_pts=2048, query_frame_num=5)
-        ba_track-density-N   + bundle adjustment with N query pts; query_frame_num=max(5, N//512)
-        lc                   full loop closure pipeline
-
-    When submap_size is set, baseline and ba use windowed inference (LoopClosure with
-    detection disabled) so sequences exceeding GPU memory can be processed in windows.
-    lc always uses the full loop-closure pipeline regardless of submap_size.
+    Returns (creator, None) when no bundle adjustment is needed.
+    Returns (creator, BundleAdjustmentConfig) when BA should run after postprocess.
     """
     base = get_creator("vggtx")()
     if condition == "lc":
-        return LoopClosure(base)
+        return LoopClosure(base), None
     m = re.fullmatch(r"ba_track-density-(\d+)", condition)
     if m:
         n = int(m.group(1))
@@ -111,26 +103,35 @@ def _make_creator(condition: str, submap_size: int | None = None):
         if submap_size is not None:
             _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
             windowed = LoopClosure(base, config=_no_lc_cfg)
-            return BundleAdjustment(windowed, config=cfg)
-        return BundleAdjustment(base, config=cfg)
+            return windowed, cfg
+        return base, cfg
     if submap_size is not None:
-        # Windowed mode: use LC pipeline but with LC detection disabled so that
-        # baseline = windowed VGGT-X, ba = windowed VGGT-X + bundle adjustment.
+        # Windowed mode: LC pipeline with detection disabled so baseline = windowed VGGT-X
         _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
         windowed = LoopClosure(base, config=_no_lc_cfg)
         if condition == "ba":
-            return BundleAdjustment(windowed)
-        return windowed  # baseline
-    # Default: single-pass (fits in GPU for short sequences)
+            return windowed, BundleAdjustmentConfig()
+        return windowed, None  # baseline
+    # Default: single-pass (short sequences that fit in GPU memory)
     if condition == "ba":
-        return BundleAdjustment(base)
-    return base
+        return base, BundleAdjustmentConfig()
+    return base, None  # baseline
 
 
 def _run_condition(name: str, image_dir: Path, output_dir: Path, submap_size: int | None = None) -> np.ndarray:
     """Wrap VGGTXCreator with BA/LC as appropriate, run, return (N,4,4) extrinsics."""
-    creator = _make_creator(name, submap_size=submap_size)
-    creator.reconstruct(image_dir, output_dir)
+    creator, ba_cfg = _make_creator(name, submap_size=submap_size)
+    if ba_cfg is None:
+        creator.reconstruct(image_dir, output_dir)
+    else:
+        # Run inference, refine poses with BA, reproject pts3d, then write COLMAP output
+        ba = BundleAdjustment(ba_cfg)
+        creator.load_model()
+        creator.setup_inference(image_dir)
+        creator.run_inference()
+        creator.postprocess()
+        creator.outputs = ba.refine(creator.outputs).reproject()
+        creator.build_colmap(output_dir)
     if creator.outputs is None:
         raise RuntimeError(f"Condition '{name}' produced no outputs")
     return creator.outputs.extrinsics  # (N, 4, 4) world-to-cam

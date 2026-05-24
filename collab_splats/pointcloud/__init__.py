@@ -8,9 +8,9 @@ try:
     _OMEGA_AVAILABLE = True
 except ImportError:
     _OMEGA_AVAILABLE = False
-from .bundle_adjustment import BundleAdjustmentConfig
+from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 from .loop_closure import LoopClosureConfig
-from .wrappers import BundleAdjustment, LoopClosure
+from .wrappers import LoopClosure
 from .localization import (
     BaseRetrievalExtractor,
     CameraLocalizer,
@@ -54,17 +54,13 @@ def make_creator(
     name: str,
     *,
     use_lc: bool = False,
-    use_ba: bool = False,
     lc_config=None,
-    ba_config=None,
     **kwargs,
 ):
-    """Construct a pointcloud creator, optionally wrapped with LoopClosure and/or BundleAdjustment."""
+    """Construct a pointcloud creator, optionally wrapped with LoopClosure."""
     creator = get_creator(name)(**kwargs)
     if use_lc:
         creator = LoopClosure(creator, config=lc_config)
-    if use_ba:
-        creator = BundleAdjustment(creator, config=ba_config)
     return creator
 
 

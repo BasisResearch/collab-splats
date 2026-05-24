@@ -1,6 +1,8 @@
 # tests/pointcloud/test_wrappers.py
-import pytest
+import dataclasses
+
 import numpy as np
+import pytest
 import torch
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,11 +25,30 @@ def _make_ff_result(**overrides):
     return FeedforwardResult(**defaults)
 
 
+def _make_mock_creator(ff_result):
+    """Returns a mock that duck-types as BaseFeedforwardCreator."""
+    m = MagicMock()
+    m.outputs = ff_result
+    m.raw_outputs = {}
+    m._reproject.return_value = (ff_result.pts3d, ff_result.colors)
+    return m
+
+
+########################################################
+########## FeedforwardResult field tests ##############
+########################################################
+
+
 def test_feedforward_result_new_fields_default_none():
     r = _make_ff_result()
     assert r.images is None
     assert r.conf is None
     assert r.world_points is None
+
+
+########################################################
+########## BundleAdjustmentConfig tests ###############
+########################################################
 
 
 def test_bundle_adjustment_config_defaults():
@@ -48,10 +69,14 @@ def test_bundle_adjustment_config_custom():
     assert cfg.lm_steps == 20
 
 
+########################################################
+########## BaseFeedforwardCreator field tests #########
+########################################################
+
+
 def test_vggtx_postprocess_populates_ba_fields():
     """VGGTXCreator._postprocess() must populate images/conf/world_points."""
     from collab_splats.pointcloud.feedforward import VGGTXCreator
-    from unittest.mock import patch
 
     creator = VGGTXCreator.__new__(VGGTXCreator)
     creator.conf_threshold = 1.0
@@ -84,7 +109,6 @@ def test_vggtx_postprocess_populates_ba_fields():
 
 def test_vggtx_no_use_ba_field():
     """VGGTXCreator must not have use_ba after refactor."""
-    import dataclasses
     from collab_splats.pointcloud.feedforward import VGGTXCreator
     field_names = {f.name for f in dataclasses.fields(VGGTXCreator)}
     assert "use_ba" not in field_names
@@ -98,7 +122,6 @@ def test_vggtx_has_reproject():
 
 def test_mapanything_no_use_ba_field():
     """MapAnythingCreator must not have use_ba after refactor."""
-    import dataclasses
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
     field_names = {f.name for f in dataclasses.fields(MapAnythingCreator)}
     assert "use_ba" not in field_names
@@ -110,115 +133,38 @@ def test_mapanything_has_reproject():
     assert hasattr(MapAnythingCreator, "_reproject")
 
 
-def _make_mock_creator(ff_result):
-    """Returns a mock that duck-types as BaseFeedforwardCreator."""
-    m = MagicMock()
-    m.outputs = ff_result
-    m.raw_outputs = {}
-    m._reproject.return_value = (ff_result.pts3d, ff_result.colors)
-    return m
+########################################################
+########## make_creator tests #########################
+########################################################
 
 
-def test_bundle_adjustment_raises_if_images_none():
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
-    result = _make_ff_result()  # images=None by default
-    mock_creator = _make_mock_creator(result)
+def test_make_creator_no_wrappers():
+    from collab_splats.pointcloud import make_creator
+    from collab_splats.pointcloud.feedforward import VGGTXCreator
 
-    ba = BundleAdjustment(mock_creator)
-    with pytest.raises(ValueError, match="images"):
-        ba.reconstruct("/fake/dir", "/fake/out")
+    creator = make_creator("vggtx")
+    assert isinstance(creator, VGGTXCreator)
 
 
-def test_bundle_adjustment_calls_extract_tracks_and_run_ba():
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
+def test_make_creator_with_lc():
+    from collab_splats.pointcloud import make_creator
+    from collab_splats.pointcloud.wrappers import LoopClosure
+    from collab_splats.pointcloud.feedforward import VGGTXCreator
 
-    N, H, W = 2, 8, 8
-    result = _make_ff_result(
-        images=torch.zeros(N, 3, H, W),
-        conf=torch.ones(N, H, W),
-        world_points=np.zeros((N, H, W, 3), dtype=np.float32),
-    )
-    mock_creator = _make_mock_creator(result)
-    mock_creator.build_colmap.return_value = MagicMock()
-
-    fake_tracks = np.zeros((N, 10, 2), dtype=np.float32)
-    fake_vis = np.ones((N, 10), dtype=np.float32)
-    fake_pts = np.zeros((10, 3), dtype=np.float32)
-    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
-    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
-
-    with patch("collab_splats.pointcloud.wrappers.extract_tracks_vggsfm",
-               return_value=(fake_tracks, fake_vis, fake_pts)) as mock_tracks, \
-         patch("collab_splats.pointcloud.wrappers.run_bundle_adjustment",
-               return_value=(fake_pts, refined_ext, refined_intr)) as mock_ba:
-        ba = BundleAdjustment(mock_creator)
-        ba.reconstruct("/fake/dir", "/fake/out")
-
-    mock_tracks.assert_called_once()
-    mock_ba.assert_called_once()
-    mock_creator._reproject_ba.assert_called_once_with({}, refined_ext, refined_intr)
-    mock_creator.build_colmap.assert_called_once()
+    creator = make_creator("vggtx", use_lc=True)
+    assert isinstance(creator, LoopClosure)
+    assert isinstance(creator.base, VGGTXCreator)
 
 
-def test_bundle_adjustment_outputs_proxies_to_base():
-    """eval_gt.py:66 reads creator.outputs after reconstruct — BundleAdjustment
-    must proxy outputs to base, mirroring LoopClosure. Without this, eval harness
-    raises AttributeError on the BA condition."""
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
-
-    result = _make_ff_result()
-    mock_creator = _make_mock_creator(result)
-
-    ba = BundleAdjustment(mock_creator)
-    assert ba.outputs is result
-
-    new_result = _make_ff_result()
-    ba.outputs = new_result
-    assert mock_creator.outputs is new_result
+def test_make_creator_unknown_name():
+    from collab_splats.pointcloud import make_creator
+    with pytest.raises(KeyError):
+        make_creator("unknown_backend")
 
 
-def test_bundle_adjustment_raw_outputs_proxies_to_base():
-    """raw_outputs proxy mirrors LoopClosure for consumer symmetry."""
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
-
-    mock_creator = _make_mock_creator(_make_ff_result())
-    sentinel = {"foo": "bar"}
-    mock_creator.raw_outputs = sentinel
-
-    ba = BundleAdjustment(mock_creator)
-    assert ba.raw_outputs is sentinel
-
-    new_raw = {"baz": 1}
-    ba.raw_outputs = new_raw
-    assert mock_creator.raw_outputs is new_raw
-
-
-def test_bundle_adjustment_config_passed_to_run_ba():
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
-    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
-
-    N, H, W = 2, 8, 8
-    result = _make_ff_result(
-        images=torch.zeros(N, 3, H, W),
-        conf=torch.ones(N, H, W),
-        world_points=np.zeros((N, H, W, 3), dtype=np.float32),
-    )
-    mock_creator = _make_mock_creator(result)
-    mock_creator.build_colmap.return_value = MagicMock()
-
-    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
-    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
-
-    with patch("collab_splats.pointcloud.wrappers.extract_tracks_vggsfm",
-               return_value=(np.zeros((N,10,2)), np.ones((N,10)), np.zeros((10,3)))), \
-         patch("collab_splats.pointcloud.wrappers.run_bundle_adjustment",
-               return_value=(np.zeros((10,3)), refined_ext, refined_intr)) as mock_ba:
-        cfg = BundleAdjustmentConfig(max_reproj_error=2.0, lm_steps=10)
-        BundleAdjustment(mock_creator, config=cfg).reconstruct("/a", "/b")
-
-    _, kwargs = mock_ba.call_args
-    assert kwargs["max_reproj_error"] == 2.0
-    assert kwargs["lm_steps"] == 10
+########################################################
+########## LoopClosure delegation tests ###############
+########################################################
 
 
 def test_loop_closure_constructor_defaults():
@@ -248,89 +194,6 @@ def test_loop_closure_forwards_load_model():
     lc = LoopClosure(mock_base)
     lc.load_model()
     mock_base.load_model.assert_called_once()
-
-
-def test_make_creator_no_wrappers():
-    from collab_splats.pointcloud import make_creator
-    from collab_splats.pointcloud.feedforward import VGGTXCreator
-
-    creator = make_creator("vggtx")
-    assert isinstance(creator, VGGTXCreator)
-
-
-def test_make_creator_with_lc():
-    from collab_splats.pointcloud import make_creator
-    from collab_splats.pointcloud.wrappers import LoopClosure
-
-    creator = make_creator("vggtx", use_lc=True)
-    assert isinstance(creator, LoopClosure)
-    from collab_splats.pointcloud.feedforward import VGGTXCreator
-    assert isinstance(creator.base, VGGTXCreator)
-
-
-def test_make_creator_with_ba():
-    from collab_splats.pointcloud import make_creator
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
-
-    creator = make_creator("vggtx", use_ba=True)
-    assert isinstance(creator, BundleAdjustment)
-
-
-def test_bundle_adjustment_uses_reproject_pixels_when_pixel_indices_set():
-    """When pixel_indices is set, BA uses reproject_pixels (deterministic) and
-    preserves colors/features from pre-BA result without calling _reproject_ba."""
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
-
-    N, H, W = 2, 8, 8
-    pixel_indices = np.array([[0, 2, 3], [1, 4, 5], [0, 1, 1]], dtype=np.int32)
-    features = np.ones((3, 4), dtype=np.float32) * 7.0
-    pre_ba_colors = np.arange(9, dtype=np.uint8).reshape(3, 3)
-    depth = np.ones((N, H, W, 1), dtype=np.float32) * 2.0
-    result = _make_ff_result(
-        pts3d=np.zeros((3, 3), dtype=np.float32),
-        colors=pre_ba_colors,
-        features=features,
-        pixel_indices=pixel_indices,
-        images=torch.zeros(N, 3, H, W),
-        conf=torch.ones(N, H, W),
-        world_points=np.zeros((N, H, W, 3), dtype=np.float32),
-    )
-    mock_creator = _make_mock_creator(result)
-    mock_creator.raw_outputs = {"depth": depth}
-    mock_creator.build_colmap.return_value = MagicMock()
-
-    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
-    refined_intr = np.tile(np.array([[100, 0, 4], [0, 100, 4], [0, 0, 1]]), (N, 1, 1)).astype(np.float32)
-
-    with patch("collab_splats.pointcloud.wrappers.extract_tracks_vggsfm",
-               return_value=(np.zeros((N, 10, 2)), np.ones((N, 10)), np.zeros((10, 3)))), \
-         patch("collab_splats.pointcloud.wrappers.run_bundle_adjustment",
-               return_value=(np.zeros((10, 3)), refined_ext, refined_intr)):
-        BundleAdjustment(mock_creator).reconstruct("/fake/dir", "/fake/out")
-
-    # _reproject_ba must NOT be called when pixel_indices is set
-    mock_creator._reproject_ba.assert_not_called()
-
-    # colors and features must be preserved unchanged from pre-BA result
-    final = mock_creator.outputs
-    np.testing.assert_array_equal(final.colors, pre_ba_colors)
-    np.testing.assert_array_equal(final.features, features)
-    np.testing.assert_array_equal(final.pixel_indices, pixel_indices)
-
-
-def test_make_creator_with_lc_and_ba():
-    from collab_splats.pointcloud import make_creator
-    from collab_splats.pointcloud.wrappers import BundleAdjustment, LoopClosure
-
-    creator = make_creator("vggtx", use_lc=True, use_ba=True)
-    assert isinstance(creator, BundleAdjustment)
-    assert isinstance(creator.base, LoopClosure)
-
-
-def test_make_creator_unknown_name():
-    from collab_splats.pointcloud import make_creator
-    with pytest.raises(KeyError):
-        make_creator("unknown_backend")
 
 
 def test_loop_closure_forwards_setup_inference():
@@ -367,31 +230,89 @@ def test_loop_closure_run_inference_falls_back_to_base_when_too_few_frames():
     mock_base.run_inference.assert_called_once()
 
 
-def test_bundle_adjustment_wraps_loop_closure():
-    """BundleAdjustment can wrap LoopClosure without isinstance checks."""
-    from collab_splats.pointcloud.wrappers import BundleAdjustment, LoopClosure
+########################################################
+########## LoopClosure.run() tests ####################
+########################################################
+
+
+def test_loop_closure_run_returns_feedforward_result():
+    """lc.run(image_dir) returns FeedforwardResult from base.outputs."""
+    from collab_splats.pointcloud.wrappers import LoopClosure
+
+    result = _make_ff_result()
+    mock_base = _make_mock_creator(result)
+    mock_base.views = torch.zeros(2, 3, 8, 8)
+
+    lc = LoopClosure(mock_base)
+    returned = lc.run(Path("/fake/dir"))
+
+    assert returned is result
+    mock_base.load_model.assert_called_once()
+    mock_base.setup_inference.assert_called_once()
+    mock_base.postprocess.assert_called_once()
+
+
+def test_loop_closure_run_no_dedup_when_raw_outputs_empty():
+    """When raw_outputs has no _dedup_rows key, result passes through unchanged."""
+    from collab_splats.pointcloud.wrappers import LoopClosure
 
     N, H, W = 2, 8, 8
+    images = torch.zeros(N, 3, H, W)
+    result = _make_ff_result(images=images)
+    mock_base = _make_mock_creator(result)
+    mock_base.raw_outputs = {}
+    mock_base.views = torch.zeros(N, 3, H, W)
+
+    lc = LoopClosure(mock_base)
+    returned = lc.run(Path("/fake/dir"))
+
+    # images tensor unchanged — same object
+    assert returned.images is images
+
+
+def test_loop_closure_run_dedup_applied_when_dedup_rows_present():
+    """When raw_outputs has _dedup_rows, arrays with M rows are sliced to N rows."""
+    from collab_splats.pointcloud.wrappers import LoopClosure
+
+    N = 2
+    # Extrinsics has N=2 rows; images/world_points have M=3 rows (merge artifact)
+    dedup = np.array([0, 2])  # selects frames 0 and 2 from merged M=3
+    images_merged = torch.zeros(3, 3, 8, 8)
+    world_points_merged = np.zeros((3, 8, 8, 3), dtype=np.float32)
+
     result = _make_ff_result(
-        images=torch.zeros(N, 3, H, W),
-        conf=torch.ones(N, H, W),
-        world_points=np.zeros((N, H, W, 3), dtype=np.float32),
+        extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
+        images=images_merged,
+        world_points=world_points_merged,
     )
-    inner_creator = MagicMock()
-    inner_creator.views = torch.zeros(N, 3, H, W)  # N < default submap_size=20 → falls back
-    lc = LoopClosure(inner_creator)
-    lc.base.outputs = result
-    lc.base.raw_outputs = {}
-    lc.base._reproject_ba.return_value = (result.pts3d, result.colors)
-    lc.base.build_colmap.return_value = MagicMock()
+    mock_base = _make_mock_creator(result)
+    mock_base.raw_outputs = {"_dedup_rows": dedup}
+    mock_base.views = torch.zeros(N, 3, 8, 8)
 
-    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
-    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
+    lc = LoopClosure(mock_base)
+    returned = lc.run(Path("/fake/dir"))
 
-    with patch("collab_splats.pointcloud.wrappers.extract_tracks_vggsfm",
-               return_value=(np.zeros((N, 10, 2)), np.ones((N, 10)), np.zeros((10, 3)))), \
-         patch("collab_splats.pointcloud.wrappers.run_bundle_adjustment",
-               return_value=(np.zeros((10, 3)), refined_ext, refined_intr)):
-        BundleAdjustment(lc).reconstruct("/a", "/b")
+    # images and world_points should be sliced to N rows via dedup indices
+    assert returned.images.shape[0] == N
+    assert returned.world_points.shape[0] == N
 
-    lc.base.build_colmap.assert_called_once()
+
+########################################################
+########## LoopClosure.reproject() tests ##############
+########################################################
+
+
+def test_loop_closure_reproject_delegates_to_base():
+    """lc.reproject(result) delegates to base.reproject(result)."""
+    from collab_splats.pointcloud.wrappers import LoopClosure
+
+    result = _make_ff_result()
+    reprojected = _make_ff_result(pts3d=np.ones((5, 3), dtype=np.float32))
+    mock_base = _make_mock_creator(result)
+    mock_base.reproject.return_value = reprojected
+
+    lc = LoopClosure(mock_base)
+    out = lc.reproject(result)
+
+    mock_base.reproject.assert_called_once_with(result)
+    assert out is reprojected

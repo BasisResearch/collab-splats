@@ -8,197 +8,23 @@ from typing import Any
 
 import numpy as np
 
-from .base import BasePointcloudCreator, PointcloudResult
-from .bundle_adjustment import BundleAdjustmentConfig, _extract_tracks_vggsfm, _run_bundle_adjustment
+from .base import PointcloudResult
 from .feedforward import FeedforwardResult
 from .loop_closure import LoopClosureConfig
 
-__all__ = ["BundleAdjustment", "LoopClosure"]
-
-
-class BundleAdjustment(BasePointcloudCreator):
-    """Wrapper that runs bundle adjustment after any feedforward creator (or LoopClosure).
-
-    Expects the wrapped creator to populate FeedforwardResult.images/conf/world_points.
-    """
-
-    def __init__(
-        self,
-        base: Any,  # BaseFeedforwardCreator | LoopClosure — duck-typed
-        config: BundleAdjustmentConfig | None = None,
-    ) -> None:
-        self.base = base
-        self.config = config or BundleAdjustmentConfig()
-
-    def refine(self, result: FeedforwardResult, output_dir: Path) -> PointcloudResult:
-        """Run BA on a pre-computed FeedforwardResult without re-running inference.
-
-        Works for any backend (VGGTX, VGGTOmega, MapAnything). Requires
-        result.images, result.conf, result.world_points, and result.pixel_indices
-        to be populated — all are stored by save_zarr() and restored by load_zarr()
-        (images must be loaded separately from the zarr store and set on the result).
-
-        Args:
-            result:     Pre-computed result with images, conf, world_points populated.
-            output_dir: Directory to write the COLMAP reconstruction.
-
-        Returns:
-            PointcloudResult with bundle-adjusted poses and point cloud.
-        """
-        output_dir = Path(output_dir)
-        # Set result on base so _apply_ba and build_colmap can access it.
-        # raw_outputs is not needed by _apply_ba (backend-agnostic reprojection uses
-        # world_points), but the dedup-rows LC path reads it as a dict — provide empty dict.
-        self.base.outputs = result
-        self.base.raw_outputs = {}
-        self._apply_ba()
-        return self.base.build_colmap(output_dir)
-
-    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
-        import torch
-
-        image_dir, output_dir = Path(image_dir), Path(output_dir)
-        self.base.load_model()
-        self.base.setup_inference(image_dir)
-        self.base.run_inference()
-        self.base.postprocess()
-        # Offload the backbone model from GPU before running track extraction + BA.
-        # Both BA stages load their own GPU models (ALIKED/SP keypoints + Warp
-        # tracker) and the backbone (~8 GB for VGGT-1B) would push the combined
-        # footprint past the container memory cap.
-        # _reproject_ba only uses raw_outputs (CPU numpy), not self.model,
-        # so the backbone need not be on GPU during _apply_ba.
-        # When self.base is LoopClosure, the actual model lives at self.base.base.
-        _backbone = getattr(self.base, "model", None) or getattr(
-            getattr(self.base, "base", None), "model", None
-        )
-        _backbone_owner = None
-        if _backbone is not None and torch.cuda.is_available():
-            _backbone_owner = (
-                self.base if hasattr(self.base, "model") else self.base.base
-            )
-            _backbone_owner.model = _backbone.to("cpu")
-            torch.cuda.empty_cache()
-        self._apply_ba()
-        return self.base.build_colmap(output_dir)
-
-    @property
-    def outputs(self) -> Any:
-        return self.base.outputs
-
-    @outputs.setter
-    def outputs(self, value: Any) -> None:
-        self.base.outputs = value
-
-    @property
-    def raw_outputs(self) -> Any:
-        return self.base.raw_outputs
-
-    @raw_outputs.setter
-    def raw_outputs(self, value: Any) -> None:
-        self.base.raw_outputs = value
-
-    def _apply_ba(self) -> None:
-        result: FeedforwardResult = self.base.outputs
-        if result.images is None:
-            raise ValueError(
-                f"{type(self.base).__name__} did not populate FeedforwardResult.images. "
-                "Creator's _postprocess() must always set images/conf/world_points."
-            )
-
-        N = result.extrinsics.shape[0]
-        images       = result.images
-        conf         = result.conf
-        world_points = result.world_points
-        intrinsics   = result.intrinsics
-
-        # When base is LoopClosure (windowed), merge_submap_outputs produces M-expanded
-        # arrays (M >= N due to overlap frames).  extrinsics is already deduped to N via
-        # extrinsic_global_4x4, but images/conf/world_points/intrinsics still have M rows.
-        # _dedup_rows[g] = first M-row index corresponding to global frame g → slice to N.
-        _raw = getattr(self.base, "raw_outputs", None) or getattr(
-            getattr(self.base, "base", None), "raw_outputs", None
-        )
-        dedup = _raw.get("_dedup_rows") if isinstance(_raw, dict) else None
-        if dedup is not None:
-            if intrinsics is not None and intrinsics.shape[0] != N:
-                intrinsics = intrinsics[dedup]
-            if images is not None and hasattr(images, "__len__") and len(images) != N:
-                images = images[dedup]
-            if conf is not None and hasattr(conf, "__len__") and len(conf) != N:
-                conf = conf[dedup]
-            if world_points is not None and world_points.shape[0] != N:
-                world_points = world_points[dedup]
-
-        cfg_dict = dataclasses.asdict(self.config)
-        track_params = {
-            "max_query_pts": cfg_dict.pop("max_query_pts"),
-            "query_frame_num": cfg_dict.pop("query_frame_num"),
-        }
-
-        # Extract 2D tracks across frames — VGGSfM tracker requires square input (padded in extract_tracks_vggsfm)
-        tracks, vis_scores, pts3d_kp = _extract_tracks_vggsfm(
-            images, conf, world_points,
-            **track_params,
-        )
-        extrinsics_3x4 = result.extrinsics[:, :3, :]  # (N, 3, 4)
-
-        # Run Levenberg-Marquardt BA to refine poses and 3D points
-        _, refined_ext_3x4, refined_intr = _run_bundle_adjustment(
-            pts3d_kp,
-            extrinsics_3x4,
-            intrinsics,
-            tracks,
-            vis_scores,
-            image_size=(result.model_height, result.model_width),
-            **cfg_dict,
-        )
-
-        if result.pixel_indices is not None and result.world_points is not None:
-            # Backend-agnostic reprojection: world_points → camera frame (old poses) →
-            # world frame (new poses).  Preserves pixel_indices so the point set stays
-            # index-aligned with pre-BA colors and features.
-            fi = result.pixel_indices[:, 0]
-            ri = result.pixel_indices[:, 1]
-            ci = result.pixel_indices[:, 2]
-            old_pts = result.world_points[fi, ri, ci].astype(np.float64)   # (P, 3)
-            ext0 = result.extrinsics[:, :3, :]                              # (N, 3, 4)
-            R0 = ext0[fi, :, :3].astype(np.float64)                        # (P, 3, 3)
-            t0 = ext0[fi, :, 3].astype(np.float64)                         # (P, 3)
-            pts3d_cam = np.einsum("pij,pj->pi", R0, old_pts) + t0          # (P, 3)
-            R1 = refined_ext_3x4[fi, :, :3].astype(np.float64)             # (P, 3, 3)
-            t1 = refined_ext_3x4[fi, :, 3].astype(np.float64)              # (P, 3)
-            pts3d = np.einsum("pij,pj->pi", R1.transpose(0, 2, 1), pts3d_cam - t1).astype(np.float32)
-            colors = result.colors
-        else:
-            pts3d, colors = self.base._reproject(
-                self.base.raw_outputs, refined_ext_3x4, refined_intr
-            )
-
-        # Write refined poses and intrinsics back into the feedforward result
-        n = refined_ext_3x4.shape[0]
-        bottom = np.tile([[0, 0, 0, 1]], (n, 1, 1)).astype(np.float32)
-        refined_ext_4x4 = np.concatenate([refined_ext_3x4, bottom], axis=1)
-
-        self.base.outputs = dataclasses.replace(
-            result,
-            pts3d=pts3d,
-            colors=colors,
-            extrinsics=refined_ext_4x4,
-            intrinsics=refined_intr,
-        )
+__all__ = ["LoopClosure"]
 
 
 ########################################################
 ########## LoopClosure wrapper ########################
 ########################################################
 
+
 class LoopClosure:
     """Proxy wrapper that runs the submap loop-closure pipeline around any feedforward creator.
 
     Forwards all non-inference methods to ``base`` and overrides ``run_inference()``
-    with the full LC loop. ``BundleAdjustment`` can wrap ``LoopClosure`` transparently
-    because both duck-type the same ``BaseFeedforwardCreator`` interface.
+    with the full LC loop.
     """
 
     def __init__(self, base: Any, config: LoopClosureConfig | None = None) -> None:
@@ -244,6 +70,40 @@ class LoopClosure:
         self.run_inference()
         self.postprocess()
         return self.build_colmap(output_dir)
+
+    def run(self, image_dir: Path) -> FeedforwardResult:
+        """Run inference pipeline without COLMAP; return FeedforwardResult."""
+        image_dir = Path(image_dir)
+        self.load_model()
+        self.setup_inference(image_dir)
+        self.run_inference()
+        self.postprocess()
+        result = self.base.outputs
+
+        # LC merge_submap_outputs may produce M-row merged arrays where M != N unique frames.
+        # _dedup_rows maps merged rows → unique frame indices so BA sees consistent shapes.
+        raw = self.base.raw_outputs
+        dedup = raw.get("_dedup_rows") if isinstance(raw, dict) else None
+        if dedup is not None:
+            N = result.extrinsics.shape[0]
+            kwargs: dict = {}
+            if result.images is not None and len(result.images) != N:
+                kwargs["images"] = result.images[dedup]
+            if result.conf is not None and hasattr(result.conf, "__len__") and len(result.conf) != N:
+                kwargs["conf"] = result.conf[dedup]
+            if result.world_points is not None and result.world_points.shape[0] != N:
+                kwargs["world_points"] = result.world_points[dedup]
+            if result.intrinsics is not None and result.intrinsics.shape[0] != N:
+                kwargs["intrinsics"] = result.intrinsics[dedup]
+            if kwargs:
+                result = dataclasses.replace(result, **kwargs)
+            self.base.outputs = result
+
+        return result
+
+    def reproject(self, result: FeedforwardResult) -> FeedforwardResult:
+        """Re-extract pts3d/colors using refined poses; delegates to base.reproject()."""
+        return self.base.reproject(result)
 
     ######################################################
     ########## Inference — LC loop override ###########

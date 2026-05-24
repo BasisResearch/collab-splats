@@ -109,10 +109,58 @@ def test_extract_tracks_vggsfm_shape():
     assert vis_scores.dtype == np.float32
     assert pts3d.dtype == np.float32
 
-    # Ensure predict_tracks was called with the right images tensor
+    # Ensure predict_tracks was called once with images on the resolved target device
     mock_predict.assert_called_once()
-    call_kwargs = mock_predict.call_args
-    assert call_kwargs[0][0] is images
+    called_images = mock_predict.call_args[0][0]
+    expected_device = "cuda" if torch.cuda.is_available() else "cpu"
+    assert called_images.shape == images.shape, (
+        f"images shape mismatch: {called_images.shape} != {images.shape}"
+    )
+    assert called_images.device.type == expected_device, (
+        f"images device {called_images.device.type!r} != target_device {expected_device!r}"
+    )
+
+
+def test_extract_tracks_vggsfm_tensor_images_reach_target_device():
+    """Tensor images (not numpy) must be moved to target_device before predict_tracks.
+
+    Regression guard: the isinstance(np.ndarray) guard previously meant CPU torch.Tensor
+    inputs bypassed .to(target_device). predict_tracks uses images.device for tracker
+    placement — wrong device means the whole tracker runs on CPU even when CUDA is available.
+    """
+    N, H, W = 2, 8, 8
+    # CPU torch.Tensor — NOT numpy; exercises the non-numpy code path
+    images_cpu = torch.zeros(N, 3, H, W)
+
+    # Capture the device of images as seen inside predict_tracks
+    received_device: list[str] = []
+
+    def fake_predict(imgs, conf=None, points_3d=None, **kw):
+        received_device.append(str(imgs.device))
+        P = 4
+        return (
+            np.zeros((N, P, 2), dtype=np.float32),
+            np.zeros((N, P), dtype=np.float32),
+            np.zeros((N, P), dtype=np.float32),
+            np.zeros((P, 3), dtype=np.float32),
+            np.zeros((P, 3), dtype=np.float32),
+        )
+
+    with patch(
+        "collab_splats.pointcloud.bundle_adjustment.predict_tracks",
+        side_effect=fake_predict,
+    ):
+        from collab_splats.pointcloud.bundle_adjustment import _extract_tracks_vggsfm
+        _extract_tracks_vggsfm(images_cpu, conf=None, world_points=None, device="cpu")
+
+    assert len(received_device) == 1, "predict_tracks must be called exactly once"
+    # After fix: images.device always matches target_device regardless of input type.
+    # For CUDA correctness the real regression is when target_device='cuda' and images are CPU;
+    # that scenario requires a GPU — this guard covers the CPU→CPU contract.
+    assert received_device[0] == "cpu", (
+        f"images.device={received_device[0]!r} != target_device='cpu'; "
+        "tensor images are not being relocated to target_device"
+    )
 
 
 def test_extract_tracks_vggsfm_conf_4d():

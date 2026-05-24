@@ -17,6 +17,7 @@ import torch.nn.functional as F
 import pypose as pp
 from bae.autograd.function import TrackingTensor, map_transform
 from bae.optim import LM
+from bae.utils.pysolvers import PCG
 from vggt.dependency.track_predict import predict_tracks
 from vggt.dependency.projection import project_3D_points_np
 
@@ -246,7 +247,6 @@ def _get_default_solver(device: str | None = None) -> Any:
             return CuDirectSparseSolver()
         except (ImportError, RuntimeError):
             pass
-    from bae.utils.pysolvers import PCG
     return PCG()
 
 
@@ -271,9 +271,12 @@ def _extract_tracks_vggsfm(
 
     # Accept numpy array input from windowed LC path (raw_outputs stores merged images as numpy)
     if isinstance(images, np.ndarray):
-        images = torch.from_numpy(images).to(target_device)
+        images = torch.from_numpy(images)
 
-    # predict_tracks inherits device from images.device — it does NOT self-relocate
+    # Always move to target_device regardless of input type — predict_tracks uses images.device
+    # for tracker model placement and does NOT self-relocate. Without this unconditional .to(),
+    # a CPU torch.Tensor input would leave the tracker on CPU even when target_device is CUDA.
+    images = images.to(target_device)
     img_device = images.device
     # VGGSfM tracker uses grid_sample; not implemented for BFloat16 on CUDA
     images = images.float()

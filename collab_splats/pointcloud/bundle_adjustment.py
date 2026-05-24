@@ -44,9 +44,10 @@ class BundleAdjustmentConfig:
     lm_steps: int = 40
     shared_camera: bool = False
     min_inliers_per_frame: int = 64
-    max_query_pts: int = 2048       # track extraction: max query points
-    query_frame_num: int = 5        # track extraction: number of query frames
-    device: str | None = None       # target device; None = auto (CUDA if available, else CPU)
+    max_query_pts: int = 2048           # track extraction: max query points
+    query_frame_num: int = 5            # track extraction: number of query frames
+    device: str | None = None           # target device; None = auto (CUDA if available, else CPU)
+    capture_loss_history: bool = False  # record per-step LM loss; read via BundleAdjustment._last_loss_history
 
 
 ########################################################
@@ -63,6 +64,8 @@ class BundleAdjustment:
 
     def __init__(self, config: BundleAdjustmentConfig | None = None) -> None:
         self.config = config or BundleAdjustmentConfig()
+        # Populated per _optimize() call when capture_loss_history=True; stays empty otherwise
+        self._last_loss_history: list[float] = []
 
     def refine(self, result: "FeedforwardResult") -> "FeedforwardResult":
         """Refine camera poses; return updated FeedforwardResult with new extrinsics/intrinsics.
@@ -186,6 +189,14 @@ class BundleAdjustment:
         cam_idx = torch.tensor(frame_idx, dtype=torch.long, device=device)
         pt_idx_t = torch.tensor(pt_idx, dtype=torch.long, device=device)
 
+        # Observation dict shared by both optimisation paths
+        input_dict = {
+            "points_2d": obs_2d_t,
+            "camera_indices": cam_idx,
+            "point_indices": pt_idx_t,
+            "principal_points": principal_points,
+        }
+
         # Optimise reprojection residuals with Levenberg-Marquardt
         with torch.enable_grad():
             model = _BAModel(cam_params, pts3d_tensor, shared_focal, cfg.shared_camera)
@@ -196,15 +207,23 @@ class BundleAdjustment:
                 solver=_get_default_solver(device=device),
                 reject=10,
             )
-            scheduler = pp.optim.scheduler.StopOnPlateau(
-                optimizer, steps=n_steps, patience=3, decreasing=1e-3, verbose=False,
-            )
-            scheduler.optimize(input={
-                "points_2d": obs_2d_t,
-                "camera_indices": cam_idx,
-                "point_indices": pt_idx_t,
-                "principal_points": principal_points,
-            })
+
+            if cfg.capture_loss_history:
+                # Manual step loop: collect scalar loss at each iteration.
+                # StopOnPlateau patience / early-stop is intentionally skipped here —
+                # running all n_steps gives a complete loss curve for visualisation.
+                loss_hist: list[float] = []
+                for _ in range(n_steps):
+                    step_loss = optimizer.step(input=input_dict)
+                    loss_hist.append(float(step_loss))
+                self._last_loss_history = loss_hist
+            else:
+                # Default path: StopOnPlateau with patience-based early stopping
+                self._last_loss_history = []
+                scheduler = pp.optim.scheduler.StopOnPlateau(
+                    optimizer, steps=n_steps, patience=3, decreasing=1e-3, verbose=False,
+                )
+                scheduler.optimize(input=input_dict)
 
         # Recover (3, 4) extrinsics from optimised SE3 quaternion representation
         opt_cam = model.pose.data.detach().cpu().numpy()     # (K, 7) or (K, 8)

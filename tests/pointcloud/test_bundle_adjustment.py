@@ -630,3 +630,64 @@ def test_bundle_adjustment_default_config():
     assert isinstance(ba.config, BundleAdjustmentConfig)
     assert ba.config.device is None
     assert ba.config.lm_steps == 40
+    # capture_loss_history defaults to False; _last_loss_history always starts empty
+    assert ba.config.capture_loss_history is False
+    assert ba._last_loss_history == []
+
+
+@pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
+def test_optimize_captures_loss_history_when_flag_set():
+    """_optimize populates self._last_loss_history when capture_loss_history=True.
+
+    Verifies: list populated, length == lm_steps, all values are finite floats,
+    losses are non-negative (squared reprojection residuals).
+    """
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, P, H, W = 4, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+
+    n_steps = 5
+    # min_inliers_per_frame lowered below P=60 so all frames survive the inlier filter
+    cfg = BundleAdjustmentConfig(capture_loss_history=True, lm_steps=n_steps, min_inliers_per_frame=10)
+    ba = BundleAdjustment(config=cfg)
+
+    # _last_loss_history must be empty before any run
+    assert ba._last_loss_history == []
+
+    ba._optimize(
+        pts3d,
+        extrinsics,
+        intrinsics,
+        tracks,
+        vis_mask.astype(np.float32),
+        max_reproj_error=None,   # skip reprojection filter so all points stay active
+    )
+
+    hist = ba._last_loss_history
+    assert isinstance(hist, list), f"expected list, got {type(hist)}"
+    assert len(hist) == n_steps, f"expected {n_steps} entries, got {len(hist)}"
+    assert all(isinstance(v, float) for v in hist), "all entries must be Python floats"
+    assert all(v >= 0 for v in hist), "losses are squared residuals — must be non-negative"
+
+
+@pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
+def test_optimize_no_loss_history_by_default():
+    """Without capture_loss_history, _last_loss_history stays empty after _optimize."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
+
+    N, P, H, W = 4, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
+    # min_inliers_per_frame lowered so frames survive the inlier filter (P=60 < default 64)
+    ba = BundleAdjustment(config=BundleAdjustmentConfig(min_inliers_per_frame=10))
+    ba._optimize(
+        pts3d, extrinsics, intrinsics,
+        tracks, vis_mask.astype(np.float32),
+        max_reproj_error=None,
+    )
+
+    assert ba._last_loss_history == [], (
+        "_last_loss_history must remain empty when capture_loss_history=False"
+    )

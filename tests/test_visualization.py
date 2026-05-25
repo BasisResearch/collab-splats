@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import pyvista as pv
 
 
 def make_features(C=32, pH=14, pW=14):
@@ -97,3 +98,46 @@ def test_pointcloud_to_polydata_no_scalars():
     cloud = pointcloud_to_polydata(pts3d)
     assert cloud.n_points == 10
     assert cloud.array_names == []
+
+
+def make_rgb_cloud(N=100):
+    pts = np.random.rand(N, 3).astype(np.float32)
+    colors = (np.random.rand(N, 3) * 255).astype(np.uint8)
+    cloud = pv.PolyData(pts)
+    cloud["RGB"] = colors
+    return cloud
+
+
+def make_bare_cloud(N=100):
+    pts = np.random.rand(N, 3).astype(np.float32)
+    return pv.PolyData(pts)
+
+
+def test_resolve_mesh_kwargs_rgb_returns_pcd_kwargs():
+    from collab_splats.utils.visualization import _resolve_mesh_kwargs, PCD_KWARGS
+    cloud = make_rgb_cloud()
+    result = _resolve_mesh_kwargs(cloud, {})
+    assert result == PCD_KWARGS
+
+
+def test_resolve_mesh_kwargs_explicit_passthrough():
+    from collab_splats.utils.visualization import _resolve_mesh_kwargs
+    cloud = make_rgb_cloud()
+    explicit = {"scalars": "RGB", "rgb": True, "point_size": 3.0}
+    result = _resolve_mesh_kwargs(cloud, explicit)
+    assert result is explicit  # exact same dict object, no copy
+
+
+def test_resolve_mesh_kwargs_bare_cloud_returns_empty():
+    from collab_splats.utils.visualization import _resolve_mesh_kwargs
+    cloud = make_bare_cloud()
+    result = _resolve_mesh_kwargs(cloud, {})
+    assert result == {}
+
+
+def test_resolve_mesh_kwargs_no_rgb_key_returns_empty():
+    from collab_splats.utils.visualization import _resolve_mesh_kwargs
+    # pv.Sphere() is a PolyData with faces but no "RGB" array — same "no RGB key" path as bare_cloud
+    mesh = pv.Sphere()
+    result = _resolve_mesh_kwargs(mesh, {})
+    assert result == {}

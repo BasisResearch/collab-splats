@@ -5,7 +5,7 @@ ultralytics
 gradio
 
 # 3D visualization and mesh processing
-pyvista
+pyvista[jupyter]
 pyntcloud
 trame
 trame-vuetify

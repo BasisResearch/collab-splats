@@ -320,7 +320,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
         extrinsic_4x4_out = raw_outputs.get("extrinsic_global_4x4", extrinsic_4x4)
 
         return FeedforwardResult(
-            pts3d=pts3d,
+            points=pts3d,
             colors=colors,
             pixel_indices=pixel_indices,
             features=None,
@@ -331,7 +331,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
             model_width=model_w,
             model_height=model_h,
             images=images,
-            conf=conf,
+            confidence=conf,
             world_points=world_points,
             depth=raw_outputs["depth"].squeeze(-1) if raw_outputs["depth"].ndim == 4 else raw_outputs["depth"],
         )

@@ -79,7 +79,7 @@ class BundleAdjustment:
 
         # Extract 2D tracks across all frames via VGGSfM
         tracks, vis_scores, pts3d_tracks = _extract_tracks_vggsfm(
-            result.images, result.conf, result.world_points,
+            result.images, result.confidence, result.world_points,
             max_query_pts=cfg.max_query_pts,
             query_frame_num=cfg.query_frame_num,
             device=cfg.device,

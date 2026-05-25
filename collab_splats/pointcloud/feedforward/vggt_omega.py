@@ -138,14 +138,13 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             logger.debug("VGGTOmegaCreator: resolved resolution=%d", self.resolution)
 
     def _load_model(self, device: str) -> Any:
-        """Load VGGT-Omega from local path or HuggingFace, move to device."""
-        # Choose dtype based on GPU capability: bfloat16 for Ampere+, float16 for older
-        dtype = (
-            torch.bfloat16
-            if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
-            else torch.float16
-        )
+        """Load VGGT-Omega from local path or HuggingFace, move to device in fp32.
 
+        Params stay float32 on purpose. VGGTOmega runs its aggregator under an internal
+        autocast (bf16/fp16) but disables autocast for CameraHead/DenseHead, which cast
+        their inputs to fp32. Casting params to bf16 mismatches those fp32 head inputs and
+        crashes the head LayerNorms ("expected scalar type Float but found BFloat16").
+        """
         # Resolve checkpoint path — local file or download from HuggingFace
         if self.model_path is not None:
             ckpt_path = Path(self.model_path)
@@ -157,11 +156,11 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
                 filename=self.model_filename,
             ))
 
-        # Instantiate model, load checkpoint weights, move to device in eval mode
+        # Instantiate model, load checkpoint weights, move to device in eval mode (fp32 params)
         model = VGGTOmega(enable_alignment=self.enable_text_alignment)
         model.load_state_dict(torch.load(str(ckpt_path), map_location="cpu"))
         model.eval()
-        model = model.to(device, dtype=dtype)
+        model = model.to(device)
         return model
 
     def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]:
@@ -256,7 +255,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         extrinsic_4x4_out = raw_outputs.get("extrinsic_global_4x4", extrinsic_4x4)
 
         return FeedforwardResult(
-            pts3d=pts3d,
+            points=pts3d,
             colors=colors,
             pixel_indices=pixel_indices,
             features=None,
@@ -267,7 +266,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             model_width=model_w,
             model_height=model_h,
             images=images,
-            conf=conf,
+            confidence=conf,
             world_points=world_points,
             depth=raw_outputs["depth"].squeeze(-1) if raw_outputs["depth"].ndim == 4 else raw_outputs["depth"],
         )

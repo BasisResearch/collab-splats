@@ -55,9 +55,12 @@ evals/
 
 ## Code Style
 
-- **Inline block comments:** each logical block of code gets a short comment explaining what it does. Comment at block level, not every line.
+- **Imports at top:** all imports at the top of the file — no inline imports inside functions or methods (scripts and notebooks). Exception: optional heavy deps that would break the module on missing install may be imported inside the function that needs them, with a clear `ImportError` message.
+- **Inline block comments:** each logical block of code gets a short comment explaining what it does. Comment at block level, not every line. Examples: `# Sort images by filename; reject non-image extensions`, `# Populate BA fields: subsampled world-point grid for track extraction`. Existing comments that meet this standard are kept; missing block comments are added.
+- **Section dividers:** use `########`-style dividers to separate major sections in long files (constants, helpers, classes, etc.). Keeps files scannable without opening a doc.
+- **Docstrings:** every public function and class gets a one-line summary docstring. Multi-line only when Args/Returns genuinely need it. No restating the function name. No padding.
+- **Don't over-complicate:** prefer the simplest implementation that solves the problem. No premature abstractions, no dead branches for hypothetical future use, no wrapper layers that add no value. If a param is always default, ask whether it should exist.
 - `logging` not `print()` — use `logger.debug()` / `logger.info()` throughout module code
-- `########`-style section dividers in long files
 - `RegistryMixin` for registry pattern (from `utils/torch_utils.py`)
 - Template-method pattern for abstract pipelines (see `BaseFeedforwardCreator`)
 - Typed `@dataclass` for pipeline outputs (`FeedforwardResult`, `PointcloudResult`)

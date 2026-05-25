@@ -275,7 +275,7 @@ def test_apply_ba_dedup_aligns_intrinsics(identity_submap_factory):
     world_pts_M = np.zeros((M, H, W, 3), dtype=np.float32)
 
     result = FeedforwardResult(
-        pts3d=np.zeros((N * H * W, 3), dtype=np.float32),
+        points=np.zeros((N * H * W, 3), dtype=np.float32),
         colors=np.zeros((N * H * W, 3), dtype=np.float32),
         extrinsics=extrinsics_N,
         intrinsics=intrinsics_M,
@@ -284,7 +284,7 @@ def test_apply_ba_dedup_aligns_intrinsics(identity_submap_factory):
         model_width=W,
         model_height=H,
         images=images_M,
-        conf=conf_M,
+        confidence=conf_M,
         world_points=world_pts_M,
     )
 

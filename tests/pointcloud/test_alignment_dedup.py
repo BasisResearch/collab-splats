@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from collab_splats.pointcloud.loop_closure.alignment import dedup_overlap
+from collab_splats.pointcloud.loop_closure.closure import dedup_overlap
 
 
 def _identity_poses(k: int) -> np.ndarray:

@@ -15,6 +15,16 @@ MESH_KWARGS = {
     "rgb": True,
 }
 
+PCD_KWARGS = MESH_KWARGS.copy()
+PCD_KWARGS.update({
+    "render_points_as_spheres": True,
+    "point_size": 0.5,
+    "ambient": 0.3,
+    "diffuse": 0.8,
+    "specular": 0.1,
+})
+
+
 VIZ_KWARGS = {
     "position": (2, 2, 1),
     "focal_point": (0, 0, 0),
@@ -226,6 +236,20 @@ def overlay_masks(
     return np.clip(overlay, 0, 255).astype(np.uint8)
 
 
+def _resolve_mesh_kwargs(mesh: pv.PolyData, mesh_kwargs: dict) -> dict:
+    """Return mesh_kwargs, auto-detecting RGB pointcloud mode when kwargs are empty."""
+    if mesh_kwargs:
+        return mesh_kwargs
+    if (
+        isinstance(mesh, pv.PolyData)
+        and "RGB" in mesh.point_data
+        and mesh.point_data["RGB"].ndim == 2
+        and mesh.point_data["RGB"].shape[1] == 3
+    ):
+        return PCD_KWARGS
+    return {}
+
+
 # ── 3D Visualization ────────────────────────────────────────────────────────
 
 
@@ -241,8 +265,8 @@ def visualize_splat(
     Visualize point cloud with camera frustums using PyVista
 
     Args:
-        ply_path: Path to the ply file
-        aligned_poses: List of 4x4 transformation matrices
+        mesh: Path to a PLY file or a PyVista PolyData to visualize.
+        aligned_cameras: List of 4x4 world-to-camera pose matrices.
     """
     plotter = pv.Plotter()
 
@@ -250,6 +274,7 @@ def visualize_splat(
     if isinstance(mesh, str):
         mesh = pv.read(mesh)
 
+    mesh_kwargs = _resolve_mesh_kwargs(mesh, mesh_kwargs)
     plotter.add_mesh(mesh, **mesh_kwargs)
 
     # Work on a copy so the caller's dict is not mutated across calls

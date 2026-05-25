@@ -2,6 +2,8 @@
 from pathlib import Path
 import yaml
 import pytest
+
+pytest.importorskip("param", reason="param not installed")
 from collab_splats.dashboard.config_panel import ConfigPanel
 
 CONFIGS_DIR = Path(__file__).parents[2] / "docs" / "splats" / "configs"

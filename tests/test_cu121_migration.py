@@ -102,10 +102,7 @@ def test_import_all_modules():
         "collab_splats.pointcloud.utils",
         "collab_splats.pointcloud.wrappers",
         "collab_splats.pointcloud.loop_closure",
-        "collab_splats.pointcloud.loop_closure.alignment",
         "collab_splats.pointcloud.loop_closure.closure",
-        "collab_splats.pointcloud.loop_closure.pose_graph",
-        "collab_splats.pointcloud.loop_closure.retrieval",
         "collab_splats.pointcloud.loop_closure.submap",
         "collab_splats.semantics",
         "collab_splats.semantics.features",
@@ -283,3 +280,13 @@ def test_splatfacto_uses_gsplat_rade():
     """nerfstudio.models.splatfacto imports without error and sees gsplat-rade."""
     import nerfstudio.models.splatfacto  # noqa: F401
     from gsplat import rasterization_2dgs_inria_wrapper  # noqa: F401
+
+
+def test_bae_cudss_importable():
+    """bae built with USE_CUDSS=1: CuDirectSparseSolver must import and instantiate."""
+    import pypose  # noqa: F401 — must precede bae imports
+    from bae.sparse.solve import CuDirectSparseSolver
+    import torch
+    assert torch.cuda.is_available(), "CUDA not available — CuDSS build meaningless"
+    solver = CuDirectSparseSolver()
+    assert solver is not None

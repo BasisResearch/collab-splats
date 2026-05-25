@@ -5,10 +5,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
-
 import numpy as np
 import pycolmap
+
+from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 
 
 class CoordinateFrame(str, Enum):
@@ -18,17 +18,85 @@ class CoordinateFrame(str, Enum):
 
 @dataclass
 class PointcloudResult:
-    points: np.ndarray                    # (N, 3) float32, world XYZ
-    colors: np.ndarray                    # (N, 3) uint8, RGB
-    confidence: np.ndarray | None = None  # (N,) float32 — feedforward only
-    camera_poses: np.ndarray | None = None       # (M, 4, 4) float32
-    camera_intrinsics: np.ndarray | None = None  # (M, 3, 3) float32, K per image
-    colmap_reconstruction: Any | None = None     # pycolmap.Reconstruction — BA + pycolmap API
-    frame: CoordinateFrame = CoordinateFrame.NERFSTUDIO
-    world_transform: np.ndarray | None = None
-    # (3, 4) applied_transform: COLMAP world → nerfstudio world.
-    # Matches transforms.json["applied_transform"].
-    # None when keep_original_world_coordinate=True.
+    """Sparse reconstruction output: pycolmap.Reconstruction + scene metadata.
+
+    reconstruction is the primary store for cameras, images, and 3D points.
+    frame declares the coordinate system of the world origin in reconstruction.
+    image_paths defines the canonical frame ordering for extrinsics/intrinsics.
+    """
+
+    reconstruction: pycolmap.Reconstruction          # primary — always set
+    frame: CoordinateFrame                           # coord system of world origin
+    image_paths: list[Path]                          # canonical frame ordering (N entries)
+    confidence: np.ndarray | None = None             # (P,) float32 — feedforward per-point
+    world_transform: np.ndarray | None = None        # (3, 4) applied COLMAP→nerfstudio axis swap
+
+    @property
+    def points(self) -> np.ndarray:
+        """(P, 3) float32 world XYZ of the tracked sparse point set, ordered by point3D_id.
+
+        P is the filtered sparse set — smaller than FeedforwardResult.points which
+        contains all feedforward model output including untracked points.
+        Recomputes on each access from reconstruction.points3D — always reflects
+        current reconstruction state.
+        """
+        pts3d = self.reconstruction.points3D
+        if not pts3d:
+            return np.zeros((0, 3), dtype=np.float32)
+        return np.array([p.xyz for p in pts3d.values()], dtype=np.float32)
+
+    @property
+    def colors(self) -> np.ndarray:
+        """(P, 3) uint8 RGB, same order as points."""
+        pts3d = self.reconstruction.points3D
+        if not pts3d:
+            return np.zeros((0, 3), dtype=np.uint8)
+        return np.array([p.color for p in pts3d.values()], dtype=np.uint8)
+
+    @property
+    def extrinsics(self) -> np.ndarray:
+        """(N, 4, 4) float32 w2c transforms, ordered by image_paths.
+
+        Convention: x_cam = E @ x_world (homogeneous). OpenCV camera axes
+        (X right, Y down, Z into scene). Frame is declared by self.frame.
+        """
+        name_to_image = {img.name: img for img in self.reconstruction.images.values()}
+        result = []
+        for path in self.image_paths:
+            img = name_to_image[path.name]
+            R = img.cam_from_world().rotation.matrix()
+            t = img.cam_from_world().translation
+            E = np.eye(4, dtype=np.float32)
+            E[:3, :3] = R
+            E[:3, 3] = t
+            result.append(E)
+        return np.stack(result) if result else np.zeros((0, 4, 4), dtype=np.float32)
+
+    @property
+    def intrinsics(self) -> np.ndarray:
+        """(N, 3, 3) float32 K matrices (PINHOLE/linear part only), ordered by image_paths.
+
+        K[i] = [[fx, 0, cx], [0, fy, cy], [0, 0, 1]].
+        Distortion params are NOT captured here. Access reconstruction.cameras[id]
+        directly for the full pycolmap.Camera when distortion-correct projection is needed.
+        """
+        name_to_image = {img.name: img for img in self.reconstruction.images.values()}
+        cameras = self.reconstruction.cameras
+        result = []
+        for path in self.image_paths:
+            img = name_to_image[path.name]
+            cam = cameras[img.camera_id]
+            # Use pycolmap canonical accessors — work for all camera models
+            # (SIMPLE_PINHOLE has one focal length; PINHOLE has fx/fy separately)
+            fx = cam.focal_length_x
+            fy = cam.focal_length_y
+            cx = cam.principal_point_x
+            cy = cam.principal_point_y
+            K = np.array([[fx, 0, cx],
+                          [0, fy, cy],
+                          [0,  0,  1]], dtype=np.float32)
+            result.append(K)
+        return np.stack(result) if result else np.zeros((0, 3, 3), dtype=np.float32)
 
 
 class BasePointcloudCreator(ABC):
@@ -50,68 +118,3 @@ class BasePointcloudCreator(ABC):
     def _write_transforms(self, sparse_dir: Path, output_dir: Path) -> None:
         from nerfstudio.process_data.colmap_utils import colmap_to_json
         colmap_to_json(recon_dir=sparse_dir, output_dir=output_dir)
-
-
-# COLMAP world (Y-down, right-handed) → nerfstudio world (Z-up, right-handed).
-# Row-swap + sign flip: [X, Y, Z] → [X, Z, -Y].
-# Matches transforms.json["applied_transform"] written by nerfstudio's ns-process-data.
-_WORLD_TRANSFORM = np.array([
-    [1,  0, 0, 0],
-    [0,  0, 1, 0],
-    [0, -1, 0, 0],
-], dtype=np.float32)
-
-
-def _colmap_recon_to_result(
-    recon: pycolmap.Reconstruction,
-    confidence: np.ndarray | None = None,
-) -> PointcloudResult:
-    """Convert pycolmap.Reconstruction to PointcloudResult in nerfstudio world frame.
-
-    Applies two transforms to each camera pose:
-      A — OpenCV → OpenGL camera axes: c2w[:3, 1:3] *= -1
-      B — COLMAP world (-Y) → nerfstudio world (+Z): row-swap + negate
-    """
-    pts3d = recon.points3D
-    if pts3d:
-        points = np.array([p.xyz for p in pts3d.values()], dtype=np.float32)
-        colors = np.array([p.color for p in pts3d.values()], dtype=np.uint8)
-    else:
-        points = np.zeros((0, 3), dtype=np.float32)
-        colors = np.zeros((0, 3), dtype=np.uint8)
-
-    poses = []
-    intrinsics = []
-    for image in recon.images.values():
-        if not image.has_pose:  # pycolmap>=4: replaces image.registered
-            continue
-        w2c_34 = image.cam_from_world().matrix()           # (3, 4)  pycolmap>=4 accessor
-        w2c = np.vstack([w2c_34, [0.0, 0.0, 0.0, 1.0]])  # (4, 4)
-        c2w = np.linalg.inv(w2c)
-
-        # Transform A: OpenCV → OpenGL camera axes
-        c2w[:3, 1:3] *= -1
-
-        # Transform B: COLMAP world (-Y up) → nerfstudio world (+Z up)
-        c2w = c2w[np.array([0, 2, 1, 3]), :]
-        c2w[2, :] *= -1
-
-        poses.append(c2w.astype(np.float32))
-
-        cam = recon.cameras[image.camera_id]
-        fx = getattr(cam, "focal_length_x", None) or cam.focal_length
-        fy = getattr(cam, "focal_length_y", None) or cam.focal_length
-        cx, cy = cam.principal_point_x, cam.principal_point_y
-        K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
-        intrinsics.append(K)
-
-    return PointcloudResult(
-        points=points,
-        colors=colors,
-        confidence=confidence,
-        camera_poses=np.stack(poses) if poses else None,
-        camera_intrinsics=np.stack(intrinsics) if intrinsics else None,
-        colmap_reconstruction=recon,
-        frame=CoordinateFrame.NERFSTUDIO,
-        world_transform=_WORLD_TRANSFORM.copy(),
-    )

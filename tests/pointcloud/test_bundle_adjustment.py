@@ -545,7 +545,7 @@ def _make_ff_result_for_ba(N=2, H=8, W=8):
     """Minimal FeedforwardResult for BundleAdjustment tests."""
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     return FeedforwardResult(
-        pts3d=np.zeros((10, 3), dtype=np.float32),
+        points=np.zeros((10, 3), dtype=np.float32),
         colors=np.zeros((10, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
@@ -554,7 +554,7 @@ def _make_ff_result_for_ba(N=2, H=8, W=8):
         model_width=W,
         model_height=H,
         images=torch.zeros(N, 3, H, W),
-        conf=torch.ones(N, H, W),
+        confidence=torch.ones(N, H, W),
         world_points=np.zeros((N, H, W, 3), dtype=np.float32),
     )
 
@@ -581,12 +581,12 @@ def test_bundle_adjustment_refine_returns_feedforward_result():
 
 
 def test_bundle_adjustment_refine_preserves_pts3d_colors():
-    """refine() must not change pts3d, colors, or pixel_indices."""
+    """refine() must not change points, colors, or pixel_indices."""
     from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
 
     N, H, W = 2, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
-    original_pts3d = result.pts3d.copy()
+    original_points = result.points.copy()
     original_colors = result.colors.copy()
     refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
     refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
@@ -597,7 +597,7 @@ def test_bundle_adjustment_refine_preserves_pts3d_colors():
                       return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
         out = BundleAdjustment().refine(result)
 
-    np.testing.assert_array_equal(out.pts3d, original_pts3d)
+    np.testing.assert_array_equal(out.points, original_points)
     np.testing.assert_array_equal(out.colors, original_colors)
     assert out.pixel_indices is None
 
@@ -615,12 +615,30 @@ def test_bundle_adjustment_refine_threads_config():
                return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))) as mock_tracks, \
          patch.object(BundleAdjustment, "_optimize",
                       return_value=(np.zeros((5, 3)), refined_ext, refined_intr)) as mock_opt:
-        cfg = BundleAdjustmentConfig(device="cpu", lm_steps=5, max_reproj_error=2.0)
+        cfg = BundleAdjustmentConfig(device="cuda:1", lm_steps=5, max_reproj_error=2.0)
         BundleAdjustment(config=cfg).refine(result)
 
     _, tracks_kw = mock_tracks.call_args
-    assert tracks_kw["device"] == "cpu"
+    assert tracks_kw["device"] == "cuda:1"
     mock_opt.assert_called_once()
+
+
+@pytest.mark.skipif(not _pypose_available(), reason="requires pypose")
+def test_optimize_rejects_cpu_device():
+    """_optimize must raise a clear error for a non-CUDA device — bae LM is CUDA-only."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, P, H, W = 4, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+
+    # min_inliers_per_frame lowered so frames survive the filter and reach the device check
+    ba = BundleAdjustment(config=BundleAdjustmentConfig(device="cpu", min_inliers_per_frame=10))
+    with pytest.raises(RuntimeError, match="CUDA"):
+        ba._optimize(
+            pts3d, extrinsics, intrinsics,
+            tracks, vis_mask.astype(np.float32),
+            max_reproj_error=None,
+        )
 
 
 def test_bundle_adjustment_default_config():

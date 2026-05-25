@@ -30,7 +30,7 @@ dependencies = [
     "huggingface_hub",
     "ultralytics",
     "gradio",
-    "pyvista",
+    "pyvista[jupyter]",
     "pyntcloud",
     "trame",
     "trame-vuetify",
@@ -65,8 +65,12 @@ dependencies = [
     # bae requires --no-build-isolation at build time (setup.py imports torch at
     # top level to query CUDA ABI). Pre-installed by Dockerfile.cu121 Stage 2.
     # Git URL removed: pip rebuilds git-URL deps even if installed, failing without
-    # build isolation. bae==0.2.3 is pre-installed at /opt/bae.
-    "bae>=0.2.3",
+    # build isolation. bae>=0.2.4 is pre-installed at /opt/bae.
+    "bae>=0.2.4",
+    # cuDSS runtime dep for bae. Must be installed before `pip install -e bae`
+    # so find_cudss_root() finds headers at site-packages/nvidia/cu12.
+    # 0.6.0.5 and 0.7.1.6 both verified by bae README; pinned for ABI stability.
+    "nvidia-cudss-cu12==0.6.0.5",
     "clip @ git+https://github.com/openai/CLIP.git",
 ]
 

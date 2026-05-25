@@ -59,18 +59,20 @@ def _synthetic_vggtx_raw(n: int = N_FRAMES, h: int = H, w: int = W) -> dict:
 
 
 def test_build_pycolmap_reconstruction_roundtrip():
-    """build_pycolmap_reconstruction → colmap_reconstruction_to_result.
+    """build_pycolmap_reconstruction → PointcloudResult with reconstruction primary.
 
     Exercises the full pycolmap 4.0.4 path:
       add_camera_with_trivial_rig + add_image_with_trivial_frame + add_point3D.
     """
     from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
-    from collab_splats.pointcloud.utils import colmap_reconstruction_to_result
+    from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
 
     P = 30
     rng = np.random.default_rng(42)
     pts3d = rng.standard_normal((P, 3)).astype(np.float32)
     colors = rng.integers(0, 255, (P, 3), dtype=np.uint8)
+    image_names = [f"frame_{i:04d}.jpg" for i in range(N_FRAMES)]
+    image_paths = [Path(name) for name in image_names]
 
     recon = build_pycolmap_reconstruction(
         pts3d=pts3d,
@@ -79,20 +81,22 @@ def test_build_pycolmap_reconstruction_roundtrip():
         intrinsics=_synthetic_intrinsics(N_FRAMES),
         image_width=W,
         image_height=H,
-        image_names=[f"frame_{i:04d}.jpg" for i in range(N_FRAMES)],
+        image_names=image_names,
     )
 
     assert len(recon.images) == N_FRAMES, f"Expected {N_FRAMES} images, got {len(recon.images)}"
     assert len(recon.cameras) == N_FRAMES, f"Expected {N_FRAMES} cameras, got {len(recon.cameras)}"
     assert len(recon.points3D) == P, f"Expected {P} points, got {len(recon.points3D)}"
 
-    result = colmap_reconstruction_to_result(recon)
+    result = PointcloudResult(
+        reconstruction=recon,
+        frame=CoordinateFrame.COLMAP,
+        image_paths=image_paths,
+    )
     assert result.points.shape == (P, 3), f"Expected points shape ({P}, 3), got {result.points.shape}"
-    assert result.camera_poses is not None
-    assert result.camera_poses.shape[0] == N_FRAMES
-    assert result.camera_poses.shape[1:] == (4, 4)
-    assert result.camera_intrinsics is not None
-    assert result.camera_intrinsics.shape == (N_FRAMES, 3, 3)
+    assert result.extrinsics.shape == (N_FRAMES, 4, 4)
+    assert result.intrinsics.shape == (N_FRAMES, 3, 3)
+    assert result.frame == CoordinateFrame.COLMAP
 
 
 def test_feedforward_result_save_load(tmp_path):
@@ -102,7 +106,7 @@ def test_feedforward_result_save_load(tmp_path):
     P, N = 30, N_FRAMES
     rng = np.random.default_rng(0)
     original = FeedforwardResult(
-        pts3d=rng.standard_normal((P, 3)).astype(np.float32),
+        points=rng.standard_normal((P, 3)).astype(np.float32),
         colors=rng.integers(0, 255, (P, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
         intrinsics=_synthetic_intrinsics(N),
@@ -115,7 +119,7 @@ def test_feedforward_result_save_load(tmp_path):
     original.save(save_path)
     loaded = FeedforwardResult.load(save_path)
 
-    np.testing.assert_array_equal(original.pts3d, loaded.pts3d)
+    np.testing.assert_array_equal(original.points, loaded.points)
     np.testing.assert_array_equal(original.colors, loaded.colors)
     np.testing.assert_array_equal(original.extrinsics, loaded.extrinsics)
     assert loaded.model_width == W
@@ -149,7 +153,7 @@ def test_vggtx_postprocess_pipeline(tmp_path):
         result = creator._postprocess(raw)
 
     assert result is not None
-    assert result.pts3d.shape[1] == 3
+    assert result.points.shape[1] == 3
     assert result.extrinsics.shape == (N_FRAMES, 4, 4)
     assert result.intrinsics.shape == (N_FRAMES, 3, 3)
     assert result.model_width == W
@@ -166,13 +170,14 @@ def test_mapanything_postprocess_pipeline(tmp_path):
     from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
 
     N = N_FRAMES
-    # MapAnythingCreator._postprocess accesses self.views[i]["img"] for model_h/model_w
+    # MapAnythingCreator._postprocess accesses self._processed_views[i]["img"] for model_h/model_w
     # Build minimal synthetic views list
     synthetic_views = [
         {
             "img": torch.rand(1, 3, H, W),
             "img_no_norm": torch.rand(1, H, W, 3),
             "pts3d": torch.rand(1, H, W, 3),
+            "pts3d_cam": torch.rand(1, H, W, 3),
             "mask": torch.ones(1, H, W, 1),
             "depth_z": torch.ones(1, H, W, 1),
             "intrinsics": torch.eye(3).unsqueeze(0),
@@ -187,14 +192,28 @@ def test_mapanything_postprocess_pipeline(tmp_path):
     creator.original_coords = np.zeros((N, 6), dtype=np.float32)
     for i in range(N):
         creator.original_coords[i] = [0, 0, W, H, W, H]
-    creator.views = synthetic_views
+    creator._processed_views = synthetic_views
 
     mock_pts3d = np.random.randn(20, 3).astype(np.float32)
     mock_colors = np.random.randint(0, 255, (20, 3)).astype(np.uint8)
     mock_extrinsics = _synthetic_extrinsics(N)
     mock_intrinsics = _synthetic_intrinsics(N)
 
+    # postprocess_model_outputs_for_inference needs full MapAnything view dicts;
+    # mock it to return views with the keys _postprocess reads after this call.
+    mock_processed = [
+        {
+            "img_no_norm": torch.rand(1, H, W, 3),
+            "pts3d": torch.rand(1, H, W, 3),
+            "conf": None,
+        }
+        for _ in range(N)
+    ]
+
     with patch(
+        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+        return_value=mock_processed,
+    ), patch(
         "collab_splats.pointcloud.feedforward.mapanything.collect_pts3d_from_outputs",
         return_value=(mock_pts3d, mock_colors, mock_extrinsics, mock_intrinsics),
     ), patch(
@@ -204,7 +223,7 @@ def test_mapanything_postprocess_pipeline(tmp_path):
         result = creator._postprocess(synthetic_views)
 
     assert result is not None
-    assert result.pts3d.shape[1] == 3
+    assert result.points.shape[1] == 3
     assert result.extrinsics.shape == (N_FRAMES, 4, 4)
 
 
@@ -245,3 +264,48 @@ def test_nerfstudio_method_registry():
     assert "rade-features" in all_methods, (
         f"rade-features not registered. Available: {sorted(all_methods)}"
     )
+
+
+def test_pointcloudresult_new_api():
+    """PointcloudResult takes reconstruction as primary; exposes points/colors/extrinsics/intrinsics as properties."""
+    from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
+    from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
+
+    P = 10
+    rng = np.random.default_rng(7)
+    pts3d = rng.standard_normal((P, 3)).astype(np.float32)
+    colors = rng.integers(0, 255, (P, 3), dtype=np.uint8)
+    image_names = [f"frame_{i:04d}.jpg" for i in range(N_FRAMES)]
+    image_paths = [Path(name) for name in image_names]
+
+    recon = build_pycolmap_reconstruction(
+        pts3d=pts3d,
+        colors=colors,
+        extrinsics=_synthetic_extrinsics(N_FRAMES),
+        intrinsics=_synthetic_intrinsics(N_FRAMES),
+        image_width=W,
+        image_height=H,
+        image_names=image_names,
+    )
+
+    result = PointcloudResult(
+        reconstruction=recon,
+        frame=CoordinateFrame.COLMAP,
+        image_paths=image_paths,
+    )
+
+    # Properties return correct shapes
+    assert result.points.shape == (P, 3)
+    assert result.colors.shape == (P, 3)
+    assert result.extrinsics.shape == (N_FRAMES, 4, 4)
+    assert result.intrinsics.shape == (N_FRAMES, 3, 3)
+
+    # Old stored fields no longer exist
+    assert not hasattr(result, "camera_poses")
+    assert not hasattr(result, "camera_intrinsics")
+    assert not hasattr(result, "colmap_reconstruction")
+
+    # reconstruction is always set
+    assert result.reconstruction is recon
+    assert result.frame == CoordinateFrame.COLMAP
+    assert len(result.image_paths) == N_FRAMES

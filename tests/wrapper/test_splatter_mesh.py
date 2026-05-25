@@ -90,7 +90,8 @@ def test_mesh_else_branch_sets_splats_key(tmp_path):
         "model_config_path": str(tmp_path / "config.yml"),
     }
 
-    with patch.object(Splatter, "_select_run"):
+    with patch.object(Splatter, "_select_run"), \
+         patch.object(Splatter, "_save_mesh_decoder"):
         s.mesh(overwrite=False)
 
     assert "splats" in s.config["mesh_info"]

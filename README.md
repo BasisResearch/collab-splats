@@ -1,6 +1,111 @@
 # collab-splats
 
-Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
+```collab-splats``` provides a flexible platform to derive 3D environment models with integrated semantic information from images and videos. Environment models can be initialized from traditional or modern, feedforward approaches (e.g., COLMAP vs. VGGT respectively). Derived camera poses can then be improved through iterative refinement methods (i.e., bundle adjustment, loop closure). New camera poses can be estimated with keypoint matching. Semantic structure can be lifted into the 3D environment through gaussian splatting or a lightweight compression module. 
+
+## Usage
+
+
+   ---
+   Bundle Adjustment                                                                                                                            ↓
+
+ Purpose: Minimize reprojection error across all frames to tighten camera poses after a feedforward pass. Feedforward models produce plausible but geometrically inconsistent poses; BA enforces multi-view consistency.                                                                    ↓
+
+   What we provide: BundleAdjustment wraps any feedforward creator transparently. It:
+   1. Runs the base creator to get initial poses.                                                                                               ↓
+   2. Extracts 2D–3D tracks via VGGSfM (extract_tracks_vggsfm).
+   3. Runs Levenberg-Marquardt BA (run_bundle_adjustment) to refine intrinsics + extrinsics jointly.                                            ↓
+                                                                                                                                                ↓
+   Configurable via BundleAdjustmentConfig (learning rate, iterations, convergence thresholds). The wrapper is composable: BundleAdjustment(LoopClosure(VGGTXCreator())) runs LC then BA.                                                                               ↓
+
+   ---
+   Loop Closure
+                                                                                                                                                ↓
+   Purpose: Correct long-range drift accumulation in feedforward reconstructions. Poses are estimated locally and errors compound over long     ↓sequences; loop closure detects when the camera revisits a scene region and enforces global consistency.
+
+   What we provide: LoopClosure wraps any feedforward creator and:                                                                              ↓
+   1. Splits the sequence into overlapping submaps.
+   2. Computes DINO-SALAD global descriptors per frame for place recognition.
+   3. Retrieves candidate loop-closure pairs above a similarity threshold.                                                                      ↓
+   4. Runs Sim3 pose graph optimization to propagate corrections across submaps.
+   5. Merges windowed outputs into a single unified PointcloudResult.
+                                                                                                                                                ↓
+   Configurable via LoopClosureConfig (submap size, retrieval threshold, optimization steps, Sim3 scale handling).
+                                                                                                                                                ↓
+   ---
+   Implementation Steps                                                                                                                         ↓
+
+   1. Open README.md
+   2. Fill Preprocessing section (after the ### Preprocessing header)                                                                           ↓
+   3. Fill Pointclouds section (after ### Pointclouds header)
+   4. Fill Refinement intro paragraph
+   5. Fill Bundle Adjustment subsection                                                                                                         ↓
+   6. Fill Loop Closure subsection
+
+   Verification                                                                                                                                 ↓
+
+   Read the resulting README and confirm:                                                                                                       ↓
+   - Each section has prose (no empty body)
+   - Technical terms match actual class/method names in codebase
+   - No placeholder text remains
+
+
+### Preprocessing
+
+Extract representative keyframes from a video before reconstruction. Feeding every frame is wasteful and introduces redundancy. Within our repository we provide two frame-selection strategies:
+   - FPS (uniform) — samples at a fixed frame rate; fast, no GPU, works well for smooth camera motion
+   - Optical flow — Lucas-Kanade-based motion/coverage scorer that favors frames with high disparity and spatial coverage; better for variable-speed capture. Tunable via min_disparity, motion_weight, coverage_weight, max_frames.
+
+Both paths output a set of images that are written to an image directory, used for pointcloud creation.
+
+### Pointclouds
+
+Estimate sparse 3D pointclouds and per-frame camera poses (intrinsics + extrinsics) from a set of images. Our package provides an interface to two families of pointcloud estimators:
+   - Structure-from-Motion (SfM): uses feature-matching with incremental reconstruction to define a scene. Slower but geometrically consistent.
+   - Feedforward: single forward pass through a pre-trained model 
+
+   What we provide: Two families of creators with a unified interface (reconstruct(image_dir, output_dir) → PointcloudResult):                  ↓
+
+   - Feedforward — single forward pass through a learned model; no iterative refinement, fast.
+     - VGGT-X (VGGTXCreator) — joint pose + depth from facebook/VGGT-1B; handles up to 256-frame chunks.                                        ↓
+     - MapAnything (MapAnythingCreator) — multiview confidence-weighted depth + pose from facebook/map-anything.
+   - Traditional SfM — feature matching + incremental reconstruction; slower but geometrically consistent.
+     - COLMAP (ColmapCreator) — SIFT features, exhaustive matching.                                                                             ↓
+     - HLoc (HlocCreator) — SuperPoint + SuperGlue learned features; stronger for textureless scenes.
+
+   PointcloudResult carries: world-frame XYZ points, RGB colors, optional per-point confidence, camera poses (M, 4, 4), intrinsics (M, 3, 3), an↓a raw COLMAP reconstruction.
+                                                                                                                                                ↓
+   Factory: make_creator(name, use_ba=False, use_lc=False, **kwargs) wires up creators with optional refinement wrappers.
+                                                                                                                                                ↓
+
+### Refinement
+
+Camera pose estimation is notoriously difficult particularly for modern methods. Feedforward approaches do not enforce geometric consistency and suffer from long-range drift. To address this, we provide a few options that enable the refinement of camera poses. 
+
+#### Bundle Adjustment
+
+Bundle adjustment seeks to minimize reprojection error across all frames.
+
+ Minimize reprojection error across all frames to tighten camera poses after a feedforward pass. Feedforward models produce plausible but geometrically inconsistent poses; BA enforces multi-view consistency.                                                                    ↓
+
+   What we provide: BundleAdjustment wraps any feedforward creator transparently. It:
+   1. Runs the base creator to get initial poses.                                                                                               ↓
+   2. Extracts 2D–3D tracks via VGGSfM (extract_tracks_vggsfm).
+   3. Runs Levenberg-Marquardt BA (run_bundle_adjustment) to refine intrinsics + extrinsics jointly.                                            ↓
+                                                                                                                                                ↓
+   Configurable via BundleAdjustmentConfig (learning rate, iterations, convergence thresholds). The wrapper is composable: BundleAdjustment(LoopClosure(VGGTXCreator())) runs LC then BA.                                                                               ↓
+
+
+#### Loop Closure
+
+
+
+
+### Semantics
+
+### Localization
+
+
+### Meshing
 
 **Documentation:** https://basisresearch.github.io/collab-splats/ — tutorials and API reference. Enable via GitHub repo → Settings → Pages → `gh-pages` branch after first merge to `main`.
 

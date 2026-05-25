@@ -614,7 +614,7 @@ class CameraLocalizer:
             CameraLocalizer ready to localize query images in the given scene.
         """
         return cls(
-            pts3d=result.pts3d,
+            pts3d=result.points,
             extrinsics=result.extrinsics,
             intrinsics=result.intrinsics,
             image_paths=result.image_paths,

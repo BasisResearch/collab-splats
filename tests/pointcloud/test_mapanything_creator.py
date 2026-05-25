@@ -208,7 +208,7 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
 
         creator.postprocess()
         assert creator.outputs is not None
-        assert creator.outputs.pts3d.shape[1] == 3
+        assert creator.outputs.points.shape[1] == 3
         assert creator.outputs.extrinsics.shape == (n, 4, 4)
 
 
@@ -350,8 +350,7 @@ def test_mapanything_reconstruct_smoke(tmp_path):
     c = MapAnythingCreator()
     result = c.reconstruct(image_dir, tmp_path / "out")
     assert isinstance(result, PointcloudResult)
-    assert result.frame == CoordinateFrame.NERFSTUDIO
-    assert result.world_transform is not None
+    assert result.frame == CoordinateFrame.COLMAP
     assert result.points.shape[1] == 3
     assert (tmp_path / "out" / "transforms.json").exists()
     assert (tmp_path / "out" / "colmap" / "sparse" / "0" / "cameras.bin").exists()
@@ -379,9 +378,9 @@ def test_mapanything_run_inference_smoke(tmp_path):
     creator.run_inference()
     creator.postprocess()
 
-    assert creator.outputs.conf is not None, "conf should be set when use_multiview_confidence=True"
-    assert not creator.outputs.conf.isnan().any(), (
-        "conf contains NaN — dtype cast regression in _postprocess"
+    assert creator.outputs.confidence is not None, "confidence should be set when use_multiview_confidence=True"
+    assert not creator.outputs.confidence.isnan().any(), (
+        "confidence contains NaN — dtype cast regression in _postprocess"
     )
 
 

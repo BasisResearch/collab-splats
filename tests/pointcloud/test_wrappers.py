@@ -12,7 +12,7 @@ from collab_splats.pointcloud.feedforward import FeedforwardResult
 
 def _make_ff_result(**overrides):
     defaults = dict(
-        pts3d=np.zeros((10, 3), dtype=np.float32),
+        points=np.zeros((10, 3), dtype=np.float32),
         colors=np.zeros((10, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4), (2, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (2, 1, 1)).astype(np.float32),
@@ -30,7 +30,7 @@ def _make_mock_creator(ff_result):
     m = MagicMock()
     m.outputs = ff_result
     m.raw_outputs = {}
-    m._reproject.return_value = (ff_result.pts3d, ff_result.colors)
+    m._reproject.return_value = (ff_result.points, ff_result.colors)
     return m
 
 
@@ -42,7 +42,7 @@ def _make_mock_creator(ff_result):
 def test_feedforward_result_new_fields_default_none():
     r = _make_ff_result()
     assert r.images is None
-    assert r.conf is None
+    assert r.confidence is None
     assert r.world_points is None
 
 
@@ -75,7 +75,7 @@ def test_bundle_adjustment_config_custom():
 
 
 def test_vggtx_postprocess_populates_ba_fields():
-    """VGGTXCreator._postprocess() must populate images/conf/world_points."""
+    """VGGTXCreator._postprocess() must populate images/confidence/world_points."""
     from collab_splats.pointcloud.feedforward import VGGTXCreator
 
     creator = VGGTXCreator.__new__(VGGTXCreator)
@@ -101,10 +101,10 @@ def test_vggtx_postprocess_populates_ba_fields():
         result = creator._postprocess(raw_outputs)
 
     assert result.images is not None
-    assert result.conf is not None
+    assert result.confidence is not None
     assert result.world_points is not None
     assert result.images.shape[0] == N
-    assert result.conf.shape == (N, H, W)
+    assert result.confidence.shape == (N, H, W)
 
 
 def test_vggtx_no_use_ba_field():
@@ -307,7 +307,7 @@ def test_loop_closure_reproject_delegates_to_base():
     from collab_splats.pointcloud.wrappers import LoopClosure
 
     result = _make_ff_result()
-    reprojected = _make_ff_result(pts3d=np.ones((5, 3), dtype=np.float32))
+    reprojected = _make_ff_result(points=np.ones((5, 3), dtype=np.float32))
     mock_base = _make_mock_creator(result)
     mock_base.reproject.return_value = reprojected
 

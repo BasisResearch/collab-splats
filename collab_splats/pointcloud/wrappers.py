@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
+from rich.console import Console
+from tqdm.auto import tqdm
+
+from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 
 from .base import PointcloudResult
-from .feedforward import FeedforwardResult
-from .loop_closure import LoopClosureConfig
+from .feedforward import FeedforwardResult, _raw_to_world_points
+from .localization import BaseRetrievalExtractor
+from .loop_closure import LoopClosureConfig, Submap
+from .loop_closure.closure import (
+    find_loop_closures,
+    merge_submap_outputs,
+    run_pose_graph_optimization,
+    translation_jump_check,
+)
+from .loop_closure.submap import assert_world_to_cam
 
 __all__ = ["LoopClosure"]
 
@@ -48,7 +62,6 @@ class LoopClosure:
         return self.base.build_colmap(output_dir)
 
     def _reproject(self, raw_outputs: Any, ext: Any, intr: Any) -> Any:
-        """Delegate _reproject to base creator."""
         return self.base._reproject(raw_outputs, ext, intr)
 
     @property
@@ -89,8 +102,8 @@ class LoopClosure:
             kwargs: dict = {}
             if result.images is not None and len(result.images) != N:
                 kwargs["images"] = result.images[dedup]
-            if result.conf is not None and hasattr(result.conf, "__len__") and len(result.conf) != N:
-                kwargs["conf"] = result.conf[dedup]
+            if result.confidence is not None and hasattr(result.confidence, "__len__") and len(result.confidence) != N:
+                kwargs["confidence"] = result.confidence[dedup]
             if result.world_points is not None and result.world_points.shape[0] != N:
                 kwargs["world_points"] = result.world_points[dedup]
             if result.intrinsics is not None and result.intrinsics.shape[0] != N:
@@ -102,7 +115,7 @@ class LoopClosure:
         return result
 
     def reproject(self, result: FeedforwardResult) -> FeedforwardResult:
-        """Re-extract pts3d/colors using refined poses; delegates to base.reproject()."""
+        """Re-extract pts3d/colors using refined poses."""
         return self.base.reproject(result)
 
     ######################################################
@@ -121,16 +134,6 @@ class LoopClosure:
         return n >= self.config.submap_size
 
     def _run_lc_loop(self, **kwargs: Any) -> None:
-        import logging
-
-        import torch
-        from rich.console import Console
-        from tqdm.auto import tqdm
-
-        from collab_splats.pointcloud.loop_closure import Submap
-        from collab_splats.pointcloud.loop_closure.closure import find_loop_closures
-        from collab_splats.pointcloud.loop_closure.submap import assert_world_to_cam
-
         console = Console()
 
         cfg = self.config
@@ -140,14 +143,8 @@ class LoopClosure:
         N = views.shape[0] if hasattr(views, "shape") else len(views)
         device = str(next(self.base.model.parameters()).device)
 
-        # Helper used inside the loop (mirrors feedforward._raw_to_world_points)
-        def _raw_to_world_points(raw: dict) -> tuple:
-            from collab_splats.pointcloud.feedforward import _raw_to_world_points as _fn
-            return _fn(raw)
-
         # Load DINO-SALAD retrieval extractor; fall back to full-sequence inference if unavailable
         try:
-            from collab_splats.pointcloud.localization import BaseRetrievalExtractor
             retrieval_cls = BaseRetrievalExtractor.get("dino-salad")
             retrieval_extractor = retrieval_cls(device=device)
             self.base._lc_retrieval = retrieval_extractor
@@ -183,8 +180,7 @@ class LoopClosure:
                     torch.cuda.empty_cache()
 
                 ext_3x4 = raw["extrinsic"]                                               # (k, 3, 4)
-                bottom = np.tile([0, 0, 0, 1], (k, 1)).reshape(k, 1, 4).astype(np.float32)
-                poses_4x4 = np.concatenate([ext_3x4, bottom], axis=1)                    # (k, 4, 4)
+                poses_4x4 = extrinsics_to_homogeneous(ext_3x4)                           # (k, 4, 4)
 
                 assert_world_to_cam(poses_4x4)
 
@@ -235,9 +231,8 @@ class LoopClosure:
                         )
                         verify_ok = False
                     if verify_ok:
-                        from collab_splats.pointcloud.loop_closure.closure import translation_jump_check
                         lc_rel = (
-                            np.linalg.inv(lc_poses[1].astype(np.float64))
+                            invert_poses(lc_poses[1].astype(np.float64))
                             @ lc_poses[0].astype(np.float64)
                         ).astype(np.float32)
                         jump_ok, jump_ratio = translation_jump_check(
@@ -292,10 +287,6 @@ class LoopClosure:
 
         # Merge per-submap world_points and poses into unified outputs
         t0_pg = time.perf_counter()
-        from collab_splats.pointcloud.loop_closure.closure import (
-            merge_submap_outputs,
-            run_pose_graph_optimization,
-        )
         corrected_extrinsics = run_pose_graph_optimization(
             submaps, lc_submaps, total_frames=N,
             overlap_frames=cfg.submap_overlap,

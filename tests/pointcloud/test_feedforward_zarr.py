@@ -29,7 +29,7 @@ def _make_result(
     """Build a minimal FeedforwardResult for testing."""
     rng = np.random.default_rng(42)
     return FeedforwardResult(
-        pts3d=rng.random((n_pts, 3), dtype=np.float32),
+        points=rng.random((n_pts, 3), dtype=np.float32),
         colors=rng.integers(0, 256, (n_pts, 3), dtype=np.uint8),
         extrinsics=np.eye(4, dtype=np.float32)[None].repeat(n_frames, axis=0),
         intrinsics=np.eye(3, dtype=np.float32)[None].repeat(n_frames, axis=0),
@@ -51,7 +51,7 @@ def test_zarr_roundtrip_core_fields(tmp_path):
     result.save_zarr(store_path)
     loaded = FeedforwardResult.load_zarr(store_path)
 
-    np.testing.assert_array_equal(loaded.pts3d, result.pts3d)
+    np.testing.assert_array_equal(loaded.points, result.points)
     np.testing.assert_array_equal(loaded.colors, result.colors)
     np.testing.assert_array_equal(loaded.extrinsics, result.extrinsics)
     np.testing.assert_array_equal(loaded.intrinsics, result.intrinsics)
@@ -106,7 +106,7 @@ def test_zarr_missing_optional_fields_load_as_none(tmp_path):
     assert loaded.pixel_indices is None
     # images always None on load
     assert loaded.images is None
-    assert loaded.conf is None
+    assert loaded.confidence is None
 
 
 def test_zarr_optional_fields_roundtrip(tmp_path):

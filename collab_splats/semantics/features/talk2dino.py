@@ -59,8 +59,12 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         self._image_resolution = image_resolution
 
         # Load Talk2DINO model from HuggingFace Hub; extract metadata before moving to device
-        # so that .to(device).eval() chaining doesn't shadow the base model attributes
-        _loaded = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        # so that .to(device).eval() chaining doesn't shadow the base model attributes.
+        # low_cpu_mem_usage=False: avoid meta-tensor init — Talk2DINO's HF code calls
+        # load_state_dict() without assign=True, making weight copies a no-op on meta tensors.
+        _loaded = AutoModel.from_pretrained(
+            model_name, trust_remote_code=True, low_cpu_mem_usage=False
+        )
 
         # Extract Normalize transform from model's stored image_transforms —
         # correct mean/std regardless of backbone variant

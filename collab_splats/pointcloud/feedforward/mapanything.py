@@ -279,7 +279,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         extrinsics_4x4 = extrinsics_to_homogeneous(extrinsics)
 
         return FeedforwardResult(
-            pts3d=pts3d,
+            points=pts3d,
             colors=colors,
             pixel_indices=pixel_indices,
             extrinsics=extrinsics_4x4,
@@ -289,7 +289,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             model_width=model_w,
             model_height=model_h,
             images=_images,
-            conf=_conf,
+            confidence=_conf,
             world_points=_world_points,
             depth=_depth,
         )

@@ -94,7 +94,7 @@ def test_loop_match_queue_equal_score_tiebreak():
     assert len(matches) == 3
 
 
-from collab_splats.pointcloud.loop_closure import ImageRetrieval
+from collab_splats.pointcloud.loop_closure import find_loop_closures
 
 
 def test_find_loop_closures_detects_similar():
@@ -129,10 +129,7 @@ def test_find_loop_closures_detects_similar():
         image_paths=[Path(f"s1_f{i}.jpg") for i in range(k)],
     )
 
-    retrieval = ImageRetrieval.__new__(ImageRetrieval)
-    retrieval.extractor = None  # skip model load
-
-    matches = retrieval.find_loop_closures(
+    matches = find_loop_closures(
         query_submap=query,
         past_submaps=[past_similar, past_different],
         lc_threshold=0.5,
@@ -143,8 +140,6 @@ def test_find_loop_closures_detects_similar():
 
 
 def test_find_loop_closures_no_match():
-    retrieval = ImageRetrieval.__new__(ImageRetrieval)
-    retrieval.extractor = None
     d = 128
 
     query = Submap(
@@ -164,13 +159,13 @@ def test_find_loop_closures_no_match():
         image_paths=[Path(f"g{i}.jpg") for i in range(2)],
     )
 
-    matches = retrieval.find_loop_closures(query, [past], lc_threshold=0.001, max_loops=1)
+    matches = find_loop_closures(query, [past], lc_threshold=0.001, max_loops=1)
     assert matches == []
 
 
 def test_loop_match_queue_nms():
     from collab_splats.pointcloud.loop_closure import LoopMatch
-    from collab_splats.pointcloud.loop_closure.retrieval import LoopMatchQueue
+    from collab_splats.pointcloud.loop_closure.closure import LoopMatchQueue
     # frames [10, 12, 50, 53, 100] — 10+12 cluster, 50+53 cluster, 100 alone
     # nms=25: keep best of each cluster by score (lower = better)
     queue = LoopMatchQueue(max_size=10, nms_frame_distance=25)

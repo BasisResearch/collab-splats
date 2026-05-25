@@ -3,6 +3,14 @@
 Shims and environment fixes that must run before any test module is imported.
 """
 
+# ── sys.path: make top-level project dir importable (for evals.* etc.) ───────
+import pathlib as _pathlib
+import sys as _sys
+
+_project_root = _pathlib.Path(__file__).parents[1]
+if str(_project_root) not in _sys.path:
+    _sys.path.insert(0, str(_project_root))
+
 # ── pkg_resources.packaging shim ─────────────────────────────────────────────
 # setuptools>=71 removed pkg_resources.packaging as a submodule. maskclip_onnx
 # (and some other old packages) do `from pkg_resources import packaging`, which

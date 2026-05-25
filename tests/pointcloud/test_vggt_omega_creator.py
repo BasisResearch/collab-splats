@@ -286,7 +286,7 @@ def test_postprocess_returns_feedforward_result(tmp_path):
         result = creator._postprocess(raw)
 
     assert isinstance(result, FeedforwardResult)
-    assert result.pts3d.shape == (5, 3)
+    assert result.points.shape == (5, 3)
     assert result.colors.shape == (5, 3)
     assert result.extrinsics.shape == (n, 4, 4)
     assert result.intrinsics.shape == (n, 3, 3)
@@ -315,7 +315,7 @@ def test_postprocess_world_points_populated(tmp_path):
 
     assert result.world_points is not None
     assert result.world_points.shape == (n, h, w, 3)
-    assert result.conf is not None
+    assert result.confidence is not None
     assert result.images is not None
 
 
@@ -374,6 +374,35 @@ def test_load_model_without_path_calls_hf_download(tmp_path):
         repo_id="facebook/VGGT-Omega",
         filename="vggt_omega_1b_512.pt",
     )
+
+
+def test_load_model_keeps_fp32_params(tmp_path):
+    """_load_model must NOT cast the model to bf16/fp16.
+
+    VGGTOmega disables autocast for CameraHead/DenseHead and casts their inputs to fp32,
+    so bf16/fp16 params crash the head LayerNorms with
+    "expected scalar type Float but found BFloat16".
+    """
+    ckpt_path = tmp_path / "fake.pt"
+    torch.save({}, ckpt_path)
+    creator = VGGTOmegaCreator(model_path=str(ckpt_path))
+
+    mock_model_instance = MagicMock()
+    mock_model_instance.eval.return_value = mock_model_instance
+    mock_model_instance.to.return_value = mock_model_instance
+
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
+               return_value=mock_model_instance):
+        creator._load_model("cpu")
+
+    # No .to() call may pass a low-precision dtype
+    for call in mock_model_instance.to.call_args_list:
+        dtype = call.kwargs.get("dtype")
+        if dtype is None and len(call.args) > 1:
+            dtype = call.args[1]
+        assert dtype not in (torch.bfloat16, torch.float16), (
+            f"_load_model cast model to {dtype}; VGGTOmega heads require fp32 params"
+        )
 
 
 ########################################################################

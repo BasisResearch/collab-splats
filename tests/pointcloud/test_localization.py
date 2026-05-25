@@ -209,7 +209,7 @@ def test_camera_localizer_from_feedforward_classmethod():
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()
     result = MagicMock()
-    result.pts3d = pts3d
+    result.points = pts3d
     result.extrinsics = extrinsics
     result.intrinsics = intrinsics
 
@@ -251,7 +251,7 @@ def test_camera_localizer_recovers_known_pose():
         result = loc.localize(query_image, K)
 
         assert isinstance(result, LocalizationResult)
-        assert result.pose is not None, "localize() returned None pose — PnP failed"
+        assert result.pose is not None, "localize() returned None pose — pycolmap failed"
         assert result.pose.shape == (4, 4)
         np.testing.assert_allclose(result.pose[:3, :3], extrinsics[0, :3, :3], atol=0.05)
         np.testing.assert_allclose(result.pose[:3, 3], extrinsics[0, :3, 3], atol=0.05)

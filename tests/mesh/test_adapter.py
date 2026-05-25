@@ -32,7 +32,7 @@ def _make_result(N=2, H=4, W=6, world_points_z=1.5, with_world_points=True):
 
     original_coords = np.tile([0, 0, W * 4, H * 4, W * 4, H * 4], (N, 1)).astype(np.float32)
     return FeedforwardResult(
-        pts3d=rng.random((10, 3)).astype(np.float32),
+        points=rng.random((10, 3)).astype(np.float32),
         colors=(rng.random((10, 3)) * 255).astype(np.uint8),
         extrinsics=extrinsics,
         intrinsics=np.eye(3, dtype=np.float32)[None].repeat(N, axis=0),

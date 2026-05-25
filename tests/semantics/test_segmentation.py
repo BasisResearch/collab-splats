@@ -85,9 +85,9 @@ def test_sam3_segment_with_text_interface():
     mock_processor.set_image.return_value = "state"
     mock_processor.set_text_prompt.return_value = mock_output
 
-    with patch("collab_splats.semantics.segmentation.build_sam3_image_model",
+    with patch("collab_splats.semantics.segmentation.sam3.build_sam3_image_model",
                return_value=MagicMock()):
-        with patch("collab_splats.semantics.segmentation.Sam3Processor",
+        with patch("collab_splats.semantics.segmentation.sam3.Sam3Processor",
                    return_value=mock_processor):
             seg = SAM3Segmentation(confidence_threshold=0.5)
 

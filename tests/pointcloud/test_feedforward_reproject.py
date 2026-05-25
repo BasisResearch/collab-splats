@@ -12,7 +12,7 @@ def _make_result(*, depth=None, pixel_indices=None) -> FeedforwardResult:
     """Minimal FeedforwardResult with configurable depth and pixel_indices."""
     N, H, W, P = 2, 4, 4, 3
     return FeedforwardResult(
-        pts3d=np.zeros((P, 3), dtype=np.float32),
+        points=np.zeros((P, 3), dtype=np.float32),
         colors=np.zeros((P, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
@@ -44,7 +44,7 @@ def test_reproject_calls_reproject_pixels_with_correct_args():
     np.testing.assert_array_equal(call_args[1], pixel_indices)
     np.testing.assert_array_equal(call_args[2], result.extrinsics[:, :3, :])
     np.testing.assert_array_equal(call_args[3], result.intrinsics)
-    np.testing.assert_array_equal(reprojected.pts3d, new_pts)
+    np.testing.assert_array_equal(reprojected.points, new_pts)
 
 
 def test_reproject_preserves_colors_and_extrinsics():

@@ -14,7 +14,7 @@ from typing import Dict, List, Literal, Tuple, Type, Union
 import numpy as np
 import torch
 from PIL import Image
-from tqdm import trange
+from tqdm.auto import trange
 
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.datamanagers.full_images_datamanager import (

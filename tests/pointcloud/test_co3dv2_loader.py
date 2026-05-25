@@ -71,12 +71,18 @@ def test_co3dv2_loader_pose_dtype(tmp_path):
 
 
 def test_co3dv2_loader_identity_rotation_preserved(tmp_path):
-    """Synthetic annotations use identity R — loader should preserve it."""
+    """Synthetic annotations use identity R — loader converts to OpenCV convention.
+
+    CO3Dv2 uses PyTorch3D row-major convention with left-handed axes (x=left, y=up, z=fwd).
+    The loader converts to OpenCV w2c via R_cv = S @ R.T where S = diag(-1, -1, 1).
+    For identity R, the expected OpenCV rotation is diag(-1, -1, 1).
+    """
     from evals.datasets import get_dataset
 
     seq_dir = _make_fake_seq(tmp_path, n_frames=2)
     ds = get_dataset("co3dv2")(seq_dir, max_frames=2)
-    np.testing.assert_allclose(ds.gt_poses[0, :3, :3], np.eye(3), atol=1e-5)
+    expected_R = np.diag([-1., -1., 1.]).astype(np.float32)
+    np.testing.assert_allclose(ds.gt_poses[0, :3, :3], expected_R, atol=1e-5)
 
 
 def test_co3dv2_loader_provides_intrinsics(tmp_path):

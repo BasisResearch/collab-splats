@@ -68,11 +68,9 @@ def test_colmap_creator_smoke(tiny_image_dir, tmp_path):
     try:
         result = creator.reconstruct(tiny_image_dir, out)
         assert isinstance(result, PointcloudResult)
-        assert result.frame == CoordinateFrame.NERFSTUDIO
-        assert result.world_transform is not None
+        assert result.frame == CoordinateFrame.COLMAP
         assert result.points.shape[1] == 3
-        if result.camera_poses is not None:
-            assert result.camera_poses.shape[1:] == (4, 4)
+        assert result.extrinsics.shape[1:] == (4, 4)
     except RuntimeError as e:
         assert "reconstruction failed" in str(e).lower()
 

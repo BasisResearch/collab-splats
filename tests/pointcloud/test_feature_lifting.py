@@ -1,10 +1,16 @@
 import dataclasses
-import unittest.mock as mock
+from pathlib import Path
 import numpy as np
+import pytest
 import torch
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult, BaseFeedforwardCreator
 from collab_splats.pointcloud.feedforward.vggtx import unproject_and_filter_points
 from collab_splats.pointcloud.utils import lift_features, reproject_pixels
+
+
+########################################################
+########## FeedforwardResult fields ####################
+########################################################
 
 
 def test_feedforward_result_has_new_fields():
@@ -19,11 +25,15 @@ def test_feedforward_result_new_fields_default_none():
     assert field_map["pixel_indices"].default is None
 
 
-def test_base_creator_has_extractor_name():
+def test_base_creator_no_extractor_name():
+    """extractor_name field removed; creators no longer own lifting."""
     fields = {f.name for f in dataclasses.fields(BaseFeedforwardCreator)}
-    assert "extractor_name" in fields
-    field_map = {f.name: f for f in dataclasses.fields(BaseFeedforwardCreator)}
-    assert field_map["extractor_name"].default is None
+    assert "extractor_name" not in fields
+
+
+########################################################
+########## unproject_and_filter_points #################
+########################################################
 
 
 def _make_depth_inputs(n=3, h=8, w=8):
@@ -55,7 +65,7 @@ def test_unproject_returns_pixel_indices():
 def test_pixel_indices_align_with_colors():
     """colors[p] must come from the same pixel as pixel_indices[p]."""
     n, h, w = 2, 8, 8
-    depth = np.ones((n, h, w, 1), dtype=np.float32)  # vggt expects (N, H, W, 1)
+    depth = np.ones((n, h, w, 1), dtype=np.float32)
     depth_conf = np.ones((n, h, w), dtype=np.float32)  # all pixels pass
     # Encode pixel identity into image: pixel (r, c) = r*10 + c across all channels
     images = torch.zeros(n, 3, h, w)
@@ -80,6 +90,11 @@ def test_pixel_indices_align_with_colors():
         )
 
 
+########################################################
+########## reproject_pixels ############################
+########################################################
+
+
 def _make_extrinsics_intrinsics(n=2):
     extrinsics_3x4 = np.tile(
         np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]], dtype=np.float32), (n, 1, 1)
@@ -102,7 +117,6 @@ def test_reproject_pixels_shape():
 def test_reproject_pixels_principal_point_zero_xy():
     """Pixel at principal point + identity extrinsics → world X=Y=0, Z=depth."""
     depth = np.ones((1, 8, 8, 1), dtype=np.float32) * 3.0
-    # principal point is cx=cy=4; pixel (row=4, col=4) → x_cam = y_cam = 0
     pixel_indices = np.array([[0, 4, 4]], dtype=np.int32)
     extrinsics_3x4 = np.array([[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]], dtype=np.float32)
     intrinsics = np.array([[[100, 0, 4], [0, 100, 4], [0, 0, 1]]], dtype=np.float32)
@@ -110,65 +124,151 @@ def test_reproject_pixels_principal_point_zero_xy():
     np.testing.assert_allclose(pts[0], [0.0, 0.0, 3.0], atol=1e-5)
 
 
-class _FakeExtractor:
-    """Minimal extractor stub: returns constant (D=4) feature tensor per image."""
-    patch_size = 2
-
-    def eval(self):
-        return self
-
-    def forward(self, images):
-        D = 4
-        results = []
-        for img in images:
-            w_px, h_px = img.size  # PIL Image: (width, height)
-            H_p, W_p = h_px // self.patch_size, w_px // self.patch_size
-            results.append(torch.ones(D, H_p, W_p))
-        return results
+########################################################
+########## lift_features (multi-view) ##################
+########################################################
 
 
-def test_lift_features_shape():
+def _make_lift_result(
+    pts3d: np.ndarray,
+    pixel_indices: np.ndarray,
+    depth: np.ndarray,
+    conf: np.ndarray,
+    *,
+    n: int,
+    h: int,
+    w: int,
+) -> FeedforwardResult:
+    """Build a minimal FeedforwardResult sufficient for lift_features.
+
+    Uses identity world-to-cam extrinsics and a pinhole intrinsics centred at (w/2, h/2).
+    """
+    extrinsics_3x4 = np.tile(
+        np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]], dtype=np.float32), (n, 1, 1)
+    )
+    bottom = np.tile(np.array([[0, 0, 0, 1]], dtype=np.float32), (n, 1, 1))
+    extrinsics_4x4 = np.concatenate([extrinsics_3x4, bottom], axis=1)
+    intrinsics = np.tile(
+        np.array([[100, 0, w / 2], [0, 100, h / 2], [0, 0, 1]], dtype=np.float32), (n, 1, 1)
+    )
+    return FeedforwardResult(
+        points=pts3d,
+        colors=np.zeros((pts3d.shape[0], 3), dtype=np.uint8),
+        extrinsics=extrinsics_4x4,
+        intrinsics=intrinsics,
+        image_paths=[Path(f"frame_{i}.png") for i in range(n)],
+        original_coords=np.zeros((n, 6), dtype=np.float32),
+        model_width=w,
+        model_height=h,
+        pixel_indices=pixel_indices,
+        depth=depth,
+        confidence=torch.from_numpy(conf),
+    )
+
+
+def test_lift_features_aggregates_across_frames():
+    """Point visible in 2 frames with conf (1, 2) → weighted mean of feats (1, 2)."""
+    n, h, w, D = 2, 8, 8, 4
+    # Point at world (0, 0, 1); identity extrinsics → both frames project to (cx, cy) = (4, 4)
+    pts3d = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+    pixel_indices = np.array([[0, 4, 4]], dtype=np.int32)
+    # Depth at the projected pixel matches z=1 in both frames → depth-consistent
+    depth = np.ones((n, h, w), dtype=np.float32)
+    # Distinct conf per frame: 1 in frame 0, 2 in frame 1
+    conf = np.zeros((n, h, w), dtype=np.float32)
+    conf[0, 4, 4] = 1.0
+    conf[1, 4, 4] = 2.0
+    # Feature maps: frame 0 all ones, frame 1 all twos
+    feature_maps = [
+        torch.full((D, h, w), 1.0, dtype=torch.float32),
+        torch.full((D, h, w), 2.0, dtype=torch.float32),
+    ]
+
+    result = _make_lift_result(pts3d, pixel_indices, depth, conf, n=n, h=h, w=w)
+    feats = lift_features(feature_maps, result)
+
+    # Weighted mean: (1*1 + 2*2) / (1 + 2) = 5/3
+    expected = 5.0 / 3.0
+    np.testing.assert_allclose(feats[0].numpy(), [expected] * D, atol=1e-4)
+
+
+def test_lift_features_source_fallback_for_unseen():
+    """Point with zero accumulated weight everywhere → source-frame sample fallback."""
+    n, h, w, D = 2, 8, 8, 4
+    pts3d = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+    pixel_indices = np.array([[0, 4, 4]], dtype=np.int32)
+    # Depth far from z=1 in both frames → depth-consistency fails everywhere → zero weight
+    depth = np.full((n, h, w), 100.0, dtype=np.float32)
+    conf = np.ones((n, h, w), dtype=np.float32)
+    # Distinct features per frame; fallback should sample from frame 0 (source)
+    feature_maps = [
+        torch.full((D, h, w), 7.0, dtype=torch.float32),
+        torch.full((D, h, w), 9.0, dtype=torch.float32),
+    ]
+
+    result = _make_lift_result(pts3d, pixel_indices, depth, conf, n=n, h=h, w=w)
+    feats = lift_features(feature_maps, result)
+
+    # Source frame is 0 (pixel_indices says so) → expect feature 7.0
+    np.testing.assert_allclose(feats[0].numpy(), [7.0] * D, atol=1e-4)
+
+
+def test_lift_features_asserts_missing_depth():
+    """Missing required field (depth) raises AssertionError with clear message."""
+    n, h, w, D = 1, 8, 8, 4
+    pts3d = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+    pixel_indices = np.array([[0, 4, 4]], dtype=np.int32)
+    depth = np.ones((n, h, w), dtype=np.float32)
+    conf = np.ones((n, h, w), dtype=np.float32)
+    result = _make_lift_result(pts3d, pixel_indices, depth, conf, n=n, h=h, w=w)
+    # Drop depth to trigger assert
+    result = dataclasses.replace(result, depth=None)
+    feature_maps = [torch.zeros(D, h, w)]
+
+    with pytest.raises(AssertionError, match="depth"):
+        lift_features(feature_maps, result)
+
+
+def test_lift_features_asserts_frame_count_mismatch():
+    """feature_maps length must match number of frames in extrinsics."""
+    n, h, w, D = 2, 8, 8, 4
+    pts3d = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+    pixel_indices = np.array([[0, 4, 4]], dtype=np.int32)
+    depth = np.ones((n, h, w), dtype=np.float32)
+    conf = np.ones((n, h, w), dtype=np.float32)
+    result = _make_lift_result(pts3d, pixel_indices, depth, conf, n=n, h=h, w=w)
+    feature_maps = [torch.zeros(D, h, w)]  # only 1 map, 2 frames
+
+    with pytest.raises(AssertionError, match="frame count"):
+        lift_features(feature_maps, result)
+
+
+########################################################
+########## load_zarr(load_images=...) ##################
+########################################################
+
+
+def test_load_zarr_load_images_flag(tmp_path: Path):
+    """load_images=True restores tensor; default (False) returns None."""
     n, h, w = 2, 8, 8
-    images = torch.zeros(n, 3, h, w)
-    pixel_indices = np.array([[0, 2, 4], [1, 6, 2], [0, 0, 0]], dtype=np.int32)
-    with mock.patch(
-        "collab_splats.pointcloud.utils.BaseFeatureExtractor"
-    ) as MockBase:
-        MockBase.get.return_value = lambda **_: _FakeExtractor()
-        feats = lift_features(images, pixel_indices, extractor_name="fake", device="cpu")
-    assert feats.shape == (3, 4)
-    assert feats.dtype == np.float32
+    pts3d = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+    pixel_indices = np.array([[0, 4, 4]], dtype=np.int32)
+    depth = np.ones((n, h, w), dtype=np.float32)
+    conf = np.ones((n, h, w), dtype=np.float32)
+    result = _make_lift_result(pts3d, pixel_indices, depth, conf, n=n, h=h, w=w)
+    # Attach images tensor — required for round-trip
+    images = torch.rand(n, 3, h, w)
+    result = dataclasses.replace(result, images=images)
 
+    store_path = tmp_path / "result.zarr"
+    result.save_zarr(store_path)
 
-def test_lift_features_frame_alignment():
-    """Points from frame 0 get value 1.0; points from frame 1 get value 2.0."""
-    n, h, w = 2, 8, 8
-    images = torch.zeros(n, 3, h, w)
-    pixel_indices = np.array([[0, 2, 4], [1, 6, 2]], dtype=np.int32)
+    # Default: images dropped
+    loaded_default = FeedforwardResult.load_zarr(store_path)
+    assert loaded_default.images is None
 
-    class _CountingExtractor:
-        patch_size = 2
-        _count = 0
-
-        def eval(self):
-            return self
-
-        def forward(self, imgs):
-            D = 4
-            results = []
-            for img in imgs:
-                w_px, h_px = img.size
-                H_p, W_p = h_px // self.patch_size, w_px // self.patch_size
-                feat = torch.full((D, H_p, W_p), float(self._count + 1))
-                self._count += 1
-                results.append(feat)
-            return results
-
-    instance = _CountingExtractor()
-    with mock.patch(
-        "collab_splats.pointcloud.utils.BaseFeatureExtractor"
-    ) as MockBase:
-        MockBase.get.return_value = lambda **_: instance
-        feats = lift_features(images, pixel_indices, extractor_name="fake", device="cpu")
-    np.testing.assert_allclose(feats[0], [1.0, 1.0, 1.0, 1.0], atol=1e-5)
-    np.testing.assert_allclose(feats[1], [2.0, 2.0, 2.0, 2.0], atol=1e-5)
+    # Opt-in: images restored
+    loaded_with_images = FeedforwardResult.load_zarr(store_path, load_images=True)
+    assert loaded_with_images.images is not None
+    assert loaded_with_images.images.shape == (n, 3, h, w)
+    np.testing.assert_allclose(loaded_with_images.images.numpy(), images.numpy(), atol=1e-5)

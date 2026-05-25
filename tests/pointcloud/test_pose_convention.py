@@ -13,7 +13,7 @@ def test_default_verifier_raises():
         def _preprocess(self, image_dir): return None, [], np.zeros((0, 2))
         def _postprocess(self, raw, **kw):
             from collab_splats.pointcloud.feedforward import FeedforwardResult
-            return FeedforwardResult(pts3d=np.zeros((1, 3)), colors=np.zeros((1, 3)),
+            return FeedforwardResult(points=np.zeros((1, 3)), colors=np.zeros((1, 3)),
                                      extrinsics=np.eye(4)[None], intrinsics=np.eye(3)[None],
                                      image_paths=[], model_width=1, model_height=1)
 

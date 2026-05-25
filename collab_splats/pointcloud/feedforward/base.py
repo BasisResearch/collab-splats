@@ -23,8 +23,8 @@ import zarr
 from rich.console import Console
 from zarr.codecs import BloscCodec
 
-from ..base import BasePointcloudCreator, PointcloudResult
-from ..utils import colmap_reconstruction_to_result, cross_frame_attention_ratio, reproject_pixels
+from ..base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
+from ..utils import cross_frame_attention_ratio, reproject_pixels
 from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 
 console = Console()
@@ -37,11 +37,11 @@ class FeedforwardResult:
     """Typed output from a feedforward creator's ``_postprocess`` step.
 
     All arrays are float32 unless noted. Shapes assume N images and P output points.
-    Optional fields ``images``, ``conf``, ``world_points`` are always populated by
+    Optional fields ``images``, ``confidence``, ``world_points`` are always populated by
     feedforward creators and consumed by ``BundleAdjustment``.
     """
 
-    pts3d: np.ndarray            # (P, 3) float32 — world-space XYZ points
+    points: np.ndarray           # (P, 3) float32 — world-space XYZ points
     colors: np.ndarray           # (P, 3) uint8 — RGB, range [0, 255]
     extrinsics: np.ndarray       # (N, 4, 4) float32 — world-to-camera homogeneous transform
                                  #   rows 0-2: [R|t], row 3: [0, 0, 0, 1]
@@ -55,17 +55,17 @@ class FeedforwardResult:
     model_height: int            # model inference resolution height (pixels)
     # Populated by feedforward creators; consumed by BundleAdjustment wrapper.
     images: "torch.Tensor | None" = None        # (N, 3, H, W) normalised RGB for track extraction
-    conf: "torch.Tensor | None" = None           # (N, H, W) confidence scores
+    confidence: "torch.Tensor | None" = None      # (N, H, W) confidence scores
     world_points: "np.ndarray | None" = None     # (N, H, W, 3) world-space points per pixel
     depth: "np.ndarray | None" = None            # (N, H, W) float32 depth maps (normalised to 3-D across backends)
-    features: "np.ndarray | None" = None      # (P, D) float32 — feature vector per point, index-aligned with pts3d
+    features: "np.ndarray | None" = None      # (P, D) float32 — feature vector per point, index-aligned with points
     pixel_indices: "np.ndarray | None" = None  # (P, 3) int32 — [frame_id, row, col] source pixel for each point
 
     def save(self, path: Path) -> None:
-        """Save to compressed .npz. images/conf/world_points excluded (too large)."""
+        """Save to compressed .npz. images/confidence/world_points excluded (too large)."""
         # Collect required arrays into a flat dict for np.savez_compressed
         arrays: dict = dict(
-            pts3d=self.pts3d,
+            points=self.points,
             colors=self.colors,
             extrinsics=self.extrinsics,
             intrinsics=self.intrinsics,
@@ -83,11 +83,11 @@ class FeedforwardResult:
 
     @classmethod
     def load(cls, path: Path) -> "FeedforwardResult":
-        """Load from .npz saved by save(). images/conf/world_points will be None."""
+        """Load from .npz saved by save(). images/confidence/world_points will be None."""
         # Deserialize all saved keys; optional keys default to None if absent
         d = np.load(path, allow_pickle=False)
         return cls(
-            pts3d=d["pts3d"],
+            points=d["points"],
             colors=d["colors"],
             extrinsics=d["extrinsics"],
             intrinsics=d["intrinsics"],
@@ -103,7 +103,7 @@ class FeedforwardResult:
         """Save to a zarr v3 store with lz4 compression.
 
         Unlike save(), this backend also persists world_points (chunked by frame),
-        conf (chunked by frame), and images (tensor → numpy, chunked by frame).
+        confidence (chunked by frame), and images (tensor → numpy, chunked by frame).
         images is excluded from load_zarr to avoid loading large tensors inadvertently.
 
         Args:
@@ -119,7 +119,7 @@ class FeedforwardResult:
 
         # Save required arrays with lz4 compression
         for name, arr in (
-            ("pts3d", self.pts3d),
+            ("points", self.points),
             ("colors", self.colors),
             ("extrinsics", self.extrinsics),
             ("intrinsics", self.intrinsics),
@@ -144,15 +144,15 @@ class FeedforwardResult:
             chunks = (1, wp.shape[1], wp.shape[2], wp.shape[3])
             store.create_array("world_points", data=wp, chunks=chunks, compressors=lz4)
 
-        # Save conf (N, H, W) chunked by frame; cast bfloat16 → float32 (zarr limitation).
-        if self.conf is not None:
-            conf_np = self.conf
+        # Save confidence (N, H, W) chunked by frame; cast bfloat16 → float32 (zarr limitation).
+        if self.confidence is not None:
+            conf_np = self.confidence
             if isinstance(conf_np, torch.Tensor):
                 if conf_np.dtype == torch.bfloat16:
                     conf_np = conf_np.to(torch.float32)
                 conf_np = conf_np.detach().cpu().numpy()
             chunks = (1, conf_np.shape[1], conf_np.shape[2])
-            store.create_array("conf", data=conf_np, chunks=chunks, compressors=lz4)
+            store.create_array("confidence", data=conf_np, chunks=chunks, compressors=lz4)
 
         # Save images (tensor → numpy) chunked by frame: (1, 3, H, W)
         # Cast bfloat16 → float32 first; zarr/numpy do not support bfloat16.
@@ -172,7 +172,7 @@ class FeedforwardResult:
         images defaults to None (large tensor; skipped to avoid accidental loads).
         Pass load_images=True to restore the (N, 3, H, W) tensor — required for
         post-load feature lifting so the extractor sees the same FOV as the depth map.
-        conf is restored as a torch.Tensor if present in the store.
+        confidence is restored as a torch.Tensor if present in the store.
 
         Args:
             path: Directory path of the zarr store.
@@ -185,7 +185,7 @@ class FeedforwardResult:
         attrs = dict(store.attrs)
 
         # Load required arrays
-        pts3d = store["pts3d"][:]
+        pts3d = store["points"][:]
         colors = store["colors"][:]
         extrinsics = store["extrinsics"][:]
         intrinsics = store["intrinsics"][:]
@@ -199,7 +199,8 @@ class FeedforwardResult:
         pixel_indices = store["pixel_indices"][:] if "pixel_indices" in store else None
         world_points = store["world_points"][:] if "world_points" in store else None
         depth = store["depth"][:] if "depth" in store else None
-        conf = torch.from_numpy(store["conf"][:]) if "conf" in store else None
+        _conf_key = "confidence" if "confidence" in store else ("conf" if "conf" in store else None)
+        confidence = torch.from_numpy(store[_conf_key][:]) if _conf_key else None
         # Opt-in image load: skipped by default to avoid pulling large tensor into memory
         images = (
             torch.from_numpy(store["images"][:])
@@ -208,7 +209,7 @@ class FeedforwardResult:
         )
 
         return cls(
-            pts3d=pts3d,
+            points=pts3d,
             colors=colors,
             extrinsics=extrinsics,
             intrinsics=intrinsics,
@@ -221,11 +222,11 @@ class FeedforwardResult:
             world_points=world_points,
             depth=depth,
             images=images,
-            conf=conf,
+            confidence=confidence,
         )
 
     def reproject(self) -> "FeedforwardResult":
-        """Re-project pts3d under current extrinsics using stored source pixels and depth."""
+        """Re-project points under current extrinsics using stored source pixels and depth."""
         if self.depth is None or self.pixel_indices is None:
             raise ValueError(
                 "reproject() requires depth and pixel_indices; load via load_zarr() "
@@ -239,7 +240,7 @@ class FeedforwardResult:
             self.extrinsics[:, :3, :],
             self.intrinsics,
         )
-        return replace(self, pts3d=pts3d)
+        return replace(self, points=pts3d)
 
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
@@ -604,7 +605,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         t0 = time.perf_counter()
         console.log("Postprocessing...")
         self.outputs = self._postprocess(self.raw_outputs, **kwargs)
-        n_pts = len(self.outputs.pts3d)
+        n_pts = len(self.outputs.points)
         console.log(f"  → {n_pts:,} pts  done in {time.perf_counter() - t0:.1f}s")
 
     def build_colmap(self, output_dir: Path) -> PointcloudResult:
@@ -613,7 +614,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         o = self.outputs
         # Build pycolmap Reconstruction from points + cameras at model resolution
         recon = build_pycolmap_reconstruction(
-            o.pts3d, o.colors, o.extrinsics, o.intrinsics,
+            o.points, o.colors, o.extrinsics, o.intrinsics,
             o.model_width, o.model_height,
             [p.name for p in o.image_paths],
             camera_model=self.camera_model,
@@ -629,7 +630,11 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         recon.write_binary(str(sparse_dir))
         self._write_transforms(sparse_dir, Path(output_dir))
         console.log(f"  done in {time.perf_counter() - t0:.1f}s")
-        return colmap_reconstruction_to_result(recon)
+        return PointcloudResult(
+            reconstruction=recon,
+            frame=CoordinateFrame.COLMAP,
+            image_paths=o.image_paths,
+        )
 
     # ── Abstract interface ────────────────────────────────────────────────────
 
@@ -722,7 +727,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         pts3d, colors = self._reproject(
             self.raw_outputs, result.extrinsics[:, :3, :], result.intrinsics
         )
-        return replace(result, pts3d=pts3d, colors=colors)
+        return replace(result, points=pts3d, colors=colors)
 
     @abstractmethod
     def _reproject(

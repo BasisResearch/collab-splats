@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from pathlib import Path
 
-from collab_splats.pointcloud.loop_closure import LoopClosureConfig, ImageRetrieval
+from collab_splats.pointcloud.loop_closure import LoopClosureConfig, find_loop_closures
 from collab_splats.pointcloud.loop_closure import PoseGraph, Submap
 
 
@@ -18,16 +18,18 @@ def _make_submap(submap_id, k, vec_dim=128):
     )
 
 
-def test_pose_graph_two_submaps_no_loop():
-    """Two submaps with identity poses — optimizer returns poses without crashing."""
-    s0 = _make_submap(0, k=4)
-    s1 = _make_submap(1, k=4)
+def test_pose_graph_two_nodes_no_loop():
+    """Two nodes with identity homographies — optimizer runs without crashing."""
     pg = PoseGraph()
-    pg.add_submaps([s0, s1])
-    result = pg.optimize()
-    assert set(result.keys()) == {0, 1}
-    assert result[0].shape == (4, 4, 4)
-    assert result[1].shape == (4, 4, 4)
+    H0 = np.eye(4, dtype=np.float64)
+    H1 = np.eye(4, dtype=np.float64)
+    pg.add_node(0, H0)
+    pg.add_prior(0, H0)
+    pg.add_node(1, H1)
+    pg.add_sequential_edge(0, 1, H1)
+    pg.optimize()
+    assert pg.get_homography(0).shape == (4, 4)
+    assert pg.get_homography(1).shape == (4, 4)
 
 
 def test_loop_closure_config_passed_through():
@@ -55,10 +57,7 @@ def test_image_retrieval_detects_identical_submaps():
         retrieval_vectors=base_vecs.clone(),  # identical → distance ≈ 0
         image_paths=[Path(f"f{i+3}.jpg") for i in range(3)],
     )
-    retrieval = ImageRetrieval.__new__(ImageRetrieval)
-    retrieval.extractor = None
-
-    matches = retrieval.find_loop_closures(s1, [s0], lc_threshold=0.01, max_loops=1)
+    matches = find_loop_closures(s1, [s0], lc_threshold=0.01, max_loops=1)
     assert len(matches) == 1
     assert matches[0].detected_submap_id == 0
     assert matches[0].similarity_score < 1e-5

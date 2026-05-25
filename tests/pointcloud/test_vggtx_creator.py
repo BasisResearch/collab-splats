@@ -98,8 +98,7 @@ def test_vggtx_reconstruct_smoke(tmp_path):
     c = VGGTXCreator()
     result = c.reconstruct(image_dir, tmp_path / "out")
     assert isinstance(result, PointcloudResult)
-    assert result.frame == CoordinateFrame.NERFSTUDIO
-    assert result.world_transform is not None
+    assert result.frame == CoordinateFrame.COLMAP
     assert (tmp_path / "out" / "transforms.json").exists()
     assert (tmp_path / "out" / "colmap" / "sparse" / "0" / "cameras.bin").exists()
 

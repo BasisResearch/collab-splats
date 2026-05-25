@@ -5,8 +5,6 @@ Coordinate convention used throughout:
   - Input from pycolmap uses COLMAP world (Y-down) + OpenCV camera axes (X right, Y down, Z forward).
   - All public functions that produce poses output CoordinateFrame.NERFSTUDIO (nerfstudio world frame):
     X right, Y up, Z backward camera axes; Z-up world.
-  - colmap_reconstruction_to_result applies the two transforms that nerfstudio's
-    ns-process-data applies: OpenCV→OpenGL camera axes (A), then COLMAP→nerfstudio world (B).
 """
 from __future__ import annotations
 
@@ -15,10 +13,15 @@ import numpy as np
 import pycolmap
 import torch
 import torch.nn.functional as F
-from typing import Any, Optional, Union, Tuple
-from tqdm import trange
+from typing import Any, Optional, TYPE_CHECKING, Union, Tuple
+from tqdm.auto import trange
 
-from .base import PointcloudResult, _colmap_recon_to_result
+from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
+
+from .base import PointcloudResult
+
+if TYPE_CHECKING:
+    from .feedforward.base import FeedforwardResult
 
 try:
     from collab_splats.semantics.features import BaseFeatureExtractor
@@ -33,44 +36,6 @@ _DEFAULT_DISTANCE_KWARGS: dict   = {"method": "radial", "max_distance": 50.0}
 
 # Sentinel to distinguish "use defaults" from "skip this step"
 _UNSET = object()
-
-
-########################################################
-########## COLMAP → result conversion ##################
-########################################################
-
-
-def colmap_reconstruction_to_result(
-    recon: pycolmap.Reconstruction,
-    confidence: np.ndarray | None = None,
-) -> PointcloudResult:
-    """Convert pycolmap.Reconstruction to PointcloudResult in the nerfstudio world frame.
-
-    Applies two transforms to each camera-to-world pose:
-
-    Transform A — OpenCV → OpenGL camera axes:
-        Flip the Y and Z columns of c2w (equivalent to right-multiplying the
-        camera frame by diag(1, −1, −1)).  After this, camera Y points up and
-        camera Z points backward (out of the lens).
-
-    Transform B — COLMAP world (Y-down) → nerfstudio world (Z-up):
-        Swap rows 1 and 2 of c2w, then negate the new row 2.
-        This is left-multiplication by _WORLD_TRANSFORM and matches the
-        ``applied_transform`` field written to ``transforms.json`` by nerfstudio.
-
-    Args:
-        recon:      pycolmap Reconstruction object (registered images + points).
-        confidence: Optional (N,) float32 per-point confidence scores.
-                    Pass None for SfM results (no per-point confidence available).
-
-    Returns:
-        PointcloudResult with:
-          frame = CoordinateFrame.NERFSTUDIO
-          world_transform = _WORLD_TRANSFORM (3, 4) — the applied B transform.
-          extrinsics — (M, 4, 4) float32 camera-to-world poses in nerfstudio frame.
-          intrinsics — (M, 3, 3) float32 K matrices (fx, fy, cx, cy per image).
-    """
-    return _colmap_recon_to_result(recon, confidence)
 
 
 ########################################################
@@ -742,81 +707,162 @@ def voxel_downsample_point_cloud(
     return downsampled_points, downsampled_colors
 
 
-def _assign_frame_features(
-    extractor,
-    pil_img,
-    mask_i: np.ndarray,
-    pixel_indices: np.ndarray,
-    features: np.ndarray,
-) -> None:
-    """Extract patch features for one frame and scatter into the features buffer.
-
-    Args:
-        extractor:     Instantiated BaseFeatureExtractor.
-        pil_img:       PIL Image for this frame.
-        mask_i:        (P,) bool — True for points from this frame.
-        pixel_indices: (P, 3) int32 — [frame_id, row, col] per point.
-        features:      (P, D) float32 — in-place output buffer.
-    """
-    # extractor.forward returns list[Tensor(C, H_p, W_p)]
-    [feat_tensor] = extractor.forward([pil_img])
-    # (H_p, W_p, D) — patch grid, channel-last
-    feat_np = feat_tensor.cpu().float().numpy().transpose(1, 2, 0)
-
-    H_p, W_p = feat_np.shape[:2]
-    patch_size = extractor.patch_size
-    # map source pixel row/col to patch grid; clamp to avoid OOB at image edges
-    pr = np.clip(pixel_indices[mask_i, 1] // patch_size, 0, H_p - 1)
-    pc = np.clip(pixel_indices[mask_i, 2] // patch_size, 0, W_p - 1)
-
-    features[mask_i] = feat_np[pr, pc]
-
-
 ########################################################
 ########## Feature projection ##########################
 ########################################################
 
 
-def lift_features(
+def _grid_sample_at_pixels(
+    fmap: torch.Tensor,
+    rows: np.ndarray,
+    cols: np.ndarray,
+    image_size: "tuple[int, int]",
+) -> torch.Tensor:
+    """Bilinear-sample fmap (D, H_p, W_p) at the given (rows, cols) in image_size frame.
+
+    Returns (P_i, D) float32 tensor on CPU. Normalises pixel centres to [-1, 1]
+    using align_corners=False convention so the same coords work for any (H_p, W_p).
+    """
+    H, W = image_size
+    gx = torch.from_numpy(((2 * cols.astype(np.float32) + 1) / W - 1)).float()
+    gy = torch.from_numpy(((2 * rows.astype(np.float32) + 1) / H - 1)).float()
+    # grid_sample wants (N, H_out, W_out, 2); treat P_i points as (1, 1, P_i, 2)
+    grid = torch.stack([gx, gy], dim=-1).view(1, 1, -1, 2)
+    sampled = F.grid_sample(
+        fmap.unsqueeze(0).float(),
+        grid,
+        mode="bilinear",
+        align_corners=False,
+        padding_mode="border",
+    )
+    # (1, D, 1, P_i) → (P_i, D)
+    return sampled.squeeze(0).squeeze(1).T.cpu()
+
+
+def _sample_at_source_pixels(
     feature_maps: "list[torch.Tensor]",
     pixel_indices: np.ndarray,
     image_size: "tuple[int, int]",
-) -> np.ndarray:
-    """Map per-frame 2D feature maps to per-point features via bilinear upsampling.
+) -> torch.Tensor:
+    """Source-frame-only lift: each point sampled at its (frame_id, row, col) only.
 
-    Upsamples each (D, H_p, W_p) map to (D, H, W) then indexes at pixel coords.
-    Pure geometric operation: no extractor, no AE — works for any feature dim D.
-
-    Args:
-        feature_maps:  List of (D, H_p, W_p) tensors, one per frame.
-        pixel_indices: (P, 3) int32 — [frame_id, row, col] per point (pixel space).
-        image_size:    (H, W) upsample target — use out.images.shape[-2:].
-
-    Returns:
-        (P, D) float32 array aligned with the point set.
+    Used as a fallback for points that have zero accumulated weight in multi-view
+    aggregation (never visible / always depth-inconsistent).
     """
     P = len(pixel_indices)
-    # Dim D inferred from first map; same for all frames
     D = feature_maps[0].shape[0]
-    features = np.zeros((P, D), dtype=np.float32)
-
+    H, W = image_size
+    out = torch.zeros((P, D), dtype=torch.float32)
     for i, fmap in enumerate(feature_maps):
-        # Boolean mask: True for points sourced from frame i
         mask_i = pixel_indices[:, 0] == i
         if not mask_i.any():
             continue
-        # Bilinear upsample (D, H_p, W_p) → (D, H, W); unsqueeze/squeeze for batch dim
-        upsampled = F.interpolate(
-            fmap.unsqueeze(0).float(),
-            size=image_size,
-            mode="bilinear",
-            align_corners=False,
-        ).squeeze(0)  # (D, H, W)
-        # Clamp pixel coordinates to image bounds — VGGT-X can produce edge coords
-        rows = np.clip(pixel_indices[mask_i, 1], 0, image_size[0] - 1)
-        cols = np.clip(pixel_indices[mask_i, 2], 0, image_size[1] - 1)
-        # Index upsampled map: (D, P_i).T → (P_i, D), then scatter into output buffer
-        features[mask_i] = upsampled[:, rows, cols].cpu().numpy().T
+        # Clip to model frame to handle any rounding drift from upstream
+        rows = np.clip(pixel_indices[mask_i, 1], 0, H - 1)
+        cols = np.clip(pixel_indices[mask_i, 2], 0, W - 1)
+        out[mask_i] = _grid_sample_at_pixels(fmap, rows, cols, image_size)
+    return out
+
+
+def lift_features(
+    feature_maps: "list[torch.Tensor]",
+    result: "FeedforwardResult",
+    *,
+    depth_tol: float = 0.05,
+) -> torch.Tensor:
+    """Multi-view confidence-weighted lift of dense feature maps to per-point features.
+
+    For each 3D point in result.points, projects into every frame, masks by
+    in-bounds + depth-consistency (|z_proj - depth| / |z_proj| < depth_tol),
+    weights by confidence at the projected pixel, and returns the weighted-mean
+    feature. Points never visible in any frame fall back to a source-frame
+    sample at their pixel_indices entry.
+
+    Args:
+        feature_maps: List of (D, H_p, W_p) per-frame dense features. Caller runs
+            the extractor (and optional AE encode) before calling.
+        result:       FeedforwardResult with points, pixel_indices, depth, confidence,
+            extrinsics, intrinsics, model_height, model_width populated.
+            Reload zarr with load_images=True before re-extracting features so
+            the extractor sees the same FOV as the depth map.
+        depth_tol:    Relative depth tolerance for visibility test.
+
+    Returns:
+        (P, D) float32 tensor of per-point features, aligned with result.points.
+    """
+    # Required fields — fail loud at function entry, not deep in the kernel
+    for name in ("points", "pixel_indices", "depth", "confidence", "extrinsics", "intrinsics"):
+        assert getattr(result, name) is not None, (
+            f"lift_features requires result.{name}; "
+            f"load zarr with load_images=True or run pipeline fresh"
+        )
+    N = result.extrinsics.shape[0]
+    assert len(feature_maps) == N, (
+        f"feature_maps count ({len(feature_maps)}) != frame count ({N})"
+    )
+
+    H, W = result.model_height, result.model_width
+    P = result.points.shape[0]
+    D = feature_maps[0].shape[0]
+    image_size = (H, W)
+
+    features_sum = torch.zeros((P, D), dtype=torch.float32)
+    weights_sum = torch.zeros((P,), dtype=torch.float32)
+
+    # Homogeneous points for batched world-to-cam transform per frame
+    pts_h = np.concatenate([result.points.astype(np.float64), np.ones((P, 1), dtype=np.float64)], axis=-1)  # (P, 4)
+
+    # Ensure extrinsics are (N, 4, 4); accept (N, 3, 4) by padding
+    ext = result.extrinsics.astype(np.float64)
+    if ext.shape[-2:] == (3, 4):
+        ext = extrinsics_to_homogeneous(ext)
+    intr = result.intrinsics.astype(np.float64)
+
+    # Conf may be torch.Tensor or np.ndarray; normalise to numpy upfront
+    conf_arr = result.confidence.cpu().numpy() if isinstance(result.confidence, torch.Tensor) else result.confidence
+
+    # Depth may be (N, H, W) or (N, H, W, 1)
+    depth_arr = result.depth
+    if depth_arr.ndim == 4:
+        depth_arr = depth_arr[..., 0]
+
+    for i, fmap in enumerate(feature_maps):
+        # Project all P points into frame i: world -> cam -> pixel
+        cam = (ext[i] @ pts_h.T)[:3]            # (3, P)
+        proj = intr[i] @ cam                    # (3, P)
+        z = proj[2]
+        # Guard against z=0 before divide; visibility mask filters them out anyway
+        safe_z = np.where(np.abs(z) < 1e-8, 1e-8, z)
+        u = proj[0] / safe_z
+        v = proj[1] / safe_z
+
+        # Visibility: in-bounds, in-front-of-camera, depth-consistent
+        in_bounds = (u >= 0) & (u < W) & (v >= 0) & (v < H) & (z > 0)
+        u_idx = np.clip(u.astype(np.int32), 0, W - 1)
+        v_idx = np.clip(v.astype(np.int32), 0, H - 1)
+        z_depth = depth_arr[i, v_idx, u_idx]
+        depth_ok = np.abs(z - z_depth) / (np.abs(z) + 1e-8) < depth_tol
+        mask = in_bounds & depth_ok                                  # (P,) bool
+
+        # Per-point conf weight at projected pixel; zero out invisible points
+        w_np = (conf_arr[i, v_idx, u_idx].astype(np.float32)) * mask.astype(np.float32)
+        w = torch.from_numpy(w_np)
+
+        # Bilinear sample feature map at projected coords (any feature-map H_p, W_p)
+        sampled = _grid_sample_at_pixels(fmap, v.astype(np.float32), u.astype(np.float32), image_size)
+
+        features_sum += sampled * w.unsqueeze(-1)
+        weights_sum += w
+
+    # Weighted mean with eps for numerical safety
+    features = features_sum / (weights_sum.unsqueeze(-1) + 1e-8)
+
+    # Fallback: points with zero accumulated weight → source-frame sample
+    zero_w = weights_sum < 1e-6
+    if zero_w.any():
+        zero_idx = zero_w.numpy()
+        fallback = _sample_at_source_pixels(feature_maps, result.pixel_indices[zero_idx], image_size)
+        features[zero_w] = fallback
 
     return features
 
@@ -868,7 +914,7 @@ def reproject_pixels(
     w2c = np.zeros((N, 4, 4), dtype=np.float64)
     w2c[:, :3, :] = extrinsics_3x4
     w2c[:, 3, 3] = 1.0
-    cam2world = np.linalg.inv(w2c)   # (N, 4, 4)
+    cam2world = invert_poses(w2c)   # (N, 4, 4)
 
     # per-point transform: cam2world[fi] @ pts_cam[p]
     pts_world = np.einsum("pij,pj->pi", cam2world[fi], pts_cam)  # (P, 4)
@@ -930,3 +976,20 @@ def cross_frame_attention_ratio(
     if ratio_np.size == 0:
         return 0.0
     return float(np.percentile(ratio_np, 90))
+
+
+########################################################
+########## Camera pose helpers #########################
+########################################################
+
+
+def extrinsics_to_c2w(extrinsics: np.ndarray) -> list[np.ndarray]:
+    """Invert world-to-cam extrinsic matrices to camera-to-world.
+
+    Args:
+        extrinsics: (N, 4, 4) float32 world-to-camera matrices.
+
+    Returns:
+        List of N (4, 4) camera-to-world matrices.
+    """
+    return list(invert_poses(np.asarray(extrinsics)))

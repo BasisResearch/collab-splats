@@ -1,0 +1,186 @@
+# syntax=docker/dockerfile:1
+# CUDA 12.1 + torch 2.4 + Python 3.11 + bae >=0.2.4 (cuDSS via pip nvidia-cudss-cu12)
+# Build: docker build --platform=linux/amd64 --progress=plain -t collab-env:cu121 .
+
+ARG UBUNTU_VERSION=22.04
+ARG NVIDIA_CUDA_VERSION=12.1.0
+ARG PYTHON_VERSION=3.11
+ARG CUDA_ARCHITECTURES="90;89;86;80;75;70"
+ARG TORCH_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
+
+##################################################
+# Stage 1: Builder — conda + Python 3.11 + torch + bae
+##################################################
+
+FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
+ARG PYTHON_VERSION
+ARG TORCH_ARCH_LIST
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget curl ca-certificates gnupg build-essential git \
+        unzip xz-utils cmake ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Miniconda
+RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
+ && bash /tmp/miniconda.sh -b -p /opt/conda \
+ && rm /tmp/miniconda.sh
+ENV PATH=/opt/conda/bin:${PATH}
+
+RUN conda config --set always_yes true \
+ && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
+ && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
+# nerfstudio env with Python 3.11
+RUN conda create -n nerfstudio python=${PYTHON_VERSION} -y && conda clean -afy
+
+# conda-side CUDA 12.1 toolkit (matches torch cu121 ABI)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    conda install -c 'nvidia/label/cuda-12.1.0' cuda-toolkit -y && conda clean -afy"
+
+ENV CUDA_HOME=/opt/conda/envs/nerfstudio \
+    CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++ \
+    PATH=/opt/conda/envs/nerfstudio/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/conda/envs/nerfstudio/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    LIBRARY_PATH=/opt/conda/envs/nerfstudio/lib:/usr/local/cuda/lib64:${LIBRARY_PATH} \
+    CPATH=/opt/conda/envs/nerfstudio/include:/usr/local/cuda/include:${CPATH} \
+    TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST}
+
+# torch 2.4.0 + cu121
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    pip install --no-cache-dir torch==2.4.0+cu121 torchvision==0.19.0+cu121 \
+      --extra-index-url https://download.pytorch.org/whl/cu121"
+
+# Verify torch reachable
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    python -c 'import torch; print(f\"[Builder] torch={torch.__version__}, cuda={torch.version.cuda}\")'"
+
+# Core deps
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    pip install --no-cache-dir 'kornia>=0.6.11' pycolmap"
+
+# gsplat-rade fork (compiles CUDA kernels — slow step).
+# --no-build-isolation: gsplat-rade's setup.py imports torch at top-level
+# to query the CUDA ABI, but doesn't declare torch in pyproject build-requires.
+# We have torch in the conda env already, so disable isolation and let it find it.
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    pip install --no-cache-dir --no-build-isolation \
+        setuptools wheel ninja && \
+    pip install --no-cache-dir --no-build-isolation \
+        git+https://github.com/brian-xu/gsplat-rade.git"
+
+# pypose (bae dependency)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    pip install --no-cache-dir git+https://github.com/pypose/pypose.git"
+
+# cuDSS via pip — bae 0.2.4 find_cudss_root() auto-detects site-packages/nvidia/cu12
+# Pinned: 0.6.0.5 and 0.7.1.6 both verified by bae README; 0.6.x matches our prior apt version.
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    pip install --no-cache-dir 'nvidia-cudss-cu12==0.6.0.5'"
+
+# bae >=0.2.4 — find_cudss_root() discovers pip-installed cuDSS automatically; no CUDSS_DIR needed
+ENV USE_CUDSS=1
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    git clone --depth 1 https://github.com/pypose/bae.git /opt/bae && \
+    cd /opt/bae && \
+    pip install --no-cache-dir -r requirements.txt && \
+    python -m pip install --no-build-isolation -v -e ."
+
+# Verify bae links against pip-installed cuDSS (import only — no GPU driver available at build time)
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    python -c 'import pypose; from bae.sparse.solve import CuDirectSparseSolver; print(\"[Builder] bae + CuDSS OK\")'"
+
+# rclone
+RUN curl https://rclone.org/install.sh | bash
+
+# Pull example data (optional — requires api-key.json next to Dockerfile)
+COPY api-key.json /tmp/api-key.json
+RUN mkdir -p /opt/data && \
+    rclone config create collab-data "google cloud storage" service_account_file=/tmp/api-key.json && \
+    rclone copy collab-data:fieldwork_processed/2024_02_06-session_0001/SplatsSD/C0043.MP4 /opt/data/ && \
+    rm -f /tmp/api-key.json && rm -rf ~/.config/rclone
+
+##################################################
+# Pre-built sources for runtime stage
+##################################################
+
+FROM continuumio/miniconda3:latest AS conda-source
+FROM colmap/colmap:20240213.23 AS colmap-source
+
+##################################################
+# Stage 2: Runtime
+##################################################
+
+FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
+        libboost-filesystem1.74.0 libboost-program-options1.74.0 \
+        libc6 libceres2 libfreeimage3 libgcc-s1 \
+        libgl1 libglew2.2 libgoogle-glog0v5 \
+        libqt5core5a libqt5gui5 libqt5widgets5 \
+        libgl1-mesa-glx libhdf5-dev xvfb \
+        build-essential ffmpeg \
+        wget curl unzip xz-utils git vim htop tmux less \
+        openssh-server gnupg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl https://rclone.org/install.sh | bash
+
+# Bring conda base + the built env + bae source + example data
+COPY --from=conda-source /opt/conda/ /opt/conda
+COPY --from=builder /opt/conda/envs/nerfstudio/ /opt/conda/envs/nerfstudio/
+COPY --from=builder /opt/bae /opt/bae
+COPY --from=builder /opt/data /opt/data
+
+# Colmap binary
+COPY --from=colmap-source /usr/local/bin/colmap /usr/local/bin/
+COPY --from=colmap-source /usr/local/lib/libcolmap* /usr/local/lib/
+
+# bae's cuDSS .so files use rpath pointing into site-packages/nvidia/cu12/lib
+# (inside the conda env copied above) — no apt libcudss package needed at runtime.
+ENV CUDA_HOME=/usr/local/cuda \
+    CUDA_ROOT=/usr/local/cuda \
+    PATH=/opt/conda/bin:/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/conda/envs/nerfstudio/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+    TORCH_HOME=/workspace/models \
+    HF_HOME=/workspace/models
+
+# Final runtime smoke test — catches path drift from copying the env across stages
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio && \
+    python -c 'import pypose; from bae.sparse.solve import CuDirectSparseSolver; print(\"[Runtime] bae CuDSS OK\")' && \
+    python -c 'import torch, bae; print(f\"[Runtime] torch={torch.__version__}\")' && \
+    echo '[Runtime] env verified'"
+
+# SSH
+RUN echo "PermitRootLogin yes"        >> /etc/ssh/sshd_config && \
+    echo "PermitTTY yes"              >> /etc/ssh/sshd_config && \
+    echo "PasswordAuthentication no"  >> /etc/ssh/sshd_config
+
+# bashrc bootstrap so interactive sessions activate the env
+RUN { \
+    echo 'export PATH="/opt/conda/bin:$PATH"'; \
+    echo 'export TORCH_HOME="/workspace/models"'; \
+    echo 'export HF_HOME="/workspace/models"'; \
+    echo 'export CUDA_HOME=/usr/local/cuda'; \
+    echo 'export CUDA_ROOT=/usr/local/cuda'; \
+    echo 'export PATH="/usr/local/cuda/bin:${PATH}"'; \
+    echo 'export LD_LIBRARY_PATH="/opt/conda/envs/nerfstudio/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"'; \
+    echo 'export CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc'; \
+    echo 'source /opt/conda/etc/profile.d/conda.sh'; \
+    echo 'conda activate nerfstudio'; \
+    } >> /root/.bashrc
+
+WORKDIR /workspace
+
+CMD bash -c "\
+mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+echo \"$PUBLIC_KEY\" >> ~/.ssh/authorized_keys && \
+chmod 600 ~/.ssh/authorized_keys && \
+service ssh start && \
+sleep infinity"

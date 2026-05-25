@@ -26,7 +26,7 @@ class _MockCreator(BaseFeedforwardCreator):
 
     def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
         return FeedforwardResult(
-            pts3d=np.zeros((100, 3), dtype=np.float32),
+            points=np.zeros((100, 3), dtype=np.float32),
             colors=np.zeros((100, 3), dtype=np.uint8),
             extrinsics=np.tile(np.eye(3, 4), (2, 1, 1)),
             intrinsics=np.tile(np.eye(3), (2, 1, 1)),
@@ -35,6 +35,13 @@ class _MockCreator(BaseFeedforwardCreator):
             model_width=100,
             model_height=100,
         )
+
+    def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
+        return {}
+
+    def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
+        import numpy as np
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
 
     def _write_transforms(self, sparse_dir, output_dir):
         pass  # suppress file I/O in tests
@@ -91,8 +98,7 @@ def test_build_colmap_logs_timing(capsys, tmp_path):
     capsys.readouterr()
     mock_recon = MagicMock()
     with patch("collab_splats.pointcloud.feedforward.build_pycolmap_reconstruction", return_value=mock_recon), \
-         patch("collab_splats.pointcloud.feedforward._rescale_reconstruction_to_original_dimensions", return_value=mock_recon), \
-         patch("collab_splats.pointcloud.feedforward.colmap_reconstruction_to_result", return_value=MagicMock()):
+         patch("collab_splats.pointcloud.feedforward.base._rescale_reconstruction_to_original_dimensions", return_value=mock_recon):
         creator.build_colmap(tmp_path)
     out = capsys.readouterr().out
     assert "COLMAP" in out
@@ -106,6 +112,9 @@ def test_mapanything_forward_logs_minibatch_info(capsys):
 
     mock_model = MagicMock()
     mock_model.infer.return_value = []
+    # Make next(model.parameters()).device return a real CPU device
+    mock_model.parameters.return_value = iter([torch.zeros(1)])
+    mock_model.forward.return_value = []
 
     creator = MapAnythingCreator(minibatch_size=3)
     creator.model = mock_model
@@ -113,6 +122,7 @@ def test_mapanything_forward_logs_minibatch_info(capsys):
     creator.image_paths = [Path(f"{i}.jpg") for i in range(6)]
 
     views = [{"img": torch.zeros(1, 3, 224, 224)} for _ in range(6)]
+    creator._processed_views = views
     creator._forward(mock_model, views)
 
     out = capsys.readouterr().out

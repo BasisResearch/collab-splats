@@ -7,6 +7,14 @@ import pytest
 
 def test_dashboard_import_no_numpy_warning():
     """Importing the dashboard must not produce a UserWarning about NumPy."""
+    # First check if panel is available — if not, skip rather than fail.
+    check = subprocess.run(
+        [sys.executable, "-c", "import panel"],
+        capture_output=True,
+    )
+    if check.returncode != 0:
+        pytest.skip("panel not installed — skipping NumPy ABI warning check")
+
     result = subprocess.run(
         [sys.executable, "-W", "error::UserWarning", "-c",
          "from collab_splats.dashboard import semantics"],

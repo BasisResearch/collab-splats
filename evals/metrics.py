@@ -111,23 +111,25 @@ def compute_auc(
 ) -> dict:
     """AUC@max_threshold_deg (CO3Dv2/VGGSfM protocol).
 
-    Loads TUM files, aligns, converts to (N,4,4) pose arrays, delegates to
-    collab_splats.pointcloud.loop_closure.eval.auc_at_threshold.
+    Loads TUM files (no evo pre-alignment — auc_at_threshold handles its own
+    Umeyama SE(3) alignment internally). Converts to (N,4,4) world-to-cam arrays.
+
+    The `align` param is accepted for API compatibility but not applied here;
+    auc_at_threshold's internal Umeyama handles alignment.
 
     Returns dict with 'auc_30' (float in [0,100]) and 'per_frame_err' (list[float]).
     """
     from collab_splats.pointcloud.loop_closure.eval import auc_at_threshold
 
     traj_ref, traj_est = _load_pair(pred_path, gt_path)
-    _apply_alignment(traj_ref, traj_est, align)
+    # No _apply_alignment here: auc_at_threshold does its own Umeyama alignment.
+    # Pre-aligning with evo then re-aligning inside auc_at_threshold corrupts results.
 
-    # evo stores poses_se3 as list of (4,4) arrays — stack to (N,4,4) cam-to-world
-    pred_poses = traj_est.poses_se3
-    gt_poses = traj_ref.poses_se3
-    pred_c2w = np.stack(pred_poses).astype(np.float32)
-    gt_c2w = np.stack(gt_poses).astype(np.float32)
+    # evo stores poses_se3 as list of (4,4) cam-to-world arrays — stack to (N,4,4)
+    pred_c2w = np.stack(traj_est.poses_se3).astype(np.float32)
+    gt_c2w = np.stack(traj_ref.poses_se3).astype(np.float32)
 
-    # auc_at_threshold expects world-to-cam poses; invert
+    # auc_at_threshold expects world-to-cam poses
     pred_w2c = np.linalg.inv(pred_c2w)
     gt_w2c = np.linalg.inv(gt_c2w)
 

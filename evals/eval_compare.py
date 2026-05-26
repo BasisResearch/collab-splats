@@ -13,10 +13,10 @@ Usage:
 Default alignment per method (override via ``--align-overrides``):
 
     gt               skipped (it IS the reference)
-    omega_baseline   se3   (VGGT-Omega baseline, metric SE(3))
-    omega_ba         se3   (VGGT-Omega + bundle adjustment)
+    omega_baseline   sim3  (VGGT-Omega baseline, monocular Sim(3))
+    omega_ba         sim3  (VGGT-Omega + bundle adjustment)
     omega_lc         sim3  (VGGT-Omega + loop closure, monocular Sim(3))
-    vggtx_baseline   se3   (VGGT-X baseline, metric SE(3))
+    vggtx_baseline   sim3  (VGGT-X baseline, monocular Sim(3))
     vggtx_lc         sim3  (VGGT-X + loop closure, monocular Sim(3))
     vggt_slam        sim3  (VGGT-SLAM internal LC, monocular)
     <unknown>        sim3  (mono assumption + warning)
@@ -40,17 +40,18 @@ from metrics import compute_ate, compute_rpe, compute_auc
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ALIGN: dict[str, str] = {
-    # backbone-prefixed names
-    "omega_baseline": "se3",
-    "omega_ba":       "se3",
+    # All monocular feedforward methods use sim3 — matches VGGT-SLAM's evo_ape -as protocol.
+    # Even baseline/BA have scale ambiguity; SE(3) alignment would be unfair.
+    "omega_baseline": "sim3",
+    "omega_ba":       "sim3",
     "omega_lc":       "sim3",
-    "vggtx_baseline": "se3",
+    "vggtx_baseline": "sim3",
     "vggtx_lc":       "sim3",
     "vggt_slam":      "sim3",
     "vggt_long":      "sim3",
     # legacy names (backward compat)
-    "ours_baseline":  "se3",
-    "ours_ba":        "se3",
+    "ours_baseline":  "sim3",
+    "ours_ba":        "sim3",
     "ours_lc":        "sim3",
 }
 _FALLBACK_ALIGN = "sim3"

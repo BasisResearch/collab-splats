@@ -150,6 +150,7 @@ class LoopClosureConfig:
     nms_frame_distance: int = 25
     min_submap_gap: int = 1
     manifold: Literal["sl4", "se3"] = "sl4"
+    max_jump_ratio: float = math.inf  # reject loops where ‖ΔT.t‖/path_length > this; math.inf disables
     lc_threshold: float | None = None   # deprecated
 
     def __post_init__(self) -> None:
@@ -436,8 +437,7 @@ def run_pose_graph_optimization(
             np.linalg.inv(lc.poses[0].astype(np.float64))
             @ lc.poses[1].astype(np.float64)
         )
-        t_norm = float(np.linalg.norm(lc.poses[1][:3, 3] - lc.poses[0][:3, 3]))
-        pg.add_loop_edge(nid_q, nid_d, H_rel_lc, t_norm=t_norm)
+        pg.add_loop_edge(nid_q, nid_d, H_rel_lc)
 
     pg.optimize()
 

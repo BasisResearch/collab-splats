@@ -257,6 +257,7 @@ class LoopClosure:
                             detected_idx=match.detected_submap_id,
                             detected_frame=match.detected_frame_idx,
                             lc_relative_pose=lc_rel,
+                            max_jump_ratio=cfg.max_jump_ratio,
                         )
                         if not jump_ok:
                             console.log(

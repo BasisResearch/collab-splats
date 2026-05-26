@@ -89,9 +89,6 @@ def estimate_scale_pairwise(X: np.ndarray, Y: np.ndarray) -> float:
 
 log = logging.getLogger(__name__)
 
-_HUBER_K = 1.0
-_LOOP_DOWNWEIGHT_ALPHA = 0.1
-
 
 def _pose3(mat: np.ndarray) -> gtsam.Pose3:
     """Convert 4×4 matrix to gtsam.Pose3 (SE(3) fallback helper)."""
@@ -105,8 +102,7 @@ class PoseGraph:
 
     One node per frame; key = global frame index via gtsam.symbol('x', node_id).
     Ported and adapted from MIT-SPARK/VGGT-SLAM vggt_slam/graph.py.
-    Additions over VGGT-SLAM baseline: SE(3) fallback, Huber kernel on loop edges,
-    per-edge translation magnitude downweighting.
+    Noise model matches VGGT-SLAM exactly: σ=0.05 Gaussian for all edges.
     """
 
     def __init__(self, manifold: Literal["sl4", "se3"] = "sl4") -> None:
@@ -116,10 +112,13 @@ class PoseGraph:
         self._node_ids: set[int] = set()
 
         if manifold == "sl4":
+            # Uniform σ=0.05 for all edges — matches VGGT-SLAM exactly
             self._seq_noise = gtsam.noiseModel.Diagonal.Sigmas(
                 0.05 * np.ones(15, dtype=np.float64)
             )
-            self._loop_sigmas = 0.15 * np.ones(15, dtype=np.float64)
+            self._loop_noise = gtsam.noiseModel.Diagonal.Sigmas(
+                0.05 * np.ones(15, dtype=np.float64)
+            )
             self._anchor_noise = gtsam.noiseModel.Diagonal.Sigmas(
                 np.full(15, 1e-6, dtype=np.float64)
             )
@@ -128,8 +127,8 @@ class PoseGraph:
             self._seq_noise = gtsam.noiseModel.Diagonal.Sigmas(
                 np.array([0.05, 0.05, 0.05, 0.20, 0.20, 0.20], dtype=np.float64)
             )
-            self._loop_sigmas = np.array(
-                [0.15, 0.15, 0.15, 0.50, 0.50, 0.50], dtype=np.float64
+            self._loop_noise = gtsam.noiseModel.Diagonal.Sigmas(
+                np.array([0.05, 0.05, 0.05, 0.20, 0.20, 0.20], dtype=np.float64)
             )
             self._anchor_noise = gtsam.noiseModel.Diagonal.Sigmas(
                 np.full(6, 1e-6, dtype=np.float64)
@@ -178,22 +177,15 @@ class PoseGraph:
                 gtsam.BetweenFactorPose3(key_i, key_j, _pose3(H_rel), self._seq_noise)
             )
 
-    def add_loop_edge(
-        self, id_i: int, id_j: int, H_rel: np.ndarray, t_norm: float = 0.0
-    ) -> None:
-        """Loop closure constraint with Huber kernel + translation downweighting."""
+    def add_loop_edge(self, id_i: int, id_j: int, H_rel: np.ndarray) -> None:
+        """Loop closure constraint — same Gaussian noise as sequential edges (VGGT-SLAM parity)."""
         key_i, key_j = _X(id_i), _X(id_j)
         H_rel = np.array(H_rel, dtype=np.float64)
-        scale = 1.0 + _LOOP_DOWNWEIGHT_ALPHA * (t_norm ** 2)
-        robust = gtsam.noiseModel.Robust.Create(
-            gtsam.noiseModel.mEstimator.Huber.Create(_HUBER_K),
-            gtsam.noiseModel.Diagonal.Sigmas(self._loop_sigmas * scale),
-        )
         if self._manifold == "sl4":
             H_rel = normalize_to_sl4(H_rel)
-            self._graph.add(gtsam.BetweenFactorSL4(key_i, key_j, gtsam.SL4(H_rel), robust))
+            self._graph.add(gtsam.BetweenFactorSL4(key_i, key_j, gtsam.SL4(H_rel), self._loop_noise))
         else:
-            self._graph.add(gtsam.BetweenFactorPose3(key_i, key_j, _pose3(H_rel), robust))
+            self._graph.add(gtsam.BetweenFactorPose3(key_i, key_j, _pose3(H_rel), self._loop_noise))
 
     # ---- optimization ----
 

@@ -22,13 +22,18 @@ VGGTSLAM_DIR = REPO_ROOT / "third_party" / "VGGT-SLAM"
 BASELINES_DIR = REPO_ROOT / "evals" / "baselines" / "vggt_slam"
 
 
-def _prepare_image_dir(image_dir: Path) -> Path:
+def _prepare_image_dir(image_dir: Path, max_frames: int | None = None) -> Path:
     """Symlink images into a temp dir as 000000.png, 000001.png, ... (sorted).
 
     VGGT-SLAM requires sequentially named images; 7-Scenes uses
     frame-NNNNNN.color.png which causes it to silently fail or produce garbage.
+    Excludes depth images (*.depth.png) so 7-Scenes dirs are handled correctly.
     """
-    images = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in _IMAGE_EXTS)
+    all_imgs = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in _IMAGE_EXTS)
+    # Exclude depth images: any file whose stem ends in '.depth' (e.g. frame-000000.depth.png)
+    images = [p for p in all_imgs if not p.stem.endswith(".depth")]
+    if max_frames is not None:
+        images = images[:max_frames]
     tmp = Path(tempfile.mkdtemp(prefix="vggtslam_imgs_"))
     for i, src in enumerate(images):
         (tmp / f"{i:06d}.png").symlink_to(src.resolve())
@@ -39,6 +44,8 @@ def run_vggt_slam(
     image_dir: Path,
     output_tum: Path,
     submap_size: int = 16,
+    max_loops: int = 1,
+    max_frames: int | None = None,
     python: str | None = None,
 ) -> Path:
     """Run VGGT-SLAM on image_dir; write trajectory to output_tum.
@@ -47,6 +54,8 @@ def run_vggt_slam(
         image_dir: Directory of input images (sorted, no GT required).
         output_tum: Destination path for the TUM trajectory file.
         submap_size: VGGT-SLAM submap window size (default 16).
+        max_loops: Max loop closures per submap (0 = disable LC entirely).
+        max_frames: Cap number of input frames (None = all). Match eval_gt.py --max_frames.
         python: Python binary to use. Defaults to sys.executable.
 
     Returns:
@@ -58,15 +67,16 @@ def run_vggt_slam(
             "Run: git submodule update --init third_party/VGGT-SLAM"
         )
     py = python or sys.executable
-    log_path = output_tum.with_suffix(".vggtslam.txt")
+    # Resolve to absolute so the path is valid regardless of subprocess CWD
+    log_path = output_tum.resolve().with_suffix(".vggtslam.txt")
     # Rename images to sequential 000000.png naming — VGGT-SLAM silently
     # breaks on non-standard filenames (e.g. frame-000000.color.png).
-    tmp_img_dir = _prepare_image_dir(image_dir)
+    tmp_img_dir = _prepare_image_dir(image_dir, max_frames=max_frames)
     cmd = [
         py,
         str(VGGTSLAM_DIR / "main.py"),
         "--image_folder", str(tmp_img_dir),
-        "--max_loops", "1",
+        "--max_loops", str(max_loops),
         "--min_disparity", "50",
         "--conf_threshold", "25",
         "--lc_thres", "0.95",
@@ -103,10 +113,18 @@ def main() -> None:
                     help="Output TUM trajectory path")
     ap.add_argument("--submap_size", type=int, default=16,
                     help="VGGT-SLAM submap size (default 16)")
+    ap.add_argument("--max_loops", type=int, default=1,
+                    help="Max loop closures per submap; 0 disables LC (default 1)")
+    ap.add_argument("--max_frames", type=int, default=None,
+                    help="Limit input to first N frames (default: all)")
     ap.add_argument("--python", type=str, default=None,
                     help="Python binary (default: sys.executable)")
     args = ap.parse_args()
-    run_vggt_slam(args.image_dir, args.output, submap_size=args.submap_size, python=args.python)
+    run_vggt_slam(
+        args.image_dir, args.output,
+        submap_size=args.submap_size, max_loops=args.max_loops,
+        max_frames=args.max_frames, python=args.python,
+    )
     print(f"Done → {args.output}")
 
 

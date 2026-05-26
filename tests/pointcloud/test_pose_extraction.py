@@ -8,8 +8,6 @@ VGGT-SLAM: projection_mat = proj_mats[idx] @ inv(homography_world).
 from __future__ import annotations
 
 import numpy as np
-import pytest
-import torch
 from scipy.spatial.transform import Rotation as ScipyR
 
 from collab_splats.pointcloud.loop_closure.closure import run_pose_graph_optimization
@@ -31,7 +29,7 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
         frames=None,
         poses=poses.astype(np.float32),
         intrinsics=np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
-        retrieval_vectors=torch.zeros(k, 64, dtype=torch.float32),
+        retrieval_vectors=np.zeros((k, 64), dtype=np.float32),
         image_paths=[f"frame_{i:04d}.png" for i in range(k)],
         raw_outputs={},
         frame_start=submap_id * k,
@@ -95,3 +93,49 @@ def test_pose_extraction_single_submap_first_frame_near_identity():
     # First frame: reference frame → near identity
     assert np.allclose(result[0], np.eye(4), atol=0.1), \
         f"First frame should be near identity, got\n{result[0]}"
+
+
+def test_pose_extraction_non_first_frame_uses_local_proj():
+    """Frame 1 extraction: result = decompose(local_proj[1] @ inv(H_opt[1])).
+
+    poses[0]=I, poses[1]=R_y15 →
+      H_opt[1] ≈ inv(poses[1]) = R_y(-15°) (sequential edge initialization)
+      corrected = poses[1] @ inv(H_opt[1]) = R_y(15°) @ R_y(15°) = R_y(30°)
+      decompose_camera transposes rotation: output ≈ R_y(-30°)
+
+    Old extraction: decompose(H_opt[1]) where H_opt[1] has R_y(-15°) → output R_y(+15°)
+    New extraction → R_y(-30°), old → R_y(+15°): 45° apart.
+    """
+    rng = np.random.default_rng(99)
+    R15 = ScipyR.from_euler("y", 15, degrees=True).as_matrix()
+    # decompose_camera transposes rotation block; corrected has R30 → output is R_y(-30°)
+    R_neg30 = ScipyR.from_euler("y", -30, degrees=True).as_matrix()
+    # Old extraction: decompose(H_opt[1]) where H_opt[1] has R_y(-15°) → output R_y(+15°)
+    R_pos15 = R15
+
+    poses = np.stack([
+        _make_w2c(np.eye(3), np.array([0., 0., 0.])),
+        _make_w2c(R15, np.array([0.1, 0., 0.])),
+    ]).astype(np.float32)
+    wp = rng.standard_normal((2, 5, 5, 3)).astype(np.float32) * 0.1
+
+    submap = _make_submap(poses, wp, submap_id=0)
+    result = run_pose_graph_optimization(
+        [submap], lc_submaps=[], total_frames=2, overlap_frames=1
+    )
+
+    assert result.shape == (2, 4, 4)
+    R_out = result[1, :3, :3]
+
+    def _angle_deg(A: np.ndarray, B: np.ndarray) -> float:
+        return float(np.degrees(np.arccos(np.clip((np.trace(A @ B.T) - 1) / 2, -1, 1))))
+
+    # New extraction: result[1] ≈ R_y(-30°)
+    angle_from_new = _angle_deg(R_out, R_neg30)
+    # Old extraction would give R_y(+15°) — 45° away from R_y(-30°)
+    angle_from_old = _angle_deg(R_out, R_pos15)
+
+    assert angle_from_new < 5.0, \
+        f"New extraction should give ~R_y(-30°) at frame 1, got {angle_from_new:.1f}° away"
+    assert angle_from_old > 10.0, \
+        f"Result should differ from old extraction R_y(+15°), got {angle_from_old:.1f}° (should be >10°)"

@@ -342,6 +342,7 @@ def run_pose_graph_optimization(
     overlap_frames: int,
     manifold: Literal["sl4", "se3"] = "sl4",
     conf_threshold: float = 25.0,
+    debug_out: list | None = None,
 ) -> np.ndarray:
     """Build + optimize per-frame SL(4) pose graph; return (total_frames, 4, 4).
 
@@ -433,6 +434,15 @@ def run_pose_graph_optimization(
             H_w = H_overlap @ T @ H_scale
             pg.add_node(node_ids_this[0], H_w)
 
+            if debug_out is not None:
+                debug_out.append({
+                    "submap_id": submap.submap_id,
+                    "T": T.copy(),
+                    "scale": float(scale),
+                    "H_w": H_w.copy(),
+                    "H_overlap": H_overlap.copy(),
+                })
+
             H_rel_inter = np.linalg.inv(pg.get_homography(prev_submap_last_nid)) @ H_w
             pg.add_sequential_edge(prev_submap_last_nid, node_ids_this[0], H_rel_inter)
 
@@ -476,6 +486,12 @@ def run_pose_graph_optimization(
             local_proj = submap.poses[local_i].astype(np.float64)
             corrected = local_proj @ np.linalg.inv(H_opt)
             _, R, t, _ = decompose_camera(corrected)
+            if debug_out is not None and local_i == 0:
+                for entry in debug_out:
+                    if entry.get("submap_id") == submap.submap_id and "H_opt" not in entry:
+                        entry["H_opt"] = H_opt.copy()
+                        entry["corrected_proj"] = corrected.copy()
+                        break
             mat = np.eye(4, dtype=np.float32)
             mat[:3, :3] = R.astype(np.float32)
             mat[:3, 3] = t.astype(np.float32)

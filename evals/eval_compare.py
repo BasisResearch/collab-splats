@@ -108,7 +108,7 @@ def _scan_results_dir(results_dir: Path, gt_path: Path) -> tuple[dict[str, Path]
             methods[stem] = entry
         elif entry.suffix == ".pending":
             pending.add(entry.stem)
-        elif entry.suffix in (".json", ".npz", ".png", ".jpg"):
+        elif entry.suffix in (".json", ".npz", ".png", ".jpg", ".log"):
             continue  # sidecar files — skip silently
         else:
             raise ValueError(

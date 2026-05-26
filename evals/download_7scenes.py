@@ -131,14 +131,12 @@ def download_scene(scene: str, seq: str = "seq-01", force: bool = False) -> Path
                 item.rename(dest)
         inner_dir.rmdir()
 
-    # Extract each inner seq-NN.zip
+    # Extract each inner seq-NN.zip directly to scene_dir; the zip's top-level
+    # dir is already named seq-NN, so this lands at scene_dir/seq-NN/frame-*.
     for inner_zip in sorted(scene_dir.glob("seq-*.zip")):
-        seq_name = inner_zip.stem  # e.g. "seq-01"
-        target_seq = scene_dir / seq_name
-        target_seq.mkdir(exist_ok=True)
         logger.info("  Extracting %s ...", inner_zip.name)
         with zipfile.ZipFile(inner_zip, "r") as zf:
-            zf.extractall(target_seq)
+            zf.extractall(scene_dir)
         inner_zip.unlink()
 
     # Remove outer zip to save disk space

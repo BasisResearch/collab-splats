@@ -343,7 +343,8 @@ def run_pose_graph_optimization(
     Per-frame node building mirrors vggt_slam/solver.py:add_edge:
     - Inner frames: H_inner = poses[i-1] @ inv(poses[i]); node chained from prev
     - Inter-submap first frame: scale estimated via estimate_scale_pairwise on
-      overlapping world_points, H_w = graph.get_homography(overlap_prev) @ inv(K_prev) @ K_curr @ H_scale
+      overlapping world_points, H_w = graph.get_homography(overlap_prev) @ T @ H_scale
+      where T = inv(P_prev_ov) @ P_curr_ov (full w2c poses, not K-only)
     - Loop edges from lc_submaps (2-frame submaps with verified LC poses)
     """
     if not submaps:

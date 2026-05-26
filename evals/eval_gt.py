@@ -260,22 +260,33 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _subprocess_mode(args: argparse.Namespace) -> None:
-    """Run one condition and write {extrinsics, time_s, backbone} JSON."""
+    """Run one condition and write {extrinsics, time_s, backbone, alignment} JSON."""
     _validate_condition(args._condition)
     backbone = getattr(args, "backbone", "vggt_omega")
     t0 = time.perf_counter()
-    pred, _creator = _run_condition(
+    pred, creator = _run_condition(
         args._condition, args._image_dir, args.output_dir / args._condition,
         submap_size=args.submap_size,
         backbone=backbone,
     )
     elapsed = time.perf_counter() - t0
+
+    # Compute submap alignment metrics for LC conditions
+    alignment: dict = {}
+    if hasattr(creator, "base") and hasattr(creator.base, "_lc_submaps"):
+        try:
+            from reconstruction_quality import compute_alignment_metrics
+            alignment = compute_alignment_metrics(creator)
+        except Exception as exc:
+            print(f"  WARNING: alignment metrics failed: {exc}")
+
     args._result_file.write_text(json.dumps({
         "extrinsics": pred.tolist(),
         "time_s": round(elapsed, 2),
         "backbone": backbone,
+        "alignment": alignment,
     }))
-    print(f"  ATE/RPE computed by parent | time={elapsed:.1f}s")
+    print(f"  time={elapsed:.1f}s")
 
 
 def main() -> None:
@@ -335,6 +346,15 @@ def main() -> None:
             result_json = json.loads(result_file.read_text())
             pred = np.array(result_json["extrinsics"], dtype=np.float32)
             time_s = result_json.get("time_s", round(elapsed, 2))
+
+            # Write alignment JSON for LC conditions that produced submap metrics
+            alignment = result_json.get("alignment", {})
+            if alignment:
+                prefix = _BACKBONE_PREFIX.get(args.backbone, args.backbone)
+                alignment_path = args.output_dir / f"{prefix}_{cond}_alignment.json"
+                alignment_path.parent.mkdir(parents=True, exist_ok=True)
+                alignment_path.write_text(json.dumps(alignment, indent=2))
+                print(f"  Alignment JSON: {alignment_path}")
 
             metrics[cond] = {
                 "ate": ate_translation(pred, dataset.gt_poses),

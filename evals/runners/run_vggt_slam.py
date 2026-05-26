@@ -46,6 +46,7 @@ def run_vggt_slam(
     submap_size: int = 16,
     max_loops: int = 1,
     max_frames: int | None = None,
+    min_disparity: float = 50.0,
     python: str | None = None,
 ) -> Path:
     """Run VGGT-SLAM on image_dir; write trajectory to output_tum.
@@ -56,6 +57,7 @@ def run_vggt_slam(
         submap_size: VGGT-SLAM submap window size (default 16).
         max_loops: Max loop closures per submap (0 = disable LC entirely).
         max_frames: Cap number of input frames (None = all). Match eval_gt.py --max_frames.
+        min_disparity: Optical-flow keyframe threshold; 0 = use all frames (default 50).
         python: Python binary to use. Defaults to sys.executable.
 
     Returns:
@@ -77,7 +79,7 @@ def run_vggt_slam(
         str(VGGTSLAM_DIR / "main.py"),
         "--image_folder", str(tmp_img_dir),
         "--max_loops", str(max_loops),
-        "--min_disparity", "50",
+        "--min_disparity", str(min_disparity),
         "--conf_threshold", "25",
         "--lc_thres", "0.95",
         "--submap_size", str(submap_size),
@@ -117,13 +119,16 @@ def main() -> None:
                     help="Max loop closures per submap; 0 disables LC (default 1)")
     ap.add_argument("--max_frames", type=int, default=None,
                     help="Limit input to first N frames (default: all)")
+    ap.add_argument("--min_disparity", type=float, default=50.0,
+                    help="Optical-flow keyframe threshold; 0 = all frames (default 50)")
     ap.add_argument("--python", type=str, default=None,
                     help="Python binary (default: sys.executable)")
     args = ap.parse_args()
     run_vggt_slam(
         args.image_dir, args.output,
         submap_size=args.submap_size, max_loops=args.max_loops,
-        max_frames=args.max_frames, python=args.python,
+        max_frames=args.max_frames, min_disparity=args.min_disparity,
+        python=args.python,
     )
     print(f"Done → {args.output}")
 

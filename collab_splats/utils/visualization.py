@@ -397,6 +397,23 @@ def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
     return frustum
 
 
+def o3d_mesh_to_polydata(mesh: "o3d.geometry.TriangleMesh") -> pv.PolyData:
+    """Convert Open3D TriangleMesh to PyVista PolyData with RGB vertex scalars.
+
+    Compatible with visualize_splat when mesh has vertex colors (MESH_KWARGS applies).
+    """
+    import open3d as o3d  # optional heavy dep — imported here to avoid top-level dependency
+    verts = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.triangles, dtype=np.int32)
+    pv_faces = np.hstack(
+        [np.full((len(faces), 1), 3, dtype=np.int32), faces]
+    ).ravel()
+    pd = pv.PolyData(verts, pv_faces)
+    if mesh.has_vertex_colors():
+        pd["RGB"] = (np.asarray(mesh.vertex_colors) * 255).astype(np.uint8)
+    return pd
+
+
 def pointcloud_to_polydata(pts3d: np.ndarray, **point_data) -> pv.PolyData:
     """Convert pts3d + named scalar arrays to a PyVista PolyData.
 

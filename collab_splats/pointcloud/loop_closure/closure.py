@@ -22,6 +22,9 @@ from .submap import Submap
 
 log = logging.getLogger(__name__)
 
+# Minimum points required for a reliable median scale estimate (matches VGGT-SLAM fallback threshold)
+_MIN_CONF_POINTS = 100
+
 
 ########################################
 ####### Absorbed from alignment.py #####
@@ -405,16 +408,18 @@ def run_pose_graph_optimization(
                 if (
                     submap.world_points_conf is not None
                     and prev_submap.world_points_conf is not None
+                    and submap.world_points_conf.shape[:2] == submap.world_points.shape[:2]
+                    and prev_submap.world_points_conf.shape[:2] == prev_submap.world_points.shape[:2]
                 ):
                     curr_conf = submap.world_points_conf[:O].reshape(-1)
                     prev_conf = prev_submap.world_points_conf[-O:].reshape(-1)
                     joint_mask = (curr_conf > conf_threshold) & (prev_conf > conf_threshold)
-                    if joint_mask.sum() >= 100:
+                    if joint_mask.sum() >= _MIN_CONF_POINTS:
                         mask = joint_mask
                     else:
                         # Fallback: try either-side mask; else use all points
                         either_mask = (curr_conf > conf_threshold) | (prev_conf > conf_threshold)
-                        if either_mask.sum() >= 100:
+                        if either_mask.sum() >= _MIN_CONF_POINTS:
                             mask = either_mask
 
                 curr_h = np.hstack([curr_pts, np.ones((n, 1))])

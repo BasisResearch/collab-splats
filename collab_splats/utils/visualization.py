@@ -266,7 +266,9 @@ def visualize_splat(
 
     Args:
         mesh: Path to a PLY file or a PyVista PolyData to visualize.
-        aligned_cameras: List of 4x4 world-to-camera pose matrices.
+        aligned_cameras: List of (4,4) world-to-camera matrices (OpenCV convention,
+            e.g. FeedforwardResult.extrinsics). Passed directly to
+            create_camera_frustum_pyvista, which inverts internally.
     """
     plotter = pv.Plotter()
 
@@ -333,71 +335,64 @@ def visualize_splat(
 
 
 def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
-    """
-    Create a camera frustum using PyVista
-    """
-    # Convert FOV to radians
-    fov_rad = np.radians(fov)
+    """Create a camera frustum wireframe in world space.
 
-    # Calculate frustum dimensions
+    Args:
+        pose: (4, 4) float32 world-to-camera matrix (OpenCV convention).
+            Matches FeedforwardResult.extrinsics[i] directly — no inversion needed.
+        scale: Controls overall frustum size (near = scale*0.1, far = scale*5).
+        aspect_ratio: Width / height of the image plane.
+        fov: Vertical field of view in degrees.
+    """
+    fov_rad = np.radians(fov)
     near = scale * 0.1
     far = scale * 5.0
 
-    # Near plane dimensions
     near_height = 2 * near * np.tan(fov_rad / 2)
     near_width = near_height * aspect_ratio
-
-    # Far plane dimensions
     far_height = 2 * far * np.tan(fov_rad / 2)
     far_width = far_height * aspect_ratio
 
-    # Define frustum vertices
+    # Frustum in camera space: apex at origin, camera looks in +Z (OpenCV)
     vertices = np.array(
         [
-            # Camera center (apex)
+            # Apex (camera centre)
             [0, 0, 0],
-            # Near plane corners
-            [-near_width / 2, -near_height / 2, -near],
-            [near_width / 2, -near_height / 2, -near],
-            [near_width / 2, near_height / 2, -near],
-            [-near_width / 2, near_height / 2, -near],
-            # Far plane corners
-            [-far_width / 2, -far_height / 2, -far],
-            [far_width / 2, -far_height / 2, -far],
-            [far_width / 2, far_height / 2, -far],
-            [-far_width / 2, far_height / 2, -far],
-        ]
+            # Near plane corners (+Z)
+            [-near_width / 2, -near_height / 2, near],
+            [ near_width / 2, -near_height / 2, near],
+            [ near_width / 2,  near_height / 2, near],
+            [-near_width / 2,  near_height / 2, near],
+            # Far plane corners (+Z)
+            [-far_width / 2, -far_height / 2, far],
+            [ far_width / 2, -far_height / 2, far],
+            [ far_width / 2,  far_height / 2, far],
+            [-far_width / 2,  far_height / 2, far],
+        ],
+        dtype=np.float64,
     )
 
-    # Define lines connecting vertices to form frustum wireframe
     lines = []
-    # Lines from camera center to near plane corners
+    # Apex → near corners
     for i in range(1, 5):
         lines.extend([2, 0, i])
-
-    # Lines from camera center to far plane corners
+    # Apex → far corners
     for i in range(5, 9):
         lines.extend([2, 0, i])
-
-    # Near plane rectangle
-    near_rect = [4, 1, 2, 3, 4]
-    lines.extend(near_rect)
-
-    # Far plane rectangle
-    far_rect = [4, 5, 6, 7, 8]
-    lines.extend(far_rect)
-
-    # Connect near to far plane corners
+    # Near plane rectangle (closed)
+    lines.extend([5, 1, 2, 3, 4, 1])
+    # Far plane rectangle (closed)
+    lines.extend([5, 5, 6, 7, 8, 5])
+    # Near → far edges
     for i in range(4):
         lines.extend([2, i + 1, i + 5])
 
-    # Create PyVista polydata for the frustum
     frustum = pv.PolyData(vertices, lines=lines)
 
-    points = frustum.points
-    points_homo = np.column_stack([points, np.ones(points.shape[0])])
-    transformed_points = (pose @ points_homo.T).T
-    frustum.points = transformed_points[:, :3]
+    # Transform camera-space vertices to world space via c2w = inv(w2c)
+    c2w = np.linalg.inv(pose)
+    pts_h = np.column_stack([frustum.points, np.ones(len(frustum.points))])
+    frustum.points = (c2w @ pts_h.T).T[:, :3]
 
     return frustum
 

@@ -307,6 +307,7 @@ class LoopClosure:
         corrected_extrinsics = run_pose_graph_optimization(
             submaps, lc_submaps, total_frames=N,
             overlap_frames=cfg.submap_overlap,
+            conf_threshold=cfg.conf_threshold,
         )
         console.log(
             f"  Pose graph: {N} frames, {len(lc_submaps)} loop edges → "

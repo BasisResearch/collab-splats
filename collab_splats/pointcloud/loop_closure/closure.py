@@ -151,6 +151,7 @@ class LoopClosureConfig:
     min_submap_gap: int = 1
     manifold: Literal["sl4", "se3"] = "sl4"
     max_jump_ratio: float = math.inf  # reject loops where ‖ΔT.t‖/path_length > this; math.inf disables
+    conf_threshold: float = 25.0  # confidence gate for scale estimation; matches VGGT-SLAM --conf_threshold 25
     lc_threshold: float | None = None   # deprecated
 
     def __post_init__(self) -> None:
@@ -337,6 +338,7 @@ def run_pose_graph_optimization(
     total_frames: int,
     overlap_frames: int,
     manifold: Literal["sl4", "se3"] = "sl4",
+    conf_threshold: float = 25.0,
 ) -> np.ndarray:
     """Build + optimize per-frame SL(4) pose graph; return (total_frames, 4, 4).
 
@@ -397,9 +399,27 @@ def run_pose_graph_optimization(
                 curr_pts = submap.world_points[:O].reshape(-1, 3).astype(np.float64)
                 prev_pts = prev_submap.world_points[-O:].reshape(-1, 3).astype(np.float64)
                 n = curr_pts.shape[0]
+
+                # Confidence filtering: match VGGT-SLAM solver.py:132-143
+                mask = np.ones(n, dtype=bool)
+                if (
+                    submap.world_points_conf is not None
+                    and prev_submap.world_points_conf is not None
+                ):
+                    curr_conf = submap.world_points_conf[:O].reshape(-1)
+                    prev_conf = prev_submap.world_points_conf[-O:].reshape(-1)
+                    joint_mask = (curr_conf > conf_threshold) & (prev_conf > conf_threshold)
+                    if joint_mask.sum() >= 100:
+                        mask = joint_mask
+                    else:
+                        # Fallback: try either-side mask; else use all points
+                        either_mask = (curr_conf > conf_threshold) | (prev_conf > conf_threshold)
+                        if either_mask.sum() >= 100:
+                            mask = either_mask
+
                 curr_h = np.hstack([curr_pts, np.ones((n, 1))])
                 curr_in_prev = (T @ curr_h.T).T[:, :3]
-                scale = estimate_scale_pairwise(curr_in_prev, prev_pts)
+                scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
 
             H_scale = np.diag([scale, scale, scale, 1.0])
             prev_submap_last_nid = submap_node_ids[prev_submap.submap_id][-1]

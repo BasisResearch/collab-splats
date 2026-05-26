@@ -101,9 +101,10 @@ def test_hw_formula_integration_two_submaps_rotated():
     # First frame (reference) should be near identity
     assert np.allclose(result[0], np.eye(4), atol=0.15), \
         f"Frame 0 should be near identity, got\n{result[0]}"
-    # Second submap first frame: rotation should NOT be identity (it has 30° world rotation)
-    # With correct H_w, the rotation is encoded; with K-only H_w, it would be identity/wrong
-    R_out = result[k, :3, :3]  # first unique frame of curr submap (starts at frame_start=submap_id*k=k)
+    # With correct H_w (T-based) + new extraction (local_proj @ inv(H_opt)):
+    # H_opt encodes R_w and local_proj also has R_w, so they cancel → rotation ≈ I.
+    # With wrong H_w (K-only, old bug): H_opt ≈ I, so local_proj @ inv(I) = R_w → rotation visible.
+    R_out = result[k, :3, :3]  # unique frame of curr submap (starts at frame_start=submap_id*k=k)
     rot_vs_identity = np.linalg.norm(R_out - np.eye(3), 'fro')
-    assert rot_vs_identity > 0.1, \
-        f"Curr submap frame should have non-trivial rotation (got rot_vs_identity={rot_vs_identity:.3f})"
+    assert rot_vs_identity < 0.3, \
+        f"With correct H_w, rotation should cancel in extraction (got rot_vs_identity={rot_vs_identity:.3f})"

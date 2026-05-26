@@ -448,7 +448,9 @@ def run_pose_graph_optimization(
         poses_out = np.zeros((k, 4, 4), dtype=np.float32)
         for local_i, nid in enumerate(node_ids):
             H_opt = pg.get_homography(nid)
-            _, R, t, _ = decompose_camera(H_opt)
+            local_proj = submap.poses[local_i].astype(np.float64)
+            corrected = local_proj @ np.linalg.inv(H_opt)
+            _, R, t, _ = decompose_camera(corrected)
             mat = np.eye(4, dtype=np.float32)
             mat[:3, :3] = R.astype(np.float32)
             mat[:3, 3] = t.astype(np.float32)

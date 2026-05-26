@@ -143,7 +143,7 @@ class LoopMatch:
 @dataclass
 class LoopClosureConfig:
     submap_size: int = 20
-    submap_overlap: int = 4
+    submap_overlap: int = 1  # 1 = VGGT-SLAM parity; 4 = old default
     lc_cosine_threshold: float = 0.75
     max_loops_per_submap: int = 5
     verify_match_ratio: float = 0.85
@@ -381,6 +381,12 @@ def run_pose_graph_optimization(
             prev_submap = submaps[s_idx - 1]
             O = min(overlap_frames, k, len(prev_submap.poses))
 
+            # Always compute T from overlap poses — needed for H_w (Bug 1 fix)
+            # and scale estimation. Moved outside world_points block.
+            P_curr_overlap = submap.poses[0].astype(np.float64)        # w2c: curr world → cam
+            P_prev_overlap = prev_submap.poses[-1].astype(np.float64)  # w2c: prev world → cam
+            T = np.linalg.inv(P_prev_overlap) @ P_curr_overlap         # curr world → prev world
+
             scale = 1.0
             if (
                 submap.world_points is not None
@@ -389,23 +395,16 @@ def run_pose_graph_optimization(
             ):
                 curr_pts = submap.world_points[:O].reshape(-1, 3).astype(np.float64)
                 prev_pts = prev_submap.world_points[-O:].reshape(-1, 3).astype(np.float64)
-                K_prev = np.eye(4, dtype=np.float64)
-                K_prev[:3, :3] = prev_submap.intrinsics[-1].astype(np.float64)
-                K_curr = np.eye(4, dtype=np.float64)
-                K_curr[:3, :3] = submap.intrinsics[0].astype(np.float64)
-                P_temp = np.linalg.inv(K_prev) @ K_curr
-                curr_in_prev = (P_temp[:3, :3] @ curr_pts.T).T
+                n = curr_pts.shape[0]
+                curr_h = np.hstack([curr_pts, np.ones((n, 1))])
+                curr_in_prev = (T @ curr_h.T).T[:, :3]
                 scale = estimate_scale_pairwise(curr_in_prev, prev_pts)
 
             H_scale = np.diag([scale, scale, scale, 1.0])
-            K_prev4 = np.eye(4, dtype=np.float64)
-            K_prev4[:3, :3] = prev_submap.intrinsics[-1].astype(np.float64)
-            K_curr4 = np.eye(4, dtype=np.float64)
-            K_curr4[:3, :3] = submap.intrinsics[0].astype(np.float64)
-
             prev_submap_last_nid = submap_node_ids[prev_submap.submap_id][-1]
             H_overlap = pg.get_homography(prev_submap_last_nid)
-            H_w = H_overlap @ np.linalg.inv(K_prev4) @ K_curr4 @ H_scale
+            # Bug 1 fix: use full pose T (captures extrinsic rotation) instead of inv(K_prev)@K_curr
+            H_w = H_overlap @ T @ H_scale
             pg.add_node(node_ids_this[0], H_w)
 
             H_rel_inter = np.linalg.inv(pg.get_homography(prev_submap_last_nid)) @ H_w

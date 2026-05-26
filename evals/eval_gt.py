@@ -58,9 +58,18 @@ def _validate_condition(cond: str) -> None:
                 f"ba_track-density-{{N}} requires N > 0, got {cond!r}"
             )
         return
+    m2 = re.fullmatch(r"incremental_ba-(\d+)", cond)
+    if m2:
+        n = int(m2.group(1))
+        if n <= 0:
+            raise ValueError(
+                f"incremental_ba-{{N}} requires N > 0, got {cond!r}"
+            )
+        return
     raise ValueError(
         f"Unknown condition {cond!r}. "
-        f"Valid: {sorted(_FIXED_CONDITIONS)} or ba_track-density-{{N}} (e.g. ba_track-density-4096)"
+        f"Valid: {sorted(_FIXED_CONDITIONS)} or ba_track-density-{{N}} "
+        f"or incremental_ba-{{N}} (e.g. incremental_ba-5)"
     )
 
 
@@ -120,6 +129,15 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
             max_query_pts=n,
             query_frame_num=max(5, n // 512),
         )
+        if submap_size is not None:
+            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
+            windowed = LoopClosure(base, config=_no_lc_cfg)
+            return windowed, cfg
+        return base, cfg
+    m2 = re.fullmatch(r"incremental_ba-(\d+)", condition)
+    if m2:
+        add_size = int(m2.group(1))
+        cfg = BundleAdjustmentConfig(add_size=add_size)
         if submap_size is not None:
             _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
             windowed = LoopClosure(base, config=_no_lc_cfg)

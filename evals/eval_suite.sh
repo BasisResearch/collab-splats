@@ -39,7 +39,7 @@ for SCENE in "${SCENES[@]}"; do
     echo "===== Scene: ${SCENE}/${SEQ} → ${RESULTS_DIR} ====="
 
     # --- VGGT-Omega conditions ---
-    for COND in baseline ba lc; do
+    for COND in baseline ba lc incremental_ba-3; do
         PREFIX="omega"
         TUM="${RESULTS_DIR}/${PREFIX}_${COND}.tum"
         if [[ -f "$TUM" ]]; then

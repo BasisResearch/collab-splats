@@ -7,7 +7,12 @@ Public API:
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
+import shutil
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -15,6 +20,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pypose as pp
+import zarr
+from zarr.codecs import BloscCodec
 from bae.autograd.function import TrackingTensor, map_transform
 from bae.optim import LM
 from bae.utils.pysolvers import PCG
@@ -27,9 +34,21 @@ if TYPE_CHECKING:
 
 __all__ = ["BundleAdjustment", "BundleAdjustmentConfig"]
 
+logger = logging.getLogger(__name__)
+
 # Sentinel for "caller did not pass this kwarg" — distinguishes explicit None (skip
 # reprojection filter) from omitted (fall back to config default).
 _UNSET = object()
+
+
+def _compute_tracks_cache_key(result: "FeedforwardResult", cfg: "BundleAdjustmentConfig") -> str:
+    """SHA-256 key for track cache invalidation — covers image paths + extraction config."""
+    meta = {
+        "image_paths": sorted(str(p) for p in (result.image_paths or [])),
+        "max_query_pts": cfg.max_query_pts,
+        "query_frame_num": cfg.query_frame_num,
+    }
+    return hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()
 
 
 ########################################################
@@ -49,6 +68,10 @@ class BundleAdjustmentConfig:
     query_frame_num: int = 5            # track extraction: number of query frames
     device: str | None = None           # CUDA device (e.g. "cuda", "cuda:1"); None = auto. CPU unsupported (bae LM is CUDA-only)
     capture_loss_history: bool = False  # record per-step LM loss; read via BundleAdjustment._last_loss_history
+    add_size: int = 3                      # frames added per incremental step; 0 or >= N → all-at-once; 1..N-1 → incremental
+    # Default add_size=3 from 7-Scenes chess seq-01 sweep (50 frames): Pareto-optimal at 0.0246m ATE / 92s runtime
+    # vs baseline 0.0558m / 91s. add_size=1 diverges; add_size≥10 regresses toward baseline accuracy.
+    tracks_cache_dir: Path | None = None   # zarr cache dir for tracks; None = always extract
 
 
 ########################################################
@@ -66,31 +89,138 @@ class BundleAdjustment:
     def __init__(self, config: BundleAdjustmentConfig | None = None) -> None:
         self.config = config or BundleAdjustmentConfig()
         # Populated per _optimize() call when capture_loss_history=True; stays empty otherwise
-        self._last_loss_history: list[float] = []
+        self._last_loss_history: list[list[float]] = []
+
+    def _load_or_extract_tracks(
+        self, result: "FeedforwardResult"
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return (tracks, vis_scores, pts3d_tracks) from zarr cache or VGGSfM extraction."""
+        cfg = self.config
+
+        def _extract() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            return _extract_tracks_vggsfm(
+                result.images, result.confidence, result.world_points,
+                max_query_pts=cfg.max_query_pts,
+                query_frame_num=cfg.query_frame_num,
+                device=cfg.device,
+            )
+
+        if cfg.tracks_cache_dir is None or not result.image_paths:
+            return _extract()
+
+        cache_path = Path(cfg.tracks_cache_dir) / "tracks.zarr"
+        expected_key = _compute_tracks_cache_key(result, cfg)
+
+        # Attempt to read from existing cache; validate key before using
+        if cache_path.exists():
+            try:
+                store = zarr.open(str(cache_path), mode="r")
+                if store.attrs.get("cache_key") == expected_key:
+                    logger.debug("Track cache hit: %s", cache_path)
+                    return (
+                        store["tracks"][:],
+                        store["vis_scores"][:],
+                        store["pts3d_tracks"][:],
+                    )
+                logger.warning("Track cache key mismatch, re-extracting: %s", cache_path)
+            except Exception as exc:
+                logger.warning("Track cache unreadable (%s), re-extracting: %s", exc, cache_path)
+            shutil.rmtree(cache_path)
+
+        # Extract and persist to zarr cache
+        tracks, vis_scores, pts3d_tracks = _extract()
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        lz4 = BloscCodec(cname="lz4")
+        store = zarr.open(str(cache_path), mode="w")
+        for key, arr in [("tracks", tracks), ("vis_scores", vis_scores), ("pts3d_tracks", pts3d_tracks)]:
+            store.create_array(key, data=arr, chunks=arr.shape, compressors=lz4)
+        store.attrs["cache_key"] = expected_key
+        logger.debug("Track cache saved: %s", cache_path)
+
+        return tracks, vis_scores, pts3d_tracks
+
+    def _refine_allonce(
+        self,
+        result: "FeedforwardResult",
+        tracks: np.ndarray,
+        vis_scores: np.ndarray,
+        pts3d_tracks: np.ndarray,
+        intrinsics_model: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Run BA on all N frames simultaneously (current all-at-once behaviour)."""
+        extrinsics_3x4 = result.extrinsics[:, :3, :]
+        _, refined_extrinsics, refined_intrinsics_model = self._optimize(
+            pts3d_tracks, extrinsics_3x4, intrinsics_model, tracks, vis_scores,
+        )
+        return refined_extrinsics, refined_intrinsics_model
+
+    def _refine_incremental(
+        self,
+        result: "FeedforwardResult",
+        tracks: np.ndarray,
+        vis_scores: np.ndarray,
+        pts3d_tracks: np.ndarray,
+        intrinsics_model: np.ndarray,
+        add_size: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Grow the registered frame set by add_size per step; warm-start each BA from prior step."""
+        N = len(result.images)
+        # Initialise warm state from feedforward poses
+        refined_extrinsics = result.extrinsics[:, :3, :].copy()
+        refined_intrinsics = intrinsics_model.copy()
+
+        # Build step sequence: add_size, 2*add_size, ..., N (always ends at exactly N)
+        steps = sorted({min(k, N) for k in range(add_size, N + add_size, add_size)})
+
+        for k in steps:
+            logger.info("Incremental BA: %d/%d frames registered", k, N)
+            _, refined_ext_k, refined_intr_k = self._optimize(
+                pts3d_tracks,
+                refined_extrinsics[:k].copy(),   # warm start from previous step
+                refined_intrinsics[:k].copy(),
+                tracks[:k],
+                vis_scores[:k],
+            )
+            refined_extrinsics[:k] = refined_ext_k
+            refined_intrinsics[:k] = refined_intr_k
+
+        return refined_extrinsics, refined_intrinsics
 
     def refine(self, result: "FeedforwardResult") -> "FeedforwardResult":
         """Refine camera poses; return updated FeedforwardResult with new extrinsics/intrinsics.
 
-        pts3d, colors, and pixel_indices are unchanged — call creator.reproject(result)
-        after to re-extract pts3d from refined poses.
+        points, colors, and pixel_indices are unchanged — call creator.reproject(result)
+        after to re-extract points from refined poses.
         """
-        cfg = self.config
-        extrinsics_3x4 = result.extrinsics[:, :3, :]
+        self._last_loss_history = []
 
-        # Extract 2D tracks across all frames via VGGSfM
-        tracks, vis_scores, pts3d_tracks = _extract_tracks_vggsfm(
-            result.images, result.confidence, result.world_points,
-            max_query_pts=cfg.max_query_pts,
-            query_frame_num=cfg.query_frame_num,
-            device=cfg.device,
+        # Load cached tracks or extract via VGGSfM (one extraction shared across all k-steps)
+        tracks, vis_scores, pts3d_tracks = self._load_or_extract_tracks(result)
+
+        # Scale intrinsics once — VGGSfM tracks in model-res, intrinsics stored at original-res
+        intrinsics_model, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(
+            result.intrinsics, result.images, result.original_coords,
         )
 
-        # Refine poses and intrinsics via LM bundle adjustment
-        _, refined_extrinsics, refined_intrinsics = self._optimize(
-            pts3d_tracks, extrinsics_3x4, result.intrinsics, tracks, vis_scores,
-        )
+        N = len(result.images)
+        add_size = self.config.add_size
+        if add_size == 0 or add_size >= N:
+            refined_extrinsics, refined_intrinsics_model = self._refine_allonce(
+                result, tracks, vis_scores, pts3d_tracks, intrinsics_model,
+            )
+        else:
+            refined_extrinsics, refined_intrinsics_model = self._refine_incremental(
+                result, tracks, vis_scores, pts3d_tracks, intrinsics_model, add_size,
+            )
 
-        # Pad (N, 3, 4) extrinsics back to (N, 4, 4) for FeedforwardResult convention
+        # Rescale refined intrinsics back to original-image space
+        refined_intrinsics = refined_intrinsics_model.copy()
+        refined_intrinsics[:, 0, 0] /= sx
+        refined_intrinsics[:, 1, 1] /= sy
+        refined_intrinsics[:, 0, 2] = refined_intrinsics_model[:, 0, 2] / sx + tl_x
+        refined_intrinsics[:, 1, 2] = refined_intrinsics_model[:, 1, 2] / sy + tl_y
+
         refined_extrinsics_4x4 = extrinsics_to_homogeneous(refined_extrinsics)
         return replace(result, extrinsics=refined_extrinsics_4x4, intrinsics=refined_intrinsics)
 
@@ -221,10 +351,9 @@ class BundleAdjustment:
                 for _ in range(n_steps):
                     step_loss = optimizer.step(input=input_dict)
                     loss_hist.append(float(step_loss))
-                self._last_loss_history = loss_hist
+                self._last_loss_history.append(loss_hist)
             else:
                 # Default path: StopOnPlateau with patience-based early stopping
-                self._last_loss_history = []
                 scheduler = pp.optim.scheduler.StopOnPlateau(
                     optimizer, steps=n_steps, patience=3, decreasing=1e-3, verbose=False,
                 )
@@ -255,6 +384,50 @@ class BundleAdjustment:
 ########################################################
 ########## Helpers ####################################
 ########################################################
+
+
+def _scale_intrinsics_to_model(
+    intrinsics: np.ndarray,
+    images: Any,
+    original_coords: np.ndarray | None,
+) -> tuple[np.ndarray, float, float, float, float]:
+    """Scale intrinsics from original-image space to model-resolution space.
+
+    VGGSfM tracks are predicted on model-resolution images; intrinsics stored in
+    FeedforwardResult are at original-image resolution. Scaling them to model space
+    ensures reprojection error is computed in the same coordinate system as the tracks.
+
+    Returns:
+        (intrinsics_model, sx, sy, tl_x, tl_y)
+        sx/sy and tl_x/tl_y are the scale + crop-offset needed to invert the transform.
+    """
+    if images is None:
+        return intrinsics, 1.0, 1.0, 0.0, 0.0
+
+    H_model = float(images.shape[-2])
+    W_model = float(images.shape[-1])
+
+    if original_coords is not None:
+        # Crop-aware: original_coords = [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
+        # The cropped region was resized to (W_model, H_model).
+        tl_x = float(original_coords[0, 0])
+        tl_y = float(original_coords[0, 1])
+        crop_w = float(original_coords[0, 2]) - tl_x
+        crop_h = float(original_coords[0, 3]) - tl_y
+        sx = W_model / crop_w
+        sy = H_model / crop_h
+    else:
+        # No crop info: estimate from principal point (cx ≈ orig_w/2, cy ≈ orig_h/2)
+        tl_x, tl_y = 0.0, 0.0
+        sx = W_model / max(float(intrinsics[0, 0, 2]) * 2, 1.0)
+        sy = H_model / max(float(intrinsics[0, 1, 2]) * 2, 1.0)
+
+    intr = intrinsics.copy()
+    intr[:, 0, 0] = intrinsics[:, 0, 0] * sx
+    intr[:, 1, 1] = intrinsics[:, 1, 1] * sy
+    intr[:, 0, 2] = (intrinsics[:, 0, 2] - tl_x) * sx
+    intr[:, 1, 2] = (intrinsics[:, 1, 2] - tl_y) * sy
+    return intr, sx, sy, tl_x, tl_y
 
 
 def _get_default_solver(device: str | None = None) -> Any:

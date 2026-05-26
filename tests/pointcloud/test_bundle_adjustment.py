@@ -550,7 +550,7 @@ def _make_ff_result_for_ba(N=2, H=8, W=8):
         extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
         image_paths=[Path(f"img{i}.jpg") for i in range(N)],
-        original_coords=np.zeros((N, 6), dtype=np.float32),
+        original_coords=None,
         model_width=W,
         model_height=H,
         images=torch.zeros(N, 3, H, W),
@@ -641,6 +641,14 @@ def test_optimize_rejects_cpu_device():
         )
 
 
+def test_ba_config_new_fields_default():
+    """BundleAdjustmentConfig has add_size=0 and tracks_cache_dir=None by default."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
+    cfg = BundleAdjustmentConfig()
+    assert cfg.add_size == 0
+    assert cfg.tracks_cache_dir is None
+
+
 def test_bundle_adjustment_default_config():
     """BundleAdjustment() with no args uses default BundleAdjustmentConfig."""
     from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
@@ -655,57 +663,200 @@ def test_bundle_adjustment_default_config():
 
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
 def test_optimize_captures_loss_history_when_flag_set():
-    """_optimize populates self._last_loss_history when capture_loss_history=True.
-
-    Verifies: list populated, length == lm_steps, all values are finite floats,
-    losses are non-negative (squared reprojection residuals).
-    """
+    """_optimize appends one inner list to _last_loss_history when capture_loss_history=True."""
     from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
     n_steps = 5
-    # min_inliers_per_frame lowered below P=60 so all frames survive the inlier filter
     cfg = BundleAdjustmentConfig(capture_loss_history=True, lm_steps=n_steps, min_inliers_per_frame=10)
     ba = BundleAdjustment(config=cfg)
-
-    # _last_loss_history must be empty before any run
     assert ba._last_loss_history == []
 
-    ba._optimize(
-        pts3d,
-        extrinsics,
-        intrinsics,
-        tracks,
-        vis_mask.astype(np.float32),
-        max_reproj_error=None,   # skip reprojection filter so all points stay active
-    )
+    ba._optimize(pts3d, extrinsics, intrinsics, tracks, vis_mask.astype(np.float32), max_reproj_error=None)
 
     hist = ba._last_loss_history
-    assert isinstance(hist, list), f"expected list, got {type(hist)}"
-    assert len(hist) == n_steps, f"expected {n_steps} entries, got {len(hist)}"
-    assert all(isinstance(v, float) for v in hist), "all entries must be Python floats"
-    assert all(v >= 0 for v in hist), "losses are squared residuals — must be non-negative"
+    assert isinstance(hist, list)
+    assert len(hist) == 1, f"one _optimize call → one inner list; got {len(hist)}"
+    assert len(hist[0]) == n_steps
+    assert all(isinstance(v, float) for v in hist[0])
+    assert all(v >= 0 for v in hist[0])
 
 
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
 def test_optimize_no_loss_history_by_default():
     """Without capture_loss_history, _last_loss_history stays empty after _optimize."""
-    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
-    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
-    # min_inliers_per_frame lowered so frames survive the inlier filter (P=60 < default 64)
     ba = BundleAdjustment(config=BundleAdjustmentConfig(min_inliers_per_frame=10))
-    ba._optimize(
-        pts3d, extrinsics, intrinsics,
-        tracks, vis_mask.astype(np.float32),
-        max_reproj_error=None,
+    ba._optimize(pts3d, extrinsics, intrinsics, tracks, vis_mask.astype(np.float32), max_reproj_error=None)
+    assert ba._last_loss_history == []
+
+
+def test_tracks_cache_save_load(tmp_path):
+    """_load_or_extract_tracks saves to zarr; second call returns cached arrays without extracting."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 3, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    fake_tracks = np.ones((N, 5, 2), dtype=np.float32)
+    fake_vis = np.ones((N, 5), dtype=np.float32) * 0.9
+    fake_pts3d = np.ones((5, 3), dtype=np.float32) * 2.0
+
+    cfg = BundleAdjustmentConfig(tracks_cache_dir=tmp_path)
+    ba = BundleAdjustment(config=cfg)
+
+    extract_calls = []
+
+    def fake_extract(images, confidence, world_points, max_query_pts, query_frame_num, device=None):
+        extract_calls.append(1)
+        return fake_tracks, fake_vis, fake_pts3d
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        t1, v1, p1 = ba._load_or_extract_tracks(result)
+        t2, v2, p2 = ba._load_or_extract_tracks(result)
+
+    assert len(extract_calls) == 1, "second call should use cache, not re-extract"
+    np.testing.assert_array_equal(t1, fake_tracks)
+    np.testing.assert_array_equal(t2, fake_tracks)
+    np.testing.assert_array_equal(p1, fake_pts3d)
+    np.testing.assert_array_equal(p2, fake_pts3d)
+
+
+def test_tracks_cache_invalidates_on_config_change(tmp_path):
+    """Cache is invalidated when query_frame_num changes; extraction runs again."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 3, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    fake_a = (np.ones((N, 5, 2), dtype=np.float32),
+              np.ones((N, 5), dtype=np.float32),
+              np.ones((5, 3), dtype=np.float32))
+    fake_b = (np.zeros((N, 5, 2), dtype=np.float32),
+              np.zeros((N, 5), dtype=np.float32),
+              np.zeros((5, 3), dtype=np.float32))
+    extractions = [fake_a, fake_b]
+
+    def fake_extract(*args, **kwargs):
+        return extractions.pop(0)
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        ba1 = BundleAdjustment(config=BundleAdjustmentConfig(query_frame_num=5, tracks_cache_dir=tmp_path))
+        ba1._load_or_extract_tracks(result)
+
+        # Change query_frame_num — different key → cache miss
+        ba2 = BundleAdjustment(config=BundleAdjustmentConfig(query_frame_num=10, tracks_cache_dir=tmp_path))
+        t2, _, _ = ba2._load_or_extract_tracks(result)
+
+    np.testing.assert_array_equal(t2, fake_b[0])
+
+
+def test_incremental_ba_add_size_n_matches_allonce():
+    """add_size >= N dispatches to all-at-once path: _optimize called exactly once with all N frames."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 4, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    P = 5
+    fake_tracks = np.zeros((N, P, 2), dtype=np.float32)
+    fake_vis = np.ones((N, P), dtype=np.float32)
+    fake_pts3d = np.zeros((P, 3), dtype=np.float32)
+    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
+    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
+
+    optimize_frame_counts = []
+
+    def mock_optimize(pts3d, extrinsics, intrinsics, tracks, vis_scores, **kwargs):
+        optimize_frame_counts.append(len(tracks))
+        return (fake_pts3d, refined_ext[:len(tracks)], refined_intr[:len(tracks)])
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
+               return_value=(fake_tracks, fake_vis, fake_pts3d)), \
+         patch.object(BundleAdjustment, "_optimize", side_effect=mock_optimize):
+
+        BundleAdjustment(BundleAdjustmentConfig(add_size=0)).refine(result)
+        BundleAdjustment(BundleAdjustmentConfig(add_size=N)).refine(result)
+        BundleAdjustment(BundleAdjustmentConfig(add_size=N + 10)).refine(result)
+
+    assert optimize_frame_counts == [N, N, N], (
+        f"add_size=0/N/N+10 should all call _optimize once with N frames; got {optimize_frame_counts}"
     )
 
-    assert ba._last_loss_history == [], (
-        "_last_loss_history must remain empty when capture_loss_history=False"
+
+def test_incremental_ba_warm_start_updates_registered_frames():
+    """_refine_incremental updates extrinsics[:k] after each step (warm start propagates)."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 6, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    P = 5
+    fake_tracks = np.zeros((N, P, 2), dtype=np.float32)
+    fake_vis = np.ones((N, P), dtype=np.float32)
+    fake_pts3d = np.zeros((P, 3), dtype=np.float32)
+
+    step_counter = [0]
+    received_extrinsics = []
+
+    def mock_optimize(pts3d, extrinsics, intrinsics, tracks, vis_scores, **kwargs):
+        k = len(tracks)
+        received_extrinsics.append(extrinsics.copy())
+        refined = extrinsics.copy()
+        refined[:, 0, 0] += float(step_counter[0] + 1)
+        step_counter[0] += 1
+        return (fake_pts3d, refined, intrinsics.copy())
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
+               return_value=(fake_tracks, fake_vis, fake_pts3d)), \
+         patch.object(BundleAdjustment, "_optimize", side_effect=mock_optimize):
+
+        ba = BundleAdjustment(BundleAdjustmentConfig(add_size=2))
+        ba.refine(result)
+
+    # N=6, add_size=2 → steps k=2,4,6 → 3 _optimize calls
+    assert len(received_extrinsics) == 3, f"expected 3 steps for N=6 add_size=2, got {len(received_extrinsics)}"
+
+    # Warm start: step-2 extrinsics[:2] should be step-1 refined output (diagonal+1), not original
+    assert received_extrinsics[1][:2, 0, 0].mean() > 1.0, (
+        "warm start failed: step-2 extrinsics[:2] should be step-1 refined output, not original feedforward"
     )
+
+
+def test_incremental_ba_loss_history_has_one_entry_per_step():
+    """_last_loss_history contains one inner list per k-step when capture_loss_history=True."""
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 6, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    P = 5
+    fake_tracks = np.zeros((N, P, 2), dtype=np.float32)
+    fake_vis = np.ones((N, P), dtype=np.float32)
+    fake_pts3d = np.zeros((P, 3), dtype=np.float32)
+
+    def mock_optimize_with_hist(self_ba, pts3d, extrinsics, intrinsics, tracks, vis_scores, **kwargs):
+        k = len(tracks)
+        if self_ba.config.capture_loss_history:
+            self_ba._last_loss_history.append([float(k) * 0.1])
+        return (fake_pts3d, extrinsics.copy(), intrinsics.copy())
+
+    with patch("collab_splats.pointcloud.bundle_adjustment._extract_tracks_vggsfm",
+               return_value=(fake_tracks, fake_vis, fake_pts3d)), \
+         patch.object(BundleAdjustment, "_optimize",
+                      lambda self_ba, *a, **kw: mock_optimize_with_hist(self_ba, *a, **kw)):
+
+        ba = BundleAdjustment(BundleAdjustmentConfig(add_size=2, capture_loss_history=True))
+        ba.refine(result)
+
+    # N=6, add_size=2 → steps k=2,4,6 → 3 _optimize calls → 3 inner lists
+    assert len(ba._last_loss_history) == 3, (
+        f"expected 3 inner lists for 3 steps; got {len(ba._last_loss_history)}"
+    )
+    assert all(isinstance(entry, list) for entry in ba._last_loss_history)

@@ -12,13 +12,14 @@ Usage:
 
 Default alignment per method (override via ``--align-overrides``):
 
-    gt              skipped (it IS the reference)
-    ours_baseline   se3   (metric SE(3) baseline)
-    ours_ba         se3   (bundle-adjusted SE(3))
-    ours_lc         sim3  (loop-closure Sim(3) recovery, monocular)
-    vggt_long       sim3  (monocular)
-    vggt_slam       sim3  (monocular)
-    <unknown>       sim3  (mono assumption + warning)
+    gt               skipped (it IS the reference)
+    omega_baseline   se3   (VGGT-Omega baseline, metric SE(3))
+    omega_ba         se3   (VGGT-Omega + bundle adjustment)
+    omega_lc         sim3  (VGGT-Omega + loop closure, monocular Sim(3))
+    vggtx_baseline   se3   (VGGT-X baseline, metric SE(3))
+    vggtx_lc         sim3  (VGGT-X + loop closure, monocular Sim(3))
+    vggt_slam        sim3  (VGGT-SLAM internal LC, monocular)
+    <unknown>        sim3  (mono assumption + warning)
 
 A method that is queued but not yet computed appears as a sentinel
 ``<method>.pending`` file; it is recorded as ``{"status": "pending"}`` and no

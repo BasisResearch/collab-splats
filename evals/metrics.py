@@ -15,13 +15,17 @@ The CLI equivalents are ``-a`` (se3) and ``-as`` (sim3).
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
+import numpy as np
 from evo.core import metrics as _evo_metrics
 from evo.core import sync
 from evo.core.metrics import PoseRelation, Unit
 from evo.tools import file_interface
 
+# Ensure collab_splats module is importable from evals scripts
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 _ALIGN_CHOICES = ("none", "se3", "sim3")
 
@@ -112,8 +116,6 @@ def compute_auc(
 
     Returns dict with 'auc_30' (float in [0,100]) and 'per_frame_err' (list[float]).
     """
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from collab_splats.pointcloud.loop_closure.eval import auc_at_threshold
 
     traj_ref, traj_est = _load_pair(pred_path, gt_path)
@@ -122,13 +124,12 @@ def compute_auc(
     # evo stores poses_se3 as list of (4,4) arrays — stack to (N,4,4) cam-to-world
     pred_poses = traj_est.poses_se3
     gt_poses = traj_ref.poses_se3
-    import numpy as _np
-    pred_c2w = _np.stack(pred_poses).astype(_np.float32)
-    gt_c2w = _np.stack(gt_poses).astype(_np.float32)
+    pred_c2w = np.stack(pred_poses).astype(np.float32)
+    gt_c2w = np.stack(gt_poses).astype(np.float32)
 
     # auc_at_threshold expects world-to-cam poses; invert
-    pred_w2c = _np.linalg.inv(pred_c2w)
-    gt_w2c = _np.linalg.inv(gt_c2w)
+    pred_w2c = np.linalg.inv(pred_c2w)
+    gt_w2c = np.linalg.inv(gt_c2w)
 
     result = auc_at_threshold(pred_w2c, gt_w2c, max_threshold_deg=max_threshold_deg)
     return {

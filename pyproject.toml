@@ -51,26 +51,31 @@ dependencies = [
     "scikit-learn",
     "roma",
     "kornia",
+    "open-clip-torch",
     "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
     # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
     # mobilesamv2/efficientvit/models/nn/drop.py imports torchpack.distributed at module level,
     # so it must be installed before any import of mobilesamv2.
     "torchpack",
-    # gsplat-rade fork (version 1.4.0) must be pre-installed with --no-build-isolation
-    # before this package. See setup_nerfstudio.sh. Git URL removed here because pip
-    # always rebuilds git-URL deps even if already installed, failing without build isolation.
+    # gsplat-rade fork (version 1.4.0) must be pre-installed with --no-build-isolation.
+    # Pre-installed in Dockerfile builder stage.
     "gsplat>=1.4.0",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
     "pypose",
-    # bae requires --no-build-isolation at build time (setup.py imports torch at
-    # top level to query CUDA ABI). Pre-installed by Dockerfile.cu121 Stage 2.
-    # Git URL removed: pip rebuilds git-URL deps even if installed, failing without
-    # build isolation. bae>=0.2.4 is pre-installed at /opt/bae.
-    "bae>=0.2.4",
-    # cuDSS runtime dep for bae. Must be installed before `pip install -e bae`
-    # so find_cudss_root() finds headers at site-packages/nvidia/cu12.
-    # 0.6.0.5 and 0.7.1.6 both verified by bae README; pinned for ABI stability.
+    # cuDSS runtime dep for bae. Must be declared before bae for clarity (pip installs
+    # wheels before source builds regardless of order, so cudss headers are present when
+    # bae's find_cudss_root() runs at compile time). Pinned for ABI stability.
     "nvidia-cudss-cu12==0.6.0.5",
+    # bae: pypose BA CUDA extension. Pinned git URL avoids PyPI 'bae' (2.0.x) collision.
+    # Pre-installed by setup.sh pre-step with --no-build-isolation before `pip install -e .`.
+    # PIP_NO_BUILD_ISOLATION=1 does NOT propagate to dependency builds, so bae must be
+    # installed explicitly first. CUDA_HOME=/opt/conda/envs/reconstruction required (nvcc lives
+    # in the conda env, not /usr/local/cuda which is runtime-only in the Docker image).
+    # USE_CUDSS defaults to "1" in bae 0.2.4.
+    "bae @ git+https://github.com/pypose/bae.git@0.2.4",
+    # nerfstudio: BasisResearch fork (our own) with gsplat-rade + cu121 patches applied.
+    # @main tracks our fork's main branch — we control what lands there.
+    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git@main",
     "clip @ git+https://github.com/openai/CLIP.git",
 ]
 
@@ -92,7 +97,6 @@ feedforward = [
     "tensorboard",
     "python-box",
     "open3d",
-    # rerun-sdk excluded: only used in mapanything viz/dataset code, not in reconstruction pipeline
     "gtsam-develop",
     # salad (Dominic101/salad) installed via setup_feedforward.sh.
     # pytorch-metric-learning is salad's only non-torch runtime dep.

@@ -2,18 +2,20 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON=/opt/conda/envs/nerfstudio/bin/python
-PIP=/opt/conda/envs/nerfstudio/bin/pip
-export PIP_NO_BUILD_ISOLATION=1
+PIP=/opt/conda/envs/reconstruction/bin/pip
+export PIP_ROOT_USER_ACTION=ignore
 
-echo "=== Step 1: install local nerfstudio ==="
-bash "$SCRIPT_DIR/setup_nerfstudio.sh"
+echo "=== Pre-step: install bae CUDA extension (--no-build-isolation required; PIP_NO_BUILD_ISOLATION=1 does not propagate to dependency builds) ==="
+CUDA_HOME=/opt/conda/envs/reconstruction \
+    $PIP install --no-build-isolation \
+        "nvidia-cudss-cu12==0.6.0.5" \
+        "bae @ git+https://github.com/pypose/bae.git@0.2.4"
 
-echo "=== Step 2: install collab-splats ==="
+echo "=== Step 1: install collab-splats ==="
 $PIP install -e "$SCRIPT_DIR"
 
-echo "=== Step 3: install collab-data (private) ==="
+echo "=== Step 2: install collab-data (private) ==="
 $PIP install git+https://github.com/BasisResearch/collab-data.git
 
-echo "=== Step 4: install co3d eval dependency (--no-deps required) ==="
+echo "=== Step 3: install co3d eval dependency (--no-deps required) ==="
 $PIP install git+https://github.com/facebookresearch/co3d.git --no-deps

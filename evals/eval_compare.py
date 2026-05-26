@@ -34,16 +34,23 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from metrics import compute_ate, compute_rpe
+from metrics import compute_ate, compute_rpe, compute_auc
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ALIGN: dict[str, str] = {
-    "ours_baseline": "se3",
-    "ours_ba":       "se3",
-    "ours_lc":       "sim3",
-    "vggt_long":     "sim3",
-    "vggt_slam":     "sim3",
+    # backbone-prefixed names
+    "omega_baseline": "se3",
+    "omega_ba":       "se3",
+    "omega_lc":       "sim3",
+    "vggtx_baseline": "se3",
+    "vggtx_lc":       "sim3",
+    "vggt_slam":      "sim3",
+    "vggt_long":      "sim3",
+    # legacy names (backward compat)
+    "ours_baseline":  "se3",
+    "ours_ba":        "se3",
+    "ours_lc":        "sim3",
 }
 _FALLBACK_ALIGN = "sim3"
 
@@ -100,10 +107,12 @@ def _scan_results_dir(results_dir: Path, gt_path: Path) -> tuple[dict[str, Path]
             methods[stem] = entry
         elif entry.suffix == ".pending":
             pending.add(entry.stem)
+        elif entry.suffix in (".json", ".npz", ".png", ".jpg"):
+            continue  # sidecar files — skip silently
         else:
             raise ValueError(
                 f"unexpected file {entry.name!r} in {results_dir} — "
-                "only *.tum and *.pending are allowed"
+                "only *.tum, *.pending, and sidecar files are allowed"
             )
     overlap = methods.keys() & pending
     if overlap:
@@ -115,22 +124,31 @@ def _scan_results_dir(results_dir: Path, gt_path: Path) -> tuple[dict[str, Path]
 
 def _format_markdown(methods: dict[str, dict]) -> str:
     header = (
-        "| method | status | align | ATE RMSE | ATE mean | RPE trans | RPE rot deg |\n"
-        "|---|---|---|---|---|---|---|"
+        "| method | status | align | ATE RMSE | RPE trans | RPE rot° | AUC@30 | loop_res↓ | chamfer_ratio↓ |\n"
+        "|---|---|---|---|---|---|---|---|---|"
     )
     lines = [header]
     for name in sorted(methods.keys()):
         body = methods[name]
         status = body.get("status", "?")
         if status != "ok":
-            lines.append(f"| {name} | {status} | - | - | - | - | - |")
+            lines.append(f"| {name} | {status} | - | - | - | - | - | - | - |")
             continue
         a = body["ate"]
         r = body["rpe"]
+        auc_val = body.get("auc", {}).get("auc_30", float("nan"))
+        al = body.get("alignment") or {}
+        loop_before = al.get("loop_match_residual", {}).get("mean_before", None)
+        loop_after  = al.get("loop_match_residual", {}).get("mean_after", None)
+        chamfer_before = al.get("pointcloud_chamfer", {}).get("mean_before", None)
+        chamfer_after  = al.get("pointcloud_chamfer", {}).get("mean_after", None)
+        loop_str = f"{loop_before:.3f}→{loop_after:.3f}" if (loop_before and loop_after) else "null"
+        chamfer_ratio = (chamfer_after / chamfer_before) if (chamfer_before and chamfer_after and chamfer_before > 0) else None
+        chamfer_str = f"{chamfer_ratio:.3f}" if chamfer_ratio is not None else "null"
         lines.append(
             f"| {name} | {status} | {body['align']} | "
-            f"{a['rmse']:.4f} | {a['mean']:.4f} | "
-            f"{r['trans_rmse']:.4f} | {r['rot_rmse_deg']:.4f} |"
+            f"{a['rmse']:.4f} | {r['trans_rmse']:.4f} | {r['rot_rmse_deg']:.4f} | "
+            f"{auc_val:.1f} | {loop_str} | {chamfer_str} |"
         )
     return "\n".join(lines)
 
@@ -168,11 +186,16 @@ def main() -> None:
         align = _resolve_align(name, overrides)
         ate = compute_ate(tum_path, gt_path, align=align)
         rpe = compute_rpe(tum_path, gt_path, align=align, delta=1)
+        auc = compute_auc(tum_path, gt_path, align=align)
+        alignment_path = results_dir / f"{name}_alignment.json"
+        alignment = json.loads(alignment_path.read_text()) if alignment_path.is_file() else None
         out[name] = {
             "status": "ok",
             "align": align,
             "ate": ate,
             "rpe": rpe,
+            "auc": auc,
+            "alignment": alignment,
         }
 
     payload = {"methods": out}

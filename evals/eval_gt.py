@@ -18,6 +18,7 @@ regardless of this flag.
 from __future__ import annotations
 
 import argparse
+from typing import Any
 from datetime import datetime
 import json
 import re
@@ -84,13 +85,32 @@ def _cam_positions(poses: np.ndarray) -> np.ndarray:
     return np.einsum("nij,nj->ni", R.transpose(0, 2, 1), -t)
 
 
-def _make_creator(condition: str, submap_size: int | None = None):
+def _write_tum(path: Path, poses_w2c: np.ndarray) -> None:
+    """Write TUM trajectory: 'timestamp tx ty tz qx qy qz qw' (camera-to-world)."""
+    from scipy.spatial.transform import Rotation
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for i, w2c in enumerate(poses_w2c):
+        c2w = np.linalg.inv(w2c.astype(np.float64))
+        t = c2w[:3, 3]
+        q = Rotation.from_matrix(c2w[:3, :3]).as_quat()  # [qx, qy, qz, qw]
+        lines.append(
+            f"{i:.6f} {t[0]:.9f} {t[1]:.9f} {t[2]:.9f} "
+            f"{q[0]:.9f} {q[1]:.9f} {q[2]:.9f} {q[3]:.9f}"
+        )
+    path.write_text("\n".join(lines) + "\n")
+
+
+_BACKBONE_PREFIX = {"vggt_omega": "omega", "vggtx": "vggtx"}
+
+
+def _make_creator(condition: str, submap_size: int | None = None, backbone: str = "vggt_omega"):
     """Build a (creator, ba_config) pair for the given condition.
 
     Returns (creator, None) when no bundle adjustment is needed.
     Returns (creator, BundleAdjustmentConfig) when BA should run after postprocess.
     """
-    base = get_creator("vggtx")()
+    base = get_creator(backbone)()
     if condition == "lc":
         return LoopClosure(base), None
     m = re.fullmatch(r"ba_track-density-(\d+)", condition)
@@ -118,9 +138,13 @@ def _make_creator(condition: str, submap_size: int | None = None):
     return base, None  # baseline
 
 
-def _run_condition(name: str, image_dir: Path, output_dir: Path, submap_size: int | None = None) -> np.ndarray:
-    """Wrap VGGTXCreator with BA/LC as appropriate, run, return (N,4,4) extrinsics."""
-    creator, ba_cfg = _make_creator(name, submap_size=submap_size)
+def _run_condition(
+    name: str, image_dir: Path, output_dir: Path,
+    submap_size: int | None = None,
+    backbone: str = "vggt_omega",
+) -> tuple[np.ndarray, Any]:
+    """Run condition, return (extrinsics (N,4,4), creator)."""
+    creator, ba_cfg = _make_creator(name, submap_size=submap_size, backbone=backbone)
     if ba_cfg is None:
         creator.reconstruct(image_dir, output_dir)
     else:
@@ -134,7 +158,7 @@ def _run_condition(name: str, image_dir: Path, output_dir: Path, submap_size: in
         creator.build_colmap(output_dir)
     if creator.outputs is None:
         raise RuntimeError(f"Condition '{name}' produced no outputs")
-    return creator.outputs.extrinsics  # (N, 4, 4) world-to-cam
+    return creator.outputs.extrinsics, creator
 
 
 def _save_outputs(
@@ -221,6 +245,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Frames per window for windowed inference. Required for sequences "
                              "too long for single-pass GPU inference (e.g. >200 frames). "
                              "baseline→windowed VGGT-X, ba→windowed+BA, lc→full LC pipeline.")
+    parser.add_argument(
+        "--backbone", choices=["vggtx", "vggt_omega"], default="vggt_omega",
+        help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*",
+    )
     parser.add_argument("--conditions", nargs="+", default=["baseline", "ba", "lc"],
                         help="Conditions: baseline | ba | lc | ba_track-density-{N}")
     # Internal flag: run exactly one condition as a subprocess and write results
@@ -232,23 +260,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _subprocess_mode(args: argparse.Namespace) -> None:
-    """Run one condition and write {extrinsics, time_s} JSON to --_result_file."""
+    """Run one condition and write {extrinsics, time_s, backbone} JSON."""
     _validate_condition(args._condition)
-    cond = args._condition
-    image_dir = args._image_dir
-    result_file = args._result_file
-
+    backbone = getattr(args, "backbone", "vggt_omega")
     t0 = time.perf_counter()
-    pred = _run_condition(cond, image_dir, args.output_dir / cond,
-                          submap_size=args.submap_size)
+    pred, _creator = _run_condition(
+        args._condition, args._image_dir, args.output_dir / args._condition,
+        submap_size=args.submap_size,
+        backbone=backbone,
+    )
     elapsed = time.perf_counter() - t0
-
-    # Serialise extrinsics as a nested list so json can handle it.
-    result_file.write_text(json.dumps({
+    args._result_file.write_text(json.dumps({
         "extrinsics": pred.tolist(),
         "time_s": round(elapsed, 2),
+        "backbone": backbone,
     }))
-    print(f"  ATE/RPE computed by parent process | time={elapsed:.1f}s")
+    print(f"  ATE/RPE computed by parent | time={elapsed:.1f}s")
 
 
 def main() -> None:
@@ -293,6 +320,7 @@ def main() -> None:
                 "--seq_dir",    str(args.seq_dir),
                 "--output_dir", str(args.output_dir),
                 "--max_frames", str(args.max_frames),
+                "--backbone",   args.backbone,
                 "--_condition",   cond,
                 "--_image_dir",   str(tmp_image_dir),
                 "--_result_file", str(result_file),
@@ -322,6 +350,14 @@ def main() -> None:
     finally:
         shutil.rmtree(tmp_image_dir, ignore_errors=True)
         shutil.rmtree(result_dir, ignore_errors=True)
+
+    # Write TUM files for eval_compare.py phase-2 runner
+    prefix = _BACKBONE_PREFIX.get(args.backbone, args.backbone)
+    _write_tum(args.output_dir / "gt.tum", dataset.gt_poses)
+    for cond, poses in trajectories.items():
+        if cond == "gt":
+            continue
+        _write_tum(args.output_dir / f"{prefix}_{cond}.tum", poses)
 
     _save_outputs(metrics, trajectories, args.output_dir)
     print(f"\nResults written to {args.output_dir}/")

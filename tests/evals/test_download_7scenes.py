@@ -113,5 +113,5 @@ def test_download_scene_raises_on_bad_scene():
     """download_scene raises ValueError for unknown scene names."""
     from download_7scenes import download_scene
 
-    with pytest.raises((ValueError, KeyError)):
+    with pytest.raises(ValueError):
         download_scene("nonexistent_scene")

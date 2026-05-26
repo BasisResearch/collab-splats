@@ -12,10 +12,13 @@ Data is written to ``<repo_root>/data/7scenes/<scene>/``.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import urllib.request
 import zipfile
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 ########################################################################
 # Constants
@@ -57,7 +60,7 @@ def _progress_hook(block_num: int, block_size: int, total_size: int) -> None:
     downloaded = min(block_num * block_size, total_size)
     pct = downloaded * 100 // total_size
     bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-    print(f"\r  [{bar}] {pct:3d}%  {downloaded // 1_048_576}/{total_size // 1_048_576} MB", end="", flush=True)
+    logger.info("\r  [%s] %3d%%  %d/%d MB", bar, pct, downloaded // 1_048_576, total_size // 1_048_576)
 
 
 ########################################################################
@@ -90,7 +93,7 @@ def download_scene(scene: str, seq: str = "seq-01", force: bool = False) -> Path
 
     # Skip if already present
     if not force and _scene_already_downloaded(scene_dir, seq):
-        print(f"  {scene}/{seq} already downloaded — skipping (use --force to re-download).")
+        logger.info("  %s/%s already downloaded — skipping (use --force to re-download).", scene, seq)
         return seq_dir
 
     # Download zip to a temp location inside data/
@@ -98,12 +101,11 @@ def download_scene(scene: str, seq: str = "seq-01", force: bool = False) -> Path
     zip_path = data_root / f"{scene}.zip"
     url = SCENES[scene]
 
-    print(f"Downloading {scene} from {url}")
+    logger.info("Downloading %s from %s", scene, url)
     urllib.request.urlretrieve(url, zip_path, reporthook=_progress_hook)
-    print()  # newline after progress bar
 
     # Extract — Microsoft's outer zip nests as <scene>/<scene>/seq-NN.zip
-    print(f"  Extracting {zip_path.name} ...")
+    logger.info("  Extracting %s ...", zip_path.name)
     scene_dir.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(zip_path, "r") as outer:
@@ -134,7 +136,7 @@ def download_scene(scene: str, seq: str = "seq-01", force: bool = False) -> Path
         seq_name = inner_zip.stem  # e.g. "seq-01"
         target_seq = scene_dir / seq_name
         target_seq.mkdir(exist_ok=True)
-        print(f"  Extracting {inner_zip.name} ...")
+        logger.info("  Extracting %s ...", inner_zip.name)
         with zipfile.ZipFile(inner_zip, "r") as zf:
             zf.extractall(target_seq)
         inner_zip.unlink()
@@ -149,7 +151,7 @@ def download_scene(scene: str, seq: str = "seq-01", force: bool = False) -> Path
             "The archive layout may have changed."
         )
 
-    print(f"  Done. Data at {seq_dir}")
+    logger.info("  Done. Data at %s", seq_dir)
     return seq_dir
 
 

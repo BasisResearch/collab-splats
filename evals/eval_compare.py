@@ -142,7 +142,7 @@ def _format_markdown(methods: dict[str, dict]) -> str:
         loop_after  = al.get("loop_match_residual", {}).get("mean_after", None)
         chamfer_before = al.get("pointcloud_chamfer", {}).get("mean_before", None)
         chamfer_after  = al.get("pointcloud_chamfer", {}).get("mean_after", None)
-        loop_str = f"{loop_before:.3f}→{loop_after:.3f}" if (loop_before and loop_after) else "null"
+        loop_str = f"{loop_before:.3f}→{loop_after:.3f}" if (loop_before is not None and loop_after is not None) else "null"
         chamfer_ratio = (chamfer_after / chamfer_before) if (chamfer_before and chamfer_after and chamfer_before > 0) else None
         chamfer_str = f"{chamfer_ratio:.3f}" if chamfer_ratio is not None else "null"
         lines.append(

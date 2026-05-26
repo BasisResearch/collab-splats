@@ -72,8 +72,12 @@ def loop_match_residual(
 
     dists_before, dists_after = [], []
     for m in accepted:
-        q_g = _global_frame(sid_to_submap[m.query_submap_id], m.query_frame_idx)
-        d_g = _global_frame(sid_to_submap[m.detected_submap_id], m.detected_frame_idx)
+        q_submap = sid_to_submap.get(m.query_submap_id)
+        d_submap = sid_to_submap.get(m.detected_submap_id)
+        if q_submap is None or d_submap is None:
+            continue
+        q_g = _global_frame(q_submap, m.query_frame_idx)
+        d_g = _global_frame(d_submap, m.detected_frame_idx)
         if q_g < len(pre_pos) and d_g < len(pre_pos):
             dists_before.append(float(np.linalg.norm(pre_pos[q_g] - pre_pos[d_g])))
             dists_after.append(float(np.linalg.norm(post_pos[q_g] - post_pos[d_g])))

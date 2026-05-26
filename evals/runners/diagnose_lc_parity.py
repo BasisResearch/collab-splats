@@ -31,7 +31,9 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 # Allow running directly from repo root without installing the package
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+_repo_root = str(Path(__file__).resolve().parents[2])
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
 from collab_splats.pointcloud.loop_closure.closure import umeyama_se3
 

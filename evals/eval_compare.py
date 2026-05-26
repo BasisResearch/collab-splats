@@ -188,7 +188,7 @@ def main() -> None:
         align = _resolve_align(name, overrides)
         ate = compute_ate(tum_path, gt_path, align=align)
         rpe = compute_rpe(tum_path, gt_path, align=align, delta=1)
-        auc = compute_auc(tum_path, gt_path, align=align)
+        auc = compute_auc(tum_path, gt_path)
         alignment_path = results_dir / f"{name}_alignment.json"
         alignment = json.loads(alignment_path.read_text()) if alignment_path.is_file() else None
         out[name] = {

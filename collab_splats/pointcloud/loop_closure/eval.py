@@ -107,6 +107,22 @@ def capture_pose_graph_loss(
 # --- GT-phase stubs (implement when GT dataset arrives) ----------------------
 
 
+def _umeyama_sim3(source: np.ndarray, target: np.ndarray):
+    """Sim3: c, R, t such that c * R @ source + t ≈ target. source/target: (3, N)."""
+    mu_s = source.mean(axis=1, keepdims=True)
+    mu_t = target.mean(axis=1, keepdims=True)
+    var_s = np.square(source - mu_s).sum(axis=0).mean()
+    cov = ((target - mu_t) @ (source - mu_s).T) / source.shape[1]
+    U, D, VH = np.linalg.svd(cov)
+    S = np.eye(3)
+    if np.linalg.det(U) * np.linalg.det(VH) < 0:
+        S[2, 2] = -1
+    c = float(np.trace(np.diag(D) @ S) / var_s)
+    R = U @ S @ VH
+    t = mu_t - c * R @ mu_s  # (3, 1)
+    return c, R, t
+
+
 def umeyama_align(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Align predicted trajectory to ground truth via Umeyama SE(3).
 
@@ -119,7 +135,6 @@ def umeyama_align(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.ndar
         transform applied.
     """
     from .closure import umeyama_se3
-    # Camera positions in world: for world-to-cam T, p_world = R^T @ (-t)
     R_pred = pred[:, :3, :3]
     t_pred = pred[:, :3, 3]
     p_pred = np.einsum("nij,nj->ni", R_pred.transpose(0, 2, 1), -t_pred)  # (N, 3)
@@ -128,13 +143,9 @@ def umeyama_align(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.ndar
     t_gt = gt[:, :3, 3]
     p_gt = np.einsum("nij,nj->ni", R_gt.transpose(0, 2, 1), -t_gt)  # (N, 3)
 
-    # SE(3) only (no scale) — preserves metric scale of pred poses.
-    # Use umeyama_sim3 if scale normalization is needed.
-    # T_align: (4,4) such that p_gt ≈ T_align @ p_pred
     T_align = umeyama_se3(source=p_pred, target=p_gt)
-    # Apply to full poses: aligned[i] = pred[i] @ inv(T_align)
     T_inv = np.linalg.inv(T_align)
-    aligned = pred @ T_inv[None]   # (N, 4, 4)
+    aligned = pred @ T_inv[None]
     return aligned.astype(np.float32), T_align
 
 
@@ -198,43 +209,75 @@ def auc_at_threshold(
     pred: np.ndarray,
     gt: np.ndarray,
     max_threshold_deg: float = 30.0,
-    num_steps: int = 100,
 ) -> dict:
-    """AUC@max_threshold_deg metric for camera pose accuracy (CO3Dv2 / VGGSfM protocol).
+    """AUC@max_threshold_deg — VGGT-X / VGGT-Long pairwise protocol.
 
-    Aligns pred to gt via Umeyama SE(3), then computes per-frame max(R_err, T_err).
-    Accuracy at t = fraction of frames with combined error < t.
-    AUC = mean accuracy across num_steps thresholds in [0, max_threshold_deg] × 100.
+    Aligns pred to gt via Umeyama Sim3 on camera centers. Computes rotation
+    and translation direction errors across all N*(N-1) directed pairs
+    (both i→j and j→i for symmetry). AUC = mean of cumulative histogram at
+    1° integer bins up to max_threshold_deg.
 
+    Rotation error: SO3 geodesic angle between relative rotations.
+    Translation error: arccos(|cos θ|) between normalized relative translations
+    (scale-free, sign-ambiguity-free).
+
+    Args:
+        pred: (N, 4, 4) predicted cam-to-world poses (t column = camera center)
+        gt:   (N, 4, 4) ground-truth cam-to-world poses
     Returns:
-        {"auc_30": float in [0, 100], "per_frame_err": list[float]}
+        {"auc_30": float in [0, 100], "per_pair_err": list[float]}
     """
-    aligned, _ = umeyama_align(pred, gt)
-
-    R_pred = aligned[:, :3, :3]
+    R_pred = pred[:, :3, :3]
+    t_pred = pred[:, :3, 3]  # camera centers (c2w convention)
     R_gt   = gt[:, :3, :3]
-    t_pred = aligned[:, :3, 3]
-    t_gt   = gt[:, :3, 3]
+    t_gt   = gt[:, :3, 3]    # camera centers (c2w convention)
 
-    # Rotation error: trace-based angle between relative rotations
-    R_rel  = R_pred @ R_gt.transpose(0, 2, 1)
-    traces = np.trace(R_rel, axis1=1, axis2=2)
-    err_R  = np.degrees(np.arccos(np.clip((traces - 1.0) / 2.0, -1.0, 1.0)))
+    # Camera centers = translation column directly (c2w convention)
+    centers_pred = t_pred
+    centers_gt   = t_gt
 
-    # Translation error: angular direction error in degrees (scale-free)
-    # Camera position: c = -R^T @ t (for world-to-cam pose)
-    c_pred = np.einsum("nij,nj->ni", R_pred.transpose(0, 2, 1), -t_pred)
-    c_gt   = np.einsum("nij,nj->ni", R_gt.transpose(0, 2, 1),   -t_gt)
-    c_pred_norm = c_pred / (np.linalg.norm(c_pred, axis=1, keepdims=True) + 1e-10)
-    c_gt_norm   = c_gt   / (np.linalg.norm(c_gt,   axis=1, keepdims=True) + 1e-10)
-    dots  = np.clip((c_pred_norm * c_gt_norm).sum(axis=1), -1.0, 1.0)
-    err_T = np.degrees(np.arccos(dots))
+    # Sim3 alignment: c * R_a @ centers_pred.T + t_a ≈ centers_gt.T
+    c, R_a, t_a = _umeyama_sim3(centers_pred.T, centers_gt.T)
+    t_a = t_a.flatten()
 
-    # Combined error: max of rotation and translation
+    # Apply alignment: R_aligned[i] = R_a @ R_pred[i], t_aligned[i] = c*R_a@t_pred[i] + t_a
+    # For relative rotation R_i^T@R_j, R_a cancels. For relative translation direction,
+    # both R_a and t_a cancel after normalisation — so alignment affects neither metric.
+    R_aligned = np.einsum("ij,njk->nik", R_a, R_pred)         # (N, 3, 3)
+    t_aligned = c * np.einsum("ij,nj->ni", R_a, t_pred) + t_a  # (N, 3)
+
+    # All N*(N-1) directed pairs: forward (i1→i2) + backward (i2→i1)
+    N = len(pred)
+    i1, i2 = np.triu_indices(N, k=1)
+    ii = np.concatenate([i1, i2])
+    jj = np.concatenate([i2, i1])
+
+    # Relative rotation: R_i^T @ R_j  (R_a cancels: (R_a@R_i)^T @ (R_a@R_j) = R_i^T@R_j)
+    R_rel_pred = np.einsum("nij,njk->nik", R_aligned[ii].transpose(0, 2, 1), R_aligned[jj])
+    R_rel_gt   = np.einsum("nij,njk->nik", R_gt[ii].transpose(0, 2, 1),      R_gt[jj])
+
+    # Rotation error: geodesic angle
+    R_err_mat = np.einsum("nij,nkj->nik", R_rel_pred, R_rel_gt)  # R_rel_pred @ R_rel_gt^T
+    traces = np.trace(R_err_mat, axis1=1, axis2=2)
+    err_R = np.degrees(np.arccos(np.clip((traces - 1.0) / 2.0, -1.0, 1.0)))
+
+    # Relative translation direction in camera i's frame: R_i^T @ (C_j - C_i)
+    # For c2w: R^T maps world→camera; t is camera center. t_a cancels in delta.
+    t_rel_pred = np.einsum("nij,nj->ni", R_aligned[ii].transpose(0, 2, 1), t_aligned[jj] - t_aligned[ii])
+    t_rel_gt   = np.einsum("nij,nj->ni", R_gt[ii].transpose(0, 2, 1),      t_gt[jj]      - t_gt[ii])
+
+    # Translation direction error: arccos(|cos θ|) — scale-free, sign-ambiguity-free
+    t_pred_n = t_rel_pred / (np.linalg.norm(t_rel_pred, axis=1, keepdims=True) + 1e-15)
+    t_gt_n   = t_rel_gt   / (np.linalg.norm(t_rel_gt,   axis=1, keepdims=True) + 1e-15)
+    dots  = np.clip(np.sum(t_pred_n * t_gt_n, axis=1), -1.0, 1.0)
+    err_T = np.degrees(np.arccos(np.abs(dots)))
+
     err = np.maximum(err_R, err_T)
 
-    thresholds = np.linspace(0.0, max_threshold_deg, num_steps)
-    accuracies = np.array([np.mean(err < t) for t in thresholds])
-    auc = float(np.mean(accuracies) * 100.0)
+    # Histogram AUC: integer 1° bins [0, max_threshold_deg], cumsum mean
+    max_t = int(max_threshold_deg)
+    histogram, _ = np.histogram(err, bins=np.arange(max_t + 1))
+    normalized = histogram.astype(float) / len(err)
+    auc = float(np.mean(np.cumsum(normalized)) * 100.0)
 
-    return {"auc_30": auc, "per_frame_err": err.tolist()}
+    return {"auc_30": auc, "per_pair_err": err.tolist()}

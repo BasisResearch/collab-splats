@@ -12,11 +12,27 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VGGTSLAM_DIR = REPO_ROOT / "third_party" / "VGGT-SLAM"
 BASELINES_DIR = REPO_ROOT / "evals" / "baselines" / "vggt_slam"
+
+
+def _prepare_image_dir(image_dir: Path) -> Path:
+    """Symlink images into a temp dir as 000000.png, 000001.png, ... (sorted).
+
+    VGGT-SLAM requires sequentially named images; 7-Scenes uses
+    frame-NNNNNN.color.png which causes it to silently fail or produce garbage.
+    """
+    images = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in _IMAGE_EXTS)
+    tmp = Path(tempfile.mkdtemp(prefix="vggtslam_imgs_"))
+    for i, src in enumerate(images):
+        (tmp / f"{i:06d}.png").symlink_to(src.resolve())
+    return tmp
 
 
 def run_vggt_slam(
@@ -43,10 +59,13 @@ def run_vggt_slam(
         )
     py = python or sys.executable
     log_path = output_tum.with_suffix(".vggtslam.txt")
+    # Rename images to sequential 000000.png naming — VGGT-SLAM silently
+    # breaks on non-standard filenames (e.g. frame-000000.color.png).
+    tmp_img_dir = _prepare_image_dir(image_dir)
     cmd = [
         py,
         str(VGGTSLAM_DIR / "main.py"),
-        "--image_folder", str(image_dir),
+        "--image_folder", str(tmp_img_dir),
         "--max_loops", "1",
         "--min_disparity", "50",
         "--conf_threshold", "25",
@@ -57,7 +76,10 @@ def run_vggt_slam(
         "--log_path", str(log_path),
     ]
     output_tum.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(cmd, check=True, cwd=VGGTSLAM_DIR)
+    try:
+        subprocess.run(cmd, check=True, cwd=VGGTSLAM_DIR)
+    finally:
+        shutil.rmtree(tmp_img_dir, ignore_errors=True)
     if not log_path.is_file():
         raise RuntimeError(
             f"VGGT-SLAM finished but log not found at {log_path}. "

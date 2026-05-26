@@ -377,7 +377,7 @@ def main() -> None:
             metrics[cond] = {
                 "ate": ate_translation(pred, dataset.gt_poses),
                 "rpe": rpe(pred, dataset.gt_poses),
-                "auc": auc_at_threshold(pred, dataset.gt_poses),
+                "auc": auc_at_threshold(np.linalg.inv(pred), np.linalg.inv(dataset.gt_poses)),
                 "time_s": time_s,
             }
             trajectories[cond] = pred

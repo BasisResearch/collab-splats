@@ -106,35 +106,26 @@ def compute_rpe(
 def compute_auc(
     pred_path: Path | str,
     gt_path: Path | str,
-    align: str = "sim3",
     max_threshold_deg: float = 30.0,
 ) -> dict:
-    """AUC@max_threshold_deg (CO3Dv2/VGGSfM protocol).
+    """AUC@max_threshold_deg — VGGT-X / VGGT-Long pairwise protocol.
 
-    Loads TUM files (no evo pre-alignment — auc_at_threshold handles its own
-    Umeyama SE(3) alignment internally). Converts to (N,4,4) world-to-cam arrays.
+    Loads TUM files, converts to (N,4,4) world-to-cam arrays, delegates to
+    auc_at_threshold which performs Umeyama Sim3 alignment internally and
+    computes pairwise relative pose errors.
 
-    The `align` param is accepted for API compatibility but not applied here;
-    auc_at_threshold's internal Umeyama handles alignment.
-
-    Returns dict with 'auc_30' (float in [0,100]) and 'per_frame_err' (list[float]).
+    Returns dict with 'auc_30' (float in [0,100]) and 'per_pair_err' (list[float]).
     """
     from collab_splats.pointcloud.loop_closure.eval import auc_at_threshold
 
     traj_ref, traj_est = _load_pair(pred_path, gt_path)
-    # No _apply_alignment here: auc_at_threshold does its own Umeyama alignment.
-    # Pre-aligning with evo then re-aligning inside auc_at_threshold corrupts results.
 
-    # evo stores poses_se3 as list of (4,4) cam-to-world arrays — stack to (N,4,4)
+    # evo stores poses_se3 as list of (4,4) cam-to-world arrays — pass as-is (c2w)
     pred_c2w = np.stack(traj_est.poses_se3).astype(np.float32)
-    gt_c2w = np.stack(traj_ref.poses_se3).astype(np.float32)
+    gt_c2w   = np.stack(traj_ref.poses_se3).astype(np.float32)
 
-    # auc_at_threshold expects world-to-cam poses
-    pred_w2c = np.linalg.inv(pred_c2w)
-    gt_w2c = np.linalg.inv(gt_c2w)
-
-    result = auc_at_threshold(pred_w2c, gt_w2c, max_threshold_deg=max_threshold_deg)
+    result = auc_at_threshold(pred_c2w, gt_c2w, max_threshold_deg=max_threshold_deg)
     return {
-        "auc_30": result["auc_30"],
-        "per_frame_err": result["per_frame_err"],
+        "auc_30":       result["auc_30"],
+        "per_pair_err": result["per_pair_err"],
     }

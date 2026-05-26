@@ -1,11 +1,12 @@
 """cu121 migration verification — Phases 1, 2, 3.
 
 Run:
-    /opt/conda/envs/nerfstudio/bin/python -m pytest tests/test_cu121_migration.py -v
+    /opt/conda/envs/reconstruction/bin/python -m pytest tests/test_cu121_migration.py -v
 
 All tests are hard gates: any failure blocks the migration merge.
 """
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -22,8 +23,8 @@ def test_python_version():
 
 def test_torch_version():
     import torch
-    assert torch.__version__.startswith("2.4"), (
-        f"Expected torch 2.4.x, got {torch.__version__}"
+    assert torch.__version__.startswith("2.5"), (
+        f"Expected torch 2.5.x, got {torch.__version__}"
     )
     assert "cu121" in torch.__version__, (
         f"Expected cu121 build, got {torch.__version__}"
@@ -65,8 +66,8 @@ def test_bae_editable_install():
     import bae
     bae_file = bae.__file__
     assert bae_file is not None
-    assert "/opt/bae" in bae_file, (
-        f"bae not from /opt/bae editable install: {bae_file}"
+    assert "/opt/conda/envs/reconstruction" in bae_file, (
+        f"bae not installed in reconstruction env: {bae_file}"
     )
 
 
@@ -191,22 +192,35 @@ def test_bae_use_cudss():
 
 
 def test_bae_cuda_backend():
-    """bae active with CUDA 12.1 / torch 2.4."""
+    """bae active with CUDA 12.1 / torch 2.5."""
     import pypose  # noqa: F401
     import bae  # noqa: F401
     import torch
-    assert torch.__version__.startswith("2.4"), f"Wrong torch: {torch.__version__}"
+    assert torch.__version__.startswith("2.5"), f"Wrong torch: {torch.__version__}"
     assert "12.1" in torch.version.cuda, f"Wrong CUDA: {torch.version.cuda}"
 
 
 def test_nerfstudio_installed_local():
-    """nerfstudio is the local /workspace/nerfstudio install, not a PyPI package."""
-    import nerfstudio.field_components.activations as _ns_probe
-    ns_file = _ns_probe.__file__
+    """nerfstudio loads from reconstruction conda env (BasisResearch fork via pyproject)."""
+    # tests/nerfstudio dir shadows the real nerfstudio package; temporarily remove it from sys.path
+    tests_dir = Path(__file__).parent
+    orig_path = sys.path.copy()
+    try:
+        # Clear nerfstudio from sys.modules cache to force reimport from site-packages
+        sys.modules.pop("nerfstudio", None)
+        sys.modules.pop("nerfstudio.field_components.activations", None)
+        # Remove tests/ from sys.path to allow site-packages nerfstudio to be found
+        sys.path = [p for p in sys.path if Path(p).resolve() != tests_dir.resolve()]
+        import nerfstudio.field_components.activations as _ns_probe
+        ns_file = _ns_probe.__file__
+    finally:
+        sys.path = orig_path
+
     assert ns_file is not None
-    assert "/workspace/nerfstudio" in ns_file, (
+    assert "/opt/conda/envs/reconstruction" in ns_file, (
         f"nerfstudio loaded from unexpected location: {ns_file}. "
-        "Expected /workspace/nerfstudio — PyPI nerfstudio may have been installed."
+        "Expected site-packages under /opt/conda/envs/reconstruction — "
+        "stale /workspace/nerfstudio or PyPI nerfstudio may be on sys.path."
     )
 
 

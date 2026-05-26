@@ -29,6 +29,21 @@ from .loop_closure.submap import assert_world_to_cam
 __all__ = ["LoopClosure"]
 
 
+def _assemble_precorrection_extrinsics(submaps: list, total_frames: int) -> np.ndarray:
+    """Stitch raw per-submap poses into (total_frames, 4, 4) without PGO correction.
+
+    Uses the same first-writer-wins overlap dedup as dedup_overlap in closure.py.
+    """
+    from .loop_closure.closure import dedup_overlap
+    corrected_raw = {s.submap_id: s.poses for s in submaps}
+    return dedup_overlap(
+        submap_ids=[s.submap_id for s in submaps],
+        submap_starts=[s.frame_start for s in submaps],
+        corrected=corrected_raw,
+        total_frames=total_frames,
+    )
+
+
 ########################################################
 ########## LoopClosure wrapper ########################
 ########################################################
@@ -284,6 +299,7 @@ class LoopClosure:
         self.base._lc_loop_submaps = lc_submaps
         self.base._lc_overlap_frames = O
         self.base._lc_all_matches = all_loop_candidates
+        self.base._lc_precorrection_extrinsics = _assemble_precorrection_extrinsics(submaps, N)
 
         # Merge per-submap world_points and poses into unified outputs
         t0_pg = time.perf_counter()
@@ -295,6 +311,7 @@ class LoopClosure:
             f"  Pose graph: {N} frames, {len(lc_submaps)} loop edges → "
             f"{time.perf_counter() - t0_pg:.1f}s"
         )
+        self.base._lc_corrected_extrinsics = corrected_extrinsics
         self.base.raw_outputs = merge_submap_outputs(
             submaps, corrected_extrinsics,
         )

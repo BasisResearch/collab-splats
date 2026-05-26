@@ -1,0 +1,391 @@
+from pathlib import Path
+import importlib.util
+import shutil
+import subprocess
+import warnings
+from unittest.mock import patch, MagicMock
+
+import numpy as np
+import pycolmap
+import pytest
+import yaml
+from mergedeep import merge
+
+from collab_splats.wrapper.reconstructor import Reconstructor
+
+# Import ConfigLoader directly from config.py to avoid wrapper/__init__.py
+spec = importlib.util.spec_from_file_location(
+    "config", Path(__file__).parent.parent.parent / "collab_splats" / "wrapper" / "config.py"
+)
+config_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(config_module)
+ConfigLoader = config_module.ConfigLoader
+
+
+def test_config_load_base_defaults(tmp_path):
+    base = {
+        "preprocessing": {"frame_selection": "fps", "frame_proportion": 0.1, "min_frames": 300},
+        "pointcloud": {"method": "feedforward", "backend": "vggtx", "bundle_adjustment": False, "loop_closure": False},
+        "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 1024},
+        "mesh": {"enabled": False, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04},
+        "localization": {"enabled": False, "extractor": "dinosalad"},
+        "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
+    }
+    (tmp_path / "base.yaml").write_text(yaml.dump(base))
+    (tmp_path / "datasets").mkdir()
+    ds = {"input_path": "/data/video.mp4", "output_path": "/data/out"}
+    (tmp_path / "datasets" / "test.yaml").write_text(yaml.dump(ds))
+
+    loader = ConfigLoader(tmp_path)
+    config = loader.load("test")
+
+    assert config["input_path"] == "/data/video.mp4"
+    assert config["pointcloud"]["method"] == "feedforward"
+    assert config["pointcloud"]["backend"] == "vggtx"
+    assert config["semantics"]["enabled"] is False
+
+
+def test_config_dataset_override_merges(tmp_path):
+    base = {
+        "pointcloud": {"method": "feedforward", "backend": "vggtx", "bundle_adjustment": False},
+        "semantics": {"enabled": False, "extractor": "dinov2"},
+    }
+    (tmp_path / "base.yaml").write_text(yaml.dump(base))
+    (tmp_path / "datasets").mkdir()
+    ds = {"input_path": "/data/v.mp4", "output_path": "/out", "pointcloud": {"backend": "mapanything", "bundle_adjustment": True}}
+    (tmp_path / "datasets" / "ds.yaml").write_text(yaml.dump(ds))
+
+    loader = ConfigLoader(tmp_path)
+    config = loader.load("ds")
+
+    assert config["pointcloud"]["backend"] == "mapanything"
+    assert config["pointcloud"]["bundle_adjustment"] is True
+    assert config["pointcloud"]["method"] == "feedforward"  # base preserved
+
+
+def test_config_runtime_overrides(tmp_path):
+    base = {"pointcloud": {"method": "feedforward", "backend": "vggtx"}}
+    (tmp_path / "base.yaml").write_text(yaml.dump(base))
+    (tmp_path / "datasets").mkdir()
+    (tmp_path / "datasets" / "ds.yaml").write_text(yaml.dump({"input_path": "/v.mp4", "output_path": "/o"}))
+
+    loader = ConfigLoader(tmp_path)
+    config = loader.load("ds", overrides={"pointcloud": {"backend": "vggt_omega"}})
+
+    assert config["pointcloud"]["backend"] == "vggt_omega"
+
+
+def test_config_missing_dataset_raises(tmp_path):
+    base = {"pointcloud": {"method": "feedforward"}}
+    (tmp_path / "base.yaml").write_text(yaml.dump(base))
+    (tmp_path / "datasets").mkdir()
+
+    loader = ConfigLoader(tmp_path)
+    with pytest.raises(ValueError, match="Dataset config not found"):
+        loader.load("nonexistent")
+
+
+def _make_config(tmp_path, overrides=None):
+    """Build minimal valid config dict for tests."""
+    config = {
+        "input_path": str(tmp_path / "video.mp4"),
+        "output_path": str(tmp_path / "out"),
+        "preprocessing": {"frame_selection": "fps", "frame_proportion": 0.1, "min_frames": 10},
+        "pointcloud": {
+            "method": "feedforward", "backend": "vggtx",
+            "bundle_adjustment": False, "loop_closure": False,
+            "clean": {"enabled": False},
+        },
+        "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
+        "mesh": {"enabled": False, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04},
+        "localization": {"enabled": False},
+        "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
+    }
+    if overrides:
+        config = merge({}, config, overrides)
+    return config
+
+
+def test_reconstructor_init(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    assert rec.config["pointcloud"]["backend"] == "vggtx"
+
+
+def test_reconstructor_validate_missing_input_path(tmp_path):
+    config = _make_config(tmp_path)
+    del config["input_path"]
+    with pytest.raises(ValueError, match="input_path"):
+        Reconstructor.validate_config(config)
+
+
+def test_reconstructor_validate_missing_output_path(tmp_path):
+    config = _make_config(tmp_path)
+    del config["output_path"]
+    with pytest.raises(ValueError, match="output_path"):
+        Reconstructor.validate_config(config)
+
+
+def test_reconstructor_validate_bad_backend(tmp_path):
+    config = _make_config(tmp_path, {"pointcloud": {"method": "feedforward", "backend": "badmodel"}})
+    with pytest.raises(ValueError, match="backend"):
+        Reconstructor.validate_config(config)
+
+
+def test_reconstructor_backend_dir(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    assert rec.backend_dir == tmp_path / "out" / "vggtx"
+
+
+def test_reconstructor_images_dir(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    assert rec.images_dir == tmp_path / "out" / "images"
+
+
+def test_reconstructor_features_dir(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    assert rec.features_dir == tmp_path / "out" / "features"
+
+
+def test_preprocess_skips_if_images_exist(tmp_path):
+    """Skip extraction when images/ already populated and overwrite=False."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    images_dir = rec.images_dir
+    images_dir.mkdir(parents=True)
+    (images_dir / "frame_0001.jpg").touch()
+
+    with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
+        result = rec.preprocess(overwrite=False)
+
+    mock_extract.assert_not_called()
+    assert result == images_dir
+
+
+def test_preprocess_runs_if_images_missing(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+
+    with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
+        mock_extract.return_value = [rec.images_dir / "frame_0001.jpg"]
+        rec.images_dir.mkdir(parents=True)
+        (rec.images_dir / "frame_0001.jpg").touch()
+        result = rec.preprocess(overwrite=False)
+
+    assert result == rec.images_dir
+
+
+def test_preprocess_overwrite_reruns(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    rec.images_dir.mkdir(parents=True)
+    (rec.images_dir / "frame_0001.jpg").touch()
+
+    with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
+        mock_extract.return_value = [rec.images_dir / "frame_0001.jpg"]
+        rec.preprocess(overwrite=True)
+
+    mock_extract.assert_called_once()
+
+
+def _make_mock_pointcloud_result(tmp_path):
+    """Minimal PointcloudResult mock for testing — avoids importing collab_splats.pointcloud."""
+    result = MagicMock()
+    result.reconstruction = pycolmap.Reconstruction()  # empty, no images
+    result.image_paths = [tmp_path / "images" / "frame_0001.jpg"]
+    return result
+
+
+def test_build_pointcloud_skips_if_colmap_exists(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
+    colmap_dir.mkdir(parents=True)
+    (colmap_dir / "cameras.bin").touch()
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+
+    with patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff, \
+         patch.object(rec, "_load_pointcloud_from_disk", return_value=mock_result):
+        rec.build_pointcloud(overwrite=False)
+
+    mock_ff.assert_not_called()
+
+
+def test_build_pointcloud_feedforward_vggtx(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+
+    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=mock_result) as mock_ff:
+        result = rec.build_pointcloud(overwrite=True)
+
+    mock_ff.assert_called_once()
+    assert result is mock_result
+    assert rec.pointcloud is mock_result
+
+
+def test_build_pointcloud_method_dir_routing(tmp_path):
+    """mapanything backend → out/mapanything/."""
+    config = _make_config(tmp_path, {"pointcloud": {"backend": "mapanything"}})
+    rec = Reconstructor(config)
+    assert rec.backend_dir == tmp_path / "out" / "mapanything"
+
+
+def test_build_pointcloud_nerfstudio_dispatches_correctly(tmp_path):
+    """Test that method='nerfstudio' dispatches to _run_nerfstudio."""
+    config = _make_config(tmp_path, {
+        "pointcloud": {"method": "nerfstudio", "backend": "vggtx"},
+        "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
+    })
+    rec = Reconstructor(config)
+
+    with patch.object(rec, "_run_nerfstudio") as mock_ns, \
+         patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff:
+        mock_ns.return_value = _make_mock_pointcloud_result(tmp_path)
+        rec.build_pointcloud(overwrite=True)
+
+    # _run_nerfstudio was called, not _run_feedforward
+    mock_ns.assert_called_once()
+    mock_ff.assert_not_called()
+
+
+def test_extract_semantics_uses_feature_cache(tmp_path):
+    """2D feature extraction skipped when cache exists."""
+    config = _make_config(tmp_path, {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}})
+    rec = Reconstructor(config)
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+    rec.pointcloud = mock_result
+
+    # Pre-populate 2D cache so extraction is skipped
+    cache_path = rec.features_dir / "dinov2" / "dinov2.zarr"
+    cache_path.mkdir(parents=True)
+
+    with patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d, \
+         patch("collab_splats.wrapper.reconstructor._lift_and_save") as mock_lift:
+        mock_lift.return_value = rec.backend_dir / "semantics" / "dinov2"
+        rec.extract_semantics(result=mock_result, overwrite=False)
+
+    mock_2d.assert_not_called()  # cache hit — no extraction
+
+
+def test_extract_semantics_skips_if_lifted_exists(tmp_path):
+    config = _make_config(tmp_path, {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}})
+    rec = Reconstructor(config)
+    lifted_dir = rec.backend_dir / "semantics" / "dinov2"
+    lifted_dir.mkdir(parents=True)
+    (lifted_dir / "features.zarr").mkdir()
+
+    with patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d, \
+         patch("collab_splats.wrapper.reconstructor._lift_and_save") as mock_lift:
+        rec.extract_semantics(overwrite=False)
+
+    mock_2d.assert_not_called()
+    mock_lift.assert_not_called()
+
+
+def test_mesh_skips_if_ply_exists(tmp_path):
+    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}})
+    rec = Reconstructor(config)
+    mesh_path = rec.backend_dir / "mesh" / "mesh.ply"
+    mesh_path.parent.mkdir(parents=True)
+    mesh_path.touch()
+
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
+        result = rec.mesh(overwrite=False)
+
+    mock_mesh.assert_not_called()
+    assert result == mesh_path
+
+
+def test_mesh_runs_tsdf(tmp_path):
+    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04}})
+    rec = Reconstructor(config)
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+    rec.pointcloud = mock_result
+
+    # feedforward.zarr must exist for the pre-flight check in mesh()
+    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
+        mock_mesh.return_value = rec.backend_dir / "mesh" / "mesh.ply"
+        result = rec.mesh(result=mock_result, overwrite=True)
+
+    mock_mesh.assert_called_once()
+
+
+def test_run_pipeline_calls_stages_in_order(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    calls = []
+
+    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.images_dir
+    rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
+    rec.mesh = lambda result=None, overwrite=False: calls.append("mesh") or tmp_path
+
+    rec.run_pipeline(stages=["preprocess", "pointcloud", "semantics", "mesh"])
+    assert calls == ["preprocess", "pointcloud", "semantics", "mesh"]
+
+
+def test_run_pipeline_subset(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    calls = []
+
+    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.images_dir
+    rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+
+    rec.run_pipeline(stages=["preprocess", "pointcloud"])
+    assert calls == ["preprocess", "pointcloud"]
+    assert "semantics" not in calls
+    assert "mesh" not in calls
+
+
+def test_run_pipeline_dep_validation(tmp_path):
+    """semantics requires pointcloud to have run first."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+
+    with pytest.raises(ValueError, match="pointcloud"):
+        rec.run_pipeline(stages=["semantics"])
+
+
+def test_run_pipeline_default_uses_config_enabled(tmp_path):
+    config = _make_config(tmp_path, {
+        "semantics": {"enabled": True, "extractor": "dinov2"},
+        "mesh": {"enabled": False},
+    })
+    rec = Reconstructor(config)
+    calls = []
+
+    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.images_dir
+    rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
+
+    rec.run_pipeline()  # no stages arg — uses config
+    assert "semantics" in calls
+    assert "mesh" not in calls
+
+
+def test_splatter_emits_deprecation_warning(tmp_path):
+    # splatter.py has a hard top-level nerfstudio import; skip if import fails
+    try:
+        from collab_splats.wrapper.splatter import Splatter
+    except (ImportError, ModuleNotFoundError):
+        pytest.skip("nerfstudio not importable in this env")
+    config = {
+        "file_path": str(tmp_path / "video.mp4"),
+        "method": "rade-features",
+    }
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        try:
+            Splatter(config)
+        except Exception:
+            pass  # Splatter init may fail due to missing deps; warning should still fire
+    assert any("deprecated" in str(warning.message).lower() for warning in w), \
+        f"No deprecation warning found in: {[str(x.message) for x in w]}"
+    assert any(issubclass(warning.category, DeprecationWarning) for warning in w)

@@ -3,6 +3,7 @@ import glob
 import json
 import pickle
 import subprocess
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, Literal, TypedDict, Set, Dict, Any, Union, List
@@ -68,6 +69,12 @@ class Splatter:
         Args:
             config: Configuration dictionary specifying environment parameters
         """
+        warnings.warn(
+            "Splatter is deprecated and will be removed in a future release. "
+            "Use collab_splats.wrapper.Reconstructor instead with pointcloud.method='nerfstudio'.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Validate config before initialization
         validated_config = self.validate_config(config)
         self.config: Dict[str, Any] = dict(validated_config)

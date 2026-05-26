@@ -1,71 +1,91 @@
-"""Subprocess wrapper around VGGT-SLAM's ``main.py`` (BLOCKED until Py3.11).
+"""Subprocess wrapper around VGGT-SLAM's main.py.
 
-VGGT-SLAM (MIT-SPARK) targets the SL(4) manifold optimizer in GTSAM and pins
-Python 3.11. Our nerfstudio env runs Python 3.10. Until that env is upgraded,
-this runner refuses to execute and instead raises :class:`EnvBlocked` with the
-exact remediation steps. Phase-2 (``evals/eval_compare.py``) discovers
-``evals/baselines/vggt_slam/<seq>.pending`` sentinel files and reports the
-method as ``"status": "pending"`` instead of running this stub.
+Runs VGGT-SLAM using the current Python interpreter (reconstruction env,
+Python 3.11 — satisfies VGGT-SLAM's SL(4)/GTSAM requirement).
 
-When the env upgrade lands, replace the body of :func:`run_vggt_slam` with a
-real subprocess invocation modeled on
-``third_party/VGGT-SLAM/evals/eval_tum.sh``: ``python main.py --image_folder
-<rgb_dir> --max_loops 1 --log_results --log_path <path>``. VGGT-SLAM writes
-TUM format directly (``map.write_poses_to_file(kitti_format=False)``), so the
-adapter just needs to copy/symlink that file into the results dir.
+On success, copies the output TUM file to output_tum and removes the
+corresponding .pending sentinel from evals/baselines/vggt_slam/ if present.
 """
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
+import sys
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VGGTSLAM_DIR = REPO_ROOT / "third_party" / "VGGT-SLAM"
-
-
-class EnvBlocked(RuntimeError):
-    """VGGT-SLAM cannot run because the project env lacks Python 3.11 / SL(4)."""
+BASELINES_DIR = REPO_ROOT / "evals" / "baselines" / "vggt_slam"
 
 
 def run_vggt_slam(
     image_dir: Path,
     output_tum: Path,
+    submap_size: int = 16,
     python: str | None = None,
 ) -> Path:
-    """Stub: always raises :class:`EnvBlocked` until the env is upgraded.
+    """Run VGGT-SLAM on image_dir; write trajectory to output_tum.
 
-    Parameters mirror :func:`evals.runners.run_vggt_long.run_vggt_long` so the
-    real implementation can drop in without changing call sites.
+    Args:
+        image_dir: Directory of input images (sorted, no GT required).
+        output_tum: Destination path for the TUM trajectory file.
+        submap_size: VGGT-SLAM submap window size (default 16).
+        python: Python binary to use. Defaults to sys.executable.
+
+    Returns:
+        output_tum path on success.
     """
-    raise EnvBlocked(
-        "VGGT-SLAM requires Python 3.11 + SL(4) manifold support (GTSAM). "
-        "Steps to unblock:\n"
-        "  1. conda create -n vggt-slam python=3.11\n"
-        "  2. conda activate vggt-slam\n"
-        "  3. cd third_party/VGGT-SLAM && pip install -e .\n"
-        "  4. Replace the body of run_vggt_slam with:\n"
-        "       cmd = [python, str(VGGTSLAM_DIR / 'main.py'),\n"
-        "              '--image_folder', str(image_dir),\n"
-        "              '--max_loops', '1', '--log_results',\n"
-        "              '--log_path', str(output_tum)]\n"
-        "       subprocess.run(cmd, check=True, cwd=VGGTSLAM_DIR)\n"
-        "  5. Drop the corresponding .pending sentinel under "
-        "evals/baselines/vggt_slam/.\n"
-        f"Inputs were image_dir={image_dir}, output_tum={output_tum}, python={python}."
-    )
+    if not VGGTSLAM_DIR.is_dir():
+        raise FileNotFoundError(
+            f"VGGT-SLAM submodule not found at {VGGTSLAM_DIR}. "
+            "Run: git submodule update --init third_party/VGGT-SLAM"
+        )
+    py = python or sys.executable
+    log_path = output_tum.with_suffix(".vggtslam.txt")
+    cmd = [
+        py,
+        str(VGGTSLAM_DIR / "main.py"),
+        "--image_folder", str(image_dir),
+        "--max_loops", "1",
+        "--min_disparity", "50",
+        "--conf_threshold", "25",
+        "--lc_thres", "0.95",
+        "--submap_size", str(submap_size),
+        "--log_results",
+        "--skip_dense_log",
+        "--log_path", str(log_path),
+    ]
+    output_tum.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(cmd, check=True, cwd=VGGTSLAM_DIR)
+    if not log_path.is_file():
+        raise RuntimeError(
+            f"VGGT-SLAM finished but log not found at {log_path}. "
+            "Check --log_path handling in VGGT-SLAM main.py."
+        )
+    shutil.copy2(log_path, output_tum)
+    # Remove .pending sentinel for this sequence if present
+    results_seq = output_tum.parent.name  # e.g. "chess_seq01"
+    sentinel = BASELINES_DIR / f"{results_seq}.pending"
+    if sentinel.is_file():
+        sentinel.unlink()
+        print(f"  Removed sentinel: {sentinel}")
+    return output_tum
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--image_dir", type=Path, required=True)
-    ap.add_argument("--output", type=Path, required=True)
-    ap.add_argument("--python", type=str, default=None)
+    ap.add_argument("--image_dir", type=Path, required=True,
+                    help="Directory of input images for VGGT-SLAM")
+    ap.add_argument("--output", type=Path, required=True,
+                    help="Output TUM trajectory path")
+    ap.add_argument("--submap_size", type=int, default=16,
+                    help="VGGT-SLAM submap size (default 16)")
+    ap.add_argument("--python", type=str, default=None,
+                    help="Python binary (default: sys.executable)")
     args = ap.parse_args()
-    try:
-        run_vggt_slam(args.image_dir, args.output, args.python)
-    except EnvBlocked as e:
-        raise SystemExit(str(e)) from None
+    run_vggt_slam(args.image_dir, args.output, submap_size=args.submap_size, python=args.python)
+    print(f"Done → {args.output}")
 
 
 if __name__ == "__main__":

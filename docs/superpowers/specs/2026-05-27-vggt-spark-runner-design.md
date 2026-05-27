@@ -1,14 +1,36 @@
-# VGGT-SPARK Integration for run_vggt_slam_lc.py
+# VGGT-SPARK Integration + Full Parity Comparison Suite
 
-**Amends:** `2026-05-27-vggt-slam-parity-verification-design.md` (Phase 1 runner only)  
+**Amends:** `2026-05-27-vggt-slam-parity-verification-design.md` (Phase 1 runner) and  
+`2026-05-27-parity-analysis-design.md` (analysis methodology)  
 **Status:** Approved — supersedes the `_VGGTCompatWrapper` approach
+
+---
+
+## History
+
+Our LC pipeline (`collab_splats/pointcloud/loop_closure/closure.py`) was built to mirror
+VGGT-SLAM's `vggt_slam/solver.py`. Three algorithmic bugs were fixed along the way:
+H_w inter-submap formula, pose extraction method, and confidence filtering
+(see `2026-05-26-lc-vggtslam-parity-fixes.md`). However outputs were only compared
+against GT — never directly against a live VGGT-SLAM run.
+
+`2026-05-27-vggt-slam-parity-verification-design.md` defined a two-phase harness
+(ATE comparison + internal state diff) and produced runs 1 & 2 (solver dumps).
+Run 3 (`run_vggt_slam_lc.py`) crashed with
+`TypeError: VGGT.forward() got an unexpected keyword argument 'compute_similarity'`
+and was patched with `_VGGTCompatWrapper` (image_match_ratio=1.0 stub) — which silences
+the crash but forces every LC candidate to pass, producing an invalid baseline TUM.
+
+This spec fixes run 3 via VGGT-SPARK and defines the full comparison suite to execute
+once a valid `vggt_slam_lc.tum` exists.
 
 ---
 
 ## Goal
 
 Produce a valid `evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum` by running the
-MIT-SPARK VGGT-SLAM pipeline with a model that natively supports `compute_similarity=True`.
+MIT-SPARK VGGT-SLAM pipeline with a model that natively supports `compute_similarity=True`,
+then run all comparisons to characterise parity between our LC implementation and theirs.
 
 ---
 
@@ -137,24 +159,103 @@ This deviation is intentional and must not be "fixed" back to 50.
 
 ---
 
-## Execution
+## Full Comparison Suite
 
-After setup:
+All five comparisons run after `vggt_slam_lc.tum` is produced. They answer different
+questions about where our LC diverges from VGGT-SLAM's.
+
+### Comparison 1 — ATE trajectory comparison (Phase 1)
+
+**Script:** `diagnose_lc_parity.py`  
+**Question:** How much does LC help, and how much gap remains vs VGGT-SLAM?
+
+| Metric | Formula | Interpretation |
+|--------|---------|----------------|
+| LC algorithm contribution | `our_baseline_ATE − our_lc_ATE` | improvement our LC delivers over raw feedforward |
+| Model quality gap | `our_lc_ATE − vggt_slam_lc_ATE` | residual gap attributable to VGGT-X vs VGGT-1B |
+| Parity gap | `our_lc_ATE − vggt_slam_lc_ATE` split by frame region | identifies if gap is uniform or concentrated in LC-corrected windows |
+
+Known values: `our_baseline = 0.3184 m`. `our_lc` and `vggt_slam_lc` TBD from run.
+
+If LC algorithm contribution ≈ 0, LC is not firing or not correcting effectively — debug
+loop detection threshold or pose graph optimizer. If model quality gap dominates, our LC
+algorithm is correct but limited by VGGT-X vs VGGT-1B feature quality.
+
+### Comparison 2 — Internal solver state diff (Phase 2)
+
+**Script:** `compare_solver_internals.py` over `vggt_slam_internals.json` + `our_internals.json`  
+**Question:** At each submap boundary, do our intermediate world poses match VGGT-SLAM's?
+
+Per-boundary metrics:
+
+| Metric | Formula | Interpretation |
+|--------|---------|----------------|
+| `delta_T` | L2 distance of translation component of boundary pose | model-driven divergence (different model → different raw poses) |
+| `delta_H_w` | Frobenius norm of H_w diff after LC correction | combined model + solver divergence |
+| attribution ratio | `delta_H_w / (delta_T + 1e-6)` | ratio ≈ 1 → model drives the gap; ratio >> 2 → solver logic gap |
+
+Flag threshold: `delta_H_w > 0.1` = high divergence regardless of attribution.  
+Parity target: `delta_H_w < 0.05` for all boundaries.
+
+If ratio >> 2 at a boundary: inspect `closure.py` `run_pose_graph_optimization` vs
+`solver.py` around the same submap index. Prior known bugs: H_w formula
+(inter-submap scale), pose extraction (`decompose_camera` vs direct), confidence filtering.
+
+### Comparison 3 — Loop closure detection agreement
+
+**Question:** Do both systems detect the same loop closure candidates on chess_seq01?
+
+Extracted from solver logs / internals JSON:
+- Total loop count: ours vs VGGT-SLAM
+- Which submap pairs were matched
+- `image_match_ratio` values (ours via `_extract_qkv_and_poses`; theirs via VGGT-SPARK)
+
+If loop counts differ significantly: either retrieval (salad-based VLAD similarity threshold)
+or disparity gating is causing different candidate sets. Since both use `min_disparity=0`
+and `lc_thres=0.95`, differences point to retrieval vector quality.
+
+### Comparison 4 — Per-frame ATE before/after LC window
+
+**Question:** Does LC correction localise improvement to the right frames?
+
+From `diagnose_lc_parity.py` per-frame output: plot ATE per frame for
+`our_baseline` / `our_lc` / `vggt_slam_lc`. Expected: ATE drops sharply in the submap
+containing the corrected loop and stays lower for remaining submaps. If correction is
+global (all frames improve equally), the pose graph propagation is working. If only
+the LC submap improves, propagation may not be spreading through the graph.
+
+### Comparison 5 — Null hypothesis check (no-LC baseline)
+
+**Question:** Does VGGT-SLAM without LC match our baseline?
+
+`evals/baselines/vggt_slam/chess_seq01/vggt_slam_dense_nolc.tum` exists (run 1 ✅).
+Compare its ATE to `our_baseline = 0.3184 m`. If VGGT-SLAM no-LC ATE >> ours, VGGT-X
+is simply a stronger model. If approximately equal, differences in LC results are
+algorithm-driven.
+
+---
+
+## Execution Order
+
+GPU runs are sequential (OOM risk if parallel). All use `reconstruction` env.
 
 ```bash
 PY=/opt/conda/envs/reconstruction/bin/python
 
-$PY evals/runners/run_vggt_slam_lc.py \
-  --seq_dir data/7scenes/chess/seq-01 \
-  --out_tum evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum \
-  --max_frames 200
-```
+# ── Step 1: Run 3 — VGGT-SLAM with LC (GPU, ~10-15 min in tmux) ──────────────
+tmux new-session -d -s vggt_slam_run3
+tmux send-keys -t vggt_slam_run3 \
+  "$PY evals/runners/run_vggt_slam_lc.py \
+    --seq_dir data/7scenes/chess/seq-01 \
+    --out_tum evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum \
+    --max_frames 200 2>&1 | tee /tmp/run3.log; echo RUN3_DONE" Enter
 
-Produces `vggt_slam_lc.tum`. Then proceed with CPU analysis per handoff doc:
+# ── Step 2: CPU analysis (after run 3 completes) ──────────────────────────────
 
-```bash
+# Comparison 2: internal boundary diff table
 $PY evals/runners/compare_solver_internals.py
 
+# Comparisons 1 + 3 + 4: ATE table, per-frame, loop detection
 $PY evals/runners/diagnose_lc_parity.py \
   --seq_dir data/7scenes/chess/seq-01 \
   --vggt_slam_tum evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum \
@@ -162,11 +263,32 @@ $PY evals/runners/diagnose_lc_parity.py \
   --max_frames 200 --submap_size 16
 ```
 
+Runs 1 & 2 (solver dumps) are already complete — do not re-run.
+
+---
+
+## Output Artefacts
+
+| File | Status | Used by |
+|------|--------|---------|
+| `evals/results/parity_harness/vggt_slam_internals.json` | ✅ done | Comparison 2 |
+| `evals/results/parity_harness/our_internals.json` | ✅ done | Comparison 2 |
+| `evals/results/parity_harness/our_lc.tum` | ✅ done | Comparisons 1, 4 |
+| `evals/baselines/vggt_slam/chess_seq01/vggt_slam_dense_nolc.tum` | ✅ done | Comparison 5 |
+| `evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum` | ❌ blocked (run 3) | Comparisons 1, 3, 4 |
+| `evals/results/parity_harness/boundary_diff.json` | ❌ depends on above | Comparison 2 |
+
 ---
 
 ## Success Criteria
 
-- `run_vggt_slam_lc.py` completes without `TypeError: compute_similarity`
-- `vggt_slam_lc.tum` exists with ~200 timestamp entries
-- Loop closure count > 0 in solver log (confirms LC was triggered and passed real similarity gate)
-- `image_match_ratio` values in solver output are < 1.0 (confirms real computation, not stub)
+| Check | Pass condition |
+|-------|----------------|
+| Run 3 completes | No `TypeError: compute_similarity`; TUM has ~200 entries |
+| LC triggered | Solver log: loop closure count > 0; `image_match_ratio` values < 1.0 |
+| Comparison 2 (boundary diff) | `delta_H_w < 0.05` for all boundaries = parity achieved |
+| Comparison 1 (ATE) | `our_lc_ATE < our_baseline_ATE` (LC helps); gap to `vggt_slam_lc` attributed |
+| Comparison 5 (null hypothesis) | VGGT-SLAM no-LC ATE documented and compared to `our_baseline` |
+
+Boundaries with `delta_H_w > 0.1` are flagged for follow-up investigation in
+`worklog/notes/2026-05-27-vggt-slam-parity-analysis.md`.

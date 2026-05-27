@@ -107,13 +107,12 @@ def run_dump(
 
         # creator.outputs proxies to base.outputs; extrinsics is (N, 4, 4) w2c
         final_poses = creator.outputs.extrinsics
+        # Add sequential index to each captured boundary entry
+        for i, entry in enumerate(_debug_out):
+            entry["boundary_idx"] = i
     finally:
         # Always restore original to avoid polluting other code in the same process
         _wrappers_mod.run_pose_graph_optimization = _orig_rpgo
-
-    # Annotate each boundary entry with its sequential index
-    for i, entry in enumerate(_debug_out):
-        entry["boundary_idx"] = i
 
     out_json.parent.mkdir(parents=True, exist_ok=True)
     payload = {

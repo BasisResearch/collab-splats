@@ -16,7 +16,8 @@ import torch
 from vggt.models.vggt import VGGT
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from vggt.utils.helper import randomly_limit_trues
-from vggt.utils.load_fn import load_and_preprocess_images_square, load_and_preprocess_images_ratio
+from PIL import Image as PILImage
+from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 from ..postproc import run_global_alignment
@@ -26,10 +27,52 @@ from collab_splats.utils.geometry import extrinsics_to_homogeneous
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# VGGT-X processes images at a fixed square resolution. load_and_preprocess_images_ratio
-# crops/pads to this size while preserving aspect ratio; original dimensions are stored
-# in original_coords for later rescaling.
+# VGGT-X target inference resolution (width, px). Matches upstream training default.
+# load_and_preprocess_images(mode="crop") resizes width → this value, then center-crops
+# height to the same value when height > target_size.
 VGGTX_IMG_LOAD_RESOLUTION: int = 518
+
+
+# ── Preprocessing helpers ──────────────────────────────────────────────────────
+
+def _compute_vggtx_crop_coords(
+    image_paths: list[Path], target_size: int = VGGTX_IMG_LOAD_RESOLUTION
+) -> np.ndarray:
+    """Compute original_coords for VGGTX upstream crop mode.
+
+    Upstream ``load_and_preprocess_images(mode="crop")`` resizes width→target_size then
+    center-crops height to target_size when height > target_size.  This function computes
+    the crop window in original-image pixel space so downstream consumers (TSDF RGB loader,
+    COLMAP rescale) can invert the transform.
+
+    Returns:
+        (N, 6) float32 array ``[tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]`` per image.
+        cr_x always equals orig_w (full width used).
+        For landscape images (no height crop): tl_y=0, cr_y=orig_h.
+        For portrait images (height cropped): tl_y and cr_y mark the kept strip.
+    """
+    coords = []
+    for p in image_paths:
+        with PILImage.open(p) as img:
+            orig_w, orig_h = img.size  # PIL: (width, height)
+
+        # Upstream: resize width → target_size, maintain AR; round height to div-by-14
+        scale = target_size / orig_w
+        new_h_raw = orig_h * scale
+        new_h = round(new_h_raw / 14) * 14  # divisible-by-14 rounding used upstream
+
+        if new_h > target_size:
+            # Height crop applied — map crop boundaries back to original-image pixels
+            start_y_resized = (new_h - target_size) // 2
+            tl_y = start_y_resized / scale
+            cr_y = (start_y_resized + target_size) / scale
+        else:
+            tl_y = 0.0
+            cr_y = float(orig_h)
+
+        coords.append([0.0, tl_y, float(orig_w), cr_y, float(orig_w), float(orig_h)])
+
+    return np.array(coords, dtype=np.float32)
 
 
 # ── Inference utilities ────────────────────────────────────────────────────────
@@ -118,10 +161,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
         conf_threshold:       Depth confidence percentile cutoff (0–100).
                               Points whose confidence is below this percentile
                               are discarded.  35.0 = keep the top 65 %.
-        resize_mode:          Preprocessing mode.
-                              ``"max_size"`` (default): resize longest side to
-                              ``VGGTX_IMG_LOAD_RESOLUTION`` (518), preserving AR.
-                              ``"square"``: center-crop + resize to 518×518.
     """
 
     camera_model: str = "SIMPLE_PINHOLE"
@@ -129,13 +168,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
     use_global_alignment: bool = False
     chunk_size: int = 256
     conf_threshold: float = 35.0
-    resize_mode: str = "max_size"
-
-    def __post_init__(self) -> None:
-        if self.resize_mode not in ("max_size", "square"):
-            raise ValueError(
-                f"resize_mode must be 'max_size' or 'square', got {self.resize_mode!r}"
-            )
 
     def _load_model(self, device: str) -> Any:
         """Load VGGT-X from HuggingFace and move to device.
@@ -161,20 +193,19 @@ class VGGTXCreator(BaseFeedforwardCreator):
         return model
 
     def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]:
-        """Load and preprocess images from directory into VGGT-X input format.
+        """Load and preprocess images using upstream VGGT crop mode.
 
-        Sorts images by filename, resizes to VGGTX_IMG_LOAD_RESOLUTION preserving
-        aspect ratio (``resize_mode='max_size'``) or square-cropping
-        (``resize_mode='square'``).  Stores original dimensions in
-        ``original_coords`` for later rescaling.
+        Resizes width to 518px then center-crops height to 518px when height > 518px.
+        Matches the training preprocessing used by VGGT and VGGT-SLAM/SPARK.
+        Stores the crop window in original-image pixel coordinates in ``original_coords``
+        so the TSDF RGB loader and COLMAP rescale can invert the transform.
 
         Args:
             image_dir: Directory containing ``.png``/``.jpg``/``.jpeg`` images.
 
         Returns:
-            (images, image_paths, original_coords) where images is an (N, 3, H, W)
-            float tensor and original_coords is an (N, 6) float32 array of
-            [crop_start_x, crop_start_y, scale_x, scale_y, orig_W, orig_H].
+            (images, image_paths, original_coords) where original_coords is (N, 6)
+            float32 ``[0, tl_y, orig_w, br_y, orig_w, orig_h]`` in original-image pixels.
 
         Raises:
             FileNotFoundError: If no supported images are found in image_dir.
@@ -188,18 +219,14 @@ class VGGTXCreator(BaseFeedforwardCreator):
         if not image_paths:
             raise FileNotFoundError(f"No images found in {image_dir}")
 
-        # Load and preprocess images to model resolution; store original crop coordinates
-        image_names = [str(p) for p in image_paths]
-        if self.resize_mode == "max_size":
-            images, original_coords = load_and_preprocess_images_ratio(
-                image_names, VGGTX_IMG_LOAD_RESOLUTION
-            )
-        else:
-            images, original_coords = load_and_preprocess_images_square(
-                image_names, VGGTX_IMG_LOAD_RESOLUTION
-            )
+        # Compute crop window in original-image pixel space for downstream consumers
+        original_coords = _compute_vggtx_crop_coords(image_paths, VGGTX_IMG_LOAD_RESOLUTION)
 
-        return images, image_paths, original_coords.cpu().float().numpy()
+        # Load and preprocess using upstream crop mode — matches VGGT training default
+        image_names = [str(p) for p in image_paths]
+        images = load_and_preprocess_images(image_names, mode="crop")
+
+        return images, image_paths, original_coords
 
     def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
         """Run VGGT-X on the preprocessed image tensor; return raw predictions dict.
@@ -211,7 +238,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
         Returns:
             dict with keys: ``images``, ``extrinsic``, ``intrinsics``,
-            ``intrinsics_downsampled``, ``depth``, ``depth_conf``.
+            ``intrinsics_downsampled`` (alias of intrinsics), ``depth``, ``depth_conf``.
         """
         images = views
         device = next(model.parameters()).device
@@ -230,7 +257,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
         # at line 270 and token assembly happens before autocast can override it.
         images = images.to(device, dtype=dtype)
 
-        width, height = self.original_coords[0, -2:]
         image_shape = images.shape[-2:]
 
         # bf16/f16 autocast scoped to model forward only; downstream numpy ops need float32.
@@ -238,26 +264,23 @@ class VGGTXCreator(BaseFeedforwardCreator):
             with torch.autocast(device_type, dtype=dtype):
                 predictions = model(images.unsqueeze(0))
 
-        # Decode pose encoding at model resolution (for BA) and original resolution
-        extrinsic_ds, intrinsic_ds = pose_encoding_to_extri_intri(
+        # Decode pose encoding at model resolution only — matches VGGT-SLAM upstream.
+        # Original-res decode removed: it fed wrong K to the BA wrapper via raw["intrinsics"].
+        extrinsic_t, intrinsic_t = pose_encoding_to_extri_intri(
             predictions["pose_enc"], image_shape
-        )
-        extrinsic, intrinsic = pose_encoding_to_extri_intri(
-            predictions["pose_enc"], [width, height]
         )
 
         # Move predictions to CPU float32 for downstream processing
-        extrinsic = extrinsic.cpu().float().numpy().squeeze(0)
-        intrinsic = intrinsic.cpu().float().numpy().squeeze(0)
-        intrinsic_downsampled = intrinsic_ds.cpu().float().numpy().squeeze(0)
-        depth_map = predictions["depth"].squeeze(0).cpu().float().numpy()
+        extrinsic  = extrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 4)
+        intrinsic  = intrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 3) model-res
+        depth_map  = predictions["depth"].squeeze(0).cpu().float().numpy()
         depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy()
 
         return {
             "images": images,
             "extrinsic": extrinsic,
-            "intrinsics": intrinsic,
-            "intrinsics_downsampled": intrinsic_downsampled,
+            "intrinsics": intrinsic,             # model-res K
+            "intrinsics_downsampled": intrinsic, # alias — _raw_to_world_points expects this key
             "depth": depth_map,
             "depth_conf": depth_conf,
         }

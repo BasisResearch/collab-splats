@@ -226,13 +226,17 @@ class FeedforwardResult:
         )
 
     def reproject(self) -> "FeedforwardResult":
-        """Re-project points under current extrinsics using stored source pixels and depth."""
+        """Re-project points under current extrinsics using stored source pixels and depth.
+
+        ``intrinsics``, ``depth``, and ``pixel_indices`` all live in model-resolution
+        space — no scaling required.
+        """
         if self.depth is None or self.pixel_indices is None:
             raise ValueError(
                 "reproject() requires depth and pixel_indices; load via load_zarr() "
                 "or ensure the creator's _postprocess populated both fields."
             )
-        # Reproject stored source pixels under new extrinsics — deterministic,
+        # Reproject stored source pixels under current extrinsics — deterministic,
         # point set stays index-aligned with colors and features.
         pts3d = reproject_pixels(
             self.depth,

@@ -446,7 +446,8 @@ def _feedforward_to_tsdf_inputs(
     if result.world_points is None:
         raise ValueError(
             "result.world_points is None. Access creator.outputs after reconstruct() — "
-            "MapAnythingCreator and VGGTXCreator both populate world_points during _postprocess()."
+            "MapAnythingCreator, VGGTXCreator, and VGGTOmegaCreator all populate "
+            "world_points during _postprocess()."
         )
 
     world_points = result.world_points          # (N, H, W, 3)
@@ -461,7 +462,14 @@ def _feedforward_to_tsdf_inputs(
 
     rgbs = np.empty((N, H, W, 3), dtype=np.float32)
     for i, path in enumerate(result.image_paths):
-        img = PILImage.open(path).convert("RGB").resize((W, H), PILImage.BILINEAR)
+        img = PILImage.open(path).convert("RGB")
+        if result.original_coords is not None:
+            tl_x, tl_y, cr_x, cr_y = result.original_coords[i, :4]
+            # VGGTOmega and VGGTXCreator crop-mode store original-image-pixel coords;
+            # cr_x = orig_w > model_W signals a crop must be applied before resize.
+            if cr_x > W + 1 or cr_y > H + 1:
+                img = img.crop((float(tl_x), float(tl_y), float(cr_x), float(cr_y)))
+        img = img.resize((W, H), PILImage.BILINEAR)
         rgbs[i] = np.asarray(img, dtype=np.float32) / 255.0
 
     c2w = invert_poses(result.extrinsics).astype(np.float32)

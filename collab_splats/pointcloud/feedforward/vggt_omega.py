@@ -186,7 +186,6 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         """Run VGGT-Omega on the preprocessed image tensor; return raw predictions dict."""
         device = next(model.parameters()).device
         image_shape = views.shape[-2:]  # (H_model, W_model)
-        orig_w, orig_h = self.original_coords[0, -2:]
 
         # Move images to model device; VGGTOmega adds the batch dim internally
         images = views.to(device)
@@ -195,31 +194,30 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         with torch.no_grad():
             predictions = model(images)
 
-        # Decode poses at model resolution (for BA track extraction)
-        ext_ds, intr_ds = encoding_to_camera(predictions["pose_enc"], image_shape)
-        # Decode poses at original image resolution (for final COLMAP output)
-        ext, intr = encoding_to_camera(predictions["pose_enc"], (int(orig_h), int(orig_w)))
+        # Decode poses at model resolution only — matches upstream demo_gradio.run_model.
+        # Original-res decode removed: no downstream consumer requires it and it was the
+        # root cause of cx > model_W in result.intrinsics.
+        ext, intr = encoding_to_camera(predictions["pose_enc"], image_shape)
 
         # Move to CPU float32 for downstream numpy ops; squeeze the batch dim (always 1)
-        extrinsic = ext.cpu().float().numpy().squeeze(0)         # (N, 3, 4)
-        intrinsic = intr.cpu().float().numpy().squeeze(0)        # (N, 3, 3)
-        intrinsic_ds = intr_ds.cpu().float().numpy().squeeze(0)  # (N, 3, 3)
-        depth = predictions["depth"].squeeze(0).cpu().float().numpy()       # (N, H, W)
-        depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy()  # (N, H, W)
+        extrinsic = ext.cpu().float().numpy().squeeze(0)   # (N, 3, 4)
+        intrinsic  = intr.cpu().float().numpy().squeeze(0) # (N, 3, 3) at model-res
+        depth      = predictions["depth"].squeeze(0).cpu().float().numpy()      # (N, H, W, 1)
+        depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy() # (N, H, W)
 
         return {
             "images": images,
             "extrinsic": extrinsic,
-            "intrinsics": intrinsic,
-            "intrinsics_downsampled": intrinsic_ds,
+            "intrinsics": intrinsic,             # model-res K
+            "intrinsics_downsampled": intrinsic, # alias — _raw_to_world_points expects this key
             "depth": depth,
             "depth_conf": depth_conf,
         }
 
     def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
         """Unproject depth maps to world-space points and build FeedforwardResult."""
-        extrinsic = raw_outputs["extrinsic"]   # (N, 3, 4) at original resolution
-        intrinsic = raw_outputs["intrinsics"]  # (N, 3, 3) at original resolution
+        extrinsic = raw_outputs["extrinsic"]   # (N, 3, 4) at model resolution
+        intrinsic = raw_outputs["intrinsics"]  # (N, 3, 3) at model resolution
 
         # Unproject depth maps to filtered world-space points and per-point colors
         pts3d, colors, pixel_indices = unproject_and_filter_points(

@@ -301,6 +301,12 @@ def main() -> None:
         help="Path to the VGGT-SLAM TUM trajectory file (c2w, 8-col format).",
     )
     parser.add_argument(
+        "--ours_tum",
+        default=None,
+        help="Optional TUM trajectory file for our LC pipeline output (c2w, 8-col format). "
+             "When absent, identity placeholder is used.",
+    )
+    parser.add_argument(
         "--max_frames",
         type=int,
         default=500,
@@ -314,11 +320,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    ours_w2c: np.ndarray | None = None
+    if args.ours_tum is not None:
+        ours_w2c = _load_tum(args.ours_tum)
+
     diagnose(
         seq_dir=args.seq_dir,
         vggt_slam_tum=args.vggt_slam_tum,
         max_frames=args.max_frames,
         submap_size=args.submap_size,
+        ours_w2c=ours_w2c,
     )
 
 

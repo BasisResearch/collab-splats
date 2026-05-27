@@ -91,7 +91,7 @@ def run_vggt_slam_lc(
     _spark_similarity_log: list[float] = []
 
     def _capture_similarity(_module: torch.nn.Module, _inp: tuple, output: dict) -> None:
-        if isinstance(output, dict) and "image_match_ratio" in output:
+        if isinstance(output, dict) and output.get("image_match_ratio") is not None:
             ratio = float(output["image_match_ratio"])
             _spark_similarity_log.append(ratio)
             logger.info("VGGT-SPARK image_match_ratio: %.4f (threshold 0.85, accept if >=)", ratio)

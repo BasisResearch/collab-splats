@@ -87,8 +87,11 @@ def run_vggt_slam_lc(
         img = cv2.imread(image_name)
         if img is None:
             continue
-        # vis_flow=False: no display during batch run
-        enough_disparity = solver.flow_tracker.compute_disparity(img, min_disparity, False)
+        # vis_flow=False; bypass filter entirely when min_disparity=0
+        enough_disparity = (
+            min_disparity <= 0.0
+            or solver.flow_tracker.compute_disparity(img, min_disparity, False)
+        )
         if enough_disparity:
             image_names_subset.append(image_name)
             image_count += 1
@@ -133,6 +136,12 @@ def main() -> None:
     parser.add_argument("--submap_size", type=int, default=16)
     parser.add_argument("--conf_threshold", type=float, default=25.0)
     parser.add_argument("--max_loops", type=int, default=1)
+    parser.add_argument(
+        "--min_disparity",
+        type=float,
+        default=0.0,
+        help="Min optical-flow disparity for keyframe selection (0 = accept all frames).",
+    )
     args = parser.parse_args()
 
     run_vggt_slam_lc(
@@ -142,6 +151,7 @@ def main() -> None:
         submap_size=args.submap_size,
         conf_threshold=args.conf_threshold,
         max_loops=args.max_loops,
+        min_disparity=args.min_disparity,
     )
 
 

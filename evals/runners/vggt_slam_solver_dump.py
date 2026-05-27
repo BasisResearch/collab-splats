@@ -157,6 +157,7 @@ def run_dump(
     submap_size: int = 16,
     conf_threshold: float = 25.0,
     max_loops: int = 0,  # Sequential edges only — isolates stitching without LC
+    min_disparity: float = 0.0,  # 0 = accept all frames; >0 = optical-flow keyframe filter
 ) -> None:
     """Run VGGT-SLAM pipeline and write boundary dump JSON.
 
@@ -214,7 +215,7 @@ def run_dump(
         img = cv2.imread(image_name)
         if img is None:
             continue
-        if solver.flow_tracker.compute_disparity(img, 50.0, False):
+        if min_disparity <= 0.0 or solver.flow_tracker.compute_disparity(img, min_disparity, False):
             image_names_subset.append(image_name)
 
         # Flush a complete submap when we have enough frames, or on the last image.
@@ -280,6 +281,12 @@ def main() -> None:
         default=25.0,
         help="Point confidence threshold (percentile).",
     )
+    parser.add_argument(
+        "--min_disparity",
+        type=float,
+        default=0.0,
+        help="Min optical-flow disparity for keyframe selection (0 = accept all frames).",
+    )
     args = parser.parse_args()
 
     run_dump(
@@ -288,6 +295,7 @@ def main() -> None:
         max_frames=args.max_frames,
         submap_size=args.submap_size,
         conf_threshold=args.conf_threshold,
+        min_disparity=args.min_disparity,
     )
 
 

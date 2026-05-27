@@ -68,9 +68,9 @@ class BundleAdjustmentConfig:
     query_frame_num: int = 5            # track extraction: number of query frames
     device: str | None = None           # CUDA device (e.g. "cuda", "cuda:1"); None = auto. CPU unsupported (bae LM is CUDA-only)
     capture_loss_history: bool = False  # record per-step LM loss; read via BundleAdjustment._last_loss_history
-    add_size: int = 3                      # frames added per incremental step; 0 or >= N → all-at-once; 1..N-1 → incremental
-    # Default add_size=3 from 7-Scenes chess seq-01 sweep (50 frames): Pareto-optimal at 0.0246m ATE / 92s runtime
-    # vs baseline 0.0558m / 91s. add_size=1 diverges; add_size≥10 regresses toward baseline accuracy.
+    add_size: int = 0                      # 0 or >= N → all-at-once; 1..N-1 → incremental growing-window BA
+    # Sweep results (chess seq-01): add_size ≈ N//10 is Pareto-optimal (N=50→3, N=200→20).
+    # add_size=1 diverges. Default 0 = all-at-once; set explicitly to opt into incremental.
     tracks_cache_dir: Path | None = None   # zarr cache dir for tracks; None = always extract
 
 

@@ -37,12 +37,21 @@ def compare(
     flag_threshold: float = 0.01,
 ) -> None:
     """Load both dumps, compute diffs, print table, write JSON."""
-    slam_data = json.loads(slam_dump.read_text())
-    our_data = json.loads(our_dump.read_text())
+    try:
+        slam_data = json.loads(slam_dump.read_text())
+        our_data = json.loads(our_dump.read_text())
+    except FileNotFoundError as exc:
+        raise SystemExit(f"Input file not found: {exc.filename}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Malformed JSON: {exc}") from exc
 
     slam_bounds = {e["boundary_idx"]: e for e in slam_data["boundaries"]}
     our_bounds = {e["boundary_idx"]: e for e in our_data["boundaries"]}
     all_indices = sorted(set(slam_bounds) | set(our_bounds))
+
+    # Format helper
+    def _fmt(v: float | None) -> str:
+        return f"{v:12.4f}" if v is not None else f"{'N/A':>12}"
 
     # Header
     print(
@@ -58,7 +67,7 @@ def compare(
 
         ds = None
         if slam_e and our_e:
-            ds = abs(float(slam_e.get("scale", 0)) - float(our_e.get("scale", 0)))
+            ds = abs(float(slam_e.get("scale") or 0) - float(our_e.get("scale") or 0))
 
         d_hw = _frob(slam_e.get("H_w") if slam_e else None,
                      our_e.get("H_w") if our_e else None)
@@ -68,9 +77,6 @@ def compare(
                      our_e.get("H_opt") if our_e else None)
 
         flag = "←" if (d_hw is not None and d_hw > flag_threshold) else ""
-
-        def _fmt(v: float | None) -> str:
-            return f"{v:12.4f}" if v is not None else f"{'N/A':>12}"
 
         print(
             f"{idx:>4d}  {_fmt(ds)}  {_fmt(d_hw)}  {_fmt(d_t)}  {_fmt(d_ho)}  {flag}"
@@ -101,7 +107,7 @@ def compare(
         "boundaries": rows,
     }
     out_json.write_text(json.dumps(result, indent=2))
-    logger.info("Written: %s", out_json)
+    print(f"Written: {out_json}")
 
 
 def main() -> None:

@@ -68,9 +68,9 @@ class BundleAdjustmentConfig:
     query_frame_num: int = 5            # track extraction: number of query frames
     device: str | None = None           # CUDA device (e.g. "cuda", "cuda:1"); None = auto. CPU unsupported (bae LM is CUDA-only)
     capture_loss_history: bool = False  # record per-step LM loss; read via BundleAdjustment._last_loss_history
-    add_size: int = 0                      # 0 or >= N → all-at-once; 1..N-1 → incremental growing-window BA
-    # Sweep results (chess seq-01): add_size ≈ N//10 is Pareto-optimal (N=50→3, N=200→20).
-    # add_size=1 diverges. Default 0 = all-at-once; set explicitly to opt into incremental.
+    increment_size: int = 0                # frames added per step; 0 = disabled (global BA); 1..N-1 = incremental
+    # Sweep results (chess seq-01): increment_size ≈ N//10 is Pareto-optimal (N=50→3, N=200→20).
+    # increment_size=1 diverges. Default 0 = global BA; set explicitly to opt into incremental.
     tracks_cache_dir: Path | None = None   # zarr cache dir for tracks; None = always extract
 
 
@@ -162,16 +162,16 @@ class BundleAdjustment:
         vis_scores: np.ndarray,
         pts3d_tracks: np.ndarray,
         intrinsics_model: np.ndarray,
-        add_size: int,
+        increment_size: int,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Grow the registered frame set by add_size per step; warm-start each BA from prior step."""
+        """Grow the registered frame set by increment_size per step; warm-start each BA from prior step."""
         N = len(result.images)
         # Initialise warm state from feedforward poses
         refined_extrinsics = result.extrinsics[:, :3, :].copy()
         refined_intrinsics = intrinsics_model.copy()
 
-        # Build step sequence: add_size, 2*add_size, ..., N (always ends at exactly N)
-        steps = sorted({min(k, N) for k in range(add_size, N + add_size, add_size)})
+        # Build step sequence: increment_size, 2*increment_size, ..., N (always ends at exactly N)
+        steps = sorted({min(k, N) for k in range(increment_size, N + increment_size, increment_size)})
 
         for k in steps:
             logger.info("Incremental BA: %d/%d frames registered", k, N)
@@ -204,14 +204,14 @@ class BundleAdjustment:
         )
 
         N = len(result.images)
-        add_size = self.config.add_size
-        if add_size == 0 or add_size >= N:
+        increment_size = self.config.increment_size
+        if increment_size == 0 or increment_size >= N:
             refined_extrinsics, refined_intrinsics_model = self._refine_allonce(
                 result, tracks, vis_scores, pts3d_tracks, intrinsics_model,
             )
         else:
             refined_extrinsics, refined_intrinsics_model = self._refine_incremental(
-                result, tracks, vis_scores, pts3d_tracks, intrinsics_model, add_size,
+                result, tracks, vis_scores, pts3d_tracks, intrinsics_model, increment_size,
             )
 
         # Rescale refined intrinsics back to original-image space

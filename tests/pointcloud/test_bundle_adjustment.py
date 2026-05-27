@@ -642,10 +642,10 @@ def test_optimize_rejects_cpu_device():
 
 
 def test_ba_config_new_fields_default():
-    """BundleAdjustmentConfig has add_size=0 and tracks_cache_dir=None by default."""
+    """BundleAdjustmentConfig has increment_size=0 and tracks_cache_dir=None by default."""
     from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
     cfg = BundleAdjustmentConfig()
-    assert cfg.add_size == 0
+    assert cfg.increment_size == 0
     assert cfg.tracks_cache_dir is None
 
 
@@ -757,8 +757,8 @@ def test_tracks_cache_invalidates_on_config_change(tmp_path):
     np.testing.assert_array_equal(t2, fake_b[0])
 
 
-def test_incremental_ba_add_size_n_matches_allonce():
-    """add_size >= N dispatches to all-at-once path: _optimize called exactly once with all N frames."""
+def test_incremental_ba_increment_size_n_matches_allonce():
+    """increment_size >= N dispatches to all-at-once path: _optimize called exactly once with all N frames."""
     from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, H, W = 4, 8, 8
@@ -781,12 +781,12 @@ def test_incremental_ba_add_size_n_matches_allonce():
                return_value=(fake_tracks, fake_vis, fake_pts3d)), \
          patch.object(BundleAdjustment, "_optimize", side_effect=mock_optimize):
 
-        BundleAdjustment(BundleAdjustmentConfig(add_size=0)).refine(result)
-        BundleAdjustment(BundleAdjustmentConfig(add_size=N)).refine(result)
-        BundleAdjustment(BundleAdjustmentConfig(add_size=N + 10)).refine(result)
+        BundleAdjustment(BundleAdjustmentConfig(increment_size=0)).refine(result)
+        BundleAdjustment(BundleAdjustmentConfig(increment_size=N)).refine(result)
+        BundleAdjustment(BundleAdjustmentConfig(increment_size=N + 10)).refine(result)
 
     assert optimize_frame_counts == [N, N, N], (
-        f"add_size=0/N/N+10 should all call _optimize once with N frames; got {optimize_frame_counts}"
+        f"increment_size=0/N/N+10 should all call _optimize once with N frames; got {optimize_frame_counts}"
     )
 
 
@@ -817,11 +817,11 @@ def test_incremental_ba_warm_start_updates_registered_frames():
                return_value=(fake_tracks, fake_vis, fake_pts3d)), \
          patch.object(BundleAdjustment, "_optimize", side_effect=mock_optimize):
 
-        ba = BundleAdjustment(BundleAdjustmentConfig(add_size=2))
+        ba = BundleAdjustment(BundleAdjustmentConfig(increment_size=2))
         ba.refine(result)
 
-    # N=6, add_size=2 → steps k=2,4,6 → 3 _optimize calls
-    assert len(received_extrinsics) == 3, f"expected 3 steps for N=6 add_size=2, got {len(received_extrinsics)}"
+    # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls
+    assert len(received_extrinsics) == 3, f"expected 3 steps for N=6 increment_size=2, got {len(received_extrinsics)}"
 
     # Warm start: step-2 extrinsics[:2] should be step-1 refined output (diagonal+1), not original
     assert received_extrinsics[1][:2, 0, 0].mean() > 1.0, (
@@ -852,10 +852,10 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
          patch.object(BundleAdjustment, "_optimize",
                       lambda self_ba, *a, **kw: mock_optimize_with_hist(self_ba, *a, **kw)):
 
-        ba = BundleAdjustment(BundleAdjustmentConfig(add_size=2, capture_loss_history=True))
+        ba = BundleAdjustment(BundleAdjustmentConfig(increment_size=2, capture_loss_history=True))
         ba.refine(result)
 
-    # N=6, add_size=2 → steps k=2,4,6 → 3 _optimize calls → 3 inner lists
+    # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls → 3 inner lists
     assert len(ba._last_loss_history) == 3, (
         f"expected 3 inner lists for 3 steps; got {len(ba._last_loss_history)}"
     )

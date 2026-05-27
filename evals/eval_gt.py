@@ -136,8 +136,8 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
         return base, cfg
     m2 = re.fullmatch(r"incremental_ba-(\d+)", condition)
     if m2:
-        add_size = int(m2.group(1))
-        cfg = BundleAdjustmentConfig(add_size=add_size)
+        increment_size = int(m2.group(1))
+        cfg = BundleAdjustmentConfig(increment_size=increment_size)
         if submap_size is not None:
             _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
             windowed = LoopClosure(base, config=_no_lc_cfg)

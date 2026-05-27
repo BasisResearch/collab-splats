@@ -218,3 +218,4 @@ evals/data/docs/.cache/
 
 # Populated by setup scripts / git submodule update — not tracked directly
 third_party/
+third_party/vggt_spark/

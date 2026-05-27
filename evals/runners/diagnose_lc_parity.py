@@ -322,7 +322,11 @@ def main() -> None:
 
     ours_w2c: np.ndarray | None = None
     if args.ours_tum is not None:
-        ours_w2c = _load_tum(args.ours_tum)
+        ours_path = Path(args.ours_tum)
+        if not ours_path.exists():
+            logger.error("ours_tum file not found: %s", ours_path)
+            sys.exit(1)
+        ours_w2c = _load_tum(ours_path)
 
     diagnose(
         seq_dir=args.seq_dir,

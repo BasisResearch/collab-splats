@@ -123,6 +123,11 @@ def run_vggt_slam_lc(
                 image_names_subset, model, max_loops,
                 clip_model=None, clip_preprocess=None,
             )
+            # solver.add_points() calls .numpy() on frames_lc; numpy rejects BFloat16.
+            # Cast to float32 here rather than touching vendored solver.py.
+            if predictions.get("frames_lc") is not None:
+                import torch as _torch
+                predictions["frames_lc"] = predictions["frames_lc"].to(_torch.float32)
             solver.add_points(predictions)
             solver.graph.optimize()
             # Keep last overlapping_window_size frames for next submap continuity

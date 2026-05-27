@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 import cv2
-import numpy as np
 import torch
 from tqdm.auto import tqdm
 
@@ -48,8 +47,11 @@ def run_vggt_slam_lc(
 ) -> None:
     """Run full VGGT-SLAM pipeline with LC and write dense TUM trajectory."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+    else:
+        dtype = torch.float32
 
-    # Solver handles its own dtype selection internally per device capability
     solver = Solver(
         init_conf_threshold=conf_threshold,
         lc_thres=lc_thres,
@@ -61,8 +63,7 @@ def run_vggt_slam_lc(
     model = VGGT()
     model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
     model.eval()
-    model = model.to(torch.bfloat16)
-    model = model.to(device)
+    model = model.to(dtype).to(device)
 
     # Collect and sort images, apply max_frames limit
     all_images = [
@@ -81,6 +82,8 @@ def run_vggt_slam_lc(
 
     for image_name in tqdm(all_images, desc="Frames"):
         img = cv2.imread(image_name)
+        if img is None:
+            continue
         # vis_flow=False: no display during batch run
         enough_disparity = solver.flow_tracker.compute_disparity(img, min_disparity, False)
         if enough_disparity:

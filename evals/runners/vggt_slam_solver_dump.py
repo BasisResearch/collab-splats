@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -33,6 +34,8 @@ import cv2
 import numpy as np
 import torch
 from tqdm.auto import tqdm
+
+logger = logging.getLogger(__name__)
 
 # Insert repo root and VGGT-SLAM root into sys.path before any vggt_slam imports.
 _repo_root = str(Path(__file__).resolve().parents[2])
@@ -122,7 +125,8 @@ class DumpSolver(Solver):
             node_id = entry["submap_id"]
             try:
                 entry["H_opt"] = self.graph.get_homography(node_id).tolist()
-            except Exception:
+            except (KeyError, IndexError, RuntimeError) as exc:
+                logger.warning("H_opt capture failed for submap %s: %s", entry["submap_id"], exc)
                 entry["H_opt"] = None
 
     def get_final_poses_c2w(self) -> list[list]:
@@ -183,7 +187,7 @@ def run_dump(
     )
 
     # Load VGGT model.
-    print("Loading VGGT model...")
+    logger.info("Loading VGGT model...")
     _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
     model = VGGT()
     model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
@@ -199,7 +203,7 @@ def run_dump(
         and "depth" not in Path(f).name.lower()
     ]
     all_images = sorted(all_images)[:max_frames]
-    print(f"Found {len(all_images)} images (limited to {max_frames})")
+    logger.info("Found %d images (limited to %d)", len(all_images), max_frames)
 
     # Run VGGT-SLAM submap loop; mirrors main.py from VGGT-SLAM.
     overlapping_window_size = 1
@@ -248,7 +252,7 @@ def run_dump(
         "final_poses": final_poses_c2w,
     }
     out_json.write_text(json.dumps(payload, indent=2))
-    print(f"Written {len(solver._boundary_dumps)} boundaries → {out_json}")
+    logger.info("Written %d boundaries → %s", len(solver._boundary_dumps), out_json)
 
 
 ########################################################################
@@ -258,6 +262,7 @@ def run_dump(
 
 def main() -> None:
     """CLI entry point."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description="Run VGGT-SLAM and dump per-boundary solver internals to JSON."
     )

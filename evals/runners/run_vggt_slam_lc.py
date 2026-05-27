@@ -31,6 +31,7 @@ if _vggt_spark not in sys.path:
 
 import argparse
 import glob
+import json
 import logging
 from pathlib import Path
 
@@ -84,6 +85,18 @@ def run_vggt_slam_lc(
     _vggt = _vggt.to(dtype).to(device)
 
     model = _vggt  # VGGT-SPARK natively handles compute_similarity=True
+
+    # Capture image_match_ratio each time model is called with compute_similarity=True.
+    # Forward hook fires on every call; filter by presence of "image_match_ratio" key.
+    _spark_similarity_log: list[float] = []
+
+    def _capture_similarity(_module: torch.nn.Module, _inp: tuple, output: dict) -> None:
+        if isinstance(output, dict) and "image_match_ratio" in output:
+            ratio = float(output["image_match_ratio"])
+            _spark_similarity_log.append(ratio)
+            logger.info("VGGT-SPARK image_match_ratio: %.4f (threshold 0.85, accept if >=)", ratio)
+
+    model.register_forward_hook(_capture_similarity)
 
     # Collect and sort images, apply max_frames limit
     all_images = [
@@ -140,6 +153,18 @@ def run_vggt_slam_lc(
     out_tum.parent.mkdir(parents=True, exist_ok=True)
     solver.map.write_poses_to_file(str(out_tum), solver.graph, kitti_format=False)
     logger.info("Written: %s", out_tum)
+
+    # Write VGGT-SPARK similarity scores for comparison against our cross_frame_attention_ratio
+    out_similarity = out_tum.parent.parent.parent / "results" / "parity_harness" / "vggt_spark_similarity.json"
+    out_similarity.parent.mkdir(parents=True, exist_ok=True)
+    out_similarity.write_text(json.dumps({
+        "model": "VGGT-SPARK (VGGT-1B weights)",
+        "metric": "image_match_ratio",
+        "threshold": 0.85,
+        "note": "computed via attention K/Q in aggregator._process_global_attention",
+        "scores": _spark_similarity_log,
+    }, indent=2))
+    logger.info("VGGT-SPARK similarity scores (%d LC calls) → %s", len(_spark_similarity_log), out_similarity)
 
 
 def main() -> None:

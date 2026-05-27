@@ -33,6 +33,9 @@ from collab_splats.pointcloud.loop_closure import LoopClosureConfig
 from collab_splats.pointcloud.loop_closure.closure import run_pose_graph_optimization as _orig_rpgo
 from collab_splats.pointcloud.wrappers import LoopClosure
 import collab_splats.pointcloud.wrappers as _wrappers_mod
+from collab_splats.pointcloud.utils import cross_frame_attention_ratio as _orig_cfar
+import collab_splats.pointcloud.utils as _utils_mod
+import collab_splats.pointcloud.feedforward.base as _base_mod
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,15 @@ def run_dump(
 ) -> None:
     """Run our LC pipeline with debug_out capture, write JSON + TUM."""
     _debug_out: list[dict] = []
+    # Capture cross_frame_attention_ratio calls from _verify_loop_candidate.
+    # Same metric as VGGT-SPARK image_match_ratio (port of get_similarity()).
+    _our_similarity_log: list[float] = []
+
+    def _patched_cfar(k, q, token_offset: int = 5) -> float:
+        result = _orig_cfar(k, q, token_offset)
+        _our_similarity_log.append(float(result))
+        logger.info("our cross_frame_attention_ratio: %.4f (threshold 0.85)", float(result))
+        return result
 
     def _patched_rpgo(*args, **kwargs):
         # Inject debug_out list so the optimizer captures per-boundary internals
@@ -81,6 +93,9 @@ def run_dump(
 
     # Patch in wrappers module namespace (where the bare call lives)
     _wrappers_mod.run_pose_graph_optimization = _patched_rpgo
+    # Patch cross_frame_attention_ratio in both utils and base (base imports it directly)
+    _utils_mod.cross_frame_attention_ratio = _patched_cfar
+    _base_mod.cross_frame_attention_ratio = _patched_cfar
 
     try:
         # Collect 7-Scenes color images sorted by filename
@@ -111,8 +126,10 @@ def run_dump(
         for i, entry in enumerate(_debug_out):
             entry["boundary_idx"] = i
     finally:
-        # Always restore original to avoid polluting other code in the same process
+        # Always restore originals to avoid polluting other code in the same process
         _wrappers_mod.run_pose_graph_optimization = _orig_rpgo
+        _utils_mod.cross_frame_attention_ratio = _orig_cfar
+        _base_mod.cross_frame_attention_ratio = _orig_cfar
 
     out_json.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -124,6 +141,16 @@ def run_dump(
         },
         "boundaries": [_to_serializable(e) for e in _debug_out],
         "final_poses": final_poses.tolist(),
+        # cross_frame_attention_ratio values per _verify_loop_candidate call.
+        # Compare against vggt_spark_similarity.json image_match_ratio scores.
+        # Same algorithm (port of VGGT-SPARK get_similarity()), different model weights.
+        "similarity_scores": {
+            "model": "VGGT-X",
+            "metric": "cross_frame_attention_ratio",
+            "threshold": 0.85,
+            "note": "port of VGGT-SPARK get_similarity() via VGGT-X QKV hooks",
+            "scores": _our_similarity_log,
+        },
     }
     out_json.write_text(json.dumps(payload, indent=2))
     logger.info("Written %d boundaries → %s", len(_debug_out), out_json)

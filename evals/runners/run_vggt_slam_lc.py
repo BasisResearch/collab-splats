@@ -9,14 +9,29 @@ Usage:
 
 Fixed pipeline args (matching VGGT-SLAM paper defaults):
     submap_size=16, overlapping_window_size=1, conf_threshold=25.0,
-    max_loops=1, min_disparity=50
+    max_loops=1, min_disparity=0
+
+Note — min_disparity=0 (not paper default of 50): with min_disparity=50, chess_seq01
+produces zero loop closure candidates, making comparison vacuous. Setting 0 accepts all
+frames so LC is actually triggered. Both this script and our_solver_dump.py use 0 so
+frame selection is identical — comparison isolates algorithm parity, not keyframe selection.
 """
 from __future__ import annotations
+
+# ── VGGT-SPARK shadow ─────────────────────────────────────────────────────────
+# Shadow the installed vggt package (VGGT-X based) with VGGT-SPARK, which adds
+# native compute_similarity=True support to VGGT.forward(). Must come before any
+# vggt import. Affects this process only — reconstruction env is unaffected.
+import sys
+from pathlib import Path as _Path
+_vggt_spark = str(_Path(__file__).resolve().parents[2] / "third_party" / "vggt_spark")
+if _vggt_spark not in sys.path:
+    sys.path.insert(0, _vggt_spark)
+# ─────────────────────────────────────────────────────────────────────────────
 
 import argparse
 import glob
 import logging
-import sys
 from pathlib import Path
 
 import cv2
@@ -32,7 +47,7 @@ for _p in (_repo_root, _slam_root):
 
 import vggt_slam.slam_utils as utils
 from vggt_slam.solver import Solver
-from vggt.models.vggt import VGGT
+from vggt.models.vggt import VGGT  # resolves to VGGT-SPARK via sys.path shadow above
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +60,7 @@ def run_vggt_slam_lc(
     overlapping_window_size: int = 1,
     conf_threshold: float = 25.0,
     max_loops: int = 1,  # LC enabled — for end-to-end ATE comparison with Phase 1
-    min_disparity: float = 50.0,
+    min_disparity: float = 0.0,
     lc_thres: float = 0.95,
 ) -> None:
     """Run full VGGT-SLAM pipeline with LC and write dense TUM trajectory."""
@@ -63,10 +78,12 @@ def run_vggt_slam_lc(
 
     logger.info("Loading VGGT model...")
     _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
-    model = VGGT()
-    model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
-    model.eval()
-    model = model.to(dtype).to(device)
+    _vggt = VGGT()
+    _vggt.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
+    _vggt.eval()
+    _vggt = _vggt.to(dtype).to(device)
+
+    model = _vggt  # VGGT-SPARK natively handles compute_similarity=True
 
     # Collect and sort images, apply max_frames limit
     all_images = [

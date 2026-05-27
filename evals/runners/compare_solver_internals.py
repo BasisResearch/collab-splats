@@ -47,6 +47,13 @@ def compare(
 
     slam_bounds = {e["boundary_idx"]: e for e in slam_data["boundaries"]}
     our_bounds = {e["boundary_idx"]: e for e in our_data["boundaries"]}
+
+    if len(slam_bounds) != len(our_bounds):
+        logger.warning(
+            "Boundary count mismatch: SLAM has %d, ours has %d",
+            len(slam_bounds), len(our_bounds),
+        )
+
     all_indices = sorted(set(slam_bounds) | set(our_bounds))
 
     # Format helper

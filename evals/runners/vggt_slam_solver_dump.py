@@ -156,7 +156,7 @@ def run_dump(
     max_frames: int = 200,
     submap_size: int = 16,
     conf_threshold: float = 25.0,
-    max_loops: int = 0,
+    max_loops: int = 0,  # Sequential edges only — isolates stitching without LC
 ) -> None:
     """Run VGGT-SLAM pipeline and write boundary dump JSON.
 

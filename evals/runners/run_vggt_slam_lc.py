@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import logging
 import sys
 from pathlib import Path
 
@@ -33,6 +34,8 @@ import vggt_slam.slam_utils as utils
 from vggt_slam.solver import Solver
 from vggt.models.vggt import VGGT
 
+logger = logging.getLogger(__name__)
+
 
 def run_vggt_slam_lc(
     seq_dir: Path,
@@ -41,7 +44,7 @@ def run_vggt_slam_lc(
     submap_size: int = 16,
     overlapping_window_size: int = 1,
     conf_threshold: float = 25.0,
-    max_loops: int = 1,
+    max_loops: int = 1,  # LC enabled — for end-to-end ATE comparison with Phase 1
     min_disparity: float = 50.0,
     lc_thres: float = 0.95,
 ) -> None:
@@ -58,7 +61,7 @@ def run_vggt_slam_lc(
         vis_voxel_size=None,
     )
 
-    print("Loading VGGT model...")
+    logger.info("Loading VGGT model...")
     _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
     model = VGGT()
     model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
@@ -74,7 +77,7 @@ def run_vggt_slam_lc(
         and Path(f).suffix.lower() in (".png", ".jpg", ".jpeg")
     ]
     all_images = utils.sort_images_by_number(all_images)[:max_frames]
-    print(f"Found {len(all_images)} images (limited to {max_frames})")
+    logger.info("Found %d images (limited to %d)", len(all_images), max_frames)
 
     # Optical flow keyframe selection + submap processing (mirrors main.py)
     image_names_subset: list[str] = []
@@ -105,17 +108,18 @@ def run_vggt_slam_lc(
             # Keep last overlapping_window_size frames for next submap continuity
             image_names_subset = image_names_subset[-overlapping_window_size:]
 
-    print(f"Processed {image_count} keyframes, {solver.map.get_num_submaps()} submaps")
-    print(f"Loop closures: {solver.graph.get_num_loops()}")
+    logger.info("Processed %d keyframes, %d submaps", image_count, solver.map.get_num_submaps())
+    logger.info("Loop closures: %d", solver.graph.get_num_loops())
 
     # Write dense TUM trajectory (kitti_format=False → TUM format with timestamps)
     out_tum.parent.mkdir(parents=True, exist_ok=True)
     solver.map.write_poses_to_file(str(out_tum), solver.graph, kitti_format=False)
-    print(f"Written: {out_tum}")
+    logger.info("Written: %s", out_tum)
 
 
 def main() -> None:
     """CLI entry point."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description="Run VGGT-SLAM with LC on a 7-Scenes sequence, write dense TUM."
     )

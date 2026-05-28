@@ -567,13 +567,15 @@ def sample_frames_optical_flow(
     coverage_weight: float = 0.4,
     on_progress: Callable[[int, int], None] | None = None,
     verbose: bool = True,
-) -> list[np.ndarray]:
+) -> tuple[list[np.ndarray], list[dict]]:
     """Select keyframes using sparse Lucas-Kanade optical flow.
 
     Combines motion (disparity + rotation) and visual diversity (histogram
     similarity) into a 0–1 score; selects frames scoring >= 0.5.
     OF analysis runs at max 480px wide for speed; selected frames kept full-res.
 
+    Returns (frames, scores) where scores has one dict per selected frame:
+        {frame_idx, disparity, rotation, histogram_similarity, score, selected}.
     on_progress: called as on_progress(frames_decoded, total_frames).
     min_disparity: mean pixel displacement threshold. Higher = fewer frames.
     """
@@ -585,6 +587,7 @@ def sample_frames_optical_flow(
     info = get_video_info(video_path)
     total = info["total_frames"]
     frames: list[np.ndarray] = []
+    scores: list[dict] = []
     frames_decoded = 0
     with tqdm(total=total, desc="Optical flow selection", unit="frame", disable=not verbose) as pbar:
         for frame in _iter_decoded_frames(video_path, info["width"], info["height"]):
@@ -597,11 +600,19 @@ def sample_frames_optical_flow(
             # Score at 480px-wide scale for speed; keep full-res copy if selected
             scale = min(1.0, 480.0 / frame.shape[1])
             small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
-            should_select, _, _ = selector.should_select_frame(small)
+            should_select, score, components = selector.should_select_frame(small)
             if should_select:
                 frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                scores.append({
+                    "frame_idx": len(frames) - 1,
+                    "disparity": components.get("disparity", 0.0),
+                    "rotation": components.get("rotation", 0.0),
+                    "histogram_similarity": components.get("histogram_similarity", 1.0),
+                    "score": score,
+                    "selected": True,
+                })
                 selector.accept_frame(small)
-    return frames
+    return frames, scores
 
 
 ########################################################################

@@ -32,7 +32,7 @@ def tiny_video(tmp_path):
 
 
 def test_optical_flow_accepts_max_frames(tiny_video):
-    frames = sample_frames_optical_flow(
+    frames, scores = sample_frames_optical_flow(
         tiny_video, max_frames=5
     )
     assert isinstance(frames, list)
@@ -40,19 +40,30 @@ def test_optical_flow_accepts_max_frames(tiny_video):
 
 
 def test_optical_flow_first_frame_always_included(tiny_video):
-    # min_disparity=9999 means only the forced first frame is emitted
-    frames = sample_frames_optical_flow(
+    frames, scores = sample_frames_optical_flow(
         tiny_video, min_disparity=9999.0, max_frames=10
     )
     assert len(frames) >= 1
 
 
 def test_optical_flow_frames_are_rgb(tiny_video):
-    frames = sample_frames_optical_flow(
+    frames, scores = sample_frames_optical_flow(
         tiny_video, max_frames=3
     )
     assert frames[0].shape[2] == 3
     assert frames[0].dtype == np.uint8
+
+
+def test_optical_flow_returns_scores_for_each_frame(tiny_video):
+    """scores list has one entry per selected frame with required keys."""
+    frames, scores = sample_frames_optical_flow(tiny_video, verbose=False)
+    assert len(scores) == len(frames)
+    for s in scores:
+        assert "disparity" in s
+        assert "rotation" in s
+        assert "histogram_similarity" in s
+        assert "score" in s
+        assert s["selected"] is True
 
 
 def test_selector_selects_first_frame_always():
@@ -162,7 +173,7 @@ def test_fps_sampler_no_progress_arg_ok(monkeypatch):
 
 def test_optical_flow_calls_on_progress(tiny_video):
     calls = []
-    sample_frames_optical_flow(
+    frames, _ = sample_frames_optical_flow(
         tiny_video, max_frames=5, on_progress=lambda c, t: calls.append((c, t))
     )
     assert len(calls) >= 1
@@ -172,7 +183,6 @@ def test_optical_flow_calls_on_progress(tiny_video):
 
 def test_optical_flow_resizes_for_analysis(tiny_video, monkeypatch):
     """Low-res resize must be called when frame width > 480."""
-    # Patch cv2.resize at the point where it's imported/used
     import cv2 as _cv2
 
     resize_calls = []
@@ -182,11 +192,10 @@ def test_optical_flow_resizes_for_analysis(tiny_video, monkeypatch):
         resize_calls.append(src.shape)
         return original_resize(src, dsize, **kwargs)
 
-    # Patch resize globally in cv2 module
     monkeypatch.setattr(_cv2, "resize", spy_resize)
 
     # tiny_video is 64px wide — below 480 threshold, resize must NOT be called
-    sample_frames_optical_flow(tiny_video, max_frames=3)
+    frames, _ = sample_frames_optical_flow(tiny_video, max_frames=3)
     assert len(resize_calls) == 0, "Must not resize frames already <= 480px wide"
 
 
@@ -423,8 +432,10 @@ def test_sample_frames_optical_flow_ffmpeg_backend(tiny_video, monkeypatch):
         pytest.skip("ffmpeg not available")
     from collab_splats.utils import frame_sampling as fs
     monkeypatch.setattr(fs, "_get_decoder_backend", lambda: "ffmpeg")
-    frames = fs.sample_frames_optical_flow(tiny_video, verbose=False)
+    frames, scores = fs.sample_frames_optical_flow(tiny_video, verbose=False)
     assert isinstance(frames, list)
+    assert isinstance(scores, list)
+    assert len(frames) == len(scores)
     for f in frames:
         assert f.shape[2] == 3
         assert f.dtype == np.uint8

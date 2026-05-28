@@ -189,6 +189,10 @@ class PreprocessPane(param.Parameterized):
             name="▶ Extract Frames", button_type="primary", width=260
         )
         self._frame_count_html = pn.pane.HTML("", width=260)
+        self._progress_bar = pn.indicators.Progress(
+            name="", value=0, max=100, bar_color="primary", width=260, visible=False,
+        )
+        self._progress_label = pn.pane.HTML("", width=260)
 
         # Controls wrapped in collapsible Card — hidden until video is loaded
         self._controls_card = pn.Card(
@@ -201,6 +205,8 @@ class PreprocessPane(param.Parameterized):
             pn.layout.Divider(),
             self._extract_btn,
             self._frame_count_html,
+            self._progress_bar,
+            self._progress_label,
             title="Frame Extraction",
             collapsed=False,
             visible=False,
@@ -276,25 +282,42 @@ class PreprocessPane(param.Parameterized):
 
     def _run_extraction(self, video_path: Path) -> None:
         """Background thread: score frames, extract keyframes, update UI state."""
+        def _progress(current: int, total: int, base: int, scale: int) -> None:
+            pct = base + int(current / total * scale) if total > 0 else base
+            self._op_log.update_progress(pct)
+            self._progress_bar.value = pct
+
         try:
+            self._progress_bar.value = 0
+            self._progress_bar.visible = True
+
             # Score all frames for the metrics chart
             self._op_log.start_op("Computing frame scores")
-            frame_scores = score_all_frames(
+            self._progress_label.object = "<p style='font-size:11px;color:#aaa'>Computing frame scores…</p>"
+            raw_scores: list[dict] = score_all_frames(
                 str(video_path),
-                on_progress=lambda pct, msg="": self._op_log.update_progress(pct // 2, msg),
+                on_progress=lambda c, t: _progress(c, t, 0, 50),
                 verbose=False,
             )
-            self._frame_scores = frame_scores
+            # Transpose list[dict] → dict[str, list[float]] for _build_metrics_sources
+            self._frame_scores = {
+                key: [d.get(key, 0.0) for d in raw_scores]
+                for key in ("disparity", "rotation", "hist_similarity")
+                if raw_scores and key in raw_scores[0]
+            }
 
             # Extract frames using selected method
             self._op_log.start_op("Extracting frames")
+            self._progress_label.object = "<p style='font-size:11px;color:#aaa'>Extracting frames…</p>"
             method = self._method_dd.value
+            frame_indices: list[int]
             if method == "fps":
-                frames = sample_frames_fps(
+                # sample_frames_fps returns (frames, video_frame_indices)
+                frames, frame_indices = sample_frames_fps(
                     str(video_path),
                     fps=self._fps_slider.value,
                     max_frames=self._n_frames_slider.value,
-                    on_progress=lambda pct, msg="": self._op_log.update_progress(50 + pct // 2, msg),
+                    on_progress=lambda c, t: _progress(c, t, 50, 50),
                     verbose=False,
                 )
             else:
@@ -302,9 +325,10 @@ class PreprocessPane(param.Parameterized):
                     str(video_path),
                     min_disparity=self._min_disparity_slider.value,
                     max_frames=self._n_frames_slider.value,
-                    on_progress=lambda pct, msg="": self._op_log.update_progress(50 + pct // 2, msg),
+                    on_progress=lambda c, t: _progress(c, t, 50, 50),
                     verbose=False,
                 )
+                frame_indices = list(range(len(frames)))
 
             # Apply window filter proportionally to extracted set
             if self._window_start_slider.value > 0.0 or self._window_end_slider.value < 1.0:
@@ -312,14 +336,17 @@ class PreprocessPane(param.Parameterized):
                 start_i = int(self._window_start_slider.value * n_total)
                 end_i = max(start_i + 1, int(self._window_end_slider.value * n_total))
                 frames = frames[start_i:end_i]
+                frame_indices = frame_indices[start_i:end_i]
 
             self._selected_frames = frames
-            self._selected_indices = list(range(len(frames)))
+            self._selected_indices = frame_indices
 
-            # Write frames to zarr; set state (no in-memory frame list)
+            # Ensure output dir exists before writing zarr
             if self._state.output_dir is None and self._state.video_path is not None:
                 self._state.output_dir = Path("/workspace/outputs") / Path(self._state.video_path).stem
             zarr_path = Path(self._state.output_dir) / "frames.zarr"
+            zarr_path.parent.mkdir(parents=True, exist_ok=True)
+            self._progress_label.object = "<p style='font-size:11px;color:#aaa'>Writing frames to disk…</p>"
             _write_frames_zarr(frames, zarr_path)
             self._state.frames_zarr_path = zarr_path
             self._state.selected_indices = self._selected_indices
@@ -331,7 +358,7 @@ class PreprocessPane(param.Parameterized):
 
             # Generate initial thumbnails and render HTML strip
             thumbnails = _frames_to_thumbnails(frames[:100])
-            self._cached_thumbnails = thumbnails  # cache for tap callbacks
+            self._cached_thumbnails = thumbnails
             self._active_frame_idx = 0
             self._frame_strip_pane.object = _build_frame_strip_html(thumbnails, active_idx=0)
             self._frame_count_html.object = (
@@ -348,6 +375,8 @@ class PreprocessPane(param.Parameterized):
                 f"<p style='color:#e05050'>Extraction failed: {exc}</p>"
             )
         finally:
+            self._progress_bar.visible = False
+            self._progress_label.object = ""
             self._extract_btn.disabled = False
 
     def _seek_to_frame(self, frame_idx: int) -> None:

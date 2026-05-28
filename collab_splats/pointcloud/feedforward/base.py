@@ -358,19 +358,27 @@ def compute_multiview_depth_confidence(
     inlier_sum = torch.zeros(N, H, W, dtype=torch.float32, device=dev)
     valid_sum  = torch.zeros(N, H, W, dtype=torch.float32, device=dev)
 
+    # Pre-allocate homogeneous padding — reused across all (i, j) pairs
+    ones_hw1 = torch.ones(H * W, 1, dtype=torch.float32, device=dev)
+
+    # Pre-convert depth_masks to a GPU bool tensor to avoid per-iteration H2D copies
+    if depth_masks is not None:
+        depth_masks_t = torch.from_numpy(depth_masks.astype(bool)).to(dev)  # (N, H, W)
+    else:
+        depth_masks_t = None
+
     for i in range(N):
         # Unproject source pixels to world space via cam-i intrinsics and pose
         K_i_inv = torch.linalg.inv(K[i])
         cam_rays = (K_i_inv @ pixel_h.T).T                          # (H*W, 3)
         src_d = depth_t[i].reshape(-1, 1)                           # (H*W, 1)
         src_valid = (src_d > 0).squeeze(-1)                          # (H*W,)
-        if depth_masks is not None:
-            dm_i = torch.from_numpy(depth_masks[i]).bool().to(dev).reshape(-1)
-            src_valid = src_valid & dm_i
+        if depth_masks_t is not None:
+            src_valid = src_valid & depth_masks_t[i].reshape(-1)
 
         pts_cam_i = cam_rays * src_d                                 # (H*W, 3)
         pts_cam_h = torch.cat(
-            [pts_cam_i, torch.ones(H * W, 1, device=dev)], dim=-1
+            [pts_cam_i, ones_hw1], dim=-1
         )                                                             # (H*W, 4)
         pts_world = (cam2world[i] @ pts_cam_h.T).T[:, :3]           # (H*W, 3)
 
@@ -380,7 +388,7 @@ def compute_multiview_depth_confidence(
 
             # Project world points into frame j; compute expected depth and pixel coords
             pts_world_h = torch.cat(
-                [pts_world, torch.ones(H * W, 1, device=dev)], dim=-1
+                [pts_world, ones_hw1], dim=-1
             )
             pts_cam_j = (E[j] @ pts_world_h.T).T[:, :3]             # (H*W, 3)
 
@@ -404,6 +412,8 @@ def compute_multiview_depth_confidence(
             valid_ij = src_valid & in_front & in_bounds              # (H*W,)
 
             # Sample frame-j depth at projected locations using bilinear interpolation
+            # Reshape to (1, H, W, 2): px_norm is ordered as the flattened source meshgrid,
+            # so grid[0, r, c, :] = the normalised target coord where source pixel (r, c) projects.
             grid = px_norm.reshape(1, H, W, 2)
             sampled_d = F.grid_sample(
                 depth_t[j].unsqueeze(0).unsqueeze(0),               # (1, 1, H, W)

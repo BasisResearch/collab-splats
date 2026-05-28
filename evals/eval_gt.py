@@ -113,7 +113,8 @@ def _write_tum(path: Path, poses_w2c: np.ndarray) -> None:
 _BACKBONE_PREFIX = {"vggt_omega": "omega", "vggtx": "vggtx", "mapanything": "mapanything"}
 
 
-def _make_creator(condition: str, submap_size: int | None = None, backbone: str = "vggt_omega"):
+def _make_creator(condition: str, submap_size: int | None = None, backbone: str = "vggt_omega",
+                  lc_scale_method: str = "se3"):
     """Build a (creator, ba_config) pair for the given condition.
 
     Returns (creator, None) when no bundle adjustment is needed.
@@ -121,7 +122,8 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
     """
     base = get_creator(backbone)()
     if condition == "lc":
-        return LoopClosure(base), None
+        lc_cfg = LoopClosureConfig(scale_method=lc_scale_method)
+        return LoopClosure(base, config=lc_cfg), None
     m = re.fullmatch(r"ba_track-density-(\d+)", condition)
     if m:
         n = int(m.group(1))
@@ -160,9 +162,11 @@ def _run_condition(
     name: str, image_dir: Path, output_dir: Path,
     submap_size: int | None = None,
     backbone: str = "vggt_omega",
+    lc_scale_method: str = "se3",
 ) -> tuple[np.ndarray, Any]:
     """Run condition, return (extrinsics (N,4,4), creator)."""
-    creator, ba_cfg = _make_creator(name, submap_size=submap_size, backbone=backbone)
+    creator, ba_cfg = _make_creator(name, submap_size=submap_size, backbone=backbone,
+                                    lc_scale_method=lc_scale_method)
     if ba_cfg is None:
         creator.reconstruct(image_dir, output_dir)
     else:
@@ -273,6 +277,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--conditions", nargs="+", default=["baseline", "ba", "lc"],
                         help="Conditions: baseline | ba | lc | ba_track-density-{N}")
     parser.add_argument(
+        "--lc_scale_method",
+        choices=["se3", "rotation_only", "pairwise_dist"],
+        default="se3",
+        help="Inter-submap scale estimation method for lc condition. "
+             "se3=current (full SE3, biased), rotation_only=VGGT-SLAM style, "
+             "pairwise_dist=translation-invariant fix.",
+    )
+    parser.add_argument(
         "--keyframe_list", type=Path, default=None,
         help="Path to selected_frames.txt from run_vggt_slam_lc.py. "
              "When set, filters the dataset to only these frames (matched by filename) "
@@ -295,6 +307,7 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
         args._condition, args._image_dir, args.output_dir / args._condition,
         submap_size=args.submap_size,
         backbone=backbone,
+        lc_scale_method=getattr(args, "lc_scale_method", "se3"),
     )
     elapsed = time.perf_counter() - t0
 
@@ -383,6 +396,8 @@ def main() -> None:
             ]
             if args.submap_size is not None:
                 cmd += ["--submap_size", str(args.submap_size)]
+            if getattr(args, "lc_scale_method", "se3") != "se3":
+                cmd += ["--lc_scale_method", args.lc_scale_method]
 
             t0 = time.perf_counter()
             proc = subprocess.run(cmd, check=True)

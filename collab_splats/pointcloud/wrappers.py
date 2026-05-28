@@ -323,6 +323,7 @@ class LoopClosure:
             submaps, lc_submaps, total_frames=N,
             overlap_frames=cfg.submap_overlap,
             conf_threshold=cfg.conf_threshold,
+            scale_method=cfg.scale_method,
         )
         console.log(
             f"  Pose graph: {N} frames, {len(lc_submaps)} loop edges → "

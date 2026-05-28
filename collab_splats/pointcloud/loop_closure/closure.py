@@ -25,6 +25,25 @@ log = logging.getLogger(__name__)
 # Minimum points required for a reliable median scale estimate (matches VGGT-SLAM fallback threshold)
 _MIN_CONF_POINTS = 100
 
+_RNG = np.random.default_rng(42)
+
+
+def _estimate_scale_pairwise_dist(X: np.ndarray, Y: np.ndarray) -> float:
+    """Pairwise distance scale estimator — invariant to coordinate origin.
+
+    median(||Y_i - Y_j|| / ||X_i - X_j||). Translation cancels in subtraction,
+    so result is unbiased regardless of which camera frame X/Y are expressed in.
+    """
+    if X.shape[0] < 2:
+        return 1.0
+    n = min(X.shape[0], 500)
+    idx = _RNG.choice(X.shape[0], (n, 2), replace=True)
+    i, j = idx[:, 0], idx[:, 1]
+    x_dists = np.linalg.norm(X[i] - X[j], axis=1)
+    y_dists = np.linalg.norm(Y[i] - Y[j], axis=1)
+    valid = x_dists > 1e-6
+    return float(np.median(y_dists[valid] / x_dists[valid])) if valid.any() else 1.0
+
 
 ########################################
 ####### Absorbed from alignment.py #####
@@ -156,6 +175,11 @@ class LoopClosureConfig:
     nms_frame_distance: int = 25
     min_submap_gap: int = 1
     manifold: Literal["sl4", "se3"] = "sl4"
+    # Inter-submap scale estimation method.
+    # "se3"           — our approach: full SE3 T applied before norm ratio (current default)
+    # "rotation_only" — VGGT-SLAM style: rotation-only transform, no translation shift
+    # "pairwise_dist" — pairwise distance ratio, translation-invariant (recommended fix)
+    scale_method: Literal["se3", "rotation_only", "pairwise_dist"] = "se3"
     max_jump_ratio: float = math.inf  # reject loops where ‖ΔT.t‖/path_length > this; math.inf disables
     conf_threshold: float = 25.0  # confidence gate for scale estimation; matches VGGT-SLAM --conf_threshold 25
     lc_threshold: float | None = None        # deprecated: use lc_retrieval_threshold (same L2 value)
@@ -355,6 +379,7 @@ def run_pose_graph_optimization(
     overlap_frames: int,
     manifold: Literal["sl4", "se3"] = "sl4",
     conf_threshold: float = 25.0,
+    scale_method: Literal["se3", "rotation_only", "pairwise_dist"] = "se3",
     debug_out: list | None = None,
 ) -> np.ndarray:
     """Build + optimize per-frame SL(4) pose graph; return (total_frames, 4, 4).
@@ -437,8 +462,18 @@ def run_pose_graph_optimization(
                             mask = either_mask
 
                 curr_h = np.hstack([curr_pts, np.ones((n, 1))])
-                curr_in_prev = (T @ curr_h.T).T[:, :3]
-                scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
+                if scale_method == "rotation_only":
+                    # VGGT-SLAM style: apply only rotation part of T, drop translation.
+                    # norm(R@X) == norm(X), so effectively uses world-frame norms.
+                    curr_in_prev = (T[:3, :3] @ curr_pts.T).T
+                else:
+                    # "se3" (default): full SE3 — translation shifts anchor, introduces bias
+                    curr_in_prev = (T @ curr_h.T).T[:, :3]
+
+                if scale_method == "pairwise_dist":
+                    scale = _estimate_scale_pairwise_dist(curr_in_prev[mask], prev_pts[mask])
+                else:
+                    scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
 
             H_scale = np.diag([scale, scale, scale, 1.0])
             prev_submap_last_nid = submap_node_ids[prev_submap.submap_id][-1]

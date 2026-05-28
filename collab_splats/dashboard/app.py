@@ -10,10 +10,10 @@ import param
 import yaml
 
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.panes._placeholder import PlaceholderPane
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
 from collab_splats.dashboard.panes.reconstruct import ReconstructPane
 from collab_splats.dashboard.panes.semantics import SemanticsPane
+from collab_splats.dashboard.panes.localize import LocalizePane
 from collab_splats.dashboard.panes.visualize import VisualizePane
 from collab_splats.dashboard.state import AppState
 
@@ -63,7 +63,7 @@ class App(param.Parameterized):
             "Semantics": SemanticsPane(state=self._state, op_log=self._op_log),
             "Reconstruct": self._reconstruct,
             "Visualize": VisualizePane(state=self._state, op_log=self._op_log, base_dir=self._base_dir),
-            "Localize": PlaceholderPane("Localize", "Coming in Phase 5 — camera localization in known scene"),
+            "Localize": LocalizePane(state=self._state, op_log=self._op_log),
         }
         self._sidebar = self._build_sidebar()
 

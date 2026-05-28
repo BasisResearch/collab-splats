@@ -12,6 +12,8 @@ import yaml
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.panes._placeholder import PlaceholderPane
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
+from collab_splats.dashboard.panes.semantics import SemanticsPane
+from collab_splats.dashboard.panes.visualize import VisualizePane
 from collab_splats.dashboard.state import AppState
 
 logger = logging.getLogger(__name__)
@@ -39,9 +41,9 @@ class App(param.Parameterized):
         self._preprocess = PreprocessPane(state=self._state, op_log=self._op_log)
         self._panes = {
             "Preprocess": self._preprocess,
-            "Semantics": PlaceholderPane("Semantics", "Coming in Phase 2 — 2D feature extraction and comparison"),
+            "Semantics": SemanticsPane(state=self._state, op_log=self._op_log),
             "Reconstruct": PlaceholderPane("Reconstruct", "Coming in Phase 3 — run feedforward reconstruction with BA/LC"),
-            "Visualize": PlaceholderPane("Visualize", "Coming in Phase 4 — interactive PyVista 3D comparison"),
+            "Visualize": VisualizePane(state=self._state, op_log=self._op_log, base_dir=self._base_dir),
             "Localize": PlaceholderPane("Localize", "Coming in Phase 5 — camera localization in known scene"),
         }
 
@@ -143,13 +145,17 @@ class App(param.Parameterized):
 
     def servable(self) -> pn.template.MaterialTemplate:
         """Build and return the full MaterialTemplate for serving."""
-        pn.extension("tabulator", css_files=[], raw_css=[_HEADER_CSS])
+        pn.extension("tabulator", "vtk", css_files=[], raw_css=[_HEADER_CSS])
 
         tabs = pn.Tabs(
             *[(name, self._panes[name].panel()) for name in self._tab_names],
             dynamic=True,
             sizing_mode="stretch_width",
         )
+
+        # Wire tab activation → VisualizePane mode rescan
+        visualize_tab_index = list(self._panes.keys()).index("Visualize")
+        self._panes["Visualize"].wire_tabs(tabs, visualize_tab_index)
 
         main_content = pn.Column(
             tabs,

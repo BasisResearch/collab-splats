@@ -133,6 +133,17 @@ class App(param.Parameterized):
 
     def _on_confirm_session(self, event: Any) -> None:
         """Handle session confirmation for both new-video and load-existing flows."""
+        try:
+            self._do_confirm_session()
+        except Exception as exc:
+            logger.exception("Confirm session failed")
+            self._session_status.object = (
+                f"<p style='color:#e05050;font-size:11px'>Error: {exc}</p>"
+            )
+
+    def _do_confirm_session(self) -> None:
+        """Inner confirm logic — exceptions surface to _on_confirm_session."""
+        self._session_status.object = "<p style='color:#aaa;font-size:12px'>Loading…</p>"
         if self._video_input.visible:
             video_path = Path(self._video_input.value.strip())
             if not video_path.exists():

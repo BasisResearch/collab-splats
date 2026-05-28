@@ -4,6 +4,32 @@
 > - [STATE.md](STATE.md) for current state (branches, in-flight, blockers, parked)
 > - [ROADMAP.md](ROADMAP.md) for future phases + architecture overview
 
+### 2026-05-28 — full-seq keyframe-parity eval
+
+**Setup**: chess/seq-01 full sequence, min_disparity=50, same 29 keyframes across all models.
+Reproduces VGGT-SLAM paper setup (issue #43 regex fix applied via lexicographic sort in runner).
+
+| Model | Mode | ATE RMSE | Keyframes | Submaps |
+|-------|------|----------|-----------|---------|
+| VGGT-SLAM (SPARK) | windowed submap=16 + SL4 graph opt | **0.0384m** | 29 | 2 |
+| VGGT-X | single-pass (no windowing) | 0.5822m | 29 | 1 |
+| VGGT-X | windowed submap=16 | 1.0703m | 29 | 2 |
+| Omega | windowed submap=16 | 1.1413m | 29 | 2 |
+| MapAnything | single-pass (windowed broken) | 0.3023m | 29 | 1 |
+
+**Key findings:**
+1. **Scale drift confirmed**: VGGT-X windowed (1.07m) vs single-pass (0.58m) — 1.8× worse with one submap boundary. Pairwise distance estimator fix (specced in `2026-05-28-lc-diagnostics-and-model-parity-design.md`) should close this gap.
+2. **Remaining gap to VGGT-SLAM**: even VGGT-X single-pass (0.58m) is 15× worse than VGGT-SLAM (0.038m). This is model quality + VGGT-SLAM's SL4 graph optimization, not a bug in our pipeline.
+3. **MapAnything single-pass (0.30m)** is closest to VGGT-SLAM, confirming no scale drift when not windowed.
+4. **VGGT-SLAM baseline reproduced** at 0.0384m — matches issue #43 result (0.03778m). Validates our runner.
+
+**New infrastructure:**
+- `evals/ate_utils.py` — `compute_ate_rmse` + `_load_gt_as_tum_trajectory` (7-Scenes GT → evo TUM)
+- `evals/runners/run_vggt_slam_lc.py` — full-seq support (max_frames=None), min_disparity=50 default, saves `selected_frames.txt` + inline ATE
+- `evals/eval_gt.py` — `--keyframe_list` arg for parity runs
+
+**Next**: implement pairwise distance scale estimator + re-run windowed VGGT-X to close the 1.07m→0.58m gap.
+
 ### 2026-05-28 — LC calibration + ATE parity run 3
 
 **VGGT-SLAM architecture confirmed identical** — two-gate pipeline: DINO-SALAD L2 retrieval → attention verify gate (0.85 threshold, same `get_similarity` algorithm). `compute_similarity=True` only in `third_party/vggt_spark` fork; installed `vggt` lacks it — hook-based `cross_frame_attention_ratio` is correct workaround. Score gap vs VGGT-SPARK reference (1.025) is pair distribution, not implementation: reference measured on DINO-SALAD retrieved pairs, our prior calibration used random temporal pairs.

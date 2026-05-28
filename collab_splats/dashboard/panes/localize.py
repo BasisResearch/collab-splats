@@ -4,6 +4,7 @@ Camera localization in a known reconstruction: single-image + batch modes.
 """
 from __future__ import annotations
 
+import io
 import logging
 import threading
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 
 import matplotlib
 import matplotlib.colors as mc
+import matplotlib.pyplot as plt
 import pandas as pd
 if not matplotlib.is_interactive():
     matplotlib.use("Agg")
@@ -21,6 +23,13 @@ import pyvista as pv
 
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.state import AppState
+from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.localization import (
+    CameraLocalizer,
+    DiskExtractor,
+    XFeatExtractor,
+    plot_correspondences,
+)
 from collab_splats.utils.visualization import (
     create_camera_frustum_pyvista,
     pointcloud_to_polydata,
@@ -208,6 +217,27 @@ def _empty_batch_df():
     return pd.DataFrame(columns=["image", "inliers", "status", "t-err (m)", "pose t"])
 
 
+def _render_correspondences_to_png(
+    loc: Any,
+    query_img: np.ndarray,
+    image_paths: list,
+    warp_corners: bool,
+) -> bytes | None:
+    """Call plot_correspondences() and capture matplotlib output as PNG bytes."""
+    buf = io.BytesIO()
+    try:
+        plt.figure(figsize=(10, 4))
+        plot_correspondences(loc, query_img, image_paths, warp_corners=warp_corners)
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
+        plt.close("all")
+        buf.seek(0)
+        return buf.read()
+    except Exception:
+        plt.close("all")
+        logger.exception("plot_correspondences failed")
+        return None
+
+
 ########################################################################
 
 
@@ -287,6 +317,16 @@ class LocalizePane(param.Parameterized):
             height=180,
         )
 
+        # Right-column container for 3D scene panel (initialized here so _run_localize
+        # can update it before panel() is called)
+        right_placeholder = pn.pane.HTML(
+            "<div style='display:flex;align-items:center;justify-content:center;"
+            "height:100%;color:#555;font-size:13px'>Run localization to see 3D scene</div>",
+            sizing_mode="stretch_both",
+            min_height=300,
+        )
+        self._right_col = pn.Column(right_placeholder, sizing_mode="stretch_both")
+
         # Wire callbacks
         self._run_btn.on_click(self._on_run)
         self._batch_run_btn.on_click(self._on_batch_run)
@@ -322,11 +362,126 @@ class LocalizePane(param.Parameterized):
         self._run_btn.disabled = not (has_dir and has_method and has_query)
 
     # ------------------------------------------------------------------
-    # Stubs (filled in Tasks 3 and 4)
+    # Single-image localization
 
     def _on_run(self, event: Any) -> None:
         """Spawn background localization thread on button click."""
-        pass
+        if self._loc_thread and self._loc_thread.is_alive():
+            return
+        # Snapshot widget values on main thread before passing to worker
+        method = self._method_dd.value
+        extractor_name = self._extractor_dd.value
+        query_path = Path(self._query_input.value.strip())
+        warp_corners = self._warp_cb.value
+        self._run_btn.disabled = True
+        self._status_html.object = "<span style='color:#2596be'>⏳ Localizing…</span>"
+        self._loc_thread = threading.Thread(
+            target=self._run_localize,
+            args=(method, extractor_name, query_path, warp_corners),
+            daemon=True,
+        )
+        self._loc_thread.start()
+
+    def _run_localize(
+        self,
+        method: str,
+        extractor_name: str,
+        query_path: Path,
+        warp_corners: bool,
+    ) -> None:
+        """Background thread: load result, build localizer, run, update UI."""
+        import cv2
+        try:
+            output_dir = Path(self._state.output_dir)
+            zarr_path = output_dir / method / "feedforward.zarr"
+            self._op_log.start_op(f"Localizing in {method}")
+
+            # Load feedforward result from zarr
+            ff = FeedforwardResult.load_zarr(zarr_path)
+            self._ff_result = ff
+
+            # Build extractor
+            extractor = XFeatExtractor() if "XFeat" in extractor_name else DiskExtractor()
+
+            # Build localizer from feedforward result
+            localizer = CameraLocalizer.from_feedforward(ff, extractor=extractor)
+            self._localizer = localizer
+
+            # Build scene panel if not yet built
+            if self._scene_panel is None:
+                self._scene_panel = LocalizeScenePanel(
+                    pts3d=ff.points,
+                    extrinsics=ff.extrinsics,
+                    image_paths=ff.image_paths,
+                )
+                self._right_col[:] = [self._scene_panel.panel()]
+
+            # Load query image
+            bgr = cv2.imread(str(query_path))
+            if bgr is None:
+                raise FileNotFoundError(f"Cannot read query image: {query_path}")
+            query_img = bgr[..., ::-1].copy()  # BGR → RGB
+
+            # Use mean reference intrinsics as query intrinsics (same camera assumed)
+            query_intrinsics = ff.intrinsics.mean(axis=0)
+
+            # Run localization
+            loc = localizer.localize(query_img, query_intrinsics)
+
+            self._op_log.finish_op()
+
+            if loc.pose is None:
+                n_inliers = int(loc.inlier_mask.sum()) if loc.inlier_mask is not None else 0
+                self._corr_info.object = (
+                    f"<span style='color:#f85149'>✗ Failed — {n_inliers} inliers</span>"
+                )
+                self._status_html.object = "<span style='color:#e05050'>✗ Localization failed</span>"
+                self._op_log.error_op(f"Localization failed: {n_inliers} inliers")
+            else:
+                # Inlier stats + best ref frame
+                inlier_frames = loc.ref_frame_indices[loc.inlier_mask]
+                best_ref_idx = int(np.bincount(inlier_frames.astype(np.intp)).argmax())
+                n_inliers = int(loc.inlier_mask.sum())
+                n_total = int(loc.inlier_mask.shape[0])
+                ref_name = Path(ff.image_paths[best_ref_idx]).name
+
+                self._corr_info.object = (
+                    f"<span style='color:#3fb950'>● {n_inliers} inliers</span> &nbsp;"
+                    f"<span style='color:#f85149'>● {n_total - n_inliers} outliers</span> &nbsp;| "
+                    f"&nbsp;best ref: <span style='color:#e3b341'>{ref_name}</span>"
+                )
+
+                # Render correspondence PNG
+                buf = _render_correspondences_to_png(
+                    loc, query_img, ff.image_paths, warp_corners
+                )
+                if buf is not None:
+                    self._corr_png.object = buf
+
+                # Update pose text
+                t = loc.pose[:3, 3]
+                self._status_html.object = (
+                    f"<span style='color:#3fb950'>✓ pose t=[{t[0]:.2f}, {t[1]:.2f}, {t[2]:.2f}]</span>"
+                )
+
+                # Highlight cameras in 3D
+                if self._scene_panel is not None:
+                    self._scene_panel.highlight(
+                        query_ext=loc.pose,
+                        ref_ext=ff.extrinsics[best_ref_idx],
+                        query_idx=-1,
+                        ref_idx=best_ref_idx,
+                    )
+
+        except Exception as exc:
+            logger.exception("LocalizePane: localization failed")
+            self._op_log.error_op(str(exc))
+            self._status_html.object = f"<span style='color:#e05050'>✗ {exc}</span>"
+        finally:
+            self._run_btn.disabled = False
+
+    # ------------------------------------------------------------------
+    # Batch mode (Task 4)
 
     def _on_batch_run(self, event: Any) -> None:
         """Spawn background batch thread."""
@@ -366,14 +521,6 @@ class LocalizePane(param.Parameterized):
             self._status_html,
             sizing_mode="stretch_both",
         )
-
-        right_placeholder = pn.pane.HTML(
-            "<div style='display:flex;align-items:center;justify-content:center;"
-            "height:100%;color:#555;font-size:13px'>Run localization to see 3D scene</div>",
-            sizing_mode="stretch_both",
-            min_height=300,
-        )
-        self._right_col = pn.Column(right_placeholder, sizing_mode="stretch_both")
 
         split = pn.Row(
             pn.Column(left_panel, sizing_mode="stretch_both", width_policy="max"),

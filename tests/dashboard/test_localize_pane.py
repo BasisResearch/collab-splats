@@ -80,3 +80,57 @@ def test_localize_pane_run_btn_enabled_when_all_conditions_met(tmp_path):
     state.output_dir = tmp_path
     pane._query_input.value = str(tmp_path / "query.jpg")
     assert pane._run_btn.disabled is False
+
+
+def test_run_localize_calls_localizer_and_updates_corr_info(tmp_path):
+    """_run_localize() calls localizer.localize() and updates _corr_info on success."""
+    from collab_splats.pointcloud.localization import LocalizationResult
+
+    (tmp_path / "vggtx").mkdir()
+    (tmp_path / "vggtx" / "feedforward.zarr").mkdir()
+
+    pane, state, op_log = _make_pane()
+    state.output_dir = tmp_path
+    pane._query_input.value = str(tmp_path / "query.jpg")
+
+    # Create a fake query image file
+    import cv2
+    fake_img = np.zeros((100, 100, 3), dtype=np.uint8)
+    cv2.imwrite(str(tmp_path / "query.jpg"), fake_img)
+
+    mock_ff = MagicMock()
+    mock_ff.points = np.zeros((5, 3), dtype=np.float32)
+    mock_ff.extrinsics = np.stack([np.eye(4)] * 3).astype(np.float32)
+    mock_ff.intrinsics = np.stack([np.eye(3)] * 3).astype(np.float32)
+    mock_ff.image_paths = [tmp_path / f"f{i}.jpg" for i in range(3)]
+
+    loc_result = LocalizationResult(
+        pts2d=np.zeros((10, 2), dtype=np.float32),
+        pts3d_matched=np.zeros((10, 3), dtype=np.float32),
+        inlier_mask=np.ones(10, dtype=bool),
+        pose=np.eye(4, dtype=np.float32),
+        pts2d_ref=np.zeros((10, 2), dtype=np.float32),
+        ref_frame_indices=np.zeros(10, dtype=np.int32),
+        n_correspondences=10,
+        n_inliers=10,
+    )
+
+    mock_localizer = MagicMock()
+    mock_localizer.localize.return_value = loc_result
+
+    with patch("collab_splats.dashboard.panes.localize.FeedforwardResult") as MockFF, \
+         patch("collab_splats.dashboard.panes.localize.CameraLocalizer") as MockCL, \
+         patch("collab_splats.dashboard.panes.localize.LocalizeScenePanel"), \
+         patch("collab_splats.dashboard.panes.localize._render_correspondences_to_png", return_value=None):
+        MockFF.load_zarr.return_value = mock_ff
+        MockCL.from_feedforward.return_value = mock_localizer
+        pane._run_localize(
+            method="vggtx",
+            extractor_name="DISK+LightGlue",
+            query_path=tmp_path / "query.jpg",
+            warp_corners=False,
+        )
+
+    mock_localizer.localize.assert_called_once()
+    # On success, corr_info should contain inlier count (not "No result yet")
+    assert "inliers" in pane._corr_info.object or "✓" in pane._corr_info.object or "✗" in pane._corr_info.object

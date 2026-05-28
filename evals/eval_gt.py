@@ -335,7 +335,9 @@ def main() -> None:
         print(f"Output directory: {args.output_dir}")
 
     # ── orchestrator ───────────────────────────────────────────────────────────
-    dataset = get_dataset(args.dataset)(args.seq_dir, max_frames=args.max_frames)
+    # When keyframe_list is set, load all frames so high-index keyframes aren't truncated
+    _load_max = args.max_frames if args.keyframe_list is None else 100_000
+    dataset = get_dataset(args.dataset)(args.seq_dir, max_frames=_load_max)
 
     if args.keyframe_list is not None:
         allowed_basenames = {

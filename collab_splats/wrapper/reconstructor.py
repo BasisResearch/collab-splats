@@ -65,7 +65,7 @@ def _extract_frames(
 
     # Video — dispatch to fps or optical-flow sampler based on frame_selection
     if frame_selection == "optical_flow":
-        frame_arrays = sample_frames_optical_flow(
+        frame_arrays, _ = sample_frames_optical_flow(
             video_path=str(input_path),
             max_frames=max_frames if max_frames is not None else 200,
         )

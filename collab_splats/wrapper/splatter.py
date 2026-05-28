@@ -308,7 +308,7 @@ class Splatter:
             else:
                 n_samples = n_frames
 
-            sampled_frames = sample_frames_optical_flow(file_path.as_posix(), max_frames=min(n_samples, 200), verbose=False)
+            sampled_frames, _ = sample_frames_optical_flow(file_path.as_posix(), max_frames=min(n_samples, 200), verbose=False)
             for i, frame in enumerate(sampled_frames):
                 cv2.imwrite(str(tmp_dir / f"{i:05d}.jpg"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 

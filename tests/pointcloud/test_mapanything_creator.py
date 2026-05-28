@@ -573,3 +573,55 @@ def test_mapanything_preprocess_longest_side_calls_load_images_with_size(tmp_pat
     assert call_kwargs.get("resize_mode") == "longest_side"
     assert call_kwargs.get("size") == 512
     assert "resolution_set" not in call_kwargs
+
+
+def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
+    """After refactor, use_multiview_confidence calls compute_multiview_depth_confidence,
+    not the upstream postprocess_model_outputs_for_inference with use_multiview_confidence=True."""
+    import numpy as np
+    from unittest.mock import patch
+    from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
+
+    upstream_calls = []
+
+    def fake_postprocess(raw_outputs, processed_views, **kwargs):
+        upstream_calls.append(kwargs.get("use_multiview_confidence", False))
+        N = len(raw_outputs)
+        H, W = 4, 4
+        import torch
+        preds = []
+        for _ in range(N):
+            preds.append({
+                "mask": [torch.ones(1, H, W, 1)],
+                "depth_z": [torch.ones(1, H, W, 1) * 2.0],
+                "pts3d": [torch.zeros(1, H, W, 3)],
+                "img_no_norm": [torch.zeros(1, H, W, 3)],
+                "camera_poses": [torch.eye(4).unsqueeze(0)],
+                "intrinsics": [torch.eye(3).unsqueeze(0)],
+            })
+        return preds
+
+    mv_conf_return = np.ones((2, 4, 4), dtype=np.float32)
+
+    with patch(
+        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+        side_effect=fake_postprocess,
+    ), patch(
+        "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
+        return_value=mv_conf_return,
+    ) as mock_mv:
+        creator = MapAnythingCreator(use_multiview_confidence=True)
+        H, W = 4, 4
+        creator._processed_views = [
+            {"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(2)
+        ]
+        creator.image_paths = []
+        creator.original_coords = np.zeros((2, 6), dtype=np.float32)
+
+        raw_outputs = [{"dummy": i} for i in range(2)]
+        result = creator._postprocess(raw_outputs)
+
+    assert all(not v for v in upstream_calls), (
+        f"postprocess_model_outputs_for_inference called with use_multiview_confidence=True: {upstream_calls}"
+    )
+    mock_mv.assert_called_once()

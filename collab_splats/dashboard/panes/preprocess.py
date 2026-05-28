@@ -30,7 +30,6 @@ from collab_splats.utils.frame_sampling import (
     load_video_frames,
     sample_frames_fps,
     sample_frames_optical_flow,
-    score_all_frames,
 )
 
 logger = logging.getLogger(__name__)
@@ -339,41 +338,29 @@ class PreprocessPane(param.Parameterized):
         self._extraction_thread.start()
 
     def _run_extraction(self, video_path: Path) -> None:
-        """Background thread: score frames, extract keyframes, update UI state."""
+        """Background thread: extract keyframes, update UI state."""
         def _progress_raw(current: int, total: int, base: int, scale: int) -> None:
             pct = base + int(current / total * scale) if total > 0 else base
             self._op_log.update_progress(pct)
             self._progress_bar.value = pct
 
-        _score_progress = ThrottledProgress(lambda c, t: _progress_raw(c, t, 0, 50))
-        _extract_progress = ThrottledProgress(lambda c, t: _progress_raw(c, t, 50, 50))
+        _extract_progress = ThrottledProgress(lambda c, t: _progress_raw(c, t, 0, 100))
 
         try:
             self._progress_bar.value = 0
             self._progress_bar.visible = True
 
-            # Score all frames for the metrics chart
-            self._op_log.start_op("Computing frame scores")
-            self._progress_label.object = "<p style='font-size:11px;color:#aaa'>Computing frame scores…</p>"
-            raw_scores: list[dict] = score_all_frames(
-                str(video_path),
-                on_progress=_score_progress,
-                verbose=False,
-            )
-            # Transpose list[dict] → dict[str, list[float]] for _build_metrics_sources
-            self._frame_scores = {
-                key: [d.get(key, 0.0) for d in raw_scores]
-                for key in ("disparity", "rotation", "hist_similarity")
-                if raw_scores and key in raw_scores[0]
-            }
+            # Probe total frame count for FPS raster x-axis
+            info = get_video_info(str(video_path))
+            total_frames = info["total_frames"]
 
             # Extract frames using selected method
             self._op_log.start_op("Extracting frames")
             self._progress_label.object = "<p style='font-size:11px;color:#aaa'>Extracting frames…</p>"
             method = self._method_dd.value
             frame_indices: list[int]
+            of_scores: list[dict] = []
             if method == "fps":
-                # sample_frames_fps returns (frames, video_frame_indices)
                 frames, frame_indices = sample_frames_fps(
                     str(video_path),
                     fps=self._fps_slider.value,
@@ -382,7 +369,7 @@ class PreprocessPane(param.Parameterized):
                     verbose=False,
                 )
             else:
-                frames = sample_frames_optical_flow(
+                frames, of_scores = sample_frames_optical_flow(
                     str(video_path),
                     min_disparity=self._min_disparity_slider.value,
                     max_frames=self._n_frames_slider.value,
@@ -398,6 +385,7 @@ class PreprocessPane(param.Parameterized):
                 end_i = max(start_i + 1, int(self._window_end_slider.value * n_total))
                 frames = frames[start_i:end_i]
                 frame_indices = frame_indices[start_i:end_i]
+                of_scores = of_scores[start_i:end_i]
 
             self._selected_frames = frames
             self._selected_indices = frame_indices
@@ -413,8 +401,16 @@ class PreprocessPane(param.Parameterized):
             self._state.selected_indices = self._selected_indices
             self._selected_frames = []  # clear after zarr write — frames now on disk
 
-            # Rebuild Bokeh metrics panel with new data
-            self._metrics_col.objects = [self._make_metrics_panel()]
+            # Rebuild metrics panel based on method
+            if method == "fps":
+                self._metrics_col.objects = [_render_fps_raster(frame_indices, total_frames)]
+            else:
+                self._frame_scores = {
+                    "disparity": [s["disparity"] for s in of_scores],
+                    "rotation": [s["rotation"] for s in of_scores],
+                    "hist_similarity": [s["histogram_similarity"] for s in of_scores],
+                }
+                self._metrics_col.objects = [self._make_metrics_panel()]
             self._metrics_col.visible = True
 
             # Generate initial thumbnails and render HTML strip

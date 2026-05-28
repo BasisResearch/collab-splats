@@ -1,15 +1,16 @@
-"""Feedforward pointcloud creators: VGGT-X, MapAnything, and VGGT-Omega backends.
+"""Feedforward pointcloud creators: VGGT-X, MapAnything, VGGT-Omega, and VGGT-SPARK backends.
 
 Import from here — submodule structure is an implementation detail.
 """
 from __future__ import annotations
 
 # ── Public types and utilities ────────────────────────────────────────────────
-from .base import FeedforwardResult, BaseFeedforwardCreator, build_pycolmap_reconstruction
+from .base import FeedforwardResult, BaseFeedforwardCreator, build_pycolmap_reconstruction, compute_multiview_depth_confidence
 
 # ── Concrete creators ─────────────────────────────────────────────────────────
 from .vggtx import VGGTXCreator
 from .mapanything import MapAnythingCreator
+from .vggt_spark_creator import VGGTSPARKCreator
 
 # vggt-omega is an optional backend — only available if setup_feedforward.sh
 # was run with the vggt-omega submodule initialized.  Hard import lives in
@@ -37,5 +38,7 @@ __all__ = [
     "VGGTXCreator",
     "MapAnythingCreator",
     "VGGTOmegaCreator",
+    "VGGTSPARKCreator",
     "unproject_and_filter_points",
+    "compute_multiview_depth_confidence",
 ]

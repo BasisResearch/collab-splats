@@ -220,26 +220,29 @@ class PreprocessPane(param.Parameterized):
     def _on_video_path_change(self, event: Any) -> None:
         """Auto-load video display and reveal controls when AppState.video_path is set."""
         if event.new and Path(event.new).exists():
-            video_path = Path(event.new)
-            # Run in background thread — get_video_info opens a large file and blocks
-            threading.Thread(target=self._load_video, args=(video_path,), daemon=True).start()
+            self._load_video(Path(event.new))
             self._controls_card.visible = True
 
     def _load_video(self, video_path: Path) -> None:
-        """Fetch video metadata (background thread) then push widget updates to main thread."""
+        """Show video in player and fetch metadata in background thread."""
+        # Show video immediately — setting object is a fast string assignment
+        self._video_pane.object = str(video_path)
+        self._video_pane.visible = True
+        self._video_info_html.object = (
+            f"<p style='font-size:11px;color:#aaa'>{video_path.name} · loading info…</p>"
+        )
+        # Fetch metadata (cv2.VideoCapture on large file) without blocking IOLoop
+        threading.Thread(target=self._fetch_video_info, args=(video_path,), daemon=True).start()
+
+    def _fetch_video_info(self, video_path: Path) -> None:
+        """Background: read video metadata and update info HTML."""
         info = get_video_info(str(video_path))
-
-        def _update() -> None:
-            self._video_pane.object = str(video_path)
-            self._video_pane.visible = True
-            self._video_info_html.object = (
-                f"<p style='font-size:11px;color:#aaa'>"
-                f"{video_path.name} · {info.get('total_frames', '?')} frames · "
-                f"{info.get('fps', 0.0):.1f} fps · "
-                f"{info.get('duration_s', 0) / 60:.1f} min</p>"
-            )
-
-        pn.state.execute(_update)
+        self._video_info_html.object = (
+            f"<p style='font-size:11px;color:#aaa'>"
+            f"{video_path.name} · {info.get('total_frames', '?')} frames · "
+            f"{info.get('fps', 0.0):.1f} fps · "
+            f"{info.get('duration_s', 0) / 60:.1f} min</p>"
+        )
 
     def _on_method_change(self, event: Any) -> None:
         """Toggle visibility of method-specific controls."""

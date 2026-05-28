@@ -153,6 +153,98 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         logger.info("Feature cache written: %s  shape=%s", zarr_path, tuple(arr.shape))
         return zarr_path
 
+    @staticmethod
+    def features_to_rgb(feat: "torch.Tensor") -> "np.ndarray":
+        """Project a feature map onto its top-3 PCs to produce an RGB display image.
+
+        Args:
+            feat: (D, H_p, W_p) float tensor — output of forward() for one frame.
+
+        Returns:
+            np.ndarray of shape (H_p, W_p, 3) dtype uint8.
+        """
+        D, H_p, W_p = feat.shape
+        E = feat.reshape(D, -1).T.float()  # (N, D) where N = H_p * W_p
+        E = E - E.mean(dim=0, keepdim=True)  # center per-channel
+        _, _, Vt = torch.linalg.svd(E, full_matrices=False)  # Vt: (min(N,D), D)
+        rgb = (E @ Vt[:3].T).detach().cpu().numpy()  # (N, 3) — project onto top-3 PCs
+        # Normalize to [0, 255]: shift to zero, scale by range, guard zero-variance case
+        rgb -= rgb.min()
+        rgb /= rgb.max() + 1e-8
+        return (rgb.reshape(H_p, W_p, 3) * 255).astype(np.uint8)
+
+    def extract_and_cache_from_zarr(
+        self,
+        frames_zarr_path: Path,
+        cache_dir: Path,
+        batch_size: int = 1,
+        skip_existing: bool = True,
+    ) -> Path:
+        """Extract patch features from a frames zarr store and write to cache_dir/{name}.zarr.
+
+        Iterates frames lazily (one chunk at a time) — never holds all frames in RAM.
+        Output zarr layout is identical to extract_and_cache.
+        """
+        import zarr
+        from PIL import Image as _PILImage
+
+        zarr_path = Path(cache_dir) / f"{self.name}.zarr"
+        frames_store = zarr.open(str(frames_zarr_path), mode="r")
+        N = int(frames_store.attrs["n_frames"])
+
+        # Validate existing cache before running extraction
+        if skip_existing and zarr_path.exists():
+            try:
+                z = zarr.open(str(zarr_path), mode="r")
+                if z.attrs.get("extractor") == self.name and z.attrs.get("n_frames") == N:
+                    logger.info("Feature cache valid, skipping extraction: %s", zarr_path)
+                    return zarr_path
+            except Exception:
+                # Corrupt or unreadable cache — fall through to re-extract
+                logger.warning("Cache at %s is corrupt or unreadable, re-extracting", zarr_path)
+
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+
+        # Probe first frame to learn output shape (D, H_p, W_p) before allocating store
+        first_frame = _PILImage.fromarray(frames_store["frames"][0]).convert("RGB")
+        with torch.no_grad():
+            [first_feat] = self.forward([first_frame])
+        D, H_p, W_p = first_feat.shape
+
+        # Open output zarr store in write mode; write metadata before filling data
+        store = zarr.open(str(zarr_path), mode="w")
+        store.attrs.update({
+            "extractor": self.name,
+            "patch_size": self.patch_size,
+            "n_frames": N,
+            "feature_dim": D,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        # One chunk per frame: reading frame i loads exactly 1 disk chunk
+        arr = store.create_array(
+            "features",
+            shape=(N, D, H_p, W_p),
+            chunks=(1, D, H_p, W_p),
+            dtype="float32",
+            fill_value=0,
+        )
+
+        # Write first frame (already extracted for shape probe)
+        arr[0] = first_feat.cpu().float().numpy()
+
+        # Iterate remaining frames lazily — never loads more than one frame into RAM
+        for i in range(1, N):
+            pil_img = _PILImage.fromarray(frames_store["frames"][i]).convert("RGB")
+            with torch.no_grad():
+                [feat] = self.forward([pil_img])
+            arr[i] = feat.cpu().float().numpy()
+            # Periodic progress log so long runs remain observable
+            if i % 10 == 0:
+                logger.info("extract_and_cache_from_zarr: %d/%d frames written", i + 1, N)
+
+        logger.info("Feature cache written: %s  shape=%s", zarr_path, tuple(arr.shape))
+        return zarr_path
+
     def _build_positional_basis(self, H_p: int, W_p: int) -> None:
         """Estimate the positional subspace from a zero-pixel image using SVD (INSID3 algorithm).
 

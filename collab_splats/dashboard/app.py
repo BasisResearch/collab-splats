@@ -9,6 +9,7 @@ import param
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.panes._placeholder import PlaceholderPane
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
+from collab_splats.dashboard.panes.semantics import SemanticsPane
 from collab_splats.dashboard.state import AppState
 
 _HEADER_CSS = """
@@ -34,7 +35,7 @@ class App(param.Parameterized):
         self._preprocess = PreprocessPane(state=self._state, op_log=self._op_log)
         self._panes = {
             "Preprocess": self._preprocess,
-            "Semantics": PlaceholderPane("Semantics", "Coming in Phase 2 — 2D feature extraction and comparison"),
+            "Semantics": SemanticsPane(state=self._state, op_log=self._op_log),
             "Reconstruct": PlaceholderPane("Reconstruct", "Coming in Phase 3 — run feedforward reconstruction with BA/LC"),
             "Visualize": PlaceholderPane("Visualize", "Coming in Phase 4 — interactive PyVista 3D comparison"),
             "Localize": PlaceholderPane("Localize", "Coming in Phase 5 — camera localization in known scene"),

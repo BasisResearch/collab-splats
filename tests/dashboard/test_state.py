@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import numpy as np
-
 from collab_splats.dashboard.state import AppState
 
 
@@ -9,7 +7,7 @@ def test_appstate_defaults():
     state = AppState()
     assert state.output_dir is None
     assert state.video_path is None
-    assert state.frames == []
+    assert state.frames_zarr_path is None
     assert state.feedforward_result is None
     assert state.feature_maps_path is None
     assert state.lifted_features_path is None
@@ -23,11 +21,20 @@ def test_appstate_watch_fires_on_output_dir_change():
     assert received == [Path("/tmp/test_out")]
 
 
-def test_appstate_frames_accepts_list_of_arrays():
+def test_appstate_frames_zarr_path_accepts_path():
     state = AppState()
-    frames = [np.zeros((10, 10, 3), dtype=np.uint8)]
-    state.frames = frames
-    assert state.frames is frames
+    p = Path("/workspace/outputs/birds/frames.zarr")
+    state.frames_zarr_path = p
+    assert state.frames_zarr_path == p
+
+
+def test_appstate_watch_fires_on_frames_zarr_path_change():
+    state = AppState()
+    received = []
+    state.param.watch(lambda e: received.append(e.new), "frames_zarr_path")
+    p = Path("/tmp/frames.zarr")
+    state.frames_zarr_path = p
+    assert received == [p]
 
 
 def test_appstate_feature_maps_path_accepts_path():

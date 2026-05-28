@@ -118,6 +118,32 @@ def _frames_to_thumbnails(
     return thumbnails
 
 
+def _write_frames_zarr(frames: list[np.ndarray], zarr_path: Path) -> Path:
+    """Write extracted frames to a Blosc-compressed zarr store.
+
+    Layout: frames (N, H, W, 3) uint8, chunks=(1, H, W, 3) — one chunk per frame.
+    Returns the zarr store path.
+    """
+    import zarr
+    from zarr.codecs import BloscCodec
+
+    N = len(frames)
+    H, W = frames[0].shape[:2]
+    store = zarr.open(str(zarr_path), mode="w")
+    store.attrs.update({"n_frames": N, "height": H, "width": W})
+    arr = store.create_array(
+        "frames",
+        shape=(N, H, W, 3),
+        chunks=(1, H, W, 3),
+        dtype="uint8",
+        fill_value=0,
+        compressors=[BloscCodec(cname="lz4", clevel=5)],
+    )
+    for i, frame in enumerate(frames):
+        arr[i] = frame
+    return zarr_path
+
+
 ########################################################################
 # PreprocessPane
 ########################################################################
@@ -255,11 +281,16 @@ class PreprocessPane(param.Parameterized):
 
             self._selected_frames = frames
             self._selected_indices = list(range(len(frames)))
-            self._state.frames = frames
 
             # Write output_dir if not already set (session started from video path)
             if self._state.output_dir is None and self._state.video_path is not None:
                 self._state.output_dir = Path("/workspace/outputs") / Path(self._state.video_path).stem
+
+            # Write frames to zarr and update shared state
+            output_dir = Path(self._state.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            frames_zarr_path = _write_frames_zarr(frames, output_dir / "frames.zarr")
+            self._state.frames_zarr_path = frames_zarr_path
 
             # Update metrics display with selected frame markers
             info = get_video_info(str(video_path))

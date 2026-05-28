@@ -1,9 +1,14 @@
+import tempfile
+from pathlib import Path
+
 import numpy as np
+import zarr
 
 from collab_splats.dashboard.panes.preprocess import (
     _window_frame_indices,
     _render_metrics_figure,
     _frames_to_thumbnails,
+    _write_frames_zarr,
 )
 
 
@@ -51,3 +56,26 @@ def test_frames_to_thumbnails_returns_bytes_list():
 
 def test_frames_to_thumbnails_empty():
     assert _frames_to_thumbnails([]) == []
+
+
+def test_write_frames_zarr_shape_and_attrs():
+    frames = [np.zeros((48, 64, 3), dtype=np.uint8) for _ in range(5)]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zarr_path = Path(tmpdir) / "frames.zarr"
+        result = _write_frames_zarr(frames, zarr_path)
+        assert result == zarr_path
+        z = zarr.open(str(zarr_path), mode="r")
+        arr = z["frames"]
+        assert arr.shape == (5, 48, 64, 3)
+        assert z.attrs["n_frames"] == 5
+        assert z.attrs["height"] == 48
+        assert z.attrs["width"] == 64
+
+
+def test_write_frames_zarr_roundtrip():
+    frame = np.arange(48 * 64 * 3, dtype=np.uint8).reshape(48, 64, 3)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zarr_path = Path(tmpdir) / "frames.zarr"
+        _write_frames_zarr([frame], zarr_path)
+        z = zarr.open(str(zarr_path), mode="r")
+        np.testing.assert_array_equal(z["frames"][0], frame)

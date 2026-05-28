@@ -58,13 +58,15 @@ def _scan_backends(dataset_dir: Path) -> list[str]:
 
 
 def _scan_extractors(dataset_dir: Path, backend: str) -> list[str]:
-    """Return extractor names with a features.zarr under semantics/."""
+    """Return queryable extractor names with a features.zarr under semantics/."""
     semantics_dir = dataset_dir / backend / "semantics"
     if not semantics_dir.is_dir():
         return []
+    from collab_splats.semantics.features.base import BaseQueryableExtractor  # noqa: PLC0415
+    queryable = set(BaseQueryableExtractor._registry.keys())
     return sorted(
         p.name for p in semantics_dir.iterdir()
-        if p.is_dir() and (p / "features.zarr").exists()
+        if p.is_dir() and (p / "features.zarr").exists() and p.name in queryable
     )
 
 
@@ -129,6 +131,7 @@ class ScenePanel(param.Parameterized):
         # Internal data
         self._result: FeedforwardResult | None = None
         self._lifted_normed: np.ndarray | None = None
+        self._compressor: Any | None = None
         self._extractor_cache: dict[str, Any] = {}
         self._available_modes: set[str] = set()
         self._available_extractors: list[str] = []
@@ -177,19 +180,28 @@ class ScenePanel(param.Parameterized):
             visible=False,
         )
 
-        # Per-scene similarity query row
+        # Extractor selector — always visible, disabled until extractors are found
         self._extractor_dd = pn.widgets.Select(
-            name="Extractor", options=[], width=180
+            name="Extractor", options=[], width=180, disabled=True
         )
-        self._sim_query_input = pn.widgets.TextInput(
-            placeholder="Enter text query…", width=220
+
+        # Per-scene similarity query row (positive + optional negative)
+        self._sim_pos_input = pn.widgets.TextInput(
+            placeholder="Enter positive query…", width=200
+        )
+        self._sim_neg_input = pn.widgets.TextInput(
+            placeholder="background, wall, floor…",
+            width=200,
+            styles={"color": "#888"},
         )
         self._sim_query_btn = pn.widgets.Button(
             name="Query", button_type="success", width=80
         )
         self._sim_query_row = pn.Row(
-            self._extractor_dd,
-            self._sim_query_input,
+            pn.pane.HTML("<b style='color:#6f6'>+</b>"),
+            self._sim_pos_input,
+            pn.pane.HTML("<b style='color:#f66'>−</b>"),
+            self._sim_neg_input,
             self._sim_query_btn,
             visible=False,
         )
@@ -200,6 +212,7 @@ class ScenePanel(param.Parameterized):
         # Wire callbacks
         self._dataset_dd.param.watch(self._on_dataset_change, "value")
         self._backend_dd.param.watch(self._on_backend_change, "value")
+        self._extractor_dd.param.watch(self._on_extractor_change, "value")
         self._load_btn.on_click(self._on_load)
         self._mode_selector.param.watch(
             lambda e: self._on_mode_change(e.new), "value"
@@ -236,11 +249,34 @@ class ScenePanel(param.Parameterized):
             self._backend_dd.value = backends[0]
 
     def _on_backend_change(self, event: Any) -> None:
-        """Clear loaded result when backend changes."""
+        """Clear loaded result when backend changes; repopulate extractor dropdown."""
         self._result = None
         self._lifted_normed = None
+        self._compressor = None
         self._available_modes = set()
         self._update_mode_buttons()
+
+        # Repopulate extractor dropdown for the new backend
+        ds_name = self._dataset_dd.value
+        backend = self._backend_dd.value
+        if ds_name and backend:
+            ds_dir = self._base_dir / ds_name
+            extractors = _scan_extractors(ds_dir, backend)
+            self._extractor_dd.options = extractors
+            self._extractor_dd.value = extractors[0] if extractors else None
+            self._extractor_dd.disabled = not bool(extractors)
+        else:
+            self._extractor_dd.options = []
+            self._extractor_dd.disabled = True
+
+    def _on_extractor_change(self, event: Any) -> None:
+        """Invalidate feature cache when extractor selection changes."""
+        self._lifted_normed = None
+        self._compressor = None
+        if self.mode == "Similarity":
+            threading.Thread(
+                target=self._load_lifted_features_for_current_extractor, daemon=True
+            ).start()
 
     def _scan_available_modes(self) -> None:
         """Check disk for available modes; update button states."""
@@ -390,10 +426,6 @@ class ScenePanel(param.Parameterized):
         elif new_mode == "Mesh":
             self._rebuild_mesh_viewer()
         elif new_mode == "Similarity":
-            # Populate extractor dropdown and lazy-load features
-            self._extractor_dd.options = self._available_extractors or []
-            if self._available_extractors:
-                self._extractor_dd.value = self._available_extractors[0]
             if self._lifted_normed is None:
                 self._load_lifted_features_for_current_extractor()
             self._rebuild_sim_viewer(colors=None)
@@ -468,18 +500,25 @@ class ScenePanel(param.Parameterized):
         return None
 
     def _load_lifted_features_for_current_extractor(self) -> None:
-        """Load and L2-normalise lifted features for the current extractor."""
+        """Load and L2-normalise lifted features + compressor for the current extractor."""
         name = self._current_extractor_name()
         if not name or self._current_dataset_dir is None or self._current_backend is None:
             return
-        feat_path = (
-            self._current_dataset_dir / self._current_backend / "semantics" / name / "features.zarr"
-        )
+        feat_dir = self._current_dataset_dir / self._current_backend / "semantics" / name
+        feat_path = feat_dir / "features.zarr"
         if not feat_path.exists():
             self._set_status(f"features.zarr not found for {name}")
             return
         try:
             self._lifted_normed = _load_lifted_features(feat_path)
+            # Load sibling compressor so text queries can be projected into latent space
+            compressor_dir = feat_dir / "compressor.pt"
+            if compressor_dir.is_dir():
+                from collab_splats.semantics.compression import FeatureAutoencoder  # noqa: PLC0415
+                self._compressor = FeatureAutoencoder.load(compressor_dir)
+                self._compressor.eval()
+            else:
+                self._compressor = None
         except Exception as exc:
             self._set_status(f"Feature load failed: {exc}")
 
@@ -495,10 +534,26 @@ class ScenePanel(param.Parameterized):
         cloud = pointcloud_to_polydata(self._result.points, RGB=rgb)
         self._plotter.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
 
-    def do_query(self, text: str, extractor_name: str) -> None:
-        """Run similarity query; called from VisualizePane in a background thread."""
-        self._selected_extractor = extractor_name
+    def _encode_query(self, extractor: Any, text: str) -> np.ndarray:
+        """Encode text to a unit vector in the stored feature space.
 
+        If a compressor is loaded, projects the raw text embedding through
+        the AE encoder so dims match the stored 64-dim lifted features.
+        """
+        import torch
+        import torch.nn.functional as F
+
+        raw = extractor.encode_text([text])[0].detach().cpu()  # (D,)
+        if self._compressor is not None:
+            with torch.no_grad():
+                latent = self._compressor.per_point_encode(raw.unsqueeze(0))  # (1, latent_dim)
+                raw = F.normalize(latent, dim=-1).squeeze(0)                  # (latent_dim,)
+        vec = raw.numpy()
+        norm = np.linalg.norm(vec)
+        return vec / norm if norm > 1e-8 else vec
+
+    def do_query(self, pos_text: str, neg_text: str, extractor_name: str) -> None:
+        """Run similarity query; called from _on_sim_query_click in a background thread."""
         # Lazy-load features on first query or after extractor change
         if self._lifted_normed is None:
             self._load_lifted_features_for_current_extractor()
@@ -508,7 +563,6 @@ class ScenePanel(param.Parameterized):
         # Lazy-instantiate extractor; cache after first use
         if extractor_name not in self._extractor_cache:
             try:
-                # Lazy import: avoids pulling in heavy semantics chain at module load time
                 from collab_splats.semantics.features.base import BaseQueryableExtractor  # noqa: PLC0415
                 extractor_cls = BaseQueryableExtractor.get(extractor_name)
                 self._extractor_cache[extractor_name] = extractor_cls()
@@ -518,13 +572,13 @@ class ScenePanel(param.Parameterized):
 
         extractor = self._extractor_cache[extractor_name]
         try:
-            query_tensor = extractor.encode_text([text])
-            query_vec = query_tensor[0].detach().cpu().numpy()
-            q_norm = np.linalg.norm(query_vec)
-            if q_norm > 1e-8:
-                query_vec = query_vec / q_norm
+            pos_vec = self._encode_query(extractor, pos_text)
+            sims = self._lifted_normed @ pos_vec
 
-            sims = self._lifted_normed @ query_vec
+            if neg_text:
+                neg_vec = self._encode_query(extractor, neg_text)
+                sims = sims - self._lifted_normed @ neg_vec
+
             colors = _apply_viridis(sims)
         except Exception as exc:
             self._set_status(f"Query failed: {exc}")
@@ -534,16 +588,20 @@ class ScenePanel(param.Parameterized):
         self._plotter.clear()
         self._rebuild_sim_viewer(colors=colors)
         self._vtk_pane.synchronize()
-        self._set_status(f'Query: "{text}" via {extractor_name}')
+        label = f'"{pos_text}"'
+        if neg_text:
+            label += f' − "{neg_text}"'
+        self._set_status(f"Query: {label} via {extractor_name}")
 
     def _on_sim_query_click(self, event: Any) -> None:
-        """Fire similarity query from this scene's per-scene query input."""
-        text = self._sim_query_input.value.strip()
+        """Fire similarity query from this scene's per-scene query inputs."""
+        pos_text = self._sim_pos_input.value.strip()
+        neg_text = self._sim_neg_input.value.strip()
         extractor_name = self._extractor_dd.value
-        if not text or not extractor_name:
+        if not pos_text or not extractor_name:
             return
         threading.Thread(
-            target=self.do_query, args=(text, extractor_name), daemon=True
+            target=self.do_query, args=(pos_text, neg_text, extractor_name), daemon=True
         ).start()
 
     ####################################################################
@@ -563,10 +621,12 @@ class ScenePanel(param.Parameterized):
     def panel(self) -> pn.Column:
         """Return the full scene panel layout."""
         controls_row = pn.Row(self._dataset_dd, self._backend_dd, self._load_btn, align="end")
+        extractor_row = pn.Row(self._extractor_dd)
         action_row = pn.Row(self._reset_btn, self._snapshot_btn)
         return pn.Column(
             f"### Scene {self._scene_id}",
             controls_row,
+            extractor_row,
             self._mode_selector,
             self._vtk_pane,
             self._points_options_row,

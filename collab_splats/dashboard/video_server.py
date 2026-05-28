@@ -1,10 +1,12 @@
 # collab_splats/dashboard/video_server.py
 from __future__ import annotations
 
+import hashlib
 import logging
 import mimetypes
 import threading
 import urllib.parse
+from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -45,6 +47,8 @@ class VideoFileServer:
 
 class _VideoRequestHandler(BaseHTTPRequestHandler):
     """HTTP handler: serves only allowlisted files with range-request support."""
+
+    protocol_version = "HTTP/1.1"  # enables keep-alive; eliminates per-range TCP handshakes
 
     def do_GET(self) -> None:  # noqa: N802
         """Handle GET request: serve an allowlisted file with optional Range support."""
@@ -96,9 +100,14 @@ class _VideoRequestHandler(BaseHTTPRequestHandler):
             length = file_size
             self.send_response(200)
 
+        stat = requested.stat()
+        etag = hashlib.md5(f"{stat.st_mtime}-{stat.st_size}".encode()).hexdigest()
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
         self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Last-Modified", formatdate(stat.st_mtime, usegmt=True))
+        self.send_header("ETag", f'"{etag}"')
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
 
         # Stream file in 64 KB chunks to avoid loading large videos into memory

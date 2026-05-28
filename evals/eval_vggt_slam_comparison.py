@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -105,14 +107,32 @@ def run_lc(
     return result.extrinsics
 
 
-def run_vggt_slam_oob(image_paths: list[Path], output_dir: Path) -> np.ndarray:
-    """Run VGGT-SLAM out-of-the-box via subprocess; parse TUM log -> extrinsics."""
+_VGGT_SPARK_PATH = str(Path(__file__).parents[1] / "third_party" / "vggt_spark")
+
+# TUM archive dir — save LC result here before any cleanup
+_BASELINES_DIR = Path(__file__).parents[1] / "evals" / "baselines" / "vggt_slam" / "chess_seq01"
+
+
+def run_vggt_slam_oob(
+    image_paths: list[Path],
+    output_dir: Path,
+    max_loops: int = 1,
+    archive_tum: str | None = None,
+) -> np.ndarray:
+    """Run VGGT-SLAM out-of-the-box via subprocess; parse TUM log -> extrinsics.
+
+    Uses third_party/vggt_spark model (injected via PYTHONPATH) so that
+    compute_similarity=True resolves correctly for the LC verify gate.
+
+    Args:
+        max_loops:   0 = no LC, 1 = LC enabled (VGGT-SLAM default).
+        archive_tum: If given, copy TUM log to this path in _BASELINES_DIR.
+    """
     from collab_splats.pointcloud.loop_closure.graph import decompose_camera
 
     # Rename images to %06d.png format (issue #43 workaround)
     renamed_dir = output_dir / "renamed_frames"
-    renamed_dir.mkdir(exist_ok=True)
-    import shutil
+    renamed_dir.mkdir(parents=True, exist_ok=True)
     for i, src in enumerate(image_paths):
         dst = renamed_dir / f"{i:06d}.png"
         if not dst.exists():
@@ -120,13 +140,29 @@ def run_vggt_slam_oob(image_paths: list[Path], output_dir: Path) -> np.ndarray:
 
     log_path = output_dir / "vggt_slam_poses.txt"
     slam_main = Path(__file__).parents[1] / "third_party" / "VGGT-SLAM" / "main.py"
+
+    # Override max_loops in VGGT_SLAM_ARGS
+    base_args = [a for i, a in enumerate(VGGT_SLAM_ARGS)
+                 if not (a == "--max_loops" or (i > 0 and VGGT_SLAM_ARGS[i - 1] == "--max_loops"))]
     cmd = [
         sys.executable, str(slam_main),
         "--image_folder", str(renamed_dir),
         "--log_results", "--log_path", str(log_path),
-    ] + VGGT_SLAM_ARGS
-    log.info("Running VGGT-SLAM: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+        "--max_loops", str(max_loops),
+    ] + base_args
+
+    # Inject vggt_spark into PYTHONPATH so compute_similarity=True resolves.
+    env = {**os.environ,
+           "PYTHONPATH": _VGGT_SPARK_PATH + ":" + os.environ.get("PYTHONPATH", "")}
+
+    log.info("Running VGGT-SLAM (max_loops=%d): %s", max_loops, " ".join(cmd))
+    subprocess.run(cmd, check=True, env=env)
+
+    # Archive TUM before any cleanup
+    if archive_tum is not None:
+        _BASELINES_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy(log_path, _BASELINES_DIR / archive_tum)
+        log.info("Archived TUM → %s", _BASELINES_DIR / archive_tum)
 
     # Parse TUM-format log: timestamp tx ty tz qx qy qz qw
     from scipy.spatial.transform import Rotation
@@ -189,10 +225,25 @@ def main() -> None:
             log.info("lc_sl4 ATE RMSE: %.4f m", results["lc_sl4"])
 
         if "vggt_slam_oob" in args.conditions:
-            log.info("Running vggt_slam_oob...")
-            est = run_vggt_slam_oob(image_paths, output_dir / "vggt_slam_oob")
+            log.info("Running vggt_slam_oob (LC enabled, vggt_spark model)...")
+            est = run_vggt_slam_oob(image_paths, output_dir / "vggt_slam_oob",
+                                    max_loops=1, archive_tum="vggt_slam_lc.tum")
             results["vggt_slam_oob"] = compute_ate(est, gt_poses[:len(est)], tmp_path)
             log.info("vggt_slam_oob ATE RMSE: %.4f m", results["vggt_slam_oob"])
+
+        if "vggt_slam_lc" in args.conditions:
+            log.info("Running vggt_slam_lc (explicit LC, vggt_spark model)...")
+            est = run_vggt_slam_oob(image_paths, output_dir / "vggt_slam_lc",
+                                    max_loops=1, archive_tum="vggt_slam_lc.tum")
+            results["vggt_slam_lc"] = compute_ate(est, gt_poses[:len(est)], tmp_path)
+            log.info("vggt_slam_lc ATE RMSE: %.4f m", results["vggt_slam_lc"])
+
+        if "vggt_slam_nolc" in args.conditions:
+            log.info("Running vggt_slam_nolc (no LC)...")
+            est = run_vggt_slam_oob(image_paths, output_dir / "vggt_slam_nolc",
+                                    max_loops=0, archive_tum="vggt_slam_nolc_rerun.tum")
+            results["vggt_slam_nolc"] = compute_ate(est, gt_poses[:len(est)], tmp_path)
+            log.info("vggt_slam_nolc ATE RMSE: %.4f m", results["vggt_slam_nolc"])
 
     results_file = output_dir / "ate_results.json"
     with open(results_file, "w") as f:

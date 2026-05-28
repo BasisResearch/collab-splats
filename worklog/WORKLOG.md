@@ -4,6 +4,62 @@
 > - [STATE.md](STATE.md) for current state (branches, in-flight, blockers, parked)
 > - [ROADMAP.md](ROADMAP.md) for future phases + architecture overview
 
+### 2026-05-28 — LC calibration + ATE parity run 3
+
+**VGGT-SLAM architecture confirmed identical** — two-gate pipeline: DINO-SALAD L2 retrieval → attention verify gate (0.85 threshold, same `get_similarity` algorithm). `compute_similarity=True` only in `third_party/vggt_spark` fork; installed `vggt` lacks it — hook-based `cross_frame_attention_ratio` is correct workaround. Score gap vs VGGT-SPARK reference (1.025) is pair distribution, not implementation: reference measured on DINO-SALAD retrieved pairs, our prior calibration used random temporal pairs.
+
+**Calibration script extended** (`evals/eval_similarity_calibration.py`):
+- `--mode retrieved` — DINO-SALAD nearest-neighbour pairs (authoritative vs VGGT-SPARK reference). Default remains `random` until validated.
+- `--layer_index INT` — per-run override for layer sweep experiments; results filed as `similarity_calibration_retrieved_layer{N}.json`
+- Layer index + block depth logged per model
+
+**eval_gt.py** — added `mapanything` to backbone choices and `_BACKBONE_PREFIX`.
+
+**Layer sweep results (retrieved mode, 20 DINO-SALAD pairs, chess_seq01):**
+
+| Model | Depth | Layer | mtq mean | Notes |
+|---|---|---|---|---|
+| VGGT-X | 24 | 23 | 0.690 | last block |
+| VGGT-X | 24 | 20 | 0.817 | VGGT-SPARK default |
+| VGGT-X | 24 | 18 | 0.500 | local minimum |
+| VGGT-X | 24 | 16 | 0.916 | above threshold |
+| VGGT-X | 24 | **12** | **1.426** | calibration peak |
+| Omega | 24 | 20 | 0.897 | false-positive LCs |
+| Omega | 24 | **16** | **1.328** | optimal — set as default |
+| Omega | 24 | 12 | 1.177 | also good |
+| Omega | 24 | 8 | 1.112 | |
+| MapAnything | 16 | 15 | 0.341 | last block = noise |
+| MapAnything | 16 | **4** | **1.807** | optimal — set as default |
+
+**Code changes from sweep:**
+- `VGGTOmegaCreator._lc_layer_index = 16` (was inherited 20; removed mistaken `default_verify_match_ratio=0.59` placeholder — reverts to base 0.85)
+- `MapAnythingCreator._lc_layer_index = 4` (was out-of-range 20; depth=16, peaks early ~25% unlike VGGT models)
+
+**ATE results (chess_seq01, 200 frames):**
+
+| Condition | ATE RMSE | Notes |
+|---|---|---|
+| VGGT-X baseline (s=16) | 0.3184m | |
+| VGGT-X + LC, layer=20 | 0.2664m | −16.3% |
+| VGGT-X + LC, layer=12 | 0.2664m | same — layer=20 kept |
+| Omega baseline (s=16) | 0.3225m | |
+| Omega + LC, layer=20 | 0.4959m | LC harmful |
+| Omega + LC, layer=16 | 0.4958m | LC still harmful — open issue |
+| MapAnything baseline (single-pass) | 0.1103m | 200 frames, no LC |
+| VGGT-SLAM LC (vggt_spark model) | 0.0189m | 30 keyframes, scale-corrected — not comparable |
+
+**Open issues (tracked):**
+1. **Omega LC regression** — LC consistently hurts Omega (0.3225 → 0.496m) regardless of layer. Cause unknown; suspect wrong pose graph edges or Omega's coordinate conventions. Layer calibration alone doesn't fix it.
+2. **MapAnything windowed LC incompatible** — `_forward` ignores `window` arg, always processes `self._processed_views` (all frames). Windowed submap approach broken. Single-pass baseline works (0.1103m). LC requires architectural rework of `_forward` to support windowed inference.
+3. **VGGT-SLAM LC 0 closures** — `lc_thres=0.95` too strict or chess_seq01 first 200 frames has no revisits within VGGT-SLAM's keyframe subset (30 selected from 200).
+
+**Infrastructure fixes:**
+- `wrappers.py` — `_run_lc_loop` now calls `self.base._lc_collate_outputs(raw)` when `raw` is a list, enabling future MapAnything windowed support
+- `BaseFeedforwardCreator._lc_collate_outputs` — no-op default
+- `MapAnythingCreator._lc_collate_outputs` — aggregates list[dict] → flat dict (extrinsic + intrinsics from `camera_poses`); blocked on `camera_poses` not in raw model output (requires postprocess step)
+- `eval_vggt_slam_comparison.py` — `run_vggt_slam_oob` now accepts `max_loops` param, injects `vggt_spark` PYTHONPATH so `compute_similarity=True` resolves, archives TUM to baselines dir; added `vggt_slam_lc` and `vggt_slam_nolc` conditions
+- `docs/superpowers/specs/2026-05-28-parity-run3-design.md` — design doc for this session
+
 ## 2026-05-24
 
 ### ba-module-cleanup

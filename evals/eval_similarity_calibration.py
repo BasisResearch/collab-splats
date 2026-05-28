@@ -5,11 +5,25 @@ Runs cross_frame_attention_ratio on frame pairs using each available FF model
 both aggregation methods — old np.percentile(90) vs new mean_top_quarter — to
 confirm the aggregation fix closes the gap with VGGT-SPARK (VGGT-1B, mean=1.025).
 
+Two pair-selection modes:
+  random    — temporal pairs with gap in [min_gap, max_gap] (diagnostic floor)
+  retrieved — DINO-SALAD top-1 nearest-neighbour pairs (matches VGGT-SLAM production use)
+
+The retrieved mode is the authoritative comparison against VGGT-SPARK's 1.025 reference,
+since that score was measured on DINO-SALAD retrieved candidates, not random pairs.
+
 Usage (tmux — GPU required):
-    /opt/conda/envs/nerfstudio/bin/python evals/eval_similarity_calibration.py \
-        --scene_dir /data/7scenes/chess/seq-01 \
-        --n_pairs 10 \
-        --models vggtx mapanything
+    python evals/eval_similarity_calibration.py \\
+        --scene_dir evals/data/7scenes/chess/chess/seq-01 \\
+        --n_pairs 20 \\
+        --mode retrieved \\
+        --models vggtx mapanything omega
+
+    # Layer sweep for MapAnything:
+    python evals/eval_similarity_calibration.py \\
+        --scene_dir evals/data/7scenes/chess/chess/seq-01 \\
+        --mode retrieved --models mapanything \\
+        --layer_index 5
 
 Output: summary table + evals/results/similarity_calibration.json
 """
@@ -18,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
 import shutil
 import sys
@@ -26,6 +41,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torchvision.transforms as T
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -82,6 +98,81 @@ def sample_pairs(
 
 
 ########################################
+####### DINO-SALAD retrieval ###########
+########################################
+
+def _salad_input_transform(image_size: int = 224) -> T.Compose:
+    MEAN = [0.485, 0.456, 0.406]
+    STD  = [0.229, 0.224, 0.225]
+    return T.Compose([
+        T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR),
+        T.ToTensor(),
+        T.Normalize(mean=MEAN, std=STD),
+    ])
+
+
+def _load_salad_model(device: str):
+    """Load DINO-SALAD model (same ckpt path as VGGT-SLAM)."""
+    from salad.eval import load_model
+    ckpt_pth = os.path.join(torch.hub.get_dir(), "checkpoints/dino_salad.ckpt")
+    model = load_model(ckpt_pth)
+    model.eval()
+    return model.to(device)
+
+
+def retrieve_pairs(
+    frames: list[Path],
+    n_pairs: int,
+    min_gap: int,
+    device: str,
+) -> list[tuple[Path, Path]]:
+    """Select pairs via DINO-SALAD nearest-neighbour retrieval.
+
+    For each frame, finds its closest match (L2 distance on SALAD embeddings) among
+    frames with gap >= min_gap. Mirrors VGGT-SLAM's ImageRetrieval.find_loop_closures
+    logic — this is the pair distribution on which VGGT-SPARK's 1.025 was measured.
+    """
+    log.info("Loading DINO-SALAD for pair retrieval...")
+    salad = _load_salad_model(device)
+    transform = _salad_input_transform()
+
+    from PIL import Image
+
+    # Compute embeddings for all frames
+    log.info("Computing SALAD embeddings for %d frames...", len(frames))
+    embeddings: list[torch.Tensor] = []
+    with torch.no_grad():
+        for p in frames:
+            img = Image.open(p).convert("RGB")
+            t = transform(img).unsqueeze(0).to(device)
+            emb = salad(t)  # (1, D)
+            embeddings.append(emb.squeeze(0).cpu())
+
+    embs = torch.stack(embeddings)  # (N, D)
+
+    # For each frame, find nearest neighbour with gap >= min_gap
+    seen: set[tuple[int, int]] = set()
+    pairs: list[tuple[Path, Path]] = []
+    for i in range(len(frames)):
+        dists = torch.linalg.norm(embs - embs[i].unsqueeze(0), dim=1)  # (N,)
+        # Mask out temporally adjacent frames
+        for k in range(max(0, i - min_gap + 1), min(len(frames), i + min_gap)):
+            dists[k] = float("inf")
+        j = int(dists.argmin().item())
+        key = (min(i, j), max(i, j))
+        if key not in seen:
+            seen.add(key)
+            pairs.append((frames[i], frames[j]))
+        if len(pairs) >= n_pairs:
+            break
+
+    del salad  # free GPU memory before model loads
+    torch.cuda.empty_cache()
+    log.info("Retrieved %d pairs via DINO-SALAD", len(pairs))
+    return pairs
+
+
+########################################
 ####### Raw ratio computation ##########
 ########################################
 
@@ -113,6 +204,7 @@ def eval_model(
     pairs: list[tuple[Path, Path]],
     device: str,
     label: str,
+    layer_index_override: int | None = None,
 ) -> dict:
     """Instantiate a FF creator and compute scores for all pairs via temp-dir preprocessing."""
     log.info("Loading model: %s", label)
@@ -120,16 +212,28 @@ def eval_model(
     # _load_model is only called inside run(); call explicitly so self.model is set.
     creator.model = creator._load_model(device)
 
+    # Apply layer index override if supplied (for sweep experiments).
+    if layer_index_override is not None:
+        log.info("  Overriding _lc_layer_index: %d → %d",
+                 getattr(creator, "_lc_layer_index", -1), layer_index_override)
+        creator._lc_layer_index = layer_index_override
+
+    # Log actual block count for the model so callers know valid layer range.
+    if hasattr(creator.model, "aggregator") and hasattr(creator.model.aggregator, "global_blocks"):
+        log.info("  VGGT-X global_blocks depth: %d", len(creator.model.aggregator.global_blocks))
+    if hasattr(creator.model, "aggregator") and hasattr(creator.model.aggregator, "inter_frame_blocks"):
+        log.info("  VGGT-Omega inter_frame_blocks depth: %d",
+                 len(creator.model.aggregator.inter_frame_blocks))
+    if hasattr(creator.model, "info_sharing") and hasattr(creator.model.info_sharing, "self_attention_blocks"):
+        log.info("  MapAnything self_attention_blocks depth: %d",
+                 len(creator.model.info_sharing.self_attention_blocks))
+
     scores_old: list[float] = []
     scores_new: list[float] = []
 
     for i, (p1, p2) in enumerate(pairs):
         log.info("  pair %d/%d: %s ↔ %s", i + 1, len(pairs), p1.name, p2.name)
         try:
-            # Copy 2 frames into a temp dir; _preprocess() expects a directory.
-            # Names must sort so frame1 < frame2 (alphanumeric order = temporal order).
-            # Use shutil.copy2 (not symlinks) — symlinks with relative paths break
-            # when accessed from the temp dir at a different cwd.
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_dir = Path(tmp)
                 shutil.copy2(p1, tmp_dir / f"a_{p1.name}")
@@ -137,14 +241,12 @@ def eval_model(
 
                 with torch.no_grad():
                     views, _, _ = creator._preprocess(tmp_dir)
-                    # views: (2, 3, H, W) tensor (VGGT-X/Omega) or list of dicts (MapAnything)
                     if isinstance(views, torch.Tensor):
                         images = views.to(device)
                     else:
                         # MapAnything: each v["img"] is (1, C, H, W)
                         images = torch.cat([v["img"] for v in views], dim=0).to(device)
 
-                    # Use the model's calibrated layer and token offset.
                     layer_idx = getattr(creator, "_lc_layer_index", -1)
                     tok_off   = getattr(creator, "_lc_token_offset", 5)
                     features = creator.extract_intermediate_features(
@@ -167,6 +269,7 @@ def eval_model(
 
     return {
         "model": label,
+        "layer_index": getattr(creator, "_lc_layer_index", -1),
         "n_pairs": len(pairs),
         "n_valid": len(valid_old),
         "percentile90": {
@@ -192,11 +295,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Similarity calibration across FF backends")
     parser.add_argument("--scene_dir", type=Path, required=True,
                         help="7-Scenes sequence dir (frame-*.color.png)")
-    parser.add_argument("--n_pairs", type=int, default=10)
+    parser.add_argument("--n_pairs", type=int, default=20)
     parser.add_argument("--min_gap", type=int, default=5,
-                        help="Min frame gap for pairs (default 5)")
+                        help="Min frame gap when building pairs (default 5)")
     parser.add_argument("--max_gap", type=int, default=40,
-                        help="Max frame gap for pairs (default 40)")
+                        help="Max frame gap for random pairs (default 40; ignored in retrieved mode)")
+    parser.add_argument(
+        "--mode", choices=["random", "retrieved"], default="random",
+        help=(
+            "Pair selection: 'random' = temporal pairs with gap in [min_gap, max_gap] (diagnostic); "
+            "'retrieved' = DINO-SALAD nearest-neighbour pairs (matches VGGT-SLAM production, "
+            "authoritative comparison vs VGGT-SPARK 1.025 reference)."
+        ),
+    )
+    parser.add_argument(
+        "--layer_index", type=int, default=None,
+        help="Override _lc_layer_index on creator instances (for layer sweep experiments). "
+             "If omitted, each creator uses its class-level default.",
+    )
     parser.add_argument("--models", nargs="+",
                         choices=["vggtx", "mapanything", "omega"],
                         default=["vggtx", "mapanything"])
@@ -205,18 +321,25 @@ def main() -> None:
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    log.info("Device: %s | models: %s | n_pairs: %d", device, args.models, args.n_pairs)
+    log.info("Device: %s | models: %s | n_pairs: %d | mode: %s",
+             device, args.models, args.n_pairs, args.mode)
 
     frames = load_7scenes_images(args.scene_dir)
-    pairs = sample_pairs(frames, args.n_pairs, args.min_gap, args.max_gap)
-    log.info("Sampled %d pairs from %d frames", len(pairs), len(frames))
+
+    if args.mode == "retrieved":
+        pairs = retrieve_pairs(frames, args.n_pairs, args.min_gap, device)
+    else:
+        pairs = sample_pairs(frames, args.n_pairs, args.min_gap, args.max_gap)
+
+    log.info("Selected %d pairs from %d frames (mode=%s)", len(pairs), len(frames), args.mode)
 
     results = []
 
-    # VGGT-SPARK reference scores (VGGT-1B, mean_top_quarter, from parity harness)
+    # VGGT-SPARK reference scores (VGGT-1B, mean_top_quarter, from parity harness).
+    # These were measured on DINO-SALAD retrieved pairs — use retrieved mode to compare.
     results.append({
         "model": "vggt_spark_reference",
-        "note": "VGGT-1B via VGGT-SPARK, get_similarity = mean_top_quarter, chess_seq01",
+        "note": "VGGT-1B via VGGT-SPARK, get_similarity = mean_top_quarter, chess_seq01, DINO-SALAD retrieved pairs",
         "mean_top_quarter": {
             "scores": [1.0321, 1.0432, 1.0359, 1.0278, 1.0205,
                        1.0016, 1.0222, 1.0223, 1.0147, 1.0181, 1.0246],
@@ -229,33 +352,43 @@ def main() -> None:
     if "vggtx" in args.models:
         try:
             from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
-            results.append(eval_model(VGGTXCreator, {}, pairs, device, "vggtx"))
+            results.append(eval_model(VGGTXCreator, {}, pairs, device, "vggtx",
+                                      layer_index_override=args.layer_index))
         except Exception as exc:
             log.error("vggtx failed: %s", exc)
 
     if "mapanything" in args.models:
         try:
             from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
-            results.append(eval_model(MapAnythingCreator, {}, pairs, device, "mapanything"))
+            results.append(eval_model(MapAnythingCreator, {}, pairs, device, "mapanything",
+                                      layer_index_override=args.layer_index))
         except Exception as exc:
             log.error("mapanything failed: %s", exc)
 
     if "omega" in args.models:
         try:
             from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
-            results.append(eval_model(VGGTOmegaCreator, {}, pairs, device, "vggt_omega"))
+            results.append(eval_model(VGGTOmegaCreator, {}, pairs, device, "vggt_omega",
+                                      layer_index_override=args.layer_index))
         except Exception as exc:
             log.error("vggt_omega failed: %s", exc)
 
     # Summary table
+    mode_note = "(retrieved pairs — compare vs VGGT-SPARK 1.025)" if args.mode == "retrieved" \
+                else "(random pairs — diagnostic floor only)"
     print("\n" + "=" * 72)
-    print(f"{'Model':<22} {'pct90 mean':>11} {'mtq mean':>10} {'mtq min':>9} {'mtq max':>9}")
+    print(f"Mode: {args.mode} {mode_note}")
+    if args.layer_index is not None:
+        print(f"Layer index override: {args.layer_index}")
+    print(f"{'Model':<22} {'layer':>6} {'pct90 mean':>11} {'mtq mean':>10} {'mtq min':>9} {'mtq max':>9}")
     print("-" * 72)
     for r in results:
         mtq = r.get("mean_top_quarter", {})
         p90 = r.get("percentile90", {})
+        layer = r.get("layer_index", "—")
         print(
             f"{r['model']:<22}"
+            f" {str(layer):>6}"
             f" {p90.get('mean', float('nan')):>11.4f}"
             f" {mtq.get('mean', float('nan')):>10.4f}"
             f" {mtq.get('min', float('nan')):>9.4f}"
@@ -271,10 +404,25 @@ def main() -> None:
         status = "✓ above" if gap >= 0 else f"✗ below by {abs(gap):.4f}"
         print(f"  {r['model']:<22} {status}")
 
+    if args.mode == "retrieved":
+        vggtx = next((r for r in results if r["model"] == "vggtx"), None)
+        if vggtx:
+            mean = vggtx.get("mean_top_quarter", {}).get("mean", float("nan"))
+            if not np.isnan(mean):
+                delta = mean - 1.025
+                verdict = "PARITY CONFIRMED" if abs(delta) < 0.15 else "GAP REMAINS — investigate"
+                print(f"\n  VGGT-X vs VGGT-SPARK ref: Δ={delta:+.4f} → {verdict}")
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.out, "w") as f:
-        json.dump(results, f, indent=2)
-    log.info("Results → %s", args.out)
+    # Append mode and layer_index to output filename to avoid overwriting runs
+    stem = args.out.stem
+    suffix = f"_{args.mode}"
+    if args.layer_index is not None:
+        suffix += f"_layer{args.layer_index}"
+    out_path = args.out.with_name(stem + suffix + args.out.suffix)
+    with open(out_path, "w") as f:
+        json.dump({"mode": args.mode, "layer_index_override": args.layer_index, "results": results}, f, indent=2)
+    log.info("Results → %s", out_path)
 
 
 if __name__ == "__main__":

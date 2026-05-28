@@ -10,12 +10,13 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import cv2
 import matplotlib
+if not matplotlib.is_interactive():
+    matplotlib.use("Agg")
 import matplotlib.colors as mc
 import matplotlib.pyplot as plt
 import pandas as pd
-if not matplotlib.is_interactive():
-    matplotlib.use("Agg")
 import numpy as np
 import panel as pn
 import param
@@ -226,10 +227,10 @@ def _render_correspondences_to_png(
     """Call plot_correspondences() and capture matplotlib output as PNG bytes."""
     buf = io.BytesIO()
     try:
-        plt.figure(figsize=(10, 4))
+        fig = plt.figure(figsize=(10, 4))
         plot_correspondences(loc, query_img, image_paths, warp_corners=warp_corners)
         plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
-        plt.close("all")
+        plt.close(fig)
         buf.seek(0)
         return buf.read()
     except Exception:
@@ -390,7 +391,6 @@ class LocalizePane(param.Parameterized):
         warp_corners: bool,
     ) -> None:
         """Background thread: load result, build localizer, run, update UI."""
-        import cv2
         try:
             output_dir = Path(self._state.output_dir)
             zarr_path = output_dir / method / "feedforward.zarr"

@@ -132,5 +132,6 @@ def test_run_localize_calls_localizer_and_updates_corr_info(tmp_path):
         )
 
     mock_localizer.localize.assert_called_once()
-    # On success, corr_info should contain inlier count (not "No result yet")
-    assert "inliers" in pane._corr_info.object or "✓" in pane._corr_info.object or "✗" in pane._corr_info.object
+    # On success path (pose is non-None), corr_info must show inlier count
+    assert "inliers" in pane._corr_info.object
+    assert "✗" not in pane._corr_info.object  # should not be in failure state

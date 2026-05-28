@@ -47,7 +47,13 @@ for _p in (_repo_root, _slam_root):
 import vggt_slam.slam_utils as utils
 from vggt_slam.solver import Solver
 from vggt.models.vggt import VGGT  # resolves to VGGT-SPARK via sys.path shadow above
-from evals.ate_utils import compute_ate_rmse
+import importlib.util as _ilu
+_ate_spec = _ilu.spec_from_file_location(
+    "ate_utils", Path(__file__).resolve().parents[2] / "evals" / "ate_utils.py"
+)
+_ate_mod = _ilu.module_from_spec(_ate_spec)
+_ate_spec.loader.exec_module(_ate_mod)
+compute_ate_rmse = _ate_mod.compute_ate_rmse
 
 logger = logging.getLogger(__name__)
 

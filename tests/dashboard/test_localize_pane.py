@@ -4,11 +4,14 @@ import numpy as np
 import panel as pn
 import pytest
 
+from collab_splats.dashboard.operation_log import OperationLog
+from collab_splats.dashboard.panes.localize import LocalizePane, LocalizeScenePanel
+from collab_splats.dashboard.state import AppState
+
 pn.extension()
 
 
 def _make_scene_panel():
-    from collab_splats.dashboard.panes.localize import LocalizeScenePanel
     pts3d = np.zeros((10, 3), dtype=np.float32)
     extrinsics = np.stack([np.eye(4, dtype=np.float32)] * 4)
     return LocalizeScenePanel(pts3d=pts3d, extrinsics=extrinsics, image_paths=[])
@@ -36,11 +39,6 @@ def test_scene_panel_highlight_sets_indices():
         panel.highlight(query_ext=np.eye(4), ref_ext=np.eye(4), query_idx=3, ref_idx=1)
     assert panel._highlighted_query_idx == 3
     assert panel._highlighted_ref_idx == 1
-
-
-from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.panes.localize import LocalizePane
-from collab_splats.dashboard.state import AppState
 
 
 def _make_pane():

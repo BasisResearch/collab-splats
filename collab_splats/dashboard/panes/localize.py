@@ -273,7 +273,6 @@ class LocalizePane(param.Parameterized):
             placeholder="Path to query image…",
             width=320,
         )
-        self._browse_btn = pn.widgets.Button(name="Browse…", width=80)
         self._method_dd = pn.widgets.Select(
             name="Recon",
             options=[],
@@ -502,9 +501,12 @@ class LocalizePane(param.Parameterized):
         """Spawn background batch thread."""
         if self._batch_thread and self._batch_thread.is_alive():
             return
+        folder_val = self._batch_folder_input.value.strip()
+        if not folder_val:
+            return
         method = self._method_dd.value
         extractor_name = self._extractor_dd.value
-        folder_path = Path(self._batch_folder_input.value.strip())
+        folder_path = Path(folder_val)
         self._batch_run_btn.disabled = True
         self._batch_export_btn.disabled = True
         self._batch_table.value = _empty_batch_df()
@@ -594,7 +596,6 @@ class LocalizePane(param.Parameterized):
         """Return the full LocalizePane layout."""
         controls_bar = pn.Row(
             self._query_input,
-            self._browse_btn,
             pn.Spacer(sizing_mode="stretch_width"),
             pn.pane.HTML("<b style='color:#8b949e;font-size:12px'>Recon:</b>"),
             self._method_dd,

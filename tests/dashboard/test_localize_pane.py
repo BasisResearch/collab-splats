@@ -135,3 +135,53 @@ def test_run_localize_calls_localizer_and_updates_corr_info(tmp_path):
     # On success path (pose is non-None), corr_info must show inlier count
     assert "inliers" in pane._corr_info.object
     assert "✗" not in pane._corr_info.object  # should not be in failure state
+
+
+def test_batch_run_populates_table(tmp_path):
+    """_run_batch() appends one row per image to _batch_table."""
+    from collab_splats.pointcloud.localization import LocalizationResult
+
+    (tmp_path / "vggtx").mkdir()
+    (tmp_path / "vggtx" / "feedforward.zarr").mkdir()
+
+    # Create fake query images
+    import cv2
+    for name in ["q1.jpg", "q2.jpg"]:
+        cv2.imwrite(str(tmp_path / name), np.zeros((100, 100, 3), dtype=np.uint8))
+
+    pane, state, _ = _make_pane()
+    state.output_dir = tmp_path
+
+    mock_ff = MagicMock()
+    mock_ff.points = np.zeros((5, 3), dtype=np.float32)
+    mock_ff.extrinsics = np.stack([np.eye(4)] * 3).astype(np.float32)
+    mock_ff.intrinsics = np.stack([np.eye(3)] * 3).astype(np.float32)
+    mock_ff.image_paths = [tmp_path / f"f{i}.jpg" for i in range(3)]
+
+    success_loc = LocalizationResult(
+        pts2d=np.zeros((10, 2), dtype=np.float32),
+        pts3d_matched=np.zeros((10, 3), dtype=np.float32),
+        inlier_mask=np.ones(10, dtype=bool),
+        pose=np.eye(4, dtype=np.float32),
+        pts2d_ref=np.zeros((10, 2), dtype=np.float32),
+        ref_frame_indices=np.zeros(10, dtype=np.int32),
+        n_correspondences=10,
+        n_inliers=10,
+    )
+
+    mock_localizer = MagicMock()
+    mock_localizer.localize.return_value = success_loc
+
+    with patch("collab_splats.dashboard.panes.localize.FeedforwardResult") as MockFF, \
+         patch("collab_splats.dashboard.panes.localize.CameraLocalizer") as MockCL, \
+         patch("collab_splats.dashboard.panes.localize.LocalizeScenePanel"):
+        MockFF.load_zarr.return_value = mock_ff
+        MockCL.from_feedforward.return_value = mock_localizer
+        pane._run_batch(
+            method="vggtx",
+            extractor_name="DISK+LightGlue",
+            folder_path=tmp_path,
+        )
+
+    assert len(pane._batch_table.value) == 2
+    assert list(pane._batch_table.value["status"]) == ["✓", "✓"]

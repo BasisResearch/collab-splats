@@ -485,11 +485,97 @@ class LocalizePane(param.Parameterized):
 
     def _on_batch_run(self, event: Any) -> None:
         """Spawn background batch thread."""
-        pass
+        if self._batch_thread and self._batch_thread.is_alive():
+            return
+        method = self._method_dd.value
+        extractor_name = self._extractor_dd.value
+        folder_path = Path(self._batch_folder_input.value.strip())
+        self._batch_run_btn.disabled = True
+        self._batch_export_btn.disabled = True
+        self._batch_table.value = _empty_batch_df()
+        self._batch_thread = threading.Thread(
+            target=self._run_batch,
+            args=(method, extractor_name, folder_path),
+            daemon=True,
+        )
+        self._batch_thread.start()
+
+    def _run_batch(
+        self,
+        method: str,
+        extractor_name: str,
+        folder_path: Path,
+    ) -> None:
+        """Background thread: localize every image in folder_path, stream rows to table."""
+        try:
+            output_dir = Path(self._state.output_dir)
+            zarr_path = output_dir / method / "feedforward.zarr"
+            ff = FeedforwardResult.load_zarr(zarr_path)
+
+            # Build extractor and localizer
+            extractor = XFeatExtractor() if "XFeat" in extractor_name else DiskExtractor()
+            localizer = CameraLocalizer.from_feedforward(ff, extractor=extractor)
+            query_intrinsics = ff.intrinsics.mean(axis=0)
+
+            # Collect image paths (common image extensions)
+            img_exts = {".jpg", ".jpeg", ".png"}
+            query_paths = sorted(
+                p for p in folder_path.iterdir()
+                if p.suffix.lower() in img_exts
+            )
+
+            rows: list[dict] = []
+            for qp in query_paths:
+                bgr = cv2.imread(str(qp))
+                if bgr is None:
+                    rows.append({
+                        "image": qp.name, "inliers": 0, "status": "✗",
+                        "t-err (m)": "—", "pose t": "—",
+                    })
+                    self._batch_table.value = pd.DataFrame(rows)
+                    continue
+
+                query_img = bgr[..., ::-1].copy()
+                try:
+                    loc = localizer.localize(query_img, query_intrinsics)
+                except Exception as exc:
+                    rows.append({
+                        "image": qp.name, "inliers": 0, "status": "✗",
+                        "t-err (m)": "—", "pose t": str(exc)[:40],
+                    })
+                    self._batch_table.value = pd.DataFrame(rows)
+                    continue
+
+                if loc.pose is None:
+                    n_in = int(loc.inlier_mask.sum()) if loc.inlier_mask is not None else 0
+                    rows.append({
+                        "image": qp.name, "inliers": n_in, "status": "✗",
+                        "t-err (m)": "—", "pose t": "—",
+                    })
+                else:
+                    n_in = int(loc.inlier_mask.sum())
+                    t = loc.pose[:3, 3]
+                    rows.append({
+                        "image": qp.name,
+                        "inliers": n_in,
+                        "status": "✓",
+                        "t-err (m)": "—",
+                        "pose t": f"[{t[0]:.2f},{t[1]:.2f},{t[2]:.2f}]",
+                    })
+
+                self._batch_table.value = pd.DataFrame(rows)
+
+            self._batch_export_btn.disabled = False
+
+        except Exception as exc:
+            logger.exception("LocalizePane: batch failed")
+            self._op_log.error_op(str(exc))
+        finally:
+            self._batch_run_btn.disabled = False
 
     def _on_export_csv(self, event: Any) -> None:
         """Trigger CSV download from Tabulator."""
-        pass
+        self._batch_table.download(filename="localize_batch.csv")
 
     # ------------------------------------------------------------------
     # Layout

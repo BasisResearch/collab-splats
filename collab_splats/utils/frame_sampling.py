@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import cv2
+from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, Iterator, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,6 +19,79 @@ logger = logging.getLogger(__name__)
 ########################################################################
 # Helpers
 ########################################################################
+
+@lru_cache(maxsize=None)
+def _get_decoder_backend() -> str:
+    """Return best available video decode backend: torchcodec > ffmpeg > cv2.
+
+    Result is cached at module load time — probe runs once per process.
+    """
+    try:
+        import torchcodec  # noqa: F401
+        return "torchcodec"
+    except ImportError:
+        pass
+    if shutil.which("ffmpeg") is not None:
+        return "ffmpeg"
+    return "cv2"
+
+
+def _iter_decoded_frames(
+    video_path: str,
+    width: int,
+    height: int,
+) -> Iterator[np.ndarray]:
+    """Yield BGR uint8 HWC numpy arrays for every frame, rotation already applied.
+
+    Dispatches to torchcodec, ffmpeg, or cv2 based on _get_decoder_backend().
+    """
+    backend = _get_decoder_backend()
+
+    if backend == "ffmpeg":
+        cmd = [
+            "ffmpeg", "-i", video_path,
+            "-f", "rawvideo", "-pix_fmt", "bgr24",
+            "-an", "pipe:1",
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        frame_size = width * height * 3
+        try:
+            while True:
+                raw = proc.stdout.read(frame_size)
+                if len(raw) < frame_size:
+                    break
+                yield np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy()
+        finally:
+            proc.stdout.close()
+            proc.terminate()
+            proc.wait()
+        return
+
+    if backend == "torchcodec":
+        import torch
+        from torchcodec.decoders import VideoDecoder
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        decoder = VideoDecoder(video_path, device=device)
+        for frame_batch in decoder:
+            # frame_batch.data: (C, H, W) uint8 RGB tensor
+            rgb = frame_batch.data.permute(1, 2, 0).cpu().numpy()
+            yield rgb[:, :, ::-1].copy()  # RGB → BGR to match cv2 convention
+        return
+
+    # cv2 fallback
+    rotation = _get_rotation_degrees(video_path)
+    cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            yield _apply_rotation(frame, rotation)
+    finally:
+        cap.release()
+
 
 def _get_rotation_degrees(video_path: str) -> int:
     """Return CW rotation degrees needed to display video correctly, via ffprobe.
@@ -54,18 +129,20 @@ def _apply_rotation(frame: np.ndarray, degrees: int) -> np.ndarray:
 def get_video_info(video_path: str) -> dict:
     """Return basic video metadata without exposing cv2 to callers.
 
-    Keys: total_frames (int), fps (float), duration_s (float).
+    Keys: total_frames (int), fps (float), duration_s (float), width (int), height (int).
     Returns zeros for all fields if the file cannot be opened.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         cap.release()
-        return {"total_frames": 0, "fps": 0.0, "duration_s": 0.0}
+        return {"total_frames": 0, "fps": 0.0, "duration_s": 0.0, "width": 0, "height": 0}
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
     duration_s = total / fps if fps > 0 else 0.0
-    return {"total_frames": total, "fps": fps, "duration_s": duration_s}
+    return {"total_frames": total, "fps": fps, "duration_s": duration_s, "width": width, "height": height}
 
 
 ########################################################################
@@ -319,49 +396,106 @@ def score_all_frames(
     stride: score every Nth decoded frame; on_progress fires for every frame regardless.
     The first scored frame always has selected=True (score=1.0).
     """
-    # Read container rotation tag to correct phone/action-cam footage orientation
-    rotation = _get_rotation_degrees(video_path)
     selector = OpticalFlowFrameSelector(
         min_disparity=min_disparity,
         motion_weight=motion_weight,
         coverage_weight=coverage_weight,
     )
-    # Open video; released in finally block regardless of outcome
-    cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    info = get_video_info(video_path)
+    total = info["total_frames"]
     results = []
     frames_decoded = 0
-    try:
-        with tqdm(total=total, desc="Scoring frames", unit="frame", disable=not verbose) as pbar:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame = _apply_rotation(frame, rotation)
-                # Score only stride-aligned frames; skip OF analysis on others
-                if frames_decoded % stride == 0:
-                    # Downscale to 480px wide for faster OF computation
-                    scale = min(1.0, 480.0 / frame.shape[1])
-                    small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
-                    should_select, score, components = selector.should_select_frame(small)
-                    if should_select:
-                        selector.accept_frame(small)
-                    results.append({
-                        "frame_idx": frames_decoded,
-                        "disparity": components.get("disparity", 0.0),
-                        "rotation": components.get("rotation", 0.0),
-                        "histogram_similarity": components.get("histogram_similarity", 1.0),
-                        "score": score,
-                        "selected": should_select,
-                    })
-                frames_decoded += 1
-                pbar.update(1)
-                if on_progress is not None:
-                    on_progress(frames_decoded, total)
-    finally:
-        cap.release()
+    with tqdm(total=total, desc="Scoring frames", unit="frame", disable=not verbose) as pbar:
+        for frame in _iter_decoded_frames(video_path, info["width"], info["height"]):
+            # Score only stride-aligned frames; skip OF analysis on others
+            if frames_decoded % stride == 0:
+                # Downscale to 480px wide for faster OF computation
+                scale = min(1.0, 480.0 / frame.shape[1])
+                small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
+                should_select, score, components = selector.should_select_frame(small)
+                if should_select:
+                    selector.accept_frame(small)
+                results.append({
+                    "frame_idx": frames_decoded,
+                    "disparity": components.get("disparity", 0.0),
+                    "rotation": components.get("rotation", 0.0),
+                    "histogram_similarity": components.get("histogram_similarity", 1.0),
+                    "score": score,
+                    "selected": should_select,
+                })
+            frames_decoded += 1
+            pbar.update(1)
+            if on_progress is not None:
+                on_progress(frames_decoded, total)
     return results
+
+
+def _decode_fps_ffmpeg(
+    video_path: str,
+    fps: float,
+    n_targets: int,
+    width: int,
+    height: int,
+    native_fps: float,
+    on_progress: Callable[[int, int], None] | None,
+) -> tuple[list[np.ndarray], list[int]]:
+    """Extract frames at fps via ffmpeg subprocess pipe.
+
+    ffmpeg handles rotation from container metadata automatically.
+    Returns (rgb_frames, approximate_source_indices).
+    """
+    cmd = [
+        "ffmpeg", "-i", video_path,
+        "-vf", f"fps={fps}",
+        "-frames:v", str(n_targets),
+        "-f", "rawvideo", "-pix_fmt", "rgb24",
+        "-an", "pipe:1",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    frame_size = width * height * 3
+    frames: list[np.ndarray] = []
+    interval = max(1, int(round(native_fps / fps)))
+    try:
+        while True:
+            raw = proc.stdout.read(frame_size)
+            if len(raw) < frame_size:
+                break
+            frames.append(np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy())
+            if on_progress is not None:
+                on_progress(len(frames), n_targets)
+    finally:
+        proc.stdout.close()
+        proc.terminate()
+        proc.wait()
+    indices = [i * interval for i in range(len(frames))]
+    return frames, indices
+
+
+def _decode_fps_torchcodec(
+    video_path: str,
+    targets: list[int],
+    on_progress: Callable[[int, int], None] | None,
+) -> tuple[list[np.ndarray], list[int]]:
+    """Extract specific frames by index using torchcodec GPU decoder.
+
+    torchcodec handles rotation from container metadata automatically.
+    Returns (rgb_frames, targets) — indices are exact source positions.
+    """
+    import torch
+    from torchcodec.decoders import VideoDecoder
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    decoder = VideoDecoder(video_path, device=device)
+    result = decoder.get_frames_at(indices=targets)
+    # result.data: (N, C, H, W) uint8 tensor, RGB
+    frames = [
+        result.data[i].permute(1, 2, 0).cpu().numpy()
+        for i in range(result.data.shape[0])
+    ]
+    if on_progress is not None:
+        for i in range(1, len(frames) + 1):
+            on_progress(i, len(targets))
+    return frames, targets[: len(frames)]
 
 
 def sample_frames_fps(
@@ -371,28 +505,46 @@ def sample_frames_fps(
     max_frames: int | None = None,
     verbose: bool = True,
 ) -> tuple[list[np.ndarray], list[int]]:
-    """Extract frames at a fixed FPS rate by seeking to each target index.
+    """Extract frames at a fixed FPS rate using the best available decoder.
 
     Returns (frames, indices) where indices are the source frame positions.
     on_progress: called as on_progress(n_collected, n_targets) after each frame.
     max_frames: cap the number of extracted frames; None means no cap.
     """
-    rotation = _get_rotation_degrees(video_path)
-    # Compute target frame indices from native fps and the requested output fps
-    cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
-    native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    info = get_video_info(video_path)
+    if info["total_frames"] == 0:
+        return [], []
+
+    native_fps = info["fps"] or 30.0
+    total = info["total_frames"]
     interval = max(1, int(round(native_fps / fps)))
     targets = list(range(0, total, interval))
     if max_frames is not None:
         targets = targets[:max_frames]
+    if not targets:
+        return [], []
+
+    backend = _get_decoder_backend()
+    logger.debug("sample_frames_fps: backend=%s, targets=%d", backend, len(targets))
+
+    if backend == "torchcodec":
+        return _decode_fps_torchcodec(video_path, targets, on_progress)
+
+    if backend == "ffmpeg":
+        return _decode_fps_ffmpeg(
+            video_path, fps, len(targets),
+            info["width"], info["height"], native_fps, on_progress,
+        )
+
+    # cv2 fallback: seek to each target index
+    rotation = _get_rotation_degrees(video_path)
+    cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
     frames: list[np.ndarray] = []
     indices: list[int] = []
     try:
         with tqdm(targets, desc="Sampling frames", unit="frame", disable=not verbose) as pbar:
             for target in pbar:
-                # Seek to exact frame index; avoids sequential decode overhead
                 cap.set(cv2.CAP_PROP_POS_FRAMES, target)
                 ret, frame = cap.read()
                 if not ret:
@@ -425,38 +577,30 @@ def sample_frames_optical_flow(
     on_progress: called as on_progress(frames_decoded, total_frames).
     min_disparity: mean pixel displacement threshold. Higher = fewer frames.
     """
-    rotation = _get_rotation_degrees(video_path)
     selector = OpticalFlowFrameSelector(
         min_disparity=min_disparity,
         motion_weight=motion_weight,
         coverage_weight=coverage_weight,
     )
-    # Open video; released in finally block regardless of outcome
-    cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frames = []
+    info = get_video_info(video_path)
+    total = info["total_frames"]
+    frames: list[np.ndarray] = []
     frames_decoded = 0
-    try:
-        with tqdm(total=total, desc="Optical flow selection", unit="frame", disable=not verbose) as pbar:
-            while len(frames) < max_frames:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frames_decoded += 1
-                pbar.update(1)
-                if on_progress is not None:
-                    on_progress(frames_decoded, total)
-                frame = _apply_rotation(frame, rotation)
-                # Score at 480px-wide scale for speed; keep full-res copy if selected
-                scale = min(1.0, 480.0 / frame.shape[1])
-                small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
-                should_select, _, _ = selector.should_select_frame(small)
-                if should_select:
-                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                    selector.accept_frame(small)
-    finally:
-        cap.release()
+    with tqdm(total=total, desc="Optical flow selection", unit="frame", disable=not verbose) as pbar:
+        for frame in _iter_decoded_frames(video_path, info["width"], info["height"]):
+            if len(frames) >= max_frames:
+                break
+            frames_decoded += 1
+            pbar.update(1)
+            if on_progress is not None:
+                on_progress(frames_decoded, total)
+            # Score at 480px-wide scale for speed; keep full-res copy if selected
+            scale = min(1.0, 480.0 / frame.shape[1])
+            small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame
+            should_select, _, _ = selector.should_select_frame(small)
+            if should_select:
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                selector.accept_frame(small)
     return frames
 
 

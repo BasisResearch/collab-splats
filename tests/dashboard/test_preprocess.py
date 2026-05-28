@@ -8,8 +8,11 @@ import pytest
 import zarr
 
 from collab_splats.dashboard.operation_log import OperationLog
+import time
+
 from collab_splats.dashboard.panes.preprocess import (
     PreprocessPane,
+    ThrottledProgress,
     _build_metrics_sources,
     _frames_to_thumbnails,
     _window_frame_indices,
@@ -106,3 +109,23 @@ def test_video_path_change_loads_video(tmp_path, mock_video_server):
         pane._on_video_path_change(FakeEvent())
 
     mock_load.assert_called_once_with(video_file)
+
+
+def test_throttled_progress_rate_limits():
+    """ThrottledProgress fires at most max_hz times per second, plus first and last."""
+    calls = []
+    tp = ThrottledProgress(lambda n, t: calls.append((n, t)), max_hz=10.0)
+    for i in range(1, 101):
+        tp(i, 100)
+    assert calls[0] == (1, 100)
+    assert calls[-1] == (100, 100)
+    assert len(calls) <= 5
+
+
+def test_throttled_progress_always_fires_final():
+    """ThrottledProgress always fires when n == total even under heavy throttling."""
+    calls = []
+    tp = ThrottledProgress(lambda n, t: calls.append(n), max_hz=0.01)
+    tp(50, 100)
+    tp(100, 100)
+    assert 100 in calls

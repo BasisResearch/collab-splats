@@ -349,3 +349,82 @@ def test_plot_disparity_sensitivity_monotonic(tiny_video):
     assert counts == sorted(counts, reverse=True), "Higher threshold must not increase count"
     plot_disparity_sensitivity(scores, thresholds)
     plt.close("all")
+
+
+def test_get_video_info_returns_width_height(tiny_video):
+    info = get_video_info(tiny_video)
+    assert info["width"] == 64
+    assert info["height"] == 48
+
+
+def test_get_decoder_backend_returns_valid_string():
+    from collab_splats.utils.frame_sampling import _get_decoder_backend
+    result = _get_decoder_backend()
+    assert result in ("torchcodec", "ffmpeg", "cv2")
+
+
+def test_get_decoder_backend_is_cached():
+    from collab_splats.utils.frame_sampling import _get_decoder_backend
+    assert _get_decoder_backend() == _get_decoder_backend()
+
+
+def test_iter_decoded_frames_yields_bgr_frames(tiny_video):
+    from collab_splats.utils.frame_sampling import _iter_decoded_frames
+    info = get_video_info(tiny_video)
+    frames = list(_iter_decoded_frames(tiny_video, info["width"], info["height"]))
+    assert len(frames) == 90
+    assert frames[0].shape == (48, 64, 3)
+    assert frames[0].dtype == np.uint8
+
+
+def test_sample_frames_fps_ffmpeg_backend(tmp_path, monkeypatch):
+    import shutil as _shutil
+    if _shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available")
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_decoder_backend", lambda: "ffmpeg")
+    path = str(tmp_path / "test_ffmpeg.mp4")
+    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (64, 48))
+    for i in range(90):
+        frame = np.full((48, 64, 3), (i * 5) % 256, dtype=np.uint8)
+        writer.write(frame)
+    writer.release()
+    frames, indices = fs.sample_frames_fps(path, fps=5.0, verbose=False)
+    assert len(frames) > 0
+    assert len(frames) == len(indices)
+    assert frames[0].shape == (48, 64, 3)
+    assert frames[0].dtype == np.uint8
+
+
+def test_sample_frames_fps_progress_callback(tiny_video):
+    calls = []
+    frames, _ = sample_frames_fps(
+        tiny_video, fps=5.0, on_progress=lambda n, t: calls.append((n, t)), verbose=False
+    )
+    assert len(calls) > 0
+    assert all(n <= t for n, t in calls)
+
+
+def test_score_all_frames_ffmpeg_backend(tiny_video, monkeypatch):
+    import shutil as _shutil
+    if _shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available")
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_decoder_backend", lambda: "ffmpeg")
+    scores = fs.score_all_frames(tiny_video, verbose=False)
+    assert isinstance(scores, list)
+    assert len(scores) > 0
+    assert all("disparity" in s for s in scores)
+
+
+def test_sample_frames_optical_flow_ffmpeg_backend(tiny_video, monkeypatch):
+    import shutil as _shutil
+    if _shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available")
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_decoder_backend", lambda: "ffmpeg")
+    frames = fs.sample_frames_optical_flow(tiny_video, verbose=False)
+    assert isinstance(frames, list)
+    for f in frames:
+        assert f.shape[2] == 3
+        assert f.dtype == np.uint8

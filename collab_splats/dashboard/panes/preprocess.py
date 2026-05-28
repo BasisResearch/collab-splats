@@ -8,9 +8,10 @@ import base64
 import io
 import logging
 import threading
+import time
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from bokeh.models import ColumnDataSource, Span, TapTool
 from bokeh.plotting import figure as bokeh_figure
@@ -38,6 +39,24 @@ logger = logging.getLogger(__name__)
 ########################################################################
 # Pure helpers — testable without Panel
 ########################################################################
+
+class ThrottledProgress:
+    """Wraps an on_progress callback, firing at most max_hz times per second.
+
+    Always fires on the very first call and when n == total.
+    """
+
+    def __init__(self, callback: Callable[[int, int], None], max_hz: float = 10.0) -> None:
+        self._cb = callback
+        self._min_interval = 1.0 / max_hz
+        self._last: float = 0.0
+
+    def __call__(self, n: int, total: int) -> None:
+        now = time.monotonic()
+        if self._last == 0.0 or now - self._last >= self._min_interval or n == total:
+            self._last = now
+            self._cb(n, total)
+
 
 def _window_frame_indices(
     total_frames: int,
@@ -282,10 +301,13 @@ class PreprocessPane(param.Parameterized):
 
     def _run_extraction(self, video_path: Path) -> None:
         """Background thread: score frames, extract keyframes, update UI state."""
-        def _progress(current: int, total: int, base: int, scale: int) -> None:
+        def _progress_raw(current: int, total: int, base: int, scale: int) -> None:
             pct = base + int(current / total * scale) if total > 0 else base
             self._op_log.update_progress(pct)
             self._progress_bar.value = pct
+
+        _score_progress = ThrottledProgress(lambda c, t: _progress_raw(c, t, 0, 50))
+        _extract_progress = ThrottledProgress(lambda c, t: _progress_raw(c, t, 50, 50))
 
         try:
             self._progress_bar.value = 0
@@ -296,7 +318,7 @@ class PreprocessPane(param.Parameterized):
             self._progress_label.object = "<p style='font-size:11px;color:#aaa'>Computing frame scores…</p>"
             raw_scores: list[dict] = score_all_frames(
                 str(video_path),
-                on_progress=lambda c, t: _progress(c, t, 0, 50),
+                on_progress=_score_progress,
                 verbose=False,
             )
             # Transpose list[dict] → dict[str, list[float]] for _build_metrics_sources
@@ -317,7 +339,7 @@ class PreprocessPane(param.Parameterized):
                     str(video_path),
                     fps=self._fps_slider.value,
                     max_frames=self._n_frames_slider.value,
-                    on_progress=lambda c, t: _progress(c, t, 50, 50),
+                    on_progress=_extract_progress,
                     verbose=False,
                 )
             else:
@@ -325,7 +347,7 @@ class PreprocessPane(param.Parameterized):
                     str(video_path),
                     min_disparity=self._min_disparity_slider.value,
                     max_frames=self._n_frames_slider.value,
-                    on_progress=lambda c, t: _progress(c, t, 50, 50),
+                    on_progress=_extract_progress,
                     verbose=False,
                 )
                 frame_indices = list(range(len(frames)))

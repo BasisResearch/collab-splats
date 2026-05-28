@@ -158,7 +158,7 @@ class PreprocessPane(param.Parameterized):
         self._cached_thumbnails: list[bytes] = []
 
         # Video player — served via side HTTP server (see _video_server_url)
-        self._video_pane = pn.pane.Video(None, width=560, height=360, loop=False, visible=False)
+        self._video_pane = pn.pane.Video(None, width=560, loop=False, visible=False)
         self._video_info_html = pn.pane.HTML("", width=560)
 
         # Frame selection controls

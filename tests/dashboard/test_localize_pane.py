@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock, patch
+import cv2
 import numpy as np
 import panel as pn
 import pytest
@@ -94,7 +95,6 @@ def test_run_localize_calls_localizer_and_updates_corr_info(tmp_path):
     pane._query_input.value = str(tmp_path / "query.jpg")
 
     # Create a fake query image file
-    import cv2
     fake_img = np.zeros((100, 100, 3), dtype=np.uint8)
     cv2.imwrite(str(tmp_path / "query.jpg"), fake_img)
 
@@ -145,7 +145,6 @@ def test_batch_run_populates_table(tmp_path):
     (tmp_path / "vggtx" / "feedforward.zarr").mkdir()
 
     # Create fake query images
-    import cv2
     for name in ["q1.jpg", "q2.jpg"]:
         cv2.imwrite(str(tmp_path / name), np.zeros((100, 100, 3), dtype=np.uint8))
 

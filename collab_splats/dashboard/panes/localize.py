@@ -39,6 +39,15 @@ from collab_splats.utils.visualization import (
 logger = logging.getLogger(__name__)
 
 ########################################################################
+# Extractor registry
+
+# Map dropdown label → extractor class
+_EXTRACTOR_CLASSES: dict[str, type] = {
+    "DISK+LightGlue": DiskExtractor,
+    "XFeat+MNN": XFeatExtractor,
+}
+
+########################################################################
 # Colours
 
 _COLOR_DEFAULT = "cornflowerblue"
@@ -363,6 +372,20 @@ class LocalizePane(param.Parameterized):
         self._run_btn.disabled = not (has_dir and has_method and has_query)
 
     # ------------------------------------------------------------------
+    # Shared localizer builder
+
+    def _build_localizer(
+        self, method: str, extractor_name: str
+    ) -> tuple["FeedforwardResult", "CameraLocalizer"]:
+        """Load feedforward result from zarr and build CameraLocalizer."""
+        output_dir = Path(self._state.output_dir)
+        zarr_path = output_dir / method / "feedforward.zarr"
+        ff = FeedforwardResult.load_zarr(zarr_path)
+        extractor = _EXTRACTOR_CLASSES.get(extractor_name, DiskExtractor)()
+        localizer = CameraLocalizer.from_feedforward(ff, extractor=extractor)
+        return ff, localizer
+
+    # ------------------------------------------------------------------
     # Single-image localization
 
     def _on_run(self, event: Any) -> None:
@@ -392,19 +415,11 @@ class LocalizePane(param.Parameterized):
     ) -> None:
         """Background thread: load result, build localizer, run, update UI."""
         try:
-            output_dir = Path(self._state.output_dir)
-            zarr_path = output_dir / method / "feedforward.zarr"
             self._op_log.start_op(f"Localizing in {method}")
 
-            # Load feedforward result from zarr
-            ff = FeedforwardResult.load_zarr(zarr_path)
+            # Load feedforward result and build localizer
+            ff, localizer = self._build_localizer(method, extractor_name)
             self._ff_result = ff
-
-            # Build extractor
-            extractor = XFeatExtractor() if "XFeat" in extractor_name else DiskExtractor()
-
-            # Build localizer from feedforward result
-            localizer = CameraLocalizer.from_feedforward(ff, extractor=extractor)
             self._localizer = localizer
 
             # Build scene panel if not yet built
@@ -508,13 +523,8 @@ class LocalizePane(param.Parameterized):
     ) -> None:
         """Background thread: localize every image in folder_path, stream rows to table."""
         try:
-            output_dir = Path(self._state.output_dir)
-            zarr_path = output_dir / method / "feedforward.zarr"
-            ff = FeedforwardResult.load_zarr(zarr_path)
-
-            # Build extractor and localizer
-            extractor = XFeatExtractor() if "XFeat" in extractor_name else DiskExtractor()
-            localizer = CameraLocalizer.from_feedforward(ff, extractor=extractor)
+            # Load feedforward result and build localizer
+            ff, localizer = self._build_localizer(method, extractor_name)
             query_intrinsics = ff.intrinsics.mean(axis=0)
 
             # Collect image paths (common image extensions)

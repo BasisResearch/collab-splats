@@ -344,7 +344,7 @@ def main() -> None:
             if p.strip()
         }
         indices = [i for i, p in enumerate(dataset.images) if Path(p).name in allowed_basenames]
-        from evals.datasets import EvalDataset
+        from datasets import EvalDataset
         dataset = EvalDataset(
             images=[dataset.images[i] for i in indices],
             gt_poses=dataset.gt_poses[indices],

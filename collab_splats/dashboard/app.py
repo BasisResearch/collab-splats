@@ -17,6 +17,8 @@ from collab_splats.dashboard.panes.semantics import SemanticsPane
 from collab_splats.dashboard.panes.visualize import VisualizePane
 from collab_splats.dashboard.state import AppState
 
+from collab_splats.dashboard.video_server import VideoFileServer, start_video_server
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,14 +46,17 @@ class App(param.Parameterized):
 
     _tab_names = ("Preprocess", "Semantics", "Reconstruct", "Visualize", "Localize")
 
-    def __init__(self, base_dir: str = "/workspace/outputs", **params: Any):
+    def __init__(self, base_dir: str = "/workspace/outputs", video_server: VideoFileServer | None = None, **params: Any):
         super().__init__(**params)
         self._base_dir = Path(base_dir)
         self._state = AppState()
         self._op_log = OperationLog()
         self._tabs: pn.Tabs | None = None
+        self._video_server = video_server if video_server is not None else start_video_server(port=7863)
 
-        self._preprocess = PreprocessPane(state=self._state, op_log=self._op_log)
+        self._preprocess = PreprocessPane(
+            state=self._state, op_log=self._op_log, video_server=self._video_server
+        )
         self._reconstruct = ReconstructPane(state=self._state, op_log=self._op_log)
         self._panes = {
             "Preprocess": self._preprocess,
@@ -229,7 +234,9 @@ class App(param.Parameterized):
 
 def run_app(host: str = "0.0.0.0", port: int = 7860, base_dir: str = "/workspace/outputs") -> None:
     """Launch the dashboard via pn.serve()."""
+    video_server = start_video_server(port=7863)
+
     def app_factory():
-        return App(base_dir=base_dir).servable()
+        return App(base_dir=base_dir, video_server=video_server).servable()
 
     pn.serve(app_factory, host=host, port=port, show=False)

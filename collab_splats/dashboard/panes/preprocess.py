@@ -8,6 +8,7 @@ import base64
 import io
 import logging
 import threading
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from zarr.codecs import BloscCodec
 
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.state import AppState
+from collab_splats.dashboard.video_server import VideoFileServer
 from collab_splats.utils.frame_sampling import (
     get_video_info,
     load_video_frames,
@@ -144,18 +146,19 @@ def _build_frame_strip_html(thumbnails: list[bytes], active_idx: int) -> str:
 class PreprocessPane(param.Parameterized):
     """Video preprocessing pane: extract keyframes, view quality metrics, confirm frame set."""
 
-    def __init__(self, state: AppState, op_log: OperationLog, **params: Any):
+    def __init__(self, state: AppState, op_log: OperationLog, video_server: VideoFileServer, **params: Any):
         super().__init__(**params)
         self._state = state
         self._op_log = op_log
+        self._video_server = video_server
         self._frame_scores: dict[str, list[float]] = {}
         self._selected_frames: list[np.ndarray] = []
         self._selected_indices: list[int] = []
         self._extraction_thread: threading.Thread | None = None
         self._cached_thumbnails: list[bytes] = []
 
-        # Video first-frame thumbnail (faster than streaming 700MB via Bokeh server)
-        self._video_pane = pn.pane.PNG(None, width=560, height=360, visible=False)
+        # Video player — served via side HTTP server (see _video_server_url)
+        self._video_pane = pn.pane.Video(None, width=560, height=360, loop=False, visible=False)
         self._video_info_html = pn.pane.HTML("", width=560)
 
         # Frame selection controls
@@ -224,17 +227,11 @@ class PreprocessPane(param.Parameterized):
             self._controls_card.visible = True
 
     def _load_video(self, video_path: Path) -> None:
-        """Extract first frame as thumbnail + fetch metadata in background."""
-        import cv2  # optional heavy dep — imported here intentionally
-        cap = cv2.VideoCapture(str(video_path))
-        ret, frame = cap.read()
-        cap.release()
-        if ret:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            buf = io.BytesIO()
-            Image.fromarray(frame_rgb).save(buf, format="PNG")
-            self._video_pane.object = buf.getvalue()
-            self._video_pane.visible = True
+        """Register video with side server and begin playback; fetch metadata in background."""
+        self._video_server.register(video_path)
+        url = f"http://localhost:{self._video_server.port}{urllib.parse.quote(str(video_path))}"
+        self._video_pane.object = url
+        self._video_pane.visible = True
         self._video_info_html.object = (
             f"<p style='font-size:11px;color:#aaa'>{video_path.name} · loading info…</p>"
         )

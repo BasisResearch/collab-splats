@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import panel as pn
+import pytest
 import zarr
 
 from collab_splats.dashboard.operation_log import OperationLog
@@ -15,6 +16,14 @@ from collab_splats.dashboard.panes.preprocess import (
     _write_frames_zarr,
 )
 from collab_splats.dashboard.state import AppState
+
+
+@pytest.fixture
+def mock_video_server():
+    """Minimal stand-in for VideoFileServer — avoids binding a real port in unit tests."""
+    srv = mock.MagicMock()
+    srv.port = 17863
+    return srv
 
 
 def test_window_frame_indices_full():
@@ -82,22 +91,18 @@ def test_write_frames_zarr_roundtrip():
         np.testing.assert_array_equal(z["frames"][0], frame)
 
 
-def test_video_path_change_uses_pn_state_execute(tmp_path):
-    """Watch callback must use pn.state.execute so update runs on Tornado main thread."""
+def test_video_path_change_loads_video(tmp_path, mock_video_server):
+    """_on_video_path_change must call _load_video when video path is valid."""
     state = AppState()
-    pane = PreprocessPane(state=state, op_log=OperationLog())
+    pane = PreprocessPane(state=state, op_log=OperationLog(), video_server=mock_video_server)
 
     video_file = tmp_path / "test.mp4"
     video_file.write_bytes(b"fake")
 
-    execute_calls = []
-
     class FakeEvent:
         new = str(video_file)
 
-    with mock.patch("collab_splats.dashboard.panes.preprocess.pn.state") as mock_state:
-        mock_state.execute = lambda fn: execute_calls.append(fn)
+    with mock.patch.object(pane, "_load_video") as mock_load:
         pane._on_video_path_change(FakeEvent())
 
-    assert len(execute_calls) == 1, "pn.state.execute should be called once"
-    assert callable(execute_calls[0])
+    mock_load.assert_called_once_with(video_file)

@@ -1,10 +1,20 @@
+import unittest.mock as mock
 from pathlib import Path
 
 import panel as pn
+import pytest
 
 from collab_splats.dashboard.app import App, _scan_output_dirs
 from collab_splats.dashboard.panes._placeholder import PlaceholderPane
 from collab_splats.dashboard.panes.reconstruct import ReconstructPane
+
+
+@pytest.fixture(autouse=True)
+def _mock_video_server(monkeypatch):
+    """Prevent App() from binding a real port during tests."""
+    srv = mock.MagicMock()
+    srv.port = 17863
+    monkeypatch.setattr("collab_splats.dashboard.app.start_video_server", lambda port=7863: srv)
 
 
 def test_placeholder_pane_returns_panel():

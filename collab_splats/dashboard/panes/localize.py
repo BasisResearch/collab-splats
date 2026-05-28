@@ -5,6 +5,8 @@ Camera localization in a known reconstruction: single-image + batch modes.
 from __future__ import annotations
 
 import logging
+import threading
+from pathlib import Path
 from typing import Any
 
 import matplotlib
@@ -16,6 +18,8 @@ import panel as pn
 import param
 import pyvista as pv
 
+from collab_splats.dashboard.operation_log import OperationLog
+from collab_splats.dashboard.state import AppState
 from collab_splats.utils.visualization import (
     create_camera_frustum_pyvista,
     pointcloud_to_polydata,
@@ -184,4 +188,220 @@ class LocalizeScenePanel(param.Parameterized):
         """Return the VTK Panel pane."""
         return self._vtk_pane
 
+
+########################################################################
+
+
+def _scan_recon_methods(output_dir: Path) -> list[str]:
+    """Return method names whose feedforward.zarr exists under output_dir."""
+    if not output_dir or not output_dir.is_dir():
+        return []
+    return sorted(
+        p.name for p in output_dir.iterdir()
+        if p.is_dir() and (p / "feedforward.zarr").exists()
+    )
+
+
+def _empty_batch_df():
+    """Return empty DataFrame with batch result columns."""
+    import pandas as pd
+    return pd.DataFrame(columns=["image", "inliers", "status", "t-err (m)", "pose t"])
+
+
+########################################################################
+
+
+class LocalizePane(param.Parameterized):
+    """Camera localization tab — single-image + batch modes.
+
+    Left panel: plot_correspondences() matplotlib PNG.
+    Right panel: LocalizeScenePanel PyVista 3D viewer.
+    """
+
+    def __init__(self, state: AppState, op_log: OperationLog, **params: Any):
+        super().__init__(**params)
+        self._state = state
+        self._op_log = op_log
+        self._localizer = None
+        self._ff_result = None
+        self._scene_panel: LocalizeScenePanel | None = None
+        self._loc_thread: threading.Thread | None = None
+        self._batch_thread: threading.Thread | None = None
+
+        # Controls
+        self._query_input = pn.widgets.TextInput(
+            placeholder="Path to query image…",
+            width=320,
+        )
+        self._browse_btn = pn.widgets.Button(name="Browse…", width=80)
+        self._method_dd = pn.widgets.Select(
+            name="Recon",
+            options=[],
+            width=120,
+        )
+        self._extractor_dd = pn.widgets.Select(
+            name="Extractor",
+            options=["DISK+LightGlue", "XFeat+MNN"],
+            value="DISK+LightGlue",
+            width=140,
+        )
+        self._run_btn = pn.widgets.Button(
+            name="▶ Localize",
+            button_type="success",
+            disabled=True,
+            width=100,
+        )
+        self._warp_cb = pn.widgets.Checkbox(name="warp corners", value=True)
+        self._status_html = pn.pane.HTML("", width=400)
+
+        # Correspondence display (left panel)
+        self._corr_png = pn.pane.PNG(
+            object=None,
+            sizing_mode="stretch_both",
+            min_height=200,
+        )
+        self._corr_info = pn.pane.HTML(
+            "<span style='color:#666;font-size:12px'>No result yet</span>",
+        )
+
+        # Batch mode widgets
+        self._batch_folder_input = pn.widgets.TextInput(
+            placeholder="Path to query image folder…",
+            width=280,
+        )
+        self._batch_run_btn = pn.widgets.Button(
+            name="▶ Run batch",
+            button_type="primary",
+            disabled=True,
+            width=100,
+        )
+        self._batch_export_btn = pn.widgets.Button(
+            name="⬇ Export CSV",
+            disabled=True,
+            width=110,
+        )
+        self._batch_table = pn.widgets.Tabulator(
+            value=_empty_batch_df(),
+            show_index=False,
+            sizing_mode="stretch_width",
+            height=180,
+        )
+
+        # Wire callbacks
+        self._run_btn.on_click(self._on_run)
+        self._batch_run_btn.on_click(self._on_batch_run)
+        self._batch_export_btn.on_click(self._on_export_csv)
+        self._query_input.param.watch(self._on_query_or_dir_changed, ["value"])
+        self._state.param.watch(self._on_output_dir_changed, ["output_dir"])
+
+        # Initial gate state
+        self._on_output_dir_changed(None)
+
+    # ------------------------------------------------------------------
+    # Gate helpers
+
+    def _on_output_dir_changed(self, event: Any) -> None:
+        """Rescan method dropdown; re-evaluate run-button gate."""
+        output_dir = self._state.output_dir
+        methods = _scan_recon_methods(Path(output_dir)) if output_dir else []
+        self._method_dd.options = methods
+        if methods:
+            self._method_dd.value = methods[0]
+        self._batch_run_btn.disabled = not bool(methods)
+        self._update_run_btn_gate()
+
+    def _on_query_or_dir_changed(self, event: Any) -> None:
+        """Re-evaluate run-button gate when query path changes."""
+        self._update_run_btn_gate()
+
+    def _update_run_btn_gate(self) -> None:
+        """Enable run only when output_dir set, method available, and query path non-empty."""
+        has_dir = self._state.output_dir is not None
+        has_method = bool(self._method_dd.options)
+        has_query = bool(self._query_input.value and self._query_input.value.strip())
+        self._run_btn.disabled = not (has_dir and has_method and has_query)
+
+    # ------------------------------------------------------------------
+    # Stubs (filled in Tasks 3 and 4)
+
+    def _on_run(self, event: Any) -> None:
+        """Spawn background localization thread on button click."""
+        pass
+
+    def _on_batch_run(self, event: Any) -> None:
+        """Spawn background batch thread."""
+        pass
+
+    def _on_export_csv(self, event: Any) -> None:
+        """Trigger CSV download from Tabulator."""
+        pass
+
+    # ------------------------------------------------------------------
+    # Layout
+
+    def panel(self) -> pn.viewable.Viewable:
+        """Return the full LocalizePane layout."""
+        controls_bar = pn.Row(
+            self._query_input,
+            self._browse_btn,
+            pn.Spacer(sizing_mode="stretch_width"),
+            pn.pane.HTML("<b style='color:#8b949e;font-size:12px'>Recon:</b>"),
+            self._method_dd,
+            self._extractor_dd,
+            self._run_btn,
+            sizing_mode="stretch_width",
+            margin=(4, 0),
+        )
+
+        corr_header = pn.Row(
+            self._corr_info,
+            pn.Spacer(sizing_mode="stretch_width"),
+            self._warp_cb,
+            margin=(0, 0, 4, 0),
+        )
+
+        left_panel = pn.Column(
+            corr_header,
+            self._corr_png,
+            self._status_html,
+            sizing_mode="stretch_both",
+        )
+
+        right_placeholder = pn.pane.HTML(
+            "<div style='display:flex;align-items:center;justify-content:center;"
+            "height:100%;color:#555;font-size:13px'>Run localization to see 3D scene</div>",
+            sizing_mode="stretch_both",
+            min_height=300,
+        )
+        self._right_col = pn.Column(right_placeholder, sizing_mode="stretch_both")
+
+        split = pn.Row(
+            pn.Column(left_panel, sizing_mode="stretch_both", width_policy="max"),
+            pn.Column(self._right_col, sizing_mode="stretch_both", width_policy="max"),
+            sizing_mode="stretch_width",
+            min_height=360,
+        )
+
+        batch_section = pn.Card(
+            pn.Column(
+                pn.Row(
+                    self._batch_folder_input,
+                    self._batch_run_btn,
+                    self._batch_export_btn,
+                    margin=(4, 0),
+                ),
+                self._batch_table,
+                sizing_mode="stretch_width",
+            ),
+            title="Batch mode",
+            collapsed=True,
+            sizing_mode="stretch_width",
+        )
+
+        return pn.Column(
+            controls_bar,
+            split,
+            batch_section,
+            sizing_mode="stretch_width",
+        )
 

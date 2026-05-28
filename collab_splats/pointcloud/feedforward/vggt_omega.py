@@ -26,6 +26,7 @@ from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
     _raw_to_world_points,
+    compute_multiview_depth_confidence,
 )
 from .vggtx import unproject_and_filter_points
 from collab_splats.utils.geometry import extrinsics_to_homogeneous
@@ -122,7 +123,12 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     # Calibrated 2026-05-28: inter_frame_blocks depth=24; layer 16 gives mtq=1.328
     # on DINO-SALAD retrieved pairs (vs 0.897 at layer 20 which caused false-positive LCs).
     # Inherits default_verify_match_ratio=0.85 from base (VGGT-SPARK calibration).
+    # Override: mtq=1.328 >> 0.85 so gate is effectively disabled; raise to 0.99 to
+    # reject false-positive LC pairs.  max_jump_ratio=0.3 enables geometric sanity check
+    # (default inf disables it) for repetitive chess-texture scenes.
     _lc_layer_index: ClassVar[int] = 16
+    default_verify_match_ratio: ClassVar[float] = 0.99
+    default_max_jump_ratio: ClassVar[float] = 0.3
 
     camera_model: str = "PINHOLE"
     model_path: str | None = None
@@ -131,6 +137,8 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     resolution: int | None = None        # None → auto (512 standard, 256 text-aligned); explicit overrides
     resize_mode: str = "balanced"        # mode= passed to load_and_preprocess_images
     conf_threshold: float = 50.0
+    use_multiview_confidence: bool = False
+    mv_conf_threshold: float = 0.0
     enable_text_alignment: bool = False  # VGGTOmega(enable_alignment=True); sets resolution=256 when None
 
     def __post_init__(self) -> None:
@@ -224,6 +232,22 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         extrinsic = raw_outputs["extrinsic"]   # (N, 3, 4) at model resolution
         intrinsic = raw_outputs["intrinsics"]  # (N, 3, 3) at model resolution
 
+        # Optionally compute geometric cross-view depth consistency mask
+        mv_mask = None
+        if self.use_multiview_confidence:
+            depth_np = raw_outputs["depth"]
+            if depth_np.ndim == 4:
+                depth_np = depth_np.squeeze(-1)   # (N, H, W)
+            extr_4x4 = extrinsics_to_homogeneous(extrinsic)
+            mv_conf = compute_multiview_depth_confidence(
+                depth_np,
+                intrinsic,
+                extr_4x4,
+                abs_thresh=0.0,
+                rel_thresh=0.05,
+            )
+            mv_mask = mv_conf > self.mv_conf_threshold
+
         # Unproject depth maps to filtered world-space points and per-point colors
         pts3d, colors, pixel_indices = unproject_and_filter_points(
             depth=raw_outputs["depth"],
@@ -233,6 +257,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             intrinsic=raw_outputs["intrinsics_downsampled"],
             conf_threshold=self.conf_threshold,
             max_points=self.max_points,
+            extra_mask=mv_mask,
         )
 
         # Resolve model spatial dimensions; handle (N, H, W, 1) and (N, H, W) depth formats

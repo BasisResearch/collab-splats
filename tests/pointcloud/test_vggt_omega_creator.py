@@ -595,3 +595,38 @@ def test_reproject_passes_max_points():
 
     call_kwargs = mock_unproj.call_args[1]
     assert call_kwargs.get("max_points") == 99_000
+
+
+def test_omega_use_multiview_confidence_calls_compute_fn(tmp_path):
+    """VGGTOmegaCreator with use_multiview_confidence=True calls compute_multiview_depth_confidence."""
+    import numpy as np
+    from unittest.mock import patch
+    from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
+
+    N, H, W = 2, 4, 4
+    raw_outputs = {
+        "depth": np.ones((N, H, W, 1), dtype=np.float32),
+        "depth_conf": np.ones((N, H, W), dtype=np.float32),
+        "images": np.zeros((N, 3, H, W), dtype=np.float32),
+        "extrinsic": np.stack([np.eye(4)[:3, :]] * N).astype(np.float32),
+        "intrinsics": np.eye(3, dtype=np.float32)[np.newaxis].repeat(N, axis=0),
+        "intrinsics_downsampled": np.eye(3, dtype=np.float32)[np.newaxis].repeat(N, axis=0),
+    }
+
+    creator = VGGTOmegaCreator(use_multiview_confidence=True, mv_conf_threshold=0.0)
+    creator.image_paths = [tmp_path / f"{i:06d}.jpg" for i in range(N)]
+    creator.original_coords = np.zeros((N, 6), dtype=np.float32)
+    creator.views = None
+
+    mv_conf_ones = np.ones((N, H, W), dtype=np.float32)
+
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.compute_multiview_depth_confidence",
+        return_value=mv_conf_ones,
+    ) as mock_mv:
+        result = creator._postprocess(raw_outputs)
+
+    mock_mv.assert_called_once()
+    called_depth = mock_mv.call_args[0][0]
+    assert called_depth.shape == (N, H, W)
+    assert result is not None

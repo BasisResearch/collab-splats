@@ -14,11 +14,12 @@ import time
 from abc import abstractmethod
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 import numpy as np
 import pycolmap
 import torch
+import torch.nn.functional as F
 import zarr
 from rich.console import Console
 from zarr.codecs import BloscCodec
@@ -308,6 +309,129 @@ def _raw_to_world_points(raw: dict, subsample: int = 8) -> tuple[np.ndarray | No
             all_conf[ki] = conf_map[ki][vv, uu]
 
     return all_pts, all_conf
+
+
+def compute_multiview_depth_confidence(
+    depth: np.ndarray,
+    intrinsics: np.ndarray,
+    extrinsics: np.ndarray,
+    depth_masks: Optional[np.ndarray] = None,
+    abs_thresh: float = 0.0,
+    rel_thresh: float = 0.05,
+    device: str = "cuda",
+) -> np.ndarray:
+    """Geometric cross-view depth consistency confidence per pixel.
+
+    For each source pixel, projects it into all other frames and checks whether
+    the reprojected and sampled depths agree within abs_thresh + rel_thresh * depth.
+    Returns per-pixel inlier ratio across overlapping views, in [0, 1].
+
+    Args:
+        depth:       (N, H, W) float32 Z-depth per frame.
+        intrinsics:  (N, 3, 3) float32 pinhole intrinsics in pixel units.
+        extrinsics:  (N, 4, 4) float32 world-to-cam transforms.
+        depth_masks: (N, H, W) bool — source pixels to include; None = all valid depth.
+        abs_thresh:  Absolute depth tolerance (depth units). 0.0 for non-metric depth.
+        rel_thresh:  Relative depth tolerance as fraction of expected depth.
+        device:      Torch device for computation.
+    """
+    dev = torch.device(
+        device if device != "cuda" or torch.cuda.is_available() else "cpu"
+    )
+    N, H, W = depth.shape
+
+    depth_t = torch.from_numpy(depth.astype(np.float32)).to(dev)
+    K = torch.from_numpy(intrinsics.astype(np.float32)).to(dev)
+    E = torch.from_numpy(extrinsics.astype(np.float32)).to(dev)
+    cam2world = torch.linalg.inv(E)
+
+    # Build pixel grid [x, y, 1] for each pixel in (H, W)
+    rows, cols = torch.meshgrid(
+        torch.arange(H, dtype=torch.float32, device=dev),
+        torch.arange(W, dtype=torch.float32, device=dev),
+        indexing="ij",
+    )
+    pixel_h = torch.stack(
+        [cols, rows, torch.ones(H, W, device=dev)], dim=-1
+    ).reshape(-1, 3)  # (H*W, 3) [x, y, 1]
+
+    inlier_sum = torch.zeros(N, H, W, dtype=torch.float32, device=dev)
+    valid_sum  = torch.zeros(N, H, W, dtype=torch.float32, device=dev)
+
+    for i in range(N):
+        # Unproject source pixels to world space via cam-i intrinsics and pose
+        K_i_inv = torch.linalg.inv(K[i])
+        cam_rays = (K_i_inv @ pixel_h.T).T                          # (H*W, 3)
+        src_d = depth_t[i].reshape(-1, 1)                           # (H*W, 1)
+        src_valid = (src_d > 0).squeeze(-1)                          # (H*W,)
+        if depth_masks is not None:
+            dm_i = torch.from_numpy(depth_masks[i]).bool().to(dev).reshape(-1)
+            src_valid = src_valid & dm_i
+
+        pts_cam_i = cam_rays * src_d                                 # (H*W, 3)
+        pts_cam_h = torch.cat(
+            [pts_cam_i, torch.ones(H * W, 1, device=dev)], dim=-1
+        )                                                             # (H*W, 4)
+        pts_world = (cam2world[i] @ pts_cam_h.T).T[:, :3]           # (H*W, 3)
+
+        for j in range(N):
+            if i == j:
+                continue
+
+            # Project world points into frame j; compute expected depth and pixel coords
+            pts_world_h = torch.cat(
+                [pts_world, torch.ones(H * W, 1, device=dev)], dim=-1
+            )
+            pts_cam_j = (E[j] @ pts_world_h.T).T[:, :3]             # (H*W, 3)
+
+            expected_d = pts_cam_j[:, 2]                             # (H*W,) Z in cam-j
+            in_front = expected_d > 0
+
+            proj_j = (K[j] @ pts_cam_j.T).T                         # (H*W, 3)
+            z_j = proj_j[:, 2:3].clamp(min=1e-6)
+            px_j = proj_j[:, :2] / z_j                              # (H*W, 2)
+
+            # Normalise pixel coords to [-1, 1] for grid_sample
+            px_norm = torch.stack(
+                [px_j[:, 0] / (W - 1) * 2 - 1,
+                 px_j[:, 1] / (H - 1) * 2 - 1],
+                dim=-1,
+            )                                                         # (H*W, 2)
+            in_bounds = (
+                (px_norm[:, 0] >= -1) & (px_norm[:, 0] <= 1)
+                & (px_norm[:, 1] >= -1) & (px_norm[:, 1] <= 1)
+            )
+            valid_ij = src_valid & in_front & in_bounds              # (H*W,)
+
+            # Sample frame-j depth at projected locations using bilinear interpolation
+            grid = px_norm.reshape(1, H, W, 2)
+            sampled_d = F.grid_sample(
+                depth_t[j].unsqueeze(0).unsqueeze(0),               # (1, 1, H, W)
+                grid,
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=True,
+            ).squeeze()                                               # (H, W)
+            sampled_d_flat = sampled_d.reshape(-1)                   # (H*W,)
+
+            # Count inliers: depth agreement within abs + rel tolerance
+            tol = abs_thresh + rel_thresh * expected_d.abs()
+            inlier = (
+                (torch.abs(expected_d - sampled_d_flat) < tol)
+                & valid_ij
+                & (sampled_d_flat > 0)
+            )
+
+            inlier_sum[i] += inlier.reshape(H, W).float()
+            valid_sum[i]  += valid_ij.reshape(H, W).float()
+
+    # Pixels with no overlapping views → confidence = 0
+    mv_conf = torch.where(
+        valid_sum > 0,
+        inlier_sum / valid_sum.clamp(min=1.0),
+        torch.zeros_like(inlier_sum),
+    )
+    return mv_conf.cpu().numpy().astype(np.float32)
 
 
 # ── COLMAP reconstruction builders ────────────────────────────────────────────

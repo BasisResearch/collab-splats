@@ -95,6 +95,45 @@ def _build_metrics_sources(
     return sources
 
 
+def _render_fps_raster(
+    sampled_indices: list[int],
+    total_frames: int,
+) -> pn.Column:
+    """Build a Bokeh bar chart showing sampled frame positions across the video timeline."""
+    if not sampled_indices:
+        return pn.Column(
+            pn.pane.HTML("<p style='color:#666;font-size:11px'>No frames extracted</p>")
+        )
+    source = ColumnDataSource(data={
+        "left": [i - 0.4 for i in sampled_indices],
+        "right": [i + 0.4 for i in sampled_indices],
+        "top": [1.0] * len(sampled_indices),
+        "bottom": [0.0] * len(sampled_indices),
+    })
+    p = bokeh_figure(
+        height=80,
+        sizing_mode="stretch_width",
+        toolbar_location=None,
+        x_range=(0, max(total_frames, 1)),
+        y_range=(0, 1.2),
+        title=f"Sampled frame positions ({len(sampled_indices)} frames)",
+    )
+    p.background_fill_color = "#111827"
+    p.border_fill_color = "#0d1117"
+    p.outline_line_color = None
+    p.title.text_color = "#aaa"
+    p.title.text_font_size = "10pt"
+    p.quad(
+        top="top", bottom="bottom", left="left", right="right",
+        source=source, color="#50c050", alpha=0.7,
+    )
+    p.yaxis.visible = False
+    p.xaxis.axis_label = "Frame index"
+    p.xaxis.axis_label_text_color = "#aaa"
+    p.xaxis.major_label_text_color = "#aaa"
+    return pn.Column(pn.pane.Bokeh(p, sizing_mode="stretch_width"), sizing_mode="stretch_width")
+
+
 def _frames_to_thumbnails(
     frames: list[np.ndarray],
     max_size: tuple[int, int] = (160, 120),

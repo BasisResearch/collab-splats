@@ -15,6 +15,7 @@ from collab_splats.dashboard.panes.preprocess import (
     ThrottledProgress,
     _build_metrics_sources,
     _frames_to_thumbnails,
+    _render_fps_raster,
     _window_frame_indices,
     _write_frames_zarr,
 )
@@ -120,6 +121,16 @@ def test_throttled_progress_rate_limits():
     assert calls[0] == (1, 100)
     assert calls[-1] == (100, 100)
     assert len(calls) <= 5
+
+
+def test_render_fps_raster_returns_panel_column():
+    result = _render_fps_raster([0, 15, 30, 45, 60], total_frames=90)
+    assert isinstance(result, pn.Column)
+
+
+def test_render_fps_raster_empty_indices():
+    result = _render_fps_raster([], total_frames=90)
+    assert isinstance(result, pn.Column)
 
 
 def test_throttled_progress_always_fires_final():

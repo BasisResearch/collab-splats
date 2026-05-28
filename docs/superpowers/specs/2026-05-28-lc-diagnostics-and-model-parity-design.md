@@ -2,7 +2,62 @@
 
 **Date:** 2026-05-28  
 **Branch:** `refactor/cu121`  
-**Status:** Ready for implementation
+**Status:** Empirically investigated — findings below, implementation plan updated
+
+---
+
+## Empirical Findings (2026-05-28 investigation)
+
+### Convention — resolved, NOT the issue
+
+Both VGGT-X and Omega use **world-to-camera (w2c)** extrinsics, confirmed from source:
+- Omega `extri_intri_to_pose_encoding` docstring: *"camera-from-world matrices in OpenCV coordinates"*
+- VGGT-X docstring: *"representing camera from world transformation"*
+- `encoding_to_camera` and `pose_encoding_to_extri_intri` are symmetric inverses of the same encoding
+
+MapAnything outputs **cam-to-world (c2w)** `camera_poses`, already correctly inverted in `_lc_collate_outputs` and `_postprocess`. No convention bug in any model.
+
+### Scale drift — new critical finding
+
+`estimate_scale_pairwise` formula is **identical** between our code and VGGT-SLAM (`median(||Y||/||X||)`). VGGT-SLAM returns `(scale, None)` and takes `[0]`; ours returns `float` directly. Same math.
+
+Source of bias: **VGGT depth anchor-frame overestimation**.
+
+When the same physical frame is the first frame of a new VGGT window (anchor), VGGT systematically overestimates its depth vs when it was the last frame of the previous window. Implied depth ratio: 1.015–1.198× per boundary, compounding to **2.76× total** across 13 boundaries (cumulative scale product = 0.363).
+
+| Metric | Ours (VGGT-X) | VGGT-SLAM |
+|--------|--------------|-----------|
+| Scale factors | 0.835–0.985 (all <1) | 0.976–1.011 (near 1) |
+| Cumulative scale | **0.363** | **0.919** |
+
+VGGT-SLAM avoids this by comparing camera-space points (curr frame 0) directly against prev world-space points (prev frame 15) using `P_temp = inv(K_prev) @ K_curr ≈ I`. This accidentally works for chess_seq01 (tiny inter-submap motion vs scene depth) but is not geometrically general. Our approach (full SE3 T) is geometrically correct but exposes the depth anchor bias.
+
+**Fix required**: switch from norm-ratio scale estimation to pairwise-distance-ratio estimation: `median(||Y_i - Y_j|| / ||X_i - X_j||)`. This is invariant to coordinate system translation and removes the anchor-bias sensitivity.
+
+### Omega LC regression root cause — resolved
+
+Primary cause: **verify gate is effectively disabled for Omega**.
+
+- Omega `cross_frame_attention_ratio` at layer=16: mtq=1.328 on retrieved pairs
+- Threshold: 0.85
+- Result: **virtually all DINO-SALAD retrieved pairs pass the verify gate**
+
+The attention similarity measure for Omega's `inter_frame_blocks` does not distinguish well between geometrically-correct and geometrically-incorrect frame pairs at threshold 0.85. Loop candidates accepted are based on DINO-SALAD retrieval alone (no geometric filtering).
+
+Additionally:
+- `max_jump_ratio=inf` (default): no geometric sanity check — wrong loop edges enter PGO unchecked
+- 2-frame Omega relative pose quality for non-adjacent frames: unknown, but likely poor (chess repetitive texture → false retrievals accepted)
+- Same depth anchor drift as VGGT-X: scale drift compounded by wrong LC corrections
+
+**Primary fix**: raise `default_verify_match_ratio` for Omega (e.g., 0.99 or a model-specific threshold). Also: enable `max_jump_ratio` (e.g., 0.2) as a safety net.
+
+**Secondary fix**: fix the scale estimation bias (pairwise distance ratio) to address the 0.363 cumulative scale issue.
+
+### VGGT-X parity gap vs VGGT-SLAM — identified
+
+In the parity run, 0/13 DINO-SALAD pairs (from VGGT-SLAM's retrieval) scored > 0.85. VGGT-SPARK's `image_match_ratio` gives 1.001–1.043 for the same pairs. Same algorithm, different model weights → different attention distribution. The successful 2026-05-28 VGGT-X LC run used OUR DINO-SALAD retrieval which finds different pairs — some of those DO exceed 0.85.
+
+VGGT-SLAM LC baseline (30 sparse keyframes) is NOT comparable to our 200-frame run. A proper comparable baseline still requires running VGGT-SLAM on all 200 frames.
 
 ---
 
@@ -64,67 +119,77 @@ For apples-to-apples comparison:
 
 ---
 
-### Convention diagnostic
+### Convention — resolved (no implementation needed)
 
-Three models, three decoders:
-
-| Model | Pose decoder | Expected convention |
-|-------|-------------|---------------------|
-| VGGT-X | `pose_encoding_to_extri_intri` (vggt pkg) | w2c — documented |
-| Omega | `encoding_to_camera` (third_party/vggt-omega) | w2c — structurally identical to VGGT-X |
-| MapAnything | `camera_poses` in pred dict | **c2w** — explicitly labeled; already inverted in our code |
-
-Diagnostic script: run all 3 models on a shared 4-frame test set (chess_seq01 frames 0-3).
-For each model, print:
-
-```
-poses[0]:       should be I (both w2c and c2w; VGGT anchors first frame to I)
-poses[1][:3,3]: translation vector of 2nd frame
-det(R[0]):      should be +1.0 (proper rotation)
-R[0]^T @ R[0]: should be near I
-sign of t[2] frame 1 vs frame 0: diagnostic — w2c and c2w differ here
-```
-
-Also run the 2-frame LC forward (`extract_intermediate_features`) on frames 0+1 and print
-`lc_poses[0]`, `lc_poses[1]` — compare against the full-sequence poses for the same frames.
-Mismatch in relative pose (vs known GT relative pose from 7-Scenes) = pose quality issue.
+Empirically confirmed: Omega = w2c, MapAnything = c2w (already inverted). No code changes
+required for convention. The original diagnostic script idea is no longer needed.
 
 ---
 
-### Omega LC diagnostics
+### Scale estimation fix
 
-Beyond convention check, instrument `_run_lc_loop` (or a dedicated diagnostic run) to log
-per-submap LC statistics for Omega:
+Replace norm-ratio with pairwise-distance-ratio in `estimate_scale_pairwise` call site
+inside `run_pose_graph_optimization`. The fix should NOT change the shared function signature
+(VGGT-SLAM uses it too). Instead, pre-process points before calling:
 
+```python
+# Before: scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
+# After: compute pairwise distances, then median ratio
+
+def _estimate_scale_pairwise_dist(X: np.ndarray, Y: np.ndarray) -> float:
+    """Pairwise distance ratio — invariant to coordinate origin, removes anchor-bias."""
+    if X.shape[0] < 2:
+        return 1.0
+    # Sample random pairs to avoid O(N^2)
+    rng = np.random.default_rng(42)
+    n = min(X.shape[0], 500)
+    idx = rng.choice(X.shape[0], (n, 2), replace=True)
+    i, j = idx[:, 0], idx[:, 1]
+    x_dists = np.linalg.norm(X[i] - X[j], axis=1)
+    y_dists = np.linalg.norm(Y[i] - Y[j], axis=1)
+    valid = x_dists > 1e-6
+    return float(np.median(y_dists[valid] / x_dists[valid])) if valid.any() else 1.0
 ```
-submap N: found=K candidates  verified=J  accepted=I  (rejected by: verify/jump)
+
+Add this as a private helper in `closure.py`. Replace the `estimate_scale_pairwise` call in
+`run_pose_graph_optimization` with `_estimate_scale_pairwise_dist`.
+
+---
+
+### Omega LC verify gate fix
+
+The verify gate is effectively disabled for Omega (mtq=1.328 >> 0.85 threshold).
+
+Fix: add `default_verify_match_ratio: ClassVar[float] = 0.99` to `VGGTOmegaCreator`.
+The `LoopClosure.__init__` already reads this via `getattr(base, "default_verify_match_ratio", None)`.
+
+Additionally: run Omega LC with `max_jump_ratio=0.3` (passed via `LoopClosureConfig`) to
+enable the geometric sanity check. Add `default_max_jump_ratio: ClassVar[float] = 0.3` to
+`VGGTOmegaCreator` and read it in `LoopClosure.__init__` the same way as `verify_match_ratio`.
+
+These two changes together should significantly reduce false-positive loop edges for Omega.
+After fixing, re-run eval to measure ATE. If still regressing, the issue is 2-frame pose
+quality — in that case, the deeper fix is to log per-loop `lc_rel` vs GT and assess whether
+a higher threshold (0.999) or a pose-consistency check is needed.
+
+---
+
+### Omega LC statistics logging
+
+Add debug logging to `_run_lc_loop` (already has `console.log` for accepted loops, but needs
+counts for all stages):
+
+```python
+# After find_loop_closures:
+log.debug("submap %d: retrieved=%d", wi, len(loop_matches))
+# After verify loop, inside the for match loop:
+log.debug("  verify ratio=%.3f %s", ratio, "PASS" if verify_ok else "FAIL")
+# After jump check:
+log.debug("  jump ratio=%.3f %s", jump_ratio, "PASS" if jump_ok else "FAIL")
 ```
 
-Also log: the `lc_rel` translation magnitude and direction for each accepted loop, and
-compare vs the DINO-SALAD distance of that pair. This tells us whether accepted loops
-have geometrically consistent poses.
-
-**Root cause hypotheses (ranked by likelihood):**
-
-1. **LC relative pose quality** — Omega's 2-frame joint `extract_intermediate_features`
-   forward produces inaccurate relative poses for non-adjacent frames. The loop edge
-   goes into PGO with wrong translation, pulling submap poses in wrong direction.
-   Diagnosis: compare `lc_rel` translation vs GT relative pose for same pair.
-
-2. **Scale estimation noise** — Omega's depth maps have different scale distribution
-   than VGGT-X. `estimate_scale_pairwise` on sparse Omega world_points (world_points=None
-   when MapAnything-style; check if Omega provides world_points) may fall back to scale=1.0
-   consistently, making inter-submap edges wrong.
-   Diagnosis: log `scale` value per submap transition.
-
-3. **Verify gate too permissive** — even with `_lc_layer_index=16`, Omega might pass
-   `verify_match_ratio=0.85` for poor pairs. The 1.328 mtq mean (retrieved mode) is a
-   calibration-set average, not a guarantee per-pair.
-   Diagnosis: log per-loop `cross_frame_attention_ratio` values, not just pass/fail.
-
-4. **Convention mismatch** — Omega extrinsics are c2w (not w2c). Ruled out by
-   `encoding_to_camera` code analysis (structurally identical to VGGT-X w2c decoder),
-   but diagnostic confirms.
+This is already partially present (console.log for rejections). Just ensure rejected loops
+log the actual `cross_frame_attention_ratio` value, not just "rejected".
 
 ---
 
@@ -206,11 +271,12 @@ The `apply_mask=False` skips confidence/edge masking — we only need poses for 
 
 | File | Action | What changes |
 |------|--------|-------------|
-| `evals/runners/run_vggt_slam_lc.py` | Modify | Remove `_VGGTCompatWrapper`; use vggt_spark PYTHONPATH |
-| `evals/eval_vggt_slam_comparison.py` | Modify | Add `vggt_slam_lc` condition for 200-frame run |
-| `evals/runners/diagnose_lc_conventions.py` | Create | 4-frame convention diagnostic for all 3 models |
-| `evals/runners/diagnose_omega_lc.py` | Create | Per-submap LC stats logging for Omega |
+| `collab_splats/pointcloud/loop_closure/closure.py` | Modify | Add `_estimate_scale_pairwise_dist` helper; replace call site |
+| `collab_splats/pointcloud/feedforward/vggt_omega.py` | Modify | `default_verify_match_ratio=0.99`; `default_max_jump_ratio=0.3` |
+| `collab_splats/pointcloud/wrappers.py` | Modify | Read `default_max_jump_ratio` from base creator; add per-loop ratio debug logging |
 | `collab_splats/pointcloud/feedforward/mapanything.py` | Modify | `_forward` windowing fix + `_lc_collate_outputs` fix |
+| `evals/runners/run_vggt_slam_lc.py` | Modify | Remove `_VGGTCompatWrapper`; use vggt_spark PYTHONPATH for 200-frame comparable run |
+| `tests/pointcloud/test_scale_estimation.py` | Create | Unit tests for pairwise-dist scale estimator (anchor-bias regression) |
 
 ---
 
@@ -238,9 +304,14 @@ The `apply_mask=False` skips confidence/edge masking — we only need poses for 
 
 ## Implementation order
 
-1. Convention diagnostic (no code changes, 30 min) — eliminates/confirms hypothesis 4 for Omega.
-2. Omega LC stats logging (30 min) — narrows root cause to hypothesis 1, 2, or 3.
-3. VGGT-SLAM run 3 fix + GPU run (1 hour wall clock, unblocks comparison table).
-4. MapAnything `_forward` + `_lc_collate_outputs` (2 hours, self-contained).
-5. Omega fix based on diagnosed root cause (1-4 hours depending on cause).
-6. Final ATE eval run for all conditions.
+1. **Scale fix** (1 hour) — add `_estimate_scale_pairwise_dist` to `closure.py`, unit test.
+   Expected: scale factors near 1.0, cumulative product > 0.9. Re-run VGGT-X eval.
+2. **Omega verify gate + jump check** (30 min) — add class vars to `VGGTOmegaCreator`,
+   wire `default_max_jump_ratio` in `LoopClosure.__init__`. Add LC ratio debug logging.
+   Re-run Omega eval with `--conditions baseline lc` to measure improvement.
+3. **MapAnything `_forward` + `_lc_collate_outputs`** (2 hours, self-contained).
+   Re-run MapAnything eval.
+4. **VGGT-SLAM comparable baseline** — remove `_VGGTCompatWrapper`, run on 200 frames.
+   Add result to ATE table.
+5. **Omega deep debug** (if step 2 doesn't fully fix regression) — log per-loop ratio
+   and lc_rel vs GT, assess 2-frame pose quality.

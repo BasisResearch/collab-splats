@@ -221,20 +221,25 @@ class PreprocessPane(param.Parameterized):
         """Auto-load video display and reveal controls when AppState.video_path is set."""
         if event.new and Path(event.new).exists():
             video_path = Path(event.new)
-            pn.state.execute(lambda: self._load_video(video_path))
+            # Run in background thread — get_video_info opens a large file and blocks
+            threading.Thread(target=self._load_video, args=(video_path,), daemon=True).start()
             self._controls_card.visible = True
 
     def _load_video(self, video_path: Path) -> None:
-        """Update video player and info text for the given path."""
+        """Fetch video metadata (background thread) then push widget updates to main thread."""
         info = get_video_info(str(video_path))
-        self._video_pane.object = str(video_path)
-        self._video_pane.visible = True
-        self._video_info_html.object = (
-            f"<p style='font-size:11px;color:#aaa'>"
-            f"{video_path.name} · {info.get('total_frames', '?')} frames · "
-            f"{info.get('fps', 0.0):.1f} fps · "
-            f"{info.get('duration_s', 0) / 60:.1f} min</p>"
-        )
+
+        def _update() -> None:
+            self._video_pane.object = str(video_path)
+            self._video_pane.visible = True
+            self._video_info_html.object = (
+                f"<p style='font-size:11px;color:#aaa'>"
+                f"{video_path.name} · {info.get('total_frames', '?')} frames · "
+                f"{info.get('fps', 0.0):.1f} fps · "
+                f"{info.get('duration_s', 0) / 60:.1f} min</p>"
+            )
+
+        pn.state.execute(_update)
 
     def _on_method_change(self, event: Any) -> None:
         """Toggle visibility of method-specific controls."""

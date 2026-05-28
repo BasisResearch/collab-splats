@@ -130,7 +130,7 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
             query_frame_num=max(5, n // 512),
         )
         if submap_size is not None:
-            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
+            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0)
             windowed = LoopClosure(base, config=_no_lc_cfg)
             return windowed, cfg
         return base, cfg
@@ -139,13 +139,13 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
         increment_size = int(m2.group(1))
         cfg = BundleAdjustmentConfig(increment_size=increment_size)
         if submap_size is not None:
-            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
+            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0)
             windowed = LoopClosure(base, config=_no_lc_cfg)
             return windowed, cfg
         return base, cfg
     if submap_size is not None:
         # Windowed mode: LC pipeline with detection disabled so baseline = windowed VGGT-X
-        _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_cosine_threshold=1.0)
+        _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0)
         windowed = LoopClosure(base, config=_no_lc_cfg)
         if condition == "ba":
             return windowed, BundleAdjustmentConfig()

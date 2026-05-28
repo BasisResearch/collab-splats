@@ -147,7 +147,10 @@ class LoopMatch:
 class LoopClosureConfig:
     submap_size: int = 20
     submap_overlap: int = 1  # 1 = VGGT-SLAM parity; 4 = old default
-    lc_cosine_threshold: float = 0.549  # L2 < 0.95 parity with VGGT-SLAM (was 0.75 → L2 < 0.707, too strict)
+    # DINO-SALAD retrieval gate: accept candidate if L2(q, ref) < lc_retrieval_threshold.
+    # L2 distance on unit-norm DINO-SALAD embeddings (range [0, 2]; typical good matches < 0.5).
+    # 0.95 matches VGGT-SLAM main.py default (lc_thres=0.95). 0.0 disables retrieval.
+    lc_retrieval_threshold: float = 0.95
     max_loops_per_submap: int = 5
     verify_match_ratio: float = 0.85
     nms_frame_distance: int = 25
@@ -155,19 +158,29 @@ class LoopClosureConfig:
     manifold: Literal["sl4", "se3"] = "sl4"
     max_jump_ratio: float = math.inf  # reject loops where ‖ΔT.t‖/path_length > this; math.inf disables
     conf_threshold: float = 25.0  # confidence gate for scale estimation; matches VGGT-SLAM --conf_threshold 25
-    lc_threshold: float | None = None   # deprecated
+    lc_threshold: float | None = None        # deprecated: use lc_retrieval_threshold (same L2 value)
+    lc_cosine_threshold: float | None = None  # deprecated: use lc_retrieval_threshold (L2); convert via sqrt(2*(1-cosine))
 
     def __post_init__(self) -> None:
         if self.lc_threshold is not None:
             warnings.warn(
-                "LoopClosureConfig.lc_threshold is deprecated; use lc_cosine_threshold. "
-                f"Equivalent: {1 - self.lc_threshold**2 / 2:.4f}",
+                "LoopClosureConfig.lc_threshold is deprecated; use lc_retrieval_threshold (same L2 value).",
                 DeprecationWarning, stacklevel=2,
             )
+            object.__setattr__(self, "lc_retrieval_threshold", self.lc_threshold)
+        if self.lc_cosine_threshold is not None:
+            l2 = math.sqrt(2 * (1 - self.lc_cosine_threshold))
+            warnings.warn(
+                f"LoopClosureConfig.lc_cosine_threshold is deprecated; "
+                f"use lc_retrieval_threshold={l2:.4f} (L2 equivalent).",
+                DeprecationWarning, stacklevel=2,
+            )
+            object.__setattr__(self, "lc_retrieval_threshold", l2)
 
     @property
     def lc_threshold_l2(self) -> float:
-        return math.sqrt(2 * (1 - self.lc_cosine_threshold))
+        """L2 threshold passed to find_loop_closures. Alias for lc_retrieval_threshold."""
+        return self.lc_retrieval_threshold
 
 
 class LoopMatchQueue:

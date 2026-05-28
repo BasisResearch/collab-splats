@@ -38,20 +38,32 @@ def test_submap_lc_flag():
 def test_loop_closure_config_defaults():
     cfg = LoopClosureConfig()
     assert cfg.submap_size == 20
-    assert cfg.submap_overlap == 4
-    assert cfg.lc_cosine_threshold == 0.75
+    assert cfg.submap_overlap == 1
+    assert cfg.lc_retrieval_threshold == 0.95
     assert cfg.max_loops_per_submap == 5
     assert cfg.verify_match_ratio == 0.85
     assert cfg.nms_frame_distance == 25
     assert cfg.min_submap_gap == 1
     assert cfg.lc_threshold is None
+    assert cfg.lc_cosine_threshold is None
 
 
 def test_loop_closure_config_l2_property():
+    cfg = LoopClosureConfig(lc_retrieval_threshold=0.80)
+    assert abs(cfg.lc_threshold_l2 - 0.80) < 1e-9
+
+
+def test_loop_closure_config_deprecated_cosine_threshold():
+    import warnings
     import math
-    cfg = LoopClosureConfig(lc_cosine_threshold=0.85)
-    expected = math.sqrt(2 * (1 - 0.85))
-    assert abs(cfg.lc_threshold_l2 - expected) < 1e-6
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        cfg = LoopClosureConfig(lc_cosine_threshold=0.85)
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert "lc_cosine_threshold" in str(w[0].message)
+        expected_l2 = math.sqrt(2 * (1 - 0.85))
+        assert abs(cfg.lc_retrieval_threshold - expected_l2) < 1e-6
 
 
 def test_loop_closure_config_deprecated_threshold():
@@ -61,7 +73,8 @@ def test_loop_closure_config_deprecated_threshold():
         cfg = LoopClosureConfig(lc_threshold=0.95)
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
-        assert "lc_cosine_threshold" in str(w[0].message)
+        assert "lc_retrieval_threshold" in str(w[0].message)
+        assert abs(cfg.lc_retrieval_threshold - 0.95) < 1e-9
 
 
 def test_loop_match_queue_keeps_top_k():

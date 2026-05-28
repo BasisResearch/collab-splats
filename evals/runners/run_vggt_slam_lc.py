@@ -47,6 +47,7 @@ for _p in (_repo_root, _slam_root):
 import vggt_slam.slam_utils as utils
 from vggt_slam.solver import Solver
 from vggt.models.vggt import VGGT  # resolves to VGGT-SPARK via sys.path shadow above
+from evals.ate_utils import compute_ate_rmse
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,6 @@ def run_vggt_slam_lc(
     logger.info("Keyframes (%d) → %s", len(selected_image_paths), kf_path)
 
     # Compute ATE against 7-Scenes GT
-    from evals.ate_utils import compute_ate_rmse
     ate_rmse: float | None = None
     try:
         ate_rmse = compute_ate_rmse(out_tum, seq_dir, selected_frames_path=kf_path)

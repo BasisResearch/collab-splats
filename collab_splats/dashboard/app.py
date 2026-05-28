@@ -12,6 +12,7 @@ import yaml
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.panes._placeholder import PlaceholderPane
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
+from collab_splats.dashboard.panes.reconstruct import ReconstructPane
 from collab_splats.dashboard.panes.semantics import SemanticsPane
 from collab_splats.dashboard.panes.visualize import VisualizePane
 from collab_splats.dashboard.state import AppState
@@ -39,10 +40,11 @@ class App(param.Parameterized):
         self._op_log = OperationLog()
 
         self._preprocess = PreprocessPane(state=self._state, op_log=self._op_log)
+        self._reconstruct = ReconstructPane(state=self._state, op_log=self._op_log)
         self._panes = {
             "Preprocess": self._preprocess,
             "Semantics": SemanticsPane(state=self._state, op_log=self._op_log),
-            "Reconstruct": PlaceholderPane("Reconstruct", "Coming in Phase 3 — run feedforward reconstruction with BA/LC"),
+            "Reconstruct": self._reconstruct,
             "Visualize": VisualizePane(state=self._state, op_log=self._op_log, base_dir=self._base_dir),
             "Localize": PlaceholderPane("Localize", "Coming in Phase 5 — camera localization in known scene"),
         }

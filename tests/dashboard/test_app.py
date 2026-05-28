@@ -34,3 +34,10 @@ def test_app_has_five_tabs():
     from collab_splats.dashboard.app import App
     app = App()
     assert set(app._tab_names) == {"Preprocess", "Semantics", "Reconstruct", "Visualize", "Localize"}
+
+
+def test_reconstruct_pane_wired(tmp_path):
+    from collab_splats.dashboard.app import App
+    from collab_splats.dashboard.panes.reconstruct import ReconstructPane
+    app = App(base_dir=str(tmp_path))
+    assert isinstance(app._reconstruct, ReconstructPane)

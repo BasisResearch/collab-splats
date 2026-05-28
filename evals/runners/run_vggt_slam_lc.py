@@ -106,7 +106,7 @@ def run_vggt_slam_lc(
         and "db" not in Path(f).name.lower()
         and Path(f).suffix.lower() in (".png", ".jpg", ".jpeg")
     ]
-    all_images = utils.sort_images_by_number(all_images)[:max_frames]
+    all_images = sorted(all_images)[:max_frames]
     logger.info("Found %d images (limited to %d)", len(all_images), max_frames)
 
     # Optical flow keyframe selection + submap processing (mirrors main.py)

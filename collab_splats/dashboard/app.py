@@ -170,7 +170,7 @@ class App(param.Parameterized):
             # Parse video_path from config if present and file exists
             try:
                 config = yaml.safe_load(config_file.read_text())
-                raw_vp = config.get("video_path")
+                raw_vp = config.get("video_path") or config.get("input_path")
                 if raw_vp:
                     vp = Path(raw_vp)
                     if vp.exists():

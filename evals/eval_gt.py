@@ -183,12 +183,15 @@ def _save_outputs(
     metrics: dict,
     trajectories: dict[str, np.ndarray],
     output_dir: Path,
+    config: dict | None = None,
 ) -> None:
     """Write metrics.json, trajectories.npz, and two plot PNGs."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # metrics.json — drop non-serializable per_frame array
-    metrics_json = {}
+    # metrics.json — drop non-serializable per_frame array; include run config
+    metrics_json: dict = {}
+    if config:
+        metrics_json["_config"] = config
     for cond, m in metrics.items():
         metrics_json[cond] = {
             "ate": {k: v for k, v in m["ate"].items() if k != "per_frame"},
@@ -397,7 +400,13 @@ def main() -> None:
             continue
         _write_tum(args.output_dir / f"{prefix}_{cond}.tum", poses)
 
-    _save_outputs(metrics, trajectories, args.output_dir)
+    _save_outputs(metrics, trajectories, args.output_dir, config={
+        "backbone": args.backbone,
+        "max_frames": args.max_frames,
+        "submap_size": args.submap_size,
+        "dataset": args.dataset,
+        "seq_dir": str(args.seq_dir),
+    })
     print(f"\nResults written to {args.output_dir}/")
     print(json.dumps(
         {c: {"ate_rmse": m["ate"]["rmse"], "rpe_trans": m["rpe"]["trans_rmse"]}

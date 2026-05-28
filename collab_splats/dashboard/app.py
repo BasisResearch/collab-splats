@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import panel as pn
 import param
+import yaml
 
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.panes._placeholder import PlaceholderPane
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
 from collab_splats.dashboard.panes.semantics import SemanticsPane
 from collab_splats.dashboard.state import AppState
+
+logger = logging.getLogger(__name__)
 
 _HEADER_CSS = """
 .bk-tab.bk-active {
@@ -110,11 +114,21 @@ class App(param.Parameterized):
             )
         else:
             out_dir = Path(self._output_dir_input.value.strip())
-            if not (out_dir / "run_config.yaml").exists():
+            config_file = out_dir / "run_config.yaml"
+            if not config_file.exists():
                 self._session_status.object = (
                     f"<p style='color:#e05050;font-size:12px'>No run_config.yaml in {out_dir}</p>"
                 )
                 return
+            try:
+                with open(config_file) as f:
+                    config = yaml.safe_load(f)
+                if config and "video_path" in config:
+                    video_path = Path(config["video_path"])
+                    if video_path.exists():
+                        self._state.video_path = video_path
+            except Exception as exc:
+                logger.warning("Could not parse video_path from %s: %s", config_file, exc)
             self._state.output_dir = out_dir
             self._session_status.object = (
                 f"<p style='color:#50c050;font-size:12px'>Loaded: {out_dir.name}</p>"

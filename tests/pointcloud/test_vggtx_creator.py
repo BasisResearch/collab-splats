@@ -220,3 +220,35 @@ def test_patch_vggtx_compute_similarity_deleted():
     assert not hasattr(vggtx_mod, "_patch_vggtx_compute_similarity"), (
         "_patch_vggtx_compute_similarity still exists — delete it and its _load_model call"
     )
+
+
+def test_unproject_and_filter_points_extra_mask():
+    """extra_mask=False pixels are excluded from the output."""
+    import numpy as np
+    from collab_splats.pointcloud.feedforward.vggtx import unproject_and_filter_points
+
+    N, H, W = 2, 4, 4
+    depth = np.ones((N, H, W, 1), dtype=np.float32)
+    depth_conf = np.ones((N, H, W), dtype=np.float32)
+    images = np.zeros((N, 3, H, W), dtype=np.float32)
+    extrinsic = np.stack([np.eye(4)[:3, :]] * N).astype(np.float32)
+    intrinsic = np.stack([np.eye(3)] * N).astype(np.float32)
+
+    # Without extra_mask: all pixels survive (conf_threshold=0.0)
+    pts_all, _, _ = unproject_and_filter_points(
+        depth, depth_conf, images, extrinsic, intrinsic, conf_threshold=0.0
+    )
+
+    # extra_mask zeros out frame 0 completely
+    extra_mask = np.ones((N, H, W), dtype=bool)
+    extra_mask[0] = False
+    pts_masked, _, _ = unproject_and_filter_points(
+        depth, depth_conf, images, extrinsic, intrinsic, conf_threshold=0.0,
+        extra_mask=extra_mask,
+    )
+
+    assert len(pts_masked) < len(pts_all), (
+        f"Expected fewer points with extra_mask; got {len(pts_masked)} vs {len(pts_all)}"
+    )
+    # Frame 0 masked → only frame 1's H*W points survive
+    assert len(pts_masked) == H * W, f"Expected {H*W}, got {len(pts_masked)}"

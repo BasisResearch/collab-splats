@@ -86,6 +86,7 @@ def unproject_and_filter_points(
     intrinsic: np.ndarray,
     conf_threshold: float = 50.0,
     max_points: int = 500_000,
+    extra_mask: "np.ndarray | None" = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Unproject depth to world-space points and filter by confidence.
 
@@ -98,6 +99,8 @@ def unproject_and_filter_points(
         conf_threshold: Percentile cutoff (>1.0) or raw threshold (≤1.0).
                         Points below this confidence are discarded.
         max_points:     Maximum number of output points; excess are randomly subsampled.
+        extra_mask:     Optional (N, H, W) boolean array; pixels where False are excluded
+                        before subsampling (e.g. from compute_multiview_depth_confidence).
 
     Returns:
         pts3d:          (P, 3) float32 world-space points.
@@ -122,6 +125,9 @@ def unproject_and_filter_points(
         threshold_val = float(conf_threshold)
 
     conf_mask = depth_conf >= threshold_val
+
+    if extra_mask is not None:
+        conf_mask = conf_mask & extra_mask
 
     n_true = int(conf_mask.sum())
     if n_true > max_points:

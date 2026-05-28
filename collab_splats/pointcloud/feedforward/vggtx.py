@@ -21,7 +21,13 @@ from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 from ..postproc import run_global_alignment
-from .base import BaseFeedforwardCreator, FeedforwardResult, _raw_to_world_points, console
+from .base import (
+    BaseFeedforwardCreator,
+    FeedforwardResult,
+    _raw_to_world_points,
+    compute_multiview_depth_confidence,
+    console,
+)
 from collab_splats.utils.geometry import extrinsics_to_homogeneous
 
 
@@ -174,6 +180,8 @@ class VGGTXCreator(BaseFeedforwardCreator):
     use_global_alignment: bool = False
     chunk_size: int = 256
     conf_threshold: float = 35.0
+    use_multiview_confidence: bool = False
+    mv_conf_threshold: float = 0.0
 
     def _load_model(self, device: str) -> Any:
         """Load VGGT-X from HuggingFace and move to device.
@@ -314,6 +322,22 @@ class VGGTXCreator(BaseFeedforwardCreator):
                 raw_outputs, extrinsic, intrinsic, self.image_paths,
             )
 
+        # Optionally compute geometric cross-view depth consistency mask
+        mv_mask = None
+        if self.use_multiview_confidence:
+            depth_np = raw_outputs["depth"]
+            if depth_np.ndim == 4:
+                depth_np = depth_np.squeeze(-1)   # (N, H, W)
+            extr_4x4 = extrinsics_to_homogeneous(extrinsic)
+            mv_conf = compute_multiview_depth_confidence(
+                depth_np,
+                intrinsic,
+                extr_4x4,
+                abs_thresh=0.0,
+                rel_thresh=0.05,
+            )
+            mv_mask = mv_conf > self.mv_conf_threshold
+
         # Unproject depth maps to filtered world-space points and per-point colors
         pts3d, colors, pixel_indices = unproject_and_filter_points(
             depth=raw_outputs["depth"],
@@ -323,6 +347,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
             intrinsic=intrinsic,
             conf_threshold=self.conf_threshold,
             max_points=self.max_points,
+            extra_mask=mv_mask,
         )
 
         # Model spatial dimensions used to reshape world-point grid for BA

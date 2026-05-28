@@ -14,7 +14,7 @@ import time
 from abc import abstractmethod
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pycolmap
@@ -547,6 +547,28 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     These are not stable API; refactor cautiously.
     """
 
+    # Threshold for cross_frame_attention_ratio LC verification gate.
+    # 0.85 matches VGGT-SPARK calibration (tested at _lc_layer_index=20).
+    default_verify_match_ratio: ClassVar[float] = 0.85
+
+    # Global block index to tap for Q/K in _verify_loop_candidate.
+    # VGGT-SPARK uses target_layer=20 (of 24 global blocks); -1 (last) gives
+    # systematically lower scores (~0.66 vs ~1.02) due to different attention distribution.
+    _lc_layer_index: ClassVar[int] = 20
+
+    # Token offset passed to cross_frame_attention_ratio — skip special tokens
+    # that precede patch tokens. VGGT has 5 (1 camera + 4 register). Models
+    # without special tokens (e.g. MapAnything) should override to 0.
+    _lc_token_offset: ClassVar[int] = 5
+
+    def _lc_collate_outputs(self, raw: Any) -> Any:
+        """Aggregate _forward outputs for use in _run_lc_loop.
+
+        Default: no-op for models that return a flat dict (VGGT-X, VGGT-Omega).
+        Override for models that return list[dict] (MapAnything).
+        """
+        return raw
+
     camera_model: str = "PINHOLE"
     max_points: int = 500_000
 
@@ -710,12 +732,16 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             (accepted, poses_or_None).  poses is (2, 4, 4) float32 np.ndarray when
             the backend includes a "poses" key; None otherwise — caller uses submap poses.
         """
+        # Use model-calibrated layer; override layer_index arg if provided explicitly.
+        effective_layer = self._lc_layer_index if layer_index == -1 else layer_index
         # Run the model once to capture cross-frame activations
         features = self.extract_intermediate_features(
-            torch.stack([frame1, frame2]), layer_index=layer_index, **kwargs
+            torch.stack([frame1, frame2]), layer_index=effective_layer, **kwargs
         )
-        # Compute the cross-frame attention ratio gate
-        ratio = cross_frame_attention_ratio(features["k"], features["q"])
+        # Compute the cross-frame attention ratio gate using model's token offset
+        ratio = cross_frame_attention_ratio(
+            features["k"], features["q"], token_offset=self._lc_token_offset
+        )
         if ratio < verify_match_ratio:
             return False, None
         # "poses" is optional — VGGTx includes it (pre-decoded), MapAnything does not

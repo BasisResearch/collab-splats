@@ -947,8 +947,9 @@ def cross_frame_attention_ratio(
                       that precede patch tokens in VGGT-style models).  Default 5.
 
     Returns:
-        Scalar float in [0, ∞), 90th-percentile of the normalised cross-frame
-        attention.  Values >= 0.85 match the VGGT-SPARK acceptance threshold.
+        Scalar float in [0, ∞), mean of the top-25% normalised cross-frame attention
+        values (mean_top_quarter aggregation, matching VGGT-SPARK get_similarity()).
+        Values >= 0.85 match the VGGT-SPARK acceptance threshold calibrated on VGGT-1B.
         Returns 0.0 if token_offset >= tokens_per_img (no patch tokens to measure).
     """
     tokens_per_img = q.shape[2] // 2
@@ -972,10 +973,15 @@ def cross_frame_attention_ratio(
     normalized = attn_to_second / (max_self.unsqueeze(-1) + 1e-8)
     ratio = normalized.max(dim=1)[0]              # (B, N_second)
 
+    # Aggregate: mean of top-25% values — matches VGGT-SPARK mean_top_quarter().
+    # Previously used np.percentile(90) which gives a lower scalar and caused
+    # VGGT-X scores (~0.74) to fall below the 0.85 threshold calibrated for VGGT-1B.
     ratio_np = ratio.cpu().float().numpy().ravel()
     if ratio_np.size == 0:
         return 0.0
-    return float(np.percentile(ratio_np, 90))
+    thresh = float(np.percentile(ratio_np, 75))
+    top_vals = ratio_np[ratio_np >= thresh]
+    return float(top_vals.mean())
 
 
 ########################################################

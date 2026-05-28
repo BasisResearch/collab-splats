@@ -1,0 +1,6 @@
+# Birds - 2024-05-18 - C0065
+input_path: /workspace/fieldwork-data/birds/2024-05-18/SplatsSD/C0065.MP4
+output_path: /workspace/outputs/birds_c0065
+
+preprocessing:
+  frame_proportion: 0.25

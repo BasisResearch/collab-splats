@@ -1,0 +1,6 @@
+# Rats - 2024-07-11 - C0119
+input_path: /workspace/fieldwork-data/rats/2024-07-11/SplatsSD/C0119.MP4
+output_path: /workspace/outputs/rats_c0119
+
+preprocessing:
+  frame_proportion: 0.25

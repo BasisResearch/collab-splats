@@ -1,0 +1,6 @@
+# Birds - 2024-06-01 - GH010164
+input_path: /workspace/fieldwork-data/birds/2024-06-01/SplatsSD/GH010164.MP4
+output_path: /workspace/outputs/birds_gh010164
+
+preprocessing:
+  frame_proportion: 0.10

@@ -6,6 +6,12 @@ vendor/*
 scratch/
 evals/results/
 
+# Eval benchmark data (downloaded on-demand via evals/download_7scenes.sh)
+data/
+
+# Reconstruction outputs (written to /workspace/outputs/ outside repo)
+outputs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

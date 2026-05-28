@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import torch
@@ -118,6 +118,11 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
                                ``VGGTOmega(enable_alignment=True)``.  Auto-sets
                                ``resolution=256`` when ``resolution`` is ``None``.
     """
+
+    # Calibrated 2026-05-28: inter_frame_blocks depth=24; layer 16 gives mtq=1.328
+    # on DINO-SALAD retrieved pairs (vs 0.897 at layer 20 which caused false-positive LCs).
+    # Inherits default_verify_match_ratio=0.85 from base (VGGT-SPARK calibration).
+    _lc_layer_index: ClassVar[int] = 16
 
     camera_model: str = "PINHOLE"
     model_path: str | None = None

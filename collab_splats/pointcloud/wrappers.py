@@ -58,7 +58,17 @@ class LoopClosure:
 
     def __init__(self, base: Any, config: LoopClosureConfig | None = None) -> None:
         self.base = base
-        self.config = config or LoopClosureConfig()
+        if config is None:
+            # Pick up per-model calibrated threshold when no explicit config given.
+            # Falls back to LoopClosureConfig default (0.85) if creator lacks the attr.
+            model_ratio = getattr(base, "default_verify_match_ratio", None)
+            self.config = (
+                LoopClosureConfig(verify_match_ratio=model_ratio)
+                if model_ratio is not None
+                else LoopClosureConfig()
+            )
+        else:
+            self.config = config
 
     ######################################################
     ########## Delegation — proxy to self.base ##########
@@ -194,18 +204,23 @@ class LoopClosure:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-                ext_3x4 = raw["extrinsic"]                                               # (k, 3, 4)
+                # Models that return list[dict] (e.g. MapAnything) must aggregate to a flat
+                # dict for the LC loop. raw_lc is used for LC metadata; raw is stored in the
+                # Submap so _postprocess can use the original per-frame structure.
+                raw_lc = self.base._lc_collate_outputs(raw) if isinstance(raw, list) else raw
+
+                ext_3x4 = raw_lc["extrinsic"]                                            # (k, 3, 4)
                 poses_4x4 = extrinsics_to_homogeneous(ext_3x4)                           # (k, 4, 4)
 
                 assert_world_to_cam(poses_4x4)
 
-                intr_key = "intrinsics" if "intrinsics" in raw else "intrinsic"
-                intrinsics = raw.get(intr_key, np.tile(np.eye(3), (k, 1, 1)).astype(np.float32))
+                intr_key = "intrinsics" if "intrinsics" in raw_lc else "intrinsic"
+                intrinsics = raw_lc.get(intr_key, np.tile(np.eye(3), (k, 1, 1)).astype(np.float32))
 
                 frames_cpu = window.cpu() if hasattr(window, "cpu") else torch.zeros(k, 3, 1, 1)
                 ret_vecs = retrieval_extractor(frames_cpu)                                # (k, D)
 
-                wp, wp_conf = _raw_to_world_points(raw)
+                wp, wp_conf = _raw_to_world_points(raw_lc)
                 submap = Submap(
                     submap_id=wi,
                     frames=frames_cpu,

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import torch
@@ -122,6 +122,14 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                                   size in pixels for ``"longest_side"`` and ``"square"``.
     """
 
+    # MapAnything info_sharing blocks have no special tokens (no camera/register
+    # tokens prepended). token_offset must be 0 — not 5 as the VGGT default.
+    _lc_token_offset: ClassVar[int] = 0
+    # Calibrated 2026-05-28: info_sharing depth=16; layer 4 gives mtq=1.807 on
+    # DINO-SALAD retrieved pairs (layer 15/last gives 0.341 — useless for LC).
+    # MapAnything cross-frame attention peaks early (~25% depth) unlike VGGT models.
+    _lc_layer_index: ClassVar[int] = 4
+
     model_name: str = "facebook/map-anything"
     confidence_percentile: float = 35.0
     use_multiview_confidence: bool = True
@@ -209,6 +217,21 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                     memory_efficient_inference=True,
                     minibatch_size=self.minibatch_size,
                 )
+
+    def _lc_collate_outputs(self, raw_list: list[dict]) -> dict:
+        """Aggregate per-frame list[dict] from _forward into flat dict for _run_lc_loop.
+
+        Each pred has camera_poses (1,4,4) cam2world and intrinsics (1,3,3). Extrinsics
+        are inverted to world-to-cam (3,4) as expected by the LC loop. World points are
+        not included — _raw_to_world_points will return (None, None) since MapAnything
+        lacks the 'depth'/'intrinsics_downsampled' keys, which is acceptable.
+        """
+        exts = np.stack([
+            invert_poses(p["camera_poses"][0].cpu().float().numpy())[:3, :4]
+            for p in raw_list
+        ])
+        intrs = np.stack([p["intrinsics"][0].cpu().float().numpy() for p in raw_list])
+        return {"extrinsic": exts, "intrinsics": intrs}
 
     def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
         model_h: int = self._processed_views[0]["img"].shape[-2]
@@ -338,8 +361,17 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             with torch.no_grad():
                 # Wrap frames into MapAnything's {"img": (1,C,H,W)} view dicts,
                 # preprocess them, then run a standard forward pass
-                raw_views = [{"img": f.unsqueeze(0)} for f in frames.cpu()]
+                # "data_norm_type" is required by preprocess_input_views_for_inference.
+                # load_images() defaults to "dinov2" and sets data_norm_type=[norm_type].
+                raw_views = [{"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]} for f in frames.cpu()]
                 views = preprocess_input_views_for_inference(raw_views)
+                # Move all tensor values to model device — _forward() does this too;
+                # extract_intermediate_features builds views from CPU frames so must move explicitly.
+                model_device = next(self.model.parameters()).device
+                for view in views:
+                    for vk, vv in view.items():
+                        if isinstance(vv, torch.Tensor):
+                            view[vk] = vv.to(model_device)
                 self.model.forward(
                     views,
                     memory_efficient_inference=memory_efficient,

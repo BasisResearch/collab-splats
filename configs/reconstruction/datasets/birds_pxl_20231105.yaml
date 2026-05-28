@@ -1,0 +1,6 @@
+# Birds - 2023-11-05 - PXL_20231105_154956078
+input_path: /workspace/fieldwork-data/birds/2023-11-05/SplatsSD/PXL_20231105_154956078.mp4
+output_path: /workspace/outputs/birds_pxl_20231105
+
+preprocessing:
+  frame_proportion: 0.25

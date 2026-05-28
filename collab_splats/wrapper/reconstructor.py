@@ -102,7 +102,11 @@ def _run_feedforward(
     bundle_adjustment: bool,
     loop_closure: bool,
 ) -> "PointcloudResult":
-    """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct."""
+    """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
+
+    Saves feedforward.zarr to output_dir after inference so downstream stages
+    (semantics lift, mesh) can load depth/confidence/pixel data.
+    """
     # Heavy dep imports — kept inline so module loads without GPU/model deps
     from collab_splats.pointcloud.feedforward import VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator
     from collab_splats.pointcloud.wrappers import LoopClosure
@@ -119,8 +123,17 @@ def _run_feedforward(
     if loop_closure:
         creator = LoopClosure(base=creator)
 
-    colmap_dir = output_dir / "colmap"
-    result = creator.reconstruct(images_dir, colmap_dir)
+    # reconstruct() expects the root backend dir; build_colmap appends colmap/sparse/0 internally
+    result = creator.reconstruct(images_dir, output_dir)
+
+    # Persist FeedforwardResult to feedforward.zarr — required by semantics lift + mesh stages
+    ff_outputs = getattr(creator, "outputs", None)
+    if ff_outputs is not None:
+        zarr_path = output_dir / "feedforward.zarr"
+        ff_outputs.save_zarr(zarr_path)
+        logger.info("feedforward.zarr saved: %s  (%s pts)", zarr_path, f"{len(ff_outputs.points):,}")
+    else:
+        logger.warning("Creator has no outputs after reconstruct — feedforward.zarr not saved")
 
     # Bundle adjustment operates on FeedforwardResult before COLMAP build;
     # at this stage we have PointcloudResult — BA at creator level is not applicable here.
@@ -129,6 +142,14 @@ def _run_feedforward(
             "bundle_adjustment=True is not yet wired at the Reconstructor level; "
             "pass bundle_adjustment to the creator config directly for now."
         )
+
+    # Explicitly release model + GPU memory before next stage (semantics) loads its model
+    import torch as _torch
+    del creator
+    if _torch.cuda.is_available():
+        _torch.cuda.empty_cache()
+        _torch.cuda.synchronize()
+    logger.info("Pointcloud model released from GPU")
 
     return result
 
@@ -144,29 +165,16 @@ def _extract_2d_features(
     image_paths: list[Path],
     features_dir: Path,
 ) -> Path:
-    """Extract 2D features for all frames, cache to features_dir/{name}/{name}.zarr."""
-    import zarr as zarr_lib
-    import torch
+    """Extract 2D features for all frames, cache to features_dir/{name}/{name}.zarr.
 
+    Delegates to BaseFeatureExtractor.extract_and_cache which handles PIL loading,
+    zarr layout (N, D, H_p, W_p), re-entrancy, and progress logging.
+    """
     extractor = _get_extractor(extractor_name)
     cache_dir = features_dir / extractor_name
     cache_dir.mkdir(parents=True, exist_ok=True)
-    zarr_path = cache_dir / f"{extractor_name}.zarr"
-
-    # Extract features for each frame and accumulate
-    feature_list = []
-    for img_path in image_paths:
-        import numpy as np
-        import cv2
-        img = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
-        feats = extractor.extract(img)  # (D, H_p, W_p)
-        feature_list.append(feats.numpy() if isinstance(feats, torch.Tensor) else feats)
-
-    # Stack and save to zarr: (N, D, H_p, W_p)
-    stacked = np.stack(feature_list, axis=0)
-    store = zarr_lib.open(str(zarr_path), mode="w")
-    store["features"] = stacked
-    return zarr_path
+    # extract_and_cache returns cache_dir/{name}.zarr
+    return extractor.extract_and_cache(image_paths, cache_dir)
 
 
 def _lift_and_save(
@@ -202,7 +210,11 @@ def _lift_and_save(
 
     # Optional PCA compression via autoencoder
     if n_components is not None:
+        import torch as _torch
         from collab_splats.semantics.compression import FeatureAutoencoder
+        # Move lifted to GPU for autoencoder training; lift_features returns CPU tensor
+        if _torch.cuda.is_available():
+            lifted = lifted.cuda()
         ae = FeatureAutoencoder(input_dim=lifted.shape[-1], latent_dim=n_components)
         ae.fit(lifted)  # (N, input_dim) flat tensor
         lifted = ae.per_point_encode(lifted)
@@ -211,7 +223,7 @@ def _lift_and_save(
     # Save lifted features as zarr
     output_dir.mkdir(parents=True, exist_ok=True)
     out_store = zarr_lib.open(str(output_dir / "features.zarr"), mode="w")
-    out_store["features"] = lifted.numpy()
+    out_store["features"] = lifted.detach().cpu().numpy()
     return output_dir
 
 
@@ -379,9 +391,12 @@ class Reconstructor:
         pc_cfg = self.config.get("pointcloud", {})
         method = pc_cfg.get("method", "feedforward")
 
-        # Skip if COLMAP reconstruction already on disk and overwrite not requested
+        # Skip if COLMAP + feedforward.zarr both exist and overwrite not requested.
+        # Require feedforward.zarr too — if a previous run was partial (zarr missing),
+        # we must re-run inference rather than loading stale COLMAP.
         colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
-        if not overwrite and colmap_done:
+        zarr_done = (self.backend_dir / "feedforward.zarr").exists()
+        if not overwrite and colmap_done and zarr_done:
             logger.info("Pointcloud exists at %s, loading from disk", self.backend_dir / "colmap")
             self.pointcloud = self._load_pointcloud_from_disk()
             return self.pointcloud

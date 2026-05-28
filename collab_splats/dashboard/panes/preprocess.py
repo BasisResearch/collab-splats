@@ -154,8 +154,8 @@ class PreprocessPane(param.Parameterized):
         self._extraction_thread: threading.Thread | None = None
         self._cached_thumbnails: list[bytes] = []
 
-        # Video player
-        self._video_pane = pn.pane.Video(None, width=560, height=360, loop=False, visible=False)
+        # Video first-frame thumbnail (faster than streaming 700MB via Bokeh server)
+        self._video_pane = pn.pane.PNG(None, width=560, height=360, visible=False)
         self._video_info_html = pn.pane.HTML("", width=560)
 
         # Frame selection controls
@@ -224,14 +224,21 @@ class PreprocessPane(param.Parameterized):
             self._controls_card.visible = True
 
     def _load_video(self, video_path: Path) -> None:
-        """Show video in player and fetch metadata in background thread."""
-        # Show video immediately — setting object is a fast string assignment
-        self._video_pane.object = str(video_path)
-        self._video_pane.visible = True
+        """Extract first frame as thumbnail + fetch metadata in background."""
+        import cv2  # optional heavy dep — imported here intentionally
+        cap = cv2.VideoCapture(str(video_path))
+        ret, frame = cap.read()
+        cap.release()
+        if ret:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            buf = io.BytesIO()
+            Image.fromarray(frame_rgb).save(buf, format="PNG")
+            self._video_pane.object = buf.getvalue()
+            self._video_pane.visible = True
         self._video_info_html.object = (
             f"<p style='font-size:11px;color:#aaa'>{video_path.name} · loading info…</p>"
         )
-        # Fetch metadata (cv2.VideoCapture on large file) without blocking IOLoop
+        # Fetch full metadata (frame count, fps) without blocking IOLoop
         threading.Thread(target=self._fetch_video_info, args=(video_path,), daemon=True).start()
 
     def _fetch_video_info(self, video_path: Path) -> None:

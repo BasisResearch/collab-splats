@@ -11,6 +11,7 @@ from typing import Any
 
 import matplotlib
 import matplotlib.colors as mc
+import pandas as pd
 if not matplotlib.is_interactive():
     matplotlib.use("Agg")
 import numpy as np
@@ -204,7 +205,6 @@ def _scan_recon_methods(output_dir: Path) -> list[str]:
 
 def _empty_batch_df():
     """Return empty DataFrame with batch result columns."""
-    import pandas as pd
     return pd.DataFrame(columns=["image", "inliers", "status", "t-err (m)", "pose t"])
 
 

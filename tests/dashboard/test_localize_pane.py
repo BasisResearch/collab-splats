@@ -71,3 +71,12 @@ def test_localize_pane_method_dropdown_populated_when_zarr_found(tmp_path):
     pane, state, _ = _make_pane()
     state.output_dir = tmp_path
     assert "vggtx" in pane._method_dd.options
+
+
+def test_localize_pane_run_btn_enabled_when_all_conditions_met(tmp_path):
+    (tmp_path / "vggtx").mkdir()
+    (tmp_path / "vggtx" / "feedforward.zarr").mkdir()
+    pane, state, _ = _make_pane()
+    state.output_dir = tmp_path
+    pane._query_input.value = str(tmp_path / "query.jpg")
+    assert pane._run_btn.disabled is False

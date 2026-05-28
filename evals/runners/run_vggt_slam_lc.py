@@ -1,20 +1,18 @@
 #!/usr/bin/env python
-"""Run VGGT-SLAM with loop closure on a 7-Scenes sequence, write dense TUM.
+"""Run VGGT-SLAM on a 7-Scenes sequence, write dense TUM trajectory + ATE metrics.
 
-Usage:
+Usage (full-sequence baseline, matching VGGT-SLAM paper defaults):
+    python evals/runners/run_vggt_slam_lc.py \\
+        --seq_dir data/7scenes/chess/seq-01
+
+Usage (legacy 200-frame LC comparison):
     python evals/runners/run_vggt_slam_lc.py \\
         --seq_dir data/7scenes/chess/seq-01 \\
         --out_tum evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum \\
-        --max_frames 200
+        --max_frames 200 --min_disparity 0 --max_loops 1
 
-Fixed pipeline args (matching VGGT-SLAM paper defaults):
-    submap_size=16, overlapping_window_size=1, conf_threshold=25.0,
-    max_loops=1, min_disparity=0
-
-Note — min_disparity=0 (not paper default of 50): with min_disparity=50, chess_seq01
-produces zero loop closure candidates, making comparison vacuous. Setting 0 accepts all
-frames so LC is actually triggered. Both this script and our_solver_dump.py use 0 so
-frame selection is identical — comparison isolates algorithm parity, not keyframe selection.
+Default args match VGGT-SLAM paper: submap_size=16, min_disparity=50, max_loops=0 (no LC).
+Saves selected_frames.txt alongside TUM so eval_gt.py --keyframe_list can use same frames.
 """
 from __future__ import annotations
 
@@ -56,15 +54,15 @@ logger = logging.getLogger(__name__)
 def run_vggt_slam_lc(
     seq_dir: Path,
     out_tum: Path,
-    max_frames: int = 200,
+    max_frames: int | None = None,   # None = all frames (VGGT-SLAM paper default)
     submap_size: int = 16,
     overlapping_window_size: int = 1,
     conf_threshold: float = 25.0,
-    max_loops: int = 1,  # LC enabled — for end-to-end ATE comparison with Phase 1
-    min_disparity: float = 0.0,
+    max_loops: int = 0,              # 0 = no LC; 1 for LC runs
+    min_disparity: float = 50.0,     # VGGT-SLAM paper default
     lc_thres: float = 0.95,
 ) -> None:
-    """Run full VGGT-SLAM pipeline with LC and write dense TUM trajectory."""
+    """Run VGGT-SLAM pipeline and write TUM trajectory + ATE metrics + keyframe list."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if torch.cuda.is_available():
         dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
@@ -98,7 +96,7 @@ def run_vggt_slam_lc(
 
     model.register_forward_hook(_capture_similarity)
 
-    # Collect and sort images, apply max_frames limit
+    # Collect and sort images; max_frames=None processes the full sequence
     all_images = [
         f for f in glob.glob(str(seq_dir / "*"))
         if "depth" not in Path(f).name.lower()
@@ -106,11 +104,14 @@ def run_vggt_slam_lc(
         and "db" not in Path(f).name.lower()
         and Path(f).suffix.lower() in (".png", ".jpg", ".jpeg")
     ]
-    all_images = sorted(all_images)[:max_frames]
-    logger.info("Found %d images (limited to %d)", len(all_images), max_frames)
+    all_images = sorted(all_images)
+    if max_frames is not None:
+        all_images = all_images[:max_frames]
+    logger.info("Found %d images (max_frames=%s)", len(all_images), max_frames)
 
     # Optical flow keyframe selection + submap processing (mirrors main.py)
     image_names_subset: list[str] = []
+    selected_image_paths: list[str] = []   # all accepted keyframes, for export
     image_count = 0
 
     for image_name in tqdm(all_images, desc="Frames"):
@@ -124,6 +125,7 @@ def run_vggt_slam_lc(
         )
         if enough_disparity:
             image_names_subset.append(image_name)
+            selected_image_paths.append(image_name)
             image_count += 1
 
         # Process submap when full or on last frame
@@ -154,6 +156,31 @@ def run_vggt_slam_lc(
     solver.map.write_poses_to_file(str(out_tum), solver.graph, kitti_format=False)
     logger.info("Written: %s", out_tum)
 
+    # Save selected keyframe paths — eval_gt.py --keyframe_list uses this for parity runs
+    kf_path = out_tum.parent / "selected_frames.txt"
+    kf_path.write_text("\n".join(selected_image_paths))
+    logger.info("Keyframes (%d) → %s", len(selected_image_paths), kf_path)
+
+    # Compute ATE against 7-Scenes GT
+    from evals.ate_utils import compute_ate_rmse
+    ate_rmse: float | None = None
+    try:
+        ate_rmse = compute_ate_rmse(out_tum, seq_dir, selected_frames_path=kf_path)
+        logger.info("ATE RMSE: %.6f m", ate_rmse)
+    except Exception as exc:
+        logger.warning("ATE computation failed: %s", exc)
+
+    metrics_out = out_tum.parent / "metrics.json"
+    metrics_out.write_text(json.dumps({
+        "ate_rmse": ate_rmse,
+        "keyframes": len(selected_image_paths),
+        "submaps": solver.map.get_num_submaps(),
+        "loop_closures": solver.graph.get_num_loops(),
+        "min_disparity": min_disparity,
+        "max_frames": max_frames,
+    }, indent=2))
+    logger.info("Metrics → %s", metrics_out)
+
     # Write VGGT-SPARK similarity scores for comparison against our cross_frame_attention_ratio
     out_similarity = out_tum.parent.parent.parent / "results" / "parity_harness" / "vggt_spark_similarity.json"
     out_similarity.parent.mkdir(parents=True, exist_ok=True)
@@ -176,18 +203,25 @@ def main() -> None:
     parser.add_argument("--seq_dir", required=True, help="Path to sequence directory.")
     parser.add_argument(
         "--out_tum",
-        default="evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum",
+        default="evals/baselines/vggt_slam/chess_seq01/vggt_slam_fullseq.tum",
         help="Output TUM path.",
     )
-    parser.add_argument("--max_frames", type=int, default=200)
+    parser.add_argument(
+        "--max_frames", type=int, default=None,
+        help="Max frames. Default None = full sequence. Pass 200 for legacy 200-frame runs.",
+    )
     parser.add_argument("--submap_size", type=int, default=16)
     parser.add_argument("--conf_threshold", type=float, default=25.0)
-    parser.add_argument("--max_loops", type=int, default=1)
+    parser.add_argument(
+        "--max_loops", type=int, default=0,
+        help="Max LC per submap. 0 = disable (default). 1 for LC runs.",
+    )
     parser.add_argument(
         "--min_disparity",
         type=float,
-        default=0.0,
-        help="Min optical-flow disparity for keyframe selection (0 = accept all frames).",
+        default=50.0,
+        help="Optical-flow disparity threshold for keyframe selection. "
+             "VGGT-SLAM paper default=50. Use 0 to accept all frames.",
     )
     args = parser.parse_args()
 

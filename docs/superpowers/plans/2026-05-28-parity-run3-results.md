@@ -9,8 +9,10 @@
 ## Architecture Finding
 
 VGGT-SLAM uses **identical two-gate LC** as ours:
-1. DINO-SALAD L2 distance gate (their `lc_thres=0.95`, ours `lc_cosine_threshold=0.75`)
+1. DINO-SALAD L2 distance gate — **now aligned**: `lc_cosine_threshold=0.549` → `lc_threshold_l2=0.95`, matching VGGT-SLAM `lc_thres=0.95`. Was 0.75 (→ L2=0.707), which was 34% stricter and likely suppressed valid candidates.
 2. Attention verify gate — same 0.85 threshold, same `get_similarity` algorithm
+
+**Threshold alignment note:** Our `LoopClosureConfig` stores cosine similarity and converts to L2 via `sqrt(2*(1-cosine))`. VGGT-SLAM stores L2 directly. Equivalent: `lc_cosine_threshold = 1 - lc_thres²/2`. At 0.549, gate 1 passes the same candidates VGGT-SLAM passes at 0.95.
 
 `compute_similarity=True` only in `third_party/vggt_spark` fork. Our hook-based `cross_frame_attention_ratio` is the correct equivalent. Score gap vs 1.025 reference = pair distribution difference (VGGT-SPARK measured on LC candidates, our calibration measured on random temporal pairs). Now fixed with `--mode retrieved`.
 

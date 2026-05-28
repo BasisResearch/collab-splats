@@ -147,7 +147,7 @@ class LoopMatch:
 class LoopClosureConfig:
     submap_size: int = 20
     submap_overlap: int = 1  # 1 = VGGT-SLAM parity; 4 = old default
-    lc_cosine_threshold: float = 0.75
+    lc_cosine_threshold: float = 0.549  # L2 < 0.95 parity with VGGT-SLAM (was 0.75 → L2 < 0.707, too strict)
     max_loops_per_submap: int = 5
     verify_match_ratio: float = 0.85
     nms_frame_distance: int = 25

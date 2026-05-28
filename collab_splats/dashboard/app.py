@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
+
+import logging
 
 import panel as pn
 import param
@@ -11,7 +12,6 @@ import yaml
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.panes._placeholder import PlaceholderPane
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
-from collab_splats.dashboard.panes.semantics import SemanticsPane
 from collab_splats.dashboard.state import AppState
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class App(param.Parameterized):
         self._preprocess = PreprocessPane(state=self._state, op_log=self._op_log)
         self._panes = {
             "Preprocess": self._preprocess,
-            "Semantics": SemanticsPane(state=self._state, op_log=self._op_log),
+            "Semantics": PlaceholderPane("Semantics", "Coming in Phase 2 — 2D feature extraction and comparison"),
             "Reconstruct": PlaceholderPane("Reconstruct", "Coming in Phase 3 — run feedforward reconstruction with BA/LC"),
             "Visualize": PlaceholderPane("Visualize", "Coming in Phase 4 — interactive PyVista 3D comparison"),
             "Localize": PlaceholderPane("Localize", "Coming in Phase 5 — camera localization in known scene"),
@@ -120,16 +120,19 @@ class App(param.Parameterized):
                     f"<p style='color:#e05050;font-size:12px'>No run_config.yaml in {out_dir}</p>"
                 )
                 return
+            self._state.output_dir = out_dir
+
+            # Parse video_path from config if present and file exists
             try:
-                with open(config_file) as f:
-                    config = yaml.safe_load(f)
-                if config and "video_path" in config:
-                    video_path = Path(config["video_path"])
-                    if video_path.exists():
-                        self._state.video_path = video_path
+                config = yaml.safe_load(config_file.read_text())
+                raw_vp = config.get("video_path")
+                if raw_vp:
+                    vp = Path(raw_vp)
+                    if vp.exists():
+                        self._state.video_path = vp
             except Exception as exc:
                 logger.warning("Could not parse video_path from %s: %s", config_file, exc)
-            self._state.output_dir = out_dir
+
             self._session_status.object = (
                 f"<p style='color:#50c050;font-size:12px'>Loaded: {out_dir.name}</p>"
             )

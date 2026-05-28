@@ -4,20 +4,21 @@ from __future__ import annotations
 # Imports
 ########################################################################
 
+import base64
 import io
 import logging
 import threading
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-if not matplotlib.is_interactive():
-    matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from bokeh.models import ColumnDataSource, Span, TapTool
+from bokeh.plotting import figure as bokeh_figure
 import numpy as np
 import panel as pn
 import param
+import zarr
 from PIL import Image
+from zarr.codecs import BloscCodec
 
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.state import AppState
@@ -47,59 +48,30 @@ def _window_frame_indices(
     return list(range(start, end))
 
 
-def _render_metrics_figure(
+########################################################################
+# Metrics constants
+########################################################################
+
+_METRIC_STYLE: dict[str, tuple[str, str]] = {
+    "disparity": ("Optical Flow / Disparity", "#7ec8e3"),
+    "rotation": ("Rotation (°)", "#f0a500"),
+    "hist_similarity": ("Hist. Similarity", "#d090e0"),
+}
+
+
+def _build_metrics_sources(
     frame_scores: dict[str, list[float]],
-    selected_indices: list[int],
-    total_frames: int,
-) -> bytes:
-    """Render stacked per-frame metrics time-series as PNG bytes.
-
-    Uses score_all_frames() output keys: disparity / rotation / hist_similarity.
-    Selected frame indices shown as green vertical bands.
-    """
-    keys = ["disparity", "rotation", "hist_similarity"]
-    labels = ["Optical Flow / Disparity", "Rotation (°)", "Hist. Similarity"]
-    colors = ["#7ec8e3", "#f0a500", "#d090e0"]
-
-    n_panels = sum(1 for k in keys if frame_scores.get(k))
-    if n_panels == 0:
-        fig, ax = plt.subplots(1, 1, figsize=(10, 1))
-        fig.patch.set_facecolor("#0d1117")
-        ax.set_facecolor("#0d1117")
-        ax.axis("off")
-        ax.text(
-            0.5, 0.5, "No metrics — run extraction first",
-            ha="center", va="center", color="#666", transform=ax.transAxes,
+) -> dict[str, ColumnDataSource]:
+    """Build Bokeh ColumnDataSources for each non-empty metric series."""
+    sources = {}
+    for key in _METRIC_STYLE:
+        vals = frame_scores.get(key, [])
+        if not vals:
+            continue
+        sources[key] = ColumnDataSource(
+            data={"x": list(range(len(vals))), "y": vals}
         )
-    else:
-        fig, axes = plt.subplots(n_panels, 1, figsize=(10, n_panels * 1.2), sharex=True)
-        if n_panels == 1:
-            axes = [axes]
-        fig.patch.set_facecolor("#0d1117")
-        fig.subplots_adjust(hspace=0.15)
-
-        panel_idx = 0
-        for key, label, color in zip(keys, labels, colors):
-            vals = frame_scores.get(key, [])
-            if not vals:
-                continue
-            ax = axes[panel_idx]
-            ax.set_facecolor("#111827")
-            ax.plot(vals, color=color, linewidth=0.9, alpha=0.9)
-            ax.set_ylabel(label, color=color, fontsize=7, labelpad=2)
-            ax.tick_params(colors="#555", labelsize=6)
-            for spine in ax.spines.values():
-                spine.set_color("#333")
-            for sel_idx in selected_indices:
-                if 0 <= sel_idx < len(vals):
-                    ax.axvline(x=sel_idx, color="#50c050", alpha=0.5, linewidth=0.7)
-            panel_idx += 1
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight", facecolor="#0d1117")
-    plt.close(fig)
-    buf.seek(0)
-    return buf.getvalue()
+    return sources
 
 
 def _frames_to_thumbnails(
@@ -118,30 +90,51 @@ def _frames_to_thumbnails(
     return thumbnails
 
 
-def _write_frames_zarr(frames: list[np.ndarray], zarr_path: Path) -> Path:
-    """Write extracted frames to a Blosc-compressed zarr store.
-
-    Layout: frames (N, H, W, 3) uint8, chunks=(1, H, W, 3) — one chunk per frame.
-    Returns the zarr store path.
-    """
-    import zarr
-    from zarr.codecs import BloscCodec
-
-    N = len(frames)
-    H, W = frames[0].shape[:2]
-    store = zarr.open(str(zarr_path), mode="w")
-    store.attrs.update({"n_frames": N, "height": H, "width": W})
-    arr = store.create_array(
+def _write_frames_zarr(frames: list[np.ndarray], path: Path) -> None:
+    """Write frame list to a zarr store at path, one chunk per frame."""
+    if not frames:
+        raise ValueError("frames list is empty — nothing to write")
+    arr = np.stack(frames)  # (N, H, W, 3) uint8
+    store = zarr.open_group(str(path), mode="w")
+    store.create_array(
         "frames",
-        shape=(N, H, W, 3),
-        chunks=(1, H, W, 3),
-        dtype="uint8",
-        fill_value=0,
-        compressors=[BloscCodec(cname="lz4", clevel=5)],
+        shape=arr.shape,
+        dtype=arr.dtype,
+        chunks=(1, *arr.shape[1:]),
+        compressors=[BloscCodec(cname="lz4", clevel=3)],
     )
-    for i, frame in enumerate(frames):
-        arr[i] = frame
-    return zarr_path
+    store["frames"][:] = arr
+
+
+def _build_frame_strip_html(thumbnails: list[bytes], active_idx: int) -> str:
+    """Return HTML string for horizontal frame strip with base64 thumbnails.
+
+    Each thumbnail has id="frame-{i}" for scrollIntoView targeting.
+    Active frame gets green border; others get dark border.
+    """
+    if not thumbnails:
+        return "<div style='color:#666;font-size:11px;padding:8px'>No frames extracted yet</div>"
+
+    # Clamp active_idx to valid range — silently out-of-range is confusing
+    active_idx = max(0, min(active_idx, len(thumbnails) - 1)) if thumbnails else 0
+
+    imgs = []
+    for i, png_bytes in enumerate(thumbnails):
+        b64 = base64.b64encode(png_bytes).decode()
+        border_color = "#50c050" if i == active_idx else "#333"
+        imgs.append(
+            f'<img id="frame-{i}" src="data:image/png;base64,{b64}" '
+            f'style="width:120px;height:90px;cursor:pointer;margin:2px;'
+            f'border:2px solid {border_color};border-radius:3px;flex-shrink:0;" />'
+        )
+
+    inner = "".join(imgs)
+    return (
+        f'<div id="frame-strip-container" '
+        f'style="display:flex;flex-direction:row;overflow-x:auto;'
+        f'padding:4px;background:#0d1117;border-radius:4px;">'
+        f"{inner}</div>"
+    )
 
 
 ########################################################################
@@ -159,6 +152,7 @@ class PreprocessPane(param.Parameterized):
         self._selected_frames: list[np.ndarray] = []
         self._selected_indices: list[int] = []
         self._extraction_thread: threading.Thread | None = None
+        self._cached_thumbnails: list[bytes] = []
 
         # Video player
         self._video_pane = pn.pane.Video(None, width=560, height=360, loop=False, visible=False)
@@ -189,12 +183,34 @@ class PreprocessPane(param.Parameterized):
         )
         self._frame_count_html = pn.pane.HTML("", width=260)
 
-        # Metrics (matplotlib PNG)
-        self._metrics_pane = pn.pane.PNG(None, width=700, height=200, visible=False)
+        # Controls wrapped in collapsible Card — hidden until video is loaded
+        self._controls_card = pn.Card(
+            self._method_dd,
+            self._fps_slider,
+            self._n_frames_slider,
+            self._window_start_slider,
+            self._window_end_slider,
+            self._min_disparity_slider,
+            pn.layout.Divider(),
+            self._extract_btn,
+            self._frame_count_html,
+            title="Frame Extraction",
+            collapsed=False,
+            visible=False,
+            sizing_mode="stretch_width",
+        )
 
-        # Frame strip
-        self._frame_strip_row = pn.Row(scroll=True, height=150, sizing_mode="stretch_width")
-        self._frame_strip_label = pn.pane.HTML("", sizing_mode="stretch_width")
+        # Metrics (Bokeh figures, built lazily after extraction)
+        self._metrics_col = pn.Column(sizing_mode="stretch_width", visible=False)
+
+        # Frame strip (HTML for scrollIntoView support)
+        self._frame_strip_pane = pn.pane.HTML(
+            _build_frame_strip_html([], active_idx=0),
+            sizing_mode="stretch_width",
+            height=120,
+        )
+        self._scroll_script = pn.pane.HTML("", width=0, height=0)
+        self._active_frame_idx: int = 0
 
         # Wire callbacks
         self._method_dd.param.watch(self._on_method_change, "value")
@@ -202,9 +218,10 @@ class PreprocessPane(param.Parameterized):
         self._state.param.watch(self._on_video_path_change, "video_path")
 
     def _on_video_path_change(self, event: Any) -> None:
-        """Auto-load video display when AppState.video_path is set."""
+        """Auto-load video display and reveal controls when AppState.video_path is set."""
         if event.new and Path(event.new).exists():
             self._load_video(Path(event.new))
+            self._controls_card.visible = True
 
     def _load_video(self, video_path: Path) -> None:
         """Update video player and info text for the given path."""
@@ -282,34 +299,30 @@ class PreprocessPane(param.Parameterized):
             self._selected_frames = frames
             self._selected_indices = list(range(len(frames)))
 
-            # Write output_dir if not already set (session started from video path)
+            # Write frames to zarr; set state (no in-memory frame list)
             if self._state.output_dir is None and self._state.video_path is not None:
                 self._state.output_dir = Path("/workspace/outputs") / Path(self._state.video_path).stem
+            zarr_path = Path(self._state.output_dir) / "frames.zarr"
+            _write_frames_zarr(frames, zarr_path)
+            self._state.frames_zarr_path = zarr_path
+            self._state.selected_indices = self._selected_indices
+            self._selected_frames = []  # clear after zarr write — frames now on disk
 
-            # Write frames to zarr and update shared state
-            output_dir = Path(self._state.output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            frames_zarr_path = _write_frames_zarr(frames, output_dir / "frames.zarr")
-            self._state.frames_zarr_path = frames_zarr_path
+            # Rebuild Bokeh metrics panel with new data
+            self._metrics_col.objects = [self._make_metrics_panel()]
+            self._metrics_col.visible = True
 
-            # Update metrics display with selected frame markers
-            info = get_video_info(str(video_path))
-            total = info.get("total_frames", len(frames))
-            metrics_png = _render_metrics_figure(frame_scores, self._selected_indices, total)
-            self._metrics_pane.object = metrics_png
-            self._metrics_pane.visible = True
-
-            # Update frame strip (cap at 100 thumbnails for performance)
+            # Generate initial thumbnails and render HTML strip
             thumbnails = _frames_to_thumbnails(frames[:100])
-            self._frame_strip_row.objects = [
-                pn.pane.PNG(t, width=120, height=90) for t in thumbnails
-            ]
-            self._frame_strip_label.object = (
-                f"<p style='font-size:11px;color:#aaa'>{len(frames)} frames selected</p>"
-            )
+            self._cached_thumbnails = thumbnails  # cache for tap callbacks
+            self._active_frame_idx = 0
+            self._frame_strip_pane.object = _build_frame_strip_html(thumbnails, active_idx=0)
             self._frame_count_html.object = (
                 f"<p style='font-size:11px;color:#50c050'>✓ {len(frames)} frames extracted</p>"
             )
+
+            # Auto-collapse controls card now that extraction is done
+            self._controls_card.collapsed = True
             self._op_log.finish_op()
         except Exception as exc:
             logger.exception("Frame extraction failed")
@@ -320,32 +333,116 @@ class PreprocessPane(param.Parameterized):
         finally:
             self._extract_btn.disabled = False
 
-    def panel(self) -> pn.Column:
+    def _seek_to_frame(self, frame_idx: int) -> None:
+        """Seek video to frame_idx; update active thumbnail in strip; scroll strip."""
+        self._active_frame_idx = frame_idx
+
+        # Seek video player to timestamp
+        if self._state.video_path:
+            try:
+                info = get_video_info(str(self._state.video_path))
+                fps = info.get("fps", 25.0)
+                self._video_pane.time = frame_idx / fps
+            except Exception as exc:
+                logger.warning("Could not seek video to frame %d: %s", frame_idx, exc)
+
+        # Rebuild strip HTML using cached thumbnails (avoid re-decoding zarr on each tap)
+        self._frame_strip_pane.object = _build_frame_strip_html(
+            self._cached_thumbnails, active_idx=frame_idx
+        )
+
+        # Inject scroll script to jump strip to the active thumbnail
+        self._scroll_script.object = (
+            f"<script>var el=document.getElementById('frame-{frame_idx}');"
+            f"if(el)el.scrollIntoView({{behavior:'smooth',inline:'center'}});</script>"
+        )
+
+    def _make_metrics_panel(self) -> pn.Column:
+        """Build stacked Bokeh metric figures with TapTool; return as pn.Column."""
+        sources = _build_metrics_sources(self._frame_scores)
+        if not sources:
+            return pn.Column(
+                pn.pane.HTML(
+                    "<p style='color:#666;font-size:11px'>No metrics — run extraction first</p>"
+                )
+            )
+
+        figs = []
+        for key, source in sources.items():
+            label, color = _METRIC_STYLE[key]
+            p = bokeh_figure(
+                height=110,
+                sizing_mode="stretch_width",
+                toolbar_location=None,
+                x_range=(0, max(source.data["x"]) + 1),
+            )
+            p.background_fill_color = "#111827"
+            p.border_fill_color = "#0d1117"
+            p.outline_line_color = "#333"
+            p.grid.grid_line_color = "#333"
+            p.yaxis.axis_label = label
+            p.yaxis.axis_label_text_color = color
+            p.yaxis.axis_label_text_font_size = "10px"
+            p.xaxis.major_label_text_color = "#555"
+            p.yaxis.major_label_text_color = "#555"
+
+            # Line trace
+            p.line("x", "y", source=source, color=color, line_width=1.2, alpha=0.9)
+
+            # Invisible circles for tap selection
+            circles = p.circle("x", "y", source=source, size=6, alpha=0, color=color)
+
+            # Green span at each selected frame index
+            for idx in self._selected_indices:
+                p.add_layout(
+                    Span(location=idx, dimension="height",
+                         line_color="#50c050", line_alpha=0.5, line_width=1.0)
+                )
+
+            # TapTool fires Python callback via source selection
+            tap = TapTool(renderers=[circles])
+            p.add_tools(tap)
+
+            def _on_tap(attr, old, new, src=source):  # noqa: ANN001
+                if new:
+                    x_val = src.data["x"][new[0]]
+                    # Snap to nearest selected frame index
+                    if self._selected_indices:
+                        nearest = min(self._selected_indices, key=lambda i: abs(i - x_val))
+                        self._seek_to_frame(nearest)
+
+            source.selected.on_change("indices", _on_tap)
+            figs.append(pn.pane.Bokeh(p, sizing_mode="stretch_width"))
+
+        return pn.Column(*figs, sizing_mode="stretch_width")
+
+    def panel(self) -> pn.Row:
         """Return the full PreprocessPane Panel layout."""
-        controls = pn.Column(
-            pn.pane.HTML("<h4 style='color:#7ec8e3;margin:0 0 6px 0'>Frame Selection</h4>"),
-            self._method_dd,
-            self._fps_slider,
-            self._n_frames_slider,
-            self._window_start_slider,
-            self._window_end_slider,
-            self._min_disparity_slider,
-            pn.layout.Divider(),
-            self._extract_btn,
-            self._frame_count_html,
-            width=300,
+        # Left column: video player + info
+        video_col = pn.Column(
+            self._video_pane,
+            self._video_info_html,
+            sizing_mode="stretch_height",
+            min_width=400,
         )
 
-        video_col = pn.Column(self._video_pane, self._video_info_html)
-        top_row = pn.Row(video_col, controls, sizing_mode="stretch_width")
-
-        return pn.Column(
-            top_row,
+        # Right column: controls card → metrics → frame strip → scroll script
+        right_col = pn.Column(
+            self._controls_card,
             pn.layout.Divider(),
-            pn.pane.HTML("<h4 style='color:#7ec8e3;margin:0 0 4px 0'>Frame Quality Metrics</h4>"),
-            self._metrics_pane,
+            pn.pane.HTML(
+                "<h4 style='color:#7ec8e3;margin:4px 0'>Frame Quality Metrics</h4>",
+                sizing_mode="stretch_width",
+            ),
+            self._metrics_col,
             pn.layout.Divider(),
-            self._frame_strip_label,
-            self._frame_strip_row,
-            sizing_mode="stretch_width",
+            pn.pane.HTML(
+                "<h4 style='color:#7ec8e3;margin:4px 0'>Selected Frames</h4>",
+                sizing_mode="stretch_width",
+            ),
+            self._frame_strip_pane,
+            self._scroll_script,
+            sizing_mode="stretch_both",
         )
+
+        return pn.Row(video_col, right_col, sizing_mode="stretch_width")

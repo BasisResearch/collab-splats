@@ -100,6 +100,71 @@ def plot_heatmap(
         plt.show()
 
 
+def plot_context_segmentation(
+    ref_image,
+    ref_mask,
+    tgt_image,
+    pred_mask,
+    alpha: float = 0.45,
+):
+    """Side-by-side colored overlay for in-context segmentation results.
+
+    Reference + context mask shown in red; target + predicted mask shown in green.
+    Returns the Figure — caller decides whether to show or save.
+
+    Args:
+        ref_image: Reference image as numpy (H, W, 3) uint8 or PIL Image.
+        ref_mask: Binary context mask as numpy bool or torch bool tensor (H, W).
+        tgt_image: Target image as numpy (H, W, 3) uint8 or PIL Image.
+        pred_mask: Predicted binary mask as numpy bool or torch bool tensor (H, W).
+        alpha: Overlay opacity (default 0.45).
+    """
+    import torch as _torch
+    from PIL import Image as _Image
+
+    def _to_np_image(img):
+        # Convert PIL or numpy image to uint8 numpy array
+        if isinstance(img, _Image.Image):
+            return np.array(img.convert("RGB"))
+        return np.asarray(img)
+
+    def _to_np_mask(mask, ref_shape):
+        # Normalize mask to bool numpy array; resize to match image if needed
+        if isinstance(mask, _torch.Tensor):
+            mask = mask.detach().cpu().numpy()
+        mask = np.asarray(mask).squeeze().astype(bool)
+        if mask.shape != ref_shape[:2]:
+            resized = _Image.fromarray(mask.astype(np.uint8) * 255).resize(
+                (ref_shape[1], ref_shape[0]), resample=_Image.NEAREST
+            )
+            mask = np.array(resized) > 0
+        return mask
+
+    def _overlay(image_np, mask_np, color, alpha):
+        # Blend colored overlay onto masked pixels
+        out = image_np.astype(np.float32).copy()
+        color_arr = np.array(color, dtype=np.float32) * 255.0
+        out[mask_np] = (1.0 - alpha) * out[mask_np] + alpha * color_arr
+        return np.clip(out, 0, 255).astype(np.uint8)
+
+    ref_np = _to_np_image(ref_image)
+    tgt_np = _to_np_image(tgt_image)
+    ref_mask_np = _to_np_mask(ref_mask, ref_np.shape)
+    pred_mask_np = _to_np_mask(pred_mask, tgt_np.shape)
+
+    ref_overlay = _overlay(ref_np, ref_mask_np, color=(0.95, 0.25, 0.2), alpha=alpha)
+    tgt_overlay = _overlay(tgt_np, pred_mask_np, color=(0.15, 0.8, 0.35), alpha=alpha)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
+    axes[0].imshow(ref_overlay)
+    axes[0].set_title("Reference + context mask")
+    axes[0].axis("off")
+    axes[1].imshow(tgt_overlay)
+    axes[1].set_title("Target + prediction")
+    axes[1].axis("off")
+    return fig
+
+
 def query_heatmap(
     image: np.ndarray,
     text: str,

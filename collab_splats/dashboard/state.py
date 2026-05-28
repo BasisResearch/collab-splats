@@ -14,7 +14,8 @@ class AppState(param.Parameterized):
 
     output_dir = param.Parameter(default=None)
     video_path = param.Parameter(default=None)
-    frames_zarr_path = param.Parameter(default=None)   # Path to output_dir/frames.zarr
+    frames_zarr_path = param.Parameter(default=None)
+    selected_indices = param.List(default=[])
     feedforward_result = param.Parameter(default=None)
     feature_maps_path = param.Parameter(default=None)
     lifted_features_path = param.Parameter(default=None)

@@ -8,6 +8,7 @@ def test_appstate_defaults():
     assert state.output_dir is None
     assert state.video_path is None
     assert state.frames_zarr_path is None
+    assert state.selected_indices == []
     assert state.feedforward_result is None
     assert state.feature_maps_path is None
     assert state.lifted_features_path is None
@@ -28,13 +29,10 @@ def test_appstate_frames_zarr_path_accepts_path():
     assert state.frames_zarr_path == p
 
 
-def test_appstate_watch_fires_on_frames_zarr_path_change():
+def test_appstate_selected_indices_accepts_list():
     state = AppState()
-    received = []
-    state.param.watch(lambda e: received.append(e.new), "frames_zarr_path")
-    p = Path("/tmp/frames.zarr")
-    state.frames_zarr_path = p
-    assert received == [p]
+    state.selected_indices = [0, 5, 10, 15]
+    assert state.selected_indices == [0, 5, 10, 15]
 
 
 def test_appstate_feature_maps_path_accepts_path():

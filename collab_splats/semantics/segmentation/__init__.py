@@ -17,6 +17,7 @@ from .base import (
 # ── Concrete backends ─────────────────────────────────────────────────────────
 from .mobile_sam import MobileSAMSegmentation, load_mobile_sam
 from .sam3 import SAM3Segmentation
+from .insid3 import INSID3Segmentation
 
 __all__ = [
     # abstract base
@@ -31,4 +32,5 @@ __all__ = [
     "MobileSAMSegmentation",
     "load_mobile_sam",
     "SAM3Segmentation",
+    "INSID3Segmentation",
 ]

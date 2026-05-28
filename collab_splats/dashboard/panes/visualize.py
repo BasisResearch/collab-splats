@@ -109,8 +109,7 @@ class ScenePanel(param.Parameterized):
     and a PyVista plotter embedded via pn.pane.VTK.
     """
 
-    # Observed by VisualizePane to toggle shared query bar
-    mode = param.String(default="PCD")
+    mode = param.String(default="Mesh")
 
     def __init__(
         self,
@@ -158,23 +157,41 @@ class ScenePanel(param.Parameterized):
             name="Load", button_type="primary", width=80
         )
 
-        # Mode buttons
-        self._pcd_btn = pn.widgets.Button(
-            name="PCD", button_type="primary", width=80, disabled=True
-        )
-        self._mesh_btn = pn.widgets.Button(
-            name="Mesh", width=120, disabled=True
-        )
-        self._sim_btn = pn.widgets.Button(
-            name="Similarity", width=140, disabled=True
+        # Mode selector — RadioButtonGroup replaces three separate buttons
+        self._mode_selector = pn.widgets.RadioButtonGroup(
+            options=["Points", "Mesh", "Similarity"],
+            value="Mesh",
+            button_type="success",
+            width=380,
+            disabled=True,
         )
 
-        # Viewer controls
-        self._frustum_toggle = pn.widgets.Toggle(
-            name="Show frustums", value=False, width=130
-        )
+        # Viewer controls — frustum checkbox + point size inside a contextual row
+        self._frustum_check = pn.widgets.Checkbox(name="Show frustums", value=False)
         self._point_size_slider = pn.widgets.IntSlider(
             name="Point size", value=2, start=1, end=10, width=180
+        )
+        self._points_options_row = pn.Row(
+            self._frustum_check,
+            self._point_size_slider,
+            visible=False,
+        )
+
+        # Per-scene similarity query row
+        self._extractor_dd = pn.widgets.Select(
+            name="Extractor", options=[], width=180
+        )
+        self._sim_query_input = pn.widgets.TextInput(
+            placeholder="Enter text query…", width=220
+        )
+        self._sim_query_btn = pn.widgets.Button(
+            name="Query", button_type="success", width=80
+        )
+        self._sim_query_row = pn.Row(
+            self._extractor_dd,
+            self._sim_query_input,
+            self._sim_query_btn,
+            visible=False,
         )
         self._reset_btn = pn.widgets.Button(name="Reset camera", width=130)
         self._snapshot_btn = pn.widgets.Button(name="Snapshot", width=100)
@@ -184,13 +201,14 @@ class ScenePanel(param.Parameterized):
         self._dataset_dd.param.watch(self._on_dataset_change, "value")
         self._backend_dd.param.watch(self._on_backend_change, "value")
         self._load_btn.on_click(self._on_load)
-        self._pcd_btn.on_click(lambda e: self._on_mode_change("PCD"))
-        self._mesh_btn.on_click(lambda e: self._on_mode_change("Mesh"))
-        self._sim_btn.on_click(lambda e: self._on_mode_change("Similarity"))
-        self._frustum_toggle.param.watch(self._on_frustum_toggle, "value")
+        self._mode_selector.param.watch(
+            lambda e: self._on_mode_change(e.new), "value"
+        )
+        self._frustum_check.param.watch(self._on_frustum_toggle, "value")
         self._point_size_slider.param.watch(self._on_point_size_change, "value")
         self._reset_btn.on_click(lambda e: self._plotter.reset_camera() or self._vtk_pane.synchronize())
         self._snapshot_btn.on_click(self._on_snapshot)
+        self._sim_query_btn.on_click(self._on_sim_query_click)
 
         # Scene A: watch AppState for auto-suggest and rescan
         if scene_id == "A":
@@ -258,21 +276,22 @@ class ScenePanel(param.Parameterized):
         self._update_mode_buttons()
 
     def _update_mode_buttons(self) -> None:
-        """Enable/disable mode buttons based on available modes."""
-        has_pcd = "PCD" in self._available_modes
-        has_mesh = "Mesh" in self._available_modes
-        has_sim = "Similarity" in self._available_modes
+        """Enable/disable the RadioButtonGroup based on available modes."""
+        # Disable selector when no modes are available; enable once data is loaded
+        self._mode_selector.disabled = not bool(self._available_modes)
 
-        self._pcd_btn.disabled = not has_pcd
-        self._mesh_btn.disabled = not has_mesh
-        self._mesh_btn.name = "Mesh" if has_mesh else "Mesh (no mesh.ply)"
-        self._sim_btn.disabled = not has_sim
-        self._sim_btn.name = "Similarity" if has_sim else "Similarity (no features)"
+        # Map internal mode names to selector labels
+        label_map = {"PCD": "Points", "Mesh": "Mesh", "Similarity": "Similarity"}
 
         # Fall back to first available mode if current mode unavailable
         if self.mode not in self._available_modes and self._available_modes:
             first_available = next(iter(sorted(self._available_modes)))
             self._on_mode_change(first_available)
+        elif self.mode in self._available_modes:
+            # Sync selector value to current mode without re-triggering render
+            label = label_map.get(self.mode, self.mode)
+            if self._mode_selector.value != label:
+                self._mode_selector.value = label
 
     ####################################################################
     # AppState watchers (Scene A only)
@@ -329,7 +348,7 @@ class ScenePanel(param.Parameterized):
 
             self._plotter.reset_camera()
             if "PCD" in self._available_modes:
-                self._on_mode_change("PCD")
+                self._on_mode_change("Points")
 
             n_pts = len(self._result.points)
             if n_pts > 500_000:
@@ -351,19 +370,19 @@ class ScenePanel(param.Parameterized):
     # Mode switching
     ####################################################################
 
-    def _on_mode_change(self, new_mode: str) -> None:
-        """Switch viewer mode; update button highlight."""
+    def _on_mode_change(self, new_display_mode: str) -> None:
+        """Switch viewer mode; update contextual controls visibility."""
+        # Map selector labels ("Points") to internal mode names ("PCD")
+        mode_map = {"Points": "PCD", "Mesh": "Mesh", "Similarity": "Similarity"}
+        new_mode = mode_map.get(new_display_mode, new_display_mode)
+
         if new_mode not in self._available_modes and self._result is not None:
             return
         self.mode = new_mode
 
-        # Update button highlight to reflect active mode
-        for btn, name in (
-            (self._pcd_btn, "PCD"),
-            (self._mesh_btn, "Mesh"),
-            (self._sim_btn, "Similarity"),
-        ):
-            btn.button_type = "primary" if name == new_mode else "default"
+        # Show/hide contextual rows based on active mode
+        self._points_options_row.visible = (new_mode == "PCD")
+        self._sim_query_row.visible = (new_mode == "Similarity")
 
         self._plotter.clear()
         if new_mode == "PCD":
@@ -371,6 +390,10 @@ class ScenePanel(param.Parameterized):
         elif new_mode == "Mesh":
             self._rebuild_mesh_viewer()
         elif new_mode == "Similarity":
+            # Populate extractor dropdown and lazy-load features
+            self._extractor_dd.options = self._available_extractors or []
+            if self._available_extractors:
+                self._extractor_dd.value = self._available_extractors[0]
             if self._lifted_normed is None:
                 self._load_lifted_features_for_current_extractor()
             self._rebuild_sim_viewer(colors=None)
@@ -390,7 +413,7 @@ class ScenePanel(param.Parameterized):
         self._plotter.add_mesh(
             cloud, scalars="RGB", rgb=True, point_size=point_size, render_points_as_spheres=False
         )
-        if self._frustum_toggle.value:
+        if self._frustum_check.value:
             self._add_frustums()
 
     def _add_frustums(self) -> None:
@@ -437,10 +460,12 @@ class ScenePanel(param.Parameterized):
     ####################################################################
 
     def _current_extractor_name(self) -> str | None:
-        """Return currently selected extractor name."""
-        return getattr(self, "_selected_extractor", None) or (
-            self._available_extractors[0] if self._available_extractors else None
-        )
+        """Return the currently selected extractor name from the per-scene dropdown."""
+        if self._extractor_dd.options and self._extractor_dd.value:
+            return self._extractor_dd.value
+        if self._available_extractors:
+            return self._available_extractors[0]
+        return None
 
     def _load_lifted_features_for_current_extractor(self) -> None:
         """Load and L2-normalise lifted features for the current extractor."""
@@ -485,7 +510,7 @@ class ScenePanel(param.Parameterized):
             try:
                 # Lazy import: avoids pulling in heavy semantics chain at module load time
                 from collab_splats.semantics.features.base import BaseQueryableExtractor  # noqa: PLC0415
-                extractor_cls = BaseQueryableExtractor.create(extractor_name)
+                extractor_cls = BaseQueryableExtractor.get(extractor_name)
                 self._extractor_cache[extractor_name] = extractor_cls()
             except Exception as exc:
                 self._set_status(f"Extractor load failed: {extractor_name} — {exc}")
@@ -511,6 +536,16 @@ class ScenePanel(param.Parameterized):
         self._vtk_pane.synchronize()
         self._set_status(f'Query: "{text}" via {extractor_name}')
 
+    def _on_sim_query_click(self, event: Any) -> None:
+        """Fire similarity query from this scene's per-scene query input."""
+        text = self._sim_query_input.value.strip()
+        extractor_name = self._extractor_dd.value
+        if not text or not extractor_name:
+            return
+        threading.Thread(
+            target=self.do_query, args=(text, extractor_name), daemon=True
+        ).start()
+
     ####################################################################
     # Snapshot
     ####################################################################
@@ -527,17 +562,15 @@ class ScenePanel(param.Parameterized):
 
     def panel(self) -> pn.Column:
         """Return the full scene panel layout."""
-        controls_row = pn.Row(self._dataset_dd, self._backend_dd, self._load_btn)
-        mode_row = pn.Row(
-            self._pcd_btn, self._mesh_btn, self._sim_btn,
-            self._frustum_toggle, self._point_size_slider,
-        )
+        controls_row = pn.Row(self._dataset_dd, self._backend_dd, self._load_btn, align="end")
         action_row = pn.Row(self._reset_btn, self._snapshot_btn)
         return pn.Column(
             f"### Scene {self._scene_id}",
             controls_row,
-            mode_row,
+            self._mode_selector,
             self._vtk_pane,
+            self._points_options_row,
+            self._sim_query_row,
             action_row,
             self._status_html,
             sizing_mode="stretch_both",
@@ -550,7 +583,7 @@ class ScenePanel(param.Parameterized):
 
 
 class VisualizePane(param.Parameterized):
-    """Compositor: two ScenePanels + shared semantic query bar."""
+    """Compositor: two ScenePanels side by side with a vertical divider."""
 
     def __init__(
         self,
@@ -566,73 +599,6 @@ class VisualizePane(param.Parameterized):
         self._scene_a = ScenePanel("A", base_dir, state, op_log)
         self._scene_b = ScenePanel("B", base_dir, state, op_log)
 
-        # Shared query bar — visible when ≥1 scene is in Similarity mode
-        self._query_input = pn.widgets.TextInput(
-            placeholder="Enter text query…", width=300
-        )
-        self._a_extractor_dd = pn.widgets.Select(
-            name="Scene A extractor", options=[], width=160
-        )
-        self._b_extractor_dd = pn.widgets.Select(
-            name="Scene B extractor", options=[], width=160
-        )
-        self._query_btn = pn.widgets.Button(
-            name="Query", button_type="success", width=90
-        )
-        self._query_bar = pn.Row(
-            self._query_input,
-            self._a_extractor_dd,
-            self._b_extractor_dd,
-            self._query_btn,
-            visible=False,
-        )
-
-        # Watch mode changes on both scenes
-        self._scene_a.param.watch(self._on_scene_mode_change, "mode")
-        self._scene_b.param.watch(self._on_scene_mode_change, "mode")
-        self._scene_a.param.watch(self._update_extractor_dropdowns, "mode")
-        self._scene_b.param.watch(self._update_extractor_dropdowns, "mode")
-
-        self._query_btn.on_click(self._on_query_click)
-
-    ####################################################################
-    # Query bar visibility
-    ####################################################################
-
-    def _on_scene_mode_change(self, event: Any) -> None:
-        """Show query bar when ≥1 scene is in Similarity mode."""
-        a_sim = self._scene_a.mode == "Similarity"
-        b_sim = self._scene_b.mode == "Similarity"
-        self._query_bar.visible = a_sim or b_sim
-        self._a_extractor_dd.visible = a_sim
-        self._b_extractor_dd.visible = b_sim
-        self._update_extractor_dropdowns(None)
-
-    def _update_extractor_dropdowns(self, event: Any) -> None:
-        """Sync extractor dropdown options from each scene's available extractors."""
-        self._a_extractor_dd.options = self._scene_a._available_extractors or []
-        self._b_extractor_dd.options = self._scene_b._available_extractors or []
-
-    ####################################################################
-    # Query dispatch
-    ####################################################################
-
-    def _on_query_click(self, event: Any) -> None:
-        """Fire similarity query on all active Similarity scenes in parallel threads."""
-        text = self._query_input.value
-        if not text:
-            return
-        targets = []
-        if self._scene_a.mode == "Similarity" and self._a_extractor_dd.value:
-            targets.append((self._scene_a, self._a_extractor_dd.value))
-        if self._scene_b.mode == "Similarity" and self._b_extractor_dd.value:
-            targets.append((self._scene_b, self._b_extractor_dd.value))
-        for scene, extractor in targets:
-            t = threading.Thread(
-                target=scene.do_query, args=(text, extractor), daemon=True
-            )
-            t.start()
-
     ####################################################################
     # Tab activation rescan
     ####################################################################
@@ -641,7 +607,6 @@ class VisualizePane(param.Parameterized):
         """Re-scan available modes on both scenes (called on tab activation)."""
         self._scene_a.rescan()
         self._scene_b.rescan()
-        self._update_extractor_dropdowns(None)
 
     def wire_tabs(self, tabs: pn.Tabs, tab_index: int) -> None:
         """Connect tab activation signal so modes rescan when this tab becomes active."""
@@ -655,14 +620,20 @@ class VisualizePane(param.Parameterized):
     ####################################################################
 
     def panel(self) -> pn.Column:
-        """Return the full VisualizePane layout."""
+        """Return Panel layout for Tab 4."""
+        divider = pn.pane.HTML(
+            "<div style='border-left:1px solid #444;height:100%;margin:0 8px'></div>",
+            width=18,
+            sizing_mode="stretch_height",
+        )
         scenes_row = pn.Row(
             self._scene_a.panel(),
+            divider,
             self._scene_b.panel(),
             sizing_mode="stretch_both",
         )
         return pn.Column(
-            self._query_bar,
+            pn.pane.HTML("<h3 style='color:#7ec8e3;margin:0 0 8px 0'>Visualize</h3>"),
             scenes_row,
             sizing_mode="stretch_both",
         )

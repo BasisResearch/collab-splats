@@ -220,7 +220,8 @@ class PreprocessPane(param.Parameterized):
     def _on_video_path_change(self, event: Any) -> None:
         """Auto-load video display and reveal controls when AppState.video_path is set."""
         if event.new and Path(event.new).exists():
-            self._load_video(Path(event.new))
+            video_path = Path(event.new)
+            pn.state.execute(lambda: self._load_video(video_path))
             self._controls_card.visible = True
 
     def _load_video(self, video_path: Path) -> None:

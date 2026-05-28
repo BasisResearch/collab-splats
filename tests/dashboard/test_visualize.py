@@ -177,7 +177,7 @@ def test_scene_panel_scan_available_modes_with_mesh(tmp_path):
     sp = ScenePanel("A", tmp_path, state, _make_op_log(), _off_screen=True)
     sp._dataset_dd.value = "scene_01"
     sp._backend_dd.value = "vggt_x"
-    sp._result = object()  # non-None sentinel
+    sp._result = mock.MagicMock()  # non-None sentinel
     sp._scan_available_modes()
     assert "Mesh" in sp._available_modes
 
@@ -188,19 +188,89 @@ def test_scene_panel_scan_available_modes_with_features(tmp_path):
     sp = ScenePanel("A", tmp_path, state, _make_op_log(), _off_screen=True)
     sp._dataset_dd.value = "scene_01"
     sp._backend_dd.value = "vggt_x"
-    sp._result = object()
-    sp._scan_available_modes()
+    sp._result = mock.MagicMock()
+    # Mock plotter + vtk_pane + rebuild so _update_mode_buttons rendering is bypassed
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_sim_viewer"), mock.patch.object(sp, "_rebuild_pcd_viewer"):
+        sp._scan_available_modes()
     assert "Similarity" in sp._available_modes
     assert "talk2dino" in sp._available_extractors
 
 
 ########################################################################
-# VisualizePane smoke tests
+# ScenePanel layout / new widget tests
 ########################################################################
 
 import unittest.mock as mock
 
 from collab_splats.dashboard.panes.visualize import VisualizePane
+from collab_splats.dashboard.operation_log import OperationLog
+
+
+def _make_scene(tmp_path):
+    """Helper: construct a ScenePanel with off-screen rendering."""
+    state = AppState()
+    return ScenePanel("A", tmp_path, state, OperationLog(), _off_screen=True)
+
+
+def test_scene_panel_has_radio_button_group(tmp_path):
+    sp = _make_scene(tmp_path)
+    assert isinstance(sp._mode_selector, pn.widgets.RadioButtonGroup)
+
+
+def test_scene_panel_default_mode_is_mesh(tmp_path):
+    sp = _make_scene(tmp_path)
+    assert sp._mode_selector.value == "Mesh"
+
+
+def test_scene_panel_frustum_is_checkbox(tmp_path):
+    sp = _make_scene(tmp_path)
+    assert isinstance(sp._frustum_check, pn.widgets.Checkbox)
+
+
+def test_scene_panel_has_sim_query_row(tmp_path):
+    sp = _make_scene(tmp_path)
+    assert hasattr(sp, "_sim_query_row")
+    assert sp._sim_query_row.visible is False
+    assert isinstance(sp._extractor_dd, pn.widgets.Select)
+
+
+def test_scene_panel_has_points_options_row(tmp_path):
+    sp = _make_scene(tmp_path)
+    assert hasattr(sp, "_points_options_row")
+    assert sp._points_options_row.visible is False
+
+
+def test_scene_panel_sim_query_row_visible_in_similarity_mode(tmp_path):
+    sp = _make_scene(tmp_path)
+    sp._available_modes = {"PCD", "Similarity"}
+    sp._result = mock.MagicMock()  # non-None, has any attr accessed
+    # Mock plotter + vtk_pane + rebuild to isolate visibility logic from rendering
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_sim_viewer"):
+        sp._on_mode_change("Similarity")
+    assert sp._sim_query_row.visible is True
+    assert sp._points_options_row.visible is False
+
+
+def test_scene_panel_points_options_visible_in_points_mode(tmp_path):
+    sp = _make_scene(tmp_path)
+    sp._available_modes = {"PCD"}
+    sp._result = mock.MagicMock()  # non-None, has any attr accessed
+    # Mock plotter + vtk_pane + rebuild to isolate visibility logic from rendering
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_pcd_viewer"):
+        sp._on_mode_change("Points")
+    assert sp._points_options_row.visible is True
+    assert sp._sim_query_row.visible is False
+
+
+########################################################################
+# VisualizePane smoke tests
+########################################################################
 
 
 def test_visualize_pane_constructs(tmp_path):
@@ -215,23 +285,14 @@ def test_visualize_pane_constructs(tmp_path):
         vp = VisualizePane(state=state, op_log=op_log, base_dir=tmp_path)
     assert vp._scene_a._scene_id == "A"
     assert vp._scene_b._scene_id == "B"
-    assert vp._query_bar.visible is False
+    assert not hasattr(vp, "_query_bar"), "Shared query bar should be removed"
 
 
-def test_visualize_pane_query_bar_visible_on_similarity(tmp_path):
-    _make_dataset(tmp_path, "scene_01", backends=("vggt_x",), extractors=("talk2dino",))
-    state = AppState()
-    op_log = _make_op_log()
+def test_visualize_pane_no_shared_query_bar(tmp_path):
+    """Shared query bar removed — per-scene query lives on ScenePanel."""
     with mock.patch(
         "collab_splats.dashboard.panes.visualize.ScenePanel",
         lambda *a, **kw: ScenePanel(*a, **{**kw, "_off_screen": True}),
     ):
-        vp = VisualizePane(state=state, op_log=op_log, base_dir=tmp_path)
-    # Simulate Scene A entering Similarity mode
-    vp._scene_a._available_modes = {"PCD", "Similarity"}
-    vp._scene_a._available_extractors = ["talk2dino"]
-    vp._scene_a.mode = "Similarity"
-    # Manually call the watcher (param.watch fires async in tests)
-    vp._on_scene_mode_change(None)
-    assert vp._query_bar.visible is True
-    assert vp._a_extractor_dd.visible is True
+        vp = VisualizePane(state=AppState(), op_log=OperationLog(), base_dir=tmp_path)
+    assert not hasattr(vp, "_query_bar"), "Shared query bar should be removed"

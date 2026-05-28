@@ -1,15 +1,7 @@
-from __future__ import annotations
+"""collab_splats interactive dashboard."""
 
+from collab_splats.dashboard.app import App, run_app
+from collab_splats.dashboard.operation_log import OperationLog
+from collab_splats.dashboard.state import AppState
 
-def __getattr__(name: str):
-    if name in ("SemanticsDashboard", "build_app", "run_app"):
-        from .semantics import SemanticsDashboard, build_app, run_app  # noqa: F401
-
-        globals()["SemanticsDashboard"] = SemanticsDashboard
-        globals()["build_app"] = build_app
-        globals()["run_app"] = run_app
-        return globals()[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-__all__ = ["SemanticsDashboard", "build_app", "run_app"]
+__all__ = ["App", "run_app", "AppState", "OperationLog"]

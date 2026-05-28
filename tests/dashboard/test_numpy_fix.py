@@ -17,7 +17,7 @@ def test_dashboard_import_no_numpy_warning():
 
     result = subprocess.run(
         [sys.executable, "-W", "error::UserWarning", "-c",
-         "from collab_splats.dashboard import semantics"],
+         "from collab_splats.dashboard import App"],
         capture_output=True,
         text=True,
     )

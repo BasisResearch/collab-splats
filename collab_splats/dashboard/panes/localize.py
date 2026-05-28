@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 import matplotlib
+import matplotlib.colors as mc
 if not matplotlib.is_interactive():
     matplotlib.use("Agg")
 import numpy as np
@@ -28,6 +29,16 @@ logger = logging.getLogger(__name__)
 _COLOR_DEFAULT = "cornflowerblue"
 _COLOR_QUERY   = "tomato"
 _COLOR_REF     = "gold"
+
+
+def _rgb(name: str) -> tuple[float, float, float]:
+    """Convert matplotlib colour name to (r, g, b) 0–1 floats for VTK."""
+    return mc.to_rgb(name)
+
+
+_RGB_DEFAULT = _rgb(_COLOR_DEFAULT)
+_RGB_QUERY   = _rgb(_COLOR_QUERY)
+_RGB_REF     = _rgb(_COLOR_REF)
 
 ########################################################################
 
@@ -64,8 +75,9 @@ class LocalizeScenePanel(param.Parameterized):
                 sizing_mode="stretch_both",
                 min_height=300,
             )
-        except Exception:
+        except Exception as e:
             # ren_win may be unavailable (e.g. in tests with a mocked Plotter)
+            logger.debug("VTK pane init failed (headless?): %s", e)
             self._vtk_pane = None
         self._build_scene()
 
@@ -84,7 +96,7 @@ class LocalizeScenePanel(param.Parameterized):
         self._frustum_actors: list[Any] = []
         for ext in self._extrinsics:
             frustum = create_camera_frustum_pyvista(np.linalg.inv(ext))
-            actor = self._plotter.add_mesh(frustum, color=_COLOR_DEFAULT, line_width=1)
+            actor = self._plotter.add_mesh(frustum, color=_RGB_DEFAULT, line_width=1)
             self._frustum_actors.append(actor)
 
         self._plotter.reset_camera()
@@ -117,11 +129,11 @@ class LocalizeScenePanel(param.Parameterized):
         # Recolour reference frustums
         for i, actor in enumerate(self._frustum_actors):
             if i == ref_idx:
-                actor.GetProperty().SetColor(*_rgb(_COLOR_REF))
+                actor.GetProperty().SetColor(*_RGB_REF)
                 actor.GetProperty().SetLineWidth(3)
                 actor.GetProperty().SetOpacity(1.0)
             else:
-                actor.GetProperty().SetColor(*_rgb(_COLOR_DEFAULT))
+                actor.GetProperty().SetColor(*_RGB_DEFAULT)
                 actor.GetProperty().SetOpacity(0.25)
                 actor.GetProperty().SetLineWidth(1)
 
@@ -132,7 +144,7 @@ class LocalizeScenePanel(param.Parameterized):
                 frustum, color=_COLOR_QUERY, line_width=3
             )
         else:
-            self._frustum_actors[query_idx].GetProperty().SetColor(*_rgb(_COLOR_QUERY))
+            self._frustum_actors[query_idx].GetProperty().SetColor(*_RGB_QUERY)
             self._frustum_actors[query_idx].GetProperty().SetLineWidth(3)
             self._frustum_actors[query_idx].GetProperty().SetOpacity(1.0)
 
@@ -161,23 +173,15 @@ class LocalizeScenePanel(param.Parameterized):
             self._connector_actor = None
 
         for actor in self._frustum_actors:
-            actor.GetProperty().SetColor(*_rgb(_COLOR_DEFAULT))
+            actor.GetProperty().SetColor(*_RGB_DEFAULT)
             actor.GetProperty().SetOpacity(1.0)
             actor.GetProperty().SetLineWidth(1)
 
         if self._vtk_pane is not None:
             self._vtk_pane.param.trigger("object")
 
-    def panel(self) -> pn.pane.VTK:
+    def panel(self) -> pn.pane.VTK | None:
         """Return the VTK Panel pane."""
         return self._vtk_pane
 
 
-########################################################################
-# Helpers
-
-
-def _rgb(name: str) -> tuple[float, float, float]:
-    """Convert matplotlib colour name to (r, g, b) 0–1 floats for VTK."""
-    import matplotlib.colors as mc
-    return mc.to_rgb(name)

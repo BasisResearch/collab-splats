@@ -22,7 +22,11 @@ def _load_gt_as_tum_trajectory(seq_dir: Path, selected_frames: list[Path] | None
             seq_dir / f"{Path(f).stem.split('.')[0]}.pose.txt"
             for f in selected_frames
         ]
-        timestamps = list(range(len(pose_files)))
+        # Use actual frame number as timestamp — matches VGGT-SLAM TUM convention
+        # (VGGT-SLAM writes frame-XXXXXX index, not sequential submap index)
+        timestamps = [
+            int(re.search(r"(\d+)", Path(f).stem).group(1)) for f in selected_frames
+        ]
     else:
         pose_files_unsorted = list(seq_dir.glob("frame-*.pose.txt"))
         pose_files = sorted(
@@ -77,10 +81,8 @@ def compute_ate_rmse(
     result = main_ape.ape(
         traj_ref_sync,
         traj_est_sync,
-        est_name="est",
-        pose_relation=metrics.PoseRelation.translation_part,
+        metrics.PoseRelation.translation_part,
         align=True,
         correct_scale=True,
-        verbose=False,
     )
     return float(result.stats["rmse"])

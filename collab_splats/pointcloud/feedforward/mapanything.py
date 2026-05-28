@@ -100,13 +100,31 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     Attributes:
         model_name:               HuggingFace model ID to load via
                                   ``MapAnything.from_pretrained``.
-        confidence_percentile:    Mask out pixels whose multiview confidence
-                                  score falls below this percentile (0–100).
-                                  Higher = more aggressive masking, fewer points.
-        use_multiview_confidence: When True, uses cross-view consistency scores
-                                  to mask unreliable depth predictions.
-                                  Set False to keep all pixels regardless of
-                                  inter-frame agreement.
+        confidence_percentile:    Percentile threshold (0–100) applied to the
+                                  learned model confidence when
+                                  ``use_multiview_confidence=False``. Has no
+                                  effect when ``use_multiview_confidence=True``
+                                  — see that field's note below.
+        use_multiview_confidence: When True, replaces the learned confidence
+                                  signal with geometric cross-view consistency
+                                  (mv_conf = inlier_ratio across overlapping
+                                  views). Pixels with mv_conf > 0 are kept;
+                                  pixels with mv_conf == 0 (no view agrees on
+                                  their depth) are discarded.
+
+                                  **Why ``confidence_percentile`` is bypassed:**
+                                  mv_conf is a quantized inlier ratio (k/N for
+                                  integer k, N). Most pixels reach conf=1.0
+                                  when views agree closely, so
+                                  ``torch.quantile(conf, p)`` collapses to 1.0
+                                  for any p where >0% of pixels are at 1.0.
+                                  The upstream strict ``conf > threshold``
+                                  then excludes every pixel including those at
+                                  exactly 1.0. Percentile-based thresholding is
+                                  designed for smooth learned-confidence
+                                  distributions, not quantized inlier ratios.
+                                  We bypass it and apply ``mv_conf > 0``
+                                  directly instead.
         minibatch_size:           Number of images processed per inference step.
                                   Reduce if running out of GPU memory.
         resize_mode:              Image resize strategy for ``load_images``.
@@ -244,20 +262,25 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             pred["pts3d_cam"] = pred["pts3d_cam"].float()
             pred["pts3d"] = pred["pts3d"].float()
 
-        # Apply confidence and edge masking via MapAnything's postprocess utility
+        # Apply masking via MapAnything's postprocess utility.
+        # When use_multiview_confidence=True, disable the upstream percentile
+        # mechanism (apply_confidence_mask=False): mv_conf is a quantized inlier
+        # ratio (k/N), so torch.quantile collapses to 1.0 for any percentile
+        # where >0% of pixels are at 1.0, and the strict conf > 1.0 check then
+        # excludes every pixel. We apply our own mv_conf > 0 threshold below.
         processed = postprocess_model_outputs_for_inference(
             raw_outputs,
             self._processed_views,
             apply_mask=True,
             mask_edges=True,
-            apply_confidence_mask=True,
+            apply_confidence_mask=not self.use_multiview_confidence,
             use_multiview_confidence=self.use_multiview_confidence,
             confidence_percentile=self.confidence_percentile,
         )
 
         # Build per-frame masks + point/color grids in one pass — mirrors VGGTX conf_mask pattern.
-        # postprocess_model_outputs_for_inference already baked confidence + edge masking into
-        # pred["mask"], so combined_mask = mask & (depth_z > 0) is the full validity mask.
+        # pred["mask"] has non_ambiguous + edge masking baked in. When use_multiview_confidence
+        # is True, we additionally apply mv_conf > 0 (keep pixels verified by ≥1 other view).
         masks, pts3d_grid, colors_grid = [], [], []
         images_list, conf_list, depth_list = [], [], []
         extrinsics_list, intrinsics_list = [], []
@@ -265,7 +288,13 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         for pred in processed:
             m = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)       # (H, W)
             dz = pred["depth_z"][0].squeeze(-1).cpu().numpy()                # (H, W)
-            masks.append(m & (dz > 0))
+            valid = m & (dz > 0)
+            if self.use_multiview_confidence and "conf" in pred:
+                # mv_conf > 0: keep pixels with geometric support from ≥1 other view.
+                # Bypasses the broken percentile mechanism (see use_multiview_confidence docstring).
+                mv = pred["conf"][0].cpu().numpy().astype(np.float32)        # (H, W)
+                valid = valid & (mv > 0)
+            masks.append(valid)
             depth_list.append(dz)
             pts3d_grid.append(pred["pts3d"][0].cpu().numpy())                # (H, W, 3)
             colors_grid.append(

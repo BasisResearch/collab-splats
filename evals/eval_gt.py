@@ -272,6 +272,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--conditions", nargs="+", default=["baseline", "ba", "lc"],
                         help="Conditions: baseline | ba | lc | ba_track-density-{N}")
+    parser.add_argument(
+        "--keyframe_list", type=Path, default=None,
+        help="Path to selected_frames.txt from run_vggt_slam_lc.py. "
+             "When set, filters the dataset to only these frames (matched by filename) "
+             "so all models run on the exact same keyframes as VGGT-SLAM.",
+    )
     # Internal flag: run exactly one condition as a subprocess and write results
     # to --_result_file as JSON.  Not part of the public API.
     parser.add_argument("--_condition",   default=None, help=argparse.SUPPRESS)
@@ -330,6 +336,22 @@ def main() -> None:
 
     # ── orchestrator ───────────────────────────────────────────────────────────
     dataset = get_dataset(args.dataset)(args.seq_dir, max_frames=args.max_frames)
+
+    if args.keyframe_list is not None:
+        allowed_basenames = {
+            Path(p).name
+            for p in args.keyframe_list.read_text().splitlines()
+            if p.strip()
+        }
+        indices = [i for i, p in enumerate(dataset.images) if Path(p).name in allowed_basenames]
+        from evals.datasets import EvalDataset
+        dataset = EvalDataset(
+            images=[dataset.images[i] for i in indices],
+            gt_poses=dataset.gt_poses[indices],
+            intrinsics=dataset.intrinsics[indices] if dataset.intrinsics is not None else None,
+        )
+        print(f"keyframe_list: filtered to {len(indices)} frames from {args.keyframe_list.name}")
+
     mode = f"windowed(submap_size={args.submap_size})" if args.submap_size else "single-pass"
     print(f"Dataset: {args.dataset} | {len(dataset.images)} frames | {args.conditions} | mode={mode}")
 

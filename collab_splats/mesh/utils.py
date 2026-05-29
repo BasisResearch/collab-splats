@@ -272,9 +272,9 @@ def align_geometry_floor(
 
     Args:
         geometry: Input geometry (PointCloud or TriangleMesh).
-        dist_threshold: RANSAC distance threshold for inlier classification.
-        ransac_n: Points sampled per RANSAC iteration.
-        num_iterations: Number of RANSAC iterations.
+        dist_threshold: Kept for backward compatibility; not passed to fit_dominant_plane.
+        ransac_n: Kept for backward compatibility; not passed to fit_dominant_plane.
+        num_iterations: Kept for backward compatibility; not passed to fit_dominant_plane.
         num_sample_points: Surface sample count for mesh inputs only.
     Returns:
         Tuple of (aligned_geometry, R (3,3), t (3,)).

@@ -155,7 +155,8 @@ def test_scene_panel_constructs(tmp_path):
         op_log=op_log,
         _off_screen=True,
     )
-    assert "scene_01" in sp._dataset_dd.options
+    # No result loaded yet — mode selector should be disabled
+    assert sp._mode_selector.disabled is True
 
 
 def test_scene_panel_scan_available_modes_no_result(tmp_path):
@@ -280,10 +281,6 @@ def test_scene_panel_default_mode_is_mesh(tmp_path):
     sp = _make_scene(tmp_path)
     assert sp._mode_selector.value == "Mesh"
 
-
-def test_scene_panel_frustum_is_checkbox(tmp_path):
-    sp = _make_scene(tmp_path)
-    assert isinstance(sp._frustum_check, pn.widgets.Checkbox)
 
 
 def test_scene_panel_has_sim_query_row(tmp_path):

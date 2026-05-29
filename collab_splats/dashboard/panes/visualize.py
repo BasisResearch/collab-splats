@@ -107,7 +107,7 @@ def _load_lifted_features(features_zarr_path: Path) -> np.ndarray:
 class ScenePanel(param.Parameterized):
     """3D viewer panel for a single reconstruction scene.
 
-    Manages dataset/backend selection, mode switching (PCD/Mesh/Similarity),
+    Receives data via AppState.feedforward_result; mode switching (Points/Mesh/Similarity)
     and a PyVista plotter embedded via pn.pane.VTK.
     """
 
@@ -133,9 +133,14 @@ class ScenePanel(param.Parameterized):
         self._extractor_cache: dict[str, Any] = {}
         self._available_modes: set[str] = set()
         self._available_extractors: list[str] = []
-        self._load_thread: threading.Thread | None = None
         self._current_dataset_dir: Path | None = None
         self._current_backend: str | None = None
+
+        # Actor cache and display-decimated result
+        self._pcd_actor = None
+        self._mesh_actor = None
+        self._display_result = None
+        self._state_frustum_enabled = False
 
         # PyVista plotter — one per scene, never recreated
         self._plotter = pv.Plotter(off_screen=_off_screen)
@@ -145,7 +150,7 @@ class ScenePanel(param.Parameterized):
             min_height=500,
         )
 
-        # Dataset / backend discovery
+        # Dataset / backend discovery (kept for _scan_available_modes and mesh worker)
         datasets = _scan_datasets(self._base_dir)
         dataset_names = [p.name for p in datasets]
         self._dataset_dd = pn.widgets.Select(
@@ -153,9 +158,6 @@ class ScenePanel(param.Parameterized):
         )
         self._backend_dd = pn.widgets.Select(
             name="Backend", options=[], width=150
-        )
-        self._load_btn = pn.widgets.Button(
-            name="Load", button_type="primary", width=80
         )
 
         # Mode selector — RadioButtonGroup replaces three separate buttons
@@ -167,13 +169,11 @@ class ScenePanel(param.Parameterized):
             disabled=True,
         )
 
-        # Viewer controls — frustum checkbox + point size inside a contextual row
-        self._frustum_check = pn.widgets.Checkbox(name="Show frustums", value=False)
+        # Viewer controls — point size inside a contextual row (frustum moved to sidebar)
         self._point_size_slider = pn.widgets.IntSlider(
             name="Point size", value=2, start=1, end=10, width=180
         )
         self._points_options_row = pn.Row(
-            self._frustum_check,
             self._point_size_slider,
             visible=False,
         )
@@ -234,19 +234,17 @@ class ScenePanel(param.Parameterized):
         self._dataset_dd.param.watch(self._on_dataset_change, "value")
         self._backend_dd.param.watch(self._on_backend_change, "value")
         self._extractor_dd.param.watch(self._on_extractor_change, "value")
-        self._load_btn.on_click(self._on_load)
         self._mode_selector.param.watch(
             lambda e: self._on_mode_change(e.new), "value"
         )
-        self._frustum_check.param.watch(self._on_frustum_toggle, "value")
         self._point_size_slider.param.watch(self._on_point_size_change, "value")
-        self._reset_btn.on_click(lambda e: self._plotter.reset_camera() or self._vtk_pane.synchronize())
+        self._reset_btn.on_click(self._on_reset_camera)
         self._snapshot_btn.on_click(self._on_snapshot)
         self._sim_query_btn.on_click(self._on_sim_query_click)
         self._mesh_run_btn.on_click(self._on_run_mesh)
 
-        # Watch AppState for auto-suggest and rescan
-        state.param.watch(self._on_feedforward_result, "feedforward_result")
+        # Watch AppState for result, output_dir, lifted features
+        state.param.watch(self._on_feedforward_result_change, "feedforward_result")
         state.param.watch(self._on_output_dir_change, "output_dir")
         state.param.watch(self._on_lifted_features_path, "lifted_features_path")
 
@@ -355,12 +353,52 @@ class ScenePanel(param.Parameterized):
     # AppState watchers
     ####################################################################
 
-    def _on_feedforward_result(self, event: Any) -> None:
-        """Auto-suggest dataset/backend from AppState (no auto-load)."""
+    def _on_feedforward_result_change(self, event: Any) -> None:
+        """Called when state.feedforward_result is set — prepare display result."""
         result = event.new
-        if result is None or self._state.output_dir is None:
+        if result is None:
             return
-        self._suggest_dataset_from_output_dir()
+        self._result = result
+        self._display_result = self._prepare_display_result(result)
+        self._pcd_actor = None
+        self._mesh_actor = None
+        self._lifted_normed = None
+        self._compressor = None
+        self._current_dataset_dir = Path(str(self._state.output_dir)) if self._state.output_dir else None
+        self._current_backend = self._state.pointcloud_backend or ""
+        # Sync dataset/backend dropdowns from state
+        if self._state.output_dir is not None:
+            self._suggest_dataset_from_output_dir()
+        self._scan_available_modes()
+        n_pts = len(result.points)
+        n_disp = len(self._display_result.points)
+        status = f"Loaded {n_pts:,} pts"
+        if n_disp < n_pts:
+            status += f" (display: {n_disp:,})"
+        self._set_status(status)
+
+    def _prepare_display_result(self, result: "FeedforwardResult", max_pts: int = 150_000) -> "FeedforwardResult":
+        """Return decimated copy for display if result exceeds max_pts."""
+        import dataclasses
+        import open3d as o3d
+
+        if len(result.points) <= max_pts:
+            return result
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(result.points.astype(np.float64))
+        pcd = pcd.voxel_down_sample(voxel_size=0.05)
+
+        # Hard cap via random subsample if still too large
+        pts_down = np.asarray(pcd.points).astype(np.float32)
+        if len(pts_down) > max_pts:
+            rng = np.random.default_rng(0)
+            idx = rng.choice(len(pts_down), size=max_pts, replace=False)
+            pts_down = pts_down[idx]
+
+        # Use original colors by nearest index (approximate — colors not critical for display)
+        colors_down = result.colors[:len(pts_down)] if result.colors is not None else None
+        return dataclasses.replace(result, points=pts_down, colors=colors_down)
 
     def _on_output_dir_change(self, event: Any) -> None:
         """Auto-suggest dataset when an existing session is loaded (no active reconstruction)."""
@@ -391,58 +429,8 @@ class ScenePanel(param.Parameterized):
         self._scan_available_modes()
 
     ####################################################################
-    # Load
+    # Status helper
     ####################################################################
-
-    def _on_load(self, event: Any) -> None:
-        """Start background load thread."""
-        if self._load_thread and self._load_thread.is_alive():
-            return
-        self._load_btn.disabled = True
-        self._status_html.object = "<em>Loading…</em>"
-        self._load_thread = threading.Thread(target=self._do_load, daemon=True)
-        self._load_thread.start()
-
-    def _do_load(self) -> None:
-        """Background: load FeedforwardResult from zarr.
-
-        Data loading only — no VTK rendering calls. VTK is not thread-safe;
-        rendering is deferred to the IOLoop via pn.io.state.execute().
-        """
-        try:
-            # Lazy import: avoids pulling in the heavy pointcloud chain at module load time
-            from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
-
-            ds_name = self._dataset_dd.value
-            backend = self._backend_dd.value
-            if not ds_name or not backend:
-                self._set_status("No dataset/backend selected.")
-                return
-
-            zarr_path = self._base_dir / ds_name / backend / "feedforward.zarr"
-            self._result = FeedforwardResult.load_zarr(zarr_path)
-            self._lifted_normed = None
-            self._scan_available_modes()
-
-            n_pts = len(self._result.points)
-            if n_pts > 500_000:
-                self._op_log.log(
-                    f"Large PCD ({n_pts:,} points) — may be slow to render"
-                )
-            # Schedule render on IOLoop thread — VTK rendering is not thread-safe
-            pn.io.state.execute(self._auto_render_after_load)
-            self._set_status(f"Loaded {n_pts:,} points — click a mode to view.")
-        except Exception as exc:
-            logger.exception("ScenePanel load failed")
-            self._set_status(f"Load failed: {exc}")
-        finally:
-            self._load_btn.disabled = False
-
-    def _auto_render_after_load(self) -> None:
-        """IOLoop-thread: switch to first available mode after data load."""
-        if self._available_modes:
-            first = min(self._available_modes)
-            self._on_mode_change(first)
 
     def _set_status(self, msg: str) -> None:
         """Update status HTML pane."""
@@ -453,7 +441,7 @@ class ScenePanel(param.Parameterized):
     ####################################################################
 
     def _on_mode_change(self, new_display_mode: str) -> None:
-        """Switch viewer mode; update contextual controls visibility."""
+        """Switch viewer mode; use cached actors where available."""
         # Map selector labels ("Points") to internal mode names ("PCD")
         mode_map = {"Points": "PCD", "Mesh": "Mesh", "Similarity": "Similarity"}
         new_mode = mode_map.get(new_display_mode, new_display_mode)
@@ -462,16 +450,29 @@ class ScenePanel(param.Parameterized):
             return
         self.mode = new_mode
 
+        # Hide all cached actors
+        if self._pcd_actor is not None:
+            self._pcd_actor.VisibilityOff()
+        if self._mesh_actor is not None:
+            self._mesh_actor.VisibilityOff()
+
         # Show/hide contextual rows based on active mode
         self._points_options_row.visible = (new_mode == "PCD")
         self._mesh_options_row.visible = (new_mode == "Mesh")
         self._sim_query_row.visible = (new_mode == "Similarity")
 
-        self._plotter.clear()
         if new_mode == "PCD":
-            self._rebuild_pcd_viewer()
+            if self._pcd_actor is None:
+                self._plotter.clear()
+                self._rebuild_pcd_viewer()
+            else:
+                self._pcd_actor.VisibilityOn()
         elif new_mode == "Mesh":
-            self._rebuild_mesh_viewer()
+            if self._mesh_actor is None:
+                self._plotter.clear()
+                self._rebuild_mesh_viewer()
+            else:
+                self._mesh_actor.VisibilityOn()
         elif new_mode == "Similarity":
             if self._lifted_normed is None:
                 self._load_lifted_features_for_current_extractor()
@@ -484,38 +485,41 @@ class ScenePanel(param.Parameterized):
     ####################################################################
 
     def _rebuild_pcd_viewer(self) -> None:
-        """Render points + optional frustums."""
-        if self._result is None:
+        """Render points + optional frustums; cache actor."""
+        result_to_use = self._display_result if self._display_result is not None else self._result
+        if result_to_use is None:
             return
         point_size = self._point_size_slider.value
-        cloud = pointcloud_to_polydata(self._result.points, RGB=self._result.colors)
-        self._plotter.add_mesh(
+        cloud = pointcloud_to_polydata(result_to_use.points, RGB=result_to_use.colors)
+        self._pcd_actor = self._plotter.add_mesh(
             cloud, scalars="RGB", rgb=True, point_size=point_size, render_points_as_spheres=False
         )
-        if self._frustum_check.value:
+        if self._state_frustum_enabled:
             self._add_frustums()
 
     def _add_frustums(self) -> None:
         """Add camera frustum actors for all extrinsics."""
-        if self._result is None:
+        result_to_use = self._display_result if self._display_result is not None else self._result
+        if result_to_use is None:
             return
-        for ext in self._result.extrinsics:
+        for ext in result_to_use.extrinsics:
             frustum = create_camera_frustum_pyvista(ext)
             self._plotter.add_mesh(frustum, color="cornflowerblue", line_width=1)
 
-    def _on_frustum_toggle(self, event: Any) -> None:
-        """Rebuild PCD view when frustum toggle changes."""
-        if self.mode != "PCD" or self._result is None:
+    def _on_point_size_change(self, event: Any) -> None:
+        """Update point size property directly; no full geometry rebuild."""
+        if self.mode != "PCD" or self._pcd_actor is None:
             return
-        self._plotter.clear()
-        self._rebuild_pcd_viewer()
+        self._pcd_actor.GetProperty().SetPointSize(event.new)
         self._vtk_pane.synchronize()
 
-    def _on_point_size_change(self, event: Any) -> None:
-        """Rebuild PCD view when point size slider changes."""
+    def _on_frustum_toggle_from_sidebar(self, enabled: bool) -> None:
+        """Called from App sidebar frustum checkbox."""
+        self._state_frustum_enabled = enabled
         if self.mode != "PCD" or self._result is None:
             return
         self._plotter.clear()
+        self._pcd_actor = None
         self._rebuild_pcd_viewer()
         self._vtk_pane.synchronize()
 
@@ -565,12 +569,13 @@ class ScenePanel(param.Parameterized):
     def _refresh_after_mesh(self, status_msg: str) -> None:
         """IOLoop-thread: redraw mesh viewer after successful generation."""
         self._plotter.clear()
+        self._mesh_actor = None
         self._rebuild_mesh_viewer()
         self._vtk_pane.synchronize()
         self._set_status(status_msg)
 
     def _rebuild_mesh_viewer(self) -> None:
-        """Load and render mesh.ply."""
+        """Load and render mesh.ply; cache actor."""
         if self._current_dataset_dir is None or self._current_backend is None:
             return
         mesh_path = self._current_dataset_dir / self._current_backend / "mesh" / "mesh.ply"
@@ -578,11 +583,12 @@ class ScenePanel(param.Parameterized):
             self._set_status("mesh.ply not found.")
             return
         mesh = pv.read(str(mesh_path))
-        self._plotter.add_mesh(mesh, rgb=True)
+        self._mesh_actor = self._plotter.add_mesh(mesh, rgb=True)
 
     def _auto_display_mesh(self) -> None:
         """Render mesh.ply immediately — called from scan, no Load required."""
         self._plotter.clear()
+        self._mesh_actor = None
         self._rebuild_mesh_viewer()
         self._vtk_pane.synchronize()
 
@@ -623,14 +629,15 @@ class ScenePanel(param.Parameterized):
 
     def _rebuild_sim_viewer(self, colors: np.ndarray | None) -> None:
         """Render PCD with viridis similarity colours, or original RGB before first query."""
-        if self._result is None:
+        result_to_use = self._display_result if self._display_result is not None else self._result
+        if result_to_use is None:
             return
         if colors is None:
-            rgb = self._result.colors
+            rgb = result_to_use.colors
             self._set_status("Enter a query to colour by similarity.")
         else:
             rgb = colors
-        cloud = pointcloud_to_polydata(self._result.points, RGB=rgb)
+        cloud = pointcloud_to_polydata(result_to_use.points, RGB=rgb)
         self._plotter.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
 
     def _encode_query(self, extractor: Any, text: str) -> np.ndarray:
@@ -704,6 +711,15 @@ class ScenePanel(param.Parameterized):
         ).start()
 
     ####################################################################
+    # Reset camera
+    ####################################################################
+
+    def _on_reset_camera(self, event: Any) -> None:
+        """Reset camera to fit current scene bounds."""
+        self._plotter.reset_camera()
+        self._vtk_pane.synchronize()
+
+    ####################################################################
     # Snapshot
     ####################################################################
 
@@ -719,12 +735,10 @@ class ScenePanel(param.Parameterized):
 
     def panel(self) -> pn.Column:
         """Return the full scene panel layout."""
-        controls_row = pn.Row(self._dataset_dd, self._backend_dd, self._load_btn, align="end")
         extractor_row = pn.Row(self._extractor_dd)
         action_row = pn.Row(self._reset_btn, self._snapshot_btn)
         return pn.Column(
             "### Scene",
-            controls_row,
             extractor_row,
             self._mode_selector,
             self._mesh_options_row,

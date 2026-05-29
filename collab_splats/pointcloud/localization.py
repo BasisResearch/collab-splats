@@ -883,8 +883,9 @@ class CameraLocalizer:
             if feats.scores is not None and "scores" in rec_group:
                 scores_np = feats.scores.numpy().astype(np.float32)
                 sc_arr = rec_group["scores"]
-                sc_arr.resize((sc_arr.shape[0] + len(scores_np),))
-                sc_arr[old_m:] = scores_np
+                old_sc = sc_arr.shape[0]
+                sc_arr.resize((old_sc + len(scores_np),))
+                sc_arr[old_sc:] = scores_np
 
         logger.info("CameraLocalizer.update_index: appended %d frames to %s [%s]",
                     len(new_image_paths), zarr_path, extractor_name)

@@ -82,17 +82,16 @@ def test_scan_output_dirs_missing_base(tmp_path):
 
 # Select widget / sidebar tests
 
-def test_load_existing_sidebar_uses_select_widget(tmp_path):
-    (tmp_path / "scene_01").mkdir()
-    (tmp_path / "scene_01" / "run_config.yaml").write_text("")
+def test_load_results_dataset_dd_exists(tmp_path):
+    """Load Results section uses a Select widget for dataset choice."""
     app = App(base_dir=str(tmp_path))
-    assert isinstance(app._output_dir_select, pn.widgets.Select)
-    assert "scene_01" in app._output_dir_select.options
+    assert isinstance(app._results_dataset_dd, pn.widgets.Select)
 
 
-def test_load_existing_sidebar_has_refresh_button(tmp_path):
+def test_load_results_load_btn_exists(tmp_path):
+    """Load Results section has a Load Results button."""
     app = App(base_dir=str(tmp_path))
-    assert isinstance(app._refresh_dirs_btn, pn.widgets.Button)
+    assert isinstance(app._results_load_btn, pn.widgets.Button)
 
 
 def test_app_stores_tabs_reference():
@@ -102,21 +101,18 @@ def test_app_stores_tabs_reference():
     assert isinstance(app._tabs, pn.Tabs)
 
 
-def test_confirm_load_existing_switches_to_preprocess_tab(tmp_path):
-    import unittest.mock as mock
-
-    (tmp_path / "scene_01").mkdir()
-    (tmp_path / "scene_01" / "run_config.yaml").write_text("")
+def test_confirm_new_video_switches_to_preprocess_tab(tmp_path):
+    """Confirming a new video session switches the active tab to Preprocess (0)."""
+    video = tmp_path / "test.mp4"
+    video.write_bytes(b"fake")
     app = App(base_dir=str(tmp_path))
     app.servable()
     # Simulate being on tab 2 (Semantics)
     app._tabs.active = 2
-    assert app._tabs.active == 2, "Setup: tab should be at Semantics before trigger"
+    assert app._tabs.active == 2
 
-    # Trigger load-existing flow
-    app._on_load_existing(None)
-    app._output_dir_select.value = "scene_01"
-
+    # Trigger new-video confirm flow
+    app._video_input.value = str(video)
     app._on_confirm_session(None)
 
     assert app._tabs.active == 0, "Should switch to Preprocess tab (index 0)"

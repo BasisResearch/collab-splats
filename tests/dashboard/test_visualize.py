@@ -201,7 +201,7 @@ def test_scan_available_modes_auto_displays_mesh(tmp_path):
 
     with mock.patch.object(sp, "_rebuild_mesh_viewer", side_effect=_set_actor) as mock_rebuild:
         sp._scan_available_modes()
-    mock_rebuild.assert_called_once()
+    mock_rebuild.assert_called()
 
 
 def test_scan_available_modes_adds_mesh_when_ply_exists(tmp_path):

@@ -1,0 +1,98 @@
+<h2>Visualize Pane — 3 Sub-tabs (same content area, different views)</h2>
+<p class="subtitle">Click a sub-tab → the content area below changes. Same slot, 3 modes.</p>
+
+<div class="section">
+  <h3>Sub-tab 1: Pointcloud (active by default)</h3>
+  <div style="background:#0d1117;border-radius:6px;padding:10px;font-family:monospace;font-size:10px">
+    <div style="display:flex;gap:0;margin-bottom:8px;border-bottom:1px solid #333">
+      <span style="background:#2596be;color:white;padding:5px 14px;border-radius:4px 4px 0 0;font-size:10px;font-weight:700">Pointcloud</span>
+      <span style="color:#666;padding:5px 14px;font-size:10px">Mesh</span>
+      <span style="color:#666;padding:5px 14px;font-size:10px">Similarity</span>
+    </div>
+    <!-- viewer controls -->
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <div style="flex:1;background:#1a1a2e;border-radius:4px;padding:5px;border:1px solid #2596be">
+        <div style="color:#7ec8e3;font-size:8px;margin-bottom:3px">VIEWER A — dataset + backend</div>
+        <div style="display:flex;gap:4px">
+          <div style="background:#252540;padding:2px 6px;border-radius:2px;color:#aaa;font-size:8px">birds_c0043 ▾</div>
+          <div style="background:#252540;padding:2px 6px;border-radius:2px;color:#aaa;font-size:8px">vggt_omega ▾</div>
+          <div style="background:#2596be;color:white;padding:2px 6px;border-radius:2px;font-size:8px">Load</div>
+        </div>
+      </div>
+      <div style="flex:1;background:#1a1a2e;border-radius:4px;padding:5px;border:1px solid #444">
+        <div style="color:#aaa;font-size:8px;margin-bottom:3px">VIEWER B — dataset + backend</div>
+        <div style="display:flex;gap:4px">
+          <div style="background:#252540;padding:2px 6px;border-radius:2px;color:#aaa;font-size:8px">birds_c0043 ▾</div>
+          <div style="background:#252540;padding:2px 6px;border-radius:2px;color:#aaa;font-size:8px">vggtx ▾</div>
+          <div style="background:#444;color:#aaa;padding:2px 6px;border-radius:2px;font-size:8px">Load</div>
+        </div>
+      </div>
+    </div>
+    <!-- side-by-side viewers -->
+    <div style="display:flex;gap:6px">
+      <div style="flex:1;background:#111;border-radius:4px;border:2px solid #2596be;height:100px;display:flex;align-items:center;justify-content:center">
+        <div style="color:#2596be;font-size:8px;text-align:center">PyVista — vggt_omega<br/><span style="color:#555;font-size:7px">142k pts · interactive 3D</span></div>
+      </div>
+      <div style="flex:1;background:#111;border-radius:4px;border:2px solid #333;height:100px;display:flex;align-items:center;justify-content:center">
+        <div style="color:#555;font-size:8px;text-align:center">PyVista — vggtx<br/><span style="font-size:7px">118k pts · interactive 3D</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Sub-tab 2: Mesh (greyed if no mesh.ply)</h3>
+  <div style="background:#0d1117;border-radius:6px;padding:10px;font-family:monospace;font-size:10px">
+    <div style="display:flex;gap:0;margin-bottom:8px;border-bottom:1px solid #333">
+      <span style="color:#666;padding:5px 14px;font-size:10px">Pointcloud</span>
+      <span style="background:#2596be;color:white;padding:5px 14px;border-radius:4px 4px 0 0;font-size:10px;font-weight:700">Mesh</span>
+      <span style="color:#666;padding:5px 14px;font-size:10px">Similarity</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <div style="flex:1;background:#1a1a2e;border-radius:4px;padding:5px;border:1px solid #2a2a4a">
+        <div style="color:#7ec8e3;font-size:8px;margin-bottom:3px">MESH SOURCE</div>
+        <div style="display:flex;gap:4px;align-items:center">
+          <div style="background:#252540;padding:2px 6px;border-radius:2px;color:#aaa;font-size:8px">birds_c0043/vggt_omega/mesh/mesh.ply ▾</div>
+          <div style="background:#2596be;color:white;padding:2px 6px;border-radius:2px;font-size:8px">Load</div>
+        </div>
+      </div>
+    </div>
+    <div style="background:#111;border-radius:4px;border:2px solid #333;height:100px;display:flex;align-items:center;justify-content:center">
+      <div style="text-align:center;color:#555;font-size:9px">PyVista mesh viewer<br/><span style="font-size:8px">Requires mesh.ply — run meshing in Reconstruct first</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Sub-tab 3: Similarity (query lifted features → color pointcloud)</h3>
+  <div style="background:#0d1117;border-radius:6px;padding:10px;font-family:monospace;font-size:10px">
+    <div style="display:flex;gap:0;margin-bottom:8px;border-bottom:1px solid #333">
+      <span style="color:#666;padding:5px 14px;font-size:10px">Pointcloud</span>
+      <span style="color:#666;padding:5px 14px;font-size:10px">Mesh</span>
+      <span style="background:#2596be;color:white;padding:5px 14px;border-radius:4px 4px 0 0;font-size:10px;font-weight:700">Similarity</span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <div style="width:200px;flex-shrink:0;background:#1a1a2e;border-radius:4px;padding:8px;border:1px solid #2a2a4a">
+        <div style="color:#7ec8e3;font-size:8px;margin-bottom:5px">QUERY CONFIG</div>
+        <div style="color:#666;font-size:7px;margin-bottom:2px">dataset + backend</div>
+        <div style="background:#252540;padding:2px 6px;border-radius:2px;color:#aaa;font-size:8px;margin-bottom:4px">birds_c0043 / vggt_omega ▾</div>
+        <div style="color:#666;font-size:7px;margin-bottom:2px">extractor (lifted features)</div>
+        <div style="background:#252540;padding:2px 6px;border-radius:2px;color:#aaa;font-size:8px;margin-bottom:4px">talk2dino ▾</div>
+        <div style="color:#666;font-size:7px;margin-bottom:2px">text query</div>
+        <div style="background:#0d1f33;border:1px solid #2596be;padding:3px 6px;border-radius:2px;color:#aaa;font-size:8px;margin-bottom:6px">"grass"</div>
+        <div style="background:#2596be;color:white;padding:4px 8px;border-radius:3px;font-size:8px;text-align:center;font-weight:700">Query →</div>
+      </div>
+      <div style="flex:1;background:#111;border-radius:4px;border:2px solid #444;height:140px;display:flex;align-items:center;justify-content:center">
+        <div style="text-align:center">
+          <div style="color:#aaa;font-size:9px;margin-bottom:4px">Pointcloud colored by similarity score</div>
+          <div style="display:flex;gap:2px;justify-content:center;align-items:center">
+            <div style="color:#555;font-size:7px">low</div>
+            <div style="width:80px;height:6px;border-radius:3px;background:linear-gradient(90deg,#00008b,#0000ff,#00ffff,#ffff00,#ff0000)"></div>
+            <div style="color:#555;font-size:7px">high</div>
+          </div>
+          <div style="color:#555;font-size:7px;margin-top:3px">interactive PyVista · single viewer</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

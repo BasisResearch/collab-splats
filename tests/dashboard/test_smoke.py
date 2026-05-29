@@ -16,10 +16,11 @@ def test_imports_cleanly():
 
 
 def test_app_instantiates():
+    from unittest.mock import MagicMock
     pn.extension()
     from collab_splats.dashboard.app import App
 
-    app = App()
+    app = App(video_server=MagicMock())
     template = app.servable()
     assert template is not None
 

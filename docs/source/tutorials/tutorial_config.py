@@ -4,6 +4,11 @@ import yaml
 
 # ── Edit these two variables to point at your data ───────────────────────────
 BASE_DIR   = Path("/workspace/outputs")
+# DATASET = "birds_c0043"
+# DATASET = "rats_gh010209"
+# DATASET = "rats_gh010210_20250831"
+# DATASET = "rats_pxl_20260327"
+# DATASET = "rats_pxl_20260330"
 DATASET    = "birds_c0043"
 MAX_FRAMES = 30
 

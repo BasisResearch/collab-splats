@@ -45,14 +45,15 @@ def test_lc_toggle_disabled():
     assert pane._lc_toggle.disabled is True
 
 
-def test_backend_dd_options():
-    pane, _, _ = _make_pane()
-    assert set(pane._backend_dd.options) == {"vggtx", "mapanything", "vggt_omega"}
+def test_creator_options_in_state():
+    # Creator type and conf are now controlled from AppState via the sidebar
+    _, state, _ = _make_pane()
+    assert state.pointcloud_creator in {"vggtx", "mapanything", "vggt_omega"}
 
 
-def test_conf_slider_default():
-    pane, _, _ = _make_pane()
-    assert pane._conf_slider.value == 35.0
+def test_conf_default_in_state():
+    _, state, _ = _make_pane()
+    assert state.pointcloud_creator_conf == 35.0
 
 
 def test_run_reconstruction_errors_when_frames_dir_missing(tmp_path):

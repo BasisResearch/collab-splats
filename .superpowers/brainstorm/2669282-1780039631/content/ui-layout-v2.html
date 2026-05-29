@@ -1,0 +1,98 @@
+<h2>UI Layout v2 — tab-specific sidebars</h2>
+<p class="subtitle">Sidebar content changes per active tab · no irrelevant controls shown</p>
+
+<div class="split" style="max-width:960px;margin:0 auto;gap:16px">
+
+  <!-- Preprocess tab -->
+  <div class="mockup">
+    <div class="mockup-header">Preprocess tab</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;height:420px;background:#0a0a0f;font-family:monospace;font-size:11px">
+
+        <!-- Sidebar — preprocess only -->
+        <div style="width:190px;background:#0d0d0d;border-right:1px solid #1a1a1a;padding:10px;flex-shrink:0">
+          <div style="color:#2596be;font-size:10px;font-weight:bold;margin-bottom:6px;letter-spacing:1px">SESSION</div>
+          <div style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:6px;color:#aaa;font-size:10px;margin-bottom:8px">
+            📁 birds_gh010164
+          </div>
+          <div style="color:#50c050;font-size:10px;margin-bottom:12px">✓ loaded</div>
+
+          <div style="color:#2596be;font-size:10px;font-weight:bold;margin-bottom:6px;letter-spacing:1px">EXTRACTION</div>
+          <select style="width:100%;background:#161b22;border:1px solid #30363d;color:#ccc;padding:3px 5px;border-radius:3px;margin-bottom:4px;font-size:10px">
+            <option>optical flow</option><option>balanced fps</option>
+          </select>
+          <input type="range" style="width:100%;accent-color:#2596be;margin-bottom:2px">
+          <div style="color:#555;font-size:9px;margin-bottom:10px">max frames: 200</div>
+          <button style="width:100%;background:#2596be;border:none;color:#000;padding:6px;border-radius:3px;font-size:11px;font-weight:bold">▶ Extract</button>
+        </div>
+
+        <!-- Main -->
+        <div style="flex:1;display:flex;flex-direction:column">
+          <div style="flex:1;background:#000;display:flex;align-items:center;justify-content:center;color:#333;font-size:11px">
+            ▶ HTML5 video
+          </div>
+          <div style="height:70px;background:#0d0d0d;border-top:1px solid #1a1a1a;display:flex;gap:3px;padding:4px 6px;overflow-x:auto">
+            <div style="width:50px;height:60px;background:#161b22;border:2px solid #2596be;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:50px;height:60px;background:#111;border:2px solid #222;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:50px;height:60px;background:#111;border:2px solid #222;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:50px;height:60px;background:#111;border:2px solid #222;border-radius:2px;flex-shrink:0"></div>
+            <div style="color:#555;font-size:9px;align-self:center;padding:0 4px">· · ·</div>
+          </div>
+          <div style="height:26px;background:#0d0d0d;border-top:1px solid #1a1a1a;display:flex;align-items:center;padding:0 10px;gap:8px">
+            <div style="width:100px;height:5px;background:#1a1a1a;border-radius:3px;overflow:hidden"><div style="width:70%;height:100%;background:#2596be"></div></div>
+            <div style="color:#666;font-size:9px">140 / 200</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reconstruct tab -->
+  <div class="mockup">
+    <div class="mockup-header">Reconstruct tab</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;height:420px;background:#0a0a0f;font-family:monospace;font-size:11px">
+
+        <!-- Sidebar — reconstruct specific -->
+        <div style="width:190px;background:#0d0d0d;border-right:1px solid #1a1a1a;padding:10px;flex-shrink:0">
+          <div style="color:#2596be;font-size:10px;font-weight:bold;margin-bottom:6px;letter-spacing:1px">SESSION</div>
+          <div style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:6px;color:#aaa;font-size:10px;margin-bottom:12px">
+            📁 birds_gh010164
+          </div>
+
+          <div style="color:#2596be;font-size:10px;font-weight:bold;margin-bottom:6px;letter-spacing:1px">POINTCLOUD</div>
+          <select style="width:100%;background:#161b22;border:1px solid #30363d;color:#ccc;padding:3px 5px;border-radius:3px;margin-bottom:4px;font-size:10px">
+            <option>vggtx</option><option>mapanything</option><option>vggt_omega</option>
+          </select>
+          <input type="range" style="width:100%;accent-color:#2596be;margin-bottom:2px">
+          <div style="color:#555;font-size:9px;margin-bottom:4px">conf: 35.0</div>
+          <div style="display:flex;gap:4px;margin-bottom:10px">
+            <label style="color:#666;font-size:9px;display:flex;align-items:center;gap:3px"><input type="checkbox" disabled> BA</label>
+            <label style="color:#666;font-size:9px;display:flex;align-items:center;gap:3px"><input type="checkbox" disabled> LC</label>
+          </div>
+          <button style="width:100%;background:#2596be;border:none;color:#000;padding:6px;border-radius:3px;font-size:11px;font-weight:bold">▶ Run</button>
+        </div>
+
+        <!-- Main: log -->
+        <div style="flex:1;padding:10px;overflow-y:auto;background:#0a0a0f">
+          <div style="color:#2596be;font-size:10px;margin-bottom:6px">RECONSTRUCTION LOG</div>
+          <div style="color:#50c050;font-size:10px;line-height:1.8">
+            Backend: vggtx  conf: 35.0<br>
+            Starting vggtx inference…<br>
+            <span style="color:#aaa">Loading model checkpoint…</span><br>
+            <span style="color:#aaa">Processing 187 frames…</span><br>
+            <span style="color:#666">▌</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="section" style="margin-top:16px;padding:12px;background:#111;border-radius:6px;border-left:3px solid #2596be">
+  <span class="label">Sidebar rule</span>
+  <p style="margin-top:6px;font-size:12px;color:#ccc">Session section always visible. All other sidebar sections are tab-specific — only the controls relevant to the active tab are shown. No pointcloud config on Preprocess, no extraction config on Reconstruct, etc.</p>
+</div>
+
+<p class="subtitle" style="margin-top:14px">Does this look right? Ready to write the spec.</p>

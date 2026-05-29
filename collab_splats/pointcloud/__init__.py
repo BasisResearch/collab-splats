@@ -8,6 +8,12 @@ try:
     _OMEGA_AVAILABLE = True
 except ImportError:
     _OMEGA_AVAILABLE = False
+
+try:
+    from .feedforward import VGGTSPARKCreator
+    _SPARK_AVAILABLE = True
+except ImportError:
+    _SPARK_AVAILABLE = False
 from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 from .loop_closure import LoopClosureConfig
 from .wrappers import LoopClosure
@@ -29,6 +35,8 @@ _REGISTRY: dict[str, type[BasePointcloudCreator]] = {
 }
 if _OMEGA_AVAILABLE:
     _REGISTRY["vggt_omega"] = VGGTOmegaCreator
+if _SPARK_AVAILABLE:
+    _REGISTRY["vggt_spark"] = VGGTSPARKCreator
 
 
 def get_creator(name: str) -> type[BasePointcloudCreator]:

@@ -41,7 +41,7 @@ async def _run_sse() -> AsyncIterator[str]:
         try:
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"Extractor: {extractor_name}"})
             from collab_splats.semantics.features import BaseFeatureExtractor
-            extractor = BaseFeatureExtractor.from_registry(extractor_name)
+            extractor = BaseFeatureExtractor.get(extractor_name)()
             zarr_path = backend_dir / "feedforward.zarr"
             if not zarr_path.exists():
                 raise FileNotFoundError(f"feedforward.zarr not found at {zarr_path}")

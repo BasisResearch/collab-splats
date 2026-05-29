@@ -20,6 +20,8 @@ class AppState(param.Parameterized):
     feature_maps_path = param.Parameter(default=None)
     lifted_features_path = param.Parameter(default=None)
     pointcloud_backend = param.String(default="")
+    pointcloud_creator = param.String(default="vggtx")
+    pointcloud_creator_conf = param.Number(default=35.0)
     semantic_extractor = param.String(default="")
     localize_method = param.String(default="")
     localize_extractor = param.String(default="DISK+LightGlue")

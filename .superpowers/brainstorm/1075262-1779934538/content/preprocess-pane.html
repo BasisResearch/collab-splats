@@ -1,0 +1,143 @@
+<h2>Section 3: Preprocess Pane Layout</h2>
+<p class="subtitle">Video player + frame selection controls + metrics + frame strip</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Video left / controls right / metrics + strip below</h3>
+      <div style="margin-top:8px;background:#0d1117;border-radius:6px;padding:8px;font-family:monospace;font-size:10px">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <!-- Video player -->
+          <div style="flex:1.4;background:#111;border-radius:4px;aspect-ratio:16/9;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid #333;min-height:80px">
+            <div style="color:#555;font-size:9px">▶ video player</div>
+            <div style="margin-top:4px;display:flex;gap:4px;align-items:center">
+              <span style="color:#7ec8e3;font-size:8px">⏮ ⏸ ⏭</span>
+              <div style="background:#333;height:3px;width:60px;border-radius:2px"><div style="background:#2596be;height:3px;width:25px;border-radius:2px"></div></div>
+              <span style="color:#666;font-size:8px">0:14/1:32</span>
+            </div>
+          </div>
+          <!-- Controls -->
+          <div style="flex:1;background:#1a1a2e;border-radius:4px;padding:8px;border:1px solid #2a2a4a">
+            <div style="color:#7ec8e3;font-size:8px;margin-bottom:5px">FRAME SELECTION</div>
+            <div style="background:#252540;padding:3px 6px;border-radius:3px;color:#aaa;font-size:8px;margin-bottom:3px">method: optical_flow ▾</div>
+            <div style="color:#666;font-size:8px;margin-bottom:2px">n_frames: <span style="color:#aaa">200</span></div>
+            <div style="background:#333;height:3px;border-radius:2px;margin-bottom:5px"><div style="background:#2596be;height:3px;width:40%;border-radius:2px"></div></div>
+            <div style="color:#666;font-size:8px;margin-bottom:2px">window start: <span style="color:#aaa">0%</span> → end: <span style="color:#aaa">100%</span></div>
+            <div style="background:#333;height:3px;border-radius:2px;margin-bottom:6px"><div style="background:#2596be;height:3px;width:100%;border-radius:2px"></div></div>
+            <div style="background:#2596be;color:white;padding:4px 8px;border-radius:3px;font-size:8px;text-align:center;margin-top:4px">Extract Frames</div>
+          </div>
+        </div>
+        <!-- Stacked metrics -->
+        <div style="background:#111;border-radius:4px;padding:6px;border:1px solid #222;margin-bottom:6px">
+          <div style="color:#7ec8e3;font-size:8px;margin-bottom:3px">METRICS (per frame)</div>
+          <div style="margin-bottom:3px">
+            <div style="color:#7ec8e3;font-size:7px">OPTICAL FLOW</div>
+            <div style="height:14px;background:linear-gradient(90deg,#1e3a5f,#3a7fc1,#1e3a5f,#4a90d9,#1e3a5f,#2d6a9f,#1e3a5f);border-radius:2px;position:relative">
+              <div style="position:absolute;left:15%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:32%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:68%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:85%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+            </div>
+          </div>
+          <div style="margin-bottom:3px">
+            <div style="color:#f0a500;font-size:7px">ROTATION (deg)</div>
+            <div style="height:14px;background:linear-gradient(90deg,#3a2000,#7a4000,#4a2800,#6a3800,#3a2000,#8a4500,#3a2000);border-radius:2px;position:relative">
+              <div style="position:absolute;left:15%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:32%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:68%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:85%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+            </div>
+          </div>
+          <div style="margin-bottom:3px">
+            <div style="color:#a0e080;font-size:7px">TRANSLATION</div>
+            <div style="height:14px;background:linear-gradient(90deg,#1a3a1a,#2a6a2a,#3a7a3a,#1a3a1a,#2a5a2a,#3a7a3a,#1a3a1a);border-radius:2px;position:relative">
+              <div style="position:absolute;left:15%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:32%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:68%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:85%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+            </div>
+          </div>
+          <div>
+            <div style="color:#d090e0;font-size:7px">HIST SIMILARITY</div>
+            <div style="height:14px;background:linear-gradient(90deg,#4a2a6a,#2a1a3a,#5a3070,#2a1a3a,#4a2a6a,#6a3a8a,#2a1a3a);border-radius:2px;position:relative">
+              <div style="position:absolute;left:15%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:32%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:68%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+              <div style="position:absolute;left:85%;top:0;bottom:0;width:1px;background:rgba(80,200,80,0.8)"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Frame strip -->
+        <div style="background:#111;border-radius:4px;padding:5px;border:1px solid #222">
+          <div style="color:#aaa;font-size:7px;margin-bottom:3px">SELECTED FRAMES (200) — scroll →</div>
+          <div style="display:flex;gap:3px;overflow:hidden">
+            <div style="width:36px;height:27px;background:#1e3a5f;border-radius:2px;border:1px solid #2596be;flex-shrink:0"></div>
+            <div style="width:36px;height:27px;background:#1a3a1a;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:36px;height:27px;background:#3a2000;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:36px;height:27px;background:#1e3a5f;border-radius:2px;border:1px solid #2596be;flex-shrink:0"></div>
+            <div style="width:36px;height:27px;background:#1a3a1a;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:36px;height:27px;background:#2a1a3a;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:36px;height:27px;background:#1e3a5f;border-radius:2px;border:1px solid #2596be;flex-shrink:0"></div>
+            <div style="width:24px;height:27px;background:#111;border-radius:2px;display:flex;align-items:center;justify-content:center;color:#555;font-size:9px;flex-shrink:0">…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Video top / metrics right / strip bottom</h3>
+      <div style="margin-top:8px;background:#0d1117;border-radius:6px;padding:8px;font-family:monospace;font-size:10px">
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <!-- Video + controls stacked -->
+          <div style="flex:1.2">
+            <div style="background:#111;border-radius:4px;aspect-ratio:16/9;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid #333;margin-bottom:5px;min-height:70px">
+              <div style="color:#555;font-size:9px">▶ video player</div>
+              <div style="margin-top:3px;display:flex;gap:4px;align-items:center">
+                <span style="color:#7ec8e3;font-size:8px">⏮ ⏸ ⏭</span>
+                <div style="background:#333;height:2px;width:50px;border-radius:2px"><div style="background:#2596be;height:2px;width:20px;border-radius:2px"></div></div>
+              </div>
+            </div>
+            <div style="background:#1a1a2e;border-radius:4px;padding:6px;border:1px solid #2a2a4a">
+              <div style="display:flex;gap:4px;align-items:center;margin-bottom:3px">
+                <div style="background:#252540;padding:2px 5px;border-radius:2px;color:#aaa;font-size:8px">optical_flow ▾</div>
+                <div style="color:#666;font-size:8px">n=200</div>
+                <div style="background:#2596be;color:white;padding:2px 6px;border-radius:2px;font-size:8px">Extract</div>
+              </div>
+            </div>
+          </div>
+          <!-- Metrics panel right -->
+          <div style="flex:1;background:#111;border-radius:4px;padding:6px;border:1px solid #222">
+            <div style="color:#7ec8e3;font-size:7px;margin-bottom:3px">METRICS</div>
+            <div style="height:12px;background:linear-gradient(90deg,#1e3a5f,#3a7fc1,#1e3a5f,#4a90d9,#1e3a5f);border-radius:2px;margin-bottom:2px"></div>
+            <div style="height:12px;background:linear-gradient(90deg,#3a2000,#7a4000,#3a2000,#6a3800,#3a2000);border-radius:2px;margin-bottom:2px"></div>
+            <div style="height:12px;background:linear-gradient(90deg,#1a3a1a,#2a6a2a,#3a7a3a,#1a3a1a,#2a5a2a);border-radius:2px;margin-bottom:2px"></div>
+            <div style="height:12px;background:linear-gradient(90deg,#4a2a6a,#2a1a3a,#5a3070,#2a1a3a,#4a2a6a);border-radius:2px"></div>
+          </div>
+        </div>
+        <!-- Frame strip full width -->
+        <div style="background:#111;border-radius:4px;padding:5px;border:1px solid #222">
+          <div style="color:#aaa;font-size:7px;margin-bottom:3px">SELECTED FRAMES → scroll</div>
+          <div style="display:flex;gap:3px">
+            <div style="width:40px;height:30px;background:#1e3a5f;border-radius:2px;border:1px solid #2596be;flex-shrink:0"></div>
+            <div style="width:40px;height:30px;background:#1a3a1a;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:40px;height:30px;background:#1e3a5f;border-radius:2px;border:1px solid #2596be;flex-shrink:0"></div>
+            <div style="width:40px;height:30px;background:#3a2000;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:40px;height:30px;background:#1e3a5f;border-radius:2px;border:1px solid #2596be;flex-shrink:0"></div>
+            <div style="width:40px;height:30px;background:#1a3a1a;border-radius:2px;flex-shrink:0"></div>
+            <div style="width:30px;height:30px;background:#111;border-radius:2px;display:flex;align-items:center;justify-content:center;color:#555;font-size:9px">…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

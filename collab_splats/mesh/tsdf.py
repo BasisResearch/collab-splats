@@ -96,39 +96,10 @@ class Open3DTSDFFusion(BaseMeshCreator):
         final_path = raw_path
 
         if self.clean_repair:
-            if _MM_AVAILABLE:
-                temp_path = self.output_dir / "mesh_tsdf_temp.ply"
-                shutil.copy(raw_path, temp_path)
-                cleaned = clean_repair_mesh(
-                    str(temp_path),
-                    max_hole_size=self.clean_max_hole_size,
-                    max_edge_splits=self.clean_max_edge_splits,
-                    use_largest=self.clean_use_largest,
-                )
-                clean_path = self.output_dir / "mesh_tsdf_clean.ply"
-                mm.saveMesh(cleaned, str(clean_path))
-                temp_path.unlink(missing_ok=True)
-                final_path = clean_path
-
-                # meshlib strips vertex colors — transfer from raw mesh via KNN
-                raw_mesh = o3d.io.read_triangle_mesh(str(raw_path))
-                if raw_mesh.has_vertex_colors():
-                    clean_mesh = o3d.io.read_triangle_mesh(str(clean_path))
-                    raw_pcd = o3d.geometry.PointCloud(raw_mesh.vertices)
-                    raw_pcd.colors = raw_mesh.vertex_colors
-                    kdtree = o3d.geometry.KDTreeFlann(raw_pcd)
-                    raw_colors = np.asarray(raw_mesh.vertex_colors)
-                    clean_verts = np.asarray(clean_mesh.vertices)
-                    new_colors = np.empty_like(clean_verts)
-                    for j in range(len(clean_verts)):
-                        _, idx, _ = kdtree.search_knn_vector_3d(clean_verts[j], 1)
-                        new_colors[j] = raw_colors[idx[0]]
-                    clean_mesh.vertex_colors = o3d.utility.Vector3dVector(new_colors)
-                    o3d.io.write_triangle_mesh(str(clean_path), clean_mesh)
-            else:
-                logger.warning(
-                    "clean_repair=True but meshlib not installed; skipping. "
-                    "Install with: pip install meshlib"
-                )
+            # meshlib addPartByMask API incompatible with installed version.
+            raise AssertionError(
+                "clean_repair disabled — meshlib addPartByMask API incompatible. "
+                "Set clean_repair=False."
+            )
 
         return MeshResult(mesh_path=final_path)

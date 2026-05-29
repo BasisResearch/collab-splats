@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import queue as _queue_mod
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -112,17 +113,48 @@ def _mesh_subprocess_worker(
     sdf_trunc: float,
     depth_trunc: float,
     clean_repair: bool,
+    progress_queue: multiprocessing.Queue,
 ) -> None:
     """Run mesh generation in an isolated subprocess.
 
     Loaded as a separate process so OOM kills only this process,
     not the dashboard server.
     """
+    # Patch tqdm BEFORE importing mesh modules.  Each module does
+    # `from tqdm.auto import tqdm` at import time, so patching the module
+    # attribute here means those `from … import` bindings pick up the custom
+    # class automatically.
+    import tqdm as _tqdm_mod
+    import tqdm.auto as _tqdm_auto
+    _q = progress_queue
+    _orig_tqdm = _tqdm_mod.tqdm
+
+    class _QueueTqdm(_orig_tqdm):
+        def update(self, n: int = 1) -> None:
+            super().update(n)
+            total = self.total or 0
+            # Throttle: emit every ~1 % of total or on completion.
+            if total > 0 and (self.n % max(1, total // 100) == 0 or self.n >= total):
+                try:
+                    _q.put_nowait({
+                        "desc": self.desc or "",
+                        "n": int(self.n),
+                        "total": int(total),
+                    })
+                except Exception:
+                    pass
+
+    _tqdm_mod.tqdm = _QueueTqdm
+    _tqdm_auto.tqdm = _QueueTqdm
+    _tqdm_mod.trange = lambda *a, **kw: _QueueTqdm(range(*a), **kw)
+    _tqdm_auto.trange = _tqdm_mod.trange
+
+    import shutil as _shutil  # noqa: PLC0415
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
     from collab_splats.mesh.utils import pointcloud_to_mesh  # noqa: PLC0415
 
     result = FeedforwardResult.load_zarr(zarr_path)
-    pointcloud_to_mesh(
+    mesh_result = pointcloud_to_mesh(
         result,
         mesh_dir,
         method="open3d_tsdf",
@@ -131,6 +163,20 @@ def _mesh_subprocess_worker(
         depth_trunc=depth_trunc,
         clean_repair=clean_repair,
     )
+    # Copy to canonical mesh.ply so the dashboard's scan/render can find it.
+    canonical = Path(mesh_dir) / "mesh.ply"
+    if mesh_result.mesh_path.resolve() != canonical.resolve() and mesh_result.mesh_path.exists():
+        _shutil.copy2(str(mesh_result.mesh_path), str(canonical))
+
+    # Persist params so the dashboard can detect stale caches.
+    import json as _json  # noqa: PLC0415
+    params_path = Path(mesh_dir) / "mesh_params.json"
+    params_path.write_text(_json.dumps({
+        "voxel_size": voxel_size,
+        "sdf_trunc": sdf_trunc,
+        "depth_trunc": depth_trunc,
+        "clean_repair": clean_repair,
+    }))
 
 
 ########################################################################
@@ -205,15 +251,6 @@ class ScenePanel(param.Parameterized):
             disabled=True,
         )
 
-        # Viewer controls — point size inside a contextual row (frustum moved to sidebar)
-        self._point_size_slider = pn.widgets.IntSlider(
-            name="Point size", value=2, start=1, end=10, width=180
-        )
-        self._points_options_row = pn.Row(
-            self._point_size_slider,
-            visible=False,
-        )
-
         # Extractor selector — always visible, disabled until extractors are found
         self._extractor_dd = pn.widgets.Select(
             name="Extractor", options=[], width=180, disabled=True
@@ -245,7 +282,9 @@ class ScenePanel(param.Parameterized):
         self._mesh_depth: float = 10.0
         self._mesh_clean: bool = True
         self._mesh_on_done: Any = None
+        self._mesh_on_progress: Any = None
         self._mesh_thread: threading.Thread | None = None
+        self._mesh_proc: multiprocessing.Process | None = None
         self._reset_btn = pn.widgets.Button(name="Reset camera", width=130)
         self._snapshot_btn = pn.widgets.Button(name="Snapshot", width=100)
         self._status_html = pn.pane.HTML("", width=400)
@@ -257,7 +296,6 @@ class ScenePanel(param.Parameterized):
         self._mode_selector.param.watch(
             lambda e: self._on_mode_change(e.new), "value"
         )
-        self._point_size_slider.param.watch(self._on_point_size_change, "value")
         self._reset_btn.on_click(self._on_reset_camera)
         self._snapshot_btn.on_click(self._on_snapshot)
         self._sim_query_btn.on_click(self._on_sim_query_click)
@@ -286,7 +324,8 @@ class ScenePanel(param.Parameterized):
         backends = _scan_backends(ds_dir)
         self._backend_dd.options = backends
         if backends:
-            self._backend_dd.value = backends[0]
+            preferred = self._state.pointcloud_backend
+            self._backend_dd.value = preferred if preferred in backends else backends[0]
 
     def _on_backend_change(self, event: Any) -> None:
         """Clear loaded result when backend changes; repopulate extractor dropdown."""
@@ -303,7 +342,11 @@ class ScenePanel(param.Parameterized):
             ds_dir = self._base_dir / ds_name
             extractors = _scan_extractors(ds_dir, backend)
             self._extractor_dd.options = extractors
-            self._extractor_dd.value = extractors[0] if extractors else None
+            if extractors:
+                preferred = self._state.semantic_extractor
+                self._extractor_dd.value = preferred if preferred in extractors else extractors[0]
+            else:
+                self._extractor_dd.value = None
             self._extractor_dd.disabled = not bool(extractors)
         else:
             self._extractor_dd.options = []
@@ -335,11 +378,10 @@ class ScenePanel(param.Parameterized):
         if self._result is not None:
             modes.add("PCD")
 
-        # Mesh mode requires mesh.ply on disk; auto-display it when found
+        # Mesh mode requires mesh.ply on disk
         mesh_path = ds_dir / backend / "mesh" / "mesh.ply"
         if mesh_path.exists():
             modes.add("Mesh")
-            pn.io.state.execute(self._auto_display_mesh)
 
         # Similarity mode requires at least one extractor with features.zarr
         extractors = _scan_extractors(ds_dir, backend)
@@ -376,6 +418,8 @@ class ScenePanel(param.Parameterized):
         self._display_result = self._prepare_display_result(result)
         self._pcd_actor = None
         self._mesh_actor = None
+        self._sim_actor = None
+        self._sim_cloud = None
         self._lifted_normed = None
         self._compressor = None
         self._current_dataset_dir = Path(str(self._state.output_dir)) if self._state.output_dir else None
@@ -384,9 +428,20 @@ class ScenePanel(param.Parameterized):
         if self._state.output_dir is not None:
             self._suggest_dataset_from_output_dir()
         self._scan_available_modes()
-        self._on_mode_change("Points")
         n_pts = len(result.points)
-        self._set_status(f"Loaded {n_pts:,} pts")
+
+        # Wrap render on the IOLoop thread — feedforward_result may be set from a
+        # background thread (e.g. ReconstructPane), and synchronize() is a no-op
+        # unless we're on the Tornado IOLoop.
+        def _render() -> None:
+            self._plotter.clear()
+            start_mode = "Mesh" if "Mesh" in self._available_modes else "Points"
+            self._on_mode_change(start_mode)
+            self._mode_selector.value = start_mode
+            self._vtk_pane.reset_camera()
+            self._set_status(f"Loaded {n_pts:,} pts")
+
+        pn.io.state.execute(_render)
 
     def _prepare_display_result(self, result: "FeedforwardResult") -> "FeedforwardResult":
         """Return result unchanged — all points rendered for full fidelity."""
@@ -467,6 +522,10 @@ class ScenePanel(param.Parameterized):
     def rescan(self) -> None:
         """Re-scan available modes (called on tab activation)."""
         self._scan_available_modes()
+        # Re-render the current mode so the VTK pane syncs with any result that
+        # arrived while this tab was inactive (synchronize is a no-op off-screen).
+        if self._display_result is not None:
+            self._on_mode_change(self._mode_selector.value)
 
     ####################################################################
     # Status helper
@@ -498,8 +557,6 @@ class ScenePanel(param.Parameterized):
         if self._sim_actor is not None:
             self._sim_actor.VisibilityOff()
 
-        # Show/hide contextual rows based on active mode
-        self._points_options_row.visible = (new_mode == "PCD")
         self._sim_query_row.visible = (new_mode == "Similarity")
 
         if new_mode == "PCD":
@@ -537,29 +594,27 @@ class ScenePanel(param.Parameterized):
         if self._display_result is None and self._result is None:
             return
         result_to_use = self._get_render_result()
-        point_size = self._point_size_slider.value
         cloud = pointcloud_to_polydata(result_to_use.points, RGB=result_to_use.colors)
         self._pcd_actor = self._plotter.add_mesh(
-            cloud, scalars="RGB", rgb=True, point_size=point_size, render_points_as_spheres=False
+            cloud, scalars="RGB", rgb=True, point_size=2, render_points_as_spheres=False
         )
         if self._state_frustum_enabled:
             self._add_frustums()
 
     def _add_frustums(self) -> None:
-        """Add camera frustum actors for all extrinsics."""
+        """Add camera frustum actors coloured by frame order (plasma colormap)."""
         if self._display_result is None and self._result is None:
             return
         result_to_use = self._get_render_result()
-        for ext in result_to_use.extrinsics:
+        extrinsics = result_to_use.extrinsics
+        n = len(extrinsics)
+        colors = cm.plasma(np.linspace(0, 1, max(n, 1)))
+        for i, ext in enumerate(extrinsics):
             frustum = create_camera_frustum_pyvista(ext)
-            self._plotter.add_mesh(frustum, color="cornflowerblue", line_width=1)
+            r, g, b = colors[i, :3]
+            self._plotter.add_mesh(frustum, color=(r, g, b), line_width=2)
 
-    def _on_point_size_change(self, event: Any) -> None:
-        """Update point size property directly; no full geometry rebuild."""
-        if self.mode != "PCD" or self._pcd_actor is None:
-            return
-        self._pcd_actor.GetProperty().SetPointSize(event.new)
-        self._vtk_pane.synchronize()
+
 
     def _on_frustum_toggle_from_sidebar(self, enabled: bool) -> None:
         """Called from App sidebar frustum checkbox."""
@@ -584,6 +639,7 @@ class ScenePanel(param.Parameterized):
         depth_trunc: float = 10.0,
         clean_repair: bool = True,
         on_done: Any = None,
+        on_progress: Any = None,
     ) -> None:
         """Spawn mesh generation thread with given params; call on_done(ok, msg) when done."""
         if self._mesh_thread and self._mesh_thread.is_alive():
@@ -593,19 +649,28 @@ class ScenePanel(param.Parameterized):
         self._mesh_depth = depth_trunc
         self._mesh_clean = clean_repair
         self._mesh_on_done = on_done
+        self._mesh_on_progress = on_progress
         self._set_status("Running mesh generation…")
         self._mesh_thread = threading.Thread(target=self._run_mesh_worker, daemon=True)
         self._mesh_thread.start()
+
+    def stop_mesh(self) -> None:
+        """Terminate the running mesh subprocess."""
+        proc = self._mesh_proc
+        if proc is not None and proc.is_alive():
+            proc.terminate()
 
     def _run_mesh_worker(self) -> None:
         """Background thread: spawn mesh generation subprocess → report result.
 
         Runs in an isolated subprocess so OOM only kills that process,
-        not the dashboard server.
+        not the dashboard server.  Progress messages flow back via a
+        multiprocessing.Queue polled here in the background thread.
         """
         _ok = False
         _msg = "No dataset selected."
         _cb = self._mesh_on_done
+        _on_progress = self._mesh_on_progress
         if self._current_dataset_dir is None or self._current_backend is None:
             pn.io.state.execute(lambda: self._set_status(_msg))
             if _cb is not None:
@@ -614,6 +679,7 @@ class ScenePanel(param.Parameterized):
         try:
             zarr_path = self._current_dataset_dir / self._current_backend / "feedforward.zarr"
             mesh_dir = self._current_dataset_dir / self._current_backend / "mesh"
+            progress_queue: multiprocessing.Queue = multiprocessing.Queue()
             proc = multiprocessing.Process(
                 target=_mesh_subprocess_worker,
                 args=(
@@ -623,18 +689,40 @@ class ScenePanel(param.Parameterized):
                     self._mesh_sdf,
                     self._mesh_depth,
                     self._mesh_clean,
+                    progress_queue,
                 ),
                 daemon=True,
             )
             proc.start()
+            self._mesh_proc = proc
+
+            # Poll progress queue while subprocess is alive
+            while proc.is_alive():
+                try:
+                    msg = progress_queue.get(timeout=0.2)
+                    if _on_progress is not None:
+                        desc = msg.get("desc", "")
+                        n = msg.get("n", 0)
+                        total = msg.get("total", 1) or 1
+                        pct = min(99, int(n / total * 100))
+                        pn.io.state.execute(lambda d=desc, p=pct: _on_progress(d, p))
+                except _queue_mod.Empty:
+                    pass
+
             proc.join()
+            self._mesh_proc = None
+
             if proc.exitcode == 0:
                 mesh_path = mesh_dir / "mesh.ply"
                 _msg = f"Mesh done — {mesh_path.name}"
                 _ok = True
                 pn.io.state.execute(lambda: self._refresh_after_mesh(_msg))
+            elif proc.exitcode == -15:
+                # SIGTERM from stop_mesh() — not an error, just cancelled
+                _msg = "Mesh cancelled."
+                pn.io.state.execute(lambda: self._set_status(_msg))
             else:
-                _msg = f"Mesh failed (process exit code {proc.exitcode})"
+                _msg = f"Mesh failed (exit {proc.exitcode})"
                 pn.io.state.execute(lambda: self._set_status(_msg))
         except Exception as exc:
             logger.exception("Mesh generation failed")
@@ -642,6 +730,7 @@ class ScenePanel(param.Parameterized):
             _msg = f"Mesh failed: {_err}"
             pn.io.state.execute(lambda: self._set_status(_msg))
         finally:
+            self._mesh_proc = None
             ok_val, msg_val = _ok, _msg
             if _cb is not None:
                 pn.io.state.execute(lambda: _cb(ok_val, msg_val))
@@ -649,16 +738,22 @@ class ScenePanel(param.Parameterized):
     def _refresh_after_mesh(self, status_msg: str) -> None:
         """IOLoop-thread: redraw mesh viewer after successful generation."""
         self._plotter.clear()
+        self._pcd_actor = None
         self._mesh_actor = None
         self._sim_actor = None
         self._sim_cloud = None
-        self._rebuild_mesh_viewer()
-        self._vtk_pane.synchronize()
         self._set_status(status_msg)
-        # Add Mesh to available modes and switch selector to it
         self._available_modes.add("Mesh")
         self._update_mode_buttons()
-        self._mode_selector.value = "Mesh"
+        # If the selector is already "Mesh" the param watcher won't fire on
+        # assignment, so _on_mode_change (which rebuilds the mesh and calls
+        # synchronize()) would be skipped — nothing visible would update.
+        # Call it explicitly in that case; otherwise change the value and let
+        # the watcher handle it.
+        if self._mode_selector.value == "Mesh":
+            self._on_mode_change("Mesh")
+        else:
+            self._mode_selector.value = "Mesh"
 
     def _rebuild_mesh_viewer(self) -> None:
         """Load and render mesh.ply; cache actor."""
@@ -840,7 +935,6 @@ class ScenePanel(param.Parameterized):
             "### Scene",
             extractor_row,
             self._mode_selector,
-            self._points_options_row,
             self._sim_query_row,
             self._vtk_pane,
             action_row,

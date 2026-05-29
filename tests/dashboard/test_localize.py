@@ -66,13 +66,12 @@ def test_localize_pane_cache_invalidated_on_extractor_change():
 
 
 def test_localize_pane_no_inline_method_dd():
-    """LocalizePane method dropdown is wired to state, not inline."""
+    """LocalizePane should not have _method_dd or _extractor_dd attributes."""
     from collab_splats.dashboard.panes.localize import LocalizePane
     state = _make_state()
     pane = LocalizePane(state=state, op_log=_make_op_log())
-    # Method dropdown exists and is synced to state
-    assert hasattr(pane, "_method_dd")
-    assert pane._method_dd.value == state.localize_method
+    assert not hasattr(pane, "_method_dd")
+    assert not hasattr(pane, "_extractor_dd")
 
 
 def test_localize_scene_panel_off_screen():

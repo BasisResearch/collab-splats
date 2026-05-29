@@ -38,6 +38,33 @@ function renderSidebar() {
     });
   });
   sec.querySelector('#rc-run-btn').addEventListener('click', runReconstruction);
+
+  // Populate creator dropdown with available backends (have feedforward.zarr)
+  fetch('/api/reconstruct/status').then(r => r.json()).then(data => {
+    if (!data.ok) return;
+    const sel = sec.querySelector('#rc-creator');
+    if (data.creator) { sel.value = data.creator; state.creator = data.creator; }
+    const status = sec.querySelector('#rc-status');
+    if (status) {
+      if (data.zarr_exists) {
+        status.textContent = `✓ Cached: ${data.creator}`;
+        status.className = 'status-ok';
+      } else if (data.has_frames) {
+        status.textContent = `${data.frame_count} frames ready — not yet reconstructed`;
+        status.className = 'status-info';
+      }
+    }
+    if (data.zarr_exists) {
+      const log = document.getElementById('log-reconstruct');
+      if (log && !log.textContent.trim()) {
+        const line = document.createElement('div');
+        line.className = 'ok';
+        line.textContent = `✓ Reconstruction cached (${data.creator}, ${data.frame_count} frames)`;
+        log.appendChild(line);
+      }
+    }
+  }).catch(() => {});
+
   return [sec];
 }
 
@@ -77,4 +104,17 @@ function runReconstruction() {
   es.onerror = () => { if (btn) btn.disabled = false; es.close(); };
 }
 
-registerTab('reconstruct', { renderSidebar });
+async function onActivate() {
+  // Re-fetch status every time tab becomes active so cached state is always current
+  const data = await fetch('/api/reconstruct/status').then(r => r.json()).catch(() => ({}));
+  if (!data.ok) return;
+  const status = document.getElementById('rc-status');
+  const sel = document.getElementById('rc-creator');
+  if (sel && data.creator) { sel.value = data.creator; state.creator = data.creator; }
+  if (status) {
+    if (data.zarr_exists) { status.textContent = `✓ Cached: ${data.creator}`; status.className = 'status-ok'; }
+    else if (data.has_frames) { status.textContent = `${data.frame_count} frames ready`; status.className = 'status-info'; }
+  }
+}
+
+registerTab('reconstruct', { renderSidebar, onActivate });

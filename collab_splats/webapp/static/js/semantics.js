@@ -83,4 +83,17 @@ function runSemantics() {
   es.onerror = () => { if (btn) btn.disabled = false; es.close(); };
 }
 
-registerTab('semantics', { renderSidebar });
+async function onActivate() {
+  const data = await fetch('/api/semantics/status').then(r => r.json()).catch(() => ({}));
+  if (!data.ok || !data.cached?.length) return;
+  const status = document.getElementById('sem-status');
+  if (status) { status.textContent = `✓ Cached: ${data.cached.join(', ')}`; status.className = 'status-ok'; }
+  // Pre-select first cached extractor
+  const sel = document.getElementById('sem-extractor');
+  if (sel && data.cached.length > 0) {
+    const match = [...sel.options].find(o => o.value.replace(' ✓','') === data.cached[0]);
+    if (match) { match.selected = true; state.extractor = data.cached[0]; }
+  }
+}
+
+registerTab('semantics', { renderSidebar, onActivate });

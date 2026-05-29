@@ -83,4 +83,29 @@ function runLocalize(queryPath) {
   es.onerror = () => { if (btn) btn.disabled = false; es.close(); };
 }
 
-registerTab('localize', { renderSidebar });
+async function onActivate() {
+  // Refresh method dropdown with latest available backends on every tab switch
+  const data = await fetch('/api/localize/methods').then(r => r.json()).catch(() => ({}));
+  const sel = document.getElementById('loc-method');
+  if (!sel || !data.methods?.length) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— select method —</option>';
+  data.methods.forEach(m => {
+    const o = document.createElement('option'); o.value = m; o.textContent = m;
+    if (m === current || m === state.creator) o.selected = true;
+    sel.appendChild(o);
+  });
+  // Auto-select first method and update session
+  if (!current && data.methods.length > 0) {
+    sel.value = data.methods[0];
+    state.creator = data.methods[0];
+    fetch('/api/session/update', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({creator: data.methods[0], localize_method: data.methods[0]}) });
+  }
+  const status = document.getElementById('loc-status');
+  if (status && data.methods.length > 0) {
+    status.textContent = `${data.methods.length} method(s) available`;
+    status.className = 'status-info';
+  }
+}
+
+registerTab('localize', { renderSidebar, onActivate });

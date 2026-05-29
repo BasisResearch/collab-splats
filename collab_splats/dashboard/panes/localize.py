@@ -273,17 +273,6 @@ class LocalizePane(param.Parameterized):
             placeholder="Path to query image…",
             width=320,
         )
-        self._method_dd = pn.widgets.Select(
-            name="Recon",
-            options=[],
-            width=120,
-        )
-        self._extractor_dd = pn.widgets.Select(
-            name="Extractor",
-            options=["DISK+LightGlue", "XFeat+MNN"],
-            value="DISK+LightGlue",
-            width=140,
-        )
         self._run_btn = pn.widgets.Button(
             name="▶ Localize",
             button_type="success",
@@ -342,6 +331,7 @@ class LocalizePane(param.Parameterized):
         self._batch_export_btn.on_click(self._on_export_csv)
         self._query_input.param.watch(self._on_query_or_dir_changed, ["value"])
         self._state.param.watch(self._on_output_dir_changed, ["output_dir"])
+        self._state.param.watch(self._on_localize_state_changed, ["localize_method", "localize_extractor"])
 
         # Initial gate state
         self._on_output_dir_changed(None)
@@ -350,13 +340,16 @@ class LocalizePane(param.Parameterized):
     # Gate helpers
 
     def _on_output_dir_changed(self, event: Any) -> None:
-        """Rescan method dropdown; re-evaluate run-button gate."""
-        output_dir = self._state.output_dir
-        methods = _scan_recon_methods(Path(output_dir)) if output_dir else []
-        self._method_dd.options = methods
-        if methods:
-            self._method_dd.value = methods[0]
-        self._batch_run_btn.disabled = not bool(methods)
+        """Re-evaluate gate when session output_dir changes; invalidate cached localizer."""
+        self._localizer = None
+        self._ff_result = None
+        self._update_run_btn_gate()
+
+    def _on_localize_state_changed(self, event: Any) -> None:
+        """Invalidate cached localizer when method or extractor changes."""
+        self._localizer = None
+        self._ff_result = None
+        self._scene_panel = None
         self._update_run_btn_gate()
 
     def _on_query_or_dir_changed(self, event: Any) -> None:
@@ -364,24 +357,30 @@ class LocalizePane(param.Parameterized):
         self._update_run_btn_gate()
 
     def _update_run_btn_gate(self) -> None:
-        """Enable run only when output_dir set, method available, and query path non-empty."""
-        has_dir = self._state.output_dir is not None
-        has_method = bool(self._method_dd.options)
+        """Enable Run when output_dir set, localize_method set, and query path non-empty."""
+        has_dir = bool(self._state.output_dir)
+        has_method = bool(self._state.localize_method)
         has_query = bool(self._query_input.value and self._query_input.value.strip())
         self._run_btn.disabled = not (has_dir and has_method and has_query)
+        self._batch_run_btn.disabled = not (has_dir and has_method)
 
     # ------------------------------------------------------------------
     # Shared localizer builder
 
     def _build_localizer(
-        self, method: str, extractor_name: str
+        self,
+        progress_callback=None,
     ) -> tuple["FeedforwardResult", "CameraLocalizer"]:
-        """Load feedforward result from zarr and build CameraLocalizer."""
+        """Load feedforward.zarr and build CameraLocalizer with optional frame progress."""
         output_dir = Path(self._state.output_dir)
+        method = self._state.localize_method
+        extractor_name = self._state.localize_extractor
         zarr_path = output_dir / method / "feedforward.zarr"
         ff = FeedforwardResult.load_zarr(zarr_path)
         extractor = _EXTRACTOR_CLASSES.get(extractor_name, DiskExtractor)()
-        localizer = CameraLocalizer.from_feedforward(ff, extractor=extractor)
+        localizer = CameraLocalizer.from_feedforward(
+            ff, extractor=extractor, progress_callback=progress_callback
+        )
         return ff, localizer
 
     # ------------------------------------------------------------------
@@ -392,34 +391,38 @@ class LocalizePane(param.Parameterized):
         if self._loc_thread and self._loc_thread.is_alive():
             return
         # Snapshot widget values on main thread before passing to worker
-        method = self._method_dd.value
-        extractor_name = self._extractor_dd.value
         query_path = Path(self._query_input.value.strip())
         warp_corners = self._warp_cb.value
         self._run_btn.disabled = True
         self._status_html.object = "<span style='color:#2596be'>⏳ Localizing…</span>"
         self._loc_thread = threading.Thread(
             target=self._run_localize,
-            args=(method, extractor_name, query_path, warp_corners),
+            args=(query_path, warp_corners),
             daemon=True,
         )
         self._loc_thread.start()
 
     def _run_localize(
         self,
-        method: str,
-        extractor_name: str,
         query_path: Path,
         warp_corners: bool,
     ) -> None:
         """Background thread: load result, build localizer, run, update UI."""
         try:
-            self._op_log.start_op(f"Localizing in {method}")
+            self._op_log.start_op(f"Localizing in {self._state.localize_method}")
 
-            # Load feedforward result and build localizer
-            ff, localizer = self._build_localizer(method, extractor_name)
-            self._ff_result = ff
-            self._localizer = localizer
+            # Build or reuse cached localizer
+            if self._localizer is None:
+                def _progress(i: int, total: int) -> None:
+                    self._status_html.object = (
+                        f"<span style='color:#2596be'>⏳ Indexing frame {i + 1} / {total}…</span>"
+                    )
+                ff, localizer = self._build_localizer(progress_callback=_progress)
+                self._ff_result = ff
+                self._localizer = localizer
+            else:
+                ff = self._ff_result
+                localizer = self._localizer
 
             # Build scene panel if not yet built
             if self._scene_panel is None:
@@ -427,6 +430,7 @@ class LocalizePane(param.Parameterized):
                     pts3d=ff.points,
                     extrinsics=ff.extrinsics,
                     image_paths=ff.image_paths,
+                    _off_screen=True,
                 )
                 self._right_col[:] = [self._scene_panel.panel()]
 
@@ -504,29 +508,30 @@ class LocalizePane(param.Parameterized):
         folder_val = self._batch_folder_input.value.strip()
         if not folder_val:
             return
-        method = self._method_dd.value
-        extractor_name = self._extractor_dd.value
         folder_path = Path(folder_val)
         self._batch_run_btn.disabled = True
         self._batch_export_btn.disabled = True
         self._batch_table.value = _empty_batch_df()
         self._batch_thread = threading.Thread(
             target=self._run_batch,
-            args=(method, extractor_name, folder_path),
+            args=(folder_path,),
             daemon=True,
         )
         self._batch_thread.start()
 
     def _run_batch(
         self,
-        method: str,
-        extractor_name: str,
         folder_path: Path,
     ) -> None:
         """Background thread: localize every image in folder_path, stream rows to table."""
         try:
-            # Load feedforward result and build localizer
-            ff, localizer = self._build_localizer(method, extractor_name)
+            # Build or reuse cached localizer
+            if self._localizer is None:
+                ff, localizer = self._build_localizer()
+                self._ff_result = ff
+                self._localizer = localizer
+            ff = self._ff_result
+            localizer = self._localizer
             query_intrinsics = ff.intrinsics.mean(axis=0)
 
             # Collect image paths (common image extensions)
@@ -597,18 +602,14 @@ class LocalizePane(param.Parameterized):
         controls_bar = pn.Row(
             self._query_input,
             pn.Spacer(sizing_mode="stretch_width"),
-            pn.pane.HTML("<b style='color:#8b949e;font-size:12px'>Recon:</b>"),
-            self._method_dd,
-            self._extractor_dd,
             self._run_btn,
+            self._warp_cb,
             sizing_mode="stretch_width",
             margin=(4, 0),
         )
 
         corr_header = pn.Row(
             self._corr_info,
-            pn.Spacer(sizing_mode="stretch_width"),
-            self._warp_cb,
             margin=(0, 0, 4, 0),
         )
 

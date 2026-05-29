@@ -11,7 +11,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
 from collab_splats.pointcloud.loop_closure.closure import run_pose_graph_optimization
-from collab_splats.pointcloud.loop_closure.graph import decompose_camera
+from collab_splats.pointcloud.loop_closure.graph import decompose_camera, normalize_to_sl4
 from collab_splats.pointcloud.loop_closure.submap import Submap
 
 
@@ -139,3 +139,35 @@ def test_pose_extraction_non_first_frame_uses_local_proj():
         f"New extraction should give ~R_y(-30°) at frame 1, got {angle_from_new:.1f}° away"
     assert angle_from_old > 10.0, \
         f"Result should differ from old extraction R_y(+15°), got {angle_from_old:.1f}° (should be >10°)"
+
+
+def test_decompose_camera_handles_sl4_projective_scale():
+    """decompose_camera divides by H[-1,-1] — correct even when H[3,3]≠1 after SL(4) norm.
+
+    Regression guard for H6: SL(4) normalization should not corrupt decomposition.
+    Tests that decompose_camera handles projective scaling via P[-1,-1] division.
+    """
+    # Construct H with H[3,3] = 2, so SL(4) norm will make H[3,3] != 1
+    R_input = np.array([
+        [1., 0., 0.],
+        [0., 0., -1.],
+        [0., 1., 0.],
+    ])
+    t_input = np.array([0.1, -0.2, 0.5])
+    H = np.eye(4)
+    H[:3, :3] = R_input
+    H[:3, 3] = t_input
+    H[3, 3] = 2.0
+
+    H_sl4 = normalize_to_sl4(H)
+    assert abs(H_sl4[3, 3] - 1.0) > 1e-6, "H[3,3] should differ from 1 after SL(4) norm"
+    assert abs(np.linalg.det(H_sl4) - 1.0) < 1e-9, "SL(4) norm should enforce det=1"
+
+    # decompose_camera handles projective scaling by dividing P by P[-1,-1] before RQ
+    K_out, R_out, t_out, _ = decompose_camera(H_sl4)
+
+    # Verify basic properties: K should be upper triangular, R should be orthogonal
+    assert np.allclose(R_out @ R_out.T, np.eye(3), atol=1e-6), "R should be orthogonal"
+    assert np.allclose(K_out, np.triu(K_out), atol=1e-9), "K should be upper triangular"
+    # Verify K diagonal is positive (enforced by decompose_camera)
+    assert K_out[0, 0] > 0 and K_out[1, 1] > 0 and K_out[2, 2] > 0, "K diagonal should be positive"

@@ -54,10 +54,6 @@ def test_load_frame_rgb_returns_array(tmp_path):
     np.testing.assert_array_equal(result, frame)
 
 
-def test_semantics_has_single_method_dropdown():
-    pane = _make_semantics()
-    assert isinstance(pane._method_dd, pn.widgets.Select)
-
 
 def test_semantics_has_three_image_panes():
     pane = _make_semantics()
@@ -88,7 +84,7 @@ def test_panel_extractor_row_is_first_content():
     col = pane.panel()
     extractor_row = col.objects[1]
     assert isinstance(extractor_row, pn.Row)
-    assert pane._method_dd in extractor_row.objects
+    assert pane._run_btn in extractor_row.objects
 
 
 def test_panel_image_area_has_fixed_height():
@@ -172,6 +168,7 @@ def test_try_discover_cache_clears_when_no_cache(tmp_path):
     pane = _make_semantics()
     pane._state.output_dir = str(tmp_path)
     pane._state.frames_zarr_path = str(frames_zarr)
+    pane._state.semantic_extractor = "dino_v2"  # method with no cache at tmp_path
     pane._feature_zarr_path = tmp_path / "stale"  # simulate stale state
     pane._try_discover_cache()
     assert pane._feature_zarr_path is None
@@ -181,7 +178,8 @@ def test_try_discover_cache_detects_valid_zarr(tmp_path, monkeypatch):
     """_try_discover_cache calls _load_cached_features when valid cache exists."""
     frames_zarr = _write_frames_zarr(tmp_path / "frames.zarr")
     pane = _make_semantics()
-    method = pane._method_dd.value
+    method = "dino_v2"
+    pane._state.semantic_extractor = method
     cache_dir = tmp_path / "features" / method
     _write_feature_zarr(cache_dir)
 

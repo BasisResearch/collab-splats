@@ -438,6 +438,9 @@ def _make_fake_result(n_pts: int = 5) -> "FeedforwardResult":  # type: ignore[na
         extrinsics=extrinsics,
         intrinsics=intrinsics,
         image_paths=[Path(f"frame_{i:04d}.jpg") for i in range(n_pts)],
+        original_coords=np.zeros((n_pts, 6), dtype=np.float32),
+        model_width=256,
+        model_height=256,
     )
 
 

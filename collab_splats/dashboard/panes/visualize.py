@@ -247,6 +247,7 @@ class ScenePanel(param.Parameterized):
         state.param.watch(self._on_feedforward_result_change, "feedforward_result")
         state.param.watch(self._on_output_dir_change, "output_dir")
         state.param.watch(self._on_lifted_features_path, "lifted_features_path")
+        state.param.watch(self._on_ground_plane_change, ["ground_plane_enabled", "ground_plane_R"])
 
         # Populate backend dropdown for initial dataset selection
         if dataset_names:
@@ -371,34 +372,55 @@ class ScenePanel(param.Parameterized):
             self._suggest_dataset_from_output_dir()
         self._scan_available_modes()
         n_pts = len(result.points)
-        n_disp = len(self._display_result.points)
-        status = f"Loaded {n_pts:,} pts"
-        if n_disp < n_pts:
-            status += f" (display: {n_disp:,})"
-        self._set_status(status)
+        self._set_status(f"Loaded {n_pts:,} pts")
 
-    def _prepare_display_result(self, result: "FeedforwardResult", max_pts: int = 150_000) -> "FeedforwardResult":
-        """Return decimated copy for display if result exceeds max_pts."""
+    def _prepare_display_result(self, result: "FeedforwardResult") -> "FeedforwardResult":
+        """Return result unchanged — all points rendered for full fidelity."""
+        return result
+
+    def _apply_ground_plane(self, result: "FeedforwardResult") -> "FeedforwardResult":
+        """Apply or invert ground plane transform (R, t) to points and extrinsics.
+
+        When state.ground_plane_enabled=True: applies R and t.
+        When False: applies inverse (R.T, -R.T @ t).
+        Returns new FeedforwardResult via dataclasses.replace — does not mutate input.
+        """
         import dataclasses
-        import open3d as o3d
-
-        if len(result.points) <= max_pts:
+        R = self._state.ground_plane_R
+        t = self._state.ground_plane_t
+        if R is None or t is None:
             return result
+        if self._state.ground_plane_enabled:
+            R_use, t_use = R, t
+        else:
+            R_use = R.T
+            t_use = -(R.T @ t)
+        pts_new = (R_use @ result.points.T).T + t_use
+        # Transform extrinsics (N,4,4) world-to-camera: E_new = E @ T_use_inv
+        T_inv = np.eye(4, dtype=np.float64)
+        T_inv[:3, :3] = R_use.T
+        T_inv[:3, 3] = -(R_use.T @ t_use)
+        extrinsics_new = result.extrinsics.astype(np.float64) @ T_inv
+        return dataclasses.replace(
+            result,
+            points=pts_new.astype(result.points.dtype),
+            extrinsics=extrinsics_new,
+        )
 
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(result.points.astype(np.float64))
-        pcd = pcd.voxel_down_sample(voxel_size=0.05)
+    def _get_render_result(self) -> "FeedforwardResult":
+        """Return display result with ground plane transform applied if enabled."""
+        base = self._display_result if self._display_result is not None else self._result
+        return self._apply_ground_plane(base)
 
-        # Hard cap via random subsample if still too large
-        pts_down = np.asarray(pcd.points).astype(np.float32)
-        if len(pts_down) > max_pts:
-            rng = np.random.default_rng(0)
-            idx = rng.choice(len(pts_down), size=max_pts, replace=False)
-            pts_down = pts_down[idx]
-
-        # Use original colors by nearest index (approximate — colors not critical for display)
-        colors_down = result.colors[:len(pts_down)] if result.colors is not None else None
-        return dataclasses.replace(result, points=pts_down, colors=colors_down)
+    def _on_ground_plane_change(self, event: Any) -> None:
+        """Re-render when ground plane toggle or R changes."""
+        if self._display_result is None:
+            return
+        self._plotter.clear()
+        self._pcd_actor = None
+        self._mesh_actor = None
+        if self.mode in ("Points", "Mesh", "Similarity"):
+            self._on_mode_change(self.mode)
 
     def _on_output_dir_change(self, event: Any) -> None:
         """Auto-suggest dataset when an existing session is loaded (no active reconstruction)."""
@@ -486,9 +508,9 @@ class ScenePanel(param.Parameterized):
 
     def _rebuild_pcd_viewer(self) -> None:
         """Render points + optional frustums; cache actor."""
-        result_to_use = self._display_result if self._display_result is not None else self._result
-        if result_to_use is None:
+        if self._display_result is None and self._result is None:
             return
+        result_to_use = self._get_render_result()
         point_size = self._point_size_slider.value
         cloud = pointcloud_to_polydata(result_to_use.points, RGB=result_to_use.colors)
         self._pcd_actor = self._plotter.add_mesh(
@@ -499,9 +521,9 @@ class ScenePanel(param.Parameterized):
 
     def _add_frustums(self) -> None:
         """Add camera frustum actors for all extrinsics."""
-        result_to_use = self._display_result if self._display_result is not None else self._result
-        if result_to_use is None:
+        if self._display_result is None and self._result is None:
             return
+        result_to_use = self._get_render_result()
         for ext in result_to_use.extrinsics:
             frustum = create_camera_frustum_pyvista(ext)
             self._plotter.add_mesh(frustum, color="cornflowerblue", line_width=1)
@@ -632,9 +654,9 @@ class ScenePanel(param.Parameterized):
 
     def _rebuild_sim_viewer(self, colors: np.ndarray | None) -> None:
         """Render PCD with viridis similarity colours, or original RGB before first query."""
-        result_to_use = self._display_result if self._display_result is not None else self._result
-        if result_to_use is None:
+        if self._display_result is None and self._result is None:
             return
+        result_to_use = self._get_render_result()
         if colors is None:
             rgb = result_to_use.colors
             self._set_status("Enter a query to colour by similarity.")

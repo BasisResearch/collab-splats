@@ -638,6 +638,9 @@ class ScenePanel(param.Parameterized):
         self._sim_cloud = None
         self._rebuild_mesh_viewer()
         self._vtk_pane.synchronize()
+        # Switch selector to Mesh so the UI reflects the active view
+        self.mode = "Mesh"
+        self._mode_selector.value = "Mesh"
 
     ####################################################################
     # Similarity viewer

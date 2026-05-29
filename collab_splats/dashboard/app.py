@@ -124,8 +124,29 @@ class App(param.Parameterized):
         self._mesh_status = pn.pane.HTML(
             "<p style='color:#666;font-size:12px'>Load data to enable</p>", width=280,
         )
+        self._mesh_progress = pn.widgets.Progress(
+            active=False, visible=False, width=275, bar_color="primary"
+        )
         self._mesh_run_btn.on_click(self._on_run_mesh_sidebar)
         self._state.param.watch(self._on_feedforward_for_mesh, "feedforward_result")
+
+        # Combined View+Mesh section — hidden until Visualize tab is active
+        self._view_section = pn.Column(
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>View</h3>"),
+            self._ground_plane_check,
+            self._ground_plane_status,
+            self._redetect_btn,
+            self._sidebar_frustum_check,
+            pn.layout.Divider(),
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Mesh</h3>"),
+            pn.Row(self._mesh_voxel_input, self._mesh_sdf_input),
+            self._mesh_depth_input,
+            self._mesh_clean_check,
+            self._mesh_run_btn,
+            self._mesh_progress,
+            self._mesh_status,
+            visible=False,
+        )
 
         self._sidebar = self._build_sidebar()
 
@@ -179,18 +200,7 @@ class App(param.Parameterized):
             self._models_load_btn,
             self._models_status,
             pn.layout.Divider(),
-            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>View</h3>"),
-            self._ground_plane_check,
-            self._ground_plane_status,
-            self._redetect_btn,
-            self._sidebar_frustum_check,
-            pn.layout.Divider(),
-            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Mesh</h3>"),
-            pn.Row(self._mesh_voxel_input, self._mesh_sdf_input),
-            self._mesh_depth_input,
-            self._mesh_clean_check,
-            self._mesh_run_btn,
-            self._mesh_status,
+            self._view_section,
             width=300,
         )
 
@@ -418,6 +428,8 @@ class App(param.Parameterized):
             return
         self._mesh_run_btn.disabled = True
         self._mesh_status.object = "<p style='color:#aaa;font-size:12px'>Running…</p>"
+        self._mesh_progress.active = True
+        self._mesh_progress.visible = True
         scene.run_mesh(
             voxel_size=self._mesh_voxel_input.value,
             sdf_trunc=self._mesh_sdf_input.value,
@@ -429,6 +441,8 @@ class App(param.Parameterized):
     def _on_mesh_done(self, ok: bool, msg: str) -> None:
         """Re-enable sidebar Run Mesh button and update status after generation."""
         self._mesh_run_btn.disabled = False
+        self._mesh_progress.active = False
+        self._mesh_progress.visible = False
         color = "#50c050" if ok else "#e05050"
         self._mesh_status.object = f"<p style='color:{color};font-size:12px'>{msg}</p>"
 
@@ -475,9 +489,13 @@ class App(param.Parameterized):
             sizing_mode="stretch_width",
         )
 
-        # Wire tab activation → ScenePanel mode rescan
+        # Wire tab activation → ScenePanel mode rescan + View section visibility
         visualize_tab_index = list(self._panes.keys()).index("Visualize")
         self._panes["Visualize"].wire_tabs(self._tabs, visualize_tab_index)
+
+        def _on_tab_change(event: Any) -> None:
+            self._view_section.visible = (event.new == visualize_tab_index)
+        self._tabs.param.watch(_on_tab_change, "active")
 
         main_content = pn.Column(
             self._tabs,

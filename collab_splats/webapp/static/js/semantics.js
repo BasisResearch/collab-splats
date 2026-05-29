@@ -10,20 +10,41 @@ function renderSidebar() {
     <button class="primary" id="sem-run-btn" style="margin-top:8px">&#9654; Extract features</button>
     <div id="sem-status" class="status-info"></div>
   `;
-  // Populate from backend registry
-  fetch('/api/semantics/methods').then(r => r.json()).then(data => {
+  // Load methods + cached status in parallel; prefer cached extractors
+  Promise.all([
+    fetch('/api/semantics/methods').then(r => r.json()).catch(() => ({methods: ['dinov2']})),
+    fetch('/api/semantics/status').then(r => r.json()).catch(() => ({cached: []})),
+  ]).then(([methodsData, statusData]) => {
     const sel = sec.querySelector('#sem-extractor');
+    const cached = new Set(statusData.cached || []);
+    const methods = methodsData.methods || ['dinov2'];
     sel.innerHTML = '';
-    (data.methods || ['dinov2']).forEach(m => {
+    // Cached extractors first, then uncached
+    const ordered = [...methods.filter(m => cached.has(m)), ...methods.filter(m => !cached.has(m))];
+    ordered.forEach(m => {
       const o = document.createElement('option');
-      o.value = m; o.textContent = m;
-      if (m === state.extractor) o.selected = true;
+      o.value = m;
+      o.textContent = cached.has(m) ? `${m} ✓` : m;
+      if (m === state.extractor || (cached.size > 0 && cached.has(m) && !state.extractor)) o.selected = true;
       sel.appendChild(o);
     });
-  }).catch(() => {});
+    // Show cache status
+    const status = sec.querySelector('#sem-status');
+    if (status && cached.size > 0) {
+      status.textContent = `✓ Cached: ${[...cached].join(', ')}`;
+      status.className = 'status-ok';
+    }
+    // Auto-select first cached extractor
+    if (cached.size > 0) {
+      const first = ordered[0];
+      sel.value = first;
+      state.extractor = first;
+      fetch('/api/session/update', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({extractor: first}) });
+    }
+  });
   sec.querySelector('#sem-extractor').addEventListener('change', e => {
-    state.extractor = e.target.value;
-    fetch('/api/session/update', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({extractor: e.target.value}) });
+    state.extractor = e.target.value.replace(' ✓', '');
+    fetch('/api/session/update', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({extractor: state.extractor}) });
   });
   sec.querySelector('#sem-run-btn').addEventListener('click', runSemantics);
   return [sec];
@@ -38,7 +59,8 @@ function runSemantics() {
   const status = document.getElementById('sem-status');
   if (status) { status.textContent = 'Running…'; status.className = 'status-info'; }
 
-  const es = new EventSource('/api/semantics/run');
+  const extractor = state.extractor || document.getElementById('sem-extractor')?.value.replace(' ✓', '') || 'dinov2';
+  const es = new EventSource(`/api/semantics/run?extractor=${encodeURIComponent(extractor)}`);
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
     if (log) {

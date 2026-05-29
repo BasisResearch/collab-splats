@@ -73,6 +73,41 @@ async def status() -> JSONResponse:
     })
 
 
+@router.get("/frustums")
+async def get_frustums() -> JSONResponse:
+    """Return camera positions and forward directions from feedforward extrinsics."""
+    import zarr as _zarr  # noqa: PLC0415
+
+    s = get_session()
+    if s.output_dir is None:
+        return JSONResponse({"ok": False, "error": "No session loaded"})
+
+    zarr_path = s.output_dir / s.creator / "feedforward.zarr"
+    if not zarr_path.exists():
+        return JSONResponse({"ok": False, "error": f"feedforward.zarr not found"})
+
+    try:
+        store = _zarr.open_group(str(zarr_path))
+        extrinsics = np.array(store["extrinsics"])  # (N, 4, 4) world-to-camera
+
+        # Camera position in world: pos = -R^T @ t
+        R = extrinsics[:, :3, :3]  # (N, 3, 3)
+        t = extrinsics[:, :3, 3]   # (N, 3)
+        positions = np.einsum('nij,nj->ni', -R.transpose(0, 2, 1), t)  # (N, 3)
+
+        # Forward direction in world: -R^T @ [0,0,1]
+        forward = -R.transpose(0, 2, 1)[:, :, 2]  # (N, 3)
+
+        return JSONResponse({
+            "ok": True,
+            "positions": positions.tolist(),
+            "forward": forward.tolist(),
+            "n_cameras": int(len(positions)),
+        })
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+
+
 @router.get("/similarity")
 async def query_similarity(pos: str, neg: str = "", extractor: str = "talk2dino") -> JSONResponse:
     """Compute per-point semantic similarity to a text query; return viridis RGB as base64."""

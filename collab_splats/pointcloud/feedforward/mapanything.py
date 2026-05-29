@@ -235,8 +235,17 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         device = next(model.parameters()).device
         device_type = device.type
 
+        # Determine whether this call is a full-sequence pass or an LC window slice.
+        # Full-sequence: views is self.views (same object or same length as _processed_views
+        # and same id). LC window: a shorter list slice or a Tensor batch.
+        _is_full_sequence = (
+            not isinstance(views, torch.Tensor)
+            and self._processed_views is not None
+            and views is self.views
+        )
+
         if isinstance(views, torch.Tensor):
-            # LC window path: views is a (K, C, H, W) tensor of K frames. Build
+            # LC window path (Tensor): views is a (K, C, H, W) tensor of K frames. Build
             # fresh MapAnything view dicts and preprocess them for this window only.
             raw_views = [
                 {"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]}
@@ -253,6 +262,21 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             forward_views = window_views
             self._lc_window_views = window_views  # consumed by _lc_collate_outputs
             console.log(f"  → {len(window_views)} images (LC window), minibatch_size={self.minibatch_size}")
+        elif not _is_full_sequence:
+            # LC window path (list): views is a raw-dict slice from self.views. Preprocess
+            # the window slice on-the-fly — same logic as the Tensor branch but starting
+            # from already-loaded load_images dicts instead of raw tensor frames.
+            window_views = preprocess_input_views_for_inference(
+                validate_input_views_for_inference(views)
+            )
+            # Transfer window views to model device
+            for view in window_views:
+                for k, v in view.items():
+                    if isinstance(v, torch.Tensor):
+                        view[k] = v.to(device)
+            forward_views = window_views
+            self._lc_window_views = window_views  # consumed by _lc_collate_outputs
+            console.log(f"  → {len(window_views)} images (LC window, list), minibatch_size={self.minibatch_size}")
         else:
             # Full-sequence path: views is the list returned by _preprocess; use
             # already-preprocessed self._processed_views (avoids redundant work).
@@ -321,6 +345,13 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
         model_h: int = self._processed_views[0]["img"].shape[-2]
         model_w: int = self._processed_views[0]["img"].shape[-1]
+
+        # After LC, merge_submap_outputs wraps the list in a dict with "_raw_list" key
+        # and attaches "extrinsic_global_4x4" (LC-corrected poses). Unwrap here.
+        lc_corrected_extrinsics: np.ndarray | None = None
+        if isinstance(raw_outputs, dict) and "_raw_list" in raw_outputs:
+            lc_corrected_extrinsics = raw_outputs.get("extrinsic_global_4x4")
+            raw_outputs = raw_outputs["_raw_list"]
 
         # Cast bf16 tensors to float32 before postprocessing. model.forward() runs
         # under bf16 autocast; postprocess_model_outputs_for_inference calls
@@ -417,6 +448,12 @@ class MapAnythingCreator(BaseFeedforwardCreator):
 
         # Convert extrinsics to 4×4 homogeneous form
         extrinsics_4x4 = extrinsics_to_homogeneous(extrinsics)
+
+        # LC path: override model-predicted extrinsics with pose-graph-corrected poses.
+        # lc_corrected_extrinsics is (N, 4, 4) world-to-cam; use only if shape matches.
+        if lc_corrected_extrinsics is not None:
+            if lc_corrected_extrinsics.shape[0] == extrinsics_4x4.shape[0]:
+                extrinsics_4x4 = lc_corrected_extrinsics
 
         return FeedforwardResult(
             points=pts3d,

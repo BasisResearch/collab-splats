@@ -6,7 +6,9 @@ import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 let renderer, scene, camera, controls;
 let currentPoints = null;
 let currentMesh = null;
-// Normalization shared between pointcloud and mesh so they stay aligned
+let currentFrustums = null;
+let lastGroundPlane = null;
+// Normalization shared between pointcloud, mesh, and frustums
 let normCenter = null;
 let normScale = 1;
 
@@ -170,6 +172,55 @@ async function runSimilarityQuery(pos, neg, extractor, statusEl) {
   }
 }
 
+async function loadFrustums(gp) {
+  if (currentFrustums) { scene.remove(currentFrustums); currentFrustums.geometry.dispose(); currentFrustums = null; }
+  const resp = await fetch('/api/visualize/frustums');
+  const data = await resp.json();
+  if (!data.ok || !data.positions?.length) { setProgress(0, 'No frustums: ' + (data.error || 'no data')); return; }
+
+  const positions = data.positions;
+  const forward = data.forward;
+  const geo = new THREE.BufferGeometry();
+  const verts = [];
+
+  positions.forEach((pos, i) => {
+    // Apply ground plane transform: p' = R @ p + t
+    let p = [...pos];
+    if (gp) {
+      const { R, t } = gp;
+      p = [
+        R[0][0]*pos[0] + R[0][1]*pos[1] + R[0][2]*pos[2] + t[0],
+        R[1][0]*pos[0] + R[1][1]*pos[1] + R[1][2]*pos[2] + t[1],
+        R[2][0]*pos[0] + R[2][1]*pos[1] + R[2][2]*pos[2] + t[2],
+      ];
+    }
+    // Apply same normalization as pointcloud
+    const px = (p[0] - (normCenter?.x || 0)) * normScale;
+    const py = (p[1] - (normCenter?.y || 0)) * normScale;
+    const pz = (p[2] - (normCenter?.z || 0)) * normScale;
+    verts.push(px, py, pz);
+
+    // Draw a short line in the forward direction
+    let f = forward[i];
+    if (gp) {
+      const { R } = gp;
+      f = [
+        R[0][0]*f[0] + R[0][1]*f[1] + R[0][2]*f[2],
+        R[1][0]*f[0] + R[1][1]*f[1] + R[1][2]*f[2],
+        R[2][0]*f[0] + R[2][1]*f[1] + R[2][2]*f[2],
+      ];
+    }
+    const s = 0.05 * normScale;
+    verts.push(px + f[0]*s, py + f[1]*s, pz + f[2]*s);
+  });
+
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  const mat = new THREE.LineBasicMaterial({ color: 0x2596be, opacity: 0.7, transparent: true });
+  currentFrustums = new THREE.LineSegments(geo, mat);
+  scene.add(currentFrustums);
+  setProgress(100, `${data.n_cameras} cameras`);
+}
+
 async function loadScene() {
   if (!state.outputDir) return;
   const resp = await fetch('/api/visualize/status');
@@ -192,6 +243,7 @@ async function loadScene() {
   }
 
   const gp = data.ground_plane || null;
+  lastGroundPlane = gp;
   if (data.ply_url) {
     loadPLY(data.ply_url, gp);
   } else {
@@ -257,9 +309,7 @@ function renderSidebar() {
     <h4>View / Mesh</h4>
     <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-mesh-toggle"> Show mesh</label>
     <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-pc-toggle" checked> Show pointcloud</label>
-    <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-frustums"> Show frustums</label>
-    <label style="margin-top:4px">Point size: <span id="viz-pt-val">4</span></label>
-    <input type="range" id="viz-pt-size" min="1" max="20" value="4">
+    <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-frustums"> Show cameras</label>
   `;
 
   pc.querySelector('#viz-creator').addEventListener('change', e => {
@@ -267,11 +317,6 @@ function renderSidebar() {
     fetch('/api/session/update', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({creator: e.target.value}) });
   });
   pc.querySelector('#viz-load-btn').addEventListener('click', loadScene);
-
-  view.querySelector('#viz-pt-size').addEventListener('input', e => {
-    view.querySelector('#viz-pt-val').textContent = e.target.value;
-    if (currentPoints) currentPoints.material.size = parseFloat(e.target.value) * 0.001;
-  });
 
   // Mesh toggle: show mesh, hide pointcloud
   view.querySelector('#viz-mesh-toggle').addEventListener('change', async e => {
@@ -299,6 +344,15 @@ function renderSidebar() {
       scene.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null;
       const meshToggle = document.getElementById('viz-mesh-toggle');
       if (meshToggle) meshToggle.checked = false;
+    }
+  });
+
+  // Camera frustums toggle
+  view.querySelector('#viz-frustums').addEventListener('change', e => {
+    if (e.target.checked) {
+      loadFrustums(lastGroundPlane);
+    } else {
+      if (currentFrustums) { scene.remove(currentFrustums); currentFrustums.geometry.dispose(); currentFrustums = null; }
     }
   });
 

@@ -588,6 +588,34 @@ def merge_submap_outputs(
     if not submaps or submaps[0].raw_outputs is None:
         return {"extrinsic": corrected_extrinsics}
 
+    # Handle backends (e.g. MapAnything) whose _forward returns list[dict] per frame.
+    # Deduplicate overlap frames: each submap contributes only its non-overlap frames
+    # (first K frames, where K = len(s.poses) - overlap), except the last submap which
+    # contributes all its frames. This produces exactly N unique frames aligned with
+    # corrected_extrinsics (N, 4, 4).
+    if isinstance(submaps[0].raw_outputs, list):
+        merged_list: list = []
+        n_submaps = len(submaps)
+        for idx, s in enumerate(submaps):
+            if not s.raw_outputs:
+                continue
+            raw_list = s.raw_outputs
+            if idx < n_submaps - 1:
+                # Infer overlap from next submap's frame_start vs this submap's end
+                next_start = submaps[idx + 1].frame_start
+                this_end = s.frame_start + len(raw_list)
+                overlap = max(0, this_end - next_start)
+                keep = len(raw_list) - overlap
+                merged_list.extend(raw_list[:keep])
+            else:
+                merged_list.extend(raw_list)
+        merged_list_out: dict = {
+            "_raw_list": merged_list,
+            "extrinsic": corrected_extrinsics[:, :3, :],
+            "extrinsic_global_4x4": corrected_extrinsics,
+        }
+        return merged_list_out
+
     sample = submaps[0].raw_outputs
     for key, val in sample.items():
         if isinstance(val, np.ndarray) and val.ndim >= 1:

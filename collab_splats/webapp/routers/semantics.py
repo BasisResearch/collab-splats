@@ -14,6 +14,21 @@ from collab_splats.webapp.state import get_session
 router = APIRouter(prefix="/api/semantics")
 
 
+@router.get("/status")
+async def feature_status() -> JSONResponse:
+    """Return which extractors have already-cached lifted features for the current session."""
+    s = get_session()
+    if s.output_dir is None:
+        return JSONResponse({"ok": False, "cached": []})
+    backend_dir = s.output_dir / s.creator
+    sem_dir = backend_dir / "semantics"
+    cached = sorted(
+        p.name for p in sem_dir.iterdir()
+        if p.is_dir() and (p / "features.zarr").exists()
+    ) if sem_dir.is_dir() else []
+    return JSONResponse({"ok": True, "cached": cached, "creator": s.creator})
+
+
 @router.get("/methods")
 async def list_methods() -> JSONResponse:
     """Return registered semantic extractor names."""
@@ -64,7 +79,11 @@ async def _run_sse() -> AsyncIterator[str]:
 
 
 @router.get("/run")
-async def run_semantics():
+async def run_semantics(extractor: str = ""):
+    """SSE endpoint: extract features. Uses session extractor if param not provided."""
+    s = get_session()
+    if extractor:
+        s.extractor = extractor
     return StreamingResponse(
         _run_sse(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

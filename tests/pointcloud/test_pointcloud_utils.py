@@ -6,6 +6,7 @@ import torch
 from collab_splats.pointcloud.utils import (
     filter_density,
     filter_distance,
+    fit_dominant_plane,
     voxel_downsample,
     clean_pointcloud,
 )
@@ -430,3 +431,40 @@ def test_get_points_in_mask_no_match():
     mask = np.zeros((5, 5), dtype=bool)  # nothing selected
     result = get_points_in_mask(0, mask, points, pixel_indices)
     assert result.shape == (0, 3)
+
+
+########################################################
+########## fit_dominant_plane ##########################
+########################################################
+
+
+def test_fit_dominant_plane_flat_z_up():
+    """Flat ground at z=-1 → R≈I, t brings floor to z=0."""
+    rng = np.random.default_rng(42)
+    # Ground plane at z = -1 with small noise
+    xy = rng.uniform(-5, 5, (800, 2)).astype(np.float32)
+    z = rng.normal(-1.0, 0.005, (800,)).astype(np.float32)
+    ground = np.column_stack([xy, z])
+    # Scatter above-ground points
+    above_xy = rng.uniform(-5, 5, (100, 2)).astype(np.float32)
+    above_z = rng.uniform(-0.5, 2.0, (100,)).astype(np.float32)
+    above = np.column_stack([above_xy, above_z])
+    points = np.vstack([ground, above])
+
+    R, t = fit_dominant_plane(points)
+
+    assert R.shape == (3, 3)
+    assert t.shape == (3,)
+    # After applying transform, floor z-mean should be ≈ 0
+    pts_aligned = (R @ points[:800].T).T + t
+    np.testing.assert_allclose(pts_aligned[:, 2].mean(), 0.0, atol=0.1)
+
+
+def test_fit_dominant_plane_returns_valid_rotation():
+    """R is a proper rotation matrix (det=1, orthogonal)."""
+    rng = np.random.default_rng(7)
+    pts = rng.standard_normal((500, 3)).astype(np.float32)
+    pts[:400, 2] = rng.normal(0, 0.01, 400)  # flat-ish ground at z=0
+    R, t = fit_dominant_plane(pts)
+    assert abs(np.linalg.det(R) - 1.0) < 1e-6
+    np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-6)

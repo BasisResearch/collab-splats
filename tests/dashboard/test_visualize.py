@@ -297,9 +297,11 @@ def test_visualize_pane_no_shared_query_bar(tmp_path):
 
 
 def test_scene_panel_wire_tabs(tmp_path):
-    """wire_tabs connects tab activation → rescan without error."""
+    """wire_tabs fires rescan when the wired tab becomes active."""
     state = AppState()
     sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
-    tabs = pn.Tabs(("Visualize", pn.pane.Str("x")))
-    sp.wire_tabs(tabs, 0)  # must not raise
-    assert True
+    tabs = pn.Tabs(("Visualize", pn.pane.Str("x")), ("Other", pn.pane.Str("y")))
+    sp.wire_tabs(tabs, 0)
+    tabs.active = 1  # switch away
+    tabs.active = 0  # switch back → triggers rescan
+    assert isinstance(sp._available_modes, (set, frozenset))

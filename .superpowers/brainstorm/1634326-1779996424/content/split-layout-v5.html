@@ -1,0 +1,134 @@
+<h2>35 / 65 split — correspondence left, 3D scene right</h2>
+<p class="subtitle">More space for the 3D viewer. Correspondence panel narrower.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Localize Tab — Result Panel</div>
+  <div class="mockup-body" style="padding:0">
+
+    <!-- Controls bar -->
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#161b22;border-bottom:1px solid #30363d">
+      <div class="mock-input" style="width:260px;font-size:12px">📁 query.jpg</div>
+      <button class="mock-button" style="font-size:12px">Browse</button>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:#8b949e">
+        <select style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px;border-radius:4px;font-size:12px">
+          <option>DISK+LightGlue</option><option>XFeat+MNN</option>
+        </select>
+        <button class="mock-button" style="background:#238636;font-size:12px">▶ Localize</button>
+      </div>
+    </div>
+
+    <!-- Split: 35 / 65 -->
+    <div style="display:flex;height:360px">
+
+      <!-- LEFT 35%: correspondence -->
+      <div style="flex:0 0 35%;padding:10px;border-right:1px solid #30363d;display:flex;flex-direction:column;gap:6px;min-width:0">
+
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:11px;color:#8b949e;font-family:monospace">
+            <span style="color:#3fb950">●</span> 142 inliers &nbsp;
+            <span style="color:#f85149">●</span> 45 out &nbsp;|&nbsp;
+            <span style="color:#e3b341">frame_042</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;color:#8b949e;white-space:nowrap;margin-left:6px">
+            <input type="checkbox" checked style="accent-color:#58a6ff">
+            <span>warp</span>
+          </label>
+        </div>
+
+        <!-- stitched image figure -->
+        <div style="flex:1;background:#111318;border-radius:4px;border:1px solid #21262d;display:flex;align-items:center;padding:10px;gap:0;position:relative">
+
+          <!-- Query -->
+          <div style="flex:1;background:#1c2128;border-radius:3px;padding:5px;height:100%;position:relative">
+            <div style="width:100%;height:100%;background:#0d1117;border-radius:2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;position:relative;overflow:hidden">
+              <div style="font-size:14px">📷</div>
+              <div style="font-size:9px;color:#58a6ff">query</div>
+              <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+                <polygon points="14%,18% 86%,14% 88%,82% 10%,86%" fill="none" stroke="#e3b341" stroke-width="1.5" stroke-opacity="0.85"/>
+              </svg>
+              <div style="position:absolute;top:28%;left:20%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #3fb950"></div>
+              <div style="position:absolute;top:50%;left:34%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #3fb950"></div>
+              <div style="position:absolute;top:65%;left:24%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #f85149"></div>
+              <div style="position:absolute;top:38%;left:16%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #3fb950"></div>
+            </div>
+          </div>
+
+          <div style="width:16px;flex-shrink:0"></div>
+
+          <!-- Ref -->
+          <div style="flex:1;background:#1c2128;border-radius:3px;padding:5px;height:100%;position:relative">
+            <div style="width:100%;height:100%;background:#0d1117;border-radius:2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;position:relative;overflow:hidden">
+              <div style="font-size:14px">🖼</div>
+              <div style="font-size:9px;color:#58a6ff">frame_042</div>
+              <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+                <polygon points="11%,17% 89%,21% 86%,83% 7%,79%" fill="none" stroke="#00bcd4" stroke-width="1.5" stroke-opacity="0.85"/>
+              </svg>
+              <div style="position:absolute;top:29%;left:28%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #3fb950"></div>
+              <div style="position:absolute;top:51%;left:43%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #3fb950"></div>
+              <div style="position:absolute;top:64%;left:30%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #f85149"></div>
+              <div style="position:absolute;top:37%;left:21%;width:4px;height:4px;border-radius:50%;background:#fff;border:1px solid #3fb950"></div>
+            </div>
+          </div>
+
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+            <line x1="26%" y1="29%" x2="62%" y2="30%" stroke="#3fb950" stroke-width="1" stroke-opacity="0.75"/>
+            <line x1="31%" y1="51%" x2="69%" y2="52%" stroke="#3fb950" stroke-width="1" stroke-opacity="0.75"/>
+            <line x1="20%" y1="39%" x2="59%" y2="38%" stroke="#3fb950" stroke-width="1" stroke-opacity="0.75"/>
+            <line x1="27%" y1="66%" x2="65%" y2="65%" stroke="#f85149" stroke-width="1" stroke-opacity="0.7"/>
+          </svg>
+        </div>
+
+        <div style="display:flex;gap:8px;font-size:9px;font-family:monospace;color:#8b949e">
+          <span><span style="color:#3fb950">—</span> in</span>
+          <span><span style="color:#f85149">—</span> out</span>
+          <span><span style="color:#e3b341">□</span> ref→q</span>
+          <span><span style="color:#00bcd4">□</span> q→ref</span>
+        </div>
+        <div style="background:#0d1117;border-radius:4px;padding:4px 7px;font-family:monospace;font-size:10px;color:#8b949e">
+          <span style="color:#e3b341">pose</span> t=[1.2,-0.3,0.8] &nbsp;<span style="color:#3fb950">✓</span>
+        </div>
+      </div>
+
+      <!-- RIGHT 65%: 3D scene -->
+      <div style="flex:0 0 65%;padding:10px;display:flex;flex-direction:column;gap:6px;min-width:0">
+        <div style="font-size:11px;color:#8b949e;font-family:monospace">
+          <span style="color:#f85149">▲</span> query &nbsp;
+          <span style="color:#e3b341">▲</span> frame_042 &nbsp;
+          <span style="color:#58a6ff;opacity:0.5">▲</span> other cameras &nbsp;
+          <span style="color:#555">·</span> point cloud
+        </div>
+        <div style="flex:1;background:#0d1117;border-radius:4px;position:relative;overflow:hidden">
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#1c2128;font-size:48px">⬡⬡⬡⬡</div>
+          <div style="position:absolute;top:28%;left:18%;font-size:11px;opacity:0.3;color:#58a6ff">▲</div>
+          <div style="position:absolute;top:55%;left:28%;font-size:11px;opacity:0.3;color:#58a6ff">▲</div>
+          <div style="position:absolute;top:22%;left:65%;font-size:11px;opacity:0.3;color:#58a6ff">▲</div>
+          <div style="position:absolute;top:62%;left:72%;font-size:11px;opacity:0.3;color:#58a6ff">▲</div>
+          <div style="position:absolute;top:35%;left:55%;font-size:11px;opacity:0.3;color:#58a6ff">▲</div>
+          <!-- highlighted pair -->
+          <div style="position:absolute;top:44%;left:44%;font-size:18px;color:#e3b341">▲</div>
+          <div style="position:absolute;top:41%;left:54%;font-size:18px;color:#f85149">▲</div>
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+            <line x1="47%" y1="45%" x2="56%" y2="43%" stroke="#e3b341" stroke-width="1.5" stroke-dasharray="4,3" stroke-opacity="0.8"/>
+          </svg>
+          <div style="position:absolute;bottom:6px;right:8px;font-size:9px;color:#30363d">PyVista vtk</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Batch collapsed -->
+    <div style="padding:8px 14px;background:#161b22;border-top:1px solid #30363d;font-size:11px;color:#8b949e;cursor:pointer">
+      <span style="color:#58a6ff">▼ Batch mode</span> — select folder → summary table
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:16px">
+  <div class="option" data-choice="good" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>Lock this in</h3><p>35/65 split, correspondence compact, 3D scene dominant</p></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">~</div>
+    <div class="content"><h3>Needs more changes</h3><p>Tell me in terminal</p></div>
+  </div>
+</div>

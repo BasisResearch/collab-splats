@@ -128,7 +128,7 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 
     if not np.any(valid_mask):
         # No points within truncation distance, return zeros
-        return np.zeros((len(vertices), features.shape[1]))
+        return np.zeros((len(vertices), features.shape[1]), dtype=features.dtype)
 
     # Filter distances, indices, and features by valid points
     distances = distances[valid_mask]
@@ -141,10 +141,10 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     weights /= weights.sum(axis=1, keepdims=True)  # normalize
 
     # Aggregate features per vertex
-    features_kNN = np.zeros((len(vertices), features.shape[1]))
+    features_kNN = np.zeros((len(vertices), features.shape[1]), dtype=features.dtype)
 
     # Use a counts array to normalize contributions per vertex later
-    vertex_weight_sum = np.zeros((len(vertices), 1))
+    vertex_weight_sum = np.zeros((len(vertices), 1), dtype=features.dtype)
 
     # Accumulate weighted features
     for i in trange(k, desc="Mapping features to vertices"):
@@ -162,6 +162,37 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     features_kNN[nonzero_mask] /= vertex_weight_sum[nonzero_mask]
 
     return features_kNN
+
+
+def transfer_features_to_mesh(
+    result: FeedforwardResult,
+    mesh: o3d.geometry.TriangleMesh,
+    *,
+    k: int = 5,
+    sdf_trunc: float = 0.03,
+) -> np.ndarray:
+    """Transfer per-point features from a FeedforwardResult to mesh vertices via KNN.
+
+    Args:
+        result:    FeedforwardResult with features (P, D) and points (P, 3) populated.
+        mesh:      Open3D TriangleMesh whose vertices receive the features.
+        k:         Neighbors for Gaussian-weighted aggregation (passed to features2vertex).
+        sdf_trunc: Truncation distance — pointcloud points farther than this from their
+                   nearest vertex are excluded from aggregation.
+
+    Returns:
+        (M, D) ndarray of per-vertex features, dtype matches input features, index-aligned with mesh.vertices.
+    """
+    assert result.features is not None, (
+        "result.features is None — call lift_features() and assign result.features before transferring"
+    )
+    return features2vertex(
+        np.asarray(mesh.vertices),
+        result.points,
+        result.features,
+        k=k,
+        sdf_trunc=sdf_trunc,
+    )
 
 
 ########################################################

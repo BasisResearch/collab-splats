@@ -1,0 +1,92 @@
+<h2>Section 4: Semantics Pane Layout</h2>
+<p class="subtitle">Selected frame → run extractor(s) → compare feature map outputs side-by-side</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Source image + up to 3 extractor outputs</h3>
+      <p>Fixed 4-column grid: original frame always left, then up to 3 extractor result columns. Each column has its own method dropdown + "Run" button. Empty columns show a "+" add button.</p>
+      <div style="margin-top:8px;background:#0d1117;border-radius:6px;padding:8px;font-family:monospace;font-size:9px">
+        <!-- frame selector row -->
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <div style="color:#666">frame:</div>
+          <div style="background:#252540;padding:2px 8px;border-radius:3px;color:#aaa">◀ 042 ▶</div>
+          <div style="background:#333;height:2px;flex:1;border-radius:2px"><div style="background:#2596be;height:2px;width:30%;border-radius:2px"></div></div>
+        </div>
+        <div style="display:flex;gap:4px">
+          <!-- Source image -->
+          <div style="flex:1;background:#111;border-radius:4px;border:1px solid #333;padding:5px">
+            <div style="color:#666;font-size:7px;margin-bottom:3px">SOURCE</div>
+            <div style="background:#1a2a1a;border-radius:3px;height:55px;display:flex;align-items:center;justify-content:center">
+              <div style="color:#555;font-size:8px">frame 042</div>
+            </div>
+          </div>
+          <!-- Extractor 1 -->
+          <div style="flex:1;background:#111;border-radius:4px;border:1px solid #2596be;padding:5px">
+            <div style="background:#252540;padding:2px 4px;border-radius:2px;color:#7ec8e3;font-size:7px;margin-bottom:2px">talk2dino ▾</div>
+            <div style="background:#1e2a3e;border-radius:3px;height:55px;display:flex;align-items:center;justify-content:center">
+              <div style="color:#7ec8e3;font-size:7px;opacity:0.6">PCA features</div>
+            </div>
+          </div>
+          <!-- Extractor 2 -->
+          <div style="flex:1;background:#111;border-radius:4px;border:1px solid #444;padding:5px">
+            <div style="background:#252540;padding:2px 4px;border-radius:2px;color:#aaa;font-size:7px;margin-bottom:2px">dinov2 ▾</div>
+            <div style="background:#1e2a3e;border-radius:3px;height:55px;display:flex;align-items:center;justify-content:center">
+              <div style="color:#666;font-size:7px">PCA features</div>
+            </div>
+          </div>
+          <!-- Empty slot -->
+          <div style="flex:1;background:#0d1117;border-radius:4px;border:1px dashed #333;padding:5px;display:flex;align-items:center;justify-content:center">
+            <div style="color:#444;font-size:16px">+</div>
+          </div>
+        </div>
+        <!-- Query bar (only for queryable extractors) -->
+        <div style="margin-top:5px;background:#1a1a2e;border-radius:3px;padding:4px;display:flex;gap:4px;align-items:center">
+          <div style="color:#666;font-size:7px">text query (talk2dino):</div>
+          <div style="background:#252540;flex:1;padding:2px 5px;border-radius:2px;color:#aaa;font-size:7px">enter text prompt…</div>
+          <div style="background:#2596be;color:white;padding:2px 6px;border-radius:2px;font-size:7px">Query</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Source left / single extractor right with sub-tabs</h3>
+      <p>Image always on left half. Right half shows extractor output. Sub-tabs at top-right switch between saved extractor runs (each run cached). One extractor visible at a time — less cluttered but no simultaneous comparison.</p>
+      <div style="margin-top:8px;background:#0d1117;border-radius:6px;padding:8px;font-family:monospace;font-size:9px">
+        <div style="display:flex;gap:6px">
+          <!-- Source -->
+          <div style="flex:1;background:#111;border-radius:4px;border:1px solid #333;padding:5px">
+            <div style="color:#666;font-size:7px;margin-bottom:3px">SOURCE — frame 042</div>
+            <div style="background:#1a2a1a;border-radius:3px;height:75px;display:flex;align-items:center;justify-content:center">
+              <div style="color:#555;font-size:8px">frame image</div>
+            </div>
+          </div>
+          <!-- Right side: extractor tabs + output -->
+          <div style="flex:1;background:#111;border-radius:4px;border:1px solid #333;overflow:hidden">
+            <div style="background:#1f2937;display:flex;gap:0;padding:0 5px">
+              <span style="background:#1a3a5c;color:#7ec8e3;padding:3px 7px;font-size:7px;border-radius:3px 3px 0 0">talk2dino</span>
+              <span style="color:#555;padding:3px 7px;font-size:7px">dinov2</span>
+              <span style="color:#555;padding:3px 7px;font-size:7px;font-size:7px">+ add</span>
+            </div>
+            <div style="padding:5px">
+              <div style="background:#1e2a3e;border-radius:3px;height:55px;display:flex;align-items:center;justify-content:center">
+                <div style="color:#7ec8e3;font-size:7px;opacity:0.6">PCA features (talk2dino)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:5px;background:#1a1a2e;border-radius:3px;padding:4px;display:flex;gap:4px;align-items:center">
+          <div style="color:#666;font-size:7px">text query:</div>
+          <div style="background:#252540;flex:1;padding:2px 5px;border-radius:2px;color:#aaa;font-size:7px">enter text prompt…</div>
+          <div style="background:#2596be;color:white;padding:2px 6px;border-radius:2px;font-size:7px">Query</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

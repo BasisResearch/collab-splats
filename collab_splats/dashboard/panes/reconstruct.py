@@ -35,16 +35,8 @@ class ReconstructPane(param.Parameterized):
         self._log_lines: list[str] = []
         self._log_lock = threading.Lock()
 
-        # Config widgets
-        self._backend_dd = pn.widgets.Select(
-            name="Backend",
-            options=["vggtx", "mapanything", "vggt_omega"],
-            value="vggtx",
-            width=260,
-        )
-        self._conf_slider = pn.widgets.FloatSlider(
-            name="Conf threshold", start=0.0, end=100.0, step=1.0, value=35.0, width=260
-        )
+        # Config summary — creator/conf come from sidebar "Pointcloud Model" section via AppState
+        self._config_summary_html = pn.pane.HTML("", width=260)
 
         # BA stub (disabled — not yet implemented)
         self._ba_toggle = pn.widgets.Toggle(
@@ -82,24 +74,80 @@ class ReconstructPane(param.Parameterized):
         # Periodic callback guard — registered once in panel()
         self._cb_registered = False
 
+        # Build stable layout objects in __init__ so dynamic=True tabs can reconstruct
+        # Bokeh models from persistent Python objects rather than anonymous inline objects.
+        self._config_header = pn.pane.HTML(
+            "<h4 style='color:#7ec8e3;margin:0 0 6px 0'>Reconstruction Config</h4>"
+        )
+        self._log_header = pn.pane.HTML(
+            "<h4 style='color:#7ec8e3;margin:0 0 6px 0'>Log</h4>"
+        )
+        self._config_col = pn.Column(
+            self._config_header,
+            self._config_summary_html,
+            pn.layout.Divider(),
+            self._ba_toggle,
+            self._ba_stub_html,
+            pn.layout.Divider(),
+            self._lc_toggle,
+            self._lc_stub_html,
+            pn.layout.Divider(),
+            self._run_btn,
+            self._status_html,
+            width=380,
+        )
+        self._log_col = pn.Column(
+            self._log_header,
+            self._log_area,
+        )
+        self._view = pn.Row(self._config_col, self._log_col, sizing_mode="stretch_width")
+
         # Wire callbacks
         self._run_btn.on_click(self._on_run)
         self._state.param.watch(self._on_output_dir_changed, ["output_dir"])
+        self._state.param.watch(self._on_creator_changed, ["pointcloud_creator", "pointcloud_creator_conf"])
 
         # Initialize gate state
         self._on_output_dir_changed(None)
+        self._on_creator_changed(None)
+
+    def wire_tabs(self, tabs: pn.Tabs, tab_index: int) -> None:
+        """Connect tab activation signal to re-assert widget state after model reconstruction."""
+        def _on_tab_change(event: Any) -> None:
+            if event.new == tab_index:
+                self._on_tab_activated()
+        tabs.param.watch(_on_tab_change, "active")
+
+    def _on_tab_activated(self) -> None:
+        """Re-assert derived widget state when Reconstruct tab becomes active.
+
+        With dynamic=True tabs, Bokeh models are destroyed on deactivation.
+        Param-watched state (e.g. run_btn.disabled) must be re-pushed on reactivation.
+        """
+        self._on_output_dir_changed(None)
+        self._on_creator_changed(None)
 
     def _on_output_dir_changed(self, event: Any) -> None:
         """Enable Run button when output_dir is set."""
         self._run_btn.disabled = self._state.output_dir is None
 
+    def _on_creator_changed(self, event: Any) -> None:
+        """Update config summary when pointcloud creator or conf changes."""
+        creator = self._state.pointcloud_creator or "vggtx"
+        conf = self._state.pointcloud_creator_conf
+        self._config_summary_html.object = (
+            f"<p style='font-size:11px;color:#aaa;margin:2px 0'>"
+            f"Creator: <b style='color:#7ec8e3'>{creator}</b> · "
+            f"conf: <b style='color:#7ec8e3'>{conf:.0f}</b></p>"
+        )
+
     def _on_run(self, event: Any) -> None:
         """Spawn background reconstruction thread on button click."""
         if self._recon_thread and self._recon_thread.is_alive():
             return
-        # Snapshot widget values on main thread before passing to worker
-        backend = self._backend_dd.value
-        conf = self._conf_slider.value
+        # Snapshot state values on main thread before passing to worker
+        backend = self._state.pointcloud_creator or "vggtx"
+        conf = self._state.pointcloud_creator_conf
         self._run_btn.disabled = True
         self._status_html.object = "<span style='color:#2596be'>⏳ Running…</span>"
         self._log_area.value = ""
@@ -197,33 +245,11 @@ class ReconstructPane(param.Parameterized):
         self._run_btn.disabled = False
 
     def panel(self) -> pn.viewable.Viewable:
-        """Return the full ReconstructPane Panel layout."""
+        """Return the ReconstructPane Panel layout."""
         if not self._cb_registered:
             try:
                 pn.state.add_periodic_callback(self._drain_log, period=500)
                 self._cb_registered = True
             except Exception:
                 pass  # outside live server context (e.g. tests)
-
-        config_col = pn.Column(
-            pn.pane.HTML("<h4 style='color:#7ec8e3;margin:0 0 6px 0'>Reconstruction Config</h4>"),
-            self._backend_dd,
-            self._conf_slider,
-            pn.layout.Divider(),
-            self._ba_toggle,
-            self._ba_stub_html,
-            pn.layout.Divider(),
-            self._lc_toggle,
-            self._lc_stub_html,
-            pn.layout.Divider(),
-            self._run_btn,
-            self._status_html,
-            width=380,
-        )
-
-        log_col = pn.Column(
-            pn.pane.HTML("<h4 style='color:#7ec8e3;margin:0 0 6px 0'>Log</h4>"),
-            self._log_area,
-        )
-
-        return pn.Row(config_col, log_col, sizing_mode="stretch_width")
+        return self._view

@@ -1,0 +1,121 @@
+<h2>Updated: correspondence lines connect across stitched image</h2>
+<p class="subtitle">Left: <code>plot_correspondences()</code> output — one stitched image, green inlier / red outlier lines. Right: 3D scene, query↔ref highlighted.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Localize Tab — Result Panel</div>
+  <div class="mockup-body" style="padding:0">
+
+    <!-- Top controls bar -->
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#161b22;border-bottom:1px solid #30363d">
+      <div class="mock-input" style="width:260px;font-size:12px">📁 /workspace/outputs/run_001/frames/query.jpg</div>
+      <button class="mock-button" style="font-size:12px">Browse</button>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:#8b949e">
+        <span>Extractor:</span>
+        <select style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px;border-radius:4px;font-size:12px">
+          <option>DISK+LightGlue</option>
+          <option>XFeat+MNN</option>
+        </select>
+        <button class="mock-button" style="background:#238636;font-size:12px">▶ Localize</button>
+      </div>
+    </div>
+
+    <!-- Split result area -->
+    <div style="display:flex;height:340px">
+
+      <!-- LEFT: plot_correspondences() output -->
+      <div style="flex:1.2;padding:10px;border-right:1px solid #30363d;display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:11px;color:#8b949e;font-family:monospace">
+          <span style="color:#3fb950">●</span> 142 inliers &nbsp;
+          <span style="color:#f85149">●</span> 45 outliers &nbsp;|&nbsp;
+          best ref: <span style="color:#e3b341">frame_042</span>
+        </div>
+
+        <!-- Stitched image with connecting lines -->
+        <div style="flex:1;background:#0d1117;border-radius:4px;position:relative;overflow:hidden;display:flex">
+          <!-- Query image half -->
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-right:1px dashed #30363d">
+            <div style="font-size:22px">📷</div>
+            <div style="font-size:10px;color:#58a6ff">query.jpg</div>
+            <!-- keypoints -->
+            <div style="position:absolute;top:25%;left:20%;width:6px;height:6px;border-radius:50%;background:#3fb950;border:1px solid #fff"></div>
+            <div style="position:absolute;top:45%;left:30%;width:6px;height:6px;border-radius:50%;background:#3fb950;border:1px solid #fff"></div>
+            <div style="position:absolute;top:60%;left:22%;width:6px;height:6px;border-radius:50%;background:#f85149;border:1px solid #fff"></div>
+            <div style="position:absolute;top:35%;left:15%;width:6px;height:6px;border-radius:50%;background:#3fb950;border:1px solid #fff"></div>
+          </div>
+
+          <!-- Ref image half -->
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
+            <div style="font-size:22px">🖼</div>
+            <div style="font-size:10px;color:#58a6ff">frame_042.jpg</div>
+            <!-- matched keypoints -->
+            <div style="position:absolute;top:26%;left:62%;width:6px;height:6px;border-radius:50%;background:#3fb950;border:1px solid #fff"></div>
+            <div style="position:absolute;top:44%;left:72%;width:6px;height:6px;border-radius:50%;background:#3fb950;border:1px solid #fff"></div>
+            <div style="position:absolute;top:58%;left:65%;width:6px;height:6px;border-radius:50%;background:#f85149;border:1px solid #fff"></div>
+            <div style="position:absolute;top:36%;left:58%;width:6px;height:6px;border-radius:50%;background:#3fb950;border:1px solid #fff"></div>
+          </div>
+
+          <!-- SVG lines connecting keypoints across the stitch -->
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+            <!-- inlier lines (green) -->
+            <line x1="23%" y1="25%" x2="65%" y2="26%" stroke="#3fb950" stroke-width="1" stroke-opacity="0.7"/>
+            <line x1="33%" y1="45%" x2="75%" y2="44%" stroke="#3fb950" stroke-width="1" stroke-opacity="0.7"/>
+            <line x1="18%" y1="35%" x2="61%" y2="36%" stroke="#3fb950" stroke-width="1" stroke-opacity="0.7"/>
+            <!-- outlier line (red) -->
+            <line x1="25%" y1="60%" x2="68%" y2="58%" stroke="#f85149" stroke-width="1" stroke-opacity="0.7"/>
+          </svg>
+        </div>
+
+        <!-- Pose text -->
+        <div style="background:#0d1117;border-radius:4px;padding:5px 8px;font-family:monospace;font-size:10px;color:#8b949e">
+          <span style="color:#e3b341">pose</span>: R=[…] t=[1.2, -0.3, 0.8] &nbsp;
+          <span style="color:#3fb950">✓ success</span>
+        </div>
+      </div>
+
+      <!-- RIGHT: 3D scene -->
+      <div style="flex:1;padding:10px;display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:11px;color:#8b949e;font-family:monospace">
+          <span style="color:#f85149">■</span> query &nbsp;
+          <span style="color:#e3b341">■</span> ref frame_042 &nbsp;
+          <span style="color:#58a6ff;opacity:0.6">■</span> other cams &nbsp;
+          <span style="color:#8b949e">·</span> point cloud
+        </div>
+        <div style="flex:1;background:#0d1117;border-radius:4px;position:relative;overflow:hidden">
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#1c2128;font-size:40px">⬡⬡⬡</div>
+          <!-- other cameras (faint blue) -->
+          <div style="position:absolute;top:30%;left:25%;font-size:11px;opacity:0.4;color:#58a6ff">▲</div>
+          <div style="position:absolute;top:55%;left:35%;font-size:11px;opacity:0.4;color:#58a6ff">▲</div>
+          <div style="position:absolute;top:25%;left:60%;font-size:11px;opacity:0.4;color:#58a6ff">▲</div>
+          <div style="position:absolute;top:65%;left:65%;font-size:11px;opacity:0.4;color:#58a6ff">▲</div>
+          <!-- ref camera (yellow, highlighted) -->
+          <div style="position:absolute;top:42%;left:48%;font-size:16px;color:#e3b341" title="ref frame_042">▲</div>
+          <!-- query camera (red, highlighted) -->
+          <div style="position:absolute;top:39%;left:56%;font-size:16px;color:#f85149" title="query camera">▲</div>
+          <!-- connection line between query and ref -->
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+            <line x1="51%" y1="43%" x2="58%" y2="41%" stroke="#e3b341" stroke-width="1.5" stroke-dasharray="4,3" stroke-opacity="0.8"/>
+          </svg>
+          <div style="position:absolute;bottom:6px;right:8px;font-size:9px;color:#30363d">PyVista vtk</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Batch mode collapsed -->
+    <div style="padding:8px 14px;background:#161b22;border-top:1px solid #30363d;font-size:11px;color:#8b949e;display:flex;align-items:center;gap:8px;cursor:pointer">
+      <span style="color:#58a6ff">▼ Batch mode</span>
+      <span>— select folder of query images → summary table (image, inliers, pose, status)</span>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:16px">
+  <div class="option" data-choice="good" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>Yes, this is it</h3><p>Stitched image + connecting lines left, 3D with highlighted pair right</p></div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">~</div>
+    <div class="content"><h3>Still needs tweaking</h3><p>Tell me what in the terminal</p></div>
+  </div>
+</div>

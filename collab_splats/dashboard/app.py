@@ -14,7 +14,7 @@ from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
 from collab_splats.dashboard.panes.reconstruct import ReconstructPane
 from collab_splats.dashboard.panes.semantics import SemanticsPane
-from collab_splats.dashboard.panes.localize import LocalizePane, _scan_recon_methods
+from collab_splats.dashboard.panes.localize import LocalizePane
 from collab_splats.dashboard.panes.visualize import ScenePanel, _scan_datasets, _scan_backends, _scan_extractors
 from collab_splats.dashboard.state import AppState
 
@@ -66,71 +66,85 @@ class App(param.Parameterized):
             "Visualize": ScenePanel(base_dir=self._base_dir, state=self._state, op_log=self._op_log),
             "Localize": LocalizePane(state=self._state, op_log=self._op_log),
         }
-        # Sidebar MODELS widgets — created before _build_sidebar
+        # Sidebar LOAD RESULTS widgets
         datasets = _scan_datasets(self._base_dir)
         dataset_names = [p.name for p in datasets]
-        self._models_dataset_dd = pn.widgets.Select(
+        self._results_dataset_dd = pn.widgets.Select(
             name="Dataset", options=dataset_names or ["(none)"], width=280,
         )
-        self._models_backend_dd = pn.widgets.Select(
-            name="Pointcloud backend", options=[], width=280,
+        self._results_load_btn = pn.widgets.Button(
+            name="⚡  Load Results", button_type="primary", width=280,
         )
-        self._models_extractor_dd = pn.widgets.Select(
-            name="Semantic model", options=[], width=280,
+        self._results_status = pn.pane.HTML(
+            "<p style='color:#666;font-size:12px'>No results loaded</p>", width=280,
         )
-        self._models_load_btn = pn.widgets.Button(
-            name="⚡  Load", button_type="primary", width=280,
+        self._results_dataset_dd.param.watch(self._on_results_dataset_change, "value")
+        self._results_load_btn.on_click(self._on_results_load)
+
+        # Sidebar SEMANTICS MODEL widgets
+        self._sem_extractor_dd = pn.widgets.Select(
+            name="Extractor", options=[], width=280,
         )
-        self._models_status = pn.pane.HTML(
-            "<p style='color:#666;font-size:12px'>No data loaded</p>", width=280,
+        self._sem_status = pn.pane.HTML(
+            "<p style='color:#666;font-size:12px'>No dataset loaded</p>", width=280,
         )
-        self._models_dataset_dd.param.watch(self._on_models_dataset_change, "value")
-        self._models_load_btn.on_click(self._on_models_load)
-        # Populate backend options for initial dataset selection
+        self._sem_extractor_dd.param.watch(self._on_sem_extractor_change, "value")
+
+        # Sidebar POINTCLOUD MODEL widgets
+        self._pc_creator_dd = pn.widgets.Select(
+            name="Creator",
+            options=["vggtx", "mapanything", "vggt_omega"],
+            value="vggtx",
+            width=280,
+        )
+        self._pc_conf_slider = pn.widgets.FloatSlider(
+            name="Conf threshold", start=0.0, end=100.0, step=1.0, value=35.0, width=280,
+        )
+        self._pc_creator_dd.param.watch(self._on_pc_creator_change, "value")
+        self._pc_conf_slider.param.watch(self._on_pc_conf_change, "value")
+        # Initialize AppState from default widget values
+        self._state.pointcloud_creator = self._pc_creator_dd.value
+        self._state.pointcloud_creator_conf = self._pc_conf_slider.value
+
+        # Populate backend/extractor options for initial dataset selection
         if dataset_names:
-            self._on_models_dataset_change(None)
+            self._on_results_dataset_change(None)
 
         # Localize sidebar widgets — created before _build_sidebar
-        self._localize_method_dd = pn.widgets.Select(
-            name="Localize method", options=[], width=280,
-        )
+        # Map source is derived from pointcloud_backend (set by "Load Results") — no separate dropdown.
         self._localize_extractor_dd = pn.widgets.Select(
-            name="Localize extractor",
+            name="Localize method",
             options=["DISK+LightGlue", "XFeat+MNN"],
             value="DISK+LightGlue",
             width=280,
         )
-        self._localize_method_dd.param.watch(self._on_localize_method_changed, ["value"])
         self._localize_extractor_dd.param.watch(self._on_localize_extractor_changed, ["value"])
+        # Sync localize_method from pointcloud_backend whenever backend changes
+        self._state.param.watch(self._on_pointcloud_backend_changed_localize, ["pointcloud_backend"])
 
         # Sidebar VIEW widgets
-        self._ground_plane_check = pn.widgets.Checkbox(
-            name="Align ground plane", value=True,
-        )
         self._ground_plane_status = pn.pane.HTML(
             "<p style='color:#666;font-size:11px'></p>", width=280,
         )
         self._redetect_btn = pn.widgets.Button(
-            name="↺  Re-detect ground plane", button_type="light", width=280,
+            name="Detect ground plane", button_type="primary", width=170,
         )
         self._sidebar_frustum_check = pn.widgets.Checkbox(
             name="Show frustums", value=False,
         )
-        self._ground_plane_check.param.watch(self._on_ground_plane_toggle, "value")
         self._redetect_btn.on_click(self._on_redetect_ground_plane)
         self._sidebar_frustum_check.param.watch(self._on_sidebar_frustum_toggle, "value")
 
         # Sidebar MESH widgets
         self._mesh_voxel_input = pn.widgets.FloatInput(
-            name="voxel_size", value=0.01, step=0.005, start=0.001, end=1.0, width=125,
+            name="voxel_size", value=0.005, step=0.005, start=0.001, end=1.0, width=85,
         )
         self._mesh_sdf_input = pn.widgets.FloatInput(
-            name="sdf_trunc", value=0.04, step=0.01, start=0.001, end=5.0, width=125,
+            name="sdf_trunc", value=0.02, step=0.001, start=0.001, end=5.0, width=85,
         )
         self._mesh_depth_input = pn.widgets.FloatInput(
-            name="depth_trunc", value=10.0, step=1.0, start=0.1, end=200.0, width=280,
+            name="depth_trunc", value=1.0, step=0.5, start=0.1, end=200.0, width=85,
         )
-        self._mesh_clean_check = pn.widgets.Checkbox(name="clean", value=True)
         self._mesh_run_btn = pn.widgets.Button(
             name="⚙  Run Mesh", button_type="primary", width=280, disabled=True,
         )
@@ -140,88 +154,91 @@ class App(param.Parameterized):
         self._mesh_progress = pn.widgets.Progress(
             active=False, visible=False, width=275, bar_color="primary"
         )
+        self._mesh_stop_btn = pn.widgets.Button(
+            name="⏹  Stop", button_type="danger", width=280, visible=False,
+        )
         self._mesh_run_btn.on_click(self._on_run_mesh_sidebar)
+        self._mesh_stop_btn.on_click(self._on_stop_mesh_sidebar)
         self._state.param.watch(self._on_feedforward_for_mesh, "feedforward_result")
+        # Re-check cache whenever any mesh param widget changes
+        for _w in (self._mesh_voxel_input, self._mesh_sdf_input, self._mesh_depth_input):
+            _w.param.watch(lambda _e: self._check_mesh_cache(), "value")
 
         # Localize section — hidden until Localize tab is active
         self._localize_section = pn.Column(
             pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Localize</h3>"),
-            self._localize_method_dd,
             self._localize_extractor_dd,
             pn.layout.Divider(),
             visible=False,
         )
 
-        # Combined View+Mesh section — hidden until Visualize tab is active
-        self._view_section = pn.Column(
-            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>View</h3>"),
-            self._ground_plane_check,
-            self._ground_plane_status,
-            self._redetect_btn,
-            self._sidebar_frustum_check,
+        # Mesh params sub-section — shown only when mode selector is on "Mesh"
+        self._mesh_section = pn.Column(
             pn.layout.Divider(),
             pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Mesh</h3>"),
-            pn.Row(self._mesh_voxel_input, self._mesh_sdf_input),
-            self._mesh_depth_input,
-            self._mesh_clean_check,
-            self._mesh_run_btn,
+            pn.Row(self._mesh_voxel_input, self._mesh_sdf_input, self._mesh_depth_input),
+            pn.Row(self._mesh_run_btn, self._mesh_stop_btn),
             self._mesh_progress,
             self._mesh_status,
             visible=False,
         )
 
+        # Combined View section — hidden until Visualize tab is active
+        self._view_section = pn.Column(
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>View</h3>"),
+            pn.Row(self._redetect_btn, self._sidebar_frustum_check),
+            self._ground_plane_status,
+            self._mesh_section,
+            visible=False,
+        )
+
+        # Show/hide mesh params whenever the mode selector changes.
+        # Watch the widget directly — ScenePanel.mode is only set after the early-return
+        # guard (requires mesh.ply to exist), so watching it would miss the case where
+        # the user clicks Mesh to configure and kick off a first run.
+        self._panes["Visualize"]._mode_selector.param.watch(
+            lambda e: setattr(self._mesh_section, "visible", e.new == "Mesh"), "value"
+        )
+
         self._sidebar = self._build_sidebar()
-        self._state.param.watch(self._on_output_dir_changed_localize, ["output_dir"])
 
     def _build_sidebar(self) -> pn.Column:
-        """Build the persistent sidebar: session controls + active session info."""
+        """Build the persistent sidebar: dataset controls + model info."""
         self._new_video_btn = pn.widgets.Button(
-            name="📹  New from video", button_type="primary", width=280
-        )
-        self._load_existing_btn = pn.widgets.Button(
-            name="📁  Load existing results", button_type="light", width=280
+            name="📹  New from video", button_type="light", width=280
         )
         self._video_input = pn.widgets.TextInput(
             name="Video path", placeholder="/workspace/fieldwork-data/.../video.MP4",
             width=280, visible=False,
         )
-        self._refresh_dirs_btn = pn.widgets.Button(name="↻", width=40, visible=False)
-        _dir_options = _scan_output_dirs(self._base_dir)
-        self._output_dir_select = pn.widgets.Select(
-            name="Output directory",
-            options=_dir_options if _dir_options else ["(no sessions found)"],
-            width=230,
-            visible=False,
-            disabled=not bool(_dir_options),
-        )
-        self._refresh_dirs_btn.on_click(self._on_refresh_dirs)
         self._confirm_btn = pn.widgets.Button(
-            name="Confirm", button_type="success", width=280, visible=False
+            name="Start preprocessing", button_type="success", width=280, visible=False
         )
         self._session_status = pn.pane.HTML(
-            "<p style='color:#666;font-size:12px'>No session loaded</p>", width=280
+            "<p style='color:#666;font-size:12px'></p>", width=280
         )
 
         self._new_video_btn.on_click(self._on_new_video)
-        self._load_existing_btn.on_click(self._on_load_existing)
         self._confirm_btn.on_click(self._on_confirm_session)
 
         return pn.Column(
-            pn.pane.HTML("<h3 style='color:#2596be;margin:0 0 8px 0'>Session</h3>"),
-            self._new_video_btn,
-            self._load_existing_btn,
-            self._video_input,
-            pn.Row(self._output_dir_select, self._refresh_dirs_btn),
-            self._confirm_btn,
+            pn.pane.HTML("<h3 style='color:#2596be;margin:0 0 8px 0'>Dataset</h3>"),
+            self._results_dataset_dd,
+            self._results_load_btn,
+            self._results_status,
             pn.layout.Divider(),
+            self._new_video_btn,
+            self._video_input,
+            self._confirm_btn,
             self._session_status,
             pn.layout.Divider(),
-            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Models</h3>"),
-            self._models_dataset_dd,
-            self._models_backend_dd,
-            self._models_extractor_dd,
-            self._models_load_btn,
-            self._models_status,
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Semantics Model</h3>"),
+            self._sem_extractor_dd,
+            self._sem_status,
+            pn.layout.Divider(),
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Pointcloud Model</h3>"),
+            self._pc_creator_dd,
+            self._pc_conf_slider,
             pn.layout.Divider(),
             self._localize_section,
             self._view_section,
@@ -230,27 +247,7 @@ class App(param.Parameterized):
 
     def _on_new_video(self, event: Any) -> None:
         self._video_input.visible = True
-        self._output_dir_select.visible = False
-        self._refresh_dirs_btn.visible = False
-        self._confirm_btn.name = "Start session"
         self._confirm_btn.visible = True
-
-    def _on_load_existing(self, event: Any) -> None:
-        self._video_input.visible = False
-        self._output_dir_select.visible = True
-        self._refresh_dirs_btn.visible = True
-        self._confirm_btn.name = "Load session"
-        self._confirm_btn.visible = True
-
-    def _on_refresh_dirs(self, event: Any) -> None:
-        """Re-scan base_dir and refresh the output directory selector options."""
-        dirs = _scan_output_dirs(self._base_dir)
-        if dirs:
-            self._output_dir_select.options = dirs
-            self._output_dir_select.disabled = False
-        else:
-            self._output_dir_select.options = ["(no sessions found)"]
-            self._output_dir_select.disabled = True
 
     def _on_confirm_session(self, event: Any) -> None:
         """Handle session confirmation for both new-video and load-existing flows."""
@@ -265,100 +262,76 @@ class App(param.Parameterized):
     def _do_confirm_session(self) -> None:
         """Inner confirm logic — exceptions surface to _on_confirm_session."""
         self._session_status.object = "<p style='color:#aaa;font-size:12px'>Loading…</p>"
-        if self._video_input.visible:
-            video_path = Path(self._video_input.value.strip())
-            if not video_path.exists():
-                self._session_status.object = (
-                    f"<p style='color:#e05050;font-size:12px'>Not found: {video_path}</p>"
-                )
-                return
-            self._state.video_path = video_path
-            auto_out = Path("/workspace/outputs") / video_path.stem
-            self._state.output_dir = auto_out
+        video_path = Path(self._video_input.value.strip())
+        if not video_path.exists():
             self._session_status.object = (
-                f"<p style='color:#50c050;font-size:12px'>Video: {video_path.name}<br/>"
-                f"Output: {auto_out}</p>"
+                f"<p style='color:#e05050;font-size:12px'>Not found: {video_path}</p>"
             )
-        else:
-            # Reject sentinel value set when base_dir contains no valid sessions
-            selected = self._output_dir_select.value
-            if selected == "(no sessions found)" or not selected:
-                self._session_status.object = (
-                    "<p style='color:#e05050;font-size:12px'>No session selected</p>"
-                )
-                return
-            out_dir = self._base_dir / selected
-            config_file = out_dir / "run_config.yaml"
-            if not config_file.exists():
-                self._session_status.object = (
-                    f"<p style='color:#e05050;font-size:12px'>No run_config.yaml in {out_dir}</p>"
-                )
-                return
-            # Switch to Preprocess tab so the pane is rendered before state updates fire
-            if self._tabs is not None:
-                self._tabs.active = 0
-            self._state.output_dir = out_dir
-
-            # Parse video_path from config if present and file exists
-            try:
-                config = yaml.safe_load(config_file.read_text())
-                raw_vp = config.get("video_path") or config.get("input_path")
-                if raw_vp:
-                    vp = Path(raw_vp)
-                    if vp.exists():
-                        self._state.video_path = vp
-            except Exception as exc:
-                logger.warning("Could not parse video_path from %s: %s", config_file, exc)
-
-            self._session_status.object = (
-                f"<p style='color:#50c050;font-size:12px'>Loaded: {out_dir.name}</p>"
-            )
-
+            return
+        # Switch to Preprocess tab so the pane is rendered before state updates fire
+        if self._tabs is not None:
+            self._tabs.active = 0
+        self._state.video_path = video_path
+        auto_out = Path("/workspace/outputs") / video_path.stem
+        self._state.output_dir = auto_out
+        # Auto-restore cached frames if a previous extraction exists
+        zarr_candidate = auto_out / "frames.zarr"
+        if zarr_candidate.exists():
+            self._state.frames_zarr_path = zarr_candidate
+        self._session_status.object = (
+            f"<p style='color:#50c050;font-size:12px'>Video: {video_path.name}<br/>"
+            f"Output: {auto_out}</p>"
+        )
         self._video_input.visible = False
-        self._output_dir_select.visible = False
-        self._refresh_dirs_btn.visible = False
         self._confirm_btn.visible = False
 
-    def _on_models_dataset_change(self, event: Any) -> None:
-        """Repopulate backend dropdown when dataset selection changes."""
-        name = self._models_dataset_dd.value
+    def _on_results_dataset_change(self, event: Any) -> None:
+        """Repopulate extractor dropdown when dataset selection changes."""
+        name = self._results_dataset_dd.value
         if not name or name == "(none)":
-            self._models_backend_dd.options = []
-            self._models_extractor_dd.options = []
+            self._sem_extractor_dd.options = []
             return
         ds_dir = self._base_dir / name
         backends = _scan_backends(ds_dir)
-        self._models_backend_dd.options = backends or ["(none)"]
         if backends:
             extractors = _scan_extractors(ds_dir, backends[0])
-            self._models_extractor_dd.options = extractors or ["(none)"]
+            self._sem_extractor_dd.options = extractors or ["(none)"]
+            if extractors:
+                self._sem_status.object = (
+                    f"<p style='color:#50c050;font-size:12px'>{extractors[0]}</p>"
+                )
 
-    def _on_models_load(self, event: Any) -> None:
+    def _on_results_load(self, event: Any) -> None:
         """Kick off background load of FeedforwardResult."""
-        self._models_load_btn.disabled = True
-        self._models_status.object = "<p style='color:#aaa;font-size:12px'>Loading…</p>"
-        t = threading.Thread(target=self._do_load_models, daemon=True)
+        self._results_load_btn.disabled = True
+        self._results_status.object = "<p style='color:#aaa;font-size:12px'>Loading…</p>"
+        t = threading.Thread(target=self._do_load_results, daemon=True)
         t.start()
 
-    def _do_load_models(self) -> None:
-        """Background: load FeedforwardResult and populate AppState."""
+    def _do_load_results(self) -> None:
+        """Background: load FeedforwardResult and populate AppState for Visualize tab."""
         try:
             from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
-            ds_name = self._models_dataset_dd.value
-            backend = self._models_backend_dd.value
-            extractor = self._models_extractor_dd.value
+            ds_name = self._results_dataset_dd.value
 
-            if not ds_name or ds_name == "(none)" or not backend or backend == "(none)":
-                self._models_status.object = (
-                    "<p style='color:#e05050;font-size:12px'>Select dataset and backend</p>"
+            if not ds_name or ds_name == "(none)":
+                self._results_status.object = (
+                    "<p style='color:#e05050;font-size:12px'>Select dataset</p>"
                 )
                 return
 
             ds_dir = self._base_dir / ds_name
+            backends = _scan_backends(ds_dir)
+            if not backends:
+                self._results_status.object = (
+                    "<p style='color:#e05050;font-size:12px'>No backends found in dataset</p>"
+                )
+                return
+            backend = backends[0]
             zarr_path = ds_dir / backend / "feedforward.zarr"
             if not zarr_path.exists():
-                self._models_status.object = (
+                self._results_status.object = (
                     f"<p style='color:#e05050;font-size:12px'>feedforward.zarr not found in {backend}</p>"
                 )
                 return
@@ -400,15 +373,37 @@ class App(param.Parameterized):
             def _set_state() -> None:
                 self._state.output_dir = ds_dir
                 self._state.pointcloud_backend = backend
-                self._state.semantic_extractor = extractor if extractor and extractor != "(none)" else ""
+                # Sync pc_creator dropdown to match the loaded backend directory name
+                if backend in self._pc_creator_dd.options:
+                    self._pc_creator_dd.value = backend
+                # Sync semantic_extractor state so ScenePanel extractor_dd prefers it
+                extractor_val = self._sem_extractor_dd.value
+                if extractor_val and extractor_val not in ("", "(none)"):
+                    self._state.semantic_extractor = extractor_val
                 self._state.ground_plane_R = gp_R
                 self._state.ground_plane_t = gp_t
+                # Auto-restore cached frames if available
+                zarr_candidate = ds_dir / "frames.zarr"
+                if zarr_candidate.exists():
+                    self._state.frames_zarr_path = zarr_candidate
+                # Auto-restore video path from run_config.yaml if present
+                config_file = ds_dir / "run_config.yaml"
+                if config_file.exists():
+                    try:
+                        config = yaml.safe_load(config_file.read_text())
+                        raw_vp = config.get("video_path") or config.get("input_path")
+                        if raw_vp:
+                            vp = Path(raw_vp)
+                            if vp.exists():
+                                self._state.video_path = vp
+                    except Exception as exc:
+                        logger.warning("Could not parse video_path from %s: %s", config_file, exc)
                 self._state.feedforward_result = result
                 if gp_status:
                     self._ground_plane_status.object = (
                         f"<p style='color:#50c050;font-size:11px'>{gp_status}</p>"
                     )
-                self._models_status.object = (
+                self._results_status.object = (
                     f"<p style='color:#50c050;font-size:12px'>"
                     f"Loaded {n_pts:,} pts<br/>"
                     f"<span style='color:#666'>{ds_name} / {backend}</span></p>"
@@ -416,16 +411,28 @@ class App(param.Parameterized):
 
             pn.io.state.execute(_set_state)
         except Exception as exc:
-            logger.exception("_do_load_models failed")
-            self._models_status.object = (
+            logger.exception("_do_load_results failed")
+            self._results_status.object = (
                 f"<p style='color:#e05050;font-size:12px'>Load failed: {exc}</p>"
             )
         finally:
-            self._models_load_btn.disabled = False
+            self._results_load_btn.disabled = False
 
-    def _on_ground_plane_toggle(self, event: Any) -> None:
-        """Propagate ground plane enable/disable to AppState."""
-        self._state.ground_plane_enabled = event.new
+    def _on_sem_extractor_change(self, event: Any) -> None:
+        """Push selected semantic extractor to AppState → SemanticsPane picks it up."""
+        self._state.semantic_extractor = event.new or ""
+        if event.new and event.new != "(none)":
+            self._sem_status.object = (
+                f"<p style='color:#50c050;font-size:12px'>{event.new}</p>"
+            )
+
+    def _on_pc_creator_change(self, event: Any) -> None:
+        """Push selected pointcloud creator to AppState → ReconstructPane uses it on run."""
+        self._state.pointcloud_creator = event.new or "vggtx"
+
+    def _on_pc_conf_change(self, event: Any) -> None:
+        """Push conf threshold to AppState → ReconstructPane uses it on run."""
+        self._state.pointcloud_creator_conf = event.new
 
     def _on_redetect_ground_plane(self, event: Any) -> None:
         """Recompute ground plane from current result and save to transforms.json."""
@@ -441,28 +448,51 @@ class App(param.Parameterized):
         if scene is not None and hasattr(scene, "_on_frustum_toggle_from_sidebar"):
             scene._on_frustum_toggle_from_sidebar(event.new)
 
-    def _on_output_dir_changed_localize(self, event: Any) -> None:
-        """Rescan feedforward methods for Localize sidebar when output_dir changes."""
-        output_dir = event.new
-        methods = _scan_recon_methods(Path(output_dir)) if output_dir else []
-        self._localize_method_dd.options = methods
-        if methods:
-            self._localize_method_dd.value = methods[0]
-            self._state.localize_method = methods[0]
-        else:
-            self._state.localize_method = ""
-
-    def _on_localize_method_changed(self, event: Any) -> None:
+    def _on_pointcloud_backend_changed_localize(self, event: Any) -> None:
+        """Sync localize_method from pointcloud_backend — map source follows loaded results."""
         self._state.localize_method = event.new or ""
 
     def _on_localize_extractor_changed(self, event: Any) -> None:
         self._state.localize_extractor = event.new or "DISK+LightGlue"
 
+    def _mesh_params_path(self) -> "Path | None":
+        """Return path to mesh_params.json for the currently loaded dataset/backend."""
+        output_dir = self._state.output_dir
+        backend = self._state.pointcloud_backend
+        if not output_dir or not backend:
+            return None
+        return Path(output_dir) / backend / "mesh" / "mesh_params.json"
+
+    def _check_mesh_cache(self) -> None:
+        """Compare saved mesh params to current widget values; update status label."""
+        if self._state.feedforward_result is None:
+            return
+        path = self._mesh_params_path()
+        if path is None or not path.exists():
+            self._mesh_status.object = "<p style='color:#666;font-size:12px'>Ready</p>"
+            return
+        try:
+            import json
+            cached = json.loads(path.read_text())
+            match = (
+                cached.get("voxel_size") == self._mesh_voxel_input.value
+                and cached.get("sdf_trunc") == self._mesh_sdf_input.value
+                and cached.get("depth_trunc") == self._mesh_depth_input.value
+                and not cached.get("clean_repair", False)
+            )
+            if match:
+                self._mesh_status.object = "<p style='color:#50c050;font-size:12px'>Cached ✓</p>"
+            else:
+                self._mesh_status.object = (
+                    "<p style='color:#e0a000;font-size:12px'>Params changed — rerun?</p>"
+                )
+        except Exception:
+            self._mesh_status.object = "<p style='color:#666;font-size:12px'>Ready</p>"
+
     def _on_feedforward_for_mesh(self, event: Any) -> None:
         """Enable sidebar Run Mesh button when feedforward_result is available."""
         self._mesh_run_btn.disabled = event.new is None
-        if event.new is not None:
-            self._mesh_status.object = "<p style='color:#666;font-size:12px'>Ready</p>"
+        self._check_mesh_cache()
 
     def _on_run_mesh_sidebar(self, event: Any) -> None:
         """Trigger mesh generation via ScenePanel with sidebar params."""
@@ -470,24 +500,47 @@ class App(param.Parameterized):
         if scene is None:
             return
         self._mesh_run_btn.disabled = True
+        self._mesh_stop_btn.visible = True
         self._mesh_status.object = "<p style='color:#aaa;font-size:12px'>Running…</p>"
-        self._mesh_progress.active = True
+        self._mesh_progress.value = 0
+        self._mesh_progress.active = False
         self._mesh_progress.visible = True
         scene.run_mesh(
             voxel_size=self._mesh_voxel_input.value,
             sdf_trunc=self._mesh_sdf_input.value,
             depth_trunc=self._mesh_depth_input.value,
-            clean_repair=self._mesh_clean_check.value,
+            clean_repair=False,
             on_done=self._on_mesh_done,
+            on_progress=self._on_mesh_progress,
+        )
+
+    def _on_mesh_progress(self, desc: str, pct: int) -> None:
+        """Update sidebar progress bar from tqdm messages."""
+        self._mesh_progress.value = pct
+        self._mesh_status.object = (
+            f"<p style='color:#aaa;font-size:12px'>{desc}: {pct}%</p>"
         )
 
     def _on_mesh_done(self, ok: bool, msg: str) -> None:
         """Re-enable sidebar Run Mesh button and update status after generation."""
         self._mesh_run_btn.disabled = False
+        self._mesh_stop_btn.visible = False
         self._mesh_progress.active = False
         self._mesh_progress.visible = False
-        color = "#50c050" if ok else "#e05050"
-        self._mesh_status.object = f"<p style='color:{color};font-size:12px'>{msg}</p>"
+        if ok:
+            self._check_mesh_cache()  # shows "Cached ✓" now that params file is written
+        else:
+            color = "#e05050" if msg != "Mesh cancelled." else "#e0a000"
+            self._mesh_status.object = f"<p style='color:{color};font-size:12px'>{msg}</p>"
+
+    def _on_stop_mesh_sidebar(self, event: Any) -> None:
+        """Terminate the mesh subprocess and reset sidebar controls."""
+        scene = self._panes.get("Visualize")
+        if scene is not None:
+            scene.stop_mesh()
+        self._mesh_stop_btn.visible = False
+        self._mesh_run_btn.disabled = False
+        self._mesh_status.object = "<p style='color:#e0a000;font-size:12px'>Cancelling…</p>"
 
     def _do_detect_ground_plane(self) -> None:
         """Background: RANSAC ground plane detection; save transforms.json."""
@@ -499,9 +552,7 @@ class App(param.Parameterized):
             result = self._state.feedforward_result
             R, t = fit_dominant_plane(result.points)
 
-            ds_name = self._models_dataset_dd.value
-            backend = self._models_backend_dd.value
-            transforms_path = self._base_dir / ds_name / backend / "transforms.json"
+            transforms_path = Path(self._state.output_dir) / self._state.pointcloud_backend / "transforms.json"
             transforms_path.write_text(
                 json.dumps({"ground_plane": {"R": R.tolist(), "t": t.tolist()}}, indent=2)
             )
@@ -532,9 +583,13 @@ class App(param.Parameterized):
             sizing_mode="stretch_width",
         )
 
-        # Wire tab activation → ScenePanel mode rescan + section visibility
+        # Wire tab activation → pane resync + section visibility
+        preprocess_tab_index = list(self._panes.keys()).index("Preprocess")
+        reconstruct_tab_index = list(self._panes.keys()).index("Reconstruct")
         visualize_tab_index = list(self._panes.keys()).index("Visualize")
         localize_tab_index = list(self._panes.keys()).index("Localize")
+        self._panes["Preprocess"].wire_tabs(self._tabs, preprocess_tab_index)
+        self._panes["Reconstruct"].wire_tabs(self._tabs, reconstruct_tab_index)
         self._panes["Visualize"].wire_tabs(self._tabs, visualize_tab_index)
 
         def _on_tab_change(event: Any) -> None:

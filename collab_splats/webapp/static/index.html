@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>collab-splats</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<nav id="tab-nav">
+  <button class="tab-btn active" data-tab="preprocess">Preprocess</button>
+  <button class="tab-btn" data-tab="semantics">Semantics</button>
+  <button class="tab-btn" data-tab="reconstruct">Reconstruct</button>
+  <button class="tab-btn" data-tab="visualize">Visualize</button>
+  <button class="tab-btn" data-tab="localize">Localize</button>
+  <span id="session-label"></span>
+</nav>
+<div id="app">
+  <aside id="sidebar"></aside>
+  <main id="main">
+    <!-- Preprocess tab panel -->
+    <section class="tab-panel active" id="tab-preprocess">
+      <div style="display:flex;flex:1;overflow:hidden">
+        <div id="video-container" style="flex:1;background:#000;display:flex;align-items:center;justify-content:center">
+          <video id="main-video" controls style="max-width:100%;max-height:100%;object-fit:contain" preload="metadata"></video>
+        </div>
+        <div id="metrics-panel" style="width:260px;padding:10px;background:#0d0d0d;border-left:1px solid #1e1e2e;overflow-y:auto;font-size:11px;color:#888">
+          <div id="video-meta"></div>
+        </div>
+      </div>
+      <div id="frame-strip" style="height:88px;background:#0d0d0d;border-top:1px solid #1e1e2e;display:flex;gap:3px;padding:4px 8px;overflow-x:auto;flex-shrink:0;align-items:center"></div>
+    </section>
+
+    <!-- Other tab panels (initially hidden) -->
+    <section class="tab-panel" id="tab-semantics"></section>
+    <section class="tab-panel" id="tab-reconstruct">
+      <div class="log-area" id="log-reconstruct" style="margin:10px"></div>
+    </section>
+    <section class="tab-panel" id="tab-visualize">
+      <canvas id="three-canvas" style="flex:1;display:block;min-height:0;width:100%"></canvas>
+    </section>
+    <section class="tab-panel" id="tab-localize">
+      <div class="log-area" id="log-localize" style="margin:10px"></div>
+    </section>
+  </main>
+</div>
+<div id="statusbar">
+  <div id="progress-track"><div id="progress-fill"></div></div>
+  <span id="status-msg"></span>
+</div>
+<script type="module" src="/static/js/state.js"></script>
+<script type="module" src="/static/js/preprocess.js"></script>
+<script type="module" src="/static/js/reconstruct.js"></script>
+<script type="module" src="/static/js/visualize.js"></script>
+<script type="module" src="/static/js/semantics.js"></script>
+<script type="module" src="/static/js/localize.js"></script>
+</body>
+</html>

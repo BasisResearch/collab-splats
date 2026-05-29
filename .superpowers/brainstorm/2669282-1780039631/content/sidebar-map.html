@@ -1,0 +1,61 @@
+<h2>Sidebar sections per tab</h2>
+<p class="subtitle">Session always pinned at top · other sections are tab-specific</p>
+
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px;font-family:monospace;font-size:11px">
+
+  <!-- Preprocess -->
+  <div style="background:#0d0d0d;border:1px solid #30363d;border-radius:6px;overflow:hidden">
+    <div style="background:#161b22;padding:7px 10px;color:#2596be;font-weight:bold;border-bottom:1px solid #222">Preprocess</div>
+    <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+      <div style="background:#1a2a3a;border:1px solid #2596be33;border-radius:3px;padding:5px 8px;color:#ccc">📁 Session</div>
+      <div style="background:#1a1a2a;border:1px solid #33336644;border-radius:3px;padding:5px 8px;color:#aaa">🎬 Extraction</div>
+    </div>
+  </div>
+
+  <!-- Semantics -->
+  <div style="background:#0d0d0d;border:1px solid #30363d;border-radius:6px;overflow:hidden">
+    <div style="background:#161b22;padding:7px 10px;color:#2596be;font-weight:bold;border-bottom:1px solid #222">Semantics</div>
+    <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+      <div style="background:#1a2a3a;border:1px solid #2596be33;border-radius:3px;padding:5px 8px;color:#ccc">📁 Session</div>
+      <div style="background:#2a1a2a;border:1px solid #66334455;border-radius:3px;padding:5px 8px;color:#aaa">🧠 Semantic methods</div>
+    </div>
+  </div>
+
+  <!-- Reconstruct -->
+  <div style="background:#0d0d0d;border:1px solid #30363d;border-radius:6px;overflow:hidden">
+    <div style="background:#161b22;padding:7px 10px;color:#2596be;font-weight:bold;border-bottom:1px solid #222">Reconstruct</div>
+    <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+      <div style="background:#1a2a3a;border:1px solid #2596be33;border-radius:3px;padding:5px 8px;color:#ccc">📁 Session</div>
+      <div style="background:#1a2a1a;border:1px solid #336633aa;border-radius:3px;padding:5px 8px;color:#aaa">☁️ Pointcloud</div>
+    </div>
+  </div>
+
+  <!-- Visualize -->
+  <div style="background:#0d0d0d;border:1px solid #30363d;border-radius:6px;overflow:hidden">
+    <div style="background:#161b22;padding:7px 10px;color:#2596be;font-weight:bold;border-bottom:1px solid #222">Visualize</div>
+    <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+      <div style="background:#1a2a3a;border:1px solid #2596be33;border-radius:3px;padding:5px 8px;color:#ccc">📁 Session</div>
+      <div style="background:#1a2a1a;border:1px solid #336633aa;border-radius:3px;padding:5px 8px;color:#aaa">☁️ Pointcloud</div>
+      <div style="background:#2a1a2a;border:1px solid #66334455;border-radius:3px;padding:5px 8px;color:#aaa">🧠 Semantic methods</div>
+      <div style="background:#2a2a1a;border:1px solid #66661144;border-radius:3px;padding:5px 8px;color:#aaa">👁 View / Mesh</div>
+    </div>
+  </div>
+
+  <!-- Localize -->
+  <div style="background:#0d0d0d;border:1px solid #30363d;border-radius:6px;overflow:hidden">
+    <div style="background:#161b22;padding:7px 10px;color:#2596be;font-weight:bold;border-bottom:1px solid #222">Localize</div>
+    <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+      <div style="background:#1a2a3a;border:1px solid #2596be33;border-radius:3px;padding:5px 8px;color:#ccc">📁 Session</div>
+      <div style="background:#1a2a1a;border:1px solid #336633aa;border-radius:3px;padding:5px 8px;color:#aaa">☁️ Pointcloud</div>
+      <div style="background:#2a1a1a;border:1px solid #66333344;border-radius:3px;padding:5px 8px;color:#aaa">📍 Localize method</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="section" style="margin-top:16px;padding:12px;background:#111;border-radius:6px;border-left:3px solid #50c050">
+  <span class="label">Implementation note</span>
+  <p style="margin-top:6px;font-size:12px;color:#ccc">Sidebar sections are HTML components rendered/hidden via JS on tab switch — no page reload. Session section is always mounted. Pointcloud, Semantic, View/Mesh, Localize sections mount only when their tabs are active. Shared state (selected creator, conf, extractor) lives in a small JS state object synced with FastAPI on change.</p>
+</div>
+
+<p class="subtitle" style="margin-top:14px">Does this match your intent? Ready to write spec if yes.</p>

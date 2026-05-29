@@ -235,7 +235,14 @@ class LoopClosure:
                 intr_key = "intrinsics" if "intrinsics" in raw_lc else "intrinsic"
                 intrinsics = raw_lc.get(intr_key, np.tile(np.eye(3), (k, 1, 1)).astype(np.float32))
 
-                frames_cpu = window.cpu() if hasattr(window, "cpu") else torch.zeros(k, 3, 1, 1)
+                if hasattr(window, "cpu"):
+                    # Tensor window (e.g. VGGT-X, Omega): shape (K, C, H, W)
+                    frames_cpu = window.cpu()
+                elif isinstance(window, list) and window and isinstance(window[0], dict) and "img" in window[0]:
+                    # List-of-dicts window (e.g. MapAnything): extract img tensors and stack to (K, C, H, W)
+                    frames_cpu = torch.cat([v["img"].cpu() for v in window], dim=0)
+                else:
+                    frames_cpu = torch.zeros(k, 3, 1, 1)
                 ret_vecs = retrieval_extractor(frames_cpu)                                # (k, D)
 
                 wp, wp_conf = _raw_to_world_points(raw_lc)

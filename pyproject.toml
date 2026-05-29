@@ -62,7 +62,12 @@ dependencies = [
     # Pre-installed in Dockerfile builder stage.
     "gsplat>=1.4.0",
     "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
-    "pypose",
+    # pypose<0.9 required: pypose 0.9+ adds _ensure_sparse_backend_version() which runs at
+    # `import pypose` and hard-rejects any bae != 0.2 (strict version.parse inequality), so it
+    # raises ImportError against our pinned bae 0.2.4. The guard is absent in <=0.7.5 (no 0.8.x
+    # exists). We use only pp.SE3 / pp.mat2SE3 / pp.optim (stable since 0.4), so the older line
+    # is functionally equivalent. Upper bound, not an exact pin, so patch releases still float.
+    "pypose<0.9",
     # cuDSS runtime dep for bae. Must be declared before bae for clarity (pip installs
     # wheels before source builds regardless of order, so cudss headers are present when
     # bae's find_cudss_root() runs at compile time). Pinned for ABI stability.
@@ -181,6 +186,7 @@ exclude = "build"
 # --doctest-modules removed: no doctests in codebase; it scanned all importable
 # CUDA modules causing multi-minute startup.
 addopts = "--ignore=tests/test_meshlib.py --import-mode=importlib"
+asyncio_mode = "auto"
 testpaths = ["./tests"]
 pythonpath = ["."]
 markers = [

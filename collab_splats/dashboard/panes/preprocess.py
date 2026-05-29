@@ -135,9 +135,13 @@ def _render_fps_raster(
 
 def _frames_to_thumbnails(
     frames: list[np.ndarray],
-    max_size: tuple[int, int] = (160, 120),
+    max_size: tuple[int, int] = (120, 120),
 ) -> list[bytes]:
-    """Convert RGB numpy frame arrays to PNG thumbnail bytes."""
+    """Convert RGB numpy frame arrays to PNG thumbnail bytes.
+
+    max_size is (width, height) passed to PIL.thumbnail — aspect ratio preserved.
+    Default 120×120 box matches the strip display width.
+    """
     thumbnails = []
     for frame in frames:
         img = Image.fromarray(frame)
@@ -199,7 +203,7 @@ def _build_frame_strip_html(thumbnails: list[bytes], active_idx: int) -> str:
         border_color = "#50c050" if i == active_idx else "#333"
         imgs.append(
             f'<img id="frame-{i}" src="data:image/png;base64,{b64}" '
-            f'style="width:120px;height:90px;cursor:pointer;margin:2px;'
+            f'style="max-width:120px;height:auto;cursor:pointer;margin:2px;'
             f'border:2px solid {border_color};border-radius:3px;flex-shrink:0;" />'
         )
 
@@ -230,11 +234,13 @@ class PreprocessPane(param.Parameterized):
         self._extraction_thread: threading.Thread | None = None
         self._cached_thumbnails: list[bytes] = []
 
-        # Video player — served via side HTTP server (see _video_server_url)
-        # Fixed 560x360 box; object-fit:contain letterboxes video to native aspect ratio
-        self._video_pane = pn.pane.Video(
-            None, width=560, height=360, loop=False, visible=False,
-            stylesheets=["video { object-fit: contain; background: #000; width: 100%; height: 100%; }"],
+        # Video player — rendered as plain HTML <video> to avoid Panel/Bokeh model issues.
+        # src is set to /video_stream/... (served via Tornado on Panel's own port) on load.
+        self._video_pane = pn.pane.HTML(
+            "<div style='width:560px;height:360px;background:#111;display:flex;"
+            "align-items:center;justify-content:center'>"
+            "<p style='color:#555;font-size:12px'>No video loaded</p></div>",
+            width=560, height=360, visible=False,
         )
         self._video_info_html = pn.pane.HTML("", width=560)
 
@@ -290,6 +296,35 @@ class PreprocessPane(param.Parameterized):
         self._method_dd.param.watch(self._on_method_change, "value")
         self._extract_btn.on_click(self._on_extract)
         self._state.param.watch(self._on_video_path_change, "video_path")
+        self._state.param.watch(self._on_frames_zarr_path_change, "frames_zarr_path")
+
+    def wire_tabs(self, tabs: pn.Tabs, tab_index: int) -> None:
+        """Connect tab activation signal to resync video and frame strip on return."""
+        def _on_tab_change(event: Any) -> None:
+            if event.new == tab_index:
+                self._on_tab_activated()
+        tabs.param.watch(_on_tab_change, "active")
+
+    def _on_tab_activated(self) -> None:
+        """Resync display state when the Preprocess tab becomes active.
+
+        With dynamic=True tabs, Bokeh models are destroyed on deactivation.
+        On reactivation we need to push current state back into the recreated models.
+        """
+        # Re-assert video visibility if a video is loaded
+        if self._state.video_path and Path(self._state.video_path).exists():
+            self._video_pane.visible = True
+
+        # Rebuild frame strip HTML from in-memory thumbnails
+        if self._cached_thumbnails:
+            self._frame_strip_pane.object = _build_frame_strip_html(
+                self._cached_thumbnails, active_idx=self._active_frame_idx
+            )
+            # Scroll strip to active frame
+            self._scroll_script.object = (
+                f"<script>var el=document.getElementById('frame-{self._active_frame_idx}');"
+                f"if(el)el.scrollIntoView({{behavior:'instant',inline:'center'}});</script>"
+            )
 
     def _on_video_path_change(self, event: Any) -> None:
         """Auto-load video display and reveal controls when AppState.video_path is set."""
@@ -297,11 +332,52 @@ class PreprocessPane(param.Parameterized):
             self._load_video(Path(event.new))
             self._controls_card.visible = True
 
+    def _on_frames_zarr_path_change(self, event: Any) -> None:
+        """Auto-populate frame strip from cached zarr when frames_zarr_path is set."""
+        zarr_path = event.new
+        if zarr_path and Path(zarr_path).exists() and not self._cached_thumbnails:
+            threading.Thread(
+                target=self._load_frames_from_zarr, args=(Path(zarr_path),), daemon=True
+            ).start()
+
+    def _load_frames_from_zarr(self, zarr_path: Path) -> None:
+        """Background: read cached frames from zarr and populate the frame strip UI."""
+        try:
+            z = zarr.open_group(str(zarr_path), mode="r")
+            arr = z["frames"]  # (N, H, W, 3) uint8
+            N = int(arr.shape[0])
+            if N == 0:
+                return
+            # Sample up to 100 evenly-spaced frames for the thumbnail strip
+            n_thumb = min(N, 100)
+            sample_indices = [int(i * N / n_thumb) for i in range(n_thumb)]
+            frames = [np.array(arr[i]) for i in sample_indices]
+            thumbnails = _frames_to_thumbnails(frames)
+            self._cached_thumbnails = thumbnails
+            self._active_frame_idx = 0
+            self._selected_indices = list(range(N))
+            self._state.selected_indices = list(range(N))
+            # Update UI
+            self._frame_strip_pane.object = _build_frame_strip_html(thumbnails, active_idx=0)
+            self._metrics_col.objects = [_render_fps_raster(list(range(N)), N)]
+            self._metrics_col.visible = True
+            self._controls_card.visible = True
+            self._controls_card.collapsed = True
+            self._frame_count_html.object = (
+                f"<p style='font-size:11px;color:#50c050'>✓ {N} frames (loaded from cache)</p>"
+            )
+        except Exception as exc:
+            logger.warning("Could not load frames from zarr cache %s: %s", zarr_path, exc)
+
     def _load_video(self, video_path: Path) -> None:
-        """Register video with side server and begin playback; fetch metadata in background."""
+        """Register video with allowlist and render <video> element via /video_stream/ route."""
         self._video_server.register(video_path)
-        url = f"http://localhost:{self._video_server.port}{urllib.parse.quote(str(video_path))}"
-        self._video_pane.object = url
+        url = "/video_stream" + urllib.parse.quote(str(video_path))
+        self._video_pane.object = (
+            f'<video id="preprocess-video" controls preload="metadata" '
+            f'style="width:100%;height:100%;object-fit:contain;background:#000" '
+            f'src="{url}"></video>'
+        )
         self._video_pane.visible = True
         self._video_info_html.object = (
             f"<p style='font-size:11px;color:#aaa'>{video_path.name} · loading info…</p>"
@@ -437,24 +513,27 @@ class PreprocessPane(param.Parameterized):
         """Seek video to frame_idx; update active thumbnail in strip; scroll strip."""
         self._active_frame_idx = frame_idx
 
-        # Seek video player to timestamp
+        # Compute timestamp for seek
+        t = 0.0
         if self._state.video_path:
             try:
                 info = get_video_info(str(self._state.video_path))
-                fps = info.get("fps", 25.0)
-                self._video_pane.time = frame_idx / fps
+                t = frame_idx / info.get("fps", 25.0)
             except Exception as exc:
-                logger.warning("Could not seek video to frame %d: %s", frame_idx, exc)
+                logger.warning("Could not get fps for seek to frame %d: %s", frame_idx, exc)
 
         # Rebuild strip HTML using cached thumbnails (avoid re-decoding zarr on each tap)
         self._frame_strip_pane.object = _build_frame_strip_html(
             self._cached_thumbnails, active_idx=frame_idx
         )
 
-        # Inject scroll script to jump strip to the active thumbnail
+        # Seek video + scroll strip in one script injection
         self._scroll_script.object = (
-            f"<script>var el=document.getElementById('frame-{frame_idx}');"
-            f"if(el)el.scrollIntoView({{behavior:'smooth',inline:'center'}});</script>"
+            f"<script>(function(){{"
+            f"var v=document.getElementById('preprocess-video');if(v)v.currentTime={t:.3f};"
+            f"var el=document.getElementById('frame-{frame_idx}');"
+            f"if(el)el.scrollIntoView({{behavior:'smooth',inline:'center'}});"
+            f"}})();</script>"
         )
 
     def _make_metrics_panel(self) -> pn.Column:

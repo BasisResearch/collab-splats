@@ -1,0 +1,64 @@
+<h2>Dashboard Architecture — 3 Approaches</h2>
+<p class="subtitle">Which direction feels right? Click to select.</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Targeted fix — Panel shell + native viewers</h3>
+      <p>Keep Panel for all Python callbacks (run extraction, run reconstruction, progress bars, state). Replace the 3 slow components with browser-native viewers served from a small static file server:</p>
+      <ul style="margin:8px 0 0 16px;font-size:13px;color:#aaa">
+        <li><strong>Video player</strong> → HTML5 &lt;video&gt; served as file (already partially done)</li>
+        <li><strong>Image strip</strong> → &lt;img src="/frames/frame_0100.jpg"&gt; URLs instead of base64 thumbnails</li>
+        <li><strong>Mesh/pointcloud</strong> → Three.js viewer in an &lt;iframe&gt; inside Panel</li>
+      </ul>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>Minimal risk, incremental</li><li>All Python logic unchanged</li><li>Fastest to ship</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Panel overhead remains</li><li>iframe embedding is awkward</li><li>Still fighting dynamic=True tab bugs</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Hybrid — FastAPI backend + HTML/JS frontend</h3>
+      <p>Thin FastAPI server exposes Python pipeline as REST/SSE endpoints. HTML+JS frontend (vanilla or minimal framework) handles all rendering. Panel is removed entirely. Python logic is unchanged — only the UI layer changes.</p>
+      <ul style="margin:8px 0 0 16px;font-size:13px;color:#aaa">
+        <li><strong>FastAPI</strong> serves frames, video, mesh as static files + REST endpoints</li>
+        <li><strong>Server-Sent Events</strong> (SSE) stream reconstruction/extraction logs to browser</li>
+        <li><strong>Three.js</strong> for pointcloud/mesh, native &lt;video&gt; for video, &lt;img&gt; for frames</li>
+        <li>Each pipeline tab = one HTML page (or SPA sections)</li>
+      </ul>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>Fluid like the viewers you liked</li><li>Full control over layout and UX</li><li>No Bokeh/Panel overhead</li><li>Easy to extend with new visualizations</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Need to rewrite UI layer (~2-3 days)</li><li>Need REST endpoints for each operation</li><li>Lose Panel reactive widgets</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Full replace — FastAPI + rich SPA</h3>
+      <p>Like B but with a richer frontend: a proper single-page app with routing, state management, and a component system (e.g. Alpine.js or Svelte). Maximum control, maximum effort.</p>
+      <ul style="margin:8px 0 0 16px;font-size:13px;color:#aaa">
+        <li>Dedicated frontend build step (Vite + Svelte or similar)</li>
+        <li>Component-based UI matching current 5-tab structure</li>
+        <li>WebSocket for real-time progress (richer than SSE)</li>
+        <li>Could look as polished as a commercial product</li>
+      </ul>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>Best UX ceiling</li><li>Maintainable long-term</li><li>Full design freedom</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Significant frontend build complexity</li><li>~1-2 weeks to replicate current features</li><li>New toolchain to maintain</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="section" style="margin-top:20px;padding:12px;background:#111;border-radius:6px;border-left:3px solid #2596be">
+  <span class="label">My recommendation</span>
+  <p style="margin-top:6px;color:#ccc">Option B. FastAPI + vanilla HTML/JS gives you the fluid feel you liked (same tech as the viewers I built) without the complexity of a build pipeline. SSE handles live log streaming cleanly. Can be built incrementally — ship Preprocess tab first, then Reconstruct, etc. Panel is deleted when each tab is replaced.</p>
+</div>

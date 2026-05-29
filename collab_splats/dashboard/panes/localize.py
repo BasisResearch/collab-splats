@@ -263,10 +263,18 @@ class LocalizePane(param.Parameterized):
         self._state = state
         self._op_log = op_log
         self._localizer = None
+        self._extractor_name: str | None = None
         self._ff_result = None
         self._scene_panel: LocalizeScenePanel | None = None
         self._loc_thread: threading.Thread | None = None
         self._batch_thread: threading.Thread | None = None
+
+        # Method dropdown — populated from zarr dirs on output_dir change
+        self._method_dd = pn.widgets.Select(
+            name="Map source",
+            options=[],
+            width=280,
+        )
 
         # Controls
         self._query_input = pn.widgets.TextInput(
@@ -333,6 +341,7 @@ class LocalizePane(param.Parameterized):
         self._batch_run_btn.on_click(self._on_batch_run)
         self._batch_export_btn.on_click(self._on_export_csv)
         self._query_input.param.watch(self._on_query_or_dir_changed, ["value"])
+        self._method_dd.param.watch(self._on_method_dd_changed, ["value"])
         self._state.param.watch(self._on_output_dir_changed, ["output_dir"])
         self._state.param.watch(self._on_localize_state_changed, ["localize_method", "localize_extractor"])
 
@@ -343,9 +352,26 @@ class LocalizePane(param.Parameterized):
     # Gate helpers
 
     def _on_output_dir_changed(self, event: Any) -> None:
-        """Re-evaluate gate when session output_dir changes; invalidate cached localizer."""
+        """Scan zarr dirs, repopulate _method_dd, re-evaluate gate; invalidate cache."""
         self._localizer = None
         self._ff_result = None
+        output_dir = self._state.output_dir
+        methods = _scan_recon_methods(Path(output_dir)) if output_dir else []
+        self._method_dd.options = methods
+        if methods:
+            self._method_dd.value = methods[0]
+            self._state.localize_method = methods[0]
+        else:
+            self._method_dd.value = None
+            self._state.localize_method = ""
+        self._update_run_btn_gate()
+
+    def _on_method_dd_changed(self, event: Any) -> None:
+        """Push _method_dd selection to state and invalidate cached localizer."""
+        self._localizer = None
+        self._ff_result = None
+        self._scene_panel = None
+        self._state.localize_method = event.new or ""
         self._update_run_btn_gate()
 
     def _on_localize_state_changed(self, event: Any) -> None:
@@ -360,9 +386,9 @@ class LocalizePane(param.Parameterized):
         self._update_run_btn_gate()
 
     def _update_run_btn_gate(self) -> None:
-        """Enable Run when output_dir set, localize_method set, and query path non-empty."""
+        """Enable Run when output_dir set, method selected, and query path non-empty."""
         has_dir = bool(self._state.output_dir)
-        has_method = bool(self._state.localize_method)
+        has_method = bool(self._method_dd.value)
         has_query = bool(self._query_input.value and self._query_input.value.strip())
         self._run_btn.disabled = not (has_dir and has_method and has_query)
         self._batch_run_btn.disabled = not (has_dir and has_method)
@@ -373,16 +399,28 @@ class LocalizePane(param.Parameterized):
     def _build_localizer(
         self,
         progress_callback=None,
+        method: str | None = None,
+        extractor_label: str | None = None,
     ) -> tuple["FeedforwardResult", "CameraLocalizer"]:
         """Load feedforward.zarr and build CameraLocalizer with optional frame progress."""
+        from collab_splats.pointcloud.localization import BaseLocalExtractor
         output_dir = Path(self._state.output_dir)
-        method = self._state.localize_method
-        extractor_name = self._state.localize_extractor
+        method = method or self._state.localize_method
+        extractor_label = extractor_label or self._state.localize_extractor
         zarr_path = output_dir / method / "feedforward.zarr"
         ff = FeedforwardResult.load_zarr(zarr_path)
-        extractor = _EXTRACTOR_CLASSES.get(extractor_name, DiskExtractor)()
+        extractor_cls = _EXTRACTOR_CLASSES.get(extractor_label, DiskExtractor)
+        extractor = extractor_cls()
+        # Determine zarr key for this extractor via registry reverse-lookup
+        self._extractor_name = next(
+            (k for k, v in BaseLocalExtractor._registry.items() if v is extractor_cls),
+            extractor_label.lower(),
+        )
         localizer = CameraLocalizer.from_feedforward(
-            ff, extractor=extractor, progress_callback=progress_callback
+            ff,
+            extractor=extractor,
+            progress_callback=progress_callback,
+            zarr_path=zarr_path,
         )
         return ff, localizer
 
@@ -396,11 +434,18 @@ class LocalizePane(param.Parameterized):
         # Snapshot widget values on main thread before passing to worker
         query_path = Path(self._query_input.value.strip())
         warp_corners = self._warp_cb.value
+        method = self._method_dd.value or self._state.localize_method
+        extractor_name = self._state.localize_extractor
         self._run_btn.disabled = True
         self._status_html.object = "<span style='color:#2596be'>⏳ Localizing…</span>"
         self._loc_thread = threading.Thread(
             target=self._run_localize,
-            args=(query_path, warp_corners),
+            kwargs=dict(
+                method=method,
+                extractor_name=extractor_name,
+                query_path=query_path,
+                warp_corners=warp_corners,
+            ),
             daemon=True,
         )
         self._loc_thread.start()
@@ -409,10 +454,13 @@ class LocalizePane(param.Parameterized):
         self,
         query_path: Path,
         warp_corners: bool,
+        method: str | None = None,
+        extractor_name: str | None = None,
     ) -> None:
         """Background thread: load result, build localizer, run, update UI."""
+        effective_method = method or self._method_dd.value or self._state.localize_method
         try:
-            self._op_log.start_op(f"Localizing in {self._state.localize_method}")
+            self._op_log.start_op(f"Localizing in {effective_method}")
 
             # Build or reuse cached localizer
             if self._localizer is None:
@@ -426,7 +474,11 @@ class LocalizePane(param.Parameterized):
                         f"<span style='color:#2596be'>⏳ Indexing frame {i + 1} / {total}…</span>"
                     )
 
-                ff, localizer = self._build_localizer(progress_callback=_progress)
+                ff, localizer = self._build_localizer(
+                    progress_callback=_progress,
+                    method=effective_method,
+                    extractor_label=extractor_name,
+                )
                 self._ff_result = ff
                 self._localizer = localizer
                 self._index_progress.active = False
@@ -502,6 +554,23 @@ class LocalizePane(param.Parameterized):
                         ref_idx=best_ref_idx,
                     )
 
+                # Add to growing reference database
+                if self._extractor_name and loc.query_features is not None:
+                    output_dir = Path(self._state.output_dir)
+                    zarr_path = output_dir / effective_method / "feedforward.zarr"
+                    try:
+                        localizer.add_localized_frame(
+                            image_path=query_path,
+                            pose=loc.pose,
+                            intrinsics=query_intrinsics,
+                            features=loc.query_features,
+                            zarr_path=zarr_path,
+                            extractor_name=self._extractor_name,
+                        )
+                        logger.debug("LocalizePane: added localized frame to reference set")
+                    except Exception as exc:
+                        logger.warning("LocalizePane: add_localized_frame failed: %s", exc)
+
         except Exception as exc:
             logger.exception("LocalizePane: localization failed")
             self._op_log.error_op(str(exc))
@@ -520,12 +589,18 @@ class LocalizePane(param.Parameterized):
         if not folder_val:
             return
         folder_path = Path(folder_val)
+        method = self._method_dd.value or self._state.localize_method
+        extractor_name = self._state.localize_extractor
         self._batch_run_btn.disabled = True
         self._batch_export_btn.disabled = True
         self._batch_table.value = _empty_batch_df()
         self._batch_thread = threading.Thread(
             target=self._run_batch,
-            args=(folder_path,),
+            kwargs=dict(
+                method=method,
+                extractor_name=extractor_name,
+                folder_path=folder_path,
+            ),
             daemon=True,
         )
         self._batch_thread.start()
@@ -533,12 +608,18 @@ class LocalizePane(param.Parameterized):
     def _run_batch(
         self,
         folder_path: Path,
+        method: str | None = None,
+        extractor_name: str | None = None,
     ) -> None:
         """Background thread: localize every image in folder_path, stream rows to table."""
+        effective_method = method or self._method_dd.value or self._state.localize_method
         try:
             # Build or reuse cached localizer
             if self._localizer is None:
-                ff, localizer = self._build_localizer()
+                ff, localizer = self._build_localizer(
+                    method=effective_method,
+                    extractor_label=extractor_name,
+                )
                 self._ff_result = ff
                 self._localizer = localizer
             ff = self._ff_result
@@ -590,6 +671,21 @@ class LocalizePane(param.Parameterized):
                         "t-err (m)": "—",
                         "pose t": f"[{t[0]:.2f},{t[1]:.2f},{t[2]:.2f}]",
                     })
+                    # Add to growing reference database
+                    if self._extractor_name and loc.query_features is not None:
+                        output_dir_b = Path(self._state.output_dir)
+                        zarr_path_b = output_dir_b / effective_method / "feedforward.zarr"
+                        try:
+                            localizer.add_localized_frame(
+                                image_path=qp,
+                                pose=loc.pose,
+                                intrinsics=query_intrinsics,
+                                features=loc.query_features,
+                                zarr_path=zarr_path_b,
+                                extractor_name=self._extractor_name,
+                            )
+                        except Exception as exc:
+                            logger.debug("batch add_localized_frame failed: %s", exc)
 
                 self._batch_table.value = pd.DataFrame(rows)
 

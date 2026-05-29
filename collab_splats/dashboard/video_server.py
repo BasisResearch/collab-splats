@@ -10,6 +10,8 @@ from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from tornado.web import RequestHandler
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +128,91 @@ class _VideoRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         logger.debug("VideoServer: " + format, *args)
+
+
+class VideoStreamHandler(RequestHandler):
+    """Tornado handler that serves allowlisted video files with range-request support.
+
+    Register with pn.serve(extra_patterns=[(r"/video_stream/(.*)", VideoStreamHandler,
+    {"video_server": vs})]) so video is served through Panel's port instead of a
+    separate localhost port (which is unreachable from remote browsers).
+    """
+
+    def initialize(self, video_server: VideoFileServer) -> None:
+        self._video_server = video_server
+
+    async def get(self, path: str) -> None:
+        """Serve an allowlisted file; supports HTTP Range requests (206 Partial Content)."""
+        # Decode URL-encoded path and resolve to canonical absolute path
+        decoded = urllib.parse.unquote(path)
+        # path comes in without leading slash (captured group after /video_stream/)
+        requested = Path("/" + decoded).resolve()
+
+        # Allowlist gate
+        with self._video_server._lock:
+            allowed = requested in self._video_server.allowlist
+        if not allowed:
+            self.set_status(403)
+            return
+
+        if not requested.is_file():
+            self.set_status(404)
+            return
+
+        file_size = requested.stat().st_size
+        content_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
+        stat = requested.stat()
+        etag = hashlib.md5(f"{stat.st_mtime}-{stat.st_size}".encode()).hexdigest()
+
+        # Parse Range header
+        range_header = self.request.headers.get("Range")
+        start, end = 0, file_size - 1
+
+        if range_header:
+            range_spec = range_header.replace("bytes=", "").strip()
+            parts = range_spec.split("-")
+            try:
+                if not parts[0]:
+                    suffix = int(parts[1])
+                    start = max(0, file_size - suffix)
+                    end = file_size - 1
+                else:
+                    start = int(parts[0])
+                    end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+            except (ValueError, IndexError):
+                self.set_status(416)
+                return
+            end = min(end, file_size - 1)
+            if start < 0 or start > end:
+                self.set_status(416)
+                return
+            self.set_status(206)
+            self.set_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+        else:
+            self.set_status(200)
+
+        length = end - start + 1
+        self.set_header("Content-Type", content_type)
+        self.set_header("Content-Length", str(length))
+        self.set_header("Accept-Ranges", "bytes")
+        self.set_header("Last-Modified", formatdate(stat.st_mtime, usegmt=True))
+        self.set_header("ETag", f'"{etag}"')
+        self.set_header("Cache-Control", "no-cache")
+
+        # Stream in 64 KB chunks
+        try:
+            with open(requested, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    self.write(chunk)
+                    remaining -= len(chunk)
+            await self.flush()
+        except Exception:
+            logger.debug("VideoStreamHandler: client disconnected or write error")
 
 
 def start_video_server(port: int = 7863) -> VideoFileServer:

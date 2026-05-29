@@ -179,7 +179,8 @@ class LoopClosureConfig:
     # "se3"           — our approach: full SE3 T applied before norm ratio (current default)
     # "rotation_only" — VGGT-SLAM style: rotation-only transform, no translation shift
     # "pairwise_dist" — pairwise distance ratio, translation-invariant (recommended fix)
-    scale_method: Literal["se3", "rotation_only", "pairwise_dist"] = "se3"
+    # "none"          — skip scale estimation entirely; always use scale=1.0
+    scale_method: Literal["se3", "rotation_only", "pairwise_dist", "none"] = "se3"
     max_jump_ratio: float = math.inf  # reject loops where ‖ΔT.t‖/path_length > this; math.inf disables
     conf_threshold: float = 25.0  # confidence gate for scale estimation; matches VGGT-SLAM --conf_threshold 25
     lc_threshold: float | None = None        # deprecated: use lc_retrieval_threshold (same L2 value)
@@ -379,7 +380,7 @@ def run_pose_graph_optimization(
     overlap_frames: int,
     manifold: Literal["sl4", "se3"] = "sl4",
     conf_threshold: float = 25.0,
-    scale_method: Literal["se3", "rotation_only", "pairwise_dist"] = "se3",
+    scale_method: Literal["se3", "rotation_only", "pairwise_dist", "none"] = "se3",
     debug_out: list | None = None,
 ) -> np.ndarray:
     """Build + optimize per-frame SL(4) pose graph; return (total_frames, 4, 4).
@@ -462,18 +463,22 @@ def run_pose_graph_optimization(
                             mask = either_mask
 
                 curr_h = np.hstack([curr_pts, np.ones((n, 1))])
-                if scale_method == "rotation_only":
-                    # VGGT-SLAM style: apply only rotation part of T, drop translation.
-                    # norm(R@X) == norm(X), so effectively uses world-frame norms.
-                    curr_in_prev = (T[:3, :3] @ curr_pts.T).T
+                if scale_method == "none":
+                    # No scale estimation — use identity scale (scale=1.0).
+                    scale = 1.0
                 else:
-                    # "se3" (default): full SE3 — translation shifts anchor, introduces bias
-                    curr_in_prev = (T @ curr_h.T).T[:, :3]
+                    if scale_method == "rotation_only":
+                        # VGGT-SLAM style: apply only rotation part of T, drop translation.
+                        # norm(R@X) == norm(X), so effectively uses world-frame norms.
+                        curr_in_prev = (T[:3, :3] @ curr_pts.T).T
+                    else:
+                        # "se3" (default): full SE3 — translation shifts anchor, introduces bias
+                        curr_in_prev = (T @ curr_h.T).T[:, :3]
 
-                if scale_method == "pairwise_dist":
-                    scale = _estimate_scale_pairwise_dist(curr_in_prev[mask], prev_pts[mask])
-                else:
-                    scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
+                    if scale_method == "pairwise_dist":
+                        scale = _estimate_scale_pairwise_dist(curr_in_prev[mask], prev_pts[mask])
+                    else:
+                        scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
 
             H_scale = np.diag([scale, scale, scale, 1.0])
             prev_submap_last_nid = submap_node_ids[prev_submap.submap_id][-1]
@@ -582,6 +587,34 @@ def merge_submap_outputs(
     merged: dict = {}
     if not submaps or submaps[0].raw_outputs is None:
         return {"extrinsic": corrected_extrinsics}
+
+    # Handle backends (e.g. MapAnything) whose _forward returns list[dict] per frame.
+    # Deduplicate overlap frames: each submap contributes only its non-overlap frames
+    # (first K frames, where K = len(s.poses) - overlap), except the last submap which
+    # contributes all its frames. This produces exactly N unique frames aligned with
+    # corrected_extrinsics (N, 4, 4).
+    if isinstance(submaps[0].raw_outputs, list):
+        merged_list: list = []
+        n_submaps = len(submaps)
+        for idx, s in enumerate(submaps):
+            if not s.raw_outputs:
+                continue
+            raw_list = s.raw_outputs
+            if idx < n_submaps - 1:
+                # Infer overlap from next submap's frame_start vs this submap's end
+                next_start = submaps[idx + 1].frame_start
+                this_end = s.frame_start + len(raw_list)
+                overlap = max(0, this_end - next_start)
+                keep = len(raw_list) - overlap
+                merged_list.extend(raw_list[:keep])
+            else:
+                merged_list.extend(raw_list)
+        merged_list_out: dict = {
+            "_raw_list": merged_list,
+            "extrinsic": corrected_extrinsics[:, :3, :],
+            "extrinsic_global_4x4": corrected_extrinsics,
+        }
+        return merged_list_out
 
     sample = submaps[0].raw_outputs
     for key, val in sample.items():

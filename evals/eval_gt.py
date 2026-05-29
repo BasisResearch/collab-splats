@@ -110,7 +110,7 @@ def _write_tum(path: Path, poses_w2c: np.ndarray) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-_BACKBONE_PREFIX = {"vggt_omega": "omega", "vggtx": "vggtx", "mapanything": "mapanything"}
+_BACKBONE_PREFIX = {"vggt_omega": "omega", "vggtx": "vggtx", "mapanything": "mapanything", "vggt_spark": "spark"}
 
 
 def _make_creator(condition: str, submap_size: int | None = None, backbone: str = "vggt_omega",
@@ -271,18 +271,18 @@ def _build_parser() -> argparse.ArgumentParser:
                              "too long for single-pass GPU inference (e.g. >200 frames). "
                              "baseline→windowed VGGT-X, ba→windowed+BA, lc→full LC pipeline.")
     parser.add_argument(
-        "--backbone", choices=["vggtx", "vggt_omega", "mapanything"], default="vggt_omega",
-        help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, mapanything→mapanything_*",
+        "--backbone", choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark"], default="vggt_omega",
+        help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, mapanything→mapanything_*, vggt_spark→spark_*",
     )
     parser.add_argument("--conditions", nargs="+", default=["baseline", "ba", "lc"],
                         help="Conditions: baseline | ba | lc | ba_track-density-{N}")
     parser.add_argument(
         "--lc_scale_method",
-        choices=["se3", "rotation_only", "pairwise_dist"],
+        choices=["se3", "rotation_only", "pairwise_dist", "none"],
         default="se3",
         help="Inter-submap scale estimation method for lc condition. "
              "se3=current (full SE3, biased), rotation_only=VGGT-SLAM style, "
-             "pairwise_dist=translation-invariant fix.",
+             "pairwise_dist=translation-invariant fix, none=skip scale (always 1.0).",
     )
     parser.add_argument(
         "--keyframe_list", type=Path, default=None,

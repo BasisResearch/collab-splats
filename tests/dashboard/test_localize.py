@@ -65,13 +65,12 @@ def test_localize_pane_cache_invalidated_on_extractor_change():
     assert pane._localizer is None
 
 
-def test_localize_pane_no_inline_method_dd():
-    """LocalizePane should not have _method_dd or _extractor_dd attributes."""
+def test_localize_pane_has_inline_method_dd():
+    """LocalizePane has a _method_dd dropdown populated from zarr dirs on output_dir change."""
     from collab_splats.dashboard.panes.localize import LocalizePane
     state = _make_state()
     pane = LocalizePane(state=state, op_log=_make_op_log())
-    assert not hasattr(pane, "_method_dd")
-    assert not hasattr(pane, "_extractor_dd")
+    assert hasattr(pane, "_method_dd")
 
 
 def test_localize_scene_panel_off_screen():

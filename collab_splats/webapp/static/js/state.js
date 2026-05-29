@@ -29,6 +29,7 @@ export function switchTab(name) {
 }
 
 function renderSessionSection() {
+  const currentName = state.outputDir ? state.outputDir.split('/').pop() : '';
   const sec = document.createElement('div');
   sec.className = 'sidebar-section';
   sec.id = 'section-session';
@@ -36,10 +37,9 @@ function renderSessionSection() {
     <h4>Session</h4>
     <select id="session-select"><option value="">— loading scenes… —</option></select>
     <button class="primary" id="load-session-btn">Load session</button>
-    <div id="session-status" class="status-info"></div>
+    <div id="session-status" class="${currentName ? 'status-ok' : 'status-info'}">${currentName ? '✓ ' + currentName : ''}</div>
   `;
   sec.querySelector('#load-session-btn').addEventListener('click', loadSession);
-  // Populate dropdown from /api/session/list
   fetch('/api/session/list').then(r => r.json()).then(data => {
     const sel = sec.querySelector('#session-select');
     sel.innerHTML = '<option value="">— select scene —</option>';
@@ -47,12 +47,11 @@ function renderSessionSection() {
       const o = document.createElement('option');
       o.value = name;
       o.textContent = name;
-      if (state.outputDir && state.outputDir.endsWith('/' + name)) o.selected = true;
+      if (name === currentName) o.selected = true;
       sel.appendChild(o);
     });
   }).catch(() => {
-    const sel = sec.querySelector('#session-select');
-    sel.innerHTML = '<option value="">— error loading scenes —</option>';
+    sec.querySelector('#session-select').innerHTML = '<option value="">— error loading scenes —</option>';
   });
   return sec;
 }

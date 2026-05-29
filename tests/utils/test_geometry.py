@@ -5,6 +5,7 @@ from collab_splats.utils.geometry import (
     extrinsics_to_homogeneous,
     invert_poses,
     extract_intrinsics,
+    rotation_align_vectors,
 )
 
 
@@ -87,5 +88,39 @@ def test_opengl_to_opencv_shape():
 def test_opengl_to_opencv_flips_yz():
     expected = np.diag([1, -1, -1, 1]).astype(np.float64)
     np.testing.assert_array_equal(OPENGL_TO_OPENCV, expected)
+
+
+def test_rotation_align_vectors_identity():
+    """Aligning a vector to itself returns identity."""
+    src = np.array([0.0, 0.0, 1.0])
+    R = rotation_align_vectors(src, src)
+    np.testing.assert_allclose(R, np.eye(3), atol=1e-10)
+
+
+def test_rotation_align_vectors_aligns_correctly():
+    """R @ src ≈ dst."""
+    src = np.array([0.0, 1.0, 0.0])
+    dst = np.array([0.0, 0.0, 1.0])
+    R = rotation_align_vectors(src, dst)
+    result = R @ src
+    np.testing.assert_allclose(result, dst, atol=1e-10)
+
+
+def test_rotation_align_vectors_is_rotation():
+    """det(R) == 1 and R @ R.T == I."""
+    src = np.array([1.0, 0.0, 0.0])
+    dst = np.array([0.0, 1.0, 0.0])
+    R = rotation_align_vectors(src, dst)
+    assert abs(np.linalg.det(R) - 1.0) < 1e-10
+    np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-10)
+
+
+def test_rotation_align_vectors_antiparallel():
+    """180-degree case: src = -dst still returns a valid rotation."""
+    src = np.array([0.0, 0.0, 1.0])
+    dst = np.array([0.0, 0.0, -1.0])
+    R = rotation_align_vectors(src, dst)
+    result = R @ src
+    np.testing.assert_allclose(result, dst, atol=1e-6)
 
 

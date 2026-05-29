@@ -37,7 +37,7 @@ def test_transfer_features_to_mesh_basic():
     vertex_features = transfer_features_to_mesh(result, mesh, sdf_trunc=0.1)
 
     assert vertex_features.shape == (20, 8)
-    assert vertex_features.dtype == np.float64
+    assert vertex_features.dtype == np.float32
     # At least some vertices should have non-zero features
     assert np.any(vertex_features != 0.0)
 

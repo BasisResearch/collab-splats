@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ from collab_splats.dashboard.panes.preprocess import PreprocessPane
 from collab_splats.dashboard.panes.reconstruct import ReconstructPane
 from collab_splats.dashboard.panes.semantics import SemanticsPane
 from collab_splats.dashboard.panes.localize import LocalizePane
-from collab_splats.dashboard.panes.visualize import ScenePanel
+from collab_splats.dashboard.panes.visualize import ScenePanel, _scan_datasets, _scan_backends, _scan_extractors
 from collab_splats.dashboard.state import AppState
 
 from collab_splats.dashboard.video_server import VideoFileServer, start_video_server
@@ -65,6 +66,30 @@ class App(param.Parameterized):
             "Visualize": ScenePanel(base_dir=self._base_dir, state=self._state, op_log=self._op_log),
             "Localize": LocalizePane(state=self._state, op_log=self._op_log),
         }
+        # Sidebar MODELS widgets — created before _build_sidebar
+        datasets = _scan_datasets(self._base_dir)
+        dataset_names = [p.name for p in datasets]
+        self._models_dataset_dd = pn.widgets.Select(
+            name="Dataset", options=dataset_names or ["(none)"], width=280,
+        )
+        self._models_backend_dd = pn.widgets.Select(
+            name="Pointcloud backend", options=[], width=280,
+        )
+        self._models_extractor_dd = pn.widgets.Select(
+            name="Semantic model", options=[], width=280,
+        )
+        self._models_load_btn = pn.widgets.Button(
+            name="⚡  Load", button_type="primary", width=280,
+        )
+        self._models_status = pn.pane.HTML(
+            "<p style='color:#666;font-size:12px'>No data loaded</p>", width=280,
+        )
+        self._models_dataset_dd.param.watch(self._on_models_dataset_change, "value")
+        self._models_load_btn.on_click(self._on_models_load)
+        # Populate backend options for initial dataset selection
+        if dataset_names:
+            self._on_models_dataset_change(None)
+
         self._sidebar = self._build_sidebar()
 
     def _build_sidebar(self) -> pn.Column:
@@ -109,6 +134,13 @@ class App(param.Parameterized):
             self._confirm_btn,
             pn.layout.Divider(),
             self._session_status,
+            pn.layout.Divider(),
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Models</h3>"),
+            self._models_dataset_dd,
+            self._models_backend_dd,
+            self._models_extractor_dd,
+            self._models_load_btn,
+            self._models_status,
             width=300,
         )
 
@@ -202,6 +234,74 @@ class App(param.Parameterized):
         self._output_dir_select.visible = False
         self._refresh_dirs_btn.visible = False
         self._confirm_btn.visible = False
+
+    def _on_models_dataset_change(self, event: Any) -> None:
+        """Repopulate backend dropdown when dataset selection changes."""
+        name = self._models_dataset_dd.value
+        if not name or name == "(none)":
+            self._models_backend_dd.options = []
+            self._models_extractor_dd.options = []
+            return
+        ds_dir = self._base_dir / name
+        backends = _scan_backends(ds_dir)
+        self._models_backend_dd.options = backends or ["(none)"]
+        if backends:
+            extractors = _scan_extractors(ds_dir, backends[0])
+            self._models_extractor_dd.options = extractors or ["(none)"]
+
+    def _on_models_load(self, event: Any) -> None:
+        """Kick off background load of FeedforwardResult."""
+        self._models_load_btn.disabled = True
+        self._models_status.object = "<p style='color:#aaa;font-size:12px'>Loading…</p>"
+        t = threading.Thread(target=self._do_load_models, daemon=True)
+        t.start()
+
+    def _do_load_models(self) -> None:
+        """Background: load FeedforwardResult and populate AppState."""
+        try:
+            from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+            ds_name = self._models_dataset_dd.value
+            backend = self._models_backend_dd.value
+            extractor = self._models_extractor_dd.value
+
+            if not ds_name or ds_name == "(none)" or not backend or backend == "(none)":
+                self._models_status.object = (
+                    "<p style='color:#e05050;font-size:12px'>Select dataset and backend</p>"
+                )
+                return
+
+            ds_dir = self._base_dir / ds_name
+            zarr_path = ds_dir / backend / "feedforward.zarr"
+            if not zarr_path.exists():
+                self._models_status.object = (
+                    f"<p style='color:#e05050;font-size:12px'>feedforward.zarr not found in {backend}</p>"
+                )
+                return
+
+            result = FeedforwardResult.load_zarr(zarr_path)
+            n_pts = len(result.points)
+
+            # Update state on IOLoop thread
+            def _set_state() -> None:
+                self._state.output_dir = ds_dir
+                self._state.pointcloud_backend = backend
+                self._state.semantic_extractor = extractor if extractor and extractor != "(none)" else ""
+                self._state.feedforward_result = result
+                self._models_status.object = (
+                    f"<p style='color:#50c050;font-size:12px'>"
+                    f"Loaded {n_pts:,} pts<br/>"
+                    f"<span style='color:#666'>{ds_name} / {backend}</span></p>"
+                )
+
+            pn.io.state.execute(_set_state)
+        except Exception as exc:
+            logger.exception("_do_load_models failed")
+            self._models_status.object = (
+                f"<p style='color:#e05050;font-size:12px'>Load failed: {exc}</p>"
+            )
+        finally:
+            self._models_load_btn.disabled = False
 
     def servable(self) -> pn.template.MaterialTemplate:
         """Build and return the full MaterialTemplate for serving."""

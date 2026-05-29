@@ -524,8 +524,50 @@ class ScenePanel(param.Parameterized):
     ####################################################################
 
     def _on_run_mesh(self, event: Any) -> None:
-        """Stub — implemented in mesh worker task."""
-        pass
+        """Spawn background mesh generation thread on Run Mesh click."""
+        if self._mesh_thread and self._mesh_thread.is_alive():
+            return
+        self._mesh_run_btn.disabled = True
+        self._set_status("Running mesh generation…")
+        self._mesh_thread = threading.Thread(target=self._run_mesh_worker, daemon=True)
+        self._mesh_thread.start()
+
+    def _run_mesh_worker(self) -> None:
+        """Background: load zarr if needed → pointcloud_to_mesh → refresh viewer."""
+        try:
+            if self._result is None:
+                from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
+                zarr_path = (
+                    self._current_dataset_dir / self._current_backend / "feedforward.zarr"
+                )
+                self._result = FeedforwardResult.load_zarr(zarr_path)
+
+            mesh_dir = self._current_dataset_dir / self._current_backend / "mesh"
+            from collab_splats.mesh.utils import pointcloud_to_mesh  # noqa: PLC0415
+            mesh_result = pointcloud_to_mesh(
+                self._result,
+                mesh_dir,
+                method="open3d_tsdf",
+                voxel_size=self._mesh_voxel_input.value,
+                sdf_trunc=self._mesh_sdf_input.value,
+                depth_trunc=self._mesh_depth_input.value,
+                clean_repair=self._mesh_clean_check.value,
+            )
+            msg = f"Mesh done — {mesh_result.mesh_path.name}"
+            pn.io.state.execute(lambda: self._refresh_after_mesh(msg))
+        except Exception as exc:
+            logger.exception("Mesh generation failed")
+            err = str(exc)
+            pn.io.state.execute(lambda: self._set_status(f"Mesh failed: {err}"))
+        finally:
+            pn.io.state.execute(lambda: setattr(self._mesh_run_btn, "disabled", False))
+
+    def _refresh_after_mesh(self, status_msg: str) -> None:
+        """IOLoop-thread: redraw mesh viewer after successful generation."""
+        self._plotter.clear()
+        self._rebuild_mesh_viewer()
+        self._vtk_pane.synchronize()
+        self._set_status(status_msg)
 
     def _rebuild_mesh_viewer(self) -> None:
         """Load and render mesh.ply."""

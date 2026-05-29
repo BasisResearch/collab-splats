@@ -364,3 +364,57 @@ def test_scene_panel_mesh_options_row_hidden_in_points_mode(tmp_path):
     with mock.patch.object(sp, "_rebuild_pcd_viewer"):
         sp._on_mode_change("Points")
     assert sp._mesh_options_row.visible is False
+
+
+########################################################################
+# _on_run_mesh / _run_mesh_worker tests
+########################################################################
+
+
+def test_on_run_mesh_uses_existing_result(tmp_path):
+    """_run_mesh_worker uses _result if already loaded rather than loading zarr."""
+    _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
+    state = AppState()
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    sp._dataset_dd.value = "scene_01"
+    sp._backend_dd.value = "vggt_x"
+    sp._current_dataset_dir = tmp_path / "scene_01"
+    sp._current_backend = "vggt_x"
+    sp._result = mock.MagicMock()  # pre-loaded result
+
+    fake_mesh_result = mock.MagicMock()
+    fake_mesh_result.mesh_path = tmp_path / "mesh.ply"
+
+    with mock.patch("collab_splats.mesh.utils.pointcloud_to_mesh", return_value=fake_mesh_result) as mock_ptm, \
+         mock.patch("panel.io.state._state.execute"):
+        sp._run_mesh_worker()
+
+    # pointcloud_to_mesh called with the pre-loaded _result, not load_zarr
+    mock_ptm.assert_called_once()
+    call_args = mock_ptm.call_args
+    assert call_args[0][0] is sp._result  # first positional arg = result
+
+
+def test_on_run_mesh_loads_zarr_when_result_none(tmp_path):
+    """_run_mesh_worker loads feedforward.zarr if _result is None."""
+    _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
+    state = AppState()
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    sp._dataset_dd.value = "scene_01"
+    sp._backend_dd.value = "vggt_x"
+    sp._current_dataset_dir = tmp_path / "scene_01"
+    sp._current_backend = "vggt_x"
+    sp._result = None
+
+    fake_result = mock.MagicMock()
+    fake_mesh_result = mock.MagicMock()
+    fake_mesh_result.mesh_path = tmp_path / "mesh.ply"
+
+    with mock.patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr",
+                    return_value=fake_result) as mock_load, \
+         mock.patch("collab_splats.mesh.utils.pointcloud_to_mesh",
+                    return_value=fake_mesh_result), \
+         mock.patch("panel.io.state._state.execute"):
+        sp._run_mesh_worker()
+
+    mock_load.assert_called_once()

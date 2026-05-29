@@ -319,7 +319,7 @@ class ScenePanel(param.Parameterized):
         mesh_path = ds_dir / backend / "mesh" / "mesh.ply"
         if mesh_path.exists():
             modes.add("Mesh")
-            self._auto_display_mesh()
+            pn.io.state.execute(self._auto_display_mesh)
 
         # Enable Run Mesh if feedforward.zarr exists (zarr gate for generation)
         zarr_path = ds_dir / backend / "feedforward.zarr"
@@ -538,6 +538,9 @@ class ScenePanel(param.Parameterized):
 
     def _run_mesh_worker(self) -> None:
         """Background: load zarr if needed → pointcloud_to_mesh → refresh viewer."""
+        if self._current_dataset_dir is None or self._current_backend is None:
+            pn.io.state.execute(lambda: self._set_status("No dataset selected."))
+            return
         try:
             if self._result is None:
                 from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415 — avoid torch at panel import time

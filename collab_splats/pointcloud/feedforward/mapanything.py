@@ -169,6 +169,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     resize_mode: str = "fixed"   # "fixed" (aspect-ratio lookup table), "longest_side", "square"
     resolution: int = 518         # resolution_set= for "fixed"; size= for "longest_side"/"square"
     _processed_views: Any = field(default=None, init=False, repr=False)
+    _lc_window_views: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.resize_mode not in _MA_RESIZE_MODE_MAP:
@@ -247,6 +248,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                     if isinstance(v, torch.Tensor):
                         view[k] = v.to(device)
             forward_views = window_views
+            self._lc_window_views = window_views  # consumed by _lc_collate_outputs
             console.log(f"  → {len(window_views)} images (LC window), minibatch_size={self.minibatch_size}")
         else:
             # Full-sequence path: views is the list returned by _preprocess; use
@@ -289,10 +291,15 @@ class MapAnythingCreator(BaseFeedforwardCreator):
 
         # Run minimal postprocess to populate camera_poses and intrinsics keys.
         # apply_mask=False: LC only needs poses, not masked point clouds.
-        # Use a matching slice of self._processed_views as the view context.
+        # Use window-specific views stored by _forward (Tensor branch) so the
+        # view context matches the actual window frames, not the first-K frames
+        # of the full sequence.
+        views_ctx = self._lc_window_views if self._lc_window_views is not None \
+            else self._processed_views[: len(raw_list)]
+        self._lc_window_views = None  # clear after use
         processed = postprocess_model_outputs_for_inference(
             raw_list,
-            self._processed_views[: len(raw_list)],
+            views_ctx,
             apply_mask=False,
         )
 

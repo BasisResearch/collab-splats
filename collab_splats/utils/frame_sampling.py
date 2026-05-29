@@ -29,7 +29,7 @@ def _get_decoder_backend() -> str:
     try:
         import torchcodec  # noqa: F401
         return "torchcodec"
-    except ImportError:
+    except (ImportError, RuntimeError):
         pass
     if shutil.which("ffmpeg") is not None:
         return "ffmpeg"
@@ -432,42 +432,51 @@ def score_all_frames(
 
 def _decode_fps_ffmpeg(
     video_path: str,
-    fps: float,
-    n_targets: int,
+    targets: list[int],
     width: int,
     height: int,
     native_fps: float,
     on_progress: Callable[[int, int], None] | None,
 ) -> tuple[list[np.ndarray], list[int]]:
-    """Extract frames at fps via ffmpeg subprocess pipe.
+    """Extract frames at target indices via parallel per-frame ffmpeg seeks.
 
+    Uses -ss input seeking (keyframe-level) — O(GOP_size) per frame, not O(total_frames).
+    Spawns up to 8 concurrent ffmpeg subprocesses to amortize launch overhead.
     ffmpeg handles rotation from container metadata automatically.
-    Returns (rgb_frames, approximate_source_indices).
+    Returns (rgb_frames, source_indices).
     """
-    cmd = [
-        "ffmpeg", "-i", video_path,
-        "-vf", f"fps={fps}",
-        "-frames:v", str(n_targets),
-        "-f", "rawvideo", "-pix_fmt", "rgb24",
-        "-an", "pipe:1",
-    ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    import concurrent.futures
+
+    n_targets = len(targets)
     frame_size = width * height * 3
-    frames: list[np.ndarray] = []
-    interval = max(1, int(round(native_fps / fps)))
-    try:
-        while True:
-            raw = proc.stdout.read(frame_size)
-            if len(raw) < frame_size:
-                break
-            frames.append(np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy())
+
+    def _seek_one(target: int) -> np.ndarray | None:
+        t = target / max(native_fps, 1.0)
+        cmd = [
+            "ffmpeg", "-ss", f"{t:.6f}", "-i", video_path,
+            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24",
+            "-an", "pipe:1",
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        raw = result.stdout
+        if len(raw) < frame_size:
+            return None
+        return np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy()
+
+    results: list[np.ndarray | None] = [None] * n_targets
+    n_done = 0
+    max_workers = min(8, n_targets)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {executor.submit(_seek_one, targets[i]): i for i in range(n_targets)}
+        for future in concurrent.futures.as_completed(future_to_idx):
+            i = future_to_idx[future]
+            results[i] = future.result()
+            n_done += 1
             if on_progress is not None:
-                on_progress(len(frames), n_targets)
-    finally:
-        proc.stdout.close()
-        proc.terminate()
-        proc.wait()
-    indices = [i * interval for i in range(len(frames))]
+                on_progress(n_done, n_targets)
+
+    frames = [r for r in results if r is not None]
+    indices = [targets[i] for i, r in enumerate(results) if r is not None]
     return frames, indices
 
 
@@ -532,7 +541,7 @@ def sample_frames_fps(
 
     if backend == "ffmpeg":
         return _decode_fps_ffmpeg(
-            video_path, fps, len(targets),
+            video_path, targets,
             info["width"], info["height"], native_fps, on_progress,
         )
 

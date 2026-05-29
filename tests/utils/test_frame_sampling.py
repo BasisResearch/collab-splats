@@ -107,6 +107,10 @@ def _make_mock_cap(total_frames=90, fps=30.0):
 
 
 def test_fps_sampler_uses_seek(monkeypatch):
+    """cv2 fallback path seeks to each target index exactly."""
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_decoder_backend", lambda: "cv2")
+
     mock_cap = _make_mock_cap(total_frames=90, fps=30.0)
     # 90 frames at 30fps, target 1fps → interval=30, targets=[0,30,60], expect 3 seeks
     mock_cap.read.return_value = (True, np.zeros((48, 64, 3), dtype=np.uint8))
@@ -115,6 +119,8 @@ def test_fps_sampler_uses_seek(monkeypatch):
     mock_cv2.VideoCapture = MagicMock(return_value=mock_cap)
     mock_cv2.CAP_PROP_FPS = cv2.CAP_PROP_FPS
     mock_cv2.CAP_PROP_FRAME_COUNT = cv2.CAP_PROP_FRAME_COUNT
+    mock_cv2.CAP_PROP_FRAME_WIDTH = cv2.CAP_PROP_FRAME_WIDTH
+    mock_cv2.CAP_PROP_FRAME_HEIGHT = cv2.CAP_PROP_FRAME_HEIGHT
     mock_cv2.CAP_PROP_ORIENTATION_AUTO = cv2.CAP_PROP_ORIENTATION_AUTO
     mock_cv2.CAP_PROP_POS_FRAMES = cv2.CAP_PROP_POS_FRAMES
     mock_cv2.COLOR_BGR2RGB = cv2.COLOR_BGR2RGB
@@ -204,7 +210,7 @@ def test_optical_flow_resizes_for_analysis(tiny_video, monkeypatch):
 
 def test_get_video_info_keys(tiny_video):
     info = get_video_info(tiny_video)
-    assert set(info.keys()) == {"total_frames", "fps", "duration_s"}
+    assert set(info.keys()) == {"total_frames", "fps", "duration_s", "width", "height"}
 
 
 def test_get_video_info_values(tiny_video):
@@ -224,7 +230,7 @@ def test_get_video_info_missing_file():
 def test_get_video_info_no_cv2(monkeypatch):
     monkeypatch.setitem(sys.modules, "cv2", None)
     info = get_video_info("anything.mp4")
-    assert info == {"total_frames": 0, "fps": 0.0, "duration_s": 0.0}
+    assert info == {"total_frames": 0, "fps": 0.0, "duration_s": 0.0, "width": 0, "height": 0}
 
 
 # ── score_all_frames ──────────────────────────────────────────────────────────

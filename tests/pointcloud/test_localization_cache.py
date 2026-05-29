@@ -97,3 +97,32 @@ def test_load_zarr_sets_zarr_path(tmp_path):
     loaded = FeedforwardResult.load_zarr(zarr_path)
     assert hasattr(loaded, "_zarr_path")
     assert loaded._zarr_path == zarr_path
+
+
+# ── Task 2 tests ─────────────────────────────────────────────────────────────
+
+def test_localize_populates_query_features(tmp_path):
+    """localize() should always set query_features on the result."""
+    pts3d, extrinsics, intrinsics = _make_scene()
+    image_paths = _make_image_files(tmp_path, n=3)
+    localizer, _ = _build_localizer_with_mock(pts3d, extrinsics, intrinsics, image_paths)
+
+    query_img = np.zeros((64, 64, 3), dtype=np.uint8)
+    query_K = intrinsics[0]
+    result = localizer.localize(query_img, query_K)
+
+    assert result.query_features is not None
+    assert hasattr(result.query_features, "keypoints")
+    assert hasattr(result.query_features, "descriptors")
+
+
+def test_camera_localizer_stores_image_paths_and_sources(tmp_path):
+    """CameraLocalizer should maintain _image_paths and _frame_sources after build."""
+    pts3d, extrinsics, intrinsics = _make_scene(n_frames=3)
+    image_paths = _make_image_files(tmp_path, n=3)
+    localizer, _ = _build_localizer_with_mock(pts3d, extrinsics, intrinsics, image_paths)
+
+    assert len(localizer._image_paths) == 3
+    assert len(localizer._frame_sources) == 3
+    assert all(s == "reconstruction" for s in localizer._frame_sources)
+    assert localizer.frame_sources == ["reconstruction", "reconstruction", "reconstruction"]

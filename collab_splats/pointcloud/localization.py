@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import pathlib
+from pathlib import Path
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -80,6 +81,7 @@ class LocalizationResult:
     inlier_mask: np.ndarray | None     # (M,) bool
     pts2d_ref: np.ndarray | None = None           # (M, 2) reference-frame pixel coords
     ref_frame_indices: np.ndarray | None = None   # (M,) int32 — source reference frame per correspondence
+    query_features: "LocalFeatures | None" = None  # always set by localize(); pass to add_localized_frame
 
 
 ########################################################
@@ -566,6 +568,10 @@ class CameraLocalizer:
 
         self._extractor = extractor if extractor is not None else DiskExtractor()
 
+        # Store image paths and provenance for duplicate guard and dashboard display
+        self._image_paths: list[Path] = [Path(p) for p in image_paths]
+        self._frame_sources: list[str] = []
+
         logger.info(
             "CameraLocalizer: building index for %d frames, %d 3D points",
             len(image_paths), len(pts3d),
@@ -615,7 +621,14 @@ class CameraLocalizer:
             radius=radius,
         )
 
+        self._frame_sources = ["reconstruction"] * len(self._frame_features)
+
         logger.info("CameraLocalizer: index built")
+
+    @property
+    def frame_sources(self) -> list[str]:
+        """Provenance per frame: 'reconstruction' or 'localized'."""
+        return list(self._frame_sources)
 
     @classmethod
     def from_feedforward(cls, result, **kwargs) -> "CameraLocalizer":
@@ -698,6 +711,7 @@ class CameraLocalizer:
                 pose=None, n_correspondences=len(best_2d), n_inliers=0,
                 pts2d=None, pts3d_matched=None, inlier_mask=None,
                 pts2d_ref=None, ref_frame_indices=None,
+                query_features=query_feats,
             )
 
         # Assemble correspondence arrays for PnP
@@ -752,6 +766,7 @@ class CameraLocalizer:
                 n_inliers=ret["num_inliers"] if ret is not None else 0,
                 pts2d=pts2d, pts3d_matched=pts3d_matched, inlier_mask=None,
                 pts2d_ref=pts2d_ref, ref_frame_indices=ref_frame_indices,
+                query_features=query_feats,
             )
 
         logger.info(
@@ -769,6 +784,7 @@ class CameraLocalizer:
             pose=pose, n_correspondences=len(pts2d), n_inliers=ret["num_inliers"],
             pts2d=pts2d, pts3d_matched=pts3d_matched, inlier_mask=inlier_mask,
             pts2d_ref=pts2d_ref, ref_frame_indices=ref_frame_indices,
+            query_features=query_feats,
         )
 
 

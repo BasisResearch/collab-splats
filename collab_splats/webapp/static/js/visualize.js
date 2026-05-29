@@ -116,6 +116,60 @@ function loadMesh(url, gp) {
   });
 }
 
+// Store original colors so we can reset after similarity query
+let originalColors = null;
+
+function resetPointColors() {
+  if (!currentPoints || !originalColors) return;
+  const geo = currentPoints.geometry;
+  if (geo.attributes.color) {
+    geo.attributes.color.array.set(originalColors);
+    geo.attributes.color.needsUpdate = true;
+  }
+}
+
+async function runSimilarityQuery(pos, neg, extractor, statusEl) {
+  if (!currentPoints) {
+    if (statusEl) { statusEl.textContent = 'Load scene first'; statusEl.className = 'status-err'; }
+    return;
+  }
+  const geo = currentPoints.geometry;
+  if (!geo.attributes.color) {
+    if (statusEl) { statusEl.textContent = 'Pointcloud has no color attribute'; statusEl.className = 'status-err'; }
+    return;
+  }
+
+  // Save original colors on first query
+  if (!originalColors) {
+    originalColors = new Float32Array(geo.attributes.color.array);
+  }
+
+  const url = `/api/visualize/similarity?pos=${encodeURIComponent(pos)}&neg=${encodeURIComponent(neg)}&extractor=${extractor}`;
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!data.ok) {
+      if (statusEl) { statusEl.textContent = data.error?.split('\n')[0] || 'Query failed'; statusEl.className = 'status-err'; }
+      return;
+    }
+    // Decode base64 → Uint8Array (N*3 bytes) → update Three.js color attribute
+    const raw = atob(data.colors_b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    const colors = geo.attributes.color.array;
+    const n = Math.min(data.n_points, colors.length / 3);
+    for (let i = 0; i < n; i++) {
+      colors[i * 3]     = bytes[i * 3]     / 255;
+      colors[i * 3 + 1] = bytes[i * 3 + 1] / 255;
+      colors[i * 3 + 2] = bytes[i * 3 + 2] / 255;
+    }
+    geo.attributes.color.needsUpdate = true;
+    if (statusEl) { statusEl.textContent = `✓ "${pos}"${neg ? ' − "' + neg + '"' : ''}`; statusEl.className = 'status-ok'; }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = String(e); statusEl.className = 'status-err'; }
+  }
+}
+
 async function loadScene() {
   if (!state.outputDir) return;
   const resp = await fetch('/api/visualize/status');
@@ -159,6 +213,16 @@ function renderSidebar() {
   sem.innerHTML = `
     <h4>Semantic methods</h4>
     <select id="viz-extractor"><option value="dinov2">DINOv2</option></select>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:4px">
+      <input type="checkbox" id="viz-sem-toggle"> Show similarity
+    </label>
+    <div id="viz-sem-inputs" style="display:none;flex-direction:column;gap:4px;margin-top:4px">
+      <input type="text" id="viz-pos-query" placeholder="positive query (e.g. bird)">
+      <input type="text" id="viz-neg-query" placeholder="negative query (optional)">
+      <button class="primary" id="viz-query-btn">&#9654; Query</button>
+      <button id="viz-reset-colors-btn" style="background:none;border:1px solid #555;color:#aaa;padding:5px;border-radius:3px;font-family:monospace;font-size:11px;cursor:pointer;margin-top:2px">Reset to original colors</button>
+      <div id="viz-sem-status" class="status-info"></div>
+    </div>
   `;
   // Populate semantic extractor from registry
   fetch('/api/semantics/methods').then(r => r.json()).then(d => {
@@ -171,6 +235,21 @@ function renderSidebar() {
       sel.appendChild(o);
     });
   }).catch(() => {});
+
+  sem.querySelector('#viz-sem-toggle').addEventListener('change', e => {
+    sem.querySelector('#viz-sem-inputs').style.display = e.target.checked ? 'flex' : 'none';
+    if (!e.target.checked) resetPointColors();
+  });
+  sem.querySelector('#viz-query-btn').addEventListener('click', () => {
+    const pos = sem.querySelector('#viz-pos-query').value.trim();
+    const neg = sem.querySelector('#viz-neg-query').value.trim();
+    const ext = sem.querySelector('#viz-extractor').value;
+    const status = sem.querySelector('#viz-sem-status');
+    if (!pos) { if (status) { status.textContent = 'Enter a positive query'; status.className = 'status-err'; } return; }
+    if (status) { status.textContent = 'Computing…'; status.className = 'status-info'; }
+    runSimilarityQuery(pos, neg, ext, status);
+  });
+  sem.querySelector('#viz-reset-colors-btn').addEventListener('click', resetPointColors);
 
   const view = document.createElement('div');
   view.className = 'sidebar-section';

@@ -384,3 +384,57 @@ def test_load_index_includes_localized_frames(tmp_path):
     assert len(loaded._frame_features) == 4
     assert loaded._frame_sources == ["reconstruction"] * 3 + ["localized"]
     assert loaded._image_paths[-1] == new_path
+
+
+# ── Task 8 tests ─────────────────────────────────────────────────────────────
+
+def test_clear_localized_frames_removes_zarr_group(tmp_path):
+    """clear_localized_frames deletes localized/ group; reconstruction/ untouched."""
+    import zarr
+    pts3d, extrinsics, intrinsics = _make_scene(n_frames=3)
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    localizer, _ = _build_localizer_with_mock(pts3d, extrinsics, intrinsics, image_paths)
+
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "disk")
+
+    # Add a localized frame
+    localizer.add_localized_frame(
+        tmp_path / "q.jpg", np.eye(4, dtype=np.float32),
+        intrinsics[0], _make_features(),
+        zarr_path=zarr_path, extractor_name="disk",
+    )
+
+    store = zarr.open(str(zarr_path), mode="r")
+    assert "local_features/disk/localized" in store
+
+    # Clear
+    CameraLocalizer.clear_localized_frames(zarr_path, "disk")
+
+    store2 = zarr.open(str(zarr_path), mode="r")
+    assert "local_features/disk/localized" not in store2
+    assert "local_features/disk/reconstruction" in store2  # untouched
+
+
+def test_load_index_after_clear_has_only_reconstruction(tmp_path):
+    """After clear_localized_frames, load_index returns only reconstruction frames."""
+    pts3d, extrinsics, intrinsics = _make_scene(n_frames=3)
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    localizer, _ = _build_localizer_with_mock(pts3d, extrinsics, intrinsics, image_paths)
+
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "disk")
+    localizer.add_localized_frame(
+        tmp_path / "q.jpg", np.eye(4, dtype=np.float32),
+        intrinsics[0], _make_features(),
+        zarr_path=zarr_path, extractor_name="disk",
+    )
+
+    CameraLocalizer.clear_localized_frames(zarr_path, "disk")
+
+    loaded = CameraLocalizer.load_index(
+        zarr_path=zarr_path, extractor_name="disk",
+        pts3d=pts3d, extrinsics=extrinsics, intrinsics=intrinsics,
+    )
+    assert len(loaded._frame_features) == 3
+    assert all(s == "reconstruction" for s in loaded._frame_sources)

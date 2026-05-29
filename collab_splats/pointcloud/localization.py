@@ -1015,6 +1015,27 @@ class CameraLocalizer:
 
         logger.debug("CameraLocalizer: appended localized frame %s to zarr", image_path.name)
 
+    @staticmethod
+    def clear_localized_frames(zarr_path: "str | Path", extractor_name: str) -> None:
+        """Delete the localized/ group for extractor_name from feedforward.zarr.
+
+        Reconstruction data is untouched. Call this after BA/LC updates that
+        invalidate previously estimated localized poses, then reload via load_index().
+        """
+        store = zarr.open(str(pathlib.Path(zarr_path)), mode="a")
+        loc_key = f"local_features/{extractor_name}/localized"
+        if loc_key in store:
+            del store[loc_key]
+            logger.info(
+                "CameraLocalizer.clear_localized_frames: cleared '%s' from %s",
+                extractor_name, zarr_path,
+            )
+        else:
+            logger.debug(
+                "CameraLocalizer.clear_localized_frames: no localized group for '%s'",
+                extractor_name,
+            )
+
     @classmethod
     def from_feedforward(
         cls,

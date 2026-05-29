@@ -102,6 +102,8 @@ class SemanticsPane(param.Parameterized):
         self._query_btn.on_click(self._on_query)
         self._state.param.watch(self._on_frames_zarr_change, "frames_zarr_path")
         self._state.param.watch(self._on_frames_zarr_change, "selected_indices")
+        self._state.param.watch(self._on_output_dir_change, "output_dir", onlychanged=True)
+        self._method_dd.param.watch(self._on_method_change, "value", onlychanged=True)
 
     def _on_frames_zarr_change(self, event: Any) -> None:
         """Update frame slider range and load first frame when zarr is ready."""
@@ -112,6 +114,14 @@ class SemanticsPane(param.Parameterized):
         self._frame_slider.end = max(0, n - 1)
         self._frame_count_html.object = f"<small>/ {n}</small>"
         self._load_original(0)
+
+    def _on_output_dir_change(self, event: Any) -> None:
+        """Try to discover cached features when a session is loaded."""
+        self._try_discover_cache()
+
+    def _on_method_change(self, event: Any) -> None:
+        """Try to discover cached features when selected extractor changes."""
+        self._try_discover_cache()
 
     def _on_frame_slider(self, event: Any) -> None:
         """Update displays when frame slider moves."""

@@ -17,6 +17,7 @@ import logging
 import pathlib
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import cv2
@@ -538,6 +539,7 @@ class CameraLocalizer:
         extractor=None,
         radius: float = 8.0,
         config: dict | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ):
         """Build feature index from scene data.
 
@@ -569,6 +571,9 @@ class CameraLocalizer:
             len(image_paths), len(pts3d),
         )
 
+        # TODO(future-C): pre-compute and store these features in feedforward.zarr so index
+        # build is a zarr read (~1 s) instead of O(N) GPU inference. See spec 2026-05-29.
+
         # Extract local features for all reference frames
         self._frame_features: list[LocalFeatures] = []
         first_hw: tuple[int, int] | None = None
@@ -581,6 +586,8 @@ class CameraLocalizer:
                 first_hw = (rgb.shape[0], rgb.shape[1])
             feats = self._extractor.extract(rgb)
             self._frame_features.append(feats)
+            if progress_callback is not None:
+                progress_callback(len(self._frame_features) - 1, len(image_paths))
             logger.debug(
                 "  frame %s: %d keypoints",
                 path.name if hasattr(path, "name") else path,

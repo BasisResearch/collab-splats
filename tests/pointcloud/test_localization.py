@@ -290,3 +290,31 @@ def test_localization_result_fields_on_success():
         assert result.pts2d_ref.shape == result.pts2d.shape
         assert result.ref_frame_indices is not None
         assert len(result.ref_frame_indices) == result.n_correspondences
+
+
+def test_camera_localizer_calls_progress_callback():
+    """progress_callback(i, total) called once per reference frame, 0-indexed."""
+    from collab_splats.pointcloud.localization import CameraLocalizer
+    import tempfile, pathlib, cv2 as _cv2
+
+    pts3d, extrinsics, intrinsics = _make_synthetic_scene()
+    extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
+    calls = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = []
+        for i in range(len(extrinsics)):
+            p = pathlib.Path(tmp) / f"frame_{i:04d}.png"
+            _cv2.imwrite(str(p), np.zeros((480, 640, 3), dtype=np.uint8))
+            paths.append(p)
+
+        CameraLocalizer(
+            pts3d, extrinsics, intrinsics, paths,
+            extractor=extractor,
+            progress_callback=lambda i, total: calls.append((i, total)),
+        )
+
+    total = len(extrinsics)
+    assert len(calls) == total
+    assert calls[0] == (0, total)
+    assert calls[-1] == (total - 1, total)

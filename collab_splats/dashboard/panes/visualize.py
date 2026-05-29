@@ -518,6 +518,7 @@ class ScenePanel(param.Parameterized):
 
     def _on_run_mesh(self, event: Any) -> None:
         """Stub — implemented in mesh worker task."""
+        pass
 
     def _rebuild_mesh_viewer(self) -> None:
         """Load and render mesh.ply."""

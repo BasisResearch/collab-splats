@@ -285,6 +285,7 @@ def test_scene_panel_has_mesh_options_row(tmp_path):
 def test_scene_panel_mesh_options_row_visible_in_mesh_mode(tmp_path):
     sp = _make_scene(tmp_path)
     sp._available_modes = {"Mesh"}
+    sp._result = mock.MagicMock()
     sp._plotter = mock.MagicMock()
     sp._vtk_pane = mock.MagicMock()
     with mock.patch.object(sp, "_rebuild_mesh_viewer"):

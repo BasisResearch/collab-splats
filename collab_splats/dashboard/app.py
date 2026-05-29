@@ -18,7 +18,7 @@ from collab_splats.dashboard.panes.localize import LocalizePane, _scan_recon_met
 from collab_splats.dashboard.panes.visualize import ScenePanel, _scan_datasets, _scan_backends, _scan_extractors
 from collab_splats.dashboard.state import AppState
 
-from collab_splats.dashboard.video_server import VideoFileServer, start_video_server
+from collab_splats.dashboard.video_server import VideoFileServer, VideoStreamHandler, start_video_server
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,15 @@ class App(param.Parameterized):
         self._mesh_run_btn.on_click(self._on_run_mesh_sidebar)
         self._state.param.watch(self._on_feedforward_for_mesh, "feedforward_result")
 
+        # Localize section — hidden until Localize tab is active
+        self._localize_section = pn.Column(
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Localize</h3>"),
+            self._localize_method_dd,
+            self._localize_extractor_dd,
+            pn.layout.Divider(),
+            visible=False,
+        )
+
         # Combined View+Mesh section — hidden until Visualize tab is active
         self._view_section = pn.Column(
             pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>View</h3>"),
@@ -214,10 +223,7 @@ class App(param.Parameterized):
             self._models_load_btn,
             self._models_status,
             pn.layout.Divider(),
-            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Localize</h3>"),
-            self._localize_method_dd,
-            self._localize_extractor_dd,
-            pn.layout.Divider(),
+            self._localize_section,
             self._view_section,
             width=300,
         )
@@ -360,42 +366,44 @@ class App(param.Parameterized):
             result = FeedforwardResult.load_zarr(zarr_path)
             n_pts = len(result.points)
 
-            # Load or auto-detect ground plane
+            # Always re-detect ground plane on load so the first render is aligned.
+            # Fall back to transforms.json only if detection fails.
             import json
             import numpy as np
             transforms_path = ds_dir / backend / "transforms.json"
             gp_R = None
             gp_t = None
             gp_status = ""
-            if transforms_path.exists():
-                try:
-                    data = json.loads(transforms_path.read_text())
-                    gp = data.get("ground_plane")
-                    if gp and "R" in gp and "t" in gp:
-                        gp_R = np.array(gp["R"], dtype=np.float64)
-                        gp_t = np.array(gp["t"], dtype=np.float64)
-                        gp_status = "loaded from file"
-                except Exception:
-                    logger.warning("Could not parse transforms.json at %s", transforms_path)
-            if gp_R is None:
-                try:
-                    from collab_splats.pointcloud.utils import fit_dominant_plane
-                    gp_R, gp_t = fit_dominant_plane(result.points)
-                    transforms_path.write_text(
-                        json.dumps({"ground_plane": {"R": gp_R.tolist(), "t": gp_t.tolist()}}, indent=2)
-                    )
-                    gp_status = "auto-detected · saved"
-                except Exception as exc:
-                    logger.warning("Ground plane auto-detect failed: %s", exc)
+            try:
+                from collab_splats.pointcloud.utils import fit_dominant_plane
+                gp_R, gp_t = fit_dominant_plane(result.points)
+                transforms_path.write_text(
+                    json.dumps({"ground_plane": {"R": gp_R.tolist(), "t": gp_t.tolist()}}, indent=2)
+                )
+                gp_status = "auto-detected · saved"
+            except Exception as exc:
+                logger.warning("Ground plane auto-detect failed: %s", exc)
+                if transforms_path.exists():
+                    try:
+                        data = json.loads(transforms_path.read_text())
+                        gp = data.get("ground_plane")
+                        if gp and "R" in gp and "t" in gp:
+                            gp_R = np.array(gp["R"], dtype=np.float64)
+                            gp_t = np.array(gp["t"], dtype=np.float64)
+                            gp_status = "loaded from file (detect failed)"
+                    except Exception:
+                        logger.warning("Could not parse transforms.json at %s", transforms_path)
 
-            # Update state on IOLoop thread
+            # Update state on IOLoop thread.
+            # ground_plane_R/t must be set BEFORE feedforward_result so the
+            # first render fires with the transform already in place.
             def _set_state() -> None:
                 self._state.output_dir = ds_dir
                 self._state.pointcloud_backend = backend
                 self._state.semantic_extractor = extractor if extractor and extractor != "(none)" else ""
-                self._state.feedforward_result = result
                 self._state.ground_plane_R = gp_R
                 self._state.ground_plane_t = gp_t
+                self._state.feedforward_result = result
                 if gp_status:
                     self._ground_plane_status.object = (
                         f"<p style='color:#50c050;font-size:11px'>{gp_status}</p>"
@@ -524,12 +532,14 @@ class App(param.Parameterized):
             sizing_mode="stretch_width",
         )
 
-        # Wire tab activation → ScenePanel mode rescan + View section visibility
+        # Wire tab activation → ScenePanel mode rescan + section visibility
         visualize_tab_index = list(self._panes.keys()).index("Visualize")
+        localize_tab_index = list(self._panes.keys()).index("Localize")
         self._panes["Visualize"].wire_tabs(self._tabs, visualize_tab_index)
 
         def _on_tab_change(event: Any) -> None:
             self._view_section.visible = (event.new == visualize_tab_index)
+            self._localize_section.visible = (event.new == localize_tab_index)
         self._tabs.param.watch(_on_tab_change, "active")
 
         main_content = pn.Column(
@@ -564,4 +574,5 @@ def run_app(host: str = "0.0.0.0", port: int = 7860, base_dir: str = "/workspace
             "websocket_ping_interval": 30_000,
             "websocket_ping_timeout": 120_000,
         },
+        extra_patterns=[(r"/video_stream/(.*)", VideoStreamHandler, {"video_server": video_server})],
     )

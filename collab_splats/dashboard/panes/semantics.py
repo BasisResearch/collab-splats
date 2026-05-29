@@ -164,6 +164,8 @@ class SemanticsPane(param.Parameterized):
         """Start background extraction when Run button clicked."""
         if self._run_thread and self._run_thread.is_alive():
             return
+        if self._discover_thread and self._discover_thread.is_alive():
+            return
         if self._state.frames_zarr_path is None or self._state.output_dir is None:
             self._status_html.object = (
                 "<small style='color:#e05050'>Load frames first (Preprocess tab)</small>"
@@ -269,6 +271,7 @@ class SemanticsPane(param.Parameterized):
             self._pca_pane.object = None
             self._sim_pane.object = None
             self._update_query_btn()
+            self._status_html.object = f"<small style='color:#888'>No cached features for {method}</small>"
             return
         # Valid cache — instantiate extractor in background (may load model weights)
         self._discover_thread = threading.Thread(
@@ -280,6 +283,9 @@ class SemanticsPane(param.Parameterized):
 
     def _load_cached_features(self, method: str, zarr_path: Path) -> None:
         """Background: instantiate extractor and load cached feature zarr."""
+        # Guard against stale thread: user may have switched extractor while this thread was queued
+        if method != self._method_dd.value:
+            return
         try:
             extractor_cls = BaseFeatureExtractor.get(method)
             self._extractor = extractor_cls()

@@ -223,6 +223,7 @@ class ScenePanel(param.Parameterized):
 
         # Watch AppState for auto-suggest and rescan
         state.param.watch(self._on_feedforward_result, "feedforward_result")
+        state.param.watch(self._on_output_dir_change, "output_dir")
         state.param.watch(self._on_lifted_features_path, "lifted_features_path")
 
         # Populate backend dropdown for initial dataset selection
@@ -335,8 +336,17 @@ class ScenePanel(param.Parameterized):
         result = event.new
         if result is None or self._state.output_dir is None:
             return
-        output_dir = Path(self._state.output_dir)
-        ds_name = output_dir.name
+        self._suggest_dataset_from_output_dir()
+
+    def _on_output_dir_change(self, event: Any) -> None:
+        """Auto-suggest dataset when an existing session is loaded (no active reconstruction)."""
+        if self._state.output_dir is None:
+            return
+        self._suggest_dataset_from_output_dir()
+
+    def _suggest_dataset_from_output_dir(self) -> None:
+        """Select dataset dropdown entry matching current output_dir name if present."""
+        ds_name = Path(self._state.output_dir).name
         if ds_name in (self._dataset_dd.options or []):
             self._dataset_dd.value = ds_name
 

@@ -8,7 +8,11 @@ let currentPoints = null;
 let currentMesh = null;
 let currentFrustums = null;
 let lastGroundPlane = null;
-// Normalization — plyNorm is always set from PLY load and used by frustums too
+// sceneRoot: THREE.Group with ground plane transform applied once.
+// Both PLY and mesh are added to this group WITHOUT per-geometry GP transforms.
+// This guarantees identical orientation when switching between them.
+let sceneRoot = null;
+// Normalization in raw world space (shared by PLY, mesh, frustums)
 let normCenter = null;
 let normScale = 1;
 let plyNormCenter = null;
@@ -50,18 +54,26 @@ function initThree() {
   (function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
 }
 
-// Apply ground plane rotation+translation to geometry in-place (before normalization)
-function applyGroundPlane(geo, gp) {
-  if (!gp) return;
-  const { R, t } = gp;
-  // p' = R @ p + t  (row-major THREE.Matrix4.set)
-  const m = new THREE.Matrix4().set(
-    R[0][0], R[0][1], R[0][2], t[0],
-    R[1][0], R[1][1], R[1][2], t[1],
-    R[2][0], R[2][1], R[2][2], t[2],
-    0, 0, 0, 1
-  );
-  geo.applyMatrix4(m);
+// Build or rebuild the sceneRoot Group with the ground plane transform applied once.
+// Both PLY and mesh are children of this group — guarantees identical orientation.
+function buildSceneRoot(gp) {
+  if (sceneRoot) {
+    scene.remove(sceneRoot);
+    sceneRoot = null;
+  }
+  sceneRoot = new THREE.Group();
+  if (gp) {
+    const { R, t } = gp;
+    const m = new THREE.Matrix4().set(
+      R[0][0], R[0][1], R[0][2], t[0],
+      R[1][0], R[1][1], R[1][2], t[1],
+      R[2][0], R[2][1], R[2][2], t[2],
+      0, 0, 0, 1
+    );
+    sceneRoot.applyMatrix4(m);
+  }
+  scene.add(sceneRoot);
+  return sceneRoot;
 }
 
 // Normalize geometry: center + scale. First call computes norm params; later calls reuse them.
@@ -82,14 +94,17 @@ function normalizeGeo(geo, fresh) {
 function loadPLY(url, gp, pointSize) {
   pointSize = pointSize || 0.004;
   if (!renderer) initThree();
-  // Clear cached colors on new scene load
   originalColors = null;
   lastSimilarityColors = null;
+  // (Re)build scene root with ground plane transform — both PLY and mesh share this group
+  buildSceneRoot(gp);
   setProgress(10, 'Loading pointcloud…');
   new PLYLoader().load(url, geo => {
-    if (currentPoints) { scene.remove(currentPoints); currentPoints.geometry.dispose(); currentPoints = null; }
-    applyGroundPlane(geo, gp);
-    normalizeGeo(geo, true);  // fresh — sets normCenter/normScale
+    if (currentPoints) { sceneRoot.remove(currentPoints); currentPoints.geometry.dispose(); currentPoints = null; }
+    // Normalize in raw world space (no per-geometry GP transform)
+    normalizeGeo(geo, true);
+    plyNormCenter = normCenter ? normCenter.clone() : null;
+    plyNormScale = normScale;
     const mat = new THREE.PointsMaterial({
       size: pointSize,
       vertexColors: !!geo.attributes.color,
@@ -97,10 +112,7 @@ function loadPLY(url, gp, pointSize) {
     });
     if (!geo.attributes.color) mat.color.set(0x2596be);
     currentPoints = new THREE.Points(geo, mat);
-    // Store PLY normalization so frustums always use the same reference frame
-    plyNormCenter = normCenter ? normCenter.clone() : null;
-    plyNormScale = normScale;
-    scene.add(currentPoints);
+    sceneRoot.add(currentPoints);
     setProgress(100, `${geo.attributes.position.count.toLocaleString()} points`);
   }, xhr => {
     if (xhr.total) setProgress(Math.round(xhr.loaded / xhr.total * 90), 'Loading…');
@@ -109,11 +121,13 @@ function loadPLY(url, gp, pointSize) {
 
 function loadMesh(url, gp) {
   if (!renderer) initThree();
+  // Ensure sceneRoot exists (may be loading mesh before PLY on Mesh-first flow)
+  if (!sceneRoot) buildSceneRoot(gp);
   setProgress(10, 'Loading mesh…');
   new PLYLoader().load(url, geo => {
-    if (currentMesh) { scene.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
-    applyGroundPlane(geo, gp);
-    normalizeGeo(geo, false);  // reuse normCenter/normScale from pointcloud
+    if (currentMesh) { sceneRoot.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
+    // Same normalization as PLY — no per-geometry GP transform
+    normalizeGeo(geo, false);
     geo.computeVertexNormals();
     const mat = new THREE.MeshPhongMaterial({
       vertexColors: !!geo.attributes.color,
@@ -122,7 +136,7 @@ function loadMesh(url, gp) {
     });
     if (!geo.attributes.color) mat.color.set(0x888888);
     currentMesh = new THREE.Mesh(geo, mat);
-    scene.add(currentMesh);
+    sceneRoot.add(currentMesh);
     setProgress(100, 'Mesh loaded');
   }, xhr => {
     if (xhr.total) setProgress(Math.round(xhr.loaded / xhr.total * 90), 'Loading mesh…');
@@ -225,26 +239,21 @@ async function loadFrustums(gp) {
 
   const verts = [];
 
+  // Frustums are in raw world space — normalize same as PLY, sceneRoot applies GP
   data.frustums.forEach(f => {
-    const cRaw = _applyGP(f.center, gp);
-    const c = _normPt(cRaw);
-    const corners = f.corners.map(corner => _normPt(_applyGP(corner, gp)));
+    const c = _normPt(f.center);
+    const corners = f.corners.map(corner => _normPt(corner));
 
-    // 4 lines from center to each corner (the pyramid edges)
-    corners.forEach(co => {
-      verts.push(...c, ...co);
-    });
-    // 4 lines forming the base rectangle: TL-TR, TR-BR, BR-BL, BL-TL
-    [0,1,2,3].forEach(i => {
-      verts.push(...corners[i], ...corners[(i+1) % 4]);
-    });
+    corners.forEach(co => { verts.push(...c, ...co); });
+    [0,1,2,3].forEach(i => { verts.push(...corners[i], ...corners[(i+1) % 4]); });
   });
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
   const mat = new THREE.LineBasicMaterial({ color: 0x2596be, opacity: 0.6, transparent: true });
   currentFrustums = new THREE.LineSegments(geo, mat);
-  scene.add(currentFrustums);
+  if (!sceneRoot) buildSceneRoot(gp);
+  sceneRoot.add(currentFrustums);
   setProgress(100, `${data.n_cameras} cameras`);
 }
 
@@ -368,7 +377,7 @@ function renderSidebar() {
       btnPc.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #2596be;background:#2596be;color:#000;font-family:monospace;font-size:11px;font-weight:700;cursor:pointer';
       btnMesh.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer';
       if (currentPoints) currentPoints.visible = true;
-      if (currentMesh) { scene.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
+      if (currentMesh) { sceneRoot?.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
     } else {
       btnMesh.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #2596be;background:#2596be;color:#000;font-family:monospace;font-size:11px;font-weight:700;cursor:pointer';
       btnPc.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer';
@@ -394,7 +403,7 @@ function renderSidebar() {
     if (e.target.checked) {
       loadFrustums(lastGroundPlane);
     } else {
-      if (currentFrustums) { scene.remove(currentFrustums); currentFrustums.geometry.dispose(); currentFrustums = null; }
+      if (currentFrustums) { sceneRoot?.remove(currentFrustums); currentFrustums.geometry.dispose(); currentFrustums = null; }
     }
   });
 
@@ -409,6 +418,7 @@ function renderSidebar() {
     if (data.ok) {
       if (status) { status.textContent = '✓ Saved — reloading scene…'; status.className = 'status-ok'; }
       lastGroundPlane = data.ground_plane;
+      normCenter = null;  // Force re-normalization on reload
       loadScene();  // Reload with new ground plane
     } else {
       if (status) { status.textContent = data.error?.split('\n')[0] || 'Failed'; status.className = 'status-err'; }

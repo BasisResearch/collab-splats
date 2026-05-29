@@ -175,6 +175,7 @@ def test_load_index_round_trip(tmp_path):
     assert loaded.frame_sources == ["reconstruction", "reconstruction", "reconstruction"]
     # Keypoint count preserved
     assert loaded._frame_features[0].keypoints.shape[1] == 2
+    assert loaded._image_paths == image_paths
 
 
 def test_load_index_missing_extractor_raises(tmp_path):

@@ -73,3 +73,6 @@ export function setProgress(pct, msg) {
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
+
+// Initial render — defer so any tab modules loaded in the same page have registered
+document.addEventListener('DOMContentLoaded', () => switchTab('preprocess'));

@@ -21,8 +21,10 @@ def create_app() -> FastAPI:
     if _OUTPUTS_DIR.exists():
         app.mount("/outputs", StaticFiles(directory=str(_OUTPUTS_DIR)), name="outputs")
 
+    _index_html = (_STATIC_DIR / "index.html").read_text()
+
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        return (_STATIC_DIR / "index.html").read_text()
+        return _index_html
 
     return app

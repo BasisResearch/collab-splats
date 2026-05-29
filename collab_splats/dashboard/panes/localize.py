@@ -212,9 +212,12 @@ class LocalizeScenePanel(param.Parameterized):
 ########################################################################
 
 
-def _scan_recon_methods(output_dir: Path) -> list[str]:
+def _scan_recon_methods(output_dir: Path | str) -> list[str]:
     """Return method names whose feedforward.zarr exists under output_dir."""
-    if not output_dir or not output_dir.is_dir():
+    if not output_dir:
+        return []
+    output_dir = Path(output_dir)
+    if not output_dir.is_dir():
         return []
     return sorted(
         p.name for p in output_dir.iterdir()
@@ -269,6 +272,11 @@ class LocalizePane(param.Parameterized):
         self._batch_thread: threading.Thread | None = None
 
         # Controls
+        self._method_dd = pn.widgets.Select(
+            name="Method",
+            options=[],
+            width=140,
+        )
         self._query_input = pn.widgets.TextInput(
             placeholder="Path to query image…",
             width=320,
@@ -330,6 +338,7 @@ class LocalizePane(param.Parameterized):
         self._batch_run_btn.on_click(self._on_batch_run)
         self._batch_export_btn.on_click(self._on_export_csv)
         self._query_input.param.watch(self._on_query_or_dir_changed, ["value"])
+        self._method_dd.param.watch(self._on_method_changed, ["value"])
         self._state.param.watch(self._on_output_dir_changed, ["output_dir"])
         self._state.param.watch(self._on_localize_state_changed, ["localize_method", "localize_extractor"])
 
@@ -343,6 +352,16 @@ class LocalizePane(param.Parameterized):
         """Re-evaluate gate when session output_dir changes; invalidate cached localizer."""
         self._localizer = None
         self._ff_result = None
+        # Populate method dropdown based on available reconstruction methods
+        methods = _scan_recon_methods(self._state.output_dir) if self._state.output_dir else []
+        self._method_dd.options = methods
+        # Auto-select first method if available, otherwise clear
+        if methods:
+            self._method_dd.value = methods[0]
+            self._state.localize_method = methods[0]
+        else:
+            self._method_dd.value = ""
+            self._state.localize_method = ""
         self._update_run_btn_gate()
 
     def _on_localize_state_changed(self, event: Any) -> None:
@@ -351,6 +370,11 @@ class LocalizePane(param.Parameterized):
         self._ff_result = None
         self._scene_panel = None
         self._update_run_btn_gate()
+
+    def _on_method_changed(self, event: Any) -> None:
+        """Update state when method dropdown changes."""
+        self._state.localize_method = self._method_dd.value
+        self._on_localize_state_changed(None)
 
     def _on_query_or_dir_changed(self, event: Any) -> None:
         """Re-evaluate run-button gate when query path changes."""
@@ -391,25 +415,29 @@ class LocalizePane(param.Parameterized):
         if self._loc_thread and self._loc_thread.is_alive():
             return
         # Snapshot widget values on main thread before passing to worker
+        method = self._state.localize_method
+        extractor_name = self._state.localize_extractor
         query_path = Path(self._query_input.value.strip())
         warp_corners = self._warp_cb.value
         self._run_btn.disabled = True
         self._status_html.object = "<span style='color:#2596be'>⏳ Localizing…</span>"
         self._loc_thread = threading.Thread(
             target=self._run_localize,
-            args=(query_path, warp_corners),
+            args=(method, extractor_name, query_path, warp_corners),
             daemon=True,
         )
         self._loc_thread.start()
 
     def _run_localize(
         self,
+        method: str,
+        extractor_name: str,
         query_path: Path,
         warp_corners: bool,
     ) -> None:
         """Background thread: load result, build localizer, run, update UI."""
         try:
-            self._op_log.start_op(f"Localizing in {self._state.localize_method}")
+            self._op_log.start_op(f"Localizing in {method}")
 
             # Build or reuse cached localizer
             if self._localizer is None:
@@ -509,18 +537,22 @@ class LocalizePane(param.Parameterized):
         if not folder_val:
             return
         folder_path = Path(folder_val)
+        method = self._state.localize_method
+        extractor_name = self._state.localize_extractor
         self._batch_run_btn.disabled = True
         self._batch_export_btn.disabled = True
         self._batch_table.value = _empty_batch_df()
         self._batch_thread = threading.Thread(
             target=self._run_batch,
-            args=(folder_path,),
+            args=(method, extractor_name, folder_path),
             daemon=True,
         )
         self._batch_thread.start()
 
     def _run_batch(
         self,
+        method: str,
+        extractor_name: str,
         folder_path: Path,
     ) -> None:
         """Background thread: localize every image in folder_path, stream rows to table."""

@@ -415,3 +415,75 @@ def test_on_run_mesh_loads_zarr_when_result_none(tmp_path):
         sp._run_mesh_worker()
 
     mock_load.assert_called_once_with(tmp_path / "scene_01" / "vggt_x" / "feedforward.zarr")
+
+
+########################################################################
+# Ground plane apply/invert tests
+########################################################################
+
+import dataclasses
+
+
+def _make_fake_result(n_pts: int = 5) -> "FeedforwardResult":  # type: ignore[name-defined]
+    """Build a minimal FeedforwardResult-like object for ground plane tests."""
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    rng = np.random.default_rng(42)
+    pts = rng.standard_normal((n_pts, 3)).astype(np.float32)
+    colors = (rng.random((n_pts, 3)) * 255).astype(np.uint8)
+    extrinsics = np.tile(np.eye(4, dtype=np.float64), (n_pts, 1, 1))
+    intrinsics = np.tile(np.eye(3, dtype=np.float32), (n_pts, 1, 1))
+    return FeedforwardResult(
+        points=pts,
+        colors=colors,
+        extrinsics=extrinsics,
+        intrinsics=intrinsics,
+        image_paths=[Path(f"frame_{i:04d}.jpg") for i in range(n_pts)],
+    )
+
+
+def test_apply_ground_plane_passthrough_when_no_r(tmp_path):
+    """_apply_ground_plane returns result unchanged when ground_plane_R is None."""
+    state = AppState()
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    result = _make_fake_result()
+    out = sp._apply_ground_plane(result)
+    # Should be the identical object — no transform applied
+    assert out is result
+
+
+def test_apply_ground_plane_translates_points(tmp_path):
+    """Identity rotation with t=[0,0,1] shifts all z coords by +1."""
+    state = AppState()
+    state.ground_plane_R = np.eye(3, dtype=np.float64)
+    state.ground_plane_t = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    state.ground_plane_enabled = True
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    result = _make_fake_result()
+    pts_orig = result.points.copy()
+    out = sp._apply_ground_plane(result)
+    np.testing.assert_allclose(out.points[:, :2], pts_orig[:, :2], atol=1e-5)
+    np.testing.assert_allclose(out.points[:, 2], pts_orig[:, 2] + 1.0, atol=1e-5)
+
+
+def test_apply_ground_plane_invert_round_trips(tmp_path):
+    """Apply then invert restores original points (round-trip, atol=1e-5)."""
+    state = AppState()
+    rng = np.random.default_rng(7)
+    # Random rotation via QR decomposition
+    Q, _ = np.linalg.qr(rng.standard_normal((3, 3)))
+    t = rng.standard_normal(3)
+    state.ground_plane_R = Q.astype(np.float64)
+    state.ground_plane_t = t.astype(np.float64)
+    state.ground_plane_enabled = True
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    result = _make_fake_result()
+    pts_orig = result.points.copy()
+
+    # Apply forward transform
+    out_fwd = sp._apply_ground_plane(result)
+
+    # Apply inverse
+    state.ground_plane_enabled = False
+    out_inv = sp._apply_ground_plane(out_fwd)
+
+    np.testing.assert_allclose(out_inv.points, pts_orig, atol=1e-5)

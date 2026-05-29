@@ -180,7 +180,7 @@ class LoopClosure:
 
         cfg = self.config
         K, O = cfg.submap_size, cfg.submap_overlap
-        step = max(1, K - O)
+        step = max(1, K)  # stride = submap_size, matching VGGT-SLAM (not K-O)
         views = self.base.views
         N = views.shape[0] if hasattr(views, "shape") else len(views)
         device = str(next(self.base.model.parameters()).device)
@@ -208,29 +208,19 @@ class LoopClosure:
 
         console.log(f"Loop closure: {N} frames → {n_submaps} submaps (size={K}, overlap={O})")
 
-        # Slide submap window across frames (stride = submap_size - overlap)
+        # Slide submap window across frames (stride = submap_size, overlap frames stored per submap)
         with tqdm(total=n_submaps, desc="Loop closure", unit="submap") as pbar:
             for wi, start in enumerate(range(0, N, step)):
-                end = min(start + K, N)
+                # Each window = K+O frames, matching VGGT-SLAM's submap_size+overlapping_window_size.
+                # The overlap frame (index K) is kept as the boundary/carry frame for the next submap.
+                end = min(start + K + O, N)
                 window = views[start:end]
                 k = window.shape[0] if hasattr(window, "shape") else len(window)
 
-                # Feed K+O frames to VGGT for broader attention context (matches VGGT-SLAM
-                # submap_size + overlapping_window_size window). Only first K predictions used.
-                end_ctx = min(start + K + O, N)
-                window_ctx = views[start:end_ctx]
-                k_ctx = (
-                    window_ctx.shape[0] if hasattr(window_ctx, "shape") else len(window_ctx)
-                )
-
                 with torch.no_grad():
-                    raw = self.base._forward(self.base.model, window_ctx, **kwargs)
+                    raw = self.base._forward(self.base.model, window, **kwargs)
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-
-                # Discard extra O-frame predictions; only K predictions enter Submap
-                if k_ctx > k:
-                    raw = _trim_forward_outputs(raw, k)
 
                 # Models that return list[dict] (e.g. MapAnything) must aggregate to a flat
                 # dict for the LC loop. raw_lc is used for LC metadata; raw is stored in the

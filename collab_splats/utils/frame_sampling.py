@@ -48,19 +48,21 @@ def _iter_decoded_frames(
     backend = _get_decoder_backend()
 
     if backend == "ffmpeg":
+        rotation = _get_rotation_degrees(video_path)
+        out_w, out_h = _ffmpeg_output_dims(width, height, rotation)
         cmd = [
             "ffmpeg", "-i", video_path,
             "-f", "rawvideo", "-pix_fmt", "bgr24",
             "-an", "pipe:1",
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        frame_size = width * height * 3
+        frame_size = out_w * out_h * 3
         try:
             while True:
                 raw = proc.stdout.read(frame_size)
                 if len(raw) < frame_size:
                     break
-                yield np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy()
+                yield np.frombuffer(raw, np.uint8).reshape(out_h, out_w, 3).copy()
         finally:
             proc.stdout.close()
             proc.terminate()
@@ -96,9 +98,10 @@ def _iter_decoded_frames(
 def _get_rotation_degrees(video_path: str) -> int:
     """Return CW rotation degrees needed to display video correctly, via ffprobe.
 
-    Uses ffprobe tags.rotate (MP4 container standard) — stable across all OpenCV
-    versions. CAP_PROP_ORIENTATION_AUTO and CAP_PROP_ORIENTATION_META apply
-    rotation in version-dependent directions and must not be relied upon.
+    Checks two metadata locations in order:
+    1. tags.rotate — older MP4 format (still used by some cameras)
+    2. side_data_list Display Matrix — modern format used by GoPro, iPhone, etc.
+       ffprobe reports CCW degrees; convert to CW with (-rot) % 360.
     """
     try:
         r = subprocess.run(
@@ -107,9 +110,16 @@ def _get_rotation_degrees(video_path: str) -> int:
         )
         for s in json.loads(r.stdout).get("streams", []):
             if s.get("codec_type") == "video":
+                # Legacy: tags.rotate (CW degrees)
                 rotate = s.get("tags", {}).get("rotate")
                 if rotate:
                     return int(rotate)
+                # Modern: Display Matrix side data (ffprobe reports CCW, convert to CW)
+                for sd in s.get("side_data_list", []):
+                    if sd.get("side_data_type") == "Display Matrix":
+                        rot = sd.get("rotation")
+                        if rot is not None:
+                            return int(-rot) % 360
     except Exception:
         logger.debug("ffprobe failed for %s", video_path, exc_info=True)
     return 0

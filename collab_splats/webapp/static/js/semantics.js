@@ -77,7 +77,7 @@ function setupMainPanel() {
   const panel = document.getElementById('tab-semantics');
   if (!panel || panel.dataset.initialized) return;
   panel.dataset.initialized = '1';
-  panel.style.cssText = 'display:none;flex-direction:column;flex:1;overflow:hidden;';
+  panel.style.cssText = 'flex-direction:column;flex:1;overflow:hidden;';
 
   panel.innerHTML = `
     <div id="sem-panels" style="display:flex;flex:1;overflow:hidden;gap:1px">

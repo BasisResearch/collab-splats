@@ -890,6 +890,131 @@ class CameraLocalizer:
         logger.info("CameraLocalizer.update_index: appended %d frames to %s [%s]",
                     len(new_image_paths), zarr_path, extractor_name)
 
+    def add_localized_frame(
+        self,
+        image_path: "str | Path",
+        pose: np.ndarray,
+        intrinsics: np.ndarray,
+        features: "LocalFeatures",
+        zarr_path: "str | Path | None" = None,
+        extractor_name: "str | None" = None,
+    ) -> None:
+        """Add a successfully localized frame to the in-memory reference set.
+
+        Rebuilds kpt→3D assignments for the new frame from existing pts3d + given pose.
+        If zarr_path and extractor_name are provided, appends to localized/ in zarr.
+        Single-writer; not thread-safe across concurrent callers.
+        Call clear_localized_frames() after BA/LC updates that invalidate poses.
+        """
+        image_path = pathlib.Path(image_path)
+
+        # Duplicate guard
+        if image_path in self._image_paths:
+            logger.warning(
+                "CameraLocalizer.add_localized_frame: %s already in index, skipping",
+                image_path.name,
+            )
+            return
+
+        # Build kpt→3D assignment for this frame using existing pts3d
+        new_assignments = _build_frame_assignments(
+            pts3d=self._pts3d,
+            extrinsics=pose[np.newaxis],       # (1, 4, 4)
+            intrinsics=intrinsics[np.newaxis],  # (1, 3, 3)
+            frame_keypoints=[features.keypoints],
+            image_hw=self._image_hw,
+        )
+
+        # Append in-memory
+        self._frame_features.append(features)
+        self._frame_sources.append("localized")
+        self._image_paths.append(image_path)
+        self._assignments.extend(new_assignments)
+
+        # Persist to zarr if requested
+        if zarr_path is not None and extractor_name is not None:
+            self._append_localized_to_zarr(
+                image_path, pose, intrinsics, features,
+                pathlib.Path(zarr_path), extractor_name,
+            )
+
+    def _append_localized_to_zarr(
+        self,
+        image_path: "pathlib.Path",
+        pose: np.ndarray,
+        intrinsics: np.ndarray,
+        features: "LocalFeatures",
+        zarr_path: "pathlib.Path",
+        extractor_name: str,
+    ) -> None:
+        """Append one localized frame to the localized/ zarr group."""
+        lz4 = BloscCodec(cname="lz4")
+        store = zarr.open(str(zarr_path), mode="a")
+        loc_key = f"local_features/{extractor_name}/localized"
+
+        kpts_np = features.keypoints.numpy().astype(np.float32)
+        descs_np = features.descriptors.numpy().astype(np.float32)
+        scores_np = (features.scores.numpy().astype(np.float32)
+                     if features.scores is not None else None)
+
+        if loc_key not in store:
+            # First localized frame — create group + arrays
+            loc_group = store.require_group(loc_key)
+            offsets = np.array([0, len(kpts_np)], dtype=np.int64)
+            loc_group.attrs["image_paths"] = [str(image_path)]
+            loc_group.create_array("frame_offsets", data=offsets,
+                                   chunks=(max(offsets.shape[0], 2),), compressors=lz4)
+            loc_group.create_array("keypoints", data=kpts_np,
+                                   chunks=(max(kpts_np.shape[0], 1), 2), compressors=lz4)
+            loc_group.create_array("descriptors", data=descs_np,
+                                   chunks=(max(descs_np.shape[0], 1),
+                                           max(descs_np.shape[1], 1)), compressors=lz4)
+            if scores_np is not None:
+                loc_group.create_array("scores", data=scores_np,
+                                       chunks=(max(scores_np.shape[0], 1),), compressors=lz4)
+            loc_group.create_array("extrinsics", data=pose[np.newaxis],
+                                   chunks=(1, 4, 4), compressors=lz4)
+            loc_group.create_array("intrinsics", data=intrinsics[np.newaxis],
+                                   chunks=(1, 3, 3), compressors=lz4)
+        else:
+            # Append to existing group
+            loc_group = store[loc_key]
+            existing = list(loc_group.attrs.get("image_paths", []))
+            existing.append(str(image_path))
+            loc_group.attrs["image_paths"] = existing
+
+            off_arr = loc_group["frame_offsets"]
+            last_off = int(off_arr[-1])
+            n_off = off_arr.shape[0]
+            off_arr.resize((n_off + 1,))
+            off_arr[n_off] = last_off + len(kpts_np)
+
+            kpts_arr = loc_group["keypoints"]
+            old_m = kpts_arr.shape[0]
+            kpts_arr.resize((old_m + len(kpts_np), kpts_arr.shape[1]))
+            kpts_arr[old_m:] = kpts_np
+
+            descs_arr = loc_group["descriptors"]
+            descs_arr.resize((old_m + len(descs_np), descs_arr.shape[1]))
+            descs_arr[old_m:] = descs_np
+
+            if scores_np is not None and "scores" in loc_group:
+                sc_arr = loc_group["scores"]
+                old_sc = sc_arr.shape[0]
+                sc_arr.resize((old_sc + len(scores_np),))
+                sc_arr[old_sc:] = scores_np
+
+            ext_arr = loc_group["extrinsics"]
+            n_loc = ext_arr.shape[0]
+            ext_arr.resize((n_loc + 1, 4, 4))
+            ext_arr[n_loc] = pose
+
+            intr_arr = loc_group["intrinsics"]
+            intr_arr.resize((n_loc + 1, 3, 3))
+            intr_arr[n_loc] = intrinsics
+
+        logger.debug("CameraLocalizer: appended localized frame %s to zarr", image_path.name)
+
     @classmethod
     def from_feedforward(
         cls,

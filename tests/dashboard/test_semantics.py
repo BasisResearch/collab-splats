@@ -80,3 +80,49 @@ def test_semantics_panel_returns_column():
     pane = _make_semantics()
     result = pane.panel()
     assert isinstance(result, pn.Column)
+
+
+def test_panel_extractor_row_is_first_content():
+    """Extractor controls are col.objects[1] (after H3 header)."""
+    pane = _make_semantics()
+    col = pane.panel()
+    extractor_row = col.objects[1]
+    assert isinstance(extractor_row, pn.Row)
+    assert pane._method_dd in extractor_row.objects
+
+
+def test_panel_image_area_has_fixed_height():
+    """Image area is a Column with height=270 to prevent reflow."""
+    pane = _make_semantics()
+    col = pane.panel()
+    image_area = col.objects[2]
+    assert isinstance(image_area, pn.Column)
+    assert image_area.height == 270
+
+
+def test_panel_frame_slider_below_image_area():
+    """Frame slider row is col.objects[3], after the image area."""
+    pane = _make_semantics()
+    col = pane.panel()
+    frame_row = col.objects[3]
+    assert isinstance(frame_row, pn.Row)
+    assert pane._frame_slider in frame_row.objects
+
+
+def test_panel_query_row_is_last():
+    """Query row is col.objects[4] (last)."""
+    pane = _make_semantics()
+    col = pane.panel()
+    query_row = col.objects[4]
+    assert isinstance(query_row, pn.Row)
+    assert pane._query_input in query_row.objects
+
+
+def test_panel_status_html_in_extractor_row():
+    """status_html lives inside extractor_row, not as a standalone column child."""
+    pane = _make_semantics()
+    col = pane.panel()
+    extractor_row = col.objects[1]
+    assert pane._status_html in extractor_row.objects
+    # Must NOT be a top-level child of the column
+    assert pane._status_html not in col.objects

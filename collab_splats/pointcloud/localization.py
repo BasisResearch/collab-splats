@@ -695,6 +695,124 @@ class CameraLocalizer:
                     len(self._frame_features), zarr_path, extractor_name)
 
     @classmethod
+    def load_index(
+        cls,
+        zarr_path: "str | Path",
+        extractor_name: str,
+        pts3d: np.ndarray,
+        extrinsics: np.ndarray,
+        intrinsics: np.ndarray,
+        config: "dict | None" = None,
+        extractor=None,
+        radius: float = 8.0,
+    ) -> "CameraLocalizer":
+        """Load feature index from zarr; rebuild kpt→3D assignments from current geometry.
+
+        Loads reconstruction/ and localized/ (if present) groups and merges them.
+        Raises KeyError if extractor_name reconstruction cache not found.
+        """
+        zarr_path = pathlib.Path(zarr_path)
+        store = zarr.open(str(zarr_path), mode="r")
+
+        rec_key = f"local_features/{extractor_name}/reconstruction"
+        if rec_key not in store:
+            raise KeyError(
+                f"No feature cache for extractor '{extractor_name}' in {zarr_path}. "
+                "Rebuild via CameraLocalizer.from_feedforward()."
+            )
+
+        # ── Load reconstruction group ────────────────────────────────────────
+        rec_group = store[rec_key]
+        rec_image_paths = [pathlib.Path(p) for p in rec_group.attrs["image_paths"]]
+        hw = tuple(int(x) for x in rec_group.attrs["hw"])
+        offsets = rec_group["frame_offsets"][:]
+        all_kpts = (rec_group["keypoints"][:]
+                    if rec_group["keypoints"].shape[0] > 0
+                    else np.zeros((0, 2), dtype=np.float32))
+        all_descs = (rec_group["descriptors"][:]
+                     if rec_group["descriptors"].shape[0] > 0
+                     else np.zeros((0, 1), dtype=np.float32))
+        all_scores = rec_group["scores"][:] if "scores" in rec_group else None
+
+        rec_features: list[LocalFeatures] = []
+        for i in range(len(offsets) - 1):
+            s, e = int(offsets[i]), int(offsets[i + 1])
+            f_kpts = torch.from_numpy(all_kpts[s:e])
+            f_descs = torch.from_numpy(all_descs[s:e])
+            f_scores = torch.from_numpy(all_scores[s:e]) if all_scores is not None else None
+            rec_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores))
+
+        # ── Load localized group (optional) ──────────────────────────────────
+        loc_key = f"local_features/{extractor_name}/localized"
+        loc_features: list[LocalFeatures] = []
+        loc_image_paths: list[pathlib.Path] = []
+        loc_extrinsics_list: list[np.ndarray] = []
+        loc_intrinsics_list: list[np.ndarray] = []
+
+        if loc_key in store:
+            loc_group = store[loc_key]
+            loc_image_paths = [pathlib.Path(p) for p in loc_group.attrs.get("image_paths", [])]
+            if loc_image_paths:
+                loc_offsets = loc_group["frame_offsets"][:]
+                loc_kpts = loc_group["keypoints"][:]
+                loc_descs = loc_group["descriptors"][:]
+                loc_scores = loc_group["scores"][:] if "scores" in loc_group else None
+                loc_ext = loc_group["extrinsics"][:]   # (N_loc, 4, 4)
+                loc_intr = loc_group["intrinsics"][:]  # (N_loc, 3, 3)
+                for i in range(len(loc_offsets) - 1):
+                    s, e = int(loc_offsets[i]), int(loc_offsets[i + 1])
+                    f_kpts = torch.from_numpy(loc_kpts[s:e])
+                    f_descs = torch.from_numpy(loc_descs[s:e])
+                    f_scores = torch.from_numpy(loc_scores[s:e]) if loc_scores is not None else None
+                    loc_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores))
+                    loc_extrinsics_list.append(loc_ext[i])
+                    loc_intrinsics_list.append(loc_intr[i])
+
+        # ── Build assignments ─────────────────────────────────────────────────
+        rec_assignments = _build_frame_assignments(
+            pts3d=pts3d,
+            extrinsics=extrinsics,
+            intrinsics=intrinsics,
+            frame_keypoints=[f.keypoints for f in rec_features],
+            image_hw=hw,
+            radius=radius,
+        )
+
+        if loc_features:
+            loc_ext_arr = np.stack(loc_extrinsics_list, axis=0)
+            loc_intr_arr = np.stack(loc_intrinsics_list, axis=0)
+            loc_assignments = _build_frame_assignments(
+                pts3d=pts3d,
+                extrinsics=loc_ext_arr,
+                intrinsics=loc_intr_arr,
+                frame_keypoints=[f.keypoints for f in loc_features],
+                image_hw=hw,
+                radius=radius,
+            )
+        else:
+            loc_assignments = []
+
+        # ── Assemble object without running __init__ extraction loop ──────────
+        obj = object.__new__(cls)
+        obj.config = config or {}
+        obj._pts3d = pts3d
+        obj._extrinsics = extrinsics
+        obj._intrinsics = intrinsics
+        obj._extractor = extractor if extractor is not None else DiskExtractor()
+        obj._image_hw = hw
+        obj._frame_features = rec_features + loc_features
+        obj._frame_sources = (["reconstruction"] * len(rec_features) +
+                              ["localized"] * len(loc_features))
+        obj._image_paths = rec_image_paths + loc_image_paths
+        obj._assignments = rec_assignments + loc_assignments
+
+        logger.info(
+            "CameraLocalizer.load_index: loaded %d rec + %d loc frames from %s [%s]",
+            len(rec_features), len(loc_features), zarr_path, extractor_name,
+        )
+        return obj
+
+    @classmethod
     def from_feedforward(cls, result, **kwargs) -> "CameraLocalizer":
         """Construct from a FeedforwardResult.
 

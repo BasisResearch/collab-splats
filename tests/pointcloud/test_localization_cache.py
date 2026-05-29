@@ -149,3 +149,43 @@ def test_save_index_creates_reconstruction_group(tmp_path):
     assert grp["frame_offsets"].shape == (4,)   # N+1 = 3+1
     assert grp["keypoints"].shape[1] == 2
     assert grp["descriptors"].shape[0] == grp["keypoints"].shape[0]
+
+
+def test_load_index_round_trip(tmp_path):
+    """save_index + load_index: loaded localizer has same frame count and sources."""
+    pts3d, extrinsics, intrinsics = _make_scene()
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    localizer, mock_ext = _build_localizer_with_mock(pts3d, extrinsics, intrinsics, image_paths)
+
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "disk")
+
+    loaded = CameraLocalizer.load_index(
+        zarr_path=zarr_path,
+        extractor_name="disk",
+        pts3d=pts3d,
+        extrinsics=extrinsics,
+        intrinsics=intrinsics,
+    )
+
+    assert len(loaded._frame_features) == 3
+    assert len(loaded._assignments) == 3
+    assert len(loaded._frame_sources) == 3
+    assert all(s == "reconstruction" for s in loaded._frame_sources)
+    assert loaded.frame_sources == ["reconstruction", "reconstruction", "reconstruction"]
+    # Keypoint count preserved
+    assert loaded._frame_features[0].keypoints.shape[1] == 2
+
+
+def test_load_index_missing_extractor_raises(tmp_path):
+    """load_index raises KeyError when extractor cache not found."""
+    zarr_path = _empty_zarr(tmp_path)
+    pts3d, extrinsics, intrinsics = _make_scene()
+    with pytest.raises(KeyError, match="disk"):
+        CameraLocalizer.load_index(
+            zarr_path=zarr_path,
+            extractor_name="disk",
+            pts3d=pts3d,
+            extrinsics=extrinsics,
+            intrinsics=intrinsics,
+        )

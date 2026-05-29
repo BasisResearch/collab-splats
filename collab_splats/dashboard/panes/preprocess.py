@@ -224,19 +224,10 @@ class PreprocessPane(param.Parameterized):
 
         # Frame selection controls
         self._method_dd = pn.widgets.Select(
-            name="Method", options=["fps", "optical_flow"], value="fps", width=200
+            name="Method", options=["balanced", "optical_flow"], value="balanced", width=200
         )
         self._n_frames_slider = pn.widgets.IntSlider(
-            name="Target frames", value=200, start=20, end=2000, step=10, width=260
-        )
-        self._fps_slider = pn.widgets.FloatSlider(
-            name="FPS", value=2.0, start=0.5, end=30.0, step=0.5, width=260
-        )
-        self._window_start_slider = pn.widgets.FloatSlider(
-            name="Window start (%)", value=0.0, start=0.0, end=1.0, step=0.01, width=260
-        )
-        self._window_end_slider = pn.widgets.FloatSlider(
-            name="Window end (%)", value=1.0, start=0.0, end=1.0, step=0.01, width=260
+            name="Frames", value=200, start=20, end=2000, step=10, width=260
         )
         self._min_disparity_slider = pn.widgets.FloatSlider(
             name="Min disparity", value=50.0, start=10.0, end=200.0, step=5.0,
@@ -254,10 +245,7 @@ class PreprocessPane(param.Parameterized):
         # Controls wrapped in collapsible Card — hidden until video is loaded
         self._controls_card = pn.Card(
             self._method_dd,
-            self._fps_slider,
             self._n_frames_slider,
-            self._window_start_slider,
-            self._window_end_slider,
             self._min_disparity_slider,
             pn.layout.Divider(),
             self._extract_btn,
@@ -317,9 +305,7 @@ class PreprocessPane(param.Parameterized):
 
     def _on_method_change(self, event: Any) -> None:
         """Toggle visibility of method-specific controls."""
-        is_of = event.new == "optical_flow"
-        self._min_disparity_slider.visible = is_of
-        self._fps_slider.visible = not is_of
+        self._min_disparity_slider.visible = event.new == "optical_flow"
 
     def _on_extract(self, event: Any) -> None:
         """Start background extraction thread when Extract button is clicked."""
@@ -358,13 +344,17 @@ class PreprocessPane(param.Parameterized):
             self._op_log.start_op("Extracting frames")
             self._progress_label.object = "<p style='font-size:11px;color:#aaa'>Extracting frames…</p>"
             method = self._method_dd.value
+            n_frames = self._n_frames_slider.value
             frame_indices: list[int]
             of_scores: list[dict] = []
-            if method == "fps":
+            if method == "balanced":
+                # Derive fps so sample_frames_fps yields exactly n_frames evenly-spaced frames
+                duration_s = info.get("duration_s") or (total_frames / (info.get("fps") or 30.0))
+                target_fps = n_frames / max(duration_s, 1.0)
                 frames, frame_indices = sample_frames_fps(
                     str(video_path),
-                    fps=self._fps_slider.value,
-                    max_frames=self._n_frames_slider.value,
+                    fps=target_fps,
+                    max_frames=n_frames,
                     on_progress=_extract_progress,
                     verbose=False,
                 )
@@ -372,20 +362,11 @@ class PreprocessPane(param.Parameterized):
                 frames, of_scores = sample_frames_optical_flow(
                     str(video_path),
                     min_disparity=self._min_disparity_slider.value,
-                    max_frames=self._n_frames_slider.value,
+                    max_frames=n_frames,
                     on_progress=_extract_progress,
                     verbose=False,
                 )
                 frame_indices = list(range(len(frames)))
-
-            # Apply window filter proportionally to extracted set
-            if self._window_start_slider.value > 0.0 or self._window_end_slider.value < 1.0:
-                n_total = len(frames)
-                start_i = int(self._window_start_slider.value * n_total)
-                end_i = max(start_i + 1, int(self._window_end_slider.value * n_total))
-                frames = frames[start_i:end_i]
-                frame_indices = frame_indices[start_i:end_i]
-                of_scores = of_scores[start_i:end_i]
 
             self._selected_frames = frames
             self._selected_indices = frame_indices
@@ -402,7 +383,7 @@ class PreprocessPane(param.Parameterized):
             self._selected_frames = []  # clear after zarr write — frames now on disk
 
             # Rebuild metrics panel based on method
-            if method == "fps":
+            if method == "balanced":
                 self._metrics_col.objects = [_render_fps_raster(frame_indices, total_frames)]
             else:
                 self._frame_scores = {

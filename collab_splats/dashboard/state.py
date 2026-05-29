@@ -21,6 +21,8 @@ class AppState(param.Parameterized):
     lifted_features_path = param.Parameter(default=None)
     pointcloud_backend = param.String(default="")
     semantic_extractor = param.String(default="")
+    localize_method = param.String(default="")
+    localize_extractor = param.String(default="DISK+LightGlue")
     ground_plane_enabled = param.Boolean(default=True)
     ground_plane_R = param.Parameter(default=None)
     ground_plane_t = param.Parameter(default=None)

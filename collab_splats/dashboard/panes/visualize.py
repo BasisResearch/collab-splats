@@ -310,22 +310,15 @@ class ScenePanel(param.Parameterized):
         self._update_mode_buttons()
 
     def _update_mode_buttons(self) -> None:
-        """Enable/disable the RadioButtonGroup based on available modes."""
-        # Disable selector when no modes are available; enable once data is loaded
+        """Enable/disable the RadioButtonGroup based on available modes.
+
+        Only updates widget state — never triggers VTK rendering directly.
+        Rendering happens via user interaction (mode selector click) on the IOLoop thread.
+        """
         self._mode_selector.disabled = not bool(self._available_modes)
-
-        # Map internal mode names to selector labels
-        label_map = {"PCD": "Points", "Mesh": "Mesh", "Similarity": "Similarity"}
-
-        # Fall back to first available mode if current mode unavailable
+        # Update internal mode to first available if current mode is gone
         if self.mode not in self._available_modes and self._available_modes:
-            first_available = next(iter(sorted(self._available_modes)))
-            self._on_mode_change(first_available)
-        elif self.mode in self._available_modes:
-            # Sync selector value to current mode without re-triggering render
-            label = label_map.get(self.mode, self.mode)
-            if self._mode_selector.value != label:
-                self._mode_selector.value = label
+            self.mode = next(iter(sorted(self._available_modes)))
 
     ####################################################################
     # AppState watchers
@@ -380,7 +373,11 @@ class ScenePanel(param.Parameterized):
         self._load_thread.start()
 
     def _do_load(self) -> None:
-        """Background: load FeedforwardResult from zarr."""
+        """Background: load FeedforwardResult from zarr.
+
+        Data loading only — no VTK rendering calls. VTK is not thread-safe;
+        rendering is deferred to the IOLoop via pn.io.state.execute().
+        """
         try:
             # Lazy import: avoids pulling in the heavy pointcloud chain at module load time
             from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
@@ -396,21 +393,25 @@ class ScenePanel(param.Parameterized):
             self._lifted_normed = None
             self._scan_available_modes()
 
-            self._plotter.reset_camera()
-            if "PCD" in self._available_modes:
-                self._on_mode_change("Points")
-
             n_pts = len(self._result.points)
             if n_pts > 500_000:
                 self._op_log.log(
                     f"Large PCD ({n_pts:,} points) — may be slow to render"
                 )
-            self._set_status(f"Loaded {n_pts:,} points.")
+            # Schedule render on IOLoop thread — VTK rendering is not thread-safe
+            pn.io.state.execute(self._auto_render_after_load)
+            self._set_status(f"Loaded {n_pts:,} points — click a mode to view.")
         except Exception as exc:
             logger.exception("ScenePanel load failed")
             self._set_status(f"Load failed: {exc}")
         finally:
             self._load_btn.disabled = False
+
+    def _auto_render_after_load(self) -> None:
+        """IOLoop-thread: switch to first available mode after data load."""
+        if self._available_modes:
+            first = min(self._available_modes)
+            self._on_mode_change(first)
 
     def _set_status(self, msg: str) -> None:
         """Update status HTML pane."""

@@ -29,11 +29,10 @@ def _suppress_noise() -> None:
 
     vtk.vtkObject.GlobalWarningDisplayOff()
     transformers.logging.set_verbosity_error()
-    warnings.filterwarnings("ignore", message=".*non-meta parameter.*")
+    warnings.filterwarnings("ignore", category=UserWarning, message=".*non-meta parameter.*")
 
 
 def main() -> None:
-    _suppress_noise()
     parser = argparse.ArgumentParser(
         prog="collab-dashboard",
         description="Launch a collab-splats interactive dashboard.",
@@ -43,6 +42,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--base-dir", default="/workspace/outputs")
     args = parser.parse_args()
+    _suppress_noise()
 
     if args.mode == "semantics":
         warnings.warn(

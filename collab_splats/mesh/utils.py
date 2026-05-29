@@ -181,7 +181,7 @@ def transfer_features_to_mesh(
                    nearest vertex are excluded from aggregation.
 
     Returns:
-        (M, D) float32 ndarray of per-vertex features, index-aligned with mesh.vertices.
+        (M, D) float64 ndarray of per-vertex features, index-aligned with mesh.vertices.
     """
     assert result.features is not None, (
         "result.features is None — call lift_features() and assign result.features before transferring"

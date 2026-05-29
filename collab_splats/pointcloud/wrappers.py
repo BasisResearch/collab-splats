@@ -215,11 +215,22 @@ class LoopClosure:
                 window = views[start:end]
                 k = window.shape[0] if hasattr(window, "shape") else len(window)
 
-                # Run feedforward inference on this submap's frames
+                # Feed K+O frames to VGGT for broader attention context (matches VGGT-SLAM
+                # submap_size + overlapping_window_size window). Only first K predictions used.
+                end_ctx = min(start + K + O, N)
+                window_ctx = views[start:end_ctx]
+                k_ctx = (
+                    window_ctx.shape[0] if hasattr(window_ctx, "shape") else len(window_ctx)
+                )
+
                 with torch.no_grad():
-                    raw = self.base._forward(self.base.model, window, **kwargs)
+                    raw = self.base._forward(self.base.model, window_ctx, **kwargs)
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+
+                # Discard extra O-frame predictions; only K predictions enter Submap
+                if k_ctx > k:
+                    raw = _trim_forward_outputs(raw, k)
 
                 # Models that return list[dict] (e.g. MapAnything) must aggregate to a flat
                 # dict for the LC loop. raw_lc is used for LC metadata; raw is stored in the

@@ -358,3 +358,66 @@ def test_trim_forward_outputs_preserves_non_array_values():
     trimmed = _trim_forward_outputs(raw, 6)
     assert trimmed["label"] == "keep"
     assert trimmed["count"] == 42
+
+
+########################################################
+########## LoopClosure window extension test ##########
+########################################################
+
+
+def _make_raw(k: int) -> dict:
+    # All frames use identity 3x4 extrinsic; first frame must be identity for assert_world_to_cam
+    extrinsic = np.tile(np.eye(3, 4, dtype=np.float32), (k, 1, 1))
+    return {
+        "extrinsic": extrinsic,
+        "intrinsics": np.eye(3, dtype=np.float32)[None].repeat(k, axis=0),
+        "depth": np.zeros((k, 4, 4, 1), dtype=np.float32),
+        "depth_conf": np.zeros((k, 4, 4), dtype=np.float32),
+    }
+
+
+def test_lc_loop_passes_k_plus_overlap_to_forward():
+    """_run_lc_loop must pass submap_size+overlap_frames frames to _forward."""
+    from collab_splats.pointcloud.wrappers import LoopClosure
+    from collab_splats.pointcloud.loop_closure.closure import LoopClosureConfig
+
+    submap_size = 3
+    overlap = 1
+    n_frames = 9
+
+    cfg = LoopClosureConfig(
+        submap_size=submap_size,
+        submap_overlap=overlap,
+        min_submap_gap=0,
+        max_loops_per_submap=0,
+        lc_retrieval_threshold=999.0,
+    )
+
+    captured_sizes: list[int] = []
+
+    def fake_forward(model, views, **kwargs):
+        sz = views.shape[0] if hasattr(views, "shape") else len(views)
+        captured_sizes.append(sz)
+        return _make_raw(sz)
+
+    base = MagicMock()
+    base.views = torch.zeros(n_frames, 3, 4, 4)
+    base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
+    base._forward = fake_forward
+    base._lc_collate_outputs = lambda r: r
+    base._lc_retrieval = None
+
+    wrapper = LoopClosure.__new__(LoopClosure)
+    wrapper.base = base
+    wrapper.config = cfg
+
+    with patch("collab_splats.pointcloud.wrappers.BaseRetrievalExtractor") as mock_retrieval, \
+         patch("collab_splats.pointcloud.wrappers.find_loop_closures", return_value=[]):
+        mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
+        wrapper._run_lc_loop()
+
+    # Non-final full windows should be submap_size + overlap = 4
+    non_final = captured_sizes[:-1]
+    assert all(sz == submap_size + overlap for sz in non_final), (
+        f"Expected windows of size {submap_size + overlap}, got {non_final}"
+    )

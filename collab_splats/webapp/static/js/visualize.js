@@ -77,6 +77,9 @@ function normalizeGeo(geo, fresh) {
 function loadPLY(url, gp, pointSize) {
   pointSize = pointSize || 0.004;
   if (!renderer) initThree();
+  // Clear cached colors on new scene load
+  originalColors = null;
+  lastSimilarityColors = null;
   setProgress(10, 'Loading pointcloud…');
   new PLYLoader().load(url, geo => {
     if (currentPoints) { scene.remove(currentPoints); currentPoints.geometry.dispose(); currentPoints = null; }
@@ -118,8 +121,9 @@ function loadMesh(url, gp) {
   });
 }
 
-// Store original colors so we can reset after similarity query
+// Store original colors + last similarity result separately
 let originalColors = null;
+let lastSimilarityColors = null;  // preserved across toggle off/on
 
 function resetPointColors() {
   if (!currentPoints || !originalColors) return;
@@ -128,6 +132,17 @@ function resetPointColors() {
     geo.attributes.color.array.set(originalColors);
     geo.attributes.color.needsUpdate = true;
   }
+}
+
+function restoreLastSimilarity() {
+  if (!currentPoints || !lastSimilarityColors) return false;
+  const geo = currentPoints.geometry;
+  if (geo.attributes.color) {
+    geo.attributes.color.array.set(lastSimilarityColors);
+    geo.attributes.color.needsUpdate = true;
+    return true;
+  }
+  return false;
 }
 
 async function runSimilarityQuery(pos, neg, extractor, statusEl) {
@@ -165,6 +180,8 @@ async function runSimilarityQuery(pos, neg, extractor, statusEl) {
       colors[i * 3 + 1] = bytes[i * 3 + 1] / 255;
       colors[i * 3 + 2] = bytes[i * 3 + 2] / 255;
     }
+    // Save similarity colors so toggling off/on restores them without re-querying
+    lastSimilarityColors = new Float32Array(geo.attributes.color.array);
     geo.attributes.color.needsUpdate = true;
     if (statusEl) { statusEl.textContent = `✓ "${pos}"${neg ? ' − "' + neg + '"' : ''}`; statusEl.className = 'status-ok'; }
   } catch (e) {
@@ -290,7 +307,16 @@ function renderSidebar() {
 
   sem.querySelector('#viz-sem-toggle').addEventListener('change', e => {
     sem.querySelector('#viz-sem-inputs').style.display = e.target.checked ? 'flex' : 'none';
-    if (!e.target.checked) resetPointColors();
+    if (e.target.checked) {
+      // Restore last similarity result if available, otherwise wait for user to query
+      restoreLastSimilarity();
+    } else {
+      // Save current similarity state then revert to original colors
+      if (currentPoints?.geometry?.attributes?.color) {
+        lastSimilarityColors = new Float32Array(currentPoints.geometry.attributes.color.array);
+      }
+      resetPointColors();
+    }
   });
   sem.querySelector('#viz-query-btn').addEventListener('click', () => {
     const pos = sem.querySelector('#viz-pos-query').value.trim();

@@ -22,7 +22,18 @@ DASHBOARDS = {
 }
 
 
+def _suppress_noise() -> None:
+    """Suppress known benign warnings from VTK, torch, and transformers."""
+    import vtk
+    import transformers
+
+    vtk.vtkObject.GlobalWarningDisplayOff()
+    transformers.logging.set_verbosity_error()
+    warnings.filterwarnings("ignore", message=".*non-meta parameter.*")
+
+
 def main() -> None:
+    _suppress_noise()
     parser = argparse.ArgumentParser(
         prog="collab-dashboard",
         description="Launch a collab-splats interactive dashboard.",

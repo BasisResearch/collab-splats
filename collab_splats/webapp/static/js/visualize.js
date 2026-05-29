@@ -38,9 +38,9 @@ function initThree() {
   controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
-  // Allow full rotation range — no pole restrictions
-  controls.minPolarAngle = 0;
-  controls.maxPolarAngle = Math.PI;
+  // Tiny clamp prevents camera.up corruption at poles while still allowing ~179° range
+  controls.minPolarAngle = 0.01;
+  controls.maxPolarAngle = Math.PI - 0.01;
 
   function resize() {
     const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -56,6 +56,14 @@ function initThree() {
 
 // Build or rebuild the sceneRoot Group with the ground plane transform applied once.
 // Both PLY and mesh are children of this group — guarantees identical orientation.
+function resetCamera() {
+  if (!camera || !controls) return;
+  camera.up.set(0, 1, 0);       // enforce Y-up
+  camera.position.set(0, 0.3, 2.2);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
 function buildSceneRoot(gp) {
   if (sceneRoot) { scene.remove(sceneRoot); sceneRoot = null; }
   sceneRoot = new THREE.Group();
@@ -112,6 +120,7 @@ function loadPLY(url, gp, pointSize) {
     if (!geo.attributes.color) mat.color.set(0x2596be);
     currentPoints = new THREE.Points(geo, mat);
     sceneRoot.add(currentPoints);
+    resetCamera();
     setProgress(100, `${geo.attributes.position.count.toLocaleString()} points`);
   }, xhr => {
     if (xhr.total) setProgress(Math.round(xhr.loaded / xhr.total * 90), 'Loading…');
@@ -356,9 +365,10 @@ function renderSidebar() {
       <button id="viz-btn-mesh" style="flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer">⬛ Mesh</button>
     </div>
     <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-frustums"> Show cameras</label>
-    <div style="margin-top:8px">
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+      <button id="viz-reset-camera-btn" style="width:100%;padding:6px;border-radius:3px;border:1px solid #2596be;background:none;color:#2596be;font-family:monospace;font-size:11px;cursor:pointer">↺ Reset view</button>
       <button id="viz-detect-gp-btn" style="width:100%;padding:6px;border-radius:3px;border:1px solid #555;background:none;color:#aaa;font-family:monospace;font-size:11px;cursor:pointer">⟳ Detect ground plane</button>
-      <div id="viz-gp-status" class="status-info" style="margin-top:4px"></div>
+      <div id="viz-gp-status" class="status-info"></div>
     </div>
     <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px;display:none" id="viz-mesh-gen-section">
       <h4 style="font-size:10px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">Mesh generation</h4>
@@ -436,6 +446,9 @@ function renderSidebar() {
     };
     es.onerror = () => { btn.disabled = false; es.close(); };
   });
+
+  // Reset camera to default view
+  view.querySelector('#viz-reset-camera-btn').addEventListener('click', resetCamera);
 
   // Ground plane detection
   view.querySelector('#viz-detect-gp-btn').addEventListener('click', async () => {

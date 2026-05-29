@@ -54,6 +54,8 @@ async def current_session() -> JSONResponse:
         "creator": s.creator,
         "conf": s.conf,
         "extractor": s.extractor,
+        "localize_method": s.localize_method,
+        "localize_extractor": s.localize_extractor,
     })
 
 

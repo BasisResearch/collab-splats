@@ -1,9 +1,12 @@
 from pathlib import Path
 
-from collab_splats.utils.paths import get_cache_dir
+# ── Edit these two variables to point at your data ───────────────────────────
+BASE_DIR   = Path("/workspace/outputs")
+DATASET    = "birds_c0043"
+MAX_FRAMES = 30
 
-DATASET = "birds_c0043"
-MAX_FRAMES = 30  # cap for light tutorial runs
-
-CACHE_DIR = get_cache_dir(DATASET)
-IMAGES = CACHE_DIR / "images"
+# ── Derived paths (do not edit) ───────────────────────────────────────────────
+VIDEO_PATH = BASE_DIR / DATASET / "video.mp4"
+OUTPUT_DIR = BASE_DIR / DATASET
+CACHE_DIR  = OUTPUT_DIR          # alias — notebooks use CACHE_DIR
+IMAGES     = OUTPUT_DIR / "images"

@@ -5,6 +5,7 @@ from __future__ import annotations
 ########################################################################
 
 import logging
+import multiprocessing
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -97,6 +98,39 @@ def _load_lifted_features(features_zarr_path: Path) -> np.ndarray:
     feats = store["features"][:]
     norms = np.linalg.norm(feats, axis=1, keepdims=True)
     return feats / np.maximum(norms, 1e-8)
+
+
+########################################################################
+# Mesh subprocess worker
+########################################################################
+
+
+def _mesh_subprocess_worker(
+    zarr_path: str,
+    mesh_dir: str,
+    voxel_size: float,
+    sdf_trunc: float,
+    depth_trunc: float,
+    clean_repair: bool,
+) -> None:
+    """Run mesh generation in an isolated subprocess.
+
+    Loaded as a separate process so OOM kills only this process,
+    not the dashboard server.
+    """
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
+    from collab_splats.mesh.utils import pointcloud_to_mesh  # noqa: PLC0415
+
+    result = FeedforwardResult.load_zarr(zarr_path)
+    pointcloud_to_mesh(
+        result,
+        mesh_dir,
+        method="open3d_tsdf",
+        voxel_size=voxel_size,
+        sdf_trunc=sdf_trunc,
+        depth_trunc=depth_trunc,
+        clean_repair=clean_repair,
+    )
 
 
 ########################################################################
@@ -564,7 +598,11 @@ class ScenePanel(param.Parameterized):
         self._mesh_thread.start()
 
     def _run_mesh_worker(self) -> None:
-        """Background: load zarr if needed → pointcloud_to_mesh → refresh viewer."""
+        """Background thread: spawn mesh generation subprocess → report result.
+
+        Runs in an isolated subprocess so OOM only kills that process,
+        not the dashboard server.
+        """
         _ok = False
         _msg = "No dataset selected."
         _cb = self._mesh_on_done
@@ -574,27 +612,30 @@ class ScenePanel(param.Parameterized):
                 pn.io.state.execute(lambda: _cb(_ok, _msg))
             return
         try:
-            if self._result is None:
-                from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415 — avoid torch at panel import time
-                zarr_path = (
-                    self._current_dataset_dir / self._current_backend / "feedforward.zarr"
-                )
-                self._result = FeedforwardResult.load_zarr(zarr_path)
-
+            zarr_path = self._current_dataset_dir / self._current_backend / "feedforward.zarr"
             mesh_dir = self._current_dataset_dir / self._current_backend / "mesh"
-            from collab_splats.mesh.utils import pointcloud_to_mesh  # noqa: PLC0415 — avoid open3d at panel import time
-            mesh_result = pointcloud_to_mesh(
-                self._result,
-                mesh_dir,
-                method="open3d_tsdf",
-                voxel_size=self._mesh_voxel,
-                sdf_trunc=self._mesh_sdf,
-                depth_trunc=self._mesh_depth,
-                clean_repair=self._mesh_clean,
+            proc = multiprocessing.Process(
+                target=_mesh_subprocess_worker,
+                args=(
+                    str(zarr_path),
+                    str(mesh_dir),
+                    self._mesh_voxel,
+                    self._mesh_sdf,
+                    self._mesh_depth,
+                    self._mesh_clean,
+                ),
+                daemon=True,
             )
-            _msg = f"Mesh done — {mesh_result.mesh_path.name}"
-            _ok = True
-            pn.io.state.execute(lambda: self._refresh_after_mesh(_msg))
+            proc.start()
+            proc.join()
+            if proc.exitcode == 0:
+                mesh_path = mesh_dir / "mesh.ply"
+                _msg = f"Mesh done — {mesh_path.name}"
+                _ok = True
+                pn.io.state.execute(lambda: self._refresh_after_mesh(_msg))
+            else:
+                _msg = f"Mesh failed (process exit code {proc.exitcode})"
+                pn.io.state.execute(lambda: self._set_status(_msg))
         except Exception as exc:
             logger.exception("Mesh generation failed")
             _err = str(exc)

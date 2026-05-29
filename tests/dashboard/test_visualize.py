@@ -196,7 +196,10 @@ def test_scan_available_modes_auto_displays_mesh(tmp_path):
     sp._backend_dd.value = "vggt_x"
     sp._plotter = mock.MagicMock()
     sp._vtk_pane = mock.MagicMock()
-    with mock.patch.object(sp, "_rebuild_mesh_viewer") as mock_rebuild:
+    def _set_actor(*a, **kw):
+        sp._mesh_actor = mock.MagicMock()
+
+    with mock.patch.object(sp, "_rebuild_mesh_viewer", side_effect=_set_actor) as mock_rebuild:
         sp._scan_available_modes()
     mock_rebuild.assert_called_once()
 
@@ -340,53 +343,58 @@ def test_scene_panel_mesh_mode_hides_points_and_sim_rows(tmp_path):
 ########################################################################
 
 
-def test_on_run_mesh_uses_existing_result(tmp_path):
-    """_run_mesh_worker uses _result if already loaded rather than loading zarr."""
+def test_on_run_mesh_spawns_subprocess_with_zarr_path(tmp_path):
+    """_run_mesh_worker spawns a subprocess using the zarr path."""
     _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
     state = AppState()
     sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
-    sp._dataset_dd.value = "scene_01"
-    sp._backend_dd.value = "vggt_x"
     sp._current_dataset_dir = tmp_path / "scene_01"
     sp._current_backend = "vggt_x"
-    sp._result = mock.MagicMock()  # pre-loaded result
+    sp._mesh_voxel = 0.05
+    sp._mesh_sdf = 0.15
+    sp._mesh_depth = 3.0
+    sp._mesh_clean = True
+    sp._mesh_on_done = None
 
-    fake_mesh_result = mock.MagicMock()
-    fake_mesh_result.mesh_path = tmp_path / "mesh.ply"
+    proc_mock = mock.MagicMock()
+    proc_mock.exitcode = 0
 
-    with mock.patch("collab_splats.mesh.utils.pointcloud_to_mesh", return_value=fake_mesh_result) as mock_ptm, \
-         mock.patch("panel.io.state._state.execute"):
+    with mock.patch("collab_splats.dashboard.panes.visualize.multiprocessing.Process",
+                    return_value=proc_mock) as mock_proc_cls, \
+         mock.patch("panel.io.state._state.execute"), \
+         mock.patch.object(sp, "_refresh_after_mesh"):
         sp._run_mesh_worker()
 
-    # pointcloud_to_mesh called with the pre-loaded _result, not load_zarr
-    mock_ptm.assert_called_once()
-    call_args = mock_ptm.call_args
-    assert call_args[0][0] is sp._result  # first positional arg = result
+    mock_proc_cls.assert_called_once()
+    call_kwargs = mock_proc_cls.call_args
+    assert str(tmp_path / "scene_01" / "vggt_x" / "feedforward.zarr") in call_kwargs[1]["args"]
+    proc_mock.start.assert_called_once()
+    proc_mock.join.assert_called_once()
 
 
-def test_on_run_mesh_loads_zarr_when_result_none(tmp_path):
-    """_run_mesh_worker loads feedforward.zarr if _result is None."""
+def test_on_run_mesh_reports_failure_on_nonzero_exit(tmp_path):
+    """_run_mesh_worker calls on_done with ok=False when subprocess exits non-zero."""
     _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
     state = AppState()
     sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
-    sp._dataset_dd.value = "scene_01"
-    sp._backend_dd.value = "vggt_x"
     sp._current_dataset_dir = tmp_path / "scene_01"
     sp._current_backend = "vggt_x"
-    sp._result = None
+    sp._mesh_voxel = 0.05
+    sp._mesh_sdf = 0.15
+    sp._mesh_depth = 3.0
+    sp._mesh_clean = True
+    results = []
+    sp._mesh_on_done = lambda ok, msg: results.append((ok, msg))
 
-    fake_result = mock.MagicMock()
-    fake_mesh_result = mock.MagicMock()
-    fake_mesh_result.mesh_path = tmp_path / "mesh.ply"
+    proc_mock = mock.MagicMock()
+    proc_mock.exitcode = -9  # OOM kill
 
-    with mock.patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr",
-                    return_value=fake_result) as mock_load, \
-         mock.patch("collab_splats.mesh.utils.pointcloud_to_mesh",
-                    return_value=fake_mesh_result), \
-         mock.patch("panel.io.state._state.execute"):
+    with mock.patch("collab_splats.dashboard.panes.visualize.multiprocessing.Process",
+                    return_value=proc_mock), \
+         mock.patch("panel.io.state._state.execute", side_effect=lambda f: f()):
         sp._run_mesh_worker()
 
-    mock_load.assert_called_once_with(tmp_path / "scene_01" / "vggt_x" / "feedforward.zarr")
+    assert results and results[0][0] is False
 
 
 ########################################################################

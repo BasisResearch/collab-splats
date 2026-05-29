@@ -61,6 +61,7 @@ class FeedforwardResult:
     depth: "np.ndarray | None" = None            # (N, H, W) float32 depth maps (normalised to 3-D across backends)
     features: "np.ndarray | None" = None      # (P, D) float32 — feature vector per point, index-aligned with points
     pixel_indices: "np.ndarray | None" = None  # (P, 3) int32 — [frame_id, row, col] source pixel for each point
+    _zarr_path: "Path | None" = field(default=None, init=False, repr=False, compare=False)
 
     def save(self, path: Path) -> None:
         """Save to compressed .npz. images/confidence/world_points excluded (too large)."""
@@ -209,7 +210,7 @@ class FeedforwardResult:
             else None
         )
 
-        return cls(
+        result = cls(
             points=pts3d,
             colors=colors,
             extrinsics=extrinsics,
@@ -225,6 +226,8 @@ class FeedforwardResult:
             images=images,
             confidence=confidence,
         )
+        result._zarr_path = Path(path)
+        return result
 
     def reproject(self) -> "FeedforwardResult":
         """Re-project points under current extrinsics using stored source pixels and depth.

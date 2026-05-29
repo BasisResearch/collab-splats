@@ -34,17 +34,34 @@ function renderSessionSection() {
   sec.id = 'section-session';
   sec.innerHTML = `
     <h4>Session</h4>
-    <input type="text" id="output-dir-input" placeholder="/workspace/outputs/my_scene" value="${state.outputDir || ''}">
+    <select id="session-select"><option value="">— loading scenes… —</option></select>
     <button class="primary" id="load-session-btn">Load session</button>
     <div id="session-status" class="status-info"></div>
   `;
   sec.querySelector('#load-session-btn').addEventListener('click', loadSession);
+  // Populate dropdown from /api/session/list
+  fetch('/api/session/list').then(r => r.json()).then(data => {
+    const sel = sec.querySelector('#session-select');
+    sel.innerHTML = '<option value="">— select scene —</option>';
+    (data.sessions || []).forEach(name => {
+      const o = document.createElement('option');
+      o.value = name;
+      o.textContent = name;
+      if (state.outputDir && state.outputDir.endsWith('/' + name)) o.selected = true;
+      sel.appendChild(o);
+    });
+  }).catch(() => {
+    const sel = sec.querySelector('#session-select');
+    sel.innerHTML = '<option value="">— error loading scenes —</option>';
+  });
   return sec;
 }
 
 async function loadSession() {
-  const dir = document.getElementById('output-dir-input').value.trim();
-  if (!dir) return;
+  const sel = document.getElementById('session-select');
+  const name = sel?.value;
+  if (!name) return;
+  const dir = `/workspace/outputs/${name}`;
   const resp = await fetch('/api/session/load', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ output_dir: dir }),
@@ -56,7 +73,6 @@ async function loadSession() {
     document.getElementById('session-label').textContent = data.name;
     document.getElementById('session-status').textContent = '✓ ' + data.name;
     document.getElementById('session-status').className = 'status-ok';
-    // Re-render current tab sidebar so tab-specific sections see the new session
     const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
     if (activeTab) switchTab(activeTab);
   } else {

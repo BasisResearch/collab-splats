@@ -9,7 +9,21 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from collab_splats.webapp.state import get_session
 
+_OUTPUTS_DIR = Path("/workspace/outputs")
+
 router = APIRouter(prefix="/api/session")
+
+
+@router.get("/list")
+async def list_sessions() -> JSONResponse:
+    """Return sorted names of output dirs that contain run_config.yaml."""
+    if not _OUTPUTS_DIR.is_dir():
+        return JSONResponse({"ok": False, "sessions": []})
+    sessions = sorted(
+        p.name for p in _OUTPUTS_DIR.iterdir()
+        if p.is_dir() and (p / "run_config.yaml").exists()
+    )
+    return JSONResponse({"ok": True, "sessions": sessions})
 
 
 @router.post("/load")

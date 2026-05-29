@@ -267,106 +267,33 @@ def align_geometry_floor(
 ) -> tuple[Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh], np.ndarray, np.ndarray]:
     """Align point cloud or triangle mesh to the floor plane.
 
+    Uses fit_dominant_plane (single RANSAC call) to detect the dominant floor
+    and compute rotation + translation, then applies both to the geometry.
+
     Args:
-        geometry: Input geometry (PointCloud or TriangleMesh)
-        dist_threshold: Distance threshold for RANSAC plane fitting
-        ransac_n: Number of points to sample for RANSAC
-        num_iterations: Number of RANSAC iterations
-        num_sample_points: Number of points to sample from mesh surface (only used for meshes)
-
+        geometry: Input geometry (PointCloud or TriangleMesh).
+        dist_threshold: RANSAC distance threshold for inlier classification.
+        ransac_n: Points sampled per RANSAC iteration.
+        num_iterations: Number of RANSAC iterations.
+        num_sample_points: Surface sample count for mesh inputs only.
     Returns:
-        Tuple of:
-            - aligned_geometry: Aligned geometry (same type as input)
-            - R: Rotation matrix (3x3 np.ndarray) used to align the geometry
-            - translation: Translation vector (3,) np.ndarray to translate geometry floor to z=0
+        Tuple of (aligned_geometry, R (3,3), t (3,)).
     """
-    # Determine input type and get point cloud for plane detection
+    from collab_splats.pointcloud.utils import fit_dominant_plane
+
+    # Sample points from mesh surface; use points directly for point clouds
     is_mesh = isinstance(geometry, o3d.geometry.TriangleMesh)
-
     if is_mesh:
-        # For mesh: sample points from surface for robust plane detection
-        pcd_for_plane_detection = geometry.sample_points_uniformly(
-            number_of_points=num_sample_points
-        )
+        sample_pcd = geometry.sample_points_uniformly(number_of_points=num_sample_points)
+        pts = np.asarray(sample_pcd.points)
     else:
-        # For point cloud: use directly
-        pcd_for_plane_detection = geometry
+        pts = np.asarray(geometry.points)
 
-    # Find the floor plane
-    floor = get_floor_plane(
-        pcd_for_plane_detection,
-        dist_threshold=dist_threshold,
-        ransac_n=ransac_n,
-        num_iterations=num_iterations,
-    )
-    a, b, c, d = floor
-
-    # Normalize the normal vector
-    normal = np.array([a, b, c])
-    normal /= np.linalg.norm(normal)
-
-    # Ensure normal points upward
-    if normal[2] < 0:
-        normal = -normal
-        d = -d  # Flip d when we flip the normal
-
-    # Compute rotation to align the normal with Z-axis
-    z_axis = np.array([0, 0, 1])
-    rotation_axis = np.cross(normal, z_axis)
-    rotation_angle = np.arccos(np.clip(np.dot(normal, z_axis), -1.0, 1.0))
-
-    if np.linalg.norm(rotation_axis) < 1e-6:
-        R = np.eye(3)
-    else:
-        rotation_axis /= np.linalg.norm(rotation_axis)
-        axis_angle = rotation_axis * rotation_angle
-        # Use appropriate method based on geometry type
-        if is_mesh:
-            R = o3d.geometry.get_rotation_matrix_from_axis_angle(axis_angle)
-        else:
-            R = geometry.get_rotation_matrix_from_axis_angle(axis_angle)
-
-    # Apply rotation to the geometry
+    # Fit dominant floor plane and get rotation + translation in one call
+    R, t = fit_dominant_plane(pts)
     geometry.rotate(R, center=(0, 0, 0))
-
-    # Recompute floor plane after rotation
-    if is_mesh:
-        rotated_pcd_for_plane_detection = geometry.sample_points_uniformly(
-            number_of_points=num_sample_points
-        )
-    else:
-        rotated_pcd_for_plane_detection = geometry
-
-    new_plane = get_floor_plane(
-        rotated_pcd_for_plane_detection,
-        dist_threshold=dist_threshold,
-        ransac_n=ransac_n,
-        num_iterations=num_iterations,
-    )
-    _, _, _, d_new = new_plane
-
-    # Translate the geometry so floor is at z=0
-    translation = np.array([0, 0, -d_new])
-    geometry.translate(translation)
-
-    return geometry, R, translation
-
-
-def get_floor_plane(
-    pcd: o3d.geometry.PointCloud,
-    dist_threshold: float = 0.02,
-    ransac_n: int = 3,
-    num_iterations: int = 1000,
-):
-    """
-    Get the floor plane from the point cloud.
-    """
-    plane_model, _ = pcd.segment_plane(
-        distance_threshold=dist_threshold,
-        ransac_n=ransac_n,
-        num_iterations=num_iterations,
-    )
-    return plane_model
+    geometry.translate(t)
+    return geometry, R, t
 
 
 ########################################################

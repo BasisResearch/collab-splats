@@ -25,6 +25,8 @@ import cv2
 import numpy as np
 import pycolmap
 import torch
+import zarr
+from zarr.codecs import BloscCodec
 import torch.nn as nn
 import torchvision.transforms as T
 from kornia.feature import DISK, LightGlue
@@ -629,6 +631,68 @@ class CameraLocalizer:
     def frame_sources(self) -> list[str]:
         """Provenance per frame: 'reconstruction' or 'localized'."""
         return list(self._frame_sources)
+
+    def save_index(self, zarr_path: "str | Path", extractor_name: str) -> None:
+        """Persist extracted frame features to feedforward.zarr reconstruction/ subgroup.
+
+        Overwrites any existing reconstruction cache for extractor_name.
+        Not automatically invalidated when source images change — caller's responsibility.
+        Single-writer assumption; not safe for concurrent calls.
+        """
+        lz4 = BloscCodec(cname="lz4")
+        zarr_path = pathlib.Path(zarr_path)
+        store = zarr.open(str(zarr_path), mode="a")
+
+        # Clean overwrite: delete existing reconstruction group if present
+        rec_key = f"local_features/{extractor_name}/reconstruction"
+        if rec_key in store:
+            del store[rec_key]
+
+        rec_group = store.require_group(rec_key)
+
+        # Build CSR frame_offsets from per-frame keypoint counts
+        counts = [len(f.keypoints) for f in self._frame_features]
+        offsets = np.zeros(len(counts) + 1, dtype=np.int64)
+        np.cumsum(counts, out=offsets[1:])
+
+        # Concatenate all keypoints and descriptors across frames
+        if offsets[-1] > 0:
+            all_kpts = np.concatenate(
+                [f.keypoints.numpy() for f in self._frame_features], axis=0
+            ).astype(np.float32)
+            all_descs = np.concatenate(
+                [f.descriptors.numpy() for f in self._frame_features], axis=0
+            ).astype(np.float32)
+        else:
+            d = self._frame_features[0].descriptors.shape[1] if self._frame_features else 1
+            all_kpts = np.zeros((0, 2), dtype=np.float32)
+            all_descs = np.zeros((0, d), dtype=np.float32)
+
+        rec_group.attrs["image_paths"] = [str(p) for p in self._image_paths]
+        rec_group.attrs["hw"] = list(self._image_hw)
+
+        rec_group.create_array("frame_offsets", data=offsets,
+                               chunks=offsets.shape, compressors=lz4)
+        rec_group.create_array("keypoints", data=all_kpts,
+                               chunks=(max(all_kpts.shape[0], 1), 2), compressors=lz4)
+        d_dim = all_descs.shape[1] if all_descs.shape[1] > 0 else 1
+        rec_group.create_array("descriptors", data=all_descs,
+                               chunks=(max(all_descs.shape[0], 1), d_dim),
+                               compressors=lz4)
+
+        # scores: XFeat only — skip if all None
+        has_scores = any(f.scores is not None for f in self._frame_features)
+        if has_scores:
+            all_scores = np.concatenate([
+                f.scores.numpy() if f.scores is not None
+                else np.zeros(len(f.keypoints), dtype=np.float32)
+                for f in self._frame_features
+            ]).astype(np.float32)
+            rec_group.create_array("scores", data=all_scores,
+                                   chunks=(max(all_scores.shape[0], 1),), compressors=lz4)
+
+        logger.info("CameraLocalizer.save_index: saved %d frames to %s [%s]",
+                    len(self._frame_features), zarr_path, extractor_name)
 
     @classmethod
     def from_feedforward(cls, result, **kwargs) -> "CameraLocalizer":

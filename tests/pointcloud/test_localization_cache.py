@@ -43,6 +43,7 @@ def _make_scene(n_frames: int = 3, n_pts: int = 20):
 
 def _make_image_files(tmp_path: Path, n: int = 3, size: int = 64) -> list[Path]:
     """Write tiny solid-colour JPEG images to tmp_path."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     paths = []
     for i in range(n):
         img = np.full((size, size, 3), fill_value=80 + i * 40, dtype=np.uint8)
@@ -126,3 +127,25 @@ def test_camera_localizer_stores_image_paths_and_sources(tmp_path):
     assert len(localizer._frame_sources) == 3
     assert all(s == "reconstruction" for s in localizer._frame_sources)
     assert localizer.frame_sources == ["reconstruction", "reconstruction", "reconstruction"]
+
+
+def test_save_index_creates_reconstruction_group(tmp_path):
+    """save_index writes local_features/{name}/reconstruction/ with expected arrays."""
+    import zarr
+    pts3d, extrinsics, intrinsics = _make_scene()
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    localizer, _ = _build_localizer_with_mock(pts3d, extrinsics, intrinsics, image_paths)
+
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "disk")
+
+    store = zarr.open(str(zarr_path), mode="r")
+    assert "local_features/disk/reconstruction" in store
+    grp = store["local_features/disk/reconstruction"]
+    assert "frame_offsets" in grp
+    assert "keypoints" in grp
+    assert "descriptors" in grp
+    assert len(grp.attrs["image_paths"]) == 3
+    assert grp["frame_offsets"].shape == (4,)   # N+1 = 3+1
+    assert grp["keypoints"].shape[1] == 2
+    assert grp["descriptors"].shape[0] == grp["keypoints"].shape[0]

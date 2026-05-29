@@ -361,6 +361,14 @@ function renderSidebar() {
       <button id="viz-detect-gp-btn" style="width:100%;padding:6px;border-radius:3px;border:1px solid #555;background:none;color:#aaa;font-family:monospace;font-size:11px;cursor:pointer">⟳ Detect ground plane</button>
       <div id="viz-gp-status" class="status-info" style="margin-top:4px"></div>
     </div>
+    <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px" id="viz-mesh-gen-section">
+      <h4 style="font-size:10px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">Mesh generation</h4>
+      <label>voxel_size: <input type="number" id="viz-voxel" value="0.005" step="0.001" min="0.001" style="width:80px;padding:2px 4px"></label>
+      <label>sdf_trunc: <input type="number" id="viz-sdf" value="0.02" step="0.005" min="0.001" style="width:80px;padding:2px 4px"></label>
+      <label>depth_trunc: <input type="number" id="viz-depth" value="1.0" step="0.5" min="0.1" style="width:80px;padding:2px 4px"></label>
+      <button id="viz-run-mesh-btn" style="width:100%;padding:6px;border-radius:3px;border:1px solid #555;background:none;color:#aaa;font-family:monospace;font-size:11px;cursor:pointer">⚙ Run mesh</button>
+      <div id="viz-mesh-gen-status" class="status-info"></div>
+    </div>
   `;
 
   pc.querySelector('#viz-creator').addEventListener('change', e => {
@@ -405,6 +413,24 @@ function renderSidebar() {
     } else {
       if (currentFrustums) { sceneRoot?.remove(currentFrustums); currentFrustums.geometry.dispose(); currentFrustums = null; }
     }
+  });
+
+  // Mesh generation
+  view.querySelector('#viz-run-mesh-btn').addEventListener('click', () => {
+    const voxel = view.querySelector('#viz-voxel').value || 0.005;
+    const sdf = view.querySelector('#viz-sdf').value || 0.02;
+    const depth = view.querySelector('#viz-depth').value || 1.0;
+    const btn = view.querySelector('#viz-run-mesh-btn');
+    const status = view.querySelector('#viz-mesh-gen-status');
+    btn.disabled = true;
+    if (status) { status.textContent = 'Running…'; status.className = 'status-info'; }
+    const es = new EventSource(`/api/visualize/run_mesh?voxel_size=${voxel}&sdf_trunc=${sdf}&depth_trunc=${depth}`);
+    es.onmessage = e => {
+      const ev = JSON.parse(e.data);
+      if (status) { status.textContent = ev.msg?.split('\n')[0]; status.className = ev.type === 'done' ? 'status-ok' : ev.type === 'error' ? 'status-err' : 'status-info'; }
+      if (ev.type === 'done' || ev.type === 'error') { btn.disabled = false; es.close(); }
+    };
+    es.onerror = () => { btn.disabled = false; es.close(); };
   });
 
   // Ground plane detection

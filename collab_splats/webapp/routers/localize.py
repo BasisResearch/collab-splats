@@ -19,6 +19,36 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
+@router.get("/sample_query")
+async def sample_query_image() -> JSONResponse:
+    """Return path to an out-of-sample image from a different scene for query testing."""
+    import glob as _glob  # noqa: PLC0415
+
+    s = get_session()
+    _OUTPUTS = Path("/workspace/outputs")
+
+    # Find a frame from ANY scene that is NOT the current session's scene
+    current = s.output_dir.name if s.output_dir else ""
+    for scene_dir in sorted(_OUTPUTS.iterdir()):
+        if not scene_dir.is_dir() or scene_dir.name == current:
+            continue
+        # Prefer frames/ directory (webapp-extracted)
+        frames_dir = scene_dir / "frames"
+        if frames_dir.is_dir():
+            jpgs = sorted(frames_dir.glob("frame_*.jpg"))
+            if jpgs:
+                mid = jpgs[len(jpgs) // 2]
+                return JSONResponse({"ok": True, "path": str(mid), "scene": scene_dir.name})
+        # Fall back to images/ directory (old pipeline)
+        images_dir = scene_dir / "images"
+        if images_dir.is_dir():
+            jpgs = sorted(images_dir.glob("frame_*.jpg"))
+            if jpgs:
+                mid = jpgs[len(jpgs) // 2]
+                return JSONResponse({"ok": True, "path": str(mid), "scene": scene_dir.name})
+    return JSONResponse({"ok": False, "error": "No other scenes found"})
+
+
 @router.get("/methods")
 async def list_methods() -> JSONResponse:
     """Return available localization methods (subdirs with feedforward.zarr)."""

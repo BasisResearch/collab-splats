@@ -19,7 +19,8 @@ function renderSidebar() {
     </select>
     <label style="margin-top:8px">Query image path</label>
     <input type="text" id="loc-query" placeholder="/path/to/query.jpg">
-    <button class="primary" id="loc-run-btn" style="margin-top:8px">&#9654; Localize</button>
+    <button id="loc-sample-btn" style="width:100%;padding:5px;margin-top:4px;border-radius:3px;border:1px solid #555;background:none;color:#aaa;font-family:monospace;font-size:11px;cursor:pointer">Use out-of-sample frame</button>
+    <button class="primary" id="loc-run-btn" style="margin-top:6px">&#9654; Localize</button>
     <div id="loc-status" class="status-info"></div>
   `;
 
@@ -45,6 +46,30 @@ function renderSidebar() {
     const query = document.getElementById('loc-query')?.value.trim() || '';
     runLocalize(query);
   });
+
+  // Load a sample out-of-sample image path on click
+  loc.querySelector('#loc-sample-btn').addEventListener('click', async () => {
+    const btn = loc.querySelector('#loc-sample-btn');
+    btn.textContent = 'Loading…';
+    const data = await fetch('/api/localize/sample_query').then(r => r.json()).catch(() => ({}));
+    if (data.ok) {
+      const inp = document.getElementById('loc-query');
+      if (inp) inp.value = data.path;
+      btn.textContent = `Sample: ${data.scene}`;
+    } else {
+      btn.textContent = 'No other scenes found';
+    }
+  });
+
+  // Auto-load sample query on activate
+  fetch('/api/localize/sample_query').then(r => r.json()).then(data => {
+    if (data.ok) {
+      const inp = document.getElementById('loc-query');
+      if (inp && !inp.value) inp.value = data.path;
+      const btn = document.getElementById('loc-sample-btn');
+      if (btn) btn.textContent = `Sample: ${data.scene}`;
+    }
+  }).catch(() => {});
 
   return [pc, loc];
 }

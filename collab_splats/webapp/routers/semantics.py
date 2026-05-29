@@ -51,21 +51,29 @@ async def _run_sse() -> AsyncIterator[str]:
     extractor_name = s.extractor
     output_dir = s.output_dir
     backend_dir = output_dir / s.creator
+    # Features are stored at {backend}/semantics/{extractor}/features.zarr
+    cache_dir = backend_dir / "semantics" / extractor_name
+    features_zarr = cache_dir / "features.zarr"
 
     def run() -> None:
         try:
-            loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"Extractor: {extractor_name}"})
-            from collab_splats.semantics.features import BaseFeatureExtractor
-            extractor = BaseFeatureExtractor.get(extractor_name)()
+            # Load from cache if it already exists — never re-extract by default
+            if features_zarr.exists():
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"✓ Features cached: {cache_dir.name}"})
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "msg": f"Loaded from cache ({cache_dir.relative_to(output_dir)})"})
+                return
+
             zarr_path = backend_dir / "feedforward.zarr"
             if not zarr_path.exists():
                 raise FileNotFoundError(f"feedforward.zarr not found at {zarr_path}")
-            from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-            ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
+
+            loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"Extractor: {extractor_name}"})
+            from collab_splats.semantics.features import BaseFeatureExtractor  # noqa: PLC0415
+            extractor = BaseFeatureExtractor.get(extractor_name)()
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Running feature extraction…"})
-            features_path = output_dir / "features" / extractor_name
-            extractor.extract(ff, features_path)
-            loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "msg": f"Features saved to {features_path.name}"})
+            # extract_and_cache_from_zarr handles images loading + caching internally
+            extractor.extract_and_cache_from_zarr(zarr_path, cache_dir, skip_existing=True)
+            loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "msg": f"Features saved to {cache_dir.name}"})
         except Exception as exc:
             tb = traceback.format_exc()
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "msg": f"{exc}\n{tb}"})

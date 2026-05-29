@@ -73,6 +73,56 @@ async def status() -> JSONResponse:
     })
 
 
+@router.get("/run_mesh")
+async def run_mesh_sse(voxel_size: float = 0.005, sdf_trunc: float = 0.02, depth_trunc: float = 1.0):
+    """SSE: run TSDF mesh generation from feedforward zarr."""
+    import asyncio as _aio, json as _json, threading, traceback  # noqa: PLC0415
+    import zarr as _zarr  # noqa: PLC0415
+    from fastapi.responses import StreamingResponse  # noqa: PLC0415
+
+    s = get_session()
+    queue: _aio.Queue = _aio.Queue()
+    loop = _aio.get_event_loop()
+
+    def _sse_inner(d: dict) -> str:
+        return f"data: {_json.dumps(d)}\n\n"
+
+    async def _gen():
+        if s.output_dir is None:
+            yield _sse_inner({"type": "error", "msg": "No session loaded"}); return
+        zarr_path = s.output_dir / s.creator / "feedforward.zarr"
+        if not zarr_path.exists():
+            yield _sse_inner({"type": "error", "msg": "feedforward.zarr not found"}); return
+
+        def run() -> None:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"voxel={voxel_size} sdf={sdf_trunc} depth={depth_trunc}"})
+                from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
+                from collab_splats.mesh.utils import pointcloud_to_mesh  # noqa: PLC0415
+                ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
+                mesh_dir = s.output_dir / s.creator / "mesh"
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Running TSDF integration…"})
+                result = pointcloud_to_mesh(
+                    ff, str(mesh_dir),
+                    voxel_size=voxel_size, sdf_trunc=sdf_trunc,
+                    depth_trunc=depth_trunc,
+                )
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "msg": f"Mesh saved: {result.mesh_path.name}"})
+            except Exception as exc:
+                tb = traceback.format_exc()
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "msg": f"{exc}\n{tb}"})
+
+        threading.Thread(target=run, daemon=True).start()
+        while True:
+            event = await queue.get()
+            yield _sse_inner(event)
+            if event["type"] in ("done", "error"):
+                break
+
+    return StreamingResponse(_gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @router.get("/detect_ground_plane")
 async def detect_ground_plane() -> JSONResponse:
     """Run RANSAC ground plane detection on pointcloud; save to transforms.json."""

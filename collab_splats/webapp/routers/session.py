@@ -58,13 +58,23 @@ async def load_session(body: dict[str, Any]) -> JSONResponse:
     if available_backends:
         session.creator = available_backends[0]
 
+    # Auto-detect extractor: first subdir present under features/
+    features_dir = out_dir / "features"
+    available_extractors = sorted(
+        p.name for p in features_dir.iterdir() if p.is_dir()
+    ) if features_dir.is_dir() else []
+    if available_extractors:
+        session.extractor = available_extractors[0]
+
     return JSONResponse({
         "ok": True,
         "output_dir": str(out_dir),
         "video_path": str(video_path) if video_path else None,
         "name": out_dir.name,
         "creator": session.creator,
+        "extractor": session.extractor,
         "available_backends": available_backends,
+        "available_extractors": available_extractors,
     })
 
 

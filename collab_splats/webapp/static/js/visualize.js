@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 
-let renderer, scene, camera, controls, currentPoints;
+let renderer, scene, camera, controls, currentPoints, currentMesh;
 
 function initThree() {
   const canvas = document.getElementById('three-canvas');
@@ -57,6 +57,31 @@ function loadPLY(url, pointSize) {
     setProgress(100, `${geo.attributes.position.count.toLocaleString()} points`);
   }, xhr => {
     if (xhr.total) setProgress(Math.round(xhr.loaded / xhr.total * 90), 'Loading…');
+  });
+}
+
+function loadMesh(url) {
+  if (!renderer) initThree();
+  new PLYLoader().load(url, geo => {
+    if (currentMesh) { scene.remove(currentMesh); currentMesh.geometry.dispose(); }
+    const mat = new THREE.MeshLambertMaterial({ color: 0x888888, side: THREE.DoubleSide });
+    currentMesh = new THREE.Mesh(geo, mat);
+    // Center mesh same as pointcloud scale
+    geo.computeBoundingBox();
+    const center = new THREE.Vector3();
+    geo.boundingBox.getCenter(center);
+    geo.translate(-center.x, -center.y, -center.z);
+    const size = new THREE.Vector3();
+    geo.boundingBox.getSize(size);
+    const scale = 2 / Math.max(size.x, size.y, size.z);
+    currentMesh.scale.set(scale, scale, scale);
+    scene.add(currentMesh);
+    // Add ambient + directional light if not already added
+    if (!scene.getObjectByName('ambient')) {
+      const amb = new THREE.AmbientLight(0xffffff, 0.6); amb.name = 'ambient'; scene.add(amb);
+      const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1,2,3); scene.add(dir);
+    }
+    setProgress(100, 'Mesh loaded');
   });
 }
 
@@ -119,6 +144,7 @@ function renderSidebar() {
   view.className = 'sidebar-section';
   view.innerHTML = `
     <h4>View / Mesh</h4>
+    <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-mesh-toggle"> Show mesh</label>
     <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-frustums"> Show frustums</label>
     <label>Point size: <span id="viz-pt-val">4</span></label>
     <input type="range" id="viz-pt-size" min="1" max="20" value="4">
@@ -132,6 +158,16 @@ function renderSidebar() {
   view.querySelector('#viz-pt-size').addEventListener('input', e => {
     view.querySelector('#viz-pt-val').textContent = e.target.value;
     if (currentPoints) currentPoints.material.size = parseFloat(e.target.value) * 0.001;
+  });
+  view.querySelector('#viz-mesh-toggle').addEventListener('change', async e => {
+    if (e.target.checked) {
+      const resp = await fetch('/api/visualize/status');
+      const data = await resp.json();
+      if (data.mesh_url) loadMesh(data.mesh_url);
+      else { e.target.checked = false; setProgress(0, 'No mesh found'); }
+    } else {
+      if (currentMesh) { scene.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
+    }
   });
 
   return [pc, sem, view];

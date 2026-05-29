@@ -38,9 +38,9 @@ function initThree() {
   controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
-  // Prevent gimbal lock at poles: allow full range except the singularity points
-  controls.minPolarAngle = 0.05;   // ~3° from straight-down view
-  controls.maxPolarAngle = Math.PI - 0.05;  // ~3° from straight-up view
+  // Allow full rotation range — no pole restrictions
+  controls.minPolarAngle = 0;
+  controls.maxPolarAngle = Math.PI;
 
   function resize() {
     const w = canvas.clientWidth, h = canvas.clientHeight;

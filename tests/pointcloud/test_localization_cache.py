@@ -252,3 +252,35 @@ def test_from_feedforward_cache_hit_skips_extraction(tmp_path):
 
     assert load_ext.extract.call_count == 0  # no GPU inference on cache hit
     assert len(loaded._frame_features) == 3
+
+
+# ── Task 6 tests ─────────────────────────────────────────────────────────────
+
+def test_update_index_appends_new_frames(tmp_path):
+    """update_index extracts + appends new reconstruction frames to zarr."""
+    import zarr
+    pts3d, extrinsics, intrinsics = _make_scene(n_frames=3)
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    localizer, _ = _build_localizer_with_mock(pts3d, extrinsics, intrinsics, image_paths)
+
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "disk")
+
+    # Create 2 new frames
+    new_paths = _make_image_files(tmp_path / "new_imgs", n=2)
+    new_ext = MagicMock()
+    new_ext.extract.return_value = _make_features()
+    new_ext.match.return_value = torch.zeros((0, 2), dtype=torch.long)
+    localizer._extractor = new_ext
+
+    localizer.update_index(new_paths, zarr_path, "disk")
+
+    assert new_ext.extract.call_count == 2
+    assert len(localizer._frame_features) == 5  # 3 + 2
+    assert localizer._frame_sources.count("reconstruction") == 5
+
+    # Verify zarr updated
+    store = zarr.open(str(zarr_path), mode="r")
+    grp = store["local_features/disk/reconstruction"]
+    assert grp["frame_offsets"].shape == (6,)  # 5+1
+    assert len(grp.attrs["image_paths"]) == 5

@@ -812,6 +812,83 @@ class CameraLocalizer:
         )
         return obj
 
+    def update_index(
+        self,
+        new_image_paths: list,
+        zarr_path: "str | Path",
+        extractor_name: str,
+        progress_callback: "Callable[[int, int], None] | None" = None,
+    ) -> None:
+        """Extract features for new reconstruction frames; append to zarr cache.
+
+        Does NOT update pts3d/extrinsics/intrinsics — caller must update those
+        and call clear_localized_frames() + load_index() to rebuild assignments.
+        """
+        zarr_path = pathlib.Path(zarr_path)
+        new_features: list[LocalFeatures] = []
+
+        for i, path in enumerate(new_image_paths):
+            bgr = cv2.imread(str(path))
+            if bgr is None:
+                raise FileNotFoundError(f"CameraLocalizer.update_index: cannot read {path}")
+            rgb = bgr[..., ::-1].copy()
+            feats = self._extractor.extract(rgb)
+            new_features.append(feats)
+            if progress_callback is not None:
+                progress_callback(i, len(new_image_paths))
+            logger.debug("update_index: frame %s: %d kpts", path, len(feats.keypoints))
+
+        # Update in-memory state
+        for path, feats in zip(new_image_paths, new_features):
+            self._frame_features.append(feats)
+            self._frame_sources.append("reconstruction")
+            self._image_paths.append(pathlib.Path(path))
+
+        # Append to reconstruction/ zarr group
+        store = zarr.open(str(zarr_path), mode="a")
+        rec_key = f"local_features/{extractor_name}/reconstruction"
+
+        if rec_key not in store:
+            logger.warning("update_index: no existing reconstruction cache — building from scratch")
+            self.save_index(zarr_path, extractor_name)
+            return
+
+        rec_group = store[rec_key]
+
+        # Update attrs
+        existing_paths = list(rec_group.attrs.get("image_paths", []))
+        existing_paths.extend([str(p) for p in new_image_paths])
+        rec_group.attrs["image_paths"] = existing_paths
+
+        # Append CSR data frame by frame
+        for feats in new_features:
+            kpts_np = feats.keypoints.numpy().astype(np.float32)
+            descs_np = feats.descriptors.numpy().astype(np.float32)
+
+            off_arr = rec_group["frame_offsets"]
+            last_off = int(off_arr[-1])
+            n_off = off_arr.shape[0]
+            off_arr.resize((n_off + 1,))
+            off_arr[n_off] = last_off + len(kpts_np)
+
+            kpts_arr = rec_group["keypoints"]
+            old_m = kpts_arr.shape[0]
+            kpts_arr.resize((old_m + len(kpts_np), kpts_arr.shape[1]))
+            kpts_arr[old_m:] = kpts_np
+
+            descs_arr = rec_group["descriptors"]
+            descs_arr.resize((old_m + len(descs_np), descs_arr.shape[1]))
+            descs_arr[old_m:] = descs_np
+
+            if feats.scores is not None and "scores" in rec_group:
+                scores_np = feats.scores.numpy().astype(np.float32)
+                sc_arr = rec_group["scores"]
+                sc_arr.resize((sc_arr.shape[0] + len(scores_np),))
+                sc_arr[old_m:] = scores_np
+
+        logger.info("CameraLocalizer.update_index: appended %d frames to %s [%s]",
+                    len(new_image_paths), zarr_path, extractor_name)
+
     @classmethod
     def from_feedforward(
         cls,

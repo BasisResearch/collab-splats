@@ -149,20 +149,36 @@ def _frames_to_thumbnails(
     return thumbnails
 
 
-def _write_frames_zarr(frames: list[np.ndarray], path: Path) -> None:
-    """Write frame list to a zarr store at path, one chunk per frame."""
+def _resize_to_max_width(frame: np.ndarray, max_width: int) -> np.ndarray:
+    """Resize frame to max_width if wider; aspect ratio preserved."""
+    h, w = frame.shape[:2]
+    if w <= max_width:
+        return frame
+    new_h = int(round(h * max_width / w))
+    return np.array(Image.fromarray(frame).resize((max_width, new_h), Image.LANCZOS))
+
+
+def _write_frames_zarr(frames: list[np.ndarray], path: Path, max_width: int = 1920) -> None:
+    """Write frame list to zarr, streaming one frame at a time.
+
+    Resizes frames wider than max_width before writing; caps peak memory to one frame.
+    """
     if not frames:
         raise ValueError("frames list is empty — nothing to write")
-    arr = np.stack(frames)  # (N, H, W, 3) uint8
+    first = _resize_to_max_width(frames[0], max_width)
+    H, W = first.shape[:2]
+    N = len(frames)
     store = zarr.open_group(str(path), mode="w")
     store.create_array(
         "frames",
-        shape=arr.shape,
-        dtype=arr.dtype,
-        chunks=(1, *arr.shape[1:]),
+        shape=(N, H, W, 3),
+        dtype=np.uint8,
+        chunks=(1, H, W, 3),
         compressors=[BloscCodec(cname="lz4", clevel=3)],
     )
-    store["frames"][:] = arr
+    store["frames"][0] = first
+    for i in range(1, N):
+        store["frames"][i] = _resize_to_max_width(frames[i], max_width)
 
 
 def _build_frame_strip_html(thumbnails: list[bytes], active_idx: int) -> str:

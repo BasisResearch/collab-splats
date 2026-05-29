@@ -158,7 +158,7 @@ async def frame_viz(idx: int = 0) -> JSONResponse:
 
 
 @router.get("/query_frame")
-async def query_frame(idx: int = 0, text: str = "") -> JSONResponse:
+async def query_frame(idx: int = 0, text: str = "", neg: str = "") -> JSONResponse:
     """Run text query on a single frame; return similarity heatmap as PNG base64."""
     import base64, io  # noqa: PLC0415
     import numpy as _np  # noqa: PLC0415
@@ -211,6 +211,12 @@ async def query_frame(idx: int = 0, text: str = "") -> JSONResponse:
                 text_vec = F.normalize(comp.per_point_encode(text_vec.unsqueeze(0)), dim=-1).squeeze(0)
 
         sims = (flat_normed @ text_vec.unsqueeze(-1)).squeeze(-1).cpu().numpy()
+        if neg.strip():
+            neg_vec = extractor.encode_text([neg])[0].detach().cpu()
+            if comp_dir.is_dir():
+                with torch.no_grad():
+                    neg_vec = F.normalize(comp.per_point_encode(neg_vec.unsqueeze(0)), dim=-1).squeeze(0)
+            sims = sims - (flat_normed @ neg_vec.unsqueeze(-1)).squeeze(-1).cpu().numpy()
         sims_img = sims.reshape(H, W)
         mn, mx = sims_img.min(), sims_img.max()
         sims_norm = (sims_img - mn) / max(mx - mn, 1e-8)

@@ -14,8 +14,8 @@ function renderSidebar() {
     <h4>Localize method</h4>
     <label>Extractor</label>
     <select id="loc-extractor">
-      <option value="DISK+LightGlue">DISK+LightGlue</option>
-      <option value="XFeat+MNN">XFeat+MNN</option>
+      <option value="xfeat">XFeat+MNN (default)</option>
+      <option value="disk">DISK+LightGlue</option>
     </select>
     <label style="margin-top:8px">Query image path</label>
     <input type="text" id="loc-query" placeholder="/path/to/query.jpg">
@@ -82,7 +82,8 @@ function runLocalize(queryPath) {
   if (btn) btn.disabled = true;
   if (status) { status.textContent = 'Running…'; status.className = 'status-info'; }
 
-  const es = new EventSource(`/api/localize/run?query_path=${encodeURIComponent(queryPath)}`);
+  const extractor = document.getElementById('loc-extractor')?.value || 'xfeat';
+  const es = new EventSource(`/api/localize/run?query_path=${encodeURIComponent(queryPath)}&extractor=${extractor}`);
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
     if (log) {

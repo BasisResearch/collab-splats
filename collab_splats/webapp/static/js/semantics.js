@@ -13,8 +13,10 @@ function renderSidebar() {
     <label>Extractor</label>
     <select id="sem-extractor"><option value="">— loading… —</option></select>
     <div id="sem-query-section" style="display:none;flex-direction:column;gap:4px;margin-top:6px">
-      <label>Text query</label>
-      <input type="text" id="sem-query-input" placeholder="e.g. bird, tree…">
+      <label>Positive query</label>
+      <input type="text" id="sem-query-pos" placeholder="e.g. bird" value="bird">
+      <label>Negative query</label>
+      <input type="text" id="sem-query-neg" placeholder="background, ground, sky" value="background, ground, sky">
       <button class="primary" id="sem-query-btn">&#9654; Query frame</button>
     </div>
     <button class="primary" id="sem-run-btn" style="margin-top:8px">&#9654; Extract features</button>
@@ -56,8 +58,9 @@ function renderSidebar() {
   });
   sec.querySelector('#sem-run-btn').addEventListener('click', runExtraction);
   sec.querySelector('#sem-query-btn')?.addEventListener('click', () => {
-    const text = document.getElementById('sem-query-input')?.value.trim();
-    if (text) runQueryFrame(currentFrameIdx, text);
+    const pos = document.getElementById('sem-query-pos')?.value.trim();
+    const neg = document.getElementById('sem-query-neg')?.value.trim();
+    if (pos) runQueryFrame(currentFrameIdx, pos, neg);
   });
   return [sec];
 }
@@ -124,17 +127,19 @@ async function loadFrame(idx) {
   });
 }
 
-async function runQueryFrame(idx, text) {
+async function runQueryFrame(idx, pos, neg) {
+  neg = neg || '';
   const qStatus = document.getElementById('sem-query-status');
   if (qStatus) { qStatus.textContent = 'Querying…'; }
-  const data = await fetch(`/api/semantics/query_frame?idx=${idx}&text=${encodeURIComponent(text)}`).then(r => r.json()).catch(() => ({}));
+  const url = `/api/semantics/query_frame?idx=${idx}&text=${encodeURIComponent(pos)}&neg=${encodeURIComponent(neg)}`;
+  const data = await fetch(url).then(r => r.json()).catch(() => ({}));
   if (!data.ok) {
     if (qStatus) qStatus.textContent = data.error?.split('\n')[0] || 'Query failed';
     return;
   }
   const qImg = document.getElementById('sem-img-query');
   if (qImg) qImg.src = `data:image/png;base64,${data.heatmap_b64}`;
-  if (qStatus) qStatus.textContent = `"${text}"`;
+  if (qStatus) qStatus.textContent = neg ? `"${pos}" − "${neg}"` : `"${pos}"`;
 }
 
 // ── Build frame strip ─────────────────────────────────────────────

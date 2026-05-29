@@ -57,17 +57,16 @@ function initThree() {
 // Build or rebuild the sceneRoot Group with the ground plane transform applied once.
 // Both PLY and mesh are children of this group — guarantees identical orientation.
 function buildSceneRoot(gp) {
-  if (sceneRoot) {
-    scene.remove(sceneRoot);
-    sceneRoot = null;
-  }
+  if (sceneRoot) { scene.remove(sceneRoot); sceneRoot = null; }
   sceneRoot = new THREE.Group();
   if (gp) {
-    const { R, t } = gp;
+    const { R } = gp;
+    // Apply ROTATION only — translation is in original reconstruction scale and
+    // would incorrectly offset already-normalized [-1,1] geometry.
     const m = new THREE.Matrix4().set(
-      R[0][0], R[0][1], R[0][2], t[0],
-      R[1][0], R[1][1], R[1][2], t[1],
-      R[2][0], R[2][1], R[2][2], t[2],
+      R[0][0], R[0][1], R[0][2], 0,
+      R[1][0], R[1][1], R[1][2], 0,
+      R[2][0], R[2][1], R[2][2], 0,
       0, 0, 0, 1
     );
     sceneRoot.applyMatrix4(m);
@@ -126,8 +125,8 @@ function loadMesh(url, gp) {
   setProgress(10, 'Loading mesh…');
   new PLYLoader().load(url, geo => {
     if (currentMesh) { sceneRoot.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
-    // Same normalization as PLY — no per-geometry GP transform
-    normalizeGeo(geo, false);
+    // Normalize mesh independently — it may be in a different coordinate space than PLY
+    normalizeGeo(geo, true);
     geo.computeVertexNormals();
     const mat = new THREE.MeshPhongMaterial({
       vertexColors: !!geo.attributes.color,

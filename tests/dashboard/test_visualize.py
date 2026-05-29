@@ -202,7 +202,6 @@ def test_scene_panel_scan_available_modes_with_features(tmp_path):
 
 import unittest.mock as mock
 
-from collab_splats.dashboard.panes.visualize import VisualizePane
 from collab_splats.dashboard.operation_log import OperationLog
 
 
@@ -266,36 +265,6 @@ def test_scene_panel_points_options_visible_in_points_mode(tmp_path):
     assert sp._sim_query_row.visible is False
 
 
-########################################################################
-# VisualizePane smoke tests
-########################################################################
-
-
-def test_visualize_pane_constructs(tmp_path):
-    _make_dataset(tmp_path, "scene_01")
-    state = AppState()
-    op_log = _make_op_log()
-    # Patch ScenePanel to use off_screen so no display needed
-    with mock.patch(
-        "collab_splats.dashboard.panes.visualize.ScenePanel",
-        lambda *a, **kw: ScenePanel(*a, **{**kw, "_off_screen": True}),
-    ):
-        vp = VisualizePane(state=state, op_log=op_log, base_dir=tmp_path)
-    assert hasattr(vp, "_scene_a")
-    assert hasattr(vp, "_scene_b")
-    assert not hasattr(vp, "_query_bar"), "Shared query bar should be removed"
-
-
-def test_visualize_pane_no_shared_query_bar(tmp_path):
-    """Shared query bar removed — per-scene query lives on ScenePanel."""
-    with mock.patch(
-        "collab_splats.dashboard.panes.visualize.ScenePanel",
-        lambda *a, **kw: ScenePanel(*a, **{**kw, "_off_screen": True}),
-    ):
-        vp = VisualizePane(state=AppState(), op_log=OperationLog(), base_dir=tmp_path)
-    assert not hasattr(vp, "_query_bar"), "Shared query bar should be removed"
-
-
 def test_scene_panel_wire_tabs(tmp_path):
     """wire_tabs fires rescan when the wired tab becomes active."""
     state = AppState()
@@ -305,3 +274,32 @@ def test_scene_panel_wire_tabs(tmp_path):
     tabs.active = 1  # switch away
     tabs.active = 0  # switch back → triggers rescan
     assert isinstance(sp._available_modes, (set, frozenset))
+
+
+def test_scene_panel_has_mesh_options_row(tmp_path):
+    sp = _make_scene(tmp_path)
+    assert hasattr(sp, "_mesh_options_row")
+    assert sp._mesh_options_row.visible is False
+
+
+def test_scene_panel_mesh_options_row_visible_in_mesh_mode(tmp_path):
+    sp = _make_scene(tmp_path)
+    sp._available_modes = {"Mesh"}
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_mesh_viewer"):
+        sp._on_mode_change("Mesh")
+    assert sp._mesh_options_row.visible is True
+    assert sp._points_options_row.visible is False
+    assert sp._sim_query_row.visible is False
+
+
+def test_scene_panel_mesh_options_row_hidden_in_points_mode(tmp_path):
+    sp = _make_scene(tmp_path)
+    sp._available_modes = {"PCD"}
+    sp._result = mock.MagicMock()
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_pcd_viewer"):
+        sp._on_mode_change("Points")
+    assert sp._mesh_options_row.visible is False

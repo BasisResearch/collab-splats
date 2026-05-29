@@ -203,6 +203,29 @@ class ScenePanel(param.Parameterized):
             self._sim_query_btn,
             visible=False,
         )
+        # Mesh options row — TSDF params + Run Mesh button
+        self._mesh_voxel_input = pn.widgets.FloatInput(
+            name="voxel_size", value=0.01, step=0.005, start=0.001, end=1.0, width=90
+        )
+        self._mesh_sdf_input = pn.widgets.FloatInput(
+            name="sdf_trunc", value=0.04, step=0.01, start=0.001, end=5.0, width=90
+        )
+        self._mesh_depth_input = pn.widgets.FloatInput(
+            name="depth_trunc", value=10.0, step=1.0, start=0.1, end=200.0, width=90
+        )
+        self._mesh_clean_check = pn.widgets.Checkbox(name="clean", value=True)
+        self._mesh_run_btn = pn.widgets.Button(
+            name="Run Mesh", button_type="primary", disabled=True, width=100
+        )
+        self._mesh_options_row = pn.Row(
+            self._mesh_voxel_input,
+            self._mesh_sdf_input,
+            self._mesh_depth_input,
+            self._mesh_clean_check,
+            self._mesh_run_btn,
+            visible=False,
+        )
+        self._mesh_thread: threading.Thread | None = None
         self._reset_btn = pn.widgets.Button(name="Reset camera", width=130)
         self._snapshot_btn = pn.widgets.Button(name="Snapshot", width=100)
         self._status_html = pn.pane.HTML("", width=400)
@@ -220,6 +243,7 @@ class ScenePanel(param.Parameterized):
         self._reset_btn.on_click(lambda e: self._plotter.reset_camera() or self._vtk_pane.synchronize())
         self._snapshot_btn.on_click(self._on_snapshot)
         self._sim_query_btn.on_click(self._on_sim_query_click)
+        self._mesh_run_btn.on_click(self._on_run_mesh)
 
         # Watch AppState for auto-suggest and rescan
         state.param.watch(self._on_feedforward_result, "feedforward_result")
@@ -433,6 +457,7 @@ class ScenePanel(param.Parameterized):
 
         # Show/hide contextual rows based on active mode
         self._points_options_row.visible = (new_mode == "PCD")
+        self._mesh_options_row.visible = (new_mode == "Mesh")
         self._sim_query_row.visible = (new_mode == "Similarity")
 
         self._plotter.clear()
@@ -490,6 +515,9 @@ class ScenePanel(param.Parameterized):
     ####################################################################
     # Mesh viewer
     ####################################################################
+
+    def _on_run_mesh(self, event: Any) -> None:
+        """Stub — implemented in mesh worker task."""
 
     def _rebuild_mesh_viewer(self) -> None:
         """Load and render mesh.ply."""
@@ -643,9 +671,10 @@ class ScenePanel(param.Parameterized):
             controls_row,
             extractor_row,
             self._mode_selector,
-            self._vtk_pane,
+            self._mesh_options_row,
             self._points_options_row,
             self._sim_query_row,
+            self._vtk_pane,
             action_row,
             self._status_html,
             sizing_mode="stretch_both",

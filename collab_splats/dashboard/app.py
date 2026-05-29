@@ -315,13 +315,14 @@ class App(param.Parameterized):
             if transforms_path.exists():
                 try:
                     data = json.loads(transforms_path.read_text())
-                    gp = data.get("ground_plane", {})
-                    gp_R = np.array(gp["R"], dtype=np.float64)
-                    gp_t = np.array(gp["t"], dtype=np.float64)
-                    gp_status = "loaded from file"
+                    gp = data.get("ground_plane")
+                    if gp and "R" in gp and "t" in gp:
+                        gp_R = np.array(gp["R"], dtype=np.float64)
+                        gp_t = np.array(gp["t"], dtype=np.float64)
+                        gp_status = "loaded from file"
                 except Exception:
                     logger.warning("Could not parse transforms.json at %s", transforms_path)
-            else:
+            if gp_R is None:
                 try:
                     from collab_splats.pointcloud.utils import fit_dominant_plane
                     gp_R, gp_t = fit_dominant_plane(result.points)

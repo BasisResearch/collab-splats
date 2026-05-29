@@ -126,3 +126,81 @@ def test_panel_status_html_in_extractor_row():
     assert pane._status_html in extractor_row.objects
     # Must NOT be a top-level child of the column
     assert pane._status_html not in col.objects
+
+
+def _write_feature_zarr(path: Path, n_frames: int = 2, feat_dim: int = 4, h: int = 6, w: int = 8):
+    """Write a minimal valid feature zarr to path."""
+    store = zarr.open(str(path), mode="w")
+    store.create_array(
+        "features",
+        shape=(n_frames, feat_dim, h, w),
+        chunks=(1, feat_dim, h, w),
+        dtype="float32",
+    )
+    return path
+
+
+def _write_frames_zarr(path: Path, n: int = 2, h: int = 48, w: int = 64):
+    """Write a minimal valid frames zarr to path."""
+    store = zarr.open(str(path), mode="w")
+    store.attrs.update({"n_frames": n, "height": h, "width": w})
+    arr = store.create_array(
+        "frames", shape=(n, h, w, 3), chunks=(1, h, w, 3), dtype="uint8"
+    )
+    arr[:] = 0
+    return path
+
+
+def test_try_discover_cache_noop_when_no_output_dir():
+    """_try_discover_cache does nothing when output_dir is not set."""
+    pane = _make_semantics()
+    pane._try_discover_cache()  # must not raise
+    assert pane._feature_zarr_path is None
+
+
+def test_try_discover_cache_noop_when_no_frames_zarr(tmp_path):
+    """_try_discover_cache does nothing when frames_zarr_path is not set."""
+    pane = _make_semantics()
+    pane._state.output_dir = str(tmp_path)
+    pane._try_discover_cache()  # must not raise
+    assert pane._feature_zarr_path is None
+
+
+def test_try_discover_cache_clears_when_no_cache(tmp_path):
+    """_try_discover_cache clears feature state when no zarr exists at candidate path."""
+    frames_zarr = _write_frames_zarr(tmp_path / "frames.zarr")
+    pane = _make_semantics()
+    pane._state.output_dir = str(tmp_path)
+    pane._state.frames_zarr_path = str(frames_zarr)
+    pane._feature_zarr_path = tmp_path / "stale"  # simulate stale state
+    pane._try_discover_cache()
+    assert pane._feature_zarr_path is None
+
+
+def test_try_discover_cache_detects_valid_zarr(tmp_path, monkeypatch):
+    """_try_discover_cache calls _load_cached_features when valid cache exists."""
+    frames_zarr = _write_frames_zarr(tmp_path / "frames.zarr")
+    pane = _make_semantics()
+    method = pane._method_dd.value
+    cache_dir = tmp_path / "features" / method
+    _write_feature_zarr(cache_dir)
+
+    # Stub _load_cached_features to avoid real model instantiation in tests
+    calls = []
+
+    def fake_load(m, p):
+        calls.append((m, p))
+        pane._feature_zarr_path = p
+
+    monkeypatch.setattr(pane, "_load_cached_features", fake_load)
+
+    pane._state.output_dir = str(tmp_path)
+    pane._state.frames_zarr_path = str(frames_zarr)
+    pane._try_discover_cache()
+
+    if pane._discover_thread and pane._discover_thread.is_alive():
+        pane._discover_thread.join(timeout=5.0)
+
+    assert len(calls) == 1
+    assert calls[0] == (method, cache_dir)
+    assert pane._feature_zarr_path == cache_dir

@@ -6,13 +6,21 @@ function renderSidebar() {
   sec.innerHTML = `
     <h4>Semantic methods</h4>
     <label>Extractor</label>
-    <select id="sem-extractor">
-      <option value="dinov2">DINOv2</option>
-      <option value="sam">SAM</option>
-    </select>
+    <select id="sem-extractor"><option value="">— loading… —</option></select>
     <button class="primary" id="sem-run-btn" style="margin-top:8px">&#9654; Extract features</button>
     <div id="sem-status" class="status-info"></div>
   `;
+  // Populate from backend registry
+  fetch('/api/semantics/methods').then(r => r.json()).then(data => {
+    const sel = sec.querySelector('#sem-extractor');
+    sel.innerHTML = '';
+    (data.methods || ['dinov2']).forEach(m => {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      if (m === state.extractor) o.selected = true;
+      sel.appendChild(o);
+    });
+  }).catch(() => {});
   sec.querySelector('#sem-extractor').addEventListener('change', e => {
     state.extractor = e.target.value;
     fetch('/api/session/update', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({extractor: e.target.value}) });

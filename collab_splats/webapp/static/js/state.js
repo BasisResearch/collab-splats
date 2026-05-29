@@ -15,21 +15,8 @@ export function registerTab(name, module) {
   TAB_MODULES[name] = module;
 }
 
-export function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
-  const sidebar = document.getElementById('sidebar');
-  sidebar.innerHTML = '';
-  sidebar.appendChild(renderSessionSection());
-  if (TAB_MODULES[name]?.renderSidebar) {
-    const sections = TAB_MODULES[name].renderSidebar();
-    sections.forEach(s => sidebar.appendChild(s));
-  }
-  if (TAB_MODULES[name]?.onActivate) TAB_MODULES[name].onActivate();
-}
-
-function renderSessionSection() {
-  const currentName = state.outputDir ? state.outputDir.split('/').pop() : '';
+// Persistent session section — created once, never destroyed on tab switch
+function buildSessionSection() {
   const sec = document.createElement('div');
   sec.className = 'sidebar-section';
   sec.id = 'section-session';
@@ -37,23 +24,43 @@ function renderSessionSection() {
     <h4>Session</h4>
     <select id="session-select"><option value="">— loading scenes… —</option></select>
     <button class="primary" id="load-session-btn">Load session</button>
-    <div id="session-status" class="${currentName ? 'status-ok' : 'status-info'}">${currentName ? '✓ ' + currentName : ''}</div>
+    <div id="session-status" class="status-info"></div>
   `;
   sec.querySelector('#load-session-btn').addEventListener('click', loadSession);
+  // Populate dropdown once
   fetch('/api/session/list').then(r => r.json()).then(data => {
-    const sel = sec.querySelector('#session-select');
+    const sel = document.getElementById('session-select');
+    if (!sel) return;
     sel.innerHTML = '<option value="">— select scene —</option>';
     (data.sessions || []).forEach(name => {
       const o = document.createElement('option');
-      o.value = name;
-      o.textContent = name;
-      if (name === currentName) o.selected = true;
+      o.value = name; o.textContent = name;
       sel.appendChild(o);
     });
-  }).catch(() => {
-    sec.querySelector('#session-select').innerHTML = '<option value="">— error loading scenes —</option>';
-  });
+  }).catch(() => {});
   return sec;
+}
+
+// Divider between session and tab-specific sections
+function buildTabSections() {
+  const div = document.createElement('div');
+  div.id = 'sidebar-tab-sections';
+  div.style.cssText = 'display:flex;flex-direction:column;gap:16px';
+  return div;
+}
+
+export function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
+  // Only replace tab-specific sections; session section stays intact
+  const tabSections = document.getElementById('sidebar-tab-sections');
+  if (tabSections) {
+    tabSections.innerHTML = '';
+    if (TAB_MODULES[name]?.renderSidebar) {
+      TAB_MODULES[name].renderSidebar().forEach(s => tabSections.appendChild(s));
+    }
+  }
+  if (TAB_MODULES[name]?.onActivate) TAB_MODULES[name].onActivate();
 }
 
 async function loadSession() {
@@ -66,17 +73,17 @@ async function loadSession() {
     body: JSON.stringify({ output_dir: dir }),
   });
   const data = await resp.json();
+  const statusEl = document.getElementById('session-status');
   if (data.ok) {
     state.outputDir = data.output_dir;
     state.videoPath = data.video_path;
     document.getElementById('session-label').textContent = data.name;
-    document.getElementById('session-status').textContent = '✓ ' + data.name;
-    document.getElementById('session-status').className = 'status-ok';
+    if (statusEl) { statusEl.textContent = '✓ ' + data.name; statusEl.className = 'status-ok'; }
+    // Refresh tab-specific sections with new session context
     const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
     if (activeTab) switchTab(activeTab);
   } else {
-    document.getElementById('session-status').textContent = data.error;
-    document.getElementById('session-status').className = 'status-err';
+    if (statusEl) { statusEl.textContent = data.error; statusEl.className = 'status-err'; }
   }
 }
 
@@ -89,5 +96,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
-// Initial render — defer so any tab modules loaded in the same page have registered
-document.addEventListener('DOMContentLoaded', () => switchTab('preprocess'));
+document.addEventListener('DOMContentLoaded', () => {
+  // Build sidebar structure once: permanent session section + tab-specific slot
+  const sidebar = document.getElementById('sidebar');
+  sidebar.appendChild(buildSessionSection());
+  sidebar.appendChild(buildTabSections());
+  switchTab('preprocess');
+});

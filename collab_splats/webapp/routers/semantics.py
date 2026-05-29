@@ -14,6 +14,14 @@ from collab_splats.webapp.state import get_session
 router = APIRouter(prefix="/api/semantics")
 
 
+@router.get("/methods")
+async def list_methods() -> JSONResponse:
+    """Return registered semantic extractor names."""
+    from collab_splats.semantics.features import BaseFeatureExtractor
+    methods = sorted(BaseFeatureExtractor._registry.keys()) if hasattr(BaseFeatureExtractor, "_registry") else ["dinov2"]
+    return JSONResponse({"ok": True, "methods": methods})
+
+
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 

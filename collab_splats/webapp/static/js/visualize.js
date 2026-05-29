@@ -64,8 +64,32 @@ async function loadScene() {
   if (!state.outputDir) return;
   const resp = await fetch('/api/visualize/status');
   const data = await resp.json();
-  if (data.ok && data.ply_url) {
+  if (!data.ok) { setProgress(0, data.error || 'No session'); return; }
+
+  // Sync creator dropdown to auto-detected backend
+  if (data.creator) {
+    state.creator = data.creator;
+    const sel = document.getElementById('viz-creator');
+    if (sel) {
+      // Rebuild options from available_backends if provided
+      if (data.available_backends?.length) {
+        sel.innerHTML = '';
+        data.available_backends.forEach(b => {
+          const o = document.createElement('option');
+          o.value = b; o.textContent = b;
+          if (b === data.creator) o.selected = true;
+          sel.appendChild(o);
+        });
+      } else {
+        sel.value = data.creator;
+      }
+    }
+  }
+
+  if (data.ply_url) {
     loadPLY(data.ply_url);
+  } else {
+    setProgress(0, 'No pointcloud found for this scene');
   }
 }
 

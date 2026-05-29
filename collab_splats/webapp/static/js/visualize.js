@@ -361,7 +361,7 @@ function renderSidebar() {
       <button id="viz-detect-gp-btn" style="width:100%;padding:6px;border-radius:3px;border:1px solid #555;background:none;color:#aaa;font-family:monospace;font-size:11px;cursor:pointer">⟳ Detect ground plane</button>
       <div id="viz-gp-status" class="status-info" style="margin-top:4px"></div>
     </div>
-    <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px" id="viz-mesh-gen-section">
+    <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px;display:none" id="viz-mesh-gen-section">
       <h4 style="font-size:10px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">Mesh generation</h4>
       <label>voxel_size: <input type="number" id="viz-voxel" value="0.005" step="0.001" min="0.001" style="width:80px;padding:2px 4px"></label>
       <label>sdf_trunc: <input type="number" id="viz-sdf" value="0.02" step="0.005" min="0.001" style="width:80px;padding:2px 4px"></label>
@@ -386,10 +386,15 @@ function renderSidebar() {
       btnMesh.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer';
       if (currentPoints) currentPoints.visible = true;
       if (currentMesh) { sceneRoot?.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
+      const meshGenSec = document.getElementById('viz-mesh-gen-section');
+      if (meshGenSec) meshGenSec.style.display = 'none';
     } else {
       btnMesh.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #2596be;background:#2596be;color:#000;font-family:monospace;font-size:11px;font-weight:700;cursor:pointer';
       btnPc.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer';
       if (currentPoints) currentPoints.visible = false;
+      // Show mesh generation options when mesh mode is active
+      const meshGenSec = document.getElementById('viz-mesh-gen-section');
+      if (meshGenSec) meshGenSec.style.display = 'flex';
     }
   }
 

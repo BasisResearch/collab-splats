@@ -190,3 +190,65 @@ def test_load_index_missing_extractor_raises(tmp_path):
             extrinsics=extrinsics,
             intrinsics=intrinsics,
         )
+
+
+# ── Task 5 tests ─────────────────────────────────────────────────────────────
+
+def _make_ff_result(pts3d, extrinsics, intrinsics, image_paths):
+    """Minimal FeedforwardResult mock for testing from_feedforward."""
+    result = MagicMock()
+    result.points = pts3d
+    result.extrinsics = extrinsics
+    result.intrinsics = intrinsics
+    result.image_paths = image_paths
+    result._zarr_path = None
+    return result
+
+
+def test_from_feedforward_cache_miss_builds_and_saves(tmp_path):
+    """Cache miss: from_feedforward runs GPU inference and saves to zarr."""
+    import zarr
+    pts3d, extrinsics, intrinsics = _make_scene()
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    zarr_path = _empty_zarr(tmp_path)
+
+    mock_ext = MagicMock()
+    mock_ext.extract.return_value = _make_features()
+    mock_ext.match.return_value = torch.zeros((0, 2), dtype=torch.long)
+
+    result = _make_ff_result(pts3d, extrinsics, intrinsics, image_paths)
+    result._zarr_path = zarr_path
+
+    localizer = CameraLocalizer.from_feedforward(
+        result, extractor=mock_ext, extractor_name="disk"
+    )
+
+    assert mock_ext.extract.call_count == 3  # GPU ran for each frame
+    store = zarr.open(str(zarr_path), mode="r")
+    assert "local_features/disk/reconstruction" in store
+
+
+def test_from_feedforward_cache_hit_skips_extraction(tmp_path):
+    """Cache hit: from_feedforward loads from zarr, does not call extractor.extract."""
+    pts3d, extrinsics, intrinsics = _make_scene()
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    zarr_path = _empty_zarr(tmp_path)
+
+    # Populate cache via first build
+    build_ext = MagicMock()
+    build_ext.extract.return_value = _make_features()
+    build_ext.match.return_value = torch.zeros((0, 2), dtype=torch.long)
+    result = _make_ff_result(pts3d, extrinsics, intrinsics, image_paths)
+    CameraLocalizer.from_feedforward(
+        result, extractor=build_ext, extractor_name="disk", zarr_path=zarr_path
+    )
+
+    # Second build — should hit cache
+    load_ext = MagicMock()
+    load_ext.extract.return_value = _make_features()
+    loaded = CameraLocalizer.from_feedforward(
+        result, extractor=load_ext, extractor_name="disk", zarr_path=zarr_path
+    )
+
+    assert load_ext.extract.call_count == 0  # no GPU inference on cache hit
+    assert len(loaded._frame_features) == 3

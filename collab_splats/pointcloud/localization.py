@@ -813,24 +813,93 @@ class CameraLocalizer:
         return obj
 
     @classmethod
-    def from_feedforward(cls, result, **kwargs) -> "CameraLocalizer":
-        """Construct from a FeedforwardResult.
+    def from_feedforward(
+        cls,
+        result,
+        extractor=None,
+        progress_callback=None,
+        zarr_path=None,
+        extractor_name=None,
+        **kwargs,
+    ) -> "CameraLocalizer":
+        """Construct from a FeedforwardResult. Loads from zarr cache if available.
 
         Args:
-            result:   object with pts3d (P,3), extrinsics (N,4,4), intrinsics (N,3,3),
-                      and image_paths (list[Path]) attributes.
-            **kwargs: forwarded to CameraLocalizer.__init__ (e.g. extractor, radius).
+            result:            FeedforwardResult (or duck-typed object with .points,
+                               .extrinsics, .intrinsics, .image_paths, ._zarr_path).
+            extractor:         Local feature extractor; defaults to DiskExtractor().
+            progress_callback: Called as (frame_idx, total) during index build.
+            zarr_path:         Override zarr cache path; falls back to result._zarr_path.
+            extractor_name:    Override extractor registry key; auto-detected if None.
+            **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. radius).
 
         Returns:
             CameraLocalizer ready to localize query images in the given scene.
         """
-        return cls(
+        extractor_inst = extractor if extractor is not None else DiskExtractor()
+
+        # Determine extractor_name via registry reverse-lookup
+        if extractor_name is None:
+            extractor_name = next(
+                (k for k, v in BaseLocalExtractor._registry.items()
+                 if v is type(extractor_inst)),
+                type(extractor_inst).__name__.lower().replace("extractor", ""),
+            )
+
+        # Resolve zarr_path: explicit arg > result._zarr_path
+        if zarr_path is None:
+            zarr_path = getattr(result, "_zarr_path", None)
+
+        # Try cache first
+        if zarr_path is not None:
+            try:
+                store = zarr.open(str(zarr_path), mode="r")
+                rec_key = f"local_features/{extractor_name}/reconstruction"
+                if rec_key in store:
+                    # Staleness check: warn if image_paths differ
+                    cached_paths = [pathlib.Path(p) for p in store[rec_key].attrs["image_paths"]]
+                    if cached_paths != list(result.image_paths):
+                        logger.warning(
+                            "CameraLocalizer: cached image_paths differ from result — cache may be stale"
+                        )
+                    logger.info(
+                        "CameraLocalizer: cache hit for '%s', loading from zarr", extractor_name
+                    )
+                    return cls.load_index(
+                        zarr_path=zarr_path,
+                        extractor_name=extractor_name,
+                        pts3d=result.points,
+                        extrinsics=result.extrinsics,
+                        intrinsics=result.intrinsics,
+                        extractor=extractor_inst,
+                        **{k: v for k, v in kwargs.items() if k in ("config", "radius")},
+                    )
+            except KeyError:
+                logger.debug(
+                    "CameraLocalizer: cache miss for '%s', building index", extractor_name
+                )
+            except Exception as exc:
+                logger.warning("CameraLocalizer: cache load failed (%s), rebuilding", exc)
+
+        # Cache miss — build from GPU inference
+        localizer = cls(
             pts3d=result.points,
             extrinsics=result.extrinsics,
             intrinsics=result.intrinsics,
             image_paths=result.image_paths,
+            extractor=extractor_inst,
+            progress_callback=progress_callback,
             **kwargs,
         )
+
+        # Save for next session
+        if zarr_path is not None:
+            try:
+                localizer.save_index(zarr_path, extractor_name)
+            except Exception as exc:
+                logger.warning("CameraLocalizer: failed to save index to zarr: %s", exc)
+
+        return localizer
 
     def localize(
         self,

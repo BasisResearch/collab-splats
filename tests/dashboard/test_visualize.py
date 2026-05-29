@@ -201,8 +201,8 @@ def test_scan_available_modes_auto_displays_mesh(tmp_path):
     mock_rebuild.assert_called_once()
 
 
-def test_scan_available_modes_enables_run_btn_when_zarr_exists(tmp_path):
-    """When feedforward.zarr exists, _mesh_run_btn is enabled after scan."""
+def test_scan_available_modes_adds_mesh_when_ply_exists(tmp_path):
+    """When mesh.ply exists, Mesh is added to available modes."""
     _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
     mesh_dir = tmp_path / "scene_01" / "vggt_x" / "mesh"
     mesh_dir.mkdir(parents=True)
@@ -215,30 +215,20 @@ def test_scan_available_modes_enables_run_btn_when_zarr_exists(tmp_path):
     sp._vtk_pane = mock.MagicMock()
     with mock.patch.object(sp, "_rebuild_mesh_viewer"):
         sp._scan_available_modes()
-    # feedforward.zarr was created by _make_dataset
-    assert sp._mesh_run_btn.disabled is False
+    assert "Mesh" in sp._available_modes
 
 
-def test_scan_available_modes_run_btn_disabled_without_zarr(tmp_path):
-    """When feedforward.zarr is absent, _mesh_run_btn stays disabled."""
-    # Create dataset dir with mesh but NO feedforward.zarr
-    ds = tmp_path / "scene_01"
-    be = ds / "vggt_x"
-    be.mkdir(parents=True)
-    (ds / "run_config.yaml").write_text("backend: vggt_x\n")
-    mesh_dir = be / "mesh"
-    mesh_dir.mkdir(parents=True)
-    (mesh_dir / "mesh.ply").write_bytes(b"ply\n")
-    # No feedforward.zarr in be/
+def test_scan_available_modes_no_mesh_without_ply(tmp_path):
+    """When mesh.ply is absent, Mesh is not in available modes."""
+    _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
     state = AppState()
     sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
     sp._dataset_dd.value = "scene_01"
     sp._backend_dd.value = "vggt_x"
     sp._plotter = mock.MagicMock()
     sp._vtk_pane = mock.MagicMock()
-    with mock.patch.object(sp, "_rebuild_mesh_viewer"):
-        sp._scan_available_modes()
-    assert sp._mesh_run_btn.disabled is True
+    sp._scan_available_modes()
+    assert "Mesh" not in sp._available_modes
 
 
 def test_scene_panel_scan_available_modes_with_features(tmp_path):
@@ -277,9 +267,9 @@ def test_scene_panel_has_radio_button_group(tmp_path):
     assert isinstance(sp._mode_selector, pn.widgets.RadioButtonGroup)
 
 
-def test_scene_panel_default_mode_is_mesh(tmp_path):
+def test_scene_panel_default_mode_is_points(tmp_path):
     sp = _make_scene(tmp_path)
-    assert sp._mode_selector.value == "Mesh"
+    assert sp._mode_selector.value == "Points"
 
 
 
@@ -333,13 +323,7 @@ def test_scene_panel_wire_tabs(tmp_path):
     assert isinstance(sp._available_modes, (set, frozenset))
 
 
-def test_scene_panel_has_mesh_options_row(tmp_path):
-    sp = _make_scene(tmp_path)
-    assert hasattr(sp, "_mesh_options_row")
-    assert sp._mesh_options_row.visible is False
-
-
-def test_scene_panel_mesh_options_row_visible_in_mesh_mode(tmp_path):
+def test_scene_panel_mesh_mode_hides_points_and_sim_rows(tmp_path):
     sp = _make_scene(tmp_path)
     sp._available_modes = {"Mesh"}
     sp._result = mock.MagicMock()
@@ -347,20 +331,8 @@ def test_scene_panel_mesh_options_row_visible_in_mesh_mode(tmp_path):
     sp._vtk_pane = mock.MagicMock()
     with mock.patch.object(sp, "_rebuild_mesh_viewer"):
         sp._on_mode_change("Mesh")
-    assert sp._mesh_options_row.visible is True
     assert sp._points_options_row.visible is False
     assert sp._sim_query_row.visible is False
-
-
-def test_scene_panel_mesh_options_row_hidden_in_points_mode(tmp_path):
-    sp = _make_scene(tmp_path)
-    sp._available_modes = {"PCD"}
-    sp._result = mock.MagicMock()
-    sp._plotter = mock.MagicMock()
-    sp._vtk_pane = mock.MagicMock()
-    with mock.patch.object(sp, "_rebuild_pcd_viewer"):
-        sp._on_mode_change("Points")
-    assert sp._mesh_options_row.visible is False
 
 
 ########################################################################

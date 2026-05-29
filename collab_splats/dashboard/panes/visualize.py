@@ -111,7 +111,7 @@ class ScenePanel(param.Parameterized):
     and a PyVista plotter embedded via pn.pane.VTK.
     """
 
-    mode = param.String(default="Mesh")
+    mode = param.String(default="PCD")
 
     def __init__(
         self,
@@ -139,6 +139,8 @@ class ScenePanel(param.Parameterized):
         # Actor cache and display-decimated result
         self._pcd_actor = None
         self._mesh_actor = None
+        self._sim_actor = None
+        self._sim_cloud = None
         self._display_result = None
         self._state_frustum_enabled = False
 
@@ -163,7 +165,7 @@ class ScenePanel(param.Parameterized):
         # Mode selector — RadioButtonGroup replaces three separate buttons
         self._mode_selector = pn.widgets.RadioButtonGroup(
             options=["Points", "Mesh", "Similarity"],
-            value="Mesh",
+            value="Points",
             button_type="success",
             width=380,
             disabled=True,
@@ -203,28 +205,12 @@ class ScenePanel(param.Parameterized):
             self._sim_query_btn,
             visible=False,
         )
-        # Mesh options row — TSDF params + Run Mesh button
-        self._mesh_voxel_input = pn.widgets.FloatInput(
-            name="voxel_size", value=0.01, step=0.005, start=0.001, end=1.0, width=90
-        )
-        self._mesh_sdf_input = pn.widgets.FloatInput(
-            name="sdf_trunc", value=0.04, step=0.01, start=0.001, end=5.0, width=90
-        )
-        self._mesh_depth_input = pn.widgets.FloatInput(
-            name="depth_trunc", value=10.0, step=1.0, start=0.1, end=200.0, width=90
-        )
-        self._mesh_clean_check = pn.widgets.Checkbox(name="clean", value=True)
-        self._mesh_run_btn = pn.widgets.Button(
-            name="Run Mesh", button_type="primary", disabled=True, width=100
-        )
-        self._mesh_options_row = pn.Row(
-            self._mesh_voxel_input,
-            self._mesh_sdf_input,
-            self._mesh_depth_input,
-            self._mesh_clean_check,
-            self._mesh_run_btn,
-            visible=False,
-        )
+        # Mesh generation params — set via run_mesh() from sidebar
+        self._mesh_voxel: float = 0.01
+        self._mesh_sdf: float = 0.04
+        self._mesh_depth: float = 10.0
+        self._mesh_clean: bool = True
+        self._mesh_on_done: Any = None
         self._mesh_thread: threading.Thread | None = None
         self._reset_btn = pn.widgets.Button(name="Reset camera", width=130)
         self._snapshot_btn = pn.widgets.Button(name="Snapshot", width=100)
@@ -241,7 +227,6 @@ class ScenePanel(param.Parameterized):
         self._reset_btn.on_click(self._on_reset_camera)
         self._snapshot_btn.on_click(self._on_snapshot)
         self._sim_query_btn.on_click(self._on_sim_query_click)
-        self._mesh_run_btn.on_click(self._on_run_mesh)
 
         # Watch AppState for result, output_dir, lifted features
         state.param.watch(self._on_feedforward_result_change, "feedforward_result")
@@ -322,12 +307,6 @@ class ScenePanel(param.Parameterized):
             modes.add("Mesh")
             pn.io.state.execute(self._auto_display_mesh)
 
-        # Enable Run Mesh if feedforward.zarr exists (zarr gate for generation)
-        zarr_path = ds_dir / backend / "feedforward.zarr"
-        self._mesh_run_btn.disabled = not zarr_path.exists()
-        if not zarr_path.exists() and mesh_path.exists():
-            self._set_status("No feedforward.zarr — cannot regenerate mesh.")
-
         # Similarity mode requires at least one extractor with features.zarr
         extractors = _scan_extractors(ds_dir, backend)
         if extractors:
@@ -371,6 +350,7 @@ class ScenePanel(param.Parameterized):
         if self._state.output_dir is not None:
             self._suggest_dataset_from_output_dir()
         self._scan_available_modes()
+        self._on_mode_change("Points")
         n_pts = len(result.points)
         self._set_status(f"Loaded {n_pts:,} pts")
 
@@ -419,8 +399,12 @@ class ScenePanel(param.Parameterized):
         self._plotter.clear()
         self._pcd_actor = None
         self._mesh_actor = None
-        if self.mode in ("Points", "Mesh", "Similarity"):
-            self._on_mode_change(self.mode)
+        self._sim_actor = None
+        self._sim_cloud = None
+        mode_display = {"PCD": "Points", "Mesh": "Mesh", "Similarity": "Similarity"}
+        if self.mode in mode_display:
+            self._on_mode_change(mode_display[self.mode])
+        self._vtk_pane.reset_camera()
 
     def _on_output_dir_change(self, event: Any) -> None:
         """Auto-suggest dataset when an existing session is loaded (no active reconstruction)."""
@@ -477,28 +461,36 @@ class ScenePanel(param.Parameterized):
             self._pcd_actor.VisibilityOff()
         if self._mesh_actor is not None:
             self._mesh_actor.VisibilityOff()
+        if self._sim_actor is not None:
+            self._sim_actor.VisibilityOff()
 
         # Show/hide contextual rows based on active mode
         self._points_options_row.visible = (new_mode == "PCD")
-        self._mesh_options_row.visible = (new_mode == "Mesh")
         self._sim_query_row.visible = (new_mode == "Similarity")
 
         if new_mode == "PCD":
             if self._pcd_actor is None:
                 self._plotter.clear()
+                self._sim_actor = None
+                self._sim_cloud = None
                 self._rebuild_pcd_viewer()
             else:
                 self._pcd_actor.VisibilityOn()
         elif new_mode == "Mesh":
             if self._mesh_actor is None:
                 self._plotter.clear()
+                self._sim_actor = None
+                self._sim_cloud = None
                 self._rebuild_mesh_viewer()
             else:
                 self._mesh_actor.VisibilityOn()
         elif new_mode == "Similarity":
             if self._lifted_normed is None:
                 self._load_lifted_features_for_current_extractor()
-            self._rebuild_sim_viewer(colors=None)
+            if self._sim_actor is None:
+                self._rebuild_sim_viewer(colors=None)
+            else:
+                self._sim_actor.VisibilityOn()
 
         self._vtk_pane.synchronize()
 
@@ -542,6 +534,8 @@ class ScenePanel(param.Parameterized):
             return
         self._plotter.clear()
         self._pcd_actor = None
+        self._sim_actor = None
+        self._sim_cloud = None
         self._rebuild_pcd_viewer()
         self._vtk_pane.synchronize()
 
@@ -549,19 +543,35 @@ class ScenePanel(param.Parameterized):
     # Mesh viewer
     ####################################################################
 
-    def _on_run_mesh(self, event: Any) -> None:
-        """Spawn background mesh generation thread on Run Mesh click."""
+    def run_mesh(
+        self,
+        voxel_size: float = 0.01,
+        sdf_trunc: float = 0.04,
+        depth_trunc: float = 10.0,
+        clean_repair: bool = True,
+        on_done: Any = None,
+    ) -> None:
+        """Spawn mesh generation thread with given params; call on_done(ok, msg) when done."""
         if self._mesh_thread and self._mesh_thread.is_alive():
             return
-        self._mesh_run_btn.disabled = True
+        self._mesh_voxel = voxel_size
+        self._mesh_sdf = sdf_trunc
+        self._mesh_depth = depth_trunc
+        self._mesh_clean = clean_repair
+        self._mesh_on_done = on_done
         self._set_status("Running mesh generation…")
         self._mesh_thread = threading.Thread(target=self._run_mesh_worker, daemon=True)
         self._mesh_thread.start()
 
     def _run_mesh_worker(self) -> None:
         """Background: load zarr if needed → pointcloud_to_mesh → refresh viewer."""
+        _ok = False
+        _msg = "No dataset selected."
+        _cb = self._mesh_on_done
         if self._current_dataset_dir is None or self._current_backend is None:
-            pn.io.state.execute(lambda: self._set_status("No dataset selected."))
+            pn.io.state.execute(lambda: self._set_status(_msg))
+            if _cb is not None:
+                pn.io.state.execute(lambda: _cb(_ok, _msg))
             return
         try:
             if self._result is None:
@@ -577,27 +587,37 @@ class ScenePanel(param.Parameterized):
                 self._result,
                 mesh_dir,
                 method="open3d_tsdf",
-                voxel_size=self._mesh_voxel_input.value,
-                sdf_trunc=self._mesh_sdf_input.value,
-                depth_trunc=self._mesh_depth_input.value,
-                clean_repair=self._mesh_clean_check.value,
+                voxel_size=self._mesh_voxel,
+                sdf_trunc=self._mesh_sdf,
+                depth_trunc=self._mesh_depth,
+                clean_repair=self._mesh_clean,
             )
-            msg = f"Mesh done — {mesh_result.mesh_path.name}"
-            pn.io.state.execute(lambda: self._refresh_after_mesh(msg))
+            _msg = f"Mesh done — {mesh_result.mesh_path.name}"
+            _ok = True
+            pn.io.state.execute(lambda: self._refresh_after_mesh(_msg))
         except Exception as exc:
             logger.exception("Mesh generation failed")
-            err = str(exc)
-            pn.io.state.execute(lambda: self._set_status(f"Mesh failed: {err}"))
+            _err = str(exc)
+            _msg = f"Mesh failed: {_err}"
+            pn.io.state.execute(lambda: self._set_status(_msg))
         finally:
-            pn.io.state.execute(lambda: setattr(self._mesh_run_btn, "disabled", False))
+            ok_val, msg_val = _ok, _msg
+            if _cb is not None:
+                pn.io.state.execute(lambda: _cb(ok_val, msg_val))
 
     def _refresh_after_mesh(self, status_msg: str) -> None:
         """IOLoop-thread: redraw mesh viewer after successful generation."""
         self._plotter.clear()
         self._mesh_actor = None
+        self._sim_actor = None
+        self._sim_cloud = None
         self._rebuild_mesh_viewer()
         self._vtk_pane.synchronize()
         self._set_status(status_msg)
+        # Add Mesh to available modes and switch selector to it
+        self._available_modes.add("Mesh")
+        self._update_mode_buttons()
+        self._mode_selector.value = "Mesh"
 
     def _rebuild_mesh_viewer(self) -> None:
         """Load and render mesh.ply; cache actor."""
@@ -614,6 +634,8 @@ class ScenePanel(param.Parameterized):
         """Render mesh.ply immediately — called from scan, no Load required."""
         self._plotter.clear()
         self._mesh_actor = None
+        self._sim_actor = None
+        self._sim_cloud = None
         self._rebuild_mesh_viewer()
         self._vtk_pane.synchronize()
 
@@ -662,8 +684,14 @@ class ScenePanel(param.Parameterized):
             self._set_status("Enter a query to colour by similarity.")
         else:
             rgb = colors
-        cloud = pointcloud_to_polydata(result_to_use.points, RGB=rgb)
-        self._plotter.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
+        if self._sim_actor is None:
+            self._sim_cloud = pointcloud_to_polydata(result_to_use.points, RGB=rgb)
+            self._sim_actor = self._plotter.add_mesh(
+                self._sim_cloud, scalars="RGB", rgb=True, point_size=2
+            )
+        else:
+            # Update colors in-place — skips full mesh rebuild and re-serialization
+            self._sim_cloud["RGB"] = rgb
 
     def _encode_query(self, extractor: Any, text: str) -> np.ndarray:
         """Encode text to a unit vector in the stored feature space.
@@ -715,8 +743,7 @@ class ScenePanel(param.Parameterized):
             self._set_status(f"Query failed: {exc}")
             return
 
-        # Re-render with similarity colours and sync VTK pane
-        self._plotter.clear()
+        # Update sim cloud colors in-place and sync; no full scene rebuild
         self._rebuild_sim_viewer(colors=colors)
         self._vtk_pane.synchronize()
         label = f'"{pos_text}"'
@@ -741,8 +768,7 @@ class ScenePanel(param.Parameterized):
 
     def _on_reset_camera(self, event: Any) -> None:
         """Reset camera to fit current scene bounds."""
-        self._plotter.reset_camera()
-        self._vtk_pane.synchronize()
+        self._vtk_pane.reset_camera()
 
     ####################################################################
     # Snapshot
@@ -758,15 +784,18 @@ class ScenePanel(param.Parameterized):
     # Layout
     ####################################################################
 
+    def _noop(self) -> None:
+        """Periodic no-op — keeps the Bokeh/Tornado WebSocket alive."""
+
     def panel(self) -> pn.Column:
         """Return the full scene panel layout."""
+        pn.state.add_periodic_callback(self._noop, period=25_000)
         extractor_row = pn.Row(self._extractor_dd)
         action_row = pn.Row(self._reset_btn, self._snapshot_btn)
         return pn.Column(
             "### Scene",
             extractor_row,
             self._mode_selector,
-            self._mesh_options_row,
             self._points_options_row,
             self._sim_query_row,
             self._vtk_pane,

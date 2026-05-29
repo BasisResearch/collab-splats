@@ -107,6 +107,26 @@ class App(param.Parameterized):
         self._redetect_btn.on_click(self._on_redetect_ground_plane)
         self._sidebar_frustum_check.param.watch(self._on_sidebar_frustum_toggle, "value")
 
+        # Sidebar MESH widgets
+        self._mesh_voxel_input = pn.widgets.FloatInput(
+            name="voxel_size", value=0.01, step=0.005, start=0.001, end=1.0, width=125,
+        )
+        self._mesh_sdf_input = pn.widgets.FloatInput(
+            name="sdf_trunc", value=0.04, step=0.01, start=0.001, end=5.0, width=125,
+        )
+        self._mesh_depth_input = pn.widgets.FloatInput(
+            name="depth_trunc", value=10.0, step=1.0, start=0.1, end=200.0, width=280,
+        )
+        self._mesh_clean_check = pn.widgets.Checkbox(name="clean", value=True)
+        self._mesh_run_btn = pn.widgets.Button(
+            name="⚙  Run Mesh", button_type="primary", width=280, disabled=True,
+        )
+        self._mesh_status = pn.pane.HTML(
+            "<p style='color:#666;font-size:12px'>Load data to enable</p>", width=280,
+        )
+        self._mesh_run_btn.on_click(self._on_run_mesh_sidebar)
+        self._state.param.watch(self._on_feedforward_for_mesh, "feedforward_result")
+
         self._sidebar = self._build_sidebar()
 
     def _build_sidebar(self) -> pn.Column:
@@ -164,6 +184,13 @@ class App(param.Parameterized):
             self._ground_plane_status,
             self._redetect_btn,
             self._sidebar_frustum_check,
+            pn.layout.Divider(),
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Mesh</h3>"),
+            pn.Row(self._mesh_voxel_input, self._mesh_sdf_input),
+            self._mesh_depth_input,
+            self._mesh_clean_check,
+            self._mesh_run_btn,
+            self._mesh_status,
             width=300,
         )
 
@@ -378,6 +405,33 @@ class App(param.Parameterized):
         if scene is not None and hasattr(scene, "_on_frustum_toggle_from_sidebar"):
             scene._on_frustum_toggle_from_sidebar(event.new)
 
+    def _on_feedforward_for_mesh(self, event: Any) -> None:
+        """Enable sidebar Run Mesh button when feedforward_result is available."""
+        self._mesh_run_btn.disabled = event.new is None
+        if event.new is not None:
+            self._mesh_status.object = "<p style='color:#666;font-size:12px'>Ready</p>"
+
+    def _on_run_mesh_sidebar(self, event: Any) -> None:
+        """Trigger mesh generation via ScenePanel with sidebar params."""
+        scene = self._panes.get("Visualize")
+        if scene is None:
+            return
+        self._mesh_run_btn.disabled = True
+        self._mesh_status.object = "<p style='color:#aaa;font-size:12px'>Running…</p>"
+        scene.run_mesh(
+            voxel_size=self._mesh_voxel_input.value,
+            sdf_trunc=self._mesh_sdf_input.value,
+            depth_trunc=self._mesh_depth_input.value,
+            clean_repair=self._mesh_clean_check.value,
+            on_done=self._on_mesh_done,
+        )
+
+    def _on_mesh_done(self, ok: bool, msg: str) -> None:
+        """Re-enable sidebar Run Mesh button and update status after generation."""
+        self._mesh_run_btn.disabled = False
+        color = "#50c050" if ok else "#e05050"
+        self._mesh_status.object = f"<p style='color:{color};font-size:12px'>{msg}</p>"
+
     def _do_detect_ground_plane(self) -> None:
         """Background: RANSAC ground plane detection; save transforms.json."""
         try:
@@ -447,4 +501,14 @@ def run_app(host: str = "0.0.0.0", port: int = 7860, base_dir: str = "/workspace
     def app_factory():
         return App(base_dir=base_dir, video_server=video_server).servable()
 
-    pn.serve(app_factory, host=host, port=port, show=False)
+    pn.serve(
+        app_factory,
+        host=host,
+        port=port,
+        show=False,
+        websocket_max_message_size=200 * 1024 * 1024,
+        tornado_settings={
+            "websocket_ping_interval": 30_000,
+            "websocket_ping_timeout": 120_000,
+        },
+    )

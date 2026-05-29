@@ -175,6 +175,11 @@ class VGGTXCreator(BaseFeedforwardCreator):
                               are discarded.  35.0 = keep the top 65 %.
     """
 
+    # Calibrated on chess_seq01 retrieved pairs, post stride=K fix (2026-05-29).
+    # Formula: mean_top_quarter mean - 2*std = 0.8178 - 2*0.0102 = 0.80.
+    # VGGTSPARKCreator inherits this value.
+    default_verify_match_ratio: ClassVar[float] = 0.80
+
     camera_model: str = "SIMPLE_PINHOLE"
     model_name: str = "facebook/VGGT-1B"
     use_global_alignment: bool = False

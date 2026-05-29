@@ -127,7 +127,10 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     # reject false-positive LC pairs.  max_jump_ratio=0.3 enables geometric sanity check
     # (default inf disables it) for repetitive chess-texture scenes.
     _lc_layer_index: ClassVar[int] = 16
-    default_verify_match_ratio: ClassVar[float] = 0.99
+    # Calibrated on chess_seq01 retrieved pairs, post stride=K fix (2026-05-29).
+    # Formula: mean_top_quarter mean - 2*std = 1.3280 - 2*0.0852 = 1.16.
+    # Higher than VGGT-X because Omega attention architecture produces larger ratios.
+    default_verify_match_ratio: ClassVar[float] = 1.16
     default_max_jump_ratio: ClassVar[float] = 0.3
 
     camera_model: str = "PINHOLE"

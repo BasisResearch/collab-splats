@@ -155,6 +155,9 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     # MapAnything info_sharing blocks have no special tokens (no camera/register
     # tokens prepended). token_offset must be 0 — not 5 as the VGGT default.
     _lc_token_offset: ClassVar[int] = 0
+    # Calibrated on chess_seq01 retrieved pairs, post stride=K fix (2026-05-29).
+    # Formula: mean_top_quarter mean - 2*std = 1.8066 - 2*0.0781 = 1.65.
+    default_verify_match_ratio: ClassVar[float] = 1.65
     # Calibrated 2026-05-28: info_sharing depth=16; layer 4 gives mtq=1.807 on
     # DINO-SALAD retrieved pairs (layer 15/last gives 0.341 — useless for LC).
     # MapAnything cross-frame attention peaks early (~25% depth) unlike VGGT models.

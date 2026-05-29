@@ -40,3 +40,29 @@ def test_appstate_feature_maps_path_accepts_path():
     p = Path("/workspace/outputs/birds/vggt_omega/features.zarr")
     state.feature_maps_path = p
     assert state.feature_maps_path == p
+
+
+def test_appstate_new_fields_defaults():
+    state = AppState()
+    assert state.pointcloud_backend == ""
+    assert state.semantic_extractor == ""
+    assert state.ground_plane_enabled is True
+    assert state.ground_plane_R is None
+    assert state.ground_plane_t is None
+
+
+def test_appstate_ground_plane_fields_settable():
+    import numpy as np
+    state = AppState()
+    R = np.eye(3)
+    t = np.array([0.0, 0.0, 1.0])
+    state.ground_plane_R = R
+    state.ground_plane_t = t
+    assert (state.ground_plane_R == R).all()
+    assert (state.ground_plane_t == t).all()
+
+
+def test_appstate_ground_plane_enabled_toggle():
+    state = AppState()
+    state.ground_plane_enabled = False
+    assert state.ground_plane_enabled is False

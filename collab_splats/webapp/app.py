@@ -6,8 +6,10 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from collab_splats.webapp.routers import localize as localize_router
 from collab_splats.webapp.routers import preprocess as preprocess_router
 from collab_splats.webapp.routers import reconstruct as reconstruct_router
+from collab_splats.webapp.routers import semantics as semantics_router
 from collab_splats.webapp.routers import session as session_router
 from collab_splats.webapp.routers import visualize as visualize_router
 
@@ -24,6 +26,8 @@ def create_app() -> FastAPI:
     app.include_router(preprocess_router.router)
     app.include_router(reconstruct_router.router)
     app.include_router(visualize_router.router)
+    app.include_router(semantics_router.router)
+    app.include_router(localize_router.router)
 
     # Serve static app files (HTML, CSS, JS)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

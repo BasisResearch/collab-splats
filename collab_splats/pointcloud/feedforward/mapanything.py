@@ -294,8 +294,12 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         # Use window-specific views stored by _forward (Tensor branch) so the
         # view context matches the actual window frames, not the first-K frames
         # of the full sequence.
-        views_ctx = self._lc_window_views if self._lc_window_views is not None \
-            else self._processed_views[: len(raw_list)]
+        if self._lc_window_views is None:
+            raise RuntimeError(
+                "_lc_window_views is None in _lc_collate_outputs — "
+                "_forward Tensor branch must be called before collation"
+            )
+        views_ctx = self._lc_window_views
         self._lc_window_views = None  # clear after use
         processed = postprocess_model_outputs_for_inference(
             raw_list,

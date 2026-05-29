@@ -62,6 +62,7 @@ class SemanticsPane(param.Parameterized):
         self._current_frame_idx: int = 0
         self._run_thread: threading.Thread | None = None
         self._query_thread: threading.Thread | None = None
+        self._discover_thread: threading.Thread | None = None
 
         # Frame selector
         self._frame_slider = pn.widgets.IntSlider(
@@ -238,6 +239,51 @@ class SemanticsPane(param.Parameterized):
             self._op_log.error_op(f"Query error: {exc}")
         finally:
             self._update_query_btn()
+
+    def _try_discover_cache(self) -> None:
+        """Check for cached features for selected extractor; load in background if found."""
+        if self._state.output_dir is None or self._state.frames_zarr_path is None:
+            return
+        if self._discover_thread and self._discover_thread.is_alive():
+            return
+        method = self._method_dd.value
+        candidate = Path(self._state.output_dir) / "features" / method
+        # Validate zarr synchronously (fast — just opens store metadata)
+        try:
+            z = zarr.open(str(candidate), mode="r")
+            _ = z["features"]
+        except Exception:
+            # No valid cache — clear stale state
+            self._feature_zarr_path = None
+            self._pca_pane.object = None
+            self._sim_pane.object = None
+            self._update_query_btn()
+            return
+        # Valid cache — instantiate extractor in background (may load model weights)
+        self._discover_thread = threading.Thread(
+            target=self._load_cached_features,
+            args=(method, candidate),
+            daemon=True,
+        )
+        self._discover_thread.start()
+
+    def _load_cached_features(self, method: str, zarr_path: Path) -> None:
+        """Background: instantiate extractor and load cached feature zarr."""
+        try:
+            extractor_cls = BaseFeatureExtractor.get(method)
+            self._extractor = extractor_cls()
+            self._feature_zarr_path = zarr_path
+            self._state.feature_maps_path = zarr_path
+            self._refresh_pca(self._current_frame_idx)
+            self._update_query_btn()
+            self._status_html.object = (
+                f"<small style='color:#50c050'>Loaded cached {method}</small>"
+            )
+        except Exception as exc:
+            logger.exception("Cache load failed for %s", method)
+            self._status_html.object = (
+                f"<small style='color:#e05050'>Cache error: {exc}</small>"
+            )
 
     def panel(self) -> pn.Column:
         """Return Panel layout for Tab 2."""

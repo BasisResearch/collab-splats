@@ -241,30 +241,39 @@ class SemanticsPane(param.Parameterized):
 
     def panel(self) -> pn.Column:
         """Return Panel layout for Tab 2."""
-        top_row = pn.Row(
+        # Extractor controls — top left
+        extractor_row = pn.Row(
+            pn.pane.HTML("<b style='align-self:center'>Extractor:</b>"),
+            self._method_dd,
+            self._run_btn,
+            self._status_html,
+        )
+        # Fixed-height image area — prevents panel reflow when features load/unload
+        image_area = pn.Column(
+            pn.Row(
+                pn.Column(
+                    pn.pane.HTML("<b style='color:#aaa;font-size:12px'>Ground truth</b>"),
+                    self._original_pane,
+                ),
+                pn.Column(
+                    pn.pane.HTML("<b style='color:#aaa;font-size:12px'>PCA features</b>"),
+                    self._pca_pane,
+                ),
+                pn.Column(
+                    pn.pane.HTML("<b style='color:#aaa;font-size:12px'>Cosine similarity</b>"),
+                    self._sim_pane,
+                ),
+                sizing_mode="stretch_width",
+            ),
+            height=270,
+            sizing_mode="fixed",
+        )
+        # Frame navigation — "scrollbar" below images
+        frame_row = pn.Row(
             self._prev_btn,
             self._frame_slider,
             self._next_btn,
             self._frame_count_html,
-            pn.HSpacer(),
-            pn.pane.HTML("<b style='align-self:center'>Extractor:</b>"),
-            self._method_dd,
-            self._run_btn,
-        )
-        image_row = pn.Row(
-            pn.Column(
-                pn.pane.HTML("<b style='color:#aaa;font-size:12px'>Ground truth</b>"),
-                self._original_pane,
-            ),
-            pn.Column(
-                pn.pane.HTML("<b style='color:#aaa;font-size:12px'>PCA features</b>"),
-                self._pca_pane,
-            ),
-            pn.Column(
-                pn.pane.HTML("<b style='color:#aaa;font-size:12px'>Cosine similarity</b>"),
-                self._sim_pane,
-            ),
-            sizing_mode="stretch_width",
         )
         query_row = pn.Row(
             pn.pane.HTML("<b style='align-self:center'>Query:</b>"),
@@ -273,9 +282,9 @@ class SemanticsPane(param.Parameterized):
         )
         return pn.Column(
             pn.pane.HTML("<h3 style='color:#7ec8e3;margin:0 0 8px 0'>Semantics</h3>"),
-            top_row,
-            self._status_html,
-            image_row,
+            extractor_row,
+            image_area,
+            frame_row,
             query_row,
             sizing_mode="stretch_width",
         )

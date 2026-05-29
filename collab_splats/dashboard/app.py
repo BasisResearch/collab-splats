@@ -14,7 +14,7 @@ from collab_splats.dashboard.panes.preprocess import PreprocessPane
 from collab_splats.dashboard.panes.reconstruct import ReconstructPane
 from collab_splats.dashboard.panes.semantics import SemanticsPane
 from collab_splats.dashboard.panes.localize import LocalizePane
-from collab_splats.dashboard.panes.visualize import VisualizePane
+from collab_splats.dashboard.panes.visualize import ScenePanel
 from collab_splats.dashboard.state import AppState
 
 from collab_splats.dashboard.video_server import VideoFileServer, start_video_server
@@ -62,7 +62,7 @@ class App(param.Parameterized):
             "Preprocess": self._preprocess,
             "Semantics": SemanticsPane(state=self._state, op_log=self._op_log),
             "Reconstruct": self._reconstruct,
-            "Visualize": VisualizePane(state=self._state, op_log=self._op_log, base_dir=self._base_dir),
+            "Visualize": ScenePanel(base_dir=self._base_dir, state=self._state, op_log=self._op_log),
             "Localize": LocalizePane(state=self._state, op_log=self._op_log),
         }
         self._sidebar = self._build_sidebar()
@@ -213,7 +213,7 @@ class App(param.Parameterized):
             sizing_mode="stretch_width",
         )
 
-        # Wire tab activation → VisualizePane mode rescan
+        # Wire tab activation → ScenePanel mode rescan
         visualize_tab_index = list(self._panes.keys()).index("Visualize")
         self._panes["Visualize"].wire_tabs(self._tabs, visualize_tab_index)
 

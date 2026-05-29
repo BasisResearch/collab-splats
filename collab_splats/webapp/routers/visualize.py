@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -28,10 +31,24 @@ async def status() -> JSONResponse:
     ply = backend_dir / "sparse_pc.ply"
     mesh = backend_dir / "mesh" / "mesh.ply"
     base = str(s.output_dir).replace("/workspace/outputs", "")
+
+    # Load ground plane transform from transforms.json if present
+    ground_plane = None
+    transforms_path = backend_dir / "transforms.json"
+    if transforms_path.exists():
+        try:
+            data = json.loads(transforms_path.read_text())
+            gp = data.get("ground_plane")
+            if gp and "R" in gp and "t" in gp:
+                ground_plane = {"R": gp["R"], "t": gp["t"]}
+        except Exception:
+            pass
+
     return JSONResponse({
         "ok": True,
         "ply_url": f"/outputs{base}/{creator}/sparse_pc.ply" if ply.exists() else None,
         "mesh_url": f"/outputs{base}/{creator}/mesh/mesh.ply" if mesh.exists() else None,
         "creator": creator,
         "available_backends": available,
+        "ground_plane": ground_plane,
     })

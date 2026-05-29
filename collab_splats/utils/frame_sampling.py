@@ -126,6 +126,16 @@ def _apply_rotation(frame: np.ndarray, degrees: int) -> np.ndarray:
     return frame
 
 
+def _ffmpeg_output_dims(width: int, height: int, rotation: int) -> tuple[int, int]:
+    """Return (out_w, out_h) after ffmpeg auto-rotation.
+
+    ffmpeg rotates 90/270-degree videos by default; native dims are swapped in output.
+    """
+    if rotation in (90, 270):
+        return height, width
+    return width, height
+
+
 def get_video_info(video_path: str) -> dict:
     """Return basic video metadata without exposing cv2 to callers.
 

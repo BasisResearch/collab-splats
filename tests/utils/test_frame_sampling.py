@@ -385,6 +385,23 @@ def test_get_decoder_backend_is_cached():
     assert _get_decoder_backend() == _get_decoder_backend()
 
 
+# ── _ffmpeg_output_dims ───────────────────────────────────────────────────────
+
+
+from collab_splats.utils.frame_sampling import _ffmpeg_output_dims
+
+
+@pytest.mark.parametrize("rotation,expected_wh", [
+    (0,   (100, 50)),
+    (180, (100, 50)),
+    (90,  (50, 100)),
+    (270, (50, 100)),
+])
+def test_ffmpeg_output_dims(rotation, expected_wh):
+    """Native w=100, h=50. 90/270 swaps to (50, 100) after ffmpeg auto-rotation."""
+    assert _ffmpeg_output_dims(100, 50, rotation) == expected_wh
+
+
 def test_iter_decoded_frames_yields_bgr_frames(tiny_video):
     from collab_splats.utils.frame_sampling import _iter_decoded_frames
     info = get_video_info(tiny_video)

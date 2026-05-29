@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from collab_splats.pointcloud.feedforward import FeedforwardResult
+from collab_splats.pointcloud.wrappers import _trim_forward_outputs
 
 
 def _make_ff_result(**overrides):
@@ -324,8 +325,6 @@ def test_loop_closure_reproject_delegates_to_base():
 
 
 def test_trim_forward_outputs_dict_trims_arrays():
-    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
-
     raw = {
         "extrinsic": np.zeros((7, 3, 4)),
         "intrinsics": np.zeros((7, 3, 3)),
@@ -342,16 +341,12 @@ def test_trim_forward_outputs_dict_trims_arrays():
 
 
 def test_trim_forward_outputs_list_trims_list():
-    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
-
     raw = [{"extrinsic": np.zeros((1, 3, 4))} for _ in range(7)]
     trimmed = _trim_forward_outputs(raw, 6)
     assert len(trimmed) == 6
 
 
 def test_trim_forward_outputs_no_op_when_short():
-    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
-
     raw = {"extrinsic": np.zeros((5, 3, 4)), "scalar": 1.0}
     trimmed = _trim_forward_outputs(raw, 6)
     assert trimmed["extrinsic"].shape[0] == 5
@@ -359,8 +354,6 @@ def test_trim_forward_outputs_no_op_when_short():
 
 
 def test_trim_forward_outputs_preserves_non_array_values():
-    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
-
     raw = {"extrinsic": np.zeros((7, 3, 4)), "label": "keep", "count": 42}
     trimmed = _trim_forward_outputs(raw, 6)
     assert trimmed["label"] == "keep"

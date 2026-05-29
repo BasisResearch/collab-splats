@@ -47,7 +47,10 @@ function renderSidebar() {
       sel.value = first;
       state.extractor = first;
       fetch('/api/session/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({extractor: first}) });
-      checkQueryable(first, sec);
+      // Show query section immediately when cache exists — all registered extractors support text query
+      const qs = sec.querySelector('#sem-query-section');
+      if (qs) qs.style.display = 'flex';
+      isQueryable = true;
     }
   });
 
@@ -80,9 +83,9 @@ function setupMainPanel() {
   panel.style.cssText = 'flex-direction:column;flex:1;overflow:hidden;';
 
   const imgStyle = 'width:100%;height:100%;object-fit:contain;display:block';
-  const panelStyle = 'flex:1;display:flex;flex-direction:column;background:#0d0d0d;overflow:hidden;min-width:0';
-  const labelStyle = 'flex-shrink:0;font-size:10px;color:#555;padding:4px 8px;text-transform:uppercase;letter-spacing:1px';
-  const imgWrapStyle = 'flex:1;min-height:0;overflow:hidden;position:relative';
+  const panelStyle = 'flex:1;display:flex;flex-direction:column;background:#0d0d0d;overflow:hidden;min-width:0;padding:0 12px 12px';
+  const labelStyle = 'flex-shrink:0;font-size:10px;color:#555;padding:8px 0 6px;text-transform:uppercase;letter-spacing:1px;text-align:center';
+  const imgWrapStyle = 'flex:1;min-height:0;overflow:hidden;border:1px solid #1e1e2e;border-radius:3px';
 
   panel.innerHTML = `
     <div id="sem-panels" style="display:flex;flex:1;overflow:hidden;gap:1px">

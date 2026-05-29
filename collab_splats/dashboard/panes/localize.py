@@ -281,6 +281,9 @@ class LocalizePane(param.Parameterized):
         )
         self._warp_cb = pn.widgets.Checkbox(name="warp corners", value=True)
         self._status_html = pn.pane.HTML("", width=400)
+        self._index_progress = pn.widgets.Progress(
+            active=False, visible=False, width=400, bar_color="primary", value=0,
+        )
 
         # Correspondence display (left panel)
         self._corr_png = pn.pane.PNG(
@@ -413,13 +416,21 @@ class LocalizePane(param.Parameterized):
 
             # Build or reuse cached localizer
             if self._localizer is None:
+                self._index_progress.value = 0
+                self._index_progress.active = True
+                self._index_progress.visible = True
+
                 def _progress(i: int, total: int) -> None:
+                    self._index_progress.value = int((i + 1) / total * 100)
                     self._status_html.object = (
                         f"<span style='color:#2596be'>⏳ Indexing frame {i + 1} / {total}…</span>"
                     )
+
                 ff, localizer = self._build_localizer(progress_callback=_progress)
                 self._ff_result = ff
                 self._localizer = localizer
+                self._index_progress.active = False
+                self._index_progress.visible = False
             else:
                 ff = self._ff_result
                 localizer = self._localizer
@@ -615,6 +626,7 @@ class LocalizePane(param.Parameterized):
 
         left_panel = pn.Column(
             corr_header,
+            self._index_progress,
             self._corr_png,
             self._status_html,
             sizing_mode="stretch_both",

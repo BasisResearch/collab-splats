@@ -577,7 +577,16 @@ class CameraLocalizer:
         # Extract local features for all reference frames
         self._frame_features: list[LocalFeatures] = []
         first_hw: tuple[int, int] | None = None
-        for path in image_paths:
+        # Use tqdm in notebook/terminal when no external progress_callback is wired
+        if progress_callback is None:
+            try:
+                from tqdm.auto import tqdm as _tqdm
+                _paths_iter = _tqdm(image_paths, desc="Indexing frames", unit="frame", leave=False)
+            except ImportError:
+                _paths_iter = image_paths
+        else:
+            _paths_iter = image_paths
+        for path in _paths_iter:
             bgr = cv2.imread(str(path))
             if bgr is None:
                 raise FileNotFoundError(f"CameraLocalizer: cannot read {path}")

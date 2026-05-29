@@ -140,7 +140,10 @@ async def frame_viz(idx: int = 0) -> JSONResponse:
 
         # PCA → RGB via features_to_rgb
         pca_rgb = extractor.features_to_rgb(feats)  # (H', W', 3) uint8
-        pca_img = PILImage.fromarray(pca_rgb.astype(_np.uint8))
+        # Resize PCA to match frame image dimensions for consistent display
+        pca_img = PILImage.fromarray(pca_rgb.astype(_np.uint8)).resize(
+            (img.width, img.height), PILImage.BILINEAR
+        )
         buf = io.BytesIO()
         pca_img.save(buf, format="PNG")
         pca_b64 = base64.b64encode(buf.getvalue()).decode()

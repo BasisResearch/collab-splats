@@ -79,21 +79,26 @@ function setupMainPanel() {
   panel.dataset.initialized = '1';
   panel.style.cssText = 'flex-direction:column;flex:1;overflow:hidden;';
 
+  const imgStyle = 'width:100%;height:100%;object-fit:contain;display:block';
+  const panelStyle = 'flex:1;display:flex;flex-direction:column;background:#0d0d0d;overflow:hidden;min-width:0';
+  const labelStyle = 'flex-shrink:0;font-size:10px;color:#555;padding:4px 8px;text-transform:uppercase;letter-spacing:1px';
+  const imgWrapStyle = 'flex:1;min-height:0;overflow:hidden;position:relative';
+
   panel.innerHTML = `
     <div id="sem-panels" style="display:flex;flex:1;overflow:hidden;gap:1px">
-      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0d0d0d;padding:8px">
-        <div style="font-size:10px;color:#555;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Frame</div>
-        <img id="sem-img-frame" style="max-width:100%;max-height:calc(100% - 24px);object-fit:contain" src="">
+      <div style="${panelStyle}">
+        <div style="${labelStyle}">Frame</div>
+        <div style="${imgWrapStyle}"><img id="sem-img-frame" style="${imgStyle}" src=""></div>
       </div>
-      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0d0d0d;padding:8px">
-        <div style="font-size:10px;color:#555;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">PCA Features</div>
-        <img id="sem-img-pca" style="max-width:100%;max-height:calc(100% - 24px);object-fit:contain" src="">
-        <div id="sem-pca-status" style="font-size:10px;color:#555;margin-top:4px"></div>
+      <div style="${panelStyle}">
+        <div style="${labelStyle}">PCA Features</div>
+        <div style="${imgWrapStyle}"><img id="sem-img-pca" style="${imgStyle}" src=""></div>
+        <div id="sem-pca-status" style="flex-shrink:0;font-size:10px;color:#555;padding:2px 8px;text-align:center"></div>
       </div>
-      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0d0d0d;padding:8px">
-        <div style="font-size:10px;color:#555;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Query Similarity</div>
-        <img id="sem-img-query" style="max-width:100%;max-height:calc(100% - 24px);object-fit:contain" src="">
-        <div id="sem-query-status" style="font-size:10px;color:#555;margin-top:4px">Run a query to see similarity</div>
+      <div style="${panelStyle}">
+        <div style="${labelStyle}">Query Similarity</div>
+        <div style="${imgWrapStyle}"><img id="sem-img-query" style="${imgStyle}" src=""></div>
+        <div id="sem-query-status" style="flex-shrink:0;font-size:10px;color:#555;padding:2px 8px;text-align:center">Run a query to see similarity</div>
       </div>
     </div>
     <div id="sem-strip" style="height:88px;background:#0d0d0d;border-top:1px solid #1e1e2e;display:flex;gap:3px;padding:4px 8px;overflow-x:auto;flex-shrink:0;align-items:center"></div>

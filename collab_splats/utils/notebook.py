@@ -91,7 +91,7 @@ def add_camera_frustums(
     from collab_splats.utils.visualization import create_camera_frustum_pyvista
 
     for ext in extrinsics:
-        frustum = create_camera_frustum_pyvista(np.linalg.inv(ext), scale=scale)
+        frustum = create_camera_frustum_pyvista(ext, scale=scale)
         plotter.add_mesh(frustum, color=color, line_width=line_width)
 
 

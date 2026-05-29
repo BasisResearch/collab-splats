@@ -453,7 +453,7 @@ class ScenePanel(param.Parameterized):
         if self._result is None:
             return
         for ext in self._result.extrinsics:
-            frustum = create_camera_frustum_pyvista(np.linalg.inv(ext))
+            frustum = create_camera_frustum_pyvista(ext)
             self._plotter.add_mesh(frustum, color="cornflowerblue", line_width=1)
 
     def _on_frustum_toggle(self, event: Any) -> None:

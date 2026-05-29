@@ -119,7 +119,7 @@ class LocalizeScenePanel(param.Parameterized):
         # Camera frustums — store actors so we can recolour on highlight
         self._frustum_actors: list[Any] = []
         for ext in self._extrinsics:
-            frustum = create_camera_frustum_pyvista(np.linalg.inv(ext))
+            frustum = create_camera_frustum_pyvista(ext)
             actor = self._plotter.add_mesh(frustum, color=_RGB_DEFAULT, line_width=1)
             self._frustum_actors.append(actor)
 
@@ -163,7 +163,7 @@ class LocalizeScenePanel(param.Parameterized):
 
         # Add query camera as temporary red frustum (query_idx == -1 means not in array)
         if query_idx == -1:
-            frustum = create_camera_frustum_pyvista(np.linalg.inv(query_ext))
+            frustum = create_camera_frustum_pyvista(query_ext)
             self._query_actor = self._plotter.add_mesh(
                 frustum, color=_COLOR_QUERY, line_width=3
             )

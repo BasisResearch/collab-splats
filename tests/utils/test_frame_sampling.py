@@ -464,3 +464,100 @@ def test_sample_frames_optical_flow_ffmpeg_backend(tiny_video, monkeypatch):
     for f in frames:
         assert f.shape[2] == 3
         assert f.dtype == np.uint8
+
+
+# ── _decode_fps_ffmpeg (single-pass) ─────────────────────────────────────────
+
+
+import io as _io
+from unittest.mock import patch as _patch, MagicMock as _MagicMock
+
+from collab_splats.utils.frame_sampling import _decode_fps_ffmpeg
+
+
+def _make_fake_proc(n_frames: int, out_w: int, out_h: int) -> _MagicMock:
+    """Return a mock Popen whose stdout yields n_frames raw RGB frames."""
+    raw = np.zeros((n_frames * out_h * out_w * 3,), dtype=np.uint8).tobytes()
+    bio = _io.BytesIO(raw)
+    proc = _MagicMock()
+    proc.stdout = bio
+    proc.stdout.close = lambda: None
+    proc.terminate = lambda: None
+    proc.wait = lambda: None
+    return proc
+
+
+def test_decode_fps_ffmpeg_returns_correct_count(monkeypatch):
+    """Single-pass: returns exactly len(targets) frames when pipe has enough data."""
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_rotation_degrees", lambda _: 0)
+    targets = [0, 10, 20]
+    proc = _make_fake_proc(3, 64, 48)
+    with _patch("subprocess.Popen", return_value=proc):
+        frames, indices = _decode_fps_ffmpeg("fake.mp4", targets, 64, 48, 30.0, None)
+    assert len(frames) == 3
+    assert indices == targets
+
+
+def test_decode_fps_ffmpeg_frame_shape_no_rotation(monkeypatch):
+    """No rotation: output shape matches native (out_h=48, out_w=64)."""
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_rotation_degrees", lambda _: 0)
+    proc = _make_fake_proc(2, 64, 48)
+    with _patch("subprocess.Popen", return_value=proc):
+        frames, _ = _decode_fps_ffmpeg("fake.mp4", [0, 10], 64, 48, 30.0, None)
+    assert frames[0].shape == (48, 64, 3)
+    assert frames[0].dtype == np.uint8
+
+
+def test_decode_fps_ffmpeg_frame_shape_rotation_90(monkeypatch):
+    """90° rotation: ffmpeg swaps dims → output shape (64, 48, 3) not (48, 64, 3)."""
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_rotation_degrees", lambda _: 90)
+    # native w=64, h=48 → after 90° rotation: out_w=48, out_h=64
+    proc = _make_fake_proc(2, out_w=48, out_h=64)
+    with _patch("subprocess.Popen", return_value=proc):
+        frames, _ = _decode_fps_ffmpeg("fake.mp4", [0, 10], 64, 48, 30.0, None)
+    assert frames[0].shape == (64, 48, 3)  # (out_h, out_w, 3)
+
+
+def test_decode_fps_ffmpeg_progress_fires(monkeypatch):
+    """on_progress called once per frame with (n_done, n_targets)."""
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_rotation_degrees", lambda _: 0)
+    targets = [0, 10, 20]
+    proc = _make_fake_proc(3, 64, 48)
+    calls = []
+    with _patch("subprocess.Popen", return_value=proc):
+        _decode_fps_ffmpeg("fake.mp4", targets, 64, 48, 30.0,
+                           on_progress=lambda n, t: calls.append((n, t)))
+    assert calls == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_decode_fps_ffmpeg_empty_targets(monkeypatch):
+    """Empty targets list returns ([], []) without calling Popen."""
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_rotation_degrees", lambda _: 0)
+    with _patch("subprocess.Popen") as mock_popen:
+        frames, indices = _decode_fps_ffmpeg("fake.mp4", [], 64, 48, 30.0, None)
+    mock_popen.assert_not_called()
+    assert frames == []
+    assert indices == []
+
+
+def test_decode_fps_ffmpeg_uses_select_filter(monkeypatch):
+    """ffmpeg command must use select filter with correct interval."""
+    from collab_splats.utils import frame_sampling as fs
+    monkeypatch.setattr(fs, "_get_rotation_degrees", lambda _: 0)
+    targets = [0, 5, 10, 15]  # interval=5
+    proc = _make_fake_proc(4, 64, 48)
+    captured_cmd = []
+    def fake_popen(cmd, **kwargs):
+        captured_cmd.extend(cmd)
+        return proc
+    with _patch("subprocess.Popen", side_effect=fake_popen):
+        _decode_fps_ffmpeg("fake.mp4", targets, 64, 48, 30.0, None)
+    cmd_str = " ".join(captured_cmd)
+    assert "select=not(mod(n\\,5))" in cmd_str
+    assert "-frames:v" in cmd_str
+    assert "4" in cmd_str

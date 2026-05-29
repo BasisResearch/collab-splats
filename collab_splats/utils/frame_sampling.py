@@ -448,45 +448,48 @@ def _decode_fps_ffmpeg(
     native_fps: float,
     on_progress: Callable[[int, int], None] | None,
 ) -> tuple[list[np.ndarray], list[int]]:
-    """Extract frames at target indices via parallel per-frame ffmpeg seeks.
+    """Extract evenly-spaced frames via a single ffmpeg pass with select filter.
 
-    Uses -ss input seeking (keyframe-level) — O(GOP_size) per frame, not O(total_frames).
-    Spawns up to 8 concurrent ffmpeg subprocesses to amortize launch overhead.
-    ffmpeg handles rotation from container metadata automatically.
+    ffmpeg applies rotation from container metadata automatically.
+    _ffmpeg_output_dims adjusts reshape dims to match rotated output.
     Returns (rgb_frames, source_indices).
     """
-    import concurrent.futures
+    if not targets:
+        return [], []
 
+    rotation = _get_rotation_degrees(video_path)
+    out_w, out_h = _ffmpeg_output_dims(width, height, rotation)
+    frame_size = out_w * out_h * 3
     n_targets = len(targets)
-    frame_size = width * height * 3
 
-    def _seek_one(target: int) -> np.ndarray | None:
-        t = target / max(native_fps, 1.0)
-        cmd = [
-            "ffmpeg", "-ss", f"{t:.6f}", "-i", video_path,
-            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24",
-            "-an", "pipe:1",
-        ]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        raw = result.stdout
-        if len(raw) < frame_size:
-            return None
-        return np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy()
+    # Infer stride from first gap; targets from sample_frames_fps are always evenly spaced
+    interval = targets[1] - targets[0] if len(targets) > 1 else 1
 
-    results: list[np.ndarray | None] = [None] * n_targets
-    n_done = 0
-    max_workers = min(8, n_targets)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_idx = {executor.submit(_seek_one, targets[i]): i for i in range(n_targets)}
-        for future in concurrent.futures.as_completed(future_to_idx):
-            i = future_to_idx[future]
-            results[i] = future.result()
-            n_done += 1
+    cmd = [
+        "ffmpeg", "-i", video_path,
+        "-vf", f"select=not(mod(n\\,{interval}))",
+        "-frames:v", str(n_targets),
+        "-vsync", "0",
+        "-f", "rawvideo", "-pix_fmt", "rgb24",
+        "-an", "pipe:1",
+    ]
+    frames: list[np.ndarray] = []
+    indices: list[int] = []
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        while len(frames) < n_targets:
+            raw = proc.stdout.read(frame_size)
+            if len(raw) < frame_size:
+                break
+            frame = np.frombuffer(raw, np.uint8).reshape(out_h, out_w, 3).copy()
+            frames.append(frame)
+            indices.append(targets[len(frames) - 1])
             if on_progress is not None:
-                on_progress(n_done, n_targets)
-
-    frames = [r for r in results if r is not None]
-    indices = [targets[i] for i, r in enumerate(results) if r is not None]
+                on_progress(len(frames), n_targets)
+    finally:
+        proc.stdout.close()
+        proc.terminate()
+        proc.wait()
     return frames, indices
 
 

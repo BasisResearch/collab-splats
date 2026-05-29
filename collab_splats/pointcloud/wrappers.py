@@ -44,6 +44,23 @@ def _assemble_precorrection_extrinsics(submaps: list, total_frames: int) -> np.n
     )
 
 
+def _trim_forward_outputs(raw: "dict | list", k: int) -> "dict | list":
+    """Trim per-frame predictions to first k entries.
+
+    When _forward receives a K+overlap window for extra VGGT attention context,
+    discards the extra overlap predictions so only K are stored per Submap.
+    """
+    if isinstance(raw, list):
+        return raw[:k]
+    trimmed = {}
+    for key, val in raw.items():
+        if isinstance(val, np.ndarray) and val.ndim >= 1 and val.shape[0] > k:
+            trimmed[key] = val[:k]
+        else:
+            trimmed[key] = val
+    return trimmed
+
+
 ########################################################
 ########## LoopClosure wrapper ########################
 ########################################################

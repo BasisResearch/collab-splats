@@ -316,3 +316,52 @@ def test_loop_closure_reproject_delegates_to_base():
 
     mock_base.reproject.assert_called_once_with(result)
     assert out is reprojected
+
+
+########################################################
+########## _trim_forward_outputs tests ###############
+########################################################
+
+
+def test_trim_forward_outputs_dict_trims_arrays():
+    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
+
+    raw = {
+        "extrinsic": np.zeros((7, 3, 4)),
+        "intrinsics": np.zeros((7, 3, 3)),
+        "depth": np.zeros((7, 64, 64, 1)),
+        "depth_conf": np.zeros((7, 64, 64)),
+        "world_points": np.zeros((7, 100, 3)),
+        "world_points_conf": np.zeros((7, 100)),
+        "images": np.zeros((7, 3, 64, 64)),
+    }
+    trimmed = _trim_forward_outputs(raw, 6)
+    for key, val in trimmed.items():
+        assert isinstance(val, np.ndarray)
+        assert val.shape[0] == 6, f"{key}: expected 6, got {val.shape[0]}"
+
+
+def test_trim_forward_outputs_list_trims_list():
+    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
+
+    raw = [{"extrinsic": np.zeros((1, 3, 4))} for _ in range(7)]
+    trimmed = _trim_forward_outputs(raw, 6)
+    assert len(trimmed) == 6
+
+
+def test_trim_forward_outputs_no_op_when_short():
+    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
+
+    raw = {"extrinsic": np.zeros((5, 3, 4)), "scalar": 1.0}
+    trimmed = _trim_forward_outputs(raw, 6)
+    assert trimmed["extrinsic"].shape[0] == 5
+    assert trimmed["scalar"] == 1.0
+
+
+def test_trim_forward_outputs_preserves_non_array_values():
+    from collab_splats.pointcloud.wrappers import _trim_forward_outputs
+
+    raw = {"extrinsic": np.zeros((7, 3, 4)), "label": "keep", "count": 42}
+    trimmed = _trim_forward_outputs(raw, 6)
+    assert trimmed["label"] == "keep"
+    assert trimmed["count"] == 42

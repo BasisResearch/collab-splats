@@ -31,3 +31,17 @@ VGGT-SPARK reference (VGGT-1B via SPARK, same weights as VGGTXCreator): mtq_mean
 - `evals/results/lc_calibration_vggtx_postfix_retrieved.json`
 - `evals/results/lc_calibration_mapanything_postfix_retrieved.json`
 - `evals/results/lc_calibration_omega_postfix_retrieved.json`
+
+## Eval results — post stride=K fix, calibrated thresholds (chess_seq01)
+
+| Backbone | Baseline ATE | LC ATE | Delta | Notes |
+|---|---|---|---|---|
+| vggt_spark | 0.3189m | 0.3752m | +17.6% | LC fires but hurts; same weights as vggtx |
+| vggtx | 0.3189m | 0.3752m | +17.6% | LC fires but hurts |
+| vggt_omega | 0.3223m | 0.2503m | −22.4% | LC now helps; was +54% worse pre-fix |
+| mapanything | 1.0023m (200f windowed) | 0.0843m (50f) | — | 200f OOM; windowed baseline regresses vs single-pass (0.1103m) |
+
+### Open issues
+1. vggt_spark/vggtx: loops fire at 0.80 but pose graph adds error — investigate edge convention or scale estimation
+2. mapanything 200-frame: OOM during LC (segfault in torch); windowed baseline worse than single-pass
+3. mapanything windowed baseline regression: single-pass was 0.1103m; windowed (submap_size=16) is 1.0023m — likely quality degradation from small window size

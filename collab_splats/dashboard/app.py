@@ -14,7 +14,7 @@ from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.panes.preprocess import PreprocessPane
 from collab_splats.dashboard.panes.reconstruct import ReconstructPane
 from collab_splats.dashboard.panes.semantics import SemanticsPane
-from collab_splats.dashboard.panes.localize import LocalizePane
+from collab_splats.dashboard.panes.localize import LocalizePane, _scan_recon_methods
 from collab_splats.dashboard.panes.visualize import ScenePanel, _scan_datasets, _scan_backends, _scan_extractors
 from collab_splats.dashboard.state import AppState
 
@@ -90,6 +90,19 @@ class App(param.Parameterized):
         if dataset_names:
             self._on_models_dataset_change(None)
 
+        # Localize sidebar widgets — created before _build_sidebar
+        self._localize_method_dd = pn.widgets.Select(
+            name="Localize method", options=[], width=280,
+        )
+        self._localize_extractor_dd = pn.widgets.Select(
+            name="Localize extractor",
+            options=["DISK+LightGlue", "XFeat+MNN"],
+            value="DISK+LightGlue",
+            width=280,
+        )
+        self._localize_method_dd.param.watch(self._on_localize_method_changed, ["value"])
+        self._localize_extractor_dd.param.watch(self._on_localize_extractor_changed, ["value"])
+
         # Sidebar VIEW widgets
         self._ground_plane_check = pn.widgets.Checkbox(
             name="Align ground plane", value=True,
@@ -149,6 +162,7 @@ class App(param.Parameterized):
         )
 
         self._sidebar = self._build_sidebar()
+        self._state.param.watch(self._on_output_dir_changed_localize, ["output_dir"])
 
     def _build_sidebar(self) -> pn.Column:
         """Build the persistent sidebar: session controls + active session info."""
@@ -199,6 +213,10 @@ class App(param.Parameterized):
             self._models_extractor_dd,
             self._models_load_btn,
             self._models_status,
+            pn.layout.Divider(),
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>Localize</h3>"),
+            self._localize_method_dd,
+            self._localize_extractor_dd,
             pn.layout.Divider(),
             self._view_section,
             width=300,
@@ -414,6 +432,23 @@ class App(param.Parameterized):
         scene = self._panes.get("Visualize")
         if scene is not None and hasattr(scene, "_on_frustum_toggle_from_sidebar"):
             scene._on_frustum_toggle_from_sidebar(event.new)
+
+    def _on_output_dir_changed_localize(self, event: Any) -> None:
+        """Rescan feedforward methods for Localize sidebar when output_dir changes."""
+        output_dir = event.new
+        methods = _scan_recon_methods(Path(output_dir)) if output_dir else []
+        self._localize_method_dd.options = methods
+        if methods:
+            self._localize_method_dd.value = methods[0]
+            self._state.localize_method = methods[0]
+        else:
+            self._state.localize_method = ""
+
+    def _on_localize_method_changed(self, event: Any) -> None:
+        self._state.localize_method = event.new or ""
+
+    def _on_localize_extractor_changed(self, event: Any) -> None:
+        self._state.localize_extractor = event.new or "DISK+LightGlue"
 
     def _on_feedforward_for_mesh(self, event: Any) -> None:
         """Enable sidebar Run Mesh button when feedforward_result is available."""

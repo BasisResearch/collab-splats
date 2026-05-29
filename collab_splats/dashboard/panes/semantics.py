@@ -114,6 +114,7 @@ class SemanticsPane(param.Parameterized):
         self._frame_slider.end = max(0, n - 1)
         self._frame_count_html.object = f"<small>/ {n}</small>"
         self._load_original(0)
+        self._try_discover_cache()
 
     def _on_output_dir_change(self, event: Any) -> None:
         """Try to discover cached features when a session is loaded."""

@@ -196,7 +196,8 @@ def test_try_discover_cache_detects_valid_zarr(tmp_path, monkeypatch):
 
     pane._state.output_dir = str(tmp_path)
     pane._state.frames_zarr_path = str(frames_zarr)
-    pane._try_discover_cache()
+    # _on_frames_zarr_change watcher now calls _try_discover_cache() automatically
+    # so no explicit call needed; just wait for the thread
 
     if pane._discover_thread and pane._discover_thread.is_alive():
         pane._discover_thread.join(timeout=5.0)

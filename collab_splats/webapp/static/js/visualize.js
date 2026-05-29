@@ -58,8 +58,9 @@ function initThree() {
 // Both PLY and mesh are children of this group — guarantees identical orientation.
 function resetCamera() {
   if (!camera || !controls) return;
-  camera.up.set(0, 1, 0);       // enforce Y-up
-  camera.position.set(0, 0.3, 2.2);
+  // After ground-plane rotation, scene up is -Y in Three.js frame
+  camera.up.set(0, -1, 0);
+  camera.position.set(0, -0.3, 2.2);
   controls.target.set(0, 0, 0);
   controls.update();
 }

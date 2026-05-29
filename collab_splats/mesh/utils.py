@@ -164,6 +164,37 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     return features_kNN
 
 
+def transfer_features_to_mesh(
+    result: FeedforwardResult,
+    mesh: o3d.geometry.TriangleMesh,
+    *,
+    k: int = 5,
+    sdf_trunc: float = 0.03,
+) -> np.ndarray:
+    """Transfer per-point features from a FeedforwardResult to mesh vertices via KNN.
+
+    Args:
+        result:    FeedforwardResult with features (P, D) and points (P, 3) populated.
+        mesh:      Open3D TriangleMesh whose vertices receive the features.
+        k:         Neighbors for Gaussian-weighted aggregation (passed to features2vertex).
+        sdf_trunc: Truncation distance — pointcloud points farther than this from their
+                   nearest vertex are excluded from aggregation.
+
+    Returns:
+        (M, D) float32 ndarray of per-vertex features, index-aligned with mesh.vertices.
+    """
+    assert result.features is not None, (
+        "result.features is None — call lift_features() and assign result.features before transferring"
+    )
+    return features2vertex(
+        np.asarray(mesh.vertices),
+        result.points,
+        result.features,
+        k=k,
+        sdf_trunc=sdf_trunc,
+    )
+
+
 ########################################################
 ############## Mesh cleaning / repair ##################
 ########################################################

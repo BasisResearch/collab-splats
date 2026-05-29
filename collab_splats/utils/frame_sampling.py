@@ -533,17 +533,22 @@ def sample_frames_fps(
     if not targets:
         return [], []
 
+    # For sparse random-access, prefer ffmpeg per-frame seeking over torchcodec.
+    # torchcodec get_frames_at can hang on videos with edit-list / ISOBMFF quirks;
+    # ffmpeg -ss seeking is robust and out-of-process (no GIL).
+    # torchcodec is kept as fallback when ffmpeg is absent.
+    if shutil.which("ffmpeg") is not None:
+        logger.debug("sample_frames_fps: backend=ffmpeg(seek), targets=%d", len(targets))
+        return _decode_fps_ffmpeg(
+            video_path, targets,
+            info["width"], info["height"], native_fps, on_progress,
+        )
+
     backend = _get_decoder_backend()
     logger.debug("sample_frames_fps: backend=%s, targets=%d", backend, len(targets))
 
     if backend == "torchcodec":
         return _decode_fps_torchcodec(video_path, targets, on_progress)
-
-    if backend == "ffmpeg":
-        return _decode_fps_ffmpeg(
-            video_path, targets,
-            info["width"], info["height"], native_fps, on_progress,
-        )
 
     # cv2 fallback: seek to each target index
     rotation = _get_rotation_degrees(video_path)

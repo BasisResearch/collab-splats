@@ -110,6 +110,8 @@ def test_fps_sampler_uses_seek(monkeypatch):
     """cv2 fallback path seeks to each target index exactly."""
     from collab_splats.utils import frame_sampling as fs
     monkeypatch.setattr(fs, "_get_decoder_backend", lambda: "cv2")
+    # Also disable ffmpeg so the new ffmpeg-first check falls through to cv2
+    monkeypatch.setattr(fs.shutil, "which", lambda _: None)
 
     mock_cap = _make_mock_cap(total_frames=90, fps=30.0)
     # 90 frames at 30fps, target 1fps → interval=30, targets=[0,30,60], expect 3 seeks

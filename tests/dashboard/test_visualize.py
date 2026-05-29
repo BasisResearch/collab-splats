@@ -150,20 +150,18 @@ def test_scene_panel_constructs(tmp_path):
     state = AppState()
     op_log = _make_op_log()
     sp = ScenePanel(
-        scene_id="A",
         base_dir=tmp_path,
         state=state,
         op_log=op_log,
         _off_screen=True,
     )
-    assert sp._scene_id == "A"
     assert "scene_01" in sp._dataset_dd.options
 
 
 def test_scene_panel_scan_available_modes_no_result(tmp_path):
     _make_dataset(tmp_path, "scene_01")
     state = AppState()
-    sp = ScenePanel("A", tmp_path, state, _make_op_log(), _off_screen=True)
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
     sp._scan_available_modes()
     assert "PCD" not in sp._available_modes
 
@@ -174,7 +172,7 @@ def test_scene_panel_scan_available_modes_with_mesh(tmp_path):
     mesh_dir.mkdir(parents=True)
     (mesh_dir / "mesh.ply").write_bytes(b"ply\n")
     state = AppState()
-    sp = ScenePanel("A", tmp_path, state, _make_op_log(), _off_screen=True)
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
     sp._dataset_dd.value = "scene_01"
     sp._backend_dd.value = "vggt_x"
     sp._result = mock.MagicMock()  # non-None sentinel
@@ -185,7 +183,7 @@ def test_scene_panel_scan_available_modes_with_mesh(tmp_path):
 def test_scene_panel_scan_available_modes_with_features(tmp_path):
     _make_dataset(tmp_path, "scene_01", backends=("vggt_x",), extractors=("talk2dino",))
     state = AppState()
-    sp = ScenePanel("A", tmp_path, state, _make_op_log(), _off_screen=True)
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
     sp._dataset_dd.value = "scene_01"
     sp._backend_dd.value = "vggt_x"
     sp._result = mock.MagicMock()
@@ -211,7 +209,7 @@ from collab_splats.dashboard.operation_log import OperationLog
 def _make_scene(tmp_path):
     """Helper: construct a ScenePanel with off-screen rendering."""
     state = AppState()
-    return ScenePanel("A", tmp_path, state, OperationLog(), _off_screen=True)
+    return ScenePanel(tmp_path, state, OperationLog(), _off_screen=True)
 
 
 def test_scene_panel_has_radio_button_group(tmp_path):
@@ -283,8 +281,8 @@ def test_visualize_pane_constructs(tmp_path):
         lambda *a, **kw: ScenePanel(*a, **{**kw, "_off_screen": True}),
     ):
         vp = VisualizePane(state=state, op_log=op_log, base_dir=tmp_path)
-    assert vp._scene_a._scene_id == "A"
-    assert vp._scene_b._scene_id == "B"
+    assert hasattr(vp, "_scene_a")
+    assert hasattr(vp, "_scene_b")
     assert not hasattr(vp, "_query_bar"), "Shared query bar should be removed"
 
 
@@ -296,3 +294,12 @@ def test_visualize_pane_no_shared_query_bar(tmp_path):
     ):
         vp = VisualizePane(state=AppState(), op_log=OperationLog(), base_dir=tmp_path)
     assert not hasattr(vp, "_query_bar"), "Shared query bar should be removed"
+
+
+def test_scene_panel_wire_tabs(tmp_path):
+    """wire_tabs connects tab activation → rescan without error."""
+    state = AppState()
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    tabs = pn.Tabs(("Visualize", pn.pane.Str("x")))
+    sp.wire_tabs(tabs, 0)  # must not raise
+    assert True

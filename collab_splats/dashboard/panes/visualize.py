@@ -105,7 +105,7 @@ def _load_lifted_features(features_zarr_path: Path) -> np.ndarray:
 
 
 class ScenePanel(param.Parameterized):
-    """Self-contained per-scene 3D viewer panel.
+    """3D viewer panel for a single reconstruction scene.
 
     Manages dataset/backend selection, mode switching (PCD/Mesh/Similarity),
     and a PyVista plotter embedded via pn.pane.VTK.
@@ -115,7 +115,6 @@ class ScenePanel(param.Parameterized):
 
     def __init__(
         self,
-        scene_id: str,
         base_dir: Path,
         state: AppState,
         op_log: OperationLog,
@@ -123,7 +122,6 @@ class ScenePanel(param.Parameterized):
         **params: Any,
     ) -> None:
         super().__init__(**params)
-        self._scene_id = scene_id
         self._base_dir = Path(base_dir) if base_dir else Path("/workspace/outputs")
         self._state = state
         self._op_log = op_log
@@ -223,10 +221,9 @@ class ScenePanel(param.Parameterized):
         self._snapshot_btn.on_click(self._on_snapshot)
         self._sim_query_btn.on_click(self._on_sim_query_click)
 
-        # Scene A: watch AppState for auto-suggest and rescan
-        if scene_id == "A":
-            state.param.watch(self._on_feedforward_result, "feedforward_result")
-            state.param.watch(self._on_lifted_features_path, "lifted_features_path")
+        # Watch AppState for auto-suggest and rescan
+        state.param.watch(self._on_feedforward_result, "feedforward_result")
+        state.param.watch(self._on_lifted_features_path, "lifted_features_path")
 
         # Populate backend dropdown for initial dataset selection
         if dataset_names:
@@ -330,7 +327,7 @@ class ScenePanel(param.Parameterized):
                 self._mode_selector.value = label
 
     ####################################################################
-    # AppState watchers (Scene A only)
+    # AppState watchers
     ####################################################################
 
     def _on_feedforward_result(self, event: Any) -> None:
@@ -347,6 +344,13 @@ class ScenePanel(param.Parameterized):
         """Re-scan available modes when semantics pipeline writes new features."""
         self._lifted_normed = None
         self._scan_available_modes()
+
+    def wire_tabs(self, tabs: pn.Tabs, tab_index: int) -> None:
+        """Connect tab activation signal so modes rescan when this tab becomes active."""
+        def _on_tab_change(event: Any) -> None:
+            if event.new == tab_index:
+                self.rescan()
+        tabs.param.watch(_on_tab_change, "active")
 
     def rescan(self) -> None:
         """Re-scan available modes (called on tab activation)."""
@@ -389,7 +393,7 @@ class ScenePanel(param.Parameterized):
             n_pts = len(self._result.points)
             if n_pts > 500_000:
                 self._op_log.log(
-                    f"Scene {self._scene_id}: large PCD ({n_pts:,} points) — may be slow to render"
+                    f"Large PCD ({n_pts:,} points) — may be slow to render"
                 )
             self._set_status(f"Loaded {n_pts:,} points.")
         except Exception as exc:
@@ -610,7 +614,7 @@ class ScenePanel(param.Parameterized):
 
     def _on_snapshot(self, event: Any) -> None:
         """Save plotter screenshot to disk."""
-        path = Path(f"scene_{self._scene_id}_snapshot.png")
+        path = Path("scene_snapshot.png")
         self._plotter.screenshot(str(path))
         self._set_status(f"Saved {path.name}")
 
@@ -624,7 +628,7 @@ class ScenePanel(param.Parameterized):
         extractor_row = pn.Row(self._extractor_dd)
         action_row = pn.Row(self._reset_btn, self._snapshot_btn)
         return pn.Column(
-            f"### Scene {self._scene_id}",
+            "### Scene",
             controls_row,
             extractor_row,
             self._mode_selector,
@@ -656,8 +660,8 @@ class VisualizePane(param.Parameterized):
         self._state = state
         self._op_log = op_log
 
-        self._scene_a = ScenePanel("A", base_dir, state, op_log)
-        self._scene_b = ScenePanel("B", base_dir, state, op_log)
+        self._scene_a = ScenePanel(base_dir, state, op_log)
+        self._scene_b = ScenePanel(base_dir, state, op_log)
 
     ####################################################################
     # Tab activation rescan

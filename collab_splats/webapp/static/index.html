@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>collab-splats</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<nav id="tab-nav">
+  <button class="tab-btn active" data-tab="preprocess">Preprocess</button>
+  <button class="tab-btn" data-tab="semantics">Semantics</button>
+  <button class="tab-btn" data-tab="reconstruct">Reconstruct</button>
+  <button class="tab-btn" data-tab="visualize">Visualize</button>
+  <button class="tab-btn" data-tab="localize">Localize</button>
+  <span id="session-label"></span>
+</nav>
+<div id="app">
+  <aside id="sidebar"></aside>
+  <main id="main"></main>
+</div>
+<div id="statusbar">
+  <div id="progress-track"><div id="progress-fill"></div></div>
+  <span id="status-msg"></span>
+</div>
+<script type="module" src="/static/js/state.js"></script>
+</body>
+</html>

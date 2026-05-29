@@ -108,7 +108,7 @@ async def detect_ground_plane() -> JSONResponse:
 
 @router.get("/frustums")
 async def get_frustums() -> JSONResponse:
-    """Return camera positions and forward directions from feedforward extrinsics."""
+    """Return camera frustum corners (world space) for drawing proper pyramids."""
     import zarr as _zarr  # noqa: PLC0415
 
     s = get_session()
@@ -117,26 +117,43 @@ async def get_frustums() -> JSONResponse:
 
     zarr_path = s.output_dir / s.creator / "feedforward.zarr"
     if not zarr_path.exists():
-        return JSONResponse({"ok": False, "error": f"feedforward.zarr not found"})
+        return JSONResponse({"ok": False, "error": "feedforward.zarr not found"})
 
     try:
         store = _zarr.open_group(str(zarr_path))
         extrinsics = np.array(store["extrinsics"])  # (N, 4, 4) world-to-camera
+        intrinsics = np.array(store["intrinsics"])  # (N, 3, 3)
+        # Image dims from images array shape: (N, C, H, W)
+        img_shape = store["images"].shape  # (N, 3, H, W)
+        H, W = int(img_shape[2]), int(img_shape[3])
 
-        # Camera position in world: pos = -R^T @ t
-        R = extrinsics[:, :3, :3]  # (N, 3, 3)
-        t = extrinsics[:, :3, 3]   # (N, 3)
-        positions = np.einsum('nij,nj->ni', -R.transpose(0, 2, 1), t)  # (N, 3)
+        R = extrinsics[:, :3, :3]   # (N, 3, 3)
+        t = extrinsics[:, :3, 3]    # (N, 3)
+        Rt = R.transpose(0, 2, 1)   # camera-to-world rotation
+        positions = np.einsum('nij,nj->ni', -Rt, t)  # camera centers (N, 3)
 
-        # Forward direction in world: -R^T @ [0,0,1]
-        forward = -R.transpose(0, 2, 1)[:, :, 2]  # (N, 3)
+        # Depth for frustum display (small fraction of scene scale)
+        d = 0.08
 
-        return JSONResponse({
-            "ok": True,
-            "positions": positions.tolist(),
-            "forward": forward.tolist(),
-            "n_cameras": int(len(positions)),
-        })
+        frustums = []
+        for i in range(len(positions)):
+            fx, fy = intrinsics[i, 0, 0], intrinsics[i, 1, 1]
+            cx, cy = intrinsics[i, 0, 2], intrinsics[i, 1, 2]
+            # 4 image corners in camera space at depth d
+            corners_cam = np.array([
+                [-cx/fx * d,  -cy/fy * d,  d],   # top-left
+                [(W-cx)/fx * d, -cy/fy * d,  d],  # top-right
+                [(W-cx)/fx * d, (H-cy)/fy * d, d], # bottom-right
+                [-cx/fx * d,  (H-cy)/fy * d, d],  # bottom-left
+            ])
+            # Transform to world: p_world = Rt @ p_cam + pos
+            corners_world = (Rt[i] @ corners_cam.T).T + positions[i]
+            frustums.append({
+                "center": positions[i].tolist(),
+                "corners": corners_world.tolist(),
+            })
+
+        return JSONResponse({"ok": True, "frustums": frustums, "n_cameras": len(frustums)})
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)})
 

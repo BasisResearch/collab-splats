@@ -8,9 +8,11 @@ let currentPoints = null;
 let currentMesh = null;
 let currentFrustums = null;
 let lastGroundPlane = null;
-// Normalization shared between pointcloud, mesh, and frustums
+// Normalization — plyNorm is always set from PLY load and used by frustums too
 let normCenter = null;
 let normScale = 1;
+let plyNormCenter = null;
+let plyNormScale = 1;
 
 function initThree() {
   const canvas = document.getElementById('three-canvas');
@@ -92,6 +94,9 @@ function loadPLY(url, gp, pointSize) {
     });
     if (!geo.attributes.color) mat.color.set(0x2596be);
     currentPoints = new THREE.Points(geo, mat);
+    // Store PLY normalization so frustums always use the same reference frame
+    plyNormCenter = normCenter ? normCenter.clone() : null;
+    plyNormScale = normScale;
     scene.add(currentPoints);
     setProgress(100, `${geo.attributes.position.count.toLocaleString()} points`);
   }, xhr => {
@@ -189,50 +194,52 @@ async function runSimilarityQuery(pos, neg, extractor, statusEl) {
   }
 }
 
+function _applyGP(p, gp) {
+  if (!gp) return p;
+  const { R, t } = gp;
+  return [
+    R[0][0]*p[0] + R[0][1]*p[1] + R[0][2]*p[2] + t[0],
+    R[1][0]*p[0] + R[1][1]*p[1] + R[1][2]*p[2] + t[1],
+    R[2][0]*p[0] + R[2][1]*p[1] + R[2][2]*p[2] + t[2],
+  ];
+}
+
+function _normPt(p) {
+  // Always use PLY normalization for frustum alignment
+  const c = plyNormCenter, s = plyNormScale;
+  return [
+    (p[0] - (c?.x || 0)) * s,
+    (p[1] - (c?.y || 0)) * s,
+    (p[2] - (c?.z || 0)) * s,
+  ];
+}
+
 async function loadFrustums(gp) {
   if (currentFrustums) { scene.remove(currentFrustums); currentFrustums.geometry.dispose(); currentFrustums = null; }
   const resp = await fetch('/api/visualize/frustums');
   const data = await resp.json();
-  if (!data.ok || !data.positions?.length) { setProgress(0, 'No frustums: ' + (data.error || 'no data')); return; }
+  if (!data.ok || !data.frustums?.length) { setProgress(0, data.error || 'No cameras'); return; }
 
-  const positions = data.positions;
-  const forward = data.forward;
-  const geo = new THREE.BufferGeometry();
   const verts = [];
 
-  positions.forEach((pos, i) => {
-    // Apply ground plane transform: p' = R @ p + t
-    let p = [...pos];
-    if (gp) {
-      const { R, t } = gp;
-      p = [
-        R[0][0]*pos[0] + R[0][1]*pos[1] + R[0][2]*pos[2] + t[0],
-        R[1][0]*pos[0] + R[1][1]*pos[1] + R[1][2]*pos[2] + t[1],
-        R[2][0]*pos[0] + R[2][1]*pos[1] + R[2][2]*pos[2] + t[2],
-      ];
-    }
-    // Apply same normalization as pointcloud
-    const px = (p[0] - (normCenter?.x || 0)) * normScale;
-    const py = (p[1] - (normCenter?.y || 0)) * normScale;
-    const pz = (p[2] - (normCenter?.z || 0)) * normScale;
-    verts.push(px, py, pz);
+  data.frustums.forEach(f => {
+    const cRaw = _applyGP(f.center, gp);
+    const c = _normPt(cRaw);
+    const corners = f.corners.map(corner => _normPt(_applyGP(corner, gp)));
 
-    // Draw a short line in the forward direction
-    let f = forward[i];
-    if (gp) {
-      const { R } = gp;
-      f = [
-        R[0][0]*f[0] + R[0][1]*f[1] + R[0][2]*f[2],
-        R[1][0]*f[0] + R[1][1]*f[1] + R[1][2]*f[2],
-        R[2][0]*f[0] + R[2][1]*f[1] + R[2][2]*f[2],
-      ];
-    }
-    const s = 0.05 * normScale;
-    verts.push(px + f[0]*s, py + f[1]*s, pz + f[2]*s);
+    // 4 lines from center to each corner (the pyramid edges)
+    corners.forEach(co => {
+      verts.push(...c, ...co);
+    });
+    // 4 lines forming the base rectangle: TL-TR, TR-BR, BR-BL, BL-TL
+    [0,1,2,3].forEach(i => {
+      verts.push(...corners[i], ...corners[(i+1) % 4]);
+    });
   });
 
+  const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  const mat = new THREE.LineBasicMaterial({ color: 0x2596be, opacity: 0.7, transparent: true });
+  const mat = new THREE.LineBasicMaterial({ color: 0x2596be, opacity: 0.6, transparent: true });
   currentFrustums = new THREE.LineSegments(geo, mat);
   scene.add(currentFrustums);
   setProgress(100, `${data.n_cameras} cameras`);
@@ -286,8 +293,8 @@ function renderSidebar() {
       <input type="checkbox" id="viz-sem-toggle"> Show similarity
     </label>
     <div id="viz-sem-inputs" style="display:none;flex-direction:column;gap:4px;margin-top:4px">
-      <input type="text" id="viz-pos-query" placeholder="positive query (e.g. bird)">
-      <input type="text" id="viz-neg-query" placeholder="negative query (optional)">
+      <input type="text" id="viz-pos-query" placeholder="positive query" value="tree">
+      <input type="text" id="viz-neg-query" placeholder="negative query" value="background, ground, sky">
       <button class="primary" id="viz-query-btn">&#9654; Query</button>
       <button id="viz-reset-colors-btn" style="background:none;border:1px solid #555;color:#aaa;padding:5px;border-radius:3px;font-family:monospace;font-size:11px;cursor:pointer;margin-top:2px">Reset to original colors</button>
       <div id="viz-sem-status" class="status-info"></div>

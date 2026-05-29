@@ -77,11 +77,17 @@ async function loadSession() {
   if (data.ok) {
     state.outputDir = data.output_dir;
     state.videoPath = data.video_path;
+    if (data.creator) state.creator = data.creator;
+    if (data.extractor) state.extractor = data.extractor;
     document.getElementById('session-label').textContent = data.name;
     if (statusEl) { statusEl.textContent = '✓ ' + data.name; statusEl.className = 'status-ok'; }
-    // Refresh tab-specific sections with new session context
+    // Refresh active tab UI
     const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
     if (activeTab) switchTab(activeTab);
+    // Pre-populate ALL tabs in background so cached state is ready when you switch
+    Object.entries(TAB_MODULES).forEach(([name, mod]) => {
+      if (name !== activeTab && mod.onActivate) mod.onActivate();
+    });
   } else {
     if (statusEl) { statusEl.textContent = data.error; statusEl.className = 'status-err'; }
   }

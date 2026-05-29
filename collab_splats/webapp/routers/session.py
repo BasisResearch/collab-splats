@@ -50,11 +50,21 @@ async def load_session(body: dict[str, Any]) -> JSONResponse:
             pass
     session.video_path = video_path
 
+    # Auto-detect creator: first backend subdir with feedforward.zarr
+    available_backends = sorted(
+        p.name for p in out_dir.iterdir()
+        if p.is_dir() and (p / "feedforward.zarr").exists()
+    ) if out_dir.is_dir() else []
+    if available_backends:
+        session.creator = available_backends[0]
+
     return JSONResponse({
         "ok": True,
         "output_dir": str(out_dir),
         "video_path": str(video_path) if video_path else None,
         "name": out_dir.name,
+        "creator": session.creator,
+        "available_backends": available_backends,
     })
 
 

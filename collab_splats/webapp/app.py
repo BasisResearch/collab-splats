@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from collab_splats.webapp.routers import preprocess as preprocess_router
 from collab_splats.webapp.routers import session as session_router
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
 
     # Mount API routers
     app.include_router(session_router.router)
+    app.include_router(preprocess_router.router)
 
     # Serve static app files (HTML, CSS, JS)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

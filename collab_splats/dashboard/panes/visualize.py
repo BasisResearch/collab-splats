@@ -536,14 +536,14 @@ class ScenePanel(param.Parameterized):
         """Background: load zarr if needed → pointcloud_to_mesh → refresh viewer."""
         try:
             if self._result is None:
-                from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
+                from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415 — avoid torch at panel import time
                 zarr_path = (
                     self._current_dataset_dir / self._current_backend / "feedforward.zarr"
                 )
                 self._result = FeedforwardResult.load_zarr(zarr_path)
 
             mesh_dir = self._current_dataset_dir / self._current_backend / "mesh"
-            from collab_splats.mesh.utils import pointcloud_to_mesh  # noqa: PLC0415
+            from collab_splats.mesh.utils import pointcloud_to_mesh  # noqa: PLC0415 — avoid open3d at panel import time
             mesh_result = pointcloud_to_mesh(
                 self._result,
                 mesh_dir,

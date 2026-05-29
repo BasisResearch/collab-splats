@@ -417,4 +417,4 @@ def test_on_run_mesh_loads_zarr_when_result_none(tmp_path):
          mock.patch("panel.io.state._state.execute"):
         sp._run_mesh_worker()
 
-    mock_load.assert_called_once()
+    mock_load.assert_called_once_with(tmp_path / "scene_01" / "vggt_x" / "feedforward.zarr")

@@ -72,12 +72,6 @@ class SemanticsPane(param.Parameterized):
         self._next_btn = pn.widgets.Button(name="►", width=40)
         self._frame_count_html = pn.pane.HTML("", width=100)
 
-        # Single extractor selector
-        self._method_dd = pn.widgets.Select(
-            name="Extractor",
-            options=list(BaseFeatureExtractor._registry.keys()),
-            width=200,
-        )
         self._run_btn = pn.widgets.Button(name="▶ Run", button_type="primary", width=90)
         self._status_html = pn.pane.HTML("", width=400)
 
@@ -103,7 +97,7 @@ class SemanticsPane(param.Parameterized):
         self._state.param.watch(self._on_frames_zarr_change, "frames_zarr_path")
         self._state.param.watch(self._on_frames_zarr_change, "selected_indices")
         self._state.param.watch(self._on_output_dir_change, "output_dir", onlychanged=True)
-        self._method_dd.param.watch(self._on_method_change, "value", onlychanged=True)
+        self._state.param.watch(self._on_semantic_extractor_change, "semantic_extractor", onlychanged=True)
 
     def _on_frames_zarr_change(self, event: Any) -> None:
         """Update frame slider range and load first frame when zarr is ready."""
@@ -120,8 +114,11 @@ class SemanticsPane(param.Parameterized):
         """Try to discover cached features when a session is loaded."""
         self._try_discover_cache()
 
-    def _on_method_change(self, event: Any) -> None:
-        """Try to discover cached features when selected extractor changes."""
+    def _on_semantic_extractor_change(self, event: Any) -> None:
+        """Trigger cache discovery when sidebar extractor selection changes."""
+        name = event.new
+        if not name:
+            return
         self._try_discover_cache()
 
     def _on_frame_slider(self, event: Any) -> None:
@@ -171,7 +168,12 @@ class SemanticsPane(param.Parameterized):
                 "<small style='color:#e05050'>Load frames first (Preprocess tab)</small>"
             )
             return
-        method = self._method_dd.value
+        method = self._state.semantic_extractor
+        if not method:
+            self._status_html.object = (
+                "<small style='color:#e05050'>Select an extractor in the sidebar Models section</small>"
+            )
+            return
         self._run_btn.disabled = True
         self._status_html.object = f"<small style='color:#aaa'>Running {method}…</small>"
         self._run_thread = threading.Thread(
@@ -259,7 +261,9 @@ class SemanticsPane(param.Parameterized):
             return
         if self._discover_thread and self._discover_thread.is_alive():
             return
-        method = self._method_dd.value
+        method = self._state.semantic_extractor
+        if not method:
+            return
         candidate = Path(self._state.output_dir) / "features" / method
         # Validate zarr synchronously (fast — just opens store metadata)
         try:
@@ -284,7 +288,7 @@ class SemanticsPane(param.Parameterized):
     def _load_cached_features(self, method: str, zarr_path: Path) -> None:
         """Background: instantiate extractor and load cached feature zarr."""
         # Guard against stale thread: user may have switched extractor while this thread was queued
-        if method != self._method_dd.value:
+        if method != self._state.semantic_extractor:
             return
         try:
             extractor_cls = BaseFeatureExtractor.get(method)
@@ -304,10 +308,8 @@ class SemanticsPane(param.Parameterized):
 
     def panel(self) -> pn.Column:
         """Return Panel layout for Tab 2."""
-        # Extractor controls — top left
+        # Run controls — extractor selected via sidebar MODELS section
         extractor_row = pn.Row(
-            pn.pane.HTML("<b style='align-self:center'>Extractor:</b>"),
-            self._method_dd,
             self._run_btn,
             self._status_html,
         )

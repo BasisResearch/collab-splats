@@ -90,6 +90,23 @@ class App(param.Parameterized):
         if dataset_names:
             self._on_models_dataset_change(None)
 
+        # Sidebar VIEW widgets
+        self._ground_plane_check = pn.widgets.Checkbox(
+            name="Align ground plane", value=True,
+        )
+        self._ground_plane_status = pn.pane.HTML(
+            "<p style='color:#666;font-size:11px'></p>", width=280,
+        )
+        self._redetect_btn = pn.widgets.Button(
+            name="↺  Re-detect ground plane", button_type="light", width=280,
+        )
+        self._sidebar_frustum_check = pn.widgets.Checkbox(
+            name="Show frustums", value=False,
+        )
+        self._ground_plane_check.param.watch(self._on_ground_plane_toggle, "value")
+        self._redetect_btn.on_click(self._on_redetect_ground_plane)
+        self._sidebar_frustum_check.param.watch(self._on_sidebar_frustum_toggle, "value")
+
         self._sidebar = self._build_sidebar()
 
     def _build_sidebar(self) -> pn.Column:
@@ -141,6 +158,12 @@ class App(param.Parameterized):
             self._models_extractor_dd,
             self._models_load_btn,
             self._models_status,
+            pn.layout.Divider(),
+            pn.pane.HTML("<h3 style='color:#2596be;margin:8px 0 8px 0'>View</h3>"),
+            self._ground_plane_check,
+            self._ground_plane_status,
+            self._redetect_btn,
+            self._sidebar_frustum_check,
             width=300,
         )
 
@@ -282,12 +305,45 @@ class App(param.Parameterized):
             result = FeedforwardResult.load_zarr(zarr_path)
             n_pts = len(result.points)
 
+            # Load or auto-detect ground plane
+            import json
+            import numpy as np
+            transforms_path = ds_dir / backend / "transforms.json"
+            gp_R = None
+            gp_t = None
+            gp_status = ""
+            if transforms_path.exists():
+                try:
+                    data = json.loads(transforms_path.read_text())
+                    gp = data.get("ground_plane", {})
+                    gp_R = np.array(gp["R"], dtype=np.float64)
+                    gp_t = np.array(gp["t"], dtype=np.float64)
+                    gp_status = "loaded from file"
+                except Exception:
+                    logger.warning("Could not parse transforms.json at %s", transforms_path)
+            else:
+                try:
+                    from collab_splats.pointcloud.utils import fit_dominant_plane
+                    gp_R, gp_t = fit_dominant_plane(result.points)
+                    transforms_path.write_text(
+                        json.dumps({"ground_plane": {"R": gp_R.tolist(), "t": gp_t.tolist()}}, indent=2)
+                    )
+                    gp_status = "auto-detected · saved"
+                except Exception as exc:
+                    logger.warning("Ground plane auto-detect failed: %s", exc)
+
             # Update state on IOLoop thread
             def _set_state() -> None:
                 self._state.output_dir = ds_dir
                 self._state.pointcloud_backend = backend
                 self._state.semantic_extractor = extractor if extractor and extractor != "(none)" else ""
                 self._state.feedforward_result = result
+                self._state.ground_plane_R = gp_R
+                self._state.ground_plane_t = gp_t
+                if gp_status:
+                    self._ground_plane_status.object = (
+                        f"<p style='color:#50c050;font-size:11px'>{gp_status}</p>"
+                    )
                 self._models_status.object = (
                     f"<p style='color:#50c050;font-size:12px'>"
                     f"Loaded {n_pts:,} pts<br/>"
@@ -302,6 +358,57 @@ class App(param.Parameterized):
             )
         finally:
             self._models_load_btn.disabled = False
+
+    def _on_ground_plane_toggle(self, event: Any) -> None:
+        """Propagate ground plane enable/disable to AppState."""
+        self._state.ground_plane_enabled = event.new
+
+    def _on_redetect_ground_plane(self, event: Any) -> None:
+        """Recompute ground plane from current result and save to transforms.json."""
+        if self._state.feedforward_result is None:
+            return
+        self._redetect_btn.disabled = True
+        t = threading.Thread(target=self._do_detect_ground_plane, daemon=True)
+        t.start()
+
+    def _on_sidebar_frustum_toggle(self, event: Any) -> None:
+        """Forward frustum toggle to ScenePanel."""
+        scene = self._panes.get("Visualize")
+        if scene is not None and hasattr(scene, "_on_frustum_toggle_from_sidebar"):
+            scene._on_frustum_toggle_from_sidebar(event.new)
+
+    def _do_detect_ground_plane(self) -> None:
+        """Background: RANSAC ground plane detection; save transforms.json."""
+        try:
+            import json
+            import numpy as np
+            from collab_splats.pointcloud.utils import fit_dominant_plane
+
+            result = self._state.feedforward_result
+            R, t = fit_dominant_plane(result.points)
+
+            ds_name = self._models_dataset_dd.value
+            backend = self._models_backend_dd.value
+            transforms_path = self._base_dir / ds_name / backend / "transforms.json"
+            transforms_path.write_text(
+                json.dumps({"ground_plane": {"R": R.tolist(), "t": t.tolist()}}, indent=2)
+            )
+
+            def _apply() -> None:
+                self._state.ground_plane_R = R
+                self._state.ground_plane_t = t
+                self._ground_plane_status.object = (
+                    "<p style='color:#50c050;font-size:11px'>auto-detected · saved</p>"
+                )
+
+            pn.io.state.execute(_apply)
+        except Exception as exc:
+            logger.exception("Ground plane detection failed")
+            self._ground_plane_status.object = (
+                f"<p style='color:#e05050;font-size:11px'>Detection failed: {exc}</p>"
+            )
+        finally:
+            self._redetect_btn.disabled = False
 
     def servable(self) -> pn.template.MaterialTemplate:
         """Build and return the full MaterialTemplate for serving."""

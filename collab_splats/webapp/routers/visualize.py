@@ -73,6 +73,39 @@ async def status() -> JSONResponse:
     })
 
 
+@router.get("/detect_ground_plane")
+async def detect_ground_plane() -> JSONResponse:
+    """Run RANSAC ground plane detection on pointcloud; save to transforms.json."""
+    import zarr as _zarr  # noqa: PLC0415
+
+    s = get_session()
+    if s.output_dir is None:
+        return JSONResponse({"ok": False, "error": "No session loaded"})
+
+    zarr_path = s.output_dir / s.creator / "feedforward.zarr"
+    if not zarr_path.exists():
+        return JSONResponse({"ok": False, "error": "feedforward.zarr not found"})
+
+    try:
+        store = _zarr.open_group(str(zarr_path))
+        points = np.array(store["points"])  # (N, 3)
+
+        from collab_splats.pointcloud.utils import fit_dominant_plane  # noqa: PLC0415
+        R, t = fit_dominant_plane(points)
+
+        transforms_path = s.output_dir / s.creator / "transforms.json"
+        transforms_path.write_text(
+            json.dumps({"ground_plane": {"R": R.tolist(), "t": t.tolist()}}, indent=2)
+        )
+        return JSONResponse({
+            "ok": True,
+            "ground_plane": {"R": R.tolist(), "t": t.tolist()},
+            "msg": "Ground plane detected and saved",
+        })
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+
+
 @router.get("/frustums")
 async def get_frustums() -> JSONResponse:
     """Return camera positions and forward directions from feedforward extrinsics."""

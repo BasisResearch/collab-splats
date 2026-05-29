@@ -306,10 +306,16 @@ function renderSidebar() {
   const view = document.createElement('div');
   view.className = 'sidebar-section';
   view.innerHTML = `
-    <h4>View / Mesh</h4>
-    <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-mesh-toggle"> Show mesh</label>
-    <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-pc-toggle" checked> Show pointcloud</label>
+    <h4>View</h4>
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <button id="viz-btn-pc" style="flex:1;padding:6px 0;border-radius:3px;border:1px solid #2596be;background:#2596be;color:#000;font-family:monospace;font-size:11px;font-weight:700;cursor:pointer">☁ Cloud</button>
+      <button id="viz-btn-mesh" style="flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer">⬛ Mesh</button>
+    </div>
     <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="viz-frustums"> Show cameras</label>
+    <div style="margin-top:8px">
+      <button id="viz-detect-gp-btn" style="width:100%;padding:6px;border-radius:3px;border:1px solid #555;background:none;color:#aaa;font-family:monospace;font-size:11px;cursor:pointer">⟳ Detect ground plane</button>
+      <div id="viz-gp-status" class="status-info" style="margin-top:4px"></div>
+    </div>
   `;
 
   pc.querySelector('#viz-creator').addEventListener('change', e => {
@@ -318,32 +324,32 @@ function renderSidebar() {
   });
   pc.querySelector('#viz-load-btn').addEventListener('click', loadScene);
 
-  // Mesh toggle: show mesh, hide pointcloud
-  view.querySelector('#viz-mesh-toggle').addEventListener('change', async e => {
-    if (e.target.checked) {
-      const resp = await fetch('/api/visualize/status');
-      const data = await resp.json();
-      if (data.mesh_url) {
-        loadMesh(data.mesh_url, data.ground_plane);
-        if (currentPoints) currentPoints.visible = false;
-        const pcToggle = document.getElementById('viz-pc-toggle');
-        if (pcToggle) pcToggle.checked = false;
-      } else {
-        e.target.checked = false;
-        setProgress(0, 'No mesh found');
-      }
-    } else {
+  function setActiveMode(mode) {
+    const btnPc = document.getElementById('viz-btn-pc');
+    const btnMesh = document.getElementById('viz-btn-mesh');
+    if (!btnPc || !btnMesh) return;
+    if (mode === 'cloud') {
+      btnPc.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #2596be;background:#2596be;color:#000;font-family:monospace;font-size:11px;font-weight:700;cursor:pointer';
+      btnMesh.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer';
+      if (currentPoints) currentPoints.visible = true;
       if (currentMesh) { scene.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null; }
+    } else {
+      btnMesh.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #2596be;background:#2596be;color:#000;font-family:monospace;font-size:11px;font-weight:700;cursor:pointer';
+      btnPc.style.cssText = 'flex:1;padding:6px 0;border-radius:3px;border:1px solid #444;background:none;color:#888;font-family:monospace;font-size:11px;cursor:pointer';
+      if (currentPoints) currentPoints.visible = false;
     }
-  });
+  }
 
-  // Pointcloud toggle
-  view.querySelector('#viz-pc-toggle').addEventListener('change', e => {
-    if (currentPoints) currentPoints.visible = e.target.checked;
-    if (e.target.checked && currentMesh) {
-      scene.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh = null;
-      const meshToggle = document.getElementById('viz-mesh-toggle');
-      if (meshToggle) meshToggle.checked = false;
+  view.querySelector('#viz-btn-pc').addEventListener('click', () => setActiveMode('cloud'));
+
+  view.querySelector('#viz-btn-mesh').addEventListener('click', async () => {
+    const resp = await fetch('/api/visualize/status');
+    const data = await resp.json();
+    if (data.mesh_url) {
+      loadMesh(data.mesh_url, data.ground_plane);
+      setActiveMode('mesh');
+    } else {
+      setProgress(0, 'No mesh found for this scene');
     }
   });
 
@@ -353,6 +359,23 @@ function renderSidebar() {
       loadFrustums(lastGroundPlane);
     } else {
       if (currentFrustums) { scene.remove(currentFrustums); currentFrustums.geometry.dispose(); currentFrustums = null; }
+    }
+  });
+
+  // Ground plane detection
+  view.querySelector('#viz-detect-gp-btn').addEventListener('click', async () => {
+    const btn = view.querySelector('#viz-detect-gp-btn');
+    const status = view.querySelector('#viz-gp-status');
+    btn.disabled = true;
+    if (status) { status.textContent = 'Detecting…'; status.className = 'status-info'; }
+    const data = await fetch('/api/visualize/detect_ground_plane').then(r => r.json()).catch(e => ({ok: false, error: String(e)}));
+    btn.disabled = false;
+    if (data.ok) {
+      if (status) { status.textContent = '✓ Saved — reloading scene…'; status.className = 'status-ok'; }
+      lastGroundPlane = data.ground_plane;
+      loadScene();  // Reload with new ground plane
+    } else {
+      if (status) { status.textContent = data.error?.split('\n')[0] || 'Failed'; status.className = 'status-err'; }
     }
   });
 

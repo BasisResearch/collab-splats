@@ -317,10 +317,17 @@ class ScenePanel(param.Parameterized):
         if self._result is not None:
             modes.add("PCD")
 
-        # Mesh mode requires mesh.ply on disk
+        # Mesh mode requires mesh.ply on disk; auto-display it when found
         mesh_path = ds_dir / backend / "mesh" / "mesh.ply"
         if mesh_path.exists():
             modes.add("Mesh")
+            self._auto_display_mesh()
+
+        # Enable Run Mesh if feedforward.zarr exists (zarr gate for generation)
+        zarr_path = ds_dir / backend / "feedforward.zarr"
+        self._mesh_run_btn.disabled = not zarr_path.exists()
+        if not zarr_path.exists() and mesh_path.exists():
+            self._set_status("No feedforward.zarr — cannot regenerate mesh.")
 
         # Similarity mode requires at least one extractor with features.zarr
         extractors = _scan_extractors(ds_dir, backend)
@@ -530,6 +537,12 @@ class ScenePanel(param.Parameterized):
             return
         mesh = pv.read(str(mesh_path))
         self._plotter.add_mesh(mesh, rgb=True)
+
+    def _auto_display_mesh(self) -> None:
+        """Render mesh.ply immediately — called from scan, no Load required."""
+        self._plotter.clear()
+        self._rebuild_mesh_viewer()
+        self._vtk_pane.synchronize()
 
     ####################################################################
     # Similarity viewer

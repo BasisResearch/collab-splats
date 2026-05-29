@@ -176,8 +176,68 @@ def test_scene_panel_scan_available_modes_with_mesh(tmp_path):
     sp._dataset_dd.value = "scene_01"
     sp._backend_dd.value = "vggt_x"
     sp._result = mock.MagicMock()  # non-None sentinel
-    sp._scan_available_modes()
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_mesh_viewer"):
+        sp._scan_available_modes()
     assert "Mesh" in sp._available_modes
+
+
+def test_scan_available_modes_auto_displays_mesh(tmp_path):
+    """When mesh.ply exists, _scan_available_modes calls _rebuild_mesh_viewer."""
+    _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
+    mesh_dir = tmp_path / "scene_01" / "vggt_x" / "mesh"
+    mesh_dir.mkdir(parents=True)
+    (mesh_dir / "mesh.ply").write_bytes(b"ply\n")
+    state = AppState()
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    sp._dataset_dd.value = "scene_01"
+    sp._backend_dd.value = "vggt_x"
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_mesh_viewer") as mock_rebuild:
+        sp._scan_available_modes()
+    mock_rebuild.assert_called_once()
+
+
+def test_scan_available_modes_enables_run_btn_when_zarr_exists(tmp_path):
+    """When feedforward.zarr exists, _mesh_run_btn is enabled after scan."""
+    _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
+    mesh_dir = tmp_path / "scene_01" / "vggt_x" / "mesh"
+    mesh_dir.mkdir(parents=True)
+    (mesh_dir / "mesh.ply").write_bytes(b"ply\n")
+    state = AppState()
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    sp._dataset_dd.value = "scene_01"
+    sp._backend_dd.value = "vggt_x"
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_mesh_viewer"):
+        sp._scan_available_modes()
+    # feedforward.zarr was created by _make_dataset
+    assert sp._mesh_run_btn.disabled is False
+
+
+def test_scan_available_modes_run_btn_disabled_without_zarr(tmp_path):
+    """When feedforward.zarr is absent, _mesh_run_btn stays disabled."""
+    # Create dataset dir with mesh but NO feedforward.zarr
+    ds = tmp_path / "scene_01"
+    be = ds / "vggt_x"
+    be.mkdir(parents=True)
+    (ds / "run_config.yaml").write_text("backend: vggt_x\n")
+    mesh_dir = be / "mesh"
+    mesh_dir.mkdir(parents=True)
+    (mesh_dir / "mesh.ply").write_bytes(b"ply\n")
+    # No feedforward.zarr in be/
+    state = AppState()
+    sp = ScenePanel(tmp_path, state, _make_op_log(), _off_screen=True)
+    sp._dataset_dd.value = "scene_01"
+    sp._backend_dd.value = "vggt_x"
+    sp._plotter = mock.MagicMock()
+    sp._vtk_pane = mock.MagicMock()
+    with mock.patch.object(sp, "_rebuild_mesh_viewer"):
+        sp._scan_available_modes()
+    assert sp._mesh_run_btn.disabled is True
 
 
 def test_scene_panel_scan_available_modes_with_features(tmp_path):

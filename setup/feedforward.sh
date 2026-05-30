@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install feedforward deps: vggt-x + mapanything
 #
-# Must run with nerfstudio env active, or use the full python path.
+# Must use the full python/pip path or have the venv activated.
 # Guards: torch 2.5.1+cu121, torchvision 0.20.1+cu121 — nothing upgrades these.
 #
 # timm>=0.9: pyproject declares timm>=0.9,<2.0; nerfstudio patched to timm>=0.6.7.
@@ -9,10 +9,9 @@
 
 set -e
 
-# Repo root = parent of this script's setup/ dir (third_party/, pyproject.toml live there)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON=/opt/conda/envs/reconstruction/bin/python
-PIP=/opt/conda/envs/reconstruction/bin/pip
+PYTHON=/opt/venv/reconstruction/bin/python
+PIP=/opt/venv/reconstruction/bin/pip
 # Prevent pip build isolation from using system Python 3.13 instead of env Python
 export PIP_NO_BUILD_ISOLATION=1
 export PIP_ROOT_USER_ACTION=ignore

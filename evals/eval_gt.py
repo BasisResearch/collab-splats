@@ -18,6 +18,7 @@ regardless of this flag.
 from __future__ import annotations
 
 import argparse
+import logging
 from typing import Any
 from datetime import datetime
 import json
@@ -293,6 +294,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     # Internal flag: run exactly one condition as a subprocess and write results
     # to --_result_file as JSON.  Not part of the public API.
+    parser.add_argument(
+        "--output_ate", type=Path, default=None,
+        help="If set, write {condition: ate_rmse} JSON to this path after all conditions complete.",
+    )
     parser.add_argument("--_condition",   default=None, help=argparse.SUPPRESS)
     parser.add_argument("--_image_dir",   type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--_result_file", type=Path, default=None, help=argparse.SUPPRESS)
@@ -331,6 +336,7 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = _build_parser().parse_args()
 
     for cond in (args.conditions or []):
@@ -453,6 +459,13 @@ def main() -> None:
          for c, m in metrics.items()},
         indent=2,
     ))
+
+    # Write per-condition ATE RMSE to JSON file if requested
+    if args.output_ate is not None:
+        import json as _json
+        ate_by_condition = {c: m["ate"]["rmse"] for c, m in metrics.items()}
+        args.output_ate.parent.mkdir(parents=True, exist_ok=True)
+        args.output_ate.write_text(_json.dumps(ate_by_condition, indent=2))
 
 
 if __name__ == "__main__":

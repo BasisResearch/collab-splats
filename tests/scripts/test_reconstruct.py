@@ -1,4 +1,4 @@
-"""Tests for docs/reconstruct.py CLI."""
+"""Tests for docs/examples/reconstruct.py CLI."""
 
 import importlib.util
 import sys

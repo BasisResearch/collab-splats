@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run all 10 reconstruction datasets sequentially with vggt_omega.
-# Usage: bash docs/run_all_datasets.sh [--overwrite]
+# Usage: bash docs/examples/run_all_datasets.sh [--overwrite]
 set -euo pipefail
 
 PYTHON=/opt/conda/envs/reconstruction/bin/python

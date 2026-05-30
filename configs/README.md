@@ -1,6 +1,6 @@
 # Reconstruction Pipeline Configs
 
-Configuration templates for `docs/reconstruct.py`. Each run of the pipeline
+Configuration templates for `docs/examples/reconstruct.py`. Each run of the pipeline
 reads these files to know what data to process, which backend to use, and where
 to write outputs.
 
@@ -15,7 +15,7 @@ This project separates **code + configs** (versioned in git) from **data + outpu
 /workspace/
   collab-splats/               ← this repo (configs live here)
     configs/reconstruction/
-    docs/reconstruct.py
+    docs/examples/reconstruct.py
     data/                      ← gitignored — eval benchmarks, downloaded on-demand
 
   fieldwork-data/              ← input videos (never in repo, ~GB each)
@@ -43,26 +43,26 @@ belong in git.
 
 ```bash
 # Standard run (uses base defaults: vggt_omega + talk2dino, semantics on)
-python docs/reconstruct.py --dataset birds_c0043
+python docs/examples/reconstruct.py --dataset birds_c0043
 
 # Specific stages only
-python docs/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
+python docs/examples/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
 
 # Override any config key at CLI (dotted key=value, any depth)
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   semantics.extractor=dinov2 \
   pointcloud.bundle_adjustment=true
 
 # Experiment variant — send output to a separate dir
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_ba_experiment
 
 # Re-run from a saved config for exact reproducibility
-python docs/reconstruct.py \
+python docs/examples/reconstruct.py \
   --config /workspace/outputs/birds_c0043_omega/run_config.yaml
 
 # Force re-run even if outputs exist
-python docs/reconstruct.py --dataset birds_c0043 --overwrite
+python docs/examples/reconstruct.py --dataset birds_c0043 --overwrite
 ```
 
 ---
@@ -73,7 +73,7 @@ python docs/reconstruct.py --dataset birds_c0043 --overwrite
 2. Set `input_path` to the absolute path of the video or image directory
 3. Set `output_path` to where outputs should be written (e.g. `/workspace/outputs/<your_name>`)
 4. Tune `preprocessing.frame_proportion` if needed (higher = more frames = slower but denser)
-5. Run: `python docs/reconstruct.py --dataset <your_name>`
+5. Run: `python docs/examples/reconstruct.py --dataset <your_name>`
 
 Everything else inherits from `base.yaml`. Only override what differs.
 
@@ -85,23 +85,23 @@ Don't create a new dataset YAML for each experiment. Override `output_path` at C
 
 ```bash
 # Experiment A: omega + talk2dino (base defaults)
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_omega_t2d
 
 # Experiment B: vggtx + dinov2
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_vggtx_dino \
   pointcloud.backend=vggtx \
   semantics.extractor=dinov2
 
 # Experiment C: omega + BA enabled
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_omega_ba \
   pointcloud.bundle_adjustment=true
 ```
 
 Each output dir gets its own `run_config.yaml` recording the exact settings used.
-Reproduce any experiment: `python docs/reconstruct.py --config path/to/run_config.yaml`
+Reproduce any experiment: `python docs/examples/reconstruct.py --config path/to/run_config.yaml`
 
 ---
 

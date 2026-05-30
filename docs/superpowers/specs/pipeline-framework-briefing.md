@@ -1,7 +1,7 @@
 # Pipeline Framework Briefing — For Dashboard Agent
 
 **Context:** You are being asked to update the dashboard to visualise outputs from the
-reconstruction pipeline (`docs/reconstruct.py`). This document describes the full
+reconstruction pipeline (`docs/examples/reconstruct.py`). This document describes the full
 pipeline, what each stage produces, and where outputs land on disk.
 
 ---
@@ -18,7 +18,7 @@ Video → [preprocess] → frames
       → [mesh]        → triangle mesh (optional)
 ```
 
-Entry point: `docs/reconstruct.py`
+Entry point: `docs/examples/reconstruct.py`
 Core class: `collab_splats.wrapper.reconstructor.Reconstructor`
 
 ---

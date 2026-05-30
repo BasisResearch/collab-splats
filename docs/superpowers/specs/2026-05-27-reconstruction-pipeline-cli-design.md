@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-27  
 **Status:** Draft  
-**Scope:** `docs/reconstruct.py` + `configs/reconstruction/` hierarchy + workspace layout convention
+**Scope:** `docs/examples/reconstruct.py` + `configs/reconstruction/` hierarchy + workspace layout convention
 
 ---
 
@@ -23,7 +23,7 @@ Data and outputs live **outside** the repository. Code, configs, and tests live 
 /workspace/
   collab-splats/               ← git repo (code + configs)
     configs/reconstruction/    ← pipeline config templates (versioned)
-    docs/reconstruct.py     ← CLI entry point
+    docs/examples/reconstruct.py     ← CLI entry point
     data/                      ← eval benchmark data (gitignored, downloaded on-demand)
     evals/                     ← eval harness
     ...
@@ -166,37 +166,37 @@ All `output_path` values: `/workspace/outputs/<dataset_name>` (matches filename 
 
 ---
 
-## CLI: `docs/reconstruct.py`
+## CLI: `docs/examples/reconstruct.py`
 
 ### Interface
 
 ```bash
 # Standard run (uses base defaults: vggt_omega + talk2dino)
-python docs/reconstruct.py --dataset birds_c0043
+python docs/examples/reconstruct.py --dataset birds_c0043
 
 # Specific stages only
-python docs/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
+python docs/examples/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
 
 # Override any config value at CLI (dotted key=value)
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   semantics.extractor=dinov2 \
   pointcloud.backend=vggtx \
   pointcloud.bundle_adjustment=true
 
 # Send output to a custom dir for this experiment
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_ba_experiment
 
 # Re-run from a prior run's saved config (full reproducibility)
-python docs/reconstruct.py \
+python docs/examples/reconstruct.py \
   --config /workspace/outputs/birds_c0043_ba_experiment/run_config.yaml
 
 # Use a different config dir
-python docs/reconstruct.py --dataset custom_scene \
+python docs/examples/reconstruct.py --dataset custom_scene \
   --config-dir /path/to/my/configs
 
 # Force re-run even if outputs exist
-python docs/reconstruct.py --dataset birds_c0043 --overwrite
+python docs/examples/reconstruct.py --dataset birds_c0043 --overwrite
 ```
 
 ### Arguments
@@ -231,9 +231,9 @@ accidental config mutation on partial re-runs).
 """CLI entry point for Reconstructor pipeline.
 
 Usage:
-    python docs/reconstruct.py --dataset birds_c0043
-    python docs/reconstruct.py --config /workspace/outputs/birds_c0043/run_config.yaml
-    python docs/reconstruct.py --dataset birds_c0043 pointcloud.backend=vggtx
+    python docs/examples/reconstruct.py --dataset birds_c0043
+    python docs/examples/reconstruct.py --config /workspace/outputs/birds_c0043/run_config.yaml
+    python docs/examples/reconstruct.py --dataset birds_c0043 pointcloud.backend=vggtx
 """
 
 import argparse
@@ -320,7 +320,7 @@ New-user-facing README. Must cover:
 
 1. **Why configs live here, not with the data** — the workspace layout rationale (code versioned,
    data/outputs too large for git, container paths are stable).
-2. **How to run** — minimal example: `python docs/reconstruct.py --dataset birds_c0043`.
+2. **How to run** — minimal example: `python docs/examples/reconstruct.py --dataset birds_c0043`.
 3. **How to add a dataset** — copy `datasets/birds_c0043.yaml`, set `input_path` + `output_path`,
    tune `frame_proportion`. Two-minute job.
 4. **How to run experiments** — override `output_path` at CLI to separate experiment dirs;

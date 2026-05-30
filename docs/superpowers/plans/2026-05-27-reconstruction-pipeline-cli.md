@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `docs/reconstruct.py` CLI + `configs/reconstruction/` hierarchy so any dataset can be run end-to-end (pointcloud → semantics) with a single command, and run all 10 fieldwork datasets with `vggt_omega`.
+**Goal:** Add `docs/examples/reconstruct.py` CLI + `configs/reconstruction/` hierarchy so any dataset can be run end-to-end (pointcloud → semantics) with a single command, and run all 10 fieldwork datasets with `vggt_omega`.
 
 **Architecture:** Thin CLI wrapper around existing `Reconstructor.from_config_file().run_pipeline()`. Config hierarchy: `configs/reconstruction/base.yaml` (defaults) + `datasets/<name>.yaml` (per-dataset overrides). Every run writes `run_config.yaml` to the output dir for auditability. Final task launches all datasets sequentially in tmux and monitors.
 
@@ -29,7 +29,7 @@
 | Create | `configs/reconstruction/datasets/rats_c0119.yaml` | " |
 | Create | `tests/scripts/__init__.py` | Test package marker |
 | Create | `tests/scripts/test_reconstruct.py` | Unit tests for the CLI |
-| Create | `docs/reconstruct.py` | CLI entry point |
+| Create | `docs/examples/reconstruct.py` | CLI entry point |
 
 ---
 
@@ -167,7 +167,7 @@ git commit -m "feat(configs): add configs/reconstruction/base.yaml with omega+ta
 ```markdown
 # Reconstruction Pipeline Configs
 
-Configuration templates for `docs/reconstruct.py`. Each run of the pipeline
+Configuration templates for `docs/examples/reconstruct.py`. Each run of the pipeline
 reads these files to know what data to process, which backend to use, and where
 to write outputs.
 
@@ -182,7 +182,7 @@ This project separates **code + configs** (versioned in git) from **data + outpu
 /workspace/
   collab-splats/               ← this repo (configs live here)
     configs/reconstruction/
-    docs/reconstruct.py
+    docs/examples/reconstruct.py
     data/                      ← gitignored — eval benchmarks, downloaded on-demand
 
   fieldwork-data/              ← input videos (never in repo, ~GB each)
@@ -204,26 +204,26 @@ across environments is handled by the container image + volume mounts.
 
 ```bash
 # Standard run (uses base defaults: vggt_omega + talk2dino, semantics on)
-python docs/reconstruct.py --dataset birds_c0043
+python docs/examples/reconstruct.py --dataset birds_c0043
 
 # Specific stages only
-python docs/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
+python docs/examples/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
 
 # Override any config key at CLI (dotted key=value, any depth)
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   semantics.extractor=dinov2 \
   pointcloud.bundle_adjustment=true
 
 # Experiment variant — send output to a separate dir
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_ba_experiment
 
 # Re-run from a saved config for exact reproducibility
-python docs/reconstruct.py \
+python docs/examples/reconstruct.py \
   --config /workspace/outputs/birds_c0043_omega/run_config.yaml
 
 # Force re-run even if outputs exist
-python docs/reconstruct.py --dataset birds_c0043 --overwrite
+python docs/examples/reconstruct.py --dataset birds_c0043 --overwrite
 ```
 
 ---
@@ -234,7 +234,7 @@ python docs/reconstruct.py --dataset birds_c0043 --overwrite
 2. Set `input_path` to the absolute path of the video or image directory
 3. Set `output_path` to where outputs should be written (e.g. `/workspace/outputs/<your_name>`)
 4. Tune `preprocessing.frame_proportion` if needed (higher = more frames = slower but better)
-5. Run: `python docs/reconstruct.py --dataset <your_name>`
+5. Run: `python docs/examples/reconstruct.py --dataset <your_name>`
 
 Everything else is inherited from `base.yaml`. You only need to override what differs.
 
@@ -246,11 +246,11 @@ Don't create a new dataset YAML for each experiment. Instead, override `output_p
 
 ```bash
 # Experiment A: omega + talk2dino (base defaults)
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_omega_t2d
 
 # Experiment B: vggtx + dinov2
-python docs/reconstruct.py --dataset birds_c0043 \
+python docs/examples/reconstruct.py --dataset birds_c0043 \
   output_path=/workspace/outputs/birds_c0043_vggtx_dino \
   pointcloud.backend=vggtx \
   semantics.extractor=dinov2
@@ -470,7 +470,7 @@ git commit -m "feat(configs): add 10 dataset configs for reconstruction pipeline
 
 ---
 
-### Task 5: Write failing tests for `docs/reconstruct.py`
+### Task 5: Write failing tests for `docs/examples/reconstruct.py`
 
 **Files:**
 - Create: `tests/scripts/__init__.py`
@@ -488,7 +488,7 @@ touch tests/scripts/__init__.py
 Write `tests/scripts/test_reconstruct.py`:
 
 ```python
-"""Tests for docs/reconstruct.py CLI."""
+"""Tests for docs/examples/reconstruct.py CLI."""
 
 import importlib.util
 import sys
@@ -670,10 +670,10 @@ git commit -m "test(scripts): add failing tests for reconstruct.py CLI (TDD)"
 
 ---
 
-### Task 6: Implement `docs/reconstruct.py`
+### Task 6: Implement `docs/examples/reconstruct.py`
 
 **Files:**
-- Create: `docs/reconstruct.py`
+- Create: `docs/examples/reconstruct.py`
 
 - [ ] **Step 1: Write the script**
 
@@ -683,27 +683,27 @@ git commit -m "test(scripts): add failing tests for reconstruct.py CLI (TDD)"
 
 Usage:
     # Run with a named dataset (config from configs/reconstruction/datasets/)
-    python docs/reconstruct.py --dataset birds_c0043
+    python docs/examples/reconstruct.py --dataset birds_c0043
 
     # Run specific stages only
-    python docs/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
+    python docs/examples/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
 
     # Override any config value (dotted key=value)
-    python docs/reconstruct.py --dataset birds_c0043 \\
+    python docs/examples/reconstruct.py --dataset birds_c0043 \\
         pointcloud.backend=vggtx \\
         semantics.extractor=dinov2
 
     # Experiment variant: send output to a separate dir
-    python docs/reconstruct.py --dataset birds_c0043 \\
+    python docs/examples/reconstruct.py --dataset birds_c0043 \\
         output_path=/workspace/outputs/birds_c0043_ba \\
         pointcloud.bundle_adjustment=true
 
     # Re-run from a saved run_config.yaml (exact reproducibility)
-    python docs/reconstruct.py \\
+    python docs/examples/reconstruct.py \\
         --config /workspace/outputs/birds_c0043/run_config.yaml
 
     # Force re-run even if outputs already exist
-    python docs/reconstruct.py --dataset birds_c0043 --overwrite
+    python docs/examples/reconstruct.py --dataset birds_c0043 --overwrite
 """
 
 import argparse
@@ -826,7 +826,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Make executable**
 
 ```bash
-chmod +x docs/reconstruct.py
+chmod +x docs/examples/reconstruct.py
 ```
 
 ---
@@ -854,7 +854,7 @@ PASSED tests/scripts/test_reconstruct.py::test_dataset_and_config_are_mutually_e
 7 passed
 ```
 
-If any test fails, fix `docs/reconstruct.py` (not the tests) and re-run.
+If any test fails, fix `docs/examples/reconstruct.py` (not the tests) and re-run.
 
 - [ ] **Step 2: Run full test suite to check for regressions**
 
@@ -867,7 +867,7 @@ Expected: no new failures.
 - [ ] **Step 3: Verify CLI help works**
 
 ```bash
-/opt/conda/envs/reconstruction/bin/python docs/reconstruct.py --help
+/opt/conda/envs/reconstruction/bin/python docs/examples/reconstruct.py --help
 ```
 
 Expected: help text prints with `--dataset`, `--config`, `--stages`, `--overwrite`, `KEY=VALUE` documented.
@@ -875,7 +875,7 @@ Expected: help text prints with `--dataset`, `--config`, `--stages`, `--overwrit
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/reconstruct.py
+git add docs/examples/reconstruct.py
 git commit -m "feat(scripts): add reconstruct.py CLI — dataset configs + run_config.yaml auditability"
 ```
 
@@ -905,7 +905,7 @@ cat > /tmp/run_all_datasets.sh << 'BATCH'
 #!/bin/bash
 set -e
 PYTHON=/opt/conda/envs/reconstruction/bin/python
-SCRIPT=/workspace/collab-splats/docs/reconstruct.py
+SCRIPT=/workspace/collab-splats/docs/examples/reconstruct.py
 LOG_DIR=/workspace/outputs/logs
 mkdir -p "$LOG_DIR"
 

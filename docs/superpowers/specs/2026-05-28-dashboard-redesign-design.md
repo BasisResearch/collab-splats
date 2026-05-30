@@ -139,7 +139,7 @@ Appears below the grid when any active column uses a `BaseQueryableExtractor` (t
 
 ## Tab 3: Reconstruct
 
-**Purpose:** Configure and run the reconstruction pipeline (`docs/reconstruct.py`) for the current session's video/frames.
+**Purpose:** Configure and run the reconstruction pipeline (`docs/examples/reconstruct.py`) for the current session's video/frames.
 
 **Layout:** Config column left / log stream right (split panel). Progress bar full-width at top.
 
@@ -158,7 +158,7 @@ Appears below the grid when any active column uses a `BaseQueryableExtractor` (t
 - **Run Reconstruction** button
 
 ### Execution
-Spawns `docs/reconstruct.py` as subprocess with config written to a temp YAML. Streams stdout/stderr to log panel (right column) and global progress strip. Kill button appears while running.
+Spawns `docs/examples/reconstruct.py` as subprocess with config written to a temp YAML. Streams stdout/stderr to log panel (right column) and global progress strip. Kill button appears while running.
 
 ### Log Stream (right column)
 Scrollable textarea, colour-coded: green = success lines, white = info, red = errors.

@@ -3,27 +3,27 @@
 
 Usage:
     # Run with a named dataset (config from configs/datasets/)
-    python docs/reconstruct.py --dataset birds_c0043
+    python docs/examples/reconstruct.py --dataset birds_c0043
 
     # Run specific stages only
-    python docs/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
+    python docs/examples/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
 
     # Override any config value (dotted key=value)
-    python docs/reconstruct.py --dataset birds_c0043 \\
+    python docs/examples/reconstruct.py --dataset birds_c0043 \\
         pointcloud.backend=vggtx \\
         semantics.extractor=dinov2
 
     # Experiment variant: send output to a separate dir
-    python docs/reconstruct.py --dataset birds_c0043 \\
+    python docs/examples/reconstruct.py --dataset birds_c0043 \\
         output_path=/workspace/outputs/birds_c0043_ba \\
         pointcloud.bundle_adjustment=true
 
     # Re-run from a saved run_config.yaml (exact reproducibility)
-    python docs/reconstruct.py \\
+    python docs/examples/reconstruct.py \\
         --config /workspace/outputs/birds_c0043/run_config.yaml
 
     # Force re-run even if outputs already exist
-    python docs/reconstruct.py --dataset birds_c0043 --overwrite
+    python docs/examples/reconstruct.py --dataset birds_c0043 --overwrite
 """
 
 import argparse

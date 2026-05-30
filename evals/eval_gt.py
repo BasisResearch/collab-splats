@@ -462,10 +462,9 @@ def main() -> None:
 
     # Write per-condition ATE RMSE to JSON file if requested
     if args.output_ate is not None:
-        import json as _json
         ate_by_condition = {c: m["ate"]["rmse"] for c, m in metrics.items()}
         args.output_ate.parent.mkdir(parents=True, exist_ok=True)
-        args.output_ate.write_text(_json.dumps(ate_by_condition, indent=2))
+        args.output_ate.write_text(json.dumps(ate_by_condition, indent=2))
 
 
 if __name__ == "__main__":

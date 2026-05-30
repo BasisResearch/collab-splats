@@ -149,7 +149,7 @@ Replaced the dead SE(3)/Sim3 pose graph stack with a unified SL(4) PoseGraph por
   - `docs/pointcloud/localization.ipynb` — 17-cell self-contained tutorial: score_all_frames keyframe extraction → VGGTXCreator → hold-out frame 10 → CameraLocalizer.from_feedforward + XFeatExtractor → plot_correspondences → PyVista (grey ref frustums + red localized) → consistency error vs feedforward reference
   - Symlink at `docs/source/tutorials/pointcloud/localization.ipynb`
 - **Decided:** No GT comparison (C0043 has no ground-truth poses) — feedforward extrinsics[10] used as pseudo-reference, labeled as consistency check
-- **Files:** `collab_splats/pointcloud/localization.py`, `tests/pointcloud/test_localization.py`, `docs/pointcloud/localization.ipynb`, `docs/source/tutorials/pointcloud/localization.ipynb`, `worklog/specs/2026-05-21-localization-cleanup-design.md`, `worklog/plans/2026-05-21-localization-cleanup.md`
+- **Files:** `collab_splats/pointcloud/localization.py`, `tests/pointcloud/test_localization.py`, `docs/pointcloud/localization.ipynb`, `docs/source/tutorials/pointcloud/localization.ipynb`, `docs/superpowers/specs/2026-05-21-localization-cleanup-design.md`, `docs/superpowers/plans/2026-05-21-localization-cleanup.md`
 - **Next:** —
 
 ### 2026-05-21 — salad-package-migration
@@ -187,15 +187,15 @@ Replaced the dead SE(3)/Sim3 pose graph stack with a unified SL(4) PoseGraph por
 - **Files:**
   - `collab_splats/semantics/features.py` — all debiasing infrastructure
   - `tests/semantics/test_positional_debiasing.py` — 11 tests (state, forward unchanged, shape, output differs, unit-norm, caching, warning, viz shape/dtype/range, missing patch_size guard)
-  - `worklog/specs/2026-05-20-positional-debiasing-design.md` — design spec
-  - `worklog/plans/2026-05-20-positional-debiasing.md` — implementation plan
+  - `docs/superpowers/specs/2026-05-20-positional-debiasing-design.md` — design spec
+  - `docs/superpowers/plans/2026-05-20-positional-debiasing.md` — implementation plan
 - **Next:** Thread `debias` through `lift_features()` (out of scope for this task — follow-on)
 
 ### 2026-05-20 — keyframe-extraction-tutorial brainstorm
 - **Focus:** Design first preprocessing tutorial (keyframe extraction)
 - **Did:** Brainstormed + wrote spec for `keyframe_extraction.ipynb`; established `preprocessing/` as new first tutorial section in docs; designed `score_all_frames()` driver + viz section in `frame_sampling.py`
 - **Decided:** Single self-contained notebook; all plot logic in package (viz section behind `###` divider in `frame_sampling.py`); 7-phase tutorial structure (why → load → FPS → OF timeseries → OF overlay → comparison → sensitivity sweep → guidance)
-- **Files:** `worklog/specs/2026-05-20-keyframe-extraction-tutorial-design.md`
+- **Files:** `docs/superpowers/specs/2026-05-20-keyframe-extraction-tutorial-design.md`
 - **Next:** Invoke writing-plans → implement `score_all_frames` + viz section + notebook
 
 ### 2026-05-20 feature-lifting
@@ -215,7 +215,7 @@ Replaced the dead SE(3)/Sim3 pose graph stack with a unified SL(4) PoseGraph por
   - `collab_splats/pointcloud/wrappers.py` — BA `reproject_pixels` path
   - `tests/pointcloud/test_feature_lifting.py` — 9 tests (dataclass fields, unproject return, color alignment, reproject shape/identity, lift shape/frame-alignment)
   - `tests/pointcloud/test_wrappers.py` — BA `reproject_pixels` path test
-  - `worklog/specs/2026-05-20-feature-lifting-design.md`, `worklog/plans/2026-05-20-feature-lifting.md`
+  - `docs/superpowers/specs/2026-05-20-feature-lifting-design.md`, `docs/superpowers/plans/2026-05-20-feature-lifting.md`
 - **Next:** Multi-view feature averaging (V2, deferred) or begin Phase 2 dashboard hardening.
 
 ### 2026-05-20 worklog-split

@@ -6,10 +6,22 @@ Always follow:
 - Use rtk tools /workspace/.claude/RTK.md
 - At the start of every conversation always call /brainstorming -- use superpowers to accomplish tasks.
 - Before anything, read worklog/STATE.md (current state), then latest entries in worklog/WORKLOG.md, then worklog/decisions/NNN-*.md as referenced.
-- Active spec/plan for in-flight work lives in worklog/{specs,plans}/. Completed work is archived to worklog/history/.
+- Active spec/plan for in-flight work lives in docs/superpowers/specs/ and docs/superpowers/plans/. Completed work is archived to worklog/history/.
 - Architecture decisions: worklog/decisions/NNN-slug.md (sequential numbering).
 - User-facing module docs live in docs/ (mirrors code tree).
-- Superpowers information belongs in worklog/ directory
+- Superpowers specs/plans belong in docs/superpowers/specs/ and docs/superpowers/plans/.
+
+## In-Flight Work
+
+These tasks are started but not complete — do not assume their targets are done:
+
+- **gt-eval-harness** — ground-truth ATE evaluation harness ([spec](docs/superpowers/specs/2026-05-07-gt-eval-harness-design.md) · [plan](docs/superpowers/plans/2026-05-07-gt-eval-harness.md))
+- **feedforward-import-cleanup** — import hygiene pass ([spec](docs/superpowers/specs/2026-05-08-feedforward-import-cleanup-design.md) · [plan](docs/superpowers/plans/2026-05-08-feedforward-import-cleanup.md))
+- **feedforward-mesh** — feedforward → TSDF mesh pipeline ([spec](docs/superpowers/specs/2026-05-14-feedforward-mesh-design.md) · [plan](docs/superpowers/plans/2026-05-14-feedforward-mesh.md))
+- **docs-site** — Sphinx site setup ([spec](docs/superpowers/specs/2026-05-20-docs-site-design.md) · [plan](docs/superpowers/plans/2026-05-20-docs-site.md))
+- **bae-vggt-parity** — verify BA matches upstream `zitongzhan/vggt --implementation bae` ([spec](docs/superpowers/specs/2026-05-20-bae-vggt-parity-design.md))
+
+Known test failures: `worklog/known-test-failures.md`
 
 ## Installation and Setup
 

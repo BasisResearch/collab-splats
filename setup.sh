@@ -2,14 +2,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PIP=/opt/conda/envs/reconstruction/bin/pip
+PIP=/opt/venv/reconstruction/bin/pip
 export PIP_ROOT_USER_ACTION=ignore
 
 echo "=== Pre-step a: install cuDSS (must land on disk before bae builds; bae find_cudss_root() scans site-packages/nvidia/cu12 at build time, so it cannot share bae's pip transaction) ==="
 $PIP install --no-build-isolation "nvidia-cudss-cu12==0.6.0.5"
 
 echo "=== Pre-step b: build bae CUDA extension (--no-build-isolation required; PIP_NO_BUILD_ISOLATION=1 does not propagate to dependency builds) ==="
-CUDA_HOME=/opt/conda/envs/reconstruction \
+CUDA_HOME=/usr/local/cuda \
     $PIP install --no-build-isolation \
         "bae @ git+https://github.com/pypose/bae.git@0.2.4"
 

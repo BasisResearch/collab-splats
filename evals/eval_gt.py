@@ -122,7 +122,8 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
     """
     base = get_creator(backbone)()
     if condition == "lc":
-        lc_cfg = LoopClosureConfig(scale_method=lc_scale_method)
+        lc_cfg = LoopClosureConfig(scale_method=lc_scale_method,
+                                   **({} if submap_size is None else {"submap_size": submap_size}))
         return LoopClosure(base, config=lc_cfg), None
     m = re.fullmatch(r"ba_track-density-(\d+)", condition)
     if m:

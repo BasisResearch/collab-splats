@@ -167,10 +167,10 @@ echo "Exit code: $?"
 python -c "import co3d; print('[OK] co3d installed')"
 ```
 
-### 0.9 — setup_feedforward.sh: full execution
+### 0.9 — setup/feedforward.sh: full execution
 
 ```bash
-bash setup_feedforward.sh 2>&1 | tee /tmp/setup_feedforward.log
+bash setup/feedforward.sh 2>&1 | tee /tmp/setup_feedforward.log
 echo "Exit code: $?"
 ```
 
@@ -181,7 +181,7 @@ Expected: exits 0. The script has internal invariant checks — look for its `[O
 
 If `FAIL: CUDA changed` or `FAIL: torch upgraded` appears, the wrong torch is active.
 
-### 0.10 — setup_feedforward.sh: gtsam-develop SL4 symbols
+### 0.10 — setup/feedforward.sh: gtsam-develop SL4 symbols
 
 ```bash
 python - <<'EOF'
@@ -447,7 +447,7 @@ assert "rade-features" in all_methods
 | 0.6 | `pip install -e .` | 0 |
 | 0.7 | collab-data install | 0 |
 | 0.8 | co3d install --no-deps | 0 |
-| 0.9–0.10 | `bash setup_feedforward.sh` | 0, invariants pass |
+| 0.9–0.10 | `bash setup/feedforward.sh` | 0, invariants pass |
 | 0.11 | deleted files check | 0 |
 | 0.12 | constraints_feedforward.txt check | 0 |
 | 1 | env guard tests | 0 (8 tests pass) |

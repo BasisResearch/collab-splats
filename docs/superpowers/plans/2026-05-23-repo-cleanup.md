@@ -112,7 +112,7 @@ Table after edit:
 | Path | Upstream | Used by |
 |---|---|---|
 | `VGGT-SLAM/` | `MIT-SPARK/VGGT-SLAM` | `evals/runners/run_vggt_slam.py` |
-| `VGGT-X/` | `Linketic/VGGT-X` | `setup_feedforward.sh`, `collab_splats/pointcloud/feedforward/vggtx.py` |
+| `VGGT-X/` | `Linketic/VGGT-X` | `setup/feedforward.sh`, `collab_splats/pointcloud/feedforward/vggtx.py` |
 ```
 
 Note: add the `VGGT-X/` row if it's missing (the README predated VGGT-X being added).

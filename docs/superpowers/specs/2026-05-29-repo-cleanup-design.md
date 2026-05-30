@@ -51,7 +51,7 @@ Scope: what it is, how to install, where to start. Keep short — this is a rese
 Sections:
 1. **What it does** — one-paragraph summary: video/images → pointcloud (VGGT-X or MapAnything) → optional BA → optional loop closure → mesh + semantic features
 2. **Key capabilities** — bullet list: feedforward reconstruction, bundle adjustment, SL(4) loop closure, semantic feature lifting, TSDF/Poisson meshing, camera localization
-3. **Install** — two commands: `bash setup.sh` then `bash setup_feedforward.sh`; note Python env (`/opt/conda/envs/reconstruction/bin/python`)
+3. **Install** — two commands: `bash setup.sh` then `bash setup/feedforward.sh`; note Python env (`/opt/conda/envs/reconstruction/bin/python`)
 4. **Getting started** — link to `docs/source/tutorials/` numbered sequence (01 preprocessing → 07 localization)
 5. **Evaluation** — one line pointing to `evals/eval_gt.py` and `docs/` for visualization notebooks
 

@@ -277,7 +277,7 @@ class ReconstructPane(param.Parameterized):
             except ImportError as exc:
                 raise ImportError(
                     "vggt_omega requires the VGGT-Omega submodule. "
-                    "Run setup_feedforward.sh with the submodule initialized."
+                    "Run setup/feedforward.sh with the submodule initialized."
                 ) from exc
             return VGGTOmegaCreator(conf_threshold=conf)
         raise ValueError(f"Unknown backend: {backend!r}")
@@ -527,7 +527,7 @@ def test_drain_log_is_noop_when_empty():
 /opt/conda/envs/nerfstudio/bin/python -m pytest tests/dashboard/test_reconstruct_pane.py -v -k "build_creator or drain" 2>&1 | tail -20
 ```
 
-Expected: all PASS. If `test_build_creator_vggtx` or `test_build_creator_mapanything` fail with `ImportError`, the feedforward env is not set up — confirm `setup_feedforward.sh` was run.
+Expected: all PASS. If `test_build_creator_vggtx` or `test_build_creator_mapanything` fail with `ImportError`, the feedforward env is not set up — confirm `setup/feedforward.sh` was run.
 
 - [ ] **Step 3: Run full suite**
 

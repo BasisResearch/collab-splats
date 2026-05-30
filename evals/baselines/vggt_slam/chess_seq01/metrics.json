@@ -1,8 +1,8 @@
 {
-  "ate_rmse": 0.038369508930969104,
-  "keyframes": 29,
-  "submaps": 2,
-  "loop_closures": 0,
-  "min_disparity": 50.0,
-  "max_frames": null
+  "ate_rmse": 0.016481891329583134,
+  "keyframes": 200,
+  "submaps": 24,
+  "loop_closures": 11,
+  "min_disparity": 0.0,
+  "max_frames": 200
 }

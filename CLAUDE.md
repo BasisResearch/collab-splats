@@ -26,7 +26,7 @@ Known test failures: `docs/known-test-failures.md`
 
 ```bash
 bash setup.sh                    # core install (nerfstudio env)
-bash setup_feedforward.sh        # VGGT-X + MapAnything
+bash setup/feedforward.sh        # VGGT-X + MapAnything
 ```
 
 ## Development Environment

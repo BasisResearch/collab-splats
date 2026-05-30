@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Create `setup_hloc.sh` to clone and install hloc into the nerfstudio conda env for standalone SfM map building.
+**Goal:** Create `setup/hloc.sh` to clone and install hloc into the nerfstudio conda env for standalone SfM map building.
 
 **Architecture:** Single shell script clones the hloc repo with submodules into `third_party/hloc/` and pip-installs it editable into the nerfstudio env. Guard clause makes it re-runnable. `.gitignore` already covers `vendor/*` — no change needed.
 
@@ -10,10 +10,10 @@
 
 ---
 
-### Task 1: Write `setup_hloc.sh`
+### Task 1: Write `setup/hloc.sh`
 
 **Files:**
-- Create: `setup_hloc.sh`
+- Create: `setup/hloc.sh`
 
 - [ ] **Step 1: Create the script**
 
@@ -46,14 +46,14 @@ echo "==> Done."
 - [ ] **Step 2: Make executable**
 
 ```bash
-chmod +x setup_hloc.sh
+chmod +x setup/hloc.sh
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add setup_hloc.sh
-git commit -m "feat(setup): add setup_hloc.sh — clone and install hloc into nerfstudio env"
+git add setup/hloc.sh
+git commit -m "feat(setup): add setup/hloc.sh — clone and install hloc into nerfstudio env"
 ```
 
 ---
@@ -65,7 +65,7 @@ git commit -m "feat(setup): add setup_hloc.sh — clone and install hloc into ne
 - [ ] **Step 1: Run the script**
 
 ```bash
-bash setup_hloc.sh
+bash setup/hloc.sh
 ```
 
 Expected output (last lines):

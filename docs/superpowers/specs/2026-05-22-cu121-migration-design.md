@@ -41,7 +41,7 @@ Each phase depends on the previous. Complete in order.
 1. Copy original to `patches/nerfstudio-pyproject.orig.toml` (tracked in collab-splats)
 2. Create `patches/nerfstudio-cu121-compat.patch` as a unified diff that documents exactly what changes
 
-All other files (`setup.sh`, `setup_feedforward.sh`, `setup_bundle_adjustment.sh`, `constraints_feedforward.txt`, `pyproject.toml`) are git-tracked — git history is the backup.
+All other files (`setup.sh`, `setup/feedforward.sh`, `setup_bundle_adjustment.sh`, `constraints_feedforward.txt`, `pyproject.toml`) are git-tracked — git history is the backup.
 
 ### Phase 1 — `collab-splats/pyproject.toml`
 
@@ -156,7 +156,7 @@ torchvision==0.19.0+cu121
 # numpy constraint removed: 2.4.6 installed; no feedforward dep needs <2.0
 ```
 
-### Phase 6 — `setup_feedforward.sh` (modify)
+### Phase 6 — `setup/feedforward.sh` (modify)
 
 Depends on Phase 5 (constraints file updated).
 
@@ -200,7 +200,7 @@ git rm patches/bae-torch21-compat.patch
 |---|---|---|
 | `pyproject.toml` | modify | git-tracked ✓ |
 | `setup.sh` | modify | git-tracked ✓ |
-| `setup_feedforward.sh` | modify | git-tracked ✓ |
+| `setup/feedforward.sh` | modify | git-tracked ✓ |
 | `setup_bundle_adjustment.sh` | delete | git-tracked ✓ |
 | `constraints_feedforward.txt` | modify | git-tracked ✓ |
 | `setup_nerfstudio.sh` | create (new) | n/a |

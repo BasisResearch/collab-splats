@@ -20,7 +20,7 @@ Three categories of dead weight in the repo:
    active use cases.
 
 3. `vendor/` and `third_party/` not gitignored — these directories are populated
-   by setup scripts (`setup.sh`, `setup_feedforward.sh`, `git submodule update`).
+   by setup scripts (`setup.sh`, `setup/feedforward.sh`, `git submodule update`).
    Any new untracked content (e.g. a new vendor clone) would show up in `git status`
    and risk accidental `git add`.
 

@@ -15,7 +15,7 @@ Install [hloc (Hierarchical-Localization)](https://github.com/cvg/Hierarchical-L
 
 ## Design
 
-### New file: `setup_hloc.sh`
+### New file: `setup/hloc.sh`
 
 - Clone `https://github.com/cvg/Hierarchical-Localization` with `--recursive` into `third_party/hloc/`
 - Guard: if `third_party/hloc/` already exists, skip clone (re-runnable)
@@ -30,7 +30,7 @@ Add `third_party/hloc/` so the cloned repo is not tracked.
 
 - No `BasePointcloudCreator` subclass for hloc
 - No changes to `pyproject.toml`
-- No changes to `setup_feedforward.sh` or `setup.sh`
+- No changes to `setup/feedforward.sh` or `setup.sh`
 - Submodule presence enables SuperPoint/R2D2/D2-Net extractors but their weights download on first use — no pre-download step
 
 ## Typical Usage (post-install)

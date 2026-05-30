@@ -15,7 +15,7 @@ Video/image → 3D pointcloud → mesh + semantic features. Feedforward reconstr
 
 ```bash
 bash setup.sh               # core install (nerfstudio conda env)
-bash setup_feedforward.sh   # VGGT-X + MapAnything models
+bash setup/feedforward.sh   # VGGT-X + MapAnything models
 ```
 
 Python env: always use `/opt/conda/envs/reconstruction/bin/python` (py3.11).

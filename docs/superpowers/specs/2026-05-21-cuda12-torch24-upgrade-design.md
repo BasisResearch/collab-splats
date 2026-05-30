@@ -139,10 +139,10 @@ docker run --gpus all collab-env:cu121 bash -c "
 # colmap
 docker run collab-env:cu121 colmap --version
 
-# After setup_feedforward.sh (MapAnything without monkey-patch)
+# After setup/feedforward.sh (MapAnything without monkey-patch)
 docker run --gpus all collab-env:cu121 bash -c "
   source /opt/conda/etc/profile.d/conda.sh && conda activate nerfstudio &&
-  bash /workspace/collab-splats/setup_feedforward.sh &&
+  bash /workspace/collab-splats/setup/feedforward.sh &&
   python -c 'from collab_splats.pointcloud.feedforward import MapAnythingCreator; print(\"ok\")'
 "
 

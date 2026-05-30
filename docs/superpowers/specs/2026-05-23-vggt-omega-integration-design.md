@@ -43,7 +43,7 @@ third_party/vggt-omega   → git@github.com:facebookresearch/vggt-omega.git
 Added as a git submodule, pinned to a specific commit, consistent with how
 `third_party/VGGT-X` is managed.
 
-### `setup_feedforward.sh` block
+### `setup/feedforward.sh` block
 
 ```bash
 # vggt-omega
@@ -198,7 +198,7 @@ Contract identical to `VGGTXCreator._verify_loop_candidate`.
 |---|---|
 | `collab_splats/pointcloud/feedforward/vggt_omega.py` | New — `VGGTOmegaCreator` |
 | `collab_splats/pointcloud/feedforward/__init__.py` | Export `VGGTOmegaCreator` |
-| `setup_feedforward.sh` | Add vggt-omega install block |
+| `setup/feedforward.sh` | Add vggt-omega install block |
 | `.gitmodules` | Add `third_party/vggt-omega` |
 | `tests/pointcloud/test_vggt_omega.py` | New — unit tests |
 

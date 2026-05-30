@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# setup_vggt_slam.sh — create isolated conda env for VGGT-SLAM 2.0
+# setup/vggt_slam.sh — create isolated conda env for VGGT-SLAM 2.0
 #
 # VGGT-SLAM requires torch==2.3.1 which conflicts with our reconstruction env
 # (torch 2.5.1+cu121). This script creates a dedicated env that is safe to
 # run alongside reconstruction without any interference.
 #
 # Usage:
-#   bash setup_vggt_slam.sh
+#   bash setup/vggt_slam.sh
 #
 # After setup, run VGGT-SLAM evals via:
 #   python evals/runners/run_vggt_slam.py \

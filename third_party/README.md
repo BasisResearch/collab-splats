@@ -8,8 +8,8 @@ Contents are gitignored — only this README is tracked.
 Run the install script for the pipeline you need:
 
 ```bash
-bash setup_feedforward.sh   # salad, xfeat, vggt-x, mapanything
-bash setup_hloc.sh          # hloc
+bash setup/feedforward.sh   # salad, xfeat, vggt-x, mapanything
+bash setup/hloc.sh          # hloc
 bash setup.sh               # core env (bae installed via pyproject.toml git URL)
 ```
 
@@ -28,6 +28,6 @@ Scripts are idempotent: if the target already exists, re-clone is skipped.
 
 | Path | Upstream | Populated by | Used by |
 |---|---|---|---|
-| `salad/` | `serizba/salad` | `setup_feedforward.sh` | DINO-SALAD aggregator for loop closure (`collab_splats/semantics/retrieval.py`). `sys.path` insert. |
-| `xfeat/` | `verlab/accelerated_features` | `setup_feedforward.sh` | Lightweight local feature extractor for camera localization (`collab_splats/pointcloud/localization.py`). `sys.path` insert to `modules/`. |
-| `hloc/` | `cvg/Hierarchical-Localization` | `setup_hloc.sh` | Hierarchical localization pipeline. Installed editable via pip. |
+| `salad/` | `serizba/salad` | `setup/feedforward.sh` | DINO-SALAD aggregator for loop closure (`collab_splats/semantics/retrieval.py`). `sys.path` insert. |
+| `xfeat/` | `verlab/accelerated_features` | `setup/feedforward.sh` | Lightweight local feature extractor for camera localization (`collab_splats/pointcloud/localization.py`). `sys.path` insert to `modules/`. |
+| `hloc/` | `cvg/Hierarchical-Localization` | `setup/hloc.sh` | Hierarchical localization pipeline. Installed editable via pip. |

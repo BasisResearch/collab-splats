@@ -175,11 +175,11 @@
 
 ---
 
-### Task 4: Delete `constraints_feedforward.txt`, clean `setup_feedforward.sh`
+### Task 4: Delete `constraints_feedforward.txt`, clean `setup/feedforward.sh`
 
 **Files:**
 - Delete: `constraints_feedforward.txt`
-- Modify: `setup_feedforward.sh`
+- Modify: `setup/feedforward.sh`
 
 - [ ] **Step 1: Delete the constraints file**
 
@@ -187,7 +187,7 @@
   rm /workspace/collab-splats/constraints_feedforward.txt
   ```
 
-- [ ] **Step 2: Edit setup_feedforward.sh — remove CONSTRAINTS variable and all -c flags**
+- [ ] **Step 2: Edit setup/feedforward.sh — remove CONSTRAINTS variable and all -c flags**
 
   Remove line 24 (`CONSTRAINTS=...`) and lines 27 (`echo "Using constraints: $CONSTRAINTS"`).
 
@@ -221,14 +221,14 @@
 - [ ] **Step 3: Verify syntax**
 
   ```bash
-  bash -n /workspace/collab-splats/setup_feedforward.sh && echo "OK"
+  bash -n /workspace/collab-splats/setup/feedforward.sh && echo "OK"
   ```
   Expected: `OK`
 
 - [ ] **Step 4: Verify no remaining references to constraints file**
 
   ```bash
-  grep -n 'CONSTRAINTS\|constraints_feedforward' /workspace/collab-splats/setup_feedforward.sh
+  grep -n 'CONSTRAINTS\|constraints_feedforward' /workspace/collab-splats/setup/feedforward.sh
   ```
   Expected: no output
 
@@ -236,7 +236,7 @@
 
   ```bash
   cd /workspace/collab-splats
-  git add -u setup_feedforward.sh constraints_feedforward.txt
+  git add -u setup/feedforward.sh constraints_feedforward.txt
   git commit -m "fix(setup): delete stale feedforward constraint file
 
   constraints_feedforward.txt pinned torch==2.4.0+cu121 — stale from cu118
@@ -249,10 +249,10 @@
 
 ---
 
-### Task 5: Fix `setup_hloc.sh` conda env name
+### Task 5: Fix `setup/hloc.sh` conda env name
 
 **Files:**
-- Modify: `setup_hloc.sh:5-6`
+- Modify: `setup/hloc.sh:5-6`
 
 - [ ] **Step 1: Replace env name in both lines**
 
@@ -271,14 +271,14 @@
 - [ ] **Step 2: Verify no remaining `nerfstudio` env references**
 
   ```bash
-  grep -n 'envs/nerfstudio' /workspace/collab-splats/setup_hloc.sh
+  grep -n 'envs/nerfstudio' /workspace/collab-splats/setup/hloc.sh
   ```
   Expected: no output
 
 - [ ] **Step 3: Verify syntax**
 
   ```bash
-  bash -n /workspace/collab-splats/setup_hloc.sh && echo "OK"
+  bash -n /workspace/collab-splats/setup/hloc.sh && echo "OK"
   ```
   Expected: `OK`
 
@@ -286,8 +286,8 @@
 
   ```bash
   cd /workspace/collab-splats
-  git add setup_hloc.sh
-  git commit -m "fix(setup): fix setup_hloc.sh conda env name nerfstudio→reconstruction
+  git add setup/hloc.sh
+  git commit -m "fix(setup): fix setup/hloc.sh conda env name nerfstudio→reconstruction
 
   Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
   ```
@@ -305,7 +305,7 @@
   ```markdown
   ```bash
   # Loop closure / feedforward (clones salad)
-  bash setup_feedforward.sh
+  bash setup/feedforward.sh
 
   # Bundle adjustment (clones + patches bae)
   bash setup_bundle_adjustment.sh
@@ -316,7 +316,7 @@
   ```markdown
   ```bash
   # Loop closure / feedforward
-  bash setup_feedforward.sh
+  bash setup/feedforward.sh
 
   # Bundle adjustment deps (bae) are installed by setup.sh via pyproject.toml git URL
   ```
@@ -374,7 +374,7 @@
 - [x] Change 1 (nerfstudio git URL in pyproject, delete setup_nerfstudio.sh) → Tasks 1 + 3
 - [x] Change 2 (delete constraints_feedforward.txt, remove --constraint flags) → Task 4
 - [x] Change 3 (bae git URL in pyproject, delete bae step from setup.sh) → Tasks 1 + 2
-- [x] Change 5 (fix setup_hloc.sh env name) → Task 5
+- [x] Change 5 (fix setup/hloc.sh env name) → Task 5
 - [x] Change 6 (vendor/README.md cleanup) → Task 6
 
 **Placeholder scan:** No TBDs, no "implement later", all code blocks show actual content.

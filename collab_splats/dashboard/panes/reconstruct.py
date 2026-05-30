@@ -218,7 +218,7 @@ class ReconstructPane(param.Parameterized):
             except ImportError as exc:
                 raise ImportError(
                     "vggt_omega requires the VGGT-Omega submodule. "
-                    "Run setup_feedforward.sh with the submodule initialized."
+                    "Run setup/feedforward.sh with the submodule initialized."
                 ) from exc
             return VGGTOmegaCreator(conf_threshold=conf)
         raise ValueError(f"Unknown backend: {backend!r}")

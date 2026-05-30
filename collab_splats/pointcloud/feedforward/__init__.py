@@ -12,7 +12,7 @@ from .vggtx import VGGTXCreator
 from .mapanything import MapAnythingCreator
 from .vggt_spark_creator import VGGTSPARKCreator
 
-# vggt-omega is an optional backend — only available if setup_feedforward.sh
+# vggt-omega is an optional backend — only available if setup/feedforward.sh
 # was run with the vggt-omega submodule initialized.  Hard import lives in
 # vggt_omega.py itself; here we expose it only when the package is present.
 try:

@@ -9,11 +9,11 @@
 First-run of the cu121 container fails at three points:
 
 1. `setup_nerfstudio.sh` — open3d resolution error ("from versions: none") caused by `--no-cache-dir` forcing PyPI re-fetch on nerfstudio install; script also applies 5 patches that are already in the nerfstudio fork.
-2. `setup_feedforward.sh` — `constraints_feedforward.txt` pins `torch==2.4.0+cu121` (stale from intermediate upgrade); env has `2.5.1`. Constraint forces torch downgrade → cascades to old numpy source build → `distutils.msvccompiler` missing → crash.
+2. `setup/feedforward.sh` — `constraints_feedforward.txt` pins `torch==2.4.0+cu121` (stale from intermediate upgrade); env has `2.5.1`. Constraint forces torch downgrade → cascades to old numpy source build → `distutils.msvccompiler` missing → crash.
 3. `bash setup_bundle_adjustment.sh` — script intentionally deleted in cu121 migration but `vendor/README.md` still references it.
 
 Additional bugs found during investigation:
-- `setup_hloc.sh` hardcodes conda env `nerfstudio` (old name); env is now `reconstruction`.
+- `setup/hloc.sh` hardcodes conda env `nerfstudio` (old name); env is now `reconstruction`.
 - `pyproject.toml` bae comment says "Pre-installed by Dockerfile.cu121 builder stage" — wrong; bae is installed by `setup.sh` Step 2, not the Dockerfile.
 
 ## Dry-Run Verification (all confirmed before spec written)
@@ -23,7 +23,7 @@ Additional bugs found during investigation:
 | `pip install --dry-run 'nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git@d99c8cd7' 'bae @ git+https://github.com/pypose/bae.git@0.2.4' 'numpy>=2'` (fresh-container simulation, no vggt in env) | `Would install bae-0.2.4 nerfstudio-1.1.5 nuscenes-devkit-1.1.9 protobuf-4.25.9` — no numpy downgrade, no conflicts |
 | `pip install --dry-run salad pytorch-metric-learning gtsam-develop` (no constraints) | torch 2.5.1 + numpy 2.4.6 both "already satisfied" — no downgrade |
 | bae git tags | `0.2`, `0.2.1`, `0.2.2`, `0.2.3`, `0.2.4` confirmed (no `v` prefix) |
-| numpy downgrade concern | Only surfaces in dirty env (vggt already installed). On fresh container, setup.sh runs before setup_feedforward.sh — vggt absent, no conflict. |
+| numpy downgrade concern | Only surfaces in dirty env (vggt already installed). On fresh container, setup.sh runs before setup/feedforward.sh — vggt absent, no conflict. |
 
 ## Design
 
@@ -40,9 +40,9 @@ Add to `pyproject.toml` dependencies:
 
 Delete `setup_nerfstudio.sh`. Remove `bash setup_nerfstudio.sh` from `setup.sh` entirely — no replacement line needed. Nerfstudio is now installed as part of `pip install -e .` (Change 3 step).
 
-**No numpy conflict:** on a fresh container, setup.sh runs before setup_feedforward.sh, so vggt (the source of `numpy<2` metadata) is not yet installed. Dry run with `numpy>=2` confirms clean resolution.
+**No numpy conflict:** on a fresh container, setup.sh runs before setup/feedforward.sh, so vggt (the source of `numpy<2` metadata) is not yet installed. Dry run with `numpy>=2` confirms clean resolution.
 
-### Change 2 — Delete `constraints_feedforward.txt`, update `setup_feedforward.sh`
+### Change 2 — Delete `constraints_feedforward.txt`, update `setup/feedforward.sh`
 
 Feedforward packages with `--no-deps` (vggt-x, mapanything, vggt-omega) never touch torch.  
 Packages without `--no-deps` (pytorch-metric-learning, salad, gtsam-develop) declare only floor bounds:
@@ -52,7 +52,7 @@ Packages without `--no-deps` (pytorch-metric-learning, salad, gtsam-develop) dec
 Dry run confirmed: all "already satisfied" with no constraint file. Constraint file was causing the problem (stale `==2.4.0` forced downgrade); removing it is strictly better.
 
 Delete `constraints_feedforward.txt`.  
-In `setup_feedforward.sh`: remove `CONSTRAINTS=` variable and all `--constraint $CONSTRAINTS` flags.
+In `setup/feedforward.sh`: remove `CONSTRAINTS=` variable and all `--constraint $CONSTRAINTS` flags.
 
 ### Change 3 — Move bae into pyproject.toml git URL, delete setup.sh bae step
 
@@ -83,7 +83,7 @@ CUDA_HOME=/opt/conda/envs/reconstruction \
 - `PIP_NO_BUILD_ISOLATION=1` already exported by setup.sh.
 - nvidia-cudss-cu12 pre-install removed: pip installs wheels before source packages in the same batch, so nvidia-cudss-cu12 is in site-packages when bae's `find_cudss_root()` runs at build time.
 
-### Change 5 — Fix `setup_hloc.sh` conda env name
+### Change 5 — Fix `setup/hloc.sh` conda env name
 
 ```bash
 # Before
@@ -106,9 +106,9 @@ Remove three references to `setup_bundle_adjustment.sh` (lines 30, 40, 53). Scri
 | `setup_nerfstudio.sh` | Delete | Patches already in nerfstudio fork; nerfstudio moved to pyproject git URL |
 | `constraints_feedforward.txt` | Delete | Stale torch pin caused numpy downgrade; all feedforward deps floor-only, no constraint needed |
 | `setup.sh` | Modify | Delete nerfstudio + bae steps; single `pip install -e .` with CUDA_HOME |
-| `setup_feedforward.sh` | Modify | Remove `--constraint` flag and `CONSTRAINTS` variable |
+| `setup/feedforward.sh` | Modify | Remove `--constraint` flag and `CONSTRAINTS` variable |
 | `pyproject.toml` | Modify | Add nerfstudio git URL dep; replace bae loose pin with pinned git URL |
-| `setup_hloc.sh` | Modify | Fix conda env name: `nerfstudio` → `reconstruction` |
+| `setup/hloc.sh` | Modify | Fix conda env name: `nerfstudio` → `reconstruction` |
 | `vendor/README.md` | Modify | Remove setup_bundle_adjustment.sh references |
 
 ## Out of Scope

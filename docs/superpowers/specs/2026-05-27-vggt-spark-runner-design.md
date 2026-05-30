@@ -89,7 +89,7 @@ Verify package structure exists:
 ls third_party/vggt_spark/vggt/__init__.py  # must exist
 ```
 
-No changes to `setup_feedforward.sh` needed for the eval runner. If this becomes
+No changes to `setup/feedforward.sh` needed for the eval runner. If this becomes
 part of the standard setup, add a `third_party/vggt_spark` clone step there.
 
 ---

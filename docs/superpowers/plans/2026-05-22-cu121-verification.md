@@ -128,10 +128,10 @@ pip install git+https://github.com/facebookresearch/co3d.git --no-deps 2>&1 | ta
 echo "Exit code: $?"
 ```
 
-- [ ] **Step 8: Run setup_feedforward.sh**
+- [ ] **Step 8: Run setup/feedforward.sh**
 
 ```bash
-bash setup_feedforward.sh 2>&1 | tee /tmp/setup_feedforward.log
+bash setup/feedforward.sh 2>&1 | tee /tmp/setup_feedforward.log
 echo "Exit code: $?"
 ```
 

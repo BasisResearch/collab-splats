@@ -10,6 +10,7 @@ Provides:
 from __future__ import annotations
 
 import copy
+import logging
 import time
 from abc import abstractmethod
 from dataclasses import dataclass, field, replace
@@ -29,6 +30,7 @@ from ..utils import cross_frame_attention_ratio, reproject_pixels
 from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 # ── Output type ───────────────────────────────────────────────────────────────
@@ -880,7 +882,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             features["k"], features["q"], token_offset=self._lc_token_offset
         )
         if ratio < verify_match_ratio:
+            logger.info("LC verify: ratio=%.4f < threshold=%.4f → rejected", ratio, verify_match_ratio)
             return False, None
+        logger.info("LC verify: ratio=%.4f >= threshold=%.4f → accepted", ratio, verify_match_ratio)
         # "poses" is optional — VGGTx includes it (pre-decoded), MapAnything does not
         return True, features.get("poses")
 

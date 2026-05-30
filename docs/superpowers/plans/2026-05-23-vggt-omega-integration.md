@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `VGGTOmegaCreator` as a third feedforward backend alongside `VGGTXCreator` and `MapAnythingCreator`, installable via `setup_feedforward.sh`, supporting the full pipeline including BundleAdjustment, LoopClosure, and feature lifting.
+**Goal:** Add `VGGTOmegaCreator` as a third feedforward backend alongside `VGGTXCreator` and `MapAnythingCreator`, installable via `setup/feedforward.sh`, supporting the full pipeline including BundleAdjustment, LoopClosure, and feature lifting.
 
 **Architecture:** New standalone `collab_splats/pointcloud/feedforward/vggt_omega.py` extending `BaseFeedforwardCreator` via the 5-step template method. vggt-omega installed as a git submodule in `third_party/vggt-omega` (pinned commit) with `--no-deps` to bypass its `numpy<2` metadata constraint. Checkpoint auto-downloaded via `hf_hub_download` from the gated `facebook/VGGT-Omega` HF repo, or loaded from a local `.pt` path.
 
@@ -16,7 +16,7 @@
 |---|---|---|
 | `collab_splats/pointcloud/feedforward/vggt_omega.py` | **Create** | `_compute_omega_original_coords` helper + `VGGTOmegaCreator` |
 | `collab_splats/pointcloud/feedforward/__init__.py` | **Modify** | Export `VGGTOmegaCreator` |
-| `setup_feedforward.sh` | **Modify** | Add vggt-omega submodule install block + smoke test |
+| `setup/feedforward.sh` | **Modify** | Add vggt-omega submodule install block + smoke test |
 | `tests/pointcloud/test_vggt_omega_creator.py` | **Create** | Unit tests for all abstract methods |
 
 ---
@@ -58,24 +58,24 @@ git commit -m "chore(deps): add vggt-omega git submodule"
 
 ---
 
-## Task 2: Update setup_feedforward.sh
+## Task 2: Update setup/feedforward.sh
 
 **Files:**
-- Modify: `setup_feedforward.sh`
+- Modify: `setup/feedforward.sh`
 
 The existing script has sections for vggt-x, mapanything, loop closure deps, and a smoke test. Add a new vggt-omega block after mapanything and update the smoke test.
 
 - [ ] **Step 1: Read the current smoke test line**
 
 ```bash
-grep -n "VGGTXCreator\|MapAnythingCreator\|smoke" /workspace/collab-splats/setup_feedforward.sh
+grep -n "VGGTXCreator\|MapAnythingCreator\|smoke" /workspace/collab-splats/setup/feedforward.sh
 ```
 
 Note the exact line numbers for the smoke test block.
 
 - [ ] **Step 2: Add vggt-omega install block before the smoke test**
 
-Find this block in `setup_feedforward.sh`:
+Find this block in `setup/feedforward.sh`:
 ```bash
 # collab-splats feedforward extras (non-git deps declared in pyproject.toml)
 $PIP install -e '.[feedforward]' --no-deps -q
@@ -132,8 +132,8 @@ Expected: `OK`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add setup_feedforward.sh
-git commit -m "feat(deps): add vggt-omega to setup_feedforward.sh"
+git add setup/feedforward.sh
+git commit -m "feat(deps): add vggt-omega to setup/feedforward.sh"
 ```
 
 ---
@@ -1187,7 +1187,7 @@ Expected: All existing tests pass. The new `test_vggt_omega_creator.py` tests pa
 
 Expected: No new failures introduced by `VGGTOmegaCreator` or the `__init__.py` changes.
 
-- [ ] **Step 3: Verify setup_feedforward.sh smoke test passes**
+- [ ] **Step 3: Verify setup/feedforward.sh smoke test passes**
 
 ```bash
 /opt/conda/envs/nerfstudio/bin/python -c "
@@ -1206,7 +1206,7 @@ Expected: `[OK] VGGTXCreator, MapAnythingCreator, and VGGTOmegaCreator import su
 |---|---|
 | New `VGGTOmegaCreator` in `feedforward/vggt_omega.py` | Task 4 |
 | `feedforward/__init__.py` exports `VGGTOmegaCreator` | Task 5 |
-| `setup_feedforward.sh` vggt-omega block | Task 2 |
+| `setup/feedforward.sh` vggt-omega block | Task 2 |
 | `.gitmodules` submodule | Task 1 |
 | `tests/pointcloud/test_vggt_omega_creator.py` | Task 3 |
 | `PINHOLE` camera model | Task 4 (`camera_model = "PINHOLE"`) |

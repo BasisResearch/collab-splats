@@ -36,7 +36,7 @@ Files modified by BOTH branches (will conflict):
 - All `tests/semantics/` files
 
 **infra/setup**
-- `setup.sh`, `setup_feedforward.sh`, `setup_hloc.sh`, `setup_vggt_slam.sh`
+- `setup.sh`, `setup/feedforward.sh`, `setup/hloc.sh`, `setup/vggt_slam.sh`
 - `requirements.txt`
 - `Dockerfile`, `Dockerfile.cu121`
 - `CLAUDE.md`, `README.md`, `Makefile`
@@ -239,7 +239,7 @@ git add tests/semantics/
 ### Task 6: Resolve setup/infra conflicts
 
 **Files:**
-- Modify: `setup.sh`, `setup_feedforward.sh`, `setup_hloc.sh`, `setup_vggt_slam.sh`
+- Modify: `setup.sh`, `setup/feedforward.sh`, `setup/hloc.sh`, `setup/vggt_slam.sh`
 - Modify: `requirements.txt`
 - Modify: `Dockerfile`, `Dockerfile.cu121`
 - Modify: `CLAUDE.md`, `README.md`, `Makefile`
@@ -270,7 +270,7 @@ For `README.md`: combine — keep cu121 as base, add any webapp-specific usage i
 - [ ] **Step 5: Mark resolved**
 
 ```bash
-git add setup.sh setup_feedforward.sh setup_hloc.sh setup_vggt_slam.sh requirements.txt Dockerfile Dockerfile.cu118 Dockerfile.cu121 CLAUDE.md README.md Makefile
+git add setup.sh setup/feedforward.sh setup/hloc.sh setup/vggt_slam.sh requirements.txt Dockerfile Dockerfile.cu118 Dockerfile.cu121 CLAUDE.md README.md Makefile
 ```
 
 ---

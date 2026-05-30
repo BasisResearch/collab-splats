@@ -87,7 +87,7 @@ dependencies = [
 
 [project.optional-dependencies]
 feedforward = [
-    # vggt-x and mapanything — git deps, install via setup_feedforward.sh
+    # vggt-x and mapanything — git deps, install via setup/feedforward.sh
     # vggt @ third_party/VGGT-X submodule (--no-deps, pinned commit)
     # mapanything @ git+https://github.com/facebookresearch/map-anything.git (--no-deps)
     # lightglue @ git+https://github.com/cvg/LightGlue.git (--no-deps, mapanything colmap extra)
@@ -104,7 +104,7 @@ feedforward = [
     "python-box",
     "open3d",
     "gtsam-develop",
-    # salad (Dominic101/salad) installed via setup_feedforward.sh.
+    # salad (Dominic101/salad) installed via setup/feedforward.sh.
     # pytorch-metric-learning is salad's only non-torch runtime dep.
     "pytorch-metric-learning",
 ]

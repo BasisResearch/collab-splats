@@ -6,7 +6,7 @@
 
 **Architecture:** Both `DiskExtractor` and `XFeatExtractor` gain a uniform 3-tuple `extract()` return `(kpts, scores, descs)` and a unified `match()` signature accepting `scores_q, scores_db`. `XFeatExtractor.match()` uses `xfeat.match_lighterglue(d0, d1)` with proper dict format. `CameraLocalizer` stores and unpacks 3-tuples; inner PnP loop is unchanged.
 
-**Tech Stack:** kornia 0.8.1, vendor/xfeat (accelerated_features.XFeat), PyTorch, NumPy, OpenCV, pytest.
+**Tech Stack:** kornia 0.8.1, third_party/xfeat (accelerated_features.XFeat), PyTorch, NumPy, OpenCV, pytest.
 
 ---
 

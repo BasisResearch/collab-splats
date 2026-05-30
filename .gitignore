@@ -2,14 +2,14 @@
 .env
 .worktrees/
 .superpowers/
-vendor/*
-!vendor/README.md
+third_party/*
+!third_party/README.md
 scratch/
 MagicMock/
 worklog/
 tools/
-//examples/
 stage/
+vendor/
 evals/results/
 
 # Eval benchmark data (downloaded on-demand via evals/download_7scenes.sh)
@@ -228,6 +228,3 @@ __marimo__/
 config-local/
 evals/data/docs/.cache/
 
-# Populated by setup scripts / git submodule update — not tracked directly
-third_party/
-third_party/vggt_spark/

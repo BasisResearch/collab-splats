@@ -34,10 +34,10 @@ All zero new installs. Already in environment or vendored:
 |---|---|---|
 | `kornia.feature.DISK` | kornia 0.8.1 (installed) | Local feature extraction |
 | `kornia.feature.LightGlue` | kornia 0.8.1 (installed) | Learned feature matching |
-| `modules.xfeat.XFeat` | vendor/xfeat/ (clone) | Fast alternative extractor |
+| `modules.xfeat.XFeat` | third_party/xfeat/ (clone) | Fast alternative extractor |
 | `kornia.feature.match_mnn` | kornia 0.8.1 (installed) | MNN matching for XFeat |
 | `cv2.solvePnPRansac` | OpenCV 4.6.0 (installed) | PnP pose solver |
-| `vendor/salad/` | existing | Stage 1 retrieval (unchanged) |
+| `third_party/salad/` | existing | Stage 1 retrieval (unchanged) |
 
 ## Architecture
 
@@ -64,7 +64,7 @@ Weights download once to torch hub cache on first use (~4 MB).
 
 **`XFeatExtractor`**
 
-Wraps vendored `vendor/xfeat/` (`accelerated_features.XFeat`) + `kornia.feature.match_mnn`.
+Wraps vendored `third_party/xfeat/` (`accelerated_features.XFeat`) + `kornia.feature.match_mnn`.
 
 ```
 extract(image: np.ndarray) → (keypoints: Tensor (N,2), descriptors: Tensor (N,64))
@@ -146,7 +146,7 @@ Everything stays in `localization.py`. No new files. Section layout:
 ## Vendor step
 
 ```bash
-git clone https://github.com/verlab/accelerated_features vendor/xfeat
+git clone https://github.com/verlab/accelerated_features third_party/xfeat
 ```
 
 Update `vendor/README.md` with XFeat entry.

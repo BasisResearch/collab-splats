@@ -135,7 +135,7 @@ def test_run_reconstruction_re_enables_run_btn_on_failure(tmp_path):
 @pytest.mark.skip(
     reason=(
         "Importing collab_splats.pointcloud.feedforward triggers the package __init__, "
-        "which imports localization → vendor/xfeat/modules/, a path not on sys.path in "
+        "which imports localization → third_party/xfeat/modules/, a path not on sys.path in "
         "the test environment (xfeat vendored dep missing). The isinstance check itself "
         "is correct; skip rather than fail on an env-setup issue."
     )
@@ -151,7 +151,7 @@ def test_build_creator_vggtx_returns_correct_type():
 @pytest.mark.skip(
     reason=(
         "Importing collab_splats.pointcloud.feedforward triggers the package __init__, "
-        "which imports localization → vendor/xfeat/modules/, a path not on sys.path in "
+        "which imports localization → third_party/xfeat/modules/, a path not on sys.path in "
         "the test environment (xfeat vendored dep missing). The isinstance check itself "
         "is correct; skip rather than fail on an env-setup issue."
     )

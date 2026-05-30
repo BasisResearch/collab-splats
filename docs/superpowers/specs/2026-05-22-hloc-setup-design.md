@@ -17,14 +17,14 @@ Install [hloc (Hierarchical-Localization)](https://github.com/cvg/Hierarchical-L
 
 ### New file: `setup_hloc.sh`
 
-- Clone `https://github.com/cvg/Hierarchical-Localization` with `--recursive` into `vendor/hloc/`
-- Guard: if `vendor/hloc/` already exists, skip clone (re-runnable)
-- Install editable via `/opt/conda/envs/nerfstudio/bin/pip install -e vendor/hloc/`
+- Clone `https://github.com/cvg/Hierarchical-Localization` with `--recursive` into `third_party/hloc/`
+- Guard: if `third_party/hloc/` already exists, skip clone (re-runnable)
+- Install editable via `/opt/conda/envs/nerfstudio/bin/pip install -e third_party/hloc/`
 - Verify: print `hloc.__version__` to confirm install
 
 ### `.gitignore` change
 
-Add `vendor/hloc/` so the cloned repo is not tracked.
+Add `third_party/hloc/` so the cloned repo is not tracked.
 
 ## Out of Scope
 

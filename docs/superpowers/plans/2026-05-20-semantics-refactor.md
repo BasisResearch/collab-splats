@@ -601,13 +601,13 @@ import torch.nn as nn
 import torchvision.transforms as T
 
 # Vendor path must precede vendored imports.
-# serizba/salad is vendored at vendor/salad/ to avoid pytorch_lightning dep.
+# serizba/salad is vendored at third_party/salad/ to avoid pytorch_lightning dep.
 _SALAD_VENDOR_PATH = str(pathlib.Path(__file__).parents[1] / "vendor" / "salad")
 if _SALAD_VENDOR_PATH not in sys.path:
     sys.path.insert(0, _SALAD_VENDOR_PATH)
 
-from models.aggregators.salad import SALAD  # vendored: vendor/salad/
-from models.backbones.dinov2 import DINOv2  # vendored: vendor/salad/
+from models.aggregators.salad import SALAD  # vendored: third_party/salad/
+from models.backbones.dinov2 import DINOv2  # vendored: third_party/salad/
 
 from collab_splats.utils.torch_utils import RegistryMixin
 
@@ -636,7 +636,7 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
     """DINO-SALAD global image descriptor for visual place recognition.
 
     DINOv2 ViT-B/14 backbone + SALAD aggregator, pretrained on GSV-Cities.
-    Vendored from serizba/salad at vendor/salad/. Avoids VPRModel to skip
+    Vendored from serizba/salad at third_party/salad/. Avoids VPRModel to skip
     pytorch_lightning / pytorch_metric_learning at runtime.
     Weights: https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt
     """

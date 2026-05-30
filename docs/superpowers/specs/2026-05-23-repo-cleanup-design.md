@@ -70,7 +70,7 @@ third_party/
 
 - `stage/` — kept as useful reference
 - `examples/` — kept as CLI entry points
-- `vendor/bae/`, `vendor/xfeat/` — active dependencies
+- `vendor/bae/`, `third_party/xfeat/` — active dependencies
 - `collab_splats.egg-info/` — not addressed here
 
 ## Commit message

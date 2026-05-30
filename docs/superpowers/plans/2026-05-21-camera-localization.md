@@ -6,31 +6,31 @@
 
 **Architecture:** `localization.py` gains two extractor classes (`DiskExtractor`, `XFeatExtractor`), a private `_build_frame_assignments` helper that projects 3D points into reference frames and assigns keypoints via nearest-neighbour, and `CameraLocalizer` which orchestrates extraction → matching across all N frames → PnP. No global retrieval — exhaustive matching against all N frames is used to avoid false exclusions from appearance shift.
 
-**Tech Stack:** kornia 0.8.1 (DISK, LightGlue, match_mnn), OpenCV 4.6.0 (solvePnPRansac), vendor/xfeat (accelerated_features.XFeat), PyTorch, NumPy.
+**Tech Stack:** kornia 0.8.1 (DISK, LightGlue, match_mnn), OpenCV 4.6.0 (solvePnPRansac), third_party/xfeat (accelerated_features.XFeat), PyTorch, NumPy.
 
 ---
 
 ## Task 1: Vendor XFeat
 
 **Files:**
-- Create: `vendor/xfeat/` — git clone
+- Create: `third_party/xfeat/` — git clone
 - Modify: `vendor/README.md`
 
 - [ ] **Step 1: Clone XFeat into vendor/**
 
 ```bash
 cd /workspace/collab-splats
-git clone https://github.com/verlab/accelerated_features vendor/xfeat
+git clone https://github.com/verlab/accelerated_features third_party/xfeat
 ```
 
-Expected: `vendor/xfeat/` created with `accelerated_features/` subdirectory inside.
+Expected: `third_party/xfeat/` created with `accelerated_features/` subdirectory inside.
 
 - [ ] **Step 2: Verify import works**
 
 ```bash
 /opt/conda/envs/nerfstudio/bin/python -c "
 import sys
-sys.path.insert(0, 'vendor/xfeat')
+sys.path.insert(0, 'third_party/xfeat')
 from accelerated_features import XFeat
 xf = XFeat()
 print('XFeat ok:', xf)
@@ -46,7 +46,7 @@ Read `vendor/README.md` first, then add an XFeat entry following the same format
 - [ ] **Step 4: Commit**
 
 ```bash
-git add vendor/xfeat vendor/README.md
+git add third_party/xfeat vendor/README.md
 git commit -m "chore(vendor): add verlab/accelerated_features (XFeat)"
 ```
 
@@ -358,7 +358,7 @@ Expected: FAIL — `ImportError: cannot import name 'XFeatExtractor'`.
 Add the vendor path injection after the SALAD vendor path block (top of file):
 
 ```python
-# XFeat vendored at vendor/xfeat/ — no pip package available.
+# XFeat vendored at third_party/xfeat/ — no pip package available.
 _XFEAT_VENDOR_PATH = str(pathlib.Path(__file__).parents[2] / "vendor" / "xfeat")
 if _XFEAT_VENDOR_PATH not in sys.path:
     sys.path.insert(0, _XFEAT_VENDOR_PATH)
@@ -371,12 +371,12 @@ class XFeatExtractor:
     """XFeat local feature extractor with mutual nearest-neighbour matching.
 
     Lightweight learned features from verlab/accelerated_features, vendored at
-    vendor/xfeat/. Faster than DISK; suitable for CPU or real-time use.
+    third_party/xfeat/. Faster than DISK; suitable for CPU or real-time use.
     Paired with kornia match_mnn for descriptor matching.
     """
 
     def __init__(self, top_k: int = 1024, device: str | None = None):
-        from modules.xfeat import XFeat  # vendored: vendor/xfeat/modules/
+        from modules.xfeat import XFeat  # vendored: third_party/xfeat/modules/
 
         self._top_k = top_k
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -1009,7 +1009,7 @@ Add to the "Recently Completed" section:
 
 ```markdown
 - **camera-localization** (2026-05-21) — [spec](specs/2026-05-21-camera-localization-design.md) · [plan](plans/2026-05-21-camera-localization.md)
-  - `localization.py` complete: `DiskExtractor` (DISK+LightGlue), `XFeatExtractor` (XFeat+MNN), `_build_frame_assignments` (torch.cdist NN), `CameraLocalizer` (exhaustive match + PnP). XFeat vendored at `vendor/xfeat/`. No global retrieval — matches all N frames to avoid false exclusions. `from_feedforward()` classmethod for feedforward pipeline.
+  - `localization.py` complete: `DiskExtractor` (DISK+LightGlue), `XFeatExtractor` (XFeat+MNN), `_build_frame_assignments` (torch.cdist NN), `CameraLocalizer` (exhaustive match + PnP). XFeat vendored at `third_party/xfeat/`. No global retrieval — matches all N frames to avoid false exclusions. `from_feedforward()` classmethod for feedforward pipeline.
 ```
 
 - [ ] **Step 5: Final commit**

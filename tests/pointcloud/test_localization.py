@@ -212,6 +212,7 @@ def test_camera_localizer_from_feedforward_classmethod():
     result.points = pts3d
     result.extrinsics = extrinsics
     result.intrinsics = intrinsics
+    result._zarr_path = None
 
     with tempfile.TemporaryDirectory() as tmp:
         paths = []

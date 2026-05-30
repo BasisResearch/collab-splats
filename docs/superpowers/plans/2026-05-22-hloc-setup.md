@@ -4,7 +4,7 @@
 
 **Goal:** Create `setup_hloc.sh` to clone and install hloc into the nerfstudio conda env for standalone SfM map building.
 
-**Architecture:** Single shell script clones the hloc repo with submodules into `vendor/hloc/` and pip-installs it editable into the nerfstudio env. Guard clause makes it re-runnable. `.gitignore` already covers `vendor/*` — no change needed.
+**Architecture:** Single shell script clones the hloc repo with submodules into `third_party/hloc/` and pip-installs it editable into the nerfstudio env. Guard clause makes it re-runnable. `.gitignore` already covers `vendor/*` — no change needed.
 
 **Tech Stack:** bash, git submodules, `/opt/conda/envs/nerfstudio/bin/pip`
 
@@ -21,14 +21,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VENDOR_DIR="$(dirname "$0")/vendor/hloc"
+VENDOR_DIR="$(dirname "$0")/third_party/hloc"
 PIP="/opt/conda/envs/nerfstudio/bin/pip"
 PYTHON="/opt/conda/envs/nerfstudio/bin/python"
 
 echo "==> hloc setup"
 
 if [ -d "$VENDOR_DIR" ]; then
-    echo "    vendor/hloc/ already exists — skipping clone"
+    echo "    third_party/hloc/ already exists — skipping clone"
 else
     echo "    Cloning Hierarchical-Localization with submodules..."
     git clone --recursive https://github.com/cvg/Hierarchical-Localization "$VENDOR_DIR"
@@ -76,7 +76,7 @@ Expected output (last lines):
 
 If clone already present (re-run):
 ```
-    vendor/hloc/ already exists — skipping clone
+    third_party/hloc/ already exists — skipping clone
     Installing hloc into nerfstudio env...
     hloc 1.x installed OK
 ==> Done.
@@ -97,7 +97,7 @@ Expected: `hloc modules OK: 1.x`
 - [ ] **Step 3: Confirm submodule extractors present**
 
 ```bash
-ls vendor/hloc/hloc/extractors/
+ls third_party/hloc/hloc/extractors/
 ```
 
 Expected: files including `superpoint.py`, `disk.py`, `sift.py`, etc.

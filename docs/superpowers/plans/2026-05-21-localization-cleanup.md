@@ -6,7 +6,7 @@
 
 **Architecture:** Three targeted edits to `localization.py` (dataclass fields, matching loop tracking, new viz section), one test addition, one new notebook. No new modules.
 
-**Tech Stack:** Python 3.10, NumPy, OpenCV, PyTorch, matplotlib, PyVista, kornia/DISK, XFeat (vendored at `vendor/xfeat/`). Always use `/opt/conda/envs/nerfstudio/bin/python`.
+**Tech Stack:** Python 3.10, NumPy, OpenCV, PyTorch, matplotlib, PyVista, kornia/DISK, XFeat (vendored at `third_party/xfeat/`). Always use `/opt/conda/envs/nerfstudio/bin/python`.
 
 ---
 

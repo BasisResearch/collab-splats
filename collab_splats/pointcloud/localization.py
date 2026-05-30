@@ -32,15 +32,15 @@ import torchvision.transforms as T
 from kornia.feature import DISK, LightGlue
 from matplotlib import pyplot as plt
 
-# XFeat vendored at vendor/xfeat/ — no pip package available.
-_XFEAT_VENDOR_PATH = str(pathlib.Path(__file__).parents[2] / "vendor" / "xfeat")
-if _XFEAT_VENDOR_PATH not in sys.path:
-    sys.path.insert(0, _XFEAT_VENDOR_PATH)
+# XFeat cloned at third_party/xfeat/ — no pip package available.
+_XFEAT_PATH = str(pathlib.Path(__file__).parents[2] / "third_party" / "xfeat")
+if _XFEAT_PATH not in sys.path:
+    sys.path.insert(0, _XFEAT_PATH)
 
 import open_clip
 from salad.models_salad.aggregators.salad import SALAD
 from salad.models_salad.backbones.dinov2 import DINOv2
-from modules.xfeat import XFeat             # vendored: vendor/xfeat/modules/
+from modules.xfeat import XFeat             # third_party/xfeat/modules/
 
 from collab_splats.utils.torch_utils import RegistryMixin
 
@@ -358,7 +358,7 @@ class XFeatExtractor(BaseLocalExtractor):
     """XFeat local feature extractor with mutual nearest-neighbour matching.
 
     Lightweight learned features from verlab/accelerated_features, vendored at
-    vendor/xfeat/. Faster than DISK; suitable for CPU or real-time use.
+    third_party/xfeat/. Faster than DISK; suitable for CPU or real-time use.
     Paired with kornia match_mnn for descriptor matching.
     """
 

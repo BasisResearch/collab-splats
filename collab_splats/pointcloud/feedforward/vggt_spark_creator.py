@@ -105,3 +105,46 @@ class VGGTSPARKCreator(VGGTXCreator):
         model.eval()
         model = model.to(device, dtype=dtype)
         return model
+
+    def _verify_loop_candidate(
+        self,
+        frame1: Any,
+        frame2: Any,
+        verify_match_ratio: float = 0.95,
+        **kwargs: Any,
+    ) -> tuple[bool, Any]:
+        """Verify a loop closure candidate via VGGT-SPARK native similarity.
+
+        Calls ``VGGT.forward(compute_similarity=True)`` on the candidate pair
+        and reads ``image_match_ratio`` directly — matching VGGT-SLAM's native
+        verification path.  This produces scores in the ~1.02–1.05 range on
+        accepted pairs (vs ~0.818 from our cross_frame_attention_ratio hook),
+        so the default threshold is recalibrated to 0.95.
+
+        Args:
+            frame1, frame2:      Preprocessed frames (C, H, W).
+            verify_match_ratio:  Accept threshold (default 0.95 for native scores).
+            **kwargs:            Ignored (no hook layer to select).
+
+        Returns:
+            (accepted, None) — poses are not extracted on this path; caller uses
+            submap poses.
+        """
+        # Stack frames into (2, C, H, W) batch expected by VGGT.forward
+        images = torch.stack([frame1, frame2])
+        # Native similarity path — model returns image_match_ratio as a side output
+        outputs = self.model(images, compute_similarity=True)
+        ratio = float(outputs["image_match_ratio"])
+        if ratio < verify_match_ratio:
+            logger.info(
+                "LC verify (native): ratio=%.4f < threshold=%.4f → rejected",
+                ratio,
+                verify_match_ratio,
+            )
+            return False, None
+        logger.info(
+            "LC verify (native): ratio=%.4f >= threshold=%.4f → accepted",
+            ratio,
+            verify_match_ratio,
+        )
+        return True, None

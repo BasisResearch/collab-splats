@@ -2,6 +2,7 @@
 .env
 .worktrees/
 .superpowers/
+.claude/
 third_party/*
 !third_party/README.md
 scratch/

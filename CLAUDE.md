@@ -6,7 +6,7 @@ Always follow:
 - Use rtk tools /workspace/.claude/RTK.md
 - At the start of every conversation always call /brainstorming -- use superpowers to accomplish tasks.
 - Active spec/plan for in-flight work lives in docs/superpowers/specs/ and docs/superpowers/plans/.
-- Architecture decisions: docs/decisions/NNN-slug.md (sequential numbering).
+- Architecture decisions: docs/superpowers/decisions/NNN-slug.md (sequential numbering).
 - User-facing module docs live in docs/ (mirrors code tree).
 - Superpowers specs/plans belong in docs/superpowers/specs/ and docs/superpowers/plans/.
 

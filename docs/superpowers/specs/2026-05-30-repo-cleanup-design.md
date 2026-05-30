@@ -11,7 +11,7 @@ Remove three directories (`worklog/`, `tools/`, `examples/`) that no longer serv
 
 | Source | Destination | Reason |
 |---|---|---|
-| `worklog/decisions/` | `docs/decisions/` | 13 ADRs — permanent architectural record |
+| `worklog/decisions/` | `docs/superpowers/decisions/` | 13 ADRs — permanent architectural record |
 | `worklog/known-test-failures.md` | `docs/known-test-failures.md` | Living doc; keep as standalone file |
 | `worklog/STATE.md` | deleted | Superseded by CLAUDE.md In-Flight + memory |
 | `worklog/WORKLOG.md` | deleted | Superseded by git log + memory |
@@ -37,7 +37,7 @@ Remove three directories (`worklog/`, `tools/`, `examples/`) that no longer serv
 ## Success Criteria
 
 - `worklog/`, `tools/`, `examples/` do not exist in the working tree
-- `docs/decisions/` contains all 13 ADRs
+- `docs/superpowers/decisions/` contains all 13 ADRs
 - `docs/known-test-failures.md` exists with original content
 - CLAUDE.md references no paths under `worklog/`
 - `pytest` passes (no regressions from file moves)

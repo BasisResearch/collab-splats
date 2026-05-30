@@ -27,7 +27,7 @@ fi
 echo "=== Downloading CO3Dv2 category: $CATEGORY → $OUTPUT_DIR ==="
 mkdir -p "$OUTPUT_DIR"
 
-PYTHON="${PYTHON:-/opt/conda/envs/nerfstudio/bin/python}"
+PYTHON="${PYTHON:-/opt/venv/reconstruction/bin/python}"
 if ! "$PYTHON" -c "import co3d" 2>/dev/null; then
     echo "Error: 'co3d' package not found. Install with:"
     echo "  $PYTHON -m pip install co3d"

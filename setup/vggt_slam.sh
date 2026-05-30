@@ -19,6 +19,8 @@ VENV_DIR="/opt/venv/vggt_slam"
 VGGTSLAM_DIR="$(dirname "$0")/third_party/VGGT-SLAM"
 CUDA_TAG="cu121"  # matches our CUDA 12.1 install
 
+command -v uv >/dev/null 2>&1 || { echo "ERROR: uv is not installed. Install it: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+
 echo "=== Creating uv venv: $VENV_DIR (python 3.11) ==="
 uv venv "$VENV_DIR" --python 3.11
 

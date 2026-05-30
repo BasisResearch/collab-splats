@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="${PYTHON:-/opt/conda/envs/reconstruction/bin/python}"
+PYTHON="${PYTHON:-/opt/venv/reconstruction/bin/python}"
 EVALS_DIR="${REPO_ROOT}/evals"
 DATA_DIR="${REPO_ROOT}/data/7scenes"
 RESULTS_BASE="${REPO_ROOT}/evals/results"

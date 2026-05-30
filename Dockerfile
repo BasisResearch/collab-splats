@@ -63,7 +63,10 @@ RUN curl https://rclone.org/install.sh | bash
 # Pre-built sources for runtime stage
 ##################################################
 
-FROM continuumio/miniconda3:latest AS conda-source
+##################################################
+# Pre-built sources for runtime stage
+##################################################
+
 FROM colmap/colmap:20240213.23 AS colmap-source
 
 ##################################################
@@ -87,9 +90,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends --no-install-su
 
 RUN curl https://rclone.org/install.sh | bash
 
-# Conda base + reconstruction env (torch + gsplat-rade compiled in builder)
-COPY --from=conda-source /opt/conda/ /opt/conda
-COPY --from=builder /opt/conda/envs/reconstruction/ /opt/conda/envs/reconstruction/
+# uv — needed post-build for setup/vggt_slam.sh to create isolated venv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH=/root/.local/bin:${PATH}
+
+# Copy pre-built venv from builder (replaces full conda copy)
+COPY --from=builder /opt/venv/reconstruction/ /opt/venv/reconstruction/
+# Copy uv-managed Python install so the interpreter is present at its canonical path
+COPY --from=builder /root/.local/share/uv/ /root/.local/share/uv/
 
 # Colmap binary
 COPY --from=colmap-source /usr/local/bin/colmap /usr/local/bin/
@@ -97,27 +105,23 @@ COPY --from=colmap-source /usr/local/lib/libcolmap* /usr/local/lib/
 
 ENV CUDA_HOME=/usr/local/cuda \
     CUDA_ROOT=/usr/local/cuda \
-    PATH=/opt/conda/bin:/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/opt/conda/envs/reconstruction/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/venv/reconstruction/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
     CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     TORCH_HOME=/workspace/models \
     HF_HOME=/workspace/models
 
-# Smoke test — verifies torch + env importable after copy across stages
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate reconstruction && \
-    python -c 'import torch; print(f\"[Runtime] torch={torch.__version__}, cuda={torch.version.cuda}\")' && \
-    echo '[Runtime] env verified'"
+# Smoke test — verifies torch + venv importable after copy across stages
+RUN python -c 'import torch; print(f"[Runtime] torch={torch.__version__}, cuda={torch.version.cuda}")' && \
+    echo '[Runtime] env verified'
 
 # SSH
 RUN echo "PermitRootLogin yes"        >> /etc/ssh/sshd_config && \
     echo "PermitTTY yes"              >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication no"  >> /etc/ssh/sshd_config
 
-# Bashrc: activate reconstruction env in interactive sessions
-# Note: conda env lib excluded from LD_LIBRARY_PATH here to avoid libtinfo.so.6 warning;
-# conda activate sets it correctly at shell init time.
+# Bashrc: activate venv in interactive sessions (replaces conda activate)
 RUN { \
-    echo 'export PATH="/opt/conda/bin:$PATH"'; \
     echo 'export TORCH_HOME="/workspace/models"'; \
     echo 'export HF_HOME="/workspace/models"'; \
     echo 'export CUDA_HOME=/usr/local/cuda'; \
@@ -125,9 +129,8 @@ RUN { \
     echo 'export PATH="/usr/local/cuda/bin:${PATH}"'; \
     echo 'export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"'; \
     echo 'export CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc'; \
-    echo 'source /opt/conda/etc/profile.d/conda.sh'; \
-    echo 'conda activate reconstruction'; \
-    echo 'export PATH="/opt/conda/envs/reconstruction/bin:${PATH}"'; \
+    echo 'source /opt/venv/reconstruction/bin/activate'; \
+    echo 'export PATH="/opt/venv/reconstruction/bin:${PATH}"'; \
     } >> /root/.bashrc
 
 WORKDIR /workspace

@@ -45,3 +45,30 @@ VGGT-SPARK reference (VGGT-1B via SPARK, same weights as VGGTXCreator): mtq_mean
 1. vggt_spark/vggtx: loops fire at 0.80 but pose graph adds error — investigate edge convention or scale estimation
 2. mapanything 200-frame: OOM during LC (segfault in torch); windowed baseline worse than single-pass
 3. mapanything windowed baseline regression: single-pass was 0.1103m; windowed (submap_size=16) is 1.0023m — likely quality degradation from small window size
+
+## Cross-model eval — 2026-05-30 (corrected method, submap_size fix)
+
+Fix applied: `eval_gt.py` `lc` condition now correctly passes `submap_size` to `LoopClosureConfig`
+(previously defaulted to 20 regardless of `--submap_size` CLI arg).
+
+### 29-frame (max_frames=29, first 29 consecutive frames, 2 submaps, 0 loops all backends)
+
+| Backbone | Baseline ATE | LC ATE | Δ |
+|---|---|---|---|
+| vggt_spark | 0.0105m | 0.0103m | −2% |
+| vggtx | 0.0105m | 0.0103m | −2% |
+| vggt_omega | 0.0126m | 0.0123m | −2% |
+| mapanything | 0.0244m | 0.0244m | 0% |
+
+All 0 loops — improvement is pure windowed stitching, not loop corrections.
+
+### 200-frame (max_frames=200, 13 submaps)
+
+| Backbone | Baseline ATE | LC ATE | Loops | Δ |
+|---|---|---|---|---|
+| vggt_spark | 0.3191m | 0.3347m | 0 | +4.9% |
+| vggtx | 0.3191m | 0.3353m | 0 | +5.1% |
+| vggt_omega | 0.3223m | 0.2652m | 12 | −17.7% |
+| mapanything | 1.0023m | 1.0023m | 0 | 0% |
+
+Open issues: spark/vggtx LC hurts with 0 loops (windowing overhead); mapanything windowed regression (1.0m vs 0.11m single-pass).

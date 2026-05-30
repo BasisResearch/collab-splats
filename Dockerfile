@@ -10,7 +10,7 @@ ARG CUDA_ARCHITECTURES="90;89;86;80;75;70"
 ARG TORCH_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 
 ##################################################
-# Stage 1: Builder — conda + Python 3.11 + torch + gsplat-rade
+# Stage 1: Builder — uv + Python 3.11 + torch + gsplat-rade
 ##################################################
 
 FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
@@ -24,48 +24,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip xz-utils cmake ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-# Miniconda
-RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
- && bash /tmp/miniconda.sh -b -p /opt/conda \
- && rm /tmp/miniconda.sh
-ENV PATH=/opt/conda/bin:${PATH}
+# uv — fast Python package manager (replaces conda + pip)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH=/root/.local/bin:${PATH}
 
-RUN conda config --set always_yes true \
- && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
- && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+# Python 3.11 + isolated venv (uv manages the Python install)
+RUN uv python install ${PYTHON_VERSION} \
+ && uv venv /opt/venv/reconstruction --python ${PYTHON_VERSION}
 
-# reconstruction env with Python 3.11
-RUN conda create -n reconstruction python=${PYTHON_VERSION} -y && conda clean -afy
-
-# CUDA 12.1 toolkit inside the conda env (matches torch cu121 ABI; used by gsplat-rade compile)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate reconstruction && \
-    conda install -c 'nvidia/label/cuda-12.1.0' cuda-toolkit -y && conda clean -afy"
-
-ENV CUDA_HOME=/opt/conda/envs/reconstruction \
+# CUDA_HOME = system path (nvidia/cuda devel image ships nvcc + headers at /usr/local/cuda)
+ENV CUDA_HOME=/usr/local/cuda \
     CC=/usr/bin/gcc \
     CXX=/usr/bin/g++ \
-    PATH=/opt/conda/envs/reconstruction/bin:${PATH} \
+    PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
-    LIBRARY_PATH=/opt/conda/envs/reconstruction/lib:/usr/local/cuda/lib64:${LIBRARY_PATH} \
-    CPATH=/opt/conda/envs/reconstruction/include:/usr/local/cuda/include:${CPATH} \
+    LIBRARY_PATH=/opt/venv/reconstruction/lib:/usr/local/cuda/lib64:${LIBRARY_PATH} \
+    CPATH=/opt/venv/reconstruction/include:/usr/local/cuda/include:${CPATH} \
     TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST}
 
 # torch 2.5.1 + cu121
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate reconstruction && \
-    pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
-        --extra-index-url https://download.pytorch.org/whl/cu121"
+RUN pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
+        --extra-index-url https://download.pytorch.org/whl/cu121
 
 # Verify torch reachable
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate reconstruction && \
-    python -c 'import torch; print(f\"[Builder] torch={torch.__version__}, cuda={torch.version.cuda}\")'"
+RUN python -c 'import torch; print(f"[Builder] torch={torch.__version__}, cuda={torch.version.cuda}")'
 
 # gsplat-rade fork (compiles CUDA kernels — slow step)
 # --no-build-isolation: setup.py imports torch at top-level to query CUDA ABI; env already has torch
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate reconstruction && \
-    pip install --no-cache-dir --no-build-isolation \
+RUN pip install --no-cache-dir --no-build-isolation \
         setuptools wheel ninja && \
     pip install --no-cache-dir --no-build-isolation \
-        git+https://github.com/brian-xu/gsplat-rade.git"
+        git+https://github.com/brian-xu/gsplat-rade.git
 
 # rclone
 RUN curl https://rclone.org/install.sh | bash

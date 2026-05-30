@@ -133,7 +133,8 @@ class VGGTSPARKCreator(VGGTXCreator):
         # Stack frames into (2, C, H, W) batch expected by VGGT.forward
         images = torch.stack([frame1, frame2])
         # Native similarity path — model returns image_match_ratio as a side output
-        outputs = self.model(images, compute_similarity=True)
+        with torch.no_grad():
+            outputs = self.model(images, compute_similarity=True)
         ratio = float(outputs["image_match_ratio"])
         if ratio < verify_match_ratio:
             logger.info(

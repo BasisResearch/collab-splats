@@ -2,8 +2,8 @@
 set -euo pipefail
 
 VENDOR_DIR="$(dirname "$0")/third_party/hloc"
-PIP="/opt/conda/envs/reconstruction/bin/pip"
-PYTHON="/opt/conda/envs/reconstruction/bin/python"
+PIP="/opt/venv/reconstruction/bin/pip"
+PYTHON="/opt/venv/reconstruction/bin/python"
 
 echo "==> hloc setup"
 

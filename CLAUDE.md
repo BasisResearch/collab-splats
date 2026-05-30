@@ -31,7 +31,7 @@ bash setup/feedforward.sh        # VGGT-X + MapAnything
 
 ## Development Environment
 
-- **Python env:** `python` = base conda py3.13 (wrong for this project). Always use `/opt/conda/envs/nerfstudio/bin/python` (py3.11).
+- **Python env:** `python` in base shell may be py3.13 (wrong for this project). Always use `/opt/venv/reconstruction/bin/python` (py3.11), or activate the venv: `source /opt/venv/reconstruction/bin/activate`.
 - **Memory:** container cgroup cap 46.6 GB. Heavy inference/eval → run in tmux, not notebooks.
 - **Side shells:** don't run parallel processes during heavy eval runs (OOM risk).
 
@@ -81,7 +81,7 @@ evals/
 
 - Flat test functions — no class-based unless shared fixture state requires it
 - `tests/` mirrors `collab_splats/` structure
-- Run: `/opt/conda/envs/nerfstudio/bin/python -m pytest tests/`
+- Run: `/opt/venv/reconstruction/bin/python -m pytest tests/`
 
 ## Evaluation
 
@@ -96,6 +96,6 @@ Conventional commits with scope: `feat(pointcloud):`, `fix(ba):`, `refactor(sema
 
 ```bash
 black . && isort .                                                  # format
-/opt/conda/envs/nerfstudio/bin/python -m pytest tests/             # test
-/opt/conda/envs/nerfstudio/bin/python evals/eval_gt.py --help      # eval
+/opt/venv/reconstruction/bin/python -m pytest tests/               # test
+/opt/venv/reconstruction/bin/python evals/eval_gt.py --help        # eval
 ```

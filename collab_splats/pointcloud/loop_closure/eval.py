@@ -159,14 +159,23 @@ def ate_translation(pred: np.ndarray, gt: np.ndarray) -> dict:
     Returns:
         {'rmse', 'mean', 'median', 'max', 'per_frame'} after Umeyama alignment.
     """
-    aligned, _ = umeyama_align(pred, gt)
-    # Camera positions in world
-    def _cam_pos(poses):
+    # Extract camera positions in world from world-to-cam poses
+    def _cam_pos(poses: np.ndarray) -> np.ndarray:
         R_ = poses[:, :3, :3]
         t_ = poses[:, :3, 3]
         return np.einsum("nij,nj->ni", R_.transpose(0, 2, 1), -t_)
 
-    errs = np.linalg.norm(_cam_pos(aligned) - _cam_pos(gt), axis=1)
+    p_pred = _cam_pos(pred)  # (N, 3)
+    p_gt = _cam_pos(gt)      # (N, 3)
+
+    # Align predicted positions to GT via Sim3 (scale + rotation + translation).
+    # Must use Sim3 (not SE3) to match evo's correct_scale=True — VGGT depth predictions
+    # carry an unknown global scale factor that SE3 alignment cannot remove.
+    from .closure import umeyama_sim3
+    s, R_align, t_align = umeyama_sim3(source=p_pred, target=p_gt)
+    p_aligned = (s * R_align @ p_pred.T).T + t_align  # (N, 3)
+
+    errs = np.linalg.norm(p_aligned - p_gt, axis=1)
     return {
         "rmse":      float(np.sqrt((errs ** 2).mean())),
         "mean":      float(errs.mean()),

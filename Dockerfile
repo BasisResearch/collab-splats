@@ -38,8 +38,9 @@ ENV CUDA_HOME=/usr/local/cuda \
     CXX=/usr/bin/g++ \
     PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
-    LIBRARY_PATH=/opt/venv/reconstruction/lib:/usr/local/cuda/lib64:${LIBRARY_PATH} \
-    CPATH=/opt/venv/reconstruction/include:/usr/local/cuda/include:${CPATH} \
+    LIBRARY_PATH=/usr/local/cuda/lib64:${LIBRARY_PATH} \
+    CPATH=/usr/local/cuda/include:${CPATH} \
+    CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST}
 
 # torch 2.5.1 + cu121
@@ -58,10 +59,6 @@ RUN pip install --no-cache-dir --no-build-isolation \
 
 # rclone
 RUN curl https://rclone.org/install.sh | bash
-
-##################################################
-# Pre-built sources for runtime stage
-##################################################
 
 ##################################################
 # Pre-built sources for runtime stage
@@ -106,7 +103,7 @@ COPY --from=colmap-source /usr/local/lib/libcolmap* /usr/local/lib/
 ENV CUDA_HOME=/usr/local/cuda \
     CUDA_ROOT=/usr/local/cuda \
     PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/opt/venv/reconstruction/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
     CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     TORCH_HOME=/workspace/models \
     HF_HOME=/workspace/models
@@ -130,7 +127,6 @@ RUN { \
     echo 'export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"'; \
     echo 'export CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc'; \
     echo 'source /opt/venv/reconstruction/bin/activate'; \
-    echo 'export PATH="/opt/venv/reconstruction/bin:${PATH}"'; \
     } >> /root/.bashrc
 
 WORKDIR /workspace

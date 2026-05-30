@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# setup/vggt_slam.sh — create isolated conda env for VGGT-SLAM 2.0
+# setup/vggt_slam.sh — create isolated uv venv for VGGT-SLAM 2.0
 #
 # VGGT-SLAM requires torch==2.3.1 which conflicts with our reconstruction env
-# (torch 2.5.1+cu121). This script creates a dedicated env that is safe to
+# (torch 2.5.1+cu121). This script creates a dedicated venv that is safe to
 # run alongside reconstruction without any interference.
 #
 # Usage:
@@ -12,18 +12,18 @@
 #   python evals/runners/run_vggt_slam.py \
 #       --image_dir /path/to/images \
 #       --output /path/to/out.tum \
-#       --python /opt/conda/envs/vggt_slam/bin/python
+#       --python /opt/venv/vggt_slam/bin/python
 set -e
 
-CONDA_ENV="vggt_slam"
+VENV_DIR="/opt/venv/vggt_slam"
 VGGTSLAM_DIR="$(dirname "$0")/third_party/VGGT-SLAM"
 CUDA_TAG="cu121"  # matches our CUDA 12.1 install
 
-echo "=== Creating conda env: $CONDA_ENV (python 3.11) ==="
-conda create -n "$CONDA_ENV" python=3.11 -y
+echo "=== Creating uv venv: $VENV_DIR (python 3.11) ==="
+uv venv "$VENV_DIR" --python 3.11
 
-PYTHON="/opt/conda/envs/${CONDA_ENV}/bin/python"
-PIP="/opt/conda/envs/${CONDA_ENV}/bin/pip"
+PYTHON="$VENV_DIR/bin/python"
+PIP="$VENV_DIR/bin/pip"
 
 echo "=== Installing torch 2.3.1 + cu121 ==="
 "$PIP" install \

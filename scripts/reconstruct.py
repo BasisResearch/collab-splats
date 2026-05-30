@@ -2,7 +2,7 @@
 """CLI entry point for the Reconstructor pipeline.
 
 Usage:
-    # Run with a named dataset (config from configs/reconstruction/datasets/)
+    # Run with a named dataset (config from configs/datasets/)
     python scripts/reconstruct.py --dataset birds_c0043
 
     # Run specific stages only
@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).parent.parent
-DEFAULT_CONFIG_DIR = _REPO_ROOT / "configs" / "reconstruction"
+DEFAULT_CONFIG_DIR = _REPO_ROOT / "configs"
 
 
 def main() -> None:
@@ -56,7 +56,7 @@ def main() -> None:
     source.add_argument(
         "--dataset",
         metavar="NAME",
-        help="Dataset name — loads configs/reconstruction/datasets/<NAME>.yaml",
+        help="Dataset name — loads configs/datasets/<NAME>.yaml",
     )
     source.add_argument(
         "--config",

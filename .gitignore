@@ -1,9 +1,14 @@
 .DS_Store
 .env
 .worktrees/
+.superpowers/
 vendor/*
 !vendor/README.md
 scratch/
+worklog/
+tools/
+examples/
+stage/
 evals/results/
 
 # Eval benchmark data (downloaded on-demand via evals/download_7scenes.sh)

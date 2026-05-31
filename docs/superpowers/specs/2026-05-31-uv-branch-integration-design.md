@@ -1,8 +1,31 @@
 # uv Branch Integration + Staged Env Debug — Design
 
 **Date:** 2026-05-31
-**Status:** Approved, pending implementation plan
+**Status:** PAUSED at Phase 0 gate — cu121 test baseline must be fixed first (see Handoff below)
 **Author:** Tommy
+
+## Handoff (2026-05-31) — Phase 0 gate tripped
+
+Phase 0 ran but **failed the env-health gate**. Do NOT rebase (Phase 1) until cu121 is green.
+
+- **Baseline run** (conda env `reconstruction`, command per Phase 0):
+  `73 failed, 346 passed, 4 skipped, 1 xpassed, 16 errors`, **423 tests collected**.
+  Saved to `evals/results/baseline-conda-tests.txt`.
+- **Documented baseline** (`docs/known-test-failures.md`, 2026-05-26): `39 failed, 600 passed,
+  2 collection errors`, ~644 collected. So ~220 tests now **fail to collect** — whole modules
+  error out on import, not new logic failures.
+- **Root cause:** missing deps in the only conda env (`reconstruction`) —
+  `vggt` (core / VGGT-X), `evo` (eval), `panel` + `param` (dashboard) all `ModuleNotFoundError`.
+  Plus the pre-known `nerfstudio.*` namespace shadow (Group 6). `torch 2.5.1+cu121` and
+  `nerfstudio` import fine. Likely an **incomplete env build**, not a wrong env — fixes belong in
+  `setup.sh` / `setup/feedforward.sh` (vggt) and dashboard/eval extras.
+- **Decision:** a separate agent will investigate and fix the failing tests on `refactor/cu121`
+  first. This integration resumes only once cu121's baseline is clean (failures == documented
+  known set).
+
+**Resume protocol:** when cu121 is green, re-run Phase 0 to refresh
+`evals/results/baseline-conda-tests.txt`, then proceed to Phase 1 (rebase). The uv worktree is
+untouched at `51e5a93`; no rebase has occurred.
 
 ## Goal
 

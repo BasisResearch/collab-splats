@@ -176,11 +176,11 @@ class LoopClosureConfig:
     min_submap_gap: int = 1
     manifold: Literal["sl4", "se3"] = "sl4"
     # Inter-submap scale estimation method.
-    # "se3"           — our approach: full SE3 T applied before norm ratio (current default)
-    # "rotation_only" — VGGT-SLAM style: rotation-only transform, no translation shift
-    # "pairwise_dist" — pairwise distance ratio, translation-invariant (recommended fix)
+    # "rotation_only" — VGGT-SLAM default: T[:3,:3] applied to curr_pts (rotation only)
+    # "se3"           — full SE3 T applied before norm ratio
+    # "pairwise_dist" — pairwise distance ratio, translation-invariant
     # "none"          — skip scale estimation entirely; always use scale=1.0
-    scale_method: Literal["se3", "rotation_only", "pairwise_dist", "none"] = "se3"
+    scale_method: Literal["se3", "rotation_only", "pairwise_dist", "none"] = "rotation_only"
     max_jump_ratio: float = math.inf  # reject loops where ‖ΔT.t‖/path_length > this; math.inf disables
     conf_threshold: float = 25.0  # confidence gate for scale estimation; matches VGGT-SLAM --conf_threshold 25
     lc_threshold: float | None = None        # deprecated: use lc_retrieval_threshold (same L2 value)
@@ -280,7 +280,15 @@ def dedup_overlap(  # noqa: F811 — shadows import; canonical copy lives here
     corrected: dict[int, np.ndarray],
     total_frames: int,
 ) -> np.ndarray:
-    """Reconstruct (total_frames, 4, 4) from per-submap corrected poses, deduplicating overlap."""
+    """Reconstruct (total_frames, 4, 4) from per-submap corrected poses, deduplicating overlap.
+
+    First-writer-wins: the overlap frame belongs to two adjacent submaps; we keep
+    submap-0's estimate (processed first). VGGT-SLAM does NOT dedup — its
+    write_poses_to_file (map.py:142-162) emits every submap's frames, so the
+    shared overlap frame appears twice in its TUM (a duplicate timestamp). evo
+    associates by timestamp and keeps the first occurrence — also submap-0's — so
+    the two pipelines agree on the boundary pose despite SLAM's duplicate row.
+    """
     out = np.tile(np.eye(4, dtype=np.float32), (total_frames, 1, 1))
     assigned = np.zeros(total_frames, dtype=bool)
     for sid, start in zip(submap_ids, submap_starts):
@@ -409,10 +417,16 @@ def run_pose_graph_optimization(
             frame_to_node[(submap.submap_id, local_i)] = nid
             node_ids_this.append(nid)
 
+        # Build K_4x4 from 3×3 intrinsics — matches VGGT-SLAM's proj_mats = K_4x4.
+        # SLAM uses K_4x4 for T computation (inv(K_prev)@K_curr = I for same camera)
+        # and for pose extraction (K @ inv(H_opt) → decompose_camera cancels K).
+        K_4x4 = np.tile(np.eye(4, dtype=np.float64), (k, 1, 1))
+        K_4x4[:, :3, :3] = submap.intrinsics.astype(np.float64)
+
         if s_idx == 0:
-            H0 = submap.poses[0].astype(np.float64)
-            pg.add_node(node_ids_this[0], H0)
-            pg.add_prior(node_ids_this[0], H0)
+            # First node = I, prior = I — matches VGGT-SLAM add_homography(0, I) + add_prior_factor(0, I)
+            pg.add_node(node_ids_this[0], np.eye(4))
+            pg.add_prior(node_ids_this[0], np.eye(4))
             for local_i in range(1, k):
                 H_inner = (
                     submap.poses[local_i - 1].astype(np.float64)
@@ -425,13 +439,13 @@ def run_pose_graph_optimization(
                 )
         else:
             prev_submap = submaps[s_idx - 1]
+            prev_K_4x4 = np.tile(np.eye(4, dtype=np.float64), (len(prev_submap.poses), 1, 1))
+            prev_K_4x4[:, :3, :3] = prev_submap.intrinsics.astype(np.float64)
             O = min(overlap_frames, k, len(prev_submap.poses))
 
-            # Always compute T from overlap poses — needed for H_w (Bug 1 fix)
-            # and scale estimation. Moved outside world_points block.
-            P_curr_overlap = submap.poses[0].astype(np.float64)        # w2c: curr world → cam
-            P_prev_overlap = prev_submap.poses[-1].astype(np.float64)  # w2c: prev world → cam
-            T = np.linalg.inv(P_prev_overlap) @ P_curr_overlap         # curr world → prev world
+            # T = inv(K_prev[-1]) @ K_curr[0] — same as VGGT-SLAM's proj_mats-based T.
+            # For fixed camera (K_prev = K_curr) this equals I exactly.
+            T = np.linalg.inv(prev_K_4x4[-1]) @ K_4x4[0]
 
             scale = 1.0
             if (
@@ -439,8 +453,21 @@ def run_pose_graph_optimization(
                 and prev_submap.world_points is not None
                 and O > 0
             ):
+                # curr_pts: world_points[0] = cam_pts[0] (W2C[0]=I for VGGT) — same as SLAM t1.
                 curr_pts = submap.world_points[:O].reshape(-1, 3).astype(np.float64)
-                prev_pts = prev_submap.world_points[-O:].reshape(-1, 3).astype(np.float64)
+
+                # prev_pts: SLAM uses camera-local depth (pointclouds[K-1], camera frame of last frame).
+                # Our world_points[-1] = C2W[-1] @ cam_pts[-1] (cam0-frame, not camera-local).
+                # Back-transform: W2C[-1] @ world_pts[-1] = cam_pts[-1] (camera-local), matching SLAM.
+                prev_wps = prev_submap.world_points[-O:]  # (O, P, 3)
+                P_per = prev_wps.shape[1]
+                prev_cam_list = []
+                for oi in range(O):
+                    W2C = prev_submap.poses[-O + oi].astype(np.float64)
+                    wh = np.hstack([prev_wps[oi], np.ones((P_per, 1), dtype=np.float64)])
+                    prev_cam_list.append((W2C @ wh.T).T[:, :3])
+                prev_pts = np.concatenate(prev_cam_list, axis=0)
+
                 n = curr_pts.shape[0]
 
                 # Confidence filtering: match VGGT-SLAM solver.py:132-143
@@ -457,10 +484,10 @@ def run_pose_graph_optimization(
                     if joint_mask.sum() >= _MIN_CONF_POINTS:
                         mask = joint_mask
                     else:
-                        # Fallback: try either-side mask; else use all points
-                        either_mask = (curr_conf > conf_threshold) | (prev_conf > conf_threshold)
-                        if either_mask.sum() >= _MIN_CONF_POINTS:
-                            mask = either_mask
+                        # VGGT-SLAM fallback: prior_conf > thresh only (not OR mask).
+                        prior_only_mask = prev_conf > conf_threshold
+                        if prior_only_mask.sum() >= _MIN_CONF_POINTS:
+                            mask = prior_only_mask
 
                 curr_h = np.hstack([curr_pts, np.ones((n, 1))])
                 if scale_method == "none":
@@ -480,10 +507,14 @@ def run_pose_graph_optimization(
                     else:
                         scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
 
+            # H_w = H_overlap @ T @ H_scale — matches VGGT-SLAM solver.py:161-162
+            # (H_overlap_prev_node @ inv(K_prev) @ K_curr @ H_scale). Note SLAM's
+            # submap.proj_mats stores K (the param is misleadingly named
+            # intrinsics_inv but solver.py:256 passes K_4x4), so its
+            # inv(proj_mats[-1]) @ proj_mats[0] == our inv(K_prev) @ K_curr == T.
             H_scale = np.diag([scale, scale, scale, 1.0])
             prev_submap_last_nid = submap_node_ids[prev_submap.submap_id][-1]
             H_overlap = pg.get_homography(prev_submap_last_nid)
-            # Bug 1 fix: use full pose T (captures extrinsic rotation) instead of inv(K_prev)@K_curr
             H_w = H_overlap @ T @ H_scale
             pg.add_node(node_ids_this[0], H_w)
 
@@ -512,6 +543,10 @@ def run_pose_graph_optimization(
 
         submap_node_ids[submap.submap_id] = node_ids_this
         global_node_id += k
+        # Incremental optimization after each submap — matches VGGT-SLAM runner which calls
+        # solver.graph.optimize() inside the per-submap loop before processing the next submap.
+        # This gives better H_overlap values for the next submap's H_w initialization.
+        pg.optimize()
 
     for lc in lc_submaps:
         if lc.poses.shape[0] != 2:
@@ -534,9 +569,13 @@ def run_pose_graph_optimization(
         node_ids = submap_node_ids[submap.submap_id]
         k = len(node_ids)
         poses_out = np.zeros((k, 4, 4), dtype=np.float32)
+        # Extraction via K_4x4 — matches VGGT-SLAM: proj_mats[i] @ inv(H_opt[i]).
+        # decompose_camera cancels the K factor and returns correct SE3 R, t.
+        s_K = np.tile(np.eye(4, dtype=np.float64), (k, 1, 1))
+        s_K[:, :3, :3] = submap.intrinsics.astype(np.float64)
         for local_i, nid in enumerate(node_ids):
             H_opt = pg.get_homography(nid)
-            local_proj = submap.poses[local_i].astype(np.float64)
+            local_proj = s_K[local_i]  # camera intrinsics as 4×4
             corrected = local_proj @ np.linalg.inv(H_opt)
             _, R, t, _ = decompose_camera(corrected)
             if debug_out is not None and local_i == 0:
@@ -545,8 +584,14 @@ def run_pose_graph_optimization(
                         entry["H_opt"] = H_opt.copy()
                         entry["corrected_proj"] = corrected.copy()
                         break
+            # decompose_camera returns R as the camera-to-world rotation and
+            # t = inv(K) @ P[:,3] (VGGT-SLAM's no_inverse=True values). SLAM's
+            # camera centre is C = -R @ t, i.e. the world-to-cam pose is
+            # [R^T | t]. Store R^T so downstream -R_stored^T @ t recovers C.
+            # (Storing R directly gives -R^T @ t — correct only for near-symmetric
+            # rotations, which is why single-submap matched but multi-submap bent.)
             mat = np.eye(4, dtype=np.float32)
-            mat[:3, :3] = R.astype(np.float32)
+            mat[:3, :3] = R.T.astype(np.float32)
             mat[:3, 3] = t.astype(np.float32)
             poses_out[local_i] = mat
         corrected_per_submap[submap.submap_id] = poses_out

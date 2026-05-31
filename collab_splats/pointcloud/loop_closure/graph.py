@@ -24,7 +24,18 @@ from scipy.linalg import rq
 def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """RQ decompose 3×4 or 4×4 projection matrix → (K, R, t, scale).
 
-    Source: MIT-SPARK/VGGT-SLAM vggt_slam/slam_utils.py:decompose_camera
+    Source: MIT-SPARK/VGGT-SLAM vggt_slam/slam_utils.py:decompose_camera.
+
+    CONVENTION (critical): this matches VGGT-SLAM's ``no_inverse=True`` branch.
+    R is the camera-to-world rotation and ``t = inv(K) @ P[:,3]`` (NOT a
+    world-to-cam translation). SLAM's *default* branch returns
+    ``t = -R @ inv(K) @ P[:,3]`` and uses it directly as the camera centre
+    ``C = -R @ t``; so the world-to-cam pose is ``[R^T | t]``. Callers that
+    store a world-to-cam extrinsic MUST transpose R (see closure.py pose
+    extraction). Storing R directly yields centre ``-R^T @ t``, which agrees
+    only for near-identity rotations (single submap) and bends multi-submap
+    trajectories — this was the root cause of the vggt_spark↔VGGT-SLAM ATE
+    gap (0.308m → 0.017m once fixed).
     """
     P = np.array(P, dtype=np.float64)
     if P.shape[0] != 3:
@@ -49,7 +60,8 @@ def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray,
     # SVD polar-decomposition snap: enforce R is a proper rotation matrix
     U, _, Vt = np.linalg.svd(R)
     R = U @ Vt
-    # t lives in camera coords: P = K[R|t] => P[:,3] = K @ t
+    # t = inv(K) @ P[:,3] — VGGT-SLAM no_inverse=True value (see docstring).
+    # NOT the world-to-cam translation; camera centre is C = -R @ t.
     t = np.linalg.inv(K) @ P[:, 3]
     K = K / scale
     return K, R, t, scale
@@ -137,13 +149,13 @@ class PoseGraph:
     # ---- node management ----
 
     def add_node(self, node_id: int, H: np.ndarray) -> None:
-        """Insert per-frame node. H is 4×4; normalize_to_sl4 applied internally."""
+        """Insert per-frame node. H is 4×4; GTSAM SL4 normalizes internally."""
         if node_id in self._node_ids:
             return
         key = _X(node_id)
         H = np.array(H, dtype=np.float64)
         if self._manifold == "sl4":
-            self._initial.insert(key, gtsam.SL4(normalize_to_sl4(H)))
+            self._initial.insert(key, gtsam.SL4(H))
         else:
             self._initial.insert(key, _pose3(H))
         self._node_ids.add(node_id)
@@ -154,7 +166,7 @@ class PoseGraph:
         H = np.array(H, dtype=np.float64)
         if self._manifold == "sl4":
             self._graph.add(
-                gtsam.PriorFactorSL4(key, gtsam.SL4(normalize_to_sl4(H)), self._anchor_noise)
+                gtsam.PriorFactorSL4(key, gtsam.SL4(H), self._anchor_noise)
             )
         else:
             self._graph.add(
@@ -168,7 +180,6 @@ class PoseGraph:
         key_i, key_j = _X(id_i), _X(id_j)
         H_rel = np.array(H_rel, dtype=np.float64)
         if self._manifold == "sl4":
-            H_rel = normalize_to_sl4(H_rel)
             self._graph.add(
                 gtsam.BetweenFactorSL4(key_i, key_j, gtsam.SL4(H_rel), self._seq_noise)
             )

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import torch
+from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 from .vggtx import VGGTXCreator
 
@@ -105,6 +106,60 @@ class VGGTSPARKCreator(VGGTXCreator):
         model.eval()
         model = model.to(device, dtype=dtype)
         return model
+
+    def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
+        """Run VGGT-SPARK forward, mirroring VGGT-SLAM's call exactly.
+
+        SPARK's ``VGGT.forward`` casts inputs to bf16 and wraps its heads in
+        ``torch.cuda.amp.autocast(enabled=False)`` — it expects to run with NO
+        outer autocast. The inherited VGGTX ``_forward`` wraps the call in
+        ``torch.autocast``, which leaks fp32 aggregator tokens into SPARK's
+        bf16 ``camera_head.token_norm`` (which, unlike VGGT-X, does not cast its
+        input) → ``expected Float but found BFloat16``. This override drops the
+        outer autocast and feeds the bf16 tensor directly, identical to
+        ``solver.run_predictions`` → guarantees stage-2 forward parity.
+
+        Args:
+            model: Loaded VGGT-SPARK model (bf16 weights on Ampere+).
+            views: ``(N, 3, H, W)`` preprocessed image tensor from _preprocess.
+
+        Returns:
+            dict with keys ``images``, ``extrinsic``, ``intrinsics``,
+            ``intrinsics_downsampled`` (alias), ``depth``, ``depth_conf`` —
+            same schema as VGGTXCreator._forward so downstream is unchanged.
+        """
+        device = next(model.parameters()).device
+        dtype = (
+            torch.bfloat16
+            if device.type == "cuda" and torch.cuda.get_device_capability(device)[0] >= 8
+            else torch.float16
+        )
+
+        # Feed bf16 tensor directly — SPARK adds the batch dim and disables
+        # autocast for its heads internally. No outer torch.autocast wrapper.
+        images = views.to(device, dtype=dtype)
+        with torch.no_grad():
+            predictions = model(images)
+
+        # Decode pose encoding at model resolution (matches VGGT-SLAM upstream).
+        extrinsic_t, intrinsic_t = pose_encoding_to_extri_intri(
+            predictions["pose_enc"], images.shape[-2:]
+        )
+
+        # Move to CPU float32 for downstream numpy ops.
+        extrinsic  = extrinsic_t.cpu().float().numpy().squeeze(0)   # (N, 3, 4)
+        intrinsic  = intrinsic_t.cpu().float().numpy().squeeze(0)   # (N, 3, 3)
+        depth_map  = predictions["depth"].squeeze(0).cpu().float().numpy()        # (N, H, W, 1)
+        depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy()   # (N, H, W)
+
+        return {
+            "images": images,
+            "extrinsic": extrinsic,
+            "intrinsics": intrinsic,
+            "intrinsics_downsampled": intrinsic,
+            "depth": depth_map,
+            "depth_conf": depth_conf,
+        }
 
     def _verify_loop_candidate(
         self,

@@ -1,0 +1,8 @@
+evals/data/7scenes/chess/chess/seq-01/frame-000000.color.png
+evals/data/7scenes/chess/chess/seq-01/frame-000035.color.png
+evals/data/7scenes/chess/chess/seq-01/frame-000059.color.png
+evals/data/7scenes/chess/chess/seq-01/frame-000078.color.png
+evals/data/7scenes/chess/chess/seq-01/frame-000113.color.png
+evals/data/7scenes/chess/chess/seq-01/frame-000139.color.png
+evals/data/7scenes/chess/chess/seq-01/frame-000149.color.png
+evals/data/7scenes/chess/chess/seq-01/frame-000182.color.png

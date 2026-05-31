@@ -217,7 +217,7 @@ def rpe(pred: np.ndarray, gt: np.ndarray, delta: int = 1) -> dict:
 def auc_at_threshold(
     pred: np.ndarray,
     gt: np.ndarray,
-    max_threshold_deg: float = 30.0,
+    thresholds: tuple[float, ...] = (30.0,),
 ) -> dict:
     """AUC@max_threshold_deg — VGGT-X / VGGT-Long pairwise protocol.
 
@@ -234,7 +234,7 @@ def auc_at_threshold(
         pred: (N, 4, 4) predicted cam-to-world poses (t column = camera center)
         gt:   (N, 4, 4) ground-truth cam-to-world poses
     Returns:
-        {"auc_30": float in [0, 100], "per_pair_err": list[float]}
+        {"auc_{t}": float in [0, 100] for each t in thresholds, "per_pair_err": list[float]}
     """
     R_pred = pred[:, :3, :3]
     t_pred = pred[:, :3, 3]  # camera centers (c2w convention)
@@ -283,10 +283,13 @@ def auc_at_threshold(
 
     err = np.maximum(err_R, err_T)
 
-    # Histogram AUC: integer 1° bins [0, max_threshold_deg], cumsum mean
-    max_t = int(max_threshold_deg)
-    histogram, _ = np.histogram(err, bins=np.arange(max_t + 1))
-    normalized = histogram.astype(float) / len(err)
-    auc = float(np.mean(np.cumsum(normalized)) * 100.0)
-
-    return {"auc_30": auc, "per_pair_err": err.tolist()}
+    # Histogram AUC at each requested threshold: integer 1° bins [0, t], cumsum mean.
+    # err is computed once over all pairs; only the cumulative window changes per threshold.
+    out: dict = {}
+    for t in thresholds:
+        max_t = int(t)
+        histogram, _ = np.histogram(err, bins=np.arange(max_t + 1))
+        normalized = histogram.astype(float) / len(err)
+        out[f"auc_{max_t}"] = float(np.mean(np.cumsum(normalized)) * 100.0)
+    out["per_pair_err"] = err.tolist()
+    return out

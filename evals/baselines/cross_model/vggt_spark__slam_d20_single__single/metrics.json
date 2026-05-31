@@ -1,0 +1,27 @@
+{
+  "_config": {
+    "backbone": "vggt_spark",
+    "max_frames": 500,
+    "submap_size": null,
+    "dataset": "7scenes",
+    "seq_dir": "evals/data/7scenes/chess/chess/seq-01"
+  },
+  "baseline": {
+    "ate": {
+      "rmse": 0.01872963085770607,
+      "mean": 0.016780061647295952,
+      "median": 0.01577169820666313,
+      "max": 0.034326378256082535
+    },
+    "rpe": {
+      "trans_rmse": 0.09443586319684982,
+      "rot_rmse_deg": 1.7902014255523682
+    },
+    "auc": {
+      "auc_5": 33.484848484848484,
+      "auc_15": 74.84848484848483,
+      "auc_30": 87.37373737373737
+    },
+    "time_s": 49.75
+  }
+}

@@ -169,3 +169,19 @@ def test_save_outputs_no_per_frame_in_json(tmp_path):
     _save_outputs(metrics, trajectories, tmp_path)
     loaded = json.loads((tmp_path / "metrics.json").read_text())
     assert "per_frame" not in loaded["baseline"]["ate"]
+
+
+def test_save_outputs_persists_all_auc_thresholds(tmp_path):
+    """metrics.json keeps the full AUC dict (auc_5/15/30) + RPE rotation."""
+    from eval_gt import _save_outputs
+    poses = np.tile(np.eye(4), (3, 1, 1))
+    metrics = {"baseline": {
+        "ate": {"rmse": 0.01, "per_frame": np.zeros(3)},
+        "rpe": {"trans_rmse": 0.02, "rot_rmse_deg": 1.5},
+        "auc": {"auc_5": 10.0, "auc_15": 50.0, "auc_30": 80.0, "per_pair_err": [0.0]},
+        "time_s": 1,
+    }}
+    _save_outputs(metrics, {"gt": poses, "baseline": poses}, tmp_path)
+    saved = json.loads((tmp_path / "metrics.json").read_text())["baseline"]
+    assert saved["auc"] == {"auc_5": 10.0, "auc_15": 50.0, "auc_30": 80.0}
+    assert saved["rpe"]["rot_rmse_deg"] == 1.5

@@ -1,0 +1,6 @@
+# Keep only lean, reproducible-from-metrics artifacts in git.
+# Heavy per-run outputs (COLMAP, point clouds, plots, npz) are gitignored.
+**/baseline/
+**/lc/
+**/plots/
+**/trajectories.npz

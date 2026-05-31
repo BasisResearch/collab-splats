@@ -1,0 +1,26 @@
+| backbone | frameset | cond | ATE | RPE-t | RPE-r° | AUC5 | AUC15 | AUC30 | Δspark | Δslam |
+|---|---|---|---|---|---|---|---|---|---|---|
+| mapanything | slam_d10 | baseline | 0.0204 | 0.0695 | 0.57 | 36.2 | 74.7 | 87.0 | +0.0031 | +0.0028 |
+| mapanything | slam_d10 | lc | 0.0204 | 0.0695 | 0.57 | 36.2 | 74.7 | 87.0 | +0.0031 | +0.0028 |
+| mapanything | slam_d10_single | baseline | 0.0235 | 0.0720 | 0.49 | 36.6 | 72.9 | 86.1 | +0.0053 | +nan |
+| mapanything | slam_d20_single | baseline | 0.0223 | 0.1386 | 0.83 | 35.6 | 73.4 | 86.7 | +0.0035 | +nan |
+| mapanything | slam_d5_long | baseline | 0.1927 | 0.0478 | 0.61 | 2.8 | 33.3 | 60.8 | +0.1486 | +0.1464 |
+| mapanything | slam_d5_long | lc | 0.1927 | 0.0478 | 0.61 | 2.8 | 33.3 | 60.8 | +0.1486 | +0.1464 |
+| vggt_omega | slam_d10 | baseline | 0.0101 | 0.0445 | 0.43 | 67.4 | 88.3 | 94.2 | -0.0073 | -0.0075 |
+| vggt_omega | slam_d10 | lc | 0.0101 | 0.0445 | 0.43 | 67.4 | 88.3 | 94.2 | -0.0073 | -0.0075 |
+| vggt_omega | slam_d10_single | baseline | 0.0101 | 0.0436 | 0.43 | 65.5 | 87.3 | 93.6 | -0.0081 | +nan |
+| vggt_omega | slam_d20_single | baseline | 0.0113 | 0.0890 | 0.74 | 69.4 | 88.4 | 94.2 | -0.0075 | +nan |
+| vggt_omega | slam_d5_long | baseline | 0.0308 | 0.0223 | 0.42 | 51.5 | 82.6 | 91.1 | -0.0133 | -0.0156 |
+| vggt_omega | slam_d5_long | lc | 0.5815 | 0.0441 | 2.00 | 0.1 | 0.6 | 2.7 | +0.5373 | +0.5351 |
+| vggt_spark | slam_d10 | baseline | 0.0174 | 0.0455 | 0.52 | 46.0 | 79.7 | 89.7 | +0.0000 | -0.0003 |
+| vggt_spark | slam_d10 | lc | 0.0174 | 0.0455 | 0.52 | 46.0 | 79.7 | 89.7 | +0.0000 | -0.0003 |
+| vggt_spark | slam_d10_single | baseline | 0.0182 | 0.0456 | 2.07 | 34.7 | 75.1 | 87.4 | +0.0000 | +nan |
+| vggt_spark | slam_d20_single | baseline | 0.0187 | 0.0944 | 1.79 | 33.5 | 74.8 | 87.4 | +0.0000 | +nan |
+| vggt_spark | slam_d5_long | baseline | 0.0441 | 0.0239 | 0.47 | 24.1 | 70.5 | 84.9 | +0.0000 | -0.0022 |
+| vggt_spark | slam_d5_long | lc | 0.0441 | 0.0239 | 0.47 | 24.1 | 70.5 | 84.9 | +0.0000 | -0.0022 |
+| vggtx | slam_d10 | baseline | 0.0173 | 0.0457 | 0.51 | 46.6 | 79.9 | 89.9 | -0.0001 | -0.0004 |
+| vggtx | slam_d10 | lc | 0.0173 | 0.0457 | 0.51 | 46.6 | 79.9 | 89.9 | -0.0001 | -0.0004 |
+| vggtx | slam_d10_single | baseline | 0.0187 | 0.0457 | 0.52 | 43.8 | 78.3 | 89.1 | +0.0005 | +nan |
+| vggtx | slam_d20_single | baseline | 0.0184 | 0.0943 | 0.89 | 44.1 | 78.6 | 89.3 | -0.0003 | +nan |
+| vggtx | slam_d5_long | baseline | 0.0428 | 0.0239 | 0.47 | 21.7 | 68.8 | 84.0 | -0.0013 | -0.0035 |
+| vggtx | slam_d5_long | lc | 0.8629 | 0.0363 | 0.80 | 1.2 | 6.0 | 12.1 | +0.8187 | +0.8165 |

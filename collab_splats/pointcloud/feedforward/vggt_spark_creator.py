@@ -10,6 +10,7 @@ same SPARK module through our pipeline unchanged.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import sys
 from dataclasses import dataclass
@@ -26,8 +27,24 @@ logger = logging.getLogger(__name__)
 # Absolute path to the VGGT-SPARK third-party source tree.
 # Inserted into sys.path only during _load_model, then removed.
 _VGGT_SPARK_ROOT: str = str(
-    Path(__file__).resolve().parents[4] / "third_party" / "vggt_spark"
+    Path(__file__).resolve().parents[3] / "third_party" / "vggt_spark"
 )
+
+
+def _assert_loaded_from_spark(module_file: str) -> None:
+    """Raise if the resolved vggt module is not under the SPARK source tree.
+
+    Guards the silent import-cache trap where a previously-cached VGGT-X
+    ``vggt`` package shadows the SPARK path insertion, so ``vggt_spark`` would
+    silently run VGGT-X weights/code.
+    """
+    if not str(module_file).startswith(_VGGT_SPARK_ROOT):
+        raise RuntimeError(
+            f"vggt_spark loaded VGGT-X, not SPARK: resolved {module_file!r} "
+            f"is outside {_VGGT_SPARK_ROOT!r}. The `vggt` package was import-cached "
+            f"before _load_model inserted the SPARK path. Run vggt_spark in a fresh "
+            f"process (or via parity_trace.py) before trusting its numbers."
+        )
 
 
 ########################################################################
@@ -81,25 +98,25 @@ class VGGTSPARKCreator(VGGTXCreator):
             else torch.float16
         )
 
-        # Patch sys.path so `import vggt` resolves to VGGT-SPARK, not VGGT-X.
-        # Scoped: prepend → import → remove. Any subsequent `import vggt` in
-        # the session still resolves to VGGT-X (already cached in sys.modules).
+        # Purge any cached `vggt*` (e.g. VGGT-X imported at module top) so the
+        # SPARK path insertion actually wins, then import SPARK. Without this,
+        # a cached `vggt` package shadows the insert → silent VGGT-X fallback.
+        for _m in [m for m in list(sys.modules) if m == "vggt" or m.startswith("vggt.")]:
+            del sys.modules[_m]
         _patched = _VGGT_SPARK_ROOT not in sys.path
         if _patched:
             sys.path.insert(0, _VGGT_SPARK_ROOT)
         try:
-            # Import SPARK VGGT; may already be cached from run_vggt_slam_lc.py
             from vggt.models.vggt import VGGT as VGGT_SPARK  # noqa: PLC0415
         finally:
             # Always remove the path injection — do not pollute session sys.path
             if _patched and _VGGT_SPARK_ROOT in sys.path:
                 sys.path.remove(_VGGT_SPARK_ROOT)
 
-        logger.info(
-            "VGGTSPARKCreator: loading %s from SPARK source tree (%s)",
-            self.model_name,
-            _VGGT_SPARK_ROOT,
-        )
+        # Hard guard: confirm the real SPARK module loaded (not cached VGGT-X).
+        _resolved = inspect.getfile(VGGT_SPARK)
+        _assert_loaded_from_spark(_resolved)
+        logger.info("VGGTSPARKCreator: loaded %s VGGT from %s", self.model_name, _resolved)
 
         # SPARK VGGT does not expose chunk_size — load without it
         model = VGGT_SPARK.from_pretrained(self.model_name)
@@ -185,8 +202,10 @@ class VGGTSPARKCreator(VGGTXCreator):
             (accepted, None) — poses are not extracted on this path; caller uses
             submap poses.
         """
-        # Stack frames into (2, C, H, W) batch expected by VGGT.forward
-        images = torch.stack([frame1, frame2])
+        # Stack frames into (2, C, H, W) on the model's device/dtype — the
+        # candidate frames are held on CPU (memory), so move them before forward.
+        p = next(self.model.parameters())
+        images = torch.stack([frame1, frame2]).to(p.device, dtype=p.dtype)
         # Native similarity path — model returns image_match_ratio as a side output
         with torch.no_grad():
             outputs = self.model(images, compute_similarity=True)

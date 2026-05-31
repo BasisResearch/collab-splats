@@ -202,7 +202,7 @@ def _save_outputs(
         metrics_json[cond] = {
             "ate": {k: v for k, v in m["ate"].items() if k != "per_frame"},
             "rpe": m["rpe"],
-            "auc_30": m["auc"]["auc_30"],
+            "auc": {k: v for k, v in m["auc"].items() if k != "per_pair_err"},
             "time_s": m.get("time_s", None),
         }
     (output_dir / "metrics.json").write_text(json.dumps(metrics_json, indent=2))
@@ -287,6 +287,10 @@ def _build_parser() -> argparse.ArgumentParser:
              "pairwise_dist=translation-invariant fix, none=skip scale (always 1.0).",
     )
     parser.add_argument(
+        "--lc_layer", type=int, default=None,
+        help="Override the per-backbone LC verify layer (_lc_layer_index) for layer sweeps.",
+    )
+    parser.add_argument(
         "--keyframe_list", type=Path, default=None,
         help="Path to selected_frames.txt from run_vggt_slam_lc.py. "
              "When set, filters the dataset to only these frames (matched by filename) "
@@ -343,6 +347,11 @@ def main() -> None:
         _validate_condition(cond)
     if args._condition is not None:
         _validate_condition(args._condition)
+
+    # Optional LC verify-layer override for sweeps — set the ClassVar on the
+    # backbone creator class (applies in both orchestrator and subprocess leaf).
+    if getattr(args, "lc_layer", None) is not None:
+        get_creator(args.backbone)._lc_layer_index = args.lc_layer
 
     # ── subprocess leaf ────────────────────────────────────────────────────────
     if args._condition is not None:
@@ -405,6 +414,8 @@ def main() -> None:
                 cmd += ["--submap_size", str(args.submap_size)]
             if getattr(args, "lc_scale_method", "se3") != "se3":
                 cmd += ["--lc_scale_method", args.lc_scale_method]
+            if getattr(args, "lc_layer", None) is not None:
+                cmd += ["--lc_layer", str(args.lc_layer)]
 
             t0 = time.perf_counter()
             proc = subprocess.run(cmd, check=True)
@@ -426,13 +437,18 @@ def main() -> None:
             metrics[cond] = {
                 "ate": ate_translation(pred, dataset.gt_poses),
                 "rpe": rpe(pred, dataset.gt_poses),
-                "auc": auc_at_threshold(np.linalg.inv(pred), np.linalg.inv(dataset.gt_poses)),
+                "auc": auc_at_threshold(
+                    np.linalg.inv(pred), np.linalg.inv(dataset.gt_poses),
+                    thresholds=(5.0, 15.0, 30.0),
+                ),
                 "time_s": time_s,
             }
             trajectories[cond] = pred
             print(f"  ATE RMSE: {metrics[cond]['ate']['rmse']:.4f}m")
-            print(f"  RPE trans RMSE: {metrics[cond]['rpe']['trans_rmse']:.4f}m")
-            print(f"  AUC@30: {metrics[cond]['auc']['auc_30']:.1f}")
+            print(f"  RPE trans/rot: {metrics[cond]['rpe']['trans_rmse']:.4f}m / "
+                  f"{metrics[cond]['rpe']['rot_rmse_deg']:.3f}deg")
+            print(f"  AUC@5/15/30: {metrics[cond]['auc']['auc_5']:.1f} / "
+                  f"{metrics[cond]['auc']['auc_15']:.1f} / {metrics[cond]['auc']['auc_30']:.1f}")
             print(f"  Time: {time_s}s")
     finally:
         shutil.rmtree(tmp_image_dir, ignore_errors=True)

@@ -124,7 +124,7 @@ def compute_auc(
     pred_c2w = np.stack(traj_est.poses_se3).astype(np.float32)
     gt_c2w   = np.stack(traj_ref.poses_se3).astype(np.float32)
 
-    result = auc_at_threshold(pred_c2w, gt_c2w, max_threshold_deg=max_threshold_deg)
+    result = auc_at_threshold(pred_c2w, gt_c2w, thresholds=(max_threshold_deg,))
     return {
         "auc_30":       result["auc_30"],
         "per_pair_err": result["per_pair_err"],

@@ -1,0 +1,21 @@
+{
+  "loop_match_residual": {
+    "mean_before": null,
+    "max_before": null,
+    "mean_after": null,
+    "max_after": null,
+    "n_matches": 0
+  },
+  "submap_boundary_gap": {
+    "mean_before": 0.0,
+    "max_before": 0.0,
+    "mean_after": 0.0,
+    "max_after": 0.0,
+    "n_boundaries": 23
+  },
+  "pointcloud_chamfer": {
+    "mean_before": null,
+    "mean_after": null,
+    "n_pairs": 0
+  }
+}

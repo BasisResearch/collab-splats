@@ -20,7 +20,7 @@ def test_auc_returns_required_keys():
     pred = np.tile(np.eye(4, dtype=np.float32), (4, 1, 1))
     gt   = np.tile(np.eye(4, dtype=np.float32), (4, 1, 1))
     result = auc_at_threshold(pred, gt)
-    assert set(result) >= {"auc_30", "per_frame_err"}
+    assert set(result) >= {"auc_30", "per_pair_err"}
 
 
 def test_auc_perfect_poses_scores_100():
@@ -43,12 +43,12 @@ def test_auc_large_error_scores_near_zero():
     assert result["auc_30"] < 10.0, f"Expected near 0, got {result['auc_30']}"
 
 
-def test_per_frame_err_length_matches_input():
+def test_per_pair_err_present():
     N = 7
     pred = np.tile(np.eye(4, dtype=np.float32), (N, 1, 1))
     gt   = np.tile(np.eye(4, dtype=np.float32), (N, 1, 1))
     result = auc_at_threshold(pred, gt)
-    assert len(result["per_frame_err"]) == N
+    assert len(result["per_pair_err"]) == N * (N - 1)
 
 
 def test_auc_is_float_in_range():
@@ -102,5 +102,13 @@ def test_auc_translation_direction_error_is_angular_not_l2():
     # Both pred and gt are identical, should score near 100
     assert result["auc_30"] >= 95.0, f"Expected ~100 for identical poses, got {result['auc_30']}"
     # Verify the function returns the expected output structure
-    assert isinstance(result["per_frame_err"], list)
-    assert len(result["per_frame_err"]) == N
+    assert isinstance(result["per_pair_err"], list)
+
+
+def test_auc_multi_threshold_keys_and_monotonic():
+    """thresholds=(5,15,30) returns auc_5/auc_15/auc_30; AUC is non-decreasing in threshold."""
+    gt   = _make_poses([0, 10, 20, 30], [[0, 0, 1], [1, 0, 2], [2, 0, 3], [3, 0, 4]])
+    pred = _make_poses([0, 12, 18, 33], [[0, 0, 1], [1, 0, 2], [2, 0, 3], [3, 0, 4]])
+    result = auc_at_threshold(pred, gt, thresholds=(5.0, 15.0, 30.0))
+    assert {"auc_5", "auc_15", "auc_30", "per_pair_err"} <= set(result)
+    assert result["auc_5"] <= result["auc_15"] <= result["auc_30"] + 1e-9

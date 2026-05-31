@@ -873,9 +873,11 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         """
         # Use model-calibrated layer; override layer_index arg if provided explicitly.
         effective_layer = self._lc_layer_index if layer_index == -1 else layer_index
-        # Run the model once to capture cross-frame activations
+        # Run the model once to capture cross-frame activations. Candidate frames
+        # are held on CPU (memory); move the batch to the model's device first.
+        device = next(self.model.parameters()).device
         features = self.extract_intermediate_features(
-            torch.stack([frame1, frame2]), layer_index=effective_layer, **kwargs
+            torch.stack([frame1, frame2]).to(device), layer_index=effective_layer, **kwargs
         )
         # Compute the cross-frame attention ratio gate using model's token offset
         ratio = cross_frame_attention_ratio(

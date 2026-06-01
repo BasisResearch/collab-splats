@@ -252,78 +252,74 @@ def test_merge_submap_outputs_dedup_rows_first_occurrence():
     assert dedup[3] == 5
 
 
-def test_apply_ba_dedup_aligns_intrinsics(identity_submap_factory):
-    """BundleAdjustment._apply_ba must align M-expanded intrinsics to N before BA.
+def test_run_dedup_aligns_intrinsics_to_unique_frames():
+    """LoopClosure.run() aligns M-expanded intrinsics down to N unique frames.
 
-    We mock out extract_tracks_vggsfm and run_bundle_adjustment to verify the
-    intrinsics array passed to run_bundle_adjustment has shape (N, 3, 3) not (M, 3, 3).
+    The old _apply_ba wrapper API is gone; the M->N alignment now lives in
+    LoopClosure.run() via raw_outputs["_dedup_rows"]. After run(), the merged
+    M-row intrinsics must be remapped to N rows == intrinsics[dedup].
     """
-    import dataclasses
-    from unittest.mock import MagicMock, patch
-    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
+    from collab_splats.pointcloud.wrappers import LoopClosure
     from collab_splats.pointcloud.feedforward import FeedforwardResult
 
-    N = 4   # unique global frames
-    M = 6   # overlap-expanded (e.g. 2 submaps of 4 with overlap 2)
+    N = 4   # unique global frames (extrinsics rows)
+    M = 6   # overlap-expanded merged rows (e.g. 2 submaps of 4 with overlap 2)
     H, W = 8, 8
 
-    # Build a FeedforwardResult where extrinsics=N but intrinsics=M (the bug scenario)
+    # FeedforwardResult where extrinsics=N but intrinsics/images/etc are M-rows.
     extrinsics_N = np.tile(np.eye(4), (N, 1, 1)).astype(np.float32)
+    # Distinct per-row intrinsics so dedup remap is content-verifiable.
     intrinsics_M = np.tile(np.eye(3), (M, 1, 1)).astype(np.float32)
-    images_M = np.zeros((M, 3, H, W), dtype=np.float32)
-    conf_M = np.ones((M, H, W), dtype=np.float32)
-    world_pts_M = np.zeros((M, H, W, 3), dtype=np.float32)
+    intrinsics_M[:, 0, 0] = np.arange(M, dtype=np.float32) + 1.0
 
     result = FeedforwardResult(
         points=np.zeros((N * H * W, 3), dtype=np.float32),
-        colors=np.zeros((N * H * W, 3), dtype=np.float32),
+        colors=np.zeros((N * H * W, 3), dtype=np.uint8),
         extrinsics=extrinsics_N,
         intrinsics=intrinsics_M,
         image_paths=[Path(f"frame_{i:04d}.png") for i in range(N)],
         original_coords=np.zeros((N, 6), dtype=np.float32),
         model_width=W,
         model_height=H,
-        images=images_M,
-        confidence=conf_M,
-        world_points=world_pts_M,
+        images=np.zeros((M, 3, H, W), dtype=np.float32),
+        confidence=np.ones((M, H, W), dtype=np.float32),
+        world_points=np.zeros((M, H, W, 3), dtype=np.float32),
     )
 
-    # Build _dedup_rows: frames 0..N-1 → rows 0..N-1 (first occurrence in M-array)
-    dedup_rows = np.arange(N, dtype=np.int64)  # [0,1,2,3] — first N rows of M
+    # _dedup_rows maps each of the N unique frames to a merged M-row index.
+    dedup_rows = np.array([0, 1, 3, 5], dtype=np.int64)
 
-    # Fake base with raw_outputs carrying _dedup_rows
-    base = MagicMock()
-    base.outputs = result
-    base.raw_outputs = {"_dedup_rows": dedup_rows}
+    # Minimal fake base: no-op pipeline stages; outputs/raw_outputs settable.
+    class FakeBase:
+        def __init__(self) -> None:
+            self.outputs = result
+            self.raw_outputs = {"_dedup_rows": dedup_rows}
 
-    ba = BundleAdjustment(base)
+        def load_model(self) -> None:
+            pass
 
-    captured_intr = {}
+        def setup_inference(self, image_dir) -> None:
+            pass
 
-    def fake_run_ba(pts3d, extrinsics, intrinsics, tracks, vis_mask, image_size, **kw):
-        captured_intr["shape"] = intrinsics.shape
-        # Return unchanged inputs so _apply_ba can proceed
-        return pts3d, extrinsics[:, :3, :], intrinsics
+        def run_inference(self, **kwargs) -> None:
+            pass
 
-    def fake_tracks(images, conf, world_points, **kw):
-        P = 10
-        return (
-            np.zeros((N, P, 2), dtype=np.float32),
-            np.ones((N, P), dtype=np.float32),
-            np.zeros((P, 3), dtype=np.float32),
-        )
+        def postprocess(self, **kwargs) -> None:
+            pass
 
-    base._reproject_ba.return_value = (
-        np.zeros((N * H * W, 3), dtype=np.float32),
-        np.zeros((N * H * W, 3), dtype=np.float32),
-    )
+    base = FakeBase()
+    # Bypass the LC loop override so run_inference stays the no-op base stage.
+    wrapper = LoopClosure(base)
+    wrapper.run_inference = base.run_inference
 
-    with patch("collab_splats.pointcloud.wrappers.extract_tracks_vggsfm", side_effect=fake_tracks), \
-         patch("collab_splats.pointcloud.wrappers.run_bundle_adjustment", side_effect=fake_run_ba):
-        ba._apply_ba()
+    out = wrapper.run(Path("unused"))
 
-    assert "shape" in captured_intr, "run_bundle_adjustment was not called"
-    assert captured_intr["shape"] == (N, 3, 3), (
-        f"intrinsics passed to run_bundle_adjustment had shape {captured_intr['shape']}, "
-        f"expected ({N}, 3, 3)"
-    )
+    # Intrinsics realigned to N rows and equal to the deduped selection.
+    assert out.intrinsics.shape[0] == N
+    np.testing.assert_array_equal(out.intrinsics, intrinsics_M[dedup_rows])
+    # Other M-row arrays are realigned too.
+    assert out.images.shape[0] == N
+    assert out.confidence.shape[0] == N
+    assert out.world_points.shape[0] == N
+    # Wrapper writes the realigned result back onto the base.
+    assert base.outputs is out

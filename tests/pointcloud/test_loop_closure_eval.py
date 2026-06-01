@@ -260,7 +260,7 @@ def test_apply_ba_dedup_aligns_intrinsics(identity_submap_factory):
     """
     import dataclasses
     from unittest.mock import MagicMock, patch
-    from collab_splats.pointcloud.wrappers import BundleAdjustment
+    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
     from collab_splats.pointcloud.feedforward import FeedforwardResult
 
     N = 4   # unique global frames

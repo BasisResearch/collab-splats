@@ -9,16 +9,6 @@ PYTHON="$VENV/bin/python"
 export PIP_ROOT_USER_ACTION=ignore
 export UV_PROJECT_ENVIRONMENT="$VENV"
 
-# Precondition: vendored third_party packages must exist (editable path deps vggt / vggt-omega).
-# They are NOT git submodules; an onboarding/clone step must have populated them.
-for d in third_party/VGGT-X third_party/vggt-omega; do
-    if [ ! -f "$SCRIPT_DIR/$d/pyproject.toml" ]; then
-        echo "ERROR: $d is missing (vendored package, not a submodule)."
-        echo "       Populate third_party/ before running setup.sh."
-        exit 1
-    fi
-done
-
 # CUDA build environment — nvcc + headers come from the pip cuda-toolkit wheels (Option A).
 # These dirs are populated during `uv sync` (cuda-toolkit is a wheel, installed before the
 # no-build-isolation source builds); env vars resolve at compile time, after install.

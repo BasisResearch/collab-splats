@@ -160,7 +160,7 @@ class VGGTSPARKCreator(VGGTXCreator):
 
         # Decode pose encoding at model resolution (matches VGGT-SLAM upstream).
         extrinsic_t, intrinsic_t = pose_encoding_to_extri_intri(
-            predictions["pose_enc"], images.shape[-2:]
+            predictions["pose_enc"], tuple(int(x) for x in images.shape[-2:])
         )
 
         # Move to CPU float32 for downstream numpy ops.

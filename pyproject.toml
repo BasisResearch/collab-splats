@@ -241,7 +241,7 @@ maskclip_onnx = { git = "https://github.com/RogerQi/maskclip_onnx.git" }
 bae = { git = "https://github.com/pypose/bae.git", rev = "0.2.4" }
 nerfstudio = { git = "https://github.com/BasisResearch/nerfstudio.git", branch = "main" }
 clip = { git = "https://github.com/openai/CLIP.git" }
-vggt = { path = "third_party/VGGT-X", editable = true }
+vggt = { git = "https://github.com/Linketic/VGGT-X.git", rev = "26d1b956cfda6f83926adda9f5c2c53f75dda749" }
 vggt-omega = { git = "https://github.com/facebookresearch/vggt-omega.git", rev = "39a0cb8" }
 mapanything = { git = "https://github.com/facebookresearch/map-anything.git" }
 lightglue = { git = "https://github.com/cvg/LightGlue.git" }

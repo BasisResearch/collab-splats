@@ -1305,7 +1305,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'" },
     { name = "ultralytics" },
     { name = "uniception", marker = "extra == 'feedforward'", specifier = "==0.1.7" },
-    { name = "vggt", marker = "extra == 'feedforward'", editable = "third_party/VGGT-X" },
+    { name = "vggt", marker = "extra == 'feedforward'", git = "https://github.com/Linketic/VGGT-X.git?rev=26d1b956cfda6f83926adda9f5c2c53f75dda749" },
     { name = "vggt-omega", marker = "extra == 'feedforward'", git = "https://github.com/facebookresearch/vggt-omega.git?rev=39a0cb8" },
     { name = "viser", marker = "extra == 'feedforward'", specifier = ">=0.2.23" },
     { name = "zarr", specifier = ">=2.16" },
@@ -9823,7 +9823,7 @@ wheels = [
 [[package]]
 name = "vggt"
 version = "0.0.1"
-source = { editable = "third_party/VGGT-X" }
+source = { git = "https://github.com/Linketic/VGGT-X.git?rev=26d1b956cfda6f83926adda9f5c2c53f75dda749#26d1b956cfda6f83926adda9f5c2c53f75dda749" }
 dependencies = [
     { name = "einops" },
     { name = "huggingface-hub" },
@@ -9832,28 +9832,6 @@ dependencies = [
     { name = "pillow" },
     { name = "safetensors" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "einops" },
-    { name = "gradio", marker = "extra == 'demo'", specifier = "==5.17.1" },
-    { name = "huggingface-hub" },
-    { name = "hydra-core", marker = "extra == 'demo'" },
-    { name = "matplotlib", marker = "extra == 'demo'" },
-    { name = "numpy", specifier = "<2" },
-    { name = "omegaconf", marker = "extra == 'demo'" },
-    { name = "onnxruntime", marker = "extra == 'demo'" },
-    { name = "opencv-python" },
-    { name = "opencv-python", marker = "extra == 'demo'" },
-    { name = "pillow" },
-    { name = "requests", marker = "extra == 'demo'" },
-    { name = "safetensors" },
-    { name = "scipy", marker = "extra == 'demo'" },
-    { name = "tqdm", marker = "extra == 'demo'" },
-    { name = "trimesh", marker = "extra == 'demo'" },
-    { name = "viser", marker = "extra == 'demo'", specifier = "==0.2.23" },
-]
-provides-extras = ["demo"]
 
 [[package]]
 name = "vggt-omega"

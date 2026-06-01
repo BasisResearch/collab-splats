@@ -276,7 +276,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
         # at line 270 and token assembly happens before autocast can override it.
         images = images.to(device, dtype=dtype)
 
-        image_shape = images.shape[-2:]
+        # int() cast: guards pose_encoding_to_extri_intri against numpy-2 float32 scalars
+        # being assigned into CUDA tensors. Lets us use upstream VGGT-X with no local patch.
+        image_shape = tuple(int(x) for x in images.shape[-2:])
 
         # bf16/f16 autocast scoped to model forward only; downstream numpy ops need float32.
         with torch.no_grad():
@@ -475,7 +477,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
             hook.remove()
 
         # Decode (2, 4, 4) camera extrinsics from VGGT-X pose encoding
-        image_shape = (frames.shape[-2], frames.shape[-1])
+        image_shape = (int(frames.shape[-2]), int(frames.shape[-1]))
         ext_3x4, _ = pose_encoding_to_extri_intri(
             predictions["pose_enc"].detach(), image_shape
         )

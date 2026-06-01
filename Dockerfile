@@ -16,6 +16,9 @@ ARG TORCH_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
 ARG PYTHON_VERSION
 ARG TORCH_ARCH_LIST
+# Parallel compile jobs for bae/gsplat. Each cc1plus needs ~2-4 GB; default 4 fits a
+# ~16-20 GB Docker VM. Raise with --build-arg MAX_JOBS=N if the host has more RAM.
+ARG MAX_JOBS=4
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -48,6 +51,7 @@ ENV CUDA_HOME=/usr/local/cuda \
 # nvcc cross-compiles to TORCH_CUDA_ARCH_LIST; no GPU needed during build.
 WORKDIR /workspace/collab-splats
 COPY . /workspace/collab-splats
+ENV MAX_JOBS=${MAX_JOBS}
 RUN bash setup.sh
 
 # rclone

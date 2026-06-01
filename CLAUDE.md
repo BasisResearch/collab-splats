@@ -25,8 +25,7 @@ Known test failures: `docs/known-test-failures.md`
 ## Installation and Setup
 
 ```bash
-bash setup.sh                    # core install (nerfstudio env)
-bash setup/feedforward.sh        # VGGT-X + MapAnything
+bash setup.sh                    # full install (uv sync — all deps incl. VGGT-X + MapAnything)
 ```
 
 ## Development Environment

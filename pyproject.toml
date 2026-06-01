@@ -217,6 +217,18 @@ skip_gitignore = true
 # uv configuration
 ##############################
 
+[tool.uv]
+# Force the cu121 torch stack + numpy>=2 regardless of what transitive deps pin.
+# Replaces the per-package `--no-deps` hacks in the old setup scripts:
+#   VGGT-X pinned torch==2.3.1; vggt-omega pinned numpy<2.
+override-dependencies = [
+    "torch==2.5.1+cu121",
+    "torchvision==0.20.1+cu121",
+    "numpy>=2,<2.2",
+]
+# bae + gsplat-rade import torch at build time → must build without isolation.
+no-build-isolation-package = ["bae", "gsplat"]
+
 [[tool.uv.index]]
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"

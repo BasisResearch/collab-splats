@@ -96,6 +96,10 @@ COPY --from=builder /opt/venv/reconstruction/ /opt/venv/reconstruction/
 # Copy uv-managed Python install so the interpreter is present at its canonical path
 COPY --from=builder /root/.local/share/uv/ /root/.local/share/uv/
 
+# Editable installs (collab_splats, vggt, vggt-omega) resolve against this path — it must
+# match the builder's /workspace/collab-splats where uv sync ran, or imports fail at runtime.
+COPY --from=builder /workspace/collab-splats /workspace/collab-splats
+
 # Colmap binary
 COPY --from=colmap-source /usr/local/bin/colmap /usr/local/bin/
 COPY --from=colmap-source /usr/local/lib/libcolmap* /usr/local/lib/

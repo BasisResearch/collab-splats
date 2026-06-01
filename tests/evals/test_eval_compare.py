@@ -77,7 +77,8 @@ def test_compare_emits_metrics_json(tmp_path):
     assert set(methods.keys()) == {"ours_baseline", "ours_ba"}
     for name, body in methods.items():
         assert body["status"] == "ok"
-        assert body["align"] == "se3"
+        # All monocular feedforward methods default to sim3 (scale ambiguity); see eval_compare _DEFAULT_ALIGN.
+        assert body["align"] == "sim3"
         assert "ate" in body and "rmse" in body["ate"]
         assert "rpe" in body and "trans_rmse" in body["rpe"]
 
@@ -102,7 +103,8 @@ def test_compare_default_alignment_picked_per_method(tmp_path):
 
     _run_main(["--results-dir", str(results_dir)])
     payload = json.loads((results_dir / "metrics.json").read_text())
-    assert payload["methods"]["ours_baseline"]["align"] == "se3"
+    # Default alignment is resolved per method; all monocular conditions now map to sim3.
+    assert payload["methods"]["ours_baseline"]["align"] == "sim3"
     assert payload["methods"]["ours_lc"]["align"] == "sim3"
 
 

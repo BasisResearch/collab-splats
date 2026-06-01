@@ -87,27 +87,27 @@ def test_save_outputs_writes_files(tmp_path):
 
 
 def test_make_creator_ba_track_density_4096(monkeypatch):
-    """ba_track-density-4096 → BundleAdjustment with max_query_pts=4096, query_frame_num=8."""
+    """ba_track-density-4096 → BA enabled with max_query_pts=4096, query_frame_num=8."""
     import eval_gt
-    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
+    from collab_splats.pointcloud import BundleAdjustmentConfig
     from unittest.mock import MagicMock
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
-    creator = eval_gt._make_creator("ba_track-density-4096")
-    assert isinstance(creator, BundleAdjustment)
-    assert creator.config.max_query_pts == 4096
-    assert creator.config.query_frame_num == 8  # max(5, 4096 // 512)
+    creator, ba_cfg = eval_gt._make_creator("ba_track-density-4096")
+    assert isinstance(ba_cfg, BundleAdjustmentConfig)  # BA enabled
+    assert ba_cfg.max_query_pts == 4096
+    assert ba_cfg.query_frame_num == 8  # max(5, 4096 // 512)
 
 
 def test_make_creator_ba_track_density_2048(monkeypatch):
     """ba_track-density-2048 → query_frame_num=5 (max(5, 2048//512) = max(5,4) = 5)."""
     import eval_gt
-    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustment
+    from collab_splats.pointcloud import BundleAdjustmentConfig
     from unittest.mock import MagicMock
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
-    creator = eval_gt._make_creator("ba_track-density-2048")
-    assert isinstance(creator, BundleAdjustment)
-    assert creator.config.max_query_pts == 2048
-    assert creator.config.query_frame_num == 5
+    creator, ba_cfg = eval_gt._make_creator("ba_track-density-2048")
+    assert isinstance(ba_cfg, BundleAdjustmentConfig)  # BA enabled
+    assert ba_cfg.max_query_pts == 2048
+    assert ba_cfg.query_frame_num == 5
 
 
 def test_validate_condition_accepts_known():

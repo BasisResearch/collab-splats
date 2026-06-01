@@ -65,10 +65,26 @@ def test_image_retrieval_detects_identical_submaps():
 
 def test_verify_loop_candidate_returns_tuple():
     """F4: _verify_loop_candidate must return (bool, ndarray|None), not bare bool."""
+    from unittest.mock import MagicMock
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
 
     creator = object.__new__(MapAnythingCreator)
     creator._lc_retrieval = None
+    # Provide a mock model so _verify_loop_candidate can resolve the device
+    mock_model = MagicMock()
+    mock_model.parameters.return_value = iter([torch.zeros(1)])
+    creator.model = mock_model
+    # Return orthogonal q/k tensors → cross-frame ratio ≈ 0 → rejected
+    B, heads, N, hd = 1, 1, 20, 4
+    k = torch.zeros(B, heads, N, hd)
+    q = torch.zeros(B, heads, N, hd)
+    k[:, :, :10, 0] = 10.0   # frame1 tokens align to dim 0
+    q[:, :, :10, 0] = 10.0
+    k[:, :, 10:, 1] = 10.0   # frame2 tokens align to dim 1 (orthogonal → low ratio)
+    q[:, :, 10:, 1] = 10.0
+    creator.extract_intermediate_features = lambda frames, layer_index=-1, **kw: {
+        "q": q, "k": k
+    }
 
     result = creator._verify_loop_candidate(
         torch.zeros(3, 64, 64), torch.zeros(3, 64, 64)
@@ -77,21 +93,3 @@ def test_verify_loop_candidate_returns_tuple():
     accepted, lc_poses = result
     assert accepted is False
     assert lc_poses is None
-
-
-def test_base_verify_raises_with_tuple_signature():
-    """F4/F5: base _verify_loop_candidate raises NotImplementedError."""
-    import pytest
-    from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator, FeedforwardResult
-
-    class _D(BaseFeedforwardCreator):
-        def _load_model(self, device): pass
-        def _preprocess(self, image_dir): return None, [], np.zeros((0, 2))
-        def _forward(self, model, views, **kw): return {}
-        def _postprocess(self, raw, **kw):
-            return FeedforwardResult(np.zeros((1, 3)), np.zeros((1, 3)),
-                                     np.eye(4)[None], np.eye(3)[None], [], 1, 1)
-
-    dummy = object.__new__(_D)
-    with pytest.raises(NotImplementedError, match="_verify_loop_candidate"):
-        dummy._verify_loop_candidate(None, None)

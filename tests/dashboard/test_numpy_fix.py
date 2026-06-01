@@ -15,9 +15,16 @@ def test_dashboard_import_no_numpy_warning():
     if check.returncode != 0:
         pytest.skip("panel not installed — skipping NumPy ABI warning check")
 
+    # Escalate UserWarnings to errors so a NumPy-ABI UserWarning fails the import.
+    # Exempt one known, harmless third-party UserWarning: timm's model registry
+    # (site-packages/timm/models/_registry.py) warns "Overwriting <name> in registry"
+    # when mobile_sam re-registers its tiny_vit_* models. That is not a NumPy-ABI
+    # warning and we cannot fix it at source (third-party); keep the ABI guard intact.
     result = subprocess.run(
-        [sys.executable, "-W", "error::UserWarning", "-c",
-         "from collab_splats.dashboard import App"],
+        [sys.executable,
+         "-W", "error::UserWarning",
+         "-W", "ignore:Overwriting:UserWarning",
+         "-c", "from collab_splats.dashboard import App"],
         capture_output=True,
         text=True,
     )
@@ -26,7 +33,6 @@ def test_dashboard_import_no_numpy_warning():
     )
 
 
-@pytest.mark.xfail(reason="splatter.py has top-level 'import torch'; needs lazy import fix")
 def test_collab_splats_init_no_torch():
     """collab_splats top-level __init__ must not import torch at module load time."""
     result = subprocess.run(

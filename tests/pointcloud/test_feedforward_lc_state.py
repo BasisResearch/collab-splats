@@ -32,6 +32,12 @@ class _StubCreator(BaseFeedforwardCreator):
     def _postprocess(self, raw_outputs, **kwargs):
         pass
 
+    def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
+        return getattr(self, "_stubbed_features", {})
+
+    def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
+        return np.zeros((0, 3)), np.zeros((0, 3))
+
     def build_colmap(self, output_dir):
         pass
 
@@ -61,5 +67,5 @@ def test_lc_state_attrs_set_after_run_inference():
     assert isinstance(base._lc_submaps, list)
     assert all(isinstance(s, Submap) for s in base._lc_submaps)
     assert base._lc_overlap_frames == 4
-    assert len(base._lc_submaps) == 3  # ceil((40-4)/16) = 3 submaps (step=size-overlap=16)
+    assert len(base._lc_submaps) == 2  # ceil((40-4)/20) = 2 submaps (step=submap_size=20)
     assert base._lc_loop_submaps == []  # _verify_loop_candidate returns False

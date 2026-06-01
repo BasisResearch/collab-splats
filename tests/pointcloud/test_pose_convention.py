@@ -3,24 +3,6 @@ import numpy as np
 import pytest
 
 
-def test_default_verifier_raises():
-    """Base class _verify_loop_candidate must raise NotImplementedError."""
-    from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
-
-    class _DummyCreator(BaseFeedforwardCreator):
-        def _load_model(self, device): pass
-        def _forward(self, model, views, **kw): return {}
-        def _preprocess(self, image_dir): return None, [], np.zeros((0, 2))
-        def _postprocess(self, raw, **kw):
-            from collab_splats.pointcloud.feedforward import FeedforwardResult
-            return FeedforwardResult(points=np.zeros((1, 3)), colors=np.zeros((1, 3)),
-                                     extrinsics=np.eye(4)[None], intrinsics=np.eye(3)[None],
-                                     image_paths=[], model_width=1, model_height=1)
-
-    dummy = object.__new__(_DummyCreator)
-    with pytest.raises(NotImplementedError, match="_verify_loop_candidate"):
-        dummy._verify_loop_candidate(None, None)
-
 
 def test_assert_world_to_cam_passes_identity_first():
     from collab_splats.pointcloud.loop_closure.submap import assert_world_to_cam

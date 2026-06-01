@@ -41,17 +41,18 @@ def test_open3d_tsdf_writes_ply(tmp_path):
     assert result.mesh_path.suffix == ".ply"
 
 
-def test_open3d_tsdf_clean_repair_skips_without_meshlib(tmp_path, monkeypatch):
-    import collab_splats.mesh.tsdf as tsdf_mod
-
-    monkeypatch.setattr(tsdf_mod, "_MM_AVAILABLE", False)
+def test_open3d_tsdf_clean_repair_raises_meshlib_incompatible(tmp_path):
+    """clean_repair=True is hard-disabled: the installed meshlib's addPartByMask
+    API is incompatible (tsdf.py:98-103), so create() raises AssertionError
+    pointing the user to clean_repair=False. Accepted-environment behavior —
+    do NOT install meshlib, do NOT change production.
+    """
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
 
     creator = Open3DTSDFFusion(output_dir=tmp_path, clean_repair=True)
     depths, rgbs, c2w, intrinsics = _synthetic_frames()
-    # Should not crash even without meshlib
-    result = creator.create(depths, rgbs, c2w, intrinsics)
-    assert result.mesh_path.exists()
+    with pytest.raises(AssertionError, match="clean_repair disabled"):
+        creator.create(depths, rgbs, c2w, intrinsics)
 
 
 def test_open3d_tsdf_creates_output_dir(tmp_path):

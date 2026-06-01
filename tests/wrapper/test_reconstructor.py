@@ -199,12 +199,15 @@ def _make_mock_pointcloud_result(tmp_path):
     return result
 
 
-def test_build_pointcloud_skips_if_colmap_exists(tmp_path):
+def test_build_pointcloud_skips_if_colmap_and_zarr_exist(tmp_path):
+    """Skip rebuild only when BOTH colmap/sparse/0/cameras.bin and feedforward.zarr exist."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
     colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
     colmap_dir.mkdir(parents=True)
     (colmap_dir / "cameras.bin").touch()
+    # The pointcloud zarr marker is also required; colmap alone no longer skips.
+    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
     mock_result = _make_mock_pointcloud_result(tmp_path)
 
     with patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff, \

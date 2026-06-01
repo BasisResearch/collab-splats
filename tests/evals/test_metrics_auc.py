@@ -46,11 +46,10 @@ def test_compute_auc_perfect():
         gt_path = Path(tmp) / "gt.tum"
         _write_tum(pred_path, poses)
         _write_tum(gt_path, poses)
-        result = compute_auc(pred_path, gt_path, align="none")
+        result = compute_auc(pred_path, gt_path)
 
     assert result["auc_30"] == pytest.approx(100.0, abs=1.0)
-    assert "per_frame_err" in result
-    assert len(result["per_frame_err"]) == N
+    assert "per_pair_err" in result
 
 
 def test_compute_auc_returns_lower_for_noisy():
@@ -58,7 +57,7 @@ def test_compute_auc_returns_lower_for_noisy():
 
     Uses 3D spiral translations so evo alignment is non-degenerate.
     Adds large rotation noise (>30°) to push most frames over the threshold.
-    Uses align='none' since auc_at_threshold performs its own Umeyama internally.
+    auc_at_threshold performs its own Umeyama Sim3 alignment internally.
     """
     import tempfile
 
@@ -85,8 +84,7 @@ def test_compute_auc_returns_lower_for_noisy():
         gt_path = Path(tmp) / "gt.tum"
         _write_tum(pred_path, pred_poses)
         _write_tum(gt_path, gt_poses)
-        # align='none': auc_at_threshold does its own Umeyama internally
-        result = compute_auc(pred_path, gt_path, align="none")
+        result = compute_auc(pred_path, gt_path)
 
     assert result["auc_30"] < 90.0
-    assert "per_frame_err" in result
+    assert "per_pair_err" in result

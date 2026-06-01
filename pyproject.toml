@@ -134,6 +134,8 @@ dev = [
   "pytest-cov",
   "pytest-xdist",
   "pytest-benchmark",
+  "pytest-asyncio",  # drives FastAPI/ASGI async webapp tests (asyncio_mode="auto")
+  "httpx",           # AsyncClient + ASGITransport in tests/webapp/
   "mypy",
   "ruff",
   "nbval",

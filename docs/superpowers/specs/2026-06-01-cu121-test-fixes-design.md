@@ -132,3 +132,90 @@ Per user decision: feedforward + dashboard deps install by default.
 - Extras/dependency-structure refactor (user will address separately).
 - Fixing genuine product regressions surfaced in Stage 4 beyond classifying them — those, if
   any, become their own tasks.
+
+---
+
+# Addendum — Stages 3–5 executed (2026-06-01, later session)
+
+Stages 1–2 landed (commits `60eec57` deps-by-default, `3e4e821` `tests/nerfstudio_methods` rename).
+This addendum records the re-baseline (Stage 3), residual triage (Stage 4), and the decisions made,
+so the uv integration has a concrete target.
+
+## Stage 3 — re-baseline result
+
+`59 failed, 913 passed, 4 skipped, 1 xpassed`, **0 collection errors**, 8 min
+(`evals/results/baseline-conda-tests-0601.txt`). Collected ~980 vs the broken-env 423 — the env
+fixes + namespace rename worked. One blocker had to be cleared first:
+
+**Infinite-hang fix ("11h at 7%").** Not deps, not network. `visualize.py:700` runs
+`while proc.is_alive(): progress_queue.get(timeout=0.2)`. Two mesh-worker tests mocked
+`multiprocessing.Process` but never stubbed `is_alive()` → `MagicMock` truthy → `while True`; the
+real `progress_queue` is never fed → `.get()` raises `Empty` forever. Installing `panel` (Stage 1)
+*unmasked* it — before, those dashboard tests failed collection and never ran. Fix:
+`proc_mock.is_alive.return_value = False` in both (`tests/dashboard/test_visualize.py`). Debug via
+`python -u … -o faulthandler_timeout=120` (dumps the stuck frame; torch inductor
+`subproc_pool._read_thread` in the dump is a red herring).
+
+## Decisions (Stage 4)
+
+- **Group B — RETIRE (done).** `examples/run_c0043_pipeline.py` does not exist anywhere; the example
+  is deprecated. Deleted `tests/examples/test_run_c0043_pipeline.py` + the now-empty
+  `tests/examples/` package.
+- **Group C — pytest-asyncio (decided empirically).** Webapp is FastAPI/ASGI; tests use
+  `@pytest.mark.asyncio` + `httpx.AsyncClient`/`ASGITransport`. Installed `pytest-asyncio` →
+  **9/9 webapp pass in 3.27s**. The pytest "pytest-tornasync" hint is a red herring (no tornado).
+  Added `pytest-asyncio` + `httpx` to `pyproject.toml [dev]`. The uv venv installs `[dev]`, so **no
+  `setup/*.sh` change is needed** — this is the only env-dependent group.
+- **No product regressions.** All 59 are test-API drift, stale script paths, or missing test deps —
+  fixes are test-side or 1-line product import moves, never behavior changes.
+
+## Per-group fix plan (remaining 50 after B+C)
+
+UPDATE = realign test to current API · DELETE = premise removed by design · all env-independent
+unless noted.
+
+| Grp | N | Action | Detail |
+|-----|---|--------|--------|
+| A `test_reconstruct` | 7 | UPDATE | Repoint `SCRIPT_PATH` `scripts/reconstruct.py` → `docs/examples/reconstruct.py` (1 line; docstring already says so). |
+| D abstract stubs | 5 | UPDATE | Add no-op `extract_intermediate_features` + `_reproject` to `_StubCreator` (`test_feedforward_shared`) and the `test_feedforward_lc_state` stub. |
+| D verifier-raises | 2 | **DELETE** | `test_pose_convention::test_default_verifier_raises`, `test_loop_closure_integration::test_base_verify_raises_with_tuple_signature` — assert the base *raises NotImplementedError*; that contract was removed (`base.py:853` is concrete → `tuple[bool, ndarray\|None]`). Deprecated. |
+| E ScenePanel UI | 5 | UPDATE | Realign `test_visualize` to the refactored ScenePanel (renamed/removed `_points_options_*` rows, auto-mesh display). |
+| F BA forward | 3 | UPDATE | `test_bundle_adjustment` calls `RobustModel.forward()` at old arity; update calls (product unchanged). |
+| G BundleAdjustment import | 3 | UPDATE | `BundleAdjustment` now in `wrappers.py`; fix import in `test_reconstructor` + `test_loop_closure_eval`. |
+| H torch `.to()` | 3 | UPDATE | `test_vggt_spark_native_similarity` mock frames' `.dtype` breaks `.to(p.device, dtype=p.dtype)` under torch 2.5; pass real tensors. |
+| I `compute_auc(align=)` | 2 | UPDATE | `compute_auc` now always Sim3-aligns internally; drop the removed `align=` kwarg. The align-mode split is obsolete — keep one positive assertion. |
+| J sim3 compare | 2 | UPDATE | `test_eval_compare` expected-metrics realignment to the Sim3 default. |
+| Z misc singles | ~13 | UPDATE/triage | `PoseGraph.add_loop_edge` kwarg, pgo/hw_formula/graph submap math, `_mapanything` attribute (old G5), `View … data_norm_type` key, numpy-warning assert, meshlib `clean_repair` skip (leave as effective xfail). Case-by-case as touched. |
+
+**Deprecation proposal — DELETE (7 total):** `test_run_c0043_pipeline.py` (done, 5),
+`test_default_verifier_raises` (1), `test_base_verify_raises_with_tuple_signature` (1). All other
+failures are realigned, not removed.
+
+## Retire-hunt (broader sweep, beyond the failing set)
+
+Swept all tests for: external-file loaders, skip/xfail scaffolding, `raises(NotImplementedError)`
+patterns, and orphaned modules. **No additional tests to delete** — the 7 above are the complete
+retire set. Zero collection errors means no test imports a dead module. Three **stale markers** found
+(not deletes — they recover passing tests):
+
+| Test | Marker | Status | Action |
+|------|--------|--------|--------|
+| `test_reconstruct_pane.py::test_build_creator_vggtx_returns_correct_type` | `@skip` (xfeat not importable) | **Stale** — `from collab_splats.pointcloud.feedforward import VGGTXCreator` now succeeds in-env | Remove skip; re-enable |
+| `test_reconstruct_pane.py::test_build_creator_mapanything_returns_correct_type` | `@skip` (same) | **Stale** — same | Remove skip; re-enable |
+| `test_numpy_fix.py::test_collab_splats_init_no_torch` | `@xfail` ("splatter.py top-level import torch; needs lazy import fix") | **Stale** — now XPASSes (the 1 xpassed in the baseline); lazy-import fix landed | Remove xfail marker |
+
+Kept (correctly marked, not retired): `test_mapanything_creator.py::test_mapanything_run_inference_loop_closure_smoke`
+(`xfail strict` tracks a real LC+MapAnything dict-vs-list[dict] bug), `test_segmentation.py`
+NotImplementedError (SAM genuinely has no text-prompt support), and the env-gated
+`ffmpeg`/`evo_ape`/`pypose`/`cuda` skips.
+
+## Env-dependence for uv
+
+Only Group C is env-sensitive, now expressed in `pyproject [dev]` (uv inherits it). The other ~48
+are code/test drift, identical across conda and uv. **uv target:** after these land, the conda suite
+is the reference; uv passes iff it adds no new failures beyond accepted residue (meshlib skip).
+
+## Verification
+
+Re-run the baseline command; expect failures ≤ accepted residue, 0 collection errors, no hangs;
+refresh `known-test-failures.md` + `evals/results/baseline-conda-tests-0601.txt`.

@@ -1,155 +1,78 @@
-# Known Test Failures — 2026-05-26
+# Known Test Failures — 2026-06-01
 
-Run: `pytest tests/ -m 'not slow' --ignore=tests/test_cu121_migration.py --continue-on-collection-errors`
-Result: **39 failed, 600 passed, 5 skipped, 2 collection errors**
+Run (conda env `reconstruction`, py3.11):
+```
+/opt/conda/envs/reconstruction/bin/python -u -m pytest tests/ -m 'not slow' \
+    --ignore=tests/test_cu121_migration.py --continue-on-collection-errors -q -rfE \
+    -o faulthandler_timeout=120 -p no:cacheprovider
+```
+Result: **59 failed, 913 passed, 4 skipped, 4 deselected, 1 xpassed** in 8min. **Zero collection errors.**
+Saved: `evals/results/baseline-conda-tests-0601.txt` (gitignored).
 
-Updated after: torch 2.4→2.5.1 upgrade, bae@0.2.4 git URL, nerfstudio BasisResearch fork via pyproject.
+This supersedes the 2026-05-26 doc and the 2026-05-31 cu121-handoff snapshot
+(`73 failed, 346 passed, 16 errors, 423 collected`). That snapshot was taken against a
+**broken/incomplete env**, not the real baseline. Three things recovered ~570 tests since:
+
+1. `panel`/`param`/`vggt`/`evo` installed by default (commits `60eec57`, feedforward setup) →
+   dashboard/eval/feedforward modules now collect (no more 16 import errors).
+2. `tests/nerfstudio/` → `tests/nerfstudio_methods/` rename (commit `3e4e821`) killed the
+   namespace shadow (old Group 6) → `nerfstudio.*` submodule imports resolve.
+3. **Infinite-hang fix** (see below) — the suite could not complete before this.
+
+## The "11 hours at 7%" hang — FIXED 2026-06-01
+
+The baseline appeared to run ~11h stuck at 7%. Not slow compute, not network: an **infinite loop
+from an incomplete test mock**, unmasked by installing `panel`. `visualize.py:700` polls
+`while proc.is_alive(): progress_queue.get(timeout=0.2)`. `test_on_run_mesh_spawns_subprocess_with_zarr_path`
+and `test_on_run_mesh_reports_failure_on_nonzero_exit` mock `multiprocessing.Process` but never
+stubbed `is_alive()` → `MagicMock.is_alive()` is always truthy → `while True`; the real
+`progress_queue` is never fed → `.get()` raises `Empty` forever. Before `panel` was installed these
+tests failed collection and never ran, so the hang was latent.
+
+**Fix:** `proc_mock.is_alive.return_value = False` in both tests (`tests/dashboard/test_visualize.py`).
+Both now pass in ~20s.
+
+**Debug technique:** `python -u ... -o faulthandler_timeout=120` dumps the stuck main-thread frame
+after the timeout, naming the exact test+line. (Torch `_inductor/.../subproc_pool._read_thread`
+always shows idle-blocked in dumps — a red herring.)
 
 ---
 
-## Group 1: bae/pypose conflict — CLEARED 2026-05-26
+## Failure groups (59)
 
-**Previously:** pypose required `bae==0.2` exactly; bae 0.2.1 caused ImportError.
+Legend — **env-dep?**: does the fix belong in env/setup (matters for the uv migration) or is it
+env-independent code/test drift (fails identically under conda and uv)?
 
-**Status:** pypose has no bae version constraint as of bae 0.2.4. Both import cleanly.
-The 3 failures + 1 collection error from this group no longer occur.
+| Grp | Count | Module(s) | Root cause | Fix type | Env-dep? |
+|-----|-------|-----------|------------|----------|----------|
+| A | 7 | `tests/scripts/test_reconstruct.py` | `SCRIPT_PATH` points to `scripts/reconstruct.py`; script moved to `docs/examples/reconstruct.py` (docstring already says so). | 1-line path fix | no |
+| B | 5 | `tests/examples/test_run_c0043_pipeline.py` | Execs `examples/run_c0043_pipeline.py` — does not exist. **RETIRED 2026-06-01**: example deprecated; test file + empty `tests/examples/` package deleted. | done | no |
+| C | 9 | `tests/webapp/*` | FastAPI/ASGI async tests; no async plugin was installed. **RESOLVED 2026-06-01**: app is FastAPI (not tornado — the `pytest-tornasync` hint was a red herring); `pytest-asyncio` → 9/9 pass. Added `pytest-asyncio`+`httpx` to `pyproject [dev]`. | done | **yes** (in `[dev]`) |
+| D | 7 | `test_feedforward_shared`, `test_pose_convention`, `test_feedforward_lc_state`, `test_loop_closure_integration` | `BaseFeedforwardCreator` gained abstract methods (`_reproject`, `extract_intermediate_features`); stub creators (`_StubCreator`/`_DummyCreator`/`_D`) don't implement them → can't instantiate. Old Group 7, expanded. | Add stub methods; update premises | no |
+| E | 5 | `tests/dashboard/test_visualize.py` | `ScenePanel` UI refactor removed/renamed `_points_options_*` rows + auto-mesh display; tests assert old attrs. | Update tests to new ScenePanel API | no |
+| F | 3 | `tests/pointcloud/test_bundle_adjustment.py` | `RobustModel.forward()` missing a required positional arg — BA forward signature changed. | Update test calls (verify product intent) | no |
+| G | 3 | `tests/wrapper/test_reconstructor.py`, `test_loop_closure_eval.py` | `BundleAdjustment` no longer importable from `collab_splats.pointcloud` (moved to `wrappers.py`); isinstance/identity checks on MagicMock. | Fix import path in tests | no |
+| H | 3 | `tests/pointcloud/test_vggt_spark_native_similarity.py` | `.to()` called with an unsupported overload under torch 2.5 (`* (Tensor, bool non_blocking…)`). | Fix `.to()` call (product or test) | no |
+| I | 2 | `tests/evals/test_metrics_auc.py` | `compute_auc()` got unexpected kwarg `align` — eval API drift. | Update test/signature | no |
+| J | 2 | `tests/evals/test_eval_compare.py` | LC sim3 alignment metrics mismatch in compare emit. | Update expected metrics | no |
+| Z | ~13 | mixed (`test_pgo_parity`, `test_hw_formula`, `test_graph`, `test_tsdf`, `test_mapanything_creator`, `test_pose_extraction`, `test_feedforward_logging`, `test_numpy_fix`, …) | Assorted singles: `PoseGraph.add_loop_edge` kwarg drift, sim3 submap overlap, meshlib `clean_repair` skip (effectively xfail), `_mapanything` attribute (old Group 5), `View … data_norm_type` key, numpy-warning assert. | Per-test, mostly mechanical | no |
 
----
+**Key for the uv migration:** only **Group C is env-sensitive**. The other 50 failures are code/test
+drift and will fail identically under conda and uv — they form the **baseline the uv env must match**
+(uv must not *add* failures beyond these). Fix C in `setup/*.sh` so it survives the env rebuild.
 
-## Group 2: loop_closure eval API mismatch (8 failures)
+## Suggested fix order
 
-**Affected:**
-- `tests/pointcloud/test_loop_closure_eval.py::test_apply_ba_dedup_aligns_intrinsics`
-- `tests/pointcloud/test_loop_closure_integration.py::test_verify_loop_candidate_returns_tuple`
-- `tests/pointcloud/test_loop_closure_integration.py::test_base_verify_raises_with_tuple_signature`
-- `tests/pointcloud/test_feedforward_shared.py::test_verify_loop_candidate_rejected`
-- `tests/pointcloud/test_feedforward_shared.py::test_verify_loop_candidate_accepted_no_poses`
-- `tests/pointcloud/test_feedforward_shared.py::test_verify_loop_candidate_accepted_with_poses`
-- `tests/pointcloud/test_feedforward_shared.py::test_verify_loop_candidate_layer_index_forwarded`
-- `tests/pointcloud/test_feedforward_lc_state.py::test_lc_state_attrs_set_after_run_inference`
+1. **C** — install async plugin, add to setup (only env-dep group; unblocks 9). Decide
+   `pytest-tornasync` vs `pytest-asyncio` (the app is tornado → likely tornasync).
+2. **A** — 1-line `SCRIPT_PATH` fix (7).
+3. **B** — decide: write `examples/run_c0043_pipeline.py`, or skip the test if the example is
+   deprecated (5).
+4. **D, E, G** — mechanical test-API/import realignment (15).
+5. **F, H, I, J, Z** — case-by-case; confirm whether each is test drift or a real product
+   regression (≈23).
 
-**Root cause:** Tests were written against an older LC verifier API. The current `_verify_loop_candidate` is a concrete method in `BaseFeedforwardCreator` that calls `extract_intermediate_features`. Tests expect tuple-return or raise behavior from an intermediate refactor that has since changed.
+## Migration hard gates
 
-**Fix:** Update tests to match the current `_verify_loop_candidate` signature and return contract.
-
----
-
-## Group 3: VGGTXCreator model_name default changed (1 failure)
-
-**Affected:**
-- `tests/pointcloud/test_vggtx_creator.py::test_vggtx_defaults`
-
-**Error:**
-```
-AssertionError: assert 'facebook/VGGT-1B' == 'facebook/vggt'
-```
-
-**Fix:** Update `test_vggtx_defaults` line 12: `assert c.model_name == "facebook/VGGT-1B"`
-
----
-
-## Group 4: VGGTXCreator depth tensor shape mismatch (2 failures)
-
-**Affected:**
-- `tests/pointcloud/test_vggtx_creator.py::test_vggtx_postprocess_calls_global_alignment`
-- `tests/pointcloud/test_vggtx_creator.py::test_vggtx_no_global_alignment_when_disabled`
-
-**Error:**
-```
-ValueError: cannot select an axis to squeeze out which has size not equal to one
-  at vggt/utils/geometry.py:39: depth_map[frame_idx].squeeze(-1)
-```
-
-**Fix:** Check current vggt expected depth shape, update test fixtures accordingly.
-
----
-
-## Group 5: _mapanything.run_mapanything attribute missing (1 failure)
-
-**Affected:**
-- `tests/pointcloud/test_mapanything_creator.py::test_mapanything_run_inference_passes_inference_params`
-
-**Error:**
-```
-AttributeError: <module 'collab_splats.pointcloud._mapanything'> does not have the attribute 'run_mapanything'
-```
-
-**Fix:** Find actual function name with `grep -n "^def " collab_splats/pointcloud/_mapanything.py`, update patch target.
-
----
-
-## Group 6: nerfstudio namespace shadow — tests/nerfstudio/ + tests/wrapper/ (20 failures + 2 collection errors)
-
-**Affected:**
-- `tests/nerfstudio/test_imports.py` — all 4 tests
-- `tests/nerfstudio/test_datamanager_config.py` — all 11 tests
-- `tests/wrapper/test_splatter_mesh.py` — all 6 tests
-- `tests/test_models.py` — collection error
-- `tests/wrapper/test_splatter_query.py` — collection error
-
-**Errors:**
-```
-ModuleNotFoundError: No module named 'nerfstudio.cameras'
-ModuleNotFoundError: No module named 'nerfstudio.configs'
-ModuleNotFoundError: No module named 'nerfstudio.utils'
-ModuleNotFoundError: No module named 'nerfstudio.data'
-```
-
-**Root cause:** `tests/nerfstudio/` is a Python namespace package (directory without `__init__.py`). With `pythonpath = ["."]` in pytest config, the repo root is on sys.path, which makes `tests/nerfstudio/` visible as a namespace package that shadows the installed `nerfstudio` site-package during collection/test execution. Submodules like `nerfstudio.cameras`, `nerfstudio.configs`, etc. don't exist inside `tests/nerfstudio/`, so imports fail.
-
-The `tests/wrapper/` failures trace through `collab_splats/wrapper/splatter.py:18` → `from nerfstudio.utils.eval_utils import eval_setup` — same shadow.
-
-**Fix:** Rename `tests/nerfstudio/` to `tests/nerfstudio_module/` (or similar) and update imports. OR add `tests/` to `norecursedirs` in pytest config (breaks test collection). Best fix: rename the directory.
-
----
-
-## Group 7: test_pose_convention abstract interface mismatch (1 failure)
-
-**Affected:**
-- `tests/pointcloud/test_pose_convention.py::test_default_verifier_raises`
-
-**Error:**
-```
-TypeError: Can't instantiate abstract class _DummyCreator with abstract methods _reproject, extract_intermediate_features
-```
-Then: test expects `NotImplementedError` matching `_verify_loop_candidate` but the base class now has a concrete implementation.
-
-**Root cause:** `BaseFeedforwardCreator` gained two new abstract methods (`_reproject`, `extract_intermediate_features`) and `_verify_loop_candidate` was made concrete. The test's `_DummyCreator` stub doesn't implement the new abstract methods, and the test premise (verifier raises NotImplementedError) is no longer true.
-
-**Fix:** Update `_DummyCreator` to add stubs for `_reproject` and `extract_intermediate_features`, then update the test to verify the new concrete `_verify_loop_candidate` behavior.
-
----
-
-## Group 8: VGGTXCreator/MapAnythingCreator reconstruct smoke (2 failures)
-
-**Affected:**
-- `tests/pointcloud/test_vggtx_creator.py::test_vggtx_reconstruct_smoke`
-- `tests/pointcloud/test_mapanything_creator.py::test_mapanything_reconstruct_smoke`
-
-**Errors:**
-```
-ModuleNotFoundError: No module named 'nerfstudio.process_data'
-  at collab_splats/pointcloud/base.py:119: from nerfstudio.process_data.colmap_utils import colmap_to_json
-```
-MapAnything: model attribute missing (Group 5 related).
-
-**Root cause:** `nerfstudio.process_data` may have been reorganized in the BasisResearch fork, or the import in `base.py` is lazy (inside `_write_transforms`) and only triggers when `build_colmap` is called during a full reconstruct. The smoke tests run far enough to hit this code path.
-
-**Fix:** Check if `nerfstudio.process_data.colmap_utils` exists in the fork; if not, find the new import path.
-
----
-
-## Summary Table
-
-| Group | Count | Status | Fix type |
-|-------|-------|--------|----------|
-| 1 bae/pypose | 0 | ✅ CLEARED 2026-05-26 | — |
-| 2 LC eval API | 8 | active | Update tests for new verifier API |
-| 3 VGGTXCreator model_name | 1 | active | 1-line test fix |
-| 4 depth shape | 2 | active | Update test fixtures |
-| 5 _mapanything attribute | 1 | active | Update patch target |
-| 6 nerfstudio namespace shadow | 20 + 2 errors | active | Rename tests/nerfstudio/ |
-| 7 pose_convention abstract | 1 | active | Update DummyCreator stubs + test premise |
-| 8 reconstruct smoke | 2 | active | Fix nerfstudio.process_data import path |
-
-**Migration hard gates:** `pytest tests/test_cu121_migration.py` → **24/24 PASS** ✅
+`pytest tests/test_cu121_migration.py` → previously **24/24 PASS** (not re-run here; ignored via
+`--ignore` in the baseline command).

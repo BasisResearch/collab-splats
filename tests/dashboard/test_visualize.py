@@ -358,6 +358,7 @@ def test_on_run_mesh_spawns_subprocess_with_zarr_path(tmp_path):
 
     proc_mock = mock.MagicMock()
     proc_mock.exitcode = 0
+    proc_mock.is_alive.return_value = False  # exit the progress-poll loop immediately
 
     with mock.patch("collab_splats.dashboard.panes.visualize.multiprocessing.Process",
                     return_value=proc_mock) as mock_proc_cls, \
@@ -388,6 +389,7 @@ def test_on_run_mesh_reports_failure_on_nonzero_exit(tmp_path):
 
     proc_mock = mock.MagicMock()
     proc_mock.exitcode = -9  # OOM kill
+    proc_mock.is_alive.return_value = False  # exit the progress-poll loop immediately
 
     with mock.patch("collab_splats.dashboard.panes.visualize.multiprocessing.Process",
                     return_value=proc_mock), \

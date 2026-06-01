@@ -109,6 +109,18 @@ feedforward = [
     # salad (Dominic101/salad) installed via setup/feedforward.sh.
     # pytorch-metric-learning is salad's only non-torch runtime dep.
     "pytorch-metric-learning",
+    "vggt",
+    "vggt-omega",
+    "mapanything",
+    "lightglue",
+    "salad",
+    "co3d",
+]
+
+gpu = [
+  # CUDA build toolkit (nvcc + cccl headers) for compiling bae/gsplat in the venv.
+  # 12.1.1 matches torch 2.5.1+cu121. torch already vendors the runtime libs.
+  "cuda-toolkit[all]==12.1.1",
 ]
 
 dashboard = [

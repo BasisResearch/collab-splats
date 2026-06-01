@@ -184,8 +184,8 @@ def test_scene_panel_scan_available_modes_with_mesh(tmp_path):
     assert "Mesh" in sp._available_modes
 
 
-def test_scan_available_modes_auto_displays_mesh(tmp_path):
-    """When mesh.ply exists, _scan_available_modes calls _rebuild_mesh_viewer."""
+def test_scan_available_modes_does_not_render(tmp_path):
+    """_scan_available_modes only updates mode state; it never triggers VTK rendering."""
     _make_dataset(tmp_path, "scene_01", backends=("vggt_x",))
     mesh_dir = tmp_path / "scene_01" / "vggt_x" / "mesh"
     mesh_dir.mkdir(parents=True)
@@ -196,12 +196,12 @@ def test_scan_available_modes_auto_displays_mesh(tmp_path):
     sp._backend_dd.value = "vggt_x"
     sp._plotter = mock.MagicMock()
     sp._vtk_pane = mock.MagicMock()
-    def _set_actor(*a, **kw):
-        sp._mesh_actor = mock.MagicMock()
 
-    with mock.patch.object(sp, "_rebuild_mesh_viewer", side_effect=_set_actor) as mock_rebuild:
+    # Rendering moved out of _scan_available_modes; mesh detection must not call rebuild.
+    with mock.patch.object(sp, "_rebuild_mesh_viewer") as mock_rebuild:
         sp._scan_available_modes()
-    mock_rebuild.assert_called()
+    mock_rebuild.assert_not_called()
+    assert "Mesh" in sp._available_modes
 
 
 def test_scan_available_modes_adds_mesh_when_ply_exists(tmp_path):
@@ -283,12 +283,6 @@ def test_scene_panel_has_sim_query_row(tmp_path):
     assert isinstance(sp._extractor_dd, pn.widgets.Select)
 
 
-def test_scene_panel_has_points_options_row(tmp_path):
-    sp = _make_scene(tmp_path)
-    assert hasattr(sp, "_points_options_row")
-    assert sp._points_options_row.visible is False
-
-
 def test_scene_panel_sim_query_row_visible_in_similarity_mode(tmp_path):
     sp = _make_scene(tmp_path)
     sp._available_modes = {"PCD", "Similarity"}
@@ -299,10 +293,9 @@ def test_scene_panel_sim_query_row_visible_in_similarity_mode(tmp_path):
     with mock.patch.object(sp, "_rebuild_sim_viewer"):
         sp._on_mode_change("Similarity")
     assert sp._sim_query_row.visible is True
-    assert sp._points_options_row.visible is False
 
 
-def test_scene_panel_points_options_visible_in_points_mode(tmp_path):
+def test_scene_panel_sim_query_row_hidden_in_points_mode(tmp_path):
     sp = _make_scene(tmp_path)
     sp._available_modes = {"PCD"}
     sp._result = mock.MagicMock()  # non-None, has any attr accessed
@@ -311,7 +304,6 @@ def test_scene_panel_points_options_visible_in_points_mode(tmp_path):
     sp._vtk_pane = mock.MagicMock()
     with mock.patch.object(sp, "_rebuild_pcd_viewer"):
         sp._on_mode_change("Points")
-    assert sp._points_options_row.visible is True
     assert sp._sim_query_row.visible is False
 
 
@@ -326,7 +318,7 @@ def test_scene_panel_wire_tabs(tmp_path):
     assert isinstance(sp._available_modes, (set, frozenset))
 
 
-def test_scene_panel_mesh_mode_hides_points_and_sim_rows(tmp_path):
+def test_scene_panel_mesh_mode_hides_sim_query_row(tmp_path):
     sp = _make_scene(tmp_path)
     sp._available_modes = {"Mesh"}
     sp._result = mock.MagicMock()
@@ -334,7 +326,6 @@ def test_scene_panel_mesh_mode_hides_points_and_sim_rows(tmp_path):
     sp._vtk_pane = mock.MagicMock()
     with mock.patch.object(sp, "_rebuild_mesh_viewer"):
         sp._on_mode_change("Mesh")
-    assert sp._points_options_row.visible is False
     assert sp._sim_query_row.visible is False
 
 

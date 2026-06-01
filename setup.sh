@@ -26,6 +26,10 @@ else
     export LD_LIBRARY_PATH="$NV/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0;8.9;8.6;8.0;7.5;7.0}"
+# Cap parallel compile jobs. torch's cpp_extension defaults to one job per CPU; each cc1plus
+# for a torch C++/CUDA file needs ~2-4 GB, so the default OOM-kills the compiler in a memory-
+# constrained Docker VM. 2 keeps peak RAM sane; raise via MAX_JOBS if the build host has more.
+export MAX_JOBS="${MAX_JOBS:-2}"
 
 echo "=== uv sync: full env (all extras incl. gpu toolkit + feedforward) ==="
 cd "$SCRIPT_DIR"

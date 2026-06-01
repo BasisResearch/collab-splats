@@ -4,10 +4,6 @@ User-facing documentation for the repository.
 
 Layout mirrors the code tree: a module at `<source-path>/<module>/` has its docs at `docs/<module>/`. The `collab_splats/` prefix is dropped; top-level dirs like `evals/` are preserved.
 
-## Module Docs
-
-- [semantics.md](semantics.md) — semantic feature splatting
-
 ## Examples
 
 - [examples/reconstruct.py](examples/reconstruct.py) — CLI entry point for the Reconstructor pipeline
@@ -20,5 +16,4 @@ Layout mirrors the code tree: a module at `<source-path>/<module>/` has its docs
 
 ## Internal
 
-- [superpowers/](superpowers/) — specs, plans, architecture decisions
 - [known-test-failures.md](known-test-failures.md) — known test failures and workarounds

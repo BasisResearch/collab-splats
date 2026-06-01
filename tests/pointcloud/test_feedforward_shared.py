@@ -76,10 +76,19 @@ class _StubCreator(BaseFeedforwardCreator):
         # Return the pre-configured stub features for this test
         return self._stubbed_features
 
+    def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
+        return np.zeros((0, 3)), np.zeros((0, 3))
+
 
 def _make_stub() -> _StubCreator:
     """Bypass the dataclass __init__; no real model or paths needed."""
-    return object.__new__(_StubCreator)
+    from unittest.mock import MagicMock
+    creator = object.__new__(_StubCreator)
+    # _verify_loop_candidate calls next(self.model.parameters()).device
+    mock_model = MagicMock()
+    mock_model.parameters.return_value = iter([torch.zeros(1)])
+    creator.model = mock_model
+    return creator
 
 
 def _high_ratio_features():

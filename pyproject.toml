@@ -227,6 +227,13 @@ override-dependencies = [
 # bae + gsplat-rade import torch at build time → must build without isolation.
 no-build-isolation-package = ["bae", "gsplat"]
 
+# no-build-isolation builds use the project venv as the build env, which lacks wheel/ninja
+# by default → 'invalid command bdist_wheel'. Supply the build tools for the source-compiled
+# CUDA extensions. (torch is already installed in the venv before these build.)
+[tool.uv.extra-build-dependencies]
+bae = ["setuptools", "wheel", "ninja"]
+gsplat = ["setuptools", "wheel", "ninja"]
+
 [[tool.uv.index]]
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"

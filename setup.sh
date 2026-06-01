@@ -9,15 +9,22 @@ PYTHON="$VENV/bin/python"
 export PIP_ROOT_USER_ACTION=ignore
 export UV_PROJECT_ENVIRONMENT="$VENV"
 
-# CUDA build environment — nvcc + headers come from the pip cuda-toolkit wheels (Option A).
-# These dirs are populated during `uv sync` (cuda-toolkit is a wheel, installed before the
-# no-build-isolation source builds); env vars resolve at compile time, after install.
-NV="$VENV/lib/python3.11/site-packages/nvidia"
-export CUDA_HOME="$NV/cuda_nvcc"
-export PATH="$CUDA_HOME/bin:$PATH"
-export CPATH="$NV/cuda_runtime/include:$NV/cuda_cccl/include:$NV/cuda_nvcc/include${CPATH:+:$CPATH}"
-export LIBRARY_PATH="$NV/cuda_runtime/lib:$NV/cuda_nvcc/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-export LD_LIBRARY_PATH="$NV/cuda_runtime/lib:$NV/cuda_nvcc/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# CUDA build environment for the source-compiled extensions (bae, gsplat).
+# Prefer a complete SYSTEM toolkit: the nvidia/cuda:*-devel image ships nvcc + all headers +
+# libs under one root at /usr/local/cuda — exactly the unified layout torch's cpp_extension
+# expects. Fall back to the pip cuda-toolkit wheels on bare machines with no system CUDA,
+# wiring the scattered site-packages/nvidia/* dirs via CPATH/LIBRARY_PATH.
+if [ -x /usr/local/cuda/bin/nvcc ]; then
+    export CUDA_HOME=/usr/local/cuda
+    export PATH="$CUDA_HOME/bin:$PATH"
+else
+    NV="$VENV/lib/python3.11/site-packages/nvidia"
+    export CUDA_HOME="$NV/cuda_nvcc"
+    export PATH="$CUDA_HOME/bin:$PATH"
+    export CPATH="$NV/cuda_runtime/include:$NV/cuda_cccl/include${CPATH:+:$CPATH}"
+    export LIBRARY_PATH="$NV/cuda_runtime/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+    export LD_LIBRARY_PATH="$NV/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0;8.9;8.6;8.0;7.5;7.0}"
 
 echo "=== uv sync: full env (all extras incl. gpu toolkit + feedforward) ==="

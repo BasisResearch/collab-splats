@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 SCRIPT_PATH = Path(__file__).parent.parent.parent / "docs" / "examples" / "reconstruct.py"
-DEFAULT_CONFIG_DIR = Path(__file__).parent.parent.parent / "docs" / "configs"
+DEFAULT_CONFIG_DIR = Path(__file__).parent.parent.parent / "configs"
 
 
 def _load_main():

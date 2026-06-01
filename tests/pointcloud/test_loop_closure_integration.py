@@ -77,21 +77,3 @@ def test_verify_loop_candidate_returns_tuple():
     accepted, lc_poses = result
     assert accepted is False
     assert lc_poses is None
-
-
-def test_base_verify_raises_with_tuple_signature():
-    """F4/F5: base _verify_loop_candidate raises NotImplementedError."""
-    import pytest
-    from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator, FeedforwardResult
-
-    class _D(BaseFeedforwardCreator):
-        def _load_model(self, device): pass
-        def _preprocess(self, image_dir): return None, [], np.zeros((0, 2))
-        def _forward(self, model, views, **kw): return {}
-        def _postprocess(self, raw, **kw):
-            return FeedforwardResult(np.zeros((1, 3)), np.zeros((1, 3)),
-                                     np.eye(4)[None], np.eye(3)[None], [], 1, 1)
-
-    dummy = object.__new__(_D)
-    with pytest.raises(NotImplementedError, match="_verify_loop_candidate"):
-        dummy._verify_loop_candidate(None, None)

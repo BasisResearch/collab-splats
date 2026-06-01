@@ -1098,6 +1098,7 @@ dependencies = [
     { name = "meshlib" },
     { name = "mobile-sam" },
     { name = "nerfstudio" },
+    { name = "ninja" },
     { name = "numcodecs", version = "0.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numcodecs", version = "0.16.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy" },
@@ -1135,6 +1136,7 @@ dependencies = [
     { name = "transformers" },
     { name = "trimesh" },
     { name = "ultralytics" },
+    { name = "wheel" },
     { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "zarr", version = "3.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1244,6 +1246,7 @@ requires-dist = [
     { name = "nbsphinx", marker = "extra == 'docs'" },
     { name = "nbval", marker = "extra == 'dev'" },
     { name = "nerfstudio", git = "https://github.com/BasisResearch/nerfstudio.git?branch=main" },
+    { name = "ninja" },
     { name = "numcodecs" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvidia-cudss-cu12", specifier = "==0.6.0.5" },
@@ -1308,6 +1311,7 @@ requires-dist = [
     { name = "vggt", marker = "extra == 'feedforward'", git = "https://github.com/Linketic/VGGT-X.git?rev=26d1b956cfda6f83926adda9f5c2c53f75dda749" },
     { name = "vggt-omega", marker = "extra == 'feedforward'", git = "https://github.com/facebookresearch/vggt-omega.git?rev=39a0cb8" },
     { name = "viser", marker = "extra == 'feedforward'", specifier = ">=0.2.23" },
+    { name = "wheel" },
     { name = "zarr", specifier = ">=2.16" },
 ]
 provides-extras = ["feedforward", "gpu", "dashboard", "docs", "dev"]
@@ -10069,6 +10073,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/dd/b2/381be8cfdee792dd117872481b6e378f85c957dd7c5bca38897b08f765fd/werkzeug-3.1.8.tar.gz", hash = "sha256:9bad61a4268dac112f1c5cd4630a56ede601b6ed420300677a869083d70a4c44", size = 875852, upload-time = "2026-04-02T18:49:14.268Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/93/8c/2e650f2afeb7ee576912636c23ddb621c91ac6a98e66dc8d29c3c69446e1/werkzeug-3.1.8-py3-none-any.whl", hash = "sha256:63a77fb8892bf28ebc3178683445222aa500e48ebad5ec77b0ad80f8726b1f50", size = 226459, upload-time = "2026-04-02T18:49:12.72Z" },
+]
+
+[[package]]
+name = "wheel"
+version = "0.47.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/39/62/75f18a0f03b4219c456652c7780e4d749b929eb605c098ce3a5b6b6bc081/wheel-0.47.0.tar.gz", hash = "sha256:cc72bd1009ba0cf63922e28f94d9d83b920aa2bb28f798a31d0691b02fa3c9b3", size = 63854, upload-time = "2026-04-22T15:51:27.727Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/1b/9e33c09813d65e248f7f773119148a612516a4bea93e9c6f545f78455b7c/wheel-0.47.0-py3-none-any.whl", hash = "sha256:212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced", size = 32218, upload-time = "2026-04-22T15:51:26.296Z" },
 ]
 
 [[package]]

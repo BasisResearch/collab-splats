@@ -14,6 +14,11 @@ dependencies = [
     # setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,
     # which setuptools 70+ removed. See [build-system] comment.
     "setuptools<70.0",
+    # wheel + ninja must be IN the venv (not build-extras): bae/gsplat build with
+    # no-build-isolation, which uses the project venv as the build env. Without wheel,
+    # setuptools<70 has no bdist_wheel command. ninja gives fast parallel CUDA compiles.
+    "wheel",
+    "ninja",
     "torch==2.5.1+cu121",
     "torchvision==0.20.1+cu121",
     "einops",
@@ -226,13 +231,6 @@ override-dependencies = [
 ]
 # bae + gsplat-rade import torch at build time → must build without isolation.
 no-build-isolation-package = ["bae", "gsplat"]
-
-# no-build-isolation builds use the project venv as the build env, which lacks wheel/ninja
-# by default → 'invalid command bdist_wheel'. Supply the build tools for the source-compiled
-# CUDA extensions. (torch is already installed in the venv before these build.)
-[tool.uv.extra-build-dependencies]
-bae = ["setuptools", "wheel", "ninja"]
-gsplat = ["setuptools", "wheel", "ninja"]
 
 [[tool.uv.index]]
 name = "pytorch-cu121"

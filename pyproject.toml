@@ -249,4 +249,3 @@ mapanything = { git = "https://github.com/facebookresearch/map-anything.git" }
 lightglue = { git = "https://github.com/cvg/LightGlue.git" }
 salad = { git = "https://github.com/Dominic101/salad.git" }
 co3d = { git = "https://github.com/facebookresearch/co3d.git" }
-collab-data = { git = "https://github.com/BasisResearch/collab-data.git" }

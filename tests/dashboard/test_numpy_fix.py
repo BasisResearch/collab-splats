@@ -26,7 +26,6 @@ def test_dashboard_import_no_numpy_warning():
     )
 
 
-@pytest.mark.xfail(reason="splatter.py has top-level 'import torch'; needs lazy import fix")
 def test_collab_splats_init_no_torch():
     """collab_splats top-level __init__ must not import torch at module load time."""
     result = subprocess.run(

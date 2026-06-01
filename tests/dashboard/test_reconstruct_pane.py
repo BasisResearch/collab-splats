@@ -132,14 +132,6 @@ def test_run_reconstruction_re_enables_run_btn_on_failure(tmp_path):
     assert pane._run_btn.disabled is False
 
 
-@pytest.mark.skip(
-    reason=(
-        "Importing collab_splats.pointcloud.feedforward triggers the package __init__, "
-        "which imports localization → third_party/xfeat/modules/, a path not on sys.path in "
-        "the test environment (xfeat vendored dep missing). The isinstance check itself "
-        "is correct; skip rather than fail on an env-setup issue."
-    )
-)
 def test_build_creator_vggtx_returns_correct_type():
     from collab_splats.pointcloud.feedforward import VGGTXCreator
     pane, _, _ = _make_pane()
@@ -148,14 +140,6 @@ def test_build_creator_vggtx_returns_correct_type():
     assert creator.conf_threshold == 40.0
 
 
-@pytest.mark.skip(
-    reason=(
-        "Importing collab_splats.pointcloud.feedforward triggers the package __init__, "
-        "which imports localization → third_party/xfeat/modules/, a path not on sys.path in "
-        "the test environment (xfeat vendored dep missing). The isinstance check itself "
-        "is correct; skip rather than fail on an env-setup issue."
-    )
-)
 def test_build_creator_mapanything_returns_correct_type():
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
     pane, _, _ = _make_pane()

@@ -55,15 +55,15 @@ dependencies = [
     "roma",
     "kornia",
     "open-clip-torch",
-    "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
+    "mobile_sam",
     # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
     # mobilesamv2/efficientvit/models/nn/drop.py imports torchpack.distributed at module level,
     # so it must be installed before any import of mobilesamv2.
     "torchpack",
     # gsplat-rade fork (version 1.4.0) must be pre-installed with --no-build-isolation.
     # Pre-installed in Dockerfile builder stage.
-    "gsplat>=1.4.0",
-    "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
+    "gsplat",
+    "maskclip_onnx",
     # pypose<0.9 required: pypose 0.9+ adds _ensure_sparse_backend_version() which runs at
     # `import pypose` and hard-rejects any bae != 0.2 (strict version.parse inequality), so it
     # raises ImportError against our pinned bae 0.2.4. The guard is absent in <=0.7.5 (no 0.8.x
@@ -80,11 +80,11 @@ dependencies = [
     # installed explicitly first. CUDA_HOME=/opt/conda/envs/reconstruction required (nvcc lives
     # in the conda env, not /usr/local/cuda which is runtime-only in the Docker image).
     # USE_CUDSS defaults to "1" in bae 0.2.4.
-    "bae @ git+https://github.com/pypose/bae.git@0.2.4",
+    "bae",
     # nerfstudio: BasisResearch fork (our own) with gsplat-rade + cu121 patches applied.
     # @main tracks our fork's main branch — we control what lands there.
-    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git@main",
-    "clip @ git+https://github.com/openai/CLIP.git",
+    "nerfstudio",
+    "clip",
 ]
 
 [project.optional-dependencies]
@@ -213,3 +213,16 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu121" }
 torchvision = { index = "pytorch-cu121" }
+gsplat = { git = "https://github.com/brian-xu/gsplat-rade.git" }
+mobile_sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
+maskclip_onnx = { git = "https://github.com/RogerQi/maskclip_onnx.git" }
+bae = { git = "https://github.com/pypose/bae.git", rev = "0.2.4" }
+nerfstudio = { git = "https://github.com/BasisResearch/nerfstudio.git", branch = "main" }
+clip = { git = "https://github.com/openai/CLIP.git" }
+vggt = { path = "third_party/VGGT-X", editable = true }
+vggt-omega = { path = "third_party/vggt-omega", editable = true }
+mapanything = { git = "https://github.com/facebookresearch/map-anything.git" }
+lightglue = { git = "https://github.com/cvg/LightGlue.git" }
+salad = { git = "https://github.com/Dominic101/salad.git" }
+co3d = { git = "https://github.com/facebookresearch/co3d.git" }
+collab-data = { git = "https://github.com/BasisResearch/collab-data.git" }

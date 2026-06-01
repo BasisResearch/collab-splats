@@ -9,7 +9,8 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Repo root = parent of this script's setup/ dir (third_party/, pyproject.toml live there)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON=/opt/conda/envs/reconstruction/bin/python
 PIP=/opt/conda/envs/reconstruction/bin/pip
 # Prevent pip build isolation from using system Python 3.13 instead of env Python

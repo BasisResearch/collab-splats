@@ -121,8 +121,12 @@ def test_mapanything_forward_logs_minibatch_info(capsys):
     creator.original_coords = np.zeros((6, 6), dtype=np.float32)
     creator.image_paths = [Path(f"{i}.jpg") for i in range(6)]
 
+    # _forward picks the full-sequence branch only when `views is self.views`
+    # (discriminator in mapanything.py:241-245). Set both so the call skips the
+    # LC-window key validation and hits the "N images, minibatch_size=..." log.
     views = [{"img": torch.zeros(1, 3, 224, 224)} for _ in range(6)]
     creator._processed_views = views
+    creator.views = views
     creator._forward(mock_model, views)
 
     out = capsys.readouterr().out

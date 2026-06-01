@@ -50,12 +50,12 @@ RUN pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
 # Verify torch reachable
 RUN python -c 'import torch; print(f"[Builder] torch={torch.__version__}, cuda={torch.version.cuda}")'
 
-# gsplat-rade fork (compiles CUDA kernels — slow step)
-# --no-build-isolation: setup.py imports torch at top-level to query CUDA ABI; env already has torch
-RUN pip install --no-cache-dir --no-build-isolation \
-        setuptools wheel ninja && \
-    pip install --no-cache-dir --no-build-isolation \
-        git+https://github.com/brian-xu/gsplat-rade.git
+# Build the full env at image-build time: copy the repo and run the single-source setup.
+# uv sync installs all deps incl. cuda-toolkit (nvcc) then compiles bae + gsplat.
+# nvcc cross-compiles to TORCH_CUDA_ARCH_LIST; no GPU needed during build.
+WORKDIR /workspace/collab-splats
+COPY . /workspace/collab-splats
+RUN bash setup.sh
 
 # rclone
 RUN curl https://rclone.org/install.sh | bash

@@ -163,9 +163,11 @@ def test_vggtx_postprocess_pipeline(tmp_path):
 def test_mapanything_postprocess_pipeline(tmp_path):
     """MapAnythingCreator._postprocess with synthetic raw_outputs → FeedforwardResult.
 
-    Mocks collect_pts3d_from_outputs (which consumes the list-of-dicts raw_outputs)
-    and voxel_downsample so no MapAnything model download is needed.
-    Also confirms _patch_mapanything_torch_compat fires without RuntimeError.
+    Since d6177bc, _postprocess builds the per-frame point/color grids inline from
+    postprocess_model_outputs_for_inference's pred dicts and applies the shared
+    compute_multiview_depth_confidence filter — collect_pts3d_from_outputs and
+    voxel_downsample are gone. We mock postprocess_model_outputs_for_inference to
+    return ready-to-consume pred dicts and stub mv-conf so no model download runs.
     """
     from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
 
@@ -194,31 +196,17 @@ def test_mapanything_postprocess_pipeline(tmp_path):
         creator.original_coords[i] = [0, 0, W, H, W, H]
     creator._processed_views = synthetic_views
 
-    mock_pts3d = np.random.randn(20, 3).astype(np.float32)
-    mock_colors = np.random.randint(0, 255, (20, 3)).astype(np.uint8)
-    mock_extrinsics = _synthetic_extrinsics(N)
-    mock_intrinsics = _synthetic_intrinsics(N)
-
-    # postprocess_model_outputs_for_inference needs full MapAnything view dicts;
-    # mock it to return views with the keys _postprocess reads after this call.
-    mock_processed = [
-        {
-            "img_no_norm": torch.rand(1, H, W, 3),
-            "pts3d": torch.rand(1, H, W, 3),
-            "conf": None,
-        }
-        for _ in range(N)
-    ]
+    # postprocess_model_outputs_for_inference returns per-frame pred dicts; _postprocess
+    # reads mask/depth_z/pts3d/img_no_norm/conf/camera_poses/intrinsics from each. The
+    # synthetic_views already carry every required key, so reuse them as the mock preds.
+    mock_processed = synthetic_views
 
     with patch(
         "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
         return_value=mock_processed,
     ), patch(
-        "collab_splats.pointcloud.feedforward.mapanything.collect_pts3d_from_outputs",
-        return_value=(mock_pts3d, mock_colors, mock_extrinsics, mock_intrinsics),
-    ), patch(
-        "collab_splats.pointcloud.feedforward.mapanything.voxel_downsample",
-        side_effect=lambda pcd, **kw: (pcd, None),
+        "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
+        side_effect=lambda depth, *a, **kw: np.ones_like(depth),
     ):
         result = creator._postprocess(synthetic_views)
 

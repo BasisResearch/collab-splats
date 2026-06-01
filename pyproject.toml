@@ -74,11 +74,9 @@ dependencies = [
     # wheels before source builds regardless of order, so cudss headers are present when
     # bae's find_cudss_root() runs at compile time). Pinned for ABI stability.
     "nvidia-cudss-cu12==0.6.0.5",
-    # bae: pypose BA CUDA extension. Pinned git URL avoids PyPI 'bae' (2.0.x) collision.
-    # Pre-installed by setup.sh pre-step with --no-build-isolation before `pip install -e .`.
-    # PIP_NO_BUILD_ISOLATION=1 does NOT propagate to dependency builds, so bae must be
-    # installed explicitly first. CUDA_HOME=/opt/conda/envs/reconstruction required (nvcc lives
-    # in the conda env, not /usr/local/cuda which is runtime-only in the Docker image).
+    # bae: pypose BA CUDA extension. Source pinned via [tool.uv.sources]; PyPI 'bae' (2.0.x) is a
+    # different package. Built with no-build-isolation (see [tool.uv]) against the pip cuda-toolkit
+    # nvcc — CUDA_HOME is wired to the venv's nvidia/cuda_nvcc dir in setup.sh.
     # USE_CUDSS defaults to "1" in bae 0.2.4.
     "bae",
     # nerfstudio: BasisResearch fork (our own) with gsplat-rade + cu121 patches applied.
@@ -106,7 +104,7 @@ feedforward = [
     "python-box",
     "open3d",
     "gtsam-develop",
-    # salad (Dominic101/salad) installed via setup/feedforward.sh.
+    # salad (Dominic101/salad) source pinned via [tool.uv.sources].
     # pytorch-metric-learning is salad's only non-torch runtime dep.
     "pytorch-metric-learning",
     "vggt",

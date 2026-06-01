@@ -25,8 +25,11 @@ cd "$SCRIPT_DIR"
 /root/.local/bin/uv sync --all-extras
 
 # collab-data: private repo, kept out of the locked graph; installed explicitly post-sync.
+# Best-effort: a credential-less Docker build (e.g. on a Mac) can't auth to the private repo —
+# don't fail the build. Re-run setup.sh at deploy (where git creds exist) to install it.
 echo "=== install collab-data (private) ==="
-/root/.local/bin/uv pip install --python "$PYTHON" "git+https://github.com/BasisResearch/collab-data.git"
+/root/.local/bin/uv pip install --python "$PYTHON" "git+https://github.com/BasisResearch/collab-data.git" \
+    || echo "WARN: collab-data not installed (no git auth in this environment) — re-run setup.sh at deploy."
 
 # Smoke test
 "$PYTHON" - << 'PYEOF'

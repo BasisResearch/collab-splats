@@ -43,13 +43,6 @@ ENV CUDA_HOME=/usr/local/cuda \
     CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST}
 
-# torch 2.5.1 + cu121
-RUN pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
-        --extra-index-url https://download.pytorch.org/whl/cu121
-
-# Verify torch reachable
-RUN python -c 'import torch; print(f"[Builder] torch={torch.__version__}, cuda={torch.version.cuda}")'
-
 # Build the full env at image-build time: copy the repo and run the single-source setup.
 # uv sync installs all deps incl. cuda-toolkit (nvcc) then compiles bae + gsplat.
 # nvcc cross-compiles to TORCH_CUDA_ARCH_LIST; no GPU needed during build.

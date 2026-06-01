@@ -44,7 +44,10 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
         image_paths=[f"frame_{i:04d}.png" for i in range(k)],
         raw_outputs={},
         frame_start=submap_id * k,
-        world_points=world_points.astype(np.float32),
+        # Submap.world_points is (K, P, 3) per the production contract
+        # (_raw_to_world_points returns (K, P, 3)). Flatten any per-pixel
+        # (K, H, W, 3) grid into (K, P, 3) for closure.py.
+        world_points=np.asarray(world_points, dtype=np.float32).reshape(k, -1, 3),
         world_points_conf=None,
     )
 

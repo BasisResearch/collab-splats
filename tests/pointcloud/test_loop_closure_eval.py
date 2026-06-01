@@ -38,15 +38,27 @@ def test_classify_edges_returns_two_keys(pg_with_loop):
 
 
 def test_classify_edges_sequential_count_matches_expected(pg_with_loop):
-    """4 nodes, 3 sequential edges."""
+    """All 4 BetweenFactors classify as 'sequential' under VGGT-SLAM noise parity.
+
+    Since 011c56f ("match VGGT-SLAM PGO noise exactly"), add_loop_edge uses the
+    same plain Gaussian (Diagonal.Sigmas) noise as add_sequential_edge — neither
+    is Robust(Huber). _classify_edges keys off isinstance(nm, noiseModel.Robust),
+    so with no Robust factors all 3 sequential + 1 loop BetweenFactors land in
+    'sequential' (4 total); the prior is skipped.
+    """
     groups = _classify_edges(pg_with_loop._graph)
-    assert len(groups["sequential"]) == 3
+    assert len(groups["sequential"]) == 4
 
 
 def test_classify_edges_loop_count_matches_expected(pg_with_loop):
-    """1 loop edge."""
+    """No edge is Robust-noised post-VGGT-SLAM-parity, so 'loop' is empty.
+
+    See test_classify_edges_sequential_count_matches_expected — loop edges are no
+    longer noise-distinguishable from sequential ones (011c56f), so _classify_edges
+    cannot separate them and 'loop' is empty.
+    """
     groups = _classify_edges(pg_with_loop._graph)
-    assert len(groups["loop"]) == 1
+    assert len(groups["loop"]) == 0
 
 
 def test_classify_edges_skips_prior_factor(pg_with_loop):

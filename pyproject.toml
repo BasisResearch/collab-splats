@@ -181,8 +181,8 @@ warn_unused_ignores = true
 exclude = "build"
 
 [tool.pytest.ini_options]
-# importlib mode: avoids prepending test parent dirs to sys.path, preventing
-# tests/nerfstudio/ namespace package from shadowing the installed nerfstudio.
+# importlib mode: avoids prepending test parent dirs to sys.path. (The old
+# tests/nerfstudio/ shadow is fixed by renaming the dir to tests/nerfstudio_methods/.)
 # --doctest-modules removed: no doctests in codebase; it scanned all importable
 # CUDA modules causing multi-minute startup.
 addopts = "--ignore=tests/test_meshlib.py --import-mode=importlib"

@@ -21,3 +21,9 @@ $PIP install git+https://github.com/BasisResearch/collab-data.git
 
 echo "=== Step 3: install co3d eval dependency (--no-deps required) ==="
 $PIP install git+https://github.com/facebookresearch/co3d.git --no-deps
+
+echo "=== Step 4: install feedforward deps (vggt-x, mapanything, evo, gtsam, salad, vggt-omega) ==="
+bash "$SCRIPT_DIR/setup/feedforward.sh"
+
+echo "=== Step 5: install dashboard deps (panel, param) ==="
+$PIP install -e "$SCRIPT_DIR[dashboard]"

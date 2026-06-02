@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import pathlib
 from pathlib import Path
+import copy
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -428,8 +429,16 @@ class XFeatExtractor(BaseLocalExtractor):
             "image_size": (W, H),
         }
 
-        # Returns mkpts_0, mkpts_1, idx — idx is (K, 2) index pairs
-        _, _, idx = self._xfeat.match_lighterglue(d0, d1)
+        # XFeat's LighterGlue (built lazily on the first match) rebinds the kornia class
+        # attribute LightGlue.default_conf to a 96-dim config — a global, permanent clobber
+        # that would corrupt any later DISK LightGlue (256-dim) built in the same process.
+        # Snapshot and restore it around the call so XFeat stays self-contained.
+        saved_conf = copy.deepcopy(LightGlue.default_conf)
+        try:
+            # Returns mkpts_0, mkpts_1, idx — idx is (K, 2) index pairs
+            _, _, idx = self._xfeat.match_lighterglue(d0, d1)
+        finally:
+            LightGlue.default_conf = saved_conf
         if len(idx) == 0:
             return torch.zeros((0, 2), dtype=torch.long)
         return torch.from_numpy(idx).long()

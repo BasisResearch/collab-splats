@@ -45,6 +45,24 @@ uv sync --all-extras             # everything (what setup.sh does)
 
 > **Note:** `bae` and `gsplat-rade` are CUDA extensions built from source with `--no-build-isolation`. They need a CUDA toolkit (`nvcc`) and `build-essential` on the build host — `setup.sh` handles the `CUDA_HOME` / `PATH` wiring (system `/usr/local/cuda` if present, else the pip `cuda-toolkit` wheels from the `[gpu]` extra). Prefer `bash setup.sh` over a bare `uv sync` whenever the compiled extensions are involved.
 
+Install from GitHub by cloning and running the project install:
+
+```sh
+git clone https://github.com/BasisResearch/collab-splats.git
+cd collab-splats
+bash setup.sh
+```
+
+Unlike a pure-Python package, collab-splats has **no single-line install** of the form
+`uv pip install "collab-splats[all] @ git+https://github.com/..."`. That command runs uv in
+pip-compatibility mode, which ignores the `[tool.uv]` configuration this project depends on, so it
+fails in four ways: (1) `torch==2.5.1+cu121` is unresolvable without the explicit
+`[[tool.uv.index]]` PyTorch CUDA index; (2) git-sourced deps with PyPI name collisions (`gsplat`,
+`nerfstudio`, `bae`, `clip`, `vggt`) resolve to the wrong upstream packages because
+`[tool.uv.sources]` is skipped; (3) `bae` / `gsplat-rade` need per-package `no-build-isolation`;
+(4) the CUDA build environment is unset. `uv sync` (via `setup.sh`) reads the lockfile and all of
+`[tool.uv]`, so the clone-and-sync path is the supported, reproducible install.
+
 ### 3. Private dependency (collab-data)
 
 `collab-data` is a private BasisResearch repo, kept out of the locked graph and installed post-sync (needs git credentials). `setup.sh` installs it best-effort; on a credential-less build it is skipped — re-run `setup.sh` at deploy, or install it directly:

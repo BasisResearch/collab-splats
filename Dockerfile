@@ -111,6 +111,7 @@ ENV CUDA_HOME=/usr/local/cuda \
 
 # Smoke test — verifies torch + venv importable after copy across stages
 RUN python -c 'import torch; print(f"[Runtime] torch={torch.__version__}, cuda={torch.version.cuda}")' && \
+    python -c 'from collab_splats.pointcloud import VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator; print("[Runtime] full creator chain imports OK")' && \
     echo '[Runtime] env verified'
 
 # SSH

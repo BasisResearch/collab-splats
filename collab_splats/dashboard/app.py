@@ -21,6 +21,10 @@ from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
 logger = logging.getLogger(__name__)
 
+# Guard so pn.extension("vtk") is called at most once per process (it is not
+# idempotent under panel serve and throws when called from a background thread).
+_VTK_EXT_LOADED = False
+
 ########
 # Helpers (kept for backward compat — used by tests and __init__)
 ########
@@ -141,11 +145,17 @@ class SplatsApp(param.Parameterized):
         return local
 
     def _on_run(self, event, force: bool) -> None:
-        """Spawn background thread to run the full pipeline."""
+        """Run or reload the pipeline, respecting cache and force flag."""
         session, name = self.session_select.value, self.video_select.value
         if not session or not name:
             return
         stem = Path(name).stem
+        out = self._base_dir / session / stem
+        cached = (out / "feedforward.zarr").exists() or self._source.has_processed(session, stem)
+        # Cached and not forced: just load existing outputs without recomputing
+        if cached and not force:
+            self._load_outputs(session, stem)
+            return
         config = self._current_config()
 
         def worker() -> None:
@@ -154,9 +164,17 @@ class SplatsApp(param.Parameterized):
                 video_path=video, session=session, stem=stem, config=config,
                 op_log=self._op_log, source=self._source, base_dir=self._base_dir,
             )
-            self._load_outputs(session, stem)
+            self._dispatch_load(session, stem)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _dispatch_load(self, session: str, stem: str) -> None:
+        """Load outputs into the viewer on the server's event loop (thread-safe)."""
+        doc = pn.state.curdoc
+        if doc is not None:
+            doc.add_next_tick_callback(lambda: self._load_outputs(session, stem))
+        else:
+            self._load_outputs(session, stem)
 
     def _load_outputs(self, session: str, stem: str) -> None:
         """Load FeedforwardResult and semantics into the viewer."""
@@ -180,7 +198,10 @@ class SplatsApp(param.Parameterized):
 
     def view(self) -> pn.template.MaterialTemplate:
         """Assemble the full single-page layout."""
-        pn.extension("vtk")
+        global _VTK_EXT_LOADED
+        if not _VTK_EXT_LOADED:
+            pn.extension("vtk")
+            _VTK_EXT_LOADED = True
 
         # Progress strip bound reactively to op_log params
         progress_bar = pn.widgets.Progress(

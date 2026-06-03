@@ -1,6 +1,6 @@
 import numpy as np
 
-from collab_splats.dashboard.viz_utils import pointcloud_to_polydata, apply_viridis
+from collab_splats.dashboard.viz_utils import apply_viridis, pointcloud_to_polydata
 
 
 def test_polydata_has_points():

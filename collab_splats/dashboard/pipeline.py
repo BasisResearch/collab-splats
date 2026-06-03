@@ -7,8 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import zarr
-from zarr.codecs import BloscCodec
 from PIL import Image
+from zarr.codecs import BloscCodec
 
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
@@ -92,9 +92,7 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
         # optical-flow sampler returns score dicts, not source frame numbers; indices are positional
         indices = list(range(len(frames)))
     else:
-        duration_s = info.get("duration_s") or (
-            info["total_frames"] / (info.get("fps") or 30.0)
-        )
+        duration_s = info.get("duration_s") or (info["total_frames"] / (info.get("fps") or 30.0))
         target_fps = config.max_frames / max(duration_s, 1.0)
         frames, indices = sample_frames_fps(
             str(video_path),

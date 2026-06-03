@@ -1,118 +1,39 @@
-import unittest.mock as mock
-from pathlib import Path
+# tests/dashboard/test_app.py
+from unittest.mock import MagicMock, patch
 
-import panel as pn
-import pytest
-
-from collab_splats.dashboard.app import App, _scan_output_dirs
-from collab_splats.dashboard.panes._placeholder import PlaceholderPane
-from collab_splats.dashboard.panes.reconstruct import ReconstructPane
+from collab_splats.dashboard.app import SplatsApp
 
 
-@pytest.fixture(autouse=True)
-def _mock_video_server(monkeypatch):
-    """Prevent App() from binding a real port during tests."""
-    srv = mock.MagicMock()
-    srv.port = 17863
-    monkeypatch.setattr("collab_splats.dashboard.app.start_video_server", lambda port=7863: srv)
+def _app(tmp_path):
+    source = MagicMock()
+    source.list_sessions.return_value = ["2026_05_07"]
+    source.list_videos.return_value = ["clip_03.mp4"]
+    source.has_processed.return_value = False
+    with patch("collab_splats.dashboard.app.SplitViewer"):
+        return SplatsApp(base_dir=tmp_path, source=source), source
 
 
-def test_placeholder_pane_returns_panel():
-    pane = PlaceholderPane("Semantics", "Coming in Phase 2")
-    result = pane.panel()
-    assert result is not None
+def test_app_populates_sessions(tmp_path):
+    app, source = _app(tmp_path)
+    assert app.session_select.options == ["2026_05_07"]
 
 
-def test_placeholder_pane_contains_title():
-    pane = PlaceholderPane("Semantics", "Coming in Phase 2")
-    result = pane.panel()
-    # panel repr varies; just verify it returns something
-    assert result is not None
+def test_selecting_session_lists_videos(tmp_path):
+    app, source = _app(tmp_path)
+    app.session_select.value = "2026_05_07"
+    assert "clip_03.mp4" in app.video_select.options
 
 
-def test_app_creates():
-    app = App()
-    assert app is not None
+def test_run_button_spawns_pipeline(tmp_path):
+    app, source = _app(tmp_path)
+    app.session_select.value = "2026_05_07"
+    app.video_select.value = "clip_03.mp4"
+    with patch("collab_splats.dashboard.app.threading.Thread") as thread, \
+         patch.object(app, "_ensure_local_video", return_value=tmp_path / "clip_03.mp4"):
+        app._on_run(event=None, force=True)
+    thread.assert_called_once()
 
 
-def test_app_servable_returns_material_template():
-    app = App()
-    template = app.servable()
-    assert isinstance(template, pn.template.MaterialTemplate)
-
-
-def test_app_has_five_tabs():
-    app = App()
-    assert set(app._tab_names) == {"Preprocess", "Semantics", "Reconstruct", "Visualize", "Localize"}
-
-
-def test_reconstruct_pane_wired(tmp_path):
-    app = App(base_dir=str(tmp_path))
-    assert isinstance(app._reconstruct, ReconstructPane)
-
-
-# _scan_output_dirs tests
-
-def test_scan_output_dirs_returns_dirs_with_config(tmp_path):
-    (tmp_path / "birds_c0043").mkdir()
-    (tmp_path / "birds_c0043" / "run_config.yaml").write_text("video_path: /foo.mp4")
-    (tmp_path / "empty_dir").mkdir()
-    result = _scan_output_dirs(tmp_path)
-    assert result == ["birds_c0043"]
-
-
-def test_scan_output_dirs_sorted(tmp_path):
-    for name in ["zoo", "alpha", "beta"]:
-        (tmp_path / name).mkdir()
-        (tmp_path / name / "run_config.yaml").write_text("")
-    result = _scan_output_dirs(tmp_path)
-    assert result == ["alpha", "beta", "zoo"]
-
-
-def test_scan_output_dirs_empty_when_no_configs(tmp_path):
-    (tmp_path / "no_config").mkdir()
-    result = _scan_output_dirs(tmp_path)
-    assert result == []
-
-
-def test_scan_output_dirs_missing_base(tmp_path):
-    result = _scan_output_dirs(tmp_path / "nonexistent")
-    assert result == []
-
-
-# Select widget / sidebar tests
-
-def test_load_results_dataset_dd_exists(tmp_path):
-    """Load Results section uses a Select widget for dataset choice."""
-    app = App(base_dir=str(tmp_path))
-    assert isinstance(app._results_dataset_dd, pn.widgets.Select)
-
-
-def test_load_results_load_btn_exists(tmp_path):
-    """Load Results section has a Load Results button."""
-    app = App(base_dir=str(tmp_path))
-    assert isinstance(app._results_load_btn, pn.widgets.Button)
-
-
-def test_app_stores_tabs_reference():
-    app = App()
-    app.servable()
-    assert hasattr(app, "_tabs")
-    assert isinstance(app._tabs, pn.Tabs)
-
-
-def test_confirm_new_video_switches_to_preprocess_tab(tmp_path):
-    """Confirming a new video session switches the active tab to Preprocess (0)."""
-    video = tmp_path / "test.mp4"
-    video.write_bytes(b"fake")
-    app = App(base_dir=str(tmp_path))
-    app.servable()
-    # Simulate being on tab 2 (Semantics)
-    app._tabs.active = 2
-    assert app._tabs.active == 2
-
-    # Trigger new-video confirm flow
-    app._video_input.value = str(video)
-    app._on_confirm_session(None)
-
-    assert app._tabs.active == 0, "Should switch to Preprocess tab (index 0)"
+def test_view(tmp_path):
+    app, _ = _app(tmp_path)
+    assert app.view() is not None

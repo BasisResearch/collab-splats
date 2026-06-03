@@ -76,6 +76,25 @@ def test_has_processed_false_on_error():
     assert src.has_processed("2026_05_07", "clip_03") is False
 
 
+def test_pull_processed_invokes_rclone_copy(monkeypatch, tmp_path):
+    client = _client()
+    calls = {}
+
+    def fake_run(cmd, check):
+        calls["cmd"] = cmd
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.run", fake_run)
+    src = SessionSource(client)
+    out = src.pull_processed("2026_05_07", "clip_03", tmp_path)
+    assert out == tmp_path
+    assert calls["cmd"] == [
+        "rclone", "copy",
+        "collab-data:fieldwork_processed/reconstruction/2026_05_07/clip_03",
+        str(tmp_path),
+    ]
+
+
 def test_push_outputs_calls_copy_local_to_remote(tmp_path):
     client = _client()
     client.copy_local_to_remote.return_value = True

@@ -70,6 +70,7 @@ class SessionSource:
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         remote = f"{self._client.remote_name}:{PROCESSED_BUCKET}/{ROOT}/{session}/{stem}"
+        # no public remote->local API on RcloneClient; use _cmd directly
         subprocess.run(
             self._client._cmd("copy", remote, str(dest_dir)), check=True
         )

@@ -23,6 +23,7 @@ def test_set_mode_pcd_to_mesh_toggles(tmp_path):
     v.load(_FakeResult(), mesh_path=None)
     v.set_mode("mesh")          # no mesh.ply -> status set, no crash
     assert v.mode == "mesh"
+    assert "not found" in v._status
     v.set_mode("pointcloud")
     assert v.mode == "pointcloud"
 

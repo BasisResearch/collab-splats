@@ -26,10 +26,14 @@ class SplitViewer:
         self._right_pane = pn.pane.VTK(self._right.ren_win, sizing_mode="stretch_both", min_height=500)
         self.layout = pn.Row(self._left_pane, self._right_pane, sizing_mode="stretch_both")
 
+        # Browser-side bidirectional camera sync between the two VTK panes.
+        if not off_screen:
+            self._left_pane.jslink(self._right_pane, camera="camera", bidirectional=True)
+
         # State
         self.mode = "pointcloud"
         self.left_actor = None
-        self._right_actor = None
+        self.right_actor = None
         self._result = None
         self._mesh_path: Path | None = None
         self._lifted_normed: np.ndarray | None = None
@@ -67,9 +71,7 @@ class SplitViewer:
         self._right.clear()
         rgb = colors if colors is not None else self._result.colors
         cloud = pointcloud_to_polydata(self._result.points, RGB=rgb)
-        self._right_actor = self._right.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
-        # Link right camera to left so the two views stay in sync
-        self._right.camera = self._left.camera
+        self.right_actor = self._right.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
         if not self._off_screen:
             self._right_pane.synchronize()
 

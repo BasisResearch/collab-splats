@@ -24,7 +24,7 @@ def test_dashboard_import_no_numpy_warning():
         [sys.executable,
          "-W", "error::UserWarning",
          "-W", "ignore:Overwriting:UserWarning",
-         "-c", "from collab_splats.dashboard import App"],
+         "-c", "from collab_splats.dashboard import SplatsApp"],
         capture_output=True,
         text=True,
     )

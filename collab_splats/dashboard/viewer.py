@@ -8,11 +8,36 @@ from pathlib import Path
 import numpy as np
 import panel as pn
 import pyvista as pv
+import torch
+import zarr
 
 from collab_splats.dashboard.viz_utils import apply_viridis, pointcloud_to_polydata
+from collab_splats.pointcloud.utils import lift_features
 from collab_splats.semantics.features.base import BaseQueryableExtractor
 
 logger = logging.getLogger(__name__)
+
+
+########################################################################
+# Module-level feature helpers
+########################################################################
+
+
+def _load_feature_maps(semantics_dir) -> list:
+    """Load per-frame dense feature maps (D, H_p, W_p) from the cached zarr."""
+    # Layout: cache_dir/{name}.zarr is a zarr group; array "features" is (N, D, H_p, W_p)
+    store_path = next(Path(semantics_dir).glob("*.zarr"))
+    arr = zarr.open(str(store_path), mode="r")["features"]
+    return [torch.from_numpy(np.asarray(arr[i])) for i in range(arr.shape[0])]
+
+
+def load_lifted_normed(result, semantics_dir) -> np.ndarray:
+    """Lift cached features to points and L2-normalise -> (P, D) float32."""
+    feature_maps = _load_feature_maps(semantics_dir)
+    lifted = lift_features(feature_maps, result)
+    lifted = lifted.detach().cpu().numpy().astype(np.float32)
+    norms = np.linalg.norm(lifted, axis=1, keepdims=True)
+    return lifted / (norms + 1e-8)
 
 
 class SplitViewer:

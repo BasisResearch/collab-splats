@@ -41,9 +41,9 @@ logger = logging.getLogger(__name__)
 def _write_frames_zarr(frames: list[np.ndarray], path: Path) -> None:
     """Write RGB frames (N, H, W, 3) uint8 to a zarr group at path/frames."""
     arr = np.stack(frames).astype(np.uint8)
-    lz4 = BloscCodec(cname="lz4", clevel=3)
-    root = zarr.open_group(str(path), mode="w")
-    root.create_array("frames", data=arr, chunks=(1,) + arr.shape[1:], compressors=[lz4])
+    lz4 = BloscCodec(cname="lz4")
+    store = zarr.open(str(path), mode="w")
+    store.create_array("frames", data=arr, chunks=(1,) + arr.shape[1:], compressors=lz4)
 
 
 def _write_frames_jpegs(frames: list[np.ndarray], frames_dir: Path) -> Path:
@@ -57,6 +57,8 @@ def _write_frames_jpegs(frames: list[np.ndarray], frames_dir: Path) -> Path:
 def _build_creator(env_model: str, conf: float):
     """Instantiate the selected feedforward creator with its confidence arg."""
     if env_model == "vggt_omega":
+        if VGGTOmegaCreator is None:
+            raise ImportError("vggt-omega is not installed; run setup.sh to enable this model")
         return VGGTOmegaCreator(conf_threshold=conf)
     if env_model == "vggtx":
         return VGGTXCreator(conf_threshold=conf)
@@ -87,6 +89,7 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
             on_progress=on_progress,
             verbose=False,
         )
+        # optical-flow sampler returns score dicts, not source frame numbers; indices are positional
         indices = list(range(len(frames)))
     else:
         duration_s = info.get("duration_s") or (

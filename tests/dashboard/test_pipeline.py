@@ -76,6 +76,9 @@ def test_build_creator_maps_models():
     with patch.object(pl, "VGGTOmegaCreator") as omega:
         pl._build_creator("vggt_omega", 50.0)
         omega.assert_called_with(conf_threshold=50.0)
+    with patch.object(pl, "VGGTXCreator") as vx:
+        pl._build_creator("vggtx", 35.0)
+        vx.assert_called_with(conf_threshold=35.0)
     with patch.object(pl, "MapAnythingCreator") as ma:
         pl._build_creator("mapanything", 35.0)
         ma.assert_called_with(confidence_percentile=35.0)

@@ -4,21 +4,10 @@ from __future__ import annotations
 
 import matplotlib.cm as cm
 import numpy as np
-import pyvista as pv
 
+from collab_splats.utils.visualization import pointcloud_to_polydata
 
-def pointcloud_to_polydata(pts3d: np.ndarray, **point_data) -> pv.PolyData:
-    """Convert pts3d + named scalar arrays to a PyVista PolyData.
-
-    Args:
-        pts3d: (P, 3) float32 world-space XYZ
-        **point_data: named scalar arrays to attach as PyVista point arrays.
-            e.g. RGB=colors, features=feat_arr, similarity=scores
-    """
-    cloud = pv.PolyData(pts3d.copy())
-    for k, v in point_data.items():
-        cloud[k] = v
-    return cloud
+__all__ = ["pointcloud_to_polydata", "apply_viridis"]
 
 
 def apply_viridis(sims: np.ndarray) -> np.ndarray:

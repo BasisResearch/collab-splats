@@ -44,6 +44,33 @@ def test_set_mode_pcd_to_mesh_toggles(tmp_path):
     assert v.mode == "pointcloud"
 
 
+def test_query_similarity_persists_across_mode_switch():
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(p=20), mesh_path=None)
+    assert v.active_query() is None
+    # Simulate a completed pointcloud query (cache colours for the current mode).
+    colors = (np.random.rand(20, 3) * 255).astype(np.uint8)
+    v._last_query = (["chair"], [], "talk2dino")
+    v._query_colors["pointcloud"] = colors
+    # Switch to mesh: query still active, mesh has no cached colours yet (app would re-score).
+    v.set_mode("mesh")
+    assert v.active_query() == (["chair"], [], "talk2dino")
+    assert v.cached_query_colors("mesh") is None
+    # Switch back: pointcloud similarity is cached -> reused, no re-score.
+    v.set_mode("pointcloud")
+    assert v.cached_query_colors("pointcloud") is colors
+
+
+def test_load_resets_query_cache():
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=None)
+    v._last_query = (["x"], [], "talk2dino")
+    v._query_colors["pointcloud"] = np.zeros((20, 3), np.uint8)
+    v.load(_FakeResult(), mesh_path=None)  # new scene
+    assert v.active_query() is None
+    assert v.cached_query_colors("pointcloud") is None
+
+
 def test_recolor_by_similarity_updates_right(monkeypatch):
     v = SplitViewer(off_screen=True)
     res = _FakeResult(p=20)

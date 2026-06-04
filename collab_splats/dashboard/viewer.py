@@ -103,6 +103,10 @@ class SplitViewer:
         self._display_idx: np.ndarray | None = None
         self._extractor_cache: dict = {}
         self._status = ""
+        # Active query (positive, negative, extractor) + per-mode similarity colours, so the right
+        # pane keeps showing similarity across pointcloud/mesh switches instead of reverting to RGB.
+        self._last_query: tuple | None = None
+        self._query_colors: dict[str, np.ndarray | None] = {"pointcloud": None, "mesh": None}
         # Display-only normalization (orientation + scale); see compute_view_transform.
         self._normalize_view = True
         self._view_T: np.ndarray | None = None
@@ -129,6 +133,9 @@ class SplitViewer:
         self._mesh_vertex_features = load_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
         self._lifted_normed = lifted_normed
         self._semantics_dir = Path(semantics_dir) if semantics_dir else None
+        # New scene -> drop any prior query state so the right pane starts on plain RGB.
+        self._last_query = None
+        self._query_colors = {"pointcloud": None, "mesh": None}
         self._display_idx = _decimate_indices(len(result.points), max_points)
         self._recompute_view_transform()
         self._render_left()
@@ -269,11 +276,23 @@ class SplitViewer:
     # ---- interactions --------------------------------------------------
 
     def set_mode(self, mode: str) -> None:
-        """Switch both panes between 'pointcloud' and 'mesh'; right reverts to plain RGB."""
+        """Switch both panes between 'pointcloud' and 'mesh', keeping the right similarity map.
+
+        Right pane renders this mode's cached query colours (None -> plain RGB until the app
+        re-scores the new mode on the worker; see active_query / cached_query_colors).
+        """
         self.mode = mode
         if self._result is not None:
             self._render_left()
-            self._render_right(None)
+            self._render_right(self._query_colors.get(mode))
+
+    def active_query(self) -> tuple | None:
+        """Return the last (positive, negative, extractor) query, or None if none is active."""
+        return self._last_query
+
+    def cached_query_colors(self, mode: str) -> np.ndarray | None:
+        """Return cached similarity colours for a mode, or None if it must be (re)scored."""
+        return self._query_colors.get(mode)
 
     def _get_extractor(self, name: str):
         """Construct (and cache) a queryable extractor by registry name."""
@@ -335,6 +354,11 @@ class SplitViewer:
         scores = extractor.score_queries(features, positive=positive, negative=negative or None)
         sims = scores.detach().cpu().numpy()
         colors = apply_viridis(sims)
+        # Remember the query and cache colours for THIS mode; invalidate the other mode so a switch
+        # re-scores against the new terms (point vs mesh-vertex feature space).
+        self._last_query = (list(positive), list(negative or []), extractor_name)
+        self._query_colors = {"pointcloud": None, "mesh": None}
+        self._query_colors[self.mode] = colors
         _stage("query: scored")
         return colors
 

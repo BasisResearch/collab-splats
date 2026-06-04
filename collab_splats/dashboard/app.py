@@ -162,7 +162,7 @@ class SplatsApp(param.Parameterized):
         self.video_select.param.watch(self._on_video, "value")
         self.env_model.param.watch(self._on_env_model, "value")
         self.run_query_btn.on_click(self._on_query)
-        self.view_mode.param.watch(lambda e: self._viewer.set_mode(e.new), "value")
+        self.view_mode.param.watch(self._on_view_mode, "value")
         self.normalize_view.param.watch(lambda e: self._viewer.set_normalize_view(e.new), "value")
         self.run_btn.on_click(lambda e: self._on_run(e, force=False))
         self.force_btn.on_click(lambda e: self._on_run(e, force=True))
@@ -446,6 +446,39 @@ class SplatsApp(param.Parameterized):
 
         self._set_busy(True)
         self._op_log.start_op(f"loading {stem}")
+        self._gpu.submit(job, on_done, doc)
+
+    def _on_view_mode(self, event) -> None:
+        """Switch pointcloud/mesh; keep the right pane's similarity map across the switch.
+
+        set_mode renders the new mode (right pane uses this mode's cached similarity if present).
+        If a query is active but this mode hasn't been scored yet, re-score it on the worker —
+        point and mesh use different feature spaces, so colours can't be reused across modes.
+        """
+        self._viewer.set_mode(event.new)
+        query = self._viewer.active_query()
+        if not query or self._viewer.cached_query_colors(event.new) is not None:
+            return
+        positive, negative, extractor_name = query
+        doc = pn.state.curdoc
+
+        def job():
+            return self._viewer.score_query(
+                positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
+            )
+
+        def on_done(res):
+            self._set_busy(False)
+            if isinstance(res, Exception):
+                self._op_log.error_op(str(res))
+                return
+            if res is None:
+                self._op_log.finish_op()
+                return
+            self._viewer.render_query(res)
+
+        self._set_busy(True)
+        self._op_log.start_op(f"query: {event.new} similarity")
         self._gpu.submit(job, on_done, doc)
 
     def _on_query(self, event) -> None:

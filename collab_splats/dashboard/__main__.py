@@ -1,60 +1,19 @@
-# dashboard/__main__.py
-"""collab_splats dashboard launcher.
-
-Usage:
-    python -m collab_splats.dashboard app
-    collab-dashboard app
-    collab-dashboard app --base-dir /workspace/outputs --port 7860
-
-    # Legacy alias (deprecated — redirects to app):
-    collab-dashboard semantics
-"""
-
-from __future__ import annotations
+# collab_splats/dashboard/__main__.py
+"""CLI entry point for the splats dashboard."""
 
 import argparse
-import importlib
-import warnings
 
-DASHBOARDS = {
-    "app": "collab_splats.dashboard.app:run_app",
-    "semantics": "collab_splats.dashboard.app:run_app",
-}
-
-
-def _suppress_noise() -> None:
-    """Suppress known benign warnings from VTK, torch, and transformers."""
-    import vtk
-    import transformers
-
-    vtk.vtkObject.GlobalWarningDisplayOff()
-    transformers.logging.set_verbosity_error()
-    warnings.filterwarnings("ignore", category=UserWarning, message=".*non-meta parameter.*")
+from collab_splats.dashboard.app import run_app
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="collab-dashboard",
-        description="Launch a collab-splats interactive dashboard.",
-    )
-    parser.add_argument("mode", choices=list(DASHBOARDS.keys()))
+    """Parse args and serve the dashboard."""
+    parser = argparse.ArgumentParser(prog="collab-dashboard", description="Launch the collab-splats dashboard.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--base-dir", default="/workspace/outputs")
     args = parser.parse_args()
-    _suppress_noise()
-
-    if args.mode == "semantics":
-        warnings.warn(
-            "'collab-dashboard semantics' is deprecated — use 'collab-dashboard app'",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-    module_path, func_name = DASHBOARDS[args.mode].rsplit(":", 1)
-    mod = importlib.import_module(module_path)
-    run_fn = getattr(mod, func_name)
-    run_fn(host=args.host, port=args.port, base_dir=args.base_dir)
+    run_app(host=args.host, port=args.port, base_dir=args.base_dir)
 
 
 if __name__ == "__main__":

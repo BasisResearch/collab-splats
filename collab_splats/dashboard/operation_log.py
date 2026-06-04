@@ -41,7 +41,7 @@ class OperationLog(param.Parameterized):
                 lines = list(self.log_lines)
                 lines.append(message)
                 if len(lines) > self._MAX_LINES:
-                    lines = lines[-self._MAX_LINES:]
+                    lines = lines[-self._MAX_LINES :]
                 self.log_lines = lines
 
     def finish_op(self) -> None:
@@ -56,14 +56,16 @@ class OperationLog(param.Parameterized):
             lines = list(self.log_lines)
             lines.append(f"ERROR: {message}")
             if len(lines) > self._MAX_LINES:
-                lines = lines[-self._MAX_LINES:]
+                lines = lines[-self._MAX_LINES :]
             self.log_lines = lines
             self.is_running = False
 
     @param.depends("current_op", "progress", "is_running", "log_lines")
     def _render(self) -> pn.Column:
-        status_color = "#50c050" if self.is_running else (
-            "#e05050" if (self.log_lines and self.log_lines[-1].startswith("ERROR")) else "#666"
+        status_color = (
+            "#50c050"
+            if self.is_running
+            else ("#e05050" if (self.log_lines and self.log_lines[-1].startswith("ERROR")) else "#666")
         )
         status_label = self.current_op if self.current_op else "Idle"
 

@@ -4,11 +4,11 @@ import json
 import logging
 import shutil
 import subprocess
-import cv2
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Dict, Iterator, Optional, Tuple, Union
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm.auto import tqdm
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Helpers
 ########################################################################
 
+
 @lru_cache(maxsize=None)
 def _get_decoder_backend() -> str:
     """Return best available video decode backend: torchcodec > ffmpeg > cv2.
@@ -28,6 +29,7 @@ def _get_decoder_backend() -> str:
     """
     try:
         import torchcodec  # noqa: F401
+
         return "torchcodec"
     except (ImportError, RuntimeError):
         pass
@@ -51,9 +53,15 @@ def _iter_decoded_frames(
         rotation = _get_rotation_degrees(video_path)
         out_w, out_h = _ffmpeg_output_dims(width, height, rotation)
         cmd = [
-            "ffmpeg", "-i", video_path,
-            "-f", "rawvideo", "-pix_fmt", "bgr24",
-            "-an", "pipe:1",
+            "ffmpeg",
+            "-i",
+            video_path,
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-an",
+            "pipe:1",
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         frame_size = out_w * out_h * 3
@@ -106,7 +114,9 @@ def _get_rotation_degrees(video_path: str) -> int:
     try:
         r = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", video_path],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         for s in json.loads(r.stdout).get("streams", []):
             if s.get("codec_type") == "video":
@@ -156,6 +166,12 @@ def get_video_info(video_path: str) -> dict:
     if not cap.isOpened():
         cap.release()
         return {"total_frames": 0, "fps": 0.0, "duration_s": 0.0, "width": 0, "height": 0}
+    # Report CODED (pre-rotation) dims. cv2 auto-applies display rotation by default and would
+    # return swapped (portrait) dims for a 90/270 video; the ffmpeg decode paths then double-count
+    # rotation via _ffmpeg_output_dims, reshaping the rawvideo buffer with W/H swapped → noise.
+    # Disabling auto-orientation keeps the rotation handled in exactly one place (_ffmpeg_output_dims
+    # / _apply_rotation), matching the coded dims those helpers expect.
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -168,6 +184,7 @@ def get_video_info(video_path: str) -> dict:
 ########################################################################
 # OpticalFlowFrameSelector
 ########################################################################
+
 
 class OpticalFlowFrameSelector:
     """Intelligent frame selection using optical flow and coverage analysis.
@@ -258,9 +275,7 @@ class OpticalFlowFrameSelector:
         """
         if prev_pts is None or len(prev_pts) == 0:
             return None, None
-        curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-            prev_gray, curr_gray, prev_pts, None, **self.lk_params
-        )
+        curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None, **self.lk_params)
         if curr_pts is None:
             return None, None
         good_prev = prev_pts[status == 1]
@@ -337,15 +352,17 @@ class OpticalFlowFrameSelector:
             score = 1.0
             if return_components:
                 return score, {
-                    "motion": 1.0, "coverage": 1.0, "combined": 1.0,
-                    "disparity": 0.0, "rotation": 0.0, "histogram_similarity": 1.0,
+                    "motion": 1.0,
+                    "coverage": 1.0,
+                    "combined": 1.0,
+                    "disparity": 0.0,
+                    "rotation": 0.0,
+                    "histogram_similarity": 1.0,
                 }
             return score
 
         # Motion score: max of normalised translation and rotation components
-        prev_pts, curr_pts = self._compute_optical_flow(
-            self.last_keyframe_gray, gray, self.last_keyframe_pts
-        )
+        prev_pts, curr_pts = self._compute_optical_flow(self.last_keyframe_gray, gray, self.last_keyframe_pts)
         motion_score = 0.0
         rotation = 0.0
         disparity = 0.0
@@ -398,6 +415,7 @@ class OpticalFlowFrameSelector:
 # Frame Selection
 ########################################################################
 
+
 def score_all_frames(
     video_path: str,
     min_disparity: float = 50.0,
@@ -435,14 +453,16 @@ def score_all_frames(
                 should_select, score, components = selector.should_select_frame(small)
                 if should_select:
                     selector.accept_frame(small)
-                results.append({
-                    "frame_idx": frames_decoded,
-                    "disparity": components.get("disparity", 0.0),
-                    "rotation": components.get("rotation", 0.0),
-                    "histogram_similarity": components.get("histogram_similarity", 1.0),
-                    "score": score,
-                    "selected": should_select,
-                })
+                results.append(
+                    {
+                        "frame_idx": frames_decoded,
+                        "disparity": components.get("disparity", 0.0),
+                        "rotation": components.get("rotation", 0.0),
+                        "histogram_similarity": components.get("histogram_similarity", 1.0),
+                        "score": score,
+                        "selected": should_select,
+                    }
+                )
             frames_decoded += 1
             pbar.update(1)
             if on_progress is not None:
@@ -476,12 +496,21 @@ def _decode_fps_ffmpeg(
     interval = targets[1] - targets[0] if len(targets) > 1 else 1
 
     cmd = [
-        "ffmpeg", "-i", video_path,
-        "-vf", f"select=not(mod(n\\,{interval}))",
-        "-frames:v", str(n_targets),
-        "-vsync", "0",
-        "-f", "rawvideo", "-pix_fmt", "rgb24",
-        "-an", "pipe:1",
+        "ffmpeg",
+        "-i",
+        video_path,
+        "-vf",
+        f"select=not(mod(n\\,{interval}))",
+        "-frames:v",
+        str(n_targets),
+        "-vsync",
+        "0",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-an",
+        "pipe:1",
     ]
     frames: list[np.ndarray] = []
     indices: list[int] = []
@@ -520,10 +549,7 @@ def _decode_fps_torchcodec(
     decoder = VideoDecoder(video_path, device=device)
     result = decoder.get_frames_at(indices=targets)
     # result.data: (N, C, H, W) uint8 tensor, RGB
-    frames = [
-        result.data[i].permute(1, 2, 0).cpu().numpy()
-        for i in range(result.data.shape[0])
-    ]
+    frames = [result.data[i].permute(1, 2, 0).cpu().numpy() for i in range(result.data.shape[0])]
     if on_progress is not None:
         for i in range(1, len(frames) + 1):
             on_progress(i, len(targets))
@@ -563,8 +589,12 @@ def sample_frames_fps(
     if shutil.which("ffmpeg") is not None:
         logger.debug("sample_frames_fps: backend=ffmpeg(seek), targets=%d", len(targets))
         return _decode_fps_ffmpeg(
-            video_path, targets,
-            info["width"], info["height"], native_fps, on_progress,
+            video_path,
+            targets,
+            info["width"],
+            info["height"],
+            native_fps,
+            on_progress,
         )
 
     backend = _get_decoder_backend()
@@ -640,14 +670,16 @@ def sample_frames_optical_flow(
             should_select, score, components = selector.should_select_frame(small)
             if should_select:
                 frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                scores.append({
-                    "frame_idx": len(frames) - 1,
-                    "disparity": components.get("disparity", 0.0),
-                    "rotation": components.get("rotation", 0.0),
-                    "histogram_similarity": components.get("histogram_similarity", 1.0),
-                    "score": score,
-                    "selected": True,
-                })
+                scores.append(
+                    {
+                        "frame_idx": len(frames) - 1,
+                        "disparity": components.get("disparity", 0.0),
+                        "rotation": components.get("rotation", 0.0),
+                        "histogram_similarity": components.get("histogram_similarity", 1.0),
+                        "score": score,
+                        "selected": True,
+                    }
+                )
                 selector.accept_frame(small)
     return frames, scores
 
@@ -655,6 +687,7 @@ def sample_frames_optical_flow(
 ########################################################################
 # Frame I/O
 ########################################################################
+
 
 def load_video_frames(
     video_path: str,
@@ -715,6 +748,7 @@ def extract_video_frames(
 # Score I/O
 ########################################################################
 
+
 def save_frame_scores(scores: list[dict], path) -> None:
     """Persist score_all_frames() output to JSON for later reload."""
     Path(path).write_text(json.dumps(scores))
@@ -728,6 +762,7 @@ def load_frame_scores(path) -> list[dict]:
 ########################################################################
 # Visualization
 ########################################################################
+
 
 def plot_frame_grid(
     frames: list,
@@ -819,11 +854,9 @@ def plot_disparity_sensitivity(
     counts = []
     for threshold in disparity_values:
         n = sum(
-            1 for d in frame_scores
-            if (
-                0.6 * min(d["disparity"] / max(threshold, 1e-6), 1.0)
-                + 0.4 * (1.0 - d["histogram_similarity"])
-            ) >= 0.5
+            1
+            for d in frame_scores
+            if (0.6 * min(d["disparity"] / max(threshold, 1e-6), 1.0) + 0.4 * (1.0 - d["histogram_similarity"])) >= 0.5
         )
         counts.append(n)
     fig, ax = plt.subplots(figsize=(8, 4))

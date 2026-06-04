@@ -264,13 +264,27 @@ class SplatsApp(param.Parameterized):
         self._gpu.submit(job, on_done, doc)
 
     def _on_query(self, event) -> None:
-        """Run the positive/negative query and recolour the right pane."""
-        self._viewer.query(
-            positive=_split_terms(self.pos_query.value),
-            negative=_split_terms(self.neg_query.value),
-            extractor_name=self.extractor.value,
-            op_log=self._op_log,
-        )
+        """Score the positive/negative query off the IOLoop; recolour the right pane on done."""
+        positive = _split_terms(self.pos_query.value)
+        negative = _split_terms(self.neg_query.value)
+        extractor_name = self.extractor.value
+        doc = pn.state.curdoc
+
+        def job():
+            return self._viewer.score_query(
+                positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
+            )
+
+        def on_done(res):
+            self._set_busy(False)
+            if isinstance(res, Exception):
+                self._op_log.error_op(str(res))
+                return
+            self._viewer.render_query(res)
+
+        self._set_busy(True)
+        self._op_log.start_op("query")
+        self._gpu.submit(job, on_done, doc)
 
     # ---- layout --------------------------------------------------------
 

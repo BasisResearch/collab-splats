@@ -73,15 +73,27 @@ def test_min_disparity_visibility_tracks_sampling(tmp_path):
     assert app.min_disparity.visible is False
 
 
-def test_run_query_button_forwards_parsed_terms(tmp_path):
+def test_query_submits_score_job_with_parsed_terms(tmp_path):
     app, _ = _app(tmp_path)
     app.pos_query.value = "chair, stool"
     app.neg_query.value = "floor"
     app._on_query(event=None)
-    app._viewer.query.assert_called_once()
-    kwargs = app._viewer.query.call_args.kwargs
-    assert kwargs["positive"] == ["chair", "stool"]
-    assert kwargs["negative"] == ["floor"]
+    # Deferred to the worker, not scored inline.
+    assert len(app._gpu.submitted) == 1
+    assert app.run_query_btn.disabled
+
+
+def test_query_on_done_renders_colors(tmp_path):
+    import numpy as np
+
+    app, _ = _app(tmp_path)
+    app.pos_query.value = "chair"
+    app._on_query(event=None)
+    _job, on_done, _doc = app._gpu.submitted[0]
+    colors = np.zeros((3, 3), dtype=np.uint8)
+    on_done(colors)
+    app._viewer.render_query.assert_called_once_with(colors)
+    assert not app.run_query_btn.disabled  # re-enabled after render
 
 
 def test_view(tmp_path):

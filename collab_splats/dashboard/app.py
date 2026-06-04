@@ -293,14 +293,33 @@ class SplatsApp(param.Parameterized):
     def _update_max_frames_bound(self, session: str, name: str) -> None:
         """Set the Max-frames upper bound + label to the selected video's total frame count.
 
-        Only possible once the video is local on disk (decoding metadata needs the file); silently
-        skips otherwise (e.g. before the first download).
+        Reading frame count needs the file. If it isn't local yet (remote bucket), fetch it on a
+        background thread (Run needs it anyway) and apply the bound on the IOLoop when it arrives.
         """
         if not session or not name:
             return
-        video = self._base_dir / session / Path(name).stem / name
-        if not video.exists():
+        local = self._base_dir / session / Path(name).stem / name
+        if local.exists():
+            self._apply_max_frames_bound(local)
             return
+        # Not local: fetch in the background, then set the bound back on the IOLoop.
+        doc = pn.state.curdoc
+
+        def work() -> None:
+            try:
+                video = self._ensure_local_video(session, name)
+            except Exception:
+                logger.warning("could not fetch video for frame count: %s/%s", session, name, exc_info=True)
+                return
+            if doc is not None:
+                doc.add_next_tick_callback(lambda: self._apply_max_frames_bound(video))
+            else:
+                self._apply_max_frames_bound(video)
+
+        threading.Thread(target=work, name="video-meta", daemon=True).start()
+
+    def _apply_max_frames_bound(self, video: Path) -> None:
+        """Read total frame count from a local video and reflect it in the Max-frames widget."""
         try:
             from collab_splats.utils.frame_sampling import get_video_info
 

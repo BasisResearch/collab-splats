@@ -19,7 +19,7 @@ from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.sources import SessionSource
-from collab_splats.dashboard.viewer import SplitViewer, load_lifted_normed
+from collab_splats.dashboard.viewer import SplitViewer
 
 # NB: collab_splats.dashboard.pipeline and pointcloud.feedforward pull in the full
 # reconstruction + TSDF mesh stack (~18s import). They are imported lazily inside the
@@ -97,7 +97,7 @@ class SplatsApp(param.Parameterized):
         self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=0.02)
         self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=1.0)
         self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=False)
-        self.max_display_points = pn.widgets.IntInput(name="Max display points", value=150_000, step=50_000)
+        self.max_display_points = pn.widgets.IntInput(name="Max display points", value=50_000, step=25_000)
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
         self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
         self.force_btn = pn.widgets.Button(label="Force re-run", button_type="warning")
@@ -265,20 +265,23 @@ class SplatsApp(param.Parameterized):
             if not (out / "feedforward.zarr").exists():
                 self._source.pull_processed(session, stem, out)
             result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
-            try:
-                lifted = load_lifted_normed(result, out / "semantics")
-            except Exception:
-                lifted = None
+            # Do NOT lift features here — lifting 500k points takes minutes and is only
+            # needed for queries. The viewer lifts lazily on first query (ensure_lifted).
+            semantics_dir = out / "semantics"
             mesh_path = out / "mesh" / "mesh.ply"
-            return (result, mesh_path if mesh_path.exists() else None, lifted)
+            return (
+                result,
+                mesh_path if mesh_path.exists() else None,
+                semantics_dir if semantics_dir.exists() else None,
+            )
 
         def on_done(res):
             self._set_busy(False)
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            result, mesh_path, lifted = res
-            self._viewer.load(result, mesh_path=mesh_path, lifted_normed=lifted, max_points=max_points)
+            result, mesh_path, semantics_dir = res
+            self._viewer.load(result, mesh_path=mesh_path, semantics_dir=semantics_dir, max_points=max_points)
             self._op_log.finish_op()
 
         self._set_busy(True)
@@ -367,6 +370,22 @@ def _ensure_display() -> None:
     logger.info("started Xvfb on %s for headless VTK rendering", display)
 
 
+def _warm_heavy_stack() -> None:
+    """Import the heavy reconstruction/semantics stack once at startup (background thread).
+
+    Pre-pays the ~17s import + torch.compile so the first Run/load/query doesn't. Runs off
+    the IOLoop (the server already binds and the page renders before this finishes).
+    """
+    try:
+        # Lazy heavy-dep imports (intentional warm) — module-process-wide once loaded.
+        import collab_splats.pointcloud.feedforward.base  # noqa: F401
+        import collab_splats.semantics.features.base  # noqa: F401
+
+        logger.info("heavy stack warmed")
+    except Exception as exc:
+        logger.warning("heavy-stack warm failed: %s", exc)
+
+
 def run_app(
     host: str = "0.0.0.0",
     port: int = 7860,
@@ -391,6 +410,9 @@ def run_app(
     # One shared GPU worker for every session: serializes all CUDA work across tabs,
     # preventing parallel model loads from OOMing the GPU.
     gpu_worker = GpuWorker()
+
+    # Warm the heavy import in the background so the first interaction isn't a cold start.
+    threading.Thread(target=_warm_heavy_stack, name="warm", daemon=True).start()
 
     if websocket_origin is None:
         origin: str | list[str] = [f"{host}:{port}", f"localhost:{port}"]

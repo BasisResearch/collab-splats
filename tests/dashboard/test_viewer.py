@@ -109,3 +109,45 @@ def test_score_query_blank_positive_returns_rgb():
     v._lifted_normed = None
     colors = v.score_query(positive=[], negative=[], extractor_name="talk2dino")
     assert np.array_equal(colors, v._result.colors)
+
+
+def test_score_query_lazily_lifts_on_first_query(monkeypatch):
+    import torch
+
+    v = SplitViewer(off_screen=True)
+    v._result = MagicMock()
+    v._result.colors = np.zeros((4, 3), dtype=np.uint8)
+    v._lifted_normed = None
+    v._semantics_dir = "semdir"  # set by load(); triggers lazy lift
+
+    called = {}
+
+    def fake_lift(result, semantics_dir):
+        called["dir"] = semantics_dir
+        return np.eye(4, dtype=np.float32)
+
+    monkeypatch.setattr("collab_splats.dashboard.viewer.load_lifted_normed", fake_lift)
+    ext = MagicMock()
+    ext.score_queries.return_value = torch.tensor([0.1, 0.2, 0.3, 0.4])
+    monkeypatch.setattr(v, "_get_extractor", lambda n: ext)
+
+    colors = v.score_query(positive=["chair"], extractor_name="talk2dino")
+    assert called["dir"] == "semdir"  # lifted lazily on first query
+    assert colors.shape == (4, 3)
+
+
+def test_score_query_blank_positive_does_not_lift(monkeypatch):
+    v = SplitViewer(off_screen=True)
+    v._result = MagicMock()
+    v._result.colors = np.full((4, 3), 5, dtype=np.uint8)
+    v._lifted_normed = None
+    v._semantics_dir = "semdir"
+    lifted_called = {"n": 0}
+
+    def fake_lift(result, semantics_dir):
+        lifted_called["n"] += 1
+        return np.eye(4, dtype=np.float32)
+
+    monkeypatch.setattr("collab_splats.dashboard.viewer.load_lifted_normed", fake_lift)
+    v.score_query(positive=[], extractor_name="talk2dino")
+    assert lifted_called["n"] == 0  # blank query must not pay the 6-min lift

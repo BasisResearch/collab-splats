@@ -78,6 +78,7 @@ class SplitViewer:
         self._result = None
         self._mesh_path: Path | None = None
         self._lifted_normed: np.ndarray | None = None
+        self._semantics_dir: Path | None = None
         self._display_idx: np.ndarray | None = None
         self._extractor_cache: dict = {}
         self._status = ""
@@ -85,15 +86,38 @@ class SplitViewer:
     # ---- loading -------------------------------------------------------
 
     def load(
-        self, result, mesh_path: Path | None, lifted_normed: np.ndarray | None = None, max_points: int = 150_000
+        self,
+        result,
+        mesh_path: Path | None,
+        lifted_normed: np.ndarray | None = None,
+        semantics_dir: Path | None = None,
+        max_points: int = 50_000,
     ) -> None:
-        """Load a FeedforwardResult (+ optional mesh + lifted features) into both panes."""
+        """Load a FeedforwardResult (+ optional mesh) into both panes.
+
+        Features are NOT lifted here — lifting 500k points takes minutes and is only
+        needed for queries. semantics_dir is stashed so the first query can lift lazily
+        (see ensure_lifted). lifted_normed may be passed pre-computed (tests).
+        """
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None
         self._lifted_normed = lifted_normed
+        self._semantics_dir = Path(semantics_dir) if semantics_dir else None
         self._display_idx = _decimate_indices(len(result.points), max_points)
         self._render_left()
         self._render_right(None)
+
+    def ensure_lifted(self, op_log=None) -> None:
+        """Lazily lift cached features to points on first query (expensive; off-loop)."""
+        if self._lifted_normed is not None or self._semantics_dir is None:
+            return
+        if op_log is not None:
+            op_log.append_line("query: lifting features to points (first query — may take minutes)")
+        try:
+            self._lifted_normed = load_lifted_normed(self._result, self._semantics_dir)
+        except Exception as exc:
+            logger.warning("feature lift failed: %s", exc)
+            self._lifted_normed = None
 
     def _render_left(self) -> None:
         """Render RGB pointcloud or mesh into the left plotter."""
@@ -155,8 +179,13 @@ class SplitViewer:
             if op_log is not None:
                 op_log.append_line(msg)
 
-        # No query terms or no cached features: fall back to plain RGB.
-        if not positive or self._lifted_normed is None:
+        # No query terms: fall back to plain RGB (skip the expensive lift entirely).
+        if not positive:
+            return self._result.colors
+
+        # Lift features on first query (cached thereafter); no semantics -> plain RGB.
+        self.ensure_lifted(op_log)
+        if self._lifted_normed is None:
             return self._result.colors
 
         _stage(f"query: encoding {len(positive)} positive / {len(negative or [])} negative")

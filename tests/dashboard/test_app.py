@@ -132,7 +132,7 @@ def test_set_busy_toggles_action_buttons(tmp_path):
 
 def test_has_max_display_points_widget(tmp_path):
     app, _ = _app(tmp_path)
-    assert app.max_display_points.value == 150_000
+    assert app.max_display_points.value == 50_000
 
 
 def test_app_uses_injected_gpu_worker(tmp_path):
@@ -180,8 +180,10 @@ def test_load_outputs_on_done_renders_into_viewer(tmp_path):
     (tmp_path / "s" / "clip" / "feedforward.zarr").mkdir(parents=True)
     app._load_outputs("s", "clip")
     _job, on_done, _doc = worker.submitted[0]
-    sentinel = ("result", None, "lifted")
+    # Job returns (result, mesh_path, semantics_dir) — NOT a pre-lifted feature array.
+    sentinel = ("result", None, "semdir")
     on_done(sentinel)
     app._viewer.load.assert_called_once()
     kwargs = app._viewer.load.call_args.kwargs
+    assert kwargs["semantics_dir"] == "semdir"  # lift deferred to first query
     assert kwargs["max_points"] == app.max_display_points.value

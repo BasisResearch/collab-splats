@@ -212,3 +212,42 @@ def test_score_query_uses_mesh_features_in_mesh_mode(monkeypatch):
 
     assert captured["n"] == 3
     assert colors.shape[0] == 3
+
+
+def _write_tiny_mesh(path):
+    import open3d as o3d
+
+    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
+    tris = np.array([[0, 1, 2]], dtype=np.int32)
+    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris))
+    mesh.vertex_colors = o3d.utility.Vector3dVector(np.ones((3, 3)) * 0.5)
+    o3d.io.write_triangle_mesh(str(path), mesh)
+    return verts
+
+
+def test_render_right_colors_mesh_per_vertex(tmp_path):
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    verts = _write_tiny_mesh(mesh_path)
+
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=mesh_path)
+    v.mode = "mesh"
+
+    # Per-vertex colors aligned with the 3 mesh vertices.
+    colors = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8)
+    v._render_right(colors)
+    assert v.right_actor is not None
+
+
+def test_render_right_mesh_size_mismatch_falls_back(tmp_path):
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    _write_tiny_mesh(mesh_path)
+
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(p=20), mesh_path=mesh_path)
+    v.mode = "mesh"
+
+    # 20 point-length colors != 3 mesh vertices -> plain RGB mesh, no crash.
+    colors = (np.random.rand(20, 3) * 255).astype(np.uint8)
+    v._render_right(colors)
+    assert v.right_actor is not None

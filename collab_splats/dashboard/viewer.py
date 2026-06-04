@@ -216,12 +216,28 @@ class SplitViewer:
             self._left_pane.synchronize()
 
     def _render_right(self, colors: np.ndarray | None) -> None:
-        """Render RGB or similarity-colored pointcloud into the right plotter (decimated)."""
+        """Render RGB or similarity-colored scene into the right plotter.
+
+        Mesh mode colors per-vertex (colors is (M, 3) aligned with mesh.vertices); pointcloud
+        mode colors the decimated cloud (colors is (P, 3) aligned with result.points). A
+        colors length that doesn't match the mesh vertex count (e.g. no persisted vertex
+        features -> point-length fallback) reverts to the plain RGB mesh.
+        """
         self._right.clear()
-        idx = self._display_idx
-        rgb = colors if colors is not None else self._result.colors
-        cloud = self._normalize(pointcloud_to_polydata(self._result.points[idx], RGB=rgb[idx]))
-        self.right_actor = self._right.add_mesh(cloud, **PCD_KWARGS)
+        if self.mode == "mesh" and self._mesh_path and self._mesh_path.exists():
+            mesh = pv.read(str(self._mesh_path))
+            if colors is not None and len(colors) == mesh.n_points:
+                # Per-vertex query colors, aligned with mesh.vertices order.
+                mesh.point_data["RGB"] = np.ascontiguousarray(colors).astype(np.uint8)
+                self.right_actor = self._right.add_mesh(self._normalize(mesh), scalars="RGB", rgb=True)
+            else:
+                # Plain RGB mesh (PLY already carries vertex colors).
+                self.right_actor = self._right.add_mesh(self._normalize(mesh), rgb=True)
+        else:
+            idx = self._display_idx
+            rgb = colors if colors is not None else self._result.colors
+            cloud = self._normalize(pointcloud_to_polydata(self._result.points[idx], RGB=rgb[idx]))
+            self.right_actor = self._right.add_mesh(cloud, **PCD_KWARGS)
         self._apply_view(self._right)
         if not self._off_screen:
             self._right_pane.synchronize()
@@ -229,10 +245,11 @@ class SplitViewer:
     # ---- interactions --------------------------------------------------
 
     def set_mode(self, mode: str) -> None:
-        """Switch the left pane between 'pointcloud' and 'mesh'."""
+        """Switch both panes between 'pointcloud' and 'mesh'; right reverts to plain RGB."""
         self.mode = mode
         if self._result is not None:
             self._render_left()
+            self._render_right(None)
 
     def _get_extractor(self, name: str):
         """Construct (and cache) a queryable extractor by registry name."""

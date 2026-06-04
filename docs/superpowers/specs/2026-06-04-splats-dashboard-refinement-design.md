@@ -32,19 +32,42 @@ never by `sample_frames_fps`. Today it shows unconditionally in the Frame-sampli
 - Expose **only** `min_disparity` (not `motion_weight` / `coverage_weight` — YAGNI).
   The helper is reusable for any future per-attribute gating.
 
-### 2. Per-step timings in the log
+### 2. Granular progress + per-step timings in the log
 
-Progress is coarse (`update_progress` at 5–20/25/60/80/95). The user wants explicit
-per-step timing — model processing time, mesh creation time — written out, since each
-step already has internal tqdm/logging.
+Progress is coarse (`update_progress` at 5–20/25/60/80/95). The user wants **exact
+progress**: image counts (`XX/XX`), which inference/processing step is running, AND the
+same granularity when running a query — plus per-step wall-clock durations.
 
-**Change (pipeline.py):**
-- Wrap each step in `time.perf_counter()` and, on completion, append a log line via
+**Surface investigation.** The heavy steps expose **no progress callbacks** —
+`BaseFeedforwardCreator.reconstruct(image_dir, output_dir)` (feedforward/base.py:723) and
+`extract_and_cache` (features/base.py:84) take no hook. But the modules already **log**
+the right detail per CLAUDE.md's "logging not print" rule: `extract_and_cache` emits
+`"extract_and_cache: %d/%d frames written"` (base.py:151), the sampler already calls
+`on_progress(done, total)`, and creators/mesh log step names. So granular progress lives
+in Python `logging`, not in callbacks. We surface it without touching any core API.
+
+**Change (operation_log.py) — logging bridge:**
+- Add a `logging.Handler` subclass (`_OpLogHandler`) that forwards each emitted record's
+  message into `op_log.log_lines` (thread-safe, reusing the existing lock/cap).
+- `OperationLog` gains `attach_logging(*logger_names)` / `detach_logging()` context-manager
+  helpers. `run_pipeline` attaches it to the `collab_splats` logger at `INFO` for the
+  duration of the run, detaches in `finally`. Scoped to `collab_splats` only (no
+  third-party noise), `INFO` level. This captures the real `XX/XX` frame counts, mesh
+  steps, and creator step logs live.
+- tqdm bars (model inference, `lift_features` `trange`) write to stderr, not `logging`,
+  so they are not captured — accepted. The textual step/count logs are what the user asked
+  for; tqdm bars stay in the tmux console.
+
+**Change (pipeline.py) — per-step timings:**
+- Wrap each step in `time.perf_counter()`; on completion append a summary line via
   `op_log.update_progress(pct, msg)` of the form `"pointcloud (vggt_omega): 42.3s"`.
 - Steps timed: sample, pointcloud, mesh, semantics, push.
-- No capture of internal tqdm (heavy, brittle). Per-step wall-clock durations plus the
-  existing coarse messages are sufficient. The log area already renders `log_lines`
-  (operation_log.py:80).
+
+**Change (viewer.py / app.py) — query progress:**
+- `viewer.query` is our own code, so it emits explicit op_log stage lines directly:
+  `"query: encoding text"` → `"query: scoring P points"` → `"query: recolour done (Xs)"`.
+  `query` takes an optional `op_log` (or a `progress` callback); `app` passes
+  `self._op_log`. This shows the query's stages on every **Run query** press.
 
 ### 3. Mesh defaults
 
@@ -82,24 +105,41 @@ contrastive softmax (Talk2DINO paper convention), accepts `(P, D)` point arrays,
 **Change (config.py):** replace `query: str` with `query_positive: str` and
 `query_negative: str` (provenance only; written to `run_config.yaml`).
 
-### 5. Push robustness — background dir-copy (live bug)
+### 5. Push robustness — streamed background dir-copy (live bug)
 
 **Bug:** `RcloneClient.copy_local_to_remote` runs `rclone copyto` (single file→file
 semantics) with a hardcoded `timeout=120`, but `SessionSource.push_outputs`
 (sources.py:90) hands it a **directory**. Wrong verb + too-short cap → the observed
 `Command '[... copyto ... PXL_...]' timed out after 120 seconds`.
 
-**Change (sources.py):**
-- `push_outputs` invokes `rclone copy <local_dir> collab-data:<bucket>/<path>` directly
-  (correct recursive directory verb) with `--gcs-bucket-policy-only --transfers 8` and a
-  generous `timeout=600`. Keep using `RcloneClient` for list/fetch/pull; push owns the
-  dir-correct invocation. Reuse the client's `_cmd`/`remote_name` if accessible, else a
-  small local subprocess call mirroring the client's pattern.
+**Why collab-data's API can't help (debate).** Every `RcloneClient` transfer method is
+**single-file, blocking, short-timeout** subprocess: `copyto` (`copy_local_to_remote`
+120s, `copy_file` 60s), `cat`/`rcat` for read/write of one file. The only non-blocking,
+long-lived method is `start_http_serve`, which `Popen`-streams `rclone serve http`. This
+shape exists because the data dashboard's job is to **read/write small metadata files and
+serve buckets for read-only browsing** — it never bulk-uploads a directory tree. So there
+is no `copy`/`sync` method to reuse, and bumping the timeout to 600s would only paper over
+the wrong verb with another arbitrary wall-clock cap that a slow link or larger tree
+breaks again. The right tool is `rclone copy` (recursive, **idempotent** — reruns skip
+already-uploaded objects), which collab-data simply never needed.
 
-**Change (pipeline.py / app.py):** push runs **in a detached background thread** —
-local outputs load into the viewer immediately when ready; the thread logs success or
-failure to `op_log`. Push failure is non-fatal (outputs already on disk locally). The
-push timer/log line (item 2) reports on completion of that thread.
+**Change (sources.py) — own the dir-copy, mirror their `serve` pattern:**
+- `push_outputs` runs `rclone copy <local_dir> collab-data:<bucket>/<path>` via
+  `subprocess.Popen` (streaming), with:
+  - `--gcs-bucket-policy-only --transfers 8` (parallelism),
+  - `--stats 2s --stats-one-line` (live progress lines on stdout),
+  - rclone-**native** robustness instead of a python wall-clock kill:
+    `--retries 3 --timeout 300 --contimeout 60` (per-operation/network, not whole-job).
+- Stream stdout line-by-line; forward each `--stats-one-line` line to `op_log` (feeds
+  item 2's live progress). Reuse `RcloneClient._cmd`/`remote_name` if accessible, else a
+  small local subprocess mirroring the client's pattern.
+- Keep using `RcloneClient` for list/fetch/pull unchanged.
+
+**Change (pipeline.py / app.py) — background, non-fatal:** push runs in a **detached
+background thread**. Local outputs load into the viewer immediately when ready; the thread
+streams push progress and a final success/failure line to `op_log`. Push failure is
+non-fatal — outputs are already on local disk, and `rclone copy`'s idempotence makes a
+later manual retry cheap.
 
 ### 6. Suppress meta-tensor warnings
 
@@ -123,14 +163,17 @@ CLIP's unused visual tower. Not a blanket filter.
 ## Testing
 
 - **Item 1:** unit-test `_bind_visibility` toggles `min_disparity.visible` on sampling change.
-- **Item 2:** assert each step appends a `"<step>: <Ns>"` line to `op_log.log_lines`
-  (mock `perf_counter`).
+- **Item 2:** (a) logging bridge — emit a record on the `collab_splats` logger while
+  attached and assert it lands in `op_log.log_lines`; assert detach stops capture.
+  (b) per-step timing — assert each step appends a `"<step>: <Ns>"` line (mock
+  `perf_counter`). (c) query — assert `viewer.query` pushes its stage lines to `op_log`.
 - **Item 3:** assert `RunConfig()` defaults equal the new values; widget defaults match.
 - **Item 4:** mock extractor; assert `viewer.query` calls `score_queries` with parsed
   positive/negative lists and feeds the result to `apply_viridis`. Blank neg → `None`.
-- **Item 5:** mock subprocess; assert `push_outputs` builds an `rclone copy` (not
-  `copyto`) command with `timeout=600`; assert push runs off the main load path and a
-  failure does not raise into the caller.
+- **Item 5:** mock `Popen`; assert `push_outputs` builds an `rclone copy` (not `copyto`)
+  command carrying `--transfers`, `--stats-one-line`, `--retries 3`; assert streamed
+  stdout lines reach `op_log`; assert push runs off the main load path and a non-zero exit
+  logs a failure line without raising into the caller.
 - **Item 6:** assert no `UserWarning` matching the meta-tensor message escapes talk2dino init.
 - Live smoke re-run (tmux, GPU) after implementation to confirm push succeeds and the log
   shows per-step timings.

@@ -197,8 +197,9 @@ class SplatsApp(param.Parameterized):
             self._load_outputs(session, stem)
             return
         config = self._current_config()
+        doc = pn.state.curdoc
 
-        def worker() -> None:
+        def job():
             # Lazy import: pulls the heavy reconstruction/mesh stack only when a run starts.
             from collab_splats.dashboard.pipeline import run_pipeline
 
@@ -212,9 +213,18 @@ class SplatsApp(param.Parameterized):
                 source=self._source,
                 base_dir=self._base_dir,
             )
-            self._dispatch_load(session, stem)
+            return True
 
-        threading.Thread(target=worker, daemon=True).start()
+        def on_done(res):
+            self._set_busy(False)
+            if isinstance(res, Exception):
+                self._op_log.error_op(str(res))
+                return
+            self._load_outputs(session, stem)  # re-enqueues a load job
+
+        self._set_busy(True)
+        self._op_log.start_op(f"running {stem}")
+        self._gpu.submit(job, on_done, doc)
 
     def _dispatch_load(self, session: str, stem: str) -> None:
         """Schedule an outputs load (called from a worker job's completion)."""

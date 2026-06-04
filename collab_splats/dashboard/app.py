@@ -21,10 +21,6 @@ from collab_splats.dashboard.viewer import SplitViewer, load_lifted_normed
 
 logger = logging.getLogger(__name__)
 
-# Guard so pn.extension("vtk") is called at most once per process (it is not
-# idempotent under panel serve and throws when called from a background thread).
-_VTK_EXT_LOADED = False
-
 ########
 # Helpers (kept for backward compat — used by tests and __init__)
 ########
@@ -238,12 +234,11 @@ class SplatsApp(param.Parameterized):
     # ---- layout --------------------------------------------------------
 
     def view(self) -> pn.template.MaterialTemplate:
-        """Assemble the full single-page layout."""
-        global _VTK_EXT_LOADED
-        if not _VTK_EXT_LOADED:
-            pn.extension("vtk")
-            _VTK_EXT_LOADED = True
+        """Assemble the full single-page layout.
 
+        The 'vtk' extension is loaded once in run_app (main thread, before serving) —
+        loading it here per-session fails to inject the VTK JS and the panes hang.
+        """
         # Progress strip bound reactively to op_log params
         progress_bar = pn.widgets.Progress(
             value=pn.bind(lambda v: v, self._op_log.param.progress),
@@ -269,10 +264,29 @@ class SplatsApp(param.Parameterized):
 ########
 
 
-def run_app(host: str = "0.0.0.0", port: int = 7860, base_dir: str = "/workspace/outputs") -> None:
-    """Serve the splats dashboard."""
+def run_app(
+    host: str = "0.0.0.0",
+    port: int = 7860,
+    base_dir: str = "/workspace/outputs",
+    websocket_origin: str | list[str] | None = "*",
+) -> None:
+    """Serve the splats dashboard.
+
+    websocket_origin defaults to "*" so the app renders when reached via a remote host
+    IP or SSH tunnel; bokeh otherwise refuses the websocket and the page hangs blank.
+    """
+    # Load the VTK extension ONCE here, in the main thread, before serving. Panel requires
+    # pn.extension() at startup; deferring it into the per-session factory hangs the panes.
+    pn.extension("vtk")
 
     def factory() -> pn.template.MaterialTemplate:
         return SplatsApp(base_dir=Path(base_dir)).view()
 
-    pn.serve(factory, address=host, port=port, show=False, title="splats")
+    pn.serve(
+        factory,
+        address=host,
+        port=port,
+        show=False,
+        title="splats",
+        websocket_origin=websocket_origin,
+    )

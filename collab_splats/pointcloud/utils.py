@@ -6,14 +6,16 @@ Coordinate convention used throughout:
   - All public functions that produce poses output CoordinateFrame.NERFSTUDIO (nerfstudio world frame):
     X right, Y up, Z backward camera axes; Z-up world.
 """
+
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING, Any, Optional, Tuple, Union
+
 import numpy as np
 import pycolmap
 import torch
 import torch.nn.functional as F
-from typing import Any, Optional, TYPE_CHECKING, Union, Tuple
 from tqdm.auto import trange
 
 from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
@@ -31,8 +33,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DOWNSAMPLE_KWARGS: dict = {"voxel_size": 0.015, "adaptive": True}
-_DEFAULT_OUTLIER_KWARGS: dict    = {"nb_neighbors": 20, "std_ratio": 2.0}
-_DEFAULT_DISTANCE_KWARGS: dict   = {"method": "radial", "max_distance": 50.0}
+_DEFAULT_OUTLIER_KWARGS: dict = {"nb_neighbors": 20, "std_ratio": 2.0}
+_DEFAULT_DISTANCE_KWARGS: dict = {"method": "radial", "max_distance": 50.0}
 
 # Sentinel to distinguish "use defaults" from "skip this step"
 _UNSET = object()
@@ -77,9 +79,7 @@ def _radial_mask(
         mask = distances <= max_distance
     else:
         if n_points > len(points):
-            raise ValueError(
-                f"n_points ({n_points}) is greater than the number of points ({len(points)})."
-            )
+            raise ValueError(f"n_points ({n_points}) is greater than the number of points ({len(points)}).")
         sorted_idx = np.argsort(distances)
         mask = np.zeros(len(points), dtype=bool)
         mask[sorted_idx[:n_points]] = True
@@ -190,10 +190,9 @@ def filter_density(
         return pcd.select_by_index([])
 
     tree = o3d.geometry.KDTreeFlann(pcd)
-    densities = np.array([
-        tree.search_radius_vector_3d(points[i], radius)[0]
-        for i in range(len(points))
-    ], dtype=np.float32)
+    densities = np.array(
+        [tree.search_radius_vector_3d(points[i], radius)[0] for i in range(len(points))], dtype=np.float32
+    )
 
     threshold = np.percentile(densities, percentile)
     mask = densities >= threshold
@@ -208,8 +207,8 @@ def filter_density(
 def clean_pointcloud(
     pcd,
     downsample_kwargs: Optional[dict] = _UNSET,
-    outlier_kwargs:    Optional[dict] = _UNSET,
-    distance_kwargs:   Optional[dict] = _UNSET,
+    outlier_kwargs: Optional[dict] = _UNSET,
+    distance_kwargs: Optional[dict] = _UNSET,
 ) -> tuple[Any, np.ndarray]:
     """Clean an Open3D point cloud via composable filter steps.
 
@@ -266,7 +265,9 @@ def clean_pointcloud(
 
     logger.debug(
         "clean_pointcloud: done %d → %d (%d total removed)",
-        n_start, len(pcd.points), n_start - len(pcd.points),
+        n_start,
+        len(pcd.points),
+        n_start - len(pcd.points),
     )
     return pcd, indices
 
@@ -355,15 +356,11 @@ def clean_pcd(
         if len(points) > 10000:  # For large point clouds, use adaptive voxel size
             tree = o3d.geometry.KDTreeFlann(pcd)
             densities = []
-            for i in range(
-                min(1000, len(points))
-            ):  # Sample subset for density estimation
+            for i in range(min(1000, len(points))):  # Sample subset for density estimation
                 [k, idx, _] = tree.search_radius_vector_3d(points[i], radius * 2)
                 densities.append(k)
             avg_density = float(np.mean(densities))
-            adaptive_voxel_size = voxel_size * max(
-                0.5, min(2.0, 50.0 / max(1e-6, avg_density))
-            )
+            adaptive_voxel_size = voxel_size * max(0.5, min(2.0, 50.0 / max(1e-6, avg_density)))
         else:
             adaptive_voxel_size = voxel_size
 
@@ -379,9 +376,7 @@ def clean_pcd(
             approximate_class=False,
         )
 
-        voxel_indices = np.array(
-            [inds[inds >= 0][0] if np.any(inds >= 0) else -1 for inds in trace_indices]
-        )
+        voxel_indices = np.array([inds[inds >= 0][0] if np.any(inds >= 0) else -1 for inds in trace_indices])
         valid_mask = voxel_indices >= 0
         voxel_indices = voxel_indices[valid_mask]
 
@@ -396,9 +391,7 @@ def clean_pcd(
 
     # 5. Distance-based removal
     if distance_removal:
-        pcd, mask = remove_far_points(
-            pcd, max_distance=max_distance, reference=reference, return_mask=True
-        )
+        pcd, mask = remove_far_points(pcd, max_distance=max_distance, reference=reference, return_mask=True)
         indices = indices[mask]
 
     logger.debug("clean_pcd: %d points after cleaning", len(indices))
@@ -441,9 +434,7 @@ def remove_far_points(
         mask = distances <= max_distance
     else:
         if n_points is not None and n_points > len(points):
-            raise ValueError(
-                "n_points is greater than the number of points in the cloud."
-            )
+            raise ValueError("n_points is greater than the number of points in the cloud.")
         sorted_indices = np.argsort(distances)
         mask = np.zeros_like(distances, dtype=bool)
         if n_points is None:
@@ -479,18 +470,16 @@ def density_filter(pcd, radius=0.03, percentile=10):
         densities.append(k)
 
     densities = np.array(densities)
-    logger.debug(
-        "density_filter: min=%d max=%d mean=%.1f", np.min(densities), np.max(densities), np.mean(densities)
-    )
+    logger.debug("density_filter: min=%d max=%d mean=%.1f", np.min(densities), np.max(densities), np.mean(densities))
 
     # Remove points in very sparse regions (bottom 10% by density)
-    density_threshold = np.percentile(
-        densities, percentile
-    )  # Adjust percentage as needed
+    density_threshold = np.percentile(densities, percentile)  # Adjust percentage as needed
     dense_mask = densities >= density_threshold
     pcd_dense = pcd.select_by_index(np.where(dense_mask)[0])
     logger.debug(
-        "density_filter: removed %d sparse points (threshold %.3f)", len(pcd.points) - len(pcd_dense.points), density_threshold
+        "density_filter: removed %d sparse points (threshold %.3f)",
+        len(pcd.points) - len(pcd_dense.points),
+        density_threshold,
     )
 
 
@@ -512,13 +501,12 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         t: (3,) translation placing floor at z=0 after rotation is applied.
     """
     import open3d as o3d  # optional heavy dep
+
     from collab_splats.utils.geometry import rotation_align_vectors
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
-    plane_model, _ = pcd.segment_plane(
-        distance_threshold=0.02, ransac_n=3, num_iterations=1000
-    )
+    plane_model, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
     a, b, c, d = plane_model
     n_mag = np.linalg.norm([a, b, c])
     normal = np.array([a, b, c]) / n_mag
@@ -654,8 +642,14 @@ def filter_points_by_spatial_extent(
         extent = (bbox_max - bbox_min).max()
         logger.debug("spatial_filter: %d-%d percentile, extent %.3f m", pmin, pmax, extent)
         removed_count = len(points) - len(filtered_points)
-        removed_pct = 100 * (1 - len(filtered_points)/len(points)) if len(points) > 0 else 0
-        logger.debug("spatial_filter: %d → %d points (%d outliers, %.1f%%)", len(points), len(filtered_points), removed_count, removed_pct)
+        removed_pct = 100 * (1 - len(filtered_points) / len(points)) if len(points) > 0 else 0
+        logger.debug(
+            "spatial_filter: %d → %d points (%d outliers, %.1f%%)",
+            len(points),
+            len(filtered_points),
+            removed_count,
+            removed_pct,
+        )
 
     return filtered_points, filtered_colors
 
@@ -722,7 +716,9 @@ def voxel_downsample_point_cloud(
             voxel_size = 0.01  # Fallback to 1cm if extent is zero
 
         if verbose:
-            logger.debug("voxel_downsample_point_cloud: scene extent IQR=%.3f m, full=%.3f m", scene_extent, full_extent)
+            logger.debug(
+                "voxel_downsample_point_cloud: scene extent IQR=%.3f m, full=%.3f m", scene_extent, full_extent
+            )
             logger.debug("voxel_downsample_point_cloud: adaptive size %.4f m", voxel_size)
 
     # Pure numpy voxel downsampling
@@ -830,63 +826,68 @@ def lift_features(
     # Required fields — fail loud at function entry, not deep in the kernel
     for name in ("points", "pixel_indices", "depth", "confidence", "extrinsics", "intrinsics"):
         assert getattr(result, name) is not None, (
-            f"lift_features requires result.{name}; "
-            f"load zarr with load_images=True or run pipeline fresh"
+            f"lift_features requires result.{name}; " f"load zarr with load_images=True or run pipeline fresh"
         )
     N = result.extrinsics.shape[0]
-    assert len(feature_maps) == N, (
-        f"feature_maps count ({len(feature_maps)}) != frame count ({N})"
-    )
+    assert len(feature_maps) == N, f"feature_maps count ({len(feature_maps)}) != frame count ({N})"
 
     H, W = result.model_height, result.model_width
     P = result.points.shape[0]
     D = feature_maps[0].shape[0]
     image_size = (H, W)
 
-    features_sum = torch.zeros((P, D), dtype=torch.float32)
-    weights_sum = torch.zeros((P,), dtype=torch.float32)
+    # Run the whole kernel on the GPU in float32 (was CPU float64 numpy + CPU grid_sample —
+    # the dominant cost on large clouds). Everything moves to the device once; one .cpu() at the end.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Homogeneous points for batched world-to-cam transform per frame
-    pts_h = np.concatenate([result.points.astype(np.float64), np.ones((P, 1), dtype=np.float64)], axis=-1)  # (P, 4)
+    pts = torch.as_tensor(np.ascontiguousarray(result.points), dtype=torch.float32, device=device)
+    pts_h = torch.cat([pts, torch.ones((P, 1), dtype=torch.float32, device=device)], dim=1)  # (P, 4)
 
     # Ensure extrinsics are (N, 4, 4); accept (N, 3, 4) by padding
-    ext = result.extrinsics.astype(np.float64)
-    if ext.shape[-2:] == (3, 4):
-        ext = extrinsics_to_homogeneous(ext)
-    intr = result.intrinsics.astype(np.float64)
+    ext_np = result.extrinsics
+    if ext_np.shape[-2:] == (3, 4):
+        ext_np = extrinsics_to_homogeneous(ext_np)
+    ext = torch.as_tensor(np.ascontiguousarray(ext_np), dtype=torch.float32, device=device)  # (N, 4, 4)
+    intr = torch.as_tensor(np.ascontiguousarray(result.intrinsics), dtype=torch.float32, device=device)  # (N, 3, 3)
 
-    # Conf may be torch.Tensor or np.ndarray; normalise to numpy upfront
-    conf_arr = result.confidence.cpu().numpy() if isinstance(result.confidence, torch.Tensor) else result.confidence
+    # Conf / depth → (N, H, W) float32 on device
+    conf_np = result.confidence.detach().cpu().numpy() if isinstance(result.confidence, torch.Tensor) else result.confidence
+    conf = torch.as_tensor(np.ascontiguousarray(conf_np), dtype=torch.float32, device=device)
+    depth_np = result.depth
+    if depth_np.ndim == 4:
+        depth_np = depth_np[..., 0]
+    depth = torch.as_tensor(np.ascontiguousarray(depth_np), dtype=torch.float32, device=device)
 
-    # Depth may be (N, H, W) or (N, H, W, 1)
-    depth_arr = result.depth
-    if depth_arr.ndim == 4:
-        depth_arr = depth_arr[..., 0]
+    features_sum = torch.zeros((P, D), dtype=torch.float32, device=device)
+    weights_sum = torch.zeros((P,), dtype=torch.float32, device=device)
 
-    for i, fmap in enumerate(feature_maps):
+    pts_hT = pts_h.T  # (4, P) — reused every frame
+    for i in range(N):
+        fmap = feature_maps[i].to(device=device, dtype=torch.float32)  # (D, H_p, W_p)
         # Project all P points into frame i: world -> cam -> pixel
-        cam = (ext[i] @ pts_h.T)[:3]            # (3, P)
-        proj = intr[i] @ cam                    # (3, P)
+        proj = intr[i] @ (ext[i] @ pts_hT)[:3]  # (3, P)
         z = proj[2]
-        # Guard against z=0 before divide; visibility mask filters them out anyway
-        safe_z = np.where(np.abs(z) < 1e-8, 1e-8, z)
+        safe_z = torch.where(z.abs() < 1e-8, torch.full_like(z, 1e-8), z)
         u = proj[0] / safe_z
         v = proj[1] / safe_z
 
-        # Visibility: in-bounds, in-front-of-camera, depth-consistent
+        # Visibility: in-bounds, in-front-of-camera, depth-consistent. nan/inf coords (degenerate
+        # points) → 0 for indexing/sampling; in_bounds is False there so they contribute weight 0.
         in_bounds = (u >= 0) & (u < W) & (v >= 0) & (v < H) & (z > 0)
-        u_idx = np.clip(u.astype(np.int32), 0, W - 1)
-        v_idx = np.clip(v.astype(np.int32), 0, H - 1)
-        z_depth = depth_arr[i, v_idx, u_idx]
-        depth_ok = np.abs(z - z_depth) / (np.abs(z) + 1e-8) < depth_tol
-        mask = in_bounds & depth_ok                                  # (P,) bool
+        u_safe = torch.nan_to_num(u, nan=0.0, posinf=0.0, neginf=0.0)
+        v_safe = torch.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+        u_idx = u_safe.clamp(0, W - 1).long()
+        v_idx = v_safe.clamp(0, H - 1).long()
+        z_depth = depth[i, v_idx, u_idx]
+        depth_ok = (z - z_depth).abs() / (z.abs() + 1e-8) < depth_tol
+        w = conf[i, v_idx, u_idx] * (in_bounds & depth_ok).float()  # (P,)
 
-        # Per-point conf weight at projected pixel; zero out invisible points
-        w_np = (conf_arr[i, v_idx, u_idx].astype(np.float32)) * mask.astype(np.float32)
-        w = torch.from_numpy(w_np)
-
-        # Bilinear sample feature map at projected coords (any feature-map H_p, W_p)
-        sampled = _grid_sample_at_pixels(fmap, v.astype(np.float32), u.astype(np.float32), image_size)
+        # Bilinear sample feature map at projected coords (align_corners=False, border pad)
+        gx = (2 * u_safe + 1) / W - 1
+        gy = (2 * v_safe + 1) / H - 1
+        grid = torch.stack([gx, gy], dim=-1).view(1, 1, P, 2)
+        sampled = F.grid_sample(fmap.unsqueeze(0), grid, mode="bilinear", align_corners=False, padding_mode="border")
+        sampled = sampled.squeeze(0).squeeze(1).T  # (P, D)
 
         features_sum += sampled * w.unsqueeze(-1)
         weights_sum += w
@@ -896,12 +897,12 @@ def lift_features(
 
     # Fallback: points with zero accumulated weight → source-frame sample
     zero_w = weights_sum < 1e-6
-    if zero_w.any():
-        zero_idx = zero_w.numpy()
+    if bool(zero_w.any()):
+        zero_idx = zero_w.detach().cpu().numpy()
         fallback = _sample_at_source_pixels(feature_maps, result.pixel_indices[zero_idx], image_size)
-        features[zero_w] = fallback
+        features[zero_w] = fallback.to(device)
 
-    return features
+    return features.detach().cpu()
 
 
 def reproject_pixels(
@@ -925,9 +926,9 @@ def reproject_pixels(
     Returns:
         (P, 3) float32 world-space point positions.
     """
-    fi = pixel_indices[:, 0]   # frame index per point  (P,)
-    ri = pixel_indices[:, 1]   # pixel row per point    (P,)
-    ci = pixel_indices[:, 2]   # pixel col per point    (P,)
+    fi = pixel_indices[:, 0]  # frame index per point  (P,)
+    ri = pixel_indices[:, 1]  # pixel row per point    (P,)
+    ci = pixel_indices[:, 2]  # pixel col per point    (P,)
 
     # depth at source pixel for each point
     if depth.ndim == 4:
@@ -940,8 +941,8 @@ def reproject_pixels(
     fy = intrinsics[fi, 1, 1].astype(np.float64)
     cx = intrinsics[fi, 0, 2].astype(np.float64)
     cy = intrinsics[fi, 1, 2].astype(np.float64)
-    x_cam = (ci - cx) * z / fx   # (P,)
-    y_cam = (ri - cy) * z / fy   # (P,)
+    x_cam = (ci - cx) * z / fx  # (P,)
+    y_cam = (ri - cy) * z / fy  # (P,)
 
     # homogeneous camera-space coords: (P, 4)
     pts_cam = np.stack([x_cam, y_cam, z, np.ones_like(z)], axis=-1)
@@ -951,7 +952,7 @@ def reproject_pixels(
     w2c = np.zeros((N, 4, 4), dtype=np.float64)
     w2c[:, :3, :] = extrinsics_3x4
     w2c[:, 3, 3] = 1.0
-    cam2world = invert_poses(w2c)   # (N, 4, 4)
+    cam2world = invert_poses(w2c)  # (N, 4, 4)
 
     # per-point transform: cam2world[fi] @ pts_cam[p]
     pts_world = np.einsum("pij,pj->pi", cam2world[fi], pts_cam)  # (P, 4)
@@ -996,19 +997,19 @@ def cross_frame_attention_ratio(
         return 0.0
 
     # Compute attention of all queries over first-frame patch keys
-    attn = q @ k_first.transpose(-2, -1)   # (B, H, N_q, N_k_first)
-    attn = attn.transpose(-2, -1)           # (B, H, N_k_first, N_q)
+    attn = q @ k_first.transpose(-2, -1)  # (B, H, N_q, N_k_first)
+    attn = attn.transpose(-2, -1)  # (B, H, N_k_first, N_q)
     attn = attn.softmax(dim=-1)
-    attn = attn.mean(dim=1)                 # (B, N_k_first, N_q) — avg over heads
+    attn = attn.mean(dim=1)  # (B, N_k_first, N_q) — avg over heads
 
     # Split queries by destination frame to separate self- vs cross-frame attention
-    attn_to_first = attn[..., :tokens_per_img]   # first-frame self-attention
+    attn_to_first = attn[..., :tokens_per_img]  # first-frame self-attention
     attn_to_second = attn[..., tokens_per_img:]  # cross-frame attention to second
 
     # Ratio: how much cross-frame attention relative to self-attention peak
-    max_self = attn_to_first.max(dim=-1)[0]      # (B, N_k_first)
+    max_self = attn_to_first.max(dim=-1)[0]  # (B, N_k_first)
     normalized = attn_to_second / (max_self.unsqueeze(-1) + 1e-8)
-    ratio = normalized.max(dim=1)[0]              # (B, N_second)
+    ratio = normalized.max(dim=1)[0]  # (B, N_second)
 
     # Aggregate: mean of top-25% values — matches VGGT-SPARK mean_top_quarter().
     # Previously used np.percentile(90) which gives a lower scalar and caused

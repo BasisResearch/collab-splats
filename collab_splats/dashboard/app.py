@@ -16,6 +16,7 @@ import panel as pn
 import param
 
 from collab_splats.dashboard.config import RunConfig
+from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.sources import SessionSource
 from collab_splats.dashboard.viewer import SplitViewer, load_lifted_normed
@@ -62,11 +63,16 @@ class SplatsApp(param.Parameterized):
     """Single-page dashboard wiring source, pipeline, and the split viewer."""
 
     def __init__(
-        self, base_dir: Path = Path("/workspace/outputs"), source: SessionSource | None = None, **params
+        self,
+        base_dir: Path = Path("/workspace/outputs"),
+        source: SessionSource | None = None,
+        gpu_worker: GpuWorker | None = None,
+        **params,
     ) -> None:
         super().__init__(**params)
         self._base_dir = Path(base_dir)
         self._source = source if source is not None else SessionSource()
+        self._gpu = gpu_worker if gpu_worker is not None else GpuWorker()
         self._op_log = OperationLog()
         self._viewer = SplitViewer()
         self._build_sidebar()
@@ -91,6 +97,7 @@ class SplatsApp(param.Parameterized):
         self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=0.02)
         self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=1.0)
         self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=False)
+        self.max_display_points = pn.widgets.IntInput(name="Max display points", value=150_000, step=50_000)
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
         self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
         self.force_btn = pn.widgets.Button(label="Force re-run", button_type="warning")
@@ -117,10 +124,16 @@ class SplatsApp(param.Parameterized):
             pn.Card(
                 self.mesh_voxel, self.mesh_sdf, self.mesh_depth, self.mesh_clean, title="Mesh params", collapsed=True
             ),
+            self.max_display_points,
             "### View",
             self.view_mode,
             pn.Row(self.run_btn, self.force_btn),
         )
+
+    def _set_busy(self, busy: bool) -> None:
+        """Enable/disable the action buttons while a GPU job is in flight (IOLoop thread)."""
+        for btn in (self.run_btn, self.force_btn, self.run_query_btn):
+            btn.disabled = busy
 
     # ---- data wiring ---------------------------------------------------
 

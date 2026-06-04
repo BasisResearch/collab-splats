@@ -87,3 +87,28 @@ def test_run_query_button_forwards_parsed_terms(tmp_path):
 def test_view(tmp_path):
     app, _ = _app(tmp_path)
     assert app.view() is not None
+
+
+from collab_splats.dashboard.gpu_worker import GpuWorker
+
+
+def test_set_busy_toggles_action_buttons(tmp_path):
+    app, _ = _app(tmp_path)
+    app._set_busy(True)
+    assert app.run_btn.disabled and app.force_btn.disabled and app.run_query_btn.disabled
+    app._set_busy(False)
+    assert not app.run_btn.disabled and not app.force_btn.disabled and not app.run_query_btn.disabled
+
+
+def test_has_max_display_points_widget(tmp_path):
+    app, _ = _app(tmp_path)
+    assert app.max_display_points.value == 150_000
+
+
+def test_app_uses_injected_gpu_worker(tmp_path):
+    worker = MagicMock(spec=GpuWorker)
+    source = MagicMock()
+    source.list_sessions.return_value = []
+    with patch("collab_splats.dashboard.app.SplitViewer"):
+        app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=worker)
+    assert app._gpu is worker

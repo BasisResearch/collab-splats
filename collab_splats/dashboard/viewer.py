@@ -12,8 +12,10 @@ import torch
 import zarr
 
 from collab_splats.dashboard.viz_utils import apply_viridis, pointcloud_to_polydata
-from collab_splats.pointcloud.utils import lift_features
-from collab_splats.semantics.features.base import BaseQueryableExtractor
+
+# NB: lift_features (pointcloud.utils) and BaseQueryableExtractor (semantics.features)
+# pull in the heavy feedforward stack (~14s import). They are imported lazily inside the
+# load/query methods so the viewer panes construct immediately at launch.
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,9 @@ def _load_feature_maps(semantics_dir) -> list:
 
 def load_lifted_normed(result, semantics_dir) -> np.ndarray:
     """Lift cached features to points and L2-normalise -> (P, D) float32."""
+    # Lazy import: pointcloud.utils pulls the heavy feedforward stack.
+    from collab_splats.pointcloud.utils import lift_features
+
     feature_maps = _load_feature_maps(semantics_dir)
     lifted = lift_features(feature_maps, result)
     lifted = lifted.detach().cpu().numpy().astype(np.float32)
@@ -108,6 +113,9 @@ class SplitViewer:
 
     def _get_extractor(self, name: str):
         """Construct (and cache) a queryable extractor by registry name."""
+        # Lazy import: semantics.features pulls the heavy feedforward stack.
+        from collab_splats.semantics.features.base import BaseQueryableExtractor
+
         if name not in self._extractor_cache:
             self._extractor_cache[name] = BaseQueryableExtractor.get(name)()
         return self._extractor_cache[name]

@@ -12,10 +12,12 @@ import param
 
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.pipeline import run_pipeline
 from collab_splats.dashboard.sources import SessionSource
 from collab_splats.dashboard.viewer import SplitViewer, load_lifted_normed
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+# NB: collab_splats.dashboard.pipeline and pointcloud.feedforward pull in the full
+# reconstruction + TSDF mesh stack (~18s import). They are imported lazily inside the
+# run/load paths so the server binds and the page renders immediately on launch.
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +185,9 @@ class SplatsApp(param.Parameterized):
         config = self._current_config()
 
         def worker() -> None:
+            # Lazy import: pulls the heavy reconstruction/mesh stack only when a run starts.
+            from collab_splats.dashboard.pipeline import run_pipeline
+
             video = self._ensure_local_video(session, name)
             run_pipeline(
                 video_path=video,
@@ -207,6 +212,9 @@ class SplatsApp(param.Parameterized):
 
     def _load_outputs(self, session: str, stem: str) -> None:
         """Load FeedforwardResult and semantics into the viewer."""
+        # Lazy import: FeedforwardResult lives in the heavy feedforward package.
+        from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
         out = self._base_dir / session / stem
         if not (out / "feedforward.zarr").exists():
             self._source.pull_processed(session, stem, out)

@@ -11,7 +11,7 @@ from collab_splats.dashboard.viewer import load_lifted_normed
 def test_load_lifted_normed_normalises():
     fake_lifted = torch.tensor([[3.0, 4.0], [0.0, 2.0]])  # norms 5, 2
     with (
-        patch("collab_splats.dashboard.viewer.lift_features", return_value=fake_lifted),
+        patch("collab_splats.pointcloud.utils.lift_features", return_value=fake_lifted),
         patch("collab_splats.dashboard.viewer._load_feature_maps", return_value=["fm"]),
     ):
         out = load_lifted_normed(result=object(), semantics_dir=object())

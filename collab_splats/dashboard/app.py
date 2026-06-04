@@ -370,12 +370,12 @@ def run_app(
     host: str = "0.0.0.0",
     port: int = 7860,
     base_dir: str = "/workspace/outputs",
-    websocket_origin: str | list[str] | None = "*",
+    websocket_origin: str | list[str] | None = None,
 ) -> None:
     """Serve the splats dashboard.
 
-    websocket_origin defaults to "*" so the app renders when reached via a remote host
-    IP or SSH tunnel; bokeh otherwise refuses the websocket and the page hangs blank.
+    websocket_origin=None restricts connections to host:port + localhost:port. Pass an
+    explicit list (or "*") to allow remote-IP / SSH-tunnel access.
     """
     # Headless host: ensure an OpenGL context exists before any VTK initialisation.
     _ensure_display()
@@ -387,8 +387,17 @@ def run_app(
     # otherwise spin forever waiting on resources that never load.
     pn.extension("vtk", inline=True)
 
+    # One shared GPU worker for every session: serializes all CUDA work across tabs,
+    # preventing parallel model loads from OOMing the GPU.
+    gpu_worker = GpuWorker()
+
+    if websocket_origin is None:
+        origin: str | list[str] = [f"{host}:{port}", f"localhost:{port}"]
+    else:
+        origin = websocket_origin
+
     def factory() -> pn.template.MaterialTemplate:
-        return SplatsApp(base_dir=Path(base_dir)).view()
+        return SplatsApp(base_dir=Path(base_dir), gpu_worker=gpu_worker).view()
 
     pn.serve(
         factory,
@@ -396,5 +405,6 @@ def run_app(
         port=port,
         show=False,
         title="splats",
-        websocket_origin=websocket_origin,
+        websocket_origin=origin,
+        session_token_expiration=1800,
     )

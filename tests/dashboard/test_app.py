@@ -98,6 +98,19 @@ def test_query_on_done_renders_colors(tmp_path):
     assert not app.run_query_btn.disabled  # re-enabled after render
 
 
+def test_run_app_serves_with_hardening(tmp_path):
+    with patch("collab_splats.dashboard.app._ensure_display"), \
+         patch("collab_splats.dashboard.app.pn.extension"), \
+         patch("collab_splats.dashboard.app.GpuWorker") as worker_cls, \
+         patch("collab_splats.dashboard.app.pn.serve") as serve:
+        from collab_splats.dashboard.app import run_app
+        run_app(host="127.0.0.1", port=9999, base_dir=str(tmp_path), websocket_origin=None)
+    worker_cls.assert_called_once()  # one shared worker for all sessions
+    kwargs = serve.call_args.kwargs
+    assert kwargs["session_token_expiration"] >= 1800
+    assert kwargs["websocket_origin"] == ["127.0.0.1:9999", "localhost:9999"]
+
+
 def test_view(tmp_path):
     app, _ = _app(tmp_path)
     assert app.view() is not None

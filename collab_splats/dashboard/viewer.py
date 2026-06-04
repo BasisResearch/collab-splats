@@ -136,26 +136,26 @@ class SplitViewer:
             self._extractor_cache[name] = BaseQueryableExtractor.get(name)()
         return self._extractor_cache[name]
 
-    def query(
+    def score_query(
         self,
         positive: list[str],
         negative: list[str] | None = None,
         extractor_name: str = "talk2dino",
         op_log=None,
     ) -> np.ndarray:
-        """Recolour the right pane by contrastive query score; return RGB colours.
+        """Compute per-point query colours (RGB uint8). Pure compute — no rendering.
 
         Reuses BaseQueryableExtractor.score_queries (contrastive softmax, [0, 1]).
-        positive/negative are lists of phrases. Empty negative -> API default ["object"].
+        Empty positive or no cached features -> returns the plain RGB colours.
+        Call from the GPU worker; pass the returned colours to render_query on the IOLoop.
         """
 
         def _stage(msg: str) -> None:
             if op_log is not None:
                 op_log.append_line(msg)
 
-        # No query terms or no cached features: reset right pane to RGB.
+        # No query terms or no cached features: fall back to plain RGB.
         if not positive or self._lifted_normed is None:
-            self._render_right(None)
             return self._result.colors
 
         _stage(f"query: encoding {len(positive)} positive / {len(negative or [])} negative")
@@ -165,8 +165,10 @@ class SplitViewer:
         _stage(f"query: scoring {features.shape[0]} points")
         scores = extractor.score_queries(features, positive=positive, negative=negative or None)
         sims = scores.detach().cpu().numpy()
-
         colors = apply_viridis(sims)
-        self._render_right(colors)
-        _stage("query: recolour done")
+        _stage("query: scored")
         return colors
+
+    def render_query(self, colors: np.ndarray) -> None:
+        """Recolour the right pane with precomputed query colours (IOLoop thread)."""
+        self._render_right(colors)

@@ -46,7 +46,7 @@ def test_recolor_by_similarity_updates_right(monkeypatch):
             return torch.rand(features.shape[0])
 
     monkeypatch.setattr(v, "_get_extractor", lambda name: _Ext())
-    colors = v.query(positive=["chair", "stool"], negative=["floor"], extractor_name="talk2dino")
+    colors = v.score_query(positive=["chair", "stool"], negative=["floor"], extractor_name="talk2dino")
     assert colors.shape == (20, 3)
     assert colors.dtype == np.uint8
     assert seen["positive"] == ["chair", "stool"]
@@ -59,7 +59,7 @@ def test_query_empty_positive_resets_right(monkeypatch):
     v.load(res, mesh_path=None)
     v._lifted_normed = np.random.rand(12, 8).astype(np.float32)
     # No positive terms -> reset to RGB, no extractor call
-    colors = v.query(positive=[], negative=[], extractor_name="talk2dino")
+    colors = v.score_query(positive=[], negative=[], extractor_name="talk2dino")
     assert np.array_equal(colors, res.colors)
 
 
@@ -82,3 +82,30 @@ def test_decimate_indices_noop_when_under_budget():
 def test_decimate_indices_nonpositive_budget_is_noop():
     idx = _decimate_indices(n=100, max_points=0)
     assert np.array_equal(idx, np.arange(100))
+
+
+from unittest.mock import MagicMock
+
+
+def test_score_query_returns_colors_without_rendering():
+    v = SplitViewer(off_screen=True)
+    v._result = MagicMock()
+    v._result.colors = np.zeros((4, 3), dtype=np.uint8)
+    v._lifted_normed = np.eye(4, dtype=np.float32)
+    fake = MagicMock()
+    import torch
+
+    fake.score_queries.return_value = torch.tensor([0.1, 0.9, 0.5, 0.2])
+    v._extractor_cache["talk2dino"] = fake
+    colors = v.score_query(positive=["chair"], negative=["floor"], extractor_name="talk2dino")
+    assert colors.shape == (4, 3)
+    fake.score_queries.assert_called_once()
+
+
+def test_score_query_blank_positive_returns_rgb():
+    v = SplitViewer(off_screen=True)
+    v._result = MagicMock()
+    v._result.colors = np.full((4, 3), 7, dtype=np.uint8)
+    v._lifted_normed = None
+    colors = v.score_query(positive=[], negative=[], extractor_name="talk2dino")
+    assert np.array_equal(colors, v._result.colors)

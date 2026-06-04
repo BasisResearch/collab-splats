@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
+import os
+import shutil
+import subprocess
 import threading
+import time
 from pathlib import Path
 
 import panel as pn
@@ -264,6 +269,32 @@ class SplatsApp(param.Parameterized):
 ########
 
 
+def _ensure_display() -> None:
+    """Start a headless Xvfb display if none is set, so VTK gets an OpenGL context.
+
+    pn.pane.VTK builds a vtkXOpenGLRenderWindow when the document is created; with no
+    DISPLAY this blocks in a C-level GL call (page spins, Ctrl-C is swallowed). On a
+    headless host we spin up Xvfb and point DISPLAY at it before any VTK init.
+    """
+    if os.environ.get("DISPLAY"):
+        return
+    if not shutil.which("Xvfb"):
+        logger.warning("no DISPLAY and Xvfb not installed; VTK rendering will fail on a headless host")
+        return
+    # Software GL via Mesa — containers rarely expose GLX on the GPU.
+    os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+    display = ":99"
+    proc = subprocess.Popen(
+        ["Xvfb", display, "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    atexit.register(proc.terminate)
+    os.environ["DISPLAY"] = display
+    time.sleep(1.0)  # let Xvfb come up before VTK probes the display
+    logger.info("started Xvfb on %s for headless VTK rendering", display)
+
+
 def run_app(
     host: str = "0.0.0.0",
     port: int = 7860,
@@ -275,6 +306,9 @@ def run_app(
     websocket_origin defaults to "*" so the app renders when reached via a remote host
     IP or SSH tunnel; bokeh otherwise refuses the websocket and the page hangs blank.
     """
+    # Headless host: ensure an OpenGL context exists before any VTK initialisation.
+    _ensure_display()
+
     # Load the VTK extension ONCE here, in the main thread, before serving. Panel requires
     # pn.extension() at startup; deferring it into the per-session factory hangs the panes.
     pn.extension("vtk")

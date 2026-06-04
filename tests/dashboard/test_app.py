@@ -28,8 +28,10 @@ def test_run_button_spawns_pipeline(tmp_path):
     app, source = _app(tmp_path)
     app.session_select.value = "2026_05_07"
     app.video_select.value = "clip_03.mp4"
-    with patch("collab_splats.dashboard.app.threading.Thread") as thread, \
-         patch.object(app, "_ensure_local_video", return_value=tmp_path / "clip_03.mp4"):
+    with (
+        patch("collab_splats.dashboard.app.threading.Thread") as thread,
+        patch.object(app, "_ensure_local_video", return_value=tmp_path / "clip_03.mp4"),
+    ):
         app._on_run(event=None, force=True)
     thread.assert_called_once()
 
@@ -41,11 +43,10 @@ def test_run_loads_cache_without_recompute(tmp_path):
     # Simulate a cached result on disk
     out = tmp_path / "2026_05_07" / "clip_03" / "feedforward.zarr"
     out.mkdir(parents=True)
-    with patch("collab_splats.dashboard.app.threading.Thread") as thread, \
-         patch.object(app, "_load_outputs") as load:
+    with patch("collab_splats.dashboard.app.threading.Thread") as thread, patch.object(app, "_load_outputs") as load:
         app._on_run(event=None, force=False)
-    thread.assert_not_called()      # no recompute
-    load.assert_called_once()       # loaded from cache
+    thread.assert_not_called()  # no recompute
+    load.assert_called_once()  # loaded from cache
 
 
 def test_force_rerun_recomputes_even_when_cached(tmp_path):
@@ -54,10 +55,12 @@ def test_force_rerun_recomputes_even_when_cached(tmp_path):
     app.video_select.value = "clip_03.mp4"
     out = tmp_path / "2026_05_07" / "clip_03" / "feedforward.zarr"
     out.mkdir(parents=True)
-    with patch("collab_splats.dashboard.app.threading.Thread") as thread, \
-         patch.object(app, "_ensure_local_video", return_value=tmp_path / "clip_03.mp4"):
+    with (
+        patch("collab_splats.dashboard.app.threading.Thread") as thread,
+        patch.object(app, "_ensure_local_video", return_value=tmp_path / "clip_03.mp4"),
+    ):
         app._on_run(event=None, force=True)
-    thread.assert_called_once()     # recompute despite cache
+    thread.assert_called_once()  # recompute despite cache
 
 
 def test_view(tmp_path):

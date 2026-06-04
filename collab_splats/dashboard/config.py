@@ -17,12 +17,12 @@ class RunConfig:
     """All knobs for one pipeline run; serialised to run_config.yaml for provenance."""
 
     # Frame sampling
-    sampling_method: str = "balanced"      # "balanced" | "optical_flow"
+    sampling_method: str = "balanced"  # "balanced" | "optical_flow"
     max_frames: int = 50
-    min_disparity: float = 50.0            # optical_flow only
+    min_disparity: float = 50.0  # optical_flow only
 
     # Environment (pointcloud) model
-    env_model: str = "vggt_omega"          # "vggt_omega" | "vggtx" | "mapanything"
+    env_model: str = "vggt_omega"  # "vggt_omega" | "vggtx" | "mapanything"
     conf_threshold: float = 50.0
 
     # Semantics

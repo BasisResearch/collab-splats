@@ -85,9 +85,7 @@ class SplitViewer:
                 self._status = "mesh.ply not found."
                 logger.warning("mesh.ply not found; falling back to pointcloud for left pane")
             cloud = pointcloud_to_polydata(self._result.points, RGB=self._result.colors)
-            self.left_actor = self._left.add_mesh(
-                cloud, scalars="RGB", rgb=True, point_size=2
-            )
+            self.left_actor = self._left.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
         if not self._off_screen:
             self._left_pane.synchronize()
 
@@ -120,10 +118,10 @@ class SplitViewer:
             self._render_right(None)
             return self._result.colors
         extractor = self._get_extractor(extractor_name)
-        text_emb = extractor.encode_text([text])   # (1, D) torch tensor
+        text_emb = extractor.encode_text([text])  # (1, D) torch tensor
         vec = text_emb.detach().cpu().numpy()[0]
         vec = vec / (np.linalg.norm(vec) + 1e-8)
-        sims = self._lifted_normed @ vec           # (P,) cosine similarities
+        sims = self._lifted_normed @ vec  # (P,) cosine similarities
         colors = apply_viridis(sims)
         self._render_right(colors)
         return colors

@@ -58,6 +58,7 @@ def test_log_lines_capped_at_100():
 
 def test_panel_returns_component():
     import panel as pn
+
     log = OperationLog()
     result = log.panel()
     assert result is not None

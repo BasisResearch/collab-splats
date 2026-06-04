@@ -35,9 +35,7 @@ def test_list_videos_filters_mp4():
     ]
     src = SessionSource(client)
     assert src.list_videos("2026_05_07") == ["clip_01.mp4", "clip_02.MP4"]
-    client.list_directory.assert_called_with(
-        "fieldwork_curated", "reconstruction/2026_05_07"
-    )
+    client.list_directory.assert_called_with("fieldwork_curated", "reconstruction/2026_05_07")
 
 
 def test_fetch_video_invokes_rclone_copyto(monkeypatch, tmp_path):
@@ -53,7 +51,8 @@ def test_fetch_video_invokes_rclone_copyto(monkeypatch, tmp_path):
     local = src.fetch_video("2026_05_07", "clip_03.mp4", tmp_path)
     assert local == tmp_path / "clip_03.mp4"
     assert calls["cmd"] == [
-        "rclone", "copyto",
+        "rclone",
+        "copyto",
         "collab-data:fieldwork_curated/reconstruction/2026_05_07/clip_03.mp4",
         str(tmp_path / "clip_03.mp4"),
     ]
@@ -64,9 +63,7 @@ def test_has_processed_true_when_listing_nonempty():
     client.list_directory.return_value = [{"Name": "feedforward.zarr", "IsDir": True}]
     src = SessionSource(client)
     assert src.has_processed("2026_05_07", "clip_03") is True
-    client.list_directory.assert_called_with(
-        "fieldwork_processed", "reconstruction/2026_05_07/clip_03"
-    )
+    client.list_directory.assert_called_with("fieldwork_processed", "reconstruction/2026_05_07/clip_03")
 
 
 def test_has_processed_false_on_error():
@@ -89,7 +86,8 @@ def test_pull_processed_invokes_rclone_copy(monkeypatch, tmp_path):
     out = src.pull_processed("2026_05_07", "clip_03", tmp_path)
     assert out == tmp_path
     assert calls["cmd"] == [
-        "rclone", "copy",
+        "rclone",
+        "copy",
         "collab-data:fieldwork_processed/reconstruction/2026_05_07/clip_03",
         str(tmp_path),
     ]

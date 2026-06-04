@@ -21,7 +21,7 @@ def test_viewer_loads_pointcloud_offscreen():
 def test_set_mode_pcd_to_mesh_toggles(tmp_path):
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(), mesh_path=None)
-    v.set_mode("mesh")          # no mesh.ply -> status set, no crash
+    v.set_mode("mesh")  # no mesh.ply -> status set, no crash
     assert v.mode == "mesh"
     assert "not found" in v._status
     v.set_mode("pointcloud")
@@ -38,6 +38,7 @@ def test_recolor_by_similarity_updates_right(monkeypatch):
     class _Ext:
         def encode_text(self, texts):
             import torch
+
             return torch.ones(1, 8)
 
     monkeypatch.setattr(v, "_get_extractor", lambda name: _Ext())

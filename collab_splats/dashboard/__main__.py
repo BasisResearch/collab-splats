@@ -8,9 +8,7 @@ from collab_splats.dashboard.app import run_app
 
 def main() -> None:
     """Parse args and serve the dashboard."""
-    parser = argparse.ArgumentParser(
-        prog="collab-dashboard", description="Launch the collab-splats dashboard."
-    )
+    parser = argparse.ArgumentParser(prog="collab-dashboard", description="Launch the collab-splats dashboard.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--base-dir", default="/workspace/outputs")

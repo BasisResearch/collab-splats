@@ -132,7 +132,7 @@ def test_set_busy_toggles_action_buttons(tmp_path):
 
 def test_has_max_display_points_widget(tmp_path):
     app, _ = _app(tmp_path)
-    assert app.max_display_points.value == 50_000
+    assert app.max_display_points.value == 500_000
 
 
 def test_app_uses_injected_gpu_worker(tmp_path):

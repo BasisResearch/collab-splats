@@ -6,9 +6,9 @@ from collab_splats.dashboard.config import RunConfig
 def test_runconfig_defaults():
     cfg = RunConfig()
     assert cfg.sampling_method == "balanced"
-    assert cfg.max_frames == 50
+    assert cfg.max_frames == 100
     assert cfg.env_model == "vggt_omega"
-    assert cfg.conf_threshold == 50.0
+    assert cfg.conf_threshold == 35.0
     assert cfg.semantic_extractor == "talk2dino"
     assert cfg.query_positive == ""
     assert cfg.query_negative == ""

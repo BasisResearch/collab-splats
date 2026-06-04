@@ -18,12 +18,12 @@ class RunConfig:
 
     # Frame sampling
     sampling_method: str = "balanced"  # "balanced" | "optical_flow"
-    max_frames: int = 50
+    max_frames: int = 100
     min_disparity: float = 50.0  # optical_flow only
 
     # Environment (pointcloud) model
     env_model: str = "vggt_omega"  # "vggt_omega" | "vggtx" | "mapanything"
-    conf_threshold: float = 50.0
+    conf_threshold: float = 35.0
 
     # Semantics
     semantic_extractor: str = "talk2dino"

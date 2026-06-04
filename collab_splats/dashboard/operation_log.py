@@ -51,16 +51,22 @@ class OperationLog(param.Parameterized):
             self.is_running = True
 
     def update_progress(self, pct: int, message: str = "") -> None:
-        """Update progress percentage and optionally append a log line."""
+        """Update progress percentage; set the status label and log the step message."""
         with self._lock:
             self.progress = min(100, max(0, pct))
+            # Surface the current stage in the status label, not just the bar.
+            if message:
+                self.current_op = message
         if message:
             self.append_line(message)
 
     def append_line(self, message: str) -> None:
-        """Append a single log line (thread-safe, capped)."""
+        """Append a single log line (thread-safe, capped, consecutive dupes collapsed)."""
         with self._lock:
             lines = list(self.log_lines)
+            # Collapse repeated progress pings (e.g. 'sampling frames' per frame).
+            if lines and lines[-1] == message:
+                return
             lines.append(message)
             if len(lines) > self._MAX_LINES:
                 lines = lines[-self._MAX_LINES :]

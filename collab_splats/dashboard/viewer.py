@@ -91,7 +91,7 @@ class SplitViewer:
         mesh_path: Path | None,
         lifted_normed: np.ndarray | None = None,
         semantics_dir: Path | None = None,
-        max_points: int = 50_000,
+        max_points: int = 500_000,
     ) -> None:
         """Load a FeedforwardResult (+ optional mesh) into both panes.
 
@@ -126,8 +126,8 @@ class SplitViewer:
             self.left_actor = self._left.add_mesh(pv.read(str(self._mesh_path)), rgb=True)
         else:
             if self.mode == "mesh":
-                self._status = "mesh.ply not found."
-                logger.warning("mesh.ply not found; falling back to pointcloud for left pane")
+                self._status = "mesh not found."
+                logger.warning("mesh not found; falling back to pointcloud for left pane")
             idx = self._display_idx
             cloud = pointcloud_to_polydata(self._result.points[idx], RGB=self._result.colors[idx])
             self.left_actor = self._left.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)

@@ -85,9 +85,9 @@ class SplatsApp(param.Parameterized):
         self.session_select = pn.widgets.Select(name="Session", options=[])
         self.video_select = pn.widgets.Select(name="Video", options=[])
         self.sampling = pn.widgets.Select(name="Frame sampling", options=_SAMPLERS, value="balanced")
-        self.max_frames = pn.widgets.IntSlider(name="Max frames", start=10, end=200, value=50)
+        self.max_frames = pn.widgets.IntSlider(name="Max frames", start=10, end=200, value=100)
         self.env_model = pn.widgets.Select(name="Environment model", options=_ENV_MODELS, value="vggt_omega")
-        self.conf = pn.widgets.FloatSlider(name="Confidence", start=0, end=100, value=50.0)
+        self.conf = pn.widgets.FloatSlider(name="Confidence", start=0, end=100, value=35.0)
         self.extractor = pn.widgets.Select(name="Semantic model", options=_EXTRACTORS, value="talk2dino")
         self.pos_query = pn.widgets.TextInput(name="Positive query", placeholder="e.g. chair, stool")
         self.neg_query = pn.widgets.TextInput(name="Negative query", placeholder="e.g. floor, wall")
@@ -97,7 +97,7 @@ class SplatsApp(param.Parameterized):
         self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=0.02)
         self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=1.0)
         self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=False)
-        self.max_display_points = pn.widgets.IntInput(name="Max display points", value=50_000, step=25_000)
+        self.max_display_points = pn.widgets.IntInput(name="Max display points", value=500_000, step=50_000)
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
         self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
         self.force_btn = pn.widgets.Button(label="Force re-run", button_type="warning")
@@ -268,7 +268,8 @@ class SplatsApp(param.Parameterized):
             # Do NOT lift features here — lifting 500k points takes minutes and is only
             # needed for queries. The viewer lifts lazily on first query (ensure_lifted).
             semantics_dir = out / "semantics"
-            mesh_path = out / "mesh" / "mesh.ply"
+            # TSDF writes mesh_tsdf.ply (see mesh/tsdf.py), not mesh.ply.
+            mesh_path = out / "mesh" / "mesh_tsdf.ply"
             return (
                 result,
                 mesh_path if mesh_path.exists() else None,
@@ -319,15 +320,10 @@ class SplatsApp(param.Parameterized):
         The 'vtk' extension is loaded once in run_app (main thread, before serving) —
         loading it here per-session fails to inject the VTK JS and the panes hang.
         """
-        # Progress strip bound reactively to op_log params
-        progress_bar = pn.widgets.Progress(
-            value=pn.bind(lambda v: v, self._op_log.param.progress),
-            max=100,
-            sizing_mode="stretch_width",
-            height=8,
-        )
-        status_str = pn.pane.Str(pn.bind(lambda s: s, self._op_log.param.current_op))
-        progress = pn.Column(progress_bar, status_str)
+        # Live operations strip: stage label + progress bar + scrolling per-step log.
+        # Reactively re-renders on every op_log param change (current_op/progress/log_lines),
+        # so the user sees each pipeline stage and its timing as it runs.
+        progress = pn.panel(self._op_log._render)
 
         main = pn.Column(self._viewer.layout, progress, sizing_mode="stretch_both")
         return pn.template.MaterialTemplate(

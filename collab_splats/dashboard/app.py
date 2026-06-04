@@ -32,10 +32,7 @@ def _scan_output_dirs(base_dir: Path) -> list[str]:
     """Return sorted names of subdirs in base_dir that contain run_config.yaml."""
     if not base_dir.is_dir():
         return []
-    return sorted(
-        p.name for p in base_dir.iterdir()
-        if p.is_dir() and (p / "run_config.yaml").exists()
-    )
+    return sorted(p.name for p in base_dir.iterdir() if p.is_dir() and (p / "run_config.yaml").exists())
 
 
 ########
@@ -50,8 +47,9 @@ _SAMPLERS = ["balanced", "optical_flow"]
 class SplatsApp(param.Parameterized):
     """Single-page dashboard wiring source, pipeline, and the split viewer."""
 
-    def __init__(self, base_dir: Path = Path("/workspace/outputs"),
-                 source: SessionSource | None = None, **params) -> None:
+    def __init__(
+        self, base_dir: Path = Path("/workspace/outputs"), source: SessionSource | None = None, **params
+    ) -> None:
         super().__init__(**params)
         self._base_dir = Path(base_dir)
         self._source = source if source is not None else SessionSource()
@@ -72,12 +70,14 @@ class SplatsApp(param.Parameterized):
         self.conf = pn.widgets.FloatSlider(name="Confidence", start=0, end=100, value=50.0)
         self.extractor = pn.widgets.Select(name="Semantic model", options=_EXTRACTORS, value="talk2dino")
         self.query = pn.widgets.TextInput(name="Query", placeholder="e.g. chair")
+        self.min_disparity = pn.widgets.FloatInput(name="min_disparity", value=50.0)
         self.mesh_voxel = pn.widgets.FloatInput(name="voxel_size", value=0.01)
         self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=0.04)
         self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=10.0)
+        self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=True)
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
-        self.run_btn = pn.widgets.Button(name="Run", button_type="primary")
-        self.force_btn = pn.widgets.Button(name="Force re-run", button_type="warning")
+        self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
+        self.force_btn = pn.widgets.Button(label="Force re-run", button_type="warning")
 
         self.session_select.param.watch(self._on_session, "value")
         self.video_select.param.watch(self._on_video, "value")
@@ -87,12 +87,17 @@ class SplatsApp(param.Parameterized):
         self.force_btn.on_click(lambda e: self._on_run(e, force=True))
 
         self._sidebar = pn.Column(
-            "## Source", self.session_select, self.video_select,
-            pn.Card(self.sampling, self.max_frames, title="Frame sampling", collapsed=True),
+            "## Source",
+            self.session_select,
+            self.video_select,
+            pn.Card(self.sampling, self.max_frames, self.min_disparity, title="Frame sampling", collapsed=True),
             pn.Card(self.env_model, self.conf, title="Environment model", collapsed=True),
             pn.Card(self.extractor, self.query, title="Semantics", collapsed=False),
-            pn.Card(self.mesh_voxel, self.mesh_sdf, self.mesh_depth, title="Mesh params", collapsed=True),
-            "### View", self.view_mode,
+            pn.Card(
+                self.mesh_voxel, self.mesh_sdf, self.mesh_depth, self.mesh_clean, title="Mesh params", collapsed=True
+            ),
+            "### View",
+            self.view_mode,
             pn.Row(self.run_btn, self.force_btn),
         )
 
@@ -126,6 +131,7 @@ class SplatsApp(param.Parameterized):
         return RunConfig(
             sampling_method=self.sampling.value,
             max_frames=self.max_frames.value,
+            min_disparity=self.min_disparity.value,
             env_model=self.env_model.value,
             conf_threshold=self.conf.value,
             semantic_extractor=self.extractor.value,
@@ -133,6 +139,7 @@ class SplatsApp(param.Parameterized):
             mesh_voxel_size=self.mesh_voxel.value,
             mesh_sdf_trunc=self.mesh_sdf.value,
             mesh_depth_trunc=self.mesh_depth.value,
+            mesh_clean_repair=self.mesh_clean.value,
         )
 
     def _ensure_local_video(self, session: str, name: str) -> Path:
@@ -159,8 +166,13 @@ class SplatsApp(param.Parameterized):
         def worker() -> None:
             video = self._ensure_local_video(session, name)
             run_pipeline(
-                video_path=video, session=session, stem=stem, config=config,
-                op_log=self._op_log, source=self._source, base_dir=self._base_dir,
+                video_path=video,
+                session=session,
+                stem=stem,
+                config=config,
+                op_log=self._op_log,
+                source=self._source,
+                base_dir=self._base_dir,
             )
             self._dispatch_load(session, stem)
 
@@ -185,8 +197,7 @@ class SplatsApp(param.Parameterized):
         except Exception:
             lifted = None
         mesh_path = out / "mesh" / "mesh.ply"
-        self._viewer.load(result, mesh_path=mesh_path if mesh_path.exists() else None,
-                          lifted_normed=lifted)
+        self._viewer.load(result, mesh_path=mesh_path if mesh_path.exists() else None, lifted_normed=lifted)
 
     def _on_query(self, event) -> None:
         """Forward query text to viewer for live recolouring."""
@@ -213,8 +224,11 @@ class SplatsApp(param.Parameterized):
 
         main = pn.Column(self._viewer.layout, progress, sizing_mode="stretch_both")
         return pn.template.MaterialTemplate(
-            title="splats", sidebar=[self._sidebar], main=[main],
-            header_background="#2596be", sidebar_width=340,
+            title="splats",
+            sidebar=[self._sidebar],
+            main=[main],
+            header_background="#2596be",
+            sidebar_width=340,
         )
 
 
@@ -223,9 +237,9 @@ class SplatsApp(param.Parameterized):
 ########
 
 
-def run_app(host: str = "0.0.0.0", port: int = 7860,
-            base_dir: str = "/workspace/outputs") -> None:
+def run_app(host: str = "0.0.0.0", port: int = 7860, base_dir: str = "/workspace/outputs") -> None:
     """Serve the splats dashboard."""
+
     def factory() -> pn.template.MaterialTemplate:
         return SplatsApp(base_dir=Path(base_dir)).view()
 

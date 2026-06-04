@@ -45,6 +45,17 @@ def load_lifted_normed(result, semantics_dir) -> np.ndarray:
     return lifted / (norms + 1e-8)
 
 
+def _decimate_indices(n: int, max_points: int) -> np.ndarray:
+    """Return display indices into n points, evenly subsampled to at most max_points.
+
+    Evenly-strided (deterministic, no RNG) so RGB and heatmap panes share the same
+    subsample and stay registered. max_points <= 0 or n <= max_points -> identity.
+    """
+    if max_points <= 0 or n <= max_points:
+        return np.arange(n)
+    return np.linspace(0, n - 1, num=max_points, dtype=np.int64)
+
+
 class SplitViewer:
     """Two linked plotters; left = RGB pcd/mesh, right = query similarity."""
 
@@ -67,16 +78,19 @@ class SplitViewer:
         self._result = None
         self._mesh_path: Path | None = None
         self._lifted_normed: np.ndarray | None = None
+        self._display_idx: np.ndarray | None = None
         self._extractor_cache: dict = {}
         self._status = ""
 
     # ---- loading -------------------------------------------------------
 
-    def load(self, result, mesh_path: Path | None, lifted_normed: np.ndarray | None = None) -> None:
+    def load(self, result, mesh_path: Path | None, lifted_normed: np.ndarray | None = None,
+             max_points: int = 150_000) -> None:
         """Load a FeedforwardResult (+ optional mesh + lifted features) into both panes."""
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None
         self._lifted_normed = lifted_normed
+        self._display_idx = _decimate_indices(len(result.points), max_points)
         self._render_left()
         self._render_right(None)
 
@@ -89,16 +103,18 @@ class SplitViewer:
             if self.mode == "mesh":
                 self._status = "mesh.ply not found."
                 logger.warning("mesh.ply not found; falling back to pointcloud for left pane")
-            cloud = pointcloud_to_polydata(self._result.points, RGB=self._result.colors)
+            idx = self._display_idx
+            cloud = pointcloud_to_polydata(self._result.points[idx], RGB=self._result.colors[idx])
             self.left_actor = self._left.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
         if not self._off_screen:
             self._left_pane.synchronize()
 
     def _render_right(self, colors: np.ndarray | None) -> None:
-        """Render RGB or similarity-colored pointcloud into the right plotter."""
+        """Render RGB or similarity-colored pointcloud into the right plotter (decimated)."""
         self._right.clear()
+        idx = self._display_idx
         rgb = colors if colors is not None else self._result.colors
-        cloud = pointcloud_to_polydata(self._result.points, RGB=rgb)
+        cloud = pointcloud_to_polydata(self._result.points[idx], RGB=rgb[idx])
         self.right_actor = self._right.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
         if not self._off_screen:
             self._right_pane.synchronize()

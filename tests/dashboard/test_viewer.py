@@ -61,3 +61,24 @@ def test_query_empty_positive_resets_right(monkeypatch):
     # No positive terms -> reset to RGB, no extractor call
     colors = v.query(positive=[], negative=[], extractor_name="talk2dino")
     assert np.array_equal(colors, res.colors)
+
+
+from collab_splats.dashboard.viewer import _decimate_indices
+
+
+def test_decimate_indices_caps_to_budget():
+    idx = _decimate_indices(n=1000, max_points=150)
+    assert idx.shape[0] == 150
+    assert idx.max() < 1000
+    assert len(np.unique(idx)) == 150  # no duplicates
+
+
+def test_decimate_indices_noop_when_under_budget():
+    idx = _decimate_indices(n=100, max_points=150)
+    assert idx.shape[0] == 100
+    assert np.array_equal(idx, np.arange(100))
+
+
+def test_decimate_indices_nonpositive_budget_is_noop():
+    idx = _decimate_indices(n=100, max_points=0)
+    assert np.array_equal(idx, np.arange(100))

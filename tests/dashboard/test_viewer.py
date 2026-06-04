@@ -251,3 +251,46 @@ def test_render_right_mesh_size_mismatch_falls_back(tmp_path):
     colors = (np.random.rand(20, 3) * 255).astype(np.uint8)
     v._render_right(colors)
     assert v.right_actor is not None
+
+
+def _write_mesh_6v(path):
+    import open3d as o3d
+
+    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 1], [1, 0, 1]], dtype=np.float64)
+    tris = np.array([[0, 1, 2], [1, 3, 2], [0, 1, 4]], dtype=np.int32)
+    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris))
+    o3d.io.write_triangle_mesh(str(path), mesh)
+    return verts
+
+
+def test_score_query_lazy_transfers_mesh_features_when_absent(tmp_path):
+    import torch
+
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    verts = _write_mesh_6v(mesh_path)
+
+    captured = {}
+
+    class _Stub:
+        def score_queries(self, features, positive, negative=None):
+            captured["n"] = features.shape[0]
+            return torch.ones(features.shape[0])
+
+    v = SplitViewer(off_screen=True)
+    res = _FakeResult(p=6)
+    res.points = verts.astype(np.float32)  # points sit on the 6 mesh vertices
+    v.load(res, mesh_path=mesh_path)
+    assert v._mesh_vertex_features is None  # no persisted vertex_features.npy (old run)
+
+    v.mode = "mesh"
+    v._lifted_normed = np.eye(6, 4, dtype=np.float32)  # 6 point features
+    v._extractor_cache = {"talk2dino": _Stub()}
+
+    colors = v.score_query(positive=["x"], op_log=None)
+
+    # Lazily transferred + cached, scored the 6 vertices (not the 6 points by coincidence:
+    # assert the cache was populated to prove the transfer ran).
+    assert v._mesh_vertex_features is not None
+    assert v._mesh_vertex_features.shape[0] == 6
+    assert captured["n"] == 6
+    assert colors.shape[0] == 6

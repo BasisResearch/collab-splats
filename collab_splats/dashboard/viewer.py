@@ -146,6 +146,30 @@ class SplitViewer:
             logger.warning("feature lift failed: %s", exc)
             self._lifted_normed = None
 
+    def ensure_mesh_features(self, op_log=None) -> None:
+        """Transfer cached point features onto mesh vertices on first mesh query (if not cached).
+
+        Older runs have no persisted vertex_features.npy; compute it on demand from the
+        already-lifted point features + the mesh so mesh-mode queries work without a re-run.
+        L2-normalises to match load_mesh_vertex_features / point-feature scoring.
+        """
+        if self._mesh_vertex_features is not None:
+            return
+        if self._lifted_normed is None or not (self._mesh_path and self._mesh_path.exists()):
+            return
+        # Lazy import: mesh.utils pulls the heavy feedforward stack (matches load_lifted_normed).
+        import open3d as o3d
+
+        from collab_splats.mesh.utils import features2vertex
+
+        if op_log is not None:
+            op_log.append_line("query: transferring features to mesh vertices (first mesh query)")
+        mesh = o3d.io.read_triangle_mesh(str(self._mesh_path))
+        vertices = np.asarray(mesh.vertices)
+        vf = features2vertex(vertices, self._result.points, self._lifted_normed)
+        norms = np.linalg.norm(vf, axis=1, keepdims=True)
+        self._mesh_vertex_features = (vf / (norms + 1e-8)).astype(np.float32)
+
     def _recompute_view_transform(self) -> None:
         """Compute the display-only recenter/up-align/scale transform for the loaded scene.
 
@@ -292,12 +316,18 @@ class SplitViewer:
         if self._lifted_normed is None:
             return self._result.colors
 
+        # In mesh mode, transfer point features to mesh vertices on first query if not already
+        # cached/persisted (older runs have no vertex_features.npy).
+        if self.mode == "mesh":
+            self.ensure_mesh_features(op_log)
+
         _stage(f"query: encoding {len(positive)} positive / {len(negative or [])} negative")
         extractor = self._get_extractor(extractor_name)
 
         # In mesh mode score per-vertex features (same feature space); else score points.
-        feature_array = getattr(self, "_mesh_vertex_features", None) if self.mode == "mesh" else None
-        if feature_array is None:
+        if self.mode == "mesh" and self._mesh_vertex_features is not None:
+            feature_array = self._mesh_vertex_features
+        else:
             feature_array = self._lifted_normed
         features = torch.from_numpy(feature_array)  # (N, D)
 

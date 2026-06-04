@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+import contextlib
+import logging
 import threading
 from typing import Any
 
 import panel as pn
 import param
+
+
+class _OpLogHandler(logging.Handler):
+    """Forward log records emitted during a run into an OperationLog's log_lines."""
+
+    def __init__(self, op_log: "OperationLog") -> None:
+        super().__init__(level=logging.INFO)
+        self._op_log = op_log
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Append the formatted message; reuse op_log's thread-safe line buffer.
+        try:
+            self._op_log.append_line(record.getMessage())
+        except Exception:  # never let logging crash the run
+            pass
 
 
 class OperationLog(param.Parameterized):
@@ -37,12 +54,42 @@ class OperationLog(param.Parameterized):
         """Update progress percentage and optionally append a log line."""
         with self._lock:
             self.progress = min(100, max(0, pct))
-            if message:
-                lines = list(self.log_lines)
-                lines.append(message)
-                if len(lines) > self._MAX_LINES:
-                    lines = lines[-self._MAX_LINES :]
-                self.log_lines = lines
+        if message:
+            self.append_line(message)
+
+    def append_line(self, message: str) -> None:
+        """Append a single log line (thread-safe, capped)."""
+        with self._lock:
+            lines = list(self.log_lines)
+            lines.append(message)
+            if len(lines) > self._MAX_LINES:
+                lines = lines[-self._MAX_LINES :]
+            self.log_lines = lines
+
+    @contextlib.contextmanager
+    def attach_logging(self, *logger_names: str, level: int = logging.INFO):
+        """Bridge module loggers into log_lines for the duration of a run.
+
+        Attaches a handler to each named logger (default: the top-level
+        'collab_splats' logger) so step-level INFO records — e.g. the creators'
+        '%d/%d frames' lines — stream into the dashboard log while a run is active.
+        """
+        names = logger_names or ("collab_splats",)
+        handler = _OpLogHandler(self)
+        targets = [logging.getLogger(n) for n in names]
+        prev_levels = []
+        for lg in targets:
+            lg.addHandler(handler)
+            # Ensure INFO records propagate to our handler without globally raising root.
+            prev_levels.append(lg.level)
+            if lg.level == logging.NOTSET or lg.level > level:
+                lg.setLevel(level)
+        try:
+            yield
+        finally:
+            for lg, prev in zip(targets, prev_levels):
+                lg.removeHandler(handler)
+                lg.setLevel(prev)
 
     def finish_op(self) -> None:
         """Mark the current operation complete."""

@@ -44,6 +44,17 @@ _EXTRACTORS = ["talk2dino", "maskclip", "dinov2"]
 _SAMPLERS = ["balanced", "optical_flow"]
 
 
+def _bind_visibility(widget, selector, predicate) -> None:
+    """Show widget only when predicate(selector.value) holds; re-evaluate on change."""
+    widget.visible = predicate(selector.value)
+    selector.param.watch(lambda e: setattr(widget, "visible", predicate(e.new)), "value")
+
+
+def _split_terms(text: str) -> list[str]:
+    """Split a comma-separated query box into a list of non-empty phrases."""
+    return [t.strip() for t in text.split(",") if t.strip()]
+
+
 class SplatsApp(param.Parameterized):
     """Single-page dashboard wiring source, pipeline, and the split viewer."""
 
@@ -69,22 +80,27 @@ class SplatsApp(param.Parameterized):
         self.env_model = pn.widgets.Select(name="Environment model", options=_ENV_MODELS, value="vggt_omega")
         self.conf = pn.widgets.FloatSlider(name="Confidence", start=0, end=100, value=50.0)
         self.extractor = pn.widgets.Select(name="Semantic model", options=_EXTRACTORS, value="talk2dino")
-        self.query = pn.widgets.TextInput(name="Query", placeholder="e.g. chair")
+        self.pos_query = pn.widgets.TextInput(name="Positive query", placeholder="e.g. chair, stool")
+        self.neg_query = pn.widgets.TextInput(name="Negative query", placeholder="e.g. floor, wall")
+        self.run_query_btn = pn.widgets.Button(label="Run query", button_type="primary")
         self.min_disparity = pn.widgets.FloatInput(name="min_disparity", value=50.0)
-        self.mesh_voxel = pn.widgets.FloatInput(name="voxel_size", value=0.01)
-        self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=0.04)
-        self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=10.0)
-        self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=True)
+        self.mesh_voxel = pn.widgets.FloatInput(name="voxel_size", value=0.005)
+        self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=0.02)
+        self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=1.0)
+        self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=False)
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
         self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
         self.force_btn = pn.widgets.Button(label="Force re-run", button_type="warning")
 
         self.session_select.param.watch(self._on_session, "value")
         self.video_select.param.watch(self._on_video, "value")
-        self.query.param.watch(self._on_query, "value")
+        self.run_query_btn.on_click(self._on_query)
         self.view_mode.param.watch(lambda e: self._viewer.set_mode(e.new), "value")
         self.run_btn.on_click(lambda e: self._on_run(e, force=False))
         self.force_btn.on_click(lambda e: self._on_run(e, force=True))
+
+        # min_disparity is consumed only by the optical-flow sampler; hide it otherwise.
+        _bind_visibility(self.min_disparity, self.sampling, lambda v: v == "optical_flow")
 
         self._sidebar = pn.Column(
             "## Source",
@@ -92,7 +108,9 @@ class SplatsApp(param.Parameterized):
             self.video_select,
             pn.Card(self.sampling, self.max_frames, self.min_disparity, title="Frame sampling", collapsed=True),
             pn.Card(self.env_model, self.conf, title="Environment model", collapsed=True),
-            pn.Card(self.extractor, self.query, title="Semantics", collapsed=False),
+            pn.Card(
+                self.extractor, self.pos_query, self.neg_query, self.run_query_btn, title="Semantics", collapsed=False
+            ),
             pn.Card(
                 self.mesh_voxel, self.mesh_sdf, self.mesh_depth, self.mesh_clean, title="Mesh params", collapsed=True
             ),
@@ -135,7 +153,8 @@ class SplatsApp(param.Parameterized):
             env_model=self.env_model.value,
             conf_threshold=self.conf.value,
             semantic_extractor=self.extractor.value,
-            query=self.query.value,
+            query_positive=self.pos_query.value,
+            query_negative=self.neg_query.value,
             mesh_voxel_size=self.mesh_voxel.value,
             mesh_sdf_trunc=self.mesh_sdf.value,
             mesh_depth_trunc=self.mesh_depth.value,
@@ -200,8 +219,13 @@ class SplatsApp(param.Parameterized):
         self._viewer.load(result, mesh_path=mesh_path if mesh_path.exists() else None, lifted_normed=lifted)
 
     def _on_query(self, event) -> None:
-        """Forward query text to viewer for live recolouring."""
-        self._viewer.query(event.new, extractor_name=self.extractor.value)
+        """Run the positive/negative query and recolour the right pane."""
+        self._viewer.query(
+            positive=_split_terms(self.pos_query.value),
+            negative=_split_terms(self.neg_query.value),
+            extractor_name=self.extractor.value,
+            op_log=self._op_log,
+        )
 
     # ---- layout --------------------------------------------------------
 

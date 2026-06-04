@@ -93,11 +93,48 @@ def test_pull_processed_invokes_rclone_copy(monkeypatch, tmp_path):
     ]
 
 
-def test_push_outputs_calls_copy_local_to_remote(tmp_path):
+def test_push_outputs_streams_rclone_copy(monkeypatch, tmp_path):
     client = _client()
-    client.copy_local_to_remote.return_value = True
+    calls = {}
+    lines = []
+
+    class _FakeProc:
+        def __init__(self):
+            self.stdout = iter(["Transferred: 1.2 MiB / 1.2 MiB\n", "\n"])
+
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, stdout, stderr, text):
+        calls["cmd"] = cmd
+        return _FakeProc()
+
+    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", fake_popen)
     src = SessionSource(client)
-    src.push_outputs(tmp_path, "2026_05_07", "clip_03")
-    client.copy_local_to_remote.assert_called_with(
-        str(tmp_path), "fieldwork_processed", "reconstruction/2026_05_07/clip_03"
-    )
+    src.push_outputs(tmp_path, "2026_05_07", "clip_03", on_line=lines.append)
+
+    # Recursive idempotent `copy` verb, not file-only `copyto`; native retries + stats.
+    assert calls["cmd"][:2] == ["rclone", "copy"]
+    assert "copyto" not in calls["cmd"]
+    for flag in ("--transfers", "--retries", "--stats-one-line"):
+        assert flag in calls["cmd"]
+    assert calls["cmd"][-2:] == [
+        str(tmp_path),
+        "collab-data:fieldwork_processed/reconstruction/2026_05_07/clip_03",
+    ]
+    assert lines == ["Transferred: 1.2 MiB / 1.2 MiB"]
+
+
+def test_push_outputs_raises_on_nonzero_exit(monkeypatch, tmp_path):
+    client = _client()
+
+    class _FailProc:
+        stdout = iter([])
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", lambda *a, **k: _FailProc())
+    src = SessionSource(client)
+    with pytest.raises(RuntimeError):
+        src.push_outputs(tmp_path, "2026_05_07", "clip_03")

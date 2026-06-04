@@ -32,16 +32,32 @@ def test_recolor_by_similarity_updates_right(monkeypatch):
     v = SplitViewer(off_screen=True)
     res = _FakeResult(p=20)
     v.load(res, mesh_path=None)
-    # Inject lifted features directly (normalised) and a fake extractor
+    # Inject lifted features directly (normalised) and a fake queryable extractor
     v._lifted_normed = np.random.rand(20, 8).astype(np.float32)
 
+    seen = {}
+
     class _Ext:
-        def encode_text(self, texts):
+        def score_queries(self, features, positive, negative=None):
             import torch
 
-            return torch.ones(1, 8)
+            seen["positive"] = positive
+            seen["negative"] = negative
+            return torch.rand(features.shape[0])
 
     monkeypatch.setattr(v, "_get_extractor", lambda name: _Ext())
-    colors = v.query("chair", extractor_name="talk2dino")
+    colors = v.query(positive=["chair", "stool"], negative=["floor"], extractor_name="talk2dino")
     assert colors.shape == (20, 3)
     assert colors.dtype == np.uint8
+    assert seen["positive"] == ["chair", "stool"]
+    assert seen["negative"] == ["floor"]
+
+
+def test_query_empty_positive_resets_right(monkeypatch):
+    v = SplitViewer(off_screen=True)
+    res = _FakeResult(p=12)
+    v.load(res, mesh_path=None)
+    v._lifted_normed = np.random.rand(12, 8).astype(np.float32)
+    # No positive terms -> reset to RGB, no extractor call
+    colors = v.query(positive=[], negative=[], extractor_name="talk2dino")
+    assert np.array_equal(colors, res.colors)

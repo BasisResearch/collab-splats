@@ -1,5 +1,7 @@
 """Talk2DINO feature extractor backend."""
+
 import logging
+import warnings
 from typing import List, Optional
 
 import torch
@@ -8,8 +10,9 @@ import torchvision.transforms as T
 from PIL import Image
 from transformers import AutoModel
 
+from collab_splats.semantics.utils import _tokens_to_feature_map, get_device
 from collab_splats.utils.image import open_image, resize_image
-from collab_splats.semantics.utils import get_device, _tokens_to_feature_map
+
 from .base import BaseQueryableExtractor
 
 logger = logging.getLogger(__name__)
@@ -62,9 +65,12 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         # so that .to(device).eval() chaining doesn't shadow the base model attributes.
         # low_cpu_mem_usage=False: avoid meta-tensor init — Talk2DINO's HF code calls
         # load_state_dict() without assign=True, making weight copies a no-op on meta tensors.
-        _loaded = AutoModel.from_pretrained(
-            model_name, trust_remote_code=True, low_cpu_mem_usage=False
-        )
+        # Talk2DINO's remote code internally loads a CLIP model; its visual tower is
+        # unused (DINO is the visual backbone) and copies onto meta tensors as a harmless
+        # no-op, spamming "copying from a non-meta parameter ... no-op" warnings. Suppress.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*copying from a non-meta parameter.*")
+            _loaded = AutoModel.from_pretrained(model_name, trust_remote_code=True, low_cpu_mem_usage=False)
 
         # Extract Normalize transform from model's stored image_transforms —
         # correct mean/std regardless of backbone variant
@@ -114,8 +120,7 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
             # Center-crop to square, then resize to target resolution
             w, h = img.size
             crop = min(w, h)
-            img = img.crop(((w - crop) // 2, (h - crop) // 2,
-                             (w + crop) // 2, (h + crop) // 2))
+            img = img.crop(((w - crop) // 2, (h - crop) // 2, (w + crop) // 2, (h + crop) // 2))
             img = img.resize((self._image_resolution, self._image_resolution), Image.BILINEAR)
         else:
             # Proportional longest-edge resize — preserves aspect ratio and pixel correspondence
@@ -147,9 +152,7 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         results = []
         for i, t in enumerate(preprocessed):
             _, H, W = t.shape
-            results.append(
-                _tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size)
-            )
+            results.append(_tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size))
         return results
 
     def encode_text(self, texts: List[str]) -> torch.Tensor:

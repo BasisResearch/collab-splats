@@ -27,13 +27,14 @@ class RunConfig:
 
     # Semantics
     semantic_extractor: str = "talk2dino"
-    query: str = ""
+    query_positive: str = ""
+    query_negative: str = ""
 
     # Mesh (TSDF) params
-    mesh_voxel_size: float = 0.01
-    mesh_sdf_trunc: float = 0.04
-    mesh_depth_trunc: float = 10.0
-    mesh_clean_repair: bool = True
+    mesh_voxel_size: float = 0.005
+    mesh_sdf_trunc: float = 0.02
+    mesh_depth_trunc: float = 1.0
+    mesh_clean_repair: bool = False
 
     # Provenance — filled by the pipeline, not the UI
     frame_indices: list[int] = field(default_factory=list)

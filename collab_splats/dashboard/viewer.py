@@ -112,16 +112,37 @@ class SplitViewer:
             self._extractor_cache[name] = BaseQueryableExtractor.get(name)()
         return self._extractor_cache[name]
 
-    def query(self, text: str, extractor_name: str) -> np.ndarray:
-        """Recolour the right pane by cosine similarity to text query; return RGB colours."""
-        if not text or self._lifted_normed is None:
+    def query(
+        self,
+        positive: list[str],
+        negative: list[str] | None = None,
+        extractor_name: str = "talk2dino",
+        op_log=None,
+    ) -> np.ndarray:
+        """Recolour the right pane by contrastive query score; return RGB colours.
+
+        Reuses BaseQueryableExtractor.score_queries (contrastive softmax, [0, 1]).
+        positive/negative are lists of phrases. Empty negative -> API default ["object"].
+        """
+
+        def _stage(msg: str) -> None:
+            if op_log is not None:
+                op_log.append_line(msg)
+
+        # No query terms or no cached features: reset right pane to RGB.
+        if not positive or self._lifted_normed is None:
             self._render_right(None)
             return self._result.colors
+
+        _stage(f"query: encoding {len(positive)} positive / {len(negative or [])} negative")
         extractor = self._get_extractor(extractor_name)
-        text_emb = extractor.encode_text([text])  # (1, D) torch tensor
-        vec = text_emb.detach().cpu().numpy()[0]
-        vec = vec / (np.linalg.norm(vec) + 1e-8)
-        sims = self._lifted_normed @ vec  # (P,) cosine similarities
+        features = torch.from_numpy(self._lifted_normed)  # (P, D)
+
+        _stage(f"query: scoring {features.shape[0]} points")
+        scores = extractor.score_queries(features, positive=positive, negative=negative or None)
+        sims = scores.detach().cpu().numpy()
+
         colors = apply_viridis(sims)
         self._render_right(colors)
+        _stage("query: recolour done")
         return colors

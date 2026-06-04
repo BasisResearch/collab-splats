@@ -1,6 +1,6 @@
 # tests/dashboard/test_pipeline.py
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import numpy as np
 
@@ -10,6 +10,17 @@ from collab_splats.dashboard.config import RunConfig
 
 def _fake_frames(n=3):
     return [np.zeros((4, 4, 3), np.uint8) for _ in range(n)], [0, 1, 2]
+
+
+class _InlineThread:
+    """Stand-in for threading.Thread that runs the target synchronously on start()."""
+
+    def __init__(self, target=None, daemon=None, **kw):
+        self._target = target
+
+    def start(self):
+        if self._target is not None:
+            self._target()
 
 
 def test_run_pipeline_orders_steps_and_pushes(tmp_path):
@@ -31,6 +42,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "pointcloud_to_mesh") as mesh,
         patch.object(pl, "_extract_semantics") as sem,
+        patch.object(pl.threading, "Thread", _InlineThread),
     ):
         out = pl.run_pipeline(
             video_path=video,
@@ -52,7 +64,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     assert cfg_path.exists()
     loaded = RunConfig.from_yaml(cfg_path)
     assert loaded.frame_indices == [0, 1, 2]
-    source.push_outputs.assert_called_with(out, "2026_05_07", "clip_03")
+    source.push_outputs.assert_called_with(out, "2026_05_07", "clip_03", on_line=ANY)
     op_log.finish_op.assert_called_once()
 
 

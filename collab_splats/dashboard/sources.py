@@ -84,7 +84,39 @@ class SessionSource:
         subprocess.run(client._cmd("copy", remote, str(dest_dir)), check=True)
         return dest_dir
 
-    def push_outputs(self, local_dir: Path, session: str, stem: str) -> None:
-        """rclone-copy the full local output tree to fieldwork_processed."""
+    def push_outputs(self, local_dir: Path, session: str, stem: str, on_line=None) -> None:
+        """Stream the full local output tree to fieldwork_processed via `rclone copy`.
+
+        Uses the recursive, idempotent `copy` verb (not file-only `copyto`) with
+        rclone-native retries/timeouts and live one-line stats — streamed via Popen so a
+        large tree (incl. frames.zarr) never trips an arbitrary wall-clock cap. on_line,
+        if given, receives each progress line.
+        """
         client = self._require_client()
-        client.copy_local_to_remote(str(local_dir), PROCESSED_BUCKET, f"{ROOT}/{session}/{stem}")
+        remote = f"{client.remote_name}:{PROCESSED_BUCKET}/{ROOT}/{session}/{stem}"
+        cmd = client._cmd(
+            "copy",
+            "--gcs-bucket-policy-only",
+            "--transfers",
+            "8",
+            "--retries",
+            "3",
+            "--timeout",
+            "300",
+            "--contimeout",
+            "60",
+            "--stats",
+            "2s",
+            "--stats-one-line",
+            str(local_dir),
+            remote,
+        )
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # Stream stats lines as they arrive.
+        for line in proc.stdout or []:
+            line = line.strip()
+            if line and on_line is not None:
+                on_line(line)
+        ret = proc.wait()
+        if ret != 0:
+            raise RuntimeError(f"rclone copy failed (exit {ret}) for {remote}")

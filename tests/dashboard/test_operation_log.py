@@ -1,3 +1,5 @@
+import logging
+
 from collab_splats.dashboard.operation_log import OperationLog
 
 
@@ -54,6 +56,18 @@ def test_log_lines_capped_at_100():
     for i in range(150):
         log.update_progress(0, f"line {i}")
     assert len(log.log_lines) <= 100
+
+
+def test_attach_logging_bridges_module_logs():
+    log = OperationLog()
+    lg = logging.getLogger("collab_splats.dummy_bridge")
+    with log.attach_logging("collab_splats"):
+        lg.info("extract_and_cache: 12/50 frames written")
+    assert any("12/50 frames" in line for line in log.log_lines)
+    # After detach, further records are not captured.
+    n = len(log.log_lines)
+    lg.info("after detach")
+    assert len(log.log_lines) == n
 
 
 def test_panel_returns_component():

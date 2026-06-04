@@ -63,6 +63,27 @@ def test_force_rerun_recomputes_even_when_cached(tmp_path):
     thread.assert_called_once()  # recompute despite cache
 
 
+def test_min_disparity_visibility_tracks_sampling(tmp_path):
+    app, _ = _app(tmp_path)
+    # Hidden under balanced (fps) sampling; shown only for optical_flow.
+    assert app.min_disparity.visible is False
+    app.sampling.value = "optical_flow"
+    assert app.min_disparity.visible is True
+    app.sampling.value = "balanced"
+    assert app.min_disparity.visible is False
+
+
+def test_run_query_button_forwards_parsed_terms(tmp_path):
+    app, _ = _app(tmp_path)
+    app.pos_query.value = "chair, stool"
+    app.neg_query.value = "floor"
+    app._on_query(event=None)
+    app._viewer.query.assert_called_once()
+    kwargs = app._viewer.query.call_args.kwargs
+    assert kwargs["positive"] == ["chair", "stool"]
+    assert kwargs["negative"] == ["floor"]
+
+
 def test_view(tmp_path):
     app, _ = _app(tmp_path)
     assert app.view() is not None

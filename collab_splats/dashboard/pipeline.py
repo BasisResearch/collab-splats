@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -109,6 +111,22 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
 ########
 
 
+def _push_async(source: SessionSource, out_dir: Path, session: str, stem: str, op_log: OperationLog) -> None:
+    """Push the output tree to fieldwork_processed in a detached, non-fatal thread."""
+
+    def _worker() -> None:
+        t0 = time.perf_counter()
+        op_log.append_line("push: uploading to fieldwork_processed")
+        try:
+            source.push_outputs(out_dir, session, stem, on_line=op_log.append_line)
+            op_log.append_line(f"push: done in {time.perf_counter() - t0:.1f}s")
+        except Exception as exc:  # non-fatal: outputs already on local disk
+            logger.exception("push failed")
+            op_log.append_line(f"push: FAILED ({exc})")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def run_pipeline(
     *,
     video_path: Path,
@@ -119,49 +137,59 @@ def run_pipeline(
     source: SessionSource,
     base_dir: Path,
 ) -> Path:
-    """Execute the full pipeline; write outputs under base_dir/session/stem; push on success."""
+    """Execute the full pipeline; write outputs under base_dir/session/stem; push in background."""
     out_dir = Path(base_dir) / session / stem
     out_dir.mkdir(parents=True, exist_ok=True)
     op_log.start_op(f"{session}/{stem}")
+    # Bridge collab_splats module logs (e.g. creator/semantics '%d/%d frames') into the dashboard log.
     try:
-        # Sample frames from video and persist for creator + viewer
-        frames, indices = _sample(Path(video_path), config, op_log)
-        _write_frames_zarr(frames, out_dir / "frames.zarr")
-        image_dir = _write_frames_jpegs(frames, out_dir / "frames")
-        config.frame_indices = list(indices)
+        with op_log.attach_logging("collab_splats"):
+            # Sample frames from video and persist for creator + viewer
+            t = time.perf_counter()
+            frames, indices = _sample(Path(video_path), config, op_log)
+            _write_frames_zarr(frames, out_dir / "frames.zarr")
+            image_dir = _write_frames_jpegs(frames, out_dir / "frames")
+            config.frame_indices = list(indices)
+            op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 
-        # Run feedforward pointcloud reconstruction
-        op_log.update_progress(25, f"pointcloud: {config.env_model}")
-        creator = _build_creator(config.env_model, config.conf_threshold)
-        creator.reconstruct(image_dir, out_dir)
-        result = creator.outputs
-        result.save_zarr(out_dir / "feedforward.zarr")
+            # Run feedforward pointcloud reconstruction
+            op_log.update_progress(25, f"pointcloud: {config.env_model}")
+            t = time.perf_counter()
+            creator = _build_creator(config.env_model, config.conf_threshold)
+            creator.reconstruct(image_dir, out_dir)
+            result = creator.outputs
+            result.save_zarr(out_dir / "feedforward.zarr")
+            op_log.append_line(f"pointcloud ({config.env_model}): {time.perf_counter() - t:.1f}s")
 
-        # Mesh from TSDF depth fusion
-        op_log.update_progress(60, "mesh (TSDF)")
-        pointcloud_to_mesh(
-            result,
-            out_dir / "mesh",
-            method="open3d_tsdf",
-            voxel_size=config.mesh_voxel_size,
-            sdf_trunc=config.mesh_sdf_trunc,
-            depth_trunc=config.mesh_depth_trunc,
-            clean_repair=config.mesh_clean_repair,
-        )
+            # Mesh from TSDF depth fusion
+            op_log.update_progress(60, "mesh (TSDF)")
+            t = time.perf_counter()
+            pointcloud_to_mesh(
+                result,
+                out_dir / "mesh",
+                method="open3d_tsdf",
+                voxel_size=config.mesh_voxel_size,
+                sdf_trunc=config.mesh_sdf_trunc,
+                depth_trunc=config.mesh_depth_trunc,
+                clean_repair=config.mesh_clean_repair,
+            )
+            op_log.append_line(f"mesh (TSDF): {time.perf_counter() - t:.1f}s")
 
-        # Extract and cache semantic patch features
-        op_log.update_progress(80, f"semantics: {config.semantic_extractor}")
-        _extract_semantics(config.semantic_extractor, image_dir, out_dir / "semantics")
+            # Extract and cache semantic patch features
+            op_log.update_progress(80, f"semantics: {config.semantic_extractor}")
+            t = time.perf_counter()
+            _extract_semantics(config.semantic_extractor, image_dir, out_dir / "semantics")
+            op_log.append_line(f"semantics ({config.semantic_extractor}): {time.perf_counter() - t:.1f}s")
 
-        # Persist provenance: frame indices + video ref baked into run_config.yaml
-        config.to_yaml(
-            out_dir / "run_config.yaml",
-            video_ref=f"reconstruction/{session}/{stem}/{Path(video_path).name}",
-        )
+            # Persist provenance: frame indices + video ref baked into run_config.yaml
+            config.to_yaml(
+                out_dir / "run_config.yaml",
+                video_ref=f"reconstruction/{session}/{stem}/{Path(video_path).name}",
+            )
 
-        # Push full output tree on success only
-        op_log.update_progress(95, "pushing to fieldwork_processed")
-        source.push_outputs(out_dir, session, stem)
+        # Local outputs ready: mark complete and push in the background (non-fatal).
+        op_log.update_progress(95, "pushing to fieldwork_processed (background)")
+        _push_async(source, out_dir, session, stem, op_log)
         op_log.finish_op()
         return out_dir
     except Exception as exc:

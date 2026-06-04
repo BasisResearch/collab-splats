@@ -217,28 +217,41 @@ class SplatsApp(param.Parameterized):
         threading.Thread(target=worker, daemon=True).start()
 
     def _dispatch_load(self, session: str, stem: str) -> None:
-        """Load outputs into the viewer on the server's event loop (thread-safe)."""
-        doc = pn.state.curdoc
-        if doc is not None:
-            doc.add_next_tick_callback(lambda: self._load_outputs(session, stem))
-        else:
-            self._load_outputs(session, stem)
+        """Schedule an outputs load (called from a worker job's completion)."""
+        self._load_outputs(session, stem)
 
     def _load_outputs(self, session: str, stem: str) -> None:
-        """Load FeedforwardResult and semantics into the viewer."""
-        # Lazy import: FeedforwardResult lives in the heavy feedforward package.
-        from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-
+        """Enqueue loading FeedforwardResult + semantics; render on the IOLoop when done."""
         out = self._base_dir / session / stem
-        if not (out / "feedforward.zarr").exists():
-            self._source.pull_processed(session, stem, out)
-        result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
-        try:
-            lifted = load_lifted_normed(result, out / "semantics")
-        except Exception:
-            lifted = None
-        mesh_path = out / "mesh" / "mesh.ply"
-        self._viewer.load(result, mesh_path=mesh_path if mesh_path.exists() else None, lifted_normed=lifted)
+        doc = pn.state.curdoc  # captured on the IOLoop at call time
+        max_points = self.max_display_points.value
+
+        def job():
+            # Lazy import: FeedforwardResult lives in the heavy feedforward package.
+            from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+            if not (out / "feedforward.zarr").exists():
+                self._source.pull_processed(session, stem, out)
+            result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
+            try:
+                lifted = load_lifted_normed(result, out / "semantics")
+            except Exception:
+                lifted = None
+            mesh_path = out / "mesh" / "mesh.ply"
+            return (result, mesh_path if mesh_path.exists() else None, lifted)
+
+        def on_done(res):
+            self._set_busy(False)
+            if isinstance(res, Exception):
+                self._op_log.error_op(str(res))
+                return
+            result, mesh_path, lifted = res
+            self._viewer.load(result, mesh_path=mesh_path, lifted_normed=lifted, max_points=max_points)
+            self._op_log.finish_op()
+
+        self._set_busy(True)
+        self._op_log.start_op(f"loading {stem}")
+        self._gpu.submit(job, on_done, doc)
 
     def _on_query(self, event) -> None:
         """Run the positive/negative query and recolour the right pane."""

@@ -4,6 +4,16 @@ from unittest.mock import MagicMock, patch
 from collab_splats.dashboard.app import SplatsApp
 
 
+class _RecordingWorker:
+    """Captures submitted jobs WITHOUT running them — proves work is deferred off-loop."""
+
+    def __init__(self):
+        self.submitted = []
+
+    def submit(self, job_fn, on_done, doc):
+        self.submitted.append((job_fn, on_done, doc))
+
+
 def _app(tmp_path):
     source = MagicMock()
     source.list_sessions.return_value = ["2026_05_07"]
@@ -112,3 +122,35 @@ def test_app_uses_injected_gpu_worker(tmp_path):
     with patch("collab_splats.dashboard.app.SplitViewer"):
         app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=worker)
     assert app._gpu is worker
+
+
+def _recording_app(tmp_path):
+    worker = _RecordingWorker()
+    source = MagicMock()
+    source.list_sessions.return_value = []
+    with patch("collab_splats.dashboard.app.SplitViewer"):
+        app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=worker)
+    return app, worker
+
+
+def test_load_outputs_defers_heavy_work_to_worker(tmp_path):
+    app, worker = _recording_app(tmp_path)
+    out = tmp_path / "s" / "clip" / "feedforward.zarr"
+    out.mkdir(parents=True)
+    app._load_outputs("s", "clip")
+    # The handler must NOT render inline; it enqueues exactly one job.
+    app._viewer.load.assert_not_called()
+    assert len(worker.submitted) == 1
+    assert callable(worker.submitted[0][0])  # job_fn deferred to the worker
+
+
+def test_load_outputs_on_done_renders_into_viewer(tmp_path):
+    app, worker = _recording_app(tmp_path)
+    (tmp_path / "s" / "clip" / "feedforward.zarr").mkdir(parents=True)
+    app._load_outputs("s", "clip")
+    _job, on_done, _doc = worker.submitted[0]
+    sentinel = ("result", None, "lifted")
+    on_done(sentinel)
+    app._viewer.load.assert_called_once()
+    kwargs = app._viewer.load.call_args.kwargs
+    assert kwargs["max_points"] == app.max_display_points.value

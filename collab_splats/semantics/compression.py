@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -93,9 +93,7 @@ class FeatureAutoencoder(nn.Module):
         self.decoder_out = nn.Linear(hidden_dim, input_dim)
 
         # Optional regularization head: hidden_dim → reg_dim
-        self.reg_head: Optional[nn.Linear] = (
-            nn.Linear(hidden_dim, self._reg_dim) if self._reg_dim is not None else None
-        )
+        self.reg_head: Optional[nn.Linear] = nn.Linear(hidden_dim, self._reg_dim) if self._reg_dim is not None else None
 
     ####################################################################
     # Image branch — operates on spatial patch maps (D, H, W)
@@ -138,6 +136,7 @@ class FeatureAutoencoder(nn.Module):
         batch_size: int = 1024,
         lr: float = 1e-3,
         lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
+        on_epoch: Optional[Callable[[int, int, float], None]] = None,
     ) -> None:
         """Train the autoencoder in-place on flat feature tensor (N, input_dim).
 
@@ -147,12 +146,13 @@ class FeatureAutoencoder(nn.Module):
         Args:
             features: (N, input_dim) main feature tensor.
             reg_target: optional (N, reg_dim) tensor for the regularization head.
+            on_epoch: optional callback(epoch, total_epochs, avg_loss) fired once per epoch.
+                Use to surface progress to a UI (tqdm/logger.debug do not reach the dashboard).
         """
         # Validate reg_target against configured head
         if reg_target is not None and self.reg_head is None:
             raise ValueError(
-                "reg_target supplied but no reg_head configured; "
-                "pass regularization_kwargs to __init__"
+                "reg_target supplied but no reg_head configured; " "pass regularization_kwargs to __init__"
             )
 
         # Move model to match feature device, then set train mode
@@ -184,9 +184,7 @@ class FeatureAutoencoder(nn.Module):
                 # Regularization head loss (weighted cosine)
                 if reg_target is not None:
                     reg_batch = reg_target[idx].to(features.device)
-                    loss = loss + self._reg_weight * (
-                        1 - F.cosine_similarity(self.reg_head(h), reg_batch).mean()
-                    )
+                    loss = loss + self._reg_weight * (1 - F.cosine_similarity(self.reg_head(h), reg_batch).mean())
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -198,6 +196,8 @@ class FeatureAutoencoder(nn.Module):
             avg_loss = epoch_loss / max(n_batches, 1)
             pbar.set_postfix(loss=f"{avg_loss:.6f}")
             logger.debug("epoch %d/%d  loss=%.6f", epoch + 1, epochs, avg_loss)
+            if on_epoch is not None:
+                on_epoch(epoch + 1, epochs, avg_loss)
 
             # Advance LR schedule once per epoch if provided
             if lr_scheduler is not None:
@@ -241,9 +241,7 @@ class FeatureAutoencoder(nn.Module):
         path = Path(path)
 
         # Reconstruct architecture from saved hyperparams, then load weights
-        payload = torch.load(
-            path / "autoencoder.pt", map_location="cpu", weights_only=True
-        )
+        payload = torch.load(path / "autoencoder.pt", map_location="cpu", weights_only=True)
         ae = cls(
             input_dim=payload["input_dim"],
             latent_dim=payload["latent_dim"],

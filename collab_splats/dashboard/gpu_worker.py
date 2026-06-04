@@ -11,6 +11,7 @@ result is marshalled back to the IOLoop via doc.add_next_tick_callback, where VT
 mutation is safe. The doc is captured by the caller at enqueue time — never pn.state.curdoc
 inside the worker (it is thread-local and None off the IOLoop).
 """
+
 from __future__ import annotations
 
 import logging

@@ -158,6 +158,7 @@ class SplatsApp(param.Parameterized):
 
     def _apply_sessions(self, names: list[str], doc) -> None:
         """Set the session dropdown options on the IOLoop (or inline if no doc)."""
+
         def setter():
             self.session_select.options = names
 

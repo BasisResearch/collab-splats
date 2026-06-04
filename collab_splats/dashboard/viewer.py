@@ -84,8 +84,9 @@ class SplitViewer:
 
     # ---- loading -------------------------------------------------------
 
-    def load(self, result, mesh_path: Path | None, lifted_normed: np.ndarray | None = None,
-             max_points: int = 150_000) -> None:
+    def load(
+        self, result, mesh_path: Path | None, lifted_normed: np.ndarray | None = None, max_points: int = 150_000
+    ) -> None:
         """Load a FeedforwardResult (+ optional mesh + lifted features) into both panes."""
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None

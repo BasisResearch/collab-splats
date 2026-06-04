@@ -42,7 +42,7 @@ def test_run_button_submits_pipeline_job(tmp_path):
     app.video_select.value = "clip_03.mp4"
     app._on_run(event=None, force=True)
     assert len(app._gpu.submitted) == 1  # pipeline deferred to the worker
-    assert app.run_btn.disabled          # busy while running
+    assert app.run_btn.disabled  # busy while running
 
 
 def test_run_loads_cache_without_recompute(tmp_path):
@@ -99,11 +99,14 @@ def test_query_on_done_renders_colors(tmp_path):
 
 
 def test_run_app_serves_with_hardening(tmp_path):
-    with patch("collab_splats.dashboard.app._ensure_display"), \
-         patch("collab_splats.dashboard.app.pn.extension"), \
-         patch("collab_splats.dashboard.app.GpuWorker") as worker_cls, \
-         patch("collab_splats.dashboard.app.pn.serve") as serve:
+    with (
+        patch("collab_splats.dashboard.app._ensure_display"),
+        patch("collab_splats.dashboard.app.pn.extension"),
+        patch("collab_splats.dashboard.app.GpuWorker") as worker_cls,
+        patch("collab_splats.dashboard.app.pn.serve") as serve,
+    ):
         from collab_splats.dashboard.app import run_app
+
         run_app(host="127.0.0.1", port=9999, base_dir=str(tmp_path), websocket_origin=None)
     worker_cls.assert_called_once()  # one shared worker for all sessions
     kwargs = serve.call_args.kwargs
@@ -144,8 +147,10 @@ def test_app_uses_injected_gpu_worker(tmp_path):
 def test_refresh_sessions_runs_off_loop(tmp_path):
     source = MagicMock()
     source.list_sessions.return_value = ["a", "b"]
-    with patch("collab_splats.dashboard.app.SplitViewer"), \
-         patch("collab_splats.dashboard.app.threading.Thread") as thread:
+    with (
+        patch("collab_splats.dashboard.app.SplitViewer"),
+        patch("collab_splats.dashboard.app.threading.Thread") as thread,
+    ):
         SplatsApp(base_dir=tmp_path, source=source, gpu_worker=_RecordingWorker())
     thread.assert_called()  # listing dispatched to a background thread, not inline on the loop
 

@@ -11,7 +11,13 @@ import pyvista as pv
 import torch
 import zarr
 
-from collab_splats.dashboard.viz_utils import apply_viridis, pointcloud_to_polydata
+from collab_splats.dashboard.viz_utils import (
+    PCD_KWARGS,
+    VIZ_KWARGS,
+    apply_viridis,
+    compute_view_transform,
+    pointcloud_to_polydata,
+)
 
 # NB: lift_features (pointcloud.utils) and BaseQueryableExtractor (semantics.features)
 # pull in the heavy feedforward stack (~14s import). They are imported lazily inside the
@@ -82,6 +88,9 @@ class SplitViewer:
         self._display_idx: np.ndarray | None = None
         self._extractor_cache: dict = {}
         self._status = ""
+        # Display-only normalization (orientation + scale); see compute_view_transform.
+        self._normalize_view = True
+        self._view_T: np.ndarray | None = None
 
     # ---- loading -------------------------------------------------------
 
@@ -104,6 +113,7 @@ class SplitViewer:
         self._lifted_normed = lifted_normed
         self._semantics_dir = Path(semantics_dir) if semantics_dir else None
         self._display_idx = _decimate_indices(len(result.points), max_points)
+        self._recompute_view_transform()
         self._render_left()
         self._render_right(None)
 
@@ -119,18 +129,72 @@ class SplitViewer:
             logger.warning("feature lift failed: %s", exc)
             self._lifted_normed = None
 
+    def _recompute_view_transform(self) -> None:
+        """Compute the display-only recenter/up-align/scale transform for the loaded scene.
+
+        Computed on the FULL pointcloud (not the decimated subset) for a stable center and
+        scale. extrinsics may be absent (e.g. test fixtures) -> orientation falls back to no
+        rotation. Disabled by the normalize toggle -> identity (raw world-space).
+        """
+        if self._result is None or not self._normalize_view:
+            self._view_T = None
+            return
+        extrinsics = getattr(self._result, "extrinsics", None)
+        self._view_T = compute_view_transform(self._result.points, extrinsics=extrinsics)
+
+    def _normalize(self, mesh: pv.PolyData) -> pv.PolyData:
+        """Apply the cached view transform to a mesh/cloud (no-op when normalization off)."""
+        if self._view_T is not None:
+            mesh.transform(self._view_T, inplace=True)
+        return mesh
+
+    def set_normalize_view(self, enabled: bool) -> None:
+        """Toggle display-only orientation+scale normalization and re-render both panes."""
+        self._normalize_view = enabled
+        if self._result is not None:
+            self._recompute_view_transform()
+            self._render_left()
+            self._render_right(None)
+
+    def _apply_view(self, plotter: pv.Plotter) -> None:
+        """Pin camera + lighting from VIZ_KWARGS, mirroring notebook visualize_splat.
+
+        Without this, pyvista auto-frames to data bounds on every add_mesh, so a single
+        outlier flyer zooms the camera out and the real scene collapses to a speck. The
+        fixed origin-centred camera matches the notebook and ignores outlier extent.
+
+        MUST be idempotent: it runs on every (re)render (mode/normalize toggles, queries).
+        camera.Zoom() and add_light() are CUMULATIVE — calling them per render drifts the
+        view_angle and stacks duplicate lights over a session. We set view_angle absolutely
+        (30° base / zoom) and clear lights first so repeated renders reproduce one framing.
+        """
+        plotter.camera_position = [
+            VIZ_KWARGS.get("position", (2, 2, 1)),
+            VIZ_KWARGS.get("focal_point", (0, 0, 0)),
+            VIZ_KWARGS.get("view_up", (0, 0, 1)),
+        ]
+        plotter.camera.azimuth = VIZ_KWARGS.get("azimuth", 235)
+        plotter.camera.elevation = VIZ_KWARGS.get("elevation", 15)
+        plotter.camera.view_angle = 30.0 / VIZ_KWARGS.get("zoom", 0.9)
+        plotter.remove_all_lights()
+        for light in VIZ_KWARGS.get("lighting", []):
+            plotter.add_light(pv.Light(**light))
+
     def _render_left(self) -> None:
         """Render RGB pointcloud or mesh into the left plotter."""
         self._left.clear()
         if self.mode == "mesh" and self._mesh_path and self._mesh_path.exists():
-            self.left_actor = self._left.add_mesh(pv.read(str(self._mesh_path)), rgb=True)
+            # Mesh .ply is in the same raw world-space as result.points -> same transform.
+            self.left_actor = self._left.add_mesh(self._normalize(pv.read(str(self._mesh_path))), rgb=True)
         else:
             if self.mode == "mesh":
                 self._status = "mesh not found."
                 logger.warning("mesh not found; falling back to pointcloud for left pane")
             idx = self._display_idx
-            cloud = pointcloud_to_polydata(self._result.points[idx], RGB=self._result.colors[idx])
-            self.left_actor = self._left.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
+            cloud = self._normalize(pointcloud_to_polydata(self._result.points[idx], RGB=self._result.colors[idx]))
+            # PCD_KWARGS = notebook point style (spheres, point_size, ambient/diffuse/specular)
+            self.left_actor = self._left.add_mesh(cloud, **PCD_KWARGS)
+        self._apply_view(self._left)
         if not self._off_screen:
             self._left_pane.synchronize()
 
@@ -139,8 +203,9 @@ class SplitViewer:
         self._right.clear()
         idx = self._display_idx
         rgb = colors if colors is not None else self._result.colors
-        cloud = pointcloud_to_polydata(self._result.points[idx], RGB=rgb[idx])
-        self.right_actor = self._right.add_mesh(cloud, scalars="RGB", rgb=True, point_size=2)
+        cloud = self._normalize(pointcloud_to_polydata(self._result.points[idx], RGB=rgb[idx]))
+        self.right_actor = self._right.add_mesh(cloud, **PCD_KWARGS)
+        self._apply_view(self._right)
         if not self._off_screen:
             self._right_pane.synchronize()
 
@@ -178,6 +243,11 @@ class SplitViewer:
         def _stage(msg: str) -> None:
             if op_log is not None:
                 op_log.append_line(msg)
+
+        # No scene loaded yet (e.g. query pressed before a load completed) -> nothing to score.
+        if self._result is None:
+            _stage("query: no scene loaded")
+            return None
 
         # No query terms: fall back to plain RGB (skip the expensive lift entirely).
         if not positive:

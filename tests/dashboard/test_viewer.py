@@ -18,6 +18,22 @@ def test_viewer_loads_pointcloud_offscreen():
     assert v.left_actor is not None
 
 
+def test_load_computes_view_transform_by_default():
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=None)
+    assert v._view_T is not None  # normalization on by default
+
+
+def test_normalize_toggle_off_drops_transform_and_rerenders():
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=None)
+    v.set_normalize_view(False)
+    assert v._view_T is None
+    assert v.left_actor is not None  # re-rendered without crashing
+    v.set_normalize_view(True)
+    assert v._view_T is not None
+
+
 def test_set_mode_pcd_to_mesh_toggles(tmp_path):
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(), mesh_path=None)

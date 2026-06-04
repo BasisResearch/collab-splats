@@ -12,8 +12,10 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
 import panel as pn
 import param
+import yaml
 
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
@@ -47,6 +49,13 @@ _ENV_MODELS = ["vggt_omega", "vggtx", "mapanything"]
 _EXTRACTORS = ["talk2dino", "maskclip", "dinov2"]
 _SAMPLERS = ["balanced", "optical_flow"]
 
+# Per-model confidence default — mirrors each creator's own class default so the dashboard
+# reproduces the notebook (which instantiates creators with no conf override). A single shared
+# default (35) silently ran VGGT-Omega far below its native 50 cutoff, keeping low-confidence
+# flyers that distort the cloud. Keep in sync with VGGTOmegaCreator.conf_threshold=50,
+# VGGTXCreator.conf_threshold=35, MapAnythingCreator.confidence_percentile=35.
+_MODEL_CONF_DEFAULTS = {"vggt_omega": 50.0, "vggtx": 35.0, "mapanything": 35.0}
+
 
 def _bind_visibility(widget, selector, predicate) -> None:
     """Show widget only when predicate(selector.value) holds; re-evaluate on change."""
@@ -67,47 +76,119 @@ class SplatsApp(param.Parameterized):
         base_dir: Path = Path("/workspace/outputs"),
         source: SessionSource | None = None,
         gpu_worker: GpuWorker | None = None,
+        op_log: OperationLog | None = None,
         **params,
     ) -> None:
         super().__init__(**params)
         self._base_dir = Path(base_dir)
         self._source = source if source is not None else SessionSource()
         self._gpu = gpu_worker if gpu_worker is not None else GpuWorker()
-        self._op_log = OperationLog()
+        # Shared across sessions (passed from run_app) so a page refresh re-attaches to an
+        # in-flight run's progress instead of spawning a fresh, disconnected log.
+        self._op_log = op_log if op_log is not None else OperationLog()
         self._viewer = SplitViewer()
+        # Persisted UI state survives browser reloads (each reload rebuilds widgets fresh).
+        self._state_path = self._base_dir / ".dashboard_state.yaml"
+        self._state = self._load_state()
+        self._restored_selection = False  # session/video restored once, after options load
+        self._suppress_autoload = False  # gate _on_video during programmatic option/restore churn
         self._build_sidebar()
         self._refresh_sessions()
+
+    def _load_state(self) -> dict:
+        """Load persisted widget values; empty dict if absent/unreadable."""
+        try:
+            if self._state_path.exists():
+                return yaml.safe_load(self._state_path.read_text()) or {}
+        except Exception:
+            logger.warning("could not read dashboard state", exc_info=True)
+        return {}
+
+    def _persist_state(self, *_event) -> None:
+        """Write current widget values to disk so they survive a browser reload."""
+        data = {k: w.value for k, w in self._persisted.items()}
+        try:
+            self._base_dir.mkdir(parents=True, exist_ok=True)
+            self._state_path.write_text(yaml.safe_dump(data, sort_keys=False))
+        except Exception:
+            logger.warning("could not persist dashboard state", exc_info=True)
 
     # ---- sidebar -------------------------------------------------------
 
     def _build_sidebar(self) -> None:
         """Build all sidebar widgets and wire callbacks."""
+        # Seed each widget from persisted state (falls back to the literal default).
+        s = self._state
         self.session_select = pn.widgets.Select(name="Session", options=[])
         self.video_select = pn.widgets.Select(name="Video", options=[])
-        self.sampling = pn.widgets.Select(name="Frame sampling", options=_SAMPLERS, value="balanced")
-        self.max_frames = pn.widgets.IntSlider(name="Max frames", start=10, end=200, value=100)
-        self.env_model = pn.widgets.Select(name="Environment model", options=_ENV_MODELS, value="vggt_omega")
-        self.conf = pn.widgets.FloatSlider(name="Confidence", start=0, end=100, value=35.0)
-        self.extractor = pn.widgets.Select(name="Semantic model", options=_EXTRACTORS, value="talk2dino")
-        self.pos_query = pn.widgets.TextInput(name="Positive query", placeholder="e.g. chair, stool")
-        self.neg_query = pn.widgets.TextInput(name="Negative query", placeholder="e.g. floor, wall")
+        self.sampling = pn.widgets.Select(name="Frame sampling", options=_SAMPLERS, value=s.get("sampling", "balanced"))
+        # Number input (not a slider); upper bound + label set to the video's frame count on select.
+        self.max_frames = pn.widgets.IntInput(name="Max frames", value=s.get("max_frames", 100), start=1, step=1)
+        self.env_model = pn.widgets.Select(
+            name="Environment model", options=_ENV_MODELS, value=s.get("env_model", "vggt_omega")
+        )
+        self.conf = pn.widgets.FloatSlider(
+            name="Confidence",
+            start=0,
+            end=100,
+            value=s.get("conf", _MODEL_CONF_DEFAULTS[s.get("env_model", "vggt_omega")]),
+        )
+        self.extractor = pn.widgets.Select(
+            name="Semantic model", options=_EXTRACTORS, value=s.get("extractor", "talk2dino")
+        )
+        self.pos_query = pn.widgets.TextInput(
+            name="Positive query", placeholder="e.g. chair, stool", value=s.get("pos_query", "")
+        )
+        self.neg_query = pn.widgets.TextInput(
+            name="Negative query", placeholder="e.g. floor, wall", value=s.get("neg_query", "background, sky")
+        )
         self.run_query_btn = pn.widgets.Button(label="Run query", button_type="primary")
-        self.min_disparity = pn.widgets.FloatInput(name="min_disparity", value=50.0)
-        self.mesh_voxel = pn.widgets.FloatInput(name="voxel_size", value=0.005)
-        self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=0.02)
-        self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=1.0)
-        self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=False)
-        self.max_display_points = pn.widgets.IntInput(name="Max display points", value=500_000, step=50_000)
+        self.min_disparity = pn.widgets.FloatInput(name="min_disparity", value=s.get("min_disparity", 50.0))
+        self.mesh_voxel = pn.widgets.FloatInput(name="voxel_size", value=s.get("mesh_voxel", 0.005))
+        self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=s.get("mesh_sdf", 0.02))
+        self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=s.get("mesh_depth", 1.0))
+        self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=s.get("mesh_clean", False))
+        self.max_display_points = pn.widgets.IntInput(
+            name="Max display points", value=s.get("max_display_points", 500_000), step=50_000
+        )
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
+        self.normalize_view = pn.widgets.Checkbox(
+            name="Normalize view (orient + scale)", value=s.get("normalize_view", True)
+        )
         self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
         self.force_btn = pn.widgets.Button(label="Force re-run", button_type="warning")
 
         self.session_select.param.watch(self._on_session, "value")
         self.video_select.param.watch(self._on_video, "value")
+        self.env_model.param.watch(self._on_env_model, "value")
         self.run_query_btn.on_click(self._on_query)
         self.view_mode.param.watch(lambda e: self._viewer.set_mode(e.new), "value")
+        self.normalize_view.param.watch(lambda e: self._viewer.set_normalize_view(e.new), "value")
         self.run_btn.on_click(lambda e: self._on_run(e, force=False))
         self.force_btn.on_click(lambda e: self._on_run(e, force=True))
+
+        # Persist these widgets' values to disk on any change so a browser reload restores them.
+        # session/video are restored once, after their options populate (see _restore_selection).
+        self._persisted = {
+            "session_select": self.session_select,
+            "video_select": self.video_select,
+            "sampling": self.sampling,
+            "max_frames": self.max_frames,
+            "env_model": self.env_model,
+            "conf": self.conf,
+            "extractor": self.extractor,
+            "pos_query": self.pos_query,
+            "neg_query": self.neg_query,
+            "min_disparity": self.min_disparity,
+            "mesh_voxel": self.mesh_voxel,
+            "mesh_sdf": self.mesh_sdf,
+            "mesh_depth": self.mesh_depth,
+            "mesh_clean": self.mesh_clean,
+            "max_display_points": self.max_display_points,
+            "normalize_view": self.normalize_view,
+        }
+        for _w in self._persisted.values():
+            _w.param.watch(self._persist_state, "value")
 
         # min_disparity is consumed only by the optical-flow sampler; hide it otherwise.
         _bind_visibility(self.min_disparity, self.sampling, lambda v: v == "optical_flow")
@@ -127,6 +208,7 @@ class SplatsApp(param.Parameterized):
             self.max_display_points,
             "### View",
             self.view_mode,
+            self.normalize_view,
             pn.Row(self.run_btn, self.force_btn),
         )
 
@@ -160,12 +242,40 @@ class SplatsApp(param.Parameterized):
         """Set the session dropdown options on the IOLoop (or inline if no doc)."""
 
         def setter():
-            self.session_select.options = names
+            # Populating options flips value→options[0], cascading _on_session/_on_video and
+            # auto-loading the WRONG (first) scene. Gate auto-load while we churn options + restore,
+            # then issue exactly one load for the final selection.
+            self._suppress_autoload = True
+            try:
+                self.session_select.options = names
+                if not self._restored_selection:
+                    self._restored_selection = True
+                    self._restore_selection(names)
+            finally:
+                self._suppress_autoload = False
+            self._autoload_current()
 
         if doc is not None:
             doc.add_next_tick_callback(setter)
         else:
             setter()
+
+    def _restore_selection(self, names: list[str]) -> None:
+        """Re-apply the persisted session + video once their option lists are available."""
+        sess = self._state.get("session_select")
+        if not sess or sess not in names:
+            return
+        self.session_select.value = sess
+        # Populate the video options for this session, then re-select the saved video.
+        try:
+            videos = self._source.list_videos(sess)
+        except Exception:
+            logger.warning("could not list videos for restored session %s", sess, exc_info=True)
+            return
+        self.video_select.options = videos
+        vid = self._state.get("video_select")
+        if vid and vid in videos:
+            self.video_select.value = vid  # final load is issued once by the setter (suppressed here)
 
     def _on_session(self, event) -> None:
         """Populate video dropdown when session changes."""
@@ -174,13 +284,52 @@ class SplatsApp(param.Parameterized):
         self.video_select.options = self._source.list_videos(event.new)
 
     def _on_video(self, event) -> None:
-        """Auto-load cached outputs when a video is selected."""
-        if not event.new:
+        """Auto-load cached outputs when a video is selected (skipped during programmatic churn)."""
+        if self._suppress_autoload or not event.new:
             return
-        session, stem = self.session_select.value, Path(event.new).stem
+        self._update_max_frames_bound(self.session_select.value, event.new)
+        self._autoload_current()
+
+    def _update_max_frames_bound(self, session: str, name: str) -> None:
+        """Set the Max-frames upper bound + label to the selected video's total frame count.
+
+        Only possible once the video is local on disk (decoding metadata needs the file); silently
+        skips otherwise (e.g. before the first download).
+        """
+        if not session or not name:
+            return
+        video = self._base_dir / session / Path(name).stem / name
+        if not video.exists():
+            return
+        try:
+            from collab_splats.utils.frame_sampling import get_video_info
+
+            total = int(get_video_info(str(video)).get("total_frames") or 0)
+        except Exception:
+            logger.warning("could not read frame count for %s", video, exc_info=True)
+            return
+        if total > 0:
+            self.max_frames.end = total
+            self.max_frames.name = f"Max frames (video has {total})"
+
+    def _autoload_current(self) -> None:
+        """Load cached outputs for the currently-selected session/video, if present."""
+        name = self.video_select.value
+        if not name:
+            return
+        session, stem = self.session_select.value, Path(name).stem
+        self._update_max_frames_bound(session, name)
+        # A refresh mid-run must not clobber the shared op_log or queue a load behind the pipeline.
+        if self._op_log.is_running:
+            return
         out = self._base_dir / session / stem
         if (out / "feedforward.zarr").exists() or self._source.has_processed(session, stem):
             self._load_outputs(session, stem)
+
+    def _on_env_model(self, event) -> None:
+        """Reset confidence to the selected model's native default (matches the notebook)."""
+        if event.new in _MODEL_CONF_DEFAULTS:
+            self.conf.value = _MODEL_CONF_DEFAULTS[event.new]
 
     def _current_config(self) -> RunConfig:
         """Build RunConfig from current widget values."""
@@ -265,15 +414,19 @@ class SplatsApp(param.Parameterized):
             if not (out / "feedforward.zarr").exists():
                 self._source.pull_processed(session, stem, out)
             result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
-            # Do NOT lift features here — lifting 500k points takes minutes and is only
-            # needed for queries. The viewer lifts lazily on first query (ensure_lifted).
             semantics_dir = out / "semantics"
+            # The pipeline lifts + compresses features eagerly during a run and caches the
+            # L2-normalised per-point features here, so queries are instant. If absent (older
+            # run), the viewer falls back to lazy lifting on first query.
+            lifted_path = semantics_dir / "lifted_normed.npy"
+            lifted_normed = np.load(lifted_path) if lifted_path.exists() else None
             # TSDF writes mesh_tsdf.ply (see mesh/tsdf.py), not mesh.ply.
             mesh_path = out / "mesh" / "mesh_tsdf.ply"
             return (
                 result,
                 mesh_path if mesh_path.exists() else None,
                 semantics_dir if semantics_dir.exists() else None,
+                lifted_normed,
             )
 
         def on_done(res):
@@ -281,8 +434,14 @@ class SplatsApp(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            result, mesh_path, semantics_dir = res
-            self._viewer.load(result, mesh_path=mesh_path, semantics_dir=semantics_dir, max_points=max_points)
+            result, mesh_path, semantics_dir, lifted_normed = res
+            self._viewer.load(
+                result,
+                mesh_path=mesh_path,
+                semantics_dir=semantics_dir,
+                lifted_normed=lifted_normed,
+                max_points=max_points,
+            )
             self._op_log.finish_op()
 
         self._set_busy(True)
@@ -306,6 +465,9 @@ class SplatsApp(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
+            if res is None:  # no scene loaded -> nothing to recolour
+                self._op_log.finish_op()
+                return
             self._viewer.render_query(res)
 
         self._set_busy(True)
@@ -321,9 +483,19 @@ class SplatsApp(param.Parameterized):
         loading it here per-session fails to inject the VTK JS and the panes hang.
         """
         # Live operations strip: stage label + progress bar + scrolling per-step log.
-        # Reactively re-renders on every op_log param change (current_op/progress/log_lines),
-        # so the user sees each pipeline stage and its timing as it runs.
-        progress = pn.panel(self._op_log._render)
+        # Poll the shared op_log on THIS session's IOLoop (op_log is mutated from the GpuWorker
+        # thread; pushing Bokeh updates cross-thread glitches). Polling reads a locked snapshot and
+        # updates the pane on the IOLoop → flicker-free, and a refreshed page re-attaches live.
+        progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
+
+        def _tick() -> None:
+            progress.object = self._op_log.render_html()
+
+        try:
+            pn.state.add_periodic_callback(_tick, period=300, start=True)
+        except Exception:
+            # No live server (tests) — leave the static snapshot.
+            logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
 
         main = pn.Column(self._viewer.layout, progress, sizing_mode="stretch_both")
         return pn.template.MaterialTemplate(
@@ -407,6 +579,9 @@ def run_app(
     # preventing parallel model loads from OOMing the GPU.
     gpu_worker = GpuWorker()
 
+    # One shared operation log too, so a page refresh re-attaches to the live run's progress.
+    op_log = OperationLog()
+
     # Warm the heavy import in the background so the first interaction isn't a cold start.
     threading.Thread(target=_warm_heavy_stack, name="warm", daemon=True).start()
 
@@ -416,7 +591,7 @@ def run_app(
         origin = websocket_origin
 
     def factory() -> pn.template.MaterialTemplate:
-        return SplatsApp(base_dir=Path(base_dir), gpu_worker=gpu_worker).view()
+        return SplatsApp(base_dir=Path(base_dir), gpu_worker=gpu_worker, op_log=op_log).view()
 
     pn.serve(
         factory,

@@ -1,6 +1,10 @@
 import numpy as np
 
-from collab_splats.dashboard.viz_utils import apply_viridis, pointcloud_to_polydata
+from collab_splats.dashboard.viz_utils import (
+    apply_viridis,
+    compute_view_transform,
+    pointcloud_to_polydata,
+)
 
 
 def test_polydata_has_points():
@@ -15,3 +19,70 @@ def test_apply_viridis_shape_and_dtype():
     rgb = apply_viridis(sims)
     assert rgb.shape == (12, 3)
     assert rgb.dtype == np.uint8
+
+
+########################################################################
+# compute_view_transform
+########################################################################
+
+
+def _apply(T, pts):
+    """Apply a 4x4 homogeneous transform to (P, 3) points."""
+    h = np.concatenate([pts, np.ones((len(pts), 1))], axis=1)
+    return (h @ T.T)[:, :3]
+
+
+def _bbox_center(pts):
+    """Geometric midpoint of a point set's bounding box."""
+    return (pts.min(axis=0) + pts.max(axis=0)) / 2.0
+
+
+def test_view_transform_centers_on_origin():
+    # Inlier bbox center (flyers clipped by radius) maps to the origin.
+    pts = np.random.rand(200, 3).astype(np.float32) + np.array([10.0, 5.0, -3.0])
+    T = compute_view_transform(pts, extrinsics=None, percentile=95.0)
+    med = np.median(pts, axis=0)
+    d = np.linalg.norm(pts - med, axis=1)
+    inliers = pts[d <= np.percentile(d, 95.0)]
+    assert np.allclose(_apply(T, _bbox_center(inliers)[None]), 0.0, atol=1e-4)
+
+
+def test_view_transform_scales_to_target_radius():
+    # 100x-inflated cloud -> 95th-pct radius maps to target_radius regardless of input scale.
+    pts = (np.random.rand(500, 3).astype(np.float32) - 0.5) * 100.0
+    T = compute_view_transform(pts, extrinsics=None, target_radius=0.7, percentile=95.0)
+    out = _apply(T, pts)
+    center = _bbox_center(out)
+    r = np.percentile(np.linalg.norm(out - center, axis=1), 95.0)
+    assert abs(r - 0.7) < 1e-3
+
+
+def test_view_transform_aligns_mean_camera_up_to_plus_z():
+    # Two identity-rotation w2c cams -> camera up in world = -Y. T must map -Y onto +Z.
+    extr = np.stack([np.eye(4), np.eye(4)]).astype(np.float32)
+    pts = np.random.rand(50, 3).astype(np.float32)
+    T = compute_view_transform(pts, extrinsics=extr)
+    up_world = np.array([0.0, -1.0, 0.0])
+    d = T[:3, :3] @ up_world
+    d /= np.linalg.norm(d)
+    assert np.allclose(d, [0.0, 0.0, 1.0], atol=1e-6)
+
+
+def test_view_transform_degenerate_up_skips_rotation():
+    # Opposite camera ups cancel to ~0 -> rotation part is identity (scale only, no flip).
+    e0 = np.eye(4)
+    e1 = np.eye(4)
+    e1[1, :3] = [0.0, -1.0, 0.0]  # second cam up cancels the first
+    extr = np.stack([e0, e1]).astype(np.float32)
+    pts = (np.random.rand(50, 3).astype(np.float32) - 0.5) * 4.0
+    T = compute_view_transform(pts, extrinsics=extr)
+    # Rotation must be a pure scaling of identity (no off-diagonal mixing).
+    off_diag = T[:3, :3] - np.diag(np.diag(T[:3, :3]))
+    assert np.allclose(off_diag, 0.0, atol=1e-6)
+
+
+def test_view_transform_no_extrinsics_is_identity_rotation():
+    pts = (np.random.rand(50, 3).astype(np.float32) - 0.5) * 4.0
+    T = compute_view_transform(pts, extrinsics=None)
+    off_diag = T[:3, :3] - np.diag(np.diag(T[:3, :3]))
+    assert np.allclose(off_diag, 0.0, atol=1e-6)

@@ -9,9 +9,9 @@ import open3d as o3d
 import torch
 import torch.nn.functional as F
 from PIL import Image as PILImage
-from scipy.spatial import cKDTree
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
+from scipy.spatial import cKDTree
 from tqdm.auto import tqdm, trange
 
 from collab_splats.mesh.base import MeshResult
@@ -20,6 +20,7 @@ from collab_splats.utils.geometry import invert_poses
 
 try:
     import meshlib.mrmeshpy as mm
+
     _MM_AVAILABLE = True
 except ImportError:
     mm = None
@@ -41,9 +42,7 @@ def find_depth_edges(depth_im, threshold=0.01, dilation_itr=3):
     if isinstance(depth_im, np.ndarray):
         depth_im = torch.from_numpy(depth_im)
 
-    laplacian_kernel = torch.tensor(
-        [[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=depth_im.dtype, device=depth_im.device
-    )
+    laplacian_kernel = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=depth_im.dtype, device=depth_im.device)
     laplacian_kernel = laplacian_kernel.unsqueeze(0).unsqueeze(0)
     depth_laplacian = (
         F.conv2d(
@@ -101,67 +100,63 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     """
     Map point cloud features to mesh vertices using KNN over a KDTree.
 
-    Returns np.ndarray (unlike original utils/mesh.py which returned torch.Tensor)
+    Spatial query runs on the CPU KDTree (multicore, O(N log M)); the Gaussian-weighted
+    aggregation runs on the GPU in float32 via index_add_ (mirrors lift_features). Falls
+    back to the CPU torch device when CUDA is unavailable.
+
+    Returns np.ndarray (M, D), dtype matching input features.
 
     Args:
         mesh_vertices: (M, 3) array of mesh vertex positions
-        points: (N, 3) array of input point cloud
-        features: (N, D) array of per-point features
-        k: number of nearest neighbors to use for weighting
-        sdf_trunc: truncation distance for SDF
-
-    Returns:
-        features_kNN: (M, D) array of per-vertex features
+        points:        (N, 3) array of input point cloud
+        features:      (N, D) array of per-point features
+        k:             number of nearest neighbors used for weighting
+        sdf_trunc:     truncation distance — points whose nearest vertex is farther are dropped
     """
-
     vertices = np.asarray(mesh_vertices)
+    M = len(vertices)
+    D = features.shape[1]
 
-    # Build tree
+    # Nearest-vertex query for every point; workers=-1 uses all cores.
     tree = cKDTree(vertices)
+    distances, indices = tree.query(points, k=k, workers=-1)
 
-    # Query nearest vertex for each point
-    distances, indices = tree.query(points, k=k)  # shape: (N,)
+    # k=1 collapses the neighbour axis; restore it so the kernel below is uniform.
+    if k == 1:
+        distances = distances[:, None]
+        indices = indices[:, None]
 
-    # Mask points where nearest vertex is within truncation distance
-    # Use distance to closest vertex (distance[:, 0]) for truncation mask
+    # Drop points whose closest vertex is beyond the truncation band.
     valid_mask = distances[:, 0] <= sdf_trunc
-
     if not np.any(valid_mask):
-        # No points within truncation distance, return zeros
-        return np.zeros((len(vertices), features.shape[1]), dtype=features.dtype)
-
-    # Filter distances, indices, and features by valid points
+        return np.zeros((M, D), dtype=features.dtype)
     distances = distances[valid_mask]
     indices = indices[valid_mask]
-    features = features[valid_mask]
+    feats = features[valid_mask]
 
-    # Weighting with Gaussian kernel
-    sigma = np.mean(distances)  # or set manually
-    weights = np.exp(-(distances**2) / (2 * sigma**2))
-    weights /= weights.sum(axis=1, keepdims=True)  # normalize
+    # Move the aggregation to the GPU (float32); one .cpu() at the end.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    d = torch.as_tensor(np.ascontiguousarray(distances), dtype=torch.float32, device=device)
+    idx = torch.as_tensor(np.ascontiguousarray(indices), dtype=torch.long, device=device)
+    f = torch.as_tensor(np.ascontiguousarray(feats), dtype=torch.float32, device=device)
 
-    # Aggregate features per vertex
-    features_kNN = np.zeros((len(vertices), features.shape[1]), dtype=features.dtype)
+    # Gaussian kernel over neighbour distances; normalize weights per point (over k).
+    sigma = d.mean()
+    w = torch.exp(-(d**2) / (2 * sigma**2))
+    w = w / w.sum(dim=1, keepdim=True)
 
-    # Use a counts array to normalize contributions per vertex later
-    vertex_weight_sum = np.zeros((len(vertices), 1), dtype=features.dtype)
+    # Scatter weighted features to vertices; accumulate weights for normalization.
+    acc = torch.zeros((M, D), dtype=torch.float32, device=device)
+    wsum = torch.zeros((M, 1), dtype=torch.float32, device=device)
+    for j in range(k):
+        acc.index_add_(0, idx[:, j], f * w[:, j : j + 1])
+        wsum.index_add_(0, idx[:, j], w[:, j : j + 1])
 
-    # Accumulate weighted features
-    for i in trange(k, desc="Mapping features to vertices"):
-        vertex_indices = indices[:, i]
-        weighted_feats = features * weights[:, i : i + 1]
+    # Normalize aggregated features by summed weights (skip untouched vertices -> stay zero).
+    nz = wsum.squeeze(1) > 0
+    acc[nz] /= wsum[nz]
 
-        # Accumulate weighted features
-        np.add.at(features_kNN, vertex_indices, weighted_feats)
-
-        # Accumulate weights for normalization
-        np.add.at(vertex_weight_sum, vertex_indices, weights[:, i : i + 1])
-
-    # Normalize aggregated features by summed weights (avoid div by zero)
-    nonzero_mask = vertex_weight_sum.squeeze() > 0
-    features_kNN[nonzero_mask] /= vertex_weight_sum[nonzero_mask]
-
-    return features_kNN
+    return acc.cpu().numpy().astype(features.dtype)
 
 
 def transfer_features_to_mesh(
@@ -183,9 +178,9 @@ def transfer_features_to_mesh(
     Returns:
         (M, D) ndarray of per-vertex features, dtype matches input features, index-aligned with mesh.vertices.
     """
-    assert result.features is not None, (
-        "result.features is None — call lift_features() and assign result.features before transferring"
-    )
+    assert (
+        result.features is not None
+    ), "result.features is None — call lift_features() and assign result.features before transferring"
     return features2vertex(
         np.asarray(mesh.vertices),
         result.points,
@@ -193,6 +188,29 @@ def transfer_features_to_mesh(
         k=k,
         sdf_trunc=sdf_trunc,
     )
+
+
+def persist_mesh_vertex_features(
+    mesh_path: Path,
+    points: np.ndarray,
+    point_features: np.ndarray,
+    *,
+    k: int = 5,
+    sdf_trunc: float = 0.03,
+) -> np.ndarray:
+    """Transfer point features to a written mesh's vertices and cache them as vertex_features.npy.
+
+    Reads the mesh PLY at mesh_path, runs features2vertex against the supplied point
+    features (already lifted/normalized by the caller), writes vertex_features.npy beside
+    the mesh, and returns the (M, D) per-vertex array (index-aligned with mesh.vertices).
+    """
+    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+    vertices = np.asarray(mesh.vertices)
+    vertex_features = features2vertex(vertices, points, point_features, k=k, sdf_trunc=sdf_trunc)
+    out_path = Path(mesh_path).parent / "vertex_features.npy"
+    np.save(out_path, vertex_features)
+    logger.info("saved mesh vertex features → %s  shape=%s", out_path, vertex_features.shape)
+    return vertex_features
 
 
 ########################################################
@@ -253,15 +271,11 @@ def clean_repair_mesh(
     avg_edge_length = 0.0
     num_edges = 0
 
-    for i in trange(
-        mesh.topology.undirectedEdgeSize(), desc="Calculating average edge length"
-    ):
+    for i in trange(mesh.topology.undirectedEdgeSize(), desc="Calculating average edge length"):
         dir_edge = mm.EdgeId(i * 2)
         org = mesh.topology.org(dir_edge)
         dest = mesh.topology.dest(dir_edge)
-        avg_edge_length += (
-            mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]
-        ).length()
+        avg_edge_length += (mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]).length()
         num_edges += 1
     avg_edge_length /= num_edges
 
@@ -332,9 +346,7 @@ def align_geometry_floor(
 ########################################################
 
 
-def mesh_clustering(
-    mesh, similarity_values, similarity_threshold=0.8, spatial_radius=0.03
-):
+def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_radius=0.03):
     """
     Clusters the mesh into connected components based on similarity values.
     """
@@ -364,9 +376,7 @@ def mesh_clustering(
 
     # For each valid vertex, find spatial neighbors that are also valid
     for i, orig_idx in tqdm(enumerate(valid_indices), desc="Building adjacency matrix"):
-        [_, neighbors, _] = kdtree.search_radius_vector_3d(
-            vertices[orig_idx], spatial_radius
-        )
+        [_, neighbors, _] = kdtree.search_radius_vector_3d(vertices[orig_idx], spatial_radius)
 
         for neighbor_idx in neighbors:
             if neighbor_idx in valid_set and neighbor_idx != orig_idx:
@@ -408,15 +418,15 @@ def _feedforward_to_tsdf_inputs(
             "world_points during _postprocess()."
         )
 
-    world_points = result.world_points          # (N, H, W, 3)
+    world_points = result.world_points  # (N, H, W, 3)
     N, H, W, _ = world_points.shape
 
     depths = np.empty((N, H, W), dtype=np.float32)
     for i in range(N):
-        R = result.extrinsics[i, :3, :3]        # (3, 3) world-to-cam rotation
-        t = result.extrinsics[i, :3, 3]         # (3,) world-to-cam translation
-        cam_pts = world_points[i] @ R.T + t     # (H, W, 3)
-        depths[i] = cam_pts[..., 2].clip(0)     # Z >= 0; negatives are boundary artefacts
+        R = result.extrinsics[i, :3, :3]  # (3, 3) world-to-cam rotation
+        t = result.extrinsics[i, :3, 3]  # (3,) world-to-cam translation
+        cam_pts = world_points[i] @ R.T + t  # (H, W, 3)
+        depths[i] = cam_pts[..., 2].clip(0)  # Z >= 0; negatives are boundary artefacts
 
     rgbs = np.empty((N, H, W, 3), dtype=np.float32)
     for i, path in enumerate(result.image_paths):

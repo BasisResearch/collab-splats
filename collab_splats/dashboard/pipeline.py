@@ -16,7 +16,7 @@ from zarr.codecs import BloscCodec
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.sources import SessionSource
-from collab_splats.mesh.utils import pointcloud_to_mesh
+from collab_splats.mesh.utils import persist_mesh_vertex_features, pointcloud_to_mesh
 from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
     VGGTXCreator,
@@ -131,6 +131,21 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     op_log.append_line(f"semantics: lift + decode + cache in {time.perf_counter() - t:.1f}s")
 
 
+def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: float = 0.03) -> None:
+    """Transfer cached point features onto the TSDF mesh vertices and persist vertex_features.npy.
+
+    No-op (logged) if the mesh or the lifted point features are missing — neither is fatal
+    to the run.
+    """
+    mesh_path = Path(out_dir) / "mesh" / "mesh_tsdf.ply"
+    lifted_path = Path(out_dir) / "semantics" / "lifted_normed.npy"
+    if not mesh_path.exists() or not lifted_path.exists():
+        logger.warning("mesh feature transfer skipped: mesh=%s lifted=%s", mesh_path.exists(), lifted_path.exists())
+        return
+    point_features = np.load(lifted_path)
+    persist_mesh_vertex_features(mesh_path, result.points, point_features, k=k, sdf_trunc=sdf_trunc)
+
+
 def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
     """Sample frames per the configured method; return (frames, indices)."""
     info = get_video_info(str(video_path))
@@ -237,7 +252,9 @@ def run_pipeline(
             op_log.update_progress(52, "pointcloud: postprocessing")
             creator.postprocess()
             result = creator.outputs
-            op_log.append_line(f"pointcloud: postprocessed ({len(result.points):,} pts) in {time.perf_counter() - t:.1f}s")
+            op_log.append_line(
+                f"pointcloud: postprocessed ({len(result.points):,} pts) in {time.perf_counter() - t:.1f}s"
+            )
             result.save_zarr(out_dir / "feedforward.zarr")
 
             # Mesh from TSDF depth fusion
@@ -263,6 +280,10 @@ def run_pipeline(
             # Lift features to points + train compression autoencoder eagerly (instant queries later);
             # _lift_and_compress emits its own 'semantics: ...' substep labels.
             _lift_and_compress(result, out_dir / "semantics", op_log)
+
+            # Transfer lifted point features onto the mesh vertices (same feature space -> mesh is queryable).
+            op_log.update_progress(94, "mesh: transferring features to vertices")
+            _transfer_mesh_features(result, out_dir)
 
             # Persist provenance: frame indices + video ref baked into run_config.yaml
             config.to_yaml(

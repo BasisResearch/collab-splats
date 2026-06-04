@@ -39,3 +39,105 @@ def test_features2vertex_output_shape():
     features = rng.random((200, 16)).astype(np.float32)
     result = features2vertex(mesh_vertices, points, features, k=5)
     assert result.shape == (50, 16)
+
+
+def _features2vertex_numpy_reference(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
+    """Frozen copy of the original CPU implementation — parity oracle for the GPU rewrite."""
+    from scipy.spatial import cKDTree
+
+    vertices = np.asarray(mesh_vertices)
+    tree = cKDTree(vertices)
+    distances, indices = tree.query(points, k=k)
+    valid_mask = distances[:, 0] <= sdf_trunc
+    if not np.any(valid_mask):
+        return np.zeros((len(vertices), features.shape[1]), dtype=features.dtype)
+    distances = distances[valid_mask]
+    indices = indices[valid_mask]
+    features = features[valid_mask]
+    sigma = np.mean(distances)
+    weights = np.exp(-(distances**2) / (2 * sigma**2))
+    weights /= weights.sum(axis=1, keepdims=True)
+    out = np.zeros((len(vertices), features.shape[1]), dtype=features.dtype)
+    wsum = np.zeros((len(vertices), 1), dtype=features.dtype)
+    for i in range(k):
+        np.add.at(out, indices[:, i], features * weights[:, i : i + 1])
+        np.add.at(wsum, indices[:, i], weights[:, i : i + 1])
+    nz = wsum.squeeze() > 0
+    out[nz] /= wsum[nz]
+    return out
+
+
+def test_features2vertex_matches_numpy_reference():
+    from collab_splats.mesh.utils import features2vertex
+
+    rng = np.random.default_rng(0)
+    vertices = rng.random((200, 3)).astype(np.float64)
+    points = rng.random((1000, 3)).astype(np.float64)
+    features = rng.random((1000, 8)).astype(np.float32)
+
+    got = features2vertex(vertices, points, features, k=5, sdf_trunc=0.1)
+    want = _features2vertex_numpy_reference(vertices, points, features, k=5, sdf_trunc=0.1)
+
+    assert got.shape == (200, 8)
+    np.testing.assert_allclose(got, want, rtol=1e-4, atol=1e-5)
+
+
+def test_features2vertex_all_far_returns_zeros():
+    from collab_splats.mesh.utils import features2vertex
+
+    vertices = np.zeros((10, 3), dtype=np.float64)
+    points = np.full((20, 3), 100.0, dtype=np.float64)  # all far beyond sdf_trunc
+    features = np.ones((20, 4), dtype=np.float32)
+
+    out = features2vertex(vertices, points, features, k=3, sdf_trunc=0.03)
+    assert out.shape == (10, 4)
+    assert np.all(out == 0.0)
+
+
+def test_features2vertex_dtype_preserved():
+    from collab_splats.mesh.utils import features2vertex
+
+    rng = np.random.default_rng(1)
+    vertices = rng.random((50, 3))
+    points = rng.random((100, 3))
+    features = rng.random((100, 6)).astype(np.float32)
+
+    out = features2vertex(vertices, points, features, k=4, sdf_trunc=0.2)
+    assert out.dtype == np.float32
+    assert out.shape == (50, 6)
+
+
+def test_meshresult_has_vertex_features_field():
+    from pathlib import Path
+
+    from collab_splats.mesh.base import MeshResult
+
+    r = MeshResult(mesh_path=Path("/tmp/m.ply"))
+    assert r.vertex_features is None  # default
+
+    r2 = MeshResult(mesh_path=Path("/tmp/m.ply"), vertex_features=np.zeros((3, 2)))
+    assert r2.vertex_features.shape == (3, 2)
+
+
+def test_persist_mesh_vertex_features(tmp_path):
+    import open3d as o3d
+
+    from collab_splats.mesh.utils import persist_mesh_vertex_features
+
+    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
+    tris = np.array([[0, 1, 2]], dtype=np.int32)
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(verts),
+        o3d.utility.Vector3iVector(tris),
+    )
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    o3d.io.write_triangle_mesh(str(mesh_path), mesh)
+
+    points = verts.copy()
+    feats = np.array([[1, 0], [0, 1], [1, 1]], dtype=np.float32)
+
+    out = persist_mesh_vertex_features(mesh_path, points, feats, k=1, sdf_trunc=0.5)
+
+    assert out.shape == (3, 2)
+    saved = np.load(mesh_path.parent / "vertex_features.npy")
+    np.testing.assert_allclose(saved, out)

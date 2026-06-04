@@ -10,6 +10,7 @@ import numpy as np
 class MeshResult:
     mesh_path: Path
     pcd_path: Path | None = None
+    vertex_features: np.ndarray | None = None
 
 
 @dataclass
@@ -24,6 +25,4 @@ class BaseMeshCreator:
         intrinsics: np.ndarray,
         **kwargs,
     ) -> MeshResult:
-        raise NotImplementedError(
-            f"{type(self).__name__}.create() is not implemented"
-        )
+        raise NotImplementedError(f"{type(self).__name__}.create() is not implemented")

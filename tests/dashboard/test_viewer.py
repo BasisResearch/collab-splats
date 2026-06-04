@@ -167,3 +167,48 @@ def test_score_query_blank_positive_does_not_lift(monkeypatch):
     monkeypatch.setattr("collab_splats.dashboard.viewer.load_lifted_normed", fake_lift)
     v.score_query(positive=[], extractor_name="talk2dino")
     assert lifted_called["n"] == 0  # blank query must not pay the 6-min lift
+
+
+def test_load_mesh_vertex_features_normalizes(tmp_path):
+    from collab_splats.dashboard.viewer import load_mesh_vertex_features
+
+    mesh_dir = tmp_path / "mesh"
+    mesh_dir.mkdir()
+    feats = np.array([[3.0, 4.0], [0.0, 2.0]], dtype=np.float32)
+    np.save(mesh_dir / "vertex_features.npy", feats)
+
+    out = load_mesh_vertex_features(mesh_dir)
+    norms = np.linalg.norm(out, axis=1)
+    np.testing.assert_allclose(norms, [1.0, 1.0], rtol=1e-5)
+
+
+def test_load_mesh_vertex_features_missing_returns_none(tmp_path):
+    from collab_splats.dashboard.viewer import load_mesh_vertex_features
+
+    assert load_mesh_vertex_features(tmp_path / "nope") is None
+
+
+def test_score_query_uses_mesh_features_in_mesh_mode(monkeypatch):
+    import torch
+
+    from collab_splats.dashboard.viewer import SplitViewer
+
+    captured = {}
+
+    class _StubExtractor:
+        def score_queries(self, features, positive, negative=None):
+            captured["n"] = features.shape[0]
+            return torch.ones(features.shape[0])
+
+    v = SplitViewer.__new__(SplitViewer)  # bypass __init__ (no GUI in tests)
+    v.mode = "mesh"
+    v._result = type("R", (), {"colors": np.zeros((5, 3), dtype=np.uint8)})()
+    v._lifted_normed = np.ones((5, 4), dtype=np.float32)  # 5 points
+    v._mesh_vertex_features = np.ones((3, 4), dtype=np.float32)  # 3 vertices
+    v._extractor_cache = {"talk2dino": _StubExtractor()}
+    monkeypatch.setattr(v, "ensure_lifted", lambda op_log=None: None)
+
+    colors = v.score_query(positive=["chair"], op_log=None)
+
+    assert captured["n"] == 3
+    assert colors.shape[0] == 3

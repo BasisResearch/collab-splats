@@ -51,6 +51,20 @@ def load_lifted_normed(result, semantics_dir) -> np.ndarray:
     return lifted / (norms + 1e-8)
 
 
+def load_mesh_vertex_features(mesh_dir) -> "np.ndarray | None":
+    """Load cached mesh vertex features and L2-normalise -> (M, D) float32, or None if absent.
+
+    Matches load_lifted_normed's normalization so mesh features share the point feature
+    space and can be scored by the same extractor.score_queries call.
+    """
+    path = Path(mesh_dir) / "vertex_features.npy"
+    if not path.exists():
+        return None
+    feats = np.load(path).astype(np.float32)
+    norms = np.linalg.norm(feats, axis=1, keepdims=True)
+    return feats / (norms + 1e-8)
+
+
 def _decimate_indices(n: int, max_points: int) -> np.ndarray:
     """Return display indices into n points, evenly subsampled to at most max_points.
 
@@ -83,6 +97,7 @@ class SplitViewer:
         self.right_actor = None
         self._result = None
         self._mesh_path: Path | None = None
+        self._mesh_vertex_features: np.ndarray | None = None
         self._lifted_normed: np.ndarray | None = None
         self._semantics_dir: Path | None = None
         self._display_idx: np.ndarray | None = None
@@ -110,6 +125,8 @@ class SplitViewer:
         """
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None
+        # Per-vertex mesh features (if the pipeline persisted them) — same space as point features.
+        self._mesh_vertex_features = load_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
         self._lifted_normed = lifted_normed
         self._semantics_dir = Path(semantics_dir) if semantics_dir else None
         self._display_idx = _decimate_indices(len(result.points), max_points)
@@ -260,9 +277,14 @@ class SplitViewer:
 
         _stage(f"query: encoding {len(positive)} positive / {len(negative or [])} negative")
         extractor = self._get_extractor(extractor_name)
-        features = torch.from_numpy(self._lifted_normed)  # (P, D)
 
-        _stage(f"query: scoring {features.shape[0]} points")
+        # In mesh mode score per-vertex features (same feature space); else score points.
+        feature_array = getattr(self, "_mesh_vertex_features", None) if self.mode == "mesh" else None
+        if feature_array is None:
+            feature_array = self._lifted_normed
+        features = torch.from_numpy(feature_array)  # (N, D)
+
+        _stage(f"query: scoring {features.shape[0]} elements")
         scores = extractor.score_queries(features, positive=positive, negative=negative or None)
         sims = scores.detach().cpu().numpy()
         colors = apply_viridis(sims)

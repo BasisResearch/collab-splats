@@ -117,3 +117,30 @@ def test_build_creator_maps_models():
     with patch.object(pl, "MapAnythingCreator") as ma:
         pl._build_creator("mapanything", 35.0)
         ma.assert_called_with(confidence_percentile=35.0)
+
+
+def test_transfer_mesh_features_writes_npy(tmp_path):
+    import numpy as np
+    import open3d as o3d
+
+    from collab_splats.dashboard import pipeline
+
+    mesh_dir = tmp_path / "mesh"
+    mesh_dir.mkdir()
+    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
+    tris = np.array([[0, 1, 2]], dtype=np.int32)
+    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris))
+    o3d.io.write_triangle_mesh(str(mesh_dir / "mesh_tsdf.ply"), mesh)
+
+    sem_dir = tmp_path / "semantics"
+    sem_dir.mkdir()
+    np.save(sem_dir / "lifted_normed.npy", np.eye(3, 2, dtype=np.float32))
+
+    class _Result:
+        points = verts.copy()
+
+    pipeline._transfer_mesh_features(_Result(), tmp_path, k=1, sdf_trunc=0.5)
+
+    assert (mesh_dir / "vertex_features.npy").exists()
+    out = np.load(mesh_dir / "vertex_features.npy")
+    assert out.shape == (3, 2)

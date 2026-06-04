@@ -311,7 +311,10 @@ def run_app(
 
     # Load the VTK extension ONCE here, in the main thread, before serving. Panel requires
     # pn.extension() at startup; deferring it into the per-session factory hangs the panes.
-    pn.extension("vtk")
+    # inline=True serves all JS/CSS (incl. the large vtk.js bundle) from this server instead
+    # of cdn.holoviz.org — a headless/air-gapped host can't reach the CDN, so the page would
+    # otherwise spin forever waiting on resources that never load.
+    pn.extension("vtk", inline=True)
 
     def factory() -> pn.template.MaterialTemplate:
         return SplatsApp(base_dir=Path(base_dir)).view()

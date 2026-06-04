@@ -50,14 +50,18 @@ class OperationLog(param.Parameterized):
             self.progress = 0
             self.is_running = True
 
-    def update_progress(self, pct: int, message: str = "") -> None:
-        """Update progress percentage; set the status label and log the step message."""
+    def update_progress(self, pct: int, message: str = "", log: bool = True) -> None:
+        """Update progress percentage; set the status label and (optionally) log the step.
+
+        log=False updates the live status label only — use for high-frequency pings (e.g. the
+        per-frame sampling counter) that would otherwise flood the scrolling log.
+        """
         with self._lock:
             self.progress = min(100, max(0, pct))
             # Surface the current stage in the status label, not just the bar.
             if message:
                 self.current_op = message
-        if message:
+        if message and log:
             self.append_line(message)
 
     def append_line(self, message: str) -> None:
@@ -112,6 +116,33 @@ class OperationLog(param.Parameterized):
                 lines = lines[-self._MAX_LINES :]
             self.log_lines = lines
             self.is_running = False
+
+    def render_html(self) -> str:
+        """Render the current state as a single HTML string (thread-safe snapshot).
+
+        Used by a per-session periodic poll on the IOLoop, instead of reactive param binding:
+        op_log state is mutated from the GpuWorker thread, and pushing Bokeh doc updates from a
+        non-IOLoop thread glitches. Polling reads a locked snapshot here and updates the pane on
+        the session's own IOLoop, so any session (incl. one opened after a run started) shows live,
+        flicker-free progress.
+        """
+        with self._lock:
+            current_op, progress = self.current_op, self.progress
+            is_running, lines = self.is_running, list(self.log_lines)
+        err = bool(lines and lines[-1].startswith("ERROR"))
+        status_color = "#50c050" if is_running else ("#e05050" if err else "#666")
+        status_label = current_op if current_op else "Idle"
+        bar_color = "#2596be" if is_running else ("#e05050" if err else "#50c050")
+        log_text = "\n".join(lines[-20:]) if lines else ""
+        return (
+            f"<div style='display:flex;justify-content:space-between;align-items:center;padding:4px 0'>"
+            f"<span style='color:{status_color};font-size:11px;font-weight:700'>{status_label}</span>"
+            f"<span style='color:#666;font-size:10px'>{progress}%</span></div>"
+            f"<div style='background:#222;border-radius:3px;height:6px;overflow:hidden'>"
+            f"<div style='background:{bar_color};width:{progress}%;height:6px'></div></div>"
+            f"<pre style='font-size:11px;color:#aaa;background:#0d1117;padding:6px;border-radius:3px;"
+            f"margin:6px 0 0 0;overflow-y:auto;max-height:80px'>{log_text}</pre>"
+        )
 
     @param.depends("current_op", "progress", "is_running", "log_lines")
     def _render(self) -> pn.Column:

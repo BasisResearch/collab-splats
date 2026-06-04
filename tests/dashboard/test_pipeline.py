@@ -31,7 +31,10 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     video.write_bytes(b"x")
 
     fake_result = MagicMock()
+    fake_result.points = list(range(10))  # len() used in the pointcloud step log line
     creator = MagicMock()
+    # Pipeline decomposes run() into load_model→setup_inference→run_inference→postprocess;
+    # result comes from creator.outputs after postprocess.
     creator.outputs = fake_result
 
     with (
@@ -42,6 +45,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "pointcloud_to_mesh") as mesh,
         patch.object(pl, "_extract_semantics") as sem,
+        patch.object(pl, "_lift_and_compress") as liftc,
         patch.object(pl.threading, "Thread", _InlineThread),
     ):
         out = pl.run_pipeline(
@@ -56,9 +60,13 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
 
     assert out == tmp_path / "outputs" / "2026_05_07" / "clip_03"
     wz.assert_called_once()
-    creator.reconstruct.assert_called_once()
+    creator.load_model.assert_called_once()
+    creator.setup_inference.assert_called_once()
+    creator.run_inference.assert_called_once()
+    creator.postprocess.assert_called_once()
     fake_result.save_zarr.assert_called_once()
     mesh.assert_called_once()
+    liftc.assert_called_once()
     sem.assert_called_once()
     cfg_path = out / "run_config.yaml"
     assert cfg_path.exists()

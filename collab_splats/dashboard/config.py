@@ -23,12 +23,12 @@ class RunConfig:
 
     # Environment (pointcloud) model
     env_model: str = "vggt_omega"  # "vggt_omega" | "vggtx" | "mapanything"
-    conf_threshold: float = 35.0
+    conf_threshold: float = 50.0  # vggt_omega native default; UI sets per-model (see _MODEL_CONF_DEFAULTS)
 
     # Semantics
     semantic_extractor: str = "talk2dino"
     query_positive: str = ""
-    query_negative: str = ""
+    query_negative: str = "background, sky"
 
     # Mesh (TSDF) params
     mesh_voxel_size: float = 0.005

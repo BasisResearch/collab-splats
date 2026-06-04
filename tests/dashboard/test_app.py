@@ -180,10 +180,12 @@ def test_load_outputs_on_done_renders_into_viewer(tmp_path):
     (tmp_path / "s" / "clip" / "feedforward.zarr").mkdir(parents=True)
     app._load_outputs("s", "clip")
     _job, on_done, _doc = worker.submitted[0]
-    # Job returns (result, mesh_path, semantics_dir) — NOT a pre-lifted feature array.
-    sentinel = ("result", None, "semdir")
+    # Job returns (result, mesh_path, semantics_dir, lifted_normed). lifted_normed=None here means
+    # an older run with no cached features; the viewer falls back to lazy lifting on first query.
+    sentinel = ("result", None, "semdir", None)
     on_done(sentinel)
     app._viewer.load.assert_called_once()
     kwargs = app._viewer.load.call_args.kwargs
-    assert kwargs["semantics_dir"] == "semdir"  # lift deferred to first query
+    assert kwargs["semantics_dir"] == "semdir"
+    assert kwargs["lifted_normed"] is None
     assert kwargs["max_points"] == app.max_display_points.value

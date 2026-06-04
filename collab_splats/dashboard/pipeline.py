@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import torch
 import zarr
 from PIL import Image
 from zarr.codecs import BloscCodec
@@ -20,6 +21,8 @@ from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
     VGGTXCreator,
 )
+from collab_splats.pointcloud.utils import lift_features
+from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.utils.frame_sampling import (
     get_video_info,
@@ -76,13 +79,75 @@ def _extract_semantics(extractor_name: str, image_dir: Path, out_dir: Path) -> N
     extractor.extract_and_cache(image_paths, out_dir)
 
 
+# Feature-compression autoencoder defaults (matches the semantic_lifting tutorial).
+_AE_LATENT_DIM = 64
+_AE_EPOCHS = 10
+
+
+def _load_feature_maps(semantics_dir: Path) -> list[torch.Tensor]:
+    """Load per-frame dense feature maps (D, H_p, W_p) from the cached semantics zarr."""
+    store_path = next(Path(semantics_dir).glob("*.zarr"))
+    arr = zarr.open(str(store_path), mode="r")["features"]  # (N, D, H_p, W_p)
+    return [torch.from_numpy(np.asarray(arr[i])) for i in range(arr.shape[0])]
+
+
+def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> None:
+    """Train a feature-compression autoencoder, lift COMPRESSED maps to points, cache decoded.
+
+    Order matches the semantic_lifting tutorial and is what makes this fast: train the AE on the
+    2D patch features, encode each map (D→latent) on GPU, then lift the small latent maps to
+    points — lift_features cost scales with channel count, so lifting `latent` (e.g. 64) instead
+    of the full D (e.g. 768) is ~D/latent× cheaper. Decode per-point back to D, L2-normalise, and
+    cache so the first query is instant. Everything except the lift runs on the GPU.
+    """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    feature_maps = _load_feature_maps(semantics_dir)  # list of (D, H_p, W_p) on CPU
+    input_dim = feature_maps[0].shape[0]
+
+    # Train the AE on flattened 2D patch features (all frames) — GPU; stream loss to the log
+    op_log.update_progress(80, "semantics: fitting autoencoder")
+    t = time.perf_counter()
+    ae = FeatureAutoencoder(input_dim=input_dim, latent_dim=_AE_LATENT_DIM).to(device)
+    patches = torch.cat([fm.flatten(1).T for fm in feature_maps]).to(device)  # (N*H_p*W_p, D)
+    ae.fit(
+        patches,
+        epochs=_AE_EPOCHS,
+        on_epoch=lambda e, t_, loss: op_log.append_line(f"semantics: autoencoder epoch {e}/{t_}  loss={loss:.4f}"),
+    )
+    op_log.append_line(f"semantics: autoencoder fit in {time.perf_counter() - t:.1f}s")
+
+    # Encode maps (GPU), lift the small latent maps to points (cheap), decode per-point (GPU)
+    op_log.update_progress(90, "semantics: lifting compressed features")
+    t = time.perf_counter()
+    with torch.no_grad():
+        compressed_maps = [ae.encode(fm.to(device)).detach().cpu() for fm in feature_maps]
+    compressed_pts = lift_features(compressed_maps, result)  # (P, latent) — fast
+    with torch.no_grad():
+        decoded = ae.per_point_decode(compressed_pts.to(device))  # (P, D)
+        normed = torch.nn.functional.normalize(decoded, dim=1)
+    op_log.update_progress(94, "semantics: caching lifted features")
+    np.save(Path(semantics_dir) / "lifted_normed.npy", normed.detach().cpu().numpy())
+    ae.save(Path(semantics_dir))
+    op_log.append_line(f"semantics: lift + decode + cache in {time.perf_counter() - t:.1f}s")
+
+
 def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
     """Sample frames per the configured method; return (frames, indices)."""
     info = get_video_info(str(video_path))
 
+    # Live label shows images processed / total; log=False so per-frame pings don't flood the log.
+    # Throttle to ~100 writes total (every 1% of frames) — the UI polls at 300ms regardless.
     def on_progress(done: int, total: int) -> None:
-        op_log.update_progress(int(5 + 15 * done / max(total, 1)), "sampling frames")
+        step = max(1, total // 100)
+        if done % step and done != total:
+            return
+        op_log.update_progress(
+            int(5 + 15 * done / max(total, 1)),
+            f"sampling: frame {done}/{total}",
+            log=False,
+        )
 
+    op_log.update_progress(5, f"sampling: {config.sampling_method}")
     if config.sampling_method == "optical_flow":
         frames, _ = sample_frames_optical_flow(
             str(video_path),
@@ -152,17 +217,31 @@ def run_pipeline(
             config.frame_indices = list(indices)
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 
-            # Run feedforward pointcloud reconstruction
-            op_log.update_progress(25, f"pointcloud: {config.env_model}")
-            t = time.perf_counter()
+            # Feedforward pointcloud reconstruction. Decompose run() into its 4 substeps so each
+            # shows in the dashboard (run() = load→preprocess→infer→postprocess, no COLMAP — the
+            # build_colmap export nothing here consumes; this keeps the cloud identical to the notebook).
             creator = _build_creator(config.env_model, config.conf_threshold)
-            creator.reconstruct(image_dir, out_dir)
+            t = time.perf_counter()
+            op_log.update_progress(25, f"pointcloud: loading model ({config.env_model})")
+            creator.load_model()
+            op_log.append_line(f"pointcloud: model loaded in {time.perf_counter() - t:.1f}s")
+            t = time.perf_counter()
+            op_log.update_progress(32, "pointcloud: preprocessing images")
+            creator.setup_inference(image_dir)
+            op_log.append_line(f"pointcloud: preprocessed in {time.perf_counter() - t:.1f}s")
+            t = time.perf_counter()
+            op_log.update_progress(42, "pointcloud: running inference")
+            creator.run_inference()
+            op_log.append_line(f"pointcloud: inference in {time.perf_counter() - t:.1f}s")
+            t = time.perf_counter()
+            op_log.update_progress(52, "pointcloud: postprocessing")
+            creator.postprocess()
             result = creator.outputs
+            op_log.append_line(f"pointcloud: postprocessed ({len(result.points):,} pts) in {time.perf_counter() - t:.1f}s")
             result.save_zarr(out_dir / "feedforward.zarr")
-            op_log.append_line(f"pointcloud ({config.env_model}): {time.perf_counter() - t:.1f}s")
 
             # Mesh from TSDF depth fusion
-            op_log.update_progress(60, "mesh (TSDF)")
+            op_log.update_progress(60, "mesh: tsdf fusion")
             t = time.perf_counter()
             pointcloud_to_mesh(
                 result,
@@ -173,13 +252,17 @@ def run_pipeline(
                 depth_trunc=config.mesh_depth_trunc,
                 clean_repair=config.mesh_clean_repair,
             )
-            op_log.append_line(f"mesh (TSDF): {time.perf_counter() - t:.1f}s")
+            op_log.append_line(f"mesh: tsdf in {time.perf_counter() - t:.1f}s")
 
             # Extract and cache semantic patch features
-            op_log.update_progress(80, f"semantics: {config.semantic_extractor}")
+            op_log.update_progress(72, f"semantics: extracting features ({config.semantic_extractor})")
             t = time.perf_counter()
             _extract_semantics(config.semantic_extractor, image_dir, out_dir / "semantics")
-            op_log.append_line(f"semantics ({config.semantic_extractor}): {time.perf_counter() - t:.1f}s")
+            op_log.append_line(f"semantics: extracted in {time.perf_counter() - t:.1f}s")
+
+            # Lift features to points + train compression autoencoder eagerly (instant queries later);
+            # _lift_and_compress emits its own 'semantics: ...' substep labels.
+            _lift_and_compress(result, out_dir / "semantics", op_log)
 
             # Persist provenance: frame indices + video ref baked into run_config.yaml
             config.to_yaml(

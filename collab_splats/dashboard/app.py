@@ -138,12 +138,33 @@ class SplatsApp(param.Parameterized):
     # ---- data wiring ---------------------------------------------------
 
     def _refresh_sessions(self) -> None:
-        """Populate session dropdown from source."""
-        try:
-            self.session_select.options = self._source.list_sessions()
-        except Exception as exc:
-            logger.warning("session listing failed: %s", exc)
-            self.session_select.options = []
+        """List sessions on a background thread; set options back on the IOLoop.
+
+        rclone listing is a blocking network call; running it inline would stall the
+        IOLoop during document init (the same class of freeze as the heavy imports).
+        """
+        doc = pn.state.curdoc
+
+        def work():
+            try:
+                names = self._source.list_sessions()
+            except Exception as exc:
+                logger.warning("session listing failed: %s", exc)
+                names = []
+            self._apply_sessions(names, doc)
+
+        self._session_thread = threading.Thread(target=work, name="session-list", daemon=True)
+        self._session_thread.start()
+
+    def _apply_sessions(self, names: list[str], doc) -> None:
+        """Set the session dropdown options on the IOLoop (or inline if no doc)."""
+        def setter():
+            self.session_select.options = names
+
+        if doc is not None:
+            doc.add_next_tick_callback(setter)
+        else:
+            setter()
 
     def _on_session(self, event) -> None:
         """Populate video dropdown when session changes."""

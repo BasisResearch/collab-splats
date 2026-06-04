@@ -20,7 +20,9 @@ def _app(tmp_path):
     source.list_videos.return_value = ["clip_03.mp4"]
     source.has_processed.return_value = False
     with patch("collab_splats.dashboard.app.SplitViewer"):
-        return SplatsApp(base_dir=tmp_path, source=source, gpu_worker=_RecordingWorker()), source
+        app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=_RecordingWorker())
+    app._session_thread.join(timeout=5)  # deterministic options for tests
+    return app, source
 
 
 def test_app_populates_sessions(tmp_path):
@@ -124,6 +126,15 @@ def test_app_uses_injected_gpu_worker(tmp_path):
     with patch("collab_splats.dashboard.app.SplitViewer"):
         app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=worker)
     assert app._gpu is worker
+
+
+def test_refresh_sessions_runs_off_loop(tmp_path):
+    source = MagicMock()
+    source.list_sessions.return_value = ["a", "b"]
+    with patch("collab_splats.dashboard.app.SplitViewer"), \
+         patch("collab_splats.dashboard.app.threading.Thread") as thread:
+        SplatsApp(base_dir=tmp_path, source=source, gpu_worker=_RecordingWorker())
+    thread.assert_called()  # listing dispatched to a background thread, not inline on the loop
 
 
 def _recording_app(tmp_path):

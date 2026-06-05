@@ -47,11 +47,9 @@ uv sync --extra dev              # + lint / test tooling
 uv sync --all-extras             # everything (what setup.sh does)
 ```
 
-Use `setup.sh`, not a bare `uv sync` or `uv pip install ... @ git+...`, whenever the CUDA
-extensions are involved: they build from source with `--no-build-isolation` and need
-`nvcc` + `build-essential`, which `setup.sh` wires up (`CUDA_HOME`/`PATH` from system
-`/usr/local/cuda`, else the `[gpu]` extra's `cuda-toolkit` wheels). `uv pip install` also
-ignores this project's `[tool.uv]` config, so it picks wrong package sources and fails.
+> **Prefer `setup.sh` over a bare `uv sync` — and never `uv pip install ... @ git+...`.** Why:
+> - The CUDA extensions (`bae`, `gsplat-rade`) build from source and need `nvcc` + `build-essential`. `setup.sh` wires `CUDA_HOME`/`PATH` (system `/usr/local/cuda`, else the `[gpu]` extra's `cuda-toolkit` wheels).
+> - `uv pip install` ignores this project's `[tool.uv]` config, so it resolves wrong package sources and fails.
 
 ### 3. Private dependency (collab-data)
 

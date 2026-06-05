@@ -71,16 +71,14 @@ fails in four ways: (1) `torch==2.5.1+cu121` is unresolvable without the explici
 uv pip install "git+https://github.com/BasisResearch/collab-data.git"
 ```
 
-**Data access (rclone remote).** The dashboard pulls/pushes scenes through an rclone
-remote named `collab-data` (GCS). Configure it once via collab-data's own setup script —
-don't hand-edit the rclone config:
+**Data access (rclone remote).** The dashboard reads and writes scenes through an rclone
+remote named `collab-data` (Google Cloud Storage). Set it up once:
 
-1. Install prerequisites: `rclone` (https://rclone.org/install/) and `jq`, both on PATH.
-2. Obtain a GCS **service-account JSON key** for the collab-data project and place it at
-   `collab-data/config-local/collab-data.json` (gitignored; `config-local` → `../api-keys/`).
-3. From the collab-data repo, run `./scripts/setup_local_rclone.sh` (or pass a key path).
-   It creates/updates the `collab-data` remote in `~/.config/rclone/rclone.conf` and
-   verifies access with `rclone lsd collab-data:` — the same config the dashboard reads.
+1. Install `rclone` (https://rclone.org/install/) and `jq`.
+2. Get a GCS service-account key for the collab-data project. Save it to
+   `collab-data/config-local/collab-data.json`.
+3. In the collab-data repo, run `./scripts/setup_local_rclone.sh`. It writes the remote to
+   `~/.config/rclone/rclone.conf` and checks access with `rclone lsd collab-data:`.
 
 ### 4. System requirements
 
@@ -106,21 +104,20 @@ Tutorials in `docs/source/tutorials/`, numbered by pipeline stage:
 
 ## Dashboard
 
-Interactive video/scene browser: reconstruct, mesh, lift features, and query the
-pointcloud or mesh by text. Requires the dashboard extra (`uv sync --extra dashboard`).
+Browse scenes, reconstruct, mesh, lift features, and query the pointcloud or mesh by text.
+Needs the dashboard extra (`uv sync --extra dashboard`).
 
 ```bash
-/opt/venv/reconstruction/bin/python -m collab_splats.dashboard --port 7860
+/opt/venv/reconstruction/bin/python -m collab_splats.dashboard
 ```
 
-`--host` defaults to `0.0.0.0` and `--base-dir` to `/workspace/outputs`, so only `--port`
-is usually needed (it too defaults to `7860`). Open `http://localhost:7860`. The server has
-no autoreload — restart the process to pick up code changes.
+Then open `http://localhost:7860`. Override defaults with `--port`, `--host`, or
+`--base-dir` (defaults: `7860`, `0.0.0.0`, `/workspace/outputs`). Restart the process to
+pick up code changes — there is no autoreload.
 
-Switch the left pane between `pointcloud` and `mesh` with the view toggle; type a query to
-recolour the right pane with the similarity heatmap. Mesh queries reuse the same features
-as the pointcloud — vertex features are transferred on the first mesh query if not already
-cached.
+Use the view toggle to switch the left pane between `pointcloud` and `mesh`. Type a query
+to colour the right pane by similarity. Pointcloud and mesh share the same features, so
+both panes answer the same query.
 
 ## Evaluation
 

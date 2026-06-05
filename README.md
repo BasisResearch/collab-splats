@@ -24,15 +24,19 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
 
 ### 2. Install the package
 
-One command does the full install — creates the venv, syncs all dependencies (including the VGGT-X + MapAnything feedforward stack), wires the CUDA build environment, and compiles the source extensions (`bae`, `gsplat-rade`):
+Clone and run `setup.sh`. It creates the venv at `/opt/venv/reconstruction`, syncs all
+dependencies (incl. the VGGT-X + MapAnything feedforward stack), and compiles the CUDA
+extensions (`bae`, `gsplat-rade`):
 
 ```sh
+git clone https://github.com/BasisResearch/collab-splats.git
+cd collab-splats
 bash setup.sh
 ```
 
-`setup.sh` is the single source of truth — it runs at Docker build time and standalone, and is idempotent (`uv sync` installs only what's missing, skipping already-compiled extensions). Under the hood it runs `uv sync --all-extras` into `/opt/venv/reconstruction`.
-
-For a lighter, selective install, sync individual extras instead:
+`setup.sh` is idempotent (re-run anytime; it builds only what's missing) and is the same
+script used at Docker build. It runs `uv sync --all-extras`. For a lighter install, sync
+extras individually:
 
 ```sh
 uv sync                          # core deps only
@@ -43,25 +47,11 @@ uv sync --extra dev              # + lint / test tooling
 uv sync --all-extras             # everything (what setup.sh does)
 ```
 
-> **Note:** `bae` and `gsplat-rade` are CUDA extensions built from source with `--no-build-isolation`. They need a CUDA toolkit (`nvcc`) and `build-essential` on the build host — `setup.sh` handles the `CUDA_HOME` / `PATH` wiring (system `/usr/local/cuda` if present, else the pip `cuda-toolkit` wheels from the `[gpu]` extra). Prefer `bash setup.sh` over a bare `uv sync` whenever the compiled extensions are involved.
-
-Install from GitHub by cloning and running the project install:
-
-```sh
-git clone https://github.com/BasisResearch/collab-splats.git
-cd collab-splats
-bash setup.sh
-```
-
-Unlike a pure-Python package, collab-splats has **no single-line install** of the form
-`uv pip install "collab-splats[all] @ git+https://github.com/..."`. That command runs uv in
-pip-compatibility mode, which ignores the `[tool.uv]` configuration this project depends on, so it
-fails in four ways: (1) `torch==2.5.1+cu121` is unresolvable without the explicit
-`[[tool.uv.index]]` PyTorch CUDA index; (2) git-sourced deps with PyPI name collisions (`gsplat`,
-`nerfstudio`, `bae`, `clip`, `vggt`) resolve to the wrong upstream packages because
-`[tool.uv.sources]` is skipped; (3) `bae` / `gsplat-rade` need per-package `no-build-isolation`;
-(4) the CUDA build environment is unset. `uv sync` (via `setup.sh`) reads the lockfile and all of
-`[tool.uv]`, so the clone-and-sync path is the supported, reproducible install.
+Use `setup.sh`, not a bare `uv sync` or `uv pip install ... @ git+...`, whenever the CUDA
+extensions are involved: they build from source with `--no-build-isolation` and need
+`nvcc` + `build-essential`, which `setup.sh` wires up (`CUDA_HOME`/`PATH` from system
+`/usr/local/cuda`, else the `[gpu]` extra's `cuda-toolkit` wheels). `uv pip install` also
+ignores this project's `[tool.uv]` config, so it picks wrong package sources and fails.
 
 ### 3. Private dependency (collab-data)
 
@@ -71,14 +61,23 @@ fails in four ways: (1) `torch==2.5.1+cu121` is unresolvable without the explici
 uv pip install "git+https://github.com/BasisResearch/collab-data.git"
 ```
 
-**Data access (rclone remote).** The dashboard reads and writes scenes through an rclone
-remote named `collab-data` (Google Cloud Storage). Set it up once:
+**Data access (rclone remote).** The dashboard reads and writes scenes over an rclone
+remote named `collab-data` (Google Cloud Storage). Set it up once.
 
-1. Install `rclone` (https://rclone.org/install/) and `jq`.
-2. Get a GCS service-account key for the collab-data project. Save it to
-   `collab-data/config-local/collab-data.json`.
-3. In the collab-data repo, run `./scripts/setup_local_rclone.sh`. It writes the remote to
-   `~/.config/rclone/rclone.conf` and checks access with `rclone lsd collab-data:`.
+Install `rclone` and `jq`:
+
+```sh
+brew install rclone jq                 # macOS
+sudo apt install rclone jq             # Debian / Ubuntu
+```
+
+Save a GCS service-account key for the collab-data project to
+`collab-data/config-local/collab-data.json`, then run the setup script from the collab-data
+repo. It configures the `collab-data` remote and verifies access:
+
+```sh
+./scripts/setup_local_rclone.sh
+```
 
 ### 4. System requirements
 

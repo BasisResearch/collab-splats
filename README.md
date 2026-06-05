@@ -93,6 +93,24 @@ Tutorials in `docs/source/tutorials/`, numbered by pipeline stage:
 | 06 · Mesh | Surface reconstruction |
 | 07 · Localization | Camera localization |
 
+## Dashboard
+
+Interactive video/scene browser: reconstruct, mesh, lift features, and query the
+pointcloud or mesh by text. Requires the dashboard extra (`uv sync --extra dashboard`).
+
+```bash
+/opt/venv/reconstruction/bin/python -m collab_splats.dashboard --port 7860
+```
+
+`--host` defaults to `0.0.0.0` and `--base-dir` to `/workspace/outputs`, so only `--port`
+is usually needed (it too defaults to `7860`). Open `http://localhost:7860`. The server has
+no autoreload — restart the process to pick up code changes.
+
+Switch the left pane between `pointcloud` and `mesh` with the view toggle; type a query to
+recolour the right pane with the similarity heatmap. Mesh queries reuse the same features
+as the pointcloud — vertex features are transferred on the first mesh query if not already
+cached.
+
 ## Evaluation
 
 ```bash

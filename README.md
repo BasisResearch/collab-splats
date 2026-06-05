@@ -71,6 +71,17 @@ fails in four ways: (1) `torch==2.5.1+cu121` is unresolvable without the explici
 uv pip install "git+https://github.com/BasisResearch/collab-data.git"
 ```
 
+**Data access (rclone remote).** The dashboard pulls/pushes scenes through an rclone
+remote named `collab-data` (GCS). Configure it once via collab-data's own setup script —
+don't hand-edit the rclone config:
+
+1. Install prerequisites: `rclone` (https://rclone.org/install/) and `jq`, both on PATH.
+2. Obtain a GCS **service-account JSON key** for the collab-data project and place it at
+   `collab-data/config-local/collab-data.json` (gitignored; `config-local` → `../api-keys/`).
+3. From the collab-data repo, run `./scripts/setup_local_rclone.sh` (or pass a key path).
+   It creates/updates the `collab-data` remote in `~/.config/rclone/rclone.conf` and
+   verifies access with `rclone lsd collab-data:` — the same config the dashboard reads.
+
 ### 4. System requirements
 
 - **NVIDIA driver + GPU** at runtime (model warmup loads CUDA kernels at import).

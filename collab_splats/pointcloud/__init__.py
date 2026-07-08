@@ -22,6 +22,8 @@ from .localization import (
     CameraLocalizer,
     DiskExtractor,
     LocalFeatures,
+    LomaExtractor,
+    LomaGExtractor,
     PECLIPExtractor,
     XFeatExtractor,
 )
@@ -86,6 +88,8 @@ __all__ = [
     "PECLIPExtractor",
     "LoopClosure",
     "LoopClosureConfig",
+    "LomaExtractor",
+    "LomaGExtractor",
     "MapAnythingCreator",
     "PointcloudResult",
     "VGGTXCreator",

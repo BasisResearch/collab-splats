@@ -29,8 +29,12 @@ import torch
 import zarr
 from zarr.codecs import BloscCodec
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.transforms as T
 from kornia.feature import DISK, LightGlue
+from loma import LoMa, LoMaB, LoMaG
+from loma.device import device as loma_device
+from loma.loma import filter_matches
 from matplotlib import pyplot as plt
 
 # XFeat cloned at third_party/xfeat/ — no pip package available.
@@ -442,6 +446,124 @@ class XFeatExtractor(BaseLocalExtractor):
         if len(idx) == 0:
             return torch.zeros((0, 2), dtype=torch.long)
         return torch.from_numpy(idx).long()
+
+
+@BaseLocalExtractor.register("loma")
+class LomaExtractor(BaseLocalExtractor):
+    """LoMa-B local feature extractor and matcher (ECCV 2026).
+
+    DaD keypoint detector + DeDoDe-G (DINOv2 ViT-L) descriptors + LoMa
+    transformer matcher, from the `lomatch` package. Detection and description
+    run once per image at a fixed 784x784 inference resolution; keypoints are
+    stored in original-image pixel coordinates so the zarr feature cache and
+    the 2D->3D assignment stage work unchanged.
+
+    Weights: auto-downloaded to torch hub cache on first use (~723 MB for
+    LoMa-B, plus the DaD detector).
+    """
+
+    _cfg_factory = LoMaB
+    _inference_hw = 784  # 14 * 56 — divisible by the DINOv2 patch size
+
+    def __init__(self, top_k: int = 2048, filter_threshold: float = 0.1):
+        # LoMa pins all modules and inputs to the module-level loma.device
+        # global (cuda > cpu, chosen at import) — adopt it rather than fight it.
+        self._device = loma_device
+        self._top_k = top_k
+        self._filter_threshold = filter_threshold
+
+        # Load matcher + frozen detector/descriptor; downloads weights on first use
+        self._loma = LoMa(self._cfg_factory()).eval()
+
+        logger.debug("%s: loaded on %s", type(self).__name__, self._device)
+
+    def extract(self, image: np.ndarray) -> LocalFeatures:
+        """Extract DaD keypoints and DeDoDe descriptors.
+
+        Args:
+            image: HxWx3 uint8 RGB image.
+
+        Returns:
+            LocalFeatures with keypoints (N,2) in original pixel coords,
+            descriptors (N,256), scores (N,).
+        """
+        H, W = image.shape[:2]
+
+        # HxWx3 uint8 -> (1,3,784,784) float [0,1]; LoMa normalizes internally.
+        # Square resize is safe: keypoints come back normalized [-1,1], which is
+        # resolution-invariant, and are denormalized against the ORIGINAL (W,H).
+        img_t = (
+            torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+        )
+        img_t = F.interpolate(
+            img_t, size=(self._inference_hw, self._inference_hw),
+            mode="bilinear", align_corners=False,
+        ).to(self._device)
+
+        # Detect (normalized [-1,1] xy) then describe at those keypoints.
+        # _descriptor is private, but it is the only per-image describe path
+        # lomatch exposes (public match() is pair-composed) — re-check this on
+        # any lomatch upgrade.
+        with torch.inference_mode():
+            det = self._loma.detect(img_t, num_keypoints=self._top_k)
+            kpts_n = det["keypoints"]            # (1, N, 2) normalized xy
+            probs = det["keypoint_probs"]        # (1, N)
+            descs = self._loma._descriptor.describe_keypoints(img_t, kpts_n)[
+                "descriptions"
+            ]                                    # (1, N, 256)
+
+        # Denormalize to original pixel coords: x_px = W * (x + 1) / 2
+        wh = torch.tensor([W, H], dtype=torch.float32)
+        kpts_px = (kpts_n[0].cpu().float() + 1.0) * wh / 2.0
+
+        return LocalFeatures(
+            keypoints=kpts_px,
+            descriptors=descs[0].cpu().float(),
+            scores=probs[0].cpu().float(),
+        )
+
+    def match(
+        self,
+        query: LocalFeatures,
+        db: LocalFeatures,
+        image_hw: tuple[int, int],
+    ) -> torch.Tensor:
+        """Match query features against database features with the LoMa matcher.
+
+        Args:
+            query:    LocalFeatures from the query image.
+            db:       LocalFeatures from the database image.
+            image_hw: (H, W) — used to re-normalize pixel coords to [-1, 1].
+
+        Returns:
+            matches: (K, 2) int64 — [query_idx, db_idx] pairs.
+        """
+        # Pixel -> normalized [-1,1] (inverse of loma.loma.to_pixel_coords)
+        wh = torch.tensor([image_hw[1], image_hw[0]], dtype=torch.float32)
+        k0 = (2.0 * query.keypoints / wh - 1.0).unsqueeze(0).to(self._device)
+        k1 = (2.0 * db.keypoints / wh - 1.0).unsqueeze(0).to(self._device)
+        d0 = query.descriptors.unsqueeze(0).to(self._device)
+        d1 = db.descriptors.unsqueeze(0).to(self._device)
+
+        # Matcher forward autocasts internally (cfg.mp); returns assignment scores
+        with torch.inference_mode():
+            scores = self._loma(k0, k1, d0, d1)["scores"]
+        m0, _, _, _ = filter_matches(scores, self._filter_threshold)
+
+        # m0[i] = index in db for query kpt i, or -1 if unmatched
+        m0 = m0[0].cpu()
+        valid = m0 > -1
+        idx_q = torch.where(valid)[0]
+        if len(idx_q) == 0:
+            return torch.zeros((0, 2), dtype=torch.long)
+        return torch.stack([idx_q, m0[valid]], dim=1).long()
+
+
+@BaseLocalExtractor.register("loma-g")
+class LomaGExtractor(LomaExtractor):
+    """LoMa-G variant: larger matcher (embed_dim=1024), best accuracy, ~1.4 GB weights."""
+
+    _cfg_factory = LoMaG
 
 
 ########################################################

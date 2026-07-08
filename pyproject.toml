@@ -59,6 +59,9 @@ dependencies = [
     "scikit-learn",
     "roma",
     "kornia",
+    # LoMa sparse matcher (ECCV 2026) — localization extractor alternative to DISK/XFeat.
+    # Declares torchvision>=0.23; neutralized by the torchvision override below.
+    "lomatch>=1.0.0",
     "open-clip-torch",
     "mobile_sam",
     # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
@@ -229,6 +232,8 @@ override-dependencies = [
     "torch==2.5.1+cu121",
     "torchvision==0.20.1+cu121",
     "numpy>=2,<2.2",
+    # lomatch declares the py3.6 `dataclasses` backport unconditionally; never install it.
+    "dataclasses>=0.8; python_version < '3.7'",
 ]
 # bae + gsplat-rade import torch at build time → must build without isolation.
 no-build-isolation-package = ["bae", "gsplat"]

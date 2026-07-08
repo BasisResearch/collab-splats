@@ -87,12 +87,10 @@ class LomaExtractor(BaseLocalExtractor):
     def match(self, query, db, image_hw) -> Tensor: ...  # (K,2) int64 index pairs
 ```
 
-- Registered names select the variant via a constructor arg; same class, config-only
-  difference.
-- Note: `CameraLocalizer.from_feedforward` reverse-looks-up class → registry name for
-  zarr cache keying; with two names mapping to one class this lookup is ambiguous.
-  The implementation must key the cache by variant (e.g. an instance-level name
-  attribute), not by class identity.
+- Each registry name maps to its own class: `LomaExtractor` (LoMa-B) and a thin
+  `LomaGExtractor(LomaExtractor)` subclass that only swaps the config factory.
+  Distinct classes keep `CameraLocalizer.from_feedforward`'s class → registry-name
+  reverse lookup (used for zarr cache keying) unambiguous.
 - `extract` runs DaD detection + descriptor sampling; returns `LocalFeatures` so the
   existing zarr cache path works unchanged (cache already keyed by extractor name).
 - `match` runs the LoMa matcher on two cached descriptor sets and converts its output

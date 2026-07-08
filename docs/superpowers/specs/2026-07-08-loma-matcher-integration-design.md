@@ -68,12 +68,12 @@ implementation.
 
 ### Dependency
 
-- Add `lomatch>=1.0.0` to `[project.optional-dependencies]` under a new `loma` extra
-  in `pyproject.toml`; `setup.sh` installs it.
+- Add `lomatch>=1.0.0` to the **required base dependencies** in `pyproject.toml` —
+  localization is a core pipeline stage, not an optional feature.
 - Add `[tool.uv] override-dependencies` entry relaxing lomatch's `torchvision>=0.23.0`
   floor to our installed 0.20.1.
-- Lazy import inside `LomaExtractor.__init__` with a clear `ImportError` message
-  (per code-style exception for optional heavy deps).
+- Hard import at the top of `localization.py`, matching the module's existing imports
+  (per code style: hard imports, no stub backends).
 
 ### Adapter
 
@@ -99,10 +99,13 @@ class LomaExtractor(BaseLocalExtractor):
   to `(K,2)` index pairs.
 - Exports added to `collab_splats/pointcloud/__init__.py`.
 
-### Webapp wiring
+### Documentation demo
 
-- `webapp/routers/localize.py`: extractor picker gains loma branches.
-- `webapp/state.py`: add loma option strings.
+- Extend the existing localization tutorial notebook
+  (`docs/source/tutorials/.../localization.ipynb`) with a LoMa section: swap the
+  extractor to `"loma"` / `"loma-g"`, localize the same query frame, and show a
+  side-by-side comparison against the DISK+LightGlue baseline (match visualization,
+  inlier count, pose error).
 
 ### Verification gates (in order)
 
@@ -126,6 +129,8 @@ class LomaExtractor(BaseLocalExtractor):
 ## Out of scope
 
 - RoMaV2 integration (deferred, see above).
+- Webapp wiring (`webapp/routers/localize.py`, `webapp/state.py`) — webapp is
+  currently minimal for reconstruction; add loma picker options later if needed.
 - Loop-closure wiring — loop closure gates on DINO-SALAD global retrieval + VGGT
   confidence; it does not use local matchers.
 - Any retraining or fine-tuning.

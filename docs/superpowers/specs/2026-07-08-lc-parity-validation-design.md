@@ -31,6 +31,8 @@ Run vendored VGGT-SLAM via `evals/runners/run_vggt_slam_lc.py` (exists) with pap
 - **7-Scenes** (seq-01 each): chess, fire, heads, office, pumpkin, redkitchen, stairs — loader `_load_7scenes` exists; only chess downloaded.
 - **TUM RGB-D**: fr1/desk, fr1/room, fr2/xyz, fr3/long_office_household — loader `_load_tum` exists; upstream ships `evals/eval_tum.sh` as config reference.
 
+**Full sequences, no frame cap.** Every scene runs over all frames, with keyframes selected by upstream's optical-flow disparity tracker (`frame_overlap.py`, `min_disparity=50`) — i.e. the natural upstream configuration, not the truncated framesets (26/200/384 frames) used in prior benchmarks. This is the scale-stress condition: loop count and submap count grow with sequence length, and LC must not degrade as they do.
+
 Per scene, persist: TUM trajectory file, ATE (Sim3-aligned RMSE), **closed-loop count** (`solver.graph.get_num_loops()`), **keyframe list**, and a **3D trajectory plot vs ground truth**. Output under `evals/baselines/lc_parity/<scene>/slam/`.
 
 ### Level 1 — End-to-end parity (ours, spark backbone)
@@ -47,6 +49,16 @@ Per scene, compare against Level 0:
 | Trajectory overlay (ours + SLAM + GT, 3D) | visual artifact per scene |
 
 Baseline condition must pass everywhere (already passes on chess). LC-on is expected to **fail** pre-fix — the harness quantifies the failure; that is its purpose.
+
+**Scaling condition (frame-count stress).** Because ours consumes the Level-0 keyframe list, optical-flow differences between subsequent frames are already accounted for — both pipelines see identical frames at every length. On the two longest sequences per dataset (7-Scenes: office, redkitchen; TUM: fr1/room, fr3/long_office_household), additionally run both pipelines at progressive keyframe prefixes — 25%, 50%, 100% of the full keyframe list — and record ATE, loop count, and submap count at each point. Gates:
+
+| Metric | Gate |
+|---|---|
+| ATE vs frame count (LC on) | bounded — no blow-up as loops accumulate; ATE(100%) ≤ ~1.5× ATE(25%) after Sim3 alignment, and never exceeds the baseline-condition ATE by more than the Level-1 gate |
+| ATE delta vs SLAM at each prefix | same ≤ 5% / 5 mm gate |
+| Loop count at each prefix | equal to SLAM at same prefix |
+
+This directly tests the user-facing failure mode: LC quality must hold as more and more frames (and therefore more loop closures) are added, not just on short clips.
 
 ### Level 2 — Stage-trace on divergent scenes
 
@@ -76,7 +88,7 @@ First stage whose artifacts diverge = pinned failure. Expected pre-fix result: r
 ## Testing
 
 - Unit: keyframe-list round-trip (SLAM run → file → our pipeline consumes identical list); gate-decision logging; loop-edge composition helper (upstream chain composition) against a hand-built 2-submap fixture.
-- Integration: chess/seq-01 end-to-end through Levels 0–2 (data already local) before scaling to the full matrix.
+- Integration: chess/seq-01 end-to-end through Levels 0–2 (data already local) before scaling to the full matrix; the chess run also exercises the prefix mechanism (25/50/100%) once before the long-sequence sweeps.
 
 ## Non-goals
 

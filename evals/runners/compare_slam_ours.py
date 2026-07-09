@@ -42,7 +42,7 @@ from collab_splats.pointcloud.loop_closure.graph import (
 from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 from collab_splats.pointcloud.feedforward.base import _raw_to_world_points
 from collab_splats.pointcloud.loop_closure.submap import assert_world_to_cam
-from collab_splats.pointcloud.localization import BaseRetrievalExtractor
+from collab_splats.localization import BaseRetrievalExtractor
 
 # Load keyframes
 keyframes = [l.strip() for l in KF_FILE.read_text().splitlines() if l.strip()]

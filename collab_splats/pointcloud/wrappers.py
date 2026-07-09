@@ -14,9 +14,10 @@ from tqdm.auto import tqdm
 
 from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 
+from collab_splats.localization import BaseRetrievalExtractor
+
 from .base import PointcloudResult
 from .feedforward import FeedforwardResult, _raw_to_world_points
-from .localization import BaseRetrievalExtractor
 from .loop_closure import LoopClosureConfig, Submap
 from .loop_closure.closure import (
     find_loop_closures,

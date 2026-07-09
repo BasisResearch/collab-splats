@@ -17,16 +17,6 @@ except ImportError:
 from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 from .loop_closure import LoopClosureConfig
 from .wrappers import LoopClosure
-from .localization import (
-    BaseRetrievalExtractor,
-    CameraLocalizer,
-    DiskExtractor,
-    LocalFeatures,
-    LomaExtractor,
-    LomaGExtractor,
-    PECLIPExtractor,
-    XFeatExtractor,
-)
 from .utils import compute_obb_from_points, get_points_in_mask
 
 _REGISTRY: dict[str, type[BasePointcloudCreator]] = {
@@ -76,24 +66,17 @@ def make_creator(
 
 __all__ = [
     "BasePointcloudCreator",
-    "BaseRetrievalExtractor",
     "BaseFeedforwardCreator",
     "BundleAdjustment",
     "BundleAdjustmentConfig",
-    "CameraLocalizer",
     "CoordinateFrame",
     "ColmapCreator",
-    "DiskExtractor",
     "HlocCreator",
-    "PECLIPExtractor",
     "LoopClosure",
     "LoopClosureConfig",
-    "LomaExtractor",
-    "LomaGExtractor",
     "MapAnythingCreator",
     "PointcloudResult",
     "VGGTXCreator",
-    "XFeatExtractor",
     "compute_obb_from_points",
     "get_points_in_mask",
     "get_creator",

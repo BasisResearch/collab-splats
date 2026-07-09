@@ -50,7 +50,7 @@ def test_lc_state_attrs_set_after_run_inference():
     base.image_paths = [None] * 40
 
     # Patch retrieval extractor and pose graph optimization
-    with patch("collab_splats.pointcloud.localization.BaseRetrievalExtractor.get") as mock_get, \
+    with patch("collab_splats.localization.retrieval.BaseRetrievalExtractor.get") as mock_get, \
          patch("collab_splats.pointcloud.loop_closure.closure.find_loop_closures", return_value=[]), \
          patch("collab_splats.pointcloud.loop_closure.closure.run_pose_graph_optimization") as mock_pg, \
          patch("collab_splats.pointcloud.loop_closure.closure.merge_submap_outputs") as mock_merge:

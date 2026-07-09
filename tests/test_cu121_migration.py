@@ -107,7 +107,7 @@ def test_import_all_modules():
         "collab_splats.pointcloud.feedforward.base",
         "collab_splats.pointcloud.feedforward.vggtx",
         "collab_splats.pointcloud.feedforward.mapanything",
-        "collab_splats.pointcloud.localization",
+        "collab_splats.localization",
         "collab_splats.pointcloud.sfm",
         "collab_splats.pointcloud.utils",
         "collab_splats.pointcloud.wrappers",

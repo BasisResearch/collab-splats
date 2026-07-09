@@ -47,8 +47,12 @@ collab_splats/
     bundle_adjustment.py   # Levenberg-Marquardt BA
     wrappers.py            # BundleAdjustment + LoopClosure wrappers (proxy outputs/raw_outputs to base)
     loop_closure/          # pose graph + Sim3 alignment
-    localization.py        # BaseRetrievalExtractor, DinoSaladExtractor (localization stage 1)
     utils.py               # lift_features, reproject_pixels, colmap_reconstruction_to_result
+  localization/            # camera localization: query image → pose in known reconstruction
+    retrieval.py           # Stage 1: BaseRetrievalExtractor, DinoSalad/PECLIP (also used by loop closure)
+    extractors.py          # Stage 2: BaseLocalExtractor, Disk/XFeat/Loma/LomaG local matchers
+    localizer.py           # Stage 3: CameraLocalizer, zarr feature cache
+    viz.py                 # plot_correspondences
   semantics/               # 2D feature extraction
     features.py            # BaseFeatureExtractor + RegistryMixin; registered DINOv2/SAM extractors
     frame_sampling.py      # re-exported here; canonical at utils/frame_sampling.py

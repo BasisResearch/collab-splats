@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.pointcloud.localization import (
+from collab_splats.localization import (
     BaseLocalExtractor,
     LocalFeatures,
     LomaExtractor,
@@ -55,7 +55,7 @@ def test_loma_match_returns_index_pairs(loma_extractor):
         assert diag > 0
 
 
-def test_loma_exported_from_pointcloud_package():
-    from collab_splats.pointcloud import LomaExtractor as le
-    from collab_splats.pointcloud import LomaGExtractor as lge
+def test_loma_exported_from_localization_package():
+    from collab_splats.localization import LomaExtractor as le
+    from collab_splats.localization import LomaGExtractor as lge
     assert le is LomaExtractor and lge is LomaGExtractor

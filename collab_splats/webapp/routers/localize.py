@@ -76,7 +76,7 @@ async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncItera
         try:
             import numpy as np  # noqa: PLC0415
             from PIL import Image as PILImage  # noqa: PLC0415
-            from collab_splats.pointcloud.localization import CameraLocalizer, XFeatExtractor, DiskExtractor  # noqa: PLC0415
+            from collab_splats.localization import CameraLocalizer, XFeatExtractor, DiskExtractor  # noqa: PLC0415
             from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
 
             zarr_path = output_dir / method / "feedforward.zarr"

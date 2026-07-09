@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-from collab_splats.pointcloud.localization import (
+from collab_splats.localization import (
     CameraLocalizer,
     LocalFeatures,
     LocalizationResult,

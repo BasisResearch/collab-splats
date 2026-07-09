@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.pointcloud.localization import (
+from collab_splats.localization import (
     BaseLocalExtractor,
     BaseRetrievalExtractor,
     DinoSaladExtractor,
@@ -15,10 +15,11 @@ from collab_splats.pointcloud.localization import (
 )
 
 
-def test_module_has_logger():
-    import collab_splats.pointcloud.localization as loc_mod
-    assert hasattr(loc_mod, "logger")
-    assert isinstance(loc_mod.logger, logging.Logger)
+def test_submodules_have_logger():
+    from collab_splats.localization import extractors, localizer, retrieval, viz
+    for mod in (extractors, localizer, retrieval, viz):
+        assert hasattr(mod, "logger")
+        assert isinstance(mod.logger, logging.Logger)
 
 
 def test_registry_get_dino_salad():
@@ -39,7 +40,7 @@ def test_base_local_extractor_registry():
 @pytest.mark.slow
 def test_disk_extractor_returns_keypoints_and_descriptors():
     """Requires network access to download DISK weights (~4 MB)."""
-    from collab_splats.pointcloud.localization import DiskExtractor
+    from collab_splats.localization import DiskExtractor
     extractor = DiskExtractor()
     image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(image)
@@ -53,7 +54,7 @@ def test_disk_extractor_returns_keypoints_and_descriptors():
 
 @pytest.mark.slow
 def test_disk_extractor_match_returns_index_pairs():
-    from collab_splats.pointcloud.localization import DiskExtractor
+    from collab_splats.localization import DiskExtractor
     extractor = DiskExtractor()
     img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(img)
@@ -65,7 +66,7 @@ def test_disk_extractor_match_returns_index_pairs():
 
 @pytest.mark.slow
 def test_xfeat_extractor_returns_keypoints_and_descriptors():
-    from collab_splats.pointcloud.localization import XFeatExtractor
+    from collab_splats.localization import XFeatExtractor
     extractor = XFeatExtractor()
     image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(image)
@@ -80,7 +81,7 @@ def test_xfeat_extractor_returns_keypoints_and_descriptors():
 
 @pytest.mark.slow
 def test_xfeat_extractor_match_returns_index_pairs():
-    from collab_splats.pointcloud.localization import XFeatExtractor
+    from collab_splats.localization import XFeatExtractor
     extractor = XFeatExtractor()
     img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(img)
@@ -90,7 +91,7 @@ def test_xfeat_extractor_match_returns_index_pairs():
 
 def test_build_frame_assignments_assigns_visible_points():
     """Identity camera: projected 3D points → keypoints at exact positions."""
-    from collab_splats.pointcloud.localization import _build_frame_assignments
+    from collab_splats.localization.localizer import _build_frame_assignments
 
     # Two points in front of identity camera at z=5
     pts3d = np.array([[0.0, 0.0, 5.0], [1.0, 0.0, 5.0]], dtype=np.float32)
@@ -110,7 +111,7 @@ def test_build_frame_assignments_assigns_visible_points():
 
 
 def test_build_frame_assignments_ignores_points_behind_camera():
-    from collab_splats.pointcloud.localization import _build_frame_assignments
+    from collab_splats.localization.localizer import _build_frame_assignments
 
     # One point in front, one behind
     pts3d = np.array([[0.0, 0.0, 5.0], [0.0, 0.0, -1.0]], dtype=np.float32)
@@ -128,7 +129,7 @@ def test_build_frame_assignments_ignores_points_behind_camera():
 
 
 def test_build_frame_assignments_respects_radius():
-    from collab_splats.pointcloud.localization import _build_frame_assignments
+    from collab_splats.localization.localizer import _build_frame_assignments
 
     pts3d = np.array([[0.0, 0.0, 5.0]], dtype=np.float32)  # projects to [320, 240]
     K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float32)
@@ -203,7 +204,7 @@ class _MockExtractor:
 
 def test_camera_localizer_from_feedforward_classmethod():
     """from_feedforward classmethod constructs CameraLocalizer correctly."""
-    from collab_splats.pointcloud.localization import CameraLocalizer
+    from collab_splats.localization import CameraLocalizer
     from unittest.mock import MagicMock
     import tempfile, pathlib
 
@@ -230,7 +231,7 @@ def test_camera_localizer_from_feedforward_classmethod():
 
 def test_camera_localizer_recovers_known_pose():
     """CameraLocalizer should recover the identity pose for a camera at extrinsics[0]."""
-    from collab_splats.pointcloud.localization import CameraLocalizer
+    from collab_splats.localization import CameraLocalizer
     import tempfile, pathlib
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()
@@ -263,7 +264,7 @@ def test_camera_localizer_recovers_known_pose():
 
 
 def test_localization_result_fields_on_success():
-    from collab_splats.pointcloud.localization import CameraLocalizer, LocalizationResult
+    from collab_splats.localization import CameraLocalizer, LocalizationResult
     import tempfile, pathlib
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()
@@ -295,7 +296,7 @@ def test_localization_result_fields_on_success():
 
 def test_camera_localizer_calls_progress_callback():
     """progress_callback(i, total) called once per reference frame, 0-indexed."""
-    from collab_splats.pointcloud.localization import CameraLocalizer
+    from collab_splats.localization import CameraLocalizer
     import tempfile, pathlib, cv2 as _cv2
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()

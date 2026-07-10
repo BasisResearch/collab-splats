@@ -35,9 +35,8 @@ Precedent: `localization/` was promoted to a top-level stage package
 ```
 collab_splats/preproc/
   __init__.py   # public API re-exports (~10 lines)
-  sampling.py   # ~440 lines: ffmpeg/ffprobe decode + video info, quality gate,
-                # OpticalFlowFrameSelector, sample_frames dispatcher,
-                # frame I/O, score I/O
+  sampling.py   # ~430 lines: ffmpeg/ffprobe decode + video info, quality gate,
+                # OpticalFlowFrameSelector, sample_frames dispatcher, frame I/O
   viz.py        # ~110 lines: plot_frame_grid, plot_selection,
                 # plot_frame_scores, plot_disparity_sensitivity
 ```
@@ -57,12 +56,14 @@ get_video_info(video_path)
 load_frames(video_path, frame_indices)     # was load_video_frames
 extract_frames(video_path, frame_indices, output_dir)  # was extract_video_frames
 compute_blur_score(gray)                   # Laplacian variance primitive
-save_frame_scores(scores, path) / load_frame_scores(path)
 ```
 
 Names simplified: `video_`/`all_` prefixes dropped — the module is already
-video-scoped. `score_frames` and score I/O survive because the
-`01_preprocessing/keyframe_extraction.ipynb` tutorial consumes them.
+video-scoped. `score_frames` survives because the
+`01_preprocessing/keyframe_extraction.ipynb` tutorial consumes it.
+`save_frame_scores`/`load_frame_scores` are deleted — 8-line wrappers around
+`json.dump`/`json.load` on a plain list of dicts; the tutorial notebook calls
+`json` directly.
 
 ### `sample_frames` dispatcher
 
@@ -230,7 +231,9 @@ Full downstream surface (verified by grep 2026-07-10):
   string list updated from `collab_splats.utils.frame_sampling` to
   `collab_splats.preproc.sampling`.
 - Tutorial notebook `docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb`
-  updated to new import path and `sample_frames` API.
+  updated to new import path and `sample_frames` API; its
+  `save_frame_scores`/`load_frame_scores` cells switch to direct
+  `json.dump`/`json.load`.
 
 ## Testing
 

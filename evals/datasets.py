@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from collab_splats.utils.frame_sampling import extract_video_frames, sample_frames_fps
+from collab_splats.preproc import extract_frames, sample_frames
 
 
 @dataclass
@@ -251,8 +251,9 @@ def _load_video(seq_dir: Path, max_frames: int = 500, fps: float = 1.0) -> EvalD
     frames_dir = seq_dir.parent / (seq_dir.stem + "_frames")
     frames_dir.mkdir(parents=True, exist_ok=True)
     # Sample keyframes then write to disk so EvalDataset receives file paths
-    frames, indices = sample_frames_fps(str(seq_dir), fps=fps)
-    images = extract_video_frames(str(seq_dir), indices[:max_frames], frames_dir)
+    _, records = sample_frames(str(seq_dir), method="uniform", fps=fps)
+    indices = [r["frame_idx"] for r in records]
+    images = extract_frames(str(seq_dir), indices[:max_frames], frames_dir)
     # GT poses not available for raw video; zeros placeholder
     return EvalDataset(images=images, gt_poses=np.zeros((len(images), 4, 4), dtype=np.float32))
 

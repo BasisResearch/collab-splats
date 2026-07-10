@@ -293,7 +293,7 @@ class Splatter:
         # If optical_flow frame selection is requested, pre-extract frames and redirect
         # ns-process-data to images mode using the sampled frame directory.
         if input_type == "video" and self.config.get("frame_selection") == "optical_flow":
-            from collab_splats.utils.frame_sampling import sample_frames_optical_flow
+            from collab_splats.preproc import sample_frames
 
             tmp_dir = Path(self.config["output_path"]) / "tmp_frames"
             tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -308,7 +308,7 @@ class Splatter:
             else:
                 n_samples = n_frames
 
-            sampled_frames, _ = sample_frames_optical_flow(file_path.as_posix(), max_frames=min(n_samples, 200), verbose=False)
+            sampled_frames, _ = sample_frames(file_path.as_posix(), method="optical_flow", max_frames=min(n_samples, 200))
             for i, frame in enumerate(sampled_frames):
                 cv2.imwrite(str(tmp_dir / f"{i:05d}.jpg"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 

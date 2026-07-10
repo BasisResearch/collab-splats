@@ -321,7 +321,7 @@ class SplatsApp(param.Parameterized):
     def _apply_max_frames_bound(self, video: Path) -> None:
         """Read total frame count from a local video and reflect it in the Max-frames widget."""
         try:
-            from collab_splats.utils.frame_sampling import get_video_info
+            from collab_splats.preproc import get_video_info
 
             total = int(get_video_info(str(video)).get("total_frames") or 0)
         except Exception:

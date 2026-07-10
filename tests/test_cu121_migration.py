@@ -130,7 +130,8 @@ def test_import_all_modules():
         "collab_splats.nerfstudio.models.rade_features",
         "collab_splats.utils",
         "collab_splats.utils.torch_utils",
-        "collab_splats.utils.frame_sampling",
+        "collab_splats.preproc",
+        "collab_splats.preproc.sampling",
         "collab_splats.nerfstudio.utils.camera_utils",
         "collab_splats.wrapper.splatter",
         # collab_splats.dashboard excluded: requires 'panel' which is not installed

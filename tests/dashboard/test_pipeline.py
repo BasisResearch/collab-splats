@@ -9,7 +9,9 @@ from collab_splats.dashboard.config import RunConfig
 
 
 def _fake_frames(n=3):
-    return [np.zeros((4, 4, 3), np.uint8) for _ in range(n)], [0, 1, 2]
+    frames = [np.zeros((4, 4, 3), np.uint8) for _ in range(n)]
+    records = [{"frame_idx": i, "blur_score": 200.0} for i in range(n)]
+    return frames, records
 
 
 class _InlineThread:
@@ -38,8 +40,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     creator.outputs = fake_result
 
     with (
-        patch.object(pl, "sample_frames_fps", return_value=_fake_frames()),
-        patch.object(pl, "get_video_info", return_value={"duration_s": 3.0, "fps": 30}),
+        patch.object(pl, "sample_frames", return_value=_fake_frames()),
         patch.object(pl, "_write_frames_zarr") as wz,
         patch.object(pl, "_write_frames_jpegs", return_value=tmp_path / "frames"),
         patch.object(pl, "_build_creator", return_value=creator),
@@ -86,8 +87,7 @@ def test_run_pipeline_does_not_push_on_failure(tmp_path):
     video.write_bytes(b"x")
 
     with (
-        patch.object(pl, "sample_frames_fps", return_value=_fake_frames()),
-        patch.object(pl, "get_video_info", return_value={"duration_s": 3.0, "fps": 30}),
+        patch.object(pl, "sample_frames", return_value=_fake_frames()),
         patch.object(pl, "_write_frames_zarr"),
         patch.object(pl, "_write_frames_jpegs", return_value=tmp_path / "frames"),
         patch.object(pl, "_build_creator", side_effect=RuntimeError("boom")),

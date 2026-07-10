@@ -1,4 +1,3 @@
-from .frame_sampling import OpticalFlowFrameSelector, sample_frames_fps, sample_frames_optical_flow
 from .geometry import (
     OPENGL_TO_OPENCV,
     extrinsics_to_homogeneous,
@@ -17,9 +16,6 @@ from .torch_utils import (
 )
 
 __all__ = [
-    "OpticalFlowFrameSelector",
-    "sample_frames_fps",
-    "sample_frames_optical_flow",
     "OPENGL_TO_OPENCV",
     "extrinsics_to_homogeneous",
     "invert_poses",

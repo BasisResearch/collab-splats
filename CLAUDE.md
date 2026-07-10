@@ -55,13 +55,14 @@ collab_splats/
     viz.py                 # plot_correspondences
   semantics/               # 2D feature extraction
     features.py            # BaseFeatureExtractor + RegistryMixin; registered DINOv2/SAM extractors
-    frame_sampling.py      # re-exported here; canonical at utils/frame_sampling.py
+  preproc/                 # video preprocessing: frame sampling + quality gate
+    sampling.py            # ffmpeg-only decode, blur/exposure gate, sample_frames (uniform | optical_flow)
+    viz.py                 # sampling analysis plots (notebook-only, not re-exported)
   mesh/                    # TSDF + Poisson meshing (base, poisson, tsdf, utils)
   nerfstudio/              # nerfstudio method configs, models, datamanagers
   dashboard/               # interactive video/scene browser
   utils/
     torch_utils.py         # RegistryMixin, pytorch_gc, infer_batch_size, batch_iterator, get_device
-    frame_sampling.py      # optical-flow + FPS keyframe selection
 evals/
   eval_gt.py               # compute script — CLI/tmux only, never run in notebook
   datasets.py              # dataset loaders (7-Scenes, CO3Dv2)

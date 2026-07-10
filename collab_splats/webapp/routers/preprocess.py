@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image
 
-from collab_splats.utils.frame_sampling import get_video_info, sample_frames_fps, sample_frames_optical_flow
+from collab_splats.preproc import get_video_info, sample_frames
 from collab_splats.webapp.state import get_session
 
 router = APIRouter(prefix="/api/preprocess")
@@ -84,20 +84,12 @@ async def _extract_sse(method: str, max_frames: int, min_disparity: float) -> As
 
     def run() -> None:
         try:
-            if method == "optical_flow":
-                frames, _ = sample_frames_optical_flow(
-                    str(s.video_path), max_frames=max_frames,
-                    min_disparity=min_disparity, on_progress=progress, verbose=False,
-                )
-            else:
-                # Balanced FPS: derive target fps from desired frame count and duration
-                info = get_video_info(str(s.video_path))
-                dur = info.get("duration_s") or (info["total_frames"] / (info.get("fps") or 30.0))
-                target_fps = max_frames / max(dur, 1.0)
-                frames, _ = sample_frames_fps(
-                    str(s.video_path), fps=target_fps, max_frames=max_frames,
-                    on_progress=progress, verbose=False,
-                )
+            # Dispatch and window derivation live in the preproc library now
+            sampling_method = "optical_flow" if method == "optical_flow" else "uniform"
+            frames, _ = sample_frames(
+                str(s.video_path), method=sampling_method, max_frames=max_frames,
+                min_disparity=min_disparity, on_progress=progress,
+            )
             _write_frames(frames, s.output_dir)
             loop.call_soon_threadsafe(
                 queue.put_nowait,

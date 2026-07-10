@@ -50,7 +50,7 @@ def _extract_frames(
     Returns sorted list of extracted frame paths.
     """
     import cv2
-    from collab_splats.utils.frame_sampling import sample_frames_fps, sample_frames_optical_flow
+    from collab_splats.preproc import get_video_info, sample_frames
 
     output_dir.mkdir(parents=True, exist_ok=True)
     input_path = Path(input_path)
@@ -63,27 +63,21 @@ def _extract_frames(
             shutil.copy(src, output_dir / f"frame_{i:04d}{src.suffix}")
         return sorted(output_dir.iterdir())
 
-    # Video — dispatch to fps or optical-flow sampler based on frame_selection
+    # Video — dispatch to uniform or optical-flow sampling based on frame_selection
     if frame_selection == "optical_flow":
-        frame_arrays, _ = sample_frames_optical_flow(
-            video_path=str(input_path),
+        frame_arrays, _ = sample_frames(
+            str(input_path), method="optical_flow",
             max_frames=max_frames if max_frames is not None else 200,
         )
     else:
-        # Probe video metadata; fall back to 30 fps if CAP_PROP_FPS is unavailable
-        cap = cv2.VideoCapture(str(input_path))
-        native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        # Derive target count from proportion, clamped to [min_frames, max_frames]
+        # Derive target count from proportion, clamped to [min_frames, max_frames];
+        # the uniform sampler spreads that count over the video itself
+        total_frames = get_video_info(str(input_path))["total_frames"]
         target_count = max(min_frames, int(total_frames * frame_proportion))
         if max_frames is not None:
             target_count = min(target_count, max_frames)
-        target_fps = native_fps * target_count / max(total_frames, 1)
-        frame_arrays, _ = sample_frames_fps(
-            video_path=str(input_path),
-            fps=target_fps,
-            max_frames=max_frames,
+        frame_arrays, _ = sample_frames(
+            str(input_path), method="uniform", max_frames=target_count,
         )
 
     # Save extracted frames as JPEG files

@@ -24,11 +24,7 @@ from collab_splats.pointcloud.feedforward import (
 from collab_splats.pointcloud.utils import lift_features
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
-from collab_splats.utils.frame_sampling import (
-    get_video_info,
-    sample_frames_fps,
-    sample_frames_optical_flow,
-)
+from collab_splats.preproc import sample_frames
 
 # VGGTOmegaCreator requires the vggt-omega submodule; only available when installed.
 try:
@@ -148,7 +144,6 @@ def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: flo
 
 def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
     """Sample frames per the configured method; return (frames, indices)."""
-    info = get_video_info(str(video_path))
 
     # Live label shows images processed / total; log=False so per-frame pings don't flood the log.
     # Throttle to ~100 writes total (every 1% of frames) — the UI polls at 300ms regardless.
@@ -163,27 +158,16 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
         )
 
     op_log.update_progress(5, f"sampling: {config.sampling_method}")
-    if config.sampling_method == "optical_flow":
-        frames, _ = sample_frames_optical_flow(
-            str(video_path),
-            min_disparity=config.min_disparity,
-            max_frames=config.max_frames,
-            on_progress=on_progress,
-            verbose=False,
-        )
-        # optical-flow sampler returns score dicts, not source frame numbers; indices are positional
-        indices = list(range(len(frames)))
-    else:
-        duration_s = info.get("duration_s") or (info["total_frames"] / (info.get("fps") or 30.0))
-        target_fps = config.max_frames / max(duration_s, 1.0)
-        frames, indices = sample_frames_fps(
-            str(video_path),
-            fps=target_fps,
-            max_frames=config.max_frames,
-            on_progress=on_progress,
-            verbose=False,
-        )
-    return frames, indices
+    # One call; records carry true source frame indices for both methods
+    method = "optical_flow" if config.sampling_method == "optical_flow" else "uniform"
+    frames, records = sample_frames(
+        str(video_path),
+        method=method,
+        min_disparity=config.min_disparity,
+        max_frames=config.max_frames,
+        on_progress=on_progress,
+    )
+    return frames, [r["frame_idx"] for r in records]
 
 
 ########

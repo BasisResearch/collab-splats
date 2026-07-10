@@ -412,7 +412,12 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
         x = torch.randn(1, n_tokens, total_dim)
         for qkv in qkv_linears:
             qkv(x)
-        return [{}]
+        # Two per-view preds with float-castable pointmaps — the post-forward
+        # pose recipe float-casts pts3d_cam/pts3d before postprocessing.
+        return [
+            {"pts3d_cam": torch.zeros(1, 4, 4, 3), "pts3d": torch.zeros(1, 4, 4, 3)}
+            for _ in range(2)
+        ]
 
     mock_model = MagicMock()
     mock_model.info_sharing.self_attention_blocks = blocks
@@ -423,20 +428,32 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
     return creator, blocks, n_tokens, num_heads, head_dim
 
 
+def _patch_mapanything_postprocess():
+    """Patch module-level postprocess to yield identity camera_poses for 2 views."""
+    import torch
+    return patch(
+        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+        return_value=[{"camera_poses": torch.eye(4).unsqueeze(0)} for _ in range(2)],
+    )
+
+
 def test_mapanything_extract_intermediate_features_shapes():
-    """Hook fires on last block; q/k shapes correct; no poses key."""
+    """Hook fires on last block; q/k shapes correct; poses derived from forward."""
+    import numpy as np
     import torch
     creator, blocks, n_tokens, num_heads, head_dim = _make_mapanything_with_mock_model()
     frames = torch.zeros(2, 3, 16, 16)
 
     with patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=[{}] * 2):
+               return_value=[{}] * 2), _patch_mapanything_postprocess():
         result = creator.extract_intermediate_features(frames, layer_index=-1)
 
     assert "q" in result and "k" in result
-    assert "poses" not in result  # MapAnything has no pose_enc to decode
     assert result["q"].shape == (1, num_heads, n_tokens, head_dim)
     assert result["k"].shape == (1, num_heads, n_tokens, head_dim)
+    # Poses derived from the same forward via the postprocess → invert recipe
+    assert result["poses"].shape == (2, 4, 4)
+    assert result["poses"].dtype == np.float32
 
 
 def test_mapanything_extract_intermediate_features_hook_removed():
@@ -448,7 +465,7 @@ def test_mapanything_extract_intermediate_features_hook_removed():
     assert len(qkv._forward_hooks) == 0
 
     with patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=[{}] * 2):
+               return_value=[{}] * 2), _patch_mapanything_postprocess():
         creator.extract_intermediate_features(frames, layer_index=-1)
 
     assert len(qkv._forward_hooks) == 0
@@ -469,7 +486,7 @@ def test_mapanything_extract_intermediate_features_layer_index():
 
     blocks[0].attn.qkv.register_forward_hook = spy_register
     with patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=[{}] * 2):
+               return_value=[{}] * 2), _patch_mapanything_postprocess():
         creator.extract_intermediate_features(frames, layer_index=0)
 
     assert hooked_blocks == [0]

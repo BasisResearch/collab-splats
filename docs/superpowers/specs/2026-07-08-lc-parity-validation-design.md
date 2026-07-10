@@ -35,9 +35,14 @@ Run vendored VGGT-SLAM via `evals/runners/run_vggt_slam_lc.py` (exists) with pap
 
 Per scene, persist: TUM trajectory file, ATE (Sim3-aligned RMSE), **closed-loop count** (`solver.graph.get_num_loops()`), **keyframe list**, and a **3D trajectory plot vs ground truth**. Output under `evals/baselines/lc_parity/<scene>/slam/`.
 
-### Level 1 — End-to-end parity (ours, spark backbone)
+### Level 1 — End-to-end parity (ours, spark backbone) + cross-model sweep
 
 Run our pipeline (`LoopClosure` wrapper, spark creator) on the **exact keyframe list from the Level-0 run** (eliminates keyframe selection as a confounder) with matched config: `submap_size=16`, `submap_overlap=1`, `max_loops_per_submap=1`, `conf_threshold=25`, `lc_retrieval_threshold=0.95`. Two conditions per scene: baseline (LC off) and LC on.
+
+**Cross-model sweep (added 2026-07-09, user request).** In addition to `vggt_spark`, run the same Level-1 protocol (same keyframes, same config, baseline + lc) for `vggt_omega` and `mapanything` (`vggtx` available behind the same `--backbones` flag). Outputs land under `<scene>/ours_<backbone>/`. Gate semantics differ by backbone:
+
+- `vggt_spark` — full parity gates (ATE ≤ 5%/5 mm vs SLAM, loop counts equal). Same weights as upstream; any gap = pipeline divergence.
+- `vggt_omega` / `mapanything` — no upstream reference exists for these weights, so ATE-vs-SLAM and loop counts are **reported, not gated**. Gated instead: **LC-harmless** — `ate_lc ≤ max(1.05 × ate_baseline, ate_baseline + 0.005)` (LC must never make a backbone worse than its own baseline), plus the scaling gate on sweep scenes. This is the cross-model comparison goal: which backbone has the best baseline, and whether LC helps, no-ops, or harms each.
 
 Per scene, compare against Level 0:
 

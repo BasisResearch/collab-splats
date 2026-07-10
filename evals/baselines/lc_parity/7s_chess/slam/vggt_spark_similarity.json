@@ -1,0 +1,7 @@
+{
+  "model": "VGGT-SPARK (VGGT-1B weights)",
+  "metric": "image_match_ratio",
+  "threshold": 0.85,
+  "note": "computed via attention K/Q in aggregator._process_global_attention",
+  "scores": []
+}

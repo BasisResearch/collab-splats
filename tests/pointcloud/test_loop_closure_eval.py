@@ -27,8 +27,9 @@ def pg_with_loop():
     # sequential edges (3 total)
     pg.add_sequential_edge(0, 1, H1); pg.add_sequential_edge(1, 2, H2)
     pg.add_sequential_edge(2, 3, H3)
-    # loop edge (1 total)
-    pg.add_loop_edge(0, 3, H3)
+    # loop edge (1 total) — loop-chain edges share the sequential-edge API/noise
+    # (add_loop_edge was removed with the scale-reconciled 3-edge chain)
+    pg.add_sequential_edge(0, 3, H3)
     return pg
 
 
@@ -40,8 +41,8 @@ def test_classify_edges_returns_two_keys(pg_with_loop):
 def test_classify_edges_sequential_count_matches_expected(pg_with_loop):
     """All 4 BetweenFactors classify as 'sequential' under VGGT-SLAM noise parity.
 
-    Since 011c56f ("match VGGT-SLAM PGO noise exactly"), add_loop_edge uses the
-    same plain Gaussian (Diagonal.Sigmas) noise as add_sequential_edge — neither
+    Since 011c56f ("match VGGT-SLAM PGO noise exactly"), loop edges use the
+    same plain Gaussian (Diagonal.Sigmas) noise as sequential edges — neither
     is Robust(Huber). _classify_edges keys off isinstance(nm, noiseModel.Robust),
     so with no Robust factors all 3 sequential + 1 loop BetweenFactors land in
     'sequential' (4 total); the prior is skipped.

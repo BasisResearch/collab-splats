@@ -25,6 +25,7 @@ from vggt_omega.utils.pose_enc import encoding_to_camera
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
+    _decode_verify_geometry,
     _raw_to_world_points,
     compute_multiview_depth_confidence,
 )
@@ -120,17 +121,20 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
                                ``resolution=256`` when ``resolution`` is ``None``.
     """
 
-    # Calibrated 2026-05-28: inter_frame_blocks depth=24; layer 16 gives mtq=1.328
-    # on DINO-SALAD retrieved pairs (vs 0.897 at layer 20 which caused false-positive LCs).
-    # Inherits default_verify_match_ratio=0.85 from base (VGGT-SPARK calibration).
-    # Override: mtq=1.328 >> 0.85 so gate is effectively disabled; raise to 0.99 to
-    # reject false-positive LC pairs.  max_jump_ratio=0.3 enables geometric sanity check
-    # (default inf disables it) for repetitive chess-texture scenes.
-    _lc_layer_index: ClassVar[int] = 16
-    # Calibrated on chess_seq01 retrieved pairs, post stride=K fix (2026-05-29).
-    # Formula: mean_top_quarter mean - 2*std = 1.3280 - 2*0.0852 = 1.16.
-    # Higher than VGGT-X because Omega attention architecture produces larger ratios.
-    default_verify_match_ratio: ClassVar[float] = 1.16
+    # LC verify calibration — chess d5 clean-negative sweep, 2026-07-10.
+    # 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers
+    # > half scene diameter apart AND viewing dirs > 90°, seed 42), all 24
+    # inter_frame_blocks hooked in one forward per pair. Layer 13 separates
+    # perfectly (AUC 1.000; positives min 1.8385, negatives max 1.2620);
+    # threshold = midpoint 1.55. Old layer 16 / 1.16 had AUC 0.824 and
+    # rejected 6/21 true loops while passing 6/20 clean negatives.
+    # Note: production token_offset=5 (inherited) technically miscounts
+    # Omega's 17 special tokens (1 camera + 16 register; patch-16 backbone),
+    # but the offset-17 re-sweep is near-identical at layer 13 (mid 1.5505),
+    # so the inherited offset is kept. max_jump_ratio=0.3 enables geometric
+    # sanity check (default inf disables it) for repetitive chess-texture scenes.
+    _lc_layer_index: ClassVar[int] = 13
+    default_verify_match_ratio: ClassVar[float] = 1.55
     default_max_jump_ratio: ClassVar[float] = 0.3
 
     camera_model: str = "PINHOLE"
@@ -321,7 +325,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Hook inter_frame_blocks[layer_index].attn.qkv; return {q, k, poses}."""
+        """Hook inter_frame_blocks[layer_index].attn.qkv; return {q, k, poses, world_points, conf}."""
         device = next(self.model.parameters()).device
 
         # VGGTOmega manages bf16/f16 autocast internally — device-only cast matches _forward
@@ -346,11 +350,17 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             # Always remove the hook — no persistent state left on the model
             hook.remove()
 
-        # Decode (2, 4, 4) camera extrinsics from Omega pose encoding
+        # Decode camera extrinsics + intrinsics from Omega pose encoding
         image_shape = (frames.shape[-2], frames.shape[-1])
-        ext_3x4, _ = encoding_to_camera(
+        ext_t, intr_t = encoding_to_camera(
             predictions["pose_enc"].detach(), image_shape
         )
-        ext_3x4 = ext_3x4.cpu().float().numpy().squeeze(0)  # (2, 3, 4)
+        ext_3x4 = ext_t.cpu().float().numpy().squeeze(0)   # (2, 3, 4) w2c
+        intrinsic = intr_t.cpu().float().numpy().squeeze(0)  # (2, 3, 3)
         captured["poses"] = extrinsics_to_homogeneous(ext_3x4)  # (2, 4, 4)
+
+        # Decode geometry from the SAME forward — shared verify-geometry helper
+        captured["world_points"], captured["conf"] = _decode_verify_geometry(
+            predictions["depth"], predictions["depth_conf"], ext_3x4, intrinsic
+        )
         return captured

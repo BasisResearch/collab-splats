@@ -124,11 +124,9 @@ class PoseGraph:
         self._node_ids: set[int] = set()
 
         if manifold == "sl4":
-            # Uniform σ=0.05 for all edges — matches VGGT-SLAM exactly
+            # Uniform σ=0.05 for all edges (sequential, inter-submap, loop chain)
+            # — matches VGGT-SLAM exactly
             self._seq_noise = gtsam.noiseModel.Diagonal.Sigmas(
-                0.05 * np.ones(15, dtype=np.float64)
-            )
-            self._loop_noise = gtsam.noiseModel.Diagonal.Sigmas(
                 0.05 * np.ones(15, dtype=np.float64)
             )
             self._anchor_noise = gtsam.noiseModel.Diagonal.Sigmas(
@@ -137,9 +135,6 @@ class PoseGraph:
         else:
             # SE(3) 6-DOF — existing tuned sigmas from ADR 005
             self._seq_noise = gtsam.noiseModel.Diagonal.Sigmas(
-                np.array([0.05, 0.05, 0.05, 0.20, 0.20, 0.20], dtype=np.float64)
-            )
-            self._loop_noise = gtsam.noiseModel.Diagonal.Sigmas(
                 np.array([0.05, 0.05, 0.05, 0.20, 0.20, 0.20], dtype=np.float64)
             )
             self._anchor_noise = gtsam.noiseModel.Diagonal.Sigmas(
@@ -187,16 +182,6 @@ class PoseGraph:
             self._graph.add(
                 gtsam.BetweenFactorPose3(key_i, key_j, _pose3(H_rel), self._seq_noise)
             )
-
-    def add_loop_edge(self, id_i: int, id_j: int, H_rel: np.ndarray) -> None:
-        """Loop closure constraint — same Gaussian noise as sequential edges (VGGT-SLAM parity)."""
-        key_i, key_j = _X(id_i), _X(id_j)
-        H_rel = np.array(H_rel, dtype=np.float64)
-        if self._manifold == "sl4":
-            H_rel = normalize_to_sl4(H_rel)
-            self._graph.add(gtsam.BetweenFactorSL4(key_i, key_j, gtsam.SL4(H_rel), self._loop_noise))
-        else:
-            self._graph.add(gtsam.BetweenFactorPose3(key_i, key_j, _pose3(H_rel), self._loop_noise))
 
     # ---- optimization ----
 

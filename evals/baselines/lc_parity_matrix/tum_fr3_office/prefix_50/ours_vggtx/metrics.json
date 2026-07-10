@@ -1,0 +1,49 @@
+{
+  "_config": {
+    "backbone": "vggtx",
+    "max_frames": 500,
+    "submap_size": 16,
+    "dataset": "tum",
+    "seq_dir": "/workspace/collab-splats/evals/data/tum/rgbd_dataset_freiburg3_long_office_household"
+  },
+  "baseline": {
+    "ate": {
+      "rmse": 0.029591843485832214,
+      "mean": 0.025680696591734886,
+      "median": 0.021557580679655075,
+      "max": 0.06701277196407318
+    },
+    "rpe": {
+      "trans_rmse": 0.6198613047599792,
+      "rot_rmse_deg": 24.85946273803711
+    },
+    "auc": {
+      "auc_5": 64.73684210526316,
+      "auc_15": 87.17401612138454,
+      "auc_30": 93.53485064011379
+    },
+    "time_s": 89.18,
+    "loops_applied": 0,
+    "candidates": 0
+  },
+  "lc": {
+    "ate": {
+      "rmse": 0.029591843485832214,
+      "mean": 0.025680696591734886,
+      "median": 0.021557580679655075,
+      "max": 0.06701277196407318
+    },
+    "rpe": {
+      "trans_rmse": 0.6198613047599792,
+      "rot_rmse_deg": 24.85946273803711
+    },
+    "auc": {
+      "auc_5": 64.73684210526316,
+      "auc_15": 87.17401612138454,
+      "auc_30": 93.53485064011379
+    },
+    "time_s": 77.71,
+    "loops_applied": 0,
+    "candidates": 0
+  }
+}

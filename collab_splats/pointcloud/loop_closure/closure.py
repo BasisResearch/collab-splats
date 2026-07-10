@@ -160,6 +160,8 @@ class LoopMatch:
     query_frame_idx: int
     detected_frame_idx: int
     accepted: bool = False
+    # None on accepted matches; "verify_ratio" | "no_joint_poses" | "jump_ratio" on rejects.
+    reject_reason: str | None = None
 
 
 @dataclass
@@ -171,7 +173,9 @@ class LoopClosureConfig:
     # 0.95 matches VGGT-SLAM main.py default (lc_thres=0.95). 0.0 disables retrieval.
     lc_retrieval_threshold: float = 0.95
     max_loops_per_submap: int = 5
-    verify_match_ratio: float = 0.85
+    # None → resolve to the creator's default_verify_match_ratio at LoopClosure
+    # wrapper init (fallback 0.85); an explicit float always wins.
+    verify_match_ratio: float | None = None
     nms_frame_distance: int = 25
     min_submap_gap: int = 1
     manifold: Literal["sl4", "se3"] = "sl4"
@@ -381,6 +385,147 @@ def translation_jump_check(
 ########################################
 
 
+def _lc_anchor_scale(
+    curr_submap: Submap,
+    curr_idx: int,
+    prior_submap: Submap,
+    prior_idx: int,
+    conf_threshold: float,
+    scale_method: str,
+    subsample: int = 8,
+) -> float | None:
+    """Pixel-aligned anchor scale between an LC frame and its identical regular frame.
+
+    Mirrors VGGT-SLAM solver.py:129-151: both frames are the SAME image, so their
+    point grids pair pixel-for-pixel. Returns median(||prior_cam|| / ||curr_cam||)
+    per `scale_method` (the factor scaling curr-submap units into prior-submap
+    units), or None when points are unavailable or the grids cannot be aligned.
+    """
+    if scale_method == "none":
+        return 1.0
+    if curr_submap.world_points is None or prior_submap.world_points is None:
+        return None
+
+    # Resolution alignment: LC submaps carry full-res (H·W) grids while regular
+    # submaps carry subsample-strided grids (arange(0, W, 8) × arange(0, H, 8),
+    # row-major over (v, u) — see _raw_to_world_points). Resample the LC side
+    # onto the regular grid so points pair pixel-for-pixel.
+    lc_side, reg_side = (
+        (curr_submap, prior_submap) if curr_submap.is_lc_submap else (prior_submap, curr_submap)
+    )
+    lc_flat_idx = None
+    if lc_side.world_points.shape[1] != reg_side.world_points.shape[1]:
+        if lc_side.frames is None:
+            return None
+        h_img, w_img = int(lc_side.frames.shape[-2]), int(lc_side.frames.shape[-1])
+        if lc_side.world_points.shape[1] != h_img * w_img:
+            return None
+        us = np.arange(0, w_img, subsample)
+        vs = np.arange(0, h_img, subsample)
+        if reg_side.world_points.shape[1] != len(us) * len(vs):
+            return None
+        uu, vv = np.meshgrid(us, vs)
+        lc_flat_idx = (vv * w_img + uu).ravel()
+
+    # Gather paired points + confs, resampling the LC side where needed
+    def _frame_data(submap: Submap, idx: int) -> tuple[np.ndarray, np.ndarray | None]:
+        pts = submap.world_points[idx].astype(np.float64)
+        conf = None
+        if (
+            submap.world_points_conf is not None
+            and submap.world_points_conf.shape[:2] == submap.world_points.shape[:2]
+        ):
+            conf = submap.world_points_conf[idx].astype(np.float64)
+        if submap is lc_side and lc_flat_idx is not None:
+            pts = pts[lc_flat_idx]
+            conf = conf[lc_flat_idx] if conf is not None else None
+        return pts, conf
+
+    curr_pts, curr_conf = _frame_data(curr_submap, curr_idx)
+    prior_pts, prior_conf = _frame_data(prior_submap, prior_idx)
+
+    # Back-transform both sides to their frame's camera-local coords so norms share
+    # an origin (same convention as the sequential-edge prev_pts back-transform).
+    curr_cam = _cam_local_points(curr_pts, curr_submap.poses[curr_idx])
+    prior_cam = _cam_local_points(prior_pts, prior_submap.poses[prior_idx])
+
+    # Confidence fallback chain (VGGT-SLAM solver.py:132-143): joint > thr,
+    # else prior > thr, else prior > 0; missing conf side treated as pass-all.
+    n = curr_cam.shape[0]
+    mask = np.ones(n, dtype=bool)
+    if prior_conf is not None:
+        joint = prior_conf > conf_threshold
+        if curr_conf is not None:
+            joint = joint & (curr_conf > conf_threshold)
+        if joint.sum() >= _MIN_CONF_POINTS:
+            mask = joint
+        elif (prior_conf > conf_threshold).sum() >= _MIN_CONF_POINTS:
+            mask = prior_conf > conf_threshold
+        else:
+            mask = prior_conf > 0
+
+    # T = inv(K_prior) @ K_curr (identity for a shared camera) — mirror the
+    # sequential-edge scale_method conventions.
+    T = np.eye(4)
+    T[:3, :3] = (
+        np.linalg.inv(prior_submap.intrinsics[prior_idx].astype(np.float64))
+        @ curr_submap.intrinsics[curr_idx].astype(np.float64)
+    )
+    if scale_method == "rotation_only":
+        curr_in_prior = (T[:3, :3] @ curr_cam.T).T
+    else:
+        curr_in_prior = _cam_local_points(curr_cam, T)
+
+    if scale_method == "pairwise_dist":
+        s = _estimate_scale_pairwise_dist(curr_in_prior[mask], prior_cam[mask])
+    else:
+        s = estimate_scale_pairwise(curr_in_prior[mask], prior_cam[mask])
+
+    # Guard against degenerate estimates: depth-unprojected LC points can contain
+    # NaN/inf (invalid pixels), letting a non-finite or ≤0 median through — which
+    # would produce a singular diag(s,s,s,1) between-factor. Fall back to the
+    # None path (scale 1.0 + once-per-loop warning at the call site).
+    if not np.isfinite(s) or s <= 0:
+        return None
+    return s
+
+
+def _cam_local_points(pts: np.ndarray, w2c: np.ndarray) -> np.ndarray:
+    """Transform (N, 3) points by a 4x4 world-to-cam pose into camera-local coords."""
+    h = np.hstack([pts.astype(np.float64), np.ones((pts.shape[0], 1))])
+    return (w2c.astype(np.float64) @ h.T).T[:, :3]
+
+
+def _loop_chain_relatives(
+    P_lc0: np.ndarray,
+    P_lc1: np.ndarray,
+    s_a: float,
+    s_b: float,
+    K_q: np.ndarray | None = None,
+    K_lc0: np.ndarray | None = None,
+    K_lc1: np.ndarray | None = None,
+    K_d: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Three loop-chain relatives in the graph's H_inner convention (H_j = H_i @ M).
+
+    Anchor A (query → LC0, identical image): pure scale fold s_a (LC units →
+    query-submap units) plus the K change; anchor B (LC1 → detected) symmetric
+    with s_b (detected units → LC units); inner edge carries the LC relative
+    P_lc0 @ inv(P_lc1). Identity anchors compose to P_lc0 @ inv(P_lc1), and for
+    an LC run at k× scale s_a=1/k, s_b=k cancel to the metric relative
+    (VGGT-SLAM solver.py:118-170 chain).
+    """
+    eye = np.eye(4, dtype=np.float64)
+    K_q = eye if K_q is None else K_q
+    K_lc0 = eye if K_lc0 is None else K_lc0
+    K_lc1 = eye if K_lc1 is None else K_lc1
+    K_d = eye if K_d is None else K_d
+    H_rel_a = np.linalg.inv(K_q) @ K_lc0 @ np.diag([s_a, s_a, s_a, 1.0])
+    H_inner = P_lc0.astype(np.float64) @ np.linalg.inv(P_lc1.astype(np.float64))
+    H_rel_b = np.linalg.inv(K_lc1) @ K_d @ np.diag([s_b, s_b, s_b, 1.0])
+    return H_rel_a, H_inner, H_rel_b
+
+
 def run_pose_graph_optimization(
     submaps: list[Submap],
     lc_submaps: list[Submap],
@@ -398,7 +543,9 @@ def run_pose_graph_optimization(
     - Inter-submap first frame: scale estimated via estimate_scale_pairwise on
       overlapping world_points, H_w = graph.get_homography(overlap_prev) @ T @ H_scale
       where T = inv(P_prev_ov) @ P_curr_ov (full w2c poses, not K-only)
-    - Loop edges from lc_submaps (2-frame submaps with verified LC poses)
+    - Loop edges from lc_submaps (2-frame submaps with verified LC poses):
+      scale-reconciled 3-edge chain through two graph-only LC nodes
+      (anchor A, inner LC relative, anchor B — VGGT-SLAM solver.py:262-295)
     """
     if not submaps:
         return np.tile(np.eye(4, dtype=np.float32), (total_frames, 1, 1))
@@ -548,19 +695,56 @@ def run_pose_graph_optimization(
         # This gives better H_overlap values for the next submap's H_w initialization.
         pg.optimize()
 
+    # Loop edges: VGGT-SLAM 3-constraint chain (solver.py:262-295) per LC submap.
+    # Two graph-only nodes for the LC frames; anchor A ties the query frame to
+    # LC frame 0 (identical image, scale fold s_a), the inner edge carries the
+    # LC relative, anchor B ties LC frame 1 to the detected frame (scale s_b).
     for lc in lc_submaps:
         if lc.poses.shape[0] != 2:
             continue
         path_q, path_d = lc.image_paths[0], lc.image_paths[1]
-        nid_q = _resolve_frame_node(frame_to_node, submaps, path_q)
-        nid_d = _resolve_frame_node(frame_to_node, submaps, path_d)
-        if nid_q is None or nid_d is None:
+        loc_q = _resolve_frame_node(frame_to_node, submaps, path_q)
+        loc_d = _resolve_frame_node(frame_to_node, submaps, path_d)
+        if loc_q is None or loc_d is None:
             continue
-        H_rel_lc = (
-            np.linalg.inv(lc.poses[0].astype(np.float64))
-            @ lc.poses[1].astype(np.float64)
+        nid_q, sub_q, qi = loc_q
+        nid_d, sub_d, di = loc_d
+
+        # Anchor scales on pixel-aligned identical images; fall back to 1.0 when
+        # the LC backend supplies poses only (direction fix still applies).
+        s_a = _lc_anchor_scale(lc, 0, sub_q, qi, conf_threshold, scale_method)
+        s_b = _lc_anchor_scale(sub_d, di, lc, 1, conf_threshold, scale_method)
+        if s_a is None or s_b is None:
+            log.warning(
+                "Loop submap %d → %d: LC world points unavailable or grid-misaligned; "
+                "using anchor scale 1.0",
+                sub_q.submap_id, sub_d.submap_id,
+            )
+            s_a = 1.0 if s_a is None else s_a
+            s_b = 1.0 if s_b is None else s_b
+
+        # Per-frame intrinsics as 4×4 for the K change across anchors (I for a shared camera)
+        K_q, K_lc0, K_lc1, K_d = (np.eye(4, dtype=np.float64) for _ in range(4))
+        K_q[:3, :3] = sub_q.intrinsics[qi].astype(np.float64)
+        K_lc0[:3, :3] = lc.intrinsics[0].astype(np.float64)
+        K_lc1[:3, :3] = lc.intrinsics[1].astype(np.float64)
+        K_d[:3, :3] = sub_d.intrinsics[di].astype(np.float64)
+
+        H_rel_a, H_inner_lc, H_rel_b = _loop_chain_relatives(
+            lc.poses[0], lc.poses[1], s_a, s_b, K_q, K_lc0, K_lc1, K_d
         )
-        pg.add_loop_edge(nid_q, nid_d, H_rel_lc)
+
+        # LC nodes chained from the query node's current graph state
+        # (upstream solver.py:162-166); they map to no output frame.
+        nid_lc0, nid_lc1 = global_node_id, global_node_id + 1
+        global_node_id += 2
+        H_q_state = pg.get_homography(nid_q)
+        pg.add_node(nid_lc0, H_q_state @ H_rel_a)
+        pg.add_node(nid_lc1, H_q_state @ H_rel_a @ H_inner_lc)
+
+        pg.add_sequential_edge(nid_q, nid_lc0, H_rel_a)
+        pg.add_sequential_edge(nid_lc0, nid_lc1, H_inner_lc)
+        pg.add_sequential_edge(nid_lc1, nid_d, H_rel_b)
 
     pg.optimize()
 
@@ -608,11 +792,14 @@ def _resolve_frame_node(
     frame_to_node: dict[tuple[int, int], int],
     submaps: list[Submap],
     image_path,
-) -> int | None:
+) -> tuple[int, Submap, int] | None:
+    """Resolve an image path to (node_id, submap, local frame index)."""
     for submap in submaps:
         for local_i, p in enumerate(submap.image_paths):
             if p == image_path:
-                return frame_to_node.get((submap.submap_id, local_i))
+                nid = frame_to_node.get((submap.submap_id, local_i))
+                if nid is not None:
+                    return nid, submap, local_i
     return None
 
 

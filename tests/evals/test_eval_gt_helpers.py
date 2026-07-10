@@ -171,6 +171,61 @@ def test_save_outputs_no_per_frame_in_json(tmp_path):
     assert "per_frame" not in loaded["baseline"]["ate"]
 
 
+def test_save_outputs_excludes_slam_overlay_from_npz_and_metrics(tmp_path):
+    """The plot-only 'vggt_slam' trajectory key (gap 1) must not leak into
+    trajectories.npz's pred_* keys or metrics.json — only conditions with a metrics
+    entry get serialized there; 'vggt_slam' only reaches the trajectory plot."""
+    from eval_gt import _save_outputs
+    gt = _make_poses(6)
+    trajectories = {"gt": gt, "lc": gt.copy(), "vggt_slam": gt.copy()}
+    metrics = {
+        "lc": {
+            "ate": {"rmse": 0.05, "mean": 0.04, "median": 0.03, "max": 0.1, "per_frame": np.zeros(6)},
+            "rpe": {"trans_rmse": 0.01, "rot_rmse_deg": 0.5},
+            "auc": {"auc_30": 90.0},
+        }
+    }
+    _save_outputs(metrics, trajectories, tmp_path)
+    npz = np.load(tmp_path / "trajectories.npz", allow_pickle=False)
+    assert "pred_vggt_slam" not in npz.files
+    assert "pred_lc" in npz.files
+    loaded = json.loads((tmp_path / "metrics.json").read_text())
+    assert "vggt_slam" not in loaded
+    assert (tmp_path / "plots" / "trajectory.png").exists()
+
+
+def test_plot_trajectory_includes_slam_overlay(tmp_path):
+    """_plot_trajectory renders an extra 'vggt_slam' trajectory without crashing (gap 1:
+    SLAM reference in the trajectory overlay)."""
+    from eval_gt import _plot_trajectory
+    gt = _make_poses(5)
+    trajectories = {"gt": gt, "lc": gt.copy(), "vggt_slam": gt.copy()}
+    out = tmp_path / "trajectory.png"
+    _plot_trajectory(trajectories, out)
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_colors_has_vggt_slam_entry():
+    import eval_gt
+    assert "vggt_slam" in eval_gt._COLORS
+
+
+def test_slam_tum_arg_defaults_to_none():
+    from eval_gt import _build_parser
+    args = _build_parser().parse_args(
+        ["--dataset", "7scenes", "--seq_dir", "/tmp/seq"]
+    )
+    assert args.slam_tum is None
+
+
+def test_slam_tum_arg_parses_path():
+    from eval_gt import _build_parser
+    args = _build_parser().parse_args(
+        ["--dataset", "7scenes", "--seq_dir", "/tmp/seq", "--slam_tum", "/tmp/slam.tum"]
+    )
+    assert args.slam_tum == Path("/tmp/slam.tum")
+
+
 def test_save_outputs_persists_all_auc_thresholds(tmp_path):
     """metrics.json keeps the full AUC dict (auc_5/15/30) + RPE rotation."""
     from eval_gt import _save_outputs

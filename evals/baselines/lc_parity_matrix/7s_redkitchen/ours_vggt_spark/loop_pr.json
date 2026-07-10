@@ -1,0 +1,24 @@
+{
+  "precision": 1.0,
+  "recall": 1.0,
+  "accepted": 1,
+  "accepted_positive": 1,
+  "accepted_negative": 0,
+  "accepted_ambiguous": 0,
+  "opportunities": 1,
+  "opportunities_uncapped": 1,
+  "recall_numerator": 1,
+  "applied_positive_pairs": 1,
+  "scene_diameter": 1.9080277054919943,
+  "n_frames": 43,
+  "submap_size": 16,
+  "params": {
+    "pos_dist_frac": 0.35,
+    "pos_view_deg": 75.0,
+    "neg_dist_frac": 0.5,
+    "neg_view_deg": 90.0,
+    "min_submap_gap": 1,
+    "nms_frame_distance": 25,
+    "max_loops_per_submap": 5
+  }
+}

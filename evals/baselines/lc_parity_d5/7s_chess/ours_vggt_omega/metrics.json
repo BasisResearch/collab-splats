@@ -1,0 +1,49 @@
+{
+  "_config": {
+    "backbone": "vggt_omega",
+    "max_frames": 500,
+    "submap_size": 16,
+    "dataset": "7scenes",
+    "seq_dir": "/workspace/collab-splats/evals/data/7scenes/chess/chess/seq-01"
+  },
+  "baseline": {
+    "ate": {
+      "rmse": 0.030019138008356094,
+      "mean": 0.027581164613366127,
+      "median": 0.025767985731363297,
+      "max": 0.06387411803007126
+    },
+    "rpe": {
+      "trans_rmse": 0.022300943732261658,
+      "rot_rmse_deg": 0.4181711971759796
+    },
+    "auc": {
+      "auc_5": 51.33907201914709,
+      "auc_15": 82.60344139831737,
+      "auc_30": 91.13663149115173
+    },
+    "time_s": 180.17,
+    "loops_applied": 0,
+    "candidates": 0
+  },
+  "lc": {
+    "ate": {
+      "rmse": 0.625523567199707,
+      "mean": 0.5476052761077881,
+      "median": 0.5462753772735596,
+      "max": 1.2013144493103027
+    },
+    "rpe": {
+      "trans_rmse": 0.044274523854255676,
+      "rot_rmse_deg": 1.9411314725875854
+    },
+    "auc": {
+      "auc_5": 0.13354003481288076,
+      "auc_15": 0.5891445459820133,
+      "auc_30": 2.6864166304032495
+    },
+    "time_s": 153.95,
+    "loops_applied": 20,
+    "candidates": 21
+  }
+}

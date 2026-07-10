@@ -3,6 +3,7 @@
 Provides:
   FeedforwardResult                        — typed output dataclass for all feedforward backends
   _raw_to_world_points                     — unproject depth maps to subsampled world-space grids
+  _decode_verify_geometry                  — decode a verify forward's depth into (world_points, conf)
   build_pycolmap_reconstruction            — build a pycolmap Reconstruction from pts+cameras
   _rescale_reconstruction_to_original_dims — rescale camera params from model resolution to original
   BaseFeedforwardCreator                   — abstract 5-step template-method pipeline
@@ -23,6 +24,7 @@ import torch
 import torch.nn.functional as F
 import zarr
 from rich.console import Console
+from vggt.utils.geometry import unproject_depth_map_to_point_map
 from zarr.codecs import BloscCodec
 
 from ..base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
@@ -254,6 +256,39 @@ class FeedforwardResult:
 
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
+
+def _decode_verify_geometry(
+    depth_t: torch.Tensor,
+    depth_conf_t: torch.Tensor,
+    extrinsics_3x4: np.ndarray,
+    intrinsics: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Decode a verify forward's depth tensors into (world_points, conf) float32 arrays.
+
+    Shared by the VGGT-family _verify_loop_candidate paths so the LC anchor-scale
+    machinery gets real geometry from the SAME forward — no second pass.
+
+    Args:
+        depth_t:        (1, 2, H, W, 1) depth prediction from the pair forward.
+        depth_conf_t:   (1, 2, H, W) depth confidence from the pair forward.
+        extrinsics_3x4: (2, 3, 4) world-to-cam extrinsics (numpy float32).
+        intrinsics:     (2, 3, 3) camera intrinsics (numpy float32).
+
+    Returns:
+        (world_points, conf) — (2, H, W, 3) points in the pair's local world
+        frame and (2, H, W) confidence, both float32.
+    """
+    # Drop the batch dim; move to CPU float32 numpy for the unprojection
+    depth = depth_t.squeeze(0).cpu().float().numpy()      # (2, H, W, 1)
+    conf = depth_conf_t.squeeze(0).cpu().float().numpy()  # (2, H, W)
+
+    # Unproject depth into the pair's local world frame so the LC anchor-scale
+    # machinery gets real geometry instead of the 1.0 fallback
+    world_points = unproject_depth_map_to_point_map(
+        depth, extrinsics_3x4, intrinsics
+    ).astype(np.float32)  # (2, H, W, 3)
+    return world_points, conf
+
 
 def _raw_to_world_points(raw: dict, subsample: int = 8) -> tuple[np.ndarray | None, np.ndarray | None]:
     """Extract world-space 3D points from raw _forward output dict.
@@ -668,9 +703,14 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         depth unprojection, confidence filtering, and optional postprocessing
         (e.g., global alignment) happen.
 
-    ``_verify_loop_candidate(frame1, frame2, verify_match_ratio) -> tuple[bool, np.ndarray | None]``
+    ``_verify_loop_candidate(frame1, frame2, verify_match_ratio) -> tuple[bool, dict | None]``
         Re-run model on a 2-frame pair to verify a loop closure candidate.
-        Return (accepted, fresh_poses_2x4x4) or (False, None) if rejected.
+        Return (accepted, lc_data) or (False, None) if rejected.  On accept,
+        lc_data is ``{"poses": (2, 4, 4) w2c float32 np.ndarray,
+        "world_points": (2, H, W, 3) np.ndarray | None,
+        "conf": (2, H, W) np.ndarray | None}`` — poses is required (every
+        accepting backend supplies it from the verify forward it already runs);
+        world_points/conf are populated where the backend exposes them cheaply.
 
     Attributes:
         camera_model: pycolmap camera model string for COLMAP reconstruction.
@@ -681,7 +721,16 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         _lc_submaps: list[Submap]        submaps built during LC inference
         _lc_loop_submaps: list[Submap]   verified loop-closure submaps (each 2 frames)
         _lc_overlap_frames: int          cfg.submap_overlap value used
-        _lc_all_matches: list[LoopMatch] all post-NMS candidates; .accepted=True for accepted ones
+        _lc_all_matches: list[LoopMatch] all post-NMS candidates; .accepted=True for accepted ones,
+                                         .reject_reason None on accepted / "verify_ratio" |
+                                         "no_joint_poses" | "jump_ratio" on rejects
+                                         ("no_joint_poses" now only fires from the defensive
+                                         guard when an accepting backend returns no lc_data —
+                                         a contract violation, not an expected path)
+        _lc_ablation_extrinsics: list[np.ndarray]  per-loop ablation trajectories, index-aligned
+                                         with _lc_loop_submaps; entry k = (total_frames, 4, 4)
+                                         corrected extrinsics re-optimized with loop k removed
+                                         (measurement only — outputs always use the full run)
     Consumer: collab_splats.pointcloud.loop_closure.eval.capture_pose_graph_loss
     These are not stable API; refactor cautiously.
     """
@@ -844,9 +893,11 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             dict with at minimum:
               "q":  (B, heads, N_tokens, head_dim) — query projections
               "k":  (B, heads, N_tokens, head_dim) — key projections
-            VGGTx additionally includes:
-              "poses": (2, 4, 4) float32 np.ndarray — pre-decoded camera extrinsics.
-            MapAnything omits "poses"; _verify_loop_candidate returns None for poses.
+            VGGTx and MapAnything additionally include:
+              "poses": (2, 4, 4) float32 np.ndarray — pre-decoded w2c extrinsics
+              (VGGTx via pose_enc decode; MapAnything via postprocessed camera_poses).
+            Optional "world_points" (2, H, W, 3) / "conf" (2, H, W) keys are folded
+            into lc_data by _verify_loop_candidate when present.
         """
         ...
 
@@ -857,7 +908,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         verify_match_ratio: float = 0.85,
         layer_index: int = -1,
         **kwargs: Any,
-    ) -> tuple[bool, Any]:
+    ) -> tuple[bool, dict[str, Any] | None]:
         """Verify a loop closure candidate via cross-frame attention gate.
 
         Args:
@@ -868,8 +919,10 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
                                  minibatch_size=2 for MapAnything).
 
         Returns:
-            (accepted, poses_or_None).  poses is (2, 4, 4) float32 np.ndarray when
-            the backend includes a "poses" key; None otherwise — caller uses submap poses.
+            (accepted, lc_data).  On accept, lc_data wraps the backend's features:
+            {"poses": (2, 4, 4) w2c float32, "world_points": (2, H, W, 3) | None,
+            "conf": (2, H, W) | None}; None when rejected (or if the backend
+            supplied no poses — the caller treats that as a contract violation).
         """
         # Use model-calibrated layer; override layer_index arg if provided explicitly.
         effective_layer = self._lc_layer_index if layer_index == -1 else layer_index
@@ -887,8 +940,17 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             logger.info("LC verify: ratio=%.4f < threshold=%.4f → rejected", ratio, verify_match_ratio)
             return False, None
         logger.info("LC verify: ratio=%.4f >= threshold=%.4f → accepted", ratio, verify_match_ratio)
-        # "poses" is optional — VGGTx includes it (pre-decoded), MapAnything does not
-        return True, features.get("poses")
+        # Wrap fresh joint poses (+ optional geometry) into the lc_data contract.
+        # Every accepting backend supplies "poses"; None here is a contract violation
+        # the caller guards against.
+        poses = features.get("poses")
+        if poses is None:
+            return True, None
+        return True, {
+            "poses": poses,
+            "world_points": features.get("world_points"),
+            "conf": features.get("conf"),
+        }
 
     def reproject(self, result: "FeedforwardResult") -> "FeedforwardResult":
         """Re-extract pts3d/colors via full depth unprojection under refined poses.

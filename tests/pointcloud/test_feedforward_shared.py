@@ -130,34 +130,57 @@ def test_verify_loop_candidate_rejected():
 
 
 def test_verify_loop_candidate_accepted_no_poses():
-    """Ratio above threshold but no 'poses' key → (True, None)."""
+    """Ratio above threshold but no 'poses' key → (True, None) — contract violation
+    the wrapper call site guards against (rejects with 'no_joint_poses')."""
     creator = _make_stub()
     k, q = _high_ratio_features()
     # No "poses" key — backend does not produce decoded poses
     creator._stubbed_features = {"q": q, "k": k}
     frame1 = torch.zeros(3, 16, 16)
     frame2 = torch.zeros(3, 16, 16)
-    accepted, poses = creator._verify_loop_candidate(
+    accepted, lc_data = creator._verify_loop_candidate(
         frame1, frame2, verify_match_ratio=0.5, layer_index=-1
     )
     assert accepted is True
-    assert poses is None
+    assert lc_data is None
 
 
 def test_verify_loop_candidate_accepted_with_poses():
-    """Ratio above threshold + 'poses' key present → (True, (2,4,4) array)."""
+    """Ratio above threshold + 'poses' key present → (True, lc_data dict)."""
     creator = _make_stub()
     k, q = _high_ratio_features()
     fake_poses = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)  # (2, 4, 4)
     creator._stubbed_features = {"q": q, "k": k, "poses": fake_poses}
     frame1 = torch.zeros(3, 16, 16)
     frame2 = torch.zeros(3, 16, 16)
-    accepted, poses = creator._verify_loop_candidate(
+    accepted, lc_data = creator._verify_loop_candidate(
         frame1, frame2, verify_match_ratio=0.5, layer_index=-1
     )
     assert accepted is True
-    assert poses is not None
-    assert poses.shape == (2, 4, 4)
+    assert lc_data is not None
+    assert lc_data["poses"].shape == (2, 4, 4)
+    # Backend supplied no geometry — lc_data carries explicit None placeholders
+    assert lc_data["world_points"] is None
+    assert lc_data["conf"] is None
+
+
+def test_verify_loop_candidate_accepted_with_geometry():
+    """'world_points'/'conf' feature keys are folded into lc_data on accept."""
+    creator = _make_stub()
+    k, q = _high_ratio_features()
+    fake_poses = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)   # (2, 4, 4)
+    wp = np.zeros((2, 8, 8, 3), dtype=np.float32)                      # (2, H, W, 3)
+    conf = np.ones((2, 8, 8), dtype=np.float32)                        # (2, H, W)
+    creator._stubbed_features = {
+        "q": q, "k": k, "poses": fake_poses, "world_points": wp, "conf": conf
+    }
+    accepted, lc_data = creator._verify_loop_candidate(
+        torch.zeros(3, 16, 16), torch.zeros(3, 16, 16),
+        verify_match_ratio=0.5, layer_index=-1,
+    )
+    assert accepted is True
+    assert lc_data["world_points"].shape == (2, 8, 8, 3)
+    assert lc_data["conf"].shape == (2, 8, 8)
 
 
 def test_verify_loop_candidate_layer_index_forwarded():

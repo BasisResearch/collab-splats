@@ -54,9 +54,11 @@ def _make_mock_model(n_frames: int = 2, num_heads: int = 2, n_blocks: int = 2, h
         B = 1
         x = torch.randn(B, n_tokens, total_dim)
         inter_blocks[-1].attn.qkv(x)
+        # Verify path decodes pose_enc AND depth/depth_conf from the same forward;
+        # depth carries the trailing channel dim: (B, S, H, W, 1)
         return {
             "pose_enc": torch.zeros(B, n_frames, 9),
-            "depth": torch.ones(B, n_frames, h, w),
+            "depth": torch.ones(B, n_frames, h, w, 1),
             "depth_conf": torch.ones(B, n_frames, h, w) * 100.0,
             "images": images if images.ndim == 5 else images.unsqueeze(0),
         }
@@ -425,6 +427,11 @@ def test_extract_intermediate_features_returns_q_k_poses():
     assert "poses" in result
     assert result["poses"].shape == (2, 4, 4)
     assert result["poses"].dtype == np.float32
+    # Geometry decoded from the same forward: unprojected depth + confidence
+    assert result["world_points"].shape == (2, 16, 16, 3)
+    assert result["world_points"].dtype == np.float32
+    assert result["conf"].shape == (2, 16, 16)
+    assert result["conf"].dtype == np.float32
 
 
 def test_extract_intermediate_features_hook_removed_after_call():

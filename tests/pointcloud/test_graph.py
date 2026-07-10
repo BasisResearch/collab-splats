@@ -113,9 +113,9 @@ def test_sl4_loop_edge_no_crash():
     pg.add_prior(0, Hs[0])
     pg.add_sequential_edge(0, 1, normalize_to_sl4(np.linalg.inv(Hs[0]) @ Hs[1]))
     pg.add_sequential_edge(1, 2, normalize_to_sl4(np.linalg.inv(Hs[1]) @ Hs[2]))
-    # add_loop_edge dropped the t_norm kwarg in 011c56f (VGGT-SLAM PGO parity:
-    # loop edges now use the same plain Gaussian noise as sequential edges).
-    pg.add_loop_edge(2, 0, normalize_to_sl4(np.linalg.inv(Hs[2]) @ Hs[0]))
+    # Loop-chain edges share the sequential-edge API and Gaussian noise
+    # (add_loop_edge was removed with the scale-reconciled 3-edge chain).
+    pg.add_sequential_edge(2, 0, normalize_to_sl4(np.linalg.inv(Hs[2]) @ Hs[0]))
     pg.optimize()   # must not raise
     for i in range(3):
         assert np.isfinite(pg.get_homography(i)).all()

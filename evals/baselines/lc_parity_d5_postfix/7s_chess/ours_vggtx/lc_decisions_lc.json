@@ -1,0 +1,191 @@
+[
+  {
+    "l2_score": 0.9446353316307068,
+    "query_submap": 2,
+    "detected_submap": 0,
+    "query_frame": 2,
+    "detected_frame": 10,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9170382022857666,
+    "query_submap": 3,
+    "detected_submap": 1,
+    "query_frame": 7,
+    "detected_frame": 16,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.92715984582901,
+    "query_submap": 4,
+    "detected_submap": 2,
+    "query_frame": 1,
+    "detected_frame": 8,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8956189155578613,
+    "query_submap": 5,
+    "detected_submap": 3,
+    "query_frame": 7,
+    "detected_frame": 16,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9058268070220947,
+    "query_submap": 6,
+    "detected_submap": 4,
+    "query_frame": 0,
+    "detected_frame": 10,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8588152527809143,
+    "query_submap": 8,
+    "detected_submap": 6,
+    "query_frame": 6,
+    "detected_frame": 16,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.6862972378730774,
+    "query_submap": 9,
+    "detected_submap": 7,
+    "query_frame": 15,
+    "detected_frame": 9,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.60798180103302,
+    "query_submap": 10,
+    "detected_submap": 8,
+    "query_frame": 0,
+    "detected_frame": 6,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.7748891711235046,
+    "query_submap": 11,
+    "detected_submap": 6,
+    "query_frame": 5,
+    "detected_frame": 10,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8452774882316589,
+    "query_submap": 12,
+    "detected_submap": 6,
+    "query_frame": 16,
+    "detected_frame": 10,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.6933944821357727,
+    "query_submap": 13,
+    "detected_submap": 11,
+    "query_frame": 10,
+    "detected_frame": 4,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.7595603466033936,
+    "query_submap": 14,
+    "detected_submap": 11,
+    "query_frame": 1,
+    "detected_frame": 1,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8973622918128967,
+    "query_submap": 15,
+    "detected_submap": 1,
+    "query_frame": 13,
+    "detected_frame": 2,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.900330126285553,
+    "query_submap": 16,
+    "detected_submap": 1,
+    "query_frame": 0,
+    "detected_frame": 2,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.895561933517456,
+    "query_submap": 17,
+    "detected_submap": 15,
+    "query_frame": 16,
+    "detected_frame": 15,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.7400563955307007,
+    "query_submap": 18,
+    "detected_submap": 16,
+    "query_frame": 2,
+    "detected_frame": 10,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9060547947883606,
+    "query_submap": 19,
+    "detected_submap": 15,
+    "query_frame": 1,
+    "detected_frame": 15,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.6628099083900452,
+    "query_submap": 20,
+    "detected_submap": 18,
+    "query_frame": 1,
+    "detected_frame": 14,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9113689661026001,
+    "query_submap": 21,
+    "detected_submap": 18,
+    "query_frame": 0,
+    "detected_frame": 5,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8425538539886475,
+    "query_submap": 22,
+    "detected_submap": 20,
+    "query_frame": 2,
+    "detected_frame": 16,
+    "accepted": true,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.7082499861717224,
+    "query_submap": 23,
+    "detected_submap": 21,
+    "query_frame": 0,
+    "detected_frame": 12,
+    "accepted": true,
+    "reject_reason": null
+  }
+]

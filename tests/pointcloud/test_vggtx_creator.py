@@ -126,11 +126,16 @@ def _make_vggtx_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tokens=10
 
     def mock_forward(batch):
         # Call every block's qkv so any registered hook fires
-        B = batch.shape[0]
+        B, S, H, W = batch.shape[0], batch.shape[1], batch.shape[-2], batch.shape[-1]
         x = torch.randn(B, n_tokens, total_dim)
         for qkv in qkv_linears:
             qkv(x)
-        return {"pose_enc": torch.zeros(B, 2, 9)}
+        # Verify path decodes pose_enc AND depth/depth_conf from the same forward
+        return {
+            "pose_enc": torch.zeros(B, S, 9),
+            "depth": torch.ones(B, S, H, W, 1),
+            "depth_conf": torch.ones(B, S, H, W),
+        }
 
     mock_model = MagicMock()
     mock_model.aggregator.global_blocks = blocks
@@ -158,6 +163,11 @@ def test_vggtx_extract_intermediate_features_shapes():
     # poses: (2, 4, 4) float32 numpy array
     assert result["poses"].shape == (2, 4, 4)
     assert result["poses"].dtype == np.float32
+    # Geometry decoded from the same forward: unprojected depth + confidence
+    assert result["world_points"].shape == (2, 16, 16, 3)
+    assert result["world_points"].dtype == np.float32
+    assert result["conf"].shape == (2, 16, 16)
+    assert result["conf"].dtype == np.float32
 
 
 def test_vggtx_extract_intermediate_features_hook_removed():

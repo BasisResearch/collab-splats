@@ -24,9 +24,12 @@ def test_lc_collate_uses_window_views_not_full_sequence():
 
     def fake_postprocess(raw_list, views_ctx, apply_mask):
         captured_views.extend(views_ctx)
+        # Include depth_z/conf — collation emits them as 'depth'/'depth_conf'
         return [
             {"camera_poses": [torch.eye(4).unsqueeze(0)],
-             "intrinsics": [torch.eye(3).unsqueeze(0)]}
+             "intrinsics": [torch.eye(3).unsqueeze(0)],
+             "depth_z": torch.ones(1, 4, 4, 1),
+             "conf": torch.ones(1, 4, 4)}
             for _ in raw_list
         ]
 
@@ -42,12 +45,15 @@ def test_lc_collate_uses_window_views_not_full_sequence():
         "collab_splats.pointcloud.feedforward.mapanything.invert_poses",
         return_value=np.eye(4),
     ):
-        creator._lc_collate_outputs(raw_list)
+        out = creator._lc_collate_outputs(raw_list)
 
     assert all(v["_tag"].startswith("win_") for v in captured_views), (
         f"Expected window views (win_*), got: {[v['_tag'] for v in captured_views]}"
     )
     assert creator._lc_window_views is None
+    # Geometry keys collated from depth_z/conf with per-frame stacking
+    assert out["depth"].shape == (3, 4, 4, 1)
+    assert out["depth_conf"].shape == (3, 4, 4)
 
 
 def test_lc_collate_raises_when_window_views_not_set():

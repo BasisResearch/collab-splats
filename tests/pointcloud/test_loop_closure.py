@@ -41,7 +41,8 @@ def test_loop_closure_config_defaults():
     assert cfg.submap_overlap == 1
     assert cfg.lc_retrieval_threshold == 0.95
     assert cfg.max_loops_per_submap == 5
-    assert cfg.verify_match_ratio == 0.85
+    # None = resolve to the creator's default_verify_match_ratio at LoopClosure init
+    assert cfg.verify_match_ratio is None
     assert cfg.nms_frame_distance == 25
     assert cfg.min_submap_gap == 1
     assert cfg.lc_threshold is None

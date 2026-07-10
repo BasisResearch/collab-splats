@@ -20,6 +20,12 @@ docs/semantics.md
 
 # Eval benchmark data (downloaded on-demand via evals/download_7scenes.sh)
 data/
+# `data/` excludes the evals/data directory itself, which blocks re-inclusion of
+# files inside it (git won't traverse an excluded dir) — so un-ignore the dir,
+# re-ignore its contents, then re-allow the one script we want tracked.
+!evals/data/
+evals/data/*
+!evals/data/download_parity_scenes.sh
 
 # Reconstruction outputs (written to /workspace/outputs/ outside repo)
 outputs/

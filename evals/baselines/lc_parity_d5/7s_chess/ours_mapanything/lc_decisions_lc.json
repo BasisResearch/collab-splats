@@ -1,0 +1,191 @@
+[
+  {
+    "l2_score": 0.9256935119628906,
+    "query_submap": 2,
+    "detected_submap": 0,
+    "query_frame": 2,
+    "detected_frame": 10,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9105029702186584,
+    "query_submap": 3,
+    "detected_submap": 1,
+    "query_frame": 4,
+    "detected_frame": 16,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9104292392730713,
+    "query_submap": 4,
+    "detected_submap": 2,
+    "query_frame": 11,
+    "detected_frame": 8,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8452723026275635,
+    "query_submap": 5,
+    "detected_submap": 3,
+    "query_frame": 1,
+    "detected_frame": 13,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8570439219474792,
+    "query_submap": 6,
+    "detected_submap": 4,
+    "query_frame": 0,
+    "detected_frame": 10,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8138154745101929,
+    "query_submap": 8,
+    "detected_submap": 6,
+    "query_frame": 2,
+    "detected_frame": 16,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.7017947435379028,
+    "query_submap": 9,
+    "detected_submap": 7,
+    "query_frame": 3,
+    "detected_frame": 14,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.673460066318512,
+    "query_submap": 10,
+    "detected_submap": 8,
+    "query_frame": 3,
+    "detected_frame": 6,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.7770121097564697,
+    "query_submap": 11,
+    "detected_submap": 7,
+    "query_frame": 6,
+    "detected_frame": 5,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8107860684394836,
+    "query_submap": 12,
+    "detected_submap": 6,
+    "query_frame": 1,
+    "detected_frame": 14,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.633224368095398,
+    "query_submap": 13,
+    "detected_submap": 11,
+    "query_frame": 0,
+    "detected_frame": 16,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.7677269577980042,
+    "query_submap": 14,
+    "detected_submap": 11,
+    "query_frame": 1,
+    "detected_frame": 1,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9027747511863708,
+    "query_submap": 15,
+    "detected_submap": 1,
+    "query_frame": 5,
+    "detected_frame": 4,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9354522824287415,
+    "query_submap": 16,
+    "detected_submap": 1,
+    "query_frame": 0,
+    "detected_frame": 2,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8834608793258667,
+    "query_submap": 17,
+    "detected_submap": 15,
+    "query_frame": 16,
+    "detected_frame": 15,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.6798551082611084,
+    "query_submap": 18,
+    "detected_submap": 16,
+    "query_frame": 0,
+    "detected_frame": 10,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8924351334571838,
+    "query_submap": 19,
+    "detected_submap": 17,
+    "query_frame": 14,
+    "detected_frame": 15,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.672931432723999,
+    "query_submap": 20,
+    "detected_submap": 18,
+    "query_frame": 1,
+    "detected_frame": 14,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.9201081395149231,
+    "query_submap": 21,
+    "detected_submap": 18,
+    "query_frame": 0,
+    "detected_frame": 5,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.8606895804405212,
+    "query_submap": 22,
+    "detected_submap": 20,
+    "query_frame": 2,
+    "detected_frame": 16,
+    "accepted": false,
+    "reject_reason": null
+  },
+  {
+    "l2_score": 0.6825104355812073,
+    "query_submap": 23,
+    "detected_submap": 21,
+    "query_frame": 0,
+    "detected_frame": 11,
+    "accepted": false,
+    "reject_reason": null
+  }
+]

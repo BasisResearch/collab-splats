@@ -17,9 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+import numpy as np
 import torch
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
+from collab_splats.utils.geometry import extrinsics_to_homogeneous
+
+from .base import _decode_verify_geometry
 from .vggtx import VGGTXCreator
 
 logger = logging.getLogger(__name__)
@@ -73,6 +77,20 @@ class VGGTSPARKCreator(VGGTXCreator):
     # Override class identity — name used in eval output prefixes and registry
     name: ClassVar[str] = "vggt_spark"
     registry_name: ClassVar[str] = "vggt_spark"
+
+    # Do NOT inherit VGGTXCreator's hook-ratio calibration: _verify_loop_candidate
+    # below uses SPARK's NATIVE image_match_ratio (~1.02-1.05 on accepted pairs),
+    # a different score family from base.py's 0.85 hook-ratio calibration.
+    # 0.95 is spark's native-score calibration — keep this classvar, the
+    # _verify_loop_candidate signature default, and its docstring in agreement.
+    # Re-checked in the chess d5 clean-negative sweep (2026-07-10, 21 positives
+    # vs 20 GT-clean negatives, seed 42): 0.95 accepts 21/21 positives; the
+    # native score saturates (pos 0.98-1.06, neg 0.81-1.03, AUC 0.921 — no
+    # threshold separates cleanly), so the gate is weak against non-co-viewing
+    # pairs and production relies on retrieval + jump_ratio to filter those.
+    # Kept at 0.95: any stricter value drops true loops for negatives that
+    # retrieval never surfaces.
+    default_verify_match_ratio: ClassVar[float] = 0.95
 
     def _load_model(self, device: str) -> Any:
         """Load VGGT-SPARK from HuggingFace via the SPARK import path.
@@ -184,7 +202,7 @@ class VGGTSPARKCreator(VGGTXCreator):
         frame2: Any,
         verify_match_ratio: float = 0.95,
         **kwargs: Any,
-    ) -> tuple[bool, Any]:
+    ) -> tuple[bool, dict[str, Any] | None]:
         """Verify a loop closure candidate via VGGT-SPARK native similarity.
 
         Calls ``VGGT.forward(compute_similarity=True)`` on the candidate pair
@@ -199,8 +217,9 @@ class VGGTSPARKCreator(VGGTXCreator):
             **kwargs:            Ignored (no hook layer to select).
 
         Returns:
-            (accepted, None) — poses are not extracted on this path; caller uses
-            submap poses.
+            (accepted, lc_data) — on accept, poses/world_points/conf are decoded
+            from the SAME forward (pose_enc + depth + depth_conf are always
+            computed alongside image_match_ratio); (False, None) on reject.
         """
         # Stack frames into (2, C, H, W) on the model's device/dtype — the
         # candidate frames are held on CPU (memory), so move them before forward.
@@ -222,4 +241,20 @@ class VGGTSPARKCreator(VGGTXCreator):
             ratio,
             verify_match_ratio,
         )
-        return True, None
+        # Decode joint poses + geometry from the same forward — no second pass.
+        # Frame 0 of the 2-frame window is at identity (VGGT first-frame-canonical).
+        extrinsic_t, intrinsic_t = pose_encoding_to_extri_intri(
+            outputs["pose_enc"], tuple(int(x) for x in images.shape[-2:])
+        )
+        ext_3x4 = extrinsic_t.cpu().float().numpy().squeeze(0)          # (2, 3, 4) w2c
+        intr = intrinsic_t.cpu().float().numpy().squeeze(0)             # (2, 3, 3)
+        # Decode geometry via the shared verify helper (matches VGGT-SLAM's
+        # unproject_depth_map_to_point_map usage on LC predictions).
+        world_points, conf = _decode_verify_geometry(
+            outputs["depth"], outputs["depth_conf"], ext_3x4, intr
+        )
+        return True, {
+            "poses": extrinsics_to_homogeneous(ext_3x4),                # (2, 4, 4)
+            "world_points": world_points,
+            "conf": conf,
+        }

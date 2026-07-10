@@ -28,7 +28,6 @@ if _vggt_spark not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 import argparse
-import glob
 import json
 import logging
 from pathlib import Path
@@ -55,6 +54,19 @@ _ate_mod = _ilu.module_from_spec(_ate_spec)
 _ate_spec.loader.exec_module(_ate_mod)
 compute_ate_rmse = _ate_mod.compute_ate_rmse
 
+# lc_parity_common shares the same shadowing problem as ate_utils above (installed
+# `evals` package would otherwise win), so load it the same way. Register in
+# sys.modules before exec: lc_parity_common's SceneSpec dataclass resolves its
+# (stringified, via `from __future__ import annotations`) field annotations
+# through sys.modules[cls.__module__], which is unset until we do this.
+_lc_common_spec = _ilu.spec_from_file_location(
+    "lc_parity_common", Path(__file__).resolve().parent / "lc_parity_common.py"
+)
+_lc_common_mod = _ilu.module_from_spec(_lc_common_spec)
+sys.modules["lc_parity_common"] = _lc_common_mod
+_lc_common_spec.loader.exec_module(_lc_common_mod)
+collect_frames = _lc_common_mod.collect_frames
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +80,7 @@ def run_vggt_slam_lc(
     max_loops: int = 0,              # 0 = no LC; 1 for LC runs
     min_disparity: float = 50.0,     # VGGT-SLAM paper default
     lc_thres: float = 0.95,
+    image_list: Path | None = None,  # restrict frame universe (TUM GT-gap parity)
 ) -> None:
     """Run VGGT-SLAM pipeline and write TUM trajectory + ATE metrics + keyframe list."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -103,18 +116,11 @@ def run_vggt_slam_lc(
 
     model.register_forward_hook(_capture_similarity)
 
-    # Collect and sort images; max_frames=None processes the full sequence
-    all_images = [
-        f for f in glob.glob(str(seq_dir / "*"))
-        if "depth" not in Path(f).name.lower()
-        and "txt" not in Path(f).name.lower()
-        and "db" not in Path(f).name.lower()
-        and Path(f).suffix.lower() in (".png", ".jpg", ".jpeg")
-    ]
-    all_images = sorted(all_images)
-    if max_frames is not None:
-        all_images = all_images[:max_frames]
-    logger.info("Found %d images (max_frames=%s)", len(all_images), max_frames)
+    # Collect and sort images (7-Scenes flat or TUM rgb/ layout); optional image_list
+    # restriction first, then max_frames cap (None = full sequence)
+    all_images = collect_frames(seq_dir, image_list=image_list, max_frames=max_frames)
+    logger.info("Found %d images (image_list=%s, max_frames=%s)",
+                len(all_images), image_list, max_frames)
 
     # Optical flow keyframe selection + submap processing (mirrors main.py)
     image_names_subset: list[str] = []
@@ -148,8 +154,7 @@ def run_vggt_slam_lc(
             # solver.add_points() calls .numpy() on frames_lc; numpy rejects BFloat16.
             # Cast to float32 here rather than touching vendored solver.py.
             if predictions.get("frames_lc") is not None:
-                import torch as _torch
-                predictions["frames_lc"] = predictions["frames_lc"].to(_torch.float32)
+                predictions["frames_lc"] = predictions["frames_lc"].to(torch.float32)
             solver.add_points(predictions)
             solver.graph.optimize()
             # Keep last overlapping_window_size frames for next submap continuity
@@ -187,8 +192,10 @@ def run_vggt_slam_lc(
     }, indent=2))
     logger.info("Metrics → %s", metrics_out)
 
-    # Write VGGT-SPARK similarity scores for comparison against our cross_frame_attention_ratio
-    out_similarity = out_tum.parent.parent.parent / "results" / "parity_harness" / "vggt_spark_similarity.json"
+    # Write VGGT-SPARK similarity scores for comparison against our cross_frame_attention_ratio.
+    # Lives next to this run's own metrics.json (not a shared path) so parallel/prefix
+    # scene runs don't clobber each other's similarity dumps.
+    out_similarity = out_tum.parent / "vggt_spark_similarity.json"
     out_similarity.parent.mkdir(parents=True, exist_ok=True)
     out_similarity.write_text(json.dumps({
         "model": "VGGT-SPARK (VGGT-1B weights)",
@@ -229,6 +236,16 @@ def main() -> None:
         help="Optical-flow disparity threshold for keyframe selection. "
              "VGGT-SLAM paper default=50. Use 0 to accept all frames.",
     )
+    parser.add_argument(
+        "--lc_thres", type=float, default=0.95,
+        help="DINO-SALAD retrieval threshold for LC candidates (VGGT-SLAM default 0.95).",
+    )
+    parser.add_argument(
+        "--image_list", type=Path, default=None,
+        help="File of allowed frame basenames (one per line). Restricts keyframe "
+             "selection to these frames — required for TUM parity runs, where the "
+             "eval-side dataset loader drops GT-gap frames.",
+    )
     args = parser.parse_args()
 
     run_vggt_slam_lc(
@@ -239,6 +256,8 @@ def main() -> None:
         conf_threshold=args.conf_threshold,
         max_loops=args.max_loops,
         min_disparity=args.min_disparity,
+        lc_thres=args.lc_thres,
+        image_list=args.image_list,
     )
 
 

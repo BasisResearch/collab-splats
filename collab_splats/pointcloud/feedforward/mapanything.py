@@ -5,6 +5,7 @@ Provides:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -37,6 +38,8 @@ from .base import (
     compute_multiview_depth_confidence,
     console,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ── Inference utilities ────────────────────────────────────────────────────────
@@ -155,12 +158,15 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     # MapAnything info_sharing blocks have no special tokens (no camera/register
     # tokens prepended). token_offset must be 0 — not 5 as the VGGT default.
     _lc_token_offset: ClassVar[int] = 0
-    # Calibrated on chess_seq01 retrieved pairs, post stride=K fix (2026-05-29).
-    # Formula: mean_top_quarter mean - 2*std = 1.8066 - 2*0.0781 = 1.65.
-    default_verify_match_ratio: ClassVar[float] = 1.65
-    # Calibrated 2026-05-28: info_sharing depth=16; layer 4 gives mtq=1.807 on
-    # DINO-SALAD retrieved pairs (layer 15/last gives 0.341 — useless for LC).
+    # LC verify calibration — chess d5 clean-negative sweep, 2026-07-10.
+    # 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers
+    # > half scene diameter apart AND viewing dirs > 90°, seed 42), all 16
+    # self_attention_blocks hooked in one forward per pair. Layer 4 CONFIRMED
+    # best (AUC 1.000; positives min 1.4741, negatives max 1.4405); threshold
+    # = midpoint 1.46 (margins +0.014 pos / -0.020 neg — narrow but zero
+    # overlap). The old 1.65 (positives-only formula) rejected 9/21 true loops.
     # MapAnything cross-frame attention peaks early (~25% depth) unlike VGGT models.
+    default_verify_match_ratio: ClassVar[float] = 1.46
     _lc_layer_index: ClassVar[int] = 4
 
     model_name: str = "facebook/map-anything"
@@ -304,11 +310,13 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         """Aggregate per-frame list[dict] from _forward into flat dict for _run_lc_loop.
 
         camera_poses and intrinsics only exist after postprocess_model_outputs_for_inference,
-        so we run a minimal postprocess here (apply_mask=False — LC only needs poses) before
-        reading those keys.  bf16 tensors are cast to float32 first, matching _postprocess.
-        Extrinsics are inverted to world-to-cam (3,4) as expected by the LC loop. World
-        points are not included — _raw_to_world_points will return (None, None) since
-        MapAnything lacks the 'depth'/'intrinsics_downsampled' keys, which is acceptable.
+        so we run a minimal postprocess here (apply_mask=False) before reading those keys.
+        bf16 tensors are cast to float32 first, matching _postprocess. Extrinsics are
+        inverted to world-to-cam (3,4) as expected by the LC loop. When present, depth_z/conf
+        are emitted under the shared 'depth'/'depth_conf' keys (with 'intrinsics_downsampled'
+        aliasing the model-resolution intrinsics) so _raw_to_world_points can build submap
+        world points for LC anchor-scale estimation, same grid path as the VGGT backends;
+        when missing, a warning is logged and the geometry keys are omitted.
         """
         # Cast bf16 tensors to float32 — postprocess_model_outputs_for_inference calls
         # F.grid_sample which requires matching dtypes (torch 2.4 strict enforcement).
@@ -340,7 +348,28 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             for p in processed
         ])
         intrs = np.stack([p["intrinsics"][0].cpu().float().numpy() for p in processed])
-        return {"extrinsic": exts, "intrinsics": intrs}
+
+        # Emit depth + confidence under the shared keys consumed by _raw_to_world_points.
+        # Depth is at model resolution (= frame resolution), so the same intrinsics
+        # describe the depth-map grid — matching the VGGT-family convention where
+        # 'intrinsics_downsampled' corresponds to the depth grid.
+        out = {
+            "extrinsic": exts,
+            "intrinsics": intrs,
+            "intrinsics_downsampled": intrs,
+        }
+        # Guard: postprocess variants may omit depth_z/conf — warn and omit the
+        # geometry keys (same posture as the LC-side pts3d handling) so LC still
+        # runs; anchor/sequential scale then falls back without submap points.
+        if all("depth_z" in p and "conf" in p for p in processed):
+            out["depth"] = np.stack([p["depth_z"][0].cpu().float().numpy() for p in processed])
+            out["depth_conf"] = np.stack([p["conf"][0].cpu().float().numpy() for p in processed])
+        else:
+            logger.warning(
+                "depth_z/conf missing from postprocessed LC window outputs — submap "
+                "world_points unavailable; LC anchor/sequential scale falls back"
+            )
+        return out
 
     def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
         model_h: int = self._processed_views[0]["img"].shape[-2]
@@ -474,12 +503,13 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Hook info_sharing.self_attention_blocks[layer_index].attn.qkv; return {q, k}.
+        """Hook info_sharing...blocks[layer_index].attn.qkv; return {q, k, poses, ...}.
 
         Wraps the 2 input frames into MapAnything's view format, runs a forward pass
         with a per-call hook on the cross-frame self-attention block at ``layer_index``,
-        then removes the hook.  MapAnything has no decodable pose encoding, so only
-        q and k are returned — _verify_loop_candidate returns None for fresh poses.
+        then removes the hook.  The forward's predictions are kept and postprocessed
+        via the ``_lc_collate_outputs`` recipe (postprocess → camera_poses → invert)
+        so _verify_loop_candidate gets fresh w2c poses without a second forward.
 
         The hook is removed in a finally block — guaranteed cleanup even if the forward
         raises.  No persistent state is left on the model or its layers.
@@ -492,8 +522,13 @@ class MapAnythingCreator(BaseFeedforwardCreator):
 
         Returns:
             dict with keys:
-              "q": (B, heads, N_tokens, head_dim) query projections
-              "k": (B, heads, N_tokens, head_dim) key projections
+              "q":            (B, heads, N_tokens, head_dim) query projections
+              "k":            (B, heads, N_tokens, head_dim) key projections
+              "poses":        (2, 4, 4) float32 np.ndarray — w2c extrinsics
+              "world_points": (2, H, W, 3) float32 np.ndarray — world-frame points
+                              (present when the postprocessed output exposes pts3d)
+              "conf":         (2, H, W) float32 np.ndarray — per-point confidence
+                              (present when the postprocessed output exposes conf)
         """
         minibatch_size = kwargs.get("minibatch_size", 1)
         memory_efficient = kwargs.get("memory_efficient_inference", False)
@@ -526,7 +561,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                     for vk, vv in view.items():
                         if isinstance(vv, torch.Tensor):
                             view[vk] = vv.to(model_device)
-                self.model.forward(
+                preds = self.model.forward(
                     views,
                     memory_efficient_inference=memory_efficient,
                     minibatch_size=minibatch_size,
@@ -535,6 +570,35 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             # Always remove the hook — no persistent state left on the model
             hook.remove()
 
+        # Derive fresh w2c poses from the SAME forward via the _lc_collate_outputs
+        # recipe: float-cast pointmaps → postprocess (apply_mask=False) → invert
+        # camera_poses (c2w) to w2c. Frame 0 is at identity (first-frame canonical).
+        with torch.no_grad():
+            for pred in preds:
+                pred["pts3d_cam"] = pred["pts3d_cam"].float()
+                pred["pts3d"] = pred["pts3d"].float()
+            processed = postprocess_model_outputs_for_inference(
+                preds, views, apply_mask=False
+            )
+        captured["poses"] = np.stack([
+            invert_poses(p["camera_poses"][0].cpu().float().numpy())
+            for p in processed
+        ]).astype(np.float32)                                          # (2, 4, 4) w2c
+        # Pointmaps + confidence are already in the postprocessed output — include
+        # them for LC anchor-scale estimation; warn loudly if a key is missing
+        # (verify contract tolerates world_points=None, but scale degrades to 1.0).
+        if all("pts3d" in p for p in processed):
+            captured["world_points"] = np.stack(
+                [p["pts3d"][0].cpu().float().numpy() for p in processed]
+            )                                                          # (2, H, W, 3)
+        else:
+            logger.warning(
+                "LC verify geometry missing pts3d — anchor scale will fall back to 1.0"
+            )
+        if all("conf" in p for p in processed):
+            captured["conf"] = np.stack(
+                [p["conf"][0].cpu().float().numpy() for p in processed]
+            )                                                          # (2, H, W)
         return captured
 
     def _reproject(

@@ -76,17 +76,16 @@ class LoopClosure:
 
     def __init__(self, base: Any, config: LoopClosureConfig | None = None) -> None:
         self.base = base
-        if config is None:
-            # Pick up per-model calibrated threshold when no explicit config given.
-            # Falls back to LoopClosureConfig default (0.85) if creator lacks the attr.
-            model_ratio = getattr(base, "default_verify_match_ratio", None)
-            self.config = (
-                LoopClosureConfig(verify_match_ratio=model_ratio)
-                if model_ratio is not None
-                else LoopClosureConfig()
+        self.config = config if config is not None else LoopClosureConfig()
+        # Resolve verify_match_ratio=None to the creator's per-model calibrated
+        # threshold on EVERY construction path (explicit config included), so
+        # per-model calibrations aren't shadowed by the dataclass default.
+        # An explicit float always wins; fallback 0.85 (VGGT-SPARK calibration).
+        if self.config.verify_match_ratio is None:
+            self.config = dataclasses.replace(
+                self.config,
+                verify_match_ratio=getattr(base, "default_verify_match_ratio", 0.85),
             )
-        else:
-            self.config = config
 
     ######################################################
     ########## Delegation — proxy to self.base ##########
@@ -271,7 +270,7 @@ class LoopClosure:
                     q_frame = frames_cpu[match.query_frame_idx]
                     d_submap = submaps[match.detected_submap_id]
                     d_frame = d_submap.frames[match.detected_frame_idx]
-                    verify_ok, lc_poses = self.base._verify_loop_candidate(
+                    verify_ok, lc_data = self.base._verify_loop_candidate(
                         q_frame, d_frame, verify_match_ratio=cfg.verify_match_ratio
                     )
                     if not verify_ok:
@@ -280,13 +279,21 @@ class LoopClosure:
                             f"submap {match.query_submap_id} → {match.detected_submap_id}"
                             f"  dist={match.similarity_score:.3f}"
                         )
-                    if verify_ok and lc_poses is None:
-                        console.log(
-                            f"  ✗ Loop skipped (no joint poses): "
-                            f"submap {match.query_submap_id} → {match.detected_submap_id}"
+                        match.reject_reason = "verify_ratio"
+                    if verify_ok and lc_data is None:
+                        # Defensive guard: the verify contract requires every accepting
+                        # backend to return lc_data with joint poses — this firing means
+                        # a backend contract violation, not an expected reject path.
+                        logging.getLogger(__name__).error(
+                            "LC verify accepted but returned no lc_data (backend contract "
+                            "violation): submap %s → %s",
+                            match.query_submap_id,
+                            match.detected_submap_id,
                         )
                         verify_ok = False
+                        match.reject_reason = "no_joint_poses"
                     if verify_ok:
+                        lc_poses = lc_data["poses"]
                         lc_rel = (
                             invert_poses(lc_poses[1].astype(np.float64))
                             @ lc_poses[0].astype(np.float64)
@@ -305,14 +312,22 @@ class LoopClosure:
                                 f"  ✗ Loop rejected (jump ratio={jump_ratio:.2f}): "
                                 f"submap {match.query_submap_id} → {match.detected_submap_id}"
                             )
+                            match.reject_reason = "jump_ratio"
                         else:
                             match.accepted = True
+                            match.reject_reason = None
                             verified += 1
                             loops_found += 1
                             console.log(
                                 f"  ↩ Loop: submap {match.query_submap_id} → {match.detected_submap_id}"
                                 f"  dist={match.similarity_score:.3f} jump={jump_ratio:.2f}"
                             )
+                            # Reshape LC geometry to Submap's (K, P, 3)/(K, P) convention:
+                            # (2, H, W, 3) → (2, H·W, 3) and (2, H, W) → (2, H·W).
+                            lc_wp = lc_data.get("world_points")
+                            lc_wp = lc_wp.reshape(2, -1, 3) if lc_wp is not None else None
+                            lc_conf = lc_data.get("conf")
+                            lc_conf = lc_conf.reshape(2, -1) if lc_conf is not None else None
                             lc_submaps.append(Submap(
                                 submap_id=len(submaps) + len(lc_submaps),
                                 frames=torch.stack([q_frame, d_frame]),
@@ -327,6 +342,8 @@ class LoopClosure:
                                     d_submap.image_paths[match.detected_frame_idx],
                                 ],
                                 is_lc_submap=True,
+                                world_points=lc_wp,
+                                world_points_conf=lc_conf,
                             ))
                     all_loop_candidates.append(match)
 
@@ -358,4 +375,32 @@ class LoopClosure:
         self.base._lc_corrected_extrinsics = corrected_extrinsics
         self.base.raw_outputs = merge_submap_outputs(
             submaps, corrected_extrinsics,
+        )
+
+        # Per-loop ablation metric: re-optimize once per accepted loop with that loop
+        # removed. Measurement only — merged outputs above always use the FULL optimization.
+        if lc_submaps:
+            self._ablate_loops(submaps, lc_submaps, total_frames=N)
+
+    def _ablate_loops(self, submaps: list[Submap], lc_submaps: list[Submap], total_frames: int) -> None:
+        """Re-run PGO with each loop removed; store per-ablation extrinsics on the base creator.
+
+        Entry k of ``_lc_ablation_extrinsics`` (index-aligned with ``_lc_loop_submaps``)
+        is the (total_frames, 4, 4) corrected extrinsics optimized without loop k, using
+        the exact PGO params of the full run.
+        """
+        cfg = self.config
+        t0 = time.perf_counter()
+        self.base._lc_ablation_extrinsics = [
+            run_pose_graph_optimization(
+                submaps, lc_submaps[:k] + lc_submaps[k + 1:], total_frames=total_frames,
+                overlap_frames=cfg.submap_overlap,
+                conf_threshold=cfg.conf_threshold,
+                scale_method=cfg.scale_method,
+            )
+            for k in range(len(lc_submaps))
+        ]
+        logging.getLogger(__name__).info(
+            "loop ablation: %d re-optimizations in %.1fs",
+            len(lc_submaps), time.perf_counter() - t0,
         )

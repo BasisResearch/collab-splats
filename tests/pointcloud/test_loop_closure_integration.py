@@ -64,7 +64,7 @@ def test_image_retrieval_detects_identical_submaps():
 
 
 def test_verify_loop_candidate_returns_tuple():
-    """F4: _verify_loop_candidate must return (bool, ndarray|None), not bare bool."""
+    """F4: _verify_loop_candidate must return (bool, lc_data dict|None), not bare bool."""
     from unittest.mock import MagicMock
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
 

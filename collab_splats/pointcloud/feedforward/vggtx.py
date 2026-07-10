@@ -24,6 +24,7 @@ from ..postproc import run_global_alignment
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
+    _decode_verify_geometry,
     _raw_to_world_points,
     compute_multiview_depth_confidence,
     console,
@@ -175,10 +176,15 @@ class VGGTXCreator(BaseFeedforwardCreator):
                               are discarded.  35.0 = keep the top 65 %.
     """
 
-    # Calibrated on chess_seq01 retrieved pairs, post stride=K fix (2026-05-29).
-    # Formula: mean_top_quarter mean - 2*std = 0.8178 - 2*0.0102 = 0.80.
-    # VGGTSPARKCreator inherits this value.
-    default_verify_match_ratio: ClassVar[float] = 0.80
+    # LC verify calibration — chess d5 full-layer sweep, 2026-07-09.
+    # 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers
+    # > half scene diameter apart AND viewing dirs > 90°, seed 42).
+    # Layer 10 separates perfectly (AUC 1.000; positives min 1.2746, negatives
+    # max 1.0658); threshold = midpoint 1.17 (±0.104 margin to both sides).
+    # The base-class layer 20 does NOT discriminate for VGGT-X (AUC 0.42 vs
+    # clean negatives). VGGTSPARKCreator overrides both (native similarity).
+    _lc_layer_index: ClassVar[int] = 10
+    default_verify_match_ratio: ClassVar[float] = 1.17
 
     camera_model: str = "SIMPLE_PINHOLE"
     model_name: str = "facebook/VGGT-1B"
@@ -429,7 +435,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Hook aggregator.global_blocks[layer_index].attn.qkv; return {q, k, poses}.
+        """Hook aggregator.global_blocks[layer_index].attn.qkv; return {q, k, poses, world_points, conf}.
 
         Runs a 2-frame VGGT-X forward with a per-call hook on the QKV projection of the
         specified global attention block.  Captures q and k tensors, then decodes the
@@ -450,6 +456,8 @@ class VGGTXCreator(BaseFeedforwardCreator):
               "q":     (B, heads, N_tokens, head_dim) query projections
               "k":     (B, heads, N_tokens, head_dim) key projections
               "poses": (2, 4, 4) float32 np.ndarray — decoded camera extrinsics
+              "world_points": (2, H, W, 3) float32 np.ndarray — unprojected depth
+              "conf": (2, H, W) float32 np.ndarray — depth confidence
         """
         device = next(self.model.parameters()).device
         dtype = next(self.model.parameters()).dtype
@@ -476,11 +484,17 @@ class VGGTXCreator(BaseFeedforwardCreator):
             # Always remove the hook — no persistent state left on the model
             hook.remove()
 
-        # Decode (2, 4, 4) camera extrinsics from VGGT-X pose encoding
+        # Decode camera extrinsics + intrinsics from VGGT-X pose encoding
         image_shape = (int(frames.shape[-2]), int(frames.shape[-1]))
-        ext_3x4, _ = pose_encoding_to_extri_intri(
+        ext_t, intr_t = pose_encoding_to_extri_intri(
             predictions["pose_enc"].detach(), image_shape
         )
-        ext_3x4 = ext_3x4.cpu().float().numpy().squeeze(0)  # (2, 3, 4)
+        ext_3x4 = ext_t.cpu().float().numpy().squeeze(0)      # (2, 3, 4) w2c
+        intrinsic = intr_t.cpu().float().numpy().squeeze(0)   # (2, 3, 3)
         captured["poses"] = extrinsics_to_homogeneous(ext_3x4)  # (2, 4, 4)
+
+        # Decode geometry from the SAME forward — shared verify-geometry helper
+        captured["world_points"], captured["conf"] = _decode_verify_geometry(
+            predictions["depth"], predictions["depth_conf"], ext_3x4, intrinsic
+        )
         return captured

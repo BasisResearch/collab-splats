@@ -188,9 +188,16 @@ functional.
   (ffmpeg select filter, above).
 - Single progress mechanism: internal hook with tqdm as the default
   `on_progress`; the parallel `verbose` tqdm plumbing goes away.
-- `combine_scores(disparity, hist_similarity, weights)` pure function used by
-  both the selector and `plot_disparity_sensitivity` — kills the hardcoded
+- `_combine_scores(disparity, hist_similarity, weights)` pure function used
+  by both the selector and `plot_disparity_sensitivity` — kills the hardcoded
   `0.6/0.4` formula duplicate in the plot.
+
+**Naming convention:** every module-level function not re-exported in
+`__init__.py` carries a single leading underscore (PEP 8 internal
+convention); `__init__.py` re-exports are the sole public surface.
+Exception: `OpticalFlowFrameSelector` stays unprefixed (underscored class
+names are unidiomatic; it is internal by omission from `__init__`, and tests
+import it from `preproc.sampling` directly).
 
 ## Documentation standard (implementation requirement)
 

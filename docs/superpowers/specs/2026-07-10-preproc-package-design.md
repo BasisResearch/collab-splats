@@ -73,7 +73,8 @@ def sample_frames(
     *,                                  # all params keyword-only
     method: str = "uniform",            # "uniform" | "optical_flow"
     max_frames: int | None = None,
-    fps: float = 2.0,                   # uniform only
+    fps: float | None = None,           # uniform only; None derives the window
+                                        # from max_frames (fallback 2.0 fps)
     min_disparity: float = 50.0,        # optical_flow only
     motion_weight: float = 0.6,         # optical_flow only
     coverage_weight: float = 0.4,       # optical_flow only

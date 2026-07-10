@@ -56,8 +56,8 @@ score_frames(video_path, ...)              # was score_all_frames
 get_video_info(video_path)
 load_frames(video_path, frame_indices)     # was load_video_frames
 extract_frames(video_path, frame_indices, output_dir)  # was extract_video_frames
-is_frame_usable(gray, blur_threshold)      # quality gate predicate
-compute_blur_score(gray)
+check_frame_quality(gray, blur_threshold)  # quality gate: blur + exposure check
+compute_blur_score(gray)                   # Laplacian variance primitive
 save_frame_scores(scores, path) / load_frame_scores(path)
 ```
 
@@ -126,16 +126,21 @@ RGB arrays and `records` has one dict per selected frame, always containing
 One pure public predicate, checked on the 480px grayscale analysis frame:
 
 ```python
-def is_frame_usable(gray: np.ndarray, blur_threshold: float = 50.0) -> bool:
+def check_frame_quality(gray: np.ndarray, blur_threshold: float = 50.0) -> bool:
     """Reject blurred (Laplacian variance < threshold) and badly exposed
     (mean outside [20, 235] or std < 10) frames."""
 ```
+
+Naming follows the verb conventions of the reference implementation
+(`compute_frame_quality_scores` in vggt-factor-refinement
+`keyframe_selection.py`): `compute_*` returns a value, `check_*` returns a
+bool.
 
 - Hard reject only — no soft "sharpness score" component, no weight
   renormalization (deliberately rejected as over-built).
 - **Composition, not nesting:** the gate lives in the sampler loop, NOT
   inside the selector. `OpticalFlowFrameSelector.score_frame` stays pure
-  motion+coverage; `is_frame_usable` stays pure quality;
+  motion+coverage; `check_frame_quality` stays pure quality;
   `sample_frames`/`score_frames` compose them:
   gate rejects → skip; gate passes → method-specific selection. Each
   function has one job and is independently testable.
@@ -184,6 +189,21 @@ functional.
   both the selector and `plot_disparity_sensitivity` — kills the hardcoded
   `0.6/0.4` formula duplicate in the plot.
 
+## Documentation standard (implementation requirement)
+
+Per project code style, and explicitly required for this package:
+
+- Every public function/class: one-line summary docstring (multi-line only
+  where Args/Returns genuinely add information — e.g. `sample_frames` method
+  semantics and return contract).
+- Every logical block inside a function: a short block comment stating what
+  the block does and, where non-obvious, why (e.g.
+  `# Score at 480px to bound LK flow cost; keep full-res copy if selected`,
+  `# ffmpeg reports CCW rotation; convert to CW`). Existing compliant
+  comments carry over; the new decode/gate/dispatch code is written to the
+  same standard.
+- No line-by-line narration — block level only.
+
 ## Migration (hard cut, no shim)
 
 Full downstream surface (verified by grep 2026-07-10):
@@ -214,7 +234,7 @@ Full downstream surface (verified by grep 2026-07-10):
 
 - Existing coverage relocates with import/API updates.
 - New: `compute_blur_score` sharp vs Gaussian-blurred synthetic frames;
-  `is_frame_usable` rejects blurred / near-black / near-white frames;
+  `check_frame_quality` rejects blurred / near-black / near-white frames;
   `sample_frames(method="uniform")` picks the sharpest frame in a window;
   dispatcher raises on unknown method; ffmpeg-missing path raises
   `RuntimeError` (monkeypatched `shutil.which`).

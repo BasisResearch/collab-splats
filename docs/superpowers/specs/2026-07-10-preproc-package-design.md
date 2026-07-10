@@ -51,15 +51,18 @@ collab_splats/preproc/
 ## Public API (`__init__.py`)
 
 ```python
-sample_frames(video_path, method="uniform" | "optical_flow", ...)
+sample_frames(video_path, *, method="uniform" | "optical_flow", ...)
+score_frames(video_path, ...)              # was score_all_frames
 get_video_info(video_path)
-load_video_frames(video_path, frame_indices)
-extract_video_frames(video_path, frame_indices, output_dir)
-score_all_frames(video_path, ...)
+load_frames(video_path, frame_indices)     # was load_video_frames
+extract_frames(video_path, frame_indices, output_dir)  # was extract_video_frames
+is_frame_usable(gray, blur_threshold)      # quality gate predicate
+compute_blur_score(gray)
 save_frame_scores(scores, path) / load_frame_scores(path)
 ```
 
-`score_all_frames` and score I/O survive because the
+Names simplified: `video_`/`all_` prefixes dropped — the module is already
+video-scoped. `score_frames` and score I/O survive because the
 `01_preprocessing/keyframe_extraction.ipynb` tutorial consumes them.
 
 ### `sample_frames` dispatcher
@@ -106,8 +109,8 @@ RGB arrays and `records` has one dict per selected frame, always containing
 - Streaming decode: single ffmpeg rawvideo pipe (existing `_iter_decoded_frames`
   ffmpeg branch, now the only branch).
 - Index-based extraction: ffmpeg `select` filter (existing `_decode_fps_ffmpeg`
-  generalized to arbitrary sorted index lists so `load_video_frames` /
-  `extract_video_frames` share it).
+  generalized to arbitrary sorted index lists so `load_frames` /
+  `extract_frames` share it).
 - `get_video_info` moves from cv2 to ffprobe — one probe returns
   frames/fps/dims/rotation together (rotation logic from
   `_get_rotation_degrees` folds in).
@@ -120,21 +123,27 @@ RGB arrays and `records` has one dict per selected frame, always containing
 
 ## Quality gate (new)
 
-One pure function used by both methods, checked on the 480px grayscale
-analysis frame before any flow computation:
+One pure public predicate, checked on the 480px grayscale analysis frame:
 
 ```python
-def _frame_ok(gray: np.ndarray, blur_threshold: float) -> bool:
-    # Reject blur: Laplacian variance below threshold.
-    # Reject exposure blowouts: mean outside [20, 235] or std < 10.
+def is_frame_usable(gray: np.ndarray, blur_threshold: float = 50.0) -> bool:
+    """Reject blurred (Laplacian variance < threshold) and badly exposed
+    (mean outside [20, 235] or std < 10) frames."""
 ```
 
 - Hard reject only — no soft "sharpness score" component, no weight
   renormalization (deliberately rejected as over-built).
+- **Composition, not nesting:** the gate lives in the sampler loop, NOT
+  inside the selector. `OpticalFlowFrameSelector.score_frame` stays pure
+  motion+coverage; `is_frame_usable` stays pure quality;
+  `sample_frames`/`score_frames` compose them:
+  gate rejects → skip; gate passes → method-specific selection. Each
+  function has one job and is independently testable.
 - Exposure bounds are module constants, not params, until someone needs to
   tune them.
-- A standalone `compute_blur_score(gray) -> float` is exposed for direct use
-  (webapp preview).
+- `compute_blur_score(gray) -> float` (Laplacian variance) is the shared
+  primitive: used by the gate, by sharpest-in-window, and directly by the
+  webapp preview.
 
 ## Sampling methods
 
@@ -154,7 +163,7 @@ def _frame_ok(gray: np.ndarray, blur_threshold: float) -> bool:
 | Delete `_estimate_rotation` `method` param + homography branch | −10 |
 | Merge `compute_frame_score`/`should_select_frame` → `score_frame(frame) -> (score, components)`; threshold at call site | −20 |
 | `max_features`, `rotation_threshold`, LK/feature param dicts → module constants; ctor keeps `min_disparity`, weights | −15 |
-| Delete `stride` param from `score_all_frames` | −5 |
+| Delete `stride` param from `score_frames` (né `score_all_frames`) | −5 |
 | Delete unused `native_fps` param from ffmpeg fps decoder | −2 |
 
 Class itself stays: streaming keyframe state (`last_keyframe_*`) and
@@ -165,9 +174,10 @@ functional.
 
 - `_iter_scored_frames(video_path, selector, max_frames, on_progress)` —
   single generator yielding `(idx, frame, selected, score, components)`;
-  `score_all_frames` and the optical-flow method become thin consumers.
-- Index-extraction loop shared by `load_video_frames` /
-  `extract_video_frames` (ffmpeg select filter, above).
+  applies the quality gate, then the selector; `score_frames` and the
+  optical-flow method become thin consumers.
+- Index-extraction loop shared by `load_frames` / `extract_frames`
+  (ffmpeg select filter, above).
 - Single progress mechanism: internal hook with tqdm as the default
   `on_progress`; the parallel `verbose` tqdm plumbing goes away.
 - `combine_scores(disparity, hist_similarity, weights)` pure function used by
@@ -188,8 +198,9 @@ Full downstream surface (verified by grep 2026-07-10):
   `dashboard/pipeline.py`, `wrapper/reconstructor.py`,
   `wrapper/splatter.py`, `evals/datasets.py` — webapp/dashboard/wrapper
   method branching replaced by `sample_frames(method=...)`;
-  `evals/datasets.py` keeps `extract_video_frames` + uniform sampling via the
-  new API.
+  `evals/datasets.py` moves to `extract_frames` + uniform sampling via the
+  new API. Renames apply everywhere: `score_all_frames → score_frames`,
+  `load_video_frames → load_frames`, `extract_video_frames → extract_frames`.
 - Tests: `tests/utils/test_frame_sampling.py` → `tests/preproc/`
   (flat functions), updated for API changes; new tests below.
   `tests/dashboard/test_pipeline.py` mocks/patch targets updated to
@@ -203,7 +214,7 @@ Full downstream surface (verified by grep 2026-07-10):
 
 - Existing coverage relocates with import/API updates.
 - New: `compute_blur_score` sharp vs Gaussian-blurred synthetic frames;
-  `_frame_ok` rejects blurred / near-black / near-white frames;
+  `is_frame_usable` rejects blurred / near-black / near-white frames;
   `sample_frames(method="uniform")` picks the sharpest frame in a window;
   dispatcher raises on unknown method; ffmpeg-missing path raises
   `RuntimeError` (monkeypatched `shutil.which`).

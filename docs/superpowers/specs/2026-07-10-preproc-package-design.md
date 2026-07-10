@@ -56,7 +56,6 @@ score_frames(video_path, ...)              # was score_all_frames
 get_video_info(video_path)
 load_frames(video_path, frame_indices)     # was load_video_frames
 extract_frames(video_path, frame_indices, output_dir)  # was extract_video_frames
-check_frame_quality(gray, blur_threshold)  # quality gate: blur + exposure check
 compute_blur_score(gray)                   # Laplacian variance primitive
 save_frame_scores(scores, path) / load_frame_scores(path)
 ```
@@ -123,10 +122,13 @@ RGB arrays and `records` has one dict per selected frame, always containing
 
 ## Quality gate (new)
 
-One pure public predicate, checked on the 480px grayscale analysis frame:
+One pure predicate, checked on the 480px grayscale analysis frame. Private —
+it has exactly two internal call sites (optical-flow loop, uniform
+sharpest-in-window path) and no verified external consumer; promote to public
+only if one appears:
 
 ```python
-def check_frame_quality(gray: np.ndarray, blur_threshold: float = 50.0) -> bool:
+def _check_frame_quality(gray: np.ndarray, blur_threshold: float = 50.0) -> bool:
     """Reject blurred (Laplacian variance < threshold) and badly exposed
     (mean outside [20, 235] or std < 10) frames."""
 ```
@@ -140,15 +142,15 @@ bool.
   renormalization (deliberately rejected as over-built).
 - **Composition, not nesting:** the gate lives in the sampler loop, NOT
   inside the selector. `OpticalFlowFrameSelector.score_frame` stays pure
-  motion+coverage; `check_frame_quality` stays pure quality;
+  motion+coverage; `_check_frame_quality` stays pure quality;
   `sample_frames`/`score_frames` compose them:
   gate rejects → skip; gate passes → method-specific selection. Each
   function has one job and is independently testable.
 - Exposure bounds are module constants, not params, until someone needs to
   tune them.
 - `compute_blur_score(gray) -> float` (Laplacian variance) is the shared
-  primitive: used by the gate, by sharpest-in-window, and directly by the
-  webapp preview.
+  public primitive: thresholded by the gate, argmaxed by sharpest-in-window,
+  reported as `blur_score` in returned records.
 
 ## Sampling methods
 
@@ -234,7 +236,7 @@ Full downstream surface (verified by grep 2026-07-10):
 
 - Existing coverage relocates with import/API updates.
 - New: `compute_blur_score` sharp vs Gaussian-blurred synthetic frames;
-  `check_frame_quality` rejects blurred / near-black / near-white frames;
+  `_check_frame_quality` rejects blurred / near-black / near-white frames;
   `sample_frames(method="uniform")` picks the sharpest frame in a window;
   dispatcher raises on unknown method; ffmpeg-missing path raises
   `RuntimeError` (monkeypatched `shutil.which`).

@@ -67,6 +67,7 @@ save_frame_scores(scores, path) / load_frame_scores(path)
 ```python
 def sample_frames(
     video_path: str,
+    *,                                  # all params keyword-only
     method: str = "uniform",            # "uniform" | "optical_flow"
     max_frames: int | None = None,
     fps: float = 2.0,                   # uniform only
@@ -84,6 +85,12 @@ receive the method as a user-config string and branch manually — dispatch
 moves into the library once. Old `sample_frames_fps` /
 `sample_frames_optical_flow` become internals. Unknown method raises
 `ValueError`. If a third method ever lands, switch to a registry then.
+
+Explicit keyword params, deliberately not `**kwargs` passthrough: at 8 params
+the flat signature is self-documenting; `**kwargs` would silently swallow
+typos and kill autocomplete. Params are keyword-only (`*,`) to prevent
+positional misuse. Revisit (per-method config or registry) only when a third
+method brings its own params.
 
 **Return contract (both methods):** `(frames, records)` where `frames` is
 RGB arrays and `records` has one dict per selected frame, always containing
@@ -169,15 +176,26 @@ functional.
 
 ## Migration (hard cut, no shim)
 
+Full downstream surface (verified by grep 2026-07-10):
+
 - Delete `collab_splats/utils/frame_sampling.py` and
-  `collab_splats/semantics/frame_sampling.py` re-export.
+  `collab_splats/semantics/frame_sampling.py` re-export (no importers of the
+  latter).
+- `collab_splats/utils/__init__.py` — remove `OpticalFlowFrameSelector`,
+  `sample_frames_fps`, `sample_frames_optical_flow` re-exports.
 - Update call sites to `collab_splats.preproc`:
   `webapp/routers/preprocess.py`, `dashboard/app.py`,
   `dashboard/pipeline.py`, `wrapper/reconstructor.py`,
-  `wrapper/splatter.py` — webapp/dashboard/wrapper method branching replaced
-  by `sample_frames(method=...)`.
+  `wrapper/splatter.py`, `evals/datasets.py` — webapp/dashboard/wrapper
+  method branching replaced by `sample_frames(method=...)`;
+  `evals/datasets.py` keeps `extract_video_frames` + uniform sampling via the
+  new API.
 - Tests: `tests/utils/test_frame_sampling.py` → `tests/preproc/`
   (flat functions), updated for API changes; new tests below.
+  `tests/dashboard/test_pipeline.py` mocks/patch targets updated to
+  `collab_splats.preproc`. `tests/test_cu121_migration.py:133` module-path
+  string list updated from `collab_splats.utils.frame_sampling` to
+  `collab_splats.preproc.sampling`.
 - Tutorial notebook `docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb`
   updated to new import path and `sample_frames` API.
 

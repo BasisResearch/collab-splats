@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 
-from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
 
 
 class CoordinateFrame(str, Enum):

@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
 
-from collab_splats.pointcloud.loop_closure.eval import ate_translation
+from collab_splats.geometry.loop_closure.eval import ate_translation
 
 
 def _fake_gt(N=6):

@@ -21,7 +21,7 @@ except ImportError:
     pass
 
 # ── Internal helpers (re-exported for wrappers and tests) ─────────────────────
-# _raw_to_world_points re-exported for wrappers.py BundleAdjustment, which calls it
+# _raw_to_world_points re-exported for geometry/loop_closure/wrapper.py, which calls it
 # directly on raw VGGT-X outputs outside the normal postprocess pipeline.
 from .base import _raw_to_world_points
 

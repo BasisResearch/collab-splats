@@ -89,7 +89,7 @@ def test_save_outputs_writes_files(tmp_path):
 def test_make_creator_ba_track_density_4096(monkeypatch):
     """ba_track-density-4096 → BA enabled with max_query_pts=4096, query_frame_num=8."""
     import eval_gt
-    from collab_splats.pointcloud import BundleAdjustmentConfig
+    from collab_splats.geometry import BundleAdjustmentConfig
     from unittest.mock import MagicMock
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
     creator, ba_cfg = eval_gt._make_creator("ba_track-density-4096")
@@ -101,7 +101,7 @@ def test_make_creator_ba_track_density_4096(monkeypatch):
 def test_make_creator_ba_track_density_2048(monkeypatch):
     """ba_track-density-2048 → query_frame_num=5 (max(5, 2048//512) = max(5,4) = 5)."""
     import eval_gt
-    from collab_splats.pointcloud import BundleAdjustmentConfig
+    from collab_splats.geometry import BundleAdjustmentConfig
     from unittest.mock import MagicMock
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
     creator, ba_cfg = eval_gt._make_creator("ba_track-density-2048")
@@ -156,7 +156,7 @@ def test_default_output_dir_uses_basename():
 def test_save_outputs_no_per_frame_in_json(tmp_path):
     """per_frame array must not appear in metrics.json (not JSON-serializable)."""
     from eval_gt import _save_outputs
-    from collab_splats.pointcloud.loop_closure.eval import ate_translation
+    from collab_splats.geometry.loop_closure.eval import ate_translation
     gt = _make_poses(10)
     metrics = {
         "baseline": {

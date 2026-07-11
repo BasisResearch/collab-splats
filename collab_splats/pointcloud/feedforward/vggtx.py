@@ -5,6 +5,7 @@ Provides:
   unproject_and_filter_points  — depth → world-space point cloud with confidence filtering
   VGGTXCreator                 — feedforward creator using VGGT-X depth + pose estimation
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,12 +14,14 @@ from typing import Any, ClassVar
 
 import numpy as np
 import torch
+from PIL import Image as PILImage
 from vggt.models.vggt import VGGT
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from vggt.utils.helper import randomly_limit_trues
-from PIL import Image as PILImage
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
 from ..postproc import run_global_alignment
 from .base import (
@@ -29,8 +32,6 @@ from .base import (
     compute_multiview_depth_confidence,
     console,
 )
-from collab_splats.utils.geometry import extrinsics_to_homogeneous
-
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -42,9 +43,8 @@ VGGTX_IMG_LOAD_RESOLUTION: int = 518
 
 # ── Preprocessing helpers ──────────────────────────────────────────────────────
 
-def _compute_vggtx_crop_coords(
-    image_paths: list[Path], target_size: int = VGGTX_IMG_LOAD_RESOLUTION
-) -> np.ndarray:
+
+def _compute_vggtx_crop_coords(image_paths: list[Path], target_size: int = VGGTX_IMG_LOAD_RESOLUTION) -> np.ndarray:
     """Compute original_coords for VGGTX upstream crop mode.
 
     Upstream ``load_and_preprocess_images(mode="crop")`` resizes width→target_size then
@@ -151,6 +151,7 @@ def unproject_and_filter_points(
 
 # ── Creator ───────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class VGGTXCreator(BaseFeedforwardCreator):
     """Pointcloud via VGGT-X feedforward pose + depth estimation.
@@ -237,10 +238,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
         """
         # Collect and sort image paths; reject non-image extensions
         image_dir = Path(image_dir)
-        image_paths = sorted([
-            p for p in image_dir.iterdir()
-            if p.suffix.lower() in {".png", ".jpg", ".jpeg"}
-        ])
+        image_paths = sorted([p for p in image_dir.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"}])
         if not image_paths:
             raise FileNotFoundError(f"No images found in {image_dir}")
 
@@ -293,21 +291,19 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
         # Decode pose encoding at model resolution only — matches VGGT-SLAM upstream.
         # Original-res decode removed: it fed wrong K to the BA wrapper via raw["intrinsics"].
-        extrinsic_t, intrinsic_t = pose_encoding_to_extri_intri(
-            predictions["pose_enc"], image_shape
-        )
+        extrinsic_t, intrinsic_t = pose_encoding_to_extri_intri(predictions["pose_enc"], image_shape)
 
         # Move predictions to CPU float32 for downstream processing
-        extrinsic  = extrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 4)
-        intrinsic  = intrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 3) model-res
-        depth_map  = predictions["depth"].squeeze(0).cpu().float().numpy()
+        extrinsic = extrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 4)
+        intrinsic = intrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 3) model-res
+        depth_map = predictions["depth"].squeeze(0).cpu().float().numpy()
         depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy()
 
         return {
             "images": images,
             "extrinsic": extrinsic,
-            "intrinsics": intrinsic,             # model-res K
-            "intrinsics_downsampled": intrinsic, # alias — _raw_to_world_points expects this key
+            "intrinsics": intrinsic,  # model-res K
+            "intrinsics_downsampled": intrinsic,  # alias — _raw_to_world_points expects this key
             "depth": depth_map,
             "depth_conf": depth_conf,
         }
@@ -332,7 +328,10 @@ class VGGTXCreator(BaseFeedforwardCreator):
         # Optionally refine poses via global alignment (feature matching + BA)
         if self.use_global_alignment:
             extrinsic, intrinsic = run_global_alignment(
-                raw_outputs, extrinsic, intrinsic, self.image_paths,
+                raw_outputs,
+                extrinsic,
+                intrinsic,
+                self.image_paths,
             )
 
         # Optionally compute geometric cross-view depth consistency mask
@@ -340,7 +339,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
         if self.use_multiview_confidence:
             depth_np = raw_outputs["depth"]
             if depth_np.ndim == 4:
-                depth_np = depth_np.squeeze(-1)   # (N, H, W)
+                depth_np = depth_np.squeeze(-1)  # (N, H, W)
             extr_4x4 = extrinsics_to_homogeneous(extrinsic)
             mv_conf = compute_multiview_depth_confidence(
                 depth_np,
@@ -370,9 +369,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
         # Populate BA fields: subsampled world-point grid for track extraction.
         world_pts_flat, _ = _raw_to_world_points(raw_outputs, subsample=1)
         if world_pts_flat is not None:
-            world_points = world_pts_flat.reshape(
-                world_pts_flat.shape[0], model_h, model_w, 3
-            )
+            world_points = world_pts_flat.reshape(world_pts_flat.shape[0], model_h, model_w, 3)
         else:
             world_points = None
         # Populate BA fields: depth confidence and preprocessed images
@@ -486,11 +483,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
         # Decode camera extrinsics + intrinsics from VGGT-X pose encoding
         image_shape = (int(frames.shape[-2]), int(frames.shape[-1]))
-        ext_t, intr_t = pose_encoding_to_extri_intri(
-            predictions["pose_enc"].detach(), image_shape
-        )
-        ext_3x4 = ext_t.cpu().float().numpy().squeeze(0)      # (2, 3, 4) w2c
-        intrinsic = intr_t.cpu().float().numpy().squeeze(0)   # (2, 3, 3)
+        ext_t, intr_t = pose_encoding_to_extri_intri(predictions["pose_enc"].detach(), image_shape)
+        ext_3x4 = ext_t.cpu().float().numpy().squeeze(0)  # (2, 3, 4) w2c
+        intrinsic = intr_t.cpu().float().numpy().squeeze(0)  # (2, 3, 3)
         captured["poses"] = extrinsics_to_homogeneous(ext_3x4)  # (2, 4, 4)
 
         # Decode geometry from the SAME forward — shared verify-geometry helper

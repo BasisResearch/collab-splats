@@ -40,10 +40,11 @@ from datasets import get_dataset
 from runners.lc_parity_common import _serialize_lc_decisions
 from trajectory_io import read_tum
 
-from collab_splats.pointcloud import BundleAdjustment, BundleAdjustmentConfig, get_creator
-from collab_splats.pointcloud.loop_closure.eval import ate_translation, rpe, auc_at_threshold
-from collab_splats.pointcloud.loop_closure import LoopClosureConfig
-from collab_splats.pointcloud.wrappers import LoopClosure
+from collab_splats.pointcloud import get_creator
+from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig
+from collab_splats.geometry.loop_closure.eval import ate_translation, rpe, auc_at_threshold
+from collab_splats.geometry.loop_closure import LoopClosureConfig
+from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
 _FIXED_CONDITIONS = {"baseline", "ba", "lc"}
 _COLORS = {"gt": "black", "baseline": "tab:red", "ba": "tab:blue", "lc": "tab:green", "vggt_slam": "tab:orange"}

@@ -24,12 +24,14 @@ import torch
 import torch.nn.functional as F
 import zarr
 from rich.console import Console
+# Imported from installed VGGT-X tree (shared dep) — byte-identical to each
+# model's vendored copy today; revisit if trees diverge.
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from zarr.codecs import BloscCodec
 
 from ..base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
 from ..utils import cross_frame_attention_ratio, reproject_pixels
-from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -731,12 +733,12 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
                                          with _lc_loop_submaps; entry k = (total_frames, 4, 4)
                                          corrected extrinsics re-optimized with loop k removed
                                          (measurement only — outputs always use the full run)
-    Consumer: collab_splats.pointcloud.loop_closure.eval.capture_pose_graph_loss
+    Consumer: collab_splats.geometry.loop_closure.eval.capture_pose_graph_loss
     These are not stable API; refactor cautiously.
     """
 
-    # Threshold for cross_frame_attention_ratio LC verification gate.
-    # 0.85 matches VGGT-SPARK calibration (tested at _lc_layer_index=20).
+    # Threshold for cross_frame_attention_ratio LC verification gate; subclasses
+    # override with their own calibrated value (see per-creator classvars).
     default_verify_match_ratio: ClassVar[float] = 0.85
 
     # Global block index to tap for Q/K in _verify_loop_candidate.
@@ -913,7 +915,10 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
 
         Args:
             frame1, frame2:      Preprocessed frames (C, H, W).
-            verify_match_ratio:  Accept threshold (default 0.85, matches VGGT-SPARK).
+            verify_match_ratio:  Accept threshold. The signature default is always
+                                 overridden in practice via the resolution chain:
+                                 explicit config value → creator classvar
+                                 default_verify_match_ratio → LoopClosureConfig default.
             layer_index:         Transformer block to tap (default -1 = last).
             **kwargs:            Forwarded to extract_intermediate_features (e.g.
                                  minibatch_size=2 for MapAnything).

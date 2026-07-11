@@ -192,10 +192,10 @@ def _dump_tum(out: Path, tum: Path) -> None:
 def run_ours(level: int, seq_dir: Path, scale_method: str = "rotation_only") -> None:
     """Run the real LoopClosure(VGGTSPARKCreator) pipeline with dump hooks."""
     out = _out_dir(level, "ours")
-    import collab_splats.pointcloud.wrappers as wrappers_mod
+    import collab_splats.geometry.loop_closure.wrapper as wrappers_mod
     from collab_splats.pointcloud.feedforward.vggt_spark_creator import VGGTSPARKCreator
-    from collab_splats.pointcloud.loop_closure import LoopClosureConfig
-    from collab_splats.pointcloud.wrappers import LoopClosure
+    from collab_splats.geometry.loop_closure import LoopClosureConfig
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
     frames = _selected_frames(level)
     # Symlink keyframes into a temp dir (eval_gt convention) so creator processes exactly these.

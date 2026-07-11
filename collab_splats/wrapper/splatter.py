@@ -14,7 +14,7 @@ import numpy as np
 import pyvista as pv
 import open3d as o3d
 from collab_splats.semantics.features import BaseFeatureExtractor
-from collab_splats.utils.geometry import extrinsics_to_homogeneous
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 from collab_splats.utils.torch_utils import get_device
 from nerfstudio.utils.eval_utils import eval_setup
 

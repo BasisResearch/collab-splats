@@ -13,6 +13,7 @@ tools/
 stage/
 vendor/
 evals/results/
+evals/baselines/lc_parity*/
 
 # Internal working docs (kept local, not tracked)
 docs/superpowers/

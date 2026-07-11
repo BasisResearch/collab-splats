@@ -14,7 +14,7 @@ ate_evo = compute_ate_rmse(slam_tum, seq_dir, selected_frames_path=kf_list)
 print(f"SLAM poses via evo ATE: {ate_evo:.4f}m")
 
 # Now test our ate_translation on SLAM's poses
-from collab_splats.pointcloud.loop_closure.eval import ate_translation
+from collab_splats.geometry.loop_closure.eval import ate_translation
 import numpy as np
 from scipy.spatial.transform import Rotation
 

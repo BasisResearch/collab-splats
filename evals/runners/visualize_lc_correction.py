@@ -20,7 +20,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 # Reuse eval's own Sim(3) Umeyama (matches evo align+correct_scale used for metrics.json ATE)
-from collab_splats.pointcloud.loop_closure.closure import umeyama_sim3
+from collab_splats.geometry.loop_closure.closure import umeyama_sim3
 
 logger = logging.getLogger(__name__)
 

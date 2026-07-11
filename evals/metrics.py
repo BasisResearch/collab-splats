@@ -116,7 +116,7 @@ def compute_auc(
 
     Returns dict with 'auc_30' (float in [0,100]) and 'per_pair_err' (list[float]).
     """
-    from collab_splats.pointcloud.loop_closure.eval import auc_at_threshold
+    from collab_splats.geometry.loop_closure.eval import auc_at_threshold
 
     traj_ref, traj_est = _load_pair(pred_path, gt_path)
 

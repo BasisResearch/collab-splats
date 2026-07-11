@@ -12,4 +12,4 @@ def test_bae_cuda_version():
 
 
 def test_bundle_adjustment_module_loads():
-    from collab_splats.pointcloud.bundle_adjustment import BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig

@@ -1,12 +1,10 @@
-import os
-import tempfile
-
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pytest
-from collab_splats.utils.visualization import compute_heatmap, plot_heatmap
+
+from collab_splats.utils.visualization import compute_heatmap
 
 
 def _make_image(h=100, w=120):
@@ -67,6 +65,7 @@ class TestComputeHeatmap:
 
     def test_alpha_one_returns_heatmap_only(self):
         import matplotlib.pyplot as plt
+
         image = _make_image()
         sim_map = _make_sim_map()
         result = compute_heatmap(image, sim_map, alpha=1.0)
@@ -93,51 +92,3 @@ class TestComputeHeatmap:
         assert result_viridis.shape == (100, 120, 3)
         assert result_plasma.shape == (100, 120, 3)
         assert not np.array_equal(result_viridis, result_plasma)
-
-
-class TestPlotHeatmap:
-    def _heatmap(self):
-        rng = np.random.default_rng(42)
-        return (rng.random((100, 120, 3)) * 255).astype(np.uint8)
-
-    def test_saves_to_disk(self):
-        heatmap = self._heatmap()
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            path = f.name
-        try:
-            plot_heatmap(heatmap, save_path=path)
-            assert os.path.exists(path)
-            assert os.path.getsize(path) > 0
-        finally:
-            os.unlink(path)
-            plt.close("all")
-
-    def test_accepts_external_ax(self):
-        heatmap = self._heatmap()
-        fig, ax = plt.subplots()
-        plot_heatmap(heatmap, ax=ax, title="test")
-        assert ax.get_title() == "test"
-        plt.close(fig)
-
-    def test_no_crash_no_ax_no_save(self):
-        heatmap = self._heatmap()
-        plot_heatmap(heatmap)
-        plt.close("all")
-
-    def test_saves_to_disk_with_external_ax(self):
-        heatmap = self._heatmap()
-        fig, ax = plt.subplots()
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            path = f.name
-        try:
-            plot_heatmap(heatmap, ax=ax, save_path=path)
-            assert os.path.exists(path)
-            assert os.path.getsize(path) > 0
-        finally:
-            os.unlink(path)
-            plt.close(fig)
-
-
-def test_query_heatmap_importable():
-    from collab_splats.utils.visualization import query_heatmap
-    assert callable(query_heatmap)

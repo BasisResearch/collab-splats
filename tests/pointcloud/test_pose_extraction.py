@@ -10,9 +10,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.pointcloud.loop_closure.closure import run_pose_graph_optimization
-from collab_splats.pointcloud.loop_closure.graph import decompose_camera, normalize_to_sl4
-from collab_splats.pointcloud.loop_closure.submap import Submap
+from collab_splats.geometry.loop_closure.closure import run_pose_graph_optimization
+from collab_splats.geometry.loop_closure.graph import decompose_camera, normalize_to_sl4
+from collab_splats.geometry.loop_closure.submap import Submap
 
 
 def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:

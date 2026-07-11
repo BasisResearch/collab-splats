@@ -103,7 +103,7 @@ def _run_feedforward(
     """
     # Heavy dep imports — kept inline so module loads without GPU/model deps
     from collab_splats.pointcloud.feedforward import VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator
-    from collab_splats.pointcloud.wrappers import LoopClosure
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
     # Select creator class by backend name
     creator_map = {

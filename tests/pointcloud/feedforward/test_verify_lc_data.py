@@ -7,36 +7,15 @@ import numpy as np
 import torch
 
 from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
-from collab_splats.pointcloud.loop_closure import LoopClosureConfig
-from collab_splats.pointcloud.loop_closure.closure import LoopMatch
-from collab_splats.pointcloud.wrappers import LoopClosure
-from collab_splats.utils.geometry import invert_poses
+from collab_splats.geometry.loop_closure import LoopClosureConfig
+from collab_splats.geometry.loop_closure.closure import LoopMatch
+from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+from collab_splats.geometry.transforms import invert_poses
+from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel, _FakeQKV
 
 ########################################################################
 ########## MapAnything: extract_intermediate_features returns poses ####
 ########################################################################
-
-
-class _FakeQKV(torch.nn.Module):
-    """Real nn.Module so register_forward_hook works; never actually called."""
-
-    def forward(self, x):
-        return x
-
-
-class _FakeMapAnythingModel(torch.nn.Module):
-    """Minimal stand-in: info_sharing block tree + forward returning canned preds."""
-
-    def __init__(self, preds):
-        super().__init__()
-        self._preds = preds
-        self._param = torch.nn.Parameter(torch.zeros(1))
-        attn = types.SimpleNamespace(num_heads=2, qkv=_FakeQKV())
-        block = types.SimpleNamespace(attn=attn)
-        self.info_sharing = types.SimpleNamespace(self_attention_blocks=[block])
-
-    def forward(self, views, memory_efficient_inference=False, minibatch_size=1):
-        return self._preds
 
 
 def _make_mapanything_creator(preds):
@@ -284,10 +263,10 @@ def _run_lc_with_verify_return(verify_return):
 
     with (
         patch("collab_splats.localization.BaseRetrievalExtractor.get") as mock_get,
-        patch("collab_splats.pointcloud.wrappers.find_loop_closures", side_effect=_fake_find_loops),
-        patch("collab_splats.pointcloud.wrappers.translation_jump_check", return_value=(True, 0.0)),
-        patch("collab_splats.pointcloud.wrappers.run_pose_graph_optimization") as mock_pg,
-        patch("collab_splats.pointcloud.wrappers.merge_submap_outputs") as mock_merge,
+        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=_fake_find_loops),
+        patch("collab_splats.geometry.loop_closure.wrapper.translation_jump_check", return_value=(True, 0.0)),
+        patch("collab_splats.geometry.loop_closure.wrapper.run_pose_graph_optimization") as mock_pg,
+        patch("collab_splats.geometry.loop_closure.wrapper.merge_submap_outputs") as mock_merge,
     ):
         mock_get.return_value = MagicMock(return_value=lambda frames: torch.zeros(frames.shape[0], 128))
         mock_pg.return_value = np.tile(np.eye(4, dtype=np.float32), (40, 1, 1))

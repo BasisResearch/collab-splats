@@ -37,7 +37,7 @@ from collab_splats.pointcloud.feedforward import (
     VGGTXCreator,
 )
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-from collab_splats.utils.geometry import invert_poses
+from collab_splats.geometry.transforms import invert_poses
 from mapanything.utils.multiview_confidence import compute_multiview_depth_confidence
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

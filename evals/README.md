@@ -64,16 +64,16 @@ evals/
 | `our_solver_dump.py` · `vggt_slam_solver_dump.py` | Per-boundary solver-internals dumps consumed by `parity_trace.py` / `run_disparity_sweep.py`. |
 | `run_cross_model_benchmark.py` | **(2026-05-31)** Serial `eval_gt` matrix over 4 backbones × framesets. |
 | `build_benchmark_table.py` | **(2026-05-31)** Aggregate `cross_model/*/metrics.json` → markdown table. |
+| `compare_loop_edges.py` | Loop-edge composition diff (ours vs SLAM). Kept: `compose_slam_chain` imported by `tests/geometry/loop_closure/test_loop_edge_chain.py`. |
 
 **Diagnostic (LC↔SLAM parity — see Investigations §A):**
-`compare_slam_ours.py` · `compare_vggt_outputs.py` · `debug_lc_steps.py` · `compare_solver_internals.py` · `diagnose_lc_parity.py`.
+`compare_vggt_outputs.py` · `compare_solver_internals.py`.
 
 ## Other eval tools (standalone)
 
 | file | role | status |
 |---|---|---|
 | `eval_similarity_calibration.py` | Sweep LC verify layer per backbone (DINO-SALAD pairs). Produced the per-model `_lc_layer_index` calibration. | keep (re-runnable tool) |
-| `eval_vggt_slam_comparison.py` | 7-Scenes comparison: baseline / lc_se3 / lc_sl4 / vggt_slam_oob. | keep |
 | `eval_multiview_conf.py` | Multiview-confidence eval across backbones (chess). | keep |
 | `diag_pose_graph.py` | Compare our SL(4) pose-graph init vs VGGT-SLAM. | retained — Investigations §A |
 | `check_ate_methods.py` | One-off: evo ATE vs our umeyama on SLAM poses. | retained — Investigations §A |
@@ -134,10 +134,7 @@ Trail: `docs/superpowers/specs/2026-05-31-vggt-spark-stage-parity-findings.md`.
 | `runners/parity_trace.py` | **Canonical** stage-by-stage trace (preprocess→forward→trajectory→scale→homographies). The tool to reach for. |
 | `runners/our_solver_dump.py` · `runners/vggt_slam_solver_dump.py` | Per-boundary solver-internals dumps — **consumed by `parity_trace.py`** (don't move independently). |
 | `runners/compare_solver_internals.py` | Per-boundary solver diff (manual precursor to parity_trace). |
-| `runners/diagnose_lc_parity.py` | Per-frame trajectory parity vs a SLAM TUM. |
-| `runners/compare_slam_ours.py` | Side-by-side our-vs-SLAM trajectory compare. |
 | `runners/compare_vggt_outputs.py` | VGGT extrinsics under our vs SLAM image preprocessing (confirmed Δ=0). |
-| `runners/debug_lc_steps.py` | Step-by-step PGO trace for the d=10 case. |
 | `diag_pose_graph.py` | Our SL(4) pose-graph init vs VGGT-SLAM's. |
 | `check_ate_methods.py` | Verified `evo` ATE == our umeyama on SLAM's own poses (sanity, passed). |
 

@@ -7,4 +7,5 @@ API Reference
    wrapper
    semantics
    pointcloud
+   geometry
    mesh

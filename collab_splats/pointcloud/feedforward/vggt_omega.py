@@ -30,7 +30,7 @@ from .base import (
     compute_multiview_depth_confidence,
 )
 from .vggtx import unproject_and_filter_points
-from collab_splats.utils.geometry import extrinsics_to_homogeneous
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
 logger = logging.getLogger(__name__)
 

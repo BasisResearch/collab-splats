@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 from tqdm.auto import trange
 
-from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
 
 from .base import PointcloudResult
 
@@ -166,37 +166,6 @@ def filter_distance(
 
     filtered = pcd.select_by_index(np.where(mask)[0])
     return (filtered, mask) if return_mask else filtered
-
-
-def filter_density(
-    pcd,
-    radius: float = 0.03,
-    percentile: float = 10.0,
-):
-    """Remove points in sparse regions using local KDTree neighbor density.
-
-    Args:
-        pcd:        Open3D PointCloud to filter.
-        radius:     Search radius for counting neighbors.
-        percentile: Remove points whose neighbor count falls below this percentile.
-
-    Returns:
-        Filtered Open3D PointCloud (denser regions only).
-    """
-    import open3d as o3d
-
-    points = np.asarray(pcd.points)
-    if len(points) == 0:
-        return pcd.select_by_index([])
-
-    tree = o3d.geometry.KDTreeFlann(pcd)
-    densities = np.array(
-        [tree.search_radius_vector_3d(points[i], radius)[0] for i in range(len(points))], dtype=np.float32
-    )
-
-    threshold = np.percentile(densities, percentile)
-    mask = densities >= threshold
-    return pcd.select_by_index(np.where(mask)[0])
 
 
 ########################################################
@@ -502,7 +471,7 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     import open3d as o3d  # optional heavy dep
 
-    from collab_splats.utils.geometry import rotation_align_vectors
+    from collab_splats.geometry.transforms import rotation_align_vectors
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
@@ -591,67 +560,6 @@ def get_points_in_mask(
     # Index mask at each point's pixel location
     in_mask = mask[rows, cols]
     return points[frame_mask][in_mask]
-
-
-def filter_points_by_spatial_extent(
-    points: np.ndarray,
-    colors: np.ndarray,
-    percentile_range: Tuple[float, float] = (1.0, 99.0),
-    max_extent: Optional[float] = None,
-    verbose: bool = True,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Filter points to a percentile-based bounding box.
-
-    This removes spatial outliers that fall outside the specified percentile range.
-    Useful for removing noisy distant points or invalid reconstructions.
-
-    Args:
-        points: (N, 3) array of 3D points
-        colors: (N, 3) array of RGB colors
-        percentile_range: (min, max) percentiles for bounding box (default: 1-99%)
-            For example, (1.0, 99.0) keeps points between 1st and 99th percentiles
-        max_extent: Optional absolute max extent in meters (applied after percentile filtering)
-            If set, clips the bounding box to this size around the center
-        verbose: Whether to print filtering information
-
-    Returns:
-        Tuple of (filtered_points, filtered_colors)
-    """
-    if len(points) == 0:
-        return points, colors
-
-    # Compute percentile-based bounds
-    pmin, pmax = percentile_range
-    bbox_min = np.percentile(points, pmin, axis=0)
-    bbox_max = np.percentile(points, pmax, axis=0)
-
-    # Optionally clip to absolute max extent from center
-    if max_extent is not None:
-        center = (bbox_min + bbox_max) / 2
-        half_extent = max_extent / 2
-        bbox_min = np.maximum(bbox_min, center - half_extent)
-        bbox_max = np.minimum(bbox_max, center + half_extent)
-
-    # Filter points within bounding box
-    mask = np.all((points >= bbox_min) & (points <= bbox_max), axis=1)
-
-    filtered_points = points[mask]
-    filtered_colors = colors[mask]
-
-    if verbose:
-        extent = (bbox_max - bbox_min).max()
-        logger.debug("spatial_filter: %d-%d percentile, extent %.3f m", pmin, pmax, extent)
-        removed_count = len(points) - len(filtered_points)
-        removed_pct = 100 * (1 - len(filtered_points) / len(points)) if len(points) > 0 else 0
-        logger.debug(
-            "spatial_filter: %d → %d points (%d outliers, %.1f%%)",
-            len(points),
-            len(filtered_points),
-            removed_count,
-            removed_pct,
-        )
-
-    return filtered_points, filtered_colors
 
 
 def voxel_downsample_point_cloud(
@@ -1020,20 +928,3 @@ def cross_frame_attention_ratio(
     thresh = float(np.percentile(ratio_np, 75))
     top_vals = ratio_np[ratio_np >= thresh]
     return float(top_vals.mean())
-
-
-########################################################
-########## Camera pose helpers #########################
-########################################################
-
-
-def extrinsics_to_c2w(extrinsics: np.ndarray) -> list[np.ndarray]:
-    """Invert world-to-cam extrinsic matrices to camera-to-world.
-
-    Args:
-        extrinsics: (N, 4, 4) float32 world-to-camera matrices.
-
-    Returns:
-        List of N (4, 4) camera-to-world matrices.
-    """
-    return list(invert_poses(np.asarray(extrinsics)))

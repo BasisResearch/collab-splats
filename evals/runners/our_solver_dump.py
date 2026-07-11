@@ -29,10 +29,10 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from collab_splats.pointcloud import get_creator
-from collab_splats.pointcloud.loop_closure import LoopClosureConfig
-from collab_splats.pointcloud.loop_closure.closure import run_pose_graph_optimization as _orig_rpgo
-from collab_splats.pointcloud.wrappers import LoopClosure
-import collab_splats.pointcloud.wrappers as _wrappers_mod
+from collab_splats.geometry.loop_closure import LoopClosureConfig
+from collab_splats.geometry.loop_closure.closure import run_pose_graph_optimization as _orig_rpgo
+from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+import collab_splats.geometry.loop_closure.wrapper as _wrappers_mod
 from collab_splats.pointcloud.utils import cross_frame_attention_ratio as _orig_cfar
 import collab_splats.pointcloud.utils as _utils_mod
 import collab_splats.pointcloud.feedforward.base as _base_mod

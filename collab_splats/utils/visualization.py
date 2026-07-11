@@ -1,13 +1,11 @@
-import pyvista as pv
-import numpy as np
+from typing import TYPE_CHECKING, List, Optional, Union
+
 import matplotlib.pyplot as plt
-from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union, List
+import numpy as np
+import pyvista as pv
 
 if TYPE_CHECKING:
     import torch
-    from matplotlib.axes import Axes
-    from collab_splats.semantics.features import BaseFeatureExtractor
 
 # Main visualization code - adaptation of your original
 MESH_KWARGS = {
@@ -16,13 +14,15 @@ MESH_KWARGS = {
 }
 
 PCD_KWARGS = MESH_KWARGS.copy()
-PCD_KWARGS.update({
-    "render_points_as_spheres": True,
-    "point_size": 0.5,
-    "ambient": 0.3,
-    "diffuse": 0.8,
-    "specular": 0.1,
-})
+PCD_KWARGS.update(
+    {
+        "render_points_as_spheres": True,
+        "point_size": 0.5,
+        "ambient": 0.3,
+        "diffuse": 0.8,
+        "specular": 0.1,
+    }
+)
 
 
 VIZ_KWARGS = {
@@ -81,106 +81,6 @@ def compute_heatmap(
     return np.clip(blended, 0, 255).astype(np.uint8)
 
 
-def plot_heatmap(
-    heatmap: np.ndarray,
-    title: Optional[str] = None,
-    ax: Optional["Axes"] = None,
-    save_path: Optional[Union[str, Path]] = None,
-) -> None:
-    created_fig = ax is None
-    if created_fig:
-        _, ax = plt.subplots()
-    ax.imshow(heatmap)
-    if title:
-        ax.set_title(title)
-    ax.axis("off")
-    if save_path is not None:
-        ax.figure.savefig(save_path, bbox_inches="tight")
-    elif created_fig:
-        plt.show()
-
-
-def plot_context_segmentation(
-    ref_image,
-    ref_mask,
-    tgt_image,
-    pred_mask,
-    alpha: float = 0.45,
-):
-    """Side-by-side colored overlay for in-context segmentation results.
-
-    Reference + context mask shown in red; target + predicted mask shown in green.
-    Returns the Figure — caller decides whether to show or save.
-
-    Args:
-        ref_image: Reference image as numpy (H, W, 3) uint8 or PIL Image.
-        ref_mask: Binary context mask as numpy bool or torch bool tensor (H, W).
-        tgt_image: Target image as numpy (H, W, 3) uint8 or PIL Image.
-        pred_mask: Predicted binary mask as numpy bool or torch bool tensor (H, W).
-        alpha: Overlay opacity (default 0.45).
-    """
-    import torch as _torch
-    from PIL import Image as _Image
-
-    def _to_np_image(img):
-        # Convert PIL or numpy image to uint8 numpy array
-        if isinstance(img, _Image.Image):
-            return np.array(img.convert("RGB"))
-        return np.asarray(img)
-
-    def _to_np_mask(mask, ref_shape):
-        # Normalize mask to bool numpy array; resize to match image if needed
-        if isinstance(mask, _torch.Tensor):
-            mask = mask.detach().cpu().numpy()
-        mask = np.asarray(mask).squeeze().astype(bool)
-        if mask.shape != ref_shape[:2]:
-            resized = _Image.fromarray(mask.astype(np.uint8) * 255).resize(
-                (ref_shape[1], ref_shape[0]), resample=_Image.NEAREST
-            )
-            mask = np.array(resized) > 0
-        return mask
-
-    def _overlay(image_np, mask_np, color, alpha):
-        # Blend colored overlay onto masked pixels
-        out = image_np.astype(np.float32).copy()
-        color_arr = np.array(color, dtype=np.float32) * 255.0
-        out[mask_np] = (1.0 - alpha) * out[mask_np] + alpha * color_arr
-        return np.clip(out, 0, 255).astype(np.uint8)
-
-    ref_np = _to_np_image(ref_image)
-    tgt_np = _to_np_image(tgt_image)
-    ref_mask_np = _to_np_mask(ref_mask, ref_np.shape)
-    pred_mask_np = _to_np_mask(pred_mask, tgt_np.shape)
-
-    ref_overlay = _overlay(ref_np, ref_mask_np, color=(0.95, 0.25, 0.2), alpha=alpha)
-    tgt_overlay = _overlay(tgt_np, pred_mask_np, color=(0.15, 0.8, 0.35), alpha=alpha)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
-    axes[0].imshow(ref_overlay)
-    axes[0].set_title("Reference + context mask")
-    axes[0].axis("off")
-    axes[1].imshow(tgt_overlay)
-    axes[1].set_title("Target + prediction")
-    axes[1].axis("off")
-    return fig
-
-
-def query_heatmap(
-    image: np.ndarray,
-    text: str,
-    extractor: "BaseFeatureExtractor",
-    alpha: float = 0.5,
-    colormap: str = "viridis",
-) -> np.ndarray:
-    from PIL import Image
-
-    pil_image = Image.fromarray(image)
-    text_emb = extractor.encode_text([text])
-    features = extractor.forward([pil_image])
-    sim_map = extractor.compute_similarity(features[0], text_emb)
-    return compute_heatmap(image, sim_map, alpha=alpha, colormap=colormap)
-
-
 def pca_to_rgb(
     features: "torch.Tensor",
     image: np.ndarray,
@@ -196,9 +96,9 @@ def pca_to_rgb(
     Returns:
         Blended image (H, W, 3) uint8.
     """
+    import cv2
     import torch
     from sklearn.decomposition import PCA
-    import cv2
 
     if isinstance(features, torch.Tensor):
         feat_np = features.detach().cpu().float().numpy()  # (C, pH, pW)
@@ -242,8 +142,8 @@ def compute_masked_image(
     Returns:
         Masked image (H, W, 3) uint8.
     """
-    import torch
     import cv2
+    import torch
 
     if isinstance(sim_map, torch.Tensor):
         sim_map = sim_map.detach().cpu().numpy()
@@ -274,8 +174,8 @@ def overlay_masks(
     Returns:
         Blended image (H, W, 3) uint8.
     """
-    import torch
     import cv2
+    import torch
 
     if isinstance(masks, torch.Tensor):
         masks_np = masks.detach().cpu().numpy()  # (N, H, W)
@@ -294,9 +194,7 @@ def overlay_masks(
         if mask.shape != (H, W):
             mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
         color = np.array(cmap(i % 20)[:3]) * 255  # RGB in [0,255]
-        overlay[mask > 0.5] = (
-            (1 - alpha) * base[mask > 0.5] + alpha * color
-        )
+        overlay[mask > 0.5] = (1 - alpha) * base[mask > 0.5] + alpha * color
 
     return np.clip(overlay, 0, 255).astype(np.uint8)
 
@@ -373,12 +271,8 @@ def visualize_splat(
     ]
 
     # Rotate camera
-    plotter.camera.azimuth = viz_kwargs.get(
-        "azimuth", 235
-    )  # Rotate 45° horizontally around focal point
-    plotter.camera.elevation = viz_kwargs.get(
-        "elevation", 15
-    )  # Rotate 30° vertically around focal point
+    plotter.camera.azimuth = viz_kwargs.get("azimuth", 235)  # Rotate 45° horizontally around focal point
+    plotter.camera.elevation = viz_kwargs.get("elevation", 15)  # Rotate 30° vertically around focal point
 
     # Adjust zoom (zoom > 1 zooms in, < 1 zooms out)
     plotter.camera.Zoom(viz_kwargs.get("zoom", 0.9))  # 1.5x zoom in
@@ -425,14 +319,14 @@ def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
             [0, 0, 0],
             # Near plane corners (+Z)
             [-near_width / 2, -near_height / 2, near],
-            [ near_width / 2, -near_height / 2, near],
-            [ near_width / 2,  near_height / 2, near],
-            [-near_width / 2,  near_height / 2, near],
+            [near_width / 2, -near_height / 2, near],
+            [near_width / 2, near_height / 2, near],
+            [-near_width / 2, near_height / 2, near],
             # Far plane corners (+Z)
             [-far_width / 2, -far_height / 2, far],
-            [ far_width / 2, -far_height / 2, far],
-            [ far_width / 2,  far_height / 2, far],
-            [-far_width / 2,  far_height / 2, far],
+            [far_width / 2, -far_height / 2, far],
+            [far_width / 2, far_height / 2, far],
+            [-far_width / 2, far_height / 2, far],
         ],
         dtype=np.float64,
     )
@@ -460,23 +354,6 @@ def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
     frustum.points = (c2w @ pts_h.T).T[:, :3]
 
     return frustum
-
-
-def o3d_mesh_to_polydata(mesh: "o3d.geometry.TriangleMesh") -> pv.PolyData:
-    """Convert Open3D TriangleMesh to PyVista PolyData with RGB vertex scalars.
-
-    Compatible with visualize_splat when mesh has vertex colors (MESH_KWARGS applies).
-    """
-    import open3d as o3d  # optional heavy dep — imported here to avoid top-level dependency
-    verts = np.asarray(mesh.vertices, dtype=np.float32)
-    faces = np.asarray(mesh.triangles, dtype=np.int32)
-    pv_faces = np.hstack(
-        [np.full((len(faces), 1), 3, dtype=np.int32), faces]
-    ).ravel()
-    pd = pv.PolyData(verts, pv_faces)
-    if mesh.has_vertex_colors():
-        pd["RGB"] = (np.asarray(mesh.vertex_colors) * 255).astype(np.uint8)
-    return pd
 
 
 def pointcloud_to_polydata(pts3d: np.ndarray, **point_data) -> pv.PolyData:

@@ -18,7 +18,7 @@ except ImportError:
 
 from collab_splats.mesh.base import BaseMeshCreator, MeshResult
 from collab_splats.mesh.utils import clean_repair_mesh
-from collab_splats.utils.geometry import extract_intrinsics, invert_poses
+from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
 
 logger = logging.getLogger(__name__)
 

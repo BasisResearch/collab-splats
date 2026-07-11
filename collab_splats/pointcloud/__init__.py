@@ -14,9 +14,6 @@ try:
     _SPARK_AVAILABLE = True
 except ImportError:
     _SPARK_AVAILABLE = False
-from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
-from .loop_closure import LoopClosureConfig
-from .wrappers import LoopClosure
 from .utils import compute_obb_from_points, get_points_in_mask
 
 _REGISTRY: dict[str, type[BasePointcloudCreator]] = {
@@ -60,6 +57,10 @@ def make_creator(
     """Construct a pointcloud creator, optionally wrapped with LoopClosure."""
     creator = get_creator(name)(**kwargs)
     if use_lc:
+        # Deferred import — avoids circular dependency: geometry.loop_closure.wrapper
+        # imports pointcloud.feedforward, so geometry cannot be imported at module load.
+        from collab_splats.geometry import LoopClosure
+
         creator = LoopClosure(creator, config=lc_config)
     return creator
 
@@ -67,13 +68,9 @@ def make_creator(
 __all__ = [
     "BasePointcloudCreator",
     "BaseFeedforwardCreator",
-    "BundleAdjustment",
-    "BundleAdjustmentConfig",
     "CoordinateFrame",
     "ColmapCreator",
     "HlocCreator",
-    "LoopClosure",
-    "LoopClosureConfig",
     "MapAnythingCreator",
     "PointcloudResult",
     "VGGTXCreator",

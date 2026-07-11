@@ -4,7 +4,6 @@ import pytest
 import torch
 
 from collab_splats.pointcloud.utils import (
-    filter_density,
     filter_distance,
     fit_dominant_plane,
     voxel_downsample,
@@ -111,30 +110,6 @@ def test_filter_distance_unknown_method():
     pcd = _make_pcd(50)
     with pytest.raises(ValueError, match="Unknown filter_distance method"):
         filter_distance(pcd, method="sphere")
-
-
-# ---------------------------------------------------------------------------
-# filter_density
-# ---------------------------------------------------------------------------
-
-def test_filter_density_removes_sparse():
-    rng = np.random.default_rng(7)
-    # Dense cluster + isolated outliers
-    dense = rng.standard_normal((300, 3)).astype(np.float32) * 0.1
-    sparse = (rng.standard_normal((20, 3)).astype(np.float32) * 5) + 10.0
-    pts = np.vstack([dense, sparse])
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(pts)
-
-    filtered = filter_density(pcd, radius=0.5, percentile=10.0)
-    assert len(filtered.points) < len(pts)
-
-
-def test_filter_density_empty():
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
-    filtered = filter_density(pcd)
-    assert len(filtered.points) == 0
 
 
 # ---------------------------------------------------------------------------

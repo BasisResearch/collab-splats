@@ -3,6 +3,7 @@
 Provides:
   MapAnythingCreator — feedforward creator using MapAnything depth + pose estimation
 """
+
 from __future__ import annotations
 
 import logging
@@ -11,26 +12,28 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-import torch
-from PIL import Image as PILImage
-from vggt.utils.helper import randomly_limit_trues
 
 # timm 0.6.x compat: uniception (mapanything dep) imports `from timm.layers import DropPath`
 # which does not exist in timm<0.9. Re-export it from timm.models.layers before the import.
 import timm.layers as _tl
 import timm.models.layers as _tml
+import torch
+from PIL import Image as PILImage
+from vggt.utils.helper import randomly_limit_trues
+
 if not hasattr(_tl, "DropPath"):
     _tl.DropPath = _tml.DropPath
 del _tl, _tml
 
 from mapanything.models import MapAnything
-from collab_splats.utils.geometry import extrinsics_to_homogeneous, invert_poses
 from mapanything.utils.image import load_images
 from mapanything.utils.inference import (
     postprocess_model_outputs_for_inference,
     preprocess_input_views_for_inference,
     validate_input_views_for_inference,
 )
+
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
 
 from .base import (
     BaseFeedforwardCreator,
@@ -43,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Inference utilities ────────────────────────────────────────────────────────
+
 
 def _reproject_mapanything(
     raw_outputs: list[dict],
@@ -63,24 +67,24 @@ def _reproject_mapanything(
 
     for i, pred in enumerate(raw_outputs):
         # Extract camera-frame points and validity components
-        pts3d_cam = pred["pts3d_cam"][0].cpu().numpy()                  # (H, W, 3)
-        mask = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)   # (H, W)
-        depth_z = pred["depth_z"][0].squeeze(-1).cpu().numpy()          # (H, W)
+        pts3d_cam = pred["pts3d_cam"][0].cpu().numpy()  # (H, W, 3)
+        mask = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)  # (H, W)
+        depth_z = pred["depth_z"][0].squeeze(-1).cpu().numpy()  # (H, W)
 
         # Combine validity mask with positive-depth check
         combined_mask = mask & (depth_z > 0)
 
         # Refined world2cam → cam2world for re-projection into world frame
-        ext_4x4 = extrinsics_to_homogeneous(extrinsics_3x4[i])   # (4, 4)
-        cam2world = invert_poses(ext_4x4)                          # (4, 4)
+        ext_4x4 = extrinsics_to_homogeneous(extrinsics_3x4[i])  # (4, 4)
+        cam2world = invert_poses(ext_4x4)  # (4, 4)
 
         # Apply mask and transform camera-frame points to world frame
-        pts_flat = pts3d_cam[combined_mask]                                       # (K, 3)
-        pts_world = (cam2world[:3, :3] @ pts_flat.T + cam2world[:3, 3:]).T       # (K, 3)
+        pts_flat = pts3d_cam[combined_mask]  # (K, 3)
+        pts_world = (cam2world[:3, :3] @ pts_flat.T + cam2world[:3, 3:]).T  # (K, 3)
 
         # Extract colors for surviving pixels
-        img_no_norm = pred["img_no_norm"][0].cpu().numpy()                        # (H, W, 3)
-        colors = (img_no_norm[combined_mask] * 255).astype(np.uint8)              # (K, 3)
+        img_no_norm = pred["img_no_norm"][0].cpu().numpy()  # (H, W, 3)
+        colors = (img_no_norm[combined_mask] * 255).astype(np.uint8)  # (K, 3)
 
         all_pts.append(pts_world.astype(np.float32))
         all_colors.append(colors)
@@ -172,19 +176,17 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     model_name: str = "facebook/map-anything"
     confidence_percentile: float = 35.0
     use_multiview_confidence: bool = True
-    mv_conf_abs_thresh: float = 0.02   # metric depth (metres) — calibrated for MapAnything
-    mv_conf_threshold: float = 0.0     # keep any pixel with ≥1 inlier view
+    mv_conf_abs_thresh: float = 0.02  # metric depth (metres) — calibrated for MapAnything
+    mv_conf_threshold: float = 0.0  # keep any pixel with ≥1 inlier view
     minibatch_size: int = 1
-    resize_mode: str = "fixed"   # "fixed" (aspect-ratio lookup table), "longest_side", "square"
-    resolution: int = 518         # resolution_set= for "fixed"; size= for "longest_side"/"square"
+    resize_mode: str = "fixed"  # "fixed" (aspect-ratio lookup table), "longest_side", "square"
+    resolution: int = 518  # resolution_set= for "fixed"; size= for "longest_side"/"square"
     _processed_views: Any = field(default=None, init=False, repr=False)
     _lc_window_views: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.resize_mode not in _MA_RESIZE_MODE_MAP:
-            raise ValueError(
-                f"resize_mode must be one of {sorted(_MA_RESIZE_MODE_MAP)}, got {self.resize_mode!r}"
-            )
+            raise ValueError(f"resize_mode must be one of {sorted(_MA_RESIZE_MODE_MAP)}, got {self.resize_mode!r}")
 
     def _load_model(self, device: str) -> Any:
         # Load pretrained model, move to device, set eval mode
@@ -245,21 +247,14 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         # Full-sequence: views is self.views (same object or same length as _processed_views
         # and same id). LC window: a shorter list slice or a Tensor batch.
         _is_full_sequence = (
-            not isinstance(views, torch.Tensor)
-            and self._processed_views is not None
-            and views is self.views
+            not isinstance(views, torch.Tensor) and self._processed_views is not None and views is self.views
         )
 
         if isinstance(views, torch.Tensor):
             # LC window path (Tensor): views is a (K, C, H, W) tensor of K frames. Build
             # fresh MapAnything view dicts and preprocess them for this window only.
-            raw_views = [
-                {"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]}
-                for f in views.cpu()
-            ]
-            window_views = preprocess_input_views_for_inference(
-                validate_input_views_for_inference(raw_views)
-            )
+            raw_views = [{"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]} for f in views.cpu()]
+            window_views = preprocess_input_views_for_inference(validate_input_views_for_inference(raw_views))
             # Transfer window views to model device
             for view in window_views:
                 for k, v in view.items():
@@ -272,9 +267,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             # LC window path (list): views is a raw-dict slice from self.views. Preprocess
             # the window slice on-the-fly — same logic as the Tensor branch but starting
             # from already-loaded load_images dicts instead of raw tensor frames.
-            window_views = preprocess_input_views_for_inference(
-                validate_input_views_for_inference(views)
-            )
+            window_views = preprocess_input_views_for_inference(validate_input_views_for_inference(views))
             # Transfer window views to model device
             for view in window_views:
                 for k, v in view.items():
@@ -298,8 +291,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         # bf16 autocast scoped to model forward only; postprocessing requires float32
         # to avoid F.grid_sample dtype mismatch (torch 2.4 enforces strict matching).
         with torch.no_grad():
-            with torch.autocast(device_type, dtype=torch.bfloat16,
-                                 enabled=(device_type == "cuda")):
+            with torch.autocast(device_type, dtype=torch.bfloat16, enabled=(device_type == "cuda")):
                 return model.forward(
                     forward_views,
                     memory_efficient_inference=True,
@@ -343,10 +335,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         )
 
         # Invert cam2world → world2cam (3,4) as expected by the LC loop
-        exts = np.stack([
-            invert_poses(p["camera_poses"][0].cpu().float().numpy())[:3, :4]
-            for p in processed
-        ])
+        exts = np.stack([invert_poses(p["camera_poses"][0].cpu().float().numpy())[:3, :4] for p in processed])
         intrs = np.stack([p["intrinsics"][0].cpu().float().numpy() for p in processed])
 
         # Emit depth + confidence under the shared keys consumed by _raw_to_world_points.
@@ -409,47 +398,45 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         extrinsics_list, intrinsics_list = [], []
 
         for pred in processed:
-            m = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)       # (H, W)
+            m = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)  # (H, W)
             if m.ndim == 3:
-                m = m.squeeze(0)                                               # drop batch dim
-            dz = pred["depth_z"][0].squeeze(-1).cpu().numpy()                # (H, W)
+                m = m.squeeze(0)  # drop batch dim
+            dz = pred["depth_z"][0].squeeze(-1).cpu().numpy()  # (H, W)
             if dz.ndim == 3:
                 dz = dz.squeeze(0)
             valid = m & (dz > 0)
             masks.append(valid)
             depth_list.append(dz)
-            pts3d_v = pred["pts3d"][0].cpu().numpy()                          # (H, W, 3)
+            pts3d_v = pred["pts3d"][0].cpu().numpy()  # (H, W, 3)
             if pts3d_v.ndim == 4:
                 pts3d_v = pts3d_v.squeeze(0)
             pts3d_grid.append(pts3d_v)
-            img_hw3 = pred["img_no_norm"][0].cpu()                             # (H, W, 3)
+            img_hw3 = pred["img_no_norm"][0].cpu()  # (H, W, 3)
             if img_hw3.ndim == 4:
-                img_hw3 = img_hw3.squeeze(0)                                   # drop batch dim if present
-            colors_grid.append((img_hw3.numpy() * 255).astype(np.uint8))       # (H, W, 3)
-            images_list.append(img_hw3.permute(2, 0, 1))                       # (C, H, W)
+                img_hw3 = img_hw3.squeeze(0)  # drop batch dim if present
+            colors_grid.append((img_hw3.numpy() * 255).astype(np.uint8))  # (H, W, 3)
+            images_list.append(img_hw3.permute(2, 0, 1))  # (C, H, W)
             if pred.get("conf") is not None:
                 c = pred["conf"][0]
                 conf_list.append(c[0] if c.ndim == 3 else c)
             cam2world = pred["camera_poses"][0].cpu().numpy()
             if cam2world.ndim == 3:
-                cam2world = cam2world.squeeze(0)                               # (4, 4)
+                cam2world = cam2world.squeeze(0)  # (4, 4)
             extrinsics_list.append(invert_poses(cam2world)[:3, :4])
             intr = pred["intrinsics"][0].cpu().numpy()
             if intr.ndim == 3:
-                intr = intr.squeeze(0)                                         # (3, 3)
+                intr = intr.squeeze(0)  # (3, 3)
             intrinsics_list.append(intr)
 
-        combined_mask = np.stack(masks)           # (N, H, W) bool
-        stacked_pts3d = np.stack(pts3d_grid)      # (N, H, W, 3)
-        stacked_colors = np.stack(colors_grid)    # (N, H, W, 3)
+        combined_mask = np.stack(masks)  # (N, H, W) bool
+        stacked_pts3d = np.stack(pts3d_grid)  # (N, H, W, 3)
+        stacked_colors = np.stack(colors_grid)  # (N, H, W, 3)
 
         # Apply shared geometric mv_conf filter (replaces upstream use_multiview_confidence path)
         if self.use_multiview_confidence:
-            stacked_depth = np.stack(depth_list)                              # (N, H, W)
-            stacked_intr  = np.stack(intrinsics_list)                         # (N, 3, 3)
-            stacked_extr  = extrinsics_to_homogeneous(
-                np.stack(extrinsics_list)
-            )                                                                  # (N, 4, 4) w2c
+            stacked_depth = np.stack(depth_list)  # (N, H, W)
+            stacked_intr = np.stack(intrinsics_list)  # (N, 3, 3)
+            stacked_extr = extrinsics_to_homogeneous(np.stack(extrinsics_list))  # (N, 4, 4) w2c
             mv_conf = compute_multiview_depth_confidence(
                 stacked_depth,
                 stacked_intr,
@@ -468,12 +455,12 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         colors = stacked_colors[combined_mask]
         pixel_indices = np.stack(np.where(combined_mask), axis=1).astype(np.int32)  # (P, 3)
 
-        _world_points = stacked_pts3d                        # full (N, H, W, 3) grid for BA
-        _images = torch.stack(images_list)                   # (N, C, H, W)
+        _world_points = stacked_pts3d  # full (N, H, W, 3) grid for BA
+        _images = torch.stack(images_list)  # (N, C, H, W)
         _conf = torch.stack(conf_list) if conf_list else None
-        _depth = np.stack(depth_list).astype(np.float32)    # (N, H, W) depth_z values
-        extrinsics = np.stack(extrinsics_list)               # (N, 3, 4)
-        intrinsics = np.stack(intrinsics_list)               # (N, 3, 3)
+        _depth = np.stack(depth_list).astype(np.float32)  # (N, H, W) depth_z values
+        extrinsics = np.stack(extrinsics_list)  # (N, 3, 4)
+        intrinsics = np.stack(intrinsics_list)  # (N, 3, 3)
 
         # Convert extrinsics to 4×4 homogeneous form
         extrinsics_4x4 = extrinsics_to_homogeneous(extrinsics)
@@ -577,28 +564,23 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             for pred in preds:
                 pred["pts3d_cam"] = pred["pts3d_cam"].float()
                 pred["pts3d"] = pred["pts3d"].float()
-            processed = postprocess_model_outputs_for_inference(
-                preds, views, apply_mask=False
-            )
-        captured["poses"] = np.stack([
-            invert_poses(p["camera_poses"][0].cpu().float().numpy())
-            for p in processed
-        ]).astype(np.float32)                                          # (2, 4, 4) w2c
+            processed = postprocess_model_outputs_for_inference(preds, views, apply_mask=False)
+        captured["poses"] = np.stack(
+            [invert_poses(p["camera_poses"][0].cpu().float().numpy()) for p in processed]
+        ).astype(
+            np.float32
+        )  # (2, 4, 4) w2c
         # Pointmaps + confidence are already in the postprocessed output — include
         # them for LC anchor-scale estimation; warn loudly if a key is missing
         # (verify contract tolerates world_points=None, but scale degrades to 1.0).
         if all("pts3d" in p for p in processed):
             captured["world_points"] = np.stack(
                 [p["pts3d"][0].cpu().float().numpy() for p in processed]
-            )                                                          # (2, H, W, 3)
+            )  # (2, H, W, 3)
         else:
-            logger.warning(
-                "LC verify geometry missing pts3d — anchor scale will fall back to 1.0"
-            )
+            logger.warning("LC verify geometry missing pts3d — anchor scale will fall back to 1.0")
         if all("conf" in p for p in processed):
-            captured["conf"] = np.stack(
-                [p["conf"][0].cpu().float().numpy() for p in processed]
-            )                                                          # (2, H, W)
+            captured["conf"] = np.stack([p["conf"][0].cpu().float().numpy() for p in processed])  # (2, H, W)
         return captured
 
     def _reproject(

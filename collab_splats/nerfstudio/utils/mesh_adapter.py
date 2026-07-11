@@ -7,7 +7,7 @@ import torch
 
 from nerfstudio.utils.eval_utils import eval_setup
 
-from collab_splats.utils.geometry import OPENGL_TO_OPENCV, extrinsics_to_homogeneous
+from collab_splats.geometry.transforms import OPENGL_TO_OPENCV, extrinsics_to_homogeneous
 
 def extract_mesh_inputs(
     load_config: Path,

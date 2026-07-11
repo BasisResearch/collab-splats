@@ -50,7 +50,7 @@ creator.model = vggt  # reuse same model weights
 
 def run_our_path(frames):
     """Run our preprocessing + forward pass on given image paths."""
-    from collab_splats.utils.geometry import extrinsics_to_homogeneous
+    from collab_splats.geometry.transforms import extrinsics_to_homogeneous
     import torch
     # Use creator's preprocess but only for these frames
     from vggt.utils.load_fn import load_and_preprocess_images as lp

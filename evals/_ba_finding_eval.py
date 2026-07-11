@@ -23,14 +23,14 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from collab_splats.pointcloud.bundle_adjustment import (
+from collab_splats.geometry.bundle_adjustment import (
     BundleAdjustmentConfig,
     extract_tracks_vggsfm,
     run_bundle_adjustment,
 )
 from collab_splats.pointcloud.feedforward import VGGTXCreator, _raw_to_world_points
 from collab_splats.pointcloud.feedforward.base import _extrinsics_3x4_to_4x4
-from collab_splats.pointcloud.loop_closure.eval import (
+from collab_splats.geometry.loop_closure.eval import (
     ate_translation,
     auc_at_threshold,
     rpe,

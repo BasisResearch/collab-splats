@@ -16,7 +16,7 @@ from tqdm.auto import tqdm, trange
 
 from collab_splats.mesh.base import MeshResult
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-from collab_splats.utils.geometry import invert_poses
+from collab_splats.geometry.transforms import invert_poses
 
 try:
     import meshlib.mrmeshpy as mm

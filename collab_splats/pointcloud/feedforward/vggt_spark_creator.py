@@ -21,7 +21,7 @@ import numpy as np
 import torch
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
-from collab_splats.utils.geometry import extrinsics_to_homogeneous
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
 from .base import _decode_verify_geometry
 from .vggtx import VGGTXCreator

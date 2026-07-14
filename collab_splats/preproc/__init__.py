@@ -6,6 +6,7 @@ Plots live in collab_splats.preproc.viz and are deliberately not re-exported
 
 from collab_splats.preproc.sampling import (
     compute_blur_score,
+    extract_frame,
     extract_frames,
     get_video_info,
     load_frames,
@@ -18,6 +19,7 @@ __all__ = [
     "score_frames",
     "get_video_info",
     "load_frames",
+    "extract_frame",
     "extract_frames",
     "compute_blur_score",
 ]

@@ -326,12 +326,13 @@ def test_extract_frames_writes_named_jpegs(tiny_video, tmp_path):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 6 public names — viz is opt-in and must NOT be re-exported
+    # Exactly the 7 public names — viz is opt-in and must NOT be re-exported
     assert set(preproc.__all__) == {
         "sample_frames",
         "score_frames",
         "get_video_info",
         "load_frames",
+        "extract_frame",
         "extract_frames",
         "compute_blur_score",
     }

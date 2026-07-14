@@ -48,7 +48,7 @@ Add a localization page to the splats dashboard: select a frame from an rgb_X fi
 - `LocalizationConfig` dataclass (~6 fields): `extractor` (default `"loma-g"`), `top_k_viz`, `append_to_db`, `refine_focal_length`, `calibration_path` (optional override), `max_pairs`. UI/call state only — **not** serialized to gcloud; localization provenance lives in zarr attrs. `RunConfig` is untouched (it is per-reconstruction provenance; localization runs are many-per-reconstruction).
 
 **`collab_splats/dashboard/pipeline.py`** (existing file):
-- `run_localization(recon_ref, query_video, frame_idx, config: LocalizationConfig, ...)` next to `run_pipeline`. Reuses `OperationLog`, gpu_worker, push helpers. Steps:
+- `run_localization(recon_ref, query_video, frame_idx, config: LocalizationConfig, ...)` next to `run_pipeline`. Reuses `OperationLog`, gpu_worker, push helpers. Each step below reports explicit progress via `OperationLog.update_progress(pct, msg)` (same mechanism as `run_pipeline`), and `LocalizePage` renders the same progress strip component as the reconstruction page — the user always sees which step is running (pulling, building/loading DB, extracting frame, estimating intrinsics, localizing, appending, pushing). Steps:
   1. Selective pull from `fieldwork_processed` (see Data movement).
   2. Load/build `CameraLocalizer` via `from_feedforward` (build-on-demand only when the user explicitly picked a method with no existing DB — UI warns about GPU cost).
   3. Pull query mp4 from `fieldwork_curated`, extract frame `frame_idx`.
@@ -68,6 +68,8 @@ Add a localization page to the splats dashboard: select a frame from an rgb_X fi
 ### LocalizePage layout
 
 **Sidebar:** session dropdown → camera dropdown (rgb_X folders only; thermal deferred) → video dropdown (mp4s via rclone listing of `fieldwork_curated/<YYYY_MM_DD>-session_XXXX/rgb_X/`) → frame slider (default 0) → method dropdown (populated from remotely pulled zarr attrs; method with an existing DB preselected; selecting a method without a DB shows a "will build DB — GPU cost" warning; default `loma-g` when no DB exists) → "append to DB" checkbox (default on) → Run button.
+
+**Progress strip:** same component as the reconstruction page, driven by `OperationLog` — step-labeled progress bar for every run (including DB build-on-demand and background push).
 
 **Main area:**
 - Pre-run: left = selected query frame; right = mesh with reconstruction cameras (viridis by time; every 3rd camera when N > ~60, with a corner annotation stating the subsampling); bottom empty.

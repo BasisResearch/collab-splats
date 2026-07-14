@@ -38,7 +38,7 @@ Add a localization page to the splats dashboard: select a frame from an rgb_X fi
 
 **`collab_splats/localization/intrinsics.py`** (new, small):
 - `estimate_intrinsics(frame: np.ndarray) -> np.ndarray` — single-frame feedforward inference, returns (3,3). Experimental; clear docstring warning.
-- `CameraLocalizer.localize` gains `refine_focal_length: bool = False`, passed through to pycolmap pose refinement.
+- `CameraLocalizer.localize` gains `refine_focal_length: bool = False`, passed through to pycolmap pose refinement. This refinement optimizes the query pose only (6-DoF + focal); reference poses and 3D points are fixed — the DB is never modified by localization.
 
 **`collab_splats/localization/viz.py`** (refactor, no new function for matches):
 - `plot_correspondences` gains `ref_idx: int | None = None` (override best-frame selection) and returns the `Figure`. Existing callers (tutorial notebook) unaffected — rendering behavior unchanged.
@@ -87,6 +87,15 @@ Pull (selective rclone from `fieldwork_processed`):
 
 Pull from `fieldwork_curated`: the selected query mp4 only.
 Push: new `localized/` chunks + updated attrs (incremental sync). Videos are never re-stored; dense `depth`/`world_points`/`confidence` arrays are never pulled.
+
+Push destination — localized data lives inside the reconstruction's store, under the reconstruction's processed folder:
+
+```
+fieldwork_processed/reconstruction/<session>/<video_stem>/feedforward.zarr/
+    local_features/<extractor>/{reconstruction/, localized/}
+```
+
+No parallel `YYYY_MM_DD-session_XXXX/rgb_X/` tree is created in `fieldwork_processed`. Rationale: a localized pose is only meaningful in that reconstruction's coordinate frame (the same rgb_X frame localized against two reconstructions yields two unrelated poses), and `load_index` requires both groups in one store. Source identity is preserved per frame via `{session, camera, video_ref, frame_idx}` attrs. A per-session manifest for cross-reconstruction lookup is deferred until a consumer exists.
 
 ## Error handling
 

@@ -580,30 +580,12 @@ def extract_frame(video_path: "str | Path", frame_idx: int) -> np.ndarray:
 
     Raises ValueError if frame_idx is past the end of the video.
     """
-    video_path = str(video_path)
-    # Probe dimensions with ffprobe so the raw pipe can be reshaped
-    probe = subprocess.run(
-        [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height", "-of", "json", video_path,
-        ],
-        capture_output=True, check=True, text=True,
-    )
-    stream = json.loads(probe.stdout)["streams"][0]
-    w, h = int(stream["width"]), int(stream["height"])
-
-    # select filter decodes only the requested frame; rawvideo/rgb24 pipe avoids temp files
-    out = subprocess.run(
-        [
-            "ffmpeg", "-v", "error", "-i", video_path,
-            "-vf", f"select=eq(n\\,{frame_idx})", "-vframes", "1",
-            "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
-        ],
-        capture_output=True, check=True,
-    ).stdout
-    if len(out) != h * w * 3:
-        raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}")
-    return np.frombuffer(out, dtype=np.uint8).reshape(h, w, 3).copy()
+    _require_ffmpeg()
+    # Delegate to the shared rotation-aware streaming decode — dims always match
+    # get_video_info's display dims (ffmpeg applies rotation metadata itself)
+    for _, frame in _iter_frames_at(str(video_path), [frame_idx]):
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}")
 
 
 def extract_frames(video_path: str, frame_indices: list[int], output_dir) -> list[Path]:

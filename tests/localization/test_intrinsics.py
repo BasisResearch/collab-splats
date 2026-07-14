@@ -38,7 +38,16 @@ def test_estimate_intrinsics_rescales_to_query_resolution():
     np.testing.assert_allclose(K[2], [0, 0, 1])
 
 
-def test_estimate_intrinsics_writes_frame_for_creator(tmp_path):
+def test_estimate_intrinsics_asymmetric_ratio_pins_axes():
+    frame = np.zeros((96, 256, 3), dtype=np.uint8)  # W doubled, H unchanged vs 96x128 fake
+    K = estimate_intrinsics(frame, creator=_FakeCreator())
+    np.testing.assert_allclose(K[0, 0], 200.0)  # fx * (256/128)
+    np.testing.assert_allclose(K[1, 1], 100.0)  # fy * (96/96)
+    np.testing.assert_allclose(K[0, 2], 128.0)  # cx * 2
+    np.testing.assert_allclose(K[1, 2], 48.0)   # cy * 1
+
+
+def test_estimate_intrinsics_writes_frame_for_creator():
     frame = np.zeros((96, 128, 3), dtype=np.uint8)
     creator = _FakeCreator()
     estimate_intrinsics(frame, creator=creator)

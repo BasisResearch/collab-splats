@@ -15,6 +15,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from collab_splats.utils.torch_utils import pytorch_gc
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,30 +27,43 @@ def estimate_intrinsics(frame: np.ndarray, creator=None) -> np.ndarray:
         frame:   (H, W, 3) uint8 RGB query frame.
         creator: Feedforward creator instance (load_model/setup_inference/run_inference/
                  postprocess/outputs surface). Defaults to VGGTXCreator — imported lazily
-                 because the feedforward stack is a heavy optional dependency.
+                 because the feedforward stack is a heavy optional dependency. When a
+                 creator is supplied, its model lifetime (and GPU memory) is the caller's
+                 responsibility; only the internally-built default is freed on return.
     """
-    if creator is None:
+    owns_creator = creator is None
+    if owns_creator:
         # Heavy import kept inside the function: pulls the full reconstruction stack
         from collab_splats.pointcloud.feedforward import VGGTXCreator
 
         creator = VGGTXCreator()
 
-    # Stage the frame as a one-image directory — the creator API consumes image dirs
+    # Stage the frame as a one-image directory — the creator API consumes image dirs.
+    # PNG (lossless) so compression artifacts don't perturb the intrinsics prediction.
     with tempfile.TemporaryDirectory() as td:
-        Image.fromarray(frame).save(Path(td) / "00000.jpg")
+        Image.fromarray(frame).save(Path(td) / "00000.png")
         creator.load_model()
         creator.setup_inference(Path(td))
         creator.run_inference()
         creator.postprocess()
 
     result = creator.outputs
+    if result is None:
+        raise RuntimeError("estimate_intrinsics: creator produced no outputs")
     K = np.asarray(result.intrinsics[0], dtype=np.float64).copy()
 
-    # Rescale from the model's inference resolution to the query frame's resolution.
+    # Extract the inference resolution as plain ints BEFORE any teardown.
     # result.images is (N, 3, H, W) channel-first (torch.Tensor in the real pipeline,
     # per FeedforwardResult) — read .shape directly, no np.asarray (would fail on CUDA).
-    proc = result.images
-    h_proc, w_proc = int(proc.shape[2]), int(proc.shape[3])
+    h_proc, w_proc = int(result.images.shape[2]), int(result.images.shape[3])
+
+    # If we built the creator, drop all refs to the model and its tensor outputs,
+    # then reclaim GPU memory — pytorch_gc only helps once the references are dead.
+    if owns_creator:
+        del result, creator
+        pytorch_gc()
+
+    # Rescale from the model's inference resolution to the query frame's resolution
     h_q, w_q = frame.shape[:2]
     K[0, :] *= w_q / w_proc
     K[1, :] *= h_q / h_proc

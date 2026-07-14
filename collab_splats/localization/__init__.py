@@ -11,6 +11,7 @@ Three-stage pipeline:
   Stage 3 — Pose estimation: 2D→3D keypoint assignment via torch.cdist NN,
              then absolute pose via LO-RANSAC + Ceres refinement (pycolmap).
 """
+
 from .extractors import (
     BaseLocalExtractor,
     DiskExtractor,
@@ -21,7 +22,7 @@ from .extractors import (
 )
 from .localizer import CameraLocalizer, LocalizationResult
 from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtractor
-from .viz import plot_correspondences
+from .viz import plot_correspondences, plot_inlier_distribution
 
 __all__ = [
     "BaseLocalExtractor",
@@ -36,4 +37,5 @@ __all__ = [
     "PECLIPExtractor",
     "XFeatExtractor",
     "plot_correspondences",
+    "plot_inlier_distribution",
 ]

@@ -146,7 +146,7 @@ def plot_correspondences(
     ax.axvline(W, color="white", linewidth=1, alpha=0.5)
     ax.axis("off")
     ax.set_title(f"query ↔ reference frame {best_ref_idx} — " f"{inliers.sum()}/{len(inliers)} inliers shown")
-    plt.tight_layout()
+    fig.tight_layout()
     if show:
         plt.show()
     return fig
@@ -170,13 +170,19 @@ def plot_inlier_distribution(
         n_frames:      Total reference frames (bars include zero-match frames);
                        defaults to max(ref_frame_indices) + 1.
         frame_sources: Per-frame provenance list ('reconstruction' | 'localized').
+
+    Returns:
+        The matplotlib Figure, or None when there is nothing to plot.
     """
     if loc.ref_frame_indices is None or loc.inlier_mask is None:
         logger.warning("plot_inlier_distribution: no correspondence data to plot")
         return None
 
-    n = int(n_frames) if n_frames is not None else int(loc.ref_frame_indices.max()) + 1
+    # Clamp: bincount(minlength=n) never truncates, so a stale/short n_frames would
+    # desync bar x-positions from counts — grow n to cover every referenced frame
     idx = loc.ref_frame_indices.astype(np.intp)
+    n_used = int(idx.max()) + 1 if len(idx) else 0
+    n = max(int(n_frames) if n_frames is not None else 0, n_used)
     totals = np.bincount(idx, minlength=n)
     inliers = np.bincount(idx[loc.inlier_mask], minlength=n)
 
@@ -208,5 +214,5 @@ def plot_inlier_distribution(
         f"({100 * loc.n_inliers / max(loc.n_correspondences, 1):.0f}%)",
         fontsize=10,
     )
-    plt.tight_layout()
+    fig.tight_layout()
     return fig

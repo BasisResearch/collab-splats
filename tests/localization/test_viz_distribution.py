@@ -77,6 +77,14 @@ def test_distribution_per_bar_ticks_when_totals_vary():
     plt.close(fig)
 
 
+def test_distribution_clamps_short_n_frames():
+    loc = _fake_result(n_frames=4)
+    fig = plot_inlier_distribution(loc, n_frames=2)  # stale/short count must not crash
+    assert fig is not None
+    assert len(fig.axes[0].patches) >= 4  # bars cover every referenced frame
+    plt.close(fig)
+
+
 def test_distribution_marks_localized_frames():
     loc = _fake_result()
     fig = plot_inlier_distribution(loc, n_frames=4, frame_sources=["reconstruction"] * 3 + ["localized"])

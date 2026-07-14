@@ -1,4 +1,5 @@
 """Provenance attrs round-trip through the zarr feature cache."""
+import cv2
 import numpy as np
 import pytest
 import torch
@@ -22,8 +23,6 @@ class _FakeExtractor:
 
 def _make_localizer(tmp_path, n_frames=2):
     """Build a localizer from synthetic images on disk (no GPU)."""
-    import cv2
-
     paths = []
     for i in range(n_frames):
         p = tmp_path / f"{i:05d}.jpg"
@@ -51,6 +50,18 @@ def test_save_index_without_attrs_still_stamps_extractor(tmp_path):
     zp = tmp_path / "feedforward.zarr"
     loc.save_index(zp, "disk")
     group = zarr.open(str(zp), mode="r")["local_features/disk"]
+    assert group.attrs["extractor"] == "disk"
+
+
+def test_save_index_rebuild_replaces_stale_attrs(tmp_path):
+    # Rebuild without attrs must not inherit provenance from a previous build
+    loc, *_ = _make_localizer(tmp_path)
+    zp = tmp_path / "feedforward.zarr"
+    loc.save_index(zp, "disk", attrs={"backbone": "vggtx", "ba": True})
+    loc.save_index(zp, "disk")
+    group = zarr.open(str(zp), mode="r")["local_features/disk"]
+    assert "ba" not in group.attrs
+    assert "backbone" not in group.attrs
     assert group.attrs["extractor"] == "disk"
 
 
@@ -83,3 +94,27 @@ def test_provenance_list_grows_per_frame(tmp_path):
                                 provenance={"frame_idx": i})
     lg = zarr.open(str(zp), mode="r")["local_features/disk/localized"]
     assert len(lg.attrs["provenance"]) == 2
+
+
+def test_append_backfills_pre_provenance_store(tmp_path):
+    # Older stores lack the provenance attr entirely — appending must backfill {}
+    loc, pts3d, extr, intr = _make_localizer(tmp_path)
+    zp = tmp_path / "feedforward.zarr"
+    loc.save_index(zp, "disk")
+    feats = _FakeExtractor().extract(None)
+    pose = np.eye(4, dtype=np.float32)
+    loc.add_localized_frame(tmp_path / "q0.jpg", pose, intr[0], feats,
+                            zarr_path=zp, extractor_name="disk")
+
+    # Simulate a pre-provenance store by stripping the attr
+    lg = zarr.open(str(zp), mode="a")["local_features/disk/localized"]
+    stripped = {k: v for k, v in lg.attrs.asdict().items() if k != "provenance"}
+    lg.attrs.put(stripped)
+
+    loc.add_localized_frame(tmp_path / "q1.jpg", pose, intr[0], feats,
+                            zarr_path=zp, extractor_name="disk",
+                            provenance={"frame_idx": 1})
+    lg = zarr.open(str(zp), mode="r")["local_features/disk/localized"]
+    prov = lg.attrs["provenance"]
+    assert prov == [{}, {"frame_idx": 1}]
+    assert len(prov) == len(lg.attrs["image_paths"])

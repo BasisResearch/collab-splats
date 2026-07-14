@@ -243,8 +243,13 @@ class CameraLocalizer:
         Overwrites any existing reconstruction cache for extractor_name.
         Not automatically invalidated when source images change — caller's responsibility.
         Single-writer assumption; not safe for concurrent calls.
-        attrs: optional provenance dict (e.g. backbone, ba, lc, built_at) merged onto
-        the extractor-level zarr group; extractor_name is always stamped regardless.
+
+        Args:
+            zarr_path:      feedforward.zarr store path.
+            extractor_name: registry key naming the local_features/ subgroup.
+            attrs:          optional build provenance (e.g. backbone, ba, lc, built_at)
+                            written to the extractor-level group. Replaces any prior
+                            attrs wholesale; extractor_name is always stamped.
         """
         lz4 = BloscCodec(cname="lz4")
         zarr_path = pathlib.Path(zarr_path)
@@ -257,12 +262,10 @@ class CameraLocalizer:
 
         rec_group = store.require_group(rec_key)
 
-        # Build provenance on the extractor group: always stamp the extractor name;
-        # merge any caller-supplied provenance (backbone, ba, lc, built_at, ...)
+        # Stamp build provenance on the extractor group — wholesale replacement so a
+        # rebuild never inherits stale attrs from a previous build
         ext_group = store.require_group(f"local_features/{extractor_name}")
-        ext_group.attrs["extractor"] = extractor_name
-        for k, v in (attrs or {}).items():
-            ext_group.attrs[k] = v
+        ext_group.attrs.put({"extractor": extractor_name, **(attrs or {})})
 
         # Build CSR frame_offsets from per-frame keypoint counts
         counts = [len(f.keypoints) for f in self._frame_features]
@@ -604,7 +607,7 @@ class CameraLocalizer:
             loc_group.attrs["image_paths"] = existing
 
             prov_list = list(loc_group.attrs.get("provenance", []))
-            # Left-pad for frames appended before provenance existed (older stores)
+            # Backfill empty provenance for frames appended before provenance existed
             while len(prov_list) < len(existing) - 1:
                 prov_list.append({})
             prov_list.append(provenance or {})

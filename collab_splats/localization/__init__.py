@@ -20,6 +20,7 @@ from .extractors import (
     LomaGExtractor,
     XFeatExtractor,
 )
+from .intrinsics import estimate_intrinsics
 from .localizer import CameraLocalizer, LocalizationResult
 from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtractor
 from .viz import plot_correspondences, plot_inlier_distribution
@@ -36,6 +37,7 @@ __all__ = [
     "LomaGExtractor",
     "PECLIPExtractor",
     "XFeatExtractor",
+    "estimate_intrinsics",
     "plot_correspondences",
     "plot_inlier_distribution",
 ]

@@ -236,12 +236,15 @@ class CameraLocalizer:
         """Provenance per frame: 'reconstruction' or 'localized'."""
         return list(self._frame_sources)
 
-    def save_index(self, zarr_path: "str | Path", extractor_name: str) -> None:
+    def save_index(self, zarr_path: "str | Path", extractor_name: str,
+                   attrs: "dict | None" = None) -> None:
         """Persist extracted frame features to feedforward.zarr reconstruction/ subgroup.
 
         Overwrites any existing reconstruction cache for extractor_name.
         Not automatically invalidated when source images change — caller's responsibility.
         Single-writer assumption; not safe for concurrent calls.
+        attrs: optional provenance dict (e.g. backbone, ba, lc, built_at) merged onto
+        the extractor-level zarr group; extractor_name is always stamped regardless.
         """
         lz4 = BloscCodec(cname="lz4")
         zarr_path = pathlib.Path(zarr_path)
@@ -253,6 +256,13 @@ class CameraLocalizer:
             del store[rec_key]
 
         rec_group = store.require_group(rec_key)
+
+        # Build provenance on the extractor group: always stamp the extractor name;
+        # merge any caller-supplied provenance (backbone, ba, lc, built_at, ...)
+        ext_group = store.require_group(f"local_features/{extractor_name}")
+        ext_group.attrs["extractor"] = extractor_name
+        for k, v in (attrs or {}).items():
+            ext_group.attrs[k] = v
 
         # Build CSR frame_offsets from per-frame keypoint counts
         counts = [len(f.keypoints) for f in self._frame_features]
@@ -502,11 +512,14 @@ class CameraLocalizer:
         features: "LocalFeatures",
         zarr_path: "str | Path | None" = None,
         extractor_name: "str | None" = None,
+        provenance: "dict | None" = None,
     ) -> None:
         """Add a successfully localized frame to the in-memory reference set.
 
         Rebuilds kpt→3D assignments for the new frame from existing pts3d + given pose.
         If zarr_path and extractor_name are provided, appends to localized/ in zarr.
+        provenance: optional per-frame metadata (e.g. video_ref, session, camera,
+        frame_idx) recorded alongside the localized frame in zarr.
         Single-writer; not thread-safe across concurrent callers.
         Call clear_localized_frames() after BA/LC updates that invalidate poses.
         """
@@ -540,6 +553,7 @@ class CameraLocalizer:
             self._append_localized_to_zarr(
                 image_path, pose, intrinsics, features,
                 pathlib.Path(zarr_path), extractor_name,
+                provenance=provenance,
             )
 
     def _append_localized_to_zarr(
@@ -550,6 +564,7 @@ class CameraLocalizer:
         features: "LocalFeatures",
         zarr_path: "pathlib.Path",
         extractor_name: str,
+        provenance: "dict | None" = None,
     ) -> None:
         """Append one localized frame to the localized/ zarr group."""
         lz4 = BloscCodec(cname="lz4")
@@ -566,6 +581,7 @@ class CameraLocalizer:
             loc_group = store.require_group(loc_key)
             offsets = np.array([0, len(kpts_np)], dtype=np.int64)
             loc_group.attrs["image_paths"] = [str(image_path)]
+            loc_group.attrs["provenance"] = [provenance or {}]
             loc_group.create_array("frame_offsets", data=offsets,
                                    chunks=(max(offsets.shape[0], 2),), compressors=lz4)
             loc_group.create_array("keypoints", data=kpts_np,
@@ -586,6 +602,13 @@ class CameraLocalizer:
             existing = list(loc_group.attrs.get("image_paths", []))
             existing.append(str(image_path))
             loc_group.attrs["image_paths"] = existing
+
+            prov_list = list(loc_group.attrs.get("provenance", []))
+            # Left-pad for frames appended before provenance existed (older stores)
+            while len(prov_list) < len(existing) - 1:
+                prov_list.append({})
+            prov_list.append(provenance or {})
+            loc_group.attrs["provenance"] = prov_list
 
             off_arr = loc_group["frame_offsets"]
             last_off = int(off_arr[-1])

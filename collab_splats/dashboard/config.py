@@ -62,7 +62,7 @@ class RunConfig:
 @dataclass
 class LocalizationConfig:
     """Knobs for one localization run. UI/call state only — provenance for persisted
-    localized frames lives in zarr attrs, so this is never serialised to gcloud."""
+    localized frames lives in zarr attrs, so this is never written to run_config.yaml."""
 
     extractor: str = "loma-g"  # feature-DB / matcher registry key
     top_k_viz: int = 3  # match-pair figures shown, best-first

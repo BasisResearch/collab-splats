@@ -528,12 +528,12 @@ class SplatsApp(param.Parameterized):
 
     # ---- layout --------------------------------------------------------
 
-    def view(self) -> pn.template.MaterialTemplate:
-        """Assemble the full single-page layout.
+    def sidebar(self) -> pn.Column:
+        """Sidebar contents — composed by view() or by the tabbed shell."""
+        return self._sidebar
 
-        The 'vtk' extension is loaded once in run_app (main thread, before serving) —
-        loading it here per-session fails to inject the VTK JS and the panes hang.
-        """
+    def main(self) -> pn.Column:
+        """Main-area contents: split viewer + live progress strip."""
         # Live operations strip: stage label + progress bar + scrolling per-step log.
         # Poll the shared op_log on THIS session's IOLoop (op_log is mutated from the GpuWorker
         # thread; pushing Bokeh updates cross-thread glitches). Polling reads a locked snapshot and
@@ -549,14 +549,25 @@ class SplatsApp(param.Parameterized):
             # No live server (tests) — leave the static snapshot.
             logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
 
-        main = pn.Column(self._viewer.layout, progress, sizing_mode="stretch_both")
+        return pn.Column(self._viewer.layout, progress, sizing_mode="stretch_both")
+
+    def view(self) -> pn.template.MaterialTemplate:
+        """Standalone single-page layout (kept for tests and direct serving).
+
+        The 'vtk' extension is loaded once in run_app (main thread, before serving) —
+        loading it here per-session fails to inject the VTK JS and the panes hang.
+        """
         return pn.template.MaterialTemplate(
             title="splats",
-            sidebar=[self._sidebar],
-            main=[main],
+            sidebar=[self.sidebar()],
+            main=[self.main()],
             header_background="#2596be",
             sidebar_width=340,
         )
+
+
+# Spec 2026-07-14 names this class SplatsPage; alias until callers migrate.
+SplatsPage = SplatsApp
 
 
 ########

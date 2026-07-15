@@ -357,43 +357,60 @@ class LocalizePage(param.Parameterized):
 
     def _render_result(self, out, config: LocalizationConfig) -> None:
         """Fill all three panels from a LocalizationRunOutput (IOLoop thread)."""
+        # Lazy: viz builds figures via plt.subplots(), so pull pyplot to close superseded ones
+        import matplotlib.pyplot as plt
+
         from collab_splats.localization.viz import plot_correspondences, plot_inlier_distribution
 
-        loc = out.result
-        n_frames = len(out.ref_image_paths)
+        try:
+            loc = out.result
+            n_frames = len(out.ref_image_paths)
 
-        # Bottom: inlier distribution + summary stats
-        fig = plot_inlier_distribution(loc, n_frames=n_frames, frame_sources=out.frame_sources)
-        self._dist_pane.object = fig
-        ratio = 100 * loc.n_inliers / max(loc.n_correspondences, 1)
-        pose_msg = "" if loc.pose is not None else " — <b style='color:#e05050'>POSE FAILED</b>"
-        self._stats.object = (
-            f"<div style='font-size:12px'>inliers {loc.n_inliers}/{loc.n_correspondences} "
-            f"({ratio:.0f}%) · intrinsics: {out.intrinsics_source} "
-            f"(fx={out.query_intrinsics[0, 0]:.0f}){pose_msg}</div>"
-        )
+            # Close the outgoing match-pair figures before rebuilding the column so they do
+            # not accumulate in pyplot's global registry (the pre-run frame pane is an Image)
+            for child in list(self._matches_col):
+                if isinstance(child, pn.pane.Matplotlib) and child.object is not None:
+                    plt.close(child.object)
 
-        # Left: top-k match-pair figures, best-first (replaces the frame preview)
-        if loc.ref_frame_indices is not None and loc.inlier_mask is not None:
-            counts = np.bincount(
-                loc.ref_frame_indices[loc.inlier_mask].astype(np.intp), minlength=n_frames)
-            top = np.argsort(counts)[::-1][: config.top_k_viz]
-            panes = []
-            for ref in top:
-                if counts[ref] == 0 or not Path(out.ref_image_paths[ref]).exists():
-                    continue
-                mfig = plot_correspondences(
-                    loc, out.query_frame, out.ref_image_paths,
-                    max_pairs=config.max_pairs, ref_idx=int(ref), show=False)
-                if mfig is not None:
-                    panes.append(pn.pane.Matplotlib(mfig, sizing_mode="stretch_width", tight=True))
-            if panes:
-                self._matches_col[:] = panes
+            # Bottom: inlier distribution + summary stats (close the superseded dist figure)
+            old_dist = self._dist_pane.object
+            fig = plot_inlier_distribution(loc, n_frames=n_frames, frame_sources=out.frame_sources)
+            self._dist_pane.object = fig
+            if old_dist is not None:
+                plt.close(old_dist)
+            ratio = 100 * loc.n_inliers / max(loc.n_correspondences, 1)
+            pose_msg = "" if loc.pose is not None else " — <b style='color:#e05050'>POSE FAILED</b>"
+            self._stats.object = (
+                f"<div style='font-size:12px'>inliers {loc.n_inliers}/{loc.n_correspondences} "
+                f"({ratio:.0f}%) · intrinsics: {out.intrinsics_source} "
+                f"(fx={out.query_intrinsics[0, 0]:.0f}){pose_msg}</div>"
+            )
 
-        # Right: mesh + viridis reconstruction cameras + red localized camera
-        scene_key = (self.scene_session.value, self.scene_video.value)
-        mesh_path = self._base_dir / scene_key[0] / scene_key[1] / "mesh" / "mesh_tsdf.ply"
-        self._render_scene(scene_key, mesh_path, out.ref_extrinsics, loc.pose)
+            # Left: top-k match-pair figures, best-first (replaces the frame preview)
+            if loc.ref_frame_indices is not None and loc.inlier_mask is not None:
+                counts = np.bincount(
+                    loc.ref_frame_indices[loc.inlier_mask].astype(np.intp), minlength=n_frames)
+                top = np.argsort(counts)[::-1][: config.top_k_viz]
+                panes = []
+                for ref in top:
+                    if counts[ref] == 0 or not Path(out.ref_image_paths[ref]).exists():
+                        continue
+                    mfig = plot_correspondences(
+                        loc, out.query_frame, out.ref_image_paths,
+                        max_pairs=config.max_pairs, ref_idx=int(ref), show=False)
+                    if mfig is not None:
+                        panes.append(pn.pane.Matplotlib(mfig, sizing_mode="stretch_width", tight=True))
+                if panes:
+                    self._matches_col[:] = panes
+
+            # Right: mesh + viridis reconstruction cameras + red localized camera
+            scene_key = (self.scene_session.value, self.scene_video.value)
+            mesh_path = self._base_dir / scene_key[0] / scene_key[1] / "mesh" / "mesh_tsdf.ply"
+            self._render_scene(scene_key, mesh_path, out.ref_extrinsics, loc.pose)
+        except Exception as exc:
+            # Surface a render failure via the op_log instead of escaping to the IOLoop
+            logger.warning("localize render failed", exc_info=True)
+            self._op_log.error_op(str(exc))
 
     def _render_scene(self, scene_key, mesh_path: Path, extrinsics: np.ndarray,
                       localized_pose: "np.ndarray | None") -> None:

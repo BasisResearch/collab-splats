@@ -174,9 +174,12 @@ class CameraLocalizer:
 
         self._extractor = extractor if extractor is not None else DiskExtractor()
 
-        # Store image paths and provenance for duplicate guard and dashboard display
+        # Store image paths and provenance for duplicate guard and dashboard display.
+        # _extrinsics stays reconstruction-only (assignment building depends on that); poses
+        # for appended localized frames accumulate here and are joined by the extrinsics property.
         self._image_paths: list[Path] = [Path(p) for p in image_paths]
         self._frame_sources: list[str] = []
+        self._localized_extrinsics: list[np.ndarray] = []
 
         logger.info(
             "CameraLocalizer: building index for %d frames, %d 3D points",
@@ -235,6 +238,21 @@ class CameraLocalizer:
     def frame_sources(self) -> list[str]:
         """Provenance per frame: 'reconstruction' or 'localized'."""
         return list(self._frame_sources)
+
+    @property
+    def image_paths(self) -> list:
+        """Reference image paths, index-aligned with frame_sources and extrinsics."""
+        return list(self._image_paths)
+
+    @property
+    def extrinsics(self) -> np.ndarray:
+        """(N, 4, 4) world-to-camera for ALL reference frames — reconstruction then localized.
+
+        Index-aligned with image_paths / frame_sources / LocalizationResult.ref_frame_indices.
+        """
+        if not self._localized_extrinsics:
+            return self._extrinsics
+        return np.concatenate([self._extrinsics, np.stack(self._localized_extrinsics)], axis=0)
 
     def save_index(self, zarr_path: "str | Path", extractor_name: str,
                    attrs: "dict | None" = None) -> None:
@@ -422,6 +440,8 @@ class CameraLocalizer:
                               ["localized"] * len(loc_features))
         obj._image_paths = rec_image_paths + loc_image_paths
         obj._assignments = rec_assignments + loc_assignments
+        # Keep the localized poses so extrinsics stays aligned with image_paths/frame_sources
+        obj._localized_extrinsics = list(loc_extrinsics_list)
 
         logger.info(
             "CameraLocalizer.load_index: loaded %d rec + %d loc frames from %s [%s]",
@@ -545,11 +565,12 @@ class CameraLocalizer:
             image_hw=self._image_hw,
         )
 
-        # Append in-memory
+        # Append in-memory; the pose keeps extrinsics aligned with image_paths/frame_sources
         self._frame_features.append(features)
         self._frame_sources.append("localized")
         self._image_paths.append(image_path)
         self._assignments.extend(new_assignments)
+        self._localized_extrinsics.append(np.asarray(pose))
 
         # Persist to zarr if requested
         if zarr_path is not None and extractor_name is not None:

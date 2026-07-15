@@ -33,15 +33,32 @@ class _FakeSource:
 
 
 class _FakeLocalizer:
+    """Mirrors CameraLocalizer's real layout: 2 reconstruction frames + 1 already-localized one.
+
+    _extrinsics is reconstruction-only (length 2) exactly as in the real class, while the public
+    extrinsics property joins in the localized pose to align with image_paths / frame_sources /
+    ref_frame_indices. Reading the private attr here yields 2 rows against 3 paths — the
+    misalignment that must not reach the dashboard.
+    """
+
     def __init__(self, pose):
         self._pose = pose
         self.appended = None
-        self._image_paths = [Path("/orig/00000.jpg"), Path("/orig/00001.jpg")]
+        self._image_paths = [Path("/orig/00000.jpg"), Path("/orig/00001.jpg"), Path("/orig/cam_f000007.jpg")]
         self._extrinsics = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+        self._localized_extrinsics = [np.full((4, 4), 7.0, dtype=np.float32)]
+
+    @property
+    def image_paths(self):
+        return list(self._image_paths)
+
+    @property
+    def extrinsics(self):
+        return np.concatenate([self._extrinsics, np.stack(self._localized_extrinsics)], axis=0)
 
     @property
     def frame_sources(self):
-        return ["reconstruction", "reconstruction"]
+        return ["reconstruction", "reconstruction", "localized"]
 
     def localize(self, image, K):
         m = 8
@@ -119,9 +136,18 @@ def test_returns_result_and_scene_context(tmp_path, wired):
     out, source = _run(tmp_path, wired)
     assert out.result.pose is not None
     assert out.result.n_inliers == 6
-    assert len(out.ref_image_paths) == 2
-    assert out.ref_extrinsics.shape == (2, 4, 4)
+    assert len(out.ref_image_paths) == 3
+    assert out.ref_extrinsics.shape == (3, 4, 4)
     assert source.pulled  # zarr absent locally → pulled
+
+
+def test_ref_paths_and_extrinsics_stay_index_aligned(tmp_path, wired):
+    """ref_frame_indices indexes both lists, so they must agree in length — and the localized
+    frame's pose must be the one carried through, not a reconstruction row."""
+    out, _ = _run(tmp_path, wired)
+    assert len(out.ref_image_paths) == out.ref_extrinsics.shape[0] == 3
+    assert len(out.frame_sources) == 3
+    np.testing.assert_allclose(out.ref_extrinsics[2], np.full((4, 4), 7.0, dtype=np.float32))
 
 
 def test_append_and_push_on_success(tmp_path, wired):
@@ -145,8 +171,11 @@ def test_no_append_on_failed_pose(tmp_path, wired):
 
 
 def test_ref_paths_remapped_to_local_frames_dir(tmp_path, wired):
+    """Reconstruction frames map to frames/; localized frames map to localized_frames/."""
     out, _ = _run(tmp_path, wired)
-    assert out.ref_image_paths[0] == tmp_path / "2024_02_06" / "vid" / "frames" / "00000.jpg"
+    scene = tmp_path / "2024_02_06" / "vid"
+    assert out.ref_image_paths[0] == scene / "frames" / "00000.jpg"
+    assert out.ref_image_paths[2] == scene / "localized_frames" / "cam_f000007.jpg"
 
 
 def test_pull_uses_minimal_excludes(tmp_path, wired):

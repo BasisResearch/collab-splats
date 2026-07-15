@@ -391,7 +391,7 @@ def _resolve_query_intrinsics(frame: np.ndarray, config: LocalizationConfig, op_
 def _local_ref_paths(localizer, out_dir: Path) -> list:
     """Remap DB image paths (recorded on the machine that built the DB) to local files."""
     paths = []
-    for p, src in zip(localizer._image_paths, localizer.frame_sources):
+    for p, src in zip(localizer.image_paths, localizer.frame_sources):
         sub = "frames" if src == "reconstruction" else "localized_frames"
         paths.append(Path(out_dir) / sub / Path(p).name)
     return paths
@@ -470,7 +470,7 @@ def run_localization(
                 query_intrinsics=K,
                 intrinsics_source=intr_source,
                 ref_image_paths=_local_ref_paths(localizer, out_dir),
-                ref_extrinsics=np.asarray(localizer._extrinsics),
+                ref_extrinsics=localizer.extrinsics,
                 frame_sources=localizer.frame_sources,
             )
         op_log.finish_op()

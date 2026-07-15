@@ -306,10 +306,22 @@ class LocalizationRunOutput:
     frame_sources: list  # per-frame 'reconstruction' | 'localized'
 
 
-# Never pulled: frames.zarr duplicates the frames/ jpg dir the viz reads.
-# NOTE(min-pull): dense arrays (depth/world_points/confidence) stay in the pull until
-# FeedforwardResult.load_zarr is audited for tolerance to missing members.
-_PULL_EXCLUDES = ("frames.zarr/**",)
+# Never pulled for localization: frames.zarr duplicates the frames/ jpg dir the viz reads,
+# and the dense per-pixel arrays are optional in FeedforwardResult.load_zarr (absent → None;
+# audited 2026-07-15). Localization needs only the required set (points/colors/extrinsics/
+# intrinsics/original_coords) plus frames/*.jpg for match viz — the dense members below can
+# be GBs per scene. The splats viewer's own pull_processed has no excludes, and rclone copy
+# is incremental, so a later scene load fetches whatever this skipped.
+_PULL_EXCLUDES = (
+    "frames.zarr/**",
+    "feedforward.zarr/depth/**",
+    "feedforward.zarr/world_points/**",
+    "feedforward.zarr/confidence/**",
+    "feedforward.zarr/conf/**",  # legacy key for confidence
+    "feedforward.zarr/features/**",
+    "feedforward.zarr/pixel_indices/**",
+    "feedforward.zarr/images/**",
+)
 
 
 def _load_feedforward_result(out_dir: Path):

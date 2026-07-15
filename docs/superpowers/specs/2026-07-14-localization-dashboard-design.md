@@ -123,3 +123,13 @@ Flat pytest functions (tests mirror package tree):
 - thermal_X cameras.
 - Same-video frame localization as a first-class flow (near-duplicate viewpoint handling for DB growth).
 - Per-camera calibration workflow/storage convention (only the override hook ships now).
+
+Shipped-behavior deviations recorded at final review (2026-07-15), accepted as follow-ups:
+
+- PnP-failure match plot: spec asked for an outliers-only match-pair plot on failure; `plot_correspondences` returns None when pose is None, so failure runs render stats + distribution only.
+- SceneCache cross-page pre-warm ("session selection on either page pre-warms the other") not wired; cache currently serves the localize page only (mesh + warm localizer).
+- No explicit focal-plausibility warning; mitigated by the always-visible "estimated (experimental)" intrinsics label + fx readout in the stats line.
+- Build-on-demand is an inline sidebar warning rather than a confirmation dialog; the user still initiates the run seeing the warning.
+- Dense-array pull exclusion is DONE (not deferred): `load_zarr` audited 2026-07-15 — dense members are optional, `_PULL_EXCLUDES` now skips depth/world_points/confidence/features/pixel_indices/images for localization pulls.
+- Stale local reconstruction: pull is guarded by zarr existence with no force-refresh path; a remotely re-reconstructed scene needs a manual local delete until a force kwarg is wired.
+- LocalizePage's pyvista plotter is built eagerly per session (dynamic tabs defer frontend rendering only); lazy plotter construction on first tab visit is a possible optimization.

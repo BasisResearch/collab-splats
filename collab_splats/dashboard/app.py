@@ -654,7 +654,11 @@ def run_app(
         origin = websocket_origin
 
     def factory() -> pn.template.MaterialTemplate:
-        return SplatsApp(base_dir=Path(base_dir), gpu_worker=gpu_worker, op_log=op_log).view()
+        # Tabbed shell: splats + localize pages share one session, worker, and op_log.
+        # Import stays local to avoid an app.py <-> shell.py circular import at module load.
+        from collab_splats.dashboard.shell import DashboardShell
+
+        return DashboardShell(base_dir=Path(base_dir), gpu_worker=gpu_worker, op_log=op_log).view()
 
     pn.serve(
         factory,

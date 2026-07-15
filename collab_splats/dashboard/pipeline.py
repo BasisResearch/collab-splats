@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
+import yaml
 import zarr
 from PIL import Image
 from zarr.codecs import BloscCodec
 
-from collab_splats.dashboard.config import RunConfig
+from collab_splats.dashboard.config import LocalizationConfig, RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.sources import SessionSource
 from collab_splats.mesh.utils import persist_mesh_vertex_features, pointcloud_to_mesh
@@ -22,9 +24,9 @@ from collab_splats.pointcloud.feedforward import (
     VGGTXCreator,
 )
 from collab_splats.pointcloud.utils import lift_features
+from collab_splats.preproc import extract_frame, sample_frames
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
-from collab_splats.preproc import sample_frames
 
 # VGGTOmegaCreator requires the vggt-omega submodule; only available when installed.
 try:
@@ -282,5 +284,198 @@ def run_pipeline(
         return out_dir
     except Exception as exc:
         logger.exception("pipeline failed")
+        op_log.error_op(str(exc))
+        raise
+
+
+########
+# Localization
+########
+
+
+@dataclass
+class LocalizationRunOutput:
+    """Everything the localize page needs to render one run."""
+
+    result: "object"  # LocalizationResult
+    query_frame: np.ndarray  # (H, W, 3) uint8 RGB
+    query_intrinsics: np.ndarray  # (3, 3) — estimated or calibrated
+    intrinsics_source: str  # "estimated (experimental)" | "calibration file"
+    ref_image_paths: list  # local paths, index-aligned with ref_frame_indices
+    ref_extrinsics: np.ndarray  # (N, 4, 4) world-to-camera
+    frame_sources: list  # per-frame 'reconstruction' | 'localized'
+
+
+# Never pulled: frames.zarr duplicates the frames/ jpg dir the viz reads.
+# NOTE(min-pull): dense arrays (depth/world_points/confidence) stay in the pull until
+# FeedforwardResult.load_zarr is audited for tolerance to missing members.
+_PULL_EXCLUDES = ("frames.zarr/**",)
+
+
+def _load_feedforward_result(out_dir: Path):
+    """Load the reconstruction result from the local zarr (lazy heavy import)."""
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+    return FeedforwardResult.load_zarr(out_dir / "feedforward.zarr")
+
+
+def _stamp_db_provenance(zarr_path: Path, extractor_name: str, out_dir: Path) -> None:
+    """Write build provenance from run_config.yaml onto the extractor's zarr group.
+
+    Idempotent — safe to call on every run; older stores gain attrs on first touch.
+    """
+    cfg_path = Path(out_dir) / "run_config.yaml"
+    attrs: dict = {"extractor": extractor_name}
+    if cfg_path.exists():
+        run_cfg = RunConfig.from_yaml(cfg_path)
+        attrs.update(
+            {
+                "backbone": run_cfg.env_model,
+                "frame_indices": list(run_cfg.frame_indices),
+                "video_ref": run_cfg.video_ref,
+            }
+        )
+    store = zarr.open(str(zarr_path), mode="a")
+    group = store.require_group(f"local_features/{extractor_name}")
+    for k, v in attrs.items():
+        group.attrs[k] = v
+
+
+def _build_localizer(
+    result, config: LocalizationConfig, zarr_path: Path, op_log: OperationLog, cache=None, scene_key=None
+):
+    """Load (or build, with progress) the feature DB; keep the localizer warm in the
+    SceneCache so consecutive runs skip index reload and extractor model load."""
+    from collab_splats.localization import CameraLocalizer
+    from collab_splats.localization.extractors import BaseLocalExtractor
+
+    if cache is not None and scene_key is not None:
+        cached = cache.get(scene_key, f"localizer:{config.extractor}")
+        if cached is not None:
+            return cached
+
+    extractor = BaseLocalExtractor.get(config.extractor)()
+
+    def on_progress(done: int, total: int) -> None:
+        # Only fires on a cache miss (DB build); scale into the 25→55% band
+        op_log.update_progress(
+            int(25 + 30 * (done + 1) / max(total, 1)),
+            f"localize: building DB {done + 1}/{total}",
+            log=False,
+        )
+
+    localizer = CameraLocalizer.from_feedforward(
+        result,
+        extractor=extractor,
+        extractor_name=config.extractor,
+        zarr_path=zarr_path,
+        progress_callback=on_progress,
+    )
+    if cache is not None and scene_key is not None:
+        cache.put(scene_key, f"localizer:{config.extractor}", localizer)
+    return localizer
+
+
+def _resolve_query_intrinsics(frame: np.ndarray, config: LocalizationConfig, op_log: OperationLog) -> np.ndarray:
+    """Calibration file when configured; else experimental feedforward estimate."""
+    if config.calibration_path:
+        data = yaml.safe_load(Path(config.calibration_path).read_text())
+        return np.asarray(data["K"], dtype=np.float32).reshape(3, 3)
+
+    from collab_splats.localization.intrinsics import estimate_intrinsics
+
+    op_log.append_line("localize: intrinsics are ESTIMATED (experimental) — validate before trusting poses")
+    return estimate_intrinsics(frame)
+
+
+def _local_ref_paths(localizer, out_dir: Path) -> list:
+    """Remap DB image paths (recorded on the machine that built the DB) to local files."""
+    paths = []
+    for p, src in zip(localizer._image_paths, localizer.frame_sources):
+        sub = "frames" if src == "reconstruction" else "localized_frames"
+        paths.append(Path(out_dir) / sub / Path(p).name)
+    return paths
+
+
+def run_localization(
+    *,
+    query_video: Path,
+    frame_idx: int,
+    session: str,
+    stem: str,
+    config: LocalizationConfig,
+    op_log: OperationLog,
+    source: SessionSource,
+    base_dir: Path,
+    provenance: "dict | None" = None,
+    cache=None,
+) -> LocalizationRunOutput:
+    """Localize one query-video frame against an existing reconstruction; optionally
+    append the result to the localized/ DB group and push incrementally."""
+    out_dir = Path(base_dir) / session / stem
+    op_log.start_op(f"localize {Path(query_video).name}#{frame_idx}")
+    try:
+        with op_log.attach_logging("collab_splats"):
+            # Reconstruction data: pull once (minimal set), then load from local zarr
+            op_log.update_progress(5, "localize: pulling reconstruction")
+            if not (out_dir / "feedforward.zarr").exists():
+                source.pull_processed(session, stem, out_dir, excludes=_PULL_EXCLUDES)
+            op_log.update_progress(15, "localize: loading reconstruction")
+            result = _load_feedforward_result(out_dir)
+
+            # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
+            op_log.update_progress(25, f"localize: loading DB ({config.extractor})")
+            localizer = _build_localizer(
+                result, config, out_dir / "feedforward.zarr", op_log, cache=cache, scene_key=(session, stem)
+            )
+            _stamp_db_provenance(out_dir / "feedforward.zarr", config.extractor, out_dir)
+
+            # Query frame + intrinsics
+            op_log.update_progress(55, f"localize: extracting frame {frame_idx}")
+            frame = extract_frame(query_video, frame_idx)
+            op_log.update_progress(60, "localize: resolving query intrinsics")
+            K = _resolve_query_intrinsics(frame, config, op_log)
+            intr_source = "calibration file" if config.calibration_path else "estimated (experimental)"
+
+            # Pose: single-pose PnP + refinement — the DB is never modified here
+            op_log.update_progress(70, "localize: matching + solving pose")
+            loc = localizer.localize(frame, K)
+            op_log.append_line(
+                f"localize: {loc.n_inliers}/{loc.n_correspondences} inliers"
+                + ("" if loc.pose is not None else " — POSE FAILED")
+            )
+
+            # Persist: save the query frame locally, append to localized/, push new chunks
+            if loc.pose is not None and config.append_to_db:
+                op_log.update_progress(85, "localize: appending to DB")
+                img_dir = out_dir / "localized_frames"
+                img_dir.mkdir(parents=True, exist_ok=True)
+                img_path = img_dir / f"{Path(query_video).stem}_f{frame_idx:06d}.jpg"
+                Image.fromarray(frame).save(img_path)
+                localizer.add_localized_frame(
+                    img_path,
+                    loc.pose,
+                    K,
+                    loc.query_features,
+                    zarr_path=out_dir / "feedforward.zarr",
+                    extractor_name=config.extractor,
+                    provenance=provenance,
+                )
+                op_log.update_progress(92, "localize: pushing to fieldwork_processed (background)")
+                _push_async(source, out_dir, session, stem, op_log)
+
+            output = LocalizationRunOutput(
+                result=loc,
+                query_frame=frame,
+                query_intrinsics=K,
+                intrinsics_source=intr_source,
+                ref_image_paths=_local_ref_paths(localizer, out_dir),
+                ref_extrinsics=np.asarray(localizer._extrinsics),
+                frame_sources=localizer.frame_sources,
+            )
+        op_log.finish_op()
+        return output
+    except Exception as exc:
+        logger.exception("localization failed")
         op_log.error_op(str(exc))
         raise

@@ -1,0 +1,178 @@
+"""run_localization orchestration with all heavy pieces faked."""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+import yaml
+import zarr
+
+import collab_splats.dashboard.pipeline as pipeline
+from collab_splats.dashboard.config import LocalizationConfig
+from collab_splats.dashboard.operation_log import OperationLog
+from collab_splats.localization.localizer import LocalizationResult
+
+########
+# Fakes
+########
+
+
+class _FakeSource:
+    def __init__(self):
+        self.pulled = False
+        self.pushed = False
+        self.excludes = None
+
+    def pull_processed(self, session, stem, dest, excludes=()):
+        self.pulled = True
+        self.excludes = excludes
+        (Path(dest) / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+
+    def push_outputs(self, out_dir, session, stem, on_line=None):
+        self.pushed = True
+
+
+class _FakeLocalizer:
+    def __init__(self, pose):
+        self._pose = pose
+        self.appended = None
+        self._image_paths = [Path("/orig/00000.jpg"), Path("/orig/00001.jpg")]
+        self._extrinsics = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+
+    @property
+    def frame_sources(self):
+        return ["reconstruction", "reconstruction"]
+
+    def localize(self, image, K):
+        m = 8
+        return LocalizationResult(
+            pose=self._pose,
+            n_correspondences=m,
+            n_inliers=6,
+            pts2d=np.zeros((m, 2), np.float32),
+            pts3d_matched=np.zeros((m, 3), np.float32),
+            inlier_mask=np.ones(m, bool),
+            pts2d_ref=np.zeros((m, 2), np.float32),
+            ref_frame_indices=np.zeros(m, np.int32),
+            query_features=object(),
+        )
+
+    def add_localized_frame(
+        self, image_path, pose, intrinsics, features, zarr_path=None, extractor_name=None, provenance=None
+    ):
+        self.appended = provenance
+
+
+########
+# Fixtures
+########
+
+
+@pytest.fixture
+def wired(monkeypatch, tmp_path):
+    """Patch every heavy dependency; return the fake localizer for assertions."""
+    fake_localizer = _FakeLocalizer(pose=np.eye(4, dtype=np.float32))
+
+    class _FakeResult:
+        extrinsics = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+        intrinsics = np.tile(np.eye(3, dtype=np.float32), (2, 1, 1))
+        image_paths = [Path("/orig/00000.jpg"), Path("/orig/00001.jpg")]
+
+    monkeypatch.setattr(pipeline, "_load_feedforward_result", lambda out_dir: _FakeResult())
+    monkeypatch.setattr(
+        pipeline, "_build_localizer", lambda result, cfg, zarr_path, op_log, cache=None, scene_key=None: fake_localizer
+    )
+    monkeypatch.setattr(pipeline, "_stamp_db_provenance", lambda zarr_path, extractor, out_dir: None)
+    monkeypatch.setattr(pipeline, "extract_frame", lambda video, idx: np.zeros((48, 64, 3), np.uint8))
+    monkeypatch.setattr(pipeline, "_resolve_query_intrinsics", lambda frame, cfg, op_log: np.eye(3, dtype=np.float32))
+    # Push runs inline (no thread) so the flag is set before assertions
+    monkeypatch.setattr(
+        pipeline,
+        "_push_async",
+        lambda source, out_dir, session, stem, op_log: source.push_outputs(out_dir, session, stem),
+    )
+    return fake_localizer
+
+
+def _run(tmp_path, wired, append=True, source=None):
+    source = source or _FakeSource()
+    out = pipeline.run_localization(
+        query_video=tmp_path / "cam.mp4",
+        frame_idx=42,
+        session="2024_02_06",
+        stem="vid",
+        config=LocalizationConfig(append_to_db=append),
+        op_log=OperationLog(),
+        source=source,
+        base_dir=tmp_path,
+        provenance={"camera": "rgb_1", "frame_idx": 42},
+    )
+    return out, source
+
+
+########
+# Tests
+########
+
+
+def test_returns_result_and_scene_context(tmp_path, wired):
+    out, source = _run(tmp_path, wired)
+    assert out.result.pose is not None
+    assert out.result.n_inliers == 6
+    assert len(out.ref_image_paths) == 2
+    assert out.ref_extrinsics.shape == (2, 4, 4)
+    assert source.pulled  # zarr absent locally → pulled
+
+
+def test_append_and_push_on_success(tmp_path, wired):
+    out, source = _run(tmp_path, wired, append=True)
+    assert wired.appended == {"camera": "rgb_1", "frame_idx": 42}
+    assert source.pushed
+
+
+def test_no_append_when_disabled(tmp_path, wired):
+    out, source = _run(tmp_path, wired, append=False)
+    assert wired.appended is None
+    assert not source.pushed
+
+
+def test_no_append_on_failed_pose(tmp_path, wired):
+    wired._pose = None
+    out, source = _run(tmp_path, wired, append=True)
+    assert out.result.pose is None
+    assert wired.appended is None
+    assert not source.pushed
+
+
+def test_ref_paths_remapped_to_local_frames_dir(tmp_path, wired):
+    out, _ = _run(tmp_path, wired)
+    assert out.ref_image_paths[0] == tmp_path / "2024_02_06" / "vid" / "frames" / "00000.jpg"
+
+
+def test_pull_uses_minimal_excludes(tmp_path, wired):
+    _, source = _run(tmp_path, wired)
+    assert source.excludes == pipeline._PULL_EXCLUDES
+
+
+def test_stamp_db_provenance_writes_attrs(tmp_path):
+    """Real (unpatched) _stamp_db_provenance: run_config provenance lands on the group."""
+    out_dir = tmp_path / "s" / "v"
+    out_dir.mkdir(parents=True)
+    (out_dir / "run_config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "env_model": "vggtx",
+                "frame_indices": [0, 5, 10],
+                "video_ref": "reconstruction/s/v/v.mp4",
+            }
+        )
+    )
+    zp = out_dir / "feedforward.zarr"
+    store = zarr.open(str(zp), mode="a")
+    store.require_group("local_features/loma-g/reconstruction")
+
+    pipeline._stamp_db_provenance(zp, "loma-g", out_dir)
+    g = zarr.open(str(zp), mode="r")["local_features/loma-g"]
+    assert g.attrs["backbone"] == "vggtx"
+    assert g.attrs["frame_indices"] == [0, 5, 10]
+    assert g.attrs["extractor"] == "loma-g"

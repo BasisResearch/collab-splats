@@ -6,6 +6,7 @@ This path is under validation (see spec 2026-07-14): errors of a few percent in 
 typical and are partially absorbed by pycolmap's focal refinement during PnP (enabled by
 default in CameraLocalizer). Prefer a real calibration when one exists.
 """
+
 from __future__ import annotations
 
 import logging
@@ -70,6 +71,11 @@ def estimate_intrinsics(frame: np.ndarray, creator=None) -> np.ndarray:
 
     logger.info(
         "estimate_intrinsics (EXPERIMENTAL): fx=%.1f fy=%.1f cx=%.1f cy=%.1f @ %dx%d",
-        K[0, 0], K[1, 1], K[0, 2], K[1, 2], w_q, h_q,
+        K[0, 0],
+        K[1, 1],
+        K[0, 2],
+        K[1, 2],
+        w_q,
+        h_q,
     )
     return K.astype(np.float32)

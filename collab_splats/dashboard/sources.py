@@ -73,10 +73,7 @@ class SessionSource:
         """Return sorted YYYY_MM_DD-session_XXXX folders at the curated bucket root."""
         client = self._require_client()
         items = client.list_directory(CURATED_BUCKET, "")
-        return sorted(
-            i["Name"] for i in items
-            if i.get("IsDir") and _FIELD_SESSION_RE.match(i["Name"])
-        )
+        return sorted(i["Name"] for i in items if i.get("IsDir") and _FIELD_SESSION_RE.match(i["Name"]))
 
     def list_rgb_cameras(self, field_session: str) -> list[str]:
         """Return sorted rgb_X camera folders in a field session (thermal_X deferred)."""
@@ -88,8 +85,7 @@ class SessionSource:
         """Return video filenames under a field session's camera folder."""
         client = self._require_client()
         items = client.list_directory(CURATED_BUCKET, f"{field_session}/{camera}")
-        return [i["Name"] for i in items
-                if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
+        return [i["Name"] for i in items if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
 
     def fetch_field_video(self, field_session: str, camera: str, name: str, dest_dir: Path) -> Path:
         """rclone-copy a field-camera video to dest_dir; return the local path."""
@@ -105,9 +101,7 @@ class SessionSource:
         """Extractor names with a feature DB in the remote zarr (cheap directory listing)."""
         try:
             client = self._require_client()
-            items = client.list_directory(
-                PROCESSED_BUCKET, f"{ROOT}/{session}/{stem}/feedforward.zarr/local_features"
-            )
+            items = client.list_directory(PROCESSED_BUCKET, f"{ROOT}/{session}/{stem}/feedforward.zarr/local_features")
         except Exception:  # path absent (no DB yet) or rclone unavailable
             return []
         return sorted(i["Name"] for i in items if i.get("IsDir"))
@@ -121,8 +115,7 @@ class SessionSource:
             return False
         return bool(items)
 
-    def pull_processed(self, session: str, stem: str, dest_dir: Path,
-                       excludes: tuple = ()) -> Path:
+    def pull_processed(self, session: str, stem: str, dest_dir: Path, excludes: tuple = ()) -> Path:
         """rclone-copy processed outputs to dest_dir; return the local dir.
 
         excludes: rclone --exclude patterns (e.g. "frames.zarr/**") to skip

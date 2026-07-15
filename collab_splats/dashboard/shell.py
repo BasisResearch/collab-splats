@@ -31,10 +31,10 @@ class DashboardShell:
         gpu_worker = gpu_worker if gpu_worker is not None else GpuWorker()
         op_log = op_log if op_log is not None else OperationLog()
         self._cache = SceneCache()
-        self._splats = SplatsApp(base_dir=Path(base_dir), source=source,
-                                 gpu_worker=gpu_worker, op_log=op_log)
-        self._localize = LocalizePage(base_dir=Path(base_dir), source=source,
-                                      gpu_worker=gpu_worker, op_log=op_log, cache=self._cache)
+        self._splats = SplatsApp(base_dir=Path(base_dir), source=source, gpu_worker=gpu_worker, op_log=op_log)
+        self._localize = LocalizePage(
+            base_dir=Path(base_dir), source=source, gpu_worker=gpu_worker, op_log=op_log, cache=self._cache
+        )
         self._tabs: pn.Tabs | None = None
         self._sidebar_holder: pn.Column | None = None
 
@@ -46,8 +46,9 @@ class DashboardShell:
             self._localize.release_gpu()
 
     def view(self) -> pn.template.MaterialTemplate:
-        """Assemble tabs + swapping sidebar. dynamic=True defers the localize page's
-        VTK build until first visit; both pages stay alive after that."""
+        """Assemble tabs + swapping sidebar. dynamic=True defers frontend rendering of
+        the inactive tab only — both pages (and their VTK plotters) are built eagerly
+        in __init__; lazy plotter construction is a possible follow-up."""
         self._tabs = pn.Tabs(
             ("Splats", self._splats.main()),
             ("Localize", self._localize.main()),

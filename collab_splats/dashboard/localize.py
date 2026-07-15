@@ -42,8 +42,9 @@ def subsample_step(n_cameras: int) -> int:
     return 1 if n_cameras <= _SUBSAMPLE_ABOVE else 3
 
 
-def preselect_method(available_dbs: list[str], registered: list[str],
-                     default: str = _DEFAULT_METHOD) -> tuple[list[str], str]:
+def preselect_method(
+    available_dbs: list[str], registered: list[str], default: str = _DEFAULT_METHOD
+) -> tuple[list[str], str]:
     """Dropdown (options, value): prefer the default method's DB, then any existing DB,
     else the default (which will build on demand)."""
     if default in available_dbs:
@@ -151,11 +152,9 @@ class LocalizePage(param.Parameterized):
     def _build_main(self) -> None:
         """Left frame/matches column, right 3D pane, bottom distribution + stats."""
         self._frame_pane = pn.pane.Image(None, sizing_mode="scale_width")
-        self._matches_col = pn.Column(self._frame_pane, sizing_mode="stretch_width",
-                                      scroll=True, max_height=700)
+        self._matches_col = pn.Column(self._frame_pane, sizing_mode="stretch_width", scroll=True, max_height=700)
         self._plotter = pv.Plotter(off_screen=True)
-        self._vtk_pane = pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both",
-                                     min_height=500)
+        self._vtk_pane = pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
         self._dist_pane = pn.pane.Matplotlib(None, sizing_mode="stretch_width", tight=True)
         self._stats = pn.pane.HTML("", sizing_mode="stretch_width")
 
@@ -259,8 +258,7 @@ class LocalizePage(param.Parameterized):
     def _on_camera(self, event) -> None:
         if not event.new:
             return
-        self.query_video.options = self._source.list_camera_videos(
-            self.field_session.value, event.new)
+        self.query_video.options = self._source.list_camera_videos(self.field_session.value, event.new)
 
     def _on_query_video(self, event) -> None:
         """Fetch the video in the background; set slider bound + preview frame 0."""
@@ -360,7 +358,10 @@ class LocalizePage(param.Parameterized):
         # Lazy: viz builds figures via plt.subplots(), so pull pyplot to close superseded ones
         import matplotlib.pyplot as plt
 
-        from collab_splats.localization.viz import plot_correspondences, plot_inlier_distribution
+        from collab_splats.localization.viz import (
+            plot_correspondences,
+            plot_inlier_distribution,
+        )
 
         try:
             loc = out.result
@@ -388,16 +389,20 @@ class LocalizePage(param.Parameterized):
 
             # Left: top-k match-pair figures, best-first (replaces the frame preview)
             if loc.ref_frame_indices is not None and loc.inlier_mask is not None:
-                counts = np.bincount(
-                    loc.ref_frame_indices[loc.inlier_mask].astype(np.intp), minlength=n_frames)
+                counts = np.bincount(loc.ref_frame_indices[loc.inlier_mask].astype(np.intp), minlength=n_frames)
                 top = np.argsort(counts)[::-1][: config.top_k_viz]
                 panes = []
                 for ref in top:
                     if counts[ref] == 0 or not Path(out.ref_image_paths[ref]).exists():
                         continue
                     mfig = plot_correspondences(
-                        loc, out.query_frame, out.ref_image_paths,
-                        max_pairs=config.max_pairs, ref_idx=int(ref), show=False)
+                        loc,
+                        out.query_frame,
+                        out.ref_image_paths,
+                        max_pairs=config.max_pairs,
+                        ref_idx=int(ref),
+                        show=False,
+                    )
                     if mfig is not None:
                         panes.append(pn.pane.Matplotlib(mfig, sizing_mode="stretch_width", tight=True))
                 if panes:
@@ -412,8 +417,9 @@ class LocalizePage(param.Parameterized):
             logger.warning("localize render failed", exc_info=True)
             self._op_log.error_op(str(exc))
 
-    def _render_scene(self, scene_key, mesh_path: Path, extrinsics: np.ndarray,
-                      localized_pose: "np.ndarray | None") -> None:
+    def _render_scene(
+        self, scene_key, mesh_path: Path, extrinsics: np.ndarray, localized_pose: "np.ndarray | None"
+    ) -> None:
         """Rebuild the 3D pane: mesh, time-coloured cameras, red localized camera."""
         self._plotter.clear()
 
@@ -431,17 +437,16 @@ class LocalizePage(param.Parameterized):
         sub = centers[::step]
         poly = pv.PolyData(sub)
         poly["time"] = np.arange(len(sub), dtype=np.float32)
-        self._plotter.add_mesh(poly, scalars="time", cmap="viridis", point_size=14,
-                               render_points_as_spheres=True, show_scalar_bar=False)
+        self._plotter.add_mesh(
+            poly, scalars="time", cmap="viridis", point_size=14, render_points_as_spheres=True, show_scalar_bar=False
+        )
         if step > 1:
-            self._plotter.add_text(f"showing every {step}rd camera", font_size=8,
-                                   position="lower_left")
+            self._plotter.add_text(f"showing every {step}rd camera", font_size=8, position="lower_left")
 
         # Localized camera in red, drawn larger
         if localized_pose is not None:
             loc_center = camera_centers(localized_pose[np.newaxis])
-            self._plotter.add_mesh(pv.PolyData(loc_center), color="red", point_size=22,
-                                   render_points_as_spheres=True)
+            self._plotter.add_mesh(pv.PolyData(loc_center), color="red", point_size=22, render_points_as_spheres=True)
 
         self._plotter.reset_camera()
         self._vtk_pane.synchronize()

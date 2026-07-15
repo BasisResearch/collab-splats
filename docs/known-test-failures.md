@@ -48,6 +48,11 @@ Three structural unblocks (deps-by-default, `tests/nerfstudio_methods` rename, t
   "Loop edges use Robust(Huber)"; post-`011c56f` loop and sequential edges use identical Gaussian
   noise so the function can no longer separate them. Instrumentation degraded by design; fixing
   needs a production change to track edge provenance. Owner's call.
+- **1 nondeterministic flake** — `tests/dashboard/test_viz_utils.py::test_view_transform_scales_to_target_radius`
+  fails ~1/3 of runs even in isolation on identical code (verified 2026-07-15: FAIL/PASS/PASS across
+  three isolated runs at the same commit). Unseeded randomness or float-tolerance issue in the
+  view-transform scaling math — pre-dates the localization-dashboard work; needs a seed or looser
+  tolerance. Retry on failure until fixed.
 
 ## numpy version note (env, not a code bug)
 

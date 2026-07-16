@@ -72,6 +72,66 @@ def test_fetch_video_invokes_rclone_copyto(monkeypatch, tmp_path):
     assert str(tmp_path / "clip_03.mp4") in calls["cmd"]
 
 
+def test_list_sessions_is_memoized():
+    client = _client()
+    client.list_directory.return_value = [{"Name": "2026_05_07", "IsDir": True}]
+    src = SessionSource(client=client)
+
+    src.list_sessions()
+    src.list_sessions()
+    assert client.list_directory.call_count == 1  # second call served from cache
+
+
+def test_invalidate_clears_memoized_listing():
+    client = _client()
+    client.list_directory.return_value = [{"Name": "2026_05_07", "IsDir": True}]
+    src = SessionSource(client=client)
+
+    src.list_sessions()
+    src.invalidate()
+    src.list_sessions()
+    assert client.list_directory.call_count == 2
+
+
+def test_push_outputs_invalidates_scene_listings(monkeypatch, tmp_path):
+    client = _client()
+    client.list_directory.return_value = [{"Name": "feedforward.zarr", "IsDir": True}]
+    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", lambda *a, **k: _FakeProc())
+    src = SessionSource(client)
+
+    # Memoize both scene listers, push, then verify both re-hit rclone (cache dropped).
+    src.has_processed("2026_05_07", "clip_03")
+    src.list_localization_dbs("2026_05_07", "clip_03")
+    before = client.list_directory.call_count
+    src.push_outputs(tmp_path, "2026_05_07", "clip_03")
+    src.has_processed("2026_05_07", "clip_03")
+    src.list_localization_dbs("2026_05_07", "clip_03")
+    assert client.list_directory.call_count == before + 2
+
+
+def test_ttl_expiry_and_keyed_invalidate():
+    client = _client()
+    client.list_directory.return_value = [{"Name": "2026_05_07", "IsDir": True}]
+    src = SessionSource(client)
+
+    # TTL of zero -> every call refetches.
+    src._listing_ttl = 0
+    src.list_sessions()
+    src.list_sessions()
+    assert client.list_directory.call_count == 2
+
+    # Keyed invalidate drops only the named key; other entries stay cached.
+    src._listing_ttl = 60.0
+    src.list_sessions()
+    src.list_videos("s")
+    count = client.list_directory.call_count
+    src.invalidate(("list_videos", "s"))
+    src.list_sessions()  # still cached, no new call
+    assert client.list_directory.call_count == count
+    src.list_videos("s")  # dropped, refetches
+    assert client.list_directory.call_count == count + 1
+
+
 def test_has_processed_true_when_listing_nonempty():
     client = _client()
     client.list_directory.return_value = [{"Name": "feedforward.zarr", "IsDir": True}]

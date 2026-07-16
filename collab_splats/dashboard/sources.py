@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -71,12 +72,35 @@ class SessionSource:
             except Exception as exc:  # rclone missing/misconfigured -> degrade, surface on use
                 logger.warning("rclone unavailable: %s", exc)
                 self._client = None
+        # (key -> (expiry_epoch, value)) memo for cheap-but-repeated rclone directory listings.
+        self._listing_cache: dict = {}
+        self._listing_ttl = 60.0  # seconds; bucket contents rarely change mid-session
 
     def _require_client(self) -> RcloneClient:
         """Return the rclone client, raising if unavailable."""
         if self._client is None:
             raise RuntimeError("rclone is not available")
         return self._client
+
+    def _cached(self, key: tuple, producer):
+        """Return a memoized listing for key, refreshing when the TTL has elapsed.
+
+        Cached values are shared by reference — callers must not mutate returned lists.
+        """
+        now = time.monotonic()
+        hit = self._listing_cache.get(key)
+        if hit is not None and hit[0] > now:
+            return hit[1]
+        value = producer()
+        self._listing_cache[key] = (now + self._listing_ttl, value)
+        return value
+
+    def invalidate(self, key: tuple | None = None) -> None:
+        """Drop one cached listing (by key) or the whole listing cache."""
+        if key is None:
+            self._listing_cache.clear()
+        else:
+            self._listing_cache.pop(key, None)
 
     def _run_streaming(self, cmd: list[str], action: str, on_line: Callable[[str], None] | None = None) -> None:
         """Run an rclone command via Popen, streaming --stats lines to on_line; raise on non-zero exit."""
@@ -91,16 +115,24 @@ class SessionSource:
             raise RuntimeError(f"rclone {action} failed (exit {ret})")
 
     def list_sessions(self) -> list[str]:
-        """Return sorted YYYY_MM_DD session directory names."""
-        client = self._require_client()
-        items = client.list_directory(CURATED_BUCKET, ROOT)
-        return sorted(i["Name"] for i in items if i.get("IsDir"))
+        """Return sorted YYYY_MM_DD session directory names (memoized)."""
+
+        def produce():
+            client = self._require_client()
+            items = client.list_directory(CURATED_BUCKET, ROOT)
+            return sorted(i["Name"] for i in items if i.get("IsDir"))
+
+        return self._cached(("list_sessions",), produce)
 
     def list_videos(self, session: str) -> list[str]:
-        """Return video filenames under a session."""
-        client = self._require_client()
-        items = client.list_directory(CURATED_BUCKET, f"{ROOT}/{session}")
-        return [i["Name"] for i in items if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
+        """Return video filenames under a session (memoized)."""
+
+        def produce():
+            client = self._require_client()
+            items = client.list_directory(CURATED_BUCKET, f"{ROOT}/{session}")
+            return [i["Name"] for i in items if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
+
+        return self._cached(("list_videos", session), produce)
 
     def fetch_video(
         self, session: str, name: str, dest_dir: Path, on_line: Callable[[str], None] | None = None
@@ -116,22 +148,34 @@ class SessionSource:
         return local
 
     def list_field_sessions(self) -> list[str]:
-        """Return sorted YYYY_MM_DD-session_XXXX folders at the curated bucket root."""
-        client = self._require_client()
-        items = client.list_directory(CURATED_BUCKET, "")
-        return sorted(i["Name"] for i in items if i.get("IsDir") and _FIELD_SESSION_RE.match(i["Name"]))
+        """Return sorted YYYY_MM_DD-session_XXXX folders at the curated bucket root (memoized)."""
+
+        def produce():
+            client = self._require_client()
+            items = client.list_directory(CURATED_BUCKET, "")
+            return sorted(i["Name"] for i in items if i.get("IsDir") and _FIELD_SESSION_RE.match(i["Name"]))
+
+        return self._cached(("list_field_sessions",), produce)
 
     def list_rgb_cameras(self, field_session: str) -> list[str]:
-        """Return sorted rgb_X camera folders in a field session (thermal_X deferred)."""
-        client = self._require_client()
-        items = client.list_directory(CURATED_BUCKET, field_session)
-        return sorted(i["Name"] for i in items if i.get("IsDir") and i["Name"].startswith("rgb_"))
+        """Return sorted rgb_X camera folders in a field session (thermal_X deferred; memoized)."""
+
+        def produce():
+            client = self._require_client()
+            items = client.list_directory(CURATED_BUCKET, field_session)
+            return sorted(i["Name"] for i in items if i.get("IsDir") and i["Name"].startswith("rgb_"))
+
+        return self._cached(("list_rgb_cameras", field_session), produce)
 
     def list_camera_videos(self, field_session: str, camera: str) -> list[str]:
-        """Return video filenames under a field session's camera folder."""
-        client = self._require_client()
-        items = client.list_directory(CURATED_BUCKET, f"{field_session}/{camera}")
-        return [i["Name"] for i in items if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
+        """Return video filenames under a field session's camera folder (memoized)."""
+
+        def produce():
+            client = self._require_client()
+            items = client.list_directory(CURATED_BUCKET, f"{field_session}/{camera}")
+            return [i["Name"] for i in items if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
+
+        return self._cached(("list_camera_videos", field_session, camera), produce)
 
     def fetch_field_video(
         self,
@@ -152,22 +196,34 @@ class SessionSource:
         return local
 
     def list_localization_dbs(self, session: str, stem: str) -> list[str]:
-        """Extractor names with a feature DB in the remote zarr (cheap directory listing)."""
-        try:
-            client = self._require_client()
-            items = client.list_directory(PROCESSED_BUCKET, f"{ROOT}/{session}/{stem}/feedforward.zarr/local_features")
-        except Exception:  # path absent (no DB yet) or rclone unavailable
-            return []
-        return sorted(i["Name"] for i in items if i.get("IsDir"))
+        """Extractor names with a feature DB in the remote zarr (memoized directory listing)."""
+
+        # try/except inside produce: the [] fallback is memoized for the TTL — acceptable.
+        def produce():
+            try:
+                client = self._require_client()
+                items = client.list_directory(
+                    PROCESSED_BUCKET, f"{ROOT}/{session}/{stem}/feedforward.zarr/local_features"
+                )
+            except Exception:  # path absent (no DB yet) or rclone unavailable
+                return []
+            return sorted(i["Name"] for i in items if i.get("IsDir"))
+
+        return self._cached(("list_localization_dbs", session, stem), produce)
 
     def has_processed(self, session: str, stem: str) -> bool:
-        """True if processed outputs already exist for this video."""
-        try:
-            client = self._require_client()
-            items = client.list_directory(PROCESSED_BUCKET, f"{ROOT}/{session}/{stem}")
-        except Exception:  # rclone errors when the path does not exist, or unavailable
-            return False
-        return bool(items)
+        """True if processed outputs already exist for this video (memoized)."""
+
+        # try/except inside produce: the False fallback is memoized for the TTL — acceptable.
+        def produce():
+            try:
+                client = self._require_client()
+                items = client.list_directory(PROCESSED_BUCKET, f"{ROOT}/{session}/{stem}")
+            except Exception:  # rclone errors when the path does not exist, or unavailable
+                return False
+            return bool(items)
+
+        return self._cached(("has_processed", session, stem), produce)
 
     def pull_processed(
         self,
@@ -225,3 +281,7 @@ class SessionSource:
             remote,
         )
         self._run_streaming(cmd, f"copy to {remote}", on_line=on_line)
+        # A freshly-pushed scene must be visible to has_processed immediately, and the push
+        # also uploads feedforward.zarr/local_features — refresh the localization-DB listing too.
+        self.invalidate(("has_processed", session, stem))
+        self.invalidate(("list_localization_dbs", session, stem))

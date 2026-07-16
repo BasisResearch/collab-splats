@@ -62,7 +62,14 @@ class GpuWorker:
             try:
                 result = self._run(job_fn)
                 # Marshal the result back to the IOLoop; render + busy reset happen there.
-                doc.add_next_tick_callback(lambda r=result, cb=on_done: self._finish(cb, r))
+                try:
+                    doc.add_next_tick_callback(lambda r=result, cb=on_done: self._finish(cb, r))
+                except Exception:
+                    # Session gone (token expired / tab closed): the doc's callback manager is
+                    # torn down and add_next_tick_callback raises. Drop the result and keep the
+                    # worker alive so a reconnecting session still gets a working dashboard.
+                    logger.debug("dropping result for a destroyed session", exc_info=True)
+                    self.busy = False
             finally:
                 self._queue.task_done()
 

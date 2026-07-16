@@ -1,5 +1,6 @@
 """Tests for the serialized GPU job worker."""
 
+import threading
 from unittest.mock import patch
 
 from collab_splats.dashboard.gpu_worker import GpuWorker
@@ -52,6 +53,31 @@ def test_job_exception_is_passed_to_on_done_and_worker_survives():
     assert isinstance(results[0], ValueError)  # error surfaced, not crashed
     assert results[1] == "ok"  # worker survived to run the next job
     assert gc.call_count == 2  # gc after every job (finally)
+
+
+def test_worker_survives_dead_document():
+    """A destroyed session raises in add_next_tick_callback; the worker must not die."""
+    w = GpuWorker()
+
+    class _DeadDoc:
+        def add_next_tick_callback(self, cb):
+            raise AttributeError(
+                "'DocumentCallbackManager' object has no attribute '_change_callbacks'"
+            )
+
+    done = threading.Event()
+
+    # First job targets a dead doc -> marshal raises inside the worker loop.
+    w.submit(lambda: 1, lambda r: None, _DeadDoc())
+
+    # Second job targets a live doc; it must still run -> proves the worker thread lived.
+    class _LiveDoc:
+        def add_next_tick_callback(self, cb):
+            cb()
+
+    w.submit(lambda: 2, lambda r: done.set(), _LiveDoc())
+    assert done.wait(timeout=5.0), "worker thread died after a dead-document marshal"
+    assert w.busy is False
 
 
 def test_pytorch_gc_called_after_each_job():

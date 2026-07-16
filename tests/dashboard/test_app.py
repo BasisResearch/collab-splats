@@ -1,4 +1,5 @@
 # tests/dashboard/test_app.py
+import threading
 from unittest.mock import MagicMock, patch
 
 from collab_splats.dashboard.app import SplatsApp
@@ -34,7 +35,27 @@ def test_app_populates_sessions(tmp_path):
 def test_selecting_session_lists_videos(tmp_path):
     app, source = _app(tmp_path)
     app.session_select.value = "2026_05_07"
+    if getattr(app, "_video_list_thread", None):
+        app._video_list_thread.join(timeout=5)
     assert "clip_03.mp4" in app.video_select.options
+
+
+def test_on_session_lists_videos_off_loop(tmp_path):
+    """Selecting a session must not call rclone list_videos on the calling (IOLoop) thread."""
+    app, _source = _app(tmp_path)
+    calling_thread = threading.current_thread().name
+    ran_on = {}
+    orig = app._source.list_videos
+
+    def tracking_list(sess):
+        ran_on["thread"] = threading.current_thread().name
+        return orig(sess)
+
+    app._source.list_videos = tracking_list
+    app._on_session(type("E", (), {"new": "2026_05_07"})())
+    if getattr(app, "_video_list_thread", None):
+        app._video_list_thread.join(timeout=5)
+    assert ran_on["thread"] != calling_thread
 
 
 def test_run_button_submits_pipeline_job(tmp_path):

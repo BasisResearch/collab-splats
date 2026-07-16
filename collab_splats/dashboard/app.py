@@ -17,6 +17,7 @@ import panel as pn
 import param
 import yaml
 
+from collab_splats.dashboard.async_utils import run_off_loop
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.operation_log import OperationLog
@@ -278,10 +279,17 @@ class SplatsApp(param.Parameterized):
             self.video_select.value = vid  # final load is issued once by the setter (suppressed here)
 
     def _on_session(self, event) -> None:
-        """Populate video dropdown when session changes."""
+        """Populate video dropdown when session changes (rclone list runs off the IOLoop)."""
         if not event.new:
             return
-        self.video_select.options = self._source.list_videos(event.new)
+        session = event.new
+        # Blocking rclone listing off the IOLoop; set options back on the loop.
+        self._video_list_thread = run_off_loop(
+            lambda: self._source.list_videos(session),
+            lambda vids: setattr(self.video_select, "options", vids),
+            label="video-list",
+            doc=pn.state.curdoc,
+        )
 
     def _on_video(self, event) -> None:
         """Auto-load cached outputs when a video is selected (skipped during programmatic churn)."""
@@ -342,8 +350,16 @@ class SplatsApp(param.Parameterized):
         if self._op_log.is_running:
             return
         out = self._base_dir / session / stem
-        if (out / "feedforward.zarr").exists() or self._source.has_processed(session, stem):
+        if (out / "feedforward.zarr").exists():
             self._load_outputs(session, stem)
+            return
+        # Remote check is a blocking rclone list -> run off the IOLoop, then load if present.
+        run_off_loop(
+            lambda: self._source.has_processed(session, stem),
+            lambda ok: self._load_outputs(session, stem) if ok else None,
+            label="has-processed",
+            doc=pn.state.curdoc,
+        )
 
     def _on_env_model(self, event) -> None:
         """Reset confidence to the selected model's native default (matches the notebook)."""

@@ -11,6 +11,7 @@ import panel as pn
 import param
 import pyvista as pv
 
+from collab_splats.dashboard.async_utils import run_off_loop
 from collab_splats.dashboard.config import LocalizationConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.operation_log import OperationLog
@@ -211,9 +212,16 @@ class LocalizePage(param.Parameterized):
         threading.Thread(target=work, name="localize-list", daemon=True).start()
 
     def _on_scene_session(self, event) -> None:
+        """Populate scene-video dropdown off the IOLoop (rclone list is blocking)."""
         if not event.new:
             return
-        self.scene_video.options = [Path(v).stem for v in self._source.list_videos(event.new)]
+        session = event.new
+        run_off_loop(
+            lambda: [Path(v).stem for v in self._source.list_videos(session)],
+            lambda stems: setattr(self.scene_video, "options", stems),
+            label="scene-video-list",
+            doc=pn.state.curdoc,
+        )
 
     def _on_scene_video(self, event) -> None:
         """Scene chosen → discover remote feature DBs and preselect the method."""
@@ -251,14 +259,28 @@ class LocalizePage(param.Parameterized):
             )
 
     def _on_field_session(self, event) -> None:
+        """Populate camera dropdown off the IOLoop (rclone list is blocking)."""
         if not event.new:
             return
-        self.camera.options = self._source.list_rgb_cameras(event.new)
+        fs = event.new
+        run_off_loop(
+            lambda: self._source.list_rgb_cameras(fs),
+            lambda cams: setattr(self.camera, "options", cams),
+            label="camera-list",
+            doc=pn.state.curdoc,
+        )
 
     def _on_camera(self, event) -> None:
+        """Populate query-video dropdown off the IOLoop (rclone list is blocking)."""
         if not event.new:
             return
-        self.query_video.options = self._source.list_camera_videos(self.field_session.value, event.new)
+        fs, cam = self.field_session.value, event.new
+        run_off_loop(
+            lambda: self._source.list_camera_videos(fs, cam),
+            lambda videos: setattr(self.query_video, "options", videos),
+            label="camera-video-list",
+            doc=pn.state.curdoc,
+        )
 
     def _on_query_video(self, event) -> None:
         """Fetch the video in the background; set slider bound + preview frame 0."""

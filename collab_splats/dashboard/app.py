@@ -14,7 +14,6 @@ import time
 from collections import deque
 from pathlib import Path
 
-import numpy as np
 import panel as pn
 import param
 import yaml
@@ -503,18 +502,16 @@ class SplatsApp(param.Parameterized):
                 )
             result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
             semantics_dir = out / "semantics"
-            # The pipeline lifts + compresses features eagerly during a run and caches the
-            # L2-normalised per-point features here, so queries are instant. If absent (older
-            # run), the viewer falls back to lazy lifting on first query.
-            lifted_path = semantics_dir / "lifted_normed.npy"
-            lifted_normed = np.load(lifted_path) if lifted_path.exists() else None
             # TSDF writes mesh_tsdf.ply (see mesh/tsdf.py), not mesh.ply.
             mesh_path = out / "mesh" / "mesh_tsdf.ply"
+            # lifted_normed=None defers the (P, D) feature read to the first query: the viewer's
+            # ensure_lifted loads the cached lifted_normed.npy from semantics_dir (or lifts from
+            # the feature zarr for older runs). Tuple keeps 4 slots so cache/on_done unpack as-is.
             value = (
                 result,
                 mesh_path if mesh_path.exists() else None,
                 semantics_dir if semantics_dir.exists() else None,
-                lifted_normed,
+                None,
             )
             self._cache.put((session, stem), "loaded", value)
             self._remember_loaded((session, stem))

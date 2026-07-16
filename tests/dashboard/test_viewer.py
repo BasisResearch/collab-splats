@@ -1,5 +1,7 @@
 """Tests for SplitViewer: off-screen, synthetic data, no GPU/models."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -161,7 +163,7 @@ def test_score_query_lazily_lifts_on_first_query(monkeypatch):
     v._result = MagicMock()
     v._result.colors = np.zeros((4, 3), dtype=np.uint8)
     v._lifted_normed = None
-    v._semantics_dir = "semdir"  # set by load(); triggers lazy lift
+    v._semantics_dir = Path("semdir")  # set by load(); no cached npy -> triggers lazy lift
 
     called = {}
 
@@ -175,7 +177,7 @@ def test_score_query_lazily_lifts_on_first_query(monkeypatch):
     monkeypatch.setattr(v, "_get_extractor", lambda n: ext)
 
     colors = v.score_query(positive=["chair"], extractor_name="talk2dino")
-    assert called["dir"] == "semdir"  # lifted lazily on first query
+    assert called["dir"] == Path("semdir")  # lifted lazily on first query
     assert colors.shape == (4, 3)
 
 
@@ -397,3 +399,16 @@ def test_score_query_lazy_transfers_mesh_features_when_absent(tmp_path):
     assert v._mesh_vertex_features.shape[0] == 6
     assert captured["n"] == 6
     assert colors.shape[0] == 6
+
+
+def test_ensure_lifted_uses_cached_npy_fast_path(tmp_path):
+    """First query must load the cached lifted_normed.npy, not re-lift from the feature zarr."""
+    sem_dir = tmp_path / "semantics"
+    sem_dir.mkdir()
+    cached = np.random.rand(20, 8).astype(np.float32)
+    np.save(sem_dir / "lifted_normed.npy", cached)
+
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(p=20), mesh_path=None, semantics_dir=sem_dir)  # no lifted_normed passed
+    v.ensure_lifted()
+    np.testing.assert_array_equal(v._lifted_normed, cached)

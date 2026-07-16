@@ -152,8 +152,16 @@ class SplitViewer:
         self._render_right(None)
 
     def ensure_lifted(self, op_log=None) -> None:
-        """Lazily lift cached features to points on first query (expensive; off-loop)."""
+        """Lazily load/lift per-point features on first query (off-loop)."""
         if self._lifted_normed is not None or self._semantics_dir is None:
+            return
+        # Fast path: the pipeline caches L2-normalised per-point features next to the scene;
+        # loading the npy is instant vs the minutes-long lift from the feature zarr below.
+        cached_path = self._semantics_dir / "lifted_normed.npy"
+        if cached_path.exists():
+            if op_log is not None:
+                op_log.append_line("query: loading cached point features")
+            self._lifted_normed = np.load(cached_path)
             return
         if op_log is not None:
             op_log.append_line("query: lifting features to points (first query — may take minutes)")

@@ -310,6 +310,36 @@ def test_load_job_returns_cached_value_without_pull(tmp_path):
     app._source.pull_processed.assert_not_called()
 
 
+def test_load_does_not_eager_load_lifted_normed(tmp_path, monkeypatch):
+    """The display load must not np.load lifted features before any query is issued."""
+    import numpy as np
+
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+    app, worker = _recording_app(tmp_path)
+    # Fake local scene: feedforward.zarr present (skips the pull) + cached lifted features.
+    out = tmp_path / "s" / "clip"
+    (out / "feedforward.zarr").mkdir(parents=True)
+    sem_dir = out / "semantics"
+    sem_dir.mkdir()
+    np.save(sem_dir / "lifted_normed.npy", np.zeros((4, 2), dtype=np.float32))
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p: object())
+
+    # Count every np.load between enqueue and job completion — must stay zero.
+    loaded = {"n": 0}
+    real_load = np.load
+
+    def counting_load(*a, **k):
+        loaded["n"] += 1
+        return real_load(*a, **k)
+
+    monkeypatch.setattr(np, "load", counting_load)
+    app._load_outputs("s", "clip")
+    job_fn, _on_done, _doc = worker.submitted[-1]
+    job_fn()
+    assert loaded["n"] == 0
+
+
 def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
     from collab_splats.dashboard import app as app_mod

@@ -289,9 +289,10 @@ class LocalizePage(param.Parameterized):
 
     def _ensure_local_query_video(self, field_session: str, camera: str, name: str) -> Path:
         local = self._base_dir / "queries" / field_session / camera / name
-        if not local.exists():
-            local = self._source.fetch_field_video(field_session, camera, name, local.parent)
-        return local
+        if local.exists():
+            return local
+        on_line = self._op_log.rclone_progress("⬇ fetching query video")
+        return self._source.fetch_field_video(field_session, camera, name, local.parent, on_line=on_line)
 
     def _show_frame(self, frame: np.ndarray) -> None:
         """Show the selected query frame in the left panel (pre-run state)."""

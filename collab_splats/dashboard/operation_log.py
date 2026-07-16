@@ -3,10 +3,12 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
-from typing import Any
+from typing import Any, Callable
 
 import panel as pn
 import param
+
+from collab_splats.dashboard.sources import parse_rclone_percent
 
 
 class _OpLogHandler(logging.Handler):
@@ -63,6 +65,16 @@ class OperationLog(param.Parameterized):
                 self.current_op = message
         if message and log:
             self.append_line(message)
+
+    def rclone_progress(self, label: str) -> Callable[[str], None]:
+        """Return an on_line callback that forwards rclone --stats percent to the status label."""
+
+        def _on_line(line: str) -> None:
+            pct = parse_rclone_percent(line)
+            if pct is not None:
+                self.update_progress(pct, label, log=False)
+
+        return _on_line
 
     def append_line(self, message: str) -> None:
         """Append a single log line (thread-safe, capped, consecutive dupes collapsed)."""

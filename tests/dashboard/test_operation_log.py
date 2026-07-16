@@ -70,6 +70,15 @@ def test_attach_logging_bridges_module_logs():
     assert len(log.log_lines) == n
 
 
+def test_rclone_progress_forwards_percent_to_status():
+    """rclone_progress builds an on_line callback that drives the progress bar from --stats lines."""
+    log = OperationLog()
+    on_line = log.rclone_progress("⬇ pulling from server")
+    on_line("Transferred: 1 GiB / 2 GiB, 42%, 10 MiB/s")
+    assert log.progress == 42
+    assert log.current_op == "⬇ pulling from server"
+
+
 def test_panel_returns_component():
     import panel as pn
 

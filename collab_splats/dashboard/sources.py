@@ -133,14 +133,22 @@ class SessionSource:
         items = client.list_directory(CURATED_BUCKET, f"{field_session}/{camera}")
         return [i["Name"] for i in items if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
 
-    def fetch_field_video(self, field_session: str, camera: str, name: str, dest_dir: Path) -> Path:
-        """rclone-copy a field-camera video to dest_dir; return the local path."""
+    def fetch_field_video(
+        self,
+        field_session: str,
+        camera: str,
+        name: str,
+        dest_dir: Path,
+        on_line: Callable[[str], None] | None = None,
+    ) -> Path:
+        """rclone-copy a field-camera video to dest_dir; return the local path. on_line gets --stats lines."""
         client = self._require_client()
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         local = dest_dir / name
         remote = f"{client.remote_name}:{CURATED_BUCKET}/{field_session}/{camera}/{name}"
-        subprocess.run(client._cmd("copyto", remote, str(local)), check=True)
+        cmd = client._cmd("copyto", "--stats", "2s", "--stats-one-line", remote, str(local))
+        self._run_streaming(cmd, f"copyto to {local}", on_line=on_line)
         return local
 
     def list_localization_dbs(self, session: str, stem: str) -> list[str]:

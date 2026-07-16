@@ -368,11 +368,12 @@ class SplatsApp(param.Parameterized):
         )
 
     def _ensure_local_video(self, session: str, name: str) -> Path:
-        """Return local video path, fetching from source if needed."""
+        """Return local video path, fetching from source if needed (progress -> op_log)."""
         local = self._base_dir / session / Path(name).stem / name
-        if not local.exists():
-            local = self._source.fetch_video(session, name, local.parent)
-        return local
+        if local.exists():
+            return local
+        on_line = self._op_log.rclone_progress("⬇ fetching video")
+        return self._source.fetch_video(session, name, local.parent, on_line=on_line)
 
     def _on_run(self, event, force: bool) -> None:
         """Run or reload the pipeline, respecting cache and force flag."""
@@ -431,7 +432,13 @@ class SplatsApp(param.Parameterized):
             from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
             if not (out / "feedforward.zarr").exists():
-                self._source.pull_processed(session, stem, out, excludes=PULL_EXCLUDES)
+                self._source.pull_processed(
+                    session,
+                    stem,
+                    out,
+                    excludes=PULL_EXCLUDES,
+                    on_line=self._op_log.rclone_progress("⬇ pulling from server"),
+                )
             result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
             semantics_dir = out / "semantics"
             # The pipeline lifts + compresses features eagerly during a run and caches the

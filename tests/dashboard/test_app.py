@@ -82,9 +82,7 @@ def test_load_outputs_pull_excludes_dense_arrays(tmp_path):
     except Exception:
         pass  # load_zarr will fail on the empty tmp tree; we only assert the pull call
     _args, kwargs = source.pull_processed.call_args
-    assert kwargs.get("excludes") == PULL_EXCLUDES or (
-        len(_args) >= 4 and _args[3] == PULL_EXCLUDES
-    )
+    assert kwargs.get("excludes") == PULL_EXCLUDES or (len(_args) >= 4 and _args[3] == PULL_EXCLUDES)
 
 
 def test_min_disparity_visibility_tracks_sampling(tmp_path):
@@ -195,6 +193,29 @@ def test_load_outputs_defers_heavy_work_to_worker(tmp_path):
     app._viewer.load.assert_not_called()
     assert len(worker.submitted) == 1
     assert callable(worker.submitted[0][0])  # job_fn deferred to the worker
+
+
+def test_load_job_reports_pull_progress_to_op_log(tmp_path):
+    """rclone --stats lines must drive op_log.update_progress so the bar shows a live %."""
+    app, _worker = _recording_app(tmp_path)
+    seen_pct = []
+    app._op_log.update_progress = lambda pct, message="", log=True: seen_pct.append(pct)
+
+    # pull_processed invokes on_line with a stats line carrying 42%.
+    def fake_pull(session, stem, out, excludes=(), on_line=None):
+        if on_line:
+            on_line("Transferred: 1 GiB / 2 GiB, 42%, 10 MiB/s")
+        (out / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+        raise RuntimeError("stop before load_zarr")
+
+    app._source.pull_processed = fake_pull
+    app._load_outputs("2026_05_07", "clip_03")
+    job_fn, _on_done, _doc = app._gpu.submitted[-1]
+    try:
+        job_fn()
+    except Exception:
+        pass
+    assert 42 in seen_pct
 
 
 def test_load_outputs_on_done_renders_into_viewer(tmp_path):

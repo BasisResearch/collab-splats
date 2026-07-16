@@ -308,3 +308,17 @@ def test_load_job_returns_cached_value_without_pull(tmp_path):
     job_fn, _on_done, _doc = worker.submitted[-1]
     assert job_fn() is sentinel
     app._source.pull_processed.assert_not_called()
+
+
+def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
+    """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
+    from collab_splats.dashboard import app as app_mod
+
+    imported = []
+    monkeypatch.setattr(
+        app_mod.importlib, "import_module", lambda name, *a, **k: imported.append(name)
+    )
+    app_mod._warm_heavy_stack()
+    assert any("localization.localizer" in n for n in imported)
+    assert any("dashboard.pipeline" in n for n in imported)
+    assert any("semantics.features.base" in n for n in imported)

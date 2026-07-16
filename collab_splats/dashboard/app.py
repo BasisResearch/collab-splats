@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import atexit
+import importlib
 import logging
 import os
 import shutil
@@ -674,19 +675,25 @@ def _ensure_display() -> None:
 
 
 def _warm_heavy_stack() -> None:
-    """Import the heavy reconstruction/semantics stack once at startup (background thread).
+    """Import the heavy reconstruction/semantics/localization stack once at startup (bg thread).
 
-    Pre-pays the ~17s import + torch.compile so the first Run/load/query doesn't. Runs off
-    the IOLoop (the server already binds and the page renders before this finishes).
+    Pre-pays the ~17s import + torch.compile so the first Run/load/query/Localize isn't a
+    cold start. Runs off the IOLoop (the server binds and the page renders before this finishes).
     """
-    try:
-        # Lazy heavy-dep imports (intentional warm) — module-process-wide once loaded.
-        import collab_splats.pointcloud.feedforward.base  # noqa: F401
-        import collab_splats.semantics.features.base  # noqa: F401
-
-        logger.info("heavy stack warmed")
-    except Exception as exc:
-        logger.warning("heavy-stack warm failed: %s", exc)
+    modules = (
+        "collab_splats.dashboard.pipeline",  # pulls feedforward + mesh/TSDF (~17s)
+        "collab_splats.semantics.features.base",
+        "collab_splats.localization.localizer",  # localize tab's first run (~10s)
+    )
+    ok = 0
+    for name in modules:
+        # Each import isolated: one missing optional dep must not skip the rest.
+        try:
+            importlib.import_module(name)
+            ok += 1
+        except Exception as exc:
+            logger.warning("heavy-stack warm failed for %s: %s", name, exc)
+    logger.info("heavy stack warmed (%d/%d)", ok, len(modules))
 
 
 def run_app(

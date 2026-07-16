@@ -280,6 +280,35 @@ def test_render_right_mesh_size_mismatch_falls_back(tmp_path):
     assert v.right_actor is not None
 
 
+def test_mesh_read_from_disk_once_across_renders(tmp_path, monkeypatch):
+    """Mesh is read once at load and reused; mode/normalize/query don't re-read from disk."""
+    import collab_splats.dashboard.viewer as viewer_mod
+
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    _write_tiny_mesh(mesh_path)
+
+    # Count pv.read calls from BEFORE load: the read-at-load is the single allowed read.
+    reads = {"n": 0}
+    real_read = viewer_mod.pv.read
+
+    def counting_read(path):
+        reads["n"] += 1
+        return real_read(path)
+
+    monkeypatch.setattr(viewer_mod.pv, "read", counting_read)
+
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=mesh_path)
+    cached_points = v._mesh_polydata.points.copy()  # raw world-space geometry at load
+    v.set_mode("mesh")
+    v.set_mode("pointcloud")
+    v.set_mode("mesh")
+    v.set_normalize_view(False)
+    assert reads["n"] == 1  # load reads exactly once; renders reuse the cache
+    # Renders (incl. normalized mesh renders) must never mutate the cached geometry.
+    np.testing.assert_array_equal(v._mesh_polydata.points, cached_points)
+
+
 def _write_mesh_6v(path):
     import open3d as o3d
 

@@ -97,6 +97,7 @@ class SplitViewer:
         self.right_actor = None
         self._result = None
         self._mesh_path: Path | None = None
+        self._mesh_polydata: pv.PolyData | None = None
         self._mesh_vertex_features: np.ndarray | None = None
         self._lifted_normed: np.ndarray | None = None
         self._semantics_dir: Path | None = None
@@ -129,6 +130,10 @@ class SplitViewer:
         """
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None
+        # Read the mesh once and cache the PolyData; renders reuse it (no per-interaction disk read).
+        self._mesh_polydata = (
+            pv.read(str(self._mesh_path)) if (self._mesh_path and self._mesh_path.exists()) else None
+        )
         # Per-vertex mesh features (if the pipeline persisted them) — same space as point features.
         self._mesh_vertex_features = load_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
         self._lifted_normed = lifted_normed
@@ -171,6 +176,7 @@ class SplitViewer:
 
         if op_log is not None:
             op_log.append_line("query: transferring features to mesh vertices (first mesh query)")
+        # One-time disk read on the first mesh query (result is cached above) — not per-render.
         mesh = o3d.io.read_triangle_mesh(str(self._mesh_path))
         vertices = np.asarray(mesh.vertices)
         vf = features2vertex(vertices, self._result.points, self._lifted_normed)
@@ -191,10 +197,14 @@ class SplitViewer:
         self._view_T = compute_view_transform(self._result.points, extrinsics=extrinsics)
 
     def _normalize(self, mesh: pv.PolyData) -> pv.PolyData:
-        """Apply the cached view transform to a mesh/cloud (no-op when normalization off)."""
-        if self._view_T is not None:
-            mesh.transform(self._view_T, inplace=True)
-        return mesh
+        """Return a view-normalized copy of a mesh/cloud (plain copy when normalization off).
+
+        Always returns a new object so callers may freely mutate the result without
+        touching a cached input; in-place transforms would compound across renders.
+        """
+        if self._view_T is None:
+            return mesh.copy()
+        return mesh.transform(self._view_T, inplace=False)
 
     def set_normalize_view(self, enabled: bool) -> None:
         """Toggle display-only orientation+scale normalization and re-render both panes."""
@@ -231,9 +241,10 @@ class SplitViewer:
     def _render_left(self) -> None:
         """Render RGB pointcloud or mesh into the left plotter."""
         self._left.clear()
-        if self.mode == "mesh" and self._mesh_path and self._mesh_path.exists():
+        if self.mode == "mesh" and self._mesh_polydata is not None:
             # Mesh .ply is in the same raw world-space as result.points -> same transform.
-            self.left_actor = self._left.add_mesh(self._normalize(pv.read(str(self._mesh_path))), rgb=True)
+            # _normalize returns a copy, so the cached PolyData is never touched.
+            self.left_actor = self._left.add_mesh(self._normalize(self._mesh_polydata), rgb=True)
         else:
             if self.mode == "mesh":
                 self._status = "mesh not found."
@@ -255,15 +266,16 @@ class SplitViewer:
         features -> point-length fallback) reverts to the plain RGB mesh.
         """
         self._right.clear()
-        if self.mode == "mesh" and self._mesh_path and self._mesh_path.exists():
-            mesh = pv.read(str(self._mesh_path))
+        if self.mode == "mesh" and self._mesh_polydata is not None:
+            # _normalize returns a copy of the cache; write query colours on the copy only.
+            mesh = self._normalize(self._mesh_polydata)
             if colors is not None and len(colors) == mesh.n_points:
                 # Per-vertex query colors, aligned with mesh.vertices order.
                 mesh.point_data["RGB"] = np.ascontiguousarray(colors).astype(np.uint8)
-                self.right_actor = self._right.add_mesh(self._normalize(mesh), scalars="RGB", rgb=True)
+                self.right_actor = self._right.add_mesh(mesh, scalars="RGB", rgb=True)
             else:
                 # Plain RGB mesh (PLY already carries vertex colors).
-                self.right_actor = self._right.add_mesh(self._normalize(mesh), rgb=True)
+                self.right_actor = self._right.add_mesh(mesh, rgb=True)
         else:
             idx = self._display_idx
             rgb = colors if colors is not None else self._result.colors

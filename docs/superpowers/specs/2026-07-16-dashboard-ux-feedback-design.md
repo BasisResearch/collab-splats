@@ -27,8 +27,7 @@ Tab switching itself never blocks. Subsequent activations are unchanged (page ca
 
 ### 2. Global busy lock (`gpu_worker.py`, `shell.py`, `app.py`, `localize.py`)
 
-- `GpuWorker` gains a busy-transition callback: `on_busy(busy: bool, label: str)`, fired when a job starts/ends, marshalled onto the UI thread via the job's doc (`add_next_tick_callback`).
-- `DashboardShell` registers a single handler that fans out to both pages.
+- Busy state propagates by polling, not push: each page's existing 300 ms op-log poll also mirrors the shared `GpuWorker.busy` flag onto its widgets. (One worker serves many browser sessions; pushing to per-session widgets from a shared object would leak dead sessions — polling matches the op-log architecture.) Pages still disable immediately in their own click handlers.
 - `SplatsApp._set_busy` (exists) and a new `LocalizePage.set_busy(flag, label)` disable all run/load/force buttons on their page and show the current-op label near the buttons.
 - Because every heavy job goes through `GpuWorker.submit`, one lock covers scene loads, reconstruction runs, and localization runs across both tabs. UI-triggered concurrent jobs become impossible; if a job is somehow submitted while busy, the log shows `queued behind: <op>`.
 

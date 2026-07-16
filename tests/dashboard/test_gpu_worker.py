@@ -61,9 +61,7 @@ def test_worker_survives_dead_document():
 
     class _DeadDoc:
         def add_next_tick_callback(self, cb):
-            raise AttributeError(
-                "'DocumentCallbackManager' object has no attribute '_change_callbacks'"
-            )
+            raise AttributeError("'DocumentCallbackManager' object has no attribute '_change_callbacks'")
 
     done = threading.Event()
 

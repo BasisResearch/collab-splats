@@ -364,9 +364,7 @@ def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     from collab_splats.dashboard import app as app_mod
 
     imported = []
-    monkeypatch.setattr(
-        app_mod.importlib, "import_module", lambda name, *a, **k: imported.append(name)
-    )
+    monkeypatch.setattr(app_mod.importlib, "import_module", lambda name, *a, **k: imported.append(name))
     app_mod._warm_heavy_stack()
     assert any("localization.localizer" in n for n in imported)
     assert any("dashboard.pipeline" in n for n in imported)

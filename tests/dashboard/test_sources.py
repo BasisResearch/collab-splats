@@ -212,9 +212,7 @@ def test_push_outputs_streams_rclone_copy(monkeypatch, tmp_path):
 def test_push_outputs_raises_on_nonzero_exit(monkeypatch, tmp_path):
     client = _client()
 
-    monkeypatch.setattr(
-        "collab_splats.dashboard.sources.subprocess.Popen", lambda *a, **k: _FakeProc(code=1)
-    )
+    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", lambda *a, **k: _FakeProc(code=1))
     src = SessionSource(client)
     with pytest.raises(RuntimeError):
         src.push_outputs(tmp_path, "2026_05_07", "clip_03")

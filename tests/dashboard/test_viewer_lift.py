@@ -52,9 +52,7 @@ def test_load_lifted_normed_reloads_dense_on_demand(tmp_path):
 
     def fake_lift(feature_maps, result):
         # Record whether the lift saw the re-hydrated dense members.
-        seen["dense"] = all(
-            getattr(result, f) is not None for f in ("depth", "confidence", "pixel_indices")
-        )
+        seen["dense"] = all(getattr(result, f) is not None for f in ("depth", "confidence", "pixel_indices"))
         return torch.zeros((p, 2))
 
     with (

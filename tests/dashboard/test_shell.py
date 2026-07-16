@@ -1,4 +1,5 @@
 """Shell composition and page-split contracts."""
+
 import panel as pn
 
 from collab_splats.dashboard.app import SplatsApp

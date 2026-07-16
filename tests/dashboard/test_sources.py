@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from collab_splats.dashboard.sources import SessionSource
+from collab_splats.dashboard.sources import SessionSource, parse_rclone_percent
 
 
 def _client():
@@ -11,6 +11,23 @@ def _client():
     c.remote_name = "collab-data"
     c._cmd = lambda *a: ["rclone", *a]
     return c
+
+
+class _FakeProc:
+    """Context-manager stub for subprocess.Popen: streams `lines`, exits with `code`."""
+
+    def __init__(self, lines=(), code=0):
+        self.stdout = iter(lines)
+        self._code = code
+
+    def wait(self):
+        return self._code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
 def test_list_sessions_returns_dir_names_sorted():
@@ -42,20 +59,17 @@ def test_fetch_video_invokes_rclone_copyto(monkeypatch, tmp_path):
     client = _client()
     calls = {}
 
-    def fake_run(cmd, check):
+    def fake_popen(cmd, stdout, stderr, text):
         calls["cmd"] = cmd
-        return MagicMock(returncode=0)
+        return _FakeProc()
 
-    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.run", fake_run)
+    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", fake_popen)
     src = SessionSource(client)
     local = src.fetch_video("2026_05_07", "clip_03.mp4", tmp_path)
     assert local == tmp_path / "clip_03.mp4"
-    assert calls["cmd"] == [
-        "rclone",
-        "copyto",
-        "collab-data:fieldwork_curated/reconstruction/2026_05_07/clip_03.mp4",
-        str(tmp_path / "clip_03.mp4"),
-    ]
+    assert calls["cmd"][:2] == ["rclone", "copyto"]
+    assert "collab-data:fieldwork_curated/reconstruction/2026_05_07/clip_03.mp4" in calls["cmd"]
+    assert str(tmp_path / "clip_03.mp4") in calls["cmd"]
 
 
 def test_has_processed_true_when_listing_nonempty():
@@ -77,20 +91,37 @@ def test_pull_processed_invokes_rclone_copy(monkeypatch, tmp_path):
     client = _client()
     calls = {}
 
-    def fake_run(cmd, check):
+    def fake_popen(cmd, stdout, stderr, text):
         calls["cmd"] = cmd
-        return MagicMock(returncode=0)
+        return _FakeProc()
 
-    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.run", fake_run)
+    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", fake_popen)
     src = SessionSource(client)
     out = src.pull_processed("2026_05_07", "clip_03", tmp_path)
     assert out == tmp_path
-    assert calls["cmd"] == [
-        "rclone",
-        "copy",
-        "collab-data:fieldwork_processed/reconstruction/2026_05_07/clip_03",
-        str(tmp_path),
-    ]
+    assert calls["cmd"][:2] == ["rclone", "copy"]
+    assert "collab-data:fieldwork_processed/reconstruction/2026_05_07/clip_03" in calls["cmd"]
+    assert str(tmp_path) in calls["cmd"]
+
+
+def test_parse_rclone_percent_extracts_percentage():
+    line = "Transferred:   1.234 GiB / 5.678 GiB, 21%, 45.6 MiB/s, ETA 1m30s"
+    assert parse_rclone_percent(line) == 21
+    assert parse_rclone_percent("no percent here") is None
+    assert parse_rclone_percent("Transferred: 0 / 0 Bytes, 100%, 0/s") == 100
+
+
+def test_pull_processed_streams_stats_to_on_line(monkeypatch, tmp_path):
+    lines_seen = []
+
+    def fake_popen(cmd, stdout, stderr, text):
+        assert "--stats-one-line" in cmd
+        return _FakeProc(lines=["Transferred: 1 GiB / 2 GiB, 50%, 10 MiB/s\n"])
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    src = SessionSource(client=_client())
+    src.pull_processed("2026_05_07", "clip_03", tmp_path, on_line=lines_seen.append)
+    assert any("50%" in ln for ln in lines_seen)
 
 
 def test_push_outputs_streams_rclone_copy(monkeypatch, tmp_path):
@@ -98,16 +129,9 @@ def test_push_outputs_streams_rclone_copy(monkeypatch, tmp_path):
     calls = {}
     lines = []
 
-    class _FakeProc:
-        def __init__(self):
-            self.stdout = iter(["Transferred: 1.2 MiB / 1.2 MiB\n", "\n"])
-
-        def wait(self):
-            return 0
-
     def fake_popen(cmd, stdout, stderr, text):
         calls["cmd"] = cmd
-        return _FakeProc()
+        return _FakeProc(lines=["Transferred: 1.2 MiB / 1.2 MiB\n", "\n"])
 
     monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", fake_popen)
     src = SessionSource(client)
@@ -128,13 +152,9 @@ def test_push_outputs_streams_rclone_copy(monkeypatch, tmp_path):
 def test_push_outputs_raises_on_nonzero_exit(monkeypatch, tmp_path):
     client = _client()
 
-    class _FailProc:
-        stdout = iter([])
-
-        def wait(self):
-            return 1
-
-    monkeypatch.setattr("collab_splats.dashboard.sources.subprocess.Popen", lambda *a, **k: _FailProc())
+    monkeypatch.setattr(
+        "collab_splats.dashboard.sources.subprocess.Popen", lambda *a, **k: _FakeProc(code=1)
+    )
     src = SessionSource(client)
     with pytest.raises(RuntimeError):
         src.push_outputs(tmp_path, "2026_05_07", "clip_03")

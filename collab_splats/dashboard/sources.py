@@ -6,6 +6,7 @@ import logging
 import re
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from collab_data.data_dashboard.rclone_client import RcloneClient
 
@@ -38,6 +39,22 @@ PULL_EXCLUDES = (
 )
 
 ########
+# Helpers
+########
+
+# rclone --stats line looks like: "Transferred: 1.2 GiB / 5.6 GiB, 21%, 45 MiB/s, ETA 1m"
+_RCLONE_PCT_RE = re.compile(r",\s*(\d{1,3})%")
+
+
+def parse_rclone_percent(line: str) -> int | None:
+    """Extract the integer transfer percentage from an rclone --stats line, or None."""
+    m = _RCLONE_PCT_RE.search(line)
+    if not m:
+        return None
+    return min(100, int(m.group(1)))
+
+
+########
 # Source
 ########
 
@@ -61,6 +78,18 @@ class SessionSource:
             raise RuntimeError("rclone is not available")
         return self._client
 
+    def _run_streaming(self, cmd: list[str], action: str, on_line: Callable[[str], None] | None = None) -> None:
+        """Run an rclone command via Popen, streaming --stats lines to on_line; raise on non-zero exit."""
+        # `with` closes the stdout fd deterministically once streaming completes.
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as proc:
+            for line in proc.stdout or []:
+                line = line.strip()
+                if line and on_line is not None:
+                    on_line(line)
+            ret = proc.wait()
+        if ret != 0:
+            raise RuntimeError(f"rclone {action} failed (exit {ret})")
+
     def list_sessions(self) -> list[str]:
         """Return sorted YYYY_MM_DD session directory names."""
         client = self._require_client()
@@ -73,14 +102,17 @@ class SessionSource:
         items = client.list_directory(CURATED_BUCKET, f"{ROOT}/{session}")
         return [i["Name"] for i in items if not i.get("IsDir") and i["Name"].lower().endswith(_VIDEO_EXTS)]
 
-    def fetch_video(self, session: str, name: str, dest_dir: Path) -> Path:
-        """rclone-copy a remote video to dest_dir; return the local path."""
+    def fetch_video(
+        self, session: str, name: str, dest_dir: Path, on_line: Callable[[str], None] | None = None
+    ) -> Path:
+        """rclone-copy a remote video to dest_dir; return the local path. on_line gets --stats lines."""
         client = self._require_client()
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         local = dest_dir / name
         remote = f"{client.remote_name}:{CURATED_BUCKET}/{ROOT}/{session}/{name}"
-        subprocess.run(client._cmd("copyto", remote, str(local)), check=True)
+        cmd = client._cmd("copyto", "--stats", "2s", "--stats-one-line", remote, str(local))
+        self._run_streaming(cmd, f"copyto to {local}", on_line=on_line)
         return local
 
     def list_field_sessions(self) -> list[str]:
@@ -129,24 +161,35 @@ class SessionSource:
             return False
         return bool(items)
 
-    def pull_processed(self, session: str, stem: str, dest_dir: Path, excludes: tuple = ()) -> Path:
+    def pull_processed(
+        self,
+        session: str,
+        stem: str,
+        dest_dir: Path,
+        excludes: tuple = (),
+        on_line: Callable[[str], None] | None = None,
+    ) -> Path:
         """rclone-copy processed outputs to dest_dir; return the local dir.
 
-        excludes: rclone --exclude patterns (e.g. "frames.zarr/**") to skip
-        artifacts a consumer does not need — keeps pulls minimal.
+        excludes: rclone --exclude patterns (e.g. "frames.zarr/**") to skip artifacts a
+        consumer does not need. on_line, if given, receives each --stats progress line.
         """
         client = self._require_client()
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         remote = f"{client.remote_name}:{PROCESSED_BUCKET}/{ROOT}/{session}/{stem}"
+        # Build --exclude flags, then stream one-line stats (no public remote->local API).
         flags: list[str] = []
         for pattern in excludes:
             flags += ["--exclude", pattern]
-        # no public remote->local API on RcloneClient; use _cmd directly
-        subprocess.run(client._cmd("copy", *flags, remote, str(dest_dir)), check=True)
+        flags += ["--stats", "2s", "--stats-one-line"]
+        cmd = client._cmd("copy", *flags, remote, str(dest_dir))
+        self._run_streaming(cmd, f"copy from {remote}", on_line=on_line)
         return dest_dir
 
-    def push_outputs(self, local_dir: Path, session: str, stem: str, on_line=None) -> None:
+    def push_outputs(
+        self, local_dir: Path, session: str, stem: str, on_line: Callable[[str], None] | None = None
+    ) -> None:
         """Stream the full local output tree to fieldwork_processed via `rclone copy`.
 
         Uses the recursive, idempotent `copy` verb (not file-only `copyto`) with
@@ -173,12 +216,4 @@ class SessionSource:
             str(local_dir),
             remote,
         )
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        # Stream stats lines as they arrive.
-        for line in proc.stdout or []:
-            line = line.strip()
-            if line and on_line is not None:
-                on_line(line)
-        ret = proc.wait()
-        if ret != 0:
-            raise RuntimeError(f"rclone copy failed (exit {ret}) for {remote}")
+        self._run_streaming(cmd, f"copy to {remote}", on_line=on_line)

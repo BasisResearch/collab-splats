@@ -256,7 +256,7 @@ class SplitViewer:
                 logger.warning("mesh not found; falling back to pointcloud for left pane")
             idx = self._display_idx
             cloud = self._normalize(pointcloud_to_polydata(self._result.points[idx], RGB=self._result.colors[idx]))
-            # PCD_KWARGS = notebook point style (spheres, point_size, ambient/diffuse/specular)
+            # PCD_KWARGS = dashboard point style (flat GL points override; see viz_utils)
             self.left_actor = self._left.add_mesh(cloud, **PCD_KWARGS)
         self._apply_view(self._left)
         if not self._off_screen:

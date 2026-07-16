@@ -7,11 +7,19 @@ import logging
 import matplotlib.cm as cm
 import numpy as np
 
+from collab_splats.utils.visualization import PCD_KWARGS as _BASE_PCD_KWARGS
 from collab_splats.utils.visualization import (
-    PCD_KWARGS,
     VIZ_KWARGS,
     pointcloud_to_polydata,
 )
+
+# Flat GL points: far cheaper than sphere impostors for 500k points; at the old 0.5px size the
+# spheres were invisible anyway. Dashboard-only override — notebooks keep the shared defaults.
+PCD_KWARGS = {
+    **_BASE_PCD_KWARGS,
+    "render_points_as_spheres": False,
+    "point_size": 2.0,
+}
 
 __all__ = [
     "pointcloud_to_polydata",

@@ -1,10 +1,20 @@
 import numpy as np
 
 from collab_splats.dashboard.viz_utils import (
+    PCD_KWARGS,
     apply_viridis,
     compute_view_transform,
     pointcloud_to_polydata,
 )
+
+
+def test_pcd_kwargs_uses_flat_points():
+    """Spheres at sub-pixel point_size are invisible; flat GL points are far cheaper for 500k pts."""
+    assert PCD_KWARGS.get("render_points_as_spheres") is False
+    assert PCD_KWARGS.get("point_size") == 2.0
+    # Base keys must survive the override spread (RGB scalar binding drives all recolors).
+    assert PCD_KWARGS.get("scalars") == "RGB"
+    assert PCD_KWARGS.get("rgb") is True
 
 
 def test_polydata_has_points():

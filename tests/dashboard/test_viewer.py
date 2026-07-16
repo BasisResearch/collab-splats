@@ -267,6 +267,27 @@ def test_recolor_updates_scalars_without_rebuilding(monkeypatch):
     np.testing.assert_array_equal(np.asarray(v._right_cloud["RGB"])[:5], colors2[idx][:5])
 
 
+def test_recolor_fast_path_does_not_reapply_view(monkeypatch):
+    """In-place recolor must not re-run camera/light setup (would yank the user's view)."""
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(p=20), mesh_path=None)  # load caches _right_cloud for the fast path
+
+    calls = {"n": 0}
+    real_apply = v._apply_view
+
+    def counting_apply(plotter):
+        calls["n"] += 1
+        return real_apply(plotter)
+
+    monkeypatch.setattr(v, "_apply_view", counting_apply)
+
+    # Both recolors hit the cached-cloud fast path -> zero camera/light reapplies.
+    n = len(v._result.points)
+    v.render_query(np.zeros((n, 3), dtype=np.uint8))
+    v.render_query(np.full((n, 3), 7, dtype=np.uint8))
+    assert calls["n"] == 0
+
+
 def _write_tiny_mesh(path):
     import open3d as o3d
 

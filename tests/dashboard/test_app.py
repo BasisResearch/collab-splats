@@ -3,6 +3,7 @@ import threading
 from unittest.mock import MagicMock, patch
 
 from collab_splats.dashboard.app import SplatsApp
+from collab_splats.dashboard.localize import SceneCache
 from collab_splats.dashboard.sources import PULL_EXCLUDES
 
 
@@ -196,12 +197,12 @@ def test_refresh_sessions_runs_off_loop(tmp_path):
     thread.assert_called()  # listing dispatched to a background thread, not inline on the loop
 
 
-def _recording_app(tmp_path):
+def _recording_app(tmp_path, cache=None):
     worker = _RecordingWorker()
     source = MagicMock()
     source.list_sessions.return_value = []
     with patch("collab_splats.dashboard.app.SplitViewer"):
-        app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=worker)
+        app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=worker, cache=cache)
     return app, worker
 
 
@@ -253,3 +254,57 @@ def test_load_outputs_on_done_renders_into_viewer(tmp_path):
     assert kwargs["semantics_dir"] == "semdir"
     assert kwargs["lifted_normed"] is None
     assert kwargs["max_points"] == app.max_display_points.value
+
+
+def test_reselecting_loaded_scene_skips_reload(tmp_path):
+    """Reselecting the already-displayed scene must not enqueue another load job."""
+    app, worker = _recording_app(tmp_path, cache=SceneCache())
+    app._current_scene = ("2026_05_07", "clip_03")  # pretend it is displayed
+    before = len(app._gpu.submitted)
+    app._load_outputs("2026_05_07", "clip_03")
+    assert len(app._gpu.submitted) == before  # short-circuited, no new job
+
+
+def test_force_run_invalidates_scene_cache(tmp_path):
+    cache = SceneCache()
+    cache.put(("2026_05_07", "clip_03"), "loaded", object())
+    cache.put(("2026_05_07", "clip_03"), "mesh", object())  # LocalizePage's kind, same key shape
+    app, _worker = _recording_app(tmp_path, cache=cache)
+    app._current_scene = ("2026_05_07", "clip_03")
+    app._invalidate_scene("2026_05_07", "clip_03")
+    # Every kind for the scene is GONE (not tombstoned) — incl. LocalizePage's mesh.
+    assert cache.get(("2026_05_07", "clip_03"), "loaded") is None
+    assert cache.get(("2026_05_07", "clip_03"), "mesh") is None
+    assert app._current_scene is None  # a post-run reload must not be short-circuited
+
+
+def test_loaded_cache_evicts_beyond_last_three(tmp_path):
+    """Only the last N 'loaded' tuples stay resident (each can hold GBs)."""
+    cache = SceneCache()
+    app, _worker = _recording_app(tmp_path, cache=cache)
+    for stem in ["a", "b", "c", "d"]:
+        cache.put(("s", stem), "loaded", stem)
+        app._remember_loaded(("s", stem))
+    assert cache.get(("s", "a"), "loaded") is None  # oldest evicted
+    assert cache.get(("s", "b"), "loaded") == "b"
+    assert cache.get(("s", "d"), "loaded") == "d"
+
+
+def test_density_change_busts_reselect_shortcircuit(tmp_path):
+    """Changing max_display_points must allow a reselect to re-render at the new density."""
+    app, _worker = _recording_app(tmp_path)
+    app._current_scene = ("s", "clip")
+    app.max_display_points.value = 123_000
+    assert app._current_scene is None
+
+
+def test_load_job_returns_cached_value_without_pull(tmp_path):
+    """Second load of a scene must come from the SceneCache, not rclone + zarr."""
+    cache = SceneCache()
+    sentinel = ("result", None, "semdir", None)
+    cache.put(("2026_05_07", "clip_03"), "loaded", sentinel)
+    app, worker = _recording_app(tmp_path, cache=cache)
+    app._load_outputs("2026_05_07", "clip_03")
+    job_fn, _on_done, _doc = worker.submitted[-1]
+    assert job_fn() is sentinel
+    app._source.pull_processed.assert_not_called()

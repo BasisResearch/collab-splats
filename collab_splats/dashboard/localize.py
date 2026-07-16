@@ -56,9 +56,11 @@ def preselect_method(
 
 
 class SceneCache:
-    """Session-level cache of expensive loads, keyed (scene_key, kind).
+    """Session-level cache of expensive loads, keyed ((session, stem), kind).
 
-    CPU loads (mesh, arrays) persist across tabs; GPU-holding entries use a
+    Known kinds: 'loaded' = SplatsApp's (result, mesh_path, semantics_dir, lifted_normed)
+    tuple; 'mesh' = LocalizePage's pyvista mesh; 'localizer:*' = GPU-holding localizers.
+    CPU loads (mesh, arrays) persist across tabs; GPU-holding entries use the
     'localizer:*' kind prefix so drop_kind('localizer') can evict them on tab switch."""
 
     def __init__(self) -> None:
@@ -69,6 +71,15 @@ class SceneCache:
 
     def put(self, scene_key, kind: str, value) -> None:
         self._store[(scene_key, kind)] = value
+
+    def drop(self, scene_key, kind: str) -> None:
+        """Remove one cache entry if present."""
+        self._store.pop((scene_key, kind), None)
+
+    def drop_scene(self, scene_key) -> None:
+        """Remove every cached kind for a scene (fresh outputs invalidate them all)."""
+        for key in [k for k in self._store if k[0] == scene_key]:
+            del self._store[key]
 
     def drop_kind(self, prefix: str) -> None:
         """Evict every entry whose kind starts with prefix (e.g. GPU-holding localizers)."""

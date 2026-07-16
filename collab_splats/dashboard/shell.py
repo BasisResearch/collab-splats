@@ -31,7 +31,9 @@ class DashboardShell:
         gpu_worker = gpu_worker if gpu_worker is not None else GpuWorker()
         op_log = op_log if op_log is not None else OperationLog()
         self._cache = SceneCache()
-        self._splats = SplatsApp(base_dir=Path(base_dir), source=source, gpu_worker=gpu_worker, op_log=op_log)
+        self._splats = SplatsApp(
+            base_dir=Path(base_dir), source=source, gpu_worker=gpu_worker, op_log=op_log, cache=self._cache
+        )
         self._localize = LocalizePage(
             base_dir=Path(base_dir), source=source, gpu_worker=gpu_worker, op_log=op_log, cache=self._cache
         )

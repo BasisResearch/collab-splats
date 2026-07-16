@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,7 @@ import yaml
 from collab_splats.dashboard.async_utils import run_off_loop
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
+from collab_splats.dashboard.localize import SceneCache
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.sources import PULL_EXCLUDES, SessionSource
 from collab_splats.dashboard.viewer import SplitViewer
@@ -57,6 +59,10 @@ _SAMPLERS = ["balanced", "optical_flow"]
 # VGGTXCreator.conf_threshold=35, MapAnythingCreator.confidence_percentile=35.
 _MODEL_CONF_DEFAULTS = {"vggt_omega": 50.0, "vggtx": 35.0, "mapanything": 35.0}
 
+# Keep at most this many scenes' "loaded" tuples resident. Each holds a full
+# FeedforwardResult (can be GBs) and the container cgroup caps memory at ~46.6 GB.
+_LOADED_CACHE_KEEP = 3
+
 
 def _bind_visibility(widget, selector, predicate) -> None:
     """Show widget only when predicate(selector.value) holds; re-evaluate on change."""
@@ -78,6 +84,7 @@ class SplatsApp(param.Parameterized):
         source: SessionSource | None = None,
         gpu_worker: GpuWorker | None = None,
         op_log: OperationLog | None = None,
+        cache: SceneCache | None = None,
         **params,
     ) -> None:
         super().__init__(**params)
@@ -87,6 +94,10 @@ class SplatsApp(param.Parameterized):
         # Shared across sessions (passed from run_app) so a page refresh re-attaches to an
         # in-flight run's progress instead of spawning a fresh, disconnected log.
         self._op_log = op_log if op_log is not None else OperationLog()
+        # Session-level cache of expensive loads, shared with LocalizePage via the shell.
+        self._cache = cache if cache is not None else SceneCache()
+        self._current_scene: tuple[str, str] | None = None  # (session, stem) currently displayed
+        self._loaded_order: deque = deque()  # "loaded" insertion order for keep-last-N eviction
         self._viewer = SplitViewer()
         # Persisted UI state survives browser reloads (each reload rebuilds widgets fresh).
         self._state_path = self._base_dir / ".dashboard_state.yaml"
@@ -153,6 +164,9 @@ class SplatsApp(param.Parameterized):
             name="Max display points", value=s.get("max_display_points", 500_000), step=50_000
         )
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
+        # Density change must bust the reselect short-circuit so a reselect re-renders at the
+        # new density; the cache stays valid since decimation happens inside viewer.load.
+        self.max_display_points.param.watch(lambda e: setattr(self, "_current_scene", None), "value")
         self.normalize_view = pn.widgets.Checkbox(
             name="Normalize view (orient + scale)", value=s.get("normalize_view", True)
         )
@@ -403,6 +417,9 @@ class SplatsApp(param.Parameterized):
         if cached and not force:
             self._load_outputs(session, stem)
             return
+        # Force re-run: drop cached loads so the post-run load re-reads fresh outputs.
+        if force:
+            self._invalidate_scene(session, stem)
         config = self._current_config()
         doc = pn.state.curdoc
 
@@ -427,6 +444,7 @@ class SplatsApp(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
+            self._invalidate_scene(session, stem)  # fresh outputs -> stale cache/display
             self._load_outputs(session, stem)  # re-enqueues a load job
 
         self._set_busy(True)
@@ -437,8 +455,31 @@ class SplatsApp(param.Parameterized):
         """Schedule an outputs load (called from a worker job's completion)."""
         self._load_outputs(session, stem)
 
+    def _invalidate_scene(self, session: str, stem: str) -> None:
+        """Drop cached loads for a scene (Force re-run / fresh pipeline output)."""
+        # Drop every kind, not just "loaded" — LocalizePage caches its "mesh" (and
+        # localizer) entries under the same shared cache and must not serve stale ones.
+        self._cache.drop_scene((session, stem))
+        if self._current_scene == (session, stem):
+            self._current_scene = None  # ensure the next load is not short-circuited
+        self._source.invalidate(("has_processed", session, stem))
+
+    def _remember_loaded(self, key: tuple[str, str]) -> None:
+        """Track "loaded" insertion order; evict beyond the last N scenes (memory cap)."""
+        # Re-loads move the key to the back instead of duplicating it in the deque.
+        if key in self._loaded_order:
+            self._loaded_order.remove(key)
+        self._loaded_order.append(key)
+        while len(self._loaded_order) > _LOADED_CACHE_KEEP:
+            self._cache.drop(self._loaded_order.popleft(), "loaded")
+
     def _load_outputs(self, session: str, stem: str) -> None:
         """Enqueue loading FeedforwardResult + semantics; render on the IOLoop when done."""
+        # Already displayed and idle -> nothing to do (reselect of the same scene). The
+        # is_running guard keeps a mid-run reselect loading: _current_scene may point at
+        # soon-to-be-stale output while a run/load is in flight, so don't trust it then.
+        if self._current_scene == (session, stem) and not self._op_log.is_running:
+            return
         out = self._base_dir / session / stem
         doc = pn.state.curdoc  # captured on the IOLoop at call time
         max_points = self.max_display_points.value
@@ -447,6 +488,10 @@ class SplatsApp(param.Parameterized):
             # Lazy import: FeedforwardResult lives in the heavy feedforward package.
             from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
+            # Session cache: skip the pull + zarr/npy reads when this scene was already loaded.
+            cached = self._cache.get((session, stem), "loaded")
+            if cached is not None:
+                return cached
             if not (out / "feedforward.zarr").exists():
                 self._source.pull_processed(
                     session,
@@ -464,12 +509,15 @@ class SplatsApp(param.Parameterized):
             lifted_normed = np.load(lifted_path) if lifted_path.exists() else None
             # TSDF writes mesh_tsdf.ply (see mesh/tsdf.py), not mesh.ply.
             mesh_path = out / "mesh" / "mesh_tsdf.ply"
-            return (
+            value = (
                 result,
                 mesh_path if mesh_path.exists() else None,
                 semantics_dir if semantics_dir.exists() else None,
                 lifted_normed,
             )
+            self._cache.put((session, stem), "loaded", value)
+            self._remember_loaded((session, stem))
+            return value
 
         def on_done(res):
             self._set_busy(False)
@@ -484,6 +532,7 @@ class SplatsApp(param.Parameterized):
                 lifted_normed=lifted_normed,
                 max_points=max_points,
             )
+            self._current_scene = (session, stem)  # reselects of this scene now short-circuit
             self._op_log.finish_op()
 
         self._set_busy(True)

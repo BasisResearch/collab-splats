@@ -241,6 +241,32 @@ def test_score_query_uses_mesh_features_in_mesh_mode(monkeypatch):
     assert colors.shape[0] == 3
 
 
+def test_recolor_updates_scalars_without_rebuilding(monkeypatch):
+    """A second query recolor updates point RGB in place; it does not clear + rebuild the pane."""
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(p=20), mesh_path=None)
+
+    clears = {"n": 0}
+    real_clear = v._right.clear
+
+    def counting_clear(*a, **k):
+        clears["n"] += 1
+        return real_clear(*a, **k)
+
+    monkeypatch.setattr(v._right, "clear", counting_clear)
+
+    n = len(v._result.points)
+    colors = np.zeros((n, 3), dtype=np.uint8)
+    v.render_query(colors)  # first recolor after load: may rebuild
+    baseline = clears["n"]
+    colors2 = np.full((n, 3), 7, dtype=np.uint8)
+    v.render_query(colors2)  # second recolor: must NOT clear again
+    assert clears["n"] == baseline
+    # And the new colors actually landed on the displayed cloud:
+    idx = v._display_idx
+    np.testing.assert_array_equal(np.asarray(v._right_cloud["RGB"])[:5], colors2[idx][:5])
+
+
 def _write_tiny_mesh(path):
     import open3d as o3d
 

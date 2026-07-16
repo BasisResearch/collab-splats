@@ -102,6 +102,9 @@ class SplitViewer:
         self._lifted_normed: np.ndarray | None = None
         self._semantics_dir: Path | None = None
         self._display_idx: np.ndarray | None = None
+        # Decimated cloud currently displayed in the right pane (pointcloud mode only);
+        # lets render_query recolor in place instead of rebuilding geometry.
+        self._right_cloud: pv.PolyData | None = None
         self._extractor_cache: dict = {}
         self._status = ""
         # Active query (positive, negative, extractor) + per-mode similarity colours, so the right
@@ -141,6 +144,8 @@ class SplitViewer:
         # New scene -> drop any prior query state so the right pane starts on plain RGB.
         self._last_query = None
         self._query_colors = {"pointcloud": None, "mesh": None}
+        # New scene -> the displayed right-pane cloud is stale; force a full rebuild.
+        self._right_cloud = None
         self._display_idx = _decimate_indices(len(result.points), max_points)
         self._recompute_view_transform()
         self._render_left()
@@ -267,6 +272,8 @@ class SplitViewer:
         """
         self._right.clear()
         if self.mode == "mesh" and self._mesh_polydata is not None:
+            # Mesh displayed -> the cached right-pane cloud no longer matches the pane.
+            self._right_cloud = None
             # _normalize returns a copy of the cache; write query colours on the copy only.
             mesh = self._normalize(self._mesh_polydata)
             if colors is not None and len(colors) == mesh.n_points:
@@ -281,6 +288,8 @@ class SplitViewer:
             rgb = colors if colors is not None else self._result.colors
             cloud = self._normalize(pointcloud_to_polydata(self._result.points[idx], RGB=rgb[idx]))
             self.right_actor = self._right.add_mesh(cloud, **PCD_KWARGS)
+            # Keep a handle to the displayed cloud so render_query can recolor in place.
+            self._right_cloud = cloud
         self._apply_view(self._right)
         if not self._off_screen:
             self._right_pane.synchronize()
@@ -375,5 +384,23 @@ class SplitViewer:
         return colors
 
     def render_query(self, colors: np.ndarray) -> None:
-        """Recolour the right pane with precomputed query colours (IOLoop thread)."""
+        """Recolour the right pane with precomputed query colours (IOLoop thread).
+
+        Fast path (pointcloud mode, same geometry already displayed): update the existing
+        PolyData's RGB scalars in place instead of clearing + rebuilding the whole scene.
+        """
+        if (
+            self.mode != "mesh"
+            and self._right_cloud is not None
+            and self._display_idx is not None
+            and len(self._display_idx) == self._right_cloud.n_points
+        ):
+            # Same decimated geometry on screen -> swap the "RGB" point array (the active
+            # scalars bound via PCD_KWARGS) and flag the dataset dirty; no clear/_apply_view.
+            idx = self._display_idx
+            self._right_cloud["RGB"] = np.ascontiguousarray(colors[idx]).astype(np.uint8)
+            self._right_cloud.Modified()
+            if not self._off_screen:
+                self._right_pane.synchronize()
+            return
         self._render_right(colors)

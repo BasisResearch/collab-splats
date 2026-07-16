@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock, patch
 
 from collab_splats.dashboard.app import SplatsApp
+from collab_splats.dashboard.sources import PULL_EXCLUDES
 
 
 class _RecordingWorker:
@@ -63,6 +64,27 @@ def test_force_rerun_submits_even_when_cached(tmp_path):
     (tmp_path / "2026_05_07" / "clip_03" / "feedforward.zarr").mkdir(parents=True)
     app._on_run(event=None, force=True)
     assert len(app._gpu.submitted) == 1  # recompute despite cache
+
+
+def test_load_outputs_pull_excludes_dense_arrays(tmp_path):
+    """The splats load must skip GBs of dense arrays the viewer never reads."""
+    app, source = _app(tmp_path)
+    app.session_select.value = "2026_05_07"
+    app.video_select.options = ["clip_03.mp4"]
+
+    app._load_outputs("2026_05_07", "clip_03")
+    job_fn, _on_done, _doc = app._gpu.submitted[-1]
+
+    source.pull_processed.reset_mock()
+    # feedforward.zarr absent -> job pulls; assert it forwards the exclude set.
+    try:
+        job_fn()
+    except Exception:
+        pass  # load_zarr will fail on the empty tmp tree; we only assert the pull call
+    _args, kwargs = source.pull_processed.call_args
+    assert kwargs.get("excludes") == PULL_EXCLUDES or (
+        len(_args) >= 4 and _args[3] == PULL_EXCLUDES
+    )
 
 
 def test_min_disparity_visibility_tracks_sampling(tmp_path):

@@ -17,7 +17,7 @@ from zarr.codecs import BloscCodec
 
 from collab_splats.dashboard.config import LocalizationConfig, RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.sources import SessionSource
+from collab_splats.dashboard.sources import PULL_EXCLUDES, SessionSource
 from collab_splats.mesh.utils import persist_mesh_vertex_features, pointcloud_to_mesh
 from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
@@ -306,24 +306,6 @@ class LocalizationRunOutput:
     frame_sources: list  # per-frame 'reconstruction' | 'localized'
 
 
-# Never pulled for localization: frames.zarr duplicates the frames/ jpg dir the viz reads,
-# and the dense per-pixel arrays are optional in FeedforwardResult.load_zarr (absent → None;
-# audited 2026-07-15). Localization needs only the required set (points/colors/extrinsics/
-# intrinsics/original_coords) plus frames/*.jpg for match viz — the dense members below can
-# be GBs per scene. The splats viewer's own pull_processed has no excludes, and rclone copy
-# is incremental, so a later scene load fetches whatever this skipped.
-_PULL_EXCLUDES = (
-    "frames.zarr/**",
-    "feedforward.zarr/depth/**",
-    "feedforward.zarr/world_points/**",
-    "feedforward.zarr/confidence/**",
-    "feedforward.zarr/conf/**",  # legacy key for confidence
-    "feedforward.zarr/features/**",
-    "feedforward.zarr/pixel_indices/**",
-    "feedforward.zarr/images/**",
-)
-
-
 def _load_feedforward_result(out_dir: Path):
     """Load the reconstruction result from the local zarr (lazy heavy import)."""
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
@@ -431,7 +413,7 @@ def run_localization(
             # Reconstruction data: pull once (minimal set), then load from local zarr
             op_log.update_progress(5, "localize: pulling reconstruction")
             if not (out_dir / "feedforward.zarr").exists():
-                source.pull_processed(session, stem, out_dir, excludes=_PULL_EXCLUDES)
+                source.pull_processed(session, stem, out_dir, excludes=PULL_EXCLUDES)
             op_log.update_progress(15, "localize: loading reconstruction")
             result = _load_feedforward_result(out_dir)
 

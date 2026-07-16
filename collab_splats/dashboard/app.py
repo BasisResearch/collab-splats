@@ -20,7 +20,7 @@ import yaml
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.sources import SessionSource
+from collab_splats.dashboard.sources import PULL_EXCLUDES, SessionSource
 from collab_splats.dashboard.viewer import SplitViewer
 
 # NB: collab_splats.dashboard.pipeline and pointcloud.feedforward pull in the full
@@ -431,7 +431,7 @@ class SplatsApp(param.Parameterized):
             from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
             if not (out / "feedforward.zarr").exists():
-                self._source.pull_processed(session, stem, out)
+                self._source.pull_processed(session, stem, out, excludes=PULL_EXCLUDES)
             result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
             semantics_dir = out / "semantics"
             # The pipeline lifts + compresses features eagerly during a run and caches the

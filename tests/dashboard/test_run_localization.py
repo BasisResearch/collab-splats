@@ -180,7 +180,7 @@ def test_ref_paths_remapped_to_local_frames_dir(tmp_path, wired):
 
 def test_pull_uses_minimal_excludes(tmp_path, wired):
     _, source = _run(tmp_path, wired)
-    assert source.excludes == pipeline._PULL_EXCLUDES
+    assert source.excludes == pipeline.PULL_EXCLUDES
 
 
 def test_stamp_db_provenance_writes_attrs(tmp_path):

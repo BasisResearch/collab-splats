@@ -102,6 +102,7 @@ class SplatsApp(param.Parameterized):
         # Persisted UI state survives browser reloads (each reload rebuilds widgets fresh).
         self._state_path = self._base_dir / ".dashboard_state.yaml"
         self._state = self._load_state()
+        self._state_dirty = False  # set by _persist_state, cleared by _flush_state
         self._restored_selection = False  # session/video restored once, after options load
         self._suppress_autoload = False  # gate _on_video during programmatic option/restore churn
         self._build_sidebar()
@@ -117,7 +118,14 @@ class SplatsApp(param.Parameterized):
         return {}
 
     def _persist_state(self, *_event) -> None:
-        """Write current widget values to disk so they survive a browser reload."""
+        """Mark UI state dirty; the debounce flush writes it (coalesces rapid changes)."""
+        self._state_dirty = True
+
+    def _flush_state(self) -> None:
+        """Write current widget values to disk if dirty (debounce timer / run start)."""
+        if not self._state_dirty:
+            return
+        self._state_dirty = False
         data = {k: w.value for k, w in self._persisted.items()}
         try:
             self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -407,6 +415,8 @@ class SplatsApp(param.Parameterized):
 
     def _on_run(self, event, force: bool) -> None:
         """Run or reload the pipeline, respecting cache and force flag."""
+        # Flush pending UI state so the config driving this run is durable on disk.
+        self._flush_state()
         session, name = self.session_select.value, self.video_select.value
         if not session or not name:
             return
@@ -627,6 +637,14 @@ class SplatsApp(param.Parameterized):
         except Exception:
             # No live server (tests) — leave the static snapshot.
             logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
+
+        # Slow debounce flush: widget changes only mark state dirty; this writes it to disk.
+        # A final flush on session teardown closes the ≤1s loss window on tab close.
+        try:
+            pn.state.add_periodic_callback(self._flush_state, period=1000, start=True)
+            pn.state.on_session_destroyed(lambda _ctx: self._flush_state())
+        except Exception:
+            logger.debug("no periodic callback (no server doc); state flushes on run only", exc_info=True)
 
         return pn.Column(self._viewer.layout, progress, sizing_mode="stretch_both")
 

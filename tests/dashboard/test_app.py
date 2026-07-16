@@ -340,6 +340,25 @@ def test_load_does_not_eager_load_lifted_normed(tmp_path, monkeypatch):
     assert loaded["n"] == 0
 
 
+def test_persist_state_is_debounced(tmp_path, monkeypatch):
+    """Rapid widget changes coalesce into a single disk write, not one per event."""
+    app, _source = _app(tmp_path)
+    writes = {"n": 0}
+    monkeypatch.setattr(
+        type(app._state_path),
+        "write_text",
+        lambda self, text: writes.__setitem__("n", writes["n"] + 1),
+    )
+
+    for _ in range(5):
+        app._persist_state()
+    assert writes["n"] == 0  # nothing written synchronously
+    app._flush_state()
+    assert writes["n"] == 1  # one coalesced write
+    app._flush_state()
+    assert writes["n"] == 1  # not dirty -> no second write
+
+
 def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
     from collab_splats.dashboard import app as app_mod

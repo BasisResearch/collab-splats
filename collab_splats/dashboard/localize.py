@@ -162,18 +162,28 @@ class LocalizePage(param.Parameterized):
     # ---- main layout ---------------------------------------------------
 
     def _build_main(self) -> None:
-        """Left frame/matches column, right 3D pane, bottom distribution + stats."""
+        """Cheap result panes only — watchers fired during __init__ (e.g. _show_frame via
+        _on_query_video) may touch these before main() is ever called. The heavy pyvista
+        plotter + VTK pane are deferred to _ensure_plotter()."""
         self._frame_pane = pn.pane.Image(None, sizing_mode="scale_width")
         self._matches_col = pn.Column(self._frame_pane, sizing_mode="stretch_width", scroll=True, max_height=700)
-        self._plotter = pv.Plotter(off_screen=True)
-        self._vtk_pane = pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
+        self._plotter: pv.Plotter | None = None
+        self._vtk_pane: pn.pane.VTK | None = None
         self._dist_pane = pn.pane.Matplotlib(None, sizing_mode="stretch_width", tight=True)
         self._stats = pn.pane.HTML("", sizing_mode="stretch_width")
 
         # Progress strip: identical polling pattern to SplatsApp.main()
         self._progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
 
+    def _ensure_plotter(self) -> None:
+        """Build the off-screen pyvista plotter + VTK pane on first use (lazy: main/_render_scene)."""
+        if self._plotter is None:
+            self._plotter = pv.Plotter(off_screen=True)
+            self._vtk_pane = pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
+
     def main(self) -> pn.Column:
+        self._ensure_plotter()
+
         def _tick() -> None:
             self._progress.object = self._op_log.render_html()
 
@@ -455,6 +465,7 @@ class LocalizePage(param.Parameterized):
         self, scene_key, mesh_path: Path, extrinsics: np.ndarray, localized_pose: "np.ndarray | None"
     ) -> None:
         """Rebuild the 3D pane: mesh, time-coloured cameras, red localized camera."""
+        self._ensure_plotter()
         self._plotter.clear()
 
         # Mesh (cached across runs and tabs — expensive read)

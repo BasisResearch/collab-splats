@@ -41,19 +41,24 @@ class DashboardShell:
         self._sidebar_holder: pn.Column | None = None
 
     def _on_tab(self, event) -> None:
-        """Swap sidebar contents to match the active tab; free GPU when leaving localize."""
+        """Swap sidebar to the active tab; build the localize view lazily; free GPU on leave."""
+        if event.new == 1 and not self._localize_built:
+            self._localize_holder[:] = [self._localize.main()]
+            self._localize_built = True
         page = self._splats if event.new == 0 else self._localize
         self._sidebar_holder[:] = [page.sidebar()]
         if event.old == 1:
             self._localize.release_gpu()
 
     def view(self) -> pn.template.MaterialTemplate:
-        """Assemble tabs + swapping sidebar. dynamic=True defers frontend rendering of
-        the inactive tab only — both pages (and their VTK plotters) are built eagerly
-        in __init__; lazy plotter construction is a possible follow-up."""
+        """Assemble tabs + swapping sidebar. The Localize tab holds an empty placeholder
+        until first activation — its main() (and the pyvista/VTK plotter behind it) is
+        built lazily in _on_tab, so an untouched Localize tab costs nothing."""
+        self._localize_built = False
+        self._localize_holder = pn.Column(sizing_mode="stretch_both")
         self._tabs = pn.Tabs(
             ("Splats", self._splats.main()),
-            ("Localize", self._localize.main()),
+            ("Localize", self._localize_holder),
             dynamic=True,
             sizing_mode="stretch_both",
         )

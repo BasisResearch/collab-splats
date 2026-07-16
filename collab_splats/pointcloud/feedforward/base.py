@@ -8,6 +8,7 @@ Provides:
   _rescale_reconstruction_to_original_dims — rescale camera params from model resolution to original
   BaseFeedforwardCreator                   — abstract 5-step template-method pipeline
 """
+
 from __future__ import annotations
 
 import copy
@@ -24,20 +25,23 @@ import torch
 import torch.nn.functional as F
 import zarr
 from rich.console import Console
+
 # Imported from installed VGGT-X tree (shared dep) — byte-identical to each
 # model's vendored copy today; revisit if trees diverge.
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from zarr.codecs import BloscCodec
 
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+
 from ..base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
 from ..utils import cross_frame_attention_ratio, reproject_pixels
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
 
 console = Console()
 logger = logging.getLogger(__name__)
 
 
 # ── Output type ───────────────────────────────────────────────────────────────
+
 
 @dataclass
 class FeedforwardResult:
@@ -48,24 +52,24 @@ class FeedforwardResult:
     feedforward creators and consumed by ``BundleAdjustment``.
     """
 
-    points: np.ndarray           # (P, 3) float32 — world-space XYZ points
-    colors: np.ndarray           # (P, 3) uint8 — RGB, range [0, 255]
-    extrinsics: np.ndarray       # (N, 4, 4) float32 — world-to-camera homogeneous transform
-                                 #   rows 0-2: [R|t], row 3: [0, 0, 0, 1]
-    intrinsics: np.ndarray       # (N, 3, 3) float32 — camera intrinsics K
-    image_paths: list[Path]      # length N — source image paths, ordered to match extrinsics
+    points: np.ndarray  # (P, 3) float32 — world-space XYZ points
+    colors: np.ndarray  # (P, 3) uint8 — RGB, range [0, 255]
+    extrinsics: np.ndarray  # (N, 4, 4) float32 — world-to-camera homogeneous transform
+    #   rows 0-2: [R|t], row 3: [0, 0, 0, 1]
+    intrinsics: np.ndarray  # (N, 3, 3) float32 — camera intrinsics K
+    image_paths: list[Path]  # length N — source image paths, ordered to match extrinsics
     original_coords: np.ndarray  # (N, 6) float32 — [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
-                                 #   tl = model crop top-left in original pixels
-                                 #   cr = model crop bottom-right in original pixels
-                                 #   orig_w/h = full original image dimensions
-    model_width: int             # model inference resolution width (pixels)
-    model_height: int            # model inference resolution height (pixels)
+    #   tl = model crop top-left in original pixels
+    #   cr = model crop bottom-right in original pixels
+    #   orig_w/h = full original image dimensions
+    model_width: int  # model inference resolution width (pixels)
+    model_height: int  # model inference resolution height (pixels)
     # Populated by feedforward creators; consumed by BundleAdjustment wrapper.
-    images: "torch.Tensor | None" = None        # (N, 3, H, W) normalised RGB for track extraction
-    confidence: "torch.Tensor | None" = None      # (N, H, W) confidence scores
-    world_points: "np.ndarray | None" = None     # (N, H, W, 3) world-space points per pixel
-    depth: "np.ndarray | None" = None            # (N, H, W) float32 depth maps (normalised to 3-D across backends)
-    features: "np.ndarray | None" = None      # (P, D) float32 — feature vector per point, index-aligned with points
+    images: "torch.Tensor | None" = None  # (N, 3, H, W) normalised RGB for track extraction
+    confidence: "torch.Tensor | None" = None  # (N, H, W) confidence scores
+    world_points: "np.ndarray | None" = None  # (N, H, W, 3) world-space points per pixel
+    depth: "np.ndarray | None" = None  # (N, H, W) float32 depth maps (normalised to 3-D across backends)
+    features: "np.ndarray | None" = None  # (P, D) float32 — feature vector per point, index-aligned with points
     pixel_indices: "np.ndarray | None" = None  # (P, 3) int32 — [frame_id, row, col] source pixel for each point
     _zarr_path: "Path | None" = field(default=None, init=False, repr=False, compare=False)
 
@@ -139,7 +143,9 @@ class FeedforwardResult:
         if self.features is not None:
             store.create_array("features", data=self.features, chunks=self.features.shape, compressors=lz4)
         if self.pixel_indices is not None:
-            store.create_array("pixel_indices", data=self.pixel_indices, chunks=self.pixel_indices.shape, compressors=lz4)
+            store.create_array(
+                "pixel_indices", data=self.pixel_indices, chunks=self.pixel_indices.shape, compressors=lz4
+            )
 
         # Save depth (N, H, W) chunked by frame
         if self.depth is not None:
@@ -174,7 +180,16 @@ class FeedforwardResult:
             store.create_array("images", data=imgs, chunks=chunks, compressors=lz4)
 
     @classmethod
-    def load_zarr(cls, path: Path, load_images: bool = False) -> "FeedforwardResult":
+    def load_zarr(
+        cls,
+        path: Path,
+        load_images: bool = False,
+        load_depth: bool = True,
+        load_world_points: bool = True,
+        load_confidence: bool = True,
+        load_features: bool = True,
+        load_pixel_indices: bool = True,
+    ) -> "FeedforwardResult":
         """Load from a zarr v3 store saved by save_zarr().
 
         images defaults to None (large tensor; skipped to avoid accidental loads).
@@ -182,12 +197,18 @@ class FeedforwardResult:
         post-load feature lifting so the extractor sees the same FOV as the depth map.
         confidence is restored as a torch.Tensor if present in the store.
 
+        The remaining dense per-pixel/per-point arrays default to loaded (back-compat);
+        pass load_<name>=False to skip decoding an array a consumer never reads — the
+        dashboard's display path skips all of them (they can be GBs per scene).
+
         Args:
             path: Directory path of the zarr store.
             load_images: If True and "images" is in the store, load and return as a torch.Tensor.
+            load_depth / load_world_points / load_confidence / load_features /
+                load_pixel_indices: If False, skip decoding that array (field → None).
 
         Returns:
-            FeedforwardResult with all persisted fields restored.
+            FeedforwardResult with all requested persisted fields restored.
         """
         store = zarr.open(str(path), mode="r")
         attrs = dict(store.attrs)
@@ -202,19 +223,16 @@ class FeedforwardResult:
         model_width = int(attrs["model_width"])
         model_height = int(attrs["model_height"])
 
-        # Load optional arrays; absent keys → None
-        features = store["features"][:] if "features" in store else None
-        pixel_indices = store["pixel_indices"][:] if "pixel_indices" in store else None
-        world_points = store["world_points"][:] if "world_points" in store else None
-        depth = store["depth"][:] if "depth" in store else None
+        # Load optional arrays; absent keys (or opted-out flags) → None
+        features = store["features"][:] if (load_features and "features" in store) else None
+        pixel_indices = store["pixel_indices"][:] if (load_pixel_indices and "pixel_indices" in store) else None
+        world_points = store["world_points"][:] if (load_world_points and "world_points" in store) else None
+        depth = store["depth"][:] if (load_depth and "depth" in store) else None
+        # Legacy stores used the "conf" key; honour both under the same flag.
         _conf_key = "confidence" if "confidence" in store else ("conf" if "conf" in store else None)
-        confidence = torch.from_numpy(store[_conf_key][:]) if _conf_key else None
+        confidence = torch.from_numpy(store[_conf_key][:]) if (load_confidence and _conf_key) else None
         # Opt-in image load: skipped by default to avoid pulling large tensor into memory
-        images = (
-            torch.from_numpy(store["images"][:])
-            if load_images and "images" in store
-            else None
-        )
+        images = torch.from_numpy(store["images"][:]) if load_images and "images" in store else None
 
         result = cls(
             points=pts3d,
@@ -259,6 +277,7 @@ class FeedforwardResult:
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
 
+
 def _decode_verify_geometry(
     depth_t: torch.Tensor,
     depth_conf_t: torch.Tensor,
@@ -281,14 +300,14 @@ def _decode_verify_geometry(
         frame and (2, H, W) confidence, both float32.
     """
     # Drop the batch dim; move to CPU float32 numpy for the unprojection
-    depth = depth_t.squeeze(0).cpu().float().numpy()      # (2, H, W, 1)
+    depth = depth_t.squeeze(0).cpu().float().numpy()  # (2, H, W, 1)
     conf = depth_conf_t.squeeze(0).cpu().float().numpy()  # (2, H, W)
 
     # Unproject depth into the pair's local world frame so the LC anchor-scale
     # machinery gets real geometry instead of the 1.0 fallback
-    world_points = unproject_depth_map_to_point_map(
-        depth, extrinsics_3x4, intrinsics
-    ).astype(np.float32)  # (2, H, W, 3)
+    world_points = unproject_depth_map_to_point_map(depth, extrinsics_3x4, intrinsics).astype(
+        np.float32
+    )  # (2, H, W, 3)
     return world_points, conf
 
 
@@ -377,9 +396,7 @@ def compute_multiview_depth_confidence(
         rel_thresh:  Relative depth tolerance as fraction of expected depth.
         device:      Torch device for computation.
     """
-    dev = torch.device(
-        device if device != "cuda" or torch.cuda.is_available() else "cpu"
-    )
+    dev = torch.device(device if device != "cuda" or torch.cuda.is_available() else "cpu")
     N, H, W = depth.shape
 
     depth_t = torch.from_numpy(depth.astype(np.float32)).to(dev)
@@ -393,12 +410,10 @@ def compute_multiview_depth_confidence(
         torch.arange(W, dtype=torch.float32, device=dev),
         indexing="ij",
     )
-    pixel_h = torch.stack(
-        [cols, rows, torch.ones(H, W, device=dev)], dim=-1
-    ).reshape(-1, 3)  # (H*W, 3) [x, y, 1]
+    pixel_h = torch.stack([cols, rows, torch.ones(H, W, device=dev)], dim=-1).reshape(-1, 3)  # (H*W, 3) [x, y, 1]
 
     inlier_sum = torch.zeros(N, H, W, dtype=torch.float32, device=dev)
-    valid_sum  = torch.zeros(N, H, W, dtype=torch.float32, device=dev)
+    valid_sum = torch.zeros(N, H, W, dtype=torch.float32, device=dev)
 
     # Pre-allocate homogeneous padding — reused across all (i, j) pairs
     ones_hw1 = torch.ones(H * W, 1, dtype=torch.float32, device=dev)
@@ -412,70 +427,58 @@ def compute_multiview_depth_confidence(
     for i in range(N):
         # Unproject source pixels to world space via cam-i intrinsics and pose
         K_i_inv = torch.linalg.inv(K[i])
-        cam_rays = (K_i_inv @ pixel_h.T).T                          # (H*W, 3)
-        src_d = depth_t[i].reshape(-1, 1)                           # (H*W, 1)
-        src_valid = (src_d > 0).squeeze(-1)                          # (H*W,)
+        cam_rays = (K_i_inv @ pixel_h.T).T  # (H*W, 3)
+        src_d = depth_t[i].reshape(-1, 1)  # (H*W, 1)
+        src_valid = (src_d > 0).squeeze(-1)  # (H*W,)
         if depth_masks_t is not None:
             src_valid = src_valid & depth_masks_t[i].reshape(-1)
 
-        pts_cam_i = cam_rays * src_d                                 # (H*W, 3)
-        pts_cam_h = torch.cat(
-            [pts_cam_i, ones_hw1], dim=-1
-        )                                                             # (H*W, 4)
-        pts_world = (cam2world[i] @ pts_cam_h.T).T[:, :3]           # (H*W, 3)
+        pts_cam_i = cam_rays * src_d  # (H*W, 3)
+        pts_cam_h = torch.cat([pts_cam_i, ones_hw1], dim=-1)  # (H*W, 4)
+        pts_world = (cam2world[i] @ pts_cam_h.T).T[:, :3]  # (H*W, 3)
 
         for j in range(N):
             if i == j:
                 continue
 
             # Project world points into frame j; compute expected depth and pixel coords
-            pts_world_h = torch.cat(
-                [pts_world, ones_hw1], dim=-1
-            )
-            pts_cam_j = (E[j] @ pts_world_h.T).T[:, :3]             # (H*W, 3)
+            pts_world_h = torch.cat([pts_world, ones_hw1], dim=-1)
+            pts_cam_j = (E[j] @ pts_world_h.T).T[:, :3]  # (H*W, 3)
 
-            expected_d = pts_cam_j[:, 2]                             # (H*W,) Z in cam-j
+            expected_d = pts_cam_j[:, 2]  # (H*W,) Z in cam-j
             in_front = expected_d > 0
 
-            proj_j = (K[j] @ pts_cam_j.T).T                         # (H*W, 3)
+            proj_j = (K[j] @ pts_cam_j.T).T  # (H*W, 3)
             z_j = proj_j[:, 2:3].clamp(min=1e-6)
-            px_j = proj_j[:, :2] / z_j                              # (H*W, 2)
+            px_j = proj_j[:, :2] / z_j  # (H*W, 2)
 
             # Normalise pixel coords to [-1, 1] for grid_sample
             px_norm = torch.stack(
-                [px_j[:, 0] / (W - 1) * 2 - 1,
-                 px_j[:, 1] / (H - 1) * 2 - 1],
+                [px_j[:, 0] / (W - 1) * 2 - 1, px_j[:, 1] / (H - 1) * 2 - 1],
                 dim=-1,
-            )                                                         # (H*W, 2)
-            in_bounds = (
-                (px_norm[:, 0] >= -1) & (px_norm[:, 0] <= 1)
-                & (px_norm[:, 1] >= -1) & (px_norm[:, 1] <= 1)
-            )
-            valid_ij = src_valid & in_front & in_bounds              # (H*W,)
+            )  # (H*W, 2)
+            in_bounds = (px_norm[:, 0] >= -1) & (px_norm[:, 0] <= 1) & (px_norm[:, 1] >= -1) & (px_norm[:, 1] <= 1)
+            valid_ij = src_valid & in_front & in_bounds  # (H*W,)
 
             # Sample frame-j depth at projected locations using bilinear interpolation
             # Reshape to (1, H, W, 2): px_norm is ordered as the flattened source meshgrid,
             # so grid[0, r, c, :] = the normalised target coord where source pixel (r, c) projects.
             grid = px_norm.reshape(1, H, W, 2)
             sampled_d = F.grid_sample(
-                depth_t[j].unsqueeze(0).unsqueeze(0),               # (1, 1, H, W)
+                depth_t[j].unsqueeze(0).unsqueeze(0),  # (1, 1, H, W)
                 grid,
                 mode="bilinear",
                 padding_mode="zeros",
                 align_corners=True,
-            ).squeeze()                                               # (H, W)
-            sampled_d_flat = sampled_d.reshape(-1)                   # (H*W,)
+            ).squeeze()  # (H, W)
+            sampled_d_flat = sampled_d.reshape(-1)  # (H*W,)
 
             # Count inliers: depth agreement within abs + rel tolerance
             tol = abs_thresh + rel_thresh * expected_d.abs()
-            inlier = (
-                (torch.abs(expected_d - sampled_d_flat) < tol)
-                & valid_ij
-                & (sampled_d_flat > 0)
-            )
+            inlier = (torch.abs(expected_d - sampled_d_flat) < tol) & valid_ij & (sampled_d_flat > 0)
 
             inlier_sum[i] += inlier.reshape(H, W).float()
-            valid_sum[i]  += valid_ij.reshape(H, W).float()
+            valid_sum[i] += valid_ij.reshape(H, W).float()
 
     # Pixels with no overlapping views → confidence = 0
     mv_conf = torch.where(
@@ -487,6 +490,7 @@ def compute_multiview_depth_confidence(
 
 
 # ── COLMAP reconstruction builders ────────────────────────────────────────────
+
 
 def build_pycolmap_reconstruction(
     pts3d: np.ndarray,
@@ -529,10 +533,7 @@ def build_pycolmap_reconstruction(
     exts = extrinsics[:, :3, :] if extrinsics.shape[1] == 4 else extrinsics
 
     # Convert colors to uint8
-    colors_u8 = (
-        colors if colors.dtype == np.uint8
-        else (np.clip(colors, 0, 1) * 255).astype(np.uint8)
-    )
+    colors_u8 = colors if colors.dtype == np.uint8 else (np.clip(colors, 0, 1) * 255).astype(np.uint8)
 
     # Add points — feedforward has no 2D feature tracks, so Track() is empty
     for xyz, rgb in zip(pts3d, colors_u8):
@@ -600,10 +601,7 @@ def _rescale_reconstruction_to_original_dimensions(
     """
     if verbose:
         original_width, original_height = original_image_sizes[0, -2:]
-        console.log(
-            f"Rescaling reconstruction from {image_size[0]}x{image_size[1]} "
-            f"to original dimensions"
-        )
+        console.log(f"Rescaling reconstruction from {image_size[0]}x{image_size[1]} " f"to original dimensions")
         console.log(f"  Original image sizes (WxH): {int(original_width)}x{int(original_height)}")
 
     # Initialise per-loop shared-camera bookkeeping (used only when shared_camera=True)
@@ -672,6 +670,7 @@ def _rescale_reconstruction_to_original_dimensions(
 
 
 # ── Abstract pipeline ─────────────────────────────────────────────────────────
+
 
 @dataclass
 class BaseFeedforwardCreator(BasePointcloudCreator):
@@ -830,14 +829,20 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         o = self.outputs
         # Build pycolmap Reconstruction from points + cameras at model resolution
         recon = build_pycolmap_reconstruction(
-            o.points, o.colors, o.extrinsics, o.intrinsics,
-            o.model_width, o.model_height,
+            o.points,
+            o.colors,
+            o.extrinsics,
+            o.intrinsics,
+            o.model_width,
+            o.model_height,
             [p.name for p in o.image_paths],
             camera_model=self.camera_model,
         )
         # Rescale intrinsics and image dims back to original image resolution
         recon = _rescale_reconstruction_to_original_dimensions(
-            recon, o.image_paths, o.original_coords,
+            recon,
+            o.image_paths,
+            o.original_coords,
             (o.model_width, o.model_height),
         )
         # Write binary COLMAP reconstruction to disk and export transforms.json
@@ -855,20 +860,16 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     # ── Abstract interface ────────────────────────────────────────────────────
 
     @abstractmethod
-    def _load_model(self, device: str) -> Any:
-        ...
+    def _load_model(self, device: str) -> Any: ...
 
     @abstractmethod
-    def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]:
-        ...
+    def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]: ...
 
     @abstractmethod
-    def _forward(self, model: Any, views: Any, **kwargs: Any) -> Any:
-        ...
+    def _forward(self, model: Any, views: Any, **kwargs: Any) -> Any: ...
 
     @abstractmethod
-    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
-        ...
+    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult: ...
 
     @abstractmethod
     def extract_intermediate_features(
@@ -938,9 +939,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             torch.stack([frame1, frame2]).to(device), layer_index=effective_layer, **kwargs
         )
         # Compute the cross-frame attention ratio gate using model's token offset
-        ratio = cross_frame_attention_ratio(
-            features["k"], features["q"], token_offset=self._lc_token_offset
-        )
+        ratio = cross_frame_attention_ratio(features["k"], features["q"], token_offset=self._lc_token_offset)
         if ratio < verify_match_ratio:
             logger.info("LC verify: ratio=%.4f < threshold=%.4f → rejected", ratio, verify_match_ratio)
             return False, None
@@ -964,9 +963,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         Prefer result.reproject() when depth and pixel_indices are populated —
         no creator state needed, deterministic point set.
         """
-        pts3d, colors = self._reproject(
-            self.raw_outputs, result.extrinsics[:, :3, :], result.intrinsics
-        )
+        pts3d, colors = self._reproject(self.raw_outputs, result.extrinsics[:, :3, :], result.intrinsics)
         return replace(result, points=pts3d, colors=colors)
 
     @abstractmethod

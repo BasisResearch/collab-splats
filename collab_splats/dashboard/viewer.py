@@ -42,7 +42,15 @@ def _load_feature_maps(semantics_dir) -> list:
 def load_lifted_normed(result, semantics_dir) -> np.ndarray:
     """Lift cached features to points and L2-normalise -> (P, D) float32."""
     # Lazy import: pointcloud.utils pulls the heavy feedforward stack.
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.pointcloud.utils import lift_features
+
+    # The display path loads the result lean (dense arrays skipped). Lifting needs
+    # pixel_indices/depth/confidence — reload them from the source zarr on demand.
+    _lift_fields = ("pixel_indices", "depth", "confidence")
+    if any(getattr(result, f, None) is None for f in _lift_fields) and getattr(result, "_zarr_path", None):
+        # world_points/features are unused by the lift; skip them to halve peak memory.
+        result = FeedforwardResult.load_zarr(result._zarr_path, load_world_points=False, load_features=False)
 
     feature_maps = _load_feature_maps(semantics_dir)
     lifted = lift_features(feature_maps, result)
@@ -134,9 +142,7 @@ class SplitViewer:
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None
         # Read the mesh once and cache the PolyData; renders reuse it (no per-interaction disk read).
-        self._mesh_polydata = (
-            pv.read(str(self._mesh_path)) if (self._mesh_path and self._mesh_path.exists()) else None
-        )
+        self._mesh_polydata = pv.read(str(self._mesh_path)) if (self._mesh_path and self._mesh_path.exists()) else None
         # Per-vertex mesh features (if the pipeline persisted them) — same space as point features.
         self._mesh_vertex_features = load_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
         self._lifted_normed = lifted_normed

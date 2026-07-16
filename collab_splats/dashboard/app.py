@@ -500,7 +500,16 @@ class SplatsApp(param.Parameterized):
                     excludes=PULL_EXCLUDES,
                     on_line=self._op_log.rclone_progress("⬇ pulling from server"),
                 )
-            result = FeedforwardResult.load_zarr(out / "feedforward.zarr")
+            # Display needs only points/colors/extrinsics; skip decoding dense arrays
+            # (GBs when present locally). The lift path reloads them on demand.
+            result = FeedforwardResult.load_zarr(
+                out / "feedforward.zarr",
+                load_depth=False,
+                load_world_points=False,
+                load_confidence=False,
+                load_features=False,
+                load_pixel_indices=False,
+            )
             semantics_dir = out / "semantics"
             # TSDF writes mesh_tsdf.ply (see mesh/tsdf.py), not mesh.ply.
             mesh_path = out / "mesh" / "mesh_tsdf.ply"

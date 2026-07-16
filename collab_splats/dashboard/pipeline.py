@@ -310,7 +310,16 @@ def _load_feedforward_result(out_dir: Path):
     """Load the reconstruction result from the local zarr (lazy heavy import)."""
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
-    return FeedforwardResult.load_zarr(out_dir / "feedforward.zarr")
+    # Localization reads only the required member set (remote pulls already exclude the
+    # dense arrays); skip decoding them for locally-generated scenes too.
+    return FeedforwardResult.load_zarr(
+        out_dir / "feedforward.zarr",
+        load_depth=False,
+        load_world_points=False,
+        load_confidence=False,
+        load_features=False,
+        load_pixel_indices=False,
+    )
 
 
 def _stamp_db_provenance(zarr_path: Path, extractor_name: str, out_dir: Path) -> None:

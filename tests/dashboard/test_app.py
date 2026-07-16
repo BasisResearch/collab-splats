@@ -323,7 +323,7 @@ def test_load_does_not_eager_load_lifted_normed(tmp_path, monkeypatch):
     sem_dir = out / "semantics"
     sem_dir.mkdir()
     np.save(sem_dir / "lifted_normed.npy", np.zeros((4, 2), dtype=np.float32))
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p: object())
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p, **kwargs: object())
 
     # Count every np.load between enqueue and job completion — must stay zero.
     loaded = {"n": 0}

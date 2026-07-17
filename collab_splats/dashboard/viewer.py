@@ -87,8 +87,10 @@ def _decimate_indices(n: int, max_points: int) -> np.ndarray:
 class SplitViewer:
     """Two linked plotters; left = RGB pcd/mesh, right = query similarity."""
 
-    def __init__(self, off_screen: bool = False) -> None:
+    def __init__(self, off_screen: bool = False, op_log=None) -> None:
         self._off_screen = off_screen
+        # Optional shared OperationLog: viewer status lines (e.g. mesh fallback) surface there.
+        self._op_log = op_log
         self._left = pv.Plotter(off_screen=off_screen)
         self._right = pv.Plotter(off_screen=off_screen)
         self._left_pane = pn.pane.VTK(self._left.ren_win, sizing_mode="stretch_both", min_height=500)
@@ -123,6 +125,11 @@ class SplitViewer:
         self._normalize_view = True
         self._view_T: np.ndarray | None = None
 
+    def _log(self, msg: str) -> None:
+        """Append a status line to the shared op log, if one was provided."""
+        if self._op_log is not None:
+            self._op_log.append_line(msg)
+
     # ---- loading -------------------------------------------------------
 
     def load(
@@ -141,10 +148,10 @@ class SplitViewer:
         """
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None
-        # Read the mesh once and cache the PolyData; renders reuse it (no per-interaction disk read).
-        self._mesh_polydata = pv.read(str(self._mesh_path)) if (self._mesh_path and self._mesh_path.exists()) else None
-        # Per-vertex mesh features (if the pipeline persisted them) — same space as point features.
-        self._mesh_vertex_features = load_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
+        # Mesh read is deferred to ensure_mesh_polydata (worker thread): the default pointcloud
+        # mode must not pay a blocking pv.read + feature np.load on the IOLoop at every load.
+        self._mesh_polydata = None
+        self._mesh_vertex_features = None
         self._lifted_normed = lifted_normed
         self._semantics_dir = Path(semantics_dir) if semantics_dir else None
         # New scene -> drop any prior query state so the right pane starts on plain RGB.
@@ -156,6 +163,34 @@ class SplitViewer:
         self._recompute_view_transform()
         self._render_left()
         self._render_right(None)
+
+    def ensure_mesh_polydata(self, preloaded: "pv.PolyData | None" = None, op_log=None) -> bool:
+        """Lazily materialise the mesh PolyData (worker thread). True when a mesh is available.
+
+        preloaded lets the app hand in a shared-cache PolyData so the disk read is skipped;
+        renders reuse the cached result (no per-interaction disk read).
+        """
+        if self._mesh_polydata is not None:
+            return True
+        if preloaded is not None:
+            self._mesh_polydata = preloaded
+        elif self._mesh_path and self._mesh_path.exists():
+            # Blocking disk read — log it as a step when any op log is available.
+            log = op_log or self._op_log
+            if log is not None:
+                with log.step("reading mesh"):
+                    self._mesh_polydata = pv.read(str(self._mesh_path))
+            else:
+                self._mesh_polydata = pv.read(str(self._mesh_path))
+        else:
+            return False
+        # Per-vertex mesh features (if the pipeline persisted them) — same space as point features.
+        self._mesh_vertex_features = load_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
+        return True
+
+    def mesh_polydata(self) -> "pv.PolyData | None":
+        """Return the cached mesh PolyData (None until ensure_mesh_polydata succeeds)."""
+        return self._mesh_polydata
 
     def ensure_lifted(self, op_log=None) -> None:
         """Lazily load/lift per-point features on first query (off-loop)."""
@@ -186,18 +221,15 @@ class SplitViewer:
         """
         if self._mesh_vertex_features is not None:
             return
-        if self._lifted_normed is None or not (self._mesh_path and self._mesh_path.exists()):
+        if self._lifted_normed is None or self._mesh_polydata is None:
             return
         # Lazy import: mesh.utils pulls the heavy feedforward stack (matches load_lifted_normed).
-        import open3d as o3d
-
         from collab_splats.mesh.utils import features2vertex
 
         if op_log is not None:
             op_log.append_line("query: transferring features to mesh vertices (first mesh query)")
-        # One-time disk read on the first mesh query (result is cached above) — not per-render.
-        mesh = o3d.io.read_triangle_mesh(str(self._mesh_path))
-        vertices = np.asarray(mesh.vertices)
+        # Vertices come straight from the cached PolyData — no second disk read of the .ply.
+        vertices = np.asarray(self._mesh_polydata.points)
         vf = features2vertex(vertices, self._result.points, self._lifted_normed)
         norms = np.linalg.norm(vf, axis=1, keepdims=True)
         self._mesh_vertex_features = (vf / (norms + 1e-8)).astype(np.float32)
@@ -267,6 +299,7 @@ class SplitViewer:
         else:
             if self.mode == "mesh":
                 self._status = "mesh not found."
+                self._log("mesh not found — showing pointcloud")
                 logger.warning("mesh not found; falling back to pointcloud for left pane")
             idx = self._display_idx
             cloud = self._normalize(pointcloud_to_polydata(self._result.points[idx], RGB=self._result.colors[idx]))
@@ -368,11 +401,13 @@ class SplitViewer:
         # Lift features on first query (cached thereafter); no semantics -> plain RGB.
         self.ensure_lifted(op_log)
         if self._lifted_normed is None:
+            _stage("query: no semantic features for this scene — showing plain RGB")
             return self._result.colors
 
-        # In mesh mode, transfer point features to mesh vertices on first query if not already
-        # cached/persisted (older runs have no vertex_features.npy).
+        # In mesh mode, materialise the mesh (worker thread) then transfer point features to
+        # mesh vertices on first query if not already cached/persisted (no vertex_features.npy).
         if self.mode == "mesh":
+            self.ensure_mesh_polydata(op_log=op_log)
             self.ensure_mesh_features(op_log)
 
         _stage(f"query: encoding {len(positive)} positive / {len(negative or [])} negative")

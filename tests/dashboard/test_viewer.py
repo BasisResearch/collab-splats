@@ -231,6 +231,8 @@ def test_score_query_uses_mesh_features_in_mesh_mode(monkeypatch):
 
     v = SplitViewer.__new__(SplitViewer)  # bypass __init__ (no GUI in tests)
     v.mode = "mesh"
+    v._mesh_path = None  # no mesh on disk -> ensure_mesh_polydata is a no-op
+    v._mesh_polydata = None
     v._result = type("R", (), {"colors": np.zeros((5, 3), dtype=np.uint8)})()
     v._lifted_normed = np.ones((5, 4), dtype=np.float32)  # 5 points
     v._mesh_vertex_features = np.ones((3, 4), dtype=np.float32)  # 3 vertices
@@ -307,6 +309,7 @@ def test_render_right_colors_mesh_per_vertex(tmp_path):
 
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(), mesh_path=mesh_path)
+    v.ensure_mesh_polydata()  # lazy read (normally on the worker before set_mode)
     v.mode = "mesh"
 
     # Per-vertex colors aligned with the 3 mesh vertices.
@@ -321,6 +324,7 @@ def test_render_right_mesh_size_mismatch_falls_back(tmp_path):
 
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(p=20), mesh_path=mesh_path)
+    v.ensure_mesh_polydata()  # lazy read (normally on the worker before set_mode)
     v.mode = "mesh"
 
     # 20 point-length colors != 3 mesh vertices -> plain RGB mesh, no crash.
@@ -330,13 +334,13 @@ def test_render_right_mesh_size_mismatch_falls_back(tmp_path):
 
 
 def test_mesh_read_from_disk_once_across_renders(tmp_path, monkeypatch):
-    """Mesh is read once at load and reused; mode/normalize/query don't re-read from disk."""
+    """Mesh is read once (lazily) and reused; mode/normalize/query don't re-read from disk."""
     import collab_splats.dashboard.viewer as viewer_mod
 
     mesh_path = tmp_path / "mesh_tsdf.ply"
     _write_tiny_mesh(mesh_path)
 
-    # Count pv.read calls from BEFORE load: the read-at-load is the single allowed read.
+    # Count pv.read calls from BEFORE load: the lazy ensure is the single allowed read.
     reads = {"n": 0}
     real_read = viewer_mod.pv.read
 
@@ -348,12 +352,14 @@ def test_mesh_read_from_disk_once_across_renders(tmp_path, monkeypatch):
 
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(), mesh_path=mesh_path)
-    cached_points = v._mesh_polydata.points.copy()  # raw world-space geometry at load
+    assert reads["n"] == 0  # load defers the read entirely
+    v.ensure_mesh_polydata()
+    cached_points = v._mesh_polydata.points.copy()  # raw world-space geometry after ensure
     v.set_mode("mesh")
     v.set_mode("pointcloud")
     v.set_mode("mesh")
     v.set_normalize_view(False)
-    assert reads["n"] == 1  # load reads exactly once; renders reuse the cache
+    assert reads["n"] == 1  # ensure reads exactly once; renders reuse the cache
     # Renders (incl. normalized mesh renders) must never mutate the cached geometry.
     np.testing.assert_array_equal(v._mesh_polydata.points, cached_points)
 
@@ -399,6 +405,70 @@ def test_score_query_lazy_transfers_mesh_features_when_absent(tmp_path):
     assert v._mesh_vertex_features.shape[0] == 6
     assert captured["n"] == 6
     assert colors.shape[0] == 6
+
+
+def test_load_does_not_read_mesh_eagerly(monkeypatch, tmp_path):
+    """load() must defer the blocking pv.read to ensure_mesh_polydata (worker thread)."""
+    import collab_splats.dashboard.viewer as viewer_mod
+
+    reads = []
+    monkeypatch.setattr(viewer_mod.pv, "read", lambda p: reads.append(p) or viewer_mod.pv.PolyData())
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path.touch()
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=mesh_path)
+    assert reads == []
+    assert v._mesh_polydata is None
+
+
+def test_ensure_mesh_polydata_reads_once(monkeypatch, tmp_path):
+    """First ensure reads from disk; repeat calls reuse the cached PolyData."""
+    import collab_splats.dashboard.viewer as viewer_mod
+
+    reads = []
+    monkeypatch.setattr(viewer_mod.pv, "read", lambda p: reads.append(p) or viewer_mod.pv.PolyData())
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path.touch()
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=mesh_path)
+    assert v.ensure_mesh_polydata() is True
+    assert v.ensure_mesh_polydata() is True
+    assert len(reads) == 1
+
+
+def test_ensure_mesh_polydata_uses_preloaded_without_reading(monkeypatch, tmp_path):
+    """A shared-cache PolyData handed in as preloaded skips the disk read entirely."""
+    import pyvista as pv
+
+    import collab_splats.dashboard.viewer as viewer_mod
+
+    reads = []
+    monkeypatch.setattr(viewer_mod.pv, "read", lambda p: reads.append(p) or pv.PolyData())
+    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path.touch()
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=mesh_path)
+    cached = pv.PolyData()
+    assert v.ensure_mesh_polydata(preloaded=cached) is True
+    assert v.mesh_polydata() is cached
+    assert reads == []
+
+
+def test_ensure_mesh_polydata_missing_mesh_returns_false():
+    v = SplitViewer(off_screen=True)
+    v.load(_FakeResult(), mesh_path=None)
+    assert v.ensure_mesh_polydata() is False
+
+
+def test_mesh_mode_without_mesh_logs():
+    """Falling back to pointcloud must surface a status line in the op log."""
+    from collab_splats.dashboard.operation_log import OperationLog
+
+    op_log = OperationLog()
+    v = SplitViewer(off_screen=True, op_log=op_log)
+    v.load(_FakeResult(), mesh_path=None)
+    v.set_mode("mesh")
+    assert any("mesh not found" in line for line in op_log.log_lines)
 
 
 def test_ensure_lifted_uses_cached_npy_fast_path(tmp_path):

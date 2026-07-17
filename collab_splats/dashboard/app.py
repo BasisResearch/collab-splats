@@ -98,7 +98,7 @@ class SplatsApp(param.Parameterized):
         self._cache = cache if cache is not None else SceneCache()
         self._current_scene: tuple[str, str] | None = None  # (session, stem) currently displayed
         self._loaded_order: deque = deque()  # "loaded" insertion order for keep-last-N eviction
-        self._viewer = SplitViewer()
+        self._viewer = SplitViewer(op_log=self._op_log)
         # Persisted UI state survives browser reloads (each reload rebuilds widgets fresh).
         self._state_path = self._base_dir / ".dashboard_state.yaml"
         self._state = self._load_state()
@@ -638,21 +638,33 @@ class SplatsApp(param.Parameterized):
     def _on_view_mode(self, event) -> None:
         """Switch pointcloud/mesh; keep the right pane's similarity map across the switch.
 
-        set_mode renders the new mode (right pane uses this mode's cached similarity if present).
-        If a query is active but this mode hasn't been scored yet, re-score it on the worker —
-        point and mesh use different feature spaces, so colours can't be reused across modes.
+        The mesh PolyData is loaded lazily (viewer.load defers it), so entering mesh mode
+        first materialises it on the WORKER (shared-cache hit skips the disk read), then
+        set_mode renders in on_done — VTK mutation stays on the IOLoop, the blocking read
+        does not. If a query is active but this mode hasn't been scored yet, the same job
+        re-scores it — point and mesh use different feature spaces, so colours can't be
+        reused across modes.
         """
-        self._viewer.set_mode(event.new)
+        mode = event.new
+        scene_key = self._current_scene
         query = self._viewer.active_query()
-        if not query or self._viewer.cached_query_colors(event.new) is not None:
-            return
-        positive, negative, extractor_name = query
+        need_score = bool(query) and self._viewer.cached_query_colors(mode) is None
+        positive, negative, extractor_name = query if query else ([], [], "")
         doc = pn.state.curdoc
 
         def job():
-            return self._viewer.score_query(
-                positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
-            )
+            # Mesh mode: materialise the polydata off the IOLoop; share it with LocalizePage
+            # via the SceneCache so neither page re-reads the .ply the other already loaded.
+            if mode == "mesh":
+                preloaded = self._cache.get(scene_key, "mesh") if scene_key else None
+                loaded = self._viewer.ensure_mesh_polydata(preloaded=preloaded, op_log=self._op_log)
+                if loaded and scene_key:
+                    self._cache.put(scene_key, "mesh", self._viewer.mesh_polydata())
+            if need_score:
+                return self._viewer.score_query(
+                    positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
+                )
+            return None
 
         def on_done(res):
             # Sync, not unconditional re-enable: another queued job must keep widgets locked.
@@ -660,13 +672,14 @@ class SplatsApp(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            if res is None:
-                self._op_log.finish_op()
-                return
-            self._viewer.render_query(res)
+            # Mesh (if any) is resident now — render the new mode on the IOLoop.
+            self._viewer.set_mode(mode)
+            if res is not None:
+                self._viewer.render_query(res)
+            self._op_log.finish_op()
 
         self._set_busy(True)
-        self._op_log.start_op(f"query: {event.new} similarity")
+        self._op_log.start_op(f"switching to {mode}")
         self._gpu.submit(job, on_done, doc)
 
     def _on_query(self, event) -> None:

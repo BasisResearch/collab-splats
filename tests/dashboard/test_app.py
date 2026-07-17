@@ -502,6 +502,60 @@ def test_stale_video_meta_apply_skipped(tmp_path, monkeypatch):
     assert app.max_frames.end == 777
 
 
+def _mode_event(new):
+    return type("E", (), {"new": new})()
+
+
+def test_view_mode_mesh_defers_load_to_worker(tmp_path):
+    """Switching to mesh must not touch the viewer on the IOLoop; set_mode runs in on_done."""
+    app, worker = _recording_app(tmp_path)
+    app._viewer.active_query.return_value = None  # no active query -> no re-score
+    app._on_view_mode(_mode_event("mesh"))
+    app._viewer.set_mode.assert_not_called()  # no VTK mutation before the mesh is resident
+    assert len(worker.submitted) == 1
+    assert app.view_mode.disabled  # busy for the switch window
+    job_fn, on_done, _doc = worker.submitted[0]
+    job_fn()  # worker: materialise the mesh polydata
+    app._viewer.ensure_mesh_polydata.assert_called_once()
+    on_done(None)
+    app._viewer.set_mode.assert_called_once_with("mesh")
+    assert not app.view_mode.disabled  # re-enabled after the switch
+
+
+def test_view_mode_mesh_populates_shared_cache(tmp_path):
+    """The worker-loaded mesh polydata lands in the shared SceneCache for LocalizePage."""
+    cache = SceneCache()
+    app, worker = _recording_app(tmp_path, cache=cache)
+    app._current_scene = ("s", "clip")
+    app._viewer.active_query.return_value = None
+    app._viewer.ensure_mesh_polydata.return_value = True
+    app._on_view_mode(_mode_event("mesh"))
+    job_fn, _on_done, _doc = worker.submitted[0]
+    job_fn()
+    # preloaded came from the (empty) cache; the loaded polydata was put back under "mesh".
+    kwargs = app._viewer.ensure_mesh_polydata.call_args.kwargs
+    assert kwargs["preloaded"] is None
+    assert cache.get(("s", "clip"), "mesh") is app._viewer.mesh_polydata()
+
+
+def test_view_mode_switch_rescores_active_query_on_worker(tmp_path):
+    """An active query without cached colours for the new mode re-scores in the same job."""
+    import numpy as np
+
+    app, worker = _recording_app(tmp_path)
+    app._viewer.active_query.return_value = (["chair"], [], "talk2dino")
+    app._viewer.cached_query_colors.return_value = None
+    colors = np.zeros((3, 3), dtype=np.uint8)
+    app._viewer.score_query.return_value = colors
+    app._on_view_mode(_mode_event("mesh"))
+    job_fn, on_done, _doc = worker.submitted[0]
+    res = job_fn()
+    app._viewer.score_query.assert_called_once()
+    on_done(res)
+    app._viewer.set_mode.assert_called_once_with("mesh")
+    app._viewer.render_query.assert_called_once_with(colors)
+
+
 def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
     from collab_splats.dashboard import app as app_mod

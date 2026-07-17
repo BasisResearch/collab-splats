@@ -21,6 +21,8 @@ These tasks are started but not complete — do not assume their targets are don
 - **bae-vggt-parity** — verify BA matches upstream `zitongzhan/vggt --implementation bae` ([spec](docs/superpowers/specs/2026-05-20-bae-vggt-parity-design.md))
 - **loma-matcher** — LoMa local matcher for localization ([spec](docs/superpowers/specs/2026-07-08-loma-matcher-integration-design.md) · [plan](docs/superpowers/plans/2026-07-08-loma-matcher-integration.md))
 
+Recently completed (2026-07-17): **dashboard-ux-feedback** — 12-task responsiveness/visibility pass: global busy lock, step-level op-log timings, debounced frame preview, all blocking work off the IOLoop, fast-bind server (page up in ~3s, import progress streams to the page) ([spec](docs/superpowers/specs/2026-07-16-dashboard-ux-feedback-design.md) · [plan](docs/superpowers/plans/2026-07-16-dashboard-ux-feedback.md)). **Before committing any dashboard change, run the smoke gate:** `python -m collab_splats.dashboard --smoke` (must print SMOKE PASS). Manual browser checklist (plan Task 12 step 3) still owed. Browsing via IP needs `--websocket-origin`.
+
 Recently completed (2026-07-16): **dashboard-loadtime** — 16-task perf pass (F1-F8, F10-F16; F9 zarr re-chunk deferred to a future decision doc) ([spec](docs/superpowers/specs/2026-07-16-dashboard-loadtime-design.md) · [plan](docs/superpowers/plans/2026-07-16-dashboard-loadtime.md)). Manual browser smoke checklist still owed.
 
 Known test failures: `docs/known-test-failures.md`

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **STATUS (2026-07-17): COMPLETE.** Tasks 1-11 implemented, each spec- and quality-reviewed with fix loops; Task 12 full-suite gate run at wrap-up. Commits: 24f72c7, 950cddf, f5b7f79+572e970+8afec2d, e6fb790, f11a15f+3aa30b0, 9b7e52c+0ff216d, d6b9e84, e04f4e9+e0d840d, 6c0858d+c854ed9, 72311db+74c4c81, 7cea6f3+9c9c9cd. Additions beyond plan (user-directed): 00b7dac (--smoke gate, --websocket-origin, startup feedback), 41d6c3b (fast-bind server + lazy package init + loading page with live import progress). Manual browser checklist (Task 12 step 3) still owed.
+
 **Goal:** Make the dashboard explicit and responsive — every long operation shows step-level progress in the log window, no blocking work runs on the UI thread, busy state locks both tabs, and the frame slider live-previews.
 
 **Architecture:** All heavy work already funnels through one `GpuWorker` daemon thread; this pass moves the stragglers there, adds an `OperationLog.step()` timing context manager used everywhere, and syncs a global busy state through the existing 300 ms op-log poll (poll, not push — one shared worker serves many browser sessions; pushing to per-session widgets from a shared object leaks dead sessions; polling matches the existing op_log architecture).

@@ -105,6 +105,8 @@ class SplatsApp(param.Parameterized):
         self._state_dirty = False  # set by _persist_state, cleared by _flush_state
         self._restored_selection = False  # session/video restored once, after options load
         self._suppress_autoload = False  # gate _on_video during programmatic option/restore churn
+        self._cache_check_token = 0  # latest-wins token for Run's remote-cache check
+        self._cache_check_active = False  # keeps widgets locked through the check window
         self._build_sidebar()
         self._refresh_sessions()
 
@@ -259,7 +261,9 @@ class SplatsApp(param.Parameterized):
 
     def _sync_busy(self) -> None:
         """Poll hook: mirror the shared worker's busy flag onto this page's widgets."""
-        busy = bool(self._gpu.busy)
+        # A pending Run cache-check also counts as busy, or the 300ms poll would
+        # re-enable Run mid-check and a second click could queue a duplicate pipeline.
+        busy = bool(self._gpu.busy) or self._cache_check_active
         if busy != self.run_btn.disabled:
             self._set_busy(busy)
         elif busy:
@@ -362,9 +366,11 @@ class SplatsApp(param.Parameterized):
             return int(get_video_info(str(video)).get("total_frames") or 0)
 
         def apply(total: int) -> None:
-            if total > 0:
-                self.max_frames.end = total
-                self.max_frames.name = f"Max frames (video has {total})"
+            # Latest-wins: a slow probe for a superseded video must not clobber the bound.
+            if self.video_select.value != name or total <= 0:
+                return
+            self.max_frames.end = total
+            self.max_frames.name = f"Max frames (video has {total})"
 
         self._video_meta_thread = run_off_loop(
             work,
@@ -394,6 +400,7 @@ class SplatsApp(param.Parameterized):
             lambda ok: self._load_outputs(session, stem) if ok else None,
             label="has-processed",
             doc=pn.state.curdoc,
+            on_error=lambda exc: self._op_log.append_line(f"server check failed: {exc}"),
         )
 
     def _on_env_model(self, event) -> None:
@@ -446,13 +453,37 @@ class SplatsApp(param.Parameterized):
             return
         # Remote-cache check is a blocking rclone list — off the IOLoop (a cold check
         # inside the click handler froze the whole page), then load or run on the result.
+        # Lock the widgets for the check window (a second click would queue a duplicate
+        # pipeline run) and keep only the latest check's verdict (stale applies bail out).
+        self._cache_check_token += 1
+        token = self._cache_check_token
+        self._cache_check_active = True
+        self._set_busy(True)
         self._op_log.append_line(f"checking server for {stem}…")
+
+        def apply(ok: bool) -> None:
+            if token != self._cache_check_token:
+                return  # superseded by a newer click
+            self._cache_check_active = False
+            self._sync_busy()  # re-enable unless the shared worker is mid-job
+            if ok:
+                self._load_outputs(session, stem)
+            else:
+                self._start_run(session, name, stem)
+
+        def on_error(exc: Exception) -> None:
+            if token != self._cache_check_token:
+                return
+            self._cache_check_active = False
+            self._sync_busy()
+            self._op_log.error_op(f"server check failed: {exc}")
+
         self._cache_check_thread = run_off_loop(
             lambda: self._source.has_processed(session, stem),
-            lambda ok: self._load_outputs(session, stem) if ok else self._start_run(session, name, stem),
+            apply,
             label="has-processed",
             doc=pn.state.curdoc,
-            on_error=lambda exc: self._op_log.error_op(f"server check failed: {exc}"),
+            on_error=on_error,
         )
 
     def _start_run(self, session: str, name: str, stem: str) -> None:

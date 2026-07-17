@@ -417,6 +417,64 @@ def test_on_run_remote_check_runs_off_loop(tmp_path, monkeypatch):
     assert loads == [("s", "v")]
 
 
+def _select(app, session, videos, value):
+    """Set session/video selection without firing autoload watchers (deterministic)."""
+    app._suppress_autoload = True
+    app.session_select.options = [session]
+    app.session_select.value = session
+    # Join the video-list thread so its options apply can't race the manual ones below.
+    if getattr(app, "_video_list_thread", None):
+        app._video_list_thread.join(timeout=5)
+    app.video_select.options = videos
+    app.video_select.value = value
+    app._suppress_autoload = False
+
+
+def test_double_click_during_check_fires_single_run(tmp_path, monkeypatch):
+    """A second Run click during a pending server check must not queue a second pipeline."""
+    app, _source = _app(tmp_path)
+    _select(app, "s", ["v.mp4"], "v.mp4")
+    starts = []
+    monkeypatch.setattr(app, "_start_run", lambda *a: starts.append(a))
+    gate = threading.Event()
+
+    def slow_check(*_a):
+        gate.wait(timeout=5)
+        return False
+
+    monkeypatch.setattr(app._source, "has_processed", slow_check)
+    app._on_run(None, force=False)
+    first = app._cache_check_thread
+    # Check window: widgets locked, and the worker-flag poll must not unlock them.
+    assert app.run_btn.disabled
+    app._sync_busy()
+    assert app.run_btn.disabled
+    app._on_run(None, force=False)  # second click while the first check is unresolved
+    gate.set()
+    first.join(timeout=5)
+    app._cache_check_thread.join(timeout=5)
+    assert len(starts) == 1  # stale first verdict bailed; only the latest fired
+
+
+def test_stale_video_meta_apply_skipped(tmp_path, monkeypatch):
+    """A slow frame-count probe for a superseded video must not clobber the bound."""
+    import collab_splats.preproc as preproc
+
+    app, _source = _app(tmp_path)
+    _select(app, "s", ["a.mp4", "b.mp4"], "b.mp4")
+    app._suppress_autoload = True  # probe called directly below; keep watchers quiet
+    monkeypatch.setattr(app, "_ensure_local_video", lambda s, n: tmp_path / n)
+    monkeypatch.setattr(preproc, "get_video_info", lambda p: {"total_frames": 777})
+    # Late probe for a.mp4 lands while b.mp4 is selected -> dropped.
+    app._update_max_frames_bound("s", "a.mp4")
+    app._video_meta_thread.join(timeout=5)
+    assert "777" not in app.max_frames.name
+    # Probe matching the current selection applies normally.
+    app._update_max_frames_bound("s", "b.mp4")
+    app._video_meta_thread.join(timeout=5)
+    assert app.max_frames.end == 777
+
+
 def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
     from collab_splats.dashboard import app as app_mod

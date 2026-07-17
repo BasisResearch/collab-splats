@@ -313,6 +313,8 @@ def test_score_frames_reject_reason_blur(tiny_video):
 
 
 def test_score_frames_accepted_have_no_reject_reason(tiny_video):
+    # tiny_video's noise fixture is well-exposed, so with blur disabled (threshold=0.0)
+    # neither reject branch can fire — every record should have reject_reason=None
     records = score_frames(tiny_video, blur_threshold=0.0)
     assert all(r["reject_reason"] is None for r in records)
 

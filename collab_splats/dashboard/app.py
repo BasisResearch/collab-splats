@@ -76,8 +76,13 @@ def _split_terms(text: str) -> list[str]:
 
 
 def _video_options(videos: list, processed: "set[str]") -> dict:
-    """Dropdown label -> filename map; already-processed scenes get a ✓ so users can tell."""
-    return {(f"{v} ✓" if Path(v).stem in processed else v): v for v in videos}
+    """Dropdown label -> filename map; already-processed scenes get a ✓ so users can tell.
+
+    Leads with a blank entry: nothing loads until the user explicitly picks a video.
+    """
+    options = {"— select a video —": ""}
+    options.update({(f"{v} ✓" if Path(v).stem in processed else v): v for v in videos})
+    return options
 
 
 class SplatsApp(param.Parameterized):
@@ -335,7 +340,8 @@ class SplatsApp(param.Parameterized):
         if not sess or sess not in names:
             return
         self.session_select.value = sess
-        # Populate the video options for this session, then re-select the saved video.
+        # Populate the video options; the video itself is NOT restored — explicit-select
+        # UX means a fresh page never auto-loads a scene until the user picks a video.
         try:
             videos = self._source.list_videos(sess)
             processed = set(self._source.list_processed_stems(sess))
@@ -343,9 +349,7 @@ class SplatsApp(param.Parameterized):
             logger.warning("could not list videos for restored session %s", sess, exc_info=True)
             return
         self.video_select.options = _video_options(videos, processed)
-        vid = self._state.get("video_select")
-        if vid and vid in videos:
-            self.video_select.value = vid  # final load is issued once by the setter (suppressed here)
+        self.video_select.value = ""
 
     def _on_session(self, event) -> None:
         """Populate video dropdown when session changes (rclone list runs off the IOLoop)."""
@@ -362,12 +366,10 @@ class SplatsApp(param.Parameterized):
             return _video_options(videos, processed)
 
         def apply(options: dict) -> None:
-            prev = self.video_select.value
             self.video_select.options = options
-            # Same filename exists in the new session -> the value doesn't change, no
-            # watcher event fires, and the new scene would silently never load.
-            if self.video_select.value == prev and not self._suppress_autoload:
-                self._autoload_current()
+            # Explicit-select UX: a session switch never auto-loads. The blank entry is
+            # selected until the user picks a video, which fires _on_video -> load.
+            self.video_select.value = ""
 
         self._video_list_thread = run_off_loop(
             fetch,
@@ -686,6 +688,7 @@ class SplatsApp(param.Parameterized):
                 if loaded and scene_key:
                     self._cache.put(scene_key, "mesh", self._viewer.mesh_polydata())
             if need_score:
+                self._ensure_lift_inputs(scene_key)
                 # Explicit target mode: set_mode runs later in on_done, so self._viewer.mode
                 # is still the OUTGOING mode here — scoring on it produced wrong-length
                 # colours (mesh-vertex vs point) and an IndexError in render_query.
@@ -718,14 +721,46 @@ class SplatsApp(param.Parameterized):
         self._op_log.start_op(f"switching to {mode}")
         self._gpu.submit(job, on_done, doc)
 
+    def _ensure_lift_inputs(self, scene_key) -> None:
+        """Fetch the dense zarr members a first-query feature lift needs (worker thread).
+
+        New runs cache semantics/lifted_normed.npy so the lift never runs; legacy scenes
+        lift from pixel_indices/depth/confidence, which the display pull excludes
+        (PULL_EXCLUDES) — fetch them on demand or the lift fails.
+        """
+        if scene_key is None:
+            return
+        session, stem = scene_key
+        out = self._base_dir / session / stem
+        if (out / "semantics" / "lifted_normed.npy").exists():
+            return  # cached per-point features -> no lift, no dense arrays needed
+        zarr_dir = out / "feedforward.zarr"
+        if not zarr_dir.exists():
+            return  # nothing local yet; the load path owns the initial pull
+        core_missing = any(not (zarr_dir / m).exists() for m in ("pixel_indices", "depth"))
+        conf_missing = not (zarr_dir / "confidence").exists() and not (zarr_dir / "conf").exists()
+        if not core_missing and not conf_missing:
+            return
+        # 'conf' is the legacy key for confidence — fetch both spellings.
+        with self._op_log.step(f"{stem}: fetching dense arrays for feature lift (legacy scene)"):
+            self._source.pull_zarr_members(
+                session,
+                stem,
+                out,
+                ("pixel_indices", "depth", "confidence", "conf"),
+                on_line=self._op_log.rclone_progress("⬇ fetching dense arrays"),
+            )
+
     def _on_query(self, event) -> None:
         """Score the positive/negative query off the IOLoop; recolour the right pane on done."""
         positive = _split_terms(self.pos_query.value)
         negative = _split_terms(self.neg_query.value)
         extractor_name = self.extractor.value
+        scene_key = self._current_scene
         doc = pn.state.curdoc
 
         def job():
+            self._ensure_lift_inputs(scene_key)
             return self._viewer.score_query(
                 positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
             )

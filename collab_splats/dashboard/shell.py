@@ -91,9 +91,9 @@ class DashboardShell:
         )
         self._sidebar_holder = pn.Column(self._splats.sidebar(), sizing_mode="stretch_width")
         self._tabs.param.watch(self._on_tab, "active")
-        # One shared operations console OUTSIDE the tabs: per-page strips lived inside each
-        # tab's content, so the console vanished on the other tab and during the localize
-        # build. Here it stays visible regardless of the active tab.
+        # One shared operations console in the SIDEBAR: per-page strips vanished on the
+        # other tab, and a strip below the stretch-both tabs sat off-viewport. The sidebar
+        # is fixed-width and always visible, so the log persists across tab switches.
         self._progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
         self._seen_log_version = -1
         try:
@@ -102,8 +102,8 @@ class DashboardShell:
             logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
         return pn.template.MaterialTemplate(
             title="splats",
-            sidebar=[self._sidebar_holder],
-            main=[self._tabs, self._progress],
+            sidebar=[self._sidebar_holder, "### Operations", self._progress],
+            main=[self._tabs],
             header_background="#2596be",
             sidebar_width=340,
         )

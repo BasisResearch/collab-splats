@@ -215,7 +215,13 @@ class LocalizePage(param.Parameterized):
         _on_query_video) may touch these before main() is ever called. The heavy pyvista
         plotter + VTK pane are deferred to _ensure_plotter()."""
         self._frame_pane = pn.pane.Image(None, sizing_mode="scale_width")
-        self._matches_col = pn.Column(self._frame_pane, sizing_mode="stretch_width", scroll=True, max_height=700)
+        # Placeholder until a query video is selected (frame preview replaces it) or a run
+        # completes (correspondence figures replace it) — a blank pane reads as broken.
+        placeholder = pn.pane.HTML(
+            "<i style='color:#888'>Select a scene and a query video, then Run. "
+            "The selected frame previews here; progress shows in the Operations console.</i>"
+        )
+        self._matches_col = pn.Column(placeholder, sizing_mode="stretch_width", scroll=True, max_height=700)
         self._plotter: pv.Plotter | None = None
         self._vtk_pane: pn.pane.VTK | None = None
         self._dist_pane = pn.pane.Matplotlib(None, sizing_mode="stretch_width", tight=True)

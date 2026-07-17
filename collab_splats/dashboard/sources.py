@@ -268,6 +268,31 @@ class SessionSource:
         self._run_streaming(cmd, f"copy from {remote}", on_line=on_line)
         return dest_dir
 
+    def pull_zarr_members(
+        self,
+        session: str,
+        stem: str,
+        dest_dir: Path,
+        members: tuple,
+        on_line: Callable[[str], None] | None = None,
+    ) -> None:
+        """Fetch specific feedforward.zarr member arrays that the default pull excludes.
+
+        The scene pull skips the dense per-pixel arrays (PULL_EXCLUDES) because display
+        never needs them — but the feature lift on legacy scenes (no cached
+        lifted_normed.npy) does. This pulls exactly the named members on demand.
+        """
+        client = self._require_client()
+        dest = Path(dest_dir) / "feedforward.zarr"
+        dest.mkdir(parents=True, exist_ok=True)
+        remote = f"{client.remote_name}:{PROCESSED_BUCKET}/{ROOT}/{session}/{stem}/feedforward.zarr"
+        flags: list[str] = []
+        for member in members:
+            flags += ["--include", f"{member}/**"]
+        flags += ["--stats", "2s", "--stats-one-line"]
+        cmd = client._cmd("copy", *flags, remote, str(dest))
+        self._run_streaming(cmd, f"copy members from {remote}", on_line=on_line)
+
     def push_outputs(
         self, local_dir: Path, session: str, stem: str, on_line: Callable[[str], None] | None = None
     ) -> None:

@@ -556,28 +556,35 @@ def test_view_mode_switch_rescores_active_query_on_worker(tmp_path):
     app._viewer.render_query.assert_called_once_with(colors)
 
 
-def test_video_options_marks_processed_scenes():
+def test_video_options_marks_processed_scenes_with_blank_default():
     from collab_splats.dashboard.app import _video_options
 
     opts = _video_options(["a.mp4", "b.mp4"], {"a"})
-    assert opts == {"a.mp4 ✓": "a.mp4", "b.mp4": "b.mp4"}
+    assert opts == {"— select a video —": "", "a.mp4 ✓": "a.mp4", "b.mp4": "b.mp4"}
+    assert next(iter(opts.values())) == ""  # blank entry first -> nothing auto-selected
 
 
-def test_session_switch_same_video_name_still_loads(tmp_path, monkeypatch):
-    """Both sessions hold the same filename: no value event fires, load must still happen."""
+def test_session_switch_resets_video_to_blank_and_never_autoloads(tmp_path, monkeypatch):
+    """Explicit-select UX: switching session leaves the video blank; no load fires."""
     app, _src = _app(tmp_path)
     monkeypatch.setattr(app._source, "list_videos", lambda s: ["C0043.mp4"])
     monkeypatch.setattr(app._source, "list_processed_stems", lambda s: [])
     loads = []
-    monkeypatch.setattr(app, "_autoload_current", lambda: loads.append(app.session_select.value))
+    monkeypatch.setattr(app, "_load_outputs", lambda s, st: loads.append((s, st)))
     app._suppress_autoload = True
     app.session_select.options = ["s1", "s2"]
     app.session_select.value = "s1"
     app._video_list_thread.join(timeout=5)
     app._suppress_autoload = False
-    app.session_select.value = "s2"  # same video name -> Select value unchanged, no watcher
+    app.session_select.value = "s2"
     app._video_list_thread.join(timeout=5)
-    assert "s2" in loads
+    assert app.video_select.value == ""
+    assert loads == []
+    # Picking a video explicitly is what triggers the load path (via _on_video/_autoload).
+    picked = []
+    monkeypatch.setattr(app, "_autoload_current", lambda: picked.append(app.video_select.value))
+    app.video_select.value = "C0043.mp4"
+    assert picked == ["C0043.mp4"]
 
 
 def test_load_outputs_inflight_dedupe(tmp_path, monkeypatch):
@@ -619,6 +626,43 @@ def test_render_query_length_mismatch_falls_back(tmp_path):
     stale = np.zeros((7, 3), dtype=np.uint8)  # wrong length (e.g. mesh-vertex colours)
     viewer.render_query(stale)  # must not raise
     assert any("don't match" in line for line in op_log.log_lines)
+
+
+def test_ensure_lift_inputs_pulls_missing_dense_members(tmp_path, monkeypatch):
+    """Legacy scene (no lifted_normed.npy, dense arrays excluded by the pull) fetches them."""
+    app, _src = _app(tmp_path)
+    (tmp_path / "s" / "v" / "feedforward.zarr").mkdir(parents=True)
+    pulls = []
+    monkeypatch.setattr(
+        app._source, "pull_zarr_members", lambda sess, stem, out, members, on_line=None: pulls.append(members)
+    )
+    app._ensure_lift_inputs(("s", "v"))
+    assert pulls and "pixel_indices" in pulls[0]
+    assert any("fetching dense arrays" in line for line in app._op_log.log_lines)
+
+
+def test_ensure_lift_inputs_skips_when_lifted_cached(tmp_path, monkeypatch):
+    """Cached lifted_normed.npy means the lift never runs -> no dense-array fetch."""
+    app, _src = _app(tmp_path)
+    sem = tmp_path / "s" / "v" / "semantics"
+    sem.mkdir(parents=True)
+    (sem / "lifted_normed.npy").touch()
+    pulls = []
+    monkeypatch.setattr(app._source, "pull_zarr_members", lambda *a, **k: pulls.append(a))
+    app._ensure_lift_inputs(("s", "v"))
+    assert pulls == []
+
+
+def test_ensure_lift_inputs_skips_when_members_present(tmp_path, monkeypatch):
+    """Dense members already on disk (fresh local run) -> no fetch."""
+    app, _src = _app(tmp_path)
+    zarr_dir = tmp_path / "s" / "v" / "feedforward.zarr"
+    for member in ("pixel_indices", "depth", "confidence"):
+        (zarr_dir / member).mkdir(parents=True)
+    pulls = []
+    monkeypatch.setattr(app._source, "pull_zarr_members", lambda *a, **k: pulls.append(a))
+    app._ensure_lift_inputs(("s", "v"))
+    assert pulls == []
 
 
 def test_view_mode_failure_snaps_radio_back(tmp_path):

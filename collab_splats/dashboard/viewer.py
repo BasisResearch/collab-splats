@@ -210,6 +210,10 @@ class SplitViewer:
             self._lifted_normed = load_lifted_normed(self._result, self._semantics_dir)
         except Exception as exc:
             logger.warning("feature lift failed: %s", exc)
+            # Surface in the dashboard console too — the query silently showing plain
+            # RGB with only a server-side warning is indistinguishable from "no match".
+            if op_log is not None:
+                op_log.append_line(f"feature lift FAILED: {exc}")
             self._lifted_normed = None
 
     def ensure_mesh_features(self, op_log=None) -> None:

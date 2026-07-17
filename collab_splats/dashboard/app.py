@@ -287,14 +287,14 @@ class SplatsApp(param.Parameterized):
         doc = pn.state.curdoc
 
         def work():
-            # step() logs start/done/FAILED; on failure still fall through with an empty
-            # list so the dropdown doesn't wedge, and surface the error in the op log.
+            # step()'s FAILED line is the user-visible surface (no error_op: that would
+            # clobber a concurrent run's is_running); fall through with an empty list
+            # so the dropdown doesn't wedge.
             try:
                 with self._op_log.step("listing sessions"):
                     names = self._source.list_sessions()
             except Exception as exc:
                 logger.warning("session listing failed: %s", exc)
-                self._op_log.error_op(f"session listing failed: {exc}")
                 names = []
             self._apply_sessions(names, doc)
 

@@ -268,21 +268,20 @@ class LocalizePage(param.Parameterized):
         doc = pn.state.curdoc
 
         def work():
-            # step() logs start/done/FAILED; on failure still fall through with empty
-            # lists so the dropdowns don't wedge, and surface the error in the op log.
+            # step()'s FAILED lines are the user-visible surface (no error_op: that would
+            # clobber a concurrent run's is_running); fall through with empty lists
+            # so the dropdowns don't wedge.
             try:
                 with self._op_log.step("listing scene sessions"):
                     scenes = self._source.list_sessions()
             except Exception as exc:
                 logger.warning("scene session listing failed: %s", exc)
-                self._op_log.error_op(f"scene session listing failed: {exc}")
                 scenes = []
             try:
                 with self._op_log.step("listing field sessions"):
                     fields = self._source.list_field_sessions()
             except Exception as exc:
                 logger.warning("field session listing failed: %s", exc)
-                self._op_log.error_op(f"field session listing failed: {exc}")
                 fields = []
 
             def setter():
@@ -323,8 +322,8 @@ class LocalizePage(param.Parameterized):
             try:
                 with self._op_log.step("listing feature DBs"):
                     dbs = self._source.list_localization_dbs(session, stem)
-            except Exception:
-                logger.warning("feature DB listing failed", exc_info=True)
+            except Exception as exc:
+                logger.warning("feature DB listing failed: %s", exc, exc_info=True)
                 return
 
             def setter():

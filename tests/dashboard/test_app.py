@@ -299,6 +299,33 @@ def test_density_change_busts_reselect_shortcircuit(tmp_path):
     assert app._current_scene is None
 
 
+def test_load_outputs_logs_steps(tmp_path, monkeypatch):
+    """A cold load logs pull/read steps with elapsed times in the op log."""
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+    app, worker = _recording_app(tmp_path)
+
+    # feedforward.zarr absent -> job pulls; fake pull materialises the zarr dir.
+    def fake_pull(session, stem, out, excludes=(), on_line=None):
+        (out / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+
+    app._source.pull_processed = fake_pull
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p, **kwargs: object())
+    app._load_outputs("s", "v")
+    job_fn, _on_done, _doc = worker.submitted[-1]
+    job_fn()
+    joined = "\n".join(app._op_log.log_lines)
+    assert "pulling from server" in joined
+    assert "reading feedforward.zarr" in joined and "done (" in joined
+
+
+def test_density_change_logs_hint(tmp_path):
+    """Changing display density logs a reselect-to-apply hint in the op log."""
+    app, _src = _app(tmp_path)
+    app.max_display_points.value = 250_000
+    assert any("display density 250,000" in line for line in app._op_log.log_lines)
+
+
 def test_load_job_returns_cached_value_without_pull(tmp_path):
     """Second load of a scene must come from the SceneCache, not rclone + zarr."""
     cache = SceneCache()

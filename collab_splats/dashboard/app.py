@@ -174,9 +174,15 @@ class SplatsApp(param.Parameterized):
             name="Max display points", value=s.get("max_display_points", 500_000), step=50_000
         )
         self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
+
         # Density change must bust the reselect short-circuit so a reselect re-renders at the
         # new density; the cache stays valid since decimation happens inside viewer.load.
-        self.max_display_points.param.watch(lambda e: setattr(self, "_current_scene", None), "value")
+        def _on_density(event) -> None:
+            """Bust the reselect short-circuit and tell the user how to apply the new density."""
+            self._current_scene = None
+            self._op_log.append_line(f"display density {event.new:,} — reselect the scene to apply")
+
+        self.max_display_points.param.watch(_on_density, "value")
         self.normalize_view = pn.widgets.Checkbox(
             name="Normalize view (orient + scale)", value=s.get("normalize_view", True)
         )
@@ -281,10 +287,14 @@ class SplatsApp(param.Parameterized):
         doc = pn.state.curdoc
 
         def work():
+            # step() logs start/done/FAILED; on failure still fall through with an empty
+            # list so the dropdown doesn't wedge, and surface the error in the op log.
             try:
-                names = self._source.list_sessions()
+                with self._op_log.step("listing sessions"):
+                    names = self._source.list_sessions()
             except Exception as exc:
                 logger.warning("session listing failed: %s", exc)
+                self._op_log.error_op(f"session listing failed: {exc}")
                 names = []
             self._apply_sessions(names, doc)
 
@@ -335,9 +345,15 @@ class SplatsApp(param.Parameterized):
         if not event.new:
             return
         session = event.new
+
         # Blocking rclone listing off the IOLoop; set options back on the loop.
+        # step() logs start/done and its FAILED line surfaces listing errors.
+        def fetch():
+            with self._op_log.step(f"listing videos ({session})"):
+                return self._source.list_videos(session)
+
         self._video_list_thread = run_off_loop(
-            lambda: self._source.list_videos(session),
+            fetch,
             lambda vids: setattr(self.video_select, "options", vids),
             label="video-list",
             doc=pn.state.curdoc,
@@ -560,25 +576,28 @@ class SplatsApp(param.Parameterized):
             # Session cache: skip the pull + zarr/npy reads when this scene was already loaded.
             cached = self._cache.get((session, stem), "loaded")
             if cached is not None:
+                self._op_log.append_line(f"{stem}: using in-memory cache")
                 return cached
             if not (out / "feedforward.zarr").exists():
-                self._source.pull_processed(
-                    session,
-                    stem,
-                    out,
-                    excludes=PULL_EXCLUDES,
-                    on_line=self._op_log.rclone_progress("⬇ pulling from server"),
-                )
+                with self._op_log.step(f"{stem}: pulling from server"):
+                    self._source.pull_processed(
+                        session,
+                        stem,
+                        out,
+                        excludes=PULL_EXCLUDES,
+                        on_line=self._op_log.rclone_progress("⬇ pulling from server"),
+                    )
             # Display needs only points/colors/extrinsics; skip decoding dense arrays
             # (GBs when present locally). The lift path reloads them on demand.
-            result = FeedforwardResult.load_zarr(
-                out / "feedforward.zarr",
-                load_depth=False,
-                load_world_points=False,
-                load_confidence=False,
-                load_features=False,
-                load_pixel_indices=False,
-            )
+            with self._op_log.step(f"{stem}: reading feedforward.zarr"):
+                result = FeedforwardResult.load_zarr(
+                    out / "feedforward.zarr",
+                    load_depth=False,
+                    load_world_points=False,
+                    load_confidence=False,
+                    load_features=False,
+                    load_pixel_indices=False,
+                )
             semantics_dir = out / "semantics"
             # TSDF writes mesh_tsdf.ply (see mesh/tsdf.py), not mesh.ply.
             mesh_path = out / "mesh" / "mesh_tsdf.ply"

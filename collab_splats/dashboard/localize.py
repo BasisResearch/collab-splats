@@ -268,15 +268,21 @@ class LocalizePage(param.Parameterized):
         doc = pn.state.curdoc
 
         def work():
+            # step() logs start/done/FAILED; on failure still fall through with empty
+            # lists so the dropdowns don't wedge, and surface the error in the op log.
             try:
-                scenes = self._source.list_sessions()
+                with self._op_log.step("listing scene sessions"):
+                    scenes = self._source.list_sessions()
             except Exception as exc:
                 logger.warning("scene session listing failed: %s", exc)
+                self._op_log.error_op(f"scene session listing failed: {exc}")
                 scenes = []
             try:
-                fields = self._source.list_field_sessions()
+                with self._op_log.step("listing field sessions"):
+                    fields = self._source.list_field_sessions()
             except Exception as exc:
                 logger.warning("field session listing failed: %s", exc)
+                self._op_log.error_op(f"field session listing failed: {exc}")
                 fields = []
 
             def setter():
@@ -292,8 +298,14 @@ class LocalizePage(param.Parameterized):
         if not event.new:
             return
         session = event.new
+
+        # step()'s FAILED line surfaces listing errors in the op log (run_off_loop swallows).
+        def fetch():
+            with self._op_log.step("listing scene videos"):
+                return [Path(v).stem for v in self._source.list_videos(session)]
+
         run_off_loop(
-            lambda: [Path(v).stem for v in self._source.list_videos(session)],
+            fetch,
             lambda stems: setattr(self.scene_video, "options", stems),
             label="scene-video-list",
             doc=pn.state.curdoc,
@@ -307,7 +319,13 @@ class LocalizePage(param.Parameterized):
         doc = pn.state.curdoc
 
         def work():
-            dbs = self._source.list_localization_dbs(session, stem)
+            # step() logs start/done and FAILED; bail on failure (note stays as-is).
+            try:
+                with self._op_log.step("listing feature DBs"):
+                    dbs = self._source.list_localization_dbs(session, stem)
+            except Exception:
+                logger.warning("feature DB listing failed", exc_info=True)
+                return
 
             def setter():
                 options, value = preselect_method(dbs, _METHODS)
@@ -339,8 +357,14 @@ class LocalizePage(param.Parameterized):
         if not event.new:
             return
         fs = event.new
+
+        # step()'s FAILED line surfaces listing errors in the op log (run_off_loop swallows).
+        def fetch():
+            with self._op_log.step("listing cameras"):
+                return self._source.list_rgb_cameras(fs)
+
         run_off_loop(
-            lambda: self._source.list_rgb_cameras(fs),
+            fetch,
             lambda cams: setattr(self.camera, "options", cams),
             label="camera-list",
             doc=pn.state.curdoc,
@@ -351,8 +375,14 @@ class LocalizePage(param.Parameterized):
         if not event.new:
             return
         fs, cam = self.field_session.value, event.new
+
+        # step()'s FAILED line surfaces listing errors in the op log (run_off_loop swallows).
+        def fetch():
+            with self._op_log.step("listing camera videos"):
+                return self._source.list_camera_videos(fs, cam)
+
         run_off_loop(
-            lambda: self._source.list_camera_videos(fs, cam),
+            fetch,
             lambda videos: setattr(self.query_video, "options", videos),
             label="camera-video-list",
             doc=pn.state.curdoc,
@@ -366,14 +396,17 @@ class LocalizePage(param.Parameterized):
         doc = pn.state.curdoc
 
         def work():
+            # step() logs fetch start/done/FAILED; the extra line marks the preview loss.
             try:
-                video = self._ensure_local_query_video(fs, cam, name)
-                from collab_splats.preproc import extract_frame, get_video_info
+                with self._op_log.step(f"fetching query video {name}"):
+                    video = self._ensure_local_query_video(fs, cam, name)
+                    from collab_splats.preproc import extract_frame, get_video_info
 
-                total = int(get_video_info(str(video)).get("total_frames") or 1)
-                frame = extract_frame(video, 0)
-            except Exception:
+                    total = int(get_video_info(str(video)).get("total_frames") or 1)
+                    frame = extract_frame(video, 0)
+            except Exception as exc:
                 logger.warning("query video fetch/preview failed", exc_info=True)
+                self._op_log.append_line(f"query video preview FAILED: {exc}")
                 return
 
             def setter():

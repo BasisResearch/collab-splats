@@ -1,5 +1,7 @@
 """Pure-logic tests for the localize page helpers."""
 
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -19,7 +21,9 @@ def _page(tmp_path):
     source = MagicMock()
     source.list_sessions.return_value = []
     source.list_field_sessions.return_value = []
-    return LocalizePage(base_dir=tmp_path, source=source, gpu_worker=MagicMock(), op_log=OperationLog())
+    worker = MagicMock()
+    worker.busy = False  # MagicMock attrs are truthy; the preview busy-gate needs a real flag
+    return LocalizePage(base_dir=tmp_path, source=source, gpu_worker=worker, op_log=OperationLog())
 
 
 def test_camera_centers_inverts_world_to_camera():
@@ -113,3 +117,41 @@ def test_localize_sync_busy_refreshes_label_while_busy(tmp_path):
     page._op_log.current_op = "matching"
     page._sync_busy()  # already busy -> label-refresh branch
     assert "matching" in page.busy_note.object
+
+
+def test_frame_slider_preview_latest_wins(tmp_path, monkeypatch):
+    page = _page(tmp_path)
+    shown = []
+    monkeypatch.setattr(page, "_ensure_local_query_video", lambda *a: Path("/dev/null"))
+    monkeypatch.setattr(
+        "collab_splats.preproc.extract_frame_fast",
+        lambda video, idx: np.full((4, 4, 3), idx, dtype=np.uint8),
+    )
+    monkeypatch.setattr(page, "_show_frame", lambda f: shown.append(int(f[0, 0, 0])))
+    page.field_session.options = ["fs"]
+    page.field_session.value = "fs"
+    page.camera.options = ["rgb_0"]
+    page.camera.value = "rgb_0"
+    page.query_video.options = ["v.mp4"]
+    page.query_video.value = "v.mp4"
+    shown.clear()  # ignore any on-select frame-0 preview
+    page._preview_token = 2
+    page._preview_frame(token=1, frame_idx=5, doc=None)  # superseded -> dropped
+    page._preview_frame(token=2, frame_idx=9, doc=None)  # current -> shown
+    assert shown == [9]
+    assert any("frame 9 loaded" in line for line in page._op_log.log_lines)
+
+
+def test_frame_slider_skipped_while_busy(tmp_path):
+    page = _page(tmp_path)
+    page._gpu.busy = True
+    before = page._preview_token
+    page._on_frame_slider(SimpleNamespace(new=7))
+    assert page._preview_token == before  # no timer scheduled while a run is in flight
+
+
+def test_show_frame_downscales_to_thumbnail(tmp_path):
+    page = _page(tmp_path)
+    big = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    page._show_frame(big)
+    assert page._frame_pane.object.width <= 640

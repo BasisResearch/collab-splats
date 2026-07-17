@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from pathlib import Path
 
@@ -30,6 +31,8 @@ logger = logging.getLogger(__name__)
 _METHODS = ["disk", "xfeat", "loma", "loma-g"]
 _DEFAULT_METHOD = "loma-g"
 _SUBSAMPLE_ABOVE = 60  # plot every 3rd camera beyond this many reconstruction frames
+_PREVIEW_DEBOUNCE_S = 0.3  # slider settles this long before a frame decode fires
+_PREVIEW_MAX_W = 640  # thumbnail width pushed to the browser (full-res is wasteful)
 
 
 def camera_centers(extrinsics: np.ndarray) -> np.ndarray:
@@ -128,6 +131,8 @@ class LocalizePage(param.Parameterized):
         self._gpu = gpu_worker
         self._op_log = op_log
         self._cache = cache if cache is not None else SceneCache()
+        self._preview_token = 0  # latest slider request; stale extracts are dropped
+        self._preview_timer: threading.Timer | None = None
         self._build_sidebar()
         self._build_main()
         self._refresh_listings()
@@ -154,6 +159,7 @@ class LocalizePage(param.Parameterized):
         self.field_session.param.watch(self._on_field_session, "value")
         self.camera.param.watch(self._on_camera, "value")
         self.query_video.param.watch(self._on_query_video, "value")
+        self.frame_slider.param.watch(self._on_frame_slider, "value")
         self.method.param.watch(self._on_method, "value")
         self.run_btn.on_click(self._on_run)
 
@@ -379,6 +385,50 @@ class LocalizePage(param.Parameterized):
 
         threading.Thread(target=work, name="query-video", daemon=True).start()
 
+    def _on_frame_slider(self, event) -> None:
+        """Debounced live preview: decode + show the frame shortly after the slider settles."""
+        if self._gpu.busy:
+            return  # a run owns the panes; the slider still sets the run's frame_idx
+        if not (self.field_session.value and self.camera.value and self.query_video.value):
+            return
+        self._preview_token += 1
+        if self._preview_timer is not None:
+            self._preview_timer.cancel()
+        self._preview_timer = threading.Timer(
+            _PREVIEW_DEBOUNCE_S,
+            self._preview_frame,
+            kwargs={"token": self._preview_token, "frame_idx": event.new, "doc": pn.state.curdoc},
+        )
+        self._preview_timer.daemon = True
+        self._preview_timer.start()
+
+    def _preview_frame(self, token: int, frame_idx: int, doc) -> None:
+        """Timer thread: fast-seek decode, then marshal display back to the IOLoop."""
+        if token != self._preview_token:
+            return  # superseded by a newer slider position
+        fs, cam, name = self.field_session.value, self.camera.value, self.query_video.value
+        t0 = time.perf_counter()
+        try:
+            video = self._ensure_local_query_video(fs, cam, name)
+            from collab_splats.preproc import extract_frame_fast
+
+            frame = extract_frame_fast(video, frame_idx)
+        except Exception as exc:
+            logger.warning("frame preview failed", exc_info=True)
+            self._op_log.append_line(f"frame {frame_idx} preview FAILED: {exc}")
+            return
+        if token != self._preview_token:
+            return
+        elapsed = time.perf_counter() - t0
+
+        def show() -> None:
+            if token != self._preview_token:
+                return
+            self._show_frame(frame)
+            self._op_log.append_line(f"frame {frame_idx} loaded ({elapsed:.1f}s)")
+
+        doc.add_next_tick_callback(show) if doc is not None else show()
+
     def _ensure_local_query_video(self, field_session: str, camera: str, name: str) -> Path:
         local = self._base_dir / "queries" / field_session / camera / name
         if local.exists():
@@ -387,11 +437,15 @@ class LocalizePage(param.Parameterized):
         return self._source.fetch_field_video(field_session, camera, name, local.parent, on_line=on_line)
 
     def _show_frame(self, frame: np.ndarray) -> None:
-        """Show the selected query frame in the left panel (pre-run state)."""
+        """Show the selected query frame in the left panel, downscaled to a thumbnail."""
         from PIL import Image as PILImage
 
-        # pn.pane.Image renders PIL images directly; raw bytes are not accepted
-        self._frame_pane.object = PILImage.fromarray(frame)
+        # pn.pane.Image renders PIL images directly; full-res frames push MBs of base64
+        # into the doc, so cap the preview width (display is scale_width anyway).
+        img = PILImage.fromarray(frame)
+        if img.width > _PREVIEW_MAX_W:
+            img = img.resize((_PREVIEW_MAX_W, max(1, int(img.height * _PREVIEW_MAX_W / img.width))))
+        self._frame_pane.object = img
         self._matches_col[:] = [self._frame_pane]
 
     # ---- run -----------------------------------------------------------

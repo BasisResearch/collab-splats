@@ -556,6 +556,21 @@ def test_view_mode_switch_rescores_active_query_on_worker(tmp_path):
     app._viewer.render_query.assert_called_once_with(colors)
 
 
+def test_view_mode_failure_snaps_radio_back(tmp_path):
+    """A failed mesh load must reset the radio to the displayed mode (no dead 'mesh' state)."""
+    app, worker = _recording_app(tmp_path)
+    app._viewer.active_query.return_value = None
+    app._viewer.mode = "pointcloud"
+    app.view_mode.value = "mesh"  # fires the watcher -> switch job submitted
+    assert len(worker.submitted) == 1
+    _job_fn, on_done, _doc = worker.submitted[0]
+    on_done(RuntimeError("mesh read failed"))
+    # Radio snapped back to what is displayed, without re-firing the watcher (no new job).
+    assert app.view_mode.value == "pointcloud"
+    assert len(worker.submitted) == 1
+    assert any(line.startswith("ERROR") for line in app._op_log.log_lines)
+
+
 def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
     from collab_splats.dashboard import app as app_mod

@@ -671,6 +671,10 @@ class SplatsApp(param.Parameterized):
             self._sync_busy()
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
+                # Mode switch failed (e.g. mesh read error): snap the radio back to what is
+                # actually displayed, without re-firing this watcher.
+                with param.parameterized.discard_events(self.view_mode):
+                    self.view_mode.value = self._viewer.mode
                 return
             # Mesh (if any) is resident now — render the new mode on the IOLoop.
             self._viewer.set_mode(mode)

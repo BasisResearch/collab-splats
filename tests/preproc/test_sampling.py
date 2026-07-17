@@ -292,6 +292,9 @@ def test_score_frames_one_record_per_frame(tiny_video):
     assert set(records[0]) == {
         "frame_idx",
         "blur_score",
+        "exposure_mean",
+        "exposure_std",
+        "reject_reason",
         "score",
         "selected",
         "disparity",
@@ -300,6 +303,18 @@ def test_score_frames_one_record_per_frame(tiny_video):
     }
     assert records[0]["selected"] is True  # first usable frame always selected
     assert all(0.0 <= r["score"] <= 1.0 for r in records)
+
+
+def test_score_frames_reject_reason_blur(tiny_video):
+    # Threshold above any real Laplacian variance → every frame blur-rejected
+    records = score_frames(tiny_video, blur_threshold=1e12)
+    assert len(records) == 60
+    assert all(r["selected"] is False and r["reject_reason"] == "blur" for r in records)
+
+
+def test_score_frames_accepted_have_no_reject_reason(tiny_video):
+    records = score_frames(tiny_video, blur_threshold=0.0)
+    assert all(r["reject_reason"] is None for r in records)
 
 
 def test_sample_frames_missing_file_returns_empty():
@@ -336,12 +351,13 @@ def test_extract_frames_writes_named_jpegs(tiny_video, tmp_path):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 8 public names — viz is opt-in and must NOT be re-exported
+    # Exactly the 9 public names — viz is opt-in and must NOT be re-exported
     assert set(preproc.__all__) == {
         "sample_frames",
         "score_frames",
         "get_video_info",
         "load_frames",
+        "extract_frame_fast",
         "extract_frame",
         "extract_frames",
         "compute_blur_score",

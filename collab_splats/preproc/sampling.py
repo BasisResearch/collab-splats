@@ -472,13 +472,13 @@ def _iter_scored_frames(
     blur_threshold: float,
     on_progress: Callable[[int, int], None] | None,
     desc: str,
-) -> Iterator[tuple[int, np.ndarray, bool, float, float, dict]]:
-    """Yield (frame_idx, frame_bgr, selected, blur_score, score, components) per frame.
+) -> Iterator[tuple[int, np.ndarray, bool, dict, float, dict]]:
+    """Yield (frame_idx, frame_bgr, selected, quality, score, components) per frame.
 
-    Single scoring loop shared by _sample_optical_flow and score_frames.
-    Gate-rejected frames yield selected=False with score 0.0 and never reach
-    the selector. Selected frames (score >= _SELECT_THRESHOLD) become the
-    selector's new reference keyframe.
+    quality is check_frame_quality's metrics dict. Single scoring loop shared by
+    _sample_optical_flow and score_frames. Gate-rejected frames yield
+    selected=False with score 0.0 and never reach the selector. Selected frames
+    (score >= _SELECT_THRESHOLD) become the selector's new reference keyframe.
     """
     info = get_video_info(str(video_path))
     report, close = _progress_reporter(info["total_frames"], desc, on_progress)
@@ -486,17 +486,16 @@ def _iter_scored_frames(
         for idx, frame in enumerate(_iter_frames(video_path)):
             report(idx + 1)
             gray = _analysis_gray(frame)
-            blur = compute_blur_score(gray)
             # Quality gate first: unusable frames never reach the selector
-            ok, _ = check_frame_quality(gray, blur_threshold, blur_score=blur)
+            ok, quality = check_frame_quality(gray, blur_threshold)
             if not ok:
-                yield idx, frame, False, blur, 0.0, {}
+                yield idx, frame, False, quality, 0.0, {}
                 continue
             score, components = selector.score_frame(gray)
             selected = score >= _SELECT_THRESHOLD
             if selected:
                 selector.accept_frame(gray)
-            yield idx, frame, selected, blur, score, components
+            yield idx, frame, selected, quality, score, components
     finally:
         close()
 
@@ -519,7 +518,7 @@ def _sample_optical_flow(
     )
     frames: list[np.ndarray] = []
     records: list[dict] = []
-    for idx, frame, selected, blur, score, comp in _iter_scored_frames(
+    for idx, frame, selected, quality, score, comp in _iter_scored_frames(
         video_path,
         selector,
         blur_threshold=blur_threshold,
@@ -530,7 +529,7 @@ def _sample_optical_flow(
             continue
         frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # frame_idx is the SOURCE video index (fixes old positional-index bug)
-        records.append({"frame_idx": idx, "blur_score": blur, "score": score, "selected": True, **comp})
+        records.append({"frame_idx": idx, "blur_score": quality["blur_score"], "score": score, "selected": True, **comp})
         if max_frames is not None and len(frames) >= max_frames:
             break
     return frames, records
@@ -547,8 +546,9 @@ def score_frames(
 ) -> list[dict]:
     """Score every frame without keeping pixel data — analysis/viz workflow.
 
-    Returns one record per frame: frame_idx, blur_score, disparity, rotation,
-    histogram_similarity, score, selected.
+    Returns one record per frame: frame_idx, blur_score, exposure_mean,
+    exposure_std, reject_reason, disparity, rotation, histogram_similarity,
+    score, selected.
     """
     selector = OpticalFlowFrameSelector(
         min_disparity=min_disparity,
@@ -556,7 +556,7 @@ def score_frames(
         coverage_weight=coverage_weight,
     )
     records: list[dict] = []
-    for idx, _frame, selected, blur, score, comp in _iter_scored_frames(
+    for idx, _frame, selected, quality, score, comp in _iter_scored_frames(
         video_path,
         selector,
         blur_threshold=blur_threshold,
@@ -566,7 +566,10 @@ def score_frames(
         records.append(
             {
                 "frame_idx": idx,
-                "blur_score": blur,
+                "blur_score": quality["blur_score"],
+                "exposure_mean": quality["exposure_mean"],
+                "exposure_std": quality["exposure_std"],
+                "reject_reason": quality["reject_reason"],
                 "score": score,
                 "selected": selected,
                 "disparity": comp.get("disparity", 0.0),
@@ -598,6 +601,33 @@ def extract_frame(video_path: "str | Path", frame_idx: int) -> np.ndarray:
     for _, frame in _iter_frames_at(str(video_path), [frame_idx]):
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}")
+
+
+def extract_frame_fast(video_path: "str | Path", frame_idx: int) -> np.ndarray:
+    """Decode one frame via ffmpeg input-seek; returns (H, W, 3) uint8 RGB.
+
+    Seeks by timestamp (frame_idx / fps) before demuxing — O(1) in frame depth, so a
+    deep frame previews instantly. Exact on constant-frame-rate video; may land one
+    frame off near keyframes on VFR sources. Use extract_frame where exactness matters
+    (e.g. the localization run, which records frame_idx as provenance).
+    """
+    _require_ffmpeg()
+    info = get_video_info(str(video_path))
+    fps, w, h, total = info["fps"], info["width"], info["height"], info["total_frames"]
+    if not fps or not w or not h:
+        # Unprobeable video: fall back to the exact streaming decode.
+        return extract_frame(video_path, frame_idx)
+    if total and frame_idx >= total:
+        raise ValueError(f"extract_frame_fast: frame {frame_idx} past end of {video_path}")
+    # -ss before -i = input seek (demuxer-level); rawvideo pipe avoids a temp file.
+    cmd = [
+        "ffmpeg", "-v", "error", "-ss", f"{frame_idx / fps:.6f}", "-i", str(video_path),
+        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ]
+    raw = subprocess.run(cmd, capture_output=True, timeout=60).stdout
+    if len(raw) < w * h * 3:
+        raise ValueError(f"extract_frame_fast: frame {frame_idx} not found in {video_path}")
+    return np.frombuffer(raw[: w * h * 3], dtype=np.uint8).reshape(h, w, 3).copy()
 
 
 def extract_frames(video_path: str, frame_indices: list[int], output_dir) -> list[Path]:

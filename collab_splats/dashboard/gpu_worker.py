@@ -30,6 +30,11 @@ class GpuWorker:
     def __init__(self) -> None:
         self._queue: queue.Queue = queue.Queue()
         self.busy = False
+        # In-flight job count (queued + executing + finish pending on the IOLoop). An explicit
+        # counter, not queue.unfinished_tasks: _loop's task_done() races the IOLoop running
+        # _finish, so unfinished_tasks can read 1 at _finish time and leave busy stuck True.
+        self._inflight = 0
+        self._flight_lock = threading.Lock()
         self._thread = threading.Thread(target=self._loop, name="gpu-worker", daemon=True)
         self._thread.start()
 
@@ -42,7 +47,10 @@ class GpuWorker:
             result = self._run(job_fn)
             on_done(result)
             return
-        self.busy = True
+        # Count before enqueue so any poll between put() and _finish observes busy.
+        with self._flight_lock:
+            self._inflight += 1
+            self.busy = True
         self._queue.put((job_fn, on_done, doc))
 
     @staticmethod
@@ -69,15 +77,21 @@ class GpuWorker:
                     # torn down and add_next_tick_callback raises. Drop the result and keep the
                     # worker alive so a reconnecting session still gets a working dashboard.
                     logger.debug("dropping result for a destroyed session", exc_info=True)
-                    self.busy = False
+                    self._job_done()
             finally:
                 self._queue.task_done()
 
     def _finish(self, on_done: Callable[[Any], None], result: Any) -> None:
-        """Runs on the IOLoop: clear busy then deliver the result to the handler."""
-        if self._queue.empty():
-            self.busy = False
+        """Runs on the IOLoop: clear busy (if nothing else in flight) then deliver the result."""
+        self._job_done()
         on_done(result)
+
+    def _job_done(self) -> None:
+        """Retire one in-flight job; drop busy only when no job is queued, running, or finishing."""
+        with self._flight_lock:
+            self._inflight -= 1
+            if self._inflight == 0:
+                self.busy = False
 
     def wait_idle(self, timeout: float = 5.0) -> None:
         """Test helper: block until the queue is drained (best-effort)."""

@@ -12,6 +12,7 @@ class _RecordingWorker:
 
     def __init__(self):
         self.submitted = []
+        self.busy = False  # mirrored by _sync_busy in on_done handlers
 
     def submit(self, job_fn, on_done, doc):
         self.submitted.append((job_fn, on_done, doc))

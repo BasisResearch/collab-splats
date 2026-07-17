@@ -228,3 +228,8 @@ class OperationLog(param.Parameterized):
             sizing_mode="stretch_width",
             header_background="#1a1a2e",
         )
+
+
+def busy_html(op: str) -> str:
+    """Sidebar busy-note span shown while a GPU job is in flight."""
+    return f"<span style='color:#e0a050;font-size:11px'>busy: {op or 'working'}…</span>"

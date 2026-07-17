@@ -104,3 +104,12 @@ def test_localize_set_busy_disables_widgets(tmp_path):
         assert w.disabled
     page.set_busy(False)
     assert not page.run_btn.disabled
+
+
+def test_localize_sync_busy_refreshes_label_while_busy(tmp_path):
+    page = _page(tmp_path)
+    page._gpu.busy = True
+    page._sync_busy()  # transition into busy
+    page._op_log.current_op = "matching"
+    page._sync_busy()  # already busy -> label-refresh branch
+    assert "matching" in page.busy_note.object

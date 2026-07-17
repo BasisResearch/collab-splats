@@ -22,7 +22,7 @@ from collab_splats.dashboard.async_utils import run_off_loop
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.localize import SceneCache
-from collab_splats.dashboard.operation_log import OperationLog
+from collab_splats.dashboard.operation_log import OperationLog, busy_html
 from collab_splats.dashboard.sources import PULL_EXCLUDES, SessionSource
 from collab_splats.dashboard.viewer import SplitViewer
 
@@ -255,10 +255,7 @@ class SplatsApp(param.Parameterized):
         )
         for w in widgets:
             w.disabled = busy
-        op = self._op_log.current_op
-        self.busy_note.object = (
-            f"<span style='color:#e0a050;font-size:11px'>busy: {op or 'working'}…</span>" if busy else ""
-        )
+        self.busy_note.object = busy_html(self._op_log.current_op) if busy else ""
 
     def _sync_busy(self) -> None:
         """Poll hook: mirror the shared worker's busy flag onto this page's widgets."""
@@ -267,8 +264,7 @@ class SplatsApp(param.Parameterized):
             self._set_busy(busy)
         elif busy:
             # Refresh the label while busy (current_op advances through the run).
-            op = self._op_log.current_op
-            self.busy_note.object = f"<span style='color:#e0a050;font-size:11px'>busy: {op or 'working'}…</span>"
+            self.busy_note.object = busy_html(self._op_log.current_op)
 
     # ---- data wiring ---------------------------------------------------
 
@@ -480,7 +476,8 @@ class SplatsApp(param.Parameterized):
             return True
 
         def on_done(res):
-            self._set_busy(False)
+            # Sync, not unconditional re-enable: another queued job must keep widgets locked.
+            self._sync_busy()
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
@@ -567,7 +564,8 @@ class SplatsApp(param.Parameterized):
             return value
 
         def on_done(res):
-            self._set_busy(False)
+            # Sync, not unconditional re-enable: another queued job must keep widgets locked.
+            self._sync_busy()
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
@@ -606,7 +604,8 @@ class SplatsApp(param.Parameterized):
             )
 
         def on_done(res):
-            self._set_busy(False)
+            # Sync, not unconditional re-enable: another queued job must keep widgets locked.
+            self._sync_busy()
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
@@ -632,7 +631,8 @@ class SplatsApp(param.Parameterized):
             )
 
         def on_done(res):
-            self._set_busy(False)
+            # Sync, not unconditional re-enable: another queued job must keep widgets locked.
+            self._sync_busy()
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return

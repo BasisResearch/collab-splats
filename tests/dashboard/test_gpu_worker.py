@@ -78,6 +78,33 @@ def test_worker_survives_dead_document():
     assert w.busy is False
 
 
+class _RecordingDoc:
+    """Records scheduled callbacks WITHOUT running them — the test delivers finishes itself."""
+
+    def __init__(self):
+        self.scheduled = []
+
+    def add_next_tick_callback(self, cb):
+        self.scheduled.append(cb)
+
+
+def test_busy_holds_until_last_inflight_job_finishes():
+    """busy must survive job 1's _finish while job 2 is still in flight (queue.empty() lies)."""
+    w = GpuWorker()
+    doc = _RecordingDoc()
+    results = []
+    with patch("collab_splats.dashboard.gpu_worker.pytorch_gc"):
+        w.submit(lambda: 1, results.append, doc)
+        w.submit(lambda: 2, results.append, doc)
+        w.wait_idle(timeout=5)
+    assert w.busy  # both jobs ran on the worker; finishes not yet delivered on the IOLoop
+    doc.scheduled[0]()  # deliver job 1's finish
+    assert w.busy  # job 2 still unfinished -> the cross-tab lock must hold
+    doc.scheduled[1]()  # deliver job 2's finish
+    assert not w.busy
+    assert results == [1, 2]
+
+
 def test_pytorch_gc_called_after_each_job():
     w = GpuWorker()
     doc = _FakeDoc()

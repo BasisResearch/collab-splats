@@ -15,7 +15,7 @@ import pyvista as pv
 from collab_splats.dashboard.async_utils import run_off_loop
 from collab_splats.dashboard.config import LocalizationConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
-from collab_splats.dashboard.operation_log import OperationLog
+from collab_splats.dashboard.operation_log import OperationLog, busy_html
 from collab_splats.dashboard.sources import SessionSource
 
 # NB: pipeline / localization viz imports are lazy (inside run/render paths) — they pull
@@ -191,16 +191,16 @@ class LocalizePage(param.Parameterized):
         )
         for w in widgets:
             w.disabled = busy
-        op = self._op_log.current_op
-        self.busy_note.object = (
-            f"<span style='color:#e0a050;font-size:11px'>busy: {op or 'working'}…</span>" if busy else ""
-        )
+        self.busy_note.object = busy_html(self._op_log.current_op) if busy else ""
 
     def _sync_busy(self) -> None:
         """Poll hook: mirror the shared worker's busy flag onto this page's widgets."""
         busy = bool(self._gpu.busy)
         if busy != self.run_btn.disabled:
             self.set_busy(busy)
+        elif busy:
+            # Refresh the label while busy (current_op advances through the run).
+            self.busy_note.object = busy_html(self._op_log.current_op)
 
     # ---- main layout ---------------------------------------------------
 
@@ -435,7 +435,8 @@ class LocalizePage(param.Parameterized):
             )
 
         def on_done(res):
-            self.set_busy(False)
+            # Sync, not unconditional re-enable: another queued job must keep widgets locked.
+            self._sync_busy()
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return

@@ -58,7 +58,15 @@ class DashboardShell:
 
             def build() -> None:
                 t0 = time.perf_counter()
-                self._localize_holder[:] = [self._localize.main()]
+                try:
+                    self._localize_holder[:] = [self._localize.main()]
+                except Exception as exc:  # e.g. VTK/offscreen GL failure
+                    logger.warning("localize page build failed", exc_info=True)
+                    self._localize_holder[:] = [
+                        pn.pane.HTML(f"<b style='color:#e05050'>Localize page failed to build: {exc}</b>")
+                    ]
+                    self._op_log.error_op(f"localize page build failed: {exc}")
+                    return
                 self._op_log.append_line(f"localize page built ({time.perf_counter() - t0:.1f}s)")
 
             doc = pn.state.curdoc

@@ -78,6 +78,24 @@ def test_localize_tab_builds_and_logs(tmp_path):
     assert any("localize page built" in line for line in op_log.log_lines)
 
 
+def test_localize_tab_build_failure_surfaces_error(tmp_path, monkeypatch):
+    """A failing localize build renders an error pane into the holder and logs an ERROR line."""
+    import collab_splats.dashboard.shell as shell_mod
+
+    def boom(self):
+        raise RuntimeError("no GL context")
+
+    monkeypatch.setattr(shell_mod.LocalizePage, "main", boom)
+
+    op_log = OperationLog()
+    shell = shell_mod.DashboardShell(base_dir=tmp_path, source=_NoopSource(), op_log=op_log)
+    shell.view()
+    shell._on_tab(SimpleNamespace(new=1, old=0))
+    assert len(shell._localize_holder) == 1
+    assert "failed to build" in shell._localize_holder[0].object
+    assert op_log.log_lines[-1].startswith("ERROR")
+
+
 def test_shell_sidebar_swaps_on_tab_change(tmp_path):
     from collab_splats.dashboard.shell import DashboardShell
 

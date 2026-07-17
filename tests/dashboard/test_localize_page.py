@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
+from collab_splats.dashboard.config import LocalizationConfig
 from collab_splats.dashboard.localize import (
     LocalizePage,
     SceneCache,
@@ -155,3 +156,39 @@ def test_show_frame_downscales_to_thumbnail(tmp_path):
     big = np.zeros((1080, 1920, 3), dtype=np.uint8)
     page._show_frame(big)
     assert page._frame_pane.object.width <= 640
+
+
+def test_build_result_figures_is_pure(tmp_path, monkeypatch):
+    """Figure building must be worker-safe: consumes the output, returns figs dict, touches no panes."""
+    import matplotlib.figure
+
+    page = _page(tmp_path)
+    # Stub the plotting functions so no real matplotlib rendering happens
+    monkeypatch.setattr(
+        "collab_splats.localization.viz.plot_inlier_distribution",
+        lambda loc, n_frames=0, frame_sources=None: matplotlib.figure.Figure(),
+    )
+    monkeypatch.setattr(
+        "collab_splats.localization.viz.plot_correspondences",
+        lambda *a, **k: matplotlib.figure.Figure(),
+    )
+    # Minimal fake LocalizationRunOutput (mirrors test_run_localization's fixture fields)
+    loc = SimpleNamespace(
+        pose=np.eye(4, dtype=np.float32),
+        n_correspondences=8,
+        n_inliers=6,
+        ref_frame_indices=None,
+        inlier_mask=None,
+    )
+    out = SimpleNamespace(
+        result=loc,
+        query_frame=np.zeros((4, 4, 3), np.uint8),
+        query_intrinsics=500.0 * np.eye(3, dtype=np.float32),
+        intrinsics_source="estimated (experimental)",
+        ref_image_paths=[],
+        ref_extrinsics=np.eye(4, dtype=np.float32)[None],
+        frame_sources=[],
+    )
+    figs = page._build_result_figures(out, LocalizationConfig(extractor="disk"))
+    assert set(figs) == {"dist_fig", "match_figs", "stats_html"}
+    assert figs["match_figs"] == []  # no ref indices -> no correspondence figures

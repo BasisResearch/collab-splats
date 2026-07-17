@@ -500,6 +500,9 @@ class LocalizePage(param.Parameterized):
             "camera": cam,
             "frame_idx": int(frame_idx),
         }
+        # Captured for the worker: on_done must only assign panes, never hit the disk
+        scene_key = (scene_session, stem)
+        mesh_path = self._base_dir / scene_session / stem / "mesh" / "mesh_tsdf.ply"
         doc = pn.state.curdoc
 
         def job():
@@ -507,7 +510,7 @@ class LocalizePage(param.Parameterized):
             from collab_splats.dashboard.pipeline import run_localization
 
             video = self._ensure_local_query_video(fs, cam, name)
-            return run_localization(
+            out = run_localization(
                 query_video=video,
                 frame_idx=frame_idx,
                 session=scene_session,
@@ -519,6 +522,11 @@ class LocalizePage(param.Parameterized):
                 provenance=provenance,
                 cache=self._cache,  # keeps the localizer (and its extractor) warm across runs
             )
+            # Figures + mesh read are slow — build them here so on_done only assigns panes.
+            with self._op_log.step("building result figures"):
+                figs = self._build_result_figures(out, config)
+            mesh = self._ensure_scene_mesh(scene_key, mesh_path)
+            return (out, figs, mesh)
 
         def on_done(res):
             # Sync, not unconditional re-enable: another queued job must keep widgets locked.
@@ -526,27 +534,73 @@ class LocalizePage(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            self._render_result(res, config)
+            out, figs, mesh = res
+            self._render_result(out, figs, mesh)
 
         self.set_busy(True)
         self._gpu.submit(job, on_done, doc)
 
     # ---- rendering -----------------------------------------------------
 
-    def _render_result(self, out, config: LocalizationConfig) -> None:
-        """Fill all three panels from a LocalizationRunOutput (IOLoop thread)."""
-        # Lazy: viz builds figures via plt.subplots(), so pull pyplot to close superseded ones
-        import matplotlib.pyplot as plt
+    def _build_result_figures(self, out, config: LocalizationConfig) -> dict:
+        """Build all matplotlib figures + stats HTML for a run output (worker thread — pure).
 
+        Safe off the IOLoop: matplotlib Agg figures only, no pane/widget access. The
+        GpuWorker serializes jobs, so pyplot's global state is never touched concurrently.
+        """
         from collab_splats.localization.viz import (
             plot_correspondences,
             plot_inlier_distribution,
         )
 
-        try:
-            loc = out.result
-            n_frames = len(out.ref_image_paths)
+        loc = out.result
+        n_frames = len(out.ref_image_paths)
 
+        # Bottom: inlier distribution + summary stats
+        dist_fig = plot_inlier_distribution(loc, n_frames=n_frames, frame_sources=out.frame_sources)
+        ratio = 100 * loc.n_inliers / max(loc.n_correspondences, 1)
+        pose_msg = "" if loc.pose is not None else " — <b style='color:#e05050'>POSE FAILED</b>"
+        stats_html = (
+            f"<div style='font-size:12px'>inliers {loc.n_inliers}/{loc.n_correspondences} "
+            f"({ratio:.0f}%) · intrinsics: {out.intrinsics_source} "
+            f"(fx={out.query_intrinsics[0, 0]:.0f}){pose_msg}</div>"
+        )
+
+        # Top-k match-pair figures, best-first
+        match_figs = []
+        if loc.ref_frame_indices is not None and loc.inlier_mask is not None:
+            counts = np.bincount(loc.ref_frame_indices[loc.inlier_mask].astype(np.intp), minlength=n_frames)
+            top = np.argsort(counts)[::-1][: config.top_k_viz]
+            for ref in top:
+                if counts[ref] == 0 or not Path(out.ref_image_paths[ref]).exists():
+                    continue
+                mfig = plot_correspondences(
+                    loc,
+                    out.query_frame,
+                    out.ref_image_paths,
+                    max_pairs=config.max_pairs,
+                    ref_idx=int(ref),
+                    show=False,
+                )
+                if mfig is not None:
+                    match_figs.append(mfig)
+        return {"dist_fig": dist_fig, "match_figs": match_figs, "stats_html": stats_html}
+
+    def _ensure_scene_mesh(self, scene_key, mesh_path: Path):
+        """Read the scene mesh with cache (worker thread — pv.read is a blocking disk read)."""
+        mesh = self._cache.get(scene_key, "mesh")
+        if mesh is None and mesh_path.exists():
+            with self._op_log.step("reading scene mesh"):
+                mesh = pv.read(str(mesh_path))
+            self._cache.put(scene_key, "mesh", mesh)
+        return mesh
+
+    def _render_result(self, out, figs: dict, mesh) -> None:
+        """Fill all three panels from pre-built figures + mesh (IOLoop thread — assignment only)."""
+        # Lazy: pyplot pulled only to close superseded figures (viz built them on the worker)
+        import matplotlib.pyplot as plt
+
+        try:
             # Close the outgoing match-pair figures before rebuilding the column so they do
             # not accumulate in pyplot's global registry (the pre-run frame pane is an Image)
             for child in list(self._matches_col):
@@ -555,60 +609,30 @@ class LocalizePage(param.Parameterized):
 
             # Bottom: inlier distribution + summary stats (close the superseded dist figure)
             old_dist = self._dist_pane.object
-            fig = plot_inlier_distribution(loc, n_frames=n_frames, frame_sources=out.frame_sources)
-            self._dist_pane.object = fig
+            self._dist_pane.object = figs["dist_fig"]
             if old_dist is not None:
                 plt.close(old_dist)
-            ratio = 100 * loc.n_inliers / max(loc.n_correspondences, 1)
-            pose_msg = "" if loc.pose is not None else " — <b style='color:#e05050'>POSE FAILED</b>"
-            self._stats.object = (
-                f"<div style='font-size:12px'>inliers {loc.n_inliers}/{loc.n_correspondences} "
-                f"({ratio:.0f}%) · intrinsics: {out.intrinsics_source} "
-                f"(fx={out.query_intrinsics[0, 0]:.0f}){pose_msg}</div>"
-            )
+            self._stats.object = figs["stats_html"]
 
             # Left: top-k match-pair figures, best-first (replaces the frame preview)
-            if loc.ref_frame_indices is not None and loc.inlier_mask is not None:
-                counts = np.bincount(loc.ref_frame_indices[loc.inlier_mask].astype(np.intp), minlength=n_frames)
-                top = np.argsort(counts)[::-1][: config.top_k_viz]
-                panes = []
-                for ref in top:
-                    if counts[ref] == 0 or not Path(out.ref_image_paths[ref]).exists():
-                        continue
-                    mfig = plot_correspondences(
-                        loc,
-                        out.query_frame,
-                        out.ref_image_paths,
-                        max_pairs=config.max_pairs,
-                        ref_idx=int(ref),
-                        show=False,
-                    )
-                    if mfig is not None:
-                        panes.append(pn.pane.Matplotlib(mfig, sizing_mode="stretch_width", tight=True))
-                if panes:
-                    self._matches_col[:] = panes
+            if figs["match_figs"]:
+                self._matches_col[:] = [
+                    pn.pane.Matplotlib(f, sizing_mode="stretch_width", tight=True) for f in figs["match_figs"]
+                ]
 
             # Right: mesh + viridis reconstruction cameras + red localized camera
-            scene_key = (self.scene_session.value, self.scene_video.value)
-            mesh_path = self._base_dir / scene_key[0] / scene_key[1] / "mesh" / "mesh_tsdf.ply"
-            self._render_scene(scene_key, mesh_path, out.ref_extrinsics, loc.pose)
+            self._render_scene(mesh, out.ref_extrinsics, out.result.pose)
         except Exception as exc:
             # Surface a render failure via the op_log instead of escaping to the IOLoop
             logger.warning("localize render failed", exc_info=True)
             self._op_log.error_op(str(exc))
 
-    def _render_scene(
-        self, scene_key, mesh_path: Path, extrinsics: np.ndarray, localized_pose: "np.ndarray | None"
-    ) -> None:
+    def _render_scene(self, mesh, extrinsics: np.ndarray, localized_pose: "np.ndarray | None") -> None:
         """Rebuild the 3D pane: mesh, time-coloured cameras, red localized camera."""
         self._ensure_plotter()
         self._plotter.clear()
 
-        # Mesh (cached across runs and tabs — expensive read)
-        mesh = self._cache.get(scene_key, "mesh")
-        if mesh is None and mesh_path.exists():
-            mesh = pv.read(str(mesh_path))
-            self._cache.put(scene_key, "mesh", mesh)
+        # Mesh arrives preloaded (worker read it via _ensure_scene_mesh)
         if mesh is not None:
             self._plotter.add_mesh(mesh, rgb="RGB" in mesh.array_names, opacity=0.9)
 

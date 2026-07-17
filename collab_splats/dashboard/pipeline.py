@@ -424,13 +424,15 @@ def run_localization(
             if not (out_dir / "feedforward.zarr").exists():
                 source.pull_processed(session, stem, out_dir, excludes=PULL_EXCLUDES)
             op_log.update_progress(15, "localize: loading reconstruction")
-            result = _load_feedforward_result(out_dir)
+            with op_log.step("localize: loading reconstruction"):
+                result = _load_feedforward_result(out_dir)
 
             # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
             op_log.update_progress(25, f"localize: loading DB ({config.extractor})")
-            localizer = _build_localizer(
-                result, config, out_dir / "feedforward.zarr", op_log, cache=cache, scene_key=(session, stem)
-            )
+            with op_log.step(f"localize: DB ({config.extractor})"):
+                localizer = _build_localizer(
+                    result, config, out_dir / "feedforward.zarr", op_log, cache=cache, scene_key=(session, stem)
+                )
             _stamp_db_provenance(out_dir / "feedforward.zarr", config.extractor, out_dir)
 
             # Query frame + intrinsics
@@ -442,7 +444,8 @@ def run_localization(
 
             # Pose: single-pose PnP + refinement — the DB is never modified here
             op_log.update_progress(70, "localize: matching + solving pose")
-            loc = localizer.localize(frame, K)
+            with op_log.step("localize: matching + solving pose"):
+                loc = localizer.localize(frame, K)
             op_log.append_line(
                 f"localize: {loc.n_inliers}/{loc.n_correspondences} inliers"
                 + ("" if loc.pose is not None else " — POSE FAILED")

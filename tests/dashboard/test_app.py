@@ -389,6 +389,34 @@ def test_sync_busy_follows_worker_flag(tmp_path):
     assert not app.run_btn.disabled
 
 
+def test_on_run_without_selection_logs_error(tmp_path):
+    app, _source = _app(tmp_path)
+    app.session_select.options = []
+    app.video_select.options = []
+    app._on_run(None, force=False)
+    assert any("select a session" in line for line in app._op_log.log_lines)
+
+
+def test_on_run_remote_check_runs_off_loop(tmp_path, monkeypatch):
+    """has_processed must not block the click handler; load fires from the off-loop apply."""
+    app, _source = _app(tmp_path)
+    monkeypatch.setattr(app._source, "has_processed", lambda *a: True)
+    loads = []
+    monkeypatch.setattr(app, "_load_outputs", lambda s, st: loads.append((s, st)))
+    app._suppress_autoload = True
+    app.session_select.options = ["s"]
+    app.session_select.value = "s"
+    # Join the video-list thread so its options apply can't race the manual ones below.
+    if getattr(app, "_video_list_thread", None):
+        app._video_list_thread.join(timeout=5)
+    app.video_select.options = ["v.mp4"]
+    app.video_select.value = "v.mp4"
+    app._suppress_autoload = False
+    app._on_run(None, force=False)
+    app._cache_check_thread.join(timeout=5)
+    assert loads == [("s", "v")]
+
+
 def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
     from collab_splats.dashboard import app as app_mod

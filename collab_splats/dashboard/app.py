@@ -343,49 +343,36 @@ class SplatsApp(param.Parameterized):
         """Auto-load cached outputs when a video is selected (skipped during programmatic churn)."""
         if self._suppress_autoload or not event.new:
             return
-        self._update_max_frames_bound(self.session_select.value, event.new)
+        # _autoload_current probes the frame bound itself — calling it here too started a
+        # duplicate remote download while the first fetch was still mid-flight.
         self._autoload_current()
 
     def _update_max_frames_bound(self, session: str, name: str) -> None:
-        """Set the Max-frames upper bound + label to the selected video's total frame count.
+        """Set the Max-frames bound to the video's frame count — fetch/probe off the IOLoop.
 
-        Reading frame count needs the file. If it isn't local yet (remote bucket), fetch it on a
-        background thread (Run needs it anyway) and apply the bound on the IOLoop when it arrives.
+        ffprobe is a subprocess even for local files; never run it inline in a watcher.
         """
         if not session or not name:
             return
-        local = self._base_dir / session / Path(name).stem / name
-        if local.exists():
-            self._apply_max_frames_bound(local)
-            return
-        # Not local: fetch in the background, then set the bound back on the IOLoop.
-        doc = pn.state.curdoc
 
-        def work() -> None:
-            try:
-                video = self._ensure_local_video(session, name)
-            except Exception:
-                logger.warning("could not fetch video for frame count: %s/%s", session, name, exc_info=True)
-                return
-            if doc is not None:
-                doc.add_next_tick_callback(lambda: self._apply_max_frames_bound(video))
-            else:
-                self._apply_max_frames_bound(video)
-
-        threading.Thread(target=work, name="video-meta", daemon=True).start()
-
-    def _apply_max_frames_bound(self, video: Path) -> None:
-        """Read total frame count from a local video and reflect it in the Max-frames widget."""
-        try:
+        def work() -> int:
+            video = self._ensure_local_video(session, name)  # no-op when already local
             from collab_splats.preproc import get_video_info
 
-            total = int(get_video_info(str(video)).get("total_frames") or 0)
-        except Exception:
-            logger.warning("could not read frame count for %s", video, exc_info=True)
-            return
-        if total > 0:
-            self.max_frames.end = total
-            self.max_frames.name = f"Max frames (video has {total})"
+            return int(get_video_info(str(video)).get("total_frames") or 0)
+
+        def apply(total: int) -> None:
+            if total > 0:
+                self.max_frames.end = total
+                self.max_frames.name = f"Max frames (video has {total})"
+
+        self._video_meta_thread = run_off_loop(
+            work,
+            apply,
+            label="video-meta",
+            doc=pn.state.curdoc,
+            on_error=lambda exc: self._op_log.append_line(f"frame count unavailable: {exc}"),
+        )
 
     def _autoload_current(self) -> None:
         """Load cached outputs for the currently-selected session/video, if present."""
@@ -445,17 +432,31 @@ class SplatsApp(param.Parameterized):
         self._flush_state()
         session, name = self.session_select.value, self.video_select.value
         if not session or not name:
+            self._op_log.error_op("select a session and a video first")
             return
         stem = Path(name).stem
         out = self._base_dir / session / stem
-        cached = (out / "feedforward.zarr").exists() or self._source.has_processed(session, stem)
-        # Cached and not forced: just load existing outputs without recomputing
-        if cached and not force:
+        if force:
+            # Force re-run: drop cached loads so the post-run load re-reads fresh outputs.
+            self._invalidate_scene(session, stem)
+            self._start_run(session, name, stem)
+            return
+        if (out / "feedforward.zarr").exists():
             self._load_outputs(session, stem)
             return
-        # Force re-run: drop cached loads so the post-run load re-reads fresh outputs.
-        if force:
-            self._invalidate_scene(session, stem)
+        # Remote-cache check is a blocking rclone list — off the IOLoop (a cold check
+        # inside the click handler froze the whole page), then load or run on the result.
+        self._op_log.append_line(f"checking server for {stem}…")
+        self._cache_check_thread = run_off_loop(
+            lambda: self._source.has_processed(session, stem),
+            lambda ok: self._load_outputs(session, stem) if ok else self._start_run(session, name, stem),
+            label="has-processed",
+            doc=pn.state.curdoc,
+            on_error=lambda exc: self._op_log.error_op(f"server check failed: {exc}"),
+        )
+
+    def _start_run(self, session: str, name: str, stem: str) -> None:
+        """Enqueue the full pipeline for a video (IOLoop thread)."""
         config = self._current_config()
         doc = pn.state.curdoc
 

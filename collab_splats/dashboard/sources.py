@@ -91,6 +91,9 @@ class SessionSource:
         hit = self._listing_cache.get(key)
         if hit is not None and hit[0] > now:
             return hit[1]
+        # Refresh path: drop other expired entries so the memo doesn't grow unbounded.
+        for k in [k for k, (exp, _v) in self._listing_cache.items() if exp <= now]:
+            del self._listing_cache[k]
         value = producer()
         self._listing_cache[key] = (now + self._listing_ttl, value)
         return value

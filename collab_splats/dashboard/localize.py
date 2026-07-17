@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -63,14 +64,28 @@ class SceneCache:
     CPU loads (mesh, arrays) persist across tabs; GPU-holding entries use the
     'localizer:*' kind prefix so drop_kind('localizer') can evict them on tab switch."""
 
+    # Kinds holding heavyweight objects get keep-last-N eviction; others are unbounded
+    # ("loaded" is bounded by SplatsApp._remember_loaded; "localizer:*" by drop_kind).
+    _KIND_KEEP = {"mesh": 3}
+
     def __init__(self) -> None:
         self._store: dict = {}
+        self._order: dict[str, deque] = {}  # kind -> scene_key insertion order
 
     def get(self, scene_key, kind: str):
         return self._store.get((scene_key, kind))
 
     def put(self, scene_key, kind: str, value) -> None:
         self._store[(scene_key, kind)] = value
+        keep = self._KIND_KEEP.get(kind)
+        if keep is None:
+            return
+        order = self._order.setdefault(kind, deque())
+        if scene_key in order:
+            order.remove(scene_key)
+        order.append(scene_key)
+        while len(order) > keep:
+            self._store.pop((order.popleft(), kind), None)
 
     def drop(self, scene_key, kind: str) -> None:
         """Remove one cache entry if present."""

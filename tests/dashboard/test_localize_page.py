@@ -1,4 +1,5 @@
 """Pure-logic tests for the localize page helpers."""
+
 import numpy as np
 
 from collab_splats.dashboard.localize import (
@@ -58,3 +59,19 @@ def test_scene_cache_drop_kind_prefix():
     assert cache.get(("s", "v"), "localizer:loma-g") is None
     assert cache.get(("s", "w"), "localizer:disk") is None
     assert cache.get(("s", "v"), "mesh") is not None  # CPU loads survive
+
+
+def test_scene_cache_evicts_oldest_mesh_beyond_keep():
+    cache = SceneCache()
+    for i in range(5):  # _KIND_KEEP["mesh"] == 3
+        cache.put(("s", f"v{i}"), "mesh", f"m{i}")
+    assert cache.get(("s", "v0"), "mesh") is None
+    assert cache.get(("s", "v1"), "mesh") is None
+    assert cache.get(("s", "v4"), "mesh") == "m4"
+
+
+def test_scene_cache_unbounded_kinds_untouched():
+    cache = SceneCache()
+    for i in range(5):
+        cache.put(("s", f"v{i}"), "localizer:disk", i)
+    assert cache.get(("s", "v0"), "localizer:disk") == 0

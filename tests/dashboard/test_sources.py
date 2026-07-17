@@ -216,3 +216,12 @@ def test_push_outputs_raises_on_nonzero_exit(monkeypatch, tmp_path):
     src = SessionSource(client)
     with pytest.raises(RuntimeError):
         src.push_outputs(tmp_path, "2026_05_07", "clip_03")
+
+
+def test_listing_cache_purges_expired_entries():
+    src = SessionSource(client=object())  # client unused; producers are plain lambdas
+    src._listing_ttl = 0.0  # everything expires immediately
+    src._cached(("a",), lambda: 1)
+    src._cached(("b",), lambda: 2)
+    src._cached(("c",), lambda: 3)  # refresh purges the expired a/b entries
+    assert len(src._listing_cache) == 1

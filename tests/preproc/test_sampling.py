@@ -77,7 +77,7 @@ def test_iter_frames_at_empty_indices(tiny_video):
 # Quality gate
 ########################################################################
 
-from collab_splats.preproc.sampling import _check_frame_quality, compute_blur_score
+from collab_splats.preproc.sampling import check_frame_quality, compute_blur_score
 
 
 def _sharp_gray():
@@ -93,7 +93,9 @@ def test_compute_blur_score_sharp_exceeds_blurred():
 
 
 def test_check_frame_quality_accepts_sharp_frame():
-    assert _check_frame_quality(_sharp_gray()) is True
+    ok, metrics = check_frame_quality(_sharp_gray())
+    assert ok is True
+    assert metrics["reject_reason"] is None
 
 
 def test_check_frame_quality_rejects_blurred_frame():
@@ -101,22 +103,30 @@ def test_check_frame_quality_rejects_blurred_frame():
     blurred = cv2.GaussianBlur(sharp, (25, 25), 0)
     # Threshold between the two measured scores makes the test threshold-robust
     threshold = (compute_blur_score(sharp) + compute_blur_score(blurred)) / 2
-    assert _check_frame_quality(blurred, blur_threshold=threshold) is False
-    assert _check_frame_quality(sharp, blur_threshold=threshold) is True
+    ok, metrics = check_frame_quality(blurred, blur_threshold=threshold)
+    assert ok is False and metrics["reject_reason"] == "blur"
+    ok, _ = check_frame_quality(sharp, blur_threshold=threshold)
+    assert ok is True
 
 
 def test_check_frame_quality_rejects_bad_exposure():
     # Near-black and near-white frames fail regardless of sharpness
     dark = np.zeros((240, 320), dtype=np.uint8)
     bright = np.full((240, 320), 255, dtype=np.uint8)
-    assert _check_frame_quality(dark, blur_threshold=0.0) is False
-    assert _check_frame_quality(bright, blur_threshold=0.0) is False
+    for gray in (dark, bright):
+        ok, metrics = check_frame_quality(gray, blur_threshold=0.0)
+        assert ok is False and metrics["reject_reason"] == "exposure"
+
+
+def test_check_frame_quality_metrics_fields():
+    _, metrics = check_frame_quality(_sharp_gray())
+    assert set(metrics) == {"blur_score", "exposure_mean", "exposure_std", "reject_reason"}
 
 
 def test_check_frame_quality_uses_precomputed_blur_score():
     # Passing blur_score short-circuits the Laplacian recompute
-    gray = _sharp_gray()
-    assert _check_frame_quality(gray, blur_threshold=100.0, blur_score=50.0) is False
+    ok, metrics = check_frame_quality(_sharp_gray(), blur_threshold=100.0, blur_score=50.0)
+    assert ok is False and metrics["blur_score"] == 50.0
 
 
 ########################################################################
@@ -326,7 +336,7 @@ def test_extract_frames_writes_named_jpegs(tiny_video, tmp_path):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 7 public names — viz is opt-in and must NOT be re-exported
+    # Exactly the 8 public names — viz is opt-in and must NOT be re-exported
     assert set(preproc.__all__) == {
         "sample_frames",
         "score_frames",
@@ -335,6 +345,7 @@ def test_public_api_surface():
         "extract_frame",
         "extract_frames",
         "compute_blur_score",
+        "check_frame_quality",
     }
     assert not hasattr(preproc, "plot_frame_scores")
 

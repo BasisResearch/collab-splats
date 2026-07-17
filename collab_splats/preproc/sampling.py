@@ -168,23 +168,34 @@ def compute_blur_score(gray: np.ndarray) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
-def _check_frame_quality(
+def check_frame_quality(
     gray: np.ndarray,
     blur_threshold: float = _DEFAULT_BLUR_THRESHOLD,
     blur_score: float | None = None,
-) -> bool:
-    """True if the frame is usable: sharp enough and reasonably exposed.
+) -> tuple[bool, dict]:
+    """Quality gate: is the frame sharp enough and reasonably exposed?
 
+    Returns (ok, metrics) where metrics holds blur_score, exposure_mean,
+    exposure_std, and reject_reason (None | "blur" | "exposure").
     blur_score: pass a precomputed value to skip the Laplacian recompute.
     """
-    # Reject motion blur / defocus
     if blur_score is None:
         blur_score = compute_blur_score(gray)
-    if blur_score < blur_threshold:
-        return False
-    # Reject over/under-exposure and contrast-free frames
+    mean, std = float(gray.mean()), float(gray.std())
     lo, hi = _EXPOSURE_MEAN_RANGE
-    return lo <= float(gray.mean()) <= hi and float(gray.std()) >= _EXPOSURE_MIN_STD
+    # Blur checked first — the first failing check names the reason
+    reason = None
+    if blur_score < blur_threshold:
+        reason = "blur"
+    elif not (lo <= mean <= hi) or std < _EXPOSURE_MIN_STD:
+        reason = "exposure"
+    metrics = {
+        "blur_score": blur_score,
+        "exposure_mean": mean,
+        "exposure_std": std,
+        "reject_reason": reason,
+    }
+    return reason is None, metrics
 
 
 ########################################################################
@@ -434,7 +445,7 @@ def _sample_uniform(
             # Track the sharpest gate-passing frame within the current window
             gray = _analysis_gray(frame)
             blur = compute_blur_score(gray)
-            usable = _check_frame_quality(gray, blur_threshold, blur_score=blur)
+            usable, _ = check_frame_quality(gray, blur_threshold, blur_score=blur)
             if usable and (best is None or blur > best[0]):
                 best = (blur, idx, frame)
             # Window boundary: flush the best frame and start the next window
@@ -477,7 +488,8 @@ def _iter_scored_frames(
             gray = _analysis_gray(frame)
             blur = compute_blur_score(gray)
             # Quality gate first: unusable frames never reach the selector
-            if not _check_frame_quality(gray, blur_threshold, blur_score=blur):
+            ok, _ = check_frame_quality(gray, blur_threshold, blur_score=blur)
+            if not ok:
                 yield idx, frame, False, blur, 0.0, {}
                 continue
             score, components = selector.score_frame(gray)

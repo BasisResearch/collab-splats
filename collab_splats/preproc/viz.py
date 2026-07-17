@@ -108,33 +108,35 @@ def plot_disparity_sensitivity(frame_scores: list, disparity_values: list) -> No
 def plot_quality_examples(video_path: str, frame_scores: list, n_examples: int = 4) -> None:
     """Example frames per quality-gate outcome: accepted / blur- / exposure-rejected.
 
-    Takes score_frames() records; decodes only the displayed frames. Empty
-    categories are dropped from the grid (counts still shown in the title).
+    Takes score_frames() records; decodes only the displayed frames, in a single
+    load_frames() pass. Empty categories are dropped from the grid (counts still
+    shown in the title).
     """
     categories = [
         ("Accepted", [d for d in frame_scores if d.get("reject_reason") is None]),
         ("Rejected: blur", [d for d in frame_scores if d.get("reject_reason") == "blur"]),
         ("Rejected: exposure", [d for d in frame_scores if d.get("reject_reason") == "exposure"]),
     ]
-    counts = " · ".join(f"{label.lower()}: {len(recs)}" for label, recs in categories)
+    counts = " · ".join(f"{key}: {len(recs)}" for key, (_, recs) in zip(("accepted", "blur", "exposure"), categories))
     # Spread picks evenly across each non-empty category rather than taking the first n
     rows = []
     for label, recs in categories:
         if recs:
-            step = max(1, len(recs) // n_examples)
-            rows.append((label, recs[::step][:n_examples]))
+            picks = [recs[i] for i in np.linspace(0, len(recs) - 1, min(n_examples, len(recs))).astype(int)]
+            rows.append((label, picks))
     if not rows:
         fig, ax = plt.subplots(figsize=(8, 2))
         ax.axis("off")
         ax.text(0.5, 0.5, f"No records ({counts})", ha="center", va="center")
         plt.show()
         return
+    # Single decode pass: gather every picked frame_idx across all rows before decoding
+    all_idxs = sorted({d["frame_idx"] for _, recs in rows for d in recs})
+    frame_by_idx = dict(zip(all_idxs, load_frames(video_path, all_idxs)))
     fig, axes = plt.subplots(len(rows), n_examples, figsize=(n_examples * 2.6, len(rows) * 2.4), squeeze=False)
     for row_axes, (label, recs) in zip(axes, rows):
-        # Records are in stream order, so load_frames returns aligned frames
-        frames = load_frames(video_path, [d["frame_idx"] for d in recs])
-        for ax, d, frame in zip(row_axes, recs, frames):
-            ax.imshow(frame)
+        for ax, d in zip(row_axes, recs):
+            ax.imshow(frame_by_idx[d["frame_idx"]])
             ax.set_title(f"#{d['frame_idx']}  blur {d['blur_score']:.0f} · mean {d['exposure_mean']:.0f}", fontsize=8)
         for ax in row_axes:
             ax.axis("off")

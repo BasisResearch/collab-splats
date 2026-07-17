@@ -72,12 +72,20 @@ def test_plot_disparity_sensitivity_monotonic():
 
 
 def test_plot_quality_examples_three_rows(monkeypatch):
-    # Stub decode: viz must only ask for the frames it displays
-    fake = lambda _path, idxs: [np.zeros((24, 32, 3), dtype=np.uint8) for _ in idxs]
+    # Stub decode: records every call so we can assert a single decode pass
+    calls = []
+
+    def fake(_path, idxs):
+        calls.append(list(idxs))
+        return [np.zeros((24, 32, 3), dtype=np.uint8) for _ in idxs]
+
     monkeypatch.setattr("collab_splats.preproc.viz.load_frames", fake)
     plot_quality_examples("unused.mp4", _fake_records(), n_examples=3)
     # One row per non-empty category (accepted / blur / exposure), n_examples cols
     assert len(plt.gcf().axes) == 9
+    # Exactly one load_frames call across all rows, covering every displayed frame
+    assert len(calls) == 1
+    assert len(calls[0]) == 9
 
 
 def test_plot_quality_examples_skips_empty_categories(monkeypatch):
@@ -86,6 +94,10 @@ def test_plot_quality_examples_skips_empty_categories(monkeypatch):
     records = [d for d in _fake_records() if d["reject_reason"] != "exposure"]
     plot_quality_examples("unused.mp4", records, n_examples=3)
     assert len(plt.gcf().axes) == 6  # accepted + blur rows only
+    row_labels = {t.get_text() for ax in plt.gcf().axes for t in ax.texts}
+    assert "Accepted" in row_labels
+    assert "Rejected: blur" in row_labels
+    assert "Rejected: exposure" not in row_labels
 
 
 def test_plot_quality_examples_empty_input():

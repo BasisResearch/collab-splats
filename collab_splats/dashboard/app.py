@@ -646,13 +646,22 @@ class SplatsApp(param.Parameterized):
                 self._op_log.error_op(str(res))
                 return
             result, mesh_path, semantics_dir, lifted_normed = res
-            self._viewer.load(
-                result,
-                mesh_path=mesh_path,
-                semantics_dir=semantics_dir,
-                lifted_normed=lifted_normed,
-                max_points=max_points,
-            )
+            # Timed: the render phase (geometry build + software-GL + full-scene websocket
+            # serialize for TWO panes) is the slow tail of a load — make it visible.
+            try:
+                n_pts = len(result.points)
+                n_shown = min(n_pts, max_points) if max_points > 0 else n_pts
+                label = f"rendering {n_shown:,} points × 2 panes"
+            except Exception:  # test doubles without real arrays
+                label = "rendering scene"
+            with self._op_log.step(label):
+                self._viewer.load(
+                    result,
+                    mesh_path=mesh_path,
+                    semantics_dir=semantics_dir,
+                    lifted_normed=lifted_normed,
+                    max_points=max_points,
+                )
             self._current_scene = (session, stem)  # reselects of this scene now short-circuit
             self._op_log.finish_op()
 

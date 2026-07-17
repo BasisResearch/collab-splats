@@ -78,6 +78,24 @@ def test_scene_cache_drop_kind_prefix():
     assert cache.get(("s", "v"), "mesh") is not None  # CPU loads survive
 
 
+def test_select_options_blank_first():
+    from collab_splats.dashboard.localize import select_options
+
+    opts = select_options(["a", "b"], "— pick —")
+    assert next(iter(opts.values())) == ""  # blank entry first -> nothing auto-selected
+    assert opts["a"] == "a" and opts["b"] == "b"
+
+
+def test_scene_dropdowns_do_not_auto_cascade(tmp_path):
+    """Populating a blank-first dropdown leaves the blank selected: no listing cascade."""
+    from collab_splats.dashboard.localize import select_options
+
+    page = _page(tmp_path)
+    page.scene_session.options = select_options(["s1"], "— select scene session —")
+    # Blank/None both mean "nothing picked"; the watchers guard on falsy values.
+    assert not page.scene_session.value
+
+
 def test_scene_cache_evicts_oldest_mesh_beyond_keep():
     cache = SceneCache()
     for i in range(5):  # _KIND_KEEP["mesh"] == 3

@@ -173,7 +173,9 @@ class OperationLog(param.Parameterized):
         status_color = "#50c050" if is_running else ("#e05050" if err else "#666")
         status_label = current_op if current_op else "Idle"
         bar_color = "#2596be" if is_running else ("#e05050" if err else "#50c050")
-        log_text = "\n".join(lines[-20:]) if lines else ""
+        # No max-height on the pre: the console container is user-resizable and scrolls,
+        # so the log fills whatever height the user drags it to.
+        log_text = "\n".join(lines[-40:]) if lines else ""
         return (
             f"<div style='display:flex;justify-content:space-between;align-items:center;padding:4px 0'>"
             f"<span style='color:{status_color};font-size:11px;font-weight:700'>{status_label}</span>"
@@ -181,7 +183,7 @@ class OperationLog(param.Parameterized):
             f"<div style='background:#222;border-radius:3px;height:6px;overflow:hidden'>"
             f"<div style='background:{bar_color};width:{progress}%;height:6px'></div></div>"
             f"<pre style='font-size:11px;color:#aaa;background:#0d1117;padding:6px;border-radius:3px;"
-            f"margin:6px 0 0 0;overflow-y:auto;max-height:80px'>{log_text}</pre>"
+            f"margin:6px 0 0 0'>{log_text}</pre>"
         )
 
     @param.depends("current_op", "progress", "is_running", "log_lines")

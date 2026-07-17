@@ -47,6 +47,17 @@ def subsample_step(n_cameras: int) -> int:
     return 1 if n_cameras <= _SUBSAMPLE_ABOVE else 3
 
 
+def select_options(items: list, hint: str = "— select —") -> dict:
+    """Blank-first dropdown map: nothing auto-selects or cascades until the user picks.
+
+    Auto-picking the first option cascaded listings/fetches for a scene the user never
+    chose (and displayed the wrong video names against fieldwork_curated).
+    """
+    options = {hint: ""}
+    options.update({i: i for i in items})
+    return options
+
+
 def preselect_method(
     available_dbs: list[str], registered: list[str], default: str = _DEFAULT_METHOD
 ) -> tuple[list[str], str]:
@@ -281,8 +292,10 @@ class LocalizePage(param.Parameterized):
                 fields = []
 
             def setter():
-                self.scene_session.options = scenes
-                self.field_session.options = fields
+                # Blank-first: no session auto-selects, so no listing cascade fires
+                # until the user explicitly picks one.
+                self.scene_session.options = select_options(scenes, "— select scene session —")
+                self.field_session.options = select_options(fields, "— select field session —")
 
             doc.add_next_tick_callback(setter) if doc is not None else setter()
 
@@ -301,7 +314,7 @@ class LocalizePage(param.Parameterized):
 
         run_off_loop(
             fetch,
-            lambda stems: setattr(self.scene_video, "options", stems),
+            lambda stems: setattr(self.scene_video, "options", select_options(stems, "— select scene video —")),
             label="scene-video-list",
             doc=pn.state.curdoc,
         )
@@ -360,7 +373,7 @@ class LocalizePage(param.Parameterized):
 
         run_off_loop(
             fetch,
-            lambda cams: setattr(self.camera, "options", cams),
+            lambda cams: setattr(self.camera, "options", select_options(cams, "— select camera —")),
             label="camera-list",
             doc=pn.state.curdoc,
         )
@@ -378,7 +391,7 @@ class LocalizePage(param.Parameterized):
 
         run_off_loop(
             fetch,
-            lambda videos: setattr(self.query_video, "options", videos),
+            lambda videos: setattr(self.query_video, "options", select_options(videos, "— select query video —")),
             label="camera-video-list",
             doc=pn.state.curdoc,
         )

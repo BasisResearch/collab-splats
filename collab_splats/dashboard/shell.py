@@ -91,10 +91,24 @@ class DashboardShell:
         )
         self._sidebar_holder = pn.Column(self._splats.sidebar(), sizing_mode="stretch_width")
         self._tabs.param.watch(self._on_tab, "active")
-        # One shared operations console in the SIDEBAR: per-page strips vanished on the
-        # other tab, and a strip below the stretch-both tabs sat off-viewport. The sidebar
-        # is fixed-width and always visible, so the log persists across tab switches.
-        self._progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
+        # One shared operations console pinned at the BOTTOM of the page: tabs and console
+        # share a single flex column (tabs stretch, console keeps its height), so the log
+        # persists across tab switches and during the localize build. The console's height
+        # is user-adjustable via the browser-native resize handle (drag its bottom edge).
+        self._progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_both")
+        self._console = pn.Column(
+            self._progress,
+            sizing_mode="stretch_width",
+            height=190,
+            styles={
+                "resize": "vertical",
+                "overflow": "auto",
+                "min-height": "70px",
+                "border-top": "2px solid #2596be",
+                "background": "#0d1117",
+                "padding": "4px 8px",
+            },
+        )
         self._seen_log_version = -1
         try:
             pn.state.add_periodic_callback(self._on_progress_tick, period=300, start=True)
@@ -102,8 +116,8 @@ class DashboardShell:
             logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
         return pn.template.MaterialTemplate(
             title="splats",
-            sidebar=[self._sidebar_holder, "### Operations", self._progress],
-            main=[self._tabs],
+            sidebar=[self._sidebar_holder],
+            main=[pn.Column(self._tabs, self._console, sizing_mode="stretch_both")],
             header_background="#2596be",
             sidebar_width=340,
         )

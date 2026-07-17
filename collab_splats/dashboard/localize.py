@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 ########
 
 _METHODS = ["disk", "xfeat", "loma", "loma-g"]
-_DEFAULT_METHOD = "loma-g"
+_DEFAULT_METHOD = "loma"
 _SUBSAMPLE_ABOVE = 60  # plot every 3rd camera beyond this many reconstruction frames
 _PREVIEW_DEBOUNCE_S = 0.3  # slider settles this long before a frame decode fires
 _PREVIEW_MAX_W = 640  # thumbnail width pushed to the browser (full-res is wasteful)

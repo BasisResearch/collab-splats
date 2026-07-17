@@ -48,14 +48,14 @@ def test_preselect_existing_db_wins():
     assert options == ["disk", "xfeat", "loma", "loma-g"]
 
 
-def test_preselect_defaults_to_loma_g_when_no_db():
+def test_preselect_defaults_to_loma_when_no_db():
     _, value = preselect_method([], ["disk", "xfeat", "loma", "loma-g"])
-    assert value == "loma-g"
+    assert value == "loma"
 
 
-def test_preselect_prefers_loma_g_among_multiple_dbs():
-    _, value = preselect_method(["disk", "loma-g"], ["disk", "xfeat", "loma", "loma-g"])
-    assert value == "loma-g"
+def test_preselect_prefers_loma_among_multiple_dbs():
+    _, value = preselect_method(["disk", "loma"], ["disk", "xfeat", "loma", "loma-g"])
+    assert value == "loma"
 
 
 def test_scene_cache_roundtrip():

@@ -545,8 +545,9 @@ class LocalizePage(param.Parameterized):
     def _build_result_figures(self, out, config: LocalizationConfig) -> dict:
         """Build all matplotlib figures + stats HTML for a run output (worker thread — pure).
 
-        Safe off the IOLoop: matplotlib Agg figures only, no pane/widget access. The
-        GpuWorker serializes jobs, so pyplot's global state is never touched concurrently.
+        Runs on the worker with the Agg backend. Figures are pyplot-managed (Gcf), so
+        there is a theoretical cross-thread window vs the IOLoop's plt.close — benign
+        under CPython/Agg; migrate viz to direct Figure() construction if it ever bites.
         """
         from collab_splats.localization.viz import (
             plot_correspondences,

@@ -137,6 +137,12 @@ def run_app(
     websocket_origin=None restricts connections to host:port + localhost:port. Pass an
     explicit list (or "*") to allow remote-IP / SSH-tunnel access.
     """
+    # Worker threads build matplotlib figures; force the thread-safe Agg backend before
+    # any pyplot import can auto-select a GUI toolkit.
+    import matplotlib
+
+    matplotlib.use("Agg")
+
     # inline=True serves all JS/CSS from this server (headless hosts can't reach CDNs);
     # registering the vtk extension is JS-side only and does not import python vtk.
     pn.extension("vtk", inline=True)

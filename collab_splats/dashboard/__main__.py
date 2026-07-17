@@ -82,17 +82,14 @@ def main() -> None:
     if args.smoke:
         sys.exit(_smoke(args.port, args.base_dir, args.smoke_timeout))
 
-    # Surface startup progress in the terminal: the import phase takes ~20-60s cold
-    # (heavier under load) during which the server is NOT yet reachable.
+    # INFO logging so startup progress (Xvfb, warm imports, sessions) reaches the terminal.
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     origin = args.websocket_origin
     if origin == ["*"]:
         origin = "*"
-    print(
-        f"starting dashboard on http://{args.host}:{args.port} — imports take ~20-60s before the page is available",
-        flush=True,
-    )
-    from collab_splats.dashboard.app import run_app
+    # serve.run_app binds immediately (light imports only) and streams the heavy-stack
+    # import progress to the browser's status strip until the dashboard is ready.
+    from collab_splats.dashboard.serve import run_app
 
     run_app(host=args.host, port=args.port, base_dir=args.base_dir, websocket_origin=origin)
 

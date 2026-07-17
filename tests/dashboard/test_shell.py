@@ -1,5 +1,7 @@
 """Shell composition and page-split contracts."""
 
+from types import SimpleNamespace
+
 import panel as pn
 
 from collab_splats.dashboard.app import SplatsApp
@@ -60,6 +62,20 @@ def test_inactive_tab_main_built_lazily(tmp_path, monkeypatch):
     shell._on_tab(type("E", (), {"new": 0, "old": 1})())
     shell._on_tab(type("E", (), {"new": 1, "old": 0})())
     assert built["n"] == 1  # NOT rebuilt on subsequent activations
+
+
+def test_localize_tab_builds_and_logs(tmp_path):
+    """First activation builds the page (inline when no doc) and logs the build time."""
+    from collab_splats.dashboard.shell import DashboardShell
+
+    op_log = OperationLog()
+    shell = DashboardShell(base_dir=tmp_path, source=_NoopSource(), op_log=op_log)
+    shell.view()
+    event = SimpleNamespace(new=1, old=0)
+    shell._on_tab(event)
+    assert shell._localize_built
+    assert len(shell._localize_holder) == 1
+    assert any("localize page built" in line for line in op_log.log_lines)
 
 
 def test_shell_sidebar_swaps_on_tab_change(tmp_path):

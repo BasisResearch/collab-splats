@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import panel as pn
@@ -37,18 +38,36 @@ class DashboardShell:
         self._localize = LocalizePage(
             base_dir=Path(base_dir), source=source, gpu_worker=gpu_worker, op_log=op_log, cache=self._cache
         )
+        self._gpu = gpu_worker
+        self._op_log = op_log
         self._tabs: pn.Tabs | None = None
         self._sidebar_holder: pn.Column | None = None
 
     def _on_tab(self, event) -> None:
         """Swap sidebar to the active tab; build the localize view lazily; free GPU on leave."""
         if event.new == 1 and not self._localize_built:
-            self._localize_holder[:] = [self._localize.main()]
             self._localize_built = True
+            # Paint a spinner NOW; defer the heavy main() (pyvista/VTK) one tick so the
+            # browser renders feedback before the build blocks the loop.
+            self._localize_holder[:] = [
+                pn.Column(
+                    pn.indicators.LoadingSpinner(value=True, size=40),
+                    pn.pane.HTML("<i>Building Localize page…</i>"),
+                )
+            ]
+
+            def build() -> None:
+                t0 = time.perf_counter()
+                self._localize_holder[:] = [self._localize.main()]
+                self._op_log.append_line(f"localize page built ({time.perf_counter() - t0:.1f}s)")
+
+            doc = pn.state.curdoc
+            doc.add_next_tick_callback(build) if doc is not None else build()
         page = self._splats if event.new == 0 else self._localize
         self._sidebar_holder[:] = [page.sidebar()]
         if event.old == 1:
-            self._localize.release_gpu()
+            # pytorch_gc CUDA-syncs — run it on the worker, not the tab-switch watcher.
+            self._gpu.submit(self._localize.release_gpu, lambda _res: None, pn.state.curdoc)
 
     def view(self) -> pn.template.MaterialTemplate:
         """Assemble tabs + swapping sidebar. The Localize tab holds an empty placeholder

@@ -91,10 +91,25 @@ class DashboardShell:
         )
         self._sidebar_holder = pn.Column(self._splats.sidebar(), sizing_mode="stretch_width")
         self._tabs.param.watch(self._on_tab, "active")
+        # One shared operations console OUTSIDE the tabs: per-page strips lived inside each
+        # tab's content, so the console vanished on the other tab and during the localize
+        # build. Here it stays visible regardless of the active tab.
+        self._progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
+        self._seen_log_version = -1
+        try:
+            pn.state.add_periodic_callback(self._on_progress_tick, period=300, start=True)
+        except Exception:
+            logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
         return pn.template.MaterialTemplate(
             title="splats",
             sidebar=[self._sidebar_holder],
-            main=[self._tabs],
+            main=[self._tabs, self._progress],
             header_background="#2596be",
             sidebar_width=340,
         )
+
+    def _on_progress_tick(self) -> None:
+        """Refresh the shared console when the op log changed (300 ms poll, version-gated)."""
+        if self._op_log.version != self._seen_log_version:
+            self._seen_log_version = self._op_log.version
+            self._progress.object = self._op_log.render_html()

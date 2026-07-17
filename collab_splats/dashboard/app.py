@@ -75,6 +75,11 @@ def _split_terms(text: str) -> list[str]:
     return [t.strip() for t in text.split(",") if t.strip()]
 
 
+def _video_options(videos: list, processed: "set[str]") -> dict:
+    """Dropdown label -> filename map; already-processed scenes get a ✓ so users can tell."""
+    return {(f"{v} ✓" if Path(v).stem in processed else v): v for v in videos}
+
+
 class SplatsApp(param.Parameterized):
     """Single-page dashboard wiring source, pipeline, and the split viewer."""
 
@@ -97,6 +102,7 @@ class SplatsApp(param.Parameterized):
         # Session-level cache of expensive loads, shared with LocalizePage via the shell.
         self._cache = cache if cache is not None else SceneCache()
         self._current_scene: tuple[str, str] | None = None  # (session, stem) currently displayed
+        self._loading_scene: tuple[str, str] | None = None  # (session, stem) load in flight
         self._loaded_order: deque = deque()  # "loaded" insertion order for keep-last-N eviction
         self._viewer = SplitViewer(op_log=self._op_log)
         # Persisted UI state survives browser reloads (each reload rebuilds widgets fresh).
@@ -332,10 +338,11 @@ class SplatsApp(param.Parameterized):
         # Populate the video options for this session, then re-select the saved video.
         try:
             videos = self._source.list_videos(sess)
+            processed = set(self._source.list_processed_stems(sess))
         except Exception:
             logger.warning("could not list videos for restored session %s", sess, exc_info=True)
             return
-        self.video_select.options = videos
+        self.video_select.options = _video_options(videos, processed)
         vid = self._state.get("video_select")
         if vid and vid in videos:
             self.video_select.value = vid  # final load is issued once by the setter (suppressed here)
@@ -346,15 +353,25 @@ class SplatsApp(param.Parameterized):
             return
         session = event.new
 
-        # Blocking rclone listing off the IOLoop; set options back on the loop.
+        # Blocking rclone listings off the IOLoop; set options back on the loop.
         # step() logs start/done and its FAILED line surfaces listing errors.
         def fetch():
             with self._op_log.step(f"listing videos ({session})"):
-                return self._source.list_videos(session)
+                videos = self._source.list_videos(session)
+                processed = set(self._source.list_processed_stems(session))
+            return _video_options(videos, processed)
+
+        def apply(options: dict) -> None:
+            prev = self.video_select.value
+            self.video_select.options = options
+            # Same filename exists in the new session -> the value doesn't change, no
+            # watcher event fires, and the new scene would silently never load.
+            if self.video_select.value == prev and not self._suppress_autoload:
+                self._autoload_current()
 
         self._video_list_thread = run_off_loop(
             fetch,
-            lambda vids: setattr(self.video_select, "options", vids),
+            apply,
             label="video-list",
             doc=pn.state.curdoc,
         )
@@ -565,6 +582,11 @@ class SplatsApp(param.Parameterized):
         # soon-to-be-stale output while a run/load is in flight, so don't trust it then.
         if self._current_scene == (session, stem) and not self._op_log.is_running:
             return
+        # In-flight dedupe: the session-switch path and the video watcher can both request
+        # the same load in one churn; queueing it twice doubles the pull + render.
+        if self._loading_scene == (session, stem):
+            return
+        self._loading_scene = (session, stem)
         out = self._base_dir / session / stem
         doc = pn.state.curdoc  # captured on the IOLoop at call time
         max_points = self.max_display_points.value
@@ -615,6 +637,7 @@ class SplatsApp(param.Parameterized):
             return value
 
         def on_done(res):
+            self._loading_scene = None
             # Sync, not unconditional re-enable: another queued job must keep widgets locked.
             self._sync_busy()
             if isinstance(res, Exception):
@@ -632,7 +655,9 @@ class SplatsApp(param.Parameterized):
             self._op_log.finish_op()
 
         self._set_busy(True)
-        self._op_log.start_op(f"loading {stem}")
+        # Session in the label: stems repeat across sessions ("loading C0043" is ambiguous
+        # right after a session switch).
+        self._op_log.start_op(f"loading {session}/{stem}")
         self._gpu.submit(job, on_done, doc)
 
     def _on_view_mode(self, event) -> None:
@@ -661,8 +686,15 @@ class SplatsApp(param.Parameterized):
                 if loaded and scene_key:
                     self._cache.put(scene_key, "mesh", self._viewer.mesh_polydata())
             if need_score:
+                # Explicit target mode: set_mode runs later in on_done, so self._viewer.mode
+                # is still the OUTGOING mode here — scoring on it produced wrong-length
+                # colours (mesh-vertex vs point) and an IndexError in render_query.
                 return self._viewer.score_query(
-                    positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
+                    positive=positive,
+                    negative=negative,
+                    extractor_name=extractor_name,
+                    op_log=self._op_log,
+                    mode=mode,
                 )
             return None
 
@@ -720,26 +752,15 @@ class SplatsApp(param.Parameterized):
         return self._sidebar
 
     def main(self) -> pn.Column:
-        """Main-area contents: split viewer + live progress strip."""
-        # Live operations strip: stage label + progress bar + scrolling per-step log.
-        # Poll the shared op_log on THIS session's IOLoop (op_log is mutated from the GpuWorker
-        # thread; pushing Bokeh updates cross-thread glitches). Polling reads a locked snapshot and
-        # updates the pane on the IOLoop → flicker-free, and a refreshed page re-attaches live.
-        progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
-        self._seen_log_version = -1
-
-        def _tick() -> None:
-            self._sync_busy()
-            # Skip the HTML re-render when nothing changed (idle sessions poll for free).
-            if self._op_log.version != self._seen_log_version:
-                self._seen_log_version = self._op_log.version
-                progress.object = self._op_log.render_html()
-
+        """Main-area contents: split viewer (the shared op-log console lives in the shell)."""
+        # Busy-state poll only: the operations console is rendered ONCE by DashboardShell,
+        # outside the tabs, so it stays visible on both tabs. This tick just mirrors the
+        # worker's busy flag onto this page's widgets.
         try:
-            pn.state.add_periodic_callback(_tick, period=300, start=True)
+            pn.state.add_periodic_callback(self._sync_busy, period=300, start=True)
         except Exception:
-            # No live server (tests) — leave the static snapshot.
-            logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
+            # No live server (tests) — busy state syncs on job boundaries only.
+            logger.debug("no periodic callback (no server doc)", exc_info=True)
 
         # Slow debounce flush: widget changes only mark state dirty; this writes it to disk.
         # A final flush on session teardown closes the ≤1s loss window on tab close.
@@ -749,7 +770,7 @@ class SplatsApp(param.Parameterized):
         except Exception:
             logger.debug("no periodic callback (no server doc); state flushes on run only", exc_info=True)
 
-        return pn.Column(self._viewer.layout, progress, sizing_mode="stretch_both")
+        return pn.Column(self._viewer.layout, sizing_mode="stretch_both")
 
     def view(self) -> pn.template.MaterialTemplate:
         """Standalone single-page layout (kept for tests and direct serving).

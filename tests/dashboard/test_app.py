@@ -556,6 +556,71 @@ def test_view_mode_switch_rescores_active_query_on_worker(tmp_path):
     app._viewer.render_query.assert_called_once_with(colors)
 
 
+def test_video_options_marks_processed_scenes():
+    from collab_splats.dashboard.app import _video_options
+
+    opts = _video_options(["a.mp4", "b.mp4"], {"a"})
+    assert opts == {"a.mp4 ✓": "a.mp4", "b.mp4": "b.mp4"}
+
+
+def test_session_switch_same_video_name_still_loads(tmp_path, monkeypatch):
+    """Both sessions hold the same filename: no value event fires, load must still happen."""
+    app, _src = _app(tmp_path)
+    monkeypatch.setattr(app._source, "list_videos", lambda s: ["C0043.mp4"])
+    monkeypatch.setattr(app._source, "list_processed_stems", lambda s: [])
+    loads = []
+    monkeypatch.setattr(app, "_autoload_current", lambda: loads.append(app.session_select.value))
+    app._suppress_autoload = True
+    app.session_select.options = ["s1", "s2"]
+    app.session_select.value = "s1"
+    app._video_list_thread.join(timeout=5)
+    app._suppress_autoload = False
+    app.session_select.value = "s2"  # same video name -> Select value unchanged, no watcher
+    app._video_list_thread.join(timeout=5)
+    assert "s2" in loads
+
+
+def test_load_outputs_inflight_dedupe(tmp_path, monkeypatch):
+    """Two requests for the same scene while its load is in flight enqueue exactly one job."""
+    app, _src = _app(tmp_path)
+    submitted = []
+    monkeypatch.setattr(app._gpu, "submit", lambda job, on_done, doc: submitted.append(job))
+    app._load_outputs("s", "v")
+    app._load_outputs("s", "v")  # in flight -> dropped
+    assert len(submitted) == 1
+
+
+def test_score_query_targets_requested_mode(tmp_path):
+    """Mode switches score in the TARGET feature space, not the not-yet-switched current one."""
+    import numpy as np
+
+    from collab_splats.dashboard.viewer import SplitViewer
+
+    viewer = SplitViewer(off_screen=True)
+    viewer.mode = "mesh"  # outgoing mode at job time
+    viewer._result = type("R", (), {"colors": np.zeros((10, 3), dtype=np.uint8), "points": np.zeros((10, 3))})()
+    viewer._lifted_normed = None  # no features -> plain RGB fallback, but cache slot matters
+    colors = viewer.score_query(positive=["x"], mode="pointcloud")
+    assert len(colors) == 10  # point-space fallback, not a mesh-vertex array
+
+
+def test_render_query_length_mismatch_falls_back(tmp_path):
+    """Stale wrong-length colours must not crash the fast-path recolor."""
+    import numpy as np
+
+    from collab_splats.dashboard.operation_log import OperationLog
+    from collab_splats.dashboard.viewer import SplitViewer
+
+    op_log = OperationLog()
+    viewer = SplitViewer(off_screen=True, op_log=op_log)
+    pts = np.random.rand(20, 3).astype(np.float32)
+    cols = np.zeros((20, 3), dtype=np.uint8)
+    viewer.load(type("R", (), {"points": pts, "colors": cols, "extrinsics": None})(), mesh_path=None)
+    stale = np.zeros((7, 3), dtype=np.uint8)  # wrong length (e.g. mesh-vertex colours)
+    viewer.render_query(stale)  # must not raise
+    assert any("don't match" in line for line in op_log.log_lines)
+
+
 def test_view_mode_failure_snaps_radio_back(tmp_path):
     """A failed mesh load must reset the radio to the displayed mode (no dead 'mesh' state)."""
     app, worker = _recording_app(tmp_path)

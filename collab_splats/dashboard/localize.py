@@ -221,9 +221,6 @@ class LocalizePage(param.Parameterized):
         self._dist_pane = pn.pane.Matplotlib(None, sizing_mode="stretch_width", tight=True)
         self._stats = pn.pane.HTML("", sizing_mode="stretch_width")
 
-        # Progress strip: identical polling pattern to SplatsApp.main()
-        self._progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
-
     def _ensure_plotter(self) -> None:
         """Build the off-screen pyvista plotter + VTK pane on first use (lazy: main/_render_scene)."""
         if self._plotter is None:
@@ -233,23 +230,16 @@ class LocalizePage(param.Parameterized):
     def main(self) -> pn.Column:
         self._ensure_plotter()
 
-        self._seen_log_version = -1
-
-        def _tick() -> None:
-            self._sync_busy()
-            # Skip the HTML re-render when nothing changed (idle sessions poll for free).
-            if self._op_log.version != self._seen_log_version:
-                self._seen_log_version = self._op_log.version
-                self._progress.object = self._op_log.render_html()
-
+        # Busy-state poll only: the operations console is rendered ONCE by DashboardShell,
+        # outside the tabs, so it stays visible on both tabs.
         try:
-            pn.state.add_periodic_callback(_tick, period=300, start=True)
+            pn.state.add_periodic_callback(self._sync_busy, period=300, start=True)
         except Exception:
-            logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
+            logger.debug("no periodic callback (no server doc)", exc_info=True)
 
         top = pn.Row(self._matches_col, self._vtk_pane, sizing_mode="stretch_both")
         bottom = pn.Column(self._dist_pane, self._stats, sizing_mode="stretch_width")
-        return pn.Column(top, bottom, self._progress, sizing_mode="stretch_both")
+        return pn.Column(top, bottom, sizing_mode="stretch_both")
 
     def release_gpu(self) -> None:
         """Free GPU memory when the user leaves this tab (models reload on next run).

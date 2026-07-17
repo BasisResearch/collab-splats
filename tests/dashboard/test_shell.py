@@ -108,3 +108,20 @@ def test_shell_sidebar_swaps_on_tab_change(tmp_path):
     assert shell._sidebar_holder[0] is localize_sidebar
     shell._tabs.active = 0
     assert shell._sidebar_holder[0] is splats_sidebar
+
+
+def test_shell_console_lives_outside_tabs(tmp_path):
+    """The op-log console is template-level (visible on both tabs), not per-tab content."""
+    from collab_splats.dashboard.shell import DashboardShell
+
+    op_log = OperationLog()
+    shell = DashboardShell(base_dir=tmp_path, source=_NoopSource(), op_log=op_log)
+    tpl = shell.view()
+    assert shell._progress is not None
+    # Console updates via the shell's own version-gated tick.
+    op_log.append_line("ping")
+    shell._on_progress_tick()
+    assert "ping" in shell._progress.object
+    # Neither page's main content carries its own strip anymore (single console).
+    splats_main = shell._splats.main()
+    assert all("render_html" not in str(type(c)) for c in splats_main)  # sanity: no HTML strip pane

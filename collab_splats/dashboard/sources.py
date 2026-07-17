@@ -214,6 +214,20 @@ class SessionSource:
 
         return self._cached(("list_localization_dbs", session, stem), produce)
 
+    def list_processed_stems(self, session: str) -> list[str]:
+        """Stems with processed outputs for a session — scenes already run (memoized)."""
+
+        # try/except inside produce: the [] fallback is memoized for the TTL — acceptable.
+        def produce():
+            try:
+                client = self._require_client()
+                items = client.list_directory(PROCESSED_BUCKET, f"{ROOT}/{session}")
+            except Exception:  # path absent (nothing processed yet) or rclone unavailable
+                return []
+            return sorted(i["Name"] for i in items if i.get("IsDir"))
+
+        return self._cached(("list_processed_stems", session), produce)
+
     def has_processed(self, session: str, stem: str) -> bool:
         """True if processed outputs already exist for this video (memoized)."""
 

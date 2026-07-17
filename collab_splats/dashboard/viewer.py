@@ -377,13 +377,18 @@ class SplitViewer:
         negative: list[str] | None = None,
         extractor_name: str = "talk2dino",
         op_log=None,
+        mode: "str | None" = None,
     ) -> np.ndarray:
         """Compute per-point query colours (RGB uint8). Pure compute — no rendering.
 
         Reuses BaseQueryableExtractor.score_queries (contrastive softmax, [0, 1]).
         Empty positive or no cached features -> returns the plain RGB colours.
         Call from the GPU worker; pass the returned colours to render_query on the IOLoop.
+        mode selects the TARGET feature space ("pointcloud"/"mesh"); default is the current
+        one. Mode switches must pass their target: set_mode runs later on the IOLoop, so
+        self.mode is still the outgoing mode while this scores on the worker.
         """
+        target = mode or self.mode
 
         def _stage(msg: str) -> None:
             if op_log is not None:
@@ -406,7 +411,7 @@ class SplitViewer:
 
         # In mesh mode, materialise the mesh (worker thread) then transfer point features to
         # mesh vertices on first query if not already cached/persisted (no vertex_features.npy).
-        if self.mode == "mesh":
+        if target == "mesh":
             self.ensure_mesh_polydata(op_log=op_log)
             self.ensure_mesh_features(op_log)
 
@@ -414,7 +419,7 @@ class SplitViewer:
         extractor = self._get_extractor(extractor_name)
 
         # In mesh mode score per-vertex features (same feature space); else score points.
-        if self.mode == "mesh" and self._mesh_vertex_features is not None:
+        if target == "mesh" and self._mesh_vertex_features is not None:
             feature_array = self._mesh_vertex_features
         else:
             feature_array = self._lifted_normed
@@ -424,11 +429,11 @@ class SplitViewer:
         scores = extractor.score_queries(features, positive=positive, negative=negative or None)
         sims = scores.detach().cpu().numpy()
         colors = apply_viridis(sims)
-        # Remember the query and cache colours for THIS mode; invalidate the other mode so a switch
-        # re-scores against the new terms (point vs mesh-vertex feature space).
+        # Remember the query and cache colours for the TARGET mode; invalidate the other mode so
+        # a switch re-scores against the new terms (point vs mesh-vertex feature space).
         self._last_query = (list(positive), list(negative or []), extractor_name)
         self._query_colors = {"pointcloud": None, "mesh": None}
-        self._query_colors[self.mode] = colors
+        self._query_colors[target] = colors
         _stage("query: scored")
         return colors
 
@@ -438,8 +443,21 @@ class SplitViewer:
         Fast path (pointcloud mode, same geometry already displayed): update the existing
         PolyData's RGB scalars in place instead of clearing + rebuilding the whole scene.
         """
+        # Length guard: colours must cover the full pointcloud in pointcloud mode. A stale
+        # or wrong-space result (e.g. mesh-vertex colours after a rapid mode flip, or a
+        # scene swap mid-job) would index out of bounds — show plain RGB instead of crashing.
+        if self.mode != "mesh" and colors is not None and self._result is not None:
+            if len(colors) != len(self._result.points):
+                self._log("query colours don't match the displayed scene — showing plain RGB")
+                logger.warning(
+                    "render_query: %d colours vs %d points (stale result?)",
+                    len(colors),
+                    len(self._result.points),
+                )
+                colors = None
         if (
             self.mode != "mesh"
+            and colors is not None
             and self._right_cloud is not None
             and self._display_idx is not None
             and len(self._display_idx) == self._right_cloud.n_points

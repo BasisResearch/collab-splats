@@ -529,7 +529,9 @@ def _sample_optical_flow(
             continue
         frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # frame_idx is the SOURCE video index (fixes old positional-index bug)
-        records.append({"frame_idx": idx, "blur_score": quality["blur_score"], "score": score, "selected": True, **comp})
+        records.append(
+            {"frame_idx": idx, "blur_score": quality["blur_score"], "score": score, "selected": True, **comp}
+        )
         if max_frames is not None and len(frames) >= max_frames:
             break
     return frames, records
@@ -617,16 +619,33 @@ def extract_frame_fast(video_path: "str | Path", frame_idx: int) -> np.ndarray:
     if not fps or not w or not h:
         # Unprobeable video: fall back to the exact streaming decode.
         return extract_frame(video_path, frame_idx)
-    if total and frame_idx >= total:
-        raise ValueError(f"extract_frame_fast: frame {frame_idx} past end of {video_path}")
+    if frame_idx < 0 or (total and frame_idx >= total):
+        raise ValueError(f"extract_frame_fast: frame {frame_idx} out of range for {video_path}")
+    # Seek to the frame midpoint, not its start: PTS float rounding can otherwise land
+    # the demuxer just past the target timestamp and decode frame N+1 instead of N.
+    seek_s = max(frame_idx - 0.5, 0) / fps
     # -ss before -i = input seek (demuxer-level); rawvideo pipe avoids a temp file.
     cmd = [
-        "ffmpeg", "-v", "error", "-ss", f"{frame_idx / fps:.6f}", "-i", str(video_path),
-        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        "ffmpeg",
+        "-v",
+        "error",
+        "-ss",
+        f"{seek_s:.6f}",
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-",
     ]
-    raw = subprocess.run(cmd, capture_output=True, timeout=60).stdout
+    proc = subprocess.run(cmd, capture_output=True, timeout=60)
+    raw = proc.stdout
     if len(raw) < w * h * 3:
-        raise ValueError(f"extract_frame_fast: frame {frame_idx} not found in {video_path}")
+        err = proc.stderr.decode(errors="replace")[-500:]
+        raise ValueError(f"extract_frame_fast: frame {frame_idx} not found in {video_path}: {err}")
     return np.frombuffer(raw[: w * h * 3], dtype=np.uint8).reshape(h, w, 3).copy()
 
 

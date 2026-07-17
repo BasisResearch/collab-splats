@@ -38,9 +38,12 @@ def test_fast_matches_exact_shape_and_content(synth_video):
     exact = extract_frame(synth_video, 30)
     assert fast.shape == exact.shape == (240, 320, 3)
     assert fast.dtype == np.uint8
-    # Same frame modulo codec noise: testsrc frames differ strongly frame-to-frame,
-    # so a small mean error proves we seeked to the right frame.
-    assert np.abs(fast.astype(int) - exact.astype(int)).mean() < 5
+    exact_29 = extract_frame(synth_video, 29)
+    exact_31 = extract_frame(synth_video, 31)
+    d30 = np.abs(fast.astype(int) - exact.astype(int)).mean()
+    # Fast must be closer to frame 30 than to its neighbours (off-by-one would flip this)
+    assert d30 < np.abs(fast.astype(int) - exact_29.astype(int)).mean()
+    assert d30 < np.abs(fast.astype(int) - exact_31.astype(int)).mean()
 
 
 def test_fast_out_of_range_raises(synth_video):

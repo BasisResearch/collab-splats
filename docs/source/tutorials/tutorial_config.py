@@ -4,32 +4,33 @@ import yaml
 
 # ── Edit these two variables to point at your data ───────────────────────────
 BASE_DIR   = Path("/workspace/outputs")
-# DATASET = "birds_c0043"
-# DATASET = "rats_gh010209"
-# DATASET = "rats_gh010210_20250831"
-# DATASET = "rats_pxl_20260327"
-# DATASET = "rats_pxl_20260330"
-DATASET    = "birds_c0043"
+DATASET    = "2024_02_06/C0043"  # <session-date>/<video-stem>
 MAX_FRAMES = 30
 
 # ── Derived paths (do not edit) ───────────────────────────────────────────────
 OUTPUT_DIR = BASE_DIR / DATASET
-CACHE_DIR  = OUTPUT_DIR          # alias — notebooks use CACHE_DIR
-IMAGES     = OUTPUT_DIR / "images"
+CACHE_DIR  = OUTPUT_DIR                    # alias — notebooks read canonical artifacts here
+FRAMES     = OUTPUT_DIR / "frames"         # pipeline-written keyframes (read-only for tutorials)
+TUTORIAL_CACHE = BASE_DIR / "tutorial_cache" / DATASET  # notebook scratch output (never synced)
 
-# Infer VIDEO_PATH from run_config.yaml; None if not found or file missing
+
 def _infer_video_path(output_dir: Path) -> Path | None:
-    """Read video_path from run_config.yaml in the output directory."""
+    """Resolve the scene's source video: run_config.yaml keys, then *.mp4 glob."""
     config_file = output_dir / "run_config.yaml"
-    if not config_file.exists():
-        return None
-    try:
-        cfg = yaml.safe_load(config_file.read_text())
-        raw = cfg.get("video_path") or cfg.get("input_path")
-        if raw:
-            p = Path(raw)
-            return p if p.exists() else None
-    except Exception:
-        return None
+    if config_file.exists():
+        try:
+            cfg = yaml.safe_load(config_file.read_text())
+            # video_ref is rclone-relative — resolve its basename against the scene dir
+            raw = cfg.get("video_path") or cfg.get("input_path") or cfg.get("video_ref")
+            if raw:
+                for candidate in (Path(raw), output_dir / Path(raw).name):
+                    if candidate.exists():
+                        return candidate
+        except Exception:
+            pass
+    # Fallback: a video file sitting directly in the scene dir
+    matches = sorted(output_dir.glob("*.MP4")) + sorted(output_dir.glob("*.mp4"))
+    return matches[0] if matches else None
+
 
 VIDEO_PATH = _infer_video_path(OUTPUT_DIR)

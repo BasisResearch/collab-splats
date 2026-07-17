@@ -359,6 +359,35 @@ def test_persist_state_is_debounced(tmp_path, monkeypatch):
     assert writes["n"] == 1  # not dirty -> no second write
 
 
+def test_set_busy_disables_all_mutating_widgets(tmp_path):
+    app, _ = _app(tmp_path)
+    app._set_busy(True)
+    for w in (
+        app.run_btn,
+        app.force_btn,
+        app.run_query_btn,
+        app.view_mode,
+        app.normalize_view,
+        app.session_select,
+        app.video_select,
+    ):
+        assert w.disabled
+    assert "busy" in app.busy_note.object
+    app._set_busy(False)
+    assert not app.run_btn.disabled
+    assert app.busy_note.object == ""
+
+
+def test_sync_busy_follows_worker_flag(tmp_path):
+    app, _ = _app(tmp_path)
+    app._gpu.busy = True
+    app._sync_busy()
+    assert app.run_btn.disabled
+    app._gpu.busy = False
+    app._sync_busy()
+    assert not app.run_btn.disabled
+
+
 def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     """Warm thread must front-load the localizer + mesh/pipeline stacks, not just feedforward."""
     from collab_splats.dashboard import app as app_mod

@@ -146,6 +146,8 @@ class LocalizePage(param.Parameterized):
         self.db_note = pn.pane.HTML("", sizing_mode="stretch_width")
         self.append_db = pn.widgets.Checkbox(name="Append localized frame to DB", value=True)
         self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
+        # Cross-tab busy indicator: filled while any GpuWorker job is in flight.
+        self.busy_note = pn.pane.HTML("", sizing_mode="stretch_width")
 
         self.scene_session.param.watch(self._on_scene_session, "value")
         self.scene_video.param.watch(self._on_scene_video, "value")
@@ -169,10 +171,36 @@ class LocalizePage(param.Parameterized):
             self.db_note,
             self.append_db,
             self.run_btn,
+            self.busy_note,
         )
 
     def sidebar(self) -> pn.Column:
         return self._sidebar
+
+    def set_busy(self, busy: bool) -> None:
+        """Enable/disable this page's mutating widgets while a GPU job is in flight."""
+        widgets = (
+            self.run_btn,
+            self.scene_session,
+            self.scene_video,
+            self.field_session,
+            self.camera,
+            self.query_video,
+            self.method,
+            self.append_db,
+        )
+        for w in widgets:
+            w.disabled = busy
+        op = self._op_log.current_op
+        self.busy_note.object = (
+            f"<span style='color:#e0a050;font-size:11px'>busy: {op or 'working'}…</span>" if busy else ""
+        )
+
+    def _sync_busy(self) -> None:
+        """Poll hook: mirror the shared worker's busy flag onto this page's widgets."""
+        busy = bool(self._gpu.busy)
+        if busy != self.run_btn.disabled:
+            self.set_busy(busy)
 
     # ---- main layout ---------------------------------------------------
 
@@ -199,8 +227,14 @@ class LocalizePage(param.Parameterized):
     def main(self) -> pn.Column:
         self._ensure_plotter()
 
+        self._seen_log_version = -1
+
         def _tick() -> None:
-            self._progress.object = self._op_log.render_html()
+            self._sync_busy()
+            # Skip the HTML re-render when nothing changed (idle sessions poll for free).
+            if self._op_log.version != self._seen_log_version:
+                self._seen_log_version = self._op_log.version
+                self._progress.object = self._op_log.render_html()
 
         try:
             pn.state.add_periodic_callback(_tick, period=300, start=True)
@@ -401,13 +435,13 @@ class LocalizePage(param.Parameterized):
             )
 
         def on_done(res):
-            self.run_btn.disabled = False
+            self.set_busy(False)
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
             self._render_result(res, config)
 
-        self.run_btn.disabled = True
+        self.set_busy(True)
         self._gpu.submit(job, on_done, doc)
 
     # ---- rendering -----------------------------------------------------

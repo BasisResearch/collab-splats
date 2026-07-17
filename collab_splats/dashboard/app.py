@@ -180,6 +180,8 @@ class SplatsApp(param.Parameterized):
         )
         self.run_btn = pn.widgets.Button(label="Run", button_type="primary")
         self.force_btn = pn.widgets.Button(label="Force re-run", button_type="warning")
+        # Cross-tab busy indicator: filled while any GpuWorker job is in flight.
+        self.busy_note = pn.pane.HTML("", sizing_mode="stretch_width")
 
         self.session_select.param.watch(self._on_session, "value")
         self.video_select.param.watch(self._on_video, "value")
@@ -233,12 +235,40 @@ class SplatsApp(param.Parameterized):
             self.view_mode,
             self.normalize_view,
             pn.Row(self.run_btn, self.force_btn),
+            self.busy_note,
         )
 
     def _set_busy(self, busy: bool) -> None:
-        """Enable/disable the action buttons while a GPU job is in flight (IOLoop thread)."""
-        for btn in (self.run_btn, self.force_btn, self.run_query_btn):
-            btn.disabled = busy
+        """Enable/disable every mutating widget while a GPU job is in flight (IOLoop thread).
+
+        Covers view widgets too: toggling view_mode mid-load would fire set_mode on a
+        half-loaded viewer and queue a second job.
+        """
+        widgets = (
+            self.run_btn,
+            self.force_btn,
+            self.run_query_btn,
+            self.view_mode,
+            self.normalize_view,
+            self.session_select,
+            self.video_select,
+        )
+        for w in widgets:
+            w.disabled = busy
+        op = self._op_log.current_op
+        self.busy_note.object = (
+            f"<span style='color:#e0a050;font-size:11px'>busy: {op or 'working'}…</span>" if busy else ""
+        )
+
+    def _sync_busy(self) -> None:
+        """Poll hook: mirror the shared worker's busy flag onto this page's widgets."""
+        busy = bool(self._gpu.busy)
+        if busy != self.run_btn.disabled:
+            self._set_busy(busy)
+        elif busy:
+            # Refresh the label while busy (current_op advances through the run).
+            op = self._op_log.current_op
+            self.busy_note.object = f"<span style='color:#e0a050;font-size:11px'>busy: {op or 'working'}…</span>"
 
     # ---- data wiring ---------------------------------------------------
 
@@ -628,9 +658,14 @@ class SplatsApp(param.Parameterized):
         # thread; pushing Bokeh updates cross-thread glitches). Polling reads a locked snapshot and
         # updates the pane on the IOLoop → flicker-free, and a refreshed page re-attaches live.
         progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_width")
+        self._seen_log_version = -1
 
         def _tick() -> None:
-            progress.object = self._op_log.render_html()
+            self._sync_busy()
+            # Skip the HTML re-render when nothing changed (idle sessions poll for free).
+            if self._op_log.version != self._seen_log_version:
+                self._seen_log_version = self._op_log.version
+                progress.object = self._op_log.render_html()
 
         try:
             pn.state.add_periodic_callback(_tick, period=300, start=True)

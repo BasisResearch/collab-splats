@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from collab_splats.dashboard.operation_log import OperationLog
 
 
@@ -85,3 +87,36 @@ def test_panel_returns_component():
     log = OperationLog()
     result = log.panel()
     assert result is not None
+
+
+def test_step_logs_start_and_elapsed():
+    log = OperationLog()
+    with log.step("zarr read"):
+        pass
+    assert log.log_lines[0] == "zarr read…"
+    assert log.log_lines[1].startswith("zarr read done (")
+    assert log.log_lines[1].endswith("s)")
+
+
+def test_step_logs_failure_and_reraises():
+    log = OperationLog()
+    with pytest.raises(ValueError):
+        with log.step("mesh read"):
+            raise ValueError("boom")
+    assert log.log_lines[-1].startswith("mesh read FAILED (")
+    assert "boom" in log.log_lines[-1]
+
+
+def test_version_bumps_on_mutation_only():
+    log = OperationLog()
+    v0 = log.version
+    log.append_line("a")
+    v1 = log.version
+    assert v1 > v0
+    log.append_line("a")  # consecutive dupe is collapsed -> no bump
+    assert log.version == v1
+    log.start_op("x")
+    log.update_progress(10, "y")
+    log.finish_op()
+    log.error_op("z")
+    assert log.version > v1

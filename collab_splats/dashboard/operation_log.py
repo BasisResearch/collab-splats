@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
+import time
 from typing import Any, Callable
 
 import panel as pn
@@ -44,6 +45,28 @@ class OperationLog(param.Parameterized):
     def __init__(self, **params: Any):
         super().__init__(**params)
         self._lock = threading.Lock()
+        self._version = 0  # bumped on every visible mutation; UI polls compare-and-skip
+
+    @property
+    def version(self) -> int:
+        """Monotonic change counter — pollers re-render only when it moves."""
+        return self._version
+
+    @contextlib.contextmanager
+    def step(self, label: str):
+        """Log '<label>…' on entry and '<label> done (Xs)' (or FAILED) on exit.
+
+        Thread-safe and exception-safe; re-raises so callers still see failures.
+        """
+        self.append_line(f"{label}…")
+        t0 = time.perf_counter()
+        try:
+            yield
+        except Exception as exc:
+            self.append_line(f"{label} FAILED ({time.perf_counter() - t0:.1f}s): {exc}")
+            raise
+        else:
+            self.append_line(f"{label} done ({time.perf_counter() - t0:.1f}s)")
 
     def start_op(self, name: str) -> None:
         """Begin a named operation; resets progress to 0."""
@@ -51,6 +74,7 @@ class OperationLog(param.Parameterized):
             self.current_op = name
             self.progress = 0
             self.is_running = True
+            self._version += 1
 
     def update_progress(self, pct: int, message: str = "", log: bool = True) -> None:
         """Update progress percentage; set the status label and (optionally) log the step.
@@ -63,6 +87,7 @@ class OperationLog(param.Parameterized):
             # Surface the current stage in the status label, not just the bar.
             if message:
                 self.current_op = message
+            self._version += 1
         if message and log:
             self.append_line(message)
 
@@ -87,6 +112,7 @@ class OperationLog(param.Parameterized):
             if len(lines) > self._MAX_LINES:
                 lines = lines[-self._MAX_LINES :]
             self.log_lines = lines
+            self._version += 1
 
     @contextlib.contextmanager
     def attach_logging(self, *logger_names: str, level: int = logging.INFO):
@@ -118,6 +144,7 @@ class OperationLog(param.Parameterized):
         with self._lock:
             self.progress = 100
             self.is_running = False
+            self._version += 1
 
     def error_op(self, message: str) -> None:
         """Mark the current operation as failed with an error message."""
@@ -128,6 +155,7 @@ class OperationLog(param.Parameterized):
                 lines = lines[-self._MAX_LINES :]
             self.log_lines = lines
             self.is_running = False
+            self._version += 1
 
     def render_html(self) -> str:
         """Render the current state as a single HTML string (thread-safe snapshot).

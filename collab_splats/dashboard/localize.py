@@ -33,6 +33,7 @@ _DEFAULT_METHOD = "loma"
 _SUBSAMPLE_ABOVE = 60  # plot every 3rd camera beyond this many reconstruction frames
 _PREVIEW_DEBOUNCE_S = 0.3  # slider settles this long before a frame decode fires
 _PREVIEW_MAX_W = 640  # thumbnail width pushed to the browser (full-res is wasteful)
+_LEFT_W = _PREVIEW_MAX_W + 24  # fixed left-column width: flex beside the VTK pane collapses to zero
 
 
 def camera_centers(extrinsics: np.ndarray) -> np.ndarray:
@@ -229,33 +230,78 @@ class LocalizePage(param.Parameterized):
     # ---- main layout ---------------------------------------------------
 
     def _build_main(self) -> None:
-        """Cheap result panes only — watchers fired during __init__ (e.g. _show_frame via
-        _on_query_video) may touch these before main() is ever called. The heavy pyvista
-        plotter + VTK pane are deferred to _ensure_plotter()."""
-        # Fixed width (matches the preview thumbnail): scale_width panes inside nested
-        # stretch columns can flex-collapse to zero height, showing nothing after
-        # 'frame N loaded'. Height follows the image's aspect automatically.
-        self._frame_pane = pn.pane.Image(None, width=_PREVIEW_MAX_W)
-        # Placeholder until a query video is selected (frame preview replaces it) or a run
-        # completes (correspondence figures replace it) — a blank pane reads as broken.
-        placeholder = pn.pane.HTML(
-            "<i style='color:#888'>Select a scene and a query video, then Run. "
-            "The selected frame previews here; progress shows in the Operations console.</i>"
-        )
-        self._matches_col = pn.Column(placeholder, sizing_mode="stretch_width", scroll=True, max_height=700)
+        """Display STATE only — panes are built per document in main() (_build_panes).
+
+        Panes constructed before a server document exists (the old __init__ pattern) bind
+        to a stale/absent Bokeh doc and silently drop updates; nothing display-bound may
+        outlive a main() build. Watchers firing before main() (e.g. _show_frame via
+        _on_query_video during __init__) write state here and render on build.
+        """
+        # left: which content owns the left column — 'placeholder' | 'frame' | 'run' | 'browse'
+        self._state: dict = {"frame": None, "run": None, "browse": None, "left": "placeholder"}
+        self._panes: "dict | None" = None
         self._plotter: pv.Plotter | None = None
-        self._vtk_pane: pn.pane.VTK | None = None
-        self._dist_pane = pn.pane.Matplotlib(None, sizing_mode="stretch_width", tight=True)
-        self._stats = pn.pane.HTML("", sizing_mode="stretch_width")
 
     def _ensure_plotter(self) -> None:
-        """Build the off-screen pyvista plotter + VTK pane on first use (lazy: main/_render_scene)."""
+        """Build the off-screen pyvista plotter on first use (lazy: main/_render_scene)."""
         if self._plotter is None:
             self._plotter = pv.Plotter(off_screen=True)
-            self._vtk_pane = pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
+
+    def _build_panes(self) -> dict:
+        """Construct fresh result panes for the current document build.
+
+        pn.pane.VTK is a dispatcher — VTK(None) returns None — so a stub pane stands in
+        when no plotter exists (tests); main() always ensures the plotter first."""
+        if self._plotter is not None:
+            vtk = pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
+        else:
+            vtk = pn.pane.HTML("", sizing_mode="stretch_both", min_height=500)
+        return {
+            "matches_col": pn.Column(width=_LEFT_W, scroll=True, max_height=700),
+            "vtk": vtk,
+            "dist": pn.pane.Matplotlib(None, sizing_mode="stretch_width", tight=True),
+            "stats": pn.pane.HTML("", sizing_mode="stretch_width"),
+        }
+
+    def _render_state(self) -> None:
+        """Paint the current panes from page state (called by main() and every event render)."""
+        if self._panes is None:
+            return
+        left = self._state["left"]
+        if left == "run" and self._state["run"] is not None:
+            out, figs, mesh = self._state["run"]
+            self._render_result(out, figs, mesh)
+        elif left == "browse" and self._state["browse"] is not None:
+            self._render_browse(self._state["browse"])
+        elif left == "frame" and self._state["frame"] is not None:
+            self._render_preview(self._state["frame"])
+        else:
+            # Placeholder until something is selected — a blank pane reads as broken
+            self._panes["matches_col"][:] = [
+                pn.pane.HTML(
+                    "<i style='color:#888'>Select a scene and a query video, then Run. "
+                    "The selected frame previews here; progress shows in the Operations console.</i>"
+                )
+            ]
+
+    def _render_preview(self, frame: np.ndarray) -> None:
+        """Show the selected query frame in the left panel, downscaled to a thumbnail."""
+        from PIL import Image as PILImage
+
+        # Full-res frames push MBs of base64 into the doc — cap the preview width
+        img = PILImage.fromarray(frame)
+        if img.width > _PREVIEW_MAX_W:
+            img = img.resize((_PREVIEW_MAX_W, max(1, int(img.height * _PREVIEW_MAX_W / img.width))))
+        self._panes["matches_col"][:] = [pn.pane.Image(img, width=_PREVIEW_MAX_W)]
+
+    def _render_browse(self, browse) -> None:
+        """Filled in by the DB-browse task."""
 
     def main(self) -> pn.Column:
+        """Per-document build: fresh panes, painted from page state (last preview/run/browse)."""
         self._ensure_plotter()
+        self._panes = self._build_panes()
+        self._render_state()
 
         # Busy-state poll only: the operations console is rendered ONCE by DashboardShell,
         # outside the tabs, so it stays visible on both tabs.
@@ -264,8 +310,8 @@ class LocalizePage(param.Parameterized):
         except Exception:
             logger.debug("no periodic callback (no server doc)", exc_info=True)
 
-        top = pn.Row(self._matches_col, self._vtk_pane, sizing_mode="stretch_both")
-        bottom = pn.Column(self._dist_pane, self._stats, sizing_mode="stretch_width")
+        top = pn.Row(self._panes["matches_col"], self._panes["vtk"], sizing_mode="stretch_both")
+        bottom = pn.Column(self._panes["dist"], self._panes["stats"], sizing_mode="stretch_width")
         return pn.Column(top, bottom, sizing_mode="stretch_both")
 
     def release_gpu(self) -> None:
@@ -514,18 +560,10 @@ class LocalizePage(param.Parameterized):
             return self._source.fetch_field_video(field_session, camera, name, local.parent, on_line=on_line)
 
     def _show_frame(self, frame: np.ndarray) -> None:
-        """Show the selected query frame in the left panel, downscaled to a thumbnail."""
-        from PIL import Image as PILImage
-
-        # pn.pane.Image renders PIL images directly; full-res frames push MBs of base64
-        # into the doc, so cap the preview width.
-        img = PILImage.fromarray(frame)
-        if img.width > _PREVIEW_MAX_W:
-            img = img.resize((_PREVIEW_MAX_W, max(1, int(img.height * _PREVIEW_MAX_W / img.width))))
-        # Fresh pane per frame: re-attaching a Bokeh model that a previous layout swap
-        # detached (run figures replace the preview) can silently render nothing.
-        self._frame_pane = pn.pane.Image(img, width=_PREVIEW_MAX_W)
-        self._matches_col[:] = [self._frame_pane]
+        """Record the selected query frame as page state and render it if panes exist."""
+        self._state["frame"] = frame
+        self._state["left"] = "frame"
+        self._render_state()
 
     # ---- run -----------------------------------------------------------
 
@@ -581,8 +619,8 @@ class LocalizePage(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            out, figs, mesh = res
-            self._render_result(out, figs, mesh)
+            self._set_run_state(res)
+            self._render_state()
 
         self.set_busy(True)
         self._gpu.submit(job, on_done, doc)
@@ -643,40 +681,48 @@ class LocalizePage(param.Parameterized):
             self._cache.put(scene_key, "mesh", mesh)
         return mesh
 
-    def _render_result(self, out, figs: dict, mesh) -> None:
-        """Fill all three panels from pre-built figures + mesh (IOLoop thread — assignment only)."""
+    def _set_run_state(self, res) -> None:
+        """Swap in a new run result; close the superseded run's figures (pyplot Gcf)."""
         # Lazy: pyplot pulled only to close superseded figures (viz built them on the worker)
         import matplotlib.pyplot as plt
 
-        try:
-            # Close the outgoing match-pair figures before rebuilding the column so they do
-            # not accumulate in pyplot's global registry (the pre-run frame pane is an Image)
-            for child in list(self._matches_col):
-                if isinstance(child, pn.pane.Matplotlib) and child.object is not None:
-                    plt.close(child.object)
+        old = self._state.get("run")
+        if old is not None:
+            _, old_figs, _ = old
+            for f in [old_figs["dist_fig"], *old_figs["match_figs"]]:
+                if f is not None:
+                    plt.close(f)
+        self._state["run"] = res
+        self._state["left"] = "run"
 
-            # Bottom: inlier distribution + summary stats (close the superseded dist figure)
-            old_dist = self._dist_pane.object
-            self._dist_pane.object = figs["dist_fig"]
-            if old_dist is not None:
-                plt.close(old_dist)
-            self._stats.object = figs["stats_html"]
+    def _render_result(self, out, figs: dict, mesh) -> None:
+        """Fill all three panels from pre-built figures + mesh (IOLoop thread — assignment only)."""
+        if self._panes is None:
+            return
+        try:
+            # Bottom: inlier distribution + summary stats
+            self._panes["dist"].object = figs["dist_fig"]
+            self._panes["stats"].object = figs["stats_html"]
 
             # Left: top-k match-pair figures, best-first (replaces the frame preview)
             if figs["match_figs"]:
-                self._matches_col[:] = [
-                    pn.pane.Matplotlib(f, sizing_mode="stretch_width", tight=True) for f in figs["match_figs"]
+                self._panes["matches_col"][:] = [
+                    pn.pane.Matplotlib(f, width=_LEFT_W - 24, tight=True) for f in figs["match_figs"]
                 ]
+            else:
+                self._panes["matches_col"][:] = [pn.pane.HTML("<i>no match figures</i>")]
 
             # Right: mesh + viridis reconstruction cameras + red localized camera
-            self._render_scene(mesh, out.ref_extrinsics, out.result.pose)
+            pose = out.result.pose
+            localized = pose[np.newaxis] if pose is not None else None
+            self._render_scene(mesh, out.ref_extrinsics, localized)
         except Exception as exc:
             # Surface a render failure via the op_log instead of escaping to the IOLoop
             logger.warning("localize render failed", exc_info=True)
             self._op_log.error_op(str(exc))
 
-    def _render_scene(self, mesh, extrinsics: np.ndarray, localized_pose: "np.ndarray | None") -> None:
-        """Rebuild the 3D pane: mesh, time-coloured cameras, red localized camera."""
+    def _render_scene(self, mesh, extrinsics: np.ndarray, localized: "np.ndarray | None") -> None:
+        """Rebuild the 3D pane: mesh, time-coloured cameras, red localized camera(s)."""
         self._ensure_plotter()
         self._plotter.clear()
 
@@ -696,10 +742,11 @@ class LocalizePage(param.Parameterized):
         if step > 1:
             self._plotter.add_text(f"showing every {step}rd camera", font_size=8, position="lower_left")
 
-        # Localized camera in red, drawn larger
-        if localized_pose is not None:
-            loc_center = camera_centers(localized_pose[np.newaxis])
-            self._plotter.add_mesh(pv.PolyData(loc_center), color="red", point_size=22, render_points_as_spheres=True)
+        # Localized camera(s) in red, drawn larger
+        if localized is not None and len(localized):
+            loc_centers = camera_centers(np.asarray(localized))
+            self._plotter.add_mesh(pv.PolyData(loc_centers), color="red", point_size=22, render_points_as_spheres=True)
 
         self._plotter.reset_camera()
-        self._vtk_pane.synchronize()
+        if self._panes is not None and isinstance(self._panes["vtk"], pn.pane.VTK):
+            self._panes["vtk"].synchronize()

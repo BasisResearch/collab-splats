@@ -211,11 +211,60 @@ def test_frame_slider_skipped_while_busy(tmp_path):
     assert page._preview_token == before  # no timer scheduled while a run is in flight
 
 
-def test_show_frame_downscales_to_thumbnail(tmp_path):
+def test_build_panes_returns_fresh_objects_each_call(tmp_path):
+    """Panes must be per-document: two builds share no pane objects (stale-doc bug class)."""
     page = _page(tmp_path)
+    a = page._build_panes()
+    b = page._build_panes()
+    assert set(a) == {"matches_col", "vtk", "dist", "stats"}
+    assert all(a[k] is not b[k] for k in a)
+
+
+def test_show_frame_before_panes_is_pending_then_renders(tmp_path):
+    """_show_frame before main() must not crash; the frame renders when panes build."""
+    import panel as pn
+
+    page = _page(tmp_path)
+    assert page._panes is None
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    page._show_frame(frame)  # no panes yet -> state only
+    assert page._state["left"] == "frame"
+    page._panes = page._build_panes()
+    page._render_state()
+    assert isinstance(page._panes["matches_col"][0], pn.pane.Image)
+
+
+def test_show_frame_downscales_to_thumbnail(tmp_path):
+    """Preview render caps thumbnail width at _PREVIEW_MAX_W."""
+    page = _page(tmp_path)
+    page._panes = page._build_panes()
     big = np.zeros((1080, 1920, 3), dtype=np.uint8)
     page._show_frame(big)
-    assert page._frame_pane.object.width <= 640
+    pane = page._panes["matches_col"][0]
+    assert pane.object.width <= 640
+
+
+def test_render_state_run_precedence(tmp_path, monkeypatch):
+    """left='run' paints figures + stats and draws the scene."""
+    import matplotlib.figure
+
+    page = _page(tmp_path)
+    page._panes = page._build_panes()
+    drawn = []
+    monkeypatch.setattr(page, "_render_scene", lambda *a, **k: drawn.append(a))
+    loc = SimpleNamespace(pose=np.eye(4, dtype=np.float32))
+    out = SimpleNamespace(result=loc, ref_extrinsics=np.eye(4, dtype=np.float32)[None])
+    figs = {
+        "dist_fig": matplotlib.figure.Figure(),
+        "match_figs": [matplotlib.figure.Figure()],
+        "stats_html": "<div>stats</div>",
+    }
+    page._state["run"] = (out, figs, None)
+    page._state["left"] = "run"
+    page._render_state()
+    assert page._panes["dist"].object is figs["dist_fig"]
+    assert page._panes["stats"].object == "<div>stats</div>"
+    assert len(drawn) == 1
 
 
 def test_build_result_figures_is_pure(tmp_path, monkeypatch):

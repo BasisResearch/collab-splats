@@ -1,7 +1,9 @@
 # Tutorial Notebook Sweep + Library Lazy-Import Pass — Design
 
 **Date:** 2026-07-18
-**Status:** Approved
+**Status:** Approved — REVISED 2026-07-18: Phase 1 (library lazy-import pass) DEFERRED
+by user decision; scope is notebook simplification only. Import-time cost stays
+until a future pass picks Phase 1 up; the design below is kept as its reference.
 **Branch:** refactor/cu121-uv-migration
 **Predecessor:** 2026-07-16-tutorial-data-format-keyframe-design.md (§Deferred is this spec's backlog)
 

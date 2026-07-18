@@ -467,10 +467,15 @@ class LocalizePage(param.Parameterized):
         ).start()
 
     def _update_db_note(self) -> None:
-        """Warn when the selected method has no DB yet (run will build it on GPU)."""
+        """DB status for the selected method: reuse (+ localized count) or build-on-run warning."""
         dbs = getattr(self, "_dbs", [])
+        browse = self._state.get("browse")
+        count = ""
+        if browse is not None and browse[0].extractor == self.method.value:
+            n = len(browse[0].localized_extrinsics)
+            count = f" ({n} localized frame{'s' if n != 1 else ''})"
         if self.method.value in dbs:
-            self.db_note.object = "<span style='color:#50c050;font-size:11px'>DB exists — will reuse</span>"
+            self.db_note.object = f"<span style='color:#50c050;font-size:11px'>DB exists — will reuse{count}</span>"
         else:
             self.db_note.object = (
                 "<span style='color:#e0a050;font-size:11px'>no DB for this method — "

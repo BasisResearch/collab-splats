@@ -308,6 +308,20 @@ def test_scene_video_select_triggers_browse_load(tmp_path, monkeypatch):
     assert calls == ["loma"]
 
 
+def test_db_note_includes_localized_count(tmp_path):
+    page = _page(tmp_path)
+    page._dbs = ["loma"]
+    page.method.options = ["loma", "disk"]
+    page.method.value = "loma"
+    data = SimpleNamespace(extractor="loma", localized_extrinsics=np.zeros((3, 4, 4), np.float32))
+    page._state["browse"] = (data, None)
+    page._update_db_note()
+    assert "3 localized frames" in page.db_note.object
+    # Count belongs to loma's browse data — a different method must not show it
+    page.method.value = "disk"
+    assert "localized frames" not in page.db_note.object
+
+
 def test_build_result_figures_is_pure(tmp_path, monkeypatch):
     """Figure building must be worker-safe: consumes the output, returns figs dict, touches no panes."""
     import matplotlib.figure

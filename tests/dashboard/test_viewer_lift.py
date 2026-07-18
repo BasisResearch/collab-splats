@@ -61,3 +61,40 @@ def test_load_lifted_normed_reloads_dense_on_demand(tmp_path):
     ):
         load_lifted_normed(lean, tmp_path)
     assert seen["dense"] is True
+
+
+def test_ensure_lifted_self_upgrades_legacy_scene(tmp_path, monkeypatch):
+    """A successful on-demand lift persists lifted_normed.npy so the scene upgrades."""
+    import numpy as np
+
+    import collab_splats.dashboard.viewer as viewer_mod
+    from collab_splats.dashboard.operation_log import OperationLog
+    from collab_splats.dashboard.viewer import SplitViewer
+
+    lifted = np.ones((5, 4), dtype=np.float32)
+    monkeypatch.setattr(viewer_mod, "load_lifted_normed", lambda result, sem: lifted)
+    op_log = OperationLog()
+    viewer = SplitViewer(off_screen=True, op_log=op_log)
+    viewer._result = object()  # anything non-None; the lift itself is stubbed
+    viewer._semantics_dir = tmp_path
+    viewer.ensure_lifted(op_log)
+    saved = tmp_path / "lifted_normed.npy"
+    assert saved.exists()
+    np.testing.assert_array_equal(np.load(saved), lifted)
+    assert any("scene upgraded" in line for line in op_log.log_lines)
+
+
+def test_ensure_lifted_failure_does_not_write_npy(tmp_path, monkeypatch):
+    import collab_splats.dashboard.viewer as viewer_mod
+    from collab_splats.dashboard.viewer import SplitViewer
+
+    def boom(result, sem):
+        raise RuntimeError("missing pixel_indices")
+
+    monkeypatch.setattr(viewer_mod, "load_lifted_normed", boom)
+    viewer = SplitViewer(off_screen=True)
+    viewer._result = object()
+    viewer._semantics_dir = tmp_path
+    viewer.ensure_lifted(None)
+    assert viewer._lifted_normed is None
+    assert not (tmp_path / "lifted_normed.npy").exists()

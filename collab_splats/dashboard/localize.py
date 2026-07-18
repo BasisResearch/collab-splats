@@ -229,7 +229,10 @@ class LocalizePage(param.Parameterized):
         """Cheap result panes only — watchers fired during __init__ (e.g. _show_frame via
         _on_query_video) may touch these before main() is ever called. The heavy pyvista
         plotter + VTK pane are deferred to _ensure_plotter()."""
-        self._frame_pane = pn.pane.Image(None, sizing_mode="scale_width")
+        # Fixed width (matches the preview thumbnail): scale_width panes inside nested
+        # stretch columns can flex-collapse to zero height, showing nothing after
+        # 'frame N loaded'. Height follows the image's aspect automatically.
+        self._frame_pane = pn.pane.Image(None, width=_PREVIEW_MAX_W)
         # Placeholder until a query video is selected (frame preview replaces it) or a run
         # completes (correspondence figures replace it) — a blank pane reads as broken.
         placeholder = pn.pane.HTML(

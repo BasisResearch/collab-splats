@@ -215,6 +215,15 @@ class SplitViewer:
             if op_log is not None:
                 op_log.append_line(f"feature lift FAILED: {exc}")
             self._lifted_normed = None
+            return
+        # Self-upgrade: persist the lift so this legacy scene never pays it again (the
+        # npy joins the output tree and rides along on the next push to the bucket).
+        try:
+            np.save(cached_path, self._lifted_normed)
+            if op_log is not None:
+                op_log.append_line("query: cached lifted features (scene upgraded — future queries are instant)")
+        except Exception:
+            logger.warning("could not cache lifted features", exc_info=True)
 
     def ensure_mesh_features(self, op_log=None) -> None:
         """Transfer cached point features onto mesh vertices on first mesh query (if not cached).

@@ -301,9 +301,7 @@ class LocalizePage(param.Parameterized):
         header = pn.pane.HTML(f"<b>DB ({data.extractor})</b>: {n} localized frame{'s' if n != 1 else ''}")
         # Thumbnails only for images present locally (pull may not include every frame)
         thumbs = [
-            pn.pane.Image(str(p), width=_PREVIEW_MAX_W // 2)
-            for p in data.localized_image_paths
-            if Path(p).exists()
+            pn.pane.Image(str(p), width=_PREVIEW_MAX_W // 2) for p in data.localized_image_paths if Path(p).exists()
         ]
         self._panes["matches_col"][:] = [header, *thumbs]
         # Browse owns the page: clear stale run figures below

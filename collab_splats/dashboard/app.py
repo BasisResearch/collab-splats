@@ -320,12 +320,15 @@ class SplatsApp(param.Parameterized):
         """Set the session dropdown options on the IOLoop (or inline if no doc)."""
 
         def setter():
-            # Populating options flips value→options[0], cascading _on_session/_on_video and
-            # auto-loading the WRONG (first) scene. Gate auto-load while we churn options + restore,
-            # then issue exactly one load for the final selection.
+            # Blank-first: plain list options auto-flip value→options[0], firing a videos
+            # listing for a session nobody picked — its late apply then overwrote the
+            # restored session's video list (session said 2024_02_06, videos showed
+            # 2023_11_05's). With the blank entry nothing fires until an explicit pick.
             self._suppress_autoload = True
             try:
-                self.session_select.options = names
+                options = {"— select a session —": ""}
+                options.update({n: n for n in names})
+                self.session_select.options = options
                 if not self._restored_selection:
                     self._restored_selection = True
                     self._restore_selection(names)
@@ -379,6 +382,10 @@ class SplatsApp(param.Parameterized):
             return _video_options(videos, processed)
 
         def apply(options: dict) -> None:
+            # Latest-wins: a slow listing for a superseded session must not clobber the
+            # current session's video list (the session/video mismatch bug).
+            if self.session_select.value != session:
+                return
             self.video_select.options = options
             # Explicit-select UX: a session switch never auto-loads. The blank entry is
             # selected until the user picks a video, which fires _on_video -> load.

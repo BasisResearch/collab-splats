@@ -31,7 +31,9 @@ def _app(tmp_path):
 
 def test_app_populates_sessions(tmp_path):
     app, source = _app(tmp_path)
-    assert app.session_select.options == ["2026_05_07"]
+    # Blank-first: populating options must not auto-select (and cascade-list) a session.
+    assert app.session_select.options == {"— select a session —": "", "2026_05_07": "2026_05_07"}
+    assert not app.session_select.value
 
 
 def test_selecting_session_lists_videos(tmp_path):
@@ -585,6 +587,25 @@ def test_restore_selection_sets_session_only(tmp_path, monkeypatch):
     assert app.session_select.value == "2026_05_07"
 
 
+def test_stale_session_listing_dropped(tmp_path, monkeypatch):
+    """A late videos listing for a superseded session must not clobber the current one."""
+    app, _src = _app(tmp_path)
+    monkeypatch.setattr(app._source, "list_videos", lambda s: [f"{s}_vid.mp4"])
+    monkeypatch.setattr(app._source, "list_processed_stems", lambda s: [])
+    app._suppress_autoload = True
+    app.session_select.options = {"": "", "A": "A", "B": "B"}
+    app.session_select.value = "B"
+    app._suppress_autoload = False
+    if getattr(app, "_video_list_thread", None):
+        app._video_list_thread.join(timeout=5)
+    before = dict(app.video_select.options)
+    # Simulate session A's slow listing landing while B is selected: apply must bail.
+    app._on_session(type("E", (), {"new": "A"})())
+    app._video_list_thread.join(timeout=5)
+    assert app.video_select.options == before  # A's stale listing was dropped
+    assert "B_vid.mp4" in before.values()
+
+
 def test_video_listing_failure_shows_retry_hint(tmp_path, monkeypatch):
     """Total listing failure surfaces a retry hint instead of a silently empty dropdown."""
     app, _src = _app(tmp_path)
@@ -594,7 +615,11 @@ def test_video_listing_failure_shows_retry_hint(tmp_path, monkeypatch):
 
     monkeypatch.setattr(app._source, "list_videos", boom)
     monkeypatch.setattr(app._source, "list_processed_stems", boom)
-    app._on_session(type("E", (), {"new": "s"})())
+    # Drive via a real selection so the latest-wins guard sees a matching session value.
+    app._suppress_autoload = True
+    app.session_select.options = {"": "", "s": "s"}
+    app.session_select.value = "s"
+    app._suppress_autoload = False
     app._video_list_thread.join(timeout=5)
     assert any("listing failed" in label for label in app.video_select.options)
 

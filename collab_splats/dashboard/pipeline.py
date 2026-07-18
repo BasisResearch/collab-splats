@@ -400,6 +400,56 @@ def _local_ref_paths(localizer, out_dir: Path) -> list:
     return paths
 
 
+@dataclass
+class BrowseData:
+    """Stored-DB view of a scene: reconstruction cameras + previously localized poses."""
+
+    extractor: str
+    ref_extrinsics: np.ndarray  # (N, 4, 4) world-to-camera reconstruction cameras
+    localized_extrinsics: np.ndarray  # (L, 4, 4) stored localized poses (L may be 0)
+    localized_image_paths: list  # local localized_frames/ paths (existence not guaranteed)
+    mesh_path: Path  # scene mesh (may not exist)
+
+
+def read_localized_group(zarr_path: Path, extractor: str, out_dir: Path) -> "tuple[np.ndarray, list]":
+    """Read stored localized poses + local image paths for one extractor (read-only, no GPU)."""
+    store = zarr.open(str(zarr_path), mode="r")
+    key = f"local_features/{extractor}/localized"
+    if key not in store:
+        return np.zeros((0, 4, 4), dtype=np.float32), []
+    group = store[key]
+    poses = np.asarray(group["extrinsics"])
+    # image_paths attrs were recorded on the building machine — only basenames are portable
+    names = [Path(p).name for p in group.attrs.get("image_paths", [])]
+    return poses, [Path(out_dir) / "localized_frames" / n for n in names]
+
+
+def load_browse_data(
+    *,
+    session: str,
+    stem: str,
+    extractor: str,
+    source: SessionSource,
+    base_dir: Path,
+    op_log: OperationLog,
+) -> BrowseData:
+    """Non-GPU DB browse load: minimal pull if absent, then ref extrinsics + stored localized poses."""
+    out_dir = Path(base_dir) / session / stem
+    # Minimal pull only when the zarr is not yet local (same excludes as run_localization)
+    if not (out_dir / "feedforward.zarr").exists():
+        with op_log.step("browse: pulling reconstruction"):
+            source.pull_processed(session, stem, out_dir, excludes=PULL_EXCLUDES)
+    result = _load_feedforward_result(out_dir)
+    loc_ext, loc_paths = read_localized_group(out_dir / "feedforward.zarr", extractor, out_dir)
+    return BrowseData(
+        extractor=extractor,
+        ref_extrinsics=np.asarray(result.extrinsics),
+        localized_extrinsics=loc_ext,
+        localized_image_paths=loc_paths,
+        mesh_path=out_dir / "mesh" / "mesh_tsdf.ply",
+    )
+
+
 def run_localization(
     *,
     query_video: Path,

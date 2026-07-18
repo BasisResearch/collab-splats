@@ -144,3 +144,66 @@ def test_transfer_mesh_features_writes_npy(tmp_path):
     assert (mesh_dir / "vertex_features.npy").exists()
     out = np.load(mesh_dir / "vertex_features.npy")
     assert out.shape == (3, 2)
+
+
+def _make_localized_zarr(tmp_path, extractor="loma", n=2):
+    """Minimal feedforward.zarr with a localized/ group for one extractor."""
+    import zarr
+    from zarr.codecs import BloscCodec
+
+    zpath = tmp_path / "feedforward.zarr"
+    store = zarr.open(str(zpath), mode="a")
+    group = store.require_group(f"local_features/{extractor}/localized")
+    lz4 = BloscCodec(cname="lz4")
+    ext = np.stack([np.eye(4, dtype=np.float32) * (i + 1) for i in range(n)])
+    group.create_array("extrinsics", data=ext, chunks=(1, 4, 4), compressors=lz4)
+    group.attrs["image_paths"] = [f"/builder/machine/localized_frames/f{i}.jpg" for i in range(n)]
+    return zpath, ext
+
+
+def test_read_localized_group_returns_poses_and_local_paths(tmp_path):
+    zpath, ext = _make_localized_zarr(tmp_path, extractor="loma", n=2)
+    poses, paths = pl.read_localized_group(zpath, "loma", tmp_path)
+    assert poses.shape == (2, 4, 4)
+    np.testing.assert_allclose(poses, ext)
+    # Paths remapped to this machine's localized_frames/ by basename
+    assert paths == [tmp_path / "localized_frames" / "f0.jpg", tmp_path / "localized_frames" / "f1.jpg"]
+
+
+def test_read_localized_group_missing_group_is_empty(tmp_path):
+    import zarr
+
+    zpath = tmp_path / "feedforward.zarr"
+    zarr.open(str(zpath), mode="a")  # store exists, no localized group
+    poses, paths = pl.read_localized_group(zpath, "disk", tmp_path)
+    assert poses.shape == (0, 4, 4)
+    assert paths == []
+
+
+def test_load_browse_data_composes_result_and_zarr(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from collab_splats.dashboard.operation_log import OperationLog
+
+    out_dir = tmp_path / "sess" / "vid"
+    out_dir.mkdir(parents=True)
+    zpath, _ = _make_localized_zarr(out_dir, extractor="loma", n=1)
+    ref_ext = np.repeat(np.eye(4, dtype=np.float32)[None], 3, axis=0)
+    monkeypatch.setattr(
+        "collab_splats.dashboard.pipeline._load_feedforward_result",
+        lambda d: SimpleNamespace(extrinsics=ref_ext),
+    )
+    source = MagicMock()
+    data = pl.load_browse_data(
+        session="sess",
+        stem="vid",
+        extractor="loma",
+        source=source,
+        base_dir=tmp_path,
+        op_log=OperationLog(),
+    )
+    source.pull_processed.assert_not_called()  # zarr already local -> no pull
+    assert data.extractor == "loma"
+    assert data.ref_extrinsics.shape == (3, 4, 4)
+    assert data.localized_extrinsics.shape == (1, 4, 4)
+    assert data.mesh_path == out_dir / "mesh" / "mesh_tsdf.ply"

@@ -250,15 +250,17 @@ class LocalizePage(param.Parameterized):
     def _build_panes(self) -> dict:
         """Construct fresh result panes for the current document build.
 
-        pn.pane.VTK is a dispatcher — VTK(None) returns None — so a stub pane stands in
-        when no plotter exists (tests); main() always ensures the plotter first."""
-        if self._plotter is not None:
-            vtk = pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
-        else:
-            vtk = pn.pane.HTML("", sizing_mode="stretch_both", min_height=500)
+        'vtk' is a holder Column: a VTK pane serialized from an EMPTY ren_win during the
+        lazy tab build renders nothing in the browser and later synchronize() calls are
+        lost — instead _render_scene swaps in a FRESH pane whose model serializes the
+        already-populated scene at creation."""
         return {
             "matches_col": pn.Column(width=_LEFT_W, scroll=True, max_height=700),
-            "vtk": vtk,
+            "vtk": pn.Column(
+                pn.pane.HTML("<i style='color:#888'>3D scene renders here after a run or DB browse</i>"),
+                sizing_mode="stretch_both",
+                min_height=500,
+            ),
             "dist": pn.pane.Matplotlib(None, sizing_mode="stretch_width", tight=True),
             "stats": pn.pane.HTML("", sizing_mode="stretch_width"),
         }
@@ -439,10 +441,15 @@ class LocalizePage(param.Parameterized):
             return
 
         def show():
-            self._state["browse"] = (data, mesh)
-            self._state["left"] = "browse"
-            self._render_state()
-            self._update_db_note()
+            # Next-tick callbacks swallow tracebacks — surface render failures in the op log
+            try:
+                self._state["browse"] = (data, mesh)
+                self._state["left"] = "browse"
+                self._render_state()
+                self._update_db_note()
+            except Exception as exc:
+                logger.warning("browse render failed", exc_info=True)
+                self._op_log.append_line(f"DB browse render FAILED: {exc}")
 
         doc.add_next_tick_callback(show) if doc is not None else show()
 
@@ -818,5 +825,10 @@ class LocalizePage(param.Parameterized):
             self._plotter.add_mesh(pv.PolyData(loc_centers), color="red", point_size=22, render_points_as_spheres=True)
 
         self._plotter.reset_camera()
-        if self._panes is not None and isinstance(self._panes["vtk"], pn.pane.VTK):
-            self._panes["vtk"].synchronize()
+        # Fresh pane per render: the model serializes the populated scene at creation,
+        # which survives dynamic-tab attachment where synchronize() on an empty-born
+        # pane silently shows nothing.
+        if self._panes is not None:
+            self._panes["vtk"][:] = [
+                pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
+            ]

@@ -685,8 +685,7 @@ class LocalizePage(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            self._set_run_state(res)
-            self._render_state()
+            self._handle_run_done(res)
 
         self.set_busy(True)
         self._gpu.submit(job, on_done, doc)
@@ -746,6 +745,13 @@ class LocalizePage(param.Parameterized):
                 mesh = pv.read(str(mesh_path))
             self._cache.put(scene_key, "mesh", mesh)
         return mesh
+
+    def _handle_run_done(self, res) -> None:
+        """Success path of a run: swap run state in, drop stale browse state, render."""
+        self._set_run_state(res)
+        # A run may have appended to the DB — cached browse data (and its count) is stale
+        self._state["browse"] = None
+        self._render_state()
 
     def _set_run_state(self, res) -> None:
         """Swap in a new run result; close the superseded run's figures (pyplot Gcf)."""

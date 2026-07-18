@@ -322,6 +322,16 @@ def test_db_note_includes_localized_count(tmp_path):
     assert "localized frames" not in page.db_note.object
 
 
+def test_run_success_invalidates_browse_state(tmp_path, monkeypatch):
+    page = _page(tmp_path)
+    page._state["browse"] = (SimpleNamespace(extractor="loma", localized_extrinsics=np.zeros((1, 4, 4))), None)
+    monkeypatch.setattr(page, "_render_state", lambda: None)
+    figs = {"dist_fig": None, "match_figs": [], "stats_html": ""}
+    page._handle_run_done((SimpleNamespace(), figs, None))
+    assert page._state["browse"] is None
+    assert page._state["left"] == "run"
+
+
 def test_build_result_figures_is_pure(tmp_path, monkeypatch):
     """Figure building must be worker-safe: consumes the output, returns figs dict, touches no panes."""
     import matplotlib.figure

@@ -725,6 +725,46 @@ def test_ensure_lift_inputs_skips_when_members_present(tmp_path, monkeypatch):
     assert pulls == []
 
 
+def test_cleanup_lift_inputs_removes_members_after_lift(tmp_path):
+    """Fetched dense members are deleted once the lift npy exists."""
+    app, _src = _app(tmp_path)
+    out = tmp_path / "s" / "v"
+    for member in ("pixel_indices", "depth", "confidence"):
+        d = out / "feedforward.zarr" / member
+        d.mkdir(parents=True)
+        (d / "chunk").write_bytes(b"x" * 10)
+    sem = out / "semantics"
+    sem.mkdir(parents=True)
+    (sem / "lifted_normed.npy").touch()
+    app._cleanup_lift_inputs(("s", "v"))
+    assert not (out / "feedforward.zarr" / "pixel_indices").exists()
+    assert not (out / "feedforward.zarr" / "depth").exists()
+    assert any("dense arrays" in line and "freed" in line for line in app._op_log.log_lines)
+
+
+def test_cleanup_lift_inputs_keeps_members_when_lift_failed(tmp_path):
+    """No npy (lift failed) -> members stay so a retry can run."""
+    app, _src = _app(tmp_path)
+    out = tmp_path / "s" / "v"
+    d = out / "feedforward.zarr" / "depth"
+    d.mkdir(parents=True)
+    (d / "chunk").write_bytes(b"x")
+    app._cleanup_lift_inputs(("s", "v"))
+    assert (out / "feedforward.zarr" / "depth").exists()
+
+
+def test_ensure_lift_inputs_reports_fetch(tmp_path, monkeypatch):
+    """Returns True only when a fetch actually happened."""
+    app, _src = _app(tmp_path)
+    (tmp_path / "s" / "v" / "feedforward.zarr").mkdir(parents=True)
+    monkeypatch.setattr(app._source, "pull_zarr_members", lambda *a, **k: None)
+    assert app._ensure_lift_inputs(("s", "v")) is True
+    sem = tmp_path / "s" / "v" / "semantics"
+    sem.mkdir(parents=True)
+    (sem / "lifted_normed.npy").touch()
+    assert app._ensure_lift_inputs(("s", "v")) is False  # npy cached -> no fetch
+
+
 def test_view_mode_failure_snaps_radio_back(tmp_path):
     """A failed mesh load must reset the radio to the displayed mode (no dead 'mesh' state)."""
     app, worker = _recording_app(tmp_path)

@@ -717,17 +717,21 @@ class SplatsApp(param.Parameterized):
                 if loaded and scene_key:
                     self._cache.put(scene_key, "mesh", self._viewer.mesh_polydata())
             if need_score:
-                self._ensure_lift_inputs(scene_key)
+                fetched = self._ensure_lift_inputs(scene_key)
                 # Explicit target mode: set_mode runs later in on_done, so self._viewer.mode
                 # is still the OUTGOING mode here — scoring on it produced wrong-length
                 # colours (mesh-vertex vs point) and an IndexError in render_query.
-                return self._viewer.score_query(
+                result = self._viewer.score_query(
                     positive=positive,
                     negative=negative,
                     extractor_name=extractor_name,
                     op_log=self._op_log,
                     mode=mode,
                 )
+                if fetched:
+                    # Lift is cached now (viewer saved the npy) -> drop the fetched GBs.
+                    self._cleanup_lift_inputs(scene_key)
+                return result
             return None
 
         def on_done(res):
@@ -750,35 +754,60 @@ class SplatsApp(param.Parameterized):
         self._op_log.start_op(f"switching to {mode}")
         self._gpu.submit(job, on_done, doc)
 
-    def _ensure_lift_inputs(self, scene_key) -> None:
+    _LIFT_MEMBERS = ("pixel_indices", "depth", "confidence", "conf")  # 'conf' = legacy key
+
+    def _ensure_lift_inputs(self, scene_key) -> bool:
         """Fetch the dense zarr members a first-query feature lift needs (worker thread).
 
         New runs cache semantics/lifted_normed.npy so the lift never runs; legacy scenes
         lift from pixel_indices/depth/confidence, which the display pull excludes
-        (PULL_EXCLUDES) — fetch them on demand or the lift fails.
+        (PULL_EXCLUDES) — fetch them on demand or the lift fails. Returns True when a
+        fetch happened, so the caller can clean the members up once the lift is cached.
         """
         if scene_key is None:
-            return
+            return False
         session, stem = scene_key
         out = self._base_dir / session / stem
         if (out / "semantics" / "lifted_normed.npy").exists():
-            return  # cached per-point features -> no lift, no dense arrays needed
+            return False  # cached per-point features -> no lift, no dense arrays needed
         zarr_dir = out / "feedforward.zarr"
         if not zarr_dir.exists():
-            return  # nothing local yet; the load path owns the initial pull
+            return False  # nothing local yet; the load path owns the initial pull
         core_missing = any(not (zarr_dir / m).exists() for m in ("pixel_indices", "depth"))
         conf_missing = not (zarr_dir / "confidence").exists() and not (zarr_dir / "conf").exists()
         if not core_missing and not conf_missing:
-            return
-        # 'conf' is the legacy key for confidence — fetch both spellings.
+            return False
         with self._op_log.step(f"{stem}: fetching dense arrays for feature lift (legacy scene)"):
             self._source.pull_zarr_members(
                 session,
                 stem,
                 out,
-                ("pixel_indices", "depth", "confidence", "conf"),
+                self._LIFT_MEMBERS,
                 on_line=self._op_log.rclone_progress("⬇ fetching dense arrays"),
             )
+        return True
+
+    def _cleanup_lift_inputs(self, scene_key) -> None:
+        """Delete on-demand-fetched dense members once the lift is cached (worker thread).
+
+        Runs ONLY when _ensure_lift_inputs fetched this call — fresh local runs keep
+        their dense arrays (the pipeline wrote them; push_outputs uploads them). The
+        npy guard keeps the members when the lift failed, so a retry can still run.
+        """
+        if scene_key is None:
+            return
+        session, stem = scene_key
+        out = self._base_dir / session / stem
+        if not (out / "semantics" / "lifted_normed.npy").exists():
+            return  # lift didn't complete -> keep the inputs for a retry
+        freed = 0
+        for member in self._LIFT_MEMBERS:
+            member_dir = out / "feedforward.zarr" / member
+            if member_dir.exists():
+                freed += sum(f.stat().st_size for f in member_dir.rglob("*") if f.is_file())
+                shutil.rmtree(member_dir, ignore_errors=True)
+        if freed:
+            self._op_log.append_line(f"{stem}: removed fetched dense arrays ({freed / 1e9:.1f} GB freed)")
 
     def _on_query(self, event) -> None:
         """Score the positive/negative query off the IOLoop; recolour the right pane on done."""
@@ -789,10 +818,14 @@ class SplatsApp(param.Parameterized):
         doc = pn.state.curdoc
 
         def job():
-            self._ensure_lift_inputs(scene_key)
-            return self._viewer.score_query(
+            fetched = self._ensure_lift_inputs(scene_key)
+            result = self._viewer.score_query(
                 positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
             )
+            if fetched:
+                # Lift is cached now (viewer saved the npy) -> the fetched GBs are dead weight.
+                self._cleanup_lift_inputs(scene_key)
+            return result
 
         def on_done(res):
             # Sync, not unconditional re-enable: another queued job must keep widgets locked.

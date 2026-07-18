@@ -564,6 +564,41 @@ def test_video_options_marks_processed_scenes_with_blank_default():
     assert next(iter(opts.values())) == ""  # blank entry first -> nothing auto-selected
 
 
+def test_video_options_includes_processed_only_scenes():
+    """Processed scenes whose source video is missing from curated still appear."""
+    from collab_splats.dashboard.app import _video_options
+
+    opts = _video_options(["a.mp4"], {"a", "orphan"})
+    assert opts["orphan ✓ (no source video)"] == "orphan"  # value = stem; load path uses stems
+
+
+def test_restore_selection_sets_session_only(tmp_path, monkeypatch):
+    """Restore must not list videos synchronously (IOLoop block + racing writer)."""
+    app, _src = _app(tmp_path)
+    listed = []
+    monkeypatch.setattr(app._source, "list_videos", lambda s: listed.append(s) or [])
+    app._state = {"session_select": "2026_05_07"}
+    app._restore_selection(["2026_05_07"])
+    # The watcher's off-loop fetch may list; restore itself must not (nothing synchronous).
+    if getattr(app, "_video_list_thread", None):
+        app._video_list_thread.join(timeout=5)
+    assert app.session_select.value == "2026_05_07"
+
+
+def test_video_listing_failure_shows_retry_hint(tmp_path, monkeypatch):
+    """Total listing failure surfaces a retry hint instead of a silently empty dropdown."""
+    app, _src = _app(tmp_path)
+
+    def boom(_s):
+        raise RuntimeError("rclone down")
+
+    monkeypatch.setattr(app._source, "list_videos", boom)
+    monkeypatch.setattr(app._source, "list_processed_stems", boom)
+    app._on_session(type("E", (), {"new": "s"})())
+    app._video_list_thread.join(timeout=5)
+    assert any("listing failed" in label for label in app.video_select.options)
+
+
 def test_session_switch_resets_video_to_blank_and_never_autoloads(tmp_path, monkeypatch):
     """Explicit-select UX: switching session leaves the video blank; no load fires."""
     app, _src = _app(tmp_path)

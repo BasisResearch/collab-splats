@@ -76,12 +76,16 @@ def _split_terms(text: str) -> list[str]:
 
 
 def _video_options(videos: list, processed: "set[str]") -> dict:
-    """Dropdown label -> filename map; already-processed scenes get a ✓ so users can tell.
+    """Dropdown label -> value map: union of curated videos and processed scenes.
 
-    Leads with a blank entry: nothing loads until the user explicitly picks a video.
+    Leads with a blank entry (nothing loads until the user picks). Curated videos with
+    processed outputs get a ✓; processed scenes whose source video is missing from
+    fieldwork_curated still appear (value = stem — the load path only needs the stem).
     """
     options = {"— select a video —": ""}
     options.update({(f"{v} ✓" if Path(v).stem in processed else v): v for v in videos})
+    curated_stems = {Path(v).stem for v in videos}
+    options.update({f"{stem} ✓ (no source video)": stem for stem in sorted(processed - curated_stems)})
     return options
 
 
@@ -335,21 +339,16 @@ class SplatsApp(param.Parameterized):
             setter()
 
     def _restore_selection(self, names: list[str]) -> None:
-        """Re-apply the persisted session + video once their option lists are available."""
+        """Re-apply the persisted session once options are available (session only).
+
+        Setting the value fires _on_session, which populates the video options off the
+        IOLoop — no listing here: a synchronous rclone call would block the IOLoop and
+        race the watcher's own fetch (two writers left the dropdown empty on reload).
+        """
         sess = self._state.get("session_select")
         if not sess or sess not in names:
             return
         self.session_select.value = sess
-        # Populate the video options; the video itself is NOT restored — explicit-select
-        # UX means a fresh page never auto-loads a scene until the user picks a video.
-        try:
-            videos = self._source.list_videos(sess)
-            processed = set(self._source.list_processed_stems(sess))
-        except Exception:
-            logger.warning("could not list videos for restored session %s", sess, exc_info=True)
-            return
-        self.video_select.options = _video_options(videos, processed)
-        self.video_select.value = ""
 
     def _on_session(self, event) -> None:
         """Populate video dropdown when session changes (rclone list runs off the IOLoop)."""
@@ -358,11 +357,25 @@ class SplatsApp(param.Parameterized):
         session = event.new
 
         # Blocking rclone listings off the IOLoop; set options back on the loop.
-        # step() logs start/done and its FAILED line surfaces listing errors.
+        # step() logs start/done and its FAILED line surfaces listing errors. The two
+        # listings fail independently: curated-only or processed-only beats an empty
+        # dropdown, and a total failure shows a retry hint instead of silence.
         def fetch():
             with self._op_log.step(f"listing videos ({session})"):
-                videos = self._source.list_videos(session)
-                processed = set(self._source.list_processed_stems(session))
+                try:
+                    videos = self._source.list_videos(session)
+                except Exception as exc:
+                    logger.warning("curated video listing failed: %s", exc)
+                    self._op_log.append_line(f"curated listing FAILED: {exc}")
+                    videos = []
+                try:
+                    processed = set(self._source.list_processed_stems(session))
+                except Exception as exc:
+                    logger.warning("processed listing failed: %s", exc)
+                    self._op_log.append_line(f"processed listing FAILED: {exc}")
+                    processed = set()
+            if not videos and not processed:
+                return {"— listing failed; reselect the session to retry —": ""}
             return _video_options(videos, processed)
 
         def apply(options: dict) -> None:

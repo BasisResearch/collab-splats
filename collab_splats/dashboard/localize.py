@@ -158,6 +158,7 @@ class LocalizePage(param.Parameterized):
         self.camera = pn.widgets.Select(name="Camera (rgb only)", options=[])
         self.query_video = pn.widgets.Select(name="Query video", options=[])
         self.frame_slider = pn.widgets.IntSlider(name="Frame", start=0, end=0, value=0)
+        self.load_video_btn = pn.widgets.Button(label="Load video / preview frame", button_type="default")
         self.method = pn.widgets.Select(name="Method", options=_METHODS, value=_DEFAULT_METHOD)
         self.db_note = pn.pane.HTML("", sizing_mode="stretch_width")
         self.append_db = pn.widgets.Checkbox(name="Append localized frame to DB", value=True)
@@ -171,6 +172,7 @@ class LocalizePage(param.Parameterized):
         self.camera.param.watch(self._on_camera, "value")
         self.query_video.param.watch(self._on_query_video, "value")
         self.frame_slider.param.watch(self._on_frame_slider, "value")
+        self.load_video_btn.on_click(self._on_load_video)
         self.method.param.watch(self._on_method, "value")
         self.run_btn.on_click(self._on_run)
 
@@ -183,6 +185,7 @@ class LocalizePage(param.Parameterized):
             self.camera,
             self.query_video,
             self.frame_slider,
+            self.load_video_btn,
             "## Localization",
             self.method,
             self.db_note,
@@ -198,6 +201,7 @@ class LocalizePage(param.Parameterized):
         """Enable/disable this page's mutating widgets while a GPU job is in flight."""
         widgets = (
             self.run_btn,
+            self.load_video_btn,
             self.scene_session,
             self.scene_video,
             self.field_session,
@@ -425,6 +429,28 @@ class LocalizePage(param.Parameterized):
             doc.add_next_tick_callback(setter) if doc is not None else setter()
 
         threading.Thread(target=work, name="query-video", daemon=True).start()
+
+    def _on_load_video(self, event) -> None:
+        """Explicit preview: fetch the query video and show the selected frame now.
+
+        Same path as the debounced slider preview, but immediate — for users who want a
+        deliberate 'load' action (and a first preview without touching the slider).
+        """
+        if self._gpu.busy:
+            self._op_log.append_line("busy — preview after the current job finishes")
+            return
+        if not (self.field_session.value and self.camera.value and self.query_video.value):
+            self._op_log.append_line("select a field session, camera, and query video first")
+            return
+        self._preview_token += 1
+        if self._preview_timer is not None:
+            self._preview_timer.cancel()  # a pending slider debounce would race this click
+        threading.Thread(
+            target=self._preview_frame,
+            kwargs={"token": self._preview_token, "frame_idx": self.frame_slider.value, "doc": pn.state.curdoc},
+            name="load-video-preview",
+            daemon=True,
+        ).start()
 
     def _on_frame_slider(self, event) -> None:
         """Debounced live preview: decode + show the frame shortly after the slider settles."""

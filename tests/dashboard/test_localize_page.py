@@ -78,6 +78,48 @@ def test_scene_cache_drop_kind_prefix():
     assert cache.get(("s", "v"), "mesh") is not None  # CPU loads survive
 
 
+def test_load_video_button_previews_current_frame(tmp_path, monkeypatch):
+    """Explicit Load-video click fetches + shows the slider's frame immediately."""
+    from pathlib import Path as _P
+
+    import numpy as np
+
+    page = _page(tmp_path)
+    shown = []
+    monkeypatch.setattr(page, "_ensure_local_query_video", lambda *a: _P("/dev/null"))
+    monkeypatch.setattr(
+        "collab_splats.preproc.extract_frame_fast",
+        lambda video, idx: np.full((4, 4, 3), idx, dtype=np.uint8),
+    )
+    monkeypatch.setattr(page, "_show_frame", lambda f: shown.append(int(f[0, 0, 0])))
+    page.field_session.options = ["fs"]
+    page.field_session.value = "fs"
+    page.camera.options = ["rgb_0"]
+    page.camera.value = "rgb_0"
+    page.query_video.options = ["v.mp4"]
+    page.query_video.value = "v.mp4"
+    shown.clear()  # drop the on-select frame-0 preview
+    page.frame_slider.end = 100
+    page.frame_slider.value = 0  # no watcher fire (already 0) -> no debounce in flight
+    token_before = page._preview_token
+    page._on_load_video(None)
+    # The handler spawns a thread; wait for the preview to land.
+    for _ in range(50):
+        if shown:
+            break
+        import time as _t
+
+        _t.sleep(0.1)
+    assert shown == [0]
+    assert page._preview_token == token_before + 1
+
+
+def test_load_video_button_requires_selection(tmp_path):
+    page = _page(tmp_path)
+    page._on_load_video(None)
+    assert any("select a field session" in line for line in page._op_log.log_lines)
+
+
 def test_select_options_blank_first():
     from collab_splats.dashboard.localize import select_options
 

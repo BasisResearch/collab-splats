@@ -134,15 +134,22 @@ def plot_correspondences(
                 (255, 255, 0),
                 4,
             )  # yellow (RGB)
+    # Query and reference may have different resolutions (e.g. 2988p GoPro query vs
+    # 1080p reconstruction frames): rescale the reference side to the query height and
+    # scale its keypoints identically, otherwise the side-by-side concat raises.
+    ref_scale = query_image_disp.shape[0] / ref_image_disp.shape[0]
+    if ref_scale != 1.0:
+        new_w = max(1, int(round(ref_image_disp.shape[1] * ref_scale)))
+        ref_image_disp = cv2.resize(ref_image_disp, (new_w, query_image_disp.shape[0]))
     combined = np.concatenate([query_image_disp, ref_image_disp], axis=1)
 
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.imshow(combined)
     for (x0, y0), (x1, y1), ok in zip(kpts0, kpts1, inliers):
         color = "lime" if ok else "red"
-        ax.plot([x0, x1 + W], [y0, y1], color=color, linewidth=0.8, alpha=0.6)
+        ax.plot([x0, x1 * ref_scale + W], [y0, y1 * ref_scale], color=color, linewidth=0.8, alpha=0.6)
     ax.scatter(kpts0[:, 0], kpts0[:, 1], s=8, c="white", zorder=3, linewidths=0)
-    ax.scatter(kpts1[:, 0] + W, kpts1[:, 1], s=8, c="white", zorder=3, linewidths=0)
+    ax.scatter(kpts1[:, 0] * ref_scale + W, kpts1[:, 1] * ref_scale, s=8, c="white", zorder=3, linewidths=0)
     ax.axvline(W, color="white", linewidth=1, alpha=0.5)
     ax.axis("off")
     ax.set_title(f"query ↔ reference frame {best_ref_idx} — " f"{inliers.sum()}/{len(inliers)} inliers shown")

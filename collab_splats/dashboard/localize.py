@@ -144,6 +144,9 @@ class LocalizePage(param.Parameterized):
         self._cache = cache if cache is not None else SceneCache()
         self._preview_token = 0  # latest slider request; stale extracts are dropped
         self._preview_timer: threading.Timer | None = None
+        # Serializes query-video fetches: the on-select prefetch and a Load-video click
+        # raced two rclone downloads of the SAME file (frame decoded from a partial file).
+        self._fetch_lock = threading.Lock()
         self._build_sidebar()
         self._build_main()
         self._refresh_listings()
@@ -500,22 +503,28 @@ class LocalizePage(param.Parameterized):
         doc.add_next_tick_callback(show) if doc is not None else show()
 
     def _ensure_local_query_video(self, field_session: str, camera: str, name: str) -> Path:
-        local = self._base_dir / "queries" / field_session / camera / name
-        if local.exists():
-            return local
-        on_line = self._op_log.rclone_progress("⬇ fetching query video")
-        return self._source.fetch_field_video(field_session, camera, name, local.parent, on_line=on_line)
+        # Lock: the on-select prefetch thread and a Load-video click can request the same
+        # file concurrently — two racing rclone writers let a frame decode from a partial
+        # file. The second caller blocks, then hits the exists() fast path.
+        with self._fetch_lock:
+            local = self._base_dir / "queries" / field_session / camera / name
+            if local.exists():
+                return local
+            on_line = self._op_log.rclone_progress("⬇ fetching query video")
+            return self._source.fetch_field_video(field_session, camera, name, local.parent, on_line=on_line)
 
     def _show_frame(self, frame: np.ndarray) -> None:
         """Show the selected query frame in the left panel, downscaled to a thumbnail."""
         from PIL import Image as PILImage
 
         # pn.pane.Image renders PIL images directly; full-res frames push MBs of base64
-        # into the doc, so cap the preview width (display is scale_width anyway).
+        # into the doc, so cap the preview width.
         img = PILImage.fromarray(frame)
         if img.width > _PREVIEW_MAX_W:
             img = img.resize((_PREVIEW_MAX_W, max(1, int(img.height * _PREVIEW_MAX_W / img.width))))
-        self._frame_pane.object = img
+        # Fresh pane per frame: re-attaching a Bokeh model that a previous layout swap
+        # detached (run figures replace the preview) can silently render nothing.
+        self._frame_pane = pn.pane.Image(img, width=_PREVIEW_MAX_W)
         self._matches_col[:] = [self._frame_pane]
 
     # ---- run -----------------------------------------------------------

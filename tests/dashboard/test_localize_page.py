@@ -267,6 +267,47 @@ def test_render_state_run_precedence(tmp_path, monkeypatch):
     assert len(drawn) == 1
 
 
+def test_render_browse_paints_header_and_scene(tmp_path, monkeypatch):
+    """Browse render: header count in left column, all stored poses passed to the scene."""
+    page = _page(tmp_path)
+    page._panes = page._build_panes()
+    drawn = {}
+    monkeypatch.setattr(
+        page, "_render_scene", lambda mesh, ext, localized: drawn.update(mesh=mesh, ext=ext, localized=localized)
+    )
+    data = SimpleNamespace(
+        extractor="loma",
+        ref_extrinsics=np.repeat(np.eye(4, dtype=np.float32)[None], 3, axis=0),
+        localized_extrinsics=np.repeat(np.eye(4, dtype=np.float32)[None], 2, axis=0),
+        localized_image_paths=[tmp_path / "missing0.jpg", tmp_path / "missing1.jpg"],
+    )
+    page._state["browse"] = (data, None)
+    page._state["left"] = "browse"
+    page._render_state()
+    header = page._panes["matches_col"][0]
+    assert "2 localized frames" in header.object
+    assert drawn["localized"].shape == (2, 4, 4)
+    assert page._panes["dist"].object is None  # browse clears stale run figures
+
+
+def test_scene_video_select_triggers_browse_load(tmp_path, monkeypatch):
+    """Choosing a scene video spawns the browse load with the preselected extractor."""
+    import time
+
+    page = _page(tmp_path)
+    calls = []
+    monkeypatch.setattr(page, "_load_browse", lambda session, stem, extractor, doc: calls.append(extractor))
+    page._source.list_localization_dbs.return_value = ["loma"]
+    page.scene_session.options = ["sess"]
+    page.scene_session.value = "sess"
+    page._on_scene_video(SimpleNamespace(new="vid"))
+    for _ in range(50):  # _on_scene_video runs its work() on a thread
+        if calls:
+            break
+        time.sleep(0.1)
+    assert calls == ["loma"]
+
+
 def test_build_result_figures_is_pure(tmp_path, monkeypatch):
     """Figure building must be worker-safe: consumes the output, returns figs dict, touches no panes."""
     import matplotlib.figure

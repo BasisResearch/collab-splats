@@ -295,7 +295,21 @@ class LocalizePage(param.Parameterized):
         self._panes["matches_col"][:] = [pn.pane.Image(img, width=_PREVIEW_MAX_W)]
 
     def _render_browse(self, browse) -> None:
-        """Filled in by the DB-browse task."""
+        """Paint the stored-DB view: thumbnail strip left, mesh + stored poses right."""
+        data, mesh = browse
+        n = len(data.localized_extrinsics)
+        header = pn.pane.HTML(f"<b>DB ({data.extractor})</b>: {n} localized frame{'s' if n != 1 else ''}")
+        # Thumbnails only for images present locally (pull may not include every frame)
+        thumbs = [
+            pn.pane.Image(str(p), width=_PREVIEW_MAX_W // 2)
+            for p in data.localized_image_paths
+            if Path(p).exists()
+        ]
+        self._panes["matches_col"][:] = [header, *thumbs]
+        # Browse owns the page: clear stale run figures below
+        self._panes["dist"].object = None
+        self._panes["stats"].object = ""
+        self._render_scene(mesh, data.ref_extrinsics, data.localized_extrinsics)
 
     def main(self) -> pn.Column:
         """Per-document build: fresh panes, painted from page state (last preview/run/browse)."""
@@ -400,10 +414,57 @@ class LocalizePage(param.Parameterized):
 
             doc.add_next_tick_callback(setter) if doc is not None else setter()
 
+            # Stored-DB browse: render existing localized poses without a run (non-GPU).
+            # Extractor computed here, not read from the widget — the setter races us.
+            _, extractor = preselect_method(dbs, _METHODS)
+            self._load_browse(session, stem, extractor, doc)
+
         threading.Thread(target=work, name="db-list", daemon=True).start()
 
+    def _load_browse(self, session: str, stem: str, extractor: str, doc) -> None:
+        """Background thread: load stored-DB browse data + mesh, then render (no GPU)."""
+        try:
+            from collab_splats.dashboard.pipeline import load_browse_data
+
+            data = load_browse_data(
+                session=session,
+                stem=stem,
+                extractor=extractor,
+                source=self._source,
+                base_dir=self._base_dir,
+                op_log=self._op_log,
+            )
+            mesh = self._ensure_scene_mesh((session, stem), data.mesh_path)
+        except Exception as exc:
+            logger.warning("browse load failed", exc_info=True)
+            self._op_log.append_line(f"DB browse FAILED: {exc}")
+            return
+
+        def show():
+            self._state["browse"] = (data, mesh)
+            self._state["left"] = "browse"
+            self._render_state()
+            self._update_db_note()
+
+        doc.add_next_tick_callback(show) if doc is not None else show()
+
     def _on_method(self, event) -> None:
+        """Refresh the DB note and re-browse the stored DB for the newly picked extractor."""
         self._update_db_note()
+        session, stem = self.scene_session.value, self.scene_video.value
+        if not (session and stem) or self._gpu.busy:
+            return
+        # Already browsing this extractor (e.g. the scene-select setter just set the
+        # preselected method) — skip the duplicate load.
+        browse = self._state.get("browse")
+        if browse is not None and browse[0].extractor == event.new:
+            return
+        threading.Thread(
+            target=self._load_browse,
+            args=(session, stem, event.new, pn.state.curdoc),
+            name="browse-load",
+            daemon=True,
+        ).start()
 
     def _update_db_note(self) -> None:
         """Warn when the selected method has no DB yet (run will build it on GPU)."""

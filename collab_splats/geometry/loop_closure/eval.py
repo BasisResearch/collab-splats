@@ -11,6 +11,7 @@ from __future__ import annotations
 import gtsam
 import numpy as np
 
+from .closure import umeyama_se3, umeyama_sim3
 from .graph import PoseGraph
 
 
@@ -107,22 +108,6 @@ def capture_pose_graph_loss(
 # --- Ground-truth trajectory metrics -----------------------------------------
 
 
-def _umeyama_sim3(source: np.ndarray, target: np.ndarray):
-    """Sim3: c, R, t such that c * R @ source + t ≈ target. source/target: (3, N)."""
-    mu_s = source.mean(axis=1, keepdims=True)
-    mu_t = target.mean(axis=1, keepdims=True)
-    var_s = np.square(source - mu_s).sum(axis=0).mean()
-    cov = ((target - mu_t) @ (source - mu_s).T) / source.shape[1]
-    U, D, VH = np.linalg.svd(cov)
-    S = np.eye(3)
-    if np.linalg.det(U) * np.linalg.det(VH) < 0:
-        S[2, 2] = -1
-    c = float(np.trace(np.diag(D) @ S) / var_s)
-    R = U @ S @ VH
-    t = mu_t - c * R @ mu_s  # (3, 1)
-    return c, R, t
-
-
 def umeyama_align(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Align predicted trajectory to ground truth via Umeyama SE(3).
 
@@ -134,8 +119,6 @@ def umeyama_align(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.ndar
         (aligned_pred, T_align): Umeyama-aligned predicted poses and the SE(3)
         transform applied.
     """
-    from .closure import umeyama_se3
-
     R_pred = pred[:, :3, :3]
     t_pred = pred[:, :3, 3]
     p_pred = np.einsum("nij,nj->ni", R_pred.transpose(0, 2, 1), -t_pred)  # (N, 3)
@@ -173,8 +156,6 @@ def ate_translation(pred: np.ndarray, gt: np.ndarray) -> dict:
     # Align predicted positions to GT via Sim3 (scale + rotation + translation).
     # Must use Sim3 (not SE3) to match evo's correct_scale=True — VGGT depth predictions
     # carry an unknown global scale factor that SE3 alignment cannot remove.
-    from .closure import umeyama_sim3
-
     s, R_align, t_align = umeyama_sim3(source=p_pred, target=p_gt)
     p_aligned = (s * R_align @ p_pred.T).T + t_align  # (N, 3)
 
@@ -246,9 +227,8 @@ def auc_at_threshold(
     centers_pred = t_pred
     centers_gt = t_gt
 
-    # Sim3 alignment: c * R_a @ centers_pred.T + t_a ≈ centers_gt.T
-    c, R_a, t_a = _umeyama_sim3(centers_pred.T, centers_gt.T)
-    t_a = t_a.flatten()
+    # Sim3 alignment: c * R_a @ centers_pred + t_a ≈ centers_gt
+    c, R_a, t_a = umeyama_sim3(source=centers_pred, target=centers_gt)
 
     # Apply alignment: R_aligned[i] = R_a @ R_pred[i], t_aligned[i] = c*R_a@t_pred[i] + t_a
     # For relative rotation R_i^T@R_j, R_a cancels. For relative translation direction,

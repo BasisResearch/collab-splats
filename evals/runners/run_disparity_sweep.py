@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Disparity sweep parity harness: compares our vggt_spark pipeline against VGGT-SLAM.
+"""Disparity sweep parity harness: compares our pipeline against VGGT-SLAM.
 
 Usage:
     python evals/runners/run_disparity_sweep.py \\
@@ -97,15 +97,16 @@ def run_slam_lc(seq_dir: Path, d: int, max_frames: int, out_dir: Path) -> dict:
 
 
 def run_our_pipeline(
-    seq_dir: Path, keyframe_list: Path, condition: str, out_ate: Path
+    seq_dir: Path, keyframe_list: Path, condition: str, out_ate: Path,
+    backbone: str = "vggt_spark",
 ) -> dict:
-    """Run our vggt_spark pipeline on the given keyframe list. Returns ATE dict."""
+    """Run our pipeline on the given keyframe list. Returns ATE dict."""
     out_ate.parent.mkdir(parents=True, exist_ok=True)
     _run([
         _PYTHON, _EVAL_GT,
         "--dataset", "7scenes",
         "--seq_dir", seq_dir,
-        "--backbone", "vggt_spark",
+        "--backbone", backbone,
         "--conditions", condition,
         "--submap_size", 16,
         "--lc_scale_method", "none",
@@ -156,7 +157,6 @@ def _check_similarity_parity(slam_loops: int) -> bool:
 
     print(f"  VGGT-SLAM loop_closures: {slam_loops}")
     print("  → Check INFO log above for 'VGGT-SPARK image_match_ratio' lines from our LC run.")
-    print("  → If our scores differ >0.05 from SLAM mean, Track A fix (Task 2) may not be applied.")
 
     # Hard gate: SLAM closed loops but ours found none is checked externally (loop count gate).
     # This function returns True — loop count gate below handles the hard failure.
@@ -177,7 +177,7 @@ def _print_row(label: str, slam: float | str, ours: float | str, ok: bool | None
 # Main sweep
 ########################################################################
 
-def sweep(seq_dir: Path, max_frames: int, start_disparity: int) -> int:
+def sweep(seq_dir: Path, max_frames: int, start_disparity: int, backbone: str = "vggt_spark") -> int:
     """Run full disparity sweep. Returns 0 on full parity, 1 on first failure."""
     # Filter levels to those <= start_disparity so resume works correctly
     levels = [d for d in DISPARITY_LEVELS if d <= start_disparity]
@@ -197,7 +197,7 @@ def sweep(seq_dir: Path, max_frames: int, start_disparity: int) -> int:
         kf_list = slam_dir / "selected_frames.txt"
 
         our_dir.mkdir(parents=True, exist_ok=True)
-        our_baseline = run_our_pipeline(seq_dir, kf_list, "baseline", our_dir / "baseline_ate.json")
+        our_baseline = run_our_pipeline(seq_dir, kf_list, "baseline", our_dir / "baseline_ate.json", backbone=backbone)
 
         slam_ate = float(slam_baseline["ate_rmse"])
         our_ate = _extract_ate(our_baseline)
@@ -211,13 +211,12 @@ def sweep(seq_dir: Path, max_frames: int, start_disparity: int) -> int:
             print(f"  Frames selected by SLAM: {slam_baseline.get('keyframes', '?')}")
             print(f"  Keyframe list: {kf_list}")
             print("  → Both pipelines used identical frames — divergence is in inference/BA.")
-            print("  → Enable Track B (H-matrix debug logging) to investigate.")
             return 1
 
         # ── LC: both pipelines ────────────────────────────────────
         print("\n  [LC]")
         slam_lc = run_slam_lc(seq_dir, d, max_frames, slam_dir)
-        our_lc = run_our_pipeline(seq_dir, kf_list, "lc", our_dir / "lc_ate.json")
+        our_lc = run_our_pipeline(seq_dir, kf_list, "lc", our_dir / "lc_ate.json", backbone=backbone)
 
         slam_lc_ate = float(slam_lc["ate_rmse"])
         our_lc_ate = _extract_ate(our_lc)
@@ -241,8 +240,6 @@ def sweep(seq_dir: Path, max_frames: int, start_disparity: int) -> int:
             print(f"  SLAM LC ATE={slam_lc_ate:.4f}m, OURS={our_lc_ate:.4f}m")
             print(f"  SLAM loop_closures={slam_loops}")
             if d == 50:
-                print("  → Verify Track A fix (Task 2) is applied: VGGTSPARKCreator must use")
-                print("    native compute_similarity=True path.")
                 print("  → Check our INFO log for 'image_match_ratio' lines.")
             return 1
 
@@ -279,8 +276,12 @@ def main() -> None:
             "Levels are [50, 30, 20, 10, 0]; pass e.g. 30 to skip d=50. Default 50."
         ),
     )
+    parser.add_argument(
+        "--backbone", type=str, default="vggt_spark",
+        help="Our-pipeline backbone to compare against VGGT-SLAM. Default vggt_spark (the parity anchor).",
+    )
     args = parser.parse_args()
-    sys.exit(sweep(args.seq_dir, args.max_frames, args.start_disparity))
+    sys.exit(sweep(args.seq_dir, args.max_frames, args.start_disparity, backbone=args.backbone))
 
 
 if __name__ == "__main__":

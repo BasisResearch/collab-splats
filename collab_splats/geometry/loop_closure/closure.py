@@ -141,10 +141,6 @@ def umeyama_sim3(
 ####### Absorbed from pose_graph.py ####
 ########################################
 
-# SE(3) noise constants — used by eval.py edge classification
-_ODOM_INTRA_SIGMA_R, _ODOM_INTRA_SIGMA_T = 0.02, 0.05
-_INTER_SIGMA_R, _INTER_SIGMA_T = 0.05, 0.20
-
 ########################################
 ####### Absorbed from retrieval.py #####
 ########################################

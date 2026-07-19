@@ -234,6 +234,8 @@ def find_loop_closures(
     if not past_submaps:
         return []
     queue = LoopMatchQueue(max_size=max_loops, nms_frame_distance=nms_frame_distance)
+    # For each query frame, find the nearest-neighbor frame in each past submap by
+    # L2 distance over DINO-SALAD retrieval vectors; keep it if under lc_threshold.
     for q_idx in range(query_submap.retrieval_vectors.shape[0]):
         q_vec = query_submap.retrieval_vectors[q_idx]
         for past in past_submaps:
@@ -493,8 +495,11 @@ def _loop_chain_relatives(
     K_lc0 = eye if K_lc0 is None else K_lc0
     K_lc1 = eye if K_lc1 is None else K_lc1
     K_d = eye if K_d is None else K_d
+    # Anchor A: query → LC-frame-0 (identical image) — K change + scale fold s_a.
     H_rel_a = np.linalg.inv(K_q) @ K_lc0 @ np.diag([s_a, s_a, s_a, 1.0])
+    # Inner edge: the LC pair's own relative pose, no K change.
     H_inner = P_lc0.astype(np.float64) @ np.linalg.inv(P_lc1.astype(np.float64))
+    # Anchor B: LC-frame-1 → detected (identical image) — K change + scale fold s_b.
     H_rel_b = np.linalg.inv(K_lc1) @ K_d @ np.diag([s_b, s_b, s_b, 1.0])
     return H_rel_a, H_inner, H_rel_b
 

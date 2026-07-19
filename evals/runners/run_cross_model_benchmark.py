@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PY = "/opt/conda/envs/reconstruction/bin/python"
-EVAL_GT = Path(__file__).resolve().parents[1] / "eval_gt.py"
+EVAL_GT = Path(__file__).resolve().parents[1] / "eval.py"
 
 
 @dataclass

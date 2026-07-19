@@ -45,7 +45,7 @@ CO3D_SCRIPT="$("$PYTHON" -c 'import co3d, os; print(os.path.join(os.path.dirname
 echo "Download complete: ${OUTPUT_DIR}/${CATEGORY}/"
 
 echo "=== Done. Test with: ==="
-echo "python evals/eval_gt.py --dataset co3dv2 \\"
+echo "python evals/eval.py --dataset co3dv2 \\"
 echo "  --seq_dir ${OUTPUT_DIR}/${CATEGORY}/<sequence_name> \\"
 echo "  --output_dir ./eval_results/co3dv2_${CATEGORY} \\"
 echo "  --conditions baseline ba ba_hightrack"

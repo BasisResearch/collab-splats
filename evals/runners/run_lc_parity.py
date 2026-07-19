@@ -34,7 +34,7 @@ REPO_ROOT = RUNNERS.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 SLAM_RUNNER = RUNNERS / "run_vggt_slam_lc.py"
-EVAL_GT = RUNNERS.parent / "eval_gt.py"
+EVAL_GT = RUNNERS.parent / "eval.py"
 
 # Paper/parity config — spec §Constraints. Every value explicit, none left to
 # runner defaults, so a default drift can't silently break parity.

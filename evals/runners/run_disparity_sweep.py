@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 _PYTHON = "/opt/conda/envs/reconstruction/bin/python"
 _REPO = Path(__file__).resolve().parents[2]
-_EVAL_GT = _REPO / "evals" / "eval_gt.py"
+_EVAL_GT = _REPO / "evals" / "eval.py"
 _SLAM_RUNNER = _REPO / "evals" / "runners" / "run_vggt_slam_lc.py"
 _SEQ_DEFAULT = _REPO / "evals" / "data" / "7scenes" / "chess" / "chess" / "seq-01"
 _SWEEP_BASE = _REPO / "evals" / "baselines" / "disparity_sweep"

@@ -1,13 +1,17 @@
 #!/usr/bin/env python
 """Ground-truth evaluation runner for collab-splats BA/LC pipelines.
 
-Usage:
-    python evals/eval_gt.py \\
+Single-cell usage:
+    python evals/eval.py \\
         --dataset   7scenes \\
         --seq_dir   /data/7scenes/chess/seq-01 \\
         --output_dir ./eval_results/chess_seq01 \\
         --max_frames 500 \\
         --conditions baseline ba lc
+
+Grid usage (YAML-driven; serial, resume-on-metrics.json, then aggregate):
+    python evals/eval.py --config evals/configs/7scenes.yaml
+    python evals/eval.py --config evals/configs/7scenes.yaml --dry_run
 
 For long sequences that exceed GPU memory in a single forward pass, use
 ``--submap_size N`` to enable windowed inference.  ``baseline`` becomes
@@ -19,7 +23,9 @@ regardless of this flag.
 from __future__ import annotations
 
 import argparse
+import itertools
 import logging
+from dataclasses import dataclass
 from typing import Any
 from datetime import datetime
 import json
@@ -32,6 +38,7 @@ import time
 from pathlib import Path
 
 import matplotlib
+import yaml
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -40,6 +47,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from datasets import get_dataset
 from trajectory_io import read_tum
+from eval_compare import collect_grid_metrics, format_markdown_rows
 
 from collab_splats.pointcloud import get_creator
 from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig
@@ -49,6 +57,80 @@ from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
 _FIXED_CONDITIONS = {"baseline", "ba", "lc"}
 _COLORS = {"gt": "black", "baseline": "tab:red", "ba": "tab:blue", "lc": "tab:green", "vggt_slam": "tab:orange"}
+
+
+########################################################################
+# Config-driven grid (YAML)
+########################################################################
+
+
+@dataclass
+class EvalCell:
+    """One grid cell: a backbone x condition over one dataset at fixed params."""
+
+    dataset_name: str
+    dataset_type: str
+    seq_dir: Path
+    keyframe_list: Path | None
+    backbone: str
+    condition: str
+    submap_size: int | None
+    max_frames: int | None
+    lc_layer: int | None
+    output_dir: Path
+
+
+@dataclass
+class EvalConfig:
+    """Flat, declarative eval experiment loaded from YAML."""
+
+    name: str
+    datasets: list[dict]
+    backbones: list[str]
+    conditions: list[str]
+    output_dir: Path
+    submap_size: int | None = None
+    max_frames: int | None = None
+    lc_layer: int | None = None
+
+
+def load_eval_config(path: Path) -> EvalConfig:
+    """Parse a flat experiment YAML into an EvalConfig."""
+    raw = yaml.safe_load(Path(path).read_text())
+    return EvalConfig(
+        name=raw["name"],
+        datasets=raw["datasets"],
+        backbones=raw["backbones"],
+        conditions=raw["conditions"],
+        output_dir=Path(raw["output_dir"]),
+        submap_size=raw.get("submap_size"),
+        max_frames=raw.get("max_frames"),
+        lc_layer=raw.get("lc_layer"),
+    )
+
+
+def build_grid(cfg: EvalConfig) -> list[EvalCell]:
+    """Expand the config into one EvalCell per (dataset x backbone x condition)."""
+    cells = []
+    for ds, backbone in itertools.product(cfg.datasets, cfg.backbones):
+        for cond in cfg.conditions:
+            cells.append(
+                EvalCell(
+                    dataset_name=ds["name"],
+                    # Loader key for --dataset; defaults to the label when the
+                    # entry's name already IS the loader type (e.g. "7scenes").
+                    dataset_type=ds.get("type", ds["name"]),
+                    seq_dir=Path(ds["seq_dir"]),
+                    keyframe_list=(Path(ds["keyframe_list"]) if ds.get("keyframe_list") else None),
+                    backbone=backbone,
+                    condition=cond,
+                    submap_size=cfg.submap_size,
+                    max_frames=cfg.max_frames,
+                    lc_layer=cfg.lc_layer,
+                    output_dir=cfg.output_dir,
+                )
+            )
+    return cells
 
 
 def _validate_condition(cond: str) -> None:
@@ -282,8 +364,22 @@ def _plot_ate_per_frame(metrics: dict, gt: np.ndarray, out_path: Path) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", required=True, help="Dataset name: 7scenes | tum | kitti | waymo | co3dv2")
-    parser.add_argument("--seq_dir", type=Path, required=True, help="Path to sequence directory")
+    # Grid wrapper: when --config is set, the single-cell args below are not
+    # required — each cell is expanded and launched as its own single-cell run.
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="YAML experiment config (dataset x backbone x condition grid). "
+        "When set, runs the grid serially with resume-on-metrics.json and post-grid aggregation.",
+    )
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="With --config: print the planned per-cell command for each cell and run nothing.",
+    )
+    parser.add_argument("--dataset", default=None, help="Dataset name: 7scenes | tum | kitti | waymo | co3dv2")
+    parser.add_argument("--seq_dir", type=Path, default=None, help="Path to sequence directory")
     parser.add_argument(
         "--output_dir",
         type=Path,
@@ -396,9 +492,78 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
     print(f"  time={elapsed:.1f}s")
 
 
+def _build_cell_command(cell: EvalCell, cell_dir: Path) -> list[str]:
+    """Build the single-cell eval.py CLI command for one grid cell.
+
+    Reuses the existing single-cell path verbatim — one --backbone over one
+    --conditions into the cell's own --output_dir, which writes metrics.json.
+    """
+    cmd = [
+        sys.executable,
+        __file__,
+        "--dataset",
+        cell.dataset_type,
+        "--seq_dir",
+        str(cell.seq_dir),
+        "--output_dir",
+        str(cell_dir),
+        "--backbone",
+        cell.backbone,
+        "--conditions",
+        cell.condition,
+    ]
+    if cell.max_frames is not None:
+        cmd += ["--max_frames", str(cell.max_frames)]
+    if cell.submap_size is not None:
+        cmd += ["--submap_size", str(cell.submap_size)]
+    if cell.lc_layer is not None:
+        cmd += ["--lc_layer", str(cell.lc_layer)]
+    if cell.keyframe_list is not None:
+        cmd += ["--keyframe_list", str(cell.keyframe_list)]
+    return cmd
+
+
+def _run_grid(config_path: Path, dry_run: bool = False) -> None:
+    """Load a YAML experiment, run each cell serially (resume), then aggregate."""
+    cfg = load_eval_config(config_path)
+    grid = build_grid(cfg)
+    print(f"Grid '{cfg.name}': {len(grid)} cells -> {cfg.output_dir}")
+
+    for cell in grid:
+        cell_dir = cfg.output_dir / f"{cell.dataset_name}__{cell.backbone}__{cell.condition}"
+        # Resume: a cell that already wrote metrics.json is considered done.
+        if (cell_dir / "metrics.json").exists():
+            print(f"  SKIP (resume): {cell_dir.name}")
+            continue
+        cmd = _build_cell_command(cell, cell_dir)
+        if dry_run:
+            print(f"  DRY RUN: {' '.join(cmd)}")
+            continue
+        print(f"  RUN: {cell_dir.name}")
+        subprocess.run(cmd, check=True)
+
+    # Post-grid aggregation — read every cell's metrics.json into one table.
+    if dry_run:
+        return
+    rows = collect_grid_metrics(cfg.output_dir)
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.output_dir / "comparison.md").write_text(format_markdown_rows(rows))
+    (cfg.output_dir / "comparison.json").write_text(json.dumps(rows, indent=2))
+    print(f"Aggregated {len(rows)} cells -> {cfg.output_dir}/comparison.md")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    # ── config-grid wrapper ────────────────────────────────────────────────────
+    if args.config is not None:
+        _run_grid(args.config, dry_run=args.dry_run)
+        return
+
+    if args.dataset is None or args.seq_dir is None:
+        parser.error("--dataset and --seq_dir are required unless --config is given")
 
     for cond in args.conditions or []:
         _validate_condition(cond)

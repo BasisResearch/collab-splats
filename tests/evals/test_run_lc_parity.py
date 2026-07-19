@@ -32,7 +32,7 @@ def test_build_scene_commands_levels_0_and_1(tmp_path):
     assert "--max_frames" not in slam  # full sequence — no cap
     # Level 1: one eval_gt run per backbone, all consuming the same Level-0 keyframe list
     for backbone, ours in zip(DEFAULT_BACKBONES, cmds[1:]):
-        assert "eval_gt.py" in ours[1]
+        assert "eval.py" in ours[1]
         assert ours[ours.index("--backbone") + 1] == backbone
         assert ours[ours.index("--max_loops_per_submap") + 1] == "1"  # upstream parity cap
         kf = Path(ours[ours.index("--keyframe_list") + 1])
@@ -144,7 +144,7 @@ def test_build_prefix_commands_7scenes_no_image_list(tmp_path):
 def test_done_skip_logic(tmp_path):
     # eval_gt.py convention: metrics.json lands directly inside --output_dir
     out_dir = tmp_path / "ours_vggt_spark"
-    cmd = ["python", "eval_gt.py", "--output_dir", str(out_dir)]
+    cmd = ["python", "eval.py", "--output_dir", str(out_dir)]
     assert _done(cmd) is False
     out_dir.mkdir(parents=True)
     (out_dir / "metrics.json").write_text("{}")
@@ -173,7 +173,7 @@ def test_run_one_pins_subprocess_imports_to_repo(monkeypatch):
         captured["env"] = env
 
     monkeypatch.setattr(rlp.subprocess, "run", fake_run)
-    rlp._run_one([rlp.PY, "eval_gt.py", "--output_dir", "/nonexistent-parity-out"], dry_run=False)
+    rlp._run_one([rlp.PY, "eval.py", "--output_dir", "/nonexistent-parity-out"], dry_run=False)
     env = captured["env"]
     assert env is not None and "PYTHONPATH" in env
     parts = env["PYTHONPATH"].split(os.pathsep)

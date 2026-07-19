@@ -14,7 +14,7 @@ def _make_poses(N=5):
 
 
 def test_prepare_image_dir_creates_symlinks(tmp_path):
-    from eval_gt import _prepare_image_dir
+    from eval import _prepare_image_dir
     src_dir = tmp_path / "src"
     src_dir.mkdir()
     images = []
@@ -35,7 +35,7 @@ def test_prepare_image_dir_creates_symlinks(tmp_path):
 
 def test_prepare_image_dir_ordered_by_index(tmp_path):
     """Symlinks are named 000000.png..N so VGGTXCreator sees correct frame order."""
-    from eval_gt import _prepare_image_dir
+    from eval import _prepare_image_dir
     images = [tmp_path / f"z_{i}.png" for i in range(5)]
     for p in images:
         p.touch()
@@ -49,7 +49,7 @@ def test_prepare_image_dir_ordered_by_index(tmp_path):
 
 def test_cam_positions_identity():
     """Identity world-to-cam → camera at origin."""
-    from eval_gt import _cam_positions
+    from eval import _cam_positions
     poses = np.tile(np.eye(4, dtype=np.float32), (3, 1, 1))
     pos = _cam_positions(poses)
     np.testing.assert_allclose(pos, np.zeros((3, 3)), atol=1e-6)
@@ -57,7 +57,7 @@ def test_cam_positions_identity():
 
 def test_cam_positions_translation():
     """world-to-cam with t=(1,2,3) → cam at (-1,-2,-3) in world (identity R)."""
-    from eval_gt import _cam_positions
+    from eval import _cam_positions
     poses = np.tile(np.eye(4, dtype=np.float32), (1, 1, 1))
     poses[0, :3, 3] = [1.0, 2.0, 3.0]
     pos = _cam_positions(poses)
@@ -65,7 +65,7 @@ def test_cam_positions_translation():
 
 
 def test_save_outputs_writes_files(tmp_path):
-    from eval_gt import _save_outputs
+    from eval import _save_outputs
     gt = _make_poses(10)
     trajectories = {"gt": gt, "baseline": gt.copy(), "ba": gt.copy()}
     metrics = {
@@ -88,7 +88,7 @@ def test_save_outputs_writes_files(tmp_path):
 
 def test_make_creator_ba_track_density_4096(monkeypatch):
     """ba_track-density-4096 → BA enabled with max_query_pts=4096, query_frame_num=8."""
-    import eval_gt
+    import eval as eval_gt
     from collab_splats.geometry import BundleAdjustmentConfig
     from unittest.mock import MagicMock
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
@@ -100,7 +100,7 @@ def test_make_creator_ba_track_density_4096(monkeypatch):
 
 def test_make_creator_ba_track_density_2048(monkeypatch):
     """ba_track-density-2048 → query_frame_num=5 (max(5, 2048//512) = max(5,4) = 5)."""
-    import eval_gt
+    import eval as eval_gt
     from collab_splats.geometry import BundleAdjustmentConfig
     from unittest.mock import MagicMock
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
@@ -111,7 +111,7 @@ def test_make_creator_ba_track_density_2048(monkeypatch):
 
 
 def test_validate_condition_accepts_known():
-    from eval_gt import _validate_condition
+    from eval import _validate_condition
     for cond in ["baseline", "ba", "lc", "ba_track-density-4096", "ba_track-density-1024"]:
         _validate_condition(cond)  # must not raise
 
@@ -119,14 +119,14 @@ def test_validate_condition_accepts_known():
 def test_validate_condition_rejects_ba_hightrack():
     """ba_hightrack is no longer valid — was replaced by ba_track-density-N."""
     import pytest
-    from eval_gt import _validate_condition
+    from eval import _validate_condition
     with pytest.raises(ValueError, match="ba_hightrack"):
         _validate_condition("ba_hightrack")
 
 
 def test_validate_condition_rejects_unknown():
     import pytest
-    from eval_gt import _validate_condition
+    from eval import _validate_condition
     with pytest.raises(ValueError):
         _validate_condition("mystery_condition")
 
@@ -134,7 +134,7 @@ def test_validate_condition_rejects_unknown():
 def test_default_output_dir_structure():
     """Auto path: evals/results/{dataset}/{seq_name}/run-{YYYYMMDD-HHMMSS}/"""
     import re
-    from eval_gt import _default_output_dir
+    from eval import _default_output_dir
     result = _default_output_dir("co3dv2", Path("/data/co3dv2/apple/seq1"))
     parts = list(result.parts)
     idx = parts.index("results")
@@ -146,7 +146,7 @@ def test_default_output_dir_structure():
 
 def test_default_output_dir_uses_basename():
     """seq_name = last component of seq_dir."""
-    from eval_gt import _default_output_dir
+    from eval import _default_output_dir
     r1 = _default_output_dir("7scenes", Path("/long/path/chess"))
     r2 = _default_output_dir("7scenes", Path("/other/chess"))
     assert r1.parent.name == "chess"
@@ -155,7 +155,7 @@ def test_default_output_dir_uses_basename():
 
 def test_save_outputs_no_per_frame_in_json(tmp_path):
     """per_frame array must not appear in metrics.json (not JSON-serializable)."""
-    from eval_gt import _save_outputs
+    from eval import _save_outputs
     from collab_splats.geometry.loop_closure.eval import ate_translation
     gt = _make_poses(10)
     metrics = {
@@ -175,7 +175,7 @@ def test_save_outputs_excludes_slam_overlay_from_npz_and_metrics(tmp_path):
     """The plot-only 'vggt_slam' trajectory key (gap 1) must not leak into
     trajectories.npz's pred_* keys or metrics.json — only conditions with a metrics
     entry get serialized there; 'vggt_slam' only reaches the trajectory plot."""
-    from eval_gt import _save_outputs
+    from eval import _save_outputs
     gt = _make_poses(6)
     trajectories = {"gt": gt, "lc": gt.copy(), "vggt_slam": gt.copy()}
     metrics = {
@@ -197,7 +197,7 @@ def test_save_outputs_excludes_slam_overlay_from_npz_and_metrics(tmp_path):
 def test_plot_trajectory_includes_slam_overlay(tmp_path):
     """_plot_trajectory renders an extra 'vggt_slam' trajectory without crashing (gap 1:
     SLAM reference in the trajectory overlay)."""
-    from eval_gt import _plot_trajectory
+    from eval import _plot_trajectory
     gt = _make_poses(5)
     trajectories = {"gt": gt, "lc": gt.copy(), "vggt_slam": gt.copy()}
     out = tmp_path / "trajectory.png"
@@ -206,12 +206,12 @@ def test_plot_trajectory_includes_slam_overlay(tmp_path):
 
 
 def test_colors_has_vggt_slam_entry():
-    import eval_gt
+    import eval as eval_gt
     assert "vggt_slam" in eval_gt._COLORS
 
 
 def test_slam_tum_arg_defaults_to_none():
-    from eval_gt import _build_parser
+    from eval import _build_parser
     args = _build_parser().parse_args(
         ["--dataset", "7scenes", "--seq_dir", "/tmp/seq"]
     )
@@ -219,7 +219,7 @@ def test_slam_tum_arg_defaults_to_none():
 
 
 def test_slam_tum_arg_parses_path():
-    from eval_gt import _build_parser
+    from eval import _build_parser
     args = _build_parser().parse_args(
         ["--dataset", "7scenes", "--seq_dir", "/tmp/seq", "--slam_tum", "/tmp/slam.tum"]
     )
@@ -228,7 +228,7 @@ def test_slam_tum_arg_parses_path():
 
 def test_save_outputs_persists_all_auc_thresholds(tmp_path):
     """metrics.json keeps the full AUC dict (auc_5/15/30) + RPE rotation."""
-    from eval_gt import _save_outputs
+    from eval import _save_outputs
     poses = np.tile(np.eye(4), (3, 1, 1))
     metrics = {"baseline": {
         "ate": {"rmse": 0.01, "per_frame": np.zeros(3)},

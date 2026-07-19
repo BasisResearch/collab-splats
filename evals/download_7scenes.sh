@@ -7,7 +7,7 @@
 #   bash evals/download_7scenes.sh office ./evals/data/7scenes
 #
 # All 7-Scenes scenes are accepted: chess fire heads office pumpkin redkitchen stairs.
-# Validated end-to-end against `evals/eval_gt.py` (VGGT-SLAM-comparable evals): chess, fire, office.
+# Validated end-to-end against `evals/eval.py` (VGGT-SLAM-comparable evals): chess, fire, office.
 # Other scenes share the same layout and should work but have not been benchmarked.
 #
 # Layout produced (matches `evals/datasets.py:_load_7scenes`):

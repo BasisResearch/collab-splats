@@ -1,5 +1,16 @@
 """LoopClosure wrapper around pointcloud creators.
 
+Quickstart:
+    from collab_splats.pointcloud import get_creator
+    from collab_splats.geometry.loop_closure import LoopClosure, LoopClosureConfig
+
+    base = get_creator("vggt_omega")()
+    lc = LoopClosure(base, config=LoopClosureConfig())
+    result = lc.reconstruct(image_dir="path/to/images", output_dir="path/to/out")
+
+See docs/source/tutorials/02_pointcloud/slam_loop_closure.ipynb for the full
+walkthrough (candidate matching, plots).
+
 This module deliberately depends on pointcloud result types (PointcloudResult,
 FeedforwardResult, _raw_to_world_points) because it wraps feedforward creators.
 That reverse dependency (geometry -> pointcloud) is why LoopClosure is lazily

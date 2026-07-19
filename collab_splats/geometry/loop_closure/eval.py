@@ -78,6 +78,9 @@ def capture_pose_graph_loss(
 
     optimizer = gtsam.LevenbergMarquardtOptimizer(pose_graph._graph, pose_graph._initial, params)
 
+    # Manual iterate() loop (not optimizer.optimize()) so we can capture the cost
+    # after every step; the outer max_iterations is the sole step-count authority
+    # (GTSAM's own internal max-iteration param is intentionally left unset).
     iterations: list[float] = [float(optimizer.error())]
     prev_err = iterations[0]
     converged = False
@@ -90,6 +93,7 @@ def capture_pose_graph_loss(
             break
         prev_err = err
 
+    # Per-edge-type residual breakdown, before and after optimization.
     optimized = optimizer.values()
     groups = _classify_edges(pose_graph._graph)
     per_edge_initial = _per_edge_error(pose_graph._graph, pose_graph._initial, groups)
@@ -182,10 +186,14 @@ def rpe(pred: np.ndarray, gt: np.ndarray, delta: int = 1) -> dict:
     """
     if delta >= len(pred):
         raise ValueError(f"delta={delta} >= N={len(pred)}, no pose pairs available")
+    # Relative pose between frame i and i+delta, for pred and gt independently,
+    # then the error transform between the two relative poses.
     rel_pred = np.linalg.inv(pred[:-delta]) @ pred[delta:]  # (N-δ, 4, 4)
     rel_gt = np.linalg.inv(gt[:-delta]) @ gt[delta:]  # (N-δ, 4, 4)
     err = np.linalg.inv(rel_gt) @ rel_pred  # (N-δ, 4, 4)
 
+    # Translation error is the error transform's norm; rotation error is its
+    # geodesic angle via the standard trace formula.
     t_err = np.linalg.norm(err[:, :3, 3], axis=1)
     cos_angle = np.clip((np.trace(err[:, :3, :3], axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
     r_err_deg = np.degrees(np.arccos(cos_angle))

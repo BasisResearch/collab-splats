@@ -36,7 +36,7 @@ evals/
 |---|---|
 | `eval_gt.py` | **Main GT eval runner.** Feedforward backbone × condition (`baseline`/`lc`/`ba`/`ba_track-density-N`) → ATE/RPE/AUC vs GT. Each condition runs in its own subprocess (clean GPU). Flags: `--backbone --conditions --submap_size --lc_scale_method --keyframe_list --lc_layer --output_ate`. Writes `metrics.json` (ATE, RPE trans+rot, AUC@{5,15,30}), TUM trajectories, plots. |
 | `eval_compare.py` | Phase-2 unified comparison runner over multiple methods/sequences. |
-| `eval_suite.sh` | Shell driver bundling a standard eval set. |
+| `eval.py` | Config-driven eval runner. For the standard 7-Scenes eval set: `eval.py --config configs/7scenes.yaml`. |
 
 ## Library (imported by the harness)
 
@@ -46,7 +46,6 @@ evals/
 | `ate_utils.py` | ATE vs 7-Scenes GT via `evo` (Sim3-aligned). |
 | `metrics.py` | Thin `evo` ATE/RPE wrapper + `compute_auc` (TUM-file pose AUC). |
 | `trajectory_io.py` | Trajectory read/write (TUM etc). |
-| `reconstruction_quality.py` | Submap-alignment quality metrics for LC validation (used by `eval_gt` subprocess mode). |
 
 ## Dataset downloaders (utility)
 
@@ -58,9 +57,6 @@ evals/
 | file | role |
 |---|---|
 | `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). Loop closure via `--max_loops` (0 = published baseline; >0 also writes `selected_frames.txt` + ATE + `metrics.json`). |
-| `run_disparity_sweep.py` | Disparity-sweep parity harness (ours vs SLAM) for any backbone (`--backbone`, default `vggt_spark`); generated `baselines/disparity_sweep/`. |
-| `run_cross_model_benchmark.py` | Serial `eval_gt` matrix over any backbones/framesets (`--backbones`, `--single_framesets`, `--windowed_framesets`, `--submap_size`); defaults reproduce the 2026-05-31 4-backbone matrix. |
-| `build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown table (`--reference_backbone`, default `vggt_spark`). |
 | `compare_loop_edges.py` | Loop-edge composition diff (ours vs SLAM). Kept: `compose_slam_chain` imported by `tests/geometry/loop_closure/test_loop_edge_chain.py`. |
 
 ### VGGT-SLAM parity workflow
@@ -159,14 +155,13 @@ so the sweep scripts are deleted. CO3Dv2 notes in `EVAL_NOTES.md`.
 ### D. Cross-model benchmark (2026-05-31)
 Goal: rank backbones; separate windowing cost from LC benefit. **Outcome:**
 `docs/superpowers/specs/2026-05-31-cross-model-benchmark-results.md`. The frozen
-2026-05-31 numbers live under `baselines/cross_model/`; to reproduce or extend
-them for a different backbone/frameset combination, use the generalized scripts:
+2026-05-31 numbers live under `baselines/cross_model/`. The bespoke sweep/table
+drivers that generated them have been retired; reproduce or extend the matrix for a
+different backbone/frameset via `eval.py --config configs/7scenes.yaml` (or
+`configs/cross_model_chess.yaml`). The VGGT-SLAM comparison anchor remains:
 
 | script | what it probed |
 |---|---|
-| `runners/run_cross_model_benchmark.py` | Serial `eval_gt` matrix — any `--backbones` × `--single_framesets`/`--windowed_framesets` (defaults reproduce the original 4-backbone matrix). |
-| `runners/build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown (`--reference_backbone`). |
-| `runners/run_disparity_sweep.py` | ours-vs-SLAM at min_disparity 10–50 for any `--backbone` → `baselines/disparity_sweep/`. |
 | `runners/run_vggt_slam.py` | VGGT-SLAM wrapper (anchor + long ref / loop probe; LC via `--max_loops`). |
 
 > **Housekeeping:** if bundle-adjustment tuning is revisited, prefer writing

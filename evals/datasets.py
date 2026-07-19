@@ -121,7 +121,7 @@ def _load_waymo(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     Waymo's tfrecord format requires the ``waymo-open-dataset`` pip wheel which
     pins TensorFlow and conflicts with the nerfstudio env's torch/CUDA stack.
     To keep this loader light, we expect the sequence to have been extracted by
-    ``evals/runners/extract_waymo.py`` (run in a sidecar env) into a flat
+    ``evals/data/extract_waymo.py`` (run in a sidecar env) into a flat
     on-disk layout::
 
         seq_dir/images/{000000.png, 000001.png, ...}   (front camera)

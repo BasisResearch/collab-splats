@@ -49,7 +49,7 @@ evals/
 
 ## Dataset downloaders (utility)
 
-`download_7scenes.py` · `download_7scenes.sh` · `download_co3dv2.sh` · `download_kitti.sh` · `download_tum.sh` · `download_waymo.sh` · `runners/extract_waymo.py` (tfrecord → flat layout).
+`data/download_datasets.py <dataset>` — one consolidated CLI with a subcommand per dataset: `7scenes` (`--parity` for the LC-parity set), `co3dv2`, `kitti`, `tum`, `waymo`. `data/extract_waymo.py` converts a Waymo tfrecord → flat layout.
 
 ## `runners/` — SLAM wrappers, benchmark drivers, parity tools
 

@@ -41,6 +41,8 @@ class Submap:
         ones = np.ones((flat.shape[0], 1), dtype=np.float64)
         hom = np.hstack([flat, ones])  # (K*P, 4)
         out_hom = (H @ hom.T).T  # (K*P, 4)
+        # Dehomogenize by /w, guarding against near-zero w (projective transform
+        # can push points toward the plane at infinity).
         w = out_hom[:, 3:4]
         w = np.where(np.abs(w) < 1e-10, 1e-10, w)
         return (out_hom[:, :3] / w).reshape(k, p, 3).astype(np.float32)

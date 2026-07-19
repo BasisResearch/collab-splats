@@ -13,7 +13,6 @@ from .graph import (
     PoseGraph,
     decompose_camera,
     estimate_scale_pairwise,
-    normalize_to_sl4,
 )
 from .submap import Submap, assert_world_to_cam
 
@@ -42,7 +41,6 @@ __all__ = [
     "translation_jump_check",
     "PoseGraph",
     "decompose_camera",
-    "normalize_to_sl4",
     "estimate_scale_pairwise",
     "capture_pose_graph_loss",
 ]

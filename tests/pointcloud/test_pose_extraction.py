@@ -11,7 +11,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
 from collab_splats.geometry.loop_closure.closure import run_pose_graph_optimization
-from collab_splats.geometry.loop_closure.graph import decompose_camera, normalize_to_sl4
+from collab_splats.geometry.loop_closure.graph import decompose_camera
 from collab_splats.geometry.loop_closure.submap import Submap
 
 
@@ -151,7 +151,8 @@ def test_decompose_camera_handles_sl4_projective_scale():
     H[:3, 3] = t_input
     H[3, 3] = 2.0
 
-    H_sl4 = normalize_to_sl4(H)
+    # Inline SL(4) normalization (det=1): H / det(H)^(1/4).
+    H_sl4 = H / abs(np.linalg.det(H)) ** 0.25
     assert abs(H_sl4[3, 3] - 1.0) > 1e-6, "H[3,3] should differ from 1 after SL(4) norm"
     assert abs(np.linalg.det(H_sl4) - 1.0) < 1e-9, "SL(4) norm should enforce det=1"
 

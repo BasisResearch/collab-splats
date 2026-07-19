@@ -179,7 +179,7 @@ def _centre(w2c: np.ndarray) -> np.ndarray:
 def _run(submaps, lc_submaps, total_frames=7):
     return run_pose_graph_optimization(
         submaps, lc_submaps, total_frames=total_frames, overlap_frames=1,
-        manifold="sl4", conf_threshold=25.0, scale_method="rotation_only",
+        conf_threshold=25.0, scale_method="rotation_only",
     )
 
 

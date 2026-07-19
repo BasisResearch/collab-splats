@@ -38,7 +38,6 @@ from collab_splats.pointcloud.feedforward import FeedforwardResult, _raw_to_worl
 
 from .closure import (
     LoopClosureConfig,
-    dedup_overlap,
     find_loop_closures,
     merge_submap_outputs,
     run_pose_graph_optimization,
@@ -49,20 +48,6 @@ from .submap import Submap, assert_world_to_cam
 logger = logging.getLogger(__name__)
 
 __all__ = ["LoopClosure"]
-
-
-def _assemble_precorrection_extrinsics(submaps: list, total_frames: int) -> np.ndarray:
-    """Stitch raw per-submap poses into (total_frames, 4, 4) without PGO correction.
-
-    Uses the same first-writer-wins overlap dedup as dedup_overlap in closure.py.
-    """
-    corrected_raw = {s.submap_id: s.poses for s in submaps}
-    return dedup_overlap(
-        submap_ids=[s.submap_id for s in submaps],
-        submap_starts=[s.frame_start for s in submaps],
-        corrected=corrected_raw,
-        total_frames=total_frames,
-    )
 
 
 def _trim_forward_outputs(raw: "dict | list", k: int) -> "dict | list":
@@ -382,7 +367,6 @@ class LoopClosure:
         self.base._lc_loop_submaps = lc_submaps
         self.base._lc_overlap_frames = O
         self.base._lc_all_matches = all_loop_candidates
-        self.base._lc_precorrection_extrinsics = _assemble_precorrection_extrinsics(submaps, N)
 
         # Merge per-submap world_points and poses into unified outputs
         t0_pg = time.perf_counter()

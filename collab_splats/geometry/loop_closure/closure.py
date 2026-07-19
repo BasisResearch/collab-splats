@@ -170,9 +170,6 @@ class LoopClosureConfig:
     verify_match_ratio: float | None = None
     nms_frame_distance: int = 25
     min_submap_gap: int = 1
-    # "se3": scale folds into Pose3 with non-orthonormal Rot3 (pre-existing limitation;
-    # "sl4" is the parity default and handles scale correctly).
-    manifold: Literal["sl4", "se3"] = "sl4"
     # Inter-submap scale estimation method.
     # "rotation_only" — VGGT-SLAM default: T[:3,:3] applied to curr_pts (rotation only)
     # "se3"           — full SE3 T applied before norm ratio
@@ -505,7 +502,6 @@ def run_pose_graph_optimization(
     lc_submaps: list[Submap],
     total_frames: int,
     overlap_frames: int,
-    manifold: Literal["sl4", "se3"] = "sl4",
     conf_threshold: float = 25.0,
     scale_method: Literal["se3", "rotation_only", "pairwise_dist", "none"] = "se3",
     debug_out: list | None = None,
@@ -524,7 +520,7 @@ def run_pose_graph_optimization(
     if not submaps:
         return np.tile(np.eye(4, dtype=np.float32), (total_frames, 1, 1))
 
-    pg = _SL4PoseGraph(manifold=manifold)
+    pg = _SL4PoseGraph()
     global_node_id = 0
     frame_to_node: dict[tuple[int, int], int] = {}
     submap_node_ids: dict[int, list[int]] = {}

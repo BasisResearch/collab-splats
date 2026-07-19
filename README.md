@@ -10,6 +10,7 @@ Video/image → 3D pointcloud → mesh + semantic features. Feedforward reconstr
 - **Semantic lifting** — DINOv2/SAM features lifted into 3D pointcloud
 - **Meshing** — TSDF and Poisson surface reconstruction
 - **Camera localization** — SALAD retrieval + hloc matching
+- **Live scene viewer** — browser-viewable viser scene for watching reconstructions build in real time
 
 ## Install
 
@@ -115,6 +116,26 @@ pick up code changes — there is no autoreload.
 Use the view toggle to switch the left pane between `pointcloud` and `mesh`. Type a query
 to colour the right pane by similarity. Pointcloud and mesh share the same features, so
 both panes answer the same query.
+
+## Live Scene Viewer
+
+`collab_splats.viewer.Viewer` serves a live 3D scene over websockets (viser) — push named
+point clouds, camera frusta, and line segments from any running job (e.g. a tmux
+reconstruction) and watch them land in the browser. No display/GL needed on the host.
+Re-adding a node under the same name replaces it, so a scene can be refreshed in place.
+
+```python
+from collab_splats.viewer import Viewer
+from collab_splats.pointcloud.utils import subsample_points
+
+viewer = Viewer(port=8080)  # open http://<host>:8080
+points, colors = subsample_points(points, colors, conf=conf, max_points=50_000)
+viewer.add_points("submap_0", points, colors)
+viewer.add_frustum("submap_0/cams/frame_0", pose_w2c, intrinsic)
+```
+
+Use `subsample_points` to cap each cloud to a fixed budget so multi-part scenes stay
+balanced. GUI toggles: camera visibility and flat per-node coloring (shows part boundaries).
 
 ## Evaluation
 

@@ -192,6 +192,179 @@ class LoopClosure:
         n = views.shape[0] if hasattr(views, "shape") else len(views)
         return n >= self.config.submap_size
 
+    def run_predictions(
+        self,
+        window: Any,
+        wi: int,
+        start: int,
+        submaps: list[Submap],
+        lc_submaps: list[Submap],
+        retrieval_extractor: Any,
+        console: Console,
+        **kwargs: Any,
+    ) -> "tuple[Submap, list[Submap], list]":
+        """Forward-pass one window, build its Submap, detect + verify loop candidates.
+
+        Returns (submap, lc_submaps, loop_matches): the window's Submap, the list of
+        verified loop-closure submaps (each 2 frames), and all post-NMS candidates
+        (accepted + rejected). Not a singular match — max_loops_per_submap defaults to 5.
+        """
+        cfg = self.config
+        k = window.shape[0] if hasattr(window, "shape") else len(window)
+        end = start + k  # window == views[start:start+k]; matches the driver's slice bound
+
+        with torch.no_grad():
+            raw = self.base._forward(self.base.model, window, **kwargs)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Models that return list[dict] (e.g. MapAnything) must aggregate to a flat
+        # dict for the LC loop. raw_lc is used for LC metadata; raw is stored in the
+        # Submap so _postprocess can use the original per-frame structure.
+        raw_lc = self.base._lc_collate_outputs(raw) if isinstance(raw, list) else raw
+
+        ext_3x4 = raw_lc["extrinsic"]  # (k, 3, 4)
+        poses_4x4 = extrinsics_to_homogeneous(ext_3x4)  # (k, 4, 4)
+
+        assert_world_to_cam(poses_4x4)
+
+        intr_key = "intrinsics" if "intrinsics" in raw_lc else "intrinsic"
+        intrinsics = raw_lc.get(intr_key, np.tile(np.eye(3), (k, 1, 1)).astype(np.float32))
+
+        if hasattr(window, "cpu"):
+            # Tensor window (e.g. VGGT-X, Omega): shape (K, C, H, W)
+            frames_cpu = window.cpu()
+        elif isinstance(window, list) and window and isinstance(window[0], dict) and "img" in window[0]:
+            # List-of-dicts window (e.g. MapAnything): extract img tensors and stack to (K, C, H, W)
+            frames_cpu = torch.cat([v["img"].cpu() for v in window], dim=0)
+        else:
+            frames_cpu = torch.zeros(k, 3, 1, 1)
+        ret_vecs = retrieval_extractor(frames_cpu)  # (k, D)
+
+        wp, wp_conf = _raw_to_world_points(raw_lc)
+        submap = Submap(
+            submap_id=wi,
+            frames=frames_cpu,
+            poses=poses_4x4,
+            intrinsics=intrinsics,
+            retrieval_vectors=ret_vecs,
+            image_paths=list(self.base.image_paths[start:end]),
+            raw_outputs=raw,
+            frame_start=start,
+            world_points=wp,
+            world_points_conf=wp_conf,
+        )
+
+        # Query retrieval index for loop candidates against prior submaps
+        past_for_lc = submaps[: max(0, len(submaps) - cfg.min_submap_gap)]
+        loop_matches = find_loop_closures(
+            submap,
+            past_for_lc,
+            cfg.lc_threshold_l2,
+            cfg.max_loops_per_submap,
+            nms_frame_distance=cfg.nms_frame_distance,
+        )
+
+        window_lc_submaps: list[Submap] = []
+        for match in loop_matches:
+            q_frame = frames_cpu[match.query_frame_idx]
+            d_submap = submaps[match.detected_submap_id]
+            d_frame = d_submap.frames[match.detected_frame_idx]
+            verify_ok, lc_data = self.base._verify_loop_candidate(
+                q_frame, d_frame, verify_match_ratio=cfg.verify_match_ratio
+            )
+            if not verify_ok:
+                console.log(
+                    f"  ✗ Loop rejected (verify ratio): "
+                    f"submap {match.query_submap_id} → {match.detected_submap_id}"
+                    f"  dist={match.similarity_score:.3f}"
+                )
+                match.reject_reason = "verify_ratio"
+            if verify_ok and lc_data is None:
+                # Defensive guard: the verify contract requires every accepting
+                # backend to return lc_data with joint poses — this firing means
+                # a backend contract violation, not an expected reject path.
+                logger.error(
+                    "LC verify accepted but returned no lc_data (backend contract " "violation): submap %s → %s",
+                    match.query_submap_id,
+                    match.detected_submap_id,
+                )
+                verify_ok = False
+                match.reject_reason = "no_joint_poses"
+            if verify_ok:
+                lc_poses = lc_data["poses"]
+                lc_rel = (invert_poses(lc_poses[1].astype(np.float64)) @ lc_poses[0].astype(np.float64)).astype(
+                    np.float32
+                )
+                jump_ok, jump_ratio = translation_jump_check(
+                    submaps + [submap],
+                    query_idx=len(submaps),
+                    query_frame=match.query_frame_idx,
+                    detected_idx=match.detected_submap_id,
+                    detected_frame=match.detected_frame_idx,
+                    lc_relative_pose=lc_rel,
+                    max_jump_ratio=cfg.max_jump_ratio,
+                )
+                if not jump_ok:
+                    console.log(
+                        f"  ✗ Loop rejected (jump ratio={jump_ratio:.2f}): "
+                        f"submap {match.query_submap_id} → {match.detected_submap_id}"
+                    )
+                    match.reject_reason = "jump_ratio"
+                else:
+                    match.accepted = True
+                    match.reject_reason = None
+                    console.log(
+                        f"  ↩ Loop: submap {match.query_submap_id} → {match.detected_submap_id}"
+                        f"  dist={match.similarity_score:.3f} jump={jump_ratio:.2f}"
+                    )
+                    # Reshape LC geometry to Submap's (K, P, 3)/(K, P) convention:
+                    # (2, H, W, 3) → (2, H·W, 3) and (2, H, W) → (2, H·W).
+                    lc_wp = lc_data.get("world_points")
+                    lc_wp = lc_wp.reshape(2, -1, 3) if lc_wp is not None else None
+                    lc_conf = lc_data.get("conf")
+                    lc_conf = lc_conf.reshape(2, -1) if lc_conf is not None else None
+                    # submap_id mirrors the original in-place accumulator growth:
+                    # len(submaps) (current submap not yet appended) + all prior lc
+                    # submaps + those already appended for this window.
+                    window_lc_submaps.append(
+                        Submap(
+                            submap_id=len(submaps) + len(lc_submaps) + len(window_lc_submaps),
+                            frames=torch.stack([q_frame, d_frame]),
+                            poses=lc_poses,
+                            intrinsics=np.stack(
+                                [
+                                    submap.intrinsics[match.query_frame_idx],
+                                    d_submap.intrinsics[match.detected_frame_idx],
+                                ]
+                            ),
+                            retrieval_vectors=torch.zeros(2, ret_vecs.shape[-1]),
+                            image_paths=[
+                                submap.image_paths[match.query_frame_idx],
+                                d_submap.image_paths[match.detected_frame_idx],
+                            ],
+                            is_lc_submap=True,
+                            world_points=lc_wp,
+                            world_points_conf=lc_conf,
+                        )
+                    )
+
+        return submap, window_lc_submaps, loop_matches
+
+    def add_points(
+        self,
+        submap: Submap,
+        lc_submaps: list[Submap],
+        submaps: list[Submap],
+        lc_submaps_acc: list[Submap],
+    ) -> None:
+        """Append the window's submap + verified loop submaps to the driver's lists.
+
+        Bookkeeping only — PGO is deferred to the batch call after the sweep.
+        """
+        submaps.append(submap)
+        lc_submaps_acc.extend(lc_submaps)
+
     def _run_lc_loop(self, **kwargs: Any) -> None:
         console = Console()
 
@@ -228,144 +401,15 @@ class LoopClosure:
                 # The overlap frame (index K) is kept as the boundary/carry frame for the next submap.
                 end = min(start + K + O, N)
                 window = views[start:end]
-                k = window.shape[0] if hasattr(window, "shape") else len(window)
 
-                with torch.no_grad():
-                    raw = self.base._forward(self.base.model, window, **kwargs)
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-                # Models that return list[dict] (e.g. MapAnything) must aggregate to a flat
-                # dict for the LC loop. raw_lc is used for LC metadata; raw is stored in the
-                # Submap so _postprocess can use the original per-frame structure.
-                raw_lc = self.base._lc_collate_outputs(raw) if isinstance(raw, list) else raw
-
-                ext_3x4 = raw_lc["extrinsic"]  # (k, 3, 4)
-                poses_4x4 = extrinsics_to_homogeneous(ext_3x4)  # (k, 4, 4)
-
-                assert_world_to_cam(poses_4x4)
-
-                intr_key = "intrinsics" if "intrinsics" in raw_lc else "intrinsic"
-                intrinsics = raw_lc.get(intr_key, np.tile(np.eye(3), (k, 1, 1)).astype(np.float32))
-
-                if hasattr(window, "cpu"):
-                    # Tensor window (e.g. VGGT-X, Omega): shape (K, C, H, W)
-                    frames_cpu = window.cpu()
-                elif isinstance(window, list) and window and isinstance(window[0], dict) and "img" in window[0]:
-                    # List-of-dicts window (e.g. MapAnything): extract img tensors and stack to (K, C, H, W)
-                    frames_cpu = torch.cat([v["img"].cpu() for v in window], dim=0)
-                else:
-                    frames_cpu = torch.zeros(k, 3, 1, 1)
-                ret_vecs = retrieval_extractor(frames_cpu)  # (k, D)
-
-                wp, wp_conf = _raw_to_world_points(raw_lc)
-                submap = Submap(
-                    submap_id=wi,
-                    frames=frames_cpu,
-                    poses=poses_4x4,
-                    intrinsics=intrinsics,
-                    retrieval_vectors=ret_vecs,
-                    image_paths=list(self.base.image_paths[start:end]),
-                    raw_outputs=raw,
-                    frame_start=start,
-                    world_points=wp,
-                    world_points_conf=wp_conf,
+                # run_predictions == VGGT-SLAM's per-frame forward+detect; add_points defers PGO to the batch step.
+                submap, window_lc_submaps, _ = self.run_predictions(
+                    window, wi, start, submaps, lc_submaps, retrieval_extractor, console, **kwargs
                 )
+                self.add_points(submap, window_lc_submaps, submaps, lc_submaps)
 
-                # Query retrieval index for loop candidates against prior submaps
-                past_for_lc = submaps[: max(0, len(submaps) - cfg.min_submap_gap)]
-                loop_matches = find_loop_closures(
-                    submap,
-                    past_for_lc,
-                    cfg.lc_threshold_l2,
-                    cfg.max_loops_per_submap,
-                    nms_frame_distance=cfg.nms_frame_distance,
-                )
-
-                for match in loop_matches:
-                    q_frame = frames_cpu[match.query_frame_idx]
-                    d_submap = submaps[match.detected_submap_id]
-                    d_frame = d_submap.frames[match.detected_frame_idx]
-                    verify_ok, lc_data = self.base._verify_loop_candidate(
-                        q_frame, d_frame, verify_match_ratio=cfg.verify_match_ratio
-                    )
-                    if not verify_ok:
-                        console.log(
-                            f"  ✗ Loop rejected (verify ratio): "
-                            f"submap {match.query_submap_id} → {match.detected_submap_id}"
-                            f"  dist={match.similarity_score:.3f}"
-                        )
-                        match.reject_reason = "verify_ratio"
-                    if verify_ok and lc_data is None:
-                        # Defensive guard: the verify contract requires every accepting
-                        # backend to return lc_data with joint poses — this firing means
-                        # a backend contract violation, not an expected reject path.
-                        logger.error(
-                            "LC verify accepted but returned no lc_data (backend contract "
-                            "violation): submap %s → %s",
-                            match.query_submap_id,
-                            match.detected_submap_id,
-                        )
-                        verify_ok = False
-                        match.reject_reason = "no_joint_poses"
-                    if verify_ok:
-                        lc_poses = lc_data["poses"]
-                        lc_rel = (invert_poses(lc_poses[1].astype(np.float64)) @ lc_poses[0].astype(np.float64)).astype(
-                            np.float32
-                        )
-                        jump_ok, jump_ratio = translation_jump_check(
-                            submaps + [submap],
-                            query_idx=len(submaps),
-                            query_frame=match.query_frame_idx,
-                            detected_idx=match.detected_submap_id,
-                            detected_frame=match.detected_frame_idx,
-                            lc_relative_pose=lc_rel,
-                            max_jump_ratio=cfg.max_jump_ratio,
-                        )
-                        if not jump_ok:
-                            console.log(
-                                f"  ✗ Loop rejected (jump ratio={jump_ratio:.2f}): "
-                                f"submap {match.query_submap_id} → {match.detected_submap_id}"
-                            )
-                            match.reject_reason = "jump_ratio"
-                        else:
-                            match.accepted = True
-                            match.reject_reason = None
-                            verified += 1
-                            loops_found += 1
-                            console.log(
-                                f"  ↩ Loop: submap {match.query_submap_id} → {match.detected_submap_id}"
-                                f"  dist={match.similarity_score:.3f} jump={jump_ratio:.2f}"
-                            )
-                            # Reshape LC geometry to Submap's (K, P, 3)/(K, P) convention:
-                            # (2, H, W, 3) → (2, H·W, 3) and (2, H, W) → (2, H·W).
-                            lc_wp = lc_data.get("world_points")
-                            lc_wp = lc_wp.reshape(2, -1, 3) if lc_wp is not None else None
-                            lc_conf = lc_data.get("conf")
-                            lc_conf = lc_conf.reshape(2, -1) if lc_conf is not None else None
-                            lc_submaps.append(
-                                Submap(
-                                    submap_id=len(submaps) + len(lc_submaps),
-                                    frames=torch.stack([q_frame, d_frame]),
-                                    poses=lc_poses,
-                                    intrinsics=np.stack(
-                                        [
-                                            submap.intrinsics[match.query_frame_idx],
-                                            d_submap.intrinsics[match.detected_frame_idx],
-                                        ]
-                                    ),
-                                    retrieval_vectors=torch.zeros(2, ret_vecs.shape[-1]),
-                                    image_paths=[
-                                        submap.image_paths[match.query_frame_idx],
-                                        d_submap.image_paths[match.detected_frame_idx],
-                                    ],
-                                    is_lc_submap=True,
-                                    world_points=lc_wp,
-                                    world_points_conf=lc_conf,
-                                )
-                            )
-
-                submaps.append(submap)
+                loops_found += len(window_lc_submaps)
+                verified += len(window_lc_submaps)
                 pbar.update(1)
                 pbar.set_postfix(loops=loops_found, verified=verified)
                 if end >= N:

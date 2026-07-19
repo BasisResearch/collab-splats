@@ -254,7 +254,7 @@ def find_loop_closures(
 
 
 ########################################
-####### Absorbed from alignment.py #####
+####### Pose merging & loop-jump utilities #####
 ########################################
 
 

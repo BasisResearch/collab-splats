@@ -39,7 +39,7 @@ from `geometry/` or `pointcloud/`.
 class Viewer:
     def __init__(self, port: int = 8080): ...
     def add_points(self, name, points, colors, point_size=0.01): ...   # (N,3), (N,3) uint8
-    def add_frusta(self, name, poses, intrinsics, images=None): ...    # (K,4,4) world-to-cam, (K,3,3)
+    def add_frustum(self, name, pose, intrinsic, image=None): ...      # (4,4) world-to-cam, (3,3)
     def add_lines(self, name, segments, color): ...                    # (M,2,3)
 ```
 

@@ -43,7 +43,16 @@ Minor: `runners/visualize_lc_correction.py`'s hand-rolled `sim3_align`/`apply_si
 - **`normalize_to_sl4`** (`graph.py`): zero production callers; dead upstream too (VGGT-SLAM defines it but every call site is commented out). Delete, along with its two test-only callers (`test_graph.py`, `test_pose_extraction.py`) — inline whatever determinant-normalization assertion those tests actually need, if any.
 - **`scale_method="none"` / `manifold="se3"`** (`LoopClosureConfig`, `run_pose_graph_optimization`): zero production callers, no CLI/config surface ever sets them. Unlike VGGT-SLAM's analogous `VGGT_SLAM_SCALE_SE3` env-var toggle (a live, reachable feature there), ours is only reachable through tests. Delete both branches and their dedicated test coverage (`test_graph.py`, `test_loop_edge_chain.py` — verify no other test depends on the branch before removing).
 
-## 4. `closure.py` split (mirrors VGGT-SLAM's `loop_closure.py` / `graph.py` / `map.py` seams)
+## 4. Evals script organization — download scripts
+
+`evals/` has 5 dataset-fetch scripts loose at its top level: `download_7scenes.py`, `download_7scenes.sh`, `download_co3dv2.sh`, `download_tum.sh`, `download_waymo.sh`, `download_kitti.sh`.
+
+- **Delete `download_7scenes.sh`.** It's an exact functional duplicate of `download_7scenes.py` — both implement the same nested-zip-flatten trick (Microsoft's archive nests as `<scene>/<scene>/seq-NN.zip`), once in bash once in Python. `eval_suite.sh` already calls only the `.py` version, which is also strictly more complete (`--list`, `--force`, progress bar, multi-scene batch download). No unique capability in the `.sh` version to preserve.
+- **Do not merge the remaining 4 scripts into one generic downloader.** `download_co3dv2.sh` (co3d pip package + its own bundled downloader script), `download_tum.sh` (`wget`+`tar` over a direct URL), and `download_waymo.sh`/`download_kitti.sh` (license-gated: no scriptable bulk fetch exists, these only verify local layout and print manual instructions) are four genuinely different acquisition mechanisms, not duplicated logic. A unified interface would just branch per-dataset internally — same LOC, more indirection, no consolidation win. Keep as separate scripts.
+- **Move all 5 remaining dataset-fetch scripts into a new `evals/download/` subdirectory** (`download_7scenes.py`, `download_co3dv2.sh`, `download_tum.sh`, `download_waymo.sh`, `download_kitti.sh`). This is a pure location change to declutter `evals/`'s flat top level. Update the one caller (`eval_suite.sh`) and any README references.
+- **Flag, don't fix:** default output-dir convention is inconsistent — `download_7scenes.py` defaults to top-level `data/7scenes/`, while `download_co3dv2.sh`/`download_tum.sh`/`download_kitti.sh` default to `evals/data/<dataset>/`. Changing a script's documented default output path is a behavior change, so leave as-is this pass; note it in the moved README for a future pass to unify.
+
+## 5. `closure.py` split (mirrors VGGT-SLAM's `loop_closure.py` / `graph.py` / `map.py` seams)
 
 `closure.py` dissolves into:
 
@@ -53,7 +62,7 @@ Minor: `runners/visualize_lc_correction.py`'s hand-rolled `sim3_align`/`apply_si
 - **`LoopClosureConfig`** moves into `wrapper.py` (its only consumer).
 - `loop_closure/__init__.py` exports updated accordingly; the existing lazy `__getattr__` for `LoopClosure` (documented circular-import workaround) is kept as-is.
 
-## 5. `LoopClosure` wrapper (`wrapper.py`) renames
+## 6. `LoopClosure` wrapper (`wrapper.py`) renames
 
 `_run_lc_loop`'s per-window body (forward pass → retrieval → loop-candidate detect → verify → append) currently has no naming correspondence to VGGT-SLAM's `Solver`. Split it into:
 
@@ -64,6 +73,6 @@ The outer sweep loop stays a private method inside `LoopClosure`, precoded and i
 
 ## Verification
 
-- `pytest tests/` green after each numbered section (evals changes first, then loop-closure dead-code removal, then the `closure.py` split, then the wrapper rename) — land as separable commits so a regression is easy to bisect.
+- `pytest tests/` green after each numbered section (evals cleanup + script org first, then loop-closure dead-code removal, then the `closure.py` split, then the wrapper rename) — land as separable commits so a regression is easy to bisect.
 - `black . && isort .` before each commit.
 - No behavior change anywhere except the deleted dead branches (`normalize_to_sl4`, `scale_method="none"`, `manifold="se3"`) and their removed tests.

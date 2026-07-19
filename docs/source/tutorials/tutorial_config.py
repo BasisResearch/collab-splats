@@ -23,9 +23,9 @@ def _infer_video_path(output_dir: Path) -> Path | None:
             # video_ref is rclone-relative — resolve its basename against the scene dir
             raw = cfg.get("video_path") or cfg.get("input_path") or cfg.get("video_ref")
             if raw:
-                for candidate in (Path(raw), output_dir / Path(raw).name):
-                    if candidate.exists():
-                        return candidate
+                candidate = output_dir / Path(raw).name
+                if candidate.exists():
+                    return candidate
         except Exception:
             pass
     # Fallback: a video file sitting directly in the scene dir

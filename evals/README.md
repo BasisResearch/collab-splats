@@ -59,15 +59,10 @@ evals/
 |---|---|
 | `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). |
 | `run_vggt_slam_lc.py` | Run VGGT-SLAM on a sequence → dense TUM + ATE + loop count. Produced the long SLAM ref / loop probe. |
-| `run_disparity_sweep.py` | Disparity-sweep parity harness (ours vs SLAM); generated `baselines/disparity_sweep/`. |
-| `parity_trace.py` | **Canonical** stage-by-stage parity trace (vggt_spark LC vs VGGT-SLAM). Localizes a diverging stage. Uses the solver-dump helpers below. |
-| `our_solver_dump.py` · `vggt_slam_solver_dump.py` | Per-boundary solver-internals dumps consumed by `parity_trace.py` / `run_disparity_sweep.py`. |
-| `run_cross_model_benchmark.py` | **(2026-05-31)** Serial `eval_gt` matrix over 4 backbones × framesets. |
-| `build_benchmark_table.py` | **(2026-05-31)** Aggregate `cross_model/*/metrics.json` → markdown table. |
+| `run_disparity_sweep.py` | Disparity-sweep parity harness (ours vs SLAM) for any backbone (`--backbone`, default `vggt_spark`); generated `baselines/disparity_sweep/`. |
+| `run_cross_model_benchmark.py` | Serial `eval_gt` matrix over any backbones/framesets (`--backbones`, `--single_framesets`, `--windowed_framesets`, `--submap_size`); defaults reproduce the 2026-05-31 4-backbone matrix. |
+| `build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown table (`--reference_backbone`, default `vggt_spark`). |
 | `compare_loop_edges.py` | Loop-edge composition diff (ours vs SLAM). Kept: `compose_slam_chain` imported by `tests/geometry/loop_closure/test_loop_edge_chain.py`. |
-
-**Diagnostic (LC↔SLAM parity — see Investigations §A):**
-`compare_vggt_outputs.py` · `compare_solver_internals.py`.
 
 ## Other eval tools (standalone)
 
@@ -75,9 +70,6 @@ evals/
 |---|---|---|
 | `eval_similarity_calibration.py` | Sweep LC verify layer per backbone (DINO-SALAD pairs). Produced the per-model `_lc_layer_index` calibration. | keep (re-runnable tool) |
 | `eval_multiview_conf.py` | Multiview-confidence eval across backbones (chess). | keep |
-| `diag_pose_graph.py` | Compare our SL(4) pose-graph init vs VGGT-SLAM. | retained — Investigations §A |
-| `check_ate_methods.py` | One-off: evo ATE vs our umeyama on SLAM poses. | retained — Investigations §A |
-| `_ba_finding_eval.py` · `sweep_incremental_ba.py` · `plot_incremental_ba_sweep.py` · `incremental_ba_sweep*.png` | Incremental-BA add_size sweep investigation (ATE vs runtime). | retained — Investigations §B |
 
 ---
 
@@ -117,35 +109,24 @@ VGGT-SPARK** (the anchor), then swap backbones on identical config. Full instruc
 
 ## Investigations — scripts grouped by what they probed
 
-Every script below is **retained** (owner decision 2026-05-31). They are the working
-record of past investigations; most are standalone diagnostics (0 imports) you re-run
-by hand when revisiting that question. Grouped by topic so the "why" is discoverable.
-Files are **left in place** — several compute paths from their directory depth
+Grouped by topic so the "why" behind each investigation is discoverable. A and B are
+closed investigations (finding fixed / parameter absorbed elsewhere) whose scripts have
+been deleted — the outcome and trail are what has ongoing value. C and D's scripts are
+still retained and re-runnable; several compute paths from their directory depth
 (`Path(__file__).parents[N]`), so moving them would silently break path resolution
 (the same class of bug as the `_VGGT_SPARK_ROOT` off-by-one fixed 2026-05-31).
 
 ### A. LC ↔ VGGT-SLAM parity (pose-extraction fix, commit `1372ac2`)
 Goal: find why our LC trajectory diverged 17× from VGGT-SLAM. Root cause = `R` vs `Rᵀ`
-in pose extraction. **Outcome:** fixed; vggt_spark baseline now matches SLAM.
-Trail: `docs/superpowers/specs/2026-05-31-vggt-spark-stage-parity-findings.md`.
-
-| script | what it probed |
-|---|---|
-| `runners/parity_trace.py` | **Canonical** stage-by-stage trace (preprocess→forward→trajectory→scale→homographies). The tool to reach for. |
-| `runners/our_solver_dump.py` · `runners/vggt_slam_solver_dump.py` | Per-boundary solver-internals dumps — **consumed by `parity_trace.py`** (don't move independently). |
-| `runners/compare_solver_internals.py` | Per-boundary solver diff (manual precursor to parity_trace). |
-| `runners/compare_vggt_outputs.py` | VGGT extrinsics under our vs SLAM image preprocessing (confirmed Δ=0). |
-| `diag_pose_graph.py` | Our SL(4) pose-graph init vs VGGT-SLAM's. |
-| `check_ate_methods.py` | Verified `evo` ATE == our umeyama on SLAM's own poses (sanity, passed). |
+in pose extraction. **Outcome:** fixed; vggt_spark baseline now matches SLAM. The
+investigation scripts (`parity_trace.py` and its solver-dump/comparison helpers) are
+deleted — bug fixed, no ongoing regen value. Trail:
+`docs/superpowers/specs/2026-05-31-vggt-spark-stage-parity-findings.md`.
 
 ### B. Bundle-adjustment tuning
 Goal: pick BA track-density / increment params. **Outcome:** folded into `eval_gt` `ba`
-and `ba_track-density-N` conditions; CO3Dv2 notes in `EVAL_NOTES.md`.
-
-| script | what it probed |
-|---|---|
-| `_ba_finding_eval.py` | Ad-hoc A/B over vis_thresh, track budget, fine_tracking. |
-| `sweep_incremental_ba.py` · `plot_incremental_ba_sweep.py` | Incremental-BA add_size vs ATE/runtime; plots → `incremental_ba_sweep*.png`. |
+and `ba_track-density-N` conditions — this capability is now native to the main runner,
+so the sweep scripts are deleted. CO3Dv2 notes in `EVAL_NOTES.md`.
 
 ### C. LC similarity / verify-layer calibration
 | script | what it probed |
@@ -155,15 +136,16 @@ and `ba_track-density-N` conditions; CO3Dv2 notes in `EVAL_NOTES.md`.
 
 ### D. Cross-model benchmark (2026-05-31)
 Goal: rank backbones; separate windowing cost from LC benefit. **Outcome:**
-`docs/superpowers/specs/2026-05-31-cross-model-benchmark-results.md`.
+`docs/superpowers/specs/2026-05-31-cross-model-benchmark-results.md`. The frozen
+2026-05-31 numbers live under `baselines/cross_model/`; to reproduce or extend
+them for a different backbone/frameset combination, use the generalized scripts:
 
 | script | what it probed |
 |---|---|
-| `runners/run_cross_model_benchmark.py` | Serial `eval_gt` matrix (4 backbones × framesets). |
-| `runners/build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown. |
-| `runners/run_disparity_sweep.py` | ours-vs-SLAM at min_disparity 10–50 → `baselines/disparity_sweep/`. |
+| `runners/run_cross_model_benchmark.py` | Serial `eval_gt` matrix — any `--backbones` × `--single_framesets`/`--windowed_framesets` (defaults reproduce the original 4-backbone matrix). |
+| `runners/build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown (`--reference_backbone`). |
+| `runners/run_disparity_sweep.py` | ours-vs-SLAM at min_disparity 10–50 for any `--backbone` → `baselines/disparity_sweep/`. |
 | `runners/run_vggt_slam.py` · `runners/run_vggt_slam_lc.py` | VGGT-SLAM wrappers (anchor + long ref / loop probe). |
 
-> **Housekeeping:** `incremental_ba_sweep*.png` are committed binaries under `evals/`.
-> Left in place per keep-all; if regenerating, prefer writing plots to the gitignored
-> `results/` rather than the source tree.
+> **Housekeeping:** if re-running the incremental-BA sweep, write plots to the
+> gitignored `results/` rather than the source tree.

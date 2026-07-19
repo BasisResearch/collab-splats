@@ -296,6 +296,37 @@ def voxel_downsample(
     return downsampled, index_mapping
 
 
+def subsample_points(
+    points: np.ndarray,
+    colors: Optional[np.ndarray] = None,
+    conf: Optional[np.ndarray] = None,
+    max_points: int = 50_000,
+    conf_percentile: float = 20.0,
+) -> tuple[np.ndarray, Optional[np.ndarray]]:
+    """Confidence-filter then randomly cap a point set to max_points.
+
+    Unlike voxel_downsample (voxel-size-based, output count varies with scene
+    extent), this guarantees an exact point budget — needed for scenes balanced
+    across submaps. Returns (points, colors) index-aligned; colors may be None.
+    """
+    # Drop points at/below the conf cutoff; strict > so a cutoff equal to the
+    # minimum still filters, while uniform conf (nothing above cutoff) keeps all.
+    if conf is not None and len(conf) > 0:
+        cutoff = np.percentile(conf, conf_percentile)
+        above = conf > cutoff
+        if above.any():
+            points = points[above]
+            colors = colors[above] if colors is not None else None
+
+    # Random cap to the budget; seeded rng keeps results reproducible
+    if len(points) > max_points:
+        idx = np.random.default_rng(0).choice(len(points), size=max_points, replace=False)
+        points = points[idx]
+        colors = colors[idx] if colors is not None else None
+
+    return points, colors
+
+
 ########################################################
 ########## Legacy cleaning utilities ##################
 ########################################################
@@ -759,7 +790,9 @@ def lift_features(
     intr = torch.as_tensor(np.ascontiguousarray(result.intrinsics), dtype=torch.float32, device=device)  # (N, 3, 3)
 
     # Conf / depth → (N, H, W) float32 on device
-    conf_np = result.confidence.detach().cpu().numpy() if isinstance(result.confidence, torch.Tensor) else result.confidence
+    conf_np = (
+        result.confidence.detach().cpu().numpy() if isinstance(result.confidence, torch.Tensor) else result.confidence
+    )
     conf = torch.as_tensor(np.ascontiguousarray(conf_np), dtype=torch.float32, device=device)
     depth_np = result.depth
     if depth_np.ndim == 4:

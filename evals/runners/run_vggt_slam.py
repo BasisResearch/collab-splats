@@ -18,7 +18,6 @@ corresponding .pending sentinel from evals/baselines/vggt_slam/ if present.
 from __future__ import annotations
 
 import argparse
-import importlib.util as _ilu
 import json
 import shutil
 import subprocess
@@ -33,17 +32,59 @@ VGGTSLAM_DIR = REPO_ROOT / "third_party" / "VGGT-SLAM"
 BASELINES_DIR = REPO_ROOT / "evals" / "baselines" / "vggt_slam"
 
 
-def _load_compute_ate_rmse():
-    """Lazily load evals/ate_utils.compute_ate_rmse without sys.path shadowing.
+def _write_gt_tum(seq_dir: Path, selected_frames: list[Path], out_file: Path) -> Path | None:
+    """Write GT cam-to-world poses for selected_frames as a TUM file (for compute_ate).
 
-    The installed ``evals`` package would otherwise win over the source tree, so
-    load the module directly from its file (same pattern the old LC runner used).
-    Kept lazy — pulls evo — so the module stays import-light for the CLI tests.
+    Reproduces the GT-trajectory construction the retired ate_utils used so the ATE
+    number is unchanged: per-frame timestamps parsed from the image filename (matching
+    VGGT-SLAM's pred TUM), poses from 7-Scenes ``.pose.txt`` or, for TUM RGB-D scenes
+    (detected via ``groundtruth.txt``), the nearest GT row within 0.02 s. Returns
+    out_file, or None when no GT poses are available (ATE then skipped, as before).
+
+    Imports stay lazy — numpy/evo are heavy and the ``evals`` source modules would be
+    shadowed by installed packages (HF ``datasets``) without the sys.path prepend.
     """
-    spec = _ilu.spec_from_file_location("ate_utils", REPO_ROOT / "evals" / "ate_utils.py")
-    mod = _ilu.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.compute_ate_rmse
+    import re
+
+    import numpy as np
+
+    sys.path.insert(0, str(REPO_ROOT / "evals"))
+    from datasets import _read_tum_groundtruth
+    from trajectory_io import write_tum
+
+    seq_dir = Path(seq_dir)
+    timestamps: list[float] = []
+    poses_c2w: list[np.ndarray] = []
+
+    gt_file = seq_dir / "groundtruth.txt"
+    if gt_file.is_file():
+        # TUM RGB-D: associate each frame timestamp (float image stem) to the nearest
+        # GT row, dropping frames whose nearest row is >0.02 s away (mocap gap).
+        gt_entries = _read_tum_groundtruth(gt_file)
+        gt_ts = np.array([t for t, _ in gt_entries], dtype=np.float64)
+        gt_T = np.stack([T for _, T in gt_entries])  # (G, 4, 4) cam-to-world
+        for f in selected_frames:
+            ts = float(Path(f).stem)
+            idx = int(np.argmin(np.abs(gt_ts - ts)))
+            if abs(gt_ts[idx] - ts) > 0.02:
+                continue
+            timestamps.append(ts)
+            poses_c2w.append(gt_T[idx])
+    else:
+        # 7-Scenes: per-frame frame-NNNNNN.pose.txt (cam-to-world); timestamp = frame index.
+        for f in selected_frames:
+            pose_path = seq_dir / f"{Path(f).stem.split('.')[0]}.pose.txt"
+            if not pose_path.is_file():
+                return None
+            timestamps.append(float(int(re.search(r"(\d+)", Path(f).stem).group(1))))
+            poses_c2w.append(np.loadtxt(pose_path))
+
+    if not poses_c2w:
+        return None
+    # write_tum expects world-to-cam; invert the cam-to-world GT poses.
+    poses_w2c = np.linalg.inv(np.stack(poses_c2w))
+    write_tum(out_file, poses_w2c, np.array(timestamps, dtype=np.float64))
+    return out_file
 
 
 def _prepare_image_dir(
@@ -162,8 +203,17 @@ def run_vggt_slam(
 
         ate_rmse: float | None = None
         try:
-            compute_ate_rmse = _load_compute_ate_rmse()
-            ate_rmse = compute_ate_rmse(output_tum, image_dir, selected_frames_path=kf_path)
+            # Write GT keyframe poses as TUM for the frames actually fed to SLAM, then
+            # score the SLAM trajectory against them with evo. Sim(3) alignment matches
+            # the retired ate_utils (align=True, correct_scale=True) — monocular scale.
+            sys.path.insert(0, str(REPO_ROOT / "evals"))
+            from metrics import compute_ate
+
+            gt_tum = output_tum.parent / "gt.tum"
+            if _write_gt_tum(image_dir, source_images, gt_tum) is None:
+                raise RuntimeError(f"no GT poses found for ATE under {image_dir}")
+            ate = compute_ate(output_tum, gt_tum, align="sim3")
+            ate_rmse = ate["rmse"]
             print(f"  ATE RMSE: {ate_rmse:.6f} m")
         except Exception as exc:  # ATE needs GT; keep non-fatal like the old LC runner
             print(f"  ATE computation failed: {exc}")

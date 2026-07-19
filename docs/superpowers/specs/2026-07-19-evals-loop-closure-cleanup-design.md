@@ -63,9 +63,11 @@ evals/scripts/
     run_cross_model_benchmark.py  run_disparity_sweep.py  run_lc_parity.py
     run_vggt_slam.py  run_vggt_slam_lc.py
     build_benchmark_table.py  build_parity_table.py
-    sweep_driver.py  lc_parity_common.py          # shared libs for the above
+    lc_parity_common.py                            # shared lib for the above
     lc_loop_pr.py  compare_loop_edges.py  visualize_lc_correction.py
 ```
+
+**Correction (verified this session): `sweep_driver.py` doesn't exist — dropped from the layout above.** An earlier draft listed it alongside `lc_parity_common.py` as an existing shared lib to relocate; repo-wide search turns up no such file anywhere under `evals/`. This section is a pure reorg (move existing files, no new code), so it can't be the thing that creates it either. The duplication this would address is real and already named in Context ("three runner scripts... independently reimplementing the same subprocess-matrix-sweep shape") but no section in this spec actually specifies extracting a shared driver — Sections 1-3 generalized each of the three runners' CLI flags independently without deduplicating the shared sweep-matrix shape between them. Leave that dedup as an explicitly out-of-scope follow-on for this pass rather than implying Section 4 already covers it.
 
 Library modules (`datasets.py`, `metrics.py`) stay at `evals/` root — nothing runs them directly, only the `scripts/` entry points import them.
 

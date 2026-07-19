@@ -1,8 +1,9 @@
 """Loop-closure pose-graph evaluation helpers.
 
 Provides instrumentation for the LC pose graph (per-iteration loss capture,
-per-edge-type residual breakdown) and stubs for future ground-truth-based
-metrics (ATE, RPE) that will be implemented when a GT pose dataset is sourced.
+per-edge-type residual breakdown) plus ground-truth-based trajectory metrics
+(ATE, RPE, AUC) used by evals/eval_gt.py and exercised in tests/evals/ and
+tests/geometry/loop_closure/.
 """
 
 from __future__ import annotations
@@ -103,7 +104,7 @@ def capture_pose_graph_loss(
     }
 
 
-# --- GT-phase stubs (implement when GT dataset arrives) ----------------------
+# --- Ground-truth trajectory metrics -----------------------------------------
 
 
 def _umeyama_sim3(source: np.ndarray, target: np.ndarray):

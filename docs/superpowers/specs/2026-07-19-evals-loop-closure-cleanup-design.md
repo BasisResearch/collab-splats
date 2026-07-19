@@ -21,7 +21,7 @@
 
 - **`GraphMap` persistence** — deferred, [ADR 003](../decisions/003-defer-graphmap.md).
 - **Full `Solver`-class port** — borrow VGGT-SLAM method *names* for the per-window step, not its class structure.
-- **Decoupling `LoopClosure` from feedforward creators** — only FF creators use it; LC is intrinsically FF-shaped. Revisit only if a non-FF creator needs LC.
+- **Decoupling `LoopClosure` from feedforward creators / full `Solver`-style dependency inversion** — only FF creators use it; LC borrows the creator's model call (`_forward`/`_verify_loop_candidate`), so the reverse dependency is intrinsic and inversion wouldn't fully pay off. §9d de-boilerplates the *existing* wrapper (kills forwarding stubs + diagnostic state) without flipping who-calls-whom. Revisit inversion only if a non-FF creator needs LC.
 - **`bundle_adjustment.py`** — separate module, out of scope.
 - **Promoting `metrics.py`/`trajectory_io.py` into `collab_splats`** — evaluation tooling, correct where it is (evals/); zero `collab_splats` consumers.
 - **Download output-dir convention unification** (`data/7scenes/` vs `evals/data/<dataset>/`) — changing a documented path is a behavior change; consolidate the *scripts*, not the paths.
@@ -93,17 +93,16 @@ Each retired script's test is deleted with it (allowed: deleting a script delete
 
 ## 5. Dissolve `lc_parity_common.py`
 
-Only two live consumers survive the §3 retirements: `eval.py` (`_serialize_lc_decisions`) and merged `run_vggt_slam.py` (`write_tum_allowed_frames` + frame helpers `collect_frames`/`list_scene_images`/`filter_images_to_list`). Move:
+After the §3 retirements **and** the LC diagnostic-side-channel removal (§9d), the *only* survivor is `write_tum_allowed_frames` + its frame helpers (`collect_frames`/`list_scene_images`/`filter_images_to_list`), used by merged `run_vggt_slam.py`. (`_serialize_lc_decisions` no longer has a consumer — its `lc_decisions.json` output is retired in §9d.) Move:
 
-- `_serialize_lc_decisions` → `eval.py`.
 - `write_tum_allowed_frames` + frame helpers → `evals/datasets.py` (GT/dataset concern).
-- Drop parity-gate machinery: `SceneSpec`/`SCENES`, `check_gates`, `check_scaling_gate`, `check_lc_harmless`, `slice_keyframes`, `slam_max_frames_for_prefix`, `PREFIX_FRACTIONS`, `ATE_*_TOL`.
-- Delete the file. Repoint `test_lc_parity_common.py` / `test_lc_decisions.py` to the moved functions (equivalence-first) or delete the parts covering dropped machinery.
+- Drop everything else: `_serialize_lc_decisions`, parity-gate machinery (`SceneSpec`/`SCENES`, `check_gates`, `check_scaling_gate`, `check_lc_harmless`, `slice_keyframes`, `slam_max_frames_for_prefix`, `PREFIX_FRACTIONS`, `ATE_*_TOL`).
+- Delete the file. `test_lc_parity_common.py` / `test_lc_decisions.py` retire (they cover dropped code); the moved frame helpers get equivalence-checked coverage in `datasets` tests.
 
 ## 6. Library extraction (evals → collab_splats)
 
 - **`trajectory_io._invert_se3`** duplicates `geometry.transforms.invert_poses` (strict superset). Delete `_invert_se3`; swap its 4 call sites. `trajectory_io.py` **stays** in evals/ (zero consumers elsewhere). Keep `_check_poses`.
-- **`reconstruction_quality.py`** → `collab_splats/geometry/loop_closure/diagnostics.py` (reads private `_lc_*` attrs off `LoopClosure.base` — cohesion). Update its `eval_gt.py:405`→`eval.py` inline import.
+- **`reconstruction_quality.py`** → **retire, not move** (see §9d). Its only caller is `eval_gt`'s alignment-metrics block; the metrics it produced fed the retired analysis. No `diagnostics.py` is created.
 - **`compare_loop_edges.py`** helpers (`compose_slam_chain`, `edge_divergence`) → `collab_splats/geometry/loop_closure/` (used by live geometry test `test_loop_edge_chain.py`, not just an evals test). Repoint `test_loop_edge_chain.py`; retire `test_compare_loop_edges.py` (or repoint, equivalence-first).
 
 ## 7. Consolidate downloads → `evals/data/download_datasets.py`
@@ -118,10 +117,12 @@ Fold `download_7scenes.py` + `download_7scenes.sh` + `download_co3dv2.sh` + `dow
 - No `eval_suite.sh` path arithmetic (it's retired). `setup/vggt_slam.sh` example command → `evals/scripts/run_vggt_slam.py`.
 - Library modules (`metrics.py`, `trajectory_io.py`, `datasets.py`) stay at `evals/` top; `scripts/` = executable entrypoints.
 
-## 9. Loop-closure codebase cleanup (carries from conservative spec §5–§7, verified)
+## 9. Loop-closure codebase cleanup
+
+§9a–§9c carry from the conservative spec (verified); §9d is the new `Solver`-parity de-boilerplate.
 
 ### 9a. Dead code
-- **`_assemble_precorrection_extrinsics`** (`wrapper.py:54-65`): single caller (`wrapper.py:385`), pure passthrough to `dedup_overlap`. Inline + delete.
+- **`_assemble_precorrection_extrinsics`** (`wrapper.py:54-65`): delete outright — its only output was `_lc_precorrection_extrinsics`, which retires in §9d (no inline needed, nothing consumes it).
 - **`normalize_to_sl4`** (`graph.py:71-80`): zero prod callers; `PoseGraph.add_node` already SL4-normalizes (`gtsam.SL4(H)`). Delete; test callers inline the trivial det-normalize or pass raw.
 - **`manifold="se3"`** (`PoseGraph.__init__` + `run_pose_graph_optimization` param + `LoopClosureConfig.manifold`): zero prod callers. Delete branch + `_pose3` helper + its tests.
 - **`scale_method="none"` — KEEP** (not dead: `eval_gt.py --lc_scale_method` exposes it).
@@ -142,31 +143,44 @@ Fold `download_7scenes.py` + `download_7scenes.sh` + `download_co3dv2.sh` + `dow
 - **`visualize_lc_correction.py:23`** imports `umeyama_sim3` from `.closure` — moot, that script retires (§3).
 - **Deferred, leave alone:** `docs/source/tutorials/02_pointcloud/slam_loop_closure.ipynb` imports from `.closure` (out of scope per CLAUDE.md in-flight list).
 
-### 9c. `_run_lc_loop` → VGGT-SLAM `Solver` parity rename
-- `run_predictions(window, submaps, ...)` → forward pass + build Submap + retrieval + verify + jump-check. Returns `(submap, lc_submaps: list[Submap], loop_matches: list[LoopMatch])` — **not** a singular `lc_submap_or_None` (`max_loops_per_submap` defaults 5; multiple accepted matches per window is common). `loop_matches` (all candidates, accepted+rejected) lets the caller drive `all_loop_candidates` + pbar counters.
-- `add_points(...)` → `submaps.append` + `lc_submaps.extend` (bookkeeping only; PGO deferred to the batch call, unlike `Solver.add_points`).
-- Outer sweep stays a private method (pbar, `end >= N` break) — not exposed. One calling convention (BaseFeedforwardCreator template method).
+### 9c. `_run_lc_loop` → VGGT-SLAM `Solver` parity split
+Split the ~180-line `_run_lc_loop` monolith into two named per-window steps + a thin loop driver, structurally mirroring VGGT-SLAM's `main.py` (`run_predictions` → `add_points` → batch PGO):
+- `run_predictions(window, ...)` → forward pass + build Submap + retrieval + verify + jump-check. Returns `(submap, lc_submaps: list[Submap], loop_matches: list[LoopMatch])` — **not** a singular `lc_submap_or_None` (`max_loops_per_submap` defaults 5; multiple accepted matches per window is common).
+- `add_points(submap, lc_submaps, ...)` → append to the driver's local `submaps`/`lc_submaps` lists (bookkeeping only; PGO deferred to the batch call, unlike `Solver.add_points`).
+- Thin private driver (pbar, `step`, `end >= N` break) calls the two steps, then runs batch PGO + merge. **State is local to the driver** (`submaps`, `lc_submaps` lists), not smeared onto `self.base` (§9d). One calling convention (BaseFeedforwardCreator template method).
+
+### 9d. LoopClosure de-boilerplate + diagnostic-side-channel removal
+
+Make `LoopClosure` (`wrapper.py`) `Solver`-shaped: own just enough to run loop→PGO→merge, expose only corrected `raw_outputs`. **Verified:** BA/mesh read only `raw_outputs` (`bundle_adjustment.py:491`); all 7 `_lc_*` attrs feed eval-time diagnostics whose consumers (`lc_loop_pr`, `visualize_lc_correction`, `build_parity_table`, ablation tests) all retire (§3). `Solver` itself keeps no precorrection/all-matches/ablation state — those are our additions.
+
+1. **Delete the diagnostic side-channel.** Remove all `_lc_*` writes onto `self.base` (`_lc_submaps`, `_lc_loop_submaps`, `_lc_overlap_frames`, `_lc_all_matches`, `_lc_precorrection_extrinsics`, `_lc_corrected_extrinsics`, `_lc_ablation_extrinsics`) and `_ablate_loops`. Delete `reconstruction_quality.py`, and in `eval.py` (ex-`eval_gt`) drop `_write_loop_ablation`, the `compute_alignment_metrics` block, and `lc_decisions.json` writing.
+2. **Keep one scalar for user visibility.** LC exposes `n_loops_applied` (len of accepted loop submaps) — surfaced in `metrics.json`. Nothing heavier.
+3. **Replace forwarding boilerplate with `__getattr__`.** Delete the pure pass-through stubs (`load_model`, `setup_inference`, `postprocess`, `build_colmap`, `_reproject`, `reproject`); add one `def __getattr__(self, name): return getattr(self.base, name)`. `__getattr__` fires only on missing attributes, so the genuine overrides (`run_inference`, `run`, `reconstruct`, `outputs`/`raw_outputs` properties) still win. `self.base`/`self.config` are set in `__init__` (normal attributes — unaffected).
+4. **No `LCState` object** — with the side-channel gone there is nothing to consolidate; per-window state lives in the §9c driver locals.
+
+**Test fallout:** `test_loop_ablation.py`, `test_evals/test_loop_ablation_json.py`, `test_feedforward_lc_state.py`, `test_verify_lc_data.py`, `test_lc_decisions.py` cover the removed side-channel → retire or trim (equivalence-first for any assertion about a surviving behavior, e.g. `n_loops_applied`). `test_feedforward_lc_state.py`'s `wrapper.<name>` mock-patch note (§9b) still applies to whatever LC-loop tests survive.
 
 ## 10. Test-equivalence protocol (hard constraint)
 
 - **Deleting a script deletes its covering test** — allowed.
-- **Moving/repointing a test:** the new test must assert the same behavior as the old, both green in one commit, *then* remove the old. Applies to `eval_compare`, `lc_parity_common`, `compare_loop_edges`, merged `run_vggt_slam`, all LC-split import repoints.
+- **Moving/repointing a test:** the new test must assert the same behavior as the old, both green in one commit, *then* remove the old. Applies to `eval_compare`, `lc_parity_common` frame helpers, `compare_loop_edges`, merged `run_vggt_slam`, the surviving `n_loops_applied` behavior (§9d), all LC-split import repoints.
 - `pytest tests/` green per commit; baseline pass count vs `docs/known-test-failures.md`.
 
 ## 11. Commit order (separable, bisectable)
 
-1. LC dead code (§9a) — smallest, isolated.
-2. Library extraction (§6: `_invert_se3`, `reconstruction_quality`→diagnostics, `compare_loop_edges` helpers→geometry).
-3. `closure.py` split + `LoopClosureConfig` move + `__getattr__` fixes + import fallout (§9b).
-4. `_run_lc_loop` rename (§9c).
-5. `eval.py` config runner + `eval_compare` module + preset configs (§1, §2).
-6. Merge VGGT-SLAM wrappers + repoint (§4).
-7. Dissolve `lc_parity_common` (§5).
-8. Retire sweep drivers/analysis/`ate_utils`/`eval_suite.sh` + their tests (§3).
-9. Downloads consolidation + `.gitignore` (§7).
-10. `runners/`→`scripts/` reorg + test/CLAUDE.md/README repoints (§8).
+1. LC dead code (§9a).
+2. LoopClosure de-boilerplate + diagnostic-side-channel removal (§9d): drop `_lc_*`/`_ablate_loops`, `__getattr__` delegation, add `n_loops_applied`; strip `reconstruction_quality`/`_write_loop_ablation`/`lc_decisions` from `eval_gt`; retire covering tests. (Do before the closure split so the split isn't threading dead diagnostic state.)
+3. Library extraction (§6: `_invert_se3`, `compare_loop_edges` helpers→geometry).
+4. `closure.py` split + `LoopClosureConfig` move + `__getattr__` import fixes + fallout (§9b).
+5. `_run_lc_loop` split → `run_predictions`/`add_points` + driver (§9c).
+6. `eval.py` config runner + `eval_compare` module + preset configs (§1, §2).
+7. Merge VGGT-SLAM wrappers + repoint (§4).
+8. Dissolve `lc_parity_common` → frame helpers to `datasets.py` (§5).
+9. Retire sweep drivers/analysis/`ate_utils`/`eval_suite.sh` + their tests (§3).
+10. Downloads consolidation + `.gitignore` (§7).
+11. `runners/`→`scripts/` reorg + test/CLAUDE.md/README repoints (§8).
 
-Order rationale: LC-internal changes first (self-contained), then the eval.py capability that replaces the drivers, then retirements (so nothing references a deleted file mid-sequence), reorg last (pure path churn).
+Order rationale: LC-internal changes first (side-channel removal before the split, so the split works on lean code), then the eval.py capability that replaces the drivers, then retirements (so nothing references a deleted file mid-sequence), reorg last (pure path churn).
 
 ## Environment / house rules
 

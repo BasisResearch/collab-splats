@@ -15,6 +15,7 @@ KITTI Odometry pose files are 3×4 cam-to-world matrices flattened row-major,
 one frame per line. Both TUM and KITTI are cam-to-world; the
 internal-to-disk inversion is the only convention boundary.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,19 +23,9 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from collab_splats.geometry.transforms import invert_poses
 
 # --- internal helpers --------------------------------------------------------
-
-
-def _invert_se3(poses: np.ndarray) -> np.ndarray:
-    """Invert (N, 4, 4) SE(3) poses (handles batched w2c↔c2w)."""
-    out = np.tile(np.eye(4, dtype=poses.dtype), (poses.shape[0], 1, 1))
-    R_in = poses[:, :3, :3]
-    t_in = poses[:, :3, 3]
-    R_out = R_in.transpose(0, 2, 1)
-    out[:, :3, :3] = R_out
-    out[:, :3, 3] = -np.einsum("nij,nj->ni", R_out, t_in)
-    return out
 
 
 def _check_poses(poses: np.ndarray) -> None:
@@ -63,11 +54,9 @@ def write_tum(
         timestamps = np.arange(n, dtype=np.float64)
     timestamps = np.asarray(timestamps, dtype=np.float64)
     if timestamps.shape != (n,):
-        raise ValueError(
-            f"timestamps shape {timestamps.shape} != poses count ({n},)"
-        )
+        raise ValueError(f"timestamps shape {timestamps.shape} != poses count ({n},)")
 
-    poses_c2w = _invert_se3(poses_w2c.astype(np.float64))
+    poses_c2w = invert_poses(poses_w2c.astype(np.float64))
     t = poses_c2w[:, :3, 3]
     quat = R.from_matrix(poses_c2w[:, :3, :3]).as_quat()  # (N, 4) [x, y, z, w]
 
@@ -97,9 +86,7 @@ def read_tum(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
             continue
         toks = s.split()
         if len(toks) != 8:
-            raise ValueError(
-                f"TUM line must have 8 columns, got {len(toks)}: {ln!r}"
-            )
+            raise ValueError(f"TUM line must have 8 columns, got {len(toks)}: {ln!r}")
         rows.append([float(x) for x in toks])
     arr = np.asarray(rows, dtype=np.float64)
     if arr.size == 0:
@@ -112,7 +99,7 @@ def read_tum(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
     poses_c2w = np.tile(np.eye(4, dtype=np.float64), (arr.shape[0], 1, 1))
     poses_c2w[:, :3, :3] = R.from_quat(quat).as_matrix()
     poses_c2w[:, :3, 3] = t
-    poses_w2c = _invert_se3(poses_c2w)
+    poses_w2c = invert_poses(poses_c2w)
     return poses_w2c, timestamps
 
 
@@ -132,15 +119,13 @@ def kitti_3x4_flat_to_w2c(text: str) -> np.ndarray:
             continue
         toks = s.split()
         if len(toks) != 12:
-            raise ValueError(
-                f"KITTI pose line must have 12 floats, got {len(toks)}: {ln!r}"
-            )
+            raise ValueError(f"KITTI pose line must have 12 floats, got {len(toks)}: {ln!r}")
         rows.append([float(x) for x in toks])
     arr = np.asarray(rows, dtype=np.float64).reshape(-1, 3, 4)
 
     poses_c2w = np.tile(np.eye(4, dtype=np.float64), (arr.shape[0], 1, 1))
     poses_c2w[:, :3, :4] = arr
-    return _invert_se3(poses_c2w)
+    return invert_poses(poses_c2w)
 
 
 def kitti_file_to_w2c(path: Path | str) -> np.ndarray:
@@ -151,6 +136,6 @@ def kitti_file_to_w2c(path: Path | str) -> np.ndarray:
 def w2c_to_kitti_3x4_flat(poses_w2c: np.ndarray) -> str:
     """Serialize world-to-cam (N, 4, 4) → KITTI 3×4-flat (cam-to-world) text."""
     _check_poses(poses_w2c)
-    poses_c2w = _invert_se3(poses_w2c.astype(np.float64))
+    poses_c2w = invert_poses(poses_w2c.astype(np.float64))
     flat = poses_c2w[:, :3, :4].reshape(-1, 12)
     return "\n".join(" ".join(f"{x:.9f}" for x in row) for row in flat) + "\n"

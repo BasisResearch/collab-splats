@@ -55,22 +55,33 @@ def build_commands(specs: list[RunSpec], seq_dir: Path, out_root: Path) -> list[
     return cmds
 
 
-def core_matrix(kf_dir: Path) -> list[RunSpec]:
-    """Core matrix: 4 backbones × framesets × conditions (spec §Execution step 2)."""
-    backbones = ["vggt_spark", "vggtx", "vggt_omega", "mapanything"]
-    d10_kf = kf_dir / "slam_d10" / "selected_frames.txt"
-    d20_kf = kf_dir / "slam_d20" / "selected_frames.txt"
+def build_matrix(
+    kf_dir: Path,
+    backbones: list[str],
+    single_framesets: list[str],
+    windowed_framesets: list[str],
+    submap_size: int,
+) -> list[RunSpec]:
+    """Build the benchmark matrix: backbones × framesets × conditions.
+
+    Each frameset name is a subdirectory of kf_dir containing selected_frames.txt
+    (e.g. "slam_d10" -> kf_dir/slam_d10/selected_frames.txt). single_framesets get
+    a single-pass baseline-only run each; windowed_framesets get a windowed
+    baseline+lc run each (a name may appear in both lists). Framesets whose
+    keyframe file doesn't exist are skipped.
+    """
     specs: list[RunSpec] = []
     for b in backbones:
-        # Goal 1 — windowing cost: single-pass vs windowed baseline on short sets.
-        specs.append(RunSpec(b, "slam_d10_single", None, ("baseline",), d10_kf))
-        specs.append(RunSpec(b, "slam_d20_single", None, ("baseline",), d20_kf))
-        # Windowed baseline + lc on d10 (2 submaps).
-        specs.append(RunSpec(b, "slam_d10", 16, ("baseline", "lc"), d10_kf))
-        # Goal 2 — LC benefit on the long, loop-closing set (only if it exists).
-        long_kf = kf_dir / "slam_d5_long" / "selected_frames.txt"
-        if long_kf.exists():
-            specs.append(RunSpec(b, "slam_d5_long", 16, ("baseline", "lc"), long_kf))
+        # Single-pass baseline-only runs (windowing-cost comparison).
+        for fs in single_framesets:
+            kf = kf_dir / fs / "selected_frames.txt"
+            if kf.exists():
+                specs.append(RunSpec(b, f"{fs}_single", None, ("baseline",), kf))
+        # Windowed baseline+lc runs (LC-benefit comparison).
+        for fs in windowed_framesets:
+            kf = kf_dir / fs / "selected_frames.txt"
+            if kf.exists():
+                specs.append(RunSpec(b, fs, submap_size, ("baseline", "lc"), kf))
     return specs
 
 
@@ -82,11 +93,28 @@ def main() -> int:
                     default=Path("evals/baselines/disparity_sweep"))
     ap.add_argument("--out_root", type=Path,
                     default=Path("evals/baselines/cross_model"))
+    ap.add_argument("--backbones", nargs="+",
+                    default=["vggt_spark", "vggtx", "vggt_omega", "mapanything"],
+                    help="Backbones to benchmark. Default: the 2026-05-31 4-backbone matrix.")
+    ap.add_argument("--single_framesets", nargs="+",
+                    default=["slam_d10", "slam_d20"],
+                    help="Frameset subdirs under --kf_dir to run single-pass baseline-only "
+                         "(windowing-cost comparison). Missing ones are skipped. "
+                         "Default: the 2026-05-31 frameset list.")
+    ap.add_argument("--windowed_framesets", nargs="+",
+                    default=["slam_d10", "slam_d5_long"],
+                    help="Frameset subdirs under --kf_dir to run windowed baseline+lc "
+                         "(LC-benefit comparison). Missing ones are skipped. "
+                         "Default: the 2026-05-31 frameset list.")
+    ap.add_argument("--submap_size", type=int, default=16,
+                    help="Submap size for the windowed baseline+lc runs. Default 16.")
     ap.add_argument("--dry_run", action="store_true",
                     help="Print commands without running.")
     args = ap.parse_args()
 
-    specs = core_matrix(args.kf_dir)
+    specs = build_matrix(
+        args.kf_dir, args.backbones, args.single_framesets, args.windowed_framesets, args.submap_size
+    )
     cmds = build_commands(specs, args.seq_dir, args.out_root)
     args.out_root.mkdir(parents=True, exist_ok=True)
     for i, cmd in enumerate(cmds, 1):

@@ -108,7 +108,7 @@ def compute_ate_rmse(
 
     tum_path: TUM file written by VGGT-SLAM (cam-to-world, sequential timestamps).
     seq_dir:  7-Scenes sequence directory containing frame-*.pose.txt files.
-    selected_frames_path: path to selected_frames.txt from run_vggt_slam_lc.py.
+    selected_frames_path: path to selected_frames.txt from run_vggt_slam.py.
         When provided, GT uses the same N frames with matching filename-derived timestamps.
     """
     from evo.tools import file_interface

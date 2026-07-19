@@ -432,7 +432,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--keyframe_list",
         type=Path,
         default=None,
-        help="Path to selected_frames.txt from run_vggt_slam_lc.py. "
+        help="Path to selected_frames.txt from run_vggt_slam.py (--max_loops >0). "
         "When set, filters the dataset to only these frames (matched by filename) "
         "so all models run on the exact same keyframes as VGGT-SLAM.",
     )

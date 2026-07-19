@@ -57,12 +57,34 @@ evals/
 **Active:**
 | file | role |
 |---|---|
-| `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). |
-| `run_vggt_slam_lc.py` | Run VGGT-SLAM on a sequence → dense TUM + ATE + loop count. Produced the long SLAM ref / loop probe. |
+| `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). Loop closure via `--max_loops` (0 = published baseline; >0 also writes `selected_frames.txt` + ATE + `metrics.json`). |
 | `run_disparity_sweep.py` | Disparity-sweep parity harness (ours vs SLAM) for any backbone (`--backbone`, default `vggt_spark`); generated `baselines/disparity_sweep/`. |
 | `run_cross_model_benchmark.py` | Serial `eval_gt` matrix over any backbones/framesets (`--backbones`, `--single_framesets`, `--windowed_framesets`, `--submap_size`); defaults reproduce the 2026-05-31 4-backbone matrix. |
 | `build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown table (`--reference_backbone`, default `vggt_spark`). |
 | `compare_loop_edges.py` | Loop-edge composition diff (ours vs SLAM). Kept: `compose_slam_chain` imported by `tests/geometry/loop_closure/test_loop_edge_chain.py`. |
+
+### VGGT-SLAM parity workflow
+
+`run_vggt_slam.py` is the single VGGT-SLAM wrapper; loop closure is a flag, not a
+separate script:
+
+```bash
+# Published no-LC baseline (paper defaults: submap_size=16, min_disparity=50)
+$PY evals/runners/run_vggt_slam.py \
+    --image_dir data/7scenes/chess/seq-01 \
+    --output evals/results/chess_seq01/vggt_slam.tum \
+    --max_loops 0
+
+# Loop-closure run (also writes selected_frames.txt + ATE + metrics.json next to the TUM)
+$PY evals/runners/run_vggt_slam.py \
+    --image_dir data/7scenes/chess/seq-01 \
+    --output evals/results/chess_seq01/vggt_slam_lc.tum \
+    --max_loops 1
+```
+
+Drop the output TUM into a results dir; `eval.py` aggregation over that dir surfaces
+it as a comparison row against the reconstruction backbones. `--seq_dir`/`--out_tum`
+are accepted as aliases for `--image_dir`/`--output`.
 
 ## Other eval tools (standalone)
 
@@ -145,7 +167,7 @@ them for a different backbone/frameset combination, use the generalized scripts:
 | `runners/run_cross_model_benchmark.py` | Serial `eval_gt` matrix — any `--backbones` × `--single_framesets`/`--windowed_framesets` (defaults reproduce the original 4-backbone matrix). |
 | `runners/build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown (`--reference_backbone`). |
 | `runners/run_disparity_sweep.py` | ours-vs-SLAM at min_disparity 10–50 for any `--backbone` → `baselines/disparity_sweep/`. |
-| `runners/run_vggt_slam.py` · `runners/run_vggt_slam_lc.py` | VGGT-SLAM wrappers (anchor + long ref / loop probe). |
+| `runners/run_vggt_slam.py` | VGGT-SLAM wrapper (anchor + long ref / loop probe; LC via `--max_loops`). |
 
 > **Housekeeping:** if bundle-adjustment tuning is revisited, prefer writing
 > plots to the gitignored `results/` rather than the source tree.

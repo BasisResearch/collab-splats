@@ -65,9 +65,11 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=Path("evals/baselines/cross_model"))
     ap.add_argument("--sweep_dir", type=Path,
                     default=Path("evals/baselines/disparity_sweep"))
+    ap.add_argument("--reference_backbone", type=str, default="vggt_spark",
+                    help="Backbone used as the Δ-vs-reference baseline in the table. Default vggt_spark.")
     args = ap.parse_args()
     rows = assemble_rows(_load_runs(args.root), _load_slam_ate(args.sweep_dir),
-                         reference_backbone="vggt_spark")
+                         reference_backbone=args.reference_backbone)
     print(render_markdown(rows))
     return 0
 

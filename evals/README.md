@@ -147,5 +147,5 @@ them for a different backbone/frameset combination, use the generalized scripts:
 | `runners/run_disparity_sweep.py` | ours-vs-SLAM at min_disparity 10–50 for any `--backbone` → `baselines/disparity_sweep/`. |
 | `runners/run_vggt_slam.py` · `runners/run_vggt_slam_lc.py` | VGGT-SLAM wrappers (anchor + long ref / loop probe). |
 
-> **Housekeeping:** if re-running the incremental-BA sweep, write plots to the
-> gitignored `results/` rather than the source tree.
+> **Housekeeping:** if bundle-adjustment tuning is revisited, prefer writing
+> plots to the gitignored `results/` rather than the source tree.

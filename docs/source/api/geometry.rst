@@ -35,7 +35,7 @@ Quickstart
    from collab_splats.pointcloud import get_creator
    from collab_splats.geometry.loop_closure import LoopClosure, LoopClosureConfig
 
-   base = get_creator("vggt_omega")()
+   base = get_creator("vggtx")()
    lc = LoopClosure(base, config=LoopClosureConfig())
    result = lc.reconstruct(image_dir="path/to/images", output_dir="path/to/out")
 

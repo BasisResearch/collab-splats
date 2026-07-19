@@ -717,23 +717,6 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         camera_model: pycolmap camera model string for COLMAP reconstruction.
                       Use ``"PINHOLE"`` (fx, fy, cx, cy) or ``"SIMPLE_PINHOLE"``
                       (f, cx, cy — single focal length).
-
-    Inspection-only attrs set after run_inference() when LC enabled:
-        _lc_submaps: list[Submap]        submaps built during LC inference
-        _lc_loop_submaps: list[Submap]   verified loop-closure submaps (each 2 frames)
-        _lc_overlap_frames: int          cfg.submap_overlap value used
-        _lc_all_matches: list[LoopMatch] all post-NMS candidates; .accepted=True for accepted ones,
-                                         .reject_reason None on accepted / "verify_ratio" |
-                                         "no_joint_poses" | "jump_ratio" on rejects
-                                         ("no_joint_poses" now only fires from the defensive
-                                         guard when an accepting backend returns no lc_data —
-                                         a contract violation, not an expected path)
-        _lc_ablation_extrinsics: list[np.ndarray]  per-loop ablation trajectories, index-aligned
-                                         with _lc_loop_submaps; entry k = (total_frames, 4, 4)
-                                         corrected extrinsics re-optimized with loop k removed
-                                         (measurement only — outputs always use the full run)
-    Consumer: collab_splats.geometry.loop_closure.eval.capture_pose_graph_loss
-    These are not stable API; refactor cautiously.
     """
 
     # Threshold for cross_frame_attention_ratio LC verification gate; subclasses

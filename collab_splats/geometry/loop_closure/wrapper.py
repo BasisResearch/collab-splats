@@ -96,20 +96,11 @@ class LoopClosure:
     ########## Delegation — proxy to self.base ##########
     ######################################################
 
-    def load_model(self) -> None:
-        self.base.load_model()
-
-    def setup_inference(self, image_dir: Path) -> None:
-        self.base.setup_inference(image_dir)
-
-    def postprocess(self, **kwargs: Any) -> None:
-        self.base.postprocess(**kwargs)
-
-    def build_colmap(self, output_dir: Path) -> PointcloudResult:
-        return self.base.build_colmap(output_dir)
-
-    def _reproject(self, raw_outputs: Any, ext: Any, intr: Any) -> Any:
-        return self.base._reproject(raw_outputs, ext, intr)
+    def __getattr__(self, name: str) -> Any:
+        # Delegate any attribute not defined on the wrapper to the wrapped creator.
+        # __getattr__ only fires for missing names, so the explicit overrides below
+        # (run_inference, run, reconstruct, outputs/raw_outputs properties) still win.
+        return getattr(self.base, name)
 
     @property
     def outputs(self) -> Any:
@@ -161,10 +152,6 @@ class LoopClosure:
 
         return result
 
-    def reproject(self, result: FeedforwardResult) -> FeedforwardResult:
-        """Re-extract pts3d/colors using refined poses."""
-        return self.base.reproject(result)
-
     ######################################################
     ########## Inference — LC loop override ###########
     ######################################################
@@ -194,7 +181,6 @@ class LoopClosure:
         try:
             retrieval_cls = BaseRetrievalExtractor.get("dino-salad")
             retrieval_extractor = retrieval_cls(device=device)
-            self.base._lc_retrieval = retrieval_extractor
         except Exception as e:
             logger.warning("DINO-SALAD failed to load (%s) — skipping loop closure", e)
             self.base.raw_outputs = self.base._forward(self.base.model, views, **kwargs)
@@ -204,7 +190,6 @@ class LoopClosure:
 
         submaps: list[Submap] = []
         lc_submaps: list[Submap] = []
-        all_loop_candidates: list = []
         n_submaps = math.ceil(max(1, N - O) / step)
         loops_found = 0
         verified = 0
@@ -354,7 +339,6 @@ class LoopClosure:
                                     world_points_conf=lc_conf,
                                 )
                             )
-                    all_loop_candidates.append(match)
 
                 submaps.append(submap)
                 pbar.update(1)
@@ -362,11 +346,8 @@ class LoopClosure:
                 if end >= N:
                     break
 
-        # Inspection-only state (not stable API — see feedforward.py docstring)
-        self.base._lc_submaps = submaps
-        self.base._lc_loop_submaps = lc_submaps
-        self.base._lc_overlap_frames = O
-        self.base._lc_all_matches = all_loop_candidates
+        # Number of accepted loop-closure submaps applied (user-visible summary).
+        self.base.n_loops_applied = len(lc_submaps)
 
         # Merge per-submap world_points and poses into unified outputs
         t0_pg = time.perf_counter()
@@ -379,39 +360,7 @@ class LoopClosure:
             scale_method=cfg.scale_method,
         )
         console.log(f"  Pose graph: {N} frames, {len(lc_submaps)} loop edges → " f"{time.perf_counter() - t0_pg:.1f}s")
-        self.base._lc_corrected_extrinsics = corrected_extrinsics
         self.base.raw_outputs = merge_submap_outputs(
             submaps,
             corrected_extrinsics,
-        )
-
-        # Per-loop ablation metric: re-optimize once per accepted loop with that loop
-        # removed. Measurement only — merged outputs above always use the FULL optimization.
-        if lc_submaps:
-            self._ablate_loops(submaps, lc_submaps, total_frames=N)
-
-    def _ablate_loops(self, submaps: list[Submap], lc_submaps: list[Submap], total_frames: int) -> None:
-        """Re-run PGO with each loop removed; store per-ablation extrinsics on the base creator.
-
-        Entry k of ``_lc_ablation_extrinsics`` (index-aligned with ``_lc_loop_submaps``)
-        is the (total_frames, 4, 4) corrected extrinsics optimized without loop k, using
-        the exact PGO params of the full run.
-        """
-        cfg = self.config
-        t0 = time.perf_counter()
-        self.base._lc_ablation_extrinsics = [
-            run_pose_graph_optimization(
-                submaps,
-                lc_submaps[:k] + lc_submaps[k + 1 :],
-                total_frames=total_frames,
-                overlap_frames=cfg.submap_overlap,
-                conf_threshold=cfg.conf_threshold,
-                scale_method=cfg.scale_method,
-            )
-            for k in range(len(lc_submaps))
-        ]
-        logger.info(
-            "loop ablation: %d re-optimizations in %.1fs",
-            len(lc_submaps),
-            time.perf_counter() - t0,
         )

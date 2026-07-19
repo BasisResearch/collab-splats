@@ -275,8 +275,8 @@ def _run_lc_with_verify_return(verify_return):
     return base
 
 
-def test_lc_submap_carries_reshaped_world_points():
-    """Accepted lc_data with geometry → LC Submap gets (K, P, 3)/(K, P) points/conf."""
+def test_accepted_loop_with_geometry_is_applied():
+    """Accepted lc_data with geometry → the loop is applied (n_loops_applied == 1)."""
     h = w = 8
     lc_data = {
         "poses": np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
@@ -285,18 +285,11 @@ def test_lc_submap_carries_reshaped_world_points():
     }
     base = _run_lc_with_verify_return((True, lc_data))
 
-    assert len(base._lc_loop_submaps) == 1
-    lc_submap = base._lc_loop_submaps[0]
-    assert lc_submap.world_points.shape == (2, h * w, 3)
-    assert lc_submap.world_points_conf.shape == (2, h * w)
-    # Reshape preserves values: row-major (H, W) flattening
-    assert np.allclose(lc_submap.world_points[0], lc_data["world_points"][0].reshape(-1, 3))
-    accepted = [m for m in base._lc_all_matches if m.accepted]
-    assert len(accepted) == 1 and accepted[0].reject_reason is None
+    assert base.n_loops_applied == 1
 
 
-def test_lc_submap_geometry_none_when_backend_has_none():
-    """Accepted lc_data without geometry → LC Submap world_points/conf stay None."""
+def test_accepted_loop_without_geometry_is_applied():
+    """Accepted lc_data without geometry still applies the loop (None-geometry branch)."""
     lc_data = {
         "poses": np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
         "world_points": None,
@@ -304,15 +297,11 @@ def test_lc_submap_geometry_none_when_backend_has_none():
     }
     base = _run_lc_with_verify_return((True, lc_data))
 
-    assert len(base._lc_loop_submaps) == 1
-    assert base._lc_loop_submaps[0].world_points is None
-    assert base._lc_loop_submaps[0].world_points_conf is None
+    assert base.n_loops_applied == 1
 
 
 def test_accept_without_lc_data_hits_defensive_guard():
-    """(True, None) from verify is a contract violation → rejected as no_joint_poses."""
+    """(True, None) from verify is a contract violation → candidate rejected, no loop applied."""
     base = _run_lc_with_verify_return((True, None))
 
-    assert base._lc_loop_submaps == []
-    reasons = [m.reject_reason for m in base._lc_all_matches]
-    assert "no_joint_poses" in reasons
+    assert base.n_loops_applied == 0

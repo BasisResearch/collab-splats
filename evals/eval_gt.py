@@ -15,6 +15,7 @@ windowed VGGT-X (LC pipeline with loop detection disabled) and ``ba``
 wraps that with bundle adjustment.  ``lc`` always uses the full LC loop
 regardless of this flag.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,13 +32,13 @@ import time
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from datasets import get_dataset
-from runners.lc_parity_common import _serialize_lc_decisions
 from trajectory_io import read_tum
 
 from collab_splats.pointcloud import get_creator
@@ -58,17 +59,13 @@ def _validate_condition(cond: str) -> None:
     if m:
         n = int(m.group(1))
         if n <= 0:
-            raise ValueError(
-                f"ba_track-density-{{N}} requires N > 0, got {cond!r}"
-            )
+            raise ValueError(f"ba_track-density-{{N}} requires N > 0, got {cond!r}")
         return
     m2 = re.fullmatch(r"incremental_ba-(\d+)", cond)
     if m2:
         n = int(m2.group(1))
         if n <= 0:
-            raise ValueError(
-                f"incremental_ba-{{N}} requires N > 0, got {cond!r}"
-            )
+            raise ValueError(f"incremental_ba-{{N}} requires N > 0, got {cond!r}")
         return
     raise ValueError(
         f"Unknown condition {cond!r}. "
@@ -101,24 +98,27 @@ def _cam_positions(poses: np.ndarray) -> np.ndarray:
 def _write_tum(path: Path, poses_w2c: np.ndarray) -> None:
     """Write TUM trajectory: 'timestamp tx ty tz qx qy qz qw' (camera-to-world)."""
     from scipy.spatial.transform import Rotation
+
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     for i, w2c in enumerate(poses_w2c):
         c2w = np.linalg.inv(w2c.astype(np.float64))
         t = c2w[:3, 3]
         q = Rotation.from_matrix(c2w[:3, :3]).as_quat()  # [qx, qy, qz, qw]
-        lines.append(
-            f"{i:.6f} {t[0]:.9f} {t[1]:.9f} {t[2]:.9f} "
-            f"{q[0]:.9f} {q[1]:.9f} {q[2]:.9f} {q[3]:.9f}"
-        )
+        lines.append(f"{i:.6f} {t[0]:.9f} {t[1]:.9f} {t[2]:.9f} " f"{q[0]:.9f} {q[1]:.9f} {q[2]:.9f} {q[3]:.9f}")
     path.write_text("\n".join(lines) + "\n")
 
 
 _BACKBONE_PREFIX = {"vggt_omega": "omega", "vggtx": "vggtx", "mapanything": "mapanything", "vggt_spark": "spark"}
 
 
-def _make_creator(condition: str, submap_size: int | None = None, backbone: str = "vggt_omega",
-                  lc_scale_method: str = "se3", max_loops_per_submap: int | None = None):
+def _make_creator(
+    condition: str,
+    submap_size: int | None = None,
+    backbone: str = "vggt_omega",
+    lc_scale_method: str = "se3",
+    max_loops_per_submap: int | None = None,
+):
     """Build a (creator, ba_config) pair for the given condition.
 
     Returns (creator, None) when no bundle adjustment is needed.
@@ -129,8 +129,9 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
     _lc_extra = {} if max_loops_per_submap is None else {"max_loops_per_submap": max_loops_per_submap}
     base = get_creator(backbone)()
     if condition == "lc":
-        lc_cfg = LoopClosureConfig(scale_method=lc_scale_method, **_lc_extra,
-                                   **({} if submap_size is None else {"submap_size": submap_size}))
+        lc_cfg = LoopClosureConfig(
+            scale_method=lc_scale_method, **_lc_extra, **({} if submap_size is None else {"submap_size": submap_size})
+        )
         return LoopClosure(base, config=lc_cfg), None
     m = re.fullmatch(r"ba_track-density-(\d+)", condition)
     if m:
@@ -167,16 +168,22 @@ def _make_creator(condition: str, submap_size: int | None = None, backbone: str 
 
 
 def _run_condition(
-    name: str, image_dir: Path, output_dir: Path,
+    name: str,
+    image_dir: Path,
+    output_dir: Path,
     submap_size: int | None = None,
     backbone: str = "vggt_omega",
     lc_scale_method: str = "se3",
     max_loops_per_submap: int | None = None,
 ) -> tuple[np.ndarray, Any]:
     """Run condition, return (extrinsics (N,4,4), creator)."""
-    creator, ba_cfg = _make_creator(name, submap_size=submap_size, backbone=backbone,
-                                    lc_scale_method=lc_scale_method,
-                                    max_loops_per_submap=max_loops_per_submap)
+    creator, ba_cfg = _make_creator(
+        name,
+        submap_size=submap_size,
+        backbone=backbone,
+        lc_scale_method=lc_scale_method,
+        max_loops_per_submap=max_loops_per_submap,
+    )
     if ba_cfg is None:
         creator.reconstruct(image_dir, output_dir)
     else:
@@ -199,7 +206,7 @@ def _save_outputs(
     output_dir: Path,
     config: dict | None = None,
 ) -> None:
-    """Write metrics.json, trajectories.npz, lc_decisions_{cond}.json (LC conditions), and two plot PNGs."""
+    """Write metrics.json, trajectories.npz, and two plot PNGs."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # metrics.json — drop non-serializable per_frame array; include run config
@@ -213,15 +220,9 @@ def _save_outputs(
             "auc": {k: v for k, v in m["auc"].items() if k != "per_pair_err"},
             "time_s": m.get("time_s", None),
         }
-        # LC gate metadata: loops_applied/candidates counts land in metrics.json;
-        # the full per-candidate decision trace goes to its own JSON file.
-        if "loops_applied" in m:
-            metrics_json[cond]["loops_applied"] = m["loops_applied"]
-            metrics_json[cond]["candidates"] = m["candidates"]
-        if "lc_decisions" in m:
-            (output_dir / f"lc_decisions_{cond}.json").write_text(
-                json.dumps(m["lc_decisions"], indent=2)
-            )
+        # LC summary: number of accepted loop-closure submaps applied.
+        if "n_loops_applied" in m:
+            metrics_json[cond]["n_loops_applied"] = m["n_loops_applied"]
     (output_dir / "metrics.json").write_text(json.dumps(metrics_json, indent=2))
 
     # trajectories.npz — poses + pre-computed per-frame ATE for notebook
@@ -246,9 +247,14 @@ def _plot_trajectory(trajectories: dict, out_path: Path) -> None:
     ax = fig.add_subplot(111, projection="3d")
     for name, poses in trajectories.items():
         pos = _cam_positions(poses)
-        ax.plot(pos[:, 0], pos[:, 1], pos[:, 2],
-                label=name, color=_COLORS.get(name, "gray"),
-                linewidth=2 if name == "gt" else 1)
+        ax.plot(
+            pos[:, 0],
+            pos[:, 1],
+            pos[:, 2],
+            label=name,
+            color=_COLORS.get(name, "gray"),
+            linewidth=2 if name == "gt" else 1,
+        )
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.set_zlabel("Z (m)")
@@ -265,8 +271,7 @@ def _plot_ate_per_frame(metrics: dict, gt: np.ndarray, out_path: Path) -> None:
         if per_frame is None:
             continue
         rmse = m["ate"]["rmse"]
-        ax.plot(per_frame, label=f"{cond} (RMSE={rmse:.3f}m)",
-                color=_COLORS.get(cond, "gray"))
+        ax.plot(per_frame, label=f"{cond} (RMSE={rmse:.3f}m)", color=_COLORS.get(cond, "gray"))
     ax.set_xlabel("Frame")
     ax.set_ylabel("ATE (m)")
     ax.set_title("Per-frame Absolute Trajectory Error")
@@ -275,122 +280,97 @@ def _plot_ate_per_frame(metrics: dict, gt: np.ndarray, out_path: Path) -> None:
     plt.close(fig)
 
 
-def _write_loop_ablation(
-    output_dir: Path,
-    lc_stats: dict,
-    ate_full: float,
-    gt_poses: np.ndarray,
-    ate_baseline: float | None = None,
-) -> dict | None:
-    """Compute per-loop delta-ATE from ablation trajectories and write loop_ablation.json."""
-    ablations = lc_stats.get("ablation_extrinsics")
-    if not ablations:
-        return None
-
-    # Loop identity: accepted decisions in order are index-aligned with the ablation
-    # list (wrappers appends lc_submaps and flags matches accepted in the same iteration).
-    accepted = [d for d in lc_stats.get("decisions", []) if d.get("accepted")]
-
-    # Per loop k: ATE of the trajectory optimized without loop k, via the same
-    # Umeyama-aligned ate_translation path as the main conditions. Positive
-    # delta_vs_full ⇒ the loop helped (removing it hurt the trajectory).
-    loops = []
-    for k, abl in enumerate(ablations):
-        ate_without = ate_translation(np.array(abl, dtype=np.float32), gt_poses)["rmse"]
-        ident = accepted[k] if k < len(accepted) else {}
-        loops.append({
-            "index": k,
-            "query_submap": ident.get("query_submap"),
-            "detected_submap": ident.get("detected_submap"),
-            "query_frame": ident.get("query_frame"),
-            "detected_frame": ident.get("detected_frame"),
-            "ate_without": ate_without,
-            "delta_vs_full": ate_without - ate_full,
-        })
-
-    payload = {"ate_full_lc": ate_full, "ate_baseline": ate_baseline, "loops": loops}
-    out_path = output_dir / "loop_ablation.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2))
-
-    # 2-line console summary: largest positive delta (helpful) and smallest (harmful)
-    best = max(loops, key=lambda l: l["delta_vs_full"])
-    worst = min(loops, key=lambda l: l["delta_vs_full"])
-    print(f"  Loop ablation: most helpful loop {best['index']} "
-          f"(submap {best['query_submap']}→{best['detected_submap']}) Δ={best['delta_vs_full']:+.4f}m")
-    print(f"  Loop ablation: most harmful loop {worst['index']} "
-          f"(submap {worst['query_submap']}→{worst['detected_submap']}) Δ={worst['delta_vs_full']:+.4f}m")
-    return payload
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset",    required=True,
-                        help="Dataset name: 7scenes | tum | kitti | waymo | co3dv2")
-    parser.add_argument("--seq_dir",    type=Path, required=True,
-                        help="Path to sequence directory")
-    parser.add_argument("--output_dir", type=Path, default=None,
-                        help="Where to write results "
-                             "(default: evals/results/{dataset}/{seq_name}/run-{timestamp})")
-    parser.add_argument("--max_frames", type=int, default=500)
-    parser.add_argument("--submap_size", type=int, default=None,
-                        help="Frames per window for windowed inference. Required for sequences "
-                             "too long for single-pass GPU inference (e.g. >200 frames). "
-                             "baseline→windowed VGGT-X, ba→windowed+BA, lc→full LC pipeline.")
+    parser.add_argument("--dataset", required=True, help="Dataset name: 7scenes | tum | kitti | waymo | co3dv2")
+    parser.add_argument("--seq_dir", type=Path, required=True, help="Path to sequence directory")
     parser.add_argument(
-        "--backbone", choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark"], default="vggt_omega",
+        "--output_dir",
+        type=Path,
+        default=None,
+        help="Where to write results " "(default: evals/results/{dataset}/{seq_name}/run-{timestamp})",
+    )
+    parser.add_argument("--max_frames", type=int, default=500)
+    parser.add_argument(
+        "--submap_size",
+        type=int,
+        default=None,
+        help="Frames per window for windowed inference. Required for sequences "
+        "too long for single-pass GPU inference (e.g. >200 frames). "
+        "baseline→windowed VGGT-X, ba→windowed+BA, lc→full LC pipeline.",
+    )
+    parser.add_argument(
+        "--backbone",
+        choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark"],
+        default="vggt_omega",
         help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, mapanything→mapanything_*, vggt_spark→spark_*",
     )
-    parser.add_argument("--conditions", nargs="+", default=["baseline", "ba", "lc"],
-                        help="Conditions: baseline | ba | lc | ba_track-density-{N}")
+    parser.add_argument(
+        "--conditions",
+        nargs="+",
+        default=["baseline", "ba", "lc"],
+        help="Conditions: baseline | ba | lc | ba_track-density-{N}",
+    )
     parser.add_argument(
         "--lc_scale_method",
         choices=["se3", "rotation_only", "pairwise_dist", "none"],
         default="se3",
         help="Inter-submap scale estimation method for lc condition. "
-             "se3=current (full SE3, biased), rotation_only=VGGT-SLAM style, "
-             "pairwise_dist=translation-invariant fix, none=skip scale (always 1.0).",
+        "se3=current (full SE3, biased), rotation_only=VGGT-SLAM style, "
+        "pairwise_dist=translation-invariant fix, none=skip scale (always 1.0).",
     )
     parser.add_argument(
-        "--lc_layer", type=int, default=None,
+        "--lc_layer",
+        type=int,
+        default=None,
         help="Override the per-backbone LC verify layer (_lc_layer_index) for layer sweeps.",
     )
     parser.add_argument(
-        "--max_loops_per_submap", type=int, default=None,
+        "--max_loops_per_submap",
+        type=int,
+        default=None,
         help="Override LoopClosureConfig.max_loops_per_submap (default None = keep class "
-             "default). Pass 1 for VGGT-SLAM parity runs (upstream caps at 1 loop/submap).",
+        "default). Pass 1 for VGGT-SLAM parity runs (upstream caps at 1 loop/submap).",
     )
     parser.add_argument(
-        "--keyframe_list", type=Path, default=None,
+        "--keyframe_list",
+        type=Path,
+        default=None,
         help="Path to selected_frames.txt from run_vggt_slam_lc.py. "
-             "When set, filters the dataset to only these frames (matched by filename) "
-             "so all models run on the exact same keyframes as VGGT-SLAM.",
+        "When set, filters the dataset to only these frames (matched by filename) "
+        "so all models run on the exact same keyframes as VGGT-SLAM.",
     )
     parser.add_argument(
-        "--slam_tum", type=Path, default=None,
+        "--slam_tum",
+        type=Path,
+        default=None,
         help="Path to an upstream VGGT-SLAM TUM trajectory (e.g. .../slam/slam.tum). "
-             "When set, overlays it (label 'vggt_slam') in the 3D trajectory plot only "
-             "— excluded from ATE/RPE/AUC metrics and from trajectories.npz.",
+        "When set, overlays it (label 'vggt_slam') in the 3D trajectory plot only "
+        "— excluded from ATE/RPE/AUC metrics and from trajectories.npz.",
     )
     # Internal flag: run exactly one condition as a subprocess and write results
     # to --_result_file as JSON.  Not part of the public API.
     parser.add_argument(
-        "--output_ate", type=Path, default=None,
+        "--output_ate",
+        type=Path,
+        default=None,
         help="If set, write {condition: ate_rmse} JSON to this path after all conditions complete.",
     )
-    parser.add_argument("--_condition",   default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--_image_dir",   type=Path, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--_condition", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--_image_dir", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--_result_file", type=Path, default=None, help=argparse.SUPPRESS)
     return parser
 
 
 def _subprocess_mode(args: argparse.Namespace) -> None:
-    """Run one condition and write {extrinsics, time_s, backbone, alignment} JSON."""
+    """Run one condition and write {extrinsics, time_s, backbone, n_loops_applied} JSON."""
     _validate_condition(args._condition)
     backbone = getattr(args, "backbone", "vggt_omega")
     t0 = time.perf_counter()
     pred, creator = _run_condition(
-        args._condition, args._image_dir, args.output_dir / args._condition,
+        args._condition,
+        args._image_dir,
+        args.output_dir / args._condition,
         submap_size=args.submap_size,
         backbone=backbone,
         lc_scale_method=getattr(args, "lc_scale_method", "se3"),
@@ -398,39 +378,21 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
     )
     elapsed = time.perf_counter() - t0
 
-    # Compute submap alignment metrics for LC conditions
-    alignment: dict = {}
-    if hasattr(creator, "base") and hasattr(creator.base, "_lc_submaps"):
-        try:
-            from reconstruction_quality import compute_alignment_metrics
-            alignment = compute_alignment_metrics(creator)
-        except Exception as exc:
-            print(f"  WARNING: alignment metrics failed: {exc}")
+    # Loop-closure summary (only field LC now exposes).
+    n_loops_applied: int | None = None
+    if hasattr(creator, "base") and hasattr(creator.base, "n_loops_applied"):
+        n_loops_applied = int(creator.base.n_loops_applied)
 
-    # Collect per-candidate LC decisions for the parity harness Level-1/Level-2 gates.
-    # Conditions without the LC wrapper (or that never ran the LC loop) skip this.
-    lc_stats: dict | None = None
-    if hasattr(creator, "base") and hasattr(creator.base, "_lc_all_matches"):
-        decisions = _serialize_lc_decisions(creator.base._lc_all_matches)
-        lc_stats = {
-            "loops_applied": len(getattr(creator.base, "_lc_loop_submaps", []) or []),
-            "candidates": len(decisions),
-            "decisions": decisions,
-        }
-        # Per-loop ablation trajectories (wrappers._ablate_loops): index-aligned with
-        # _lc_loop_submaps, which the wrapper appends in the same iteration it marks a
-        # match accepted — so accepted decisions (in order) carry each loop's identity.
-        ablations = getattr(creator.base, "_lc_ablation_extrinsics", None)
-        if ablations:
-            lc_stats["ablation_extrinsics"] = [np.asarray(a).tolist() for a in ablations]
-
-    args._result_file.write_text(json.dumps({
-        "extrinsics": pred.tolist(),
-        "time_s": round(elapsed, 2),
-        "backbone": backbone,
-        "alignment": alignment,
-        "lc_stats": lc_stats,
-    }))
+    args._result_file.write_text(
+        json.dumps(
+            {
+                "extrinsics": pred.tolist(),
+                "time_s": round(elapsed, 2),
+                "backbone": backbone,
+                "n_loops_applied": n_loops_applied,
+            }
+        )
+    )
     print(f"  time={elapsed:.1f}s")
 
 
@@ -438,7 +400,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = _build_parser().parse_args()
 
-    for cond in (args.conditions or []):
+    for cond in args.conditions or []:
         _validate_condition(cond)
     if args._condition is not None:
         _validate_condition(args._condition)
@@ -464,11 +426,7 @@ def main() -> None:
     dataset = get_dataset(args.dataset)(args.seq_dir, max_frames=_load_max)
 
     if args.keyframe_list is not None:
-        allowed_basenames = {
-            Path(p).name
-            for p in args.keyframe_list.read_text().splitlines()
-            if p.strip()
-        }
+        allowed_basenames = {Path(p).name for p in args.keyframe_list.read_text().splitlines() if p.strip()}
         indices = [i for i, p in enumerate(dataset.images) if Path(p).name in allowed_basenames]
         # Guard against a silent subset run: if the dataset loader dropped any requested
         # keyframe (e.g. TUM's groundtruth-gap filter in datasets.py:_load_tum), SLAM's
@@ -484,6 +442,7 @@ def main() -> None:
                 "would run different frames; parity run aborted."
             )
         from datasets import EvalDataset
+
         dataset = EvalDataset(
             images=[dataset.images[i] for i in indices],
             gt_poses=dataset.gt_poses[indices],
@@ -508,15 +467,24 @@ def main() -> None:
             # The heavy VGGT-1B model (~8 GB) and VGGSfM tracker are fully freed
             # between conditions — Python GC cannot guarantee this in-process.
             cmd = [
-                sys.executable, __file__,
-                "--dataset",    args.dataset,
-                "--seq_dir",    str(args.seq_dir),
-                "--output_dir", str(args.output_dir),
-                "--max_frames", str(args.max_frames),
-                "--backbone",   args.backbone,
-                "--_condition",   cond,
-                "--_image_dir",   str(tmp_image_dir),
-                "--_result_file", str(result_file),
+                sys.executable,
+                __file__,
+                "--dataset",
+                args.dataset,
+                "--seq_dir",
+                str(args.seq_dir),
+                "--output_dir",
+                str(args.output_dir),
+                "--max_frames",
+                str(args.max_frames),
+                "--backbone",
+                args.backbone,
+                "--_condition",
+                cond,
+                "--_image_dir",
+                str(tmp_image_dir),
+                "--_result_file",
+                str(result_file),
             ]
             if args.submap_size is not None:
                 cmd += ["--submap_size", str(args.submap_size)]
@@ -535,43 +503,31 @@ def main() -> None:
             pred = np.array(result_json["extrinsics"], dtype=np.float32)
             time_s = result_json.get("time_s", round(elapsed, 2))
 
-            # Write alignment JSON for LC conditions that produced submap metrics
-            alignment = result_json.get("alignment", {})
-            if alignment:
-                prefix = _BACKBONE_PREFIX.get(args.backbone, args.backbone)
-                alignment_path = args.output_dir / f"{prefix}_{cond}_alignment.json"
-                alignment_path.parent.mkdir(parents=True, exist_ok=True)
-                alignment_path.write_text(json.dumps(alignment, indent=2))
-                print(f"  Alignment JSON: {alignment_path}")
-
             metrics[cond] = {
                 "ate": ate_translation(pred, dataset.gt_poses),
                 "rpe": rpe(pred, dataset.gt_poses),
                 "auc": auc_at_threshold(
-                    np.linalg.inv(pred), np.linalg.inv(dataset.gt_poses),
+                    np.linalg.inv(pred),
+                    np.linalg.inv(dataset.gt_poses),
                     thresholds=(5.0, 15.0, 30.0),
                 ),
                 "time_s": time_s,
             }
-            # LC gate metadata (loops_applied/candidates/per-candidate decisions), when
-            # this condition ran the LC loop — see _subprocess_mode's lc_stats collection.
-            lc_stats = result_json.get("lc_stats")
-            if lc_stats:
-                metrics[cond]["loops_applied"] = lc_stats["loops_applied"]
-                metrics[cond]["candidates"] = lc_stats["candidates"]
-                metrics[cond]["lc_decisions"] = lc_stats["decisions"]
-                print(f"  Loops applied: {lc_stats['loops_applied']} / {lc_stats['candidates']} candidates")
-                # Per-loop ablation attribution: delta-ATE per applied loop → loop_ablation.json
-                _write_loop_ablation(
-                    args.output_dir, lc_stats, metrics[cond]["ate"]["rmse"], dataset.gt_poses,
-                    ate_baseline=metrics.get("baseline", {}).get("ate", {}).get("rmse"),
-                )
+            # LC summary: number of accepted loop-closure submaps applied.
+            n_loops_applied = result_json.get("n_loops_applied")
+            if n_loops_applied is not None:
+                metrics[cond]["n_loops_applied"] = int(n_loops_applied)
+                print(f"  Loops applied: {n_loops_applied}")
             trajectories[cond] = pred
             print(f"  ATE RMSE: {metrics[cond]['ate']['rmse']:.4f}m")
-            print(f"  RPE trans/rot: {metrics[cond]['rpe']['trans_rmse']:.4f}m / "
-                  f"{metrics[cond]['rpe']['rot_rmse_deg']:.3f}deg")
-            print(f"  AUC@5/15/30: {metrics[cond]['auc']['auc_5']:.1f} / "
-                  f"{metrics[cond]['auc']['auc_15']:.1f} / {metrics[cond]['auc']['auc_30']:.1f}")
+            print(
+                f"  RPE trans/rot: {metrics[cond]['rpe']['trans_rmse']:.4f}m / "
+                f"{metrics[cond]['rpe']['rot_rmse_deg']:.3f}deg"
+            )
+            print(
+                f"  AUC@5/15/30: {metrics[cond]['auc']['auc_5']:.1f} / "
+                f"{metrics[cond]['auc']['auc_15']:.1f} / {metrics[cond]['auc']['auc_30']:.1f}"
+            )
             print(f"  Time: {time_s}s")
     finally:
         shutil.rmtree(tmp_image_dir, ignore_errors=True)
@@ -595,19 +551,25 @@ def main() -> None:
         slam_poses, _ = read_tum(args.slam_tum)
         trajectories["vggt_slam"] = slam_poses
 
-    _save_outputs(metrics, trajectories, args.output_dir, config={
-        "backbone": args.backbone,
-        "max_frames": args.max_frames,
-        "submap_size": args.submap_size,
-        "dataset": args.dataset,
-        "seq_dir": str(args.seq_dir),
-    })
+    _save_outputs(
+        metrics,
+        trajectories,
+        args.output_dir,
+        config={
+            "backbone": args.backbone,
+            "max_frames": args.max_frames,
+            "submap_size": args.submap_size,
+            "dataset": args.dataset,
+            "seq_dir": str(args.seq_dir),
+        },
+    )
     print(f"\nResults written to {args.output_dir}/")
-    print(json.dumps(
-        {c: {"ate_rmse": m["ate"]["rmse"], "rpe_trans": m["rpe"]["trans_rmse"]}
-         for c, m in metrics.items()},
-        indent=2,
-    ))
+    print(
+        json.dumps(
+            {c: {"ate_rmse": m["ate"]["rmse"], "rpe_trans": m["rpe"]["trans_rmse"]} for c, m in metrics.items()},
+            indent=2,
+        )
+    )
 
     # Write per-condition ATE RMSE to JSON file if requested
     if args.output_ate is not None:

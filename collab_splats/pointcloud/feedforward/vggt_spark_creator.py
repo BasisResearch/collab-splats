@@ -47,7 +47,7 @@ def _assert_loaded_from_spark(module_file: str) -> None:
             f"vggt_spark loaded VGGT-X, not SPARK: resolved {module_file!r} "
             f"is outside {_VGGT_SPARK_ROOT!r}. The `vggt` package was import-cached "
             f"before _load_model inserted the SPARK path. Run vggt_spark in a fresh "
-            f"process (or via parity_trace.py) before trusting its numbers."
+            f"process before trusting its numbers."
         )
 
 

@@ -38,6 +38,8 @@ dependencies = [
     "ultralytics",
     "gradio",
     "pyvista[jupyter]",
+    # viser — websocket 3D viewer for live scene visualization (collab_splats/viewer.py)
+    "viser>=1.0",
     "pyntcloud",
     "trame",
     "trame-vuetify",

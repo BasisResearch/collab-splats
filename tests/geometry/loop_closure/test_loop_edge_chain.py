@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.geometry.loop_closure.closure import (
+from collab_splats.geometry.loop_closure.graph import (
     _lc_anchor_scale,
     _loop_chain_relatives,
     run_pose_graph_optimization,
@@ -190,7 +190,7 @@ def _run(submaps, lc_submaps, total_frames=7):
 
 def _run_recording_graph_errors(monkeypatch, submaps, lc_submaps):
     """Run PGO while recording factor-graph error before each optimize() call."""
-    from collab_splats.geometry.loop_closure.closure import _SL4PoseGraph
+    from collab_splats.geometry.loop_closure.graph import PoseGraph as _SL4PoseGraph
 
     pre_errors: list[float] = []
     orig = _SL4PoseGraph.optimize
@@ -357,7 +357,7 @@ def test_lc_nodes_excluded_from_output(gt, consistent_submaps):
 def test_missing_lc_points_falls_back_scale1_with_one_warning(gt, consistent_submaps, caplog):
     """poses-only LC (vggtx/omega): direction fix still applies; warn once per loop."""
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, no_points=True)
-    with caplog.at_level(logging.WARNING, logger="collab_splats.geometry.loop_closure.closure"):
+    with caplog.at_level(logging.WARNING, logger="collab_splats.geometry.loop_closure.graph"):
         out = _run(consistent_submaps, [lc])
     np.testing.assert_allclose(out, gt.astype(np.float32), atol=1e-3)
     warnings = [r for r in caplog.records if "scale" in r.getMessage().lower()]

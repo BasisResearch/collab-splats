@@ -8,7 +8,7 @@ import torch
 
 from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
 from collab_splats.geometry.loop_closure import LoopClosureConfig
-from collab_splats.geometry.loop_closure.closure import LoopMatch
+from collab_splats.geometry.loop_closure.matching import LoopMatch
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 from collab_splats.geometry.transforms import invert_poses
 from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel, _FakeQKV

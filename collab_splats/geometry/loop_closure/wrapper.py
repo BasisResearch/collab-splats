@@ -24,7 +24,7 @@ import logging
 import math
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -36,18 +36,43 @@ from collab_splats.localization import BaseRetrievalExtractor
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import FeedforwardResult, _raw_to_world_points
 
-from .closure import (
-    LoopClosureConfig,
-    find_loop_closures,
-    merge_submap_outputs,
-    run_pose_graph_optimization,
-    translation_jump_check,
-)
+from .graph import run_pose_graph_optimization
+from .matching import find_loop_closures, translation_jump_check
+from .merge import merge_submap_outputs
 from .submap import Submap, assert_world_to_cam
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["LoopClosure"]
+
+
+@dataclasses.dataclass
+class LoopClosureConfig:
+    submap_size: int = 20
+    submap_overlap: int = 1  # 1 = VGGT-SLAM parity; 4 = old default
+    # DINO-SALAD retrieval gate: accept candidate if L2(q, ref) < lc_retrieval_threshold.
+    # L2 distance on unit-norm DINO-SALAD embeddings (range [0, 2]; typical good matches < 0.5).
+    # 0.95 matches VGGT-SLAM main.py default (lc_thres=0.95). 0.0 disables retrieval.
+    lc_retrieval_threshold: float = 0.95
+    max_loops_per_submap: int = 5
+    # None → resolve to the creator's default_verify_match_ratio at LoopClosure
+    # wrapper init (fallback 0.85); an explicit float always wins.
+    verify_match_ratio: float | None = None
+    nms_frame_distance: int = 25
+    min_submap_gap: int = 1
+    # Inter-submap scale estimation method.
+    # "rotation_only" — VGGT-SLAM default: T[:3,:3] applied to curr_pts (rotation only)
+    # "se3"           — full SE3 T applied before norm ratio
+    # "pairwise_dist" — pairwise distance ratio, translation-invariant
+    # "none"          — skip scale estimation entirely; always use scale=1.0
+    scale_method: Literal["se3", "rotation_only", "pairwise_dist", "none"] = "rotation_only"
+    max_jump_ratio: float = math.inf  # reject loops where ‖ΔT.t‖/path_length > this; math.inf disables
+    conf_threshold: float = 25.0  # confidence gate for scale estimation; matches VGGT-SLAM --conf_threshold 25
+
+    @property
+    def lc_threshold_l2(self) -> float:
+        """L2 threshold passed to find_loop_closures. Alias for lc_retrieval_threshold."""
+        return self.lc_retrieval_threshold
 
 
 def _trim_forward_outputs(raw: "dict | list", k: int) -> "dict | list":

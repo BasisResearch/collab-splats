@@ -53,9 +53,9 @@ def test_n_loops_applied_set_after_run_inference():
     # Patch retrieval extractor and pose graph optimization
     with (
         patch("collab_splats.localization.retrieval.BaseRetrievalExtractor.get") as mock_get,
-        patch("collab_splats.geometry.loop_closure.closure.find_loop_closures", return_value=[]),
-        patch("collab_splats.geometry.loop_closure.closure.run_pose_graph_optimization") as mock_pg,
-        patch("collab_splats.geometry.loop_closure.closure.merge_submap_outputs") as mock_merge,
+        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", return_value=[]),
+        patch("collab_splats.geometry.loop_closure.wrapper.run_pose_graph_optimization") as mock_pg,
+        patch("collab_splats.geometry.loop_closure.wrapper.merge_submap_outputs") as mock_merge,
     ):
         mock_extractor = MagicMock()
         mock_extractor.return_value = torch.zeros(20, 128)

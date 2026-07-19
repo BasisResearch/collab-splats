@@ -5,6 +5,7 @@ Run:
 
 All tests are hard gates: any failure blocks the migration merge.
 """
+
 import importlib.metadata as importlib_metadata
 import importlib.util
 import sys
@@ -14,52 +15,47 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-
 # ── Phase 1: Environment guards ───────────────────────────────────────────────
 
 
 def test_python_version():
-    assert sys.version_info >= (3, 11), (
-        f"Expected Python >= 3.11, got {sys.version_info.major}.{sys.version_info.minor}"
-    )
+    assert sys.version_info >= (
+        3,
+        11,
+    ), f"Expected Python >= 3.11, got {sys.version_info.major}.{sys.version_info.minor}"
 
 
 def test_torch_version():
     import torch
-    assert torch.__version__.startswith("2.5"), (
-        f"Expected torch 2.5.x, got {torch.__version__}"
-    )
-    assert "cu121" in torch.__version__, (
-        f"Expected cu121 build, got {torch.__version__}"
-    )
+
+    assert torch.__version__.startswith("2.5"), f"Expected torch 2.5.x, got {torch.__version__}"
+    assert "cu121" in torch.__version__, f"Expected cu121 build, got {torch.__version__}"
 
 
 def test_cuda_version():
     import torch
+
     assert torch.cuda.is_available(), "CUDA not available"
-    assert "12.1" in torch.version.cuda, (
-        f"Expected CUDA 12.1, got {torch.version.cuda}"
-    )
+    assert "12.1" in torch.version.cuda, f"Expected CUDA 12.1, got {torch.version.cuda}"
 
 
 def test_numpy_not_downgraded():
     major, minor = [int(x) for x in np.__version__.split(".")[:2]]
     assert major >= 2, (
-        f"numpy was downgraded below 2.0 — got {np.__version__}. "
-        "Check pyproject.toml numpy>=1.26 constraint."
+        f"numpy was downgraded below 2.0 — got {np.__version__}. " "Check pyproject.toml numpy>=1.26 constraint."
     )
 
 
 def test_scipy_version():
     import scipy
+
     major, minor = [int(x) for x in scipy.__version__.split(".")[:2]]
-    assert (major, minor) >= (1, 17), (
-        f"Expected scipy >= 1.17, got {scipy.__version__}"
-    )
+    assert (major, minor) >= (1, 17), f"Expected scipy >= 1.17, got {scipy.__version__}"
 
 
 def test_pycolmap_version():
     import pycolmap
+
     ver = pycolmap.__version__
     major = int(ver.split(".")[0])
     assert major >= 4, f"Expected pycolmap >= 4.0, got {ver}"
@@ -68,25 +64,23 @@ def test_pycolmap_version():
 def test_bae_installed_version():
     """bae must be 0.2.4 (pypose/bae git source) installed in the active venv."""
     import bae
+
     # Version pin: bae 0.2.4 is the source pinned in [tool.uv.sources] (pypose/bae@0.2.4)
-    assert importlib_metadata.version("bae") == "0.2.4", (
-        f"bae must be 0.2.4, got {importlib_metadata.version('bae')}"
-    )
+    assert importlib_metadata.version("bae") == "0.2.4", f"bae must be 0.2.4, got {importlib_metadata.version('bae')}"
     # Location: must live under the running interpreter's site-packages (venv-agnostic —
     # works for conda /opt/conda/... and uv /opt/venv/..., not a hardcoded path).
     site = sysconfig.get_path("purelib")
-    assert bae.__file__ and bae.__file__.startswith(site), (
-        f"bae not installed under active venv site-packages ({site}): {bae.__file__}"
-    )
+    assert bae.__file__ and bae.__file__.startswith(
+        site
+    ), f"bae not installed under active venv site-packages ({site}): {bae.__file__}"
 
 
 def test_viser_version():
     import viser
+
     parts = [int(x) for x in viser.__version__.split(".")[:3]]
     major, minor, patch = parts[0], parts[1], parts[2] if len(parts) > 2 else 0
-    assert (major, minor, patch) >= (0, 2, 23), (
-        f"Expected viser >= 0.2.23, got {viser.__version__}"
-    )
+    assert (major, minor, patch) >= (0, 2, 23), f"Expected viser >= 0.2.23, got {viser.__version__}"
 
 
 # ── Phase 2: Import sweep ─────────────────────────────────────────────────────
@@ -112,7 +106,9 @@ def test_import_all_modules():
         "collab_splats.pointcloud.utils",
         "collab_splats.geometry.loop_closure.wrapper",
         "collab_splats.geometry.loop_closure",
-        "collab_splats.geometry.loop_closure.closure",
+        "collab_splats.geometry.loop_closure.matching",
+        "collab_splats.geometry.loop_closure.graph",
+        "collab_splats.geometry.loop_closure.merge",
         "collab_splats.geometry.loop_closure.submap",
         "collab_splats.semantics",
         "collab_splats.semantics.features",
@@ -137,6 +133,7 @@ def test_import_all_modules():
         # collab_splats.dashboard excluded: requires 'panel' which is not installed
     ]
     import importlib
+
     failed = []
     for mod in modules:
         try:
@@ -165,9 +162,8 @@ def test_flagged_package_imports():
             exec(stmt)
         except Exception as e:
             failed.append(f"{name}: {e}")
-    assert not failed, (
-        "Flagged packages failed to import — investigate numpy 2.x / torch 2.4 compat:\n"
-        + "\n".join(failed)
+    assert not failed, "Flagged packages failed to import — investigate numpy 2.x / torch 2.4 compat:\n" + "\n".join(
+        failed
     )
 
 
@@ -182,6 +178,7 @@ def test_gsplat_rade_fork():
 def test_gsplat_not_overwritten():
     """gsplat installed is the rade fork, not official PyPI gsplat 1.4.0."""
     import gsplat
+
     assert hasattr(gsplat, "rasterization_2dgs_inria_wrapper"), (
         f"gsplat at {gsplat.__file__} is missing rade-specific symbol — "
         "nerfstudio install may have overwritten gsplat-rade fork"
@@ -206,6 +203,7 @@ def test_bae_cuda_backend():
     import pypose  # noqa: F401
     import bae  # noqa: F401
     import torch
+
     assert torch.__version__.startswith("2.5"), f"Wrong torch: {torch.__version__}"
     assert "12.1" in torch.version.cuda, f"Wrong CUDA: {torch.version.cuda}"
 
@@ -222,6 +220,7 @@ def test_nerfstudio_installed_local():
         # Remove tests/ from sys.path to allow site-packages nerfstudio to be found
         sys.path = [p for p in sys.path if Path(p).resolve() != tests_dir.resolve()]
         import nerfstudio.field_components.activations as _ns_probe
+
         ns_file = _ns_probe.__file__
     finally:
         sys.path = orig_path
@@ -276,12 +275,11 @@ def test_nerfstudio_method_configs():
     import collab_splats.nerfstudio.method_configs.rade_gs  # noqa: F401
     import collab_splats.nerfstudio.method_configs.rade_features  # noqa: F401
     from nerfstudio.configs.method_configs import all_methods
-    assert "rade-gs" in all_methods, (
-        f"rade-gs missing from nerfstudio registry. Keys: {sorted(all_methods)}"
-    )
-    assert "rade-features" in all_methods, (
-        f"rade-features missing from nerfstudio registry. Keys: {sorted(all_methods)}"
-    )
+
+    assert "rade-gs" in all_methods, f"rade-gs missing from nerfstudio registry. Keys: {sorted(all_methods)}"
+    assert (
+        "rade-features" in all_methods
+    ), f"rade-features missing from nerfstudio registry. Keys: {sorted(all_methods)}"
 
 
 @pytest.mark.skipif(
@@ -297,14 +295,11 @@ def test_nerfstudio_patched_deps():
     """nerfacc and timm resolve to patched (unpinned) versions."""
     import nerfacc
     import timm
+
     nerfacc_parts = [int(x) for x in nerfacc.__version__.split(".")[:3]]
-    assert tuple(nerfacc_parts) >= (0, 5, 2), (
-        f"Expected nerfacc >= 0.5.2, got {nerfacc.__version__}"
-    )
+    assert tuple(nerfacc_parts) >= (0, 5, 2), f"Expected nerfacc >= 0.5.2, got {nerfacc.__version__}"
     timm_parts = [int(x) for x in timm.__version__.split(".")[:2]]
-    assert tuple(timm_parts) >= (0, 6), (
-        f"Expected timm >= 0.6.7, got {timm.__version__}"
-    )
+    assert tuple(timm_parts) >= (0, 6), f"Expected timm >= 0.6.7, got {timm.__version__}"
 
 
 def test_splatfacto_uses_gsplat_rade():
@@ -318,6 +313,7 @@ def test_bae_cudss_importable():
     import pypose  # noqa: F401 — must precede bae imports
     from bae.sparse.solve import CuDirectSparseSolver
     import torch
+
     assert torch.cuda.is_available(), "CUDA not available — CuDSS build meaningless"
     solver = CuDirectSparseSolver()
     assert solver is not None

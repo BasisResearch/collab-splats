@@ -9,6 +9,7 @@ Usage:
     python visualize_lc_correction.py --run_dir <.../ours_vggt_omega>
     python visualize_lc_correction.py --root <.../lc_parity_d5_postfix>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +21,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 # Reuse eval's own Sim(3) Umeyama (matches evo align+correct_scale used for metrics.json ATE)
-from collab_splats.geometry.loop_closure.closure import umeyama_sim3
+from collab_splats.geometry.loop_closure.graph import umeyama_sim3
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +103,16 @@ def build_trajectory_figure(
         (baseline_xyz, "baseline", COLOR_BASELINE),
         (lc_xyz, "LC", COLOR_LC),
     ]:
-        fig.add_trace(go.Scatter3d(
-            x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2], mode="lines",
-            line=dict(color=color, width=4), name=name,
-        ))
+        fig.add_trace(
+            go.Scatter3d(
+                x=xyz[:, 0],
+                y=xyz[:, 1],
+                z=xyz[:, 2],
+                mode="lines",
+                line=dict(color=color, width=4),
+                name=name,
+            )
+        )
 
     # Loop chords on the LC trajectory, hidden until toggled via the legend
     if loop_pairs:
@@ -114,15 +121,21 @@ def build_trajectory_figure(
             xs += [lc_xyz[q, 0], lc_xyz[d, 0], None]
             ys += [lc_xyz[q, 1], lc_xyz[d, 1], None]
             zs += [lc_xyz[q, 2], lc_xyz[d, 2], None]
-        fig.add_trace(go.Scatter3d(
-            x=xs, y=ys, z=zs, mode="lines",
-            line=dict(color=COLOR_LOOP, width=3, dash="dash"),
-            name="loop closures (click to show)",
-            visible="legendonly",
-        ))
+        fig.add_trace(
+            go.Scatter3d(
+                x=xs,
+                y=ys,
+                z=zs,
+                mode="lines",
+                line=dict(color=COLOR_LOOP, width=3, dash="dash"),
+                name="loop closures (click to show)",
+                visible="legendonly",
+            )
+        )
 
     fig.update_layout(
-        height=700, margin=dict(l=0, r=0, t=30, b=0),
+        height=700,
+        margin=dict(l=0, r=0, t=30, b=0),
         scene=dict(aspectmode="data"),
         legend=dict(itemsizing="constant"),
     )
@@ -143,18 +156,20 @@ p.caption { font-size: 0.85rem; color: #555; max-width: 70rem; }
 
 def build_html(title: str, stats_html: str, fig: go.Figure) -> str:
     """Assemble the single self-contained page: header + one plotly figure."""
-    return "".join([
-        f'<!DOCTYPE html><html><head><meta charset="utf-8"><title>{title}</title>',
-        f"<style>{_PAGE_CSS}</style></head><body>",
-        f"<h1>{title}</h1>",
-        f'<p class="stats">{stats_html}</p>',
-        '<p class="caption">GT gray, baseline (no LC) red, LC green — each trajectory '
-        "independently Sim(3) Umeyama-aligned to GT (same convention as the eval's ATE). "
-        "Dashed chords joining the two frames of each accepted loop are hidden by default; "
-        "click the legend entry to show them.</p>",
-        fig.to_html(full_html=False, include_plotlyjs=True),
-        "</body></html>",
-    ])
+    return "".join(
+        [
+            f'<!DOCTYPE html><html><head><meta charset="utf-8"><title>{title}</title>',
+            f"<style>{_PAGE_CSS}</style></head><body>",
+            f"<h1>{title}</h1>",
+            f'<p class="stats">{stats_html}</p>',
+            '<p class="caption">GT gray, baseline (no LC) red, LC green — each trajectory '
+            "independently Sim(3) Umeyama-aligned to GT (same convention as the eval's ATE). "
+            "Dashed chords joining the two frames of each accepted loop are hidden by default; "
+            "click the legend entry to show them.</p>",
+            fig.to_html(full_html=False, include_plotlyjs=True),
+            "</body></html>",
+        ]
+    )
 
 
 ########################################
@@ -189,8 +204,13 @@ def visualize_run(run_dir: Path) -> Path | None:
     _, lc_xyz_raw, _ = load_tum(lc_tum)
     n = gt_xyz.shape[0]
     if base_xyz_raw.shape[0] != n or lc_xyz_raw.shape[0] != n:
-        logger.warning("%s: trajectory length mismatch (gt=%d base=%d lc=%d); skipping",
-                       run_dir, n, base_xyz_raw.shape[0], lc_xyz_raw.shape[0])
+        logger.warning(
+            "%s: trajectory length mismatch (gt=%d base=%d lc=%d); skipping",
+            run_dir,
+            n,
+            base_xyz_raw.shape[0],
+            lc_xyz_raw.shape[0],
+        )
         return None
     base_xyz, _ = sim3_align(base_xyz_raw, gt_xyz)
     lc_xyz, _ = sim3_align(lc_xyz_raw, gt_xyz)
@@ -212,8 +232,10 @@ def visualize_run(run_dir: Path) -> Path | None:
     loops_applied = metrics.get("lc", {}).get("loops_applied")
     stats = []
     if base_ate is not None and lc_ate is not None:
-        stats.append(f"ATE RMSE: baseline <b>{base_ate:.4f} m</b> → LC <b>{lc_ate:.4f} m</b> "
-                     f"({(lc_ate - base_ate) / base_ate * 100:+.1f}%)")
+        stats.append(
+            f"ATE RMSE: baseline <b>{base_ate:.4f} m</b> → LC <b>{lc_ate:.4f} m</b> "
+            f"({(lc_ate - base_ate) / base_ate * 100:+.1f}%)"
+        )
     if loops_applied is not None:
         stats.append(f"loops applied: <b>{loops_applied}</b>")
     stats.append(f"keyframes: <b>{n}</b>, submap_size: <b>{submap_size or '?'}</b>")

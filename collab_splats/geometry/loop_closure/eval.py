@@ -11,8 +11,7 @@ from __future__ import annotations
 import gtsam
 import numpy as np
 
-from .closure import umeyama_se3, umeyama_sim3
-from .graph import PoseGraph
+from .graph import PoseGraph, umeyama_se3, umeyama_sim3
 
 
 def _classify_edges(graph: gtsam.NonlinearFactorGraph) -> dict[str, list[int]]:

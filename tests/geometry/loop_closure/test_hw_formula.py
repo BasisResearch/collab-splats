@@ -3,13 +3,14 @@
 H_w = H_overlap @ T @ H_scale  where T = inv(P_prev_ov) @ P_curr_ov.
 Old code used inv(K_prev) @ K_curr which = I when K=identity, ignoring rotation.
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.closure import run_pose_graph_optimization
+from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
 from collab_splats.geometry.loop_closure.submap import Submap
 
 
@@ -66,10 +67,12 @@ def test_hw_formula_uses_full_pose_not_k_only():
     assert np.allclose(H_w_old, H_overlap), "Old K-only formula should equal H_overlap when K=I"
 
     # New formula includes the 30° rotation
-    assert not np.allclose(H_w_new, H_overlap, atol=1e-6), \
-        "New T-based formula must differ when world frames have a rotation"
-    assert np.allclose(H_w_new[:3, :3], R_w, atol=1e-6), \
-        "New H_w rotation block should match the world-frame rotation R_w"
+    assert not np.allclose(
+        H_w_new, H_overlap, atol=1e-6
+    ), "New T-based formula must differ when world frames have a rotation"
+    assert np.allclose(
+        H_w_new[:3, :3], R_w, atol=1e-6
+    ), "New H_w rotation block should match the world-frame rotation R_w"
 
 
 def test_hw_formula_integration_two_submaps_rotated():
@@ -82,13 +85,9 @@ def test_hw_formula_integration_two_submaps_rotated():
     k = 2
 
     # Prev submap: identity camera (overlap frame = last frame = identity)
-    poses_prev = np.stack([
-        _make_w2c(np.eye(3), np.array([i * 0.1, 0., 0.])) for i in range(k)
-    ])
+    poses_prev = np.stack([_make_w2c(np.eye(3), np.array([i * 0.1, 0.0, 0.0])) for i in range(k)])
     # Curr submap: first frame (overlap) has 30° rotation in curr world
-    poses_curr = np.stack([
-        _make_w2c(R_w, np.array([i * 0.1, 0., 0.])) for i in range(k)
-    ])
+    poses_curr = np.stack([_make_w2c(R_w, np.array([i * 0.1, 0.0, 0.0])) for i in range(k)])
 
     wp_prev = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
     wp_curr = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
@@ -103,12 +102,12 @@ def test_hw_formula_integration_two_submaps_rotated():
 
     assert result.shape == (total_frames, 4, 4)
     # First frame (reference) should be near identity
-    assert np.allclose(result[0], np.eye(4), atol=0.15), \
-        f"Frame 0 should be near identity, got\n{result[0]}"
+    assert np.allclose(result[0], np.eye(4), atol=0.15), f"Frame 0 should be near identity, got\n{result[0]}"
     # With correct H_w (T-based) + new extraction (local_proj @ inv(H_opt)):
     # H_opt encodes R_w and local_proj also has R_w, so they cancel → rotation ≈ I.
     # With wrong H_w (K-only, old bug): H_opt ≈ I, so local_proj @ inv(I) = R_w → rotation visible.
     R_out = result[k, :3, :3]  # unique frame of curr submap (starts at frame_start=submap_id*k=k)
-    rot_vs_identity = np.linalg.norm(R_out - np.eye(3), 'fro')
-    assert rot_vs_identity < 0.3, \
-        f"With correct H_w, rotation should cancel in extraction (got rot_vs_identity={rot_vs_identity:.3f})"
+    rot_vs_identity = np.linalg.norm(R_out - np.eye(3), "fro")
+    assert (
+        rot_vs_identity < 0.3
+    ), f"With correct H_w, rotation should cancel in extraction (got rot_vs_identity={rot_vs_identity:.3f})"

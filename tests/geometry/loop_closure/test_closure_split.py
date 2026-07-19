@@ -1,6 +1,6 @@
 import numpy as np
 
-from collab_splats.geometry.loop_closure.closure import run_pose_graph_optimization
+from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
 
 
 def test_run_pose_graph_optimization_unchanged_signature(identity_submap_factory):

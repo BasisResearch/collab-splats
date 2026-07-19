@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from collab_splats.geometry.loop_closure.closure import dedup_overlap
+from collab_splats.geometry.loop_closure.merge import dedup_overlap
 
 
 def _identity_poses(k: int) -> np.ndarray:
@@ -57,7 +57,7 @@ def test_dedup_small():
 def test_dedup_canonical_owner():
     """Overlap frames keep the EARLIER submap's pose (canonical-owner rule)."""
     # submap 0: frames 0-4 (5 frames), submap 1: frames 3-7 (5 frames), overlap = frames 3,4
-    poses_a = _identity_poses(5)       # all identity
+    poses_a = _identity_poses(5)  # all identity
     poses_b = _shifted_poses(5, 99.0)  # all shifted — should NOT appear at frames 3,4
     corrected = {0: poses_a, 1: poses_b}
     result = dedup_overlap([0, 1], [0, 3], corrected, total_frames=8)

@@ -12,7 +12,7 @@ def test_decompose_camera_round_trip():
     K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float64)
     R = ScipyR.from_euler("y", 15, degrees=True).as_matrix()
     t = np.array([0.1, -0.2, 0.5])
-    P34 = K @ np.hstack([R, t[:, None]])   # (3, 4)
+    P34 = K @ np.hstack([R, t[:, None]])  # (3, 4)
     K_out, R_out, t_out, scale = decompose_camera(P34)
     assert np.allclose(K_out[:3, :3] / K_out[0, 0], K / K[0, 0], atol=1e-6)
     assert np.allclose(np.abs(R_out), np.abs(R), atol=1e-5)
@@ -32,15 +32,15 @@ def test_decompose_camera_accepts_4x4():
 def test_estimate_scale_pairwise_known():
     rng = np.random.default_rng(1)
     X = rng.random((50, 3)).astype(np.float64)
-    Y = X * 2.5                              # exact scale = 2.5
+    Y = X * 2.5  # exact scale = 2.5
     scale = estimate_scale_pairwise(X, Y)
     assert abs(scale - 2.5) < 0.01
 
 
 def test_estimate_scale_pairwise_no_div_zero():
-    X = np.zeros((5, 3), dtype=np.float64)   # all at origin
+    X = np.zeros((5, 3), dtype=np.float64)  # all at origin
     Y = np.ones((5, 3), dtype=np.float64)
-    scale = estimate_scale_pairwise(X, Y)    # should not raise
+    scale = estimate_scale_pairwise(X, Y)  # should not raise
     assert np.isfinite(scale)
 
 
@@ -105,7 +105,7 @@ def test_sl4_loop_edge_no_crash():
     # Loop-chain edges share the sequential-edge API and Gaussian noise
     # (add_loop_edge was removed with the scale-reconciled 3-edge chain).
     pg.add_sequential_edge(2, 0, np.linalg.inv(Hs[2]) @ Hs[0])
-    pg.optimize()   # must not raise
+    pg.optimize()  # must not raise
     for i in range(3):
         assert np.isfinite(pg.get_homography(i)).all()
 
@@ -128,16 +128,14 @@ def test_get_homography_post_optimize():
 from pathlib import Path
 import torch
 from collab_splats.geometry.loop_closure.submap import Submap
-from collab_splats.geometry.loop_closure.closure import run_pose_graph_optimization
+from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
 
 
 def _make_real_submap(submap_id: int, k: int = 4, frame_start: int = 0) -> Submap:
     rng = np.random.default_rng(submap_id)
     poses = np.tile(np.eye(4, dtype=np.float32), (k, 1, 1))
     poses[:, :3, 3] = (rng.standard_normal((k, 3)) * 0.05).astype(np.float32)
-    intrinsics = np.tile(
-        np.diag([400.0, 400.0, 1.0]).astype(np.float32), (k, 1, 1)
-    )
+    intrinsics = np.tile(np.diag([400.0, 400.0, 1.0]).astype(np.float32), (k, 1, 1))
     world_points = rng.standard_normal((k, 20, 3)).astype(np.float32)
     return Submap(
         submap_id=submap_id,
@@ -153,10 +151,11 @@ def _make_real_submap(submap_id: int, k: int = 4, frame_start: int = 0) -> Subma
 
 def test_run_pose_graph_optimization_returns_correct_shape():
     k = 4
-    submaps = [_make_real_submap(0, k=k, frame_start=0),
-               _make_real_submap(1, k=k, frame_start=k)]
+    submaps = [_make_real_submap(0, k=k, frame_start=0), _make_real_submap(1, k=k, frame_start=k)]
     result = run_pose_graph_optimization(
-        submaps, lc_submaps=[], total_frames=k * 2,
+        submaps,
+        lc_submaps=[],
+        total_frames=k * 2,
         overlap_frames=1,
     )
     assert result.shape == (k * 2, 4, 4)

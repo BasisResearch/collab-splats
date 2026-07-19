@@ -1,19 +1,12 @@
-from .closure import (
-    LoopClosureConfig,
-    LoopMatch,
-    LoopMatchQueue,
-    dedup_overlap,
-    find_loop_closures,
-    merge_submap_outputs,
-    run_pose_graph_optimization,
-    translation_jump_check,
-)
 from .eval import capture_pose_graph_loss
 from .graph import (
     PoseGraph,
     decompose_camera,
     estimate_scale_pairwise,
+    run_pose_graph_optimization,
 )
+from .matching import LoopMatch, LoopMatchQueue, find_loop_closures, translation_jump_check
+from .merge import dedup_overlap, merge_submap_outputs
 from .submap import Submap, assert_world_to_cam
 
 
@@ -24,6 +17,10 @@ def __getattr__(name):
         from .wrapper import LoopClosure
 
         return LoopClosure
+    if name == "LoopClosureConfig":
+        from .wrapper import LoopClosureConfig
+
+        return LoopClosureConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

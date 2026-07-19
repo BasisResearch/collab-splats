@@ -24,7 +24,7 @@ Goal: reduce LOC and consolidate duplicated logic while keeping `pytest tests/` 
 
 ## 1. Evals dead files/dirs
 
-- Delete `evals/runners/run_vggt_slam.py` (137 loc, no callers anywhere — superseded by `run_vggt_slam_lc.py`).
+- **Keep `evals/runners/run_vggt_slam.py`.** Earlier research called this dead; that was wrong — it's called by `eval_suite.sh:83`, documented in `evals/README.md`, referenced by `setup/vggt_slam.sh`, and covered by `tests/evals/test_run_vggt_slam.py`. It's the dense/no-LC subprocess wrapper (published-matching anchor); `run_vggt_slam_lc.py` is a separate dense+LC path — not a superset. No deletion here.
 - Delete `evals/notebooks/` (empty).
 - Delete `evals/envs/vggt_long.yml` (unreferenced by any script or README).
 - Flatten `evals/baselines/{lc_parity,lc_parity_d5,lc_parity_d5_postfix,lc_parity_matrix}/` into `evals/baselines/lc_parity/<config>/` — these are parameter variants of one sweep, not distinct baselines.

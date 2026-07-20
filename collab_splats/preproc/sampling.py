@@ -174,24 +174,6 @@ def _iter_frames(video_path: str) -> Iterator[np.ndarray]:
         proc.wait()
 
 
-def _iter_frames_at(video_path: str, frame_indices: list[int]) -> Iterator[tuple[int, np.ndarray]]:
-    """Yield (index, BGR frame) for the requested indices via one streaming pass.
-
-    Indices are deduplicated and yielded in stream order; the decode stops
-    after the last requested index. Streaming beats per-index seeking: exact
-    for every codec, one process, no approximate-seek issues.
-    """
-    wanted = set(frame_indices)
-    if not wanted:
-        return
-    last = max(wanted)
-    for idx, frame in enumerate(_iter_frames(video_path)):
-        if idx in wanted:
-            yield idx, frame
-        if idx >= last:
-            break
-
-
 ########################################################################
 # Frame quality
 ########################################################################
@@ -576,40 +558,20 @@ def score_frames(
 ########################################################################
 
 
-def load_frames(video_path: str, frame_indices: list[int]) -> list[np.ndarray]:
-    """Read specific frames by index; returns RGB arrays in index order."""
-    return [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for _, f in _iter_frames_at(video_path, frame_indices)]
-
-
 def extract_frame(video_path: str | Path, frame_idx: int) -> np.ndarray:
-    """Decode exactly one frame (0-based index) via ffmpeg; returns (H, W, 3) uint8 RGB.
-
-    Raises ValueError if frame_idx is past the end of the video.
-    """
-    _require_ffmpeg()
-    # Delegate to the shared rotation-aware streaming decode — dims always match
-    # get_video_info's display dims (ffmpeg applies rotation metadata itself)
-    for _, frame in _iter_frames_at(str(video_path), [frame_idx]):
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}")
-
-
-def extract_frame_fast(video_path: str | Path, frame_idx: int) -> np.ndarray:
     """Decode one frame via ffmpeg input-seek; returns (H, W, 3) uint8 RGB.
 
     Seeks by timestamp (frame_idx / fps) before demuxing — O(1) in frame depth, so a
     deep frame previews instantly. Exact on constant-frame-rate video; may land one
-    frame off near keyframes on VFR sources. Use extract_frame where exactness matters
-    (e.g. the localization run, which records frame_idx as provenance).
+    frame off near keyframes on VFR sources.
     """
     _require_ffmpeg()
     info = get_video_info(str(video_path))
     fps, w, h, total = info["fps"], info["width"], info["height"], info["total_frames"]
     if not fps or not w or not h:
-        # Unprobeable video: fall back to the exact streaming decode.
-        return extract_frame(video_path, frame_idx)
+        raise ValueError(f"cannot probe {video_path} for seek decode")
     if frame_idx < 0 or (total and frame_idx >= total):
-        raise ValueError(f"extract_frame_fast: frame {frame_idx} out of range for {video_path}")
+        raise ValueError(f"extract_frame: frame {frame_idx} out of range for {video_path}")
     # Seek to the frame midpoint, not its start: PTS float rounding can otherwise land
     # the demuxer just past the target timestamp and decode frame N+1 instead of N.
     seek_s = max(frame_idx - 0.5, 0) / fps
@@ -634,17 +596,5 @@ def extract_frame_fast(video_path: str | Path, frame_idx: int) -> np.ndarray:
     raw = proc.stdout
     if len(raw) < w * h * 3:
         err = proc.stderr.decode(errors="replace")[-500:]
-        raise ValueError(f"extract_frame_fast: frame {frame_idx} not found in {video_path}: {err}")
+        raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}: {err}")
     return np.frombuffer(raw[: w * h * 3], dtype=np.uint8).reshape(h, w, 3).copy()
-
-
-def extract_frames(video_path: str, frame_indices: list[int], output_dir) -> list[Path]:
-    """Save specific frames as frame_NNNNNN.jpg in output_dir; returns saved paths."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    saved: list[Path] = []
-    for idx, frame in _iter_frames_at(video_path, frame_indices):
-        out_path = output_dir / f"frame_{idx:06d}.jpg"
-        cv2.imwrite(str(out_path), frame)
-        saved.append(out_path)
-    return saved

@@ -600,9 +600,9 @@ class LocalizePage(param.Parameterized):
         t0 = time.perf_counter()
         try:
             video = self._ensure_local_query_video(fs, cam, name)
-            from collab_splats.preproc import extract_frame_fast
+            from collab_splats.preproc import extract_frame
 
-            frame = extract_frame_fast(video, frame_idx)
+            frame = extract_frame(video, frame_idx)
         except Exception as exc:
             logger.warning("frame preview failed", exc_info=True)
             self._op_log.append_line(f"frame {frame_idx} preview FAILED: {exc}")
@@ -829,6 +829,4 @@ class LocalizePage(param.Parameterized):
         # which survives dynamic-tab attachment where synchronize() on an empty-born
         # pane silently shows nothing.
         if self._panes is not None:
-            self._panes["vtk"][:] = [
-                pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)
-            ]
+            self._panes["vtk"][:] = [pn.pane.VTK(self._plotter.ren_win, sizing_mode="stretch_both", min_height=500)]

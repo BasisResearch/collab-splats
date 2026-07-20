@@ -169,7 +169,7 @@ pointcloud:
     conf_percentile: 20.0
 preprocess:
   method: optical_flow            # keyframe selector (Spec 1 store)
-  max_frames: 400                 # bound keyframes drawn from the >1k-frame video
+  max_frames: 200                 # bound keyframes drawn from the >1k-frame video
 ```
 
 ## Implementation principles

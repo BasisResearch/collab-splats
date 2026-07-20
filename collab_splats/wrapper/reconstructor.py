@@ -560,11 +560,12 @@ class Reconstructor:
         # c2w = inv(w2c): invert each 4x4 pose for nerfstudio convention
         c2w = np.linalg.inv(extrinsics)  # (N, 4, 4)
 
+        # Frames live in the canonical frames.zarr store (no images/ dir); pose+intrinsics only.
         frames = []
         for img_path, K, pose in zip(image_paths, intrinsics, c2w):
             frames.append(
                 {
-                    "file_path": f"../images/{img_path.name}",
+                    "frame_idx": FrameStore.frame_idx_from_path(img_path),
                     "fl_x": float(K[0, 0]),
                     "fl_y": float(K[1, 1]),
                     "cx": float(K[0, 2]),

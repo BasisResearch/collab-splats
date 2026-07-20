@@ -61,13 +61,13 @@ For each window (submap) of keyframes:
    load-everything `_preprocess`.
 2. **Forward** — unchanged; GPU bounded by `submap_size`.
 3. **Spill to disk** — write the submap to
-   `feedforward.zarr/submap_NNN/{points, colors, poses, intrinsics, descriptors}`
+   `submaps.zarr/submap_NNN/{points, colors, poses, intrinsics, descriptors}`
    (Blosc-compressed, chunked). Then **free** the window's frames / world_points.
 4. **Graph update** — add a sequential SL(4) edge to a **persistent** `PoseGraph`
    (`geometry/loop_closure/graph.py`); compose forward for the viewer pose. Retain the
    submap's **retrieval descriptors** in RAM (small vectors).
 5. **Loop closure** — detect loops vs retained descriptors. On a candidate, **reload that
-   one submap** from `feedforward.zarr` (cheap) to run `_verify_loop_candidate`.
+   one submap** from `submaps.zarr` (cheap) to run `_verify_loop_candidate`.
 6. **On verified loop** — add the loop edge, run **global PGO** over the compact node
    graph, and have the viewer **re-upload corrected** windows.
 7. **Viewer push** — subsample and `add_points` + frusta for the new submap (drifting until
@@ -76,7 +76,30 @@ For each window (submap) of keyframes:
 ### Retained-in-RAM state
 
 Across the whole run only: retrieval descriptors + `PoseGraph` nodes (SL(4) 4×4 matrices).
-Everything heavy lives in `feedforward.zarr`. → **bounded by window, not scene length.**
+Everything heavy lives in `submaps.zarr`. → **bounded by window, not scene length.**
+
+### submaps.zarr — checkpoint store (own lifecycle)
+
+Submaps spill to a **dedicated `submaps.zarr`** (sibling of `feedforward.zarr`), not into the
+final artifact. Rationale: submaps are not throwaway scratch — they are a **resume /
+re-optimize checkpoint**. A >1k-frame run is hours of GPU inference; retained submaps let a
+crashed run resume without re-inferring earlier windows, and let LC/PGO be retuned
+(re-solve from stored points + descriptors + local poses) **without re-running inference**.
+Pre-PGO local poses + the node graph also serve drift debugging.
+
+```
+submaps.zarr/
+  submap_000/ points, colors, poses(local), intrinsics, descriptors, frame_idx
+  submap_001/ ...
+  nodes/      pose-graph state (SL(4) node values, edges, loop edges)
+  attrs: {schema_version, submap_size, submap_overlap, n_submaps, complete}
+```
+
+- A separate store sidesteps the `mode="w"` clobber hazard of `FeedforwardResult.save_zarr`
+  entirely — the final artifact writer never touches `submaps.zarr`.
+- **Kept by default**; `keep_submaps=false` deletes `submaps.zarr` after the final merge.
+- The `complete` attr + per-submap presence gives a trivial **resume** check (skip windows
+  already spilled).
 
 ### PGO cadence — on-loop + final (VGGT-SLAM style)
 
@@ -90,8 +113,10 @@ optimization — versus the repo's current single end-of-run `pg.optimize()`.
 ### Merge from disk + final export
 
 At the end: final global PGO over the full node graph → `merge_submap_outputs` **streams
-submap groups from `feedforward.zarr`** (not from a RAM list) → `build_colmap` →
-`PointcloudResult`. Final full-scene COLMAP export preserved.
+submap groups from `submaps.zarr`** (not from a RAM list) → `build_colmap` →
+`PointcloudResult` → `save_zarr` writes the final `feedforward.zarr` (global merged arrays,
+**no `images` copy** — references `frames.zarr` by `frame_idx`, see Spec 1). Final
+full-scene COLMAP export preserved. If `keep_submaps=false`, delete `submaps.zarr`.
 
 ### Viewer wiring
 
@@ -122,8 +147,8 @@ correctness gate.
 
 - `pointcloud/feedforward/base.py` — `_preprocess_window(idxs)`.
 - `geometry/loop_closure/wrapper.py` `_run_lc_loop` — streaming / spill / on-loop-PGO /
-  viewer refactor; persistent `PoseGraph`; reload-submap-on-verify; merge-from-disk.
-- `feedforward.zarr` submap schema + spill/reload helpers (Blosc, zarr-v3 API).
+  viewer refactor; persistent `PoseGraph`; reload-submap-on-verify; merge-from-disk; resume.
+- `submaps.zarr` schema + spill/reload/resume helpers (Blosc, zarr-v3 API).
 - `viewer.py` — keep-alive helper.
 - `docs/examples/run_scenes.py` + a config — example for a >1k-frame video.
 
@@ -135,7 +160,8 @@ pointcloud:
   streaming: true                 # per-submap spill + on-loop PGO + merge-from-disk
   submap_size: 20
   submap_overlap: 1
-  spill_store: feedforward.zarr    # submap groups
+  spill_store: submaps.zarr        # dedicated checkpoint store
+  keep_submaps: true              # keep for resume/re-opt; false deletes after merge
   viz:
     enabled: true
     port: 8080
@@ -171,7 +197,9 @@ preprocess:
 
 - **Unit:** `_preprocess_window` loads only the window's frames; submap zarr round-trip;
   free-after-spill drops frame/world_point refs (RAM drop); on-loop PGO fires only on
-  verified loops (not on plain sequential appends); merge-from-disk == in-memory merge.
+  verified loops (not on plain sequential appends); merge-from-disk == in-memory merge;
+  **resume** — a run interrupted mid-way and restarted skips already-spilled submaps and
+  produces the same final result; `keep_submaps=false` removes `submaps.zarr` after merge.
 - **Parity:** windowed poses ≈ batch poses on a short sequence (within tolerance) — the
   correctness gate; preserves per-model LC calibrations.
 - **Smoke:** short video end-to-end with viewer stubbed.
@@ -182,6 +210,6 @@ preprocess:
 
 Run `docs/examples/run_scenes.py` with the streaming config on a >1000-frame video in
 tmux (per repo memory-eval guidance). Confirm: `frames.zarr` decoded once (Spec 1),
-per-submap groups appear in `feedforward.zarr`, RSS stays bounded, the viser page shows the
+per-submap groups appear in `submaps.zarr`, RSS stays bounded, the viser page shows the
 scene growing and snapping on loop closures, and the final merged cloud + COLMAP match the
 batch result on a truncated parity run.

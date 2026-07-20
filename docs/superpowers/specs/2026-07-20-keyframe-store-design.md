@@ -109,6 +109,20 @@ Replace every re-decode call site with `FrameStore.open(...).image(i)` /
 - Keep `extract_frames` / `load_frames` as thin fallbacks only where a raw video with no
   store is a legitimate input; otherwise route through the store.
 
+### Deduplicate `images` out of feedforward.zarr
+
+`FeedforwardResult.save_zarr` optionally stores the input frames as an `images` array
+(N,3,H,W, `base.py:180`) — the *same* keyframes `frames.zarr` now owns (N,H,W,3), stored
+twice. Once `frames.zarr` is canonical:
+
+- **Stop writing `images`** into `feedforward.zarr`; persist only a `frame_idx` reference to
+  `frames.zarr` so consumers fetch pixels from the canonical store.
+- Migrate `images` readers (`dashboard/viewer.py`, `webapp/routers/visualize.py`, and any
+  `"images" in store` guard in `load_zarr`) to read frames from `frames.zarr` by
+  `frame_idx`.
+- `world_points` / `depth` / `confidence` are reconstruction-derived, not raw frames — leave
+  them in `feedforward.zarr`.
+
 ## Implementation principles
 
 - **Reuse, don't rewrite.** Decode via the existing `_iter_frames` generator — no new decode

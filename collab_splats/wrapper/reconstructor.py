@@ -103,7 +103,6 @@ def _run_feedforward(
     backend: str,
     images_dir: Path,
     output_dir: Path,
-    bundle_adjustment: bool,
     loop_closure: bool,
 ) -> "PointcloudResult":
     """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
@@ -142,14 +141,6 @@ def _run_feedforward(
         logger.info("feedforward.zarr saved: %s  (%s pts)", zarr_path, f"{len(ff_outputs.points):,}")
     else:
         logger.warning("Creator has no outputs after reconstruct — feedforward.zarr not saved")
-
-    # Bundle adjustment operates on FeedforwardResult before COLMAP build;
-    # at this stage we have PointcloudResult — BA at creator level is not applicable here.
-    if bundle_adjustment:
-        logger.warning(
-            "bundle_adjustment=True is not yet wired at the Reconstructor level; "
-            "pass bundle_adjustment to the creator config directly for now."
-        )
 
     # Explicitly release model + GPU memory before next stage (semantics) loads its model
     import torch as _torch
@@ -429,6 +420,13 @@ class Reconstructor:
         pc_cfg = self.config["pointcloud"]
         method = pc_cfg["method"]
 
+        # BA at the Reconstructor level is not wired — fail loud instead of silently no-op'ing
+        if pc_cfg["bundle_adjustment"]:
+            raise NotImplementedError(
+                "pointcloud.bundle_adjustment is not wired at the Reconstructor level. "
+                "Pass bundle_adjustment to the creator config directly for now."
+            )
+
         # Skip if COLMAP + feedforward.zarr both exist and overwrite not requested.
         # Require feedforward.zarr too — if a previous run was partial (zarr missing),
         # we must re-run inference rather than loading stale COLMAP.
@@ -454,7 +452,6 @@ class Reconstructor:
                 backend=pc_cfg["backend"],
                 images_dir=self.images_dir,
                 output_dir=self.backend_dir,
-                bundle_adjustment=pc_cfg["bundle_adjustment"],
                 loop_closure=pc_cfg["loop_closure"],
             )
 

@@ -3,7 +3,7 @@
 # Usage: bash docs/examples/run_all_datasets.sh [--overwrite]
 set -euo pipefail
 
-PYTHON=/opt/conda/envs/reconstruction/bin/python
+PYTHON=/opt/venv/reconstruction/bin/python
 SCRIPT=$(dirname "$0")/reconstruct.py
 OVERWRITE="${1:-}"
 

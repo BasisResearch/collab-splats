@@ -160,9 +160,11 @@ broken/pending a sweep. Keep public.
 - Delete `load_frames` (`592`), `extract_frames` (`652`), `_iter_frames_at` (`143`) — pure
   re-decode-by-index helpers the store replaces.
 - `extract_frame` (`595`, exact-provenance re-decode) → its callers (`dashboard/pipeline.py`,
-  localize) become store lookups; delete.
+  localize) become store lookups; delete. This frees the plain name.
 - **Keep** `extract_frame_fast` (`608`) — seek-based scrub preview for arbitrary
-  (non-keyframe) indices the store does not hold.
+  (non-keyframe) indices the store does not hold — and **rename it `extract_frame`** (the
+  O(N) original is gone, so the seek-based reader takes the canonical name; no `_fast`
+  suffix qualifier). Update its two callers.
 
 ## Implementation principles
 

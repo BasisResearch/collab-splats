@@ -6,7 +6,7 @@ import subprocess
 import numpy as np
 import pytest
 
-from collab_splats.preproc import extract_frame
+from collab_splats.preproc import extract_frame, get_video_info
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
 
@@ -33,6 +33,29 @@ def synth_video(tmp_path_factory):
     return path
 
 
+@pytest.fixture(scope="module")
+def rotated_video(synth_video, tmp_path_factory):
+    """synth_video re-muxed with a rotate=90 tag — display dims swap to (240, 320)."""
+    path = tmp_path_factory.mktemp("vid_rot") / "rotated.mp4"
+    # Stream copy + rotate tag: same pixels, ffmpeg autorotates on decode
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(synth_video),
+            "-c",
+            "copy",
+            "-metadata:s:v:0",
+            "rotate=90",
+            str(path),
+        ],
+        check=True,
+    )
+    return path
+
+
 def test_extract_frame_shape_and_dtype(synth_video):
     frame = extract_frame(synth_video, 30)
     assert frame.shape == (240, 320, 3)
@@ -51,6 +74,15 @@ def test_extract_frame_lands_near_target_index(synth_video):
     assert d_adjacent < d_far
 
 
+def test_extract_frame_rotated_video_matches_display_dims(rotated_video):
+    # ffmpeg autorotates on decode: extract_frame's dims must match get_video_info's
+    # display dims (which already account for the rotate tag), consistent with the
+    # streamed decode this function replaced.
+    info = get_video_info(str(rotated_video))
+    frame = extract_frame(rotated_video, 0)
+    assert frame.shape[:2] == (info["height"], info["width"])
+
+
 def test_extract_frame_out_of_range_raises(synth_video):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="out of range"):
         extract_frame(synth_video, 10_000)

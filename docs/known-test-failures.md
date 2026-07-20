@@ -8,7 +8,7 @@ Pass count dropped from ~1200 (pre-cleanup) to 1121 **entirely by retiring scrip
 
 Known flaky (pre-existing, unrelated): `tests/dashboard/test_viz_utils.py::test_view_transform_scales_to_target_radius` — nondeterministic, fails ~1/3 of runs on identical code; surfaces intermittently, not a regression.
 
-**Untested surface note:** `evals/scripts/run_vggt_slam.py`'s ATE path (GT-TUM construction + `compute_ate`, Sim(3)) runs only on real GPU/SLAM runs — no unit coverage. Verify manually if that number matters.
+`evals/scripts/run_vggt_slam.py` no longer computes its own ATE — it emits the SLAM TUM (+ `selected_frames.txt` when `--max_loops >0`); `eval.py`/`eval_compare` scores it against GT downstream.
 
 ---
 

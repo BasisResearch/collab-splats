@@ -1,7 +1,7 @@
 """Tests for evals/scripts/run_vggt_slam.py — real subprocess wrapper.
 
 Covers both modes: the no-LC baseline (--max_loops 0) and the loop-closure run
-(--max_loops >0, which also emits selected_frames.txt + ATE + metrics.json).
+(--max_loops >0, which also emits selected_frames.txt for eval.py parity).
 CLI surface only — real runs shell out to heavy/GPU VGGT-SLAM.
 """
 

@@ -34,17 +34,15 @@ evals/
 
 | file | role |
 |---|---|
-| `eval_gt.py` | **Main GT eval runner.** Feedforward backbone × condition (`baseline`/`lc`/`ba`/`ba_track-density-N`) → ATE/RPE/AUC vs GT. Each condition runs in its own subprocess (clean GPU). Flags: `--backbone --conditions --submap_size --lc_scale_method --keyframe_list --lc_layer --output_ate`. Writes `metrics.json` (ATE, RPE trans+rot, AUC@{5,15,30}), TUM trajectories, plots. |
-| `eval_compare.py` | Phase-2 unified comparison runner over multiple methods/sequences. |
-| `eval.py` | Config-driven eval runner. For the standard 7-Scenes eval set: `eval.py --config configs/7scenes.yaml`. |
+| `scripts/eval.py` | **Main GT eval runner.** Single-cell: feedforward backbone × condition (`baseline`/`lc`/`ba`/`ba_track-density-N`) → ATE/RPE/AUC vs GT, each condition in its own subprocess (clean GPU). Config-driven grid: `eval.py --config configs/7scenes.yaml` expands datasets × backbones × conditions, resumes on existing `metrics.json`, and aggregates a `comparison.md`/`comparison.json`. Writes `metrics.json` (ATE, RPE trans+rot, AUC@{5,15,30}, `n_loops_applied`), TUM trajectories, plots. |
+| `scripts/eval_compare.py` | Comparison aggregation over multiple methods/cells (`scan_results_dir`/`collect_grid_metrics`/`format_markdown*`); imported by `eval.py` and runnable standalone over a results dir. |
 
 ## Library (imported by the harness)
 
 | file | role |
 |---|---|
-| `datasets.py` | Dataset loaders: 7-Scenes, CO3Dv2, TUM association files. `get_dataset(name)`. |
-| `ate_utils.py` | ATE vs 7-Scenes GT via `evo` (Sim3-aligned). |
-| `metrics.py` | Thin `evo` ATE/RPE wrapper + `compute_auc` (TUM-file pose AUC). |
+| `datasets.py` | Dataset loaders: 7-Scenes, CO3Dv2, TUM association files. `get_dataset(name)`; GT-TUM/frame helpers (`write_tum_allowed_frames`, `collect_frames`). |
+| `metrics.py` | Thin `evo` ATE/RPE wrapper + `compute_auc` (TUM-file pose AUC). ATE/RPE source of truth. |
 | `trajectory_io.py` | Trajectory read/write (TUM etc). |
 
 ## Dataset downloaders (utility)
@@ -56,7 +54,7 @@ evals/
 **Active:**
 | file | role |
 |---|---|
-| `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). Loop closure via `--max_loops` (0 = published baseline; >0 also writes `selected_frames.txt` + ATE + `metrics.json`). |
+| `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). Loop closure via `--max_loops` (0 = published baseline; >0 also writes `selected_frames.txt` for `eval.py --keyframe_list` parity). ATE is scored downstream by `eval.py`/`eval_compare` — drop the TUM into a results dir as a comparison row. |
 | `compare_loop_edges.py` | Loop-edge composition diff (ours vs SLAM). Kept: `compose_slam_chain` imported by `tests/geometry/loop_closure/test_loop_edge_chain.py`. |
 
 ### VGGT-SLAM parity workflow

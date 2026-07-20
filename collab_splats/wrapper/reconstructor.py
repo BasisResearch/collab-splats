@@ -47,14 +47,19 @@ def _extract_frames(
     frame_proportion: float,
     min_frames: int,
     max_frames: int | None,
+    frames_zarr: Path | None = None,
 ) -> list[Path]:
     """Extract frames from video or copy from image dir into output_dir.
+
+    Also writes frames_zarr — the canonical decode-once keyframe store — alongside
+    the JPEGs when a path is given.
 
     Returns sorted list of extracted frame paths.
     """
     import cv2
 
     from collab_splats.preproc import get_video_info, sample_frames
+    from collab_splats.preproc.frame_store import FrameStore
 
     output_dir.mkdir(parents=True, exist_ok=True)
     input_path = Path(input_path)
@@ -65,11 +70,18 @@ def _extract_frames(
         frames = sorted(p for p in input_path.iterdir() if p.suffix.lower() in exts)
         for i, src in enumerate(frames):
             shutil.copy(src, output_dir / f"frame_{i:04d}{src.suffix}")
+        if frames_zarr is not None and frames:
+            # Read the source images back as RGB arrays for the canonical store
+            frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in frames]
+            records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
+            prov = {"video_path": str(input_path), "video_mtime": None, "method": "dir", "max_frames": max_frames}
+            FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
         return sorted(output_dir.iterdir())
 
     # Video — dispatch to uniform or optical-flow sampling based on frame_selection
     if frame_selection == "optical_flow":
-        frame_arrays, _ = sample_frames(
+        method = "optical_flow"
+        frame_arrays, records = sample_frames(
             str(input_path),
             method="optical_flow",
             max_frames=max_frames if max_frames is not None else 200,
@@ -77,11 +89,12 @@ def _extract_frames(
     else:
         # Derive target count from proportion, clamped to [min_frames, max_frames];
         # the uniform sampler spreads that count over the video itself
+        method = "uniform"
         total_frames = get_video_info(str(input_path))["total_frames"]
         target_count = max(min_frames, int(total_frames * frame_proportion))
         if max_frames is not None:
             target_count = min(target_count, max_frames)
-        frame_arrays, _ = sample_frames(
+        frame_arrays, records = sample_frames(
             str(input_path),
             method="uniform",
             max_frames=target_count,
@@ -93,6 +106,17 @@ def _extract_frames(
         dest = output_dir / f"frame_{i:04d}.jpg"
         cv2.imwrite(str(dest), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         paths.append(dest)
+
+    # Write the canonical frames.zarr alongside the JPEGs (decode-once keyframe store)
+    if frames_zarr is not None and frame_arrays:
+        prov = {
+            "video_path": str(input_path),
+            "video_mtime": input_path.stat().st_mtime,
+            "method": method,
+            "max_frames": max_frames,
+        }
+        FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
+
     return paths
 
 
@@ -404,6 +428,11 @@ class Reconstructor:
         return Path(self.config["output_path"]) / "images"
 
     @property
+    def frames_zarr(self) -> Path:
+        """output_path / frames.zarr — canonical decode-once keyframe store for this run."""
+        return Path(self.config["output_path"]) / "frames.zarr"
+
+    @property
     def features_dir(self) -> Path:
         """output_path / features/ — shared 2D feature cache, extractor-scoped subdirs."""
         return Path(self.config["output_path"]) / "features"
@@ -413,7 +442,7 @@ class Reconstructor:
     ########################################
 
     def preprocess(self, overwrite: bool = False) -> Path:
-        """Extract frames from input video/dir into images_dir."""
+        """Extract frames from input video/dir into images_dir and frames.zarr."""
         # Skip if frames already exist and overwrite not requested
         if not overwrite and self.images_dir.exists() and any(self.images_dir.iterdir()):
             logger.info("Frames already extracted at %s, skipping preprocess", self.images_dir)
@@ -430,6 +459,7 @@ class Reconstructor:
             frame_proportion=pre_cfg.get("frame_proportion", 0.1),
             min_frames=pre_cfg.get("min_frames", 300),
             max_frames=pre_cfg.get("max_frames"),
+            frames_zarr=self.frames_zarr,
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",

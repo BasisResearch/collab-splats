@@ -38,8 +38,9 @@ semantics:
 
 mesh:
   enabled: false
-  voxel_size: 0.01
-  sdf_trunc: 0.04
+  voxel_size: 0.005         # dashboard-parity TSDF defaults
+  sdf_trunc: 0.02
+  depth_trunc: 1.0          # drop depth samples beyond this range (metres)
 
 localization:
   enabled: false

@@ -248,6 +248,7 @@ def _run_tsdf_mesh(
     output_dir: Path,
     voxel_size: float,
     sdf_trunc: float,
+    depth_trunc: float,
 ) -> Path:
     """Fuse depth + RGB from FeedforwardResult into TSDF mesh."""
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
@@ -278,6 +279,7 @@ def _run_tsdf_mesh(
         output_dir=output_dir,
         voxel_size=voxel_size,
         sdf_trunc=sdf_trunc,
+        depth_trunc=depth_trunc,
     )
     mesh_result = mesher.create(depths=depths, rgbs=rgbs, c2w=c2w, intrinsics=intrinsics)
     return mesh_result.mesh_path
@@ -684,13 +686,14 @@ class Reconstructor:
                 "Mesh requires depth maps from a feedforward backend."
             )
 
-        mesh_cfg = self.config.get("mesh", {})
+        mesh_cfg = self.config["mesh"]
         out = _run_tsdf_mesh(
             result=result,
             feedforward_zarr=feedforward_zarr,
             output_dir=self.backend_dir / "mesh",
-            voxel_size=mesh_cfg.get("voxel_size", 0.01),
-            sdf_trunc=mesh_cfg.get("sdf_trunc", 0.04),
+            voxel_size=mesh_cfg["voxel_size"],
+            sdf_trunc=mesh_cfg["sdf_trunc"],
+            depth_trunc=mesh_cfg["depth_trunc"],
         )
         logger.info("Mesh saved to %s", out)
         return out

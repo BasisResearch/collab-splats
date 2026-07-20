@@ -1,7 +1,10 @@
 # Base configuration for Reconstructor pipelines.
 # All dataset configs inherit from this and override specific values.
 #
-# Required per dataset (no defaults — Reconstructor.validate_config() raises if null):
+# This file is the SINGLE SOURCE OF DEFAULTS. Reconstructor.__init__ deep-merges
+# any passed config over these values — do not duplicate defaults in Python code.
+#
+# Required per run (no defaults — Reconstructor.validate_config() raises if null):
 #   input_path  — absolute path to input video or image directory
 #   output_path — absolute path to output root (created if absent)
 #
@@ -11,21 +14,22 @@ input_path: null
 output_path: null
 
 preprocessing:
-  frame_selection: fps        # fps | optical_flow
+  frame_selection: uniform    # uniform | optical_flow
   frame_proportion: 0.1       # fraction of total frames to extract
   min_frames: 150             # extract at least this many frames
   max_frames: 200             # cap at 200 — vggt_omega OOMs above ~300 on 44 GB GPU
 
 pointcloud:
-  method: feedforward         # feedforward | sfm
+  method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)
   backend: vggt_omega         # vggt_omega | vggtx | mapanything  (feedforward only)
-  bundle_adjustment: false
   loop_closure: false
+  # ── NOT YET IMPLEMENTED (raises NotImplementedError if enabled) ──
+  bundle_adjustment: false    # BA at Reconstructor level not wired; pass to creator config directly
   clean:
     enabled: true
     outlier_removal: true
     voxel_size: null          # null = adaptive per-scene
-    confidence_threshold: null
+    confidence_threshold: null  # NOT YET READ by the clean step
 
 semantics:
   enabled: true
@@ -34,7 +38,6 @@ semantics:
 
 mesh:
   enabled: false
-  mesher: tsdf                # tsdf | poisson
   voxel_size: 0.01
   sdf_trunc: 0.04
 

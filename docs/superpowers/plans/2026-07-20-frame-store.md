@@ -374,7 +374,7 @@ git commit -m "perf(preproc): cheap W/H probe for _iter_frames (skip full-file d
 - Modify: `collab_splats/wrapper/reconstructor.py` (`_extract_frames` def:43, `preprocess` def:415, `images_dir`/new `frames_zarr` path property)
 - Test: `tests/wrapper/test_reconstructor_preprocess.py` (create; mirror existing wrapper test style — flat functions)
 
-**Design:** `preprocess` samples once and writes `frames.zarr` under `output_path`. It no longer writes `images/` JPGs as the canonical artifact. Downstream stages that still need file paths call `FrameStore.export(...)` (Task 5). Provenance = `{video_path, video_mtime, method, max_frames}`; reuse store when `not is_stale`.
+**Design:** `preprocess` samples once and writes `frames.zarr` under `output_path`. **This task is ADDITIVE** — it keeps the existing `images/` JPG writing so feedforward (which still reads `images/`) keeps working; Task 5 removes `images/` once feedforward reads the store. This keeps every task green. Provenance = `{video_path, video_mtime, method, max_frames}`; reuse store when `not is_stale`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -396,8 +396,7 @@ def test_preprocess_writes_frames_zarr(tmp_path, sample_video):
     r.preprocess()
     store = FrameStore.open(Path(cfg["output_path"]) / "frames.zarr")
     assert 0 < len(store) <= 5
-    # Canonical images/ JPG dir is NOT the source of truth anymore
-    assert not (Path(cfg["output_path"]) / "images").exists()
+    # NOTE: images/ still exists (additive through consumer migration; removed in Task 10).
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -416,7 +415,7 @@ def frames_zarr(self) -> Path:
     return self.output_path / "frames.zarr"
 ```
 
-Rewrite `_extract_frames` (reconstructor.py:43) so the video branch (72/84) returns `(frames, records)` from `sample_frames` and writes a `FrameStore` instead of JPGs; the image-dir branch (62-68) builds records from the copied files and writes the store too (so every input yields a `frames.zarr`). Provenance from the input path stat:
+Rewrite `_extract_frames` (reconstructor.py:43) so the video branch (72/84) returns `(frames, records)` from `sample_frames` and writes a `FrameStore` **in addition to** the JPGs; the image-dir branch (62-68) builds records from the copied files and writes the store too (so every input yields a `frames.zarr`). Provenance from the input path stat:
 
 ```python
 prov = {
@@ -428,7 +427,7 @@ prov = {
 FrameStore.create(self.frames_zarr, frames, records, provenance=prov)
 ```
 
-Delete the `cv2.imwrite frame_%04d.jpg` loop (90-95). `preprocess` (415) reuses the store when it exists and `not FrameStore.open(self.frames_zarr).is_stale(prov)`.
+**Keep** the `cv2.imwrite frame_%04d.jpg` loop (additive — `images/` still has consumers). It is removed in Task 10. `preprocess` (415) reuses the store via the existing `images_dir` skip gate.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -453,7 +452,7 @@ git commit -m "feat(wrapper): preprocess stage writes canonical frames.zarr"
 - Modify: `collab_splats/wrapper/reconstructor.py` (`_run_feedforward`/`reconstruct` call at ~132 passes the store, not `images_dir`)
 - Test: `tests/pointcloud/test_feedforward_preprocess_store.py` (create)
 
-**Design:** VGGT-X `load_and_preprocess_images` and MapAnything `PIL.open` are path-locked. Lowest-risk: the feedforward creator receives the `FrameStore`, calls `store.export(tmp_dir)` into a `tempfile.TemporaryDirectory`, runs existing path-based preprocessing over the exported files, and the temp dir is deleted on exit. `image_paths` become the exported names (basenames stay `frame_NNNNNN`, preserving COLMAP naming).
+**Design:** VGGT-X `load_and_preprocess_images` and MapAnything `PIL.open` are path-locked. Lowest-risk: the feedforward creator receives the `FrameStore`, calls `store.export(tmp_dir)` into a `tempfile.TemporaryDirectory` **held on the creator for the whole run** (so within-run file reads work), runs existing path-based preprocessing over the exported files. `image_paths` become the exported names (`frame_{idx:06d}.jpg`, source-indexed — COLMAP uses basenames only). **`images/` stays additive** — it has other consumers (`_extract_2d_features`, the `reconstructor.py:496` glob) not migrated until Task 7. `images/` writing is removed only in Task 10, after every consumer reads the store.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -514,72 +513,51 @@ git commit -m "feat(pointcloud): feedforward _preprocess reads frames.zarr via t
 
 ---
 
-### Task 6: Drop `images` from feedforward.zarr; migrate its readers
+### Task 6: Drop the vestigial `load_images=True` at the lift stage (RESCOPED)
+
+**Rescope rationale:** Investigation proved `feedforward.zarr`'s `images` is NOT a duplicate of
+`frames.zarr` — it is the model-resolution, center-cropped, channel-first tensor pixel-aligned
+with the depth map, and it IS needed by TSDF meshing, BA track extraction, and per-point colors
+(`reconstructor.py:285`, `bundle_adjustment.py:101/173/209`, `vggtx.py:122`). **Keep `images`.**
+The only genuinely wasteful thing is that `_lift_and_save` loads that large tensor
+(`load_images=True`) even though `lift_features` never reads `.images` (it uses
+points/pixel_indices/depth/confidence/intrinsics and gets feature maps from
+`_extract_2d_features` reading JPEGs). Dropping that flag saves loading the tensor on the lift
+path — a real memory win, zero behavior change. `save_zarr`/`load_zarr` and the mesh/BA/colors
+consumers are UNTOUCHED. (A future spec may cut footprint further by re-deriving `images`/
+`world_points` on load — deferred; needs the VGGT [0,255] vs MapAnything [0,1] scale fix first.)
 
 **Files:**
-- Modify: `collab_splats/pointcloud/feedforward/base.py` (`save_zarr:171-180`, `load_zarr:234-235`)
-- Modify: `collab_splats/webapp/routers/visualize.py:102,177`, `collab_splats/webapp/routers/localize.py:97`, `collab_splats/dashboard/viewer.py:53`
-- Test: `tests/pointcloud/test_save_zarr_no_images.py` (create)
+- Modify: `collab_splats/wrapper/reconstructor.py` (`_lift_and_save`, the `load_zarr(..., load_images=True)` call ~line 240)
 
-**Design:** `save_zarr` stops writing the `images` array and instead persists `frame_idx` (source indices, already in `image_paths` names). Readers needing pixels open `frames.zarr`; the one shape-only reader (`visualize.py:177`) reads `frames.zarr` `images.shape`.
+- [ ] **Step 1: Confirm `_lift_and_save` never uses `ff_result.images`**
 
-- [ ] **Step 1: Write the failing test**
+Read `_lift_and_save` end to end. Confirm the loaded `images` tensor is passed to nothing —
+`lift_features(...)` takes points/pixel_indices/depth/confidence/extrinsics/intrinsics, not
+`images`. If `_lift_and_save` DOES use `images` anywhere, STOP and report — the flag is not
+vestigial and this task changes.
 
-```python
-# tests/pointcloud/test_save_zarr_no_images.py
-import numpy as np
-import zarr
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+- [ ] **Step 2: Drop the flag**
 
+In `_lift_and_save`, change `FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)` to
+`FeedforwardResult.load_zarr(feedforward_zarr)` (i.e. `load_images=False`, the default). Leave
+the `load_images=True` calls in `_run_tsdf_mesh` (`reconstructor.py:252`) and
+`_build_localization_db` (`:307`) ALONE unless Step-1 reading shows they also never use
+`images` — those genuinely may need the tensor (mesh does). Only touch the lift call.
 
-def _minimal_result():
-    n = 2
-    return FeedforwardResult(
-        points=np.zeros((10, 3), np.float32), colors=np.zeros((10, 3), np.uint8),
-        extrinsics=np.tile(np.eye(4), (n, 1, 1)).astype(np.float32),
-        intrinsics=np.tile(np.eye(3), (n, 1, 1)).astype(np.float32),
-        original_coords=np.zeros((n, 4), np.float32),
-        image_paths=[__import__("pathlib").Path(f"frame_{i:06d}.jpg") for i in range(n)],
-        model_width=48, model_height=32,
-    )
+- [ ] **Step 3: Run the lift/feature suite**
 
+Run: `PYTHONPATH=<worktree> /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud -k "lift or feature" -v`
+Expected: PASS — lifting produces identical features without loading `images`. If a test
+asserts `load_images=True` in `_lift_and_save`, update it to the new default.
 
-def test_save_zarr_writes_no_images_array(tmp_path):
-    _minimal_result().save_zarr(tmp_path / "ff.zarr")
-    store = zarr.open(str(tmp_path / "ff.zarr"), mode="r")
-    assert "images" not in store
-    # frame_idx reference persisted instead
-    assert "frame_idx" in store
-```
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_save_zarr_no_images.py -v`
-Expected: FAIL — `images` still written / `frame_idx` absent.
-
-- [ ] **Step 3: Edit save_zarr / load_zarr**
-
-- `save_zarr` (base.py:171-180): delete the `images` block. Add: write a `frame_idx` array from `[int(p.stem.split("_")[-1]) for p in self.image_paths]` (basenames are `frame_NNNNNN`).
-- `load_zarr` (base.py:186,234-235): remove the `load_images` param and the `images = ...` line; leave `images=None` on the constructed result (field stays for back-compat, always None from zarr).
-- Update every `load_zarr(..., load_images=True)` caller to drop the kwarg: `reconstructor.py:214,252,307`, `webapp/routers/visualize.py:102`, `webapp/routers/localize.py:97`. Any that then needed pixels handled in Step 4.
-
-- [ ] **Step 4: Repoint the pixel/shape readers to frames.zarr**
-
-- `visualize.py:177` `img_shape = store["images"].shape` → open `frames.zarr` and read `store["images"].shape` (H,W from `(N,H,W,3)`), or `FrameStore.open(frames_zarr)` and use `.image(0).shape`.
-- `visualize.py:102`, `localize.py:97`, `dashboard/viewer.py:53`: if they used the loaded `images` tensor for display/lift, switch to reading needed frames from `frames.zarr` (`FrameStore.open(run_dir/'frames.zarr').images(...)`). If they only passed it through, no pixel read is needed.
-
-- [ ] **Step 5: Run the affected suites**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_save_zarr_no_images.py tests/pointcloud -k "zarr or feature_lifting" -v`
-Expected: PASS. (Update `tests/pointcloud/test_feature_lifting.py` if it asserts `load_images=True`.)
-
-- [ ] **Step 6: Format and commit**
+- [ ] **Step 4: Format and commit**
 
 ```bash
-black collab_splats/pointcloud/feedforward/base.py collab_splats/webapp/routers/visualize.py collab_splats/webapp/routers/localize.py collab_splats/dashboard/viewer.py tests/pointcloud/test_save_zarr_no_images.py
-isort <same files>
-git add -A
-git commit -m "refactor(pointcloud): drop images from feedforward.zarr; readers use frames.zarr"
+/opt/venv/reconstruction/bin/python -m black collab_splats/wrapper/reconstructor.py
+/opt/venv/reconstruction/bin/python -m isort collab_splats/wrapper/reconstructor.py
+git add collab_splats/wrapper/reconstructor.py
+git commit -m "perf(wrapper): skip loading unused images tensor on the lift path"
 ```
 
 ---

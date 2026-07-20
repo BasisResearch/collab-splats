@@ -46,8 +46,9 @@ cheaply. This is upstream of feedforward and independent of loop closure.
 
 A dedicated preproc artifact written next to other stage outputs (sibling of
 `feedforward.zarr`, not inside it — keyframes are upstream of the pointcloud stage). It is
-the **sole persistent frame source**: it replaces the old `output_path/images/` JPG dir
-*and* the `feedforward.zarr` `images` array (one canonical copy, not three). Consumers with
+the **sole persistent RAW-frame source**: it replaces the old `output_path/images/` JPG dir.
+(It does NOT replace `feedforward.zarr`'s `images` array — that is the model-resolution
+depth-aligned tensor, a distinct artifact, kept. See the correction note below.) Consumers with
 path-locked APIs (VGGT-X / MapAnything model preprocessing, external extractors) get a
 **transient** `export(dir)` deleted after use — a derived copy, not persistent duplication.
 COLMAP (names + arrays), nerfstudio and splatter (raw video) never touch it.
@@ -116,19 +117,25 @@ Replace every re-decode call site with `FrameStore.open(...).image(i)` /
 - Keep `extract_frames` / `load_frames` as thin fallbacks only where a raw video with no
   store is a legitimate input; otherwise route through the store.
 
-### Deduplicate `images` out of feedforward.zarr
+### `images` in feedforward.zarr is NOT a duplicate — keep it
 
-`FeedforwardResult.save_zarr` optionally stores the input frames as an `images` array
-(N,3,H,W, `base.py:180`) — the *same* keyframes `frames.zarr` now owns (N,H,W,3), stored
-twice. Once `frames.zarr` is canonical:
+Correction (verified during implementation): `FeedforwardResult.images` (`base.py:70`) is the
+**model-resolution, center-cropped, channel-first tensor pixel-aligned with the depth map** —
+produced by `load_and_preprocess_images(mode="crop")` / MapAnything `img_no_norm`, at
+`model_width×model_height`. It is NOT the same as `frames.zarr`'s raw full-res HWC keyframes
+(different resolution, FOV, layout, dtype). It is consumed as pixels by **TSDF meshing, BA
+track extraction, and per-point colors** (`reconstructor.py:285`, `bundle_adjustment.py:101/
+173/209`, `vggtx.py:122`), which need pixels aligned to the model-res depth — a `frames.zarr`
+read cannot substitute. **Keep the `images` array in feedforward.zarr.** The only cleanup: the
+lift path (`_lift_and_save`) loads it via `load_images=True` even though `lift_features` never
+reads `.images` — drop that flag to avoid loading the tensor when unused (a memory win, no
+behavior change).
 
-- **Stop writing `images`** into `feedforward.zarr`; persist only a `frame_idx` reference to
-  `frames.zarr` so consumers fetch pixels from the canonical store.
-- Migrate `images` readers (`dashboard/viewer.py`, `webapp/routers/visualize.py`, and any
-  `"images" in store` guard in `load_zarr`) to read frames from `frames.zarr` by
-  `frame_idx`.
-- `world_points` / `depth` / `confidence` are reconstruction-derived, not raw frames — leave
-  them in `feedforward.zarr`.
+Future footprint work (separate spec): `images` is a pure resize+crop of `frames.zarr` and
+`world_points` is unproject(depth, intrinsics, extrinsics) — both are derivable, so a later
+optimization could store derivation params and regenerate on load, cutting the largest arrays.
+That needs the pre-existing VGGT `[0,255]` vs MapAnything `[0,1]` image-scale inconsistency
+fixed first, so it is deferred, not part of this refactor.
 
 ## Cleanup scope (preproc audit)
 

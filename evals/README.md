@@ -16,6 +16,59 @@ $PY evals/scripts/eval.py --help
 
 ---
 
+## Running an evaluation
+
+`scripts/eval.py` is the one runner. Interpreter: `/opt/venv/reconstruction/bin/python` (py3.11) — run in **tmux**, one model at a time (heavy GPU, 46 GB cap). `results/` is gitignored scratch.
+
+```bash
+PY=/opt/venv/reconstruction/bin/python
+```
+
+**1 — one model, given parameters (goal: run a model + params → metrics).**
+Each condition runs in its own subprocess (clean GPU). Metrics land in `<output_dir>/metrics.json` (per-condition ATE, RPE trans+rot, AUC@{5,15,30}, `n_loops_applied`) + TUM trajectories + plots.
+
+```bash
+$PY scripts/eval.py \
+    --dataset 7scenes --seq_dir data/7scenes/chess/seq-01 \
+    --backbone vggt_omega --conditions baseline lc \
+    --submap_size 16 --max_frames 500 \
+    --output_dir results/omega_chess
+```
+- `--backbone`: `vggt_omega | vggtx | mapanything | vggt_spark`. Per-model LC layer + verify-threshold calibrations are applied automatically.
+- `--conditions`: `baseline | ba | lc | ba_track-density-N | incremental_ba-N`.
+- `--lc_scale_method` (default **`rotation_only`** = VGGT-SLAM parity method; also `se3 | pairwise_dist | none`). **Keep the default for parity-comparable numbers.**
+- `--submap_size` for >100-frame sequences (windowed); omit for single-pass short clips.
+
+**2 — compare across models and/or datasets (config-driven grid).**
+Declare the axes in a flat YAML; `eval.py` expands `datasets × backbones × conditions`, runs each cell serially, **resumes** (skips cells with an existing `metrics.json`), and writes `comparison.md` + `comparison.json`.
+
+```bash
+$PY scripts/eval.py --config configs/cross_model_chess.yaml            # compare backbones on chess
+$PY scripts/eval.py --config configs/7scenes.yaml                      # chess/fire/office × backbones × conditions
+$PY scripts/eval.py --config configs/7scenes.yaml --dry_run            # print the per-cell plan, run nothing
+```
+Presets pin `scale_method: rotation_only` so grid runs reproduce the frozen `baselines/` numbers. Author a new experiment by copying a config in `configs/`.
+
+**3 — compare arbitrary trajectories already on disk.**
+Drop each method's `<name>.tum` (+ a `gt.tum`) into a dir; aggregate them into one table:
+
+```bash
+$PY scripts/eval_compare.py --results-dir results/omega_chess --gt-path results/omega_chess/gt.tum
+```
+
+**4 — VGGT-SLAM parity (historical / secondary).**
+Run the reference SLAM, then treat its trajectory as one more comparison row (its ATE is scored by `eval.py`, not by the wrapper). Needs the isolated env from `bash setup/vggt_slam.sh` (torch 2.3.1).
+
+```bash
+$PY scripts/run_vggt_slam.py --seq_dir data/7scenes/chess/seq-01 \
+    --out_tum results/parity/vggt_slam.tum --max_loops 0        # 0 = published no-LC baseline; >0 enables LC
+# then drop vggt_slam.tum into a results dir and run eval_compare.py (step 3).
+```
+
+**Datasets:** `$PY data/download_datasets.py <7scenes|co3dv2|kitti|tum|waymo>`.
+
+---
+
 ## Layout
 
 ```

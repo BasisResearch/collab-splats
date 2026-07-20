@@ -10,7 +10,8 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 
-from collab_splats.preproc.sampling import _combine_scores, load_frames
+from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc.sampling import _combine_scores
 
 
 def plot_frame_grid(frames: list, title: str, n_cols: int = 6) -> None:
@@ -105,12 +106,12 @@ def plot_disparity_sensitivity(frame_scores: list, disparity_values: list) -> No
     plt.show()
 
 
-def plot_quality_examples(video_path: str, frame_scores: list, n_examples: int = 4) -> None:
+def plot_quality_examples(store: FrameStore, frame_scores: list, n_examples: int = 4) -> None:
     """Example frames per quality-gate outcome: accepted / blur- / exposure-rejected.
 
-    Takes score_frames() records; decodes only the displayed frames, in a single
-    load_frames() pass. Empty categories are dropped from the grid (counts still
-    shown in the title).
+    Takes score_frames() records; reads only the displayed frames from the canonical
+    frames.zarr store (no re-decode). Empty categories are dropped from the grid
+    (counts still shown in the title).
     """
     categories = [
         ("Accepted", [d for d in frame_scores if d.get("reject_reason") is None]),
@@ -130,9 +131,9 @@ def plot_quality_examples(video_path: str, frame_scores: list, n_examples: int =
         ax.text(0.5, 0.5, f"No records ({counts})", ha="center", va="center")
         plt.show()
         return
-    # Single decode pass: gather every picked frame_idx across all rows before decoding
+    # Gather every picked frame_idx across all rows; read each once from the store
     all_idxs = sorted({d["frame_idx"] for _, recs in rows for d in recs})
-    frame_by_idx = dict(zip(all_idxs, load_frames(video_path, all_idxs)))
+    frame_by_idx = {i: store.image_by_frame_idx(i) for i in all_idxs}
     fig, axes = plt.subplots(len(rows), n_examples, figsize=(n_examples * 2.6, len(rows) * 2.4), squeeze=False)
     for row_axes, (label, recs) in zip(axes, rows):
         for ax, d in zip(row_axes, recs):

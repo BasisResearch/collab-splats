@@ -497,4 +497,4 @@ def test_build_localization_db_runs_when_missing(tmp_path):
         patch.object(R, "_build_localization_db") as build,
     ):
         rec.build_localization_db(overwrite=False)
-    build.assert_called_once_with(ff, "loma", 8.0)
+    build.assert_called_once_with(ff, "loma", 8.0, rec.frames_zarr)

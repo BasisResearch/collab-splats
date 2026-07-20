@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
+
+from collab_splats.preproc.frame_store import FrameStore
 
 from .localizer import LocalizationResult
 
@@ -21,6 +24,7 @@ def plot_correspondences(
     warp_corners: bool = False,
     ref_idx: "int | None" = None,
     show: bool = True,
+    frames_zarr: "str | Path | None" = None,
 ) -> "plt.Figure | None":
     """Side-by-side query + best reference frame with inlier/outlier connecting lines.
 
@@ -39,6 +43,10 @@ def plot_correspondences(
         warp_corners: Draw homography-warped boundaries on both sides.
         ref_idx:      Reference frame to plot; None selects the frame with most inliers.
         show:         Call plt.show() (notebook behaviour). Dashboard passes False.
+        frames_zarr:  Optional canonical frames.zarr store. When given, the reference frame
+                     is read via FrameStore.image_by_frame_idx (source index parsed from
+                     image_paths[best_ref_idx]'s filename stem) instead of cv2.imread — use
+                     this when image_paths reference a deleted temp export dir.
 
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
@@ -93,10 +101,15 @@ def plot_correspondences(
         idx = rng.choice(len(kpts0), max_pairs, replace=False)
         kpts0, kpts1, inliers = kpts0[idx], kpts1[idx], inliers[idx]
 
-    ref_bgr = cv2.imread(str(image_paths[best_ref_idx]))
-    if ref_bgr is None:
-        raise FileNotFoundError(f"plot_correspondences: cannot read {image_paths[best_ref_idx]}")
-    ref_image = ref_bgr[..., ::-1].copy()
+    if frames_zarr is not None:
+        store = FrameStore.open(frames_zarr)
+        frame_idx = int(Path(image_paths[best_ref_idx]).stem.split("_")[-1])
+        ref_image = store.image_by_frame_idx(frame_idx)
+    else:
+        ref_bgr = cv2.imread(str(image_paths[best_ref_idx]))
+        if ref_bgr is None:
+            raise FileNotFoundError(f"plot_correspondences: cannot read {image_paths[best_ref_idx]}")
+        ref_image = ref_bgr[..., ::-1].copy()
 
     W = query_image.shape[1]
     query_image_disp = query_image.copy()

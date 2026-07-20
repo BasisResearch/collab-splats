@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -195,19 +196,23 @@ def _get_extractor(name: str):
 
 def _extract_2d_features(
     extractor_name: str,
-    image_paths: list[Path],
+    frames_zarr: Path,
     features_dir: Path,
 ) -> Path:
     """Extract 2D features for all frames, cache to features_dir/{name}/{name}.zarr.
 
+    extract_and_cache is strictly path-based, so the canonical store is exported to a
+    temp dir (same bridge pattern as feedforward preprocessing) and cleaned up after.
     Delegates to BaseFeatureExtractor.extract_and_cache which handles PIL loading,
     zarr layout (N, D, H_p, W_p), re-entrancy, and progress logging.
     """
     extractor = _get_extractor(extractor_name)
     cache_dir = features_dir / extractor_name
     cache_dir.mkdir(parents=True, exist_ok=True)
-    # extract_and_cache returns cache_dir/{name}.zarr
-    return extractor.extract_and_cache(image_paths, cache_dir)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        image_paths = FrameStore.open(frames_zarr).export(Path(tmp_dir))
+        # extract_and_cache returns cache_dir/{name}.zarr
+        return extractor.extract_and_cache(image_paths, cache_dir)
 
 
 def _lift_and_save(
@@ -319,7 +324,7 @@ def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool
         return False
 
 
-def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: float) -> Path:
+def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: float, frames_zarr: Path) -> Path:
     """Build the per-frame local-feature localization cache into feedforward.zarr.
 
     Loads the FeedforwardResult, runs the local matcher over every DB frame, and persists
@@ -333,13 +338,16 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
     extractor = BaseLocalExtractor.get(extractor_name)()
 
-    # from_feedforward is cache-first: on miss it runs GPU extraction + save_index
+    # from_feedforward is cache-first: on miss it runs GPU extraction + save_index.
+    # frames_zarr lets the miss path read pixels from the canonical store instead of
+    # ff.image_paths, which point at a temp export dir already discarded by the creator.
     CameraLocalizer.from_feedforward(
         ff,
         extractor=extractor,
         extractor_name=extractor_name,
         zarr_path=feedforward_zarr,
         radius=radius,
+        frames_zarr=frames_zarr,
     )
     logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
     return feedforward_zarr
@@ -686,13 +694,11 @@ class Reconstructor:
         if result is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        image_paths = sorted(self.images_dir.glob("*.jpg")) + sorted(self.images_dir.glob("*.png"))
-
         # Stage 1: 2D feature extraction (cached at features_dir/extractor)
         zarr_path = self.features_dir / extractor_name / f"{extractor_name}.zarr"
         if overwrite or not zarr_path.exists():
             logger.info("Extracting 2D features with %s", extractor_name)
-            zarr_path = _extract_2d_features(extractor_name, image_paths, self.features_dir)
+            zarr_path = _extract_2d_features(extractor_name, self.frames_zarr, self.features_dir)
         else:
             logger.info("2D feature cache hit: %s", zarr_path)
 
@@ -759,7 +765,7 @@ class Reconstructor:
             )
             return feedforward_zarr
 
-        return _build_localization_db(feedforward_zarr, extractor_name, radius)
+        return _build_localization_db(feedforward_zarr, extractor_name, radius, self.frames_zarr)
 
     def run_pipeline(
         self,

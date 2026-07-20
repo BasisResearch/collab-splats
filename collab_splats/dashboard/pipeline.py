@@ -56,7 +56,12 @@ def _write_frames_zarr(
 
 
 def _write_frames_jpegs(frames: list[np.ndarray], frames_dir: Path) -> Path:
-    """Write frames as zero-padded JPEGs for creators that consume an image dir."""
+    """Write frames as zero-padded JPEGs for creators that consume an image dir.
+
+    NOTE: this frames/ dir is still needed by _local_ref_paths, which maps localization
+    reference thumbnails to out_dir/frames/<name>.jpg. Migrating those thumbnails to read
+    from frames.zarr is a separate follow-up (see frame-store Task 10b report).
+    """
     frames_dir.mkdir(parents=True, exist_ok=True)
     for i, f in enumerate(frames):
         Image.fromarray(f).save(frames_dir / f"{i:05d}.jpg")
@@ -228,6 +233,8 @@ def run_pipeline(
                 method=sampling_method,
                 max_frames=config.max_frames,
             )
+            # frames/ jpgs feed setup_inference + semantics + localization ref thumbnails
+            # (_local_ref_paths); frames.zarr is the canonical store for pixel reads.
             image_dir = _write_frames_jpegs(frames, out_dir / "frames")
             config.frame_indices = [r["frame_idx"] for r in records]
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
@@ -501,8 +508,8 @@ def run_localization(
             # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
             op_log.update_progress(25, f"localize: loading DB ({config.extractor})")
             with op_log.step(f"localize: DB ({config.extractor})"):
-                # frames.zarr is excluded from processed-scene pulls (PULL_EXCLUDES), so it is only
-                # present for locally-run sessions; guard so pulled scenes fall back to image_paths.
+                # frames.zarr is the sole persistent frame store and is now pulled for processed
+                # scenes too; guard defensively so any legacy scene without it falls back to image_paths.
                 frames_zarr = out_dir / "frames.zarr"
                 localizer = _build_localizer(
                     result,

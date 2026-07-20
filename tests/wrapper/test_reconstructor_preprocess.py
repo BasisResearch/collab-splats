@@ -52,8 +52,8 @@ def test_preprocess_writes_frames_zarr(tmp_path, tiny_video):
 
     store = FrameStore.open(Path(cfg["output_path"]) / "frames.zarr")
     assert 0 < len(store) <= 5
-    # images/ JPEGs still written alongside — this task is additive, not a replacement
-    assert sorted(rec.images_dir.glob("*.jpg"))
+    # frames.zarr is the sole persistent frame store — no images/ JPG dir is written
+    assert not (Path(cfg["output_path"]) / "images").exists()
 
 
 def test_preprocess_frames_zarr_path_property(tmp_path, tiny_video):

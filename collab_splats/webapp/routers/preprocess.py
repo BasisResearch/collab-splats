@@ -10,7 +10,6 @@ import cv2
 import numpy as np
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from PIL import Image
 
 from collab_splats.preproc import get_video_info, sample_frames
 from collab_splats.preproc.frame_store import FrameStore
@@ -34,12 +33,11 @@ async def video_info() -> JSONResponse:
     if s.video_path and s.video_path.exists():
         meta = get_video_info(str(s.video_path))
         info["video"] = meta
-    # Count extracted frames if frames dir exists
-    frames_dir = s.output_dir / "frames"
-    if frames_dir.is_dir():
-        jpgs = sorted(frames_dir.glob("*.jpg"))
-        info["frames_extracted"] = len(jpgs)
-        info["frames_dir"] = str(frames_dir)
+    # Count extracted frames from the canonical frames.zarr store
+    frames_zarr = s.output_dir / "frames.zarr"
+    if frames_zarr.exists():
+        info["frames_extracted"] = len(FrameStore.open(frames_zarr))
+        info["frames_zarr"] = str(frames_zarr)
     return JSONResponse(info)
 
 
@@ -67,20 +65,6 @@ async def frame_jpeg(idx: int) -> Response:
 ########################################################################
 # Frame writing helpers
 ########################################################################
-
-
-def _write_frames(frames: list[np.ndarray], output_dir: Path) -> Path:
-    """Write RGB numpy frames as JPEGs to output_dir/frames/. Return frames dir.
-
-    Still needed alongside frames.zarr: reconstruct.py passes this directory's
-    path directly to the feedforward creator (path-based flow), not the store.
-    """
-    frames_dir = output_dir / "frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    for i, frame in enumerate(frames):
-        out = frames_dir / f"frame_{i:06d}.jpg"
-        Image.fromarray(frame).save(str(out), format="JPEG", quality=95)
-    return frames_dir
 
 
 def _write_frames_zarr(
@@ -136,9 +120,8 @@ async def _extract_sse(method: str, max_frames: int, min_disparity: float) -> As
                 min_disparity=min_disparity,
                 on_progress=progress,
             )
-            # Dual-write: frames/ JPEGs (reconstruct.py still consumes the dir path directly)
-            # and frames.zarr (canonical store; served on demand by GET /api/preprocess/frame/{idx})
-            _write_frames(frames, s.output_dir)
+            # Write frames.zarr — the sole persistent frame store. Served on demand by
+            # GET /api/preprocess/frame/{idx}; reconstruct.py opens it as a FrameStore.
             _write_frames_zarr(
                 frames,
                 records,

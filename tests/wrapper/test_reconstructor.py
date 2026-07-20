@@ -144,10 +144,12 @@ def test_reconstructor_backend_dir(tmp_path):
     assert rec.backend_dir == tmp_path / "out" / "vggtx"
 
 
-def test_reconstructor_images_dir(tmp_path):
+def test_reconstructor_no_images_dir(tmp_path):
+    """images/ JPG dir is retired — frames.zarr is the sole persistent frame store."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    assert rec.images_dir == tmp_path / "out" / "images"
+    assert not hasattr(rec, "images_dir")
+    assert rec.frames_zarr == tmp_path / "out" / "frames.zarr"
 
 
 def test_reconstructor_features_dir(tmp_path):
@@ -156,42 +158,38 @@ def test_reconstructor_features_dir(tmp_path):
     assert rec.features_dir == tmp_path / "out" / "features"
 
 
-def test_preprocess_skips_if_images_exist(tmp_path):
-    """Skip extraction when images/ already populated and overwrite=False."""
+def test_preprocess_skips_if_frames_zarr_exists(tmp_path):
+    """Skip extraction when frames.zarr already exists and overwrite=False."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    images_dir = rec.images_dir
-    images_dir.mkdir(parents=True)
-    (images_dir / "frame_0001.jpg").touch()
+    rec.frames_zarr.mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
         result = rec.preprocess(overwrite=False)
 
     mock_extract.assert_not_called()
-    assert result == images_dir
+    assert result == rec.frames_zarr
 
 
-def test_preprocess_runs_if_images_missing(tmp_path):
+def test_preprocess_runs_if_frames_zarr_missing(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
 
     with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
-        mock_extract.return_value = [rec.images_dir / "frame_0001.jpg"]
-        rec.images_dir.mkdir(parents=True)
-        (rec.images_dir / "frame_0001.jpg").touch()
+        mock_extract.return_value = 1
         result = rec.preprocess(overwrite=False)
 
-    assert result == rec.images_dir
+    mock_extract.assert_called_once()
+    assert result == rec.frames_zarr
 
 
 def test_preprocess_overwrite_reruns(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    rec.images_dir.mkdir(parents=True)
-    (rec.images_dir / "frame_0001.jpg").touch()
+    rec.frames_zarr.mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
-        mock_extract.return_value = [rec.images_dir / "frame_0001.jpg"]
+        mock_extract.return_value = 1
         rec.preprocess(overwrite=True)
 
     mock_extract.assert_called_once()
@@ -343,7 +341,7 @@ def test_run_pipeline_calls_stages_in_order(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.images_dir
+    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
     rec.mesh = lambda result=None, overwrite=False: calls.append("mesh") or tmp_path
@@ -357,7 +355,7 @@ def test_run_pipeline_subset(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.images_dir
+    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
 
     rec.run_pipeline(stages=["preprocess", "pointcloud"])
@@ -386,7 +384,7 @@ def test_run_pipeline_default_uses_config_enabled(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.images_dir
+    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
 

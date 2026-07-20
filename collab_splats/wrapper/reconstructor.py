@@ -45,40 +45,34 @@ _STAGE_DEPS: dict[str, list[str]] = {
 
 def _extract_frames(
     input_path: Path,
-    output_dir: Path,
+    frames_zarr: Path,
     frame_selection: str,
     frame_proportion: float,
     min_frames: int,
     max_frames: int | None,
-    frames_zarr: Path | None = None,
-) -> list[Path]:
-    """Extract frames from video or copy from image dir into output_dir.
+) -> int:
+    """Extract frames from video or image dir into frames.zarr (sole persistent store).
 
-    Also writes frames_zarr — the canonical decode-once keyframe store — alongside
-    the JPEGs when a path is given.
-
-    Returns sorted list of extracted frame paths.
+    frames.zarr is the canonical decode-once keyframe store; no JPEG dir is written.
+    Returns the number of frames stored.
     """
     import cv2
 
     from collab_splats.preproc import get_video_info, sample_frames
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     input_path = Path(input_path)
 
     if input_path.is_dir():
-        # Copy images from directory; reject non-image extensions
+        # Read source images from directory; reject non-image extensions
         exts = {".jpg", ".jpeg", ".png"}
         frames = sorted(p for p in input_path.iterdir() if p.suffix.lower() in exts)
-        for i, src in enumerate(frames):
-            shutil.copy(src, output_dir / f"frame_{i:04d}{src.suffix}")
-        if frames_zarr is not None and frames:
-            # Read the source images back as RGB arrays for the canonical store
-            frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in frames]
-            records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
-            prov = {"video_path": str(input_path), "video_mtime": None, "method": "dir", "max_frames": max_frames}
-            FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
-        return sorted(output_dir.iterdir())
+        if not frames:
+            return 0
+        frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in frames]
+        records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
+        prov = {"video_path": str(input_path), "video_mtime": None, "method": "dir", "max_frames": max_frames}
+        FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
+        return len(frame_arrays)
 
     # Video — dispatch to uniform or optical-flow sampling based on frame_selection
     if frame_selection == "optical_flow":
@@ -102,15 +96,8 @@ def _extract_frames(
             max_frames=target_count,
         )
 
-    # Save extracted frames as JPEG files
-    paths: list[Path] = []
-    for i, frame in enumerate(frame_arrays):
-        dest = output_dir / f"frame_{i:04d}.jpg"
-        cv2.imwrite(str(dest), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        paths.append(dest)
-
-    # Write the canonical frames.zarr alongside the JPEGs (decode-once keyframe store)
-    if frames_zarr is not None and frame_arrays:
+    # Write the canonical frames.zarr (decode-once keyframe store)
+    if frame_arrays:
         prov = {
             "video_path": str(input_path),
             "video_mtime": input_path.stat().st_mtime,
@@ -119,7 +106,7 @@ def _extract_frames(
         }
         FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
 
-    return paths
+    return len(frame_arrays)
 
 
 def _run_feedforward(
@@ -433,11 +420,6 @@ class Reconstructor:
         return Path(self.config["output_path"]) / backend
 
     @property
-    def images_dir(self) -> Path:
-        """output_path / images/ — shared frame store across all backends."""
-        return Path(self.config["output_path"]) / "images"
-
-    @property
     def frames_zarr(self) -> Path:
         """output_path / frames.zarr — canonical decode-once keyframe store for this run."""
         return Path(self.config["output_path"]) / "frames.zarr"
@@ -452,31 +434,30 @@ class Reconstructor:
     ########################################
 
     def preprocess(self, overwrite: bool = False) -> Path:
-        """Extract frames from input video/dir into images_dir and frames.zarr."""
-        # Skip if frames already exist and overwrite not requested
-        if not overwrite and self.images_dir.exists() and any(self.images_dir.iterdir()):
-            logger.info("Frames already extracted at %s, skipping preprocess", self.images_dir)
-            return self.images_dir
+        """Extract frames from input video/dir into frames.zarr (sole persistent store)."""
+        # Skip if the store already exists and overwrite not requested
+        if not overwrite and self.frames_zarr.exists():
+            logger.info("Frames already extracted at %s, skipping preprocess", self.frames_zarr)
+            return self.frames_zarr
 
-        if overwrite and self.images_dir.exists():
-            shutil.rmtree(self.images_dir)
+        if overwrite and self.frames_zarr.exists():
+            shutil.rmtree(self.frames_zarr)
 
         pre_cfg = self.config.get("preprocessing", {})
-        extracted = _extract_frames(
+        n_frames = _extract_frames(
             input_path=Path(self.config["input_path"]),
-            output_dir=self.images_dir,
+            frames_zarr=self.frames_zarr,
             frame_selection=pre_cfg.get("frame_selection", "fps"),
             frame_proportion=pre_cfg.get("frame_proportion", 0.1),
             min_frames=pre_cfg.get("min_frames", 300),
             max_frames=pre_cfg.get("max_frames"),
-            frames_zarr=self.frames_zarr,
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",
-            len(extracted),
-            self.images_dir,
+            n_frames,
+            self.frames_zarr,
         )
-        return self.images_dir
+        return self.frames_zarr
 
     def build_pointcloud(self, overwrite: bool = False) -> "PointcloudResult":
         """Run pointcloud stage. Sets self.pointcloud, returns PointcloudResult."""
@@ -532,8 +513,11 @@ class Reconstructor:
         colmap_dir = self.backend_dir / "colmap" / "sparse" / "0"
         recon = pycolmap.Reconstruction()
         recon.read(str(colmap_dir))
-        # Gather image paths from images_dir matching the reconstruction
-        image_paths = sorted(self.images_dir.glob("*.jpg")) + sorted(self.images_dir.glob("*.png"))
+        # Rebuild image_paths from frames.zarr: COLMAP registered names as frame_{source_idx:06d}.jpg
+        # (build_pycolmap_reconstruction takes names from FrameStore.export, which is 06d source-idx
+        # named), so derive the same names in store order to line up with the reconstruction.
+        frame_indices = FrameStore.open(self.frames_zarr).frame_indices()
+        image_paths = [Path(f"frame_{int(fi):06d}.jpg") for fi in frame_indices]
         return PointcloudResult(
             reconstruction=recon,
             frame=CoordinateFrame.COLMAP,

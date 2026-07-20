@@ -7,9 +7,11 @@ import traceback
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+import cv2
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.webapp.state import get_session
 
 router = APIRouter(prefix="/api/localize")
@@ -22,30 +24,26 @@ def _sse(data: dict) -> str:
 @router.get("/sample_query")
 async def sample_query_image() -> JSONResponse:
     """Return path to an out-of-sample image from a different scene for query testing."""
-    import glob as _glob  # noqa: PLC0415
-
     s = get_session()
     _OUTPUTS = Path("/workspace/outputs")
 
-    # Find a frame from ANY scene that is NOT the current session's scene
+    # Find a scene that is NOT the current session's scene and has a frames.zarr store
     current = s.output_dir.name if s.output_dir else ""
     for scene_dir in sorted(_OUTPUTS.iterdir()):
         if not scene_dir.is_dir() or scene_dir.name == current:
             continue
-        # Prefer frames/ directory (webapp-extracted)
-        frames_dir = scene_dir / "frames"
-        if frames_dir.is_dir():
-            jpgs = sorted(frames_dir.glob("frame_*.jpg"))
-            if jpgs:
-                mid = jpgs[len(jpgs) // 2]
-                return JSONResponse({"ok": True, "path": str(mid), "scene": scene_dir.name})
-        # Fall back to images/ directory (old pipeline)
-        images_dir = scene_dir / "images"
-        if images_dir.is_dir():
-            jpgs = sorted(images_dir.glob("frame_*.jpg"))
-            if jpgs:
-                mid = jpgs[len(jpgs) // 2]
-                return JSONResponse({"ok": True, "path": str(mid), "scene": scene_dir.name})
+        frames_zarr = scene_dir / "frames.zarr"
+        if not frames_zarr.exists():
+            continue
+        store = FrameStore.open(frames_zarr)
+        if len(store) == 0:
+            continue
+        # Export the middle frame to a derived cache jpg — frames.zarr is the canonical source,
+        # but the localize query flow needs a real file path to hand back to the client.
+        mid = len(store) // 2
+        query_path = scene_dir / "query_sample.jpg"
+        cv2.imwrite(str(query_path), cv2.cvtColor(store.image(mid), cv2.COLOR_RGB2BGR))
+        return JSONResponse({"ok": True, "path": str(query_path), "scene": scene_dir.name})
     return JSONResponse({"ok": False, "error": "No other scenes found"})
 
 

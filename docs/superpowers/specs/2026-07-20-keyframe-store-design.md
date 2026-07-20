@@ -123,6 +123,47 @@ twice. Once `frames.zarr` is canonical:
 - `world_points` / `depth` / `confidence` are reconstruction-derived, not raw frames — leave
   them in `feedforward.zarr`.
 
+## Cleanup scope (preproc audit)
+
+Fold these into the same change — the store refactor is the moment to make `preproc`
+production-clean. Each is verified against repo callers.
+
+**Dead code — delete:**
+- `OpticalFlowFrameSelector.stats` (`sampling.py:255`, appended 280-282) — written every
+  frame, **read nowhere**. Delete the dict + the three appends.
+
+**Redundant params — remove (always default, no caller varies them):**
+- `motion_weight` / `coverage_weight` threaded `sample_frames` → `_sample_optical_flow` →
+  `OpticalFlowFrameSelector` → `_combine_scores` (`sampling.py:211,239-241,374-375,509`).
+  No caller ever sets them. Hardcode 0.6 / 0.4, drop the weight-validation branch (244-247).
+  Keep `min_disparity` — it *is* varied.
+
+**Inefficiency — fix:**
+- **Evals double-decode** (`evals/datasets.py:251,253`): `sample_frames(uniform)` decodes the
+  whole video, discards the frames, then `extract_frames` **re-decodes** it to write JPEGs.
+  Resolve by reading persisted frames from `frames.zarr` instead.
+- **Full-file probe for two integers**: `_iter_frames` → `get_video_info` (`sampling.py:80`)
+  always runs `ffprobe -count_packets` (demuxes the entire file) but only needs W/H. Split a
+  cheap W/H-only probe from the packet-count path so every decode stops paying a full demux.
+
+**Style:**
+- `extract_frame` / `extract_frame_fast` annotate `"str | Path"` as **string literals**
+  (`sampling.py:595,608`) despite `from __future__ import annotations` — make them bare
+  `str | Path`.
+
+**Do NOT trim** `check_frame_quality` / `reject_reason` from `__all__`: they were
+deliberately promoted to public for the tutorial (`project_tutorial_keyframe_rework`); the
+audit's zero-hit grep undercounts because several tutorial notebooks are currently
+broken/pending a sweep. Keep public.
+
+**Retirement folds into the store (from §Consumer migration above):**
+- Delete `load_frames` (`592`), `extract_frames` (`652`), `_iter_frames_at` (`143`) — pure
+  re-decode-by-index helpers the store replaces.
+- `extract_frame` (`595`, exact-provenance re-decode) → its callers (`dashboard/pipeline.py`,
+  localize) become store lookups; delete.
+- **Keep** `extract_frame_fast` (`608`) — seek-based scrub preview for arbitrary
+  (non-keyframe) indices the store does not hold.
+
 ## Implementation principles
 
 - **Reuse, don't rewrite.** Decode via the existing `_iter_frames` generator — no new decode

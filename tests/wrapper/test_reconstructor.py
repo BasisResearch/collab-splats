@@ -152,6 +152,11 @@ def test_extract_frames_uniform_is_default_branch(tmp_path, monkeypatch):
     assert calls["method"] == "uniform"
 
 
+def test_from_config_file_removed():
+    """The dead, dataset-based from_config_file constructor is gone."""
+    assert not hasattr(Reconstructor, "from_config_file")
+
+
 def test_reconstructor_init(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)

@@ -1,10 +1,23 @@
 # Minimal Pipeline Runner — Design
 
 **Date:** 2026-07-20
-**Status:** Approved (pending spec review)
+**Status:** Implemented (see Amendments below for changes made during implementation)
 **Scope:** A clean, minimal interface for running the reconstruction pipeline on one or
 more scene videos, plus wiring the localization-database stage that the existing
 `Reconstructor` never exposed.
+
+> **Amendments (2026-07-20, during implementation):**
+> - Launcher named **`docs/examples/run_pipeline.py`** (not `run_scenes.py`).
+> - Positional inputs accept **video files OR directories** (dirs globbed non-recursively
+>   for `*.mp4/*.mov/*.avi`), not video files only.
+> - Output layout is **`<output-root>/<session-date>/<stem>`** (date = first `YYYY-MM-DD`
+>   dir in the video's parents, dashes→underscores; fallback `<output-root>/<stem>`),
+>   matching the live `outputs/` convention — not `<output-root>/<stem>` flat.
+> - **Named-dataset flow retired:** deleted `configs/datasets/` + `run_all_datasets.sh` +
+>   `Reconstructor.from_config_file`. `reconstruct.py` slimmed to `--config`-only
+>   (reproduce a saved `run_config.yaml`). `base.yaml` + `ConfigLoader` kept.
+> - Localization "DB" confirmed to be a single artifact (local-feature cache); no
+>   retrieval index. Default `localization.extractor: loma`.
 
 ## Goal
 

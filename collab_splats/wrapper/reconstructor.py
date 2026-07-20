@@ -237,7 +237,7 @@ def _lift_and_save(
     feature_maps = [torch.from_numpy(np.array(features_arr[i])) for i in range(features_arr.shape[0])]
 
     # Load FeedforwardResult with depth/pixel data for lifting
-    ff_result = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
+    ff_result = FeedforwardResult.load_zarr(feedforward_zarr)
 
     # Lift 2D features to 3D: (P, D)
     lifted = lift_features(feature_maps, ff_result)

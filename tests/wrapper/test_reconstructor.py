@@ -27,7 +27,7 @@ def test_config_load_base_defaults(tmp_path):
         "preprocessing": {"frame_selection": "fps", "frame_proportion": 0.1, "min_frames": 300},
         "pointcloud": {"method": "feedforward", "backend": "vggtx", "bundle_adjustment": False, "loop_closure": False},
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 1024},
-        "mesh": {"enabled": False, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04},
+        "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
         "localization": {"enabled": False, "extractor": "dinosalad"},
         "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
     }
@@ -94,7 +94,7 @@ def _make_config(tmp_path, overrides=None):
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "preprocessing": {"frame_selection": "fps", "frame_proportion": 0.1, "min_frames": 10},
+        "preprocessing": {"frame_selection": "uniform", "frame_proportion": 0.1, "min_frames": 10},
         "pointcloud": {
             "method": "feedforward",
             "backend": "vggtx",
@@ -103,7 +103,7 @@ def _make_config(tmp_path, overrides=None):
             "clean": {"enabled": False},
         },
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
-        "mesh": {"enabled": False, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04},
+        "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
         "localization": {"enabled": False},
         "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
     }

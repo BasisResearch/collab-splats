@@ -386,7 +386,7 @@ class Reconstructor:
         return Path(self.config["output_path"]) / "features"
 
     ########################################
-    # Stage stubs (implemented in later tasks)
+    # Pipeline stages
     ########################################
 
     def preprocess(self, overwrite: bool = False) -> Path:

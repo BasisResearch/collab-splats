@@ -24,7 +24,7 @@ The pain the user hit ("hard to read / understand how to specify a pipeline") li
    options that silently do nothing or raise deep in a stage:
    - `pointcloud.method: sfm` → `NotImplementedError`
    - `pointcloud.bundle_adjustment` → logs a warning, does nothing
-   - `mesh.mesher: poisson` → validated as legal, but only tsdf is wired
+   - `mesh.mesher: poisson` → validated as legal, but only tsdf is wired (not needed → cut)
    - `clean.confidence_threshold` → present in YAML, never read
 
 3. **Dead code.** `Reconstructor.from_config_file` has zero callers and calls
@@ -42,11 +42,14 @@ The whole config → execution path reads as one coherent thing, for **both** re
 ## Approach
 
 Keep the config a **plain dict** (full YAML flexibility — any override key, deep-merged).
-Make `base.yaml` the single source of defaults *and* the human-readable schema. No typed
-config layer: a `TypedDict`/dataclass schema is closed by default, so every new knob would
-need a schema edit and free-form overrides would read as type errors — that fights the
-YAML-flexible design. Readability for the developer comes from `base.yaml` + clean code,
-not from a type wrapper.
+Make `base.yaml` the single source of defaults *and* the human-readable schema.
+
+**No typed config layer.** A `TypedDict`/dataclass schema is *closed* by default: it is only
+a type-checker hint (runtime is still a plain dict, zero enforcement), and any override key
+not declared in the schema reads as a type error even though it works. Config is built from
+free-form YAML merge, so a closed schema fights the design. Developer readability comes from
+`base.yaml` (the one commented schema) + clean code, not from a type wrapper. This is a
+decision to *not add* anything — the config remains a plain dict exactly as today.
 
 ### Config override model (documented, mostly unchanged)
 
@@ -77,16 +80,19 @@ passes `{**override_config, input_path, output_path}` and lets `__init__` merge 
 Silent no-ops become explicit failures the caller can see:
 - reconstructor-level `bundle_adjustment=True` → raise `NotImplementedError` with the same
   guidance the current warning gives (pass BA to the creator config directly).
-- `mesh.mesher: poisson` → `mesh()` raises `NotImplementedError` (only tsdf wired).
 - `pointcloud.method: sfm` → keep the existing `NotImplementedError` in `_run_sfm`.
 - `clean.confidence_threshold` → mark as not-yet-read in base.yaml.
 
 `base.yaml` groups these under a `# ── NOT YET IMPLEMENTED ──` banner so status is visible
 at the point of configuration.
 
+**Poisson is cut, not stubbed.** A `mesh.mesher` knob with only one legal value is itself
+overengineering. Remove `mesh.mesher` from `base.yaml`, drop `_VALID_MESHERS` and the mesher
+check from `validate_config`, and make `mesh()` tsdf-only. Re-add if poisson is ever needed.
+
 `validate_config` stays **shape-only**: required `input_path`/`output_path`, method ∈ valid
-set, backend ↔ method compatibility, mesher ∈ valid set. The "not implemented yet" raises
-live in the stage methods, not in validation.
+set, backend ↔ method compatibility. The "not implemented yet" raises live in the stage
+methods, not in validation.
 
 ### Honest label
 
@@ -133,8 +139,9 @@ Target: `build_pointcloud`, `run_pipeline`, `extract_semantics`, `mesh`, `prepro
   base.yaml defaults filled; a user override wins over the base value.
 - Drift fixes: assert `min_frames`, `backend`, `frame_selection` resolve to the base.yaml
   value (no stale code default).
-- Not-implemented stubs: `mesh(mesher=poisson)`, reconstructor-level `bundle_adjustment=True`
-  raise `NotImplementedError`.
+- Not-implemented stubs: reconstructor-level `bundle_adjustment=True` raises
+  `NotImplementedError`.
+- Poisson removed: no `mesher` key in base.yaml; `validate_config` no longer references it.
 - Run the suite: `/opt/venv/reconstruction/bin/python -m pytest tests/`.
 
 ## Success criteria

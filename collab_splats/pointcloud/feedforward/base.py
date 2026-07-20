@@ -750,7 +750,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     views: Any = field(default=None, init=False, repr=False)
     image_paths: list[Path] | None = field(default=None, init=False, repr=False)
     # Holds the temp export of a FrameStore alive for the whole run (path-locked _preprocess)
-    _frame_export: Any = field(default=None, init=False, repr=False)
+    _frame_export: tempfile.TemporaryDirectory | None = field(default=None, init=False, repr=False)
     original_coords: np.ndarray | None = field(default=None, init=False, repr=False)
     raw_outputs: Any = field(default=None, init=False, repr=False)
     outputs: FeedforwardResult | None = field(default=None, init=False, repr=False)
@@ -794,11 +794,12 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         t0 = time.perf_counter()
         console.log("Preprocessing images...")
         if isinstance(source, FrameStore):
-            self.views, self.image_paths, self.original_coords = self._preprocess_from_store(source)
+            result = self._preprocess_from_store(source)
         elif Path(source).suffix == ".zarr":
-            self.views, self.image_paths, self.original_coords = self._preprocess_from_store(FrameStore.open(source))
+            result = self._preprocess_from_store(FrameStore.open(source))
         else:
-            self.views, self.image_paths, self.original_coords = self._preprocess(Path(source))
+            result = self._preprocess(Path(source))
+        self.views, self.image_paths, self.original_coords = result
         console.log(f"  → {len(self.image_paths)} images  done in {time.perf_counter() - t0:.1f}s")
 
     def _preprocess_from_store(self, store: FrameStore) -> tuple[Any, list[Path], np.ndarray]:

@@ -34,6 +34,8 @@ class FrameStore:
     @classmethod
     def create(cls, path, frames, records, *, provenance) -> "FrameStore":
         """Write frames + records + provenance to a new frames.zarr and return it open."""
+        if not records or "frame_idx" not in records[0]:
+            raise ValueError("FrameStore.create: every record must contain 'frame_idx' (source video index)")
         path = Path(path)
         imgs = np.stack(frames).astype(np.uint8)  # (N, H, W, 3) RGB
         lz4 = BloscCodec(cname="lz4")

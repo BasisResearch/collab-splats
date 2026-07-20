@@ -1,7 +1,8 @@
 import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
-from pathlib import Path
 
 # Local `evals/` is shadowed by an installed `evals`/`datasets` package; insert the
 # evals dir on sys.path and import the module directly (sibling-test convention,
@@ -9,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
 
 from datasets import (  # noqa: E402
+    _load_video,
     collect_frames,
     filter_images_to_list,
     list_scene_images,
@@ -485,3 +487,42 @@ def test_collect_frames_max_frames_applies_after_filter(tmp_path):
     allow.write_text("\n".join(f"f{i}.png" for i in (0, 2, 4)))
     frames = collect_frames(tmp_path, image_list=allow, max_frames=2)
     assert [Path(p).name for p in frames] == ["f0.png", "f2.png"]
+
+
+# ------------------- Video loading via FrameStore (single decode) ------------------- #
+
+
+def test_load_video_single_decode(tmp_path, monkeypatch):
+    """Verify _load_video uses FrameStore (single decode), not extract_frames (re-decode)."""
+    # Create synthetic frames and records
+    n_frames = 5
+    synthetic_frames = [np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8) for _ in range(n_frames)]
+    synthetic_records = [{"frame_idx": i, "timestamp": float(i) * 0.1} for i in range(n_frames)]
+
+    # Patch sample_frames to return synthetic data; count calls
+    call_count = [0]
+
+    def mock_sample_frames(*args, **kwargs):
+        call_count[0] += 1
+        return synthetic_frames, synthetic_records
+
+    monkeypatch.setattr("datasets.sample_frames", mock_sample_frames)
+
+    # Create a minimal fake video file to pass to _load_video
+    video_path = tmp_path / "test_video.mp4"
+    video_path.touch()
+
+    # Call _load_video with max_frames limit
+    result = _load_video(video_path, max_frames=3, fps=1.0)
+
+    # Verify sample_frames was called exactly once (if we were still using extract_frames, it would be called twice)
+    assert call_count[0] == 1, f"sample_frames called {call_count[0]} times, expected 1"
+
+    # Verify result contains the expected number of images (max_frames=3)
+    assert len(result.images) == 3, f"Expected 3 images, got {len(result.images)}"
+    assert all(img.exists() for img in result.images), "Not all image paths exist"
+    assert all(img.suffix.lower() == ".jpg" for img in result.images), "Images should be JPEGs"
+
+    # Verify GT poses are zeros placeholder
+    assert result.gt_poses.shape == (3, 4, 4)
+    assert np.allclose(result.gt_poses, 0.0)

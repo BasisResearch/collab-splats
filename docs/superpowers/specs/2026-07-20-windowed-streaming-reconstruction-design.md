@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-20
 **Status:** draft
-**Depends on:** [keyframe-store](2026-07-20-keyframe-store-design.md) (Spec 1)
+**Depends on:** [frame-store](2026-07-20-keyframe-store-design.md) (Spec 1)
 **Related:** [scene-viewer](2026-07-19-scene-viewer-design.md) (viewer + deferred LC hooks),
 [LC parity harness](../../../CLAUDE.md) memory `project_lc_parity_harness`
 
@@ -34,7 +34,7 @@ viewer-wired**.
 - Cross-window loop closure with **global PGO** for a globally consistent long scene.
 - Real-time viser visualization of the scene as it is built and corrected.
 - Final output **identical** to the batch path (parity gate).
-- Decode-once keyframe I/O (via Spec 1's `KeyframeStore`).
+- Decode-once keyframe I/O (via Spec 1's `FrameStore`).
 
 ## Non-goals
 
@@ -57,7 +57,7 @@ process one submap at a time, spill it to disk, and retain only compact state.
 For each window (submap) of keyframes:
 
 1. **Preprocess only this window** — `_preprocess_window(idxs)` on
-   `BaseFeedforwardCreator`, reading keyframes from `KeyframeStore` (Spec 1). Replaces the
+   `BaseFeedforwardCreator`, reading keyframes from `FrameStore` (Spec 1). Replaces the
    load-everything `_preprocess`.
 2. **Forward** — unchanged; GPU bounded by `submap_size`.
 3. **Spill to disk** — write the submap to
@@ -146,6 +146,27 @@ preprocess:
   max_frames: 400                 # bound keyframes drawn from the >1k-frame video
 ```
 
+## Implementation principles
+
+- **Refactor the existing loop, don't add a framework.** The streaming path is `_run_lc_loop`
+  restructured, not a new streaming/producer-consumer subsystem. Reuse `Submap`, `PoseGraph`
+  (+ `add_sequential_edge` / loop edges / `optimize`), `run_pose_graph_optimization`,
+  `find_loop_closures`, `_verify_loop_candidate`, `merge_submap_outputs`, `subsample_points`,
+  the `Viewer`, and `build_pycolmap_reconstruction` / `build_colmap`. No new solver, no new
+  viewer, no online iSAM.
+- **Reuse Spec 1.** `_preprocess_window` reads from `FrameStore` — it does not add its own
+  decode/IO path.
+- **Retire dead code.** `graph.py` notes per-submap optimize "is possible but currently runs
+  once" — the on-loop path realizes that; remove any now-dead single-shot-only stub or
+  commented scaffolding it leaves behind. If the batch (load-all) path is fully subsumed,
+  collapse it rather than keeping two parallel code paths; if it must stay for short scenes,
+  factor the shared steps so there is one implementation, not a fork.
+- **Don't over-build the viewer hooks.** Guarded `if self.viz is not None:` call sites only;
+  no incremental-PGO, mesh preview, or dashboard integration (explicit non-goals of the
+  scene-viewer spec).
+- **Inline block comments** on each logical block (window preprocess, spill, free, graph
+  update, loop verify, PGO, viewer push); one-line docstrings on new public methods.
+
 ## Testing
 
 - **Unit:** `_preprocess_window` loads only the window's frames; submap zarr round-trip;
@@ -160,7 +181,7 @@ preprocess:
 ## Verification
 
 Run `docs/examples/run_scenes.py` with the streaming config on a >1000-frame video in
-tmux (per repo memory-eval guidance). Confirm: `keyframes.zarr` decoded once (Spec 1),
+tmux (per repo memory-eval guidance). Confirm: `frames.zarr` decoded once (Spec 1),
 per-submap groups appear in `feedforward.zarr`, RSS stays bounded, the viser page shows the
 scene growing and snapping on loop closures, and the final merged cloud + COLMAP match the
 batch result on a truncated parity run.

@@ -23,7 +23,7 @@ requested index — a second (near-)full decode pass. For a >1000-frame video th
 large, repeated cost, and it blocks the windowed-streaming reconstruction goal
 (decode-once, read windows from disk).
 
-The fix is a **canonical keyframe store**: the preprocess stage decodes once, writes
+The fix is a **canonical frame store**: the preprocess stage decodes once, writes
 keyframes + records + provenance to a dedicated artifact, and all stages read from it
 cheaply. This is upstream of feedforward and independent of loop closure.
 
@@ -42,13 +42,13 @@ cheaply. This is upstream of feedforward and independent of loop closure.
 
 ## Design
 
-### Store: `keyframes.zarr`
+### Store: `frames.zarr`
 
 A dedicated preproc artifact written next to other stage outputs (sibling of
 `feedforward.zarr`, not inside it — keyframes are upstream of the pointcloud stage).
 
 ```
-keyframes.zarr/
+frames.zarr/
   images        (N, H, W, 3) uint8, chunked per-frame, Blosc-compressed
   frame_idx     (N,) int      # source frame index in the original video
   blur_score    (N,) float
@@ -69,14 +69,14 @@ keyframes.zarr/
 
 ### Accessor
 
-New module `preproc/keyframe_store.py`:
+New module `preproc/frame_store.py`:
 
 ```python
-class KeyframeStore:
+class FrameStore:
     @classmethod
-    def create(cls, path, frames, records, *, provenance) -> "KeyframeStore"
+    def create(cls, path, frames, records, *, provenance) -> "FrameStore"
     @classmethod
-    def open(cls, path) -> "KeyframeStore"
+    def open(cls, path) -> "FrameStore"
 
     def __len__(self) -> int
     def image(self, i) -> np.ndarray            # (H,W,3) uint8, partial read
@@ -93,12 +93,12 @@ class KeyframeStore:
 ### Producer: preprocess stage
 
 `wrapper/reconstructor.py` preprocess stage calls `sample_frames` once, then
-`KeyframeStore.create(...)` writes `keyframes.zarr`. The stage output becomes "the store
+`FrameStore.create(...)` writes `frames.zarr`. The stage output becomes "the store
 exists," not "frames returned in memory." Reuse existing store if `is_stale` is False.
 
 ### Consumer migration
 
-Replace every re-decode call site with `KeyframeStore.open(...).image(i)` /
+Replace every re-decode call site with `FrameStore.open(...).image(i)` /
 `.images(idxs)`:
 
 - feedforward `_preprocess` reads keyframes from the store (also unblocks Spec 2's
@@ -108,6 +108,22 @@ Replace every re-decode call site with `KeyframeStore.open(...).image(i)` /
   `extract_frame*` for accessor reads.
 - Keep `extract_frames` / `load_frames` as thin fallbacks only where a raw video with no
   store is a legitimate input; otherwise route through the store.
+
+## Implementation principles
+
+- **Reuse, don't rewrite.** Decode via the existing `_iter_frames` generator — no new decode
+  path. Store the record dicts `sample_frames` already returns; reuse the Blosc/zarr helper
+  pattern used elsewhere in the package. The accessor is a thin wrapper over `zarr`, not a
+  new abstraction layer.
+- **Retire dead code.** Once all callers read from the store, the re-decode helpers become
+  dead: audit and remove `load_frames`, `extract_frame`, `extract_frame_fast`, and
+  `_iter_frames_at` (`preproc/sampling.py`) unless a raw-video-with-no-store path genuinely
+  still needs them — if so, keep exactly one, delete the rest. Do not leave both a store
+  read and a re-decode fallback "just in case."
+- **Minimal surface.** `FrameStore` gets only the methods listed; no speculative params
+  (compression level, formats) until a caller needs them.
+- **Inline block comments** on each logical block (schema write, provenance check, accessor
+  read) per repo code style; one-line docstrings on public methods.
 
 ## Testing
 
@@ -123,5 +139,5 @@ Replace every re-decode call site with `KeyframeStore.open(...).image(i)` /
 ## Verification
 
 Run preprocess + pointcloud on a short clip through `docs/examples/run_scenes.py`; confirm
-`keyframes.zarr` is written, the pointcloud stage reads it (no re-decode), and outputs are
+`frames.zarr` is written, the pointcloud stage reads it (no re-decode), and outputs are
 unchanged vs the pre-migration baseline. Run the test suite.

@@ -5,6 +5,7 @@ API Reference
    :maxdepth: 1
 
    wrapper
+   preproc
    semantics
    pointcloud
    geometry

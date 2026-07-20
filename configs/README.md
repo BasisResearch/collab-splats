@@ -135,7 +135,7 @@ Reproduce any experiment: `python docs/examples/reconstruct.py --config path/to/
 ```
 <output_path>/
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
-  images/                      ← extracted keyframes
+  frames.zarr                  ← canonical decode-once keyframe store (chunked images + records + provenance)
   features/                    ← 2D feature cache (one subdir per extractor)
   <backend>/                   ← e.g. vggt_omega/
     feedforward.zarr           ← depth maps, poses, confidence, 3D points

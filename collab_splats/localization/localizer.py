@@ -151,7 +151,7 @@ class CameraLocalizer:
         radius: float = 8.0,
         config: dict | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
-        frames_zarr: "str | Path | None" = None,
+        frames_zarr: str | Path | None = None,
     ):
         """Build feature index from scene data.
 
@@ -217,7 +217,7 @@ class CameraLocalizer:
             _paths_iter = image_paths
         for path in _paths_iter:
             if store is not None:
-                rgb = store.image_by_frame_idx(int(Path(path).stem.split("_")[-1]))
+                rgb = store.image_by_frame_idx(FrameStore.frame_idx_from_path(path))
             else:
                 bgr = cv2.imread(str(path))
                 if bgr is None:
@@ -490,7 +490,7 @@ class CameraLocalizer:
         zarr_path: "str | Path",
         extractor_name: str,
         progress_callback: "Callable[[int, int], None] | None" = None,
-        frames_zarr: "str | Path | None" = None,
+        frames_zarr: str | Path | None = None,
     ) -> None:
         """Extract features for new reconstruction frames; append to zarr cache.
 
@@ -505,7 +505,7 @@ class CameraLocalizer:
 
         for i, path in enumerate(new_image_paths):
             if store is not None:
-                rgb = store.image_by_frame_idx(int(pathlib.Path(path).stem.split("_")[-1]))
+                rgb = store.image_by_frame_idx(FrameStore.frame_idx_from_path(path))
             else:
                 bgr = cv2.imread(str(path))
                 if bgr is None:

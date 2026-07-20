@@ -57,6 +57,11 @@ class FrameStore:
         """Open an existing frames.zarr read-only."""
         return cls(path, zarr.open(str(path), mode="r"))
 
+    @classmethod
+    def frame_idx_from_path(cls, path) -> int:
+        """Source frame index encoded in a frame_{idx:06d}.<ext> filename."""
+        return int(Path(path).stem.split("_")[-1])
+
     def __len__(self) -> int:
         return int(self._store["images"].shape[0])
 

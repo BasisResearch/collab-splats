@@ -24,7 +24,7 @@ def plot_correspondences(
     warp_corners: bool = False,
     ref_idx: "int | None" = None,
     show: bool = True,
-    frames_zarr: "str | Path | None" = None,
+    frames_zarr: str | Path | None = None,
 ) -> "plt.Figure | None":
     """Side-by-side query + best reference frame with inlier/outlier connecting lines.
 
@@ -103,7 +103,7 @@ def plot_correspondences(
 
     if frames_zarr is not None:
         store = FrameStore.open(frames_zarr)
-        frame_idx = int(Path(image_paths[best_ref_idx]).stem.split("_")[-1])
+        frame_idx = FrameStore.frame_idx_from_path(image_paths[best_ref_idx])
         ref_image = store.image_by_frame_idx(frame_idx)
     else:
         ref_bgr = cv2.imread(str(image_paths[best_ref_idx]))

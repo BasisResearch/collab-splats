@@ -2,7 +2,7 @@
 """Ground-truth evaluation runner for collab-splats BA/LC pipelines.
 
 Single-cell usage:
-    python evals/eval.py \\
+    python evals/scripts/eval.py \\
         --dataset   7scenes \\
         --seq_dir   /data/7scenes/chess/seq-01 \\
         --output_dir ./eval_results/chess_seq01 \\
@@ -10,8 +10,8 @@ Single-cell usage:
         --conditions baseline ba lc
 
 Grid usage (YAML-driven; serial, resume-on-metrics.json, then aggregate):
-    python evals/eval.py --config evals/configs/7scenes.yaml
-    python evals/eval.py --config evals/configs/7scenes.yaml --dry_run
+    python evals/scripts/eval.py --config evals/configs/7scenes.yaml
+    python evals/scripts/eval.py --config evals/configs/7scenes.yaml --dry_run
 
 For long sequences that exceed GPU memory in a single forward pass, use
 ``--submap_size N`` to enable windowed inference.  ``baseline`` becomes
@@ -44,6 +44,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from datasets import get_dataset
 from trajectory_io import read_tum

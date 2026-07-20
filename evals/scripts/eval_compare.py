@@ -8,7 +8,7 @@ phase-2 runner ingests that directory and emits a single ``metrics.json``
 holding ATE + RPE for every method, plus a Markdown summary on stdout.
 
 Usage:
-    python evals/eval_compare.py --results-dir evals/results/chess_seq01
+    python evals/scripts/eval_compare.py --results-dir evals/results/chess_seq01
 
 Default alignment per method (override via ``--align-overrides``):
 
@@ -35,7 +35,7 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from metrics import compute_ate, compute_rpe, compute_auc
 
 logger = logging.getLogger(__name__)

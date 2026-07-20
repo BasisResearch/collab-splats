@@ -1,4 +1,4 @@
-"""Tests for evals/eval_compare.py — phase-2 unified comparison runner.
+"""Tests for evals/scripts/eval_compare.py — phase-2 unified comparison runner.
 
 Seeds fixtures via `evals.trajectory_io.write_tum`, runs `eval_compare.main`,
 and inspects the resulting `metrics.json` plus per-method alignment choices.
@@ -16,6 +16,7 @@ import pytest
 from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "scripts"))
 
 pytest.importorskip("evo")
 

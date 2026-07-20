@@ -7,12 +7,12 @@ visualization. Heavy inference/eval → tmux, one model at a time (46 GB cgroup 
 
 ```bash
 PY=/opt/conda/envs/reconstruction/bin/python      # py3.11; NOT base conda
-$PY evals/eval_gt.py --help
+$PY evals/scripts/eval.py --help
 ```
 
 > **Note on the `evals` package name:** a same-named `evals` pip package is installed
-> and shadows this dir at import time. Tests import runner modules via
-> `sys.path.insert(0, ".../evals"); from runners.X import …` (see `tests/evals/`).
+> and shadows this dir at import time. Tests import script modules via
+> `sys.path.insert(0, ".../evals/scripts"); from scripts.X import …` (see `tests/evals/`).
 
 ---
 
@@ -20,8 +20,8 @@ $PY evals/eval_gt.py --help
 
 ```
 evals/
-  *.py            entry points + library (see tables below)
-  runners/        SLAM wrappers, benchmark drivers, parity/diagnostic tools
+  *.py            library modules (see tables below)
+  scripts/        entry points: SLAM wrappers, benchmark drivers, parity/diagnostic tools
   baselines/      committed reference results (frozen; see below)
   results/        gitignored scratch output of eval_gt runs
   data/           datasets (7-Scenes etc; large, gitignored)
@@ -51,7 +51,7 @@ evals/
 
 `data/download_datasets.py <dataset>` — one consolidated CLI with a subcommand per dataset: `7scenes` (`--parity` for the LC-parity set), `co3dv2`, `kitti`, `tum`, `waymo`. `data/extract_waymo.py` converts a Waymo tfrecord → flat layout.
 
-## `runners/` — SLAM wrappers, benchmark drivers, parity tools
+## `scripts/` — SLAM wrappers, benchmark drivers, parity tools
 
 **Active:**
 | file | role |
@@ -66,13 +66,13 @@ separate script:
 
 ```bash
 # Published no-LC baseline (paper defaults: submap_size=16, min_disparity=50)
-$PY evals/runners/run_vggt_slam.py \
+$PY evals/scripts/run_vggt_slam.py \
     --image_dir data/7scenes/chess/seq-01 \
     --output evals/results/chess_seq01/vggt_slam.tum \
     --max_loops 0
 
 # Loop-closure run (also writes selected_frames.txt + ATE + metrics.json next to the TUM)
-$PY evals/runners/run_vggt_slam.py \
+$PY evals/scripts/run_vggt_slam.py \
     --image_dir data/7scenes/chess/seq-01 \
     --output evals/results/chess_seq01/vggt_slam_lc.tum \
     --max_loops 1
@@ -162,7 +162,7 @@ different backbone/frameset via `eval.py --config configs/7scenes.yaml` (or
 
 | script | what it probed |
 |---|---|
-| `runners/run_vggt_slam.py` | VGGT-SLAM wrapper (anchor + long ref / loop probe; LC via `--max_loops`). |
+| `scripts/run_vggt_slam.py` | VGGT-SLAM wrapper (anchor + long ref / loop probe; LC via `--max_loops`). |
 
 > **Housekeeping:** if bundle-adjustment tuning is revisited, prefer writing
 > plots to the gitignored `results/` rather than the source tree.

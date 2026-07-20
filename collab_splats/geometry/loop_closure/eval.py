@@ -2,7 +2,7 @@
 
 Provides instrumentation for the LC pose graph (per-iteration loss capture,
 per-edge-type residual breakdown) plus ground-truth-based trajectory metrics
-(ATE, RPE, AUC) used by evals/eval_gt.py and exercised in tests/evals/ and
+(ATE, RPE, AUC) used by evals/scripts/eval.py and exercised in tests/evals/ and
 tests/geometry/loop_closure/.
 """
 

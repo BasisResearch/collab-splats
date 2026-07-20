@@ -306,7 +306,7 @@ def download_co3dv2(category: str, output_dir: str = "./evals/data/co3dv2") -> N
 
     print(f"Download complete: {output_dir}/{category}/")
     print("=== Done. Test with: ===")
-    print("python evals/eval.py --dataset co3dv2 \\")
+    print("python evals/scripts/eval.py --dataset co3dv2 \\")
     print(f"  --seq_dir {output_dir}/{category}/<sequence_name> \\")
     print(f"  --output_dir ./eval_results/co3dv2_{category} \\")
     print("  --conditions baseline ba ba_hightrack")

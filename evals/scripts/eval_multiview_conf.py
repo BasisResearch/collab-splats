@@ -4,7 +4,7 @@ Measures whether MapAnything's geometric multiview depth confidence filter
 improves point cloud quality for VGGT-X and VGGTOmega.
 
 Run in tmux:
-    /opt/conda/envs/reconstruction/bin/python evals/eval_multiview_conf.py
+    /opt/conda/envs/reconstruction/bin/python evals/scripts/eval_multiview_conf.py
 
 Outputs saved to evals/results/mv_conf_eval/:
     point_count_comparison.png
@@ -12,6 +12,7 @@ Outputs saved to evals/results/mv_conf_eval/:
     scatter_comparison.png
     summary.txt
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,13 +23,14 @@ import tempfile
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from datasets import get_dataset
 from collab_splats.pointcloud.feedforward import (
@@ -47,17 +49,18 @@ log = logging.getLogger(__name__)
 # Config
 ########################################################################
 
-SEQ_DIR    = Path("evals/data/7scenes/chess/chess/seq-01")
-ZARR_BASE  = Path("evals/results/mv_conf_eval")
-OUT_DIR    = ZARR_BASE
+SEQ_DIR = Path("evals/data/7scenes/chess/chess/seq-01")
+ZARR_BASE = Path("evals/results/mv_conf_eval")
+OUT_DIR = ZARR_BASE
 PERCENTILE = 35.0
 MAX_FRAMES = 50
-DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 ########################################################################
 # Helpers
 ########################################################################
+
 
 def _make_image_dir(image_paths: list[Path]) -> Path:
     """Copy images to a temp dir with sequential names for creators."""
@@ -72,28 +75,19 @@ def compute_mv_conf(result: FeedforwardResult) -> np.ndarray:
 
     Returns (N, H, W) float32 numpy array, values in [0, 1].
     """
-    depth_np = result.depth.astype(np.float32)   # (N, H, W)
+    depth_np = result.depth.astype(np.float32)  # (N, H, W)
     N = depth_np.shape[0]
 
     # depth_z: List[(1, H, W, 1)] on DEVICE
-    depth_z = [
-        torch.from_numpy(depth_np[i]).unsqueeze(0).unsqueeze(-1).to(DEVICE)
-        for i in range(N)
-    ]
+    depth_z = [torch.from_numpy(depth_np[i]).unsqueeze(0).unsqueeze(-1).to(DEVICE) for i in range(N)]
 
     # intrinsics: List[(1, 3, 3)] on DEVICE
     intrs_np = result.intrinsics.astype(np.float32)
-    intrinsics = [
-        torch.from_numpy(intrs_np[i]).unsqueeze(0).to(DEVICE)
-        for i in range(N)
-    ]
+    intrinsics = [torch.from_numpy(intrs_np[i]).unsqueeze(0).to(DEVICE) for i in range(N)]
 
     # extrinsics are world2cam (N, 4, 4); invert to cam2world
     cam2world_np = invert_poses(result.extrinsics.astype(np.float32))  # (N, 4, 4)
-    camera_poses = [
-        torch.from_numpy(cam2world_np[i]).unsqueeze(0).to(DEVICE)
-        for i in range(N)
-    ]
+    camera_poses = [torch.from_numpy(cam2world_np[i]).unsqueeze(0).to(DEVICE) for i in range(N)]
 
     with torch.no_grad():
         mv_conf_list = compute_multiview_depth_confidence(depth_z, intrinsics, camera_poses)
@@ -113,8 +107,7 @@ def point_count(world_points: np.ndarray, mask: np.ndarray) -> int:
     return int(mask.sum())
 
 
-def run_and_save(creator_cls, creator_kwargs: dict, image_dir: Path,
-                 zarr_path: Path, label: str) -> FeedforwardResult:
+def run_and_save(creator_cls, creator_kwargs: dict, image_dir: Path, zarr_path: Path, label: str) -> FeedforwardResult:
     """Run creator if zarr absent, save zarr, load + return FeedforwardResult."""
     if zarr_path.exists():
         log.info("%s zarr exists, loading from cache: %s", label, zarr_path)
@@ -133,6 +126,7 @@ def run_and_save(creator_cls, creator_kwargs: dict, image_dir: Path,
 ########################################################################
 # Diagnostic
 ########################################################################
+
 
 def diagnose_mapanything_mv_conf(
     image_paths: list[Path],
@@ -176,8 +170,13 @@ def diagnose_mapanything_mv_conf(
     # Side-by-side depth_z stats — valid pixels only
     def _depth_stats(d: np.ndarray) -> dict:
         d = d[d > 0].ravel().astype(np.float64)
-        return {"min": d.min(), "max": d.max(), "mean": d.mean(),
-                "p5": float(np.percentile(d, 5)), "p95": float(np.percentile(d, 95))}
+        return {
+            "min": d.min(),
+            "max": d.max(),
+            "mean": d.mean(),
+            "p5": float(np.percentile(d, 5)),
+            "p95": float(np.percentile(d, 95)),
+        }
 
     ma_s = _depth_stats(result_ma.depth)
     vx_s = _depth_stats(result_vggtx.depth)
@@ -234,8 +233,9 @@ def diagnose_mapanything_mv_conf(
         for p in out:
             if "non_ambiguous_mask" in p:
                 m = p["non_ambiguous_mask"]
-                density = float(m.float().mean().item()) if isinstance(m, torch.Tensor) \
-                    else float(m.astype(float).mean())
+                density = (
+                    float(m.float().mean().item()) if isinstance(m, torch.Tensor) else float(m.astype(float).mean())
+                )
                 captured_masks.append(density)
         return out
 
@@ -260,8 +260,7 @@ def diagnose_mapanything_mv_conf(
     if captured_masks:
         arr = np.array(captured_masks, dtype=np.float32)
         print(f"  non_ambiguous_mask over {len(arr)} frames:")
-        print(f"    mean={arr.mean():.4f}  std={arr.std():.4f}  "
-              f"min={arr.min():.4f}  max={arr.max():.4f}")
+        print(f"    mean={arr.mean():.4f}  std={arr.std():.4f}  " f"min={arr.min():.4f}  max={arr.max():.4f}")
         if arr.mean() < 0.2:
             print("  ⚠  H3 LIKELY — mean density <20%; most target pixels invalid → all outliers")
         else:
@@ -277,9 +276,9 @@ def diagnose_mapanything_mv_conf(
 # Main
 ########################################################################
 
+
 def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
-    log.info("Device: %s | MAX_FRAMES: %d | PERCENTILE: %.1f | diagnose=%s",
-             DEVICE, MAX_FRAMES, PERCENTILE, diagnose)
+    log.info("Device: %s | MAX_FRAMES: %d | PERCENTILE: %.1f | diagnose=%s", DEVICE, MAX_FRAMES, PERCENTILE, diagnose)
 
     ZARR_BASE.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -305,10 +304,12 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
         )
         assert result_vggtx.depth is not None, "VGGT-X depth missing"
         assert result_vggtx.world_points is not None, "VGGT-X world_points missing"
-        log.info("VGGT-X loaded: depth%s conf%s wp%s",
-                 result_vggtx.depth.shape,
-                 tuple(result_vggtx.confidence.shape) if result_vggtx.confidence is not None else None,
-                 result_vggtx.world_points.shape)
+        log.info(
+            "VGGT-X loaded: depth%s conf%s wp%s",
+            result_vggtx.depth.shape,
+            tuple(result_vggtx.confidence.shape) if result_vggtx.confidence is not None else None,
+            result_vggtx.world_points.shape,
+        )
 
         ################################################################
         # 2. VGGTOmega inference
@@ -322,18 +323,19 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
         )
         assert result_omega.depth is not None, "VGGTOmega depth missing"
         assert result_omega.world_points is not None, "VGGTOmega world_points missing"
-        log.info("VGGTOmega loaded: depth%s conf%s wp%s",
-                 result_omega.depth.shape,
-                 tuple(result_omega.confidence.shape) if result_omega.confidence is not None else None,
-                 result_omega.world_points.shape)
+        log.info(
+            "VGGTOmega loaded: depth%s conf%s wp%s",
+            result_omega.depth.shape,
+            tuple(result_omega.confidence.shape) if result_omega.confidence is not None else None,
+            result_omega.world_points.shape,
+        )
 
         ################################################################
         # 3. MapAnything — mv_off (cached) and mv_on (point count sanity check)
         ################################################################
         result_ma_off = run_and_save(
             MapAnythingCreator,
-            {"use_multiview_confidence": False, "confidence_percentile": PERCENTILE,
-             "max_points": 500_000},
+            {"use_multiview_confidence": False, "confidence_percentile": PERCENTILE, "max_points": 500_000},
             image_dir,
             ZARR_BASE / "mapanything_off",
             "MapAnything mv_off",
@@ -343,9 +345,9 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
         log.info("MapAnything mv_off: %d points", n_ma_off)
 
         log.info("Running MapAnything mv_on...")
-        creator_on = MapAnythingCreator(use_multiview_confidence=True,
-                                        confidence_percentile=PERCENTILE,
-                                        max_points=500_000)
+        creator_on = MapAnythingCreator(
+            use_multiview_confidence=True, confidence_percentile=PERCENTILE, max_points=500_000
+        )
         n_ma_on = creator_on.run(image_dir).points.shape[0]
         del creator_on
         torch.cuda.empty_cache()
@@ -356,15 +358,23 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
         ################################################################
         log.info("Computing mv_conf for VGGT-X (%d frames)...", result_vggtx.depth.shape[0])
         mv_conf_vggtx = compute_mv_conf(result_vggtx)
-        log.info("VGGT-X mv_conf: mean=%.3f std=%.3f min=%.3f max=%.3f",
-                 mv_conf_vggtx.mean(), mv_conf_vggtx.std(),
-                 mv_conf_vggtx.min(), mv_conf_vggtx.max())
+        log.info(
+            "VGGT-X mv_conf: mean=%.3f std=%.3f min=%.3f max=%.3f",
+            mv_conf_vggtx.mean(),
+            mv_conf_vggtx.std(),
+            mv_conf_vggtx.min(),
+            mv_conf_vggtx.max(),
+        )
 
         log.info("Computing mv_conf for VGGTOmega (%d frames)...", result_omega.depth.shape[0])
         mv_conf_omega = compute_mv_conf(result_omega)
-        log.info("VGGTOmega mv_conf: mean=%.3f std=%.3f min=%.3f max=%.3f",
-                 mv_conf_omega.mean(), mv_conf_omega.std(),
-                 mv_conf_omega.min(), mv_conf_omega.max())
+        log.info(
+            "VGGTOmega mv_conf: mean=%.3f std=%.3f min=%.3f max=%.3f",
+            mv_conf_omega.mean(),
+            mv_conf_omega.std(),
+            mv_conf_omega.min(),
+            mv_conf_omega.max(),
+        )
 
         ################################################################
         # 5. Filtering variants
@@ -376,10 +386,10 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
                 return c.cpu().numpy().astype(np.float32)
             return c.astype(np.float32)
 
-        conf_vggtx = _conf_np(result_vggtx)   # (N, H, W) learned depth_conf
-        conf_omega = _conf_np(result_omega)    # (N, H, W) learned depth_conf
-        wp_vggtx   = result_vggtx.world_points # (N, H, W, 3)
-        wp_omega   = result_omega.world_points  # (N, H, W, 3)
+        conf_vggtx = _conf_np(result_vggtx)  # (N, H, W) learned depth_conf
+        conf_omega = _conf_np(result_omega)  # (N, H, W) learned depth_conf
+        wp_vggtx = result_vggtx.world_points  # (N, H, W, 3)
+        wp_omega = result_omega.world_points  # (N, H, W, 3)
 
         # VGGT-X variants
         mask_l_vggtx = apply_mask(conf_vggtx)
@@ -401,19 +411,19 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
         # 6. Summary table
         ################################################################
         rows = [
-            ("VGGT-X",      "learned_only", n_l_vggtx, mv_conf_vggtx.mean()),
-            ("VGGT-X",      "mv_only",      n_m_vggtx, mv_conf_vggtx.mean()),
-            ("VGGT-X",      "intersect",    n_i_vggtx, mv_conf_vggtx.mean()),
-            ("VGGTOmega",   "learned_only", n_l_omega,  mv_conf_omega.mean()),
-            ("VGGTOmega",   "mv_only",      n_m_omega,  mv_conf_omega.mean()),
-            ("VGGTOmega",   "intersect",    n_i_omega,  mv_conf_omega.mean()),
-            ("MapAnything", "mv_off",       n_ma_off,   float("nan")),
-            ("MapAnything", "mv_on",        n_ma_on,    float("nan")),
+            ("VGGT-X", "learned_only", n_l_vggtx, mv_conf_vggtx.mean()),
+            ("VGGT-X", "mv_only", n_m_vggtx, mv_conf_vggtx.mean()),
+            ("VGGT-X", "intersect", n_i_vggtx, mv_conf_vggtx.mean()),
+            ("VGGTOmega", "learned_only", n_l_omega, mv_conf_omega.mean()),
+            ("VGGTOmega", "mv_only", n_m_omega, mv_conf_omega.mean()),
+            ("VGGTOmega", "intersect", n_i_omega, mv_conf_omega.mean()),
+            ("MapAnything", "mv_off", n_ma_off, float("nan")),
+            ("MapAnything", "mv_on", n_ma_on, float("nan")),
         ]
 
         header = f"{'Model':<14} {'Variant':<14} {'N_points':>10}  {'mv_conf_mean':>12}"
-        sep    = "-" * len(header)
-        lines  = [header, sep]
+        sep = "-" * len(header)
+        lines = [header, sep]
         for model, variant, n, mv_mean in rows:
             mv_str = f"{mv_mean:.3f}" if not np.isnan(mv_mean) else "  n/a"
             lines.append(f"{model:<14} {variant:<14} {n:>10,}  {mv_str:>12}")
@@ -431,19 +441,22 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
         values = [r[2] for r in rows]
         color_map = {
             "learned_only": "#4477AA",
-            "mv_only":      "#EE7733",
-            "intersect":    "#AA3377",
-            "mv_off":       "#4477AA",
-            "mv_on":        "#EE7733",
+            "mv_only": "#EE7733",
+            "intersect": "#AA3377",
+            "mv_off": "#4477AA",
+            "mv_on": "#EE7733",
         }
         bar_colors = [color_map[r[1]] for r in rows]
         bars = ax.bar(labels, values, color=bar_colors, edgecolor="white", linewidth=0.5)
         ax.bar_label(bars, fmt=lambda v: f"{int(v):,}", padding=3, fontsize=8)
         ax.set_ylabel("Surviving points")
-        ax.set_title(f"Point cloud density by model × filtering variant\n"
-                     f"(chess seq-01, {MAX_FRAMES} frames, p{int(PERCENTILE)} threshold)")
+        ax.set_title(
+            f"Point cloud density by model × filtering variant\n"
+            f"(chess seq-01, {MAX_FRAMES} frames, p{int(PERCENTILE)} threshold)"
+        )
         ax.grid(axis="y", alpha=0.3)
         from matplotlib.patches import Patch
+
         legend_elems = [
             Patch(facecolor="#4477AA", label="learned_only / mv_off"),
             Patch(facecolor="#EE7733", label="mv_only / mv_on"),
@@ -460,20 +473,20 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
         # 8. mv_conf distribution histograms
         ################################################################
         fig, axes = plt.subplots(1, 2, figsize=(13, 4))
-        for ax, (label, mv_conf, conf_learned) in zip(axes, [
-            ("VGGT-X",    mv_conf_vggtx, conf_vggtx),
-            ("VGGTOmega", mv_conf_omega,  conf_omega),
-        ]):
-            ax.hist(mv_conf.ravel(), bins=60, color="#EE7733", alpha=0.7,
-                    label="mv_conf (geometric)", density=True)
+        for ax, (label, mv_conf, conf_learned) in zip(
+            axes,
+            [
+                ("VGGT-X", mv_conf_vggtx, conf_vggtx),
+                ("VGGTOmega", mv_conf_omega, conf_omega),
+            ],
+        ):
+            ax.hist(mv_conf.ravel(), bins=60, color="#EE7733", alpha=0.7, label="mv_conf (geometric)", density=True)
             # Normalise learned conf to [0,1] for overlay
             lc = conf_learned.ravel().astype(np.float64)
             lc_norm = (lc - lc.min()) / ((lc.max() - lc.min()) + 1e-9)
-            ax.hist(lc_norm, bins=60, color="#4477AA", alpha=0.5,
-                    label="depth_conf normalised", density=True)
+            ax.hist(lc_norm, bins=60, color="#4477AA", alpha=0.5, label="depth_conf normalised", density=True)
             thresh_mv = float(np.percentile(mv_conf, PERCENTILE))
-            ax.axvline(thresh_mv, color="#EE7733", linestyle="--",
-                       label=f"mv p{int(PERCENTILE)}={thresh_mv:.3f}")
+            ax.axvline(thresh_mv, color="#EE7733", linestyle="--", label=f"mv p{int(PERCENTILE)}={thresh_mv:.3f}")
             ax.set_xlabel("Confidence score")
             ax.set_ylabel("Density")
             ax.set_title(f"{label} — confidence distributions")
@@ -498,18 +511,18 @@ def main(diagnose: bool = False, diagnose_h2: bool = False) -> None:
 
         variants_vggtx = [
             (mask_l_vggtx, f"learned_only\n{n_l_vggtx:,} pts", "#4477AA"),
-            (mask_m_vggtx, f"mv_only\n{n_m_vggtx:,} pts",      "#EE7733"),
-            (mask_i_vggtx, f"intersect\n{n_i_vggtx:,} pts",    "#AA3377"),
+            (mask_m_vggtx, f"mv_only\n{n_m_vggtx:,} pts", "#EE7733"),
+            (mask_i_vggtx, f"intersect\n{n_i_vggtx:,} pts", "#AA3377"),
         ]
 
         fig = plt.figure(figsize=(16, 5))
         for i, (mask, title, color) in enumerate(variants_vggtx, 1):
             pts = _sample(wp_vggtx, mask, SCATTER_N)
             ax = fig.add_subplot(1, 3, i, projection="3d")
-            ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
-                       s=0.4, alpha=0.5, c=pts[:, 2], cmap="viridis")
+            ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], s=0.4, alpha=0.5, c=pts[:, 2], cmap="viridis")
             ax.set_title(f"VGGT-X {title}", fontsize=9)
-            ax.set_xlabel("X", fontsize=7); ax.set_ylabel("Y", fontsize=7)
+            ax.set_xlabel("X", fontsize=7)
+            ax.set_ylabel("Y", fontsize=7)
             ax.set_zlabel("Z", fontsize=7)
             ax.tick_params(labelsize=6)
         plt.suptitle("VGGT-X point clouds: filtering variant comparison", fontsize=11)
@@ -541,11 +554,13 @@ if __name__ == "__main__":
         description="Multiview confidence eval — VGGT-X, VGGTOmega, MapAnything on chess seq-01"
     )
     parser.add_argument(
-        "--diagnose", action="store_true",
+        "--diagnose",
+        action="store_true",
         help="Run MapAnything mv_conf diagnostic (H1 + H3; requires second MapAnything run for H3)",
     )
     parser.add_argument(
-        "--diagnose-h2", action="store_true",
+        "--diagnose-h2",
+        action="store_true",
         help="Also run H2 percentile rerun (--diagnose must also be set; requires third MapAnything run)",
     )
     args = parser.parse_args()

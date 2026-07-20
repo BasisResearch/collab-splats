@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "scripts"))
 from eval import load_eval_config, build_grid  # noqa: E402
 
 

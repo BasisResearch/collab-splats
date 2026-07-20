@@ -1,4 +1,4 @@
-"""Tests for evals/runners/run_vggt_slam.py — real subprocess wrapper.
+"""Tests for evals/scripts/run_vggt_slam.py — real subprocess wrapper.
 
 Covers both modes: the no-LC baseline (--max_loops 0) and the loop-closure run
 (--max_loops >0, which also emits selected_frames.txt + ATE + metrics.json).
@@ -13,8 +13,9 @@ from pathlib import Path
 
 import pytest
 
-RUNNER = Path(__file__).resolve().parents[2] / "evals" / "runners" / "run_vggt_slam.py"
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "runners"))
+RUNNER = Path(__file__).resolve().parents[2] / "evals" / "scripts" / "run_vggt_slam.py"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "scripts"))
 
 
 def test_vggtslam_dir_exists():

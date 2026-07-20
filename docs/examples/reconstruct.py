@@ -8,6 +8,10 @@ Usage:
     # Run specific stages only
     python docs/examples/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
 
+    # Build the localization database (local-feature cache) as part of the run
+    python docs/examples/reconstruct.py --dataset birds_c0043 \\
+        localization.enabled=true --stages preprocess,pointcloud,localize
+
     # Override any config value (dotted key=value)
     python docs/examples/reconstruct.py --dataset birds_c0043 \\
         pointcloud.backend=vggtx \\
@@ -76,8 +80,8 @@ def main() -> None:
         "--stages",
         default=None,
         metavar="STAGE[,STAGE,...]",
-        help="Comma-separated stages to run: preprocess,pointcloud,semantics,mesh. "
-             "Default: all enabled stages in config.",
+        help="Comma-separated stages to run: preprocess,pointcloud,semantics,mesh,localize. "
+        "Default: all enabled stages in config.",
     )
     parser.add_argument(
         "--overwrite",
@@ -107,6 +111,7 @@ def main() -> None:
             config = yaml.safe_load(f)
         if overrides:
             from mergedeep import merge
+
             config = merge({}, config, overrides)
         r = Reconstructor(config)
     else:
@@ -132,9 +137,7 @@ def main() -> None:
     # Parse stages
     stages = [s.strip() for s in args.stages.split(",")] if args.stages else None
 
-    logger.info(
-        "Running pipeline: stages=%s overwrite=%s", stages or "auto", args.overwrite
-    )
+    logger.info("Running pipeline: stages=%s overwrite=%s", stages or "auto", args.overwrite)
     r.run_pipeline(stages=stages, overwrite=args.overwrite)
     logger.info("Pipeline complete. Output: %s", r.backend_dir)
 

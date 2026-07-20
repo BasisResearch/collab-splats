@@ -10,9 +10,7 @@ def _make_submap(k=4, h=224, w=224, d=128, submap_id=0):
         submap_id=submap_id,
         frames=torch.zeros(k, 3, h, w),
         poses=np.tile(np.eye(4), (k, 1, 1)).astype(np.float32),
-        intrinsics=np.tile(
-            np.array([[500, 0, 112], [0, 500, 112], [0, 0, 1]], dtype=np.float32), (k, 1, 1)
-        ),
+        intrinsics=np.tile(np.array([[500, 0, 112], [0, 500, 112], [0, 0, 1]], dtype=np.float32), (k, 1, 1)),
         retrieval_vectors=torch.zeros(k, d),
         image_paths=[Path(f"frame_{i:04d}.jpg") for i in range(k)],
     )
@@ -153,18 +151,21 @@ def test_find_loop_closures_no_match():
 
 def test_loop_match_queue_nms():
     from collab_splats.geometry.loop_closure import LoopMatch
-    from collab_splats.geometry.loop_closure.closure import LoopMatchQueue
+    from collab_splats.geometry.loop_closure.matching import LoopMatchQueue
+
     # frames [10, 12, 50, 53, 100] — 10+12 cluster, 50+53 cluster, 100 alone
     # nms=25: keep best of each cluster by score (lower = better)
     queue = LoopMatchQueue(max_size=10, nms_frame_distance=25)
     for frame_idx, score in [(10, 0.1), (12, 0.2), (50, 0.15), (53, 0.3), (100, 0.05)]:
-        queue.push(LoopMatch(
-            similarity_score=score,
-            query_submap_id=1,
-            detected_submap_id=0,
-            query_frame_idx=0,
-            detected_frame_idx=frame_idx,
-        ))
+        queue.push(
+            LoopMatch(
+                similarity_score=score,
+                query_submap_id=1,
+                detected_submap_id=0,
+                query_frame_idx=0,
+                detected_frame_idx=frame_idx,
+            )
+        )
     matches = queue.get_matches()
     detected_frames = [m.detected_frame_idx for m in matches]
     assert 10 in detected_frames

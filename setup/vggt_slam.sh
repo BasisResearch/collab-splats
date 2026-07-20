@@ -9,7 +9,7 @@
 #   bash setup/vggt_slam.sh
 #
 # After setup, run VGGT-SLAM evals via:
-#   python evals/runners/run_vggt_slam.py \
+#   python evals/scripts/run_vggt_slam.py \
 #       --image_dir /path/to/images \
 #       --output /path/to/out.tum \
 #       --python /opt/venv/vggt_slam/bin/python
@@ -66,7 +66,7 @@ echo "Python binary for --python arg:"
 echo "  $PYTHON"
 echo ""
 echo "Example eval run:"
-echo "  python evals/runners/run_vggt_slam.py \\"
+echo "  python evals/scripts/run_vggt_slam.py \\"
 echo "      --image_dir data/7scenes/chess/seq-01 \\"
 echo "      --output evals/baselines/vggt_slam/chess_seq01/vggt_slam_lc.tum \\"
 echo "      --max_loops 1 --max_frames 200 \\"

@@ -1,17 +1,13 @@
 """Composed-chain loop-edge comparison (Level 2, spec §stage-trace item 3)."""
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as R
 
-# `compare_loop_edges.py` does a plain same-dir import, so the runners dir
-# itself (not `evals/`) must be on sys.path (mirrors test_run_lc_parity.py).
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "runners"))
-
-from compare_loop_edges import compose_slam_chain, edge_divergence
+from collab_splats.geometry.loop_closure.edge_trace import (
+    compose_slam_chain,
+    edge_divergence,
+)
 
 
 def test_compose_slam_chain_matches_direct_relative():

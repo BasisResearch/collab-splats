@@ -1,4 +1,4 @@
-"""Unit tests for evals/download_7scenes.py — no network required."""
+"""Unit tests for evals/data/download_datasets.py (7-Scenes portion) — no network required."""
 
 import sys
 from pathlib import Path
@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure evals/ is importable
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "evals"))
+# Ensure evals/data/ is importable
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "evals" / "data"))
 
-from download_7scenes import SCENES, _scene_already_downloaded, main
+from download_datasets import SCENES, _scene_already_downloaded, main
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ def test_scenes_dict_urls_are_microsoft_cdn():
 def test_main_list_mode(capsys):
     """--list prints scene names and URLs then exits with code 0."""
     with pytest.raises(SystemExit) as exc_info:
-        main(["--list"])
+        main(["7scenes", "--list"])
     assert exc_info.value.code == 0
 
     captured = capsys.readouterr()
@@ -93,7 +93,7 @@ def test_main_list_mode(capsys):
 
 def test_download_scene_skips_if_already_present(tmp_path):
     """download_scene returns immediately if seq dir already has color.png files."""
-    from download_7scenes import download_scene
+    from download_datasets import download_scene
 
     scene = "fire"
     seq = "seq-01"
@@ -103,7 +103,7 @@ def test_download_scene_skips_if_already_present(tmp_path):
     (seq_dir / "frame-000000.color.png").touch()
 
     # Patch REPO_ROOT so data lands in tmp_path
-    with patch("download_7scenes.REPO_ROOT", tmp_path):
+    with patch("download_datasets.REPO_ROOT", tmp_path):
         result = download_scene(scene, seq=seq, force=False)
 
     assert result == seq_dir
@@ -111,7 +111,7 @@ def test_download_scene_skips_if_already_present(tmp_path):
 
 def test_download_scene_raises_on_bad_scene():
     """download_scene raises ValueError for unknown scene names."""
-    from download_7scenes import download_scene
+    from download_datasets import download_scene
 
     with pytest.raises(ValueError):
         download_scene("nonexistent_scene")

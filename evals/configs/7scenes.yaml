@@ -1,0 +1,21 @@
+# 7-Scenes GT-eval grid (supersedes the retired evals/eval_suite.sh).
+# Serial run: one single-cell eval.py subprocess per (scene x backbone x condition).
+# Resume-safe: a cell with an existing metrics.json is skipped.
+name: 7scenes
+
+output_dir: evals/results/7scenes_grid
+
+# Windowed inference (matches eval_suite.sh --submap_size 20).
+submap_size: 20
+max_frames: 500
+
+# `name` is the cell label; `type` is the dataset loader key for --dataset.
+# Paths mirror the retired eval_suite.sh (data/7scenes/<scene>/seq-01).
+datasets:
+  - {name: chess,  type: 7scenes, seq_dir: data/7scenes/chess/seq-01,  keyframe_list: null}
+  - {name: fire,   type: 7scenes, seq_dir: data/7scenes/fire/seq-01,   keyframe_list: null}
+  - {name: office, type: 7scenes, seq_dir: data/7scenes/office/seq-01, keyframe_list: null}
+
+backbones: [vggt_omega, vggtx]
+
+conditions: [baseline, ba, lc, incremental_ba-3]

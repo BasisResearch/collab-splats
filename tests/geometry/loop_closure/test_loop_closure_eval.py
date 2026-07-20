@@ -22,10 +22,14 @@ def pg_with_loop():
     H2 = np.eye(4, dtype=np.float64)
     H3 = np.eye(4, dtype=np.float64)
     # nodes
-    pg.add_node(0, H0); pg.add_node(1, H1); pg.add_node(2, H2); pg.add_node(3, H3)
+    pg.add_node(0, H0)
+    pg.add_node(1, H1)
+    pg.add_node(2, H2)
+    pg.add_node(3, H3)
     pg.add_prior(0, H0)
     # sequential edges (3 total)
-    pg.add_sequential_edge(0, 1, H1); pg.add_sequential_edge(1, 2, H2)
+    pg.add_sequential_edge(0, 1, H1)
+    pg.add_sequential_edge(1, 2, H2)
     pg.add_sequential_edge(2, 3, H3)
     # loop edge (1 total) — loop-chain edges share the sequential-edge API/noise
     # (add_loop_edge was removed with the scale-reconciled 3-edge chain)
@@ -90,9 +94,7 @@ def test_per_edge_error_sum_matches_classified_total(pg_with_loop):
     errors = _per_edge_error(pg_with_loop._graph, pg_with_loop._initial, groups)
     summed = sum(errors.values())
     expected = sum(
-        pg_with_loop._graph.at(i).error(pg_with_loop._initial)
-        for indices in groups.values()
-        for i in indices
+        pg_with_loop._graph.at(i).error(pg_with_loop._initial) for indices in groups.values() for i in indices
     )
     assert abs(summed - expected) < 1e-9
 
@@ -118,9 +120,7 @@ def test_capture_loss_curve_decreases_or_holds(pg_with_loop):
 def test_capture_loss_does_not_mutate_input_graph(pg_with_loop):
     """Capture must not mutate pg._initial or pg._graph."""
     keys_before = set(pg_with_loop._initial.keys())
-    poses_before = {
-        k: pg_with_loop._initial.atSL4(k).matrix().copy() for k in keys_before
-    }
+    poses_before = {k: pg_with_loop._initial.atSL4(k).matrix().copy() for k in keys_before}
     graph_size_before = pg_with_loop._graph.size()
 
     capture_pose_graph_loss(pg_with_loop)
@@ -187,10 +187,12 @@ def test_rpe_returns_error_dict():
 
 def test_capture_pose_graph_loss_importable_from_package():
     from collab_splats.geometry.loop_closure import capture_pose_graph_loss as cpl
+
     assert callable(cpl)
 
 
 # ── merge_submap_outputs dedup index ──────────────────────────────────────────
+
 
 def _make_submap_with_raw(submap_id, frame_start, k, h=4, w=4):
     """Build a minimal Submap with raw_outputs carrying intrinsics/depth/depth_conf."""
@@ -217,7 +219,7 @@ def _make_submap_with_raw(submap_id, frame_start, k, h=4, w=4):
 
 def test_merge_submap_outputs_dedup_rows_length_and_no_missing():
     """_dedup_rows must have length N (total unique frames) with no -1 entries."""
-    from collab_splats.geometry.loop_closure.closure import merge_submap_outputs
+    from collab_splats.geometry.loop_closure.merge import merge_submap_outputs
 
     # submap_size=5, overlap=2, step=3 → submaps at [0..4], [3..7], [6..9]
     # N=10, M=5+5+4=14
@@ -240,7 +242,7 @@ def test_merge_submap_outputs_dedup_rows_length_and_no_missing():
 
 def test_merge_submap_outputs_dedup_rows_first_occurrence():
     """For overlap frames, _dedup_rows should point to the FIRST submap occurrence."""
-    from collab_splats.geometry.loop_closure.closure import merge_submap_outputs
+    from collab_splats.geometry.loop_closure.merge import merge_submap_outputs
 
     # submap 0 covers frames 0-2, submap 1 covers frames 1-3 (overlap at 1,2)
     # M-expanded rows: [0,1,2] from s0 (rows 0,1,2) then [1,2,3] from s1 (rows 3,4,5)
@@ -275,8 +277,8 @@ def test_run_dedup_aligns_intrinsics_to_unique_frames():
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
     from collab_splats.pointcloud.feedforward import FeedforwardResult
 
-    N = 4   # unique global frames (extrinsics rows)
-    M = 6   # overlap-expanded merged rows (e.g. 2 submaps of 4 with overlap 2)
+    N = 4  # unique global frames (extrinsics rows)
+    M = 6  # overlap-expanded merged rows (e.g. 2 submaps of 4 with overlap 2)
     H, W = 8, 8
 
     # FeedforwardResult where extrinsics=N but intrinsics/images/etc are M-rows.

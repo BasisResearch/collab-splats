@@ -13,20 +13,21 @@ The retrieved mode is the authoritative comparison against VGGT-SPARK's 1.025 re
 since that score was measured on DINO-SALAD retrieved candidates, not random pairs.
 
 Usage (tmux — GPU required):
-    python evals/eval_similarity_calibration.py \\
+    python evals/scripts/eval_similarity_calibration.py \\
         --scene_dir evals/data/7scenes/chess/chess/seq-01 \\
         --n_pairs 20 \\
         --mode retrieved \\
         --models vggtx mapanything omega
 
     # Layer sweep for MapAnything:
-    python evals/eval_similarity_calibration.py \\
+    python evals/scripts/eval_similarity_calibration.py \\
         --scene_dir evals/data/7scenes/chess/chess/seq-01 \\
         --mode retrieved --models mapanything \\
         --layer_index 5
 
 Output: summary table + evals/results/similarity_calibration.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,12 +48,13 @@ log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 # Repo root on path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 ########################################
 ####### Aggregation helpers ############
 ########################################
+
 
 def percentile_90(ratio_np: np.ndarray) -> float:
     """Old aggregation: 90th percentile (pre-fix)."""
@@ -69,6 +71,7 @@ def mean_top_quarter(ratio_np: np.ndarray) -> float:
 ########################################
 ####### Frame loading ##################
 ########################################
+
 
 def load_7scenes_images(scene_dir: Path, n: int = 200) -> list[Path]:
     frames = sorted(scene_dir.glob("frame-*.color.png"))
@@ -101,19 +104,23 @@ def sample_pairs(
 ####### DINO-SALAD retrieval ###########
 ########################################
 
+
 def _salad_input_transform(image_size: int = 224) -> T.Compose:
     MEAN = [0.485, 0.456, 0.406]
-    STD  = [0.229, 0.224, 0.225]
-    return T.Compose([
-        T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR),
-        T.ToTensor(),
-        T.Normalize(mean=MEAN, std=STD),
-    ])
+    STD = [0.229, 0.224, 0.225]
+    return T.Compose(
+        [
+            T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR),
+            T.ToTensor(),
+            T.Normalize(mean=MEAN, std=STD),
+        ]
+    )
 
 
 def _load_salad_model(device: str):
     """Load DINO-SALAD model (same ckpt path as VGGT-SLAM)."""
     from salad.eval import load_model
+
     ckpt_pth = os.path.join(torch.hub.get_dir(), "checkpoints/dino_salad.ckpt")
     model = load_model(ckpt_pth)
     model.eval()
@@ -176,6 +183,7 @@ def retrieve_pairs(
 ####### Raw ratio computation ##########
 ########################################
 
+
 def _compute_ratio_np(k: torch.Tensor, q: torch.Tensor, token_offset: int = 5) -> np.ndarray:
     """Mirrors cross_frame_attention_ratio internals up to final aggregation."""
     tokens_per_img = q.shape[2] // 2
@@ -198,6 +206,7 @@ def _compute_ratio_np(k: torch.Tensor, q: torch.Tensor, token_offset: int = 5) -
 ####### Per-model eval #################
 ########################################
 
+
 def eval_model(
     creator_cls,
     creator_kwargs: dict,
@@ -214,19 +223,16 @@ def eval_model(
 
     # Apply layer index override if supplied (for sweep experiments).
     if layer_index_override is not None:
-        log.info("  Overriding _lc_layer_index: %d → %d",
-                 getattr(creator, "_lc_layer_index", -1), layer_index_override)
+        log.info("  Overriding _lc_layer_index: %d → %d", getattr(creator, "_lc_layer_index", -1), layer_index_override)
         creator._lc_layer_index = layer_index_override
 
     # Log actual block count for the model so callers know valid layer range.
     if hasattr(creator.model, "aggregator") and hasattr(creator.model.aggregator, "global_blocks"):
         log.info("  VGGT-X global_blocks depth: %d", len(creator.model.aggregator.global_blocks))
     if hasattr(creator.model, "aggregator") and hasattr(creator.model.aggregator, "inter_frame_blocks"):
-        log.info("  VGGT-Omega inter_frame_blocks depth: %d",
-                 len(creator.model.aggregator.inter_frame_blocks))
+        log.info("  VGGT-Omega inter_frame_blocks depth: %d", len(creator.model.aggregator.inter_frame_blocks))
     if hasattr(creator.model, "info_sharing") and hasattr(creator.model.info_sharing, "self_attention_blocks"):
-        log.info("  MapAnything self_attention_blocks depth: %d",
-                 len(creator.model.info_sharing.self_attention_blocks))
+        log.info("  MapAnything self_attention_blocks depth: %d", len(creator.model.info_sharing.self_attention_blocks))
 
     scores_old: list[float] = []
     scores_new: list[float] = []
@@ -248,10 +254,8 @@ def eval_model(
                         images = torch.cat([v["img"] for v in views], dim=0).to(device)
 
                     layer_idx = getattr(creator, "_lc_layer_index", -1)
-                    tok_off   = getattr(creator, "_lc_token_offset", 5)
-                    features = creator.extract_intermediate_features(
-                        images, layer_index=layer_idx
-                    )
+                    tok_off = getattr(creator, "_lc_token_offset", 5)
+                    features = creator.extract_intermediate_features(images, layer_index=layer_idx)
 
             k, q = features["k"], features["q"]
             ratio_np = _compute_ratio_np(k, q, token_offset=tok_off)
@@ -274,14 +278,14 @@ def eval_model(
         "n_valid": len(valid_old),
         "percentile90": {
             "mean": float(np.mean(valid_old)) if valid_old else float("nan"),
-            "min":  float(np.min(valid_old))  if valid_old else float("nan"),
-            "max":  float(np.max(valid_old))  if valid_old else float("nan"),
+            "min": float(np.min(valid_old)) if valid_old else float("nan"),
+            "max": float(np.max(valid_old)) if valid_old else float("nan"),
             "scores": scores_old,
         },
         "mean_top_quarter": {
             "mean": float(np.mean(valid_new)) if valid_new else float("nan"),
-            "min":  float(np.min(valid_new))  if valid_new else float("nan"),
-            "max":  float(np.max(valid_new))  if valid_new else float("nan"),
+            "min": float(np.min(valid_new)) if valid_new else float("nan"),
+            "max": float(np.max(valid_new)) if valid_new else float("nan"),
             "scores": scores_new,
         },
     }
@@ -291,17 +295,19 @@ def eval_model(
 ####### Main ###########################
 ########################################
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Similarity calibration across FF backends")
-    parser.add_argument("--scene_dir", type=Path, required=True,
-                        help="7-Scenes sequence dir (frame-*.color.png)")
+    parser.add_argument("--scene_dir", type=Path, required=True, help="7-Scenes sequence dir (frame-*.color.png)")
     parser.add_argument("--n_pairs", type=int, default=20)
-    parser.add_argument("--min_gap", type=int, default=5,
-                        help="Min frame gap when building pairs (default 5)")
-    parser.add_argument("--max_gap", type=int, default=40,
-                        help="Max frame gap for random pairs (default 40; ignored in retrieved mode)")
+    parser.add_argument("--min_gap", type=int, default=5, help="Min frame gap when building pairs (default 5)")
     parser.add_argument(
-        "--mode", choices=["random", "retrieved"], default="random",
+        "--max_gap", type=int, default=40, help="Max frame gap for random pairs (default 40; ignored in retrieved mode)"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["random", "retrieved"],
+        default="random",
         help=(
             "Pair selection: 'random' = temporal pairs with gap in [min_gap, max_gap] (diagnostic); "
             "'retrieved' = DINO-SALAD nearest-neighbour pairs (matches VGGT-SLAM production, "
@@ -309,20 +315,20 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--layer_index", type=int, default=None,
+        "--layer_index",
+        type=int,
+        default=None,
         help="Override _lc_layer_index on creator instances (for layer sweep experiments). "
-             "If omitted, each creator uses its class-level default.",
+        "If omitted, each creator uses its class-level default.",
     )
-    parser.add_argument("--models", nargs="+",
-                        choices=["vggtx", "mapanything", "omega"],
-                        default=["vggtx", "mapanything"])
-    parser.add_argument("--out", type=Path,
-                        default=Path("evals/results/similarity_calibration.json"))
+    parser.add_argument(
+        "--models", nargs="+", choices=["vggtx", "mapanything", "omega"], default=["vggtx", "mapanything"]
+    )
+    parser.add_argument("--out", type=Path, default=Path("evals/results/similarity_calibration.json"))
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    log.info("Device: %s | models: %s | n_pairs: %d | mode: %s",
-             device, args.models, args.n_pairs, args.mode)
+    log.info("Device: %s | models: %s | n_pairs: %d | mode: %s", device, args.models, args.n_pairs, args.mode)
 
     frames = load_7scenes_images(args.scene_dir)
 
@@ -337,45 +343,53 @@ def main() -> None:
 
     # VGGT-SPARK reference scores (VGGT-1B, mean_top_quarter, from parity harness).
     # These were measured on DINO-SALAD retrieved pairs — use retrieved mode to compare.
-    results.append({
-        "model": "vggt_spark_reference",
-        "note": "VGGT-1B via VGGT-SPARK, get_similarity = mean_top_quarter, chess_seq01, DINO-SALAD retrieved pairs",
-        "mean_top_quarter": {
-            "scores": [1.0321, 1.0432, 1.0359, 1.0278, 1.0205,
-                       1.0016, 1.0222, 1.0223, 1.0147, 1.0181, 1.0246],
-            "mean": 1.025,
-            "min":  1.0016,
-            "max":  1.0432,
-        },
-    })
+    results.append(
+        {
+            "model": "vggt_spark_reference",
+            "note": "VGGT-1B via VGGT-SPARK, get_similarity = mean_top_quarter, chess_seq01, DINO-SALAD retrieved pairs",
+            "mean_top_quarter": {
+                "scores": [1.0321, 1.0432, 1.0359, 1.0278, 1.0205, 1.0016, 1.0222, 1.0223, 1.0147, 1.0181, 1.0246],
+                "mean": 1.025,
+                "min": 1.0016,
+                "max": 1.0432,
+            },
+        }
+    )
 
     if "vggtx" in args.models:
         try:
             from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
-            results.append(eval_model(VGGTXCreator, {}, pairs, device, "vggtx",
-                                      layer_index_override=args.layer_index))
+
+            results.append(eval_model(VGGTXCreator, {}, pairs, device, "vggtx", layer_index_override=args.layer_index))
         except Exception as exc:
             log.error("vggtx failed: %s", exc)
 
     if "mapanything" in args.models:
         try:
             from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
-            results.append(eval_model(MapAnythingCreator, {}, pairs, device, "mapanything",
-                                      layer_index_override=args.layer_index))
+
+            results.append(
+                eval_model(MapAnythingCreator, {}, pairs, device, "mapanything", layer_index_override=args.layer_index)
+            )
         except Exception as exc:
             log.error("mapanything failed: %s", exc)
 
     if "omega" in args.models:
         try:
             from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
-            results.append(eval_model(VGGTOmegaCreator, {}, pairs, device, "vggt_omega",
-                                      layer_index_override=args.layer_index))
+
+            results.append(
+                eval_model(VGGTOmegaCreator, {}, pairs, device, "vggt_omega", layer_index_override=args.layer_index)
+            )
         except Exception as exc:
             log.error("vggt_omega failed: %s", exc)
 
     # Summary table
-    mode_note = "(retrieved pairs — compare vs VGGT-SPARK 1.025)" if args.mode == "retrieved" \
-                else "(random pairs — diagnostic floor only)"
+    mode_note = (
+        "(retrieved pairs — compare vs VGGT-SPARK 1.025)"
+        if args.mode == "retrieved"
+        else "(random pairs — diagnostic floor only)"
+    )
     print("\n" + "=" * 72)
     print(f"Mode: {args.mode} {mode_note}")
     if args.layer_index is not None:

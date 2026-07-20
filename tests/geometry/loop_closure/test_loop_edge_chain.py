@@ -10,6 +10,7 @@ query/detected images, and prove:
 - LC nodes are graph-only (no output-frame collision);
 - missing LC world points → scale-1.0 fallback with one warning per loop.
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,13 +20,13 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.geometry.loop_closure.closure import (
+from collab_splats.geometry.loop_closure.graph import (
     _lc_anchor_scale,
     _loop_chain_relatives,
     run_pose_graph_optimization,
 )
+from collab_splats.geometry.loop_closure.edge_trace import compose_slam_chain
 from collab_splats.geometry.loop_closure.submap import Submap
-from evals.runners.compare_loop_edges import compose_slam_chain
 
 # Image/grid geometry: full-res H*W LC grids vs subsample=8 strided regular grids
 H_IMG, W_IMG, STRIDE = 80, 80, 8
@@ -70,8 +71,7 @@ def _full_grid() -> np.ndarray:
     """(H*W, 3) camera-local synthetic depth grid, row-major over (v, u)."""
     vv, uu = np.meshgrid(np.arange(H_IMG), np.arange(W_IMG), indexing="ij")
     return np.stack(
-        [(uu.ravel() - W_IMG / 2) / 20.0, (vv.ravel() - H_IMG / 2) / 20.0,
-         2.0 + 0.01 * (uu.ravel() + vv.ravel())],
+        [(uu.ravel() - W_IMG / 2) / 20.0, (vv.ravel() - H_IMG / 2) / 20.0, 2.0 + 0.01 * (uu.ravel() + vv.ravel())],
         axis=1,
     )
 
@@ -142,14 +142,15 @@ def _make_lc_submap(
     P1_metric = gt[d_global] @ np.linalg.inv(gt[q_global])
     P1 = Sk @ P1_metric @ np.linalg.inv(Sk)  # scale translation by `scale`
     grid = _full_grid()
-    wp0 = scale * grid                                   # P0 = I: world == camera-local
-    wp1 = _apply(np.linalg.inv(P1), scale * grid)        # LC-local world frame
+    wp0 = scale * grid  # P0 = I: world == camera-local
+    wp1 = _apply(np.linalg.inv(P1), scale * grid)  # LC-local world frame
     if garbage_offgrid:
         # Corrupt every pixel NOT on the stride grid — pixel-aligned resampling
         # must ignore them; naive flatten-pairing would be poisoned.
         off = np.ones(H_IMG * W_IMG, dtype=bool)
         off[_strided_flat_idx()] = False
-        wp0 = wp0.copy(); wp1 = wp1.copy()
+        wp0 = wp0.copy()
+        wp1 = wp1.copy()
         wp0[off] = 1e6
         wp1[off] = -1e6
     if poison_inf:
@@ -178,14 +179,18 @@ def _centre(w2c: np.ndarray) -> np.ndarray:
 
 def _run(submaps, lc_submaps, total_frames=7):
     return run_pose_graph_optimization(
-        submaps, lc_submaps, total_frames=total_frames, overlap_frames=1,
-        manifold="sl4", conf_threshold=25.0, scale_method="rotation_only",
+        submaps,
+        lc_submaps,
+        total_frames=total_frames,
+        overlap_frames=1,
+        conf_threshold=25.0,
+        scale_method="rotation_only",
     )
 
 
 def _run_recording_graph_errors(monkeypatch, submaps, lc_submaps):
     """Run PGO while recording factor-graph error before each optimize() call."""
-    from collab_splats.geometry.loop_closure.closure import _SL4PoseGraph
+    from collab_splats.geometry.loop_closure.graph import PoseGraph as _SL4PoseGraph
 
     pre_errors: list[float] = []
     orig = _SL4PoseGraph.optimize
@@ -352,7 +357,7 @@ def test_lc_nodes_excluded_from_output(gt, consistent_submaps):
 def test_missing_lc_points_falls_back_scale1_with_one_warning(gt, consistent_submaps, caplog):
     """poses-only LC (vggtx/omega): direction fix still applies; warn once per loop."""
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, no_points=True)
-    with caplog.at_level(logging.WARNING, logger="collab_splats.geometry.loop_closure.closure"):
+    with caplog.at_level(logging.WARNING, logger="collab_splats.geometry.loop_closure.graph"):
         out = _run(consistent_submaps, [lc])
     np.testing.assert_allclose(out, gt.astype(np.float32), atol=1e-3)
     warnings = [r for r in caplog.records if "scale" in r.getMessage().lower()]

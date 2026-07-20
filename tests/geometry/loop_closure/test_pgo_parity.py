@@ -7,23 +7,24 @@
 
 2. submap_overlap default is 1 (VGGT-SLAM default, not our old 4).
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.closure import (
-    LoopClosureConfig,
+from collab_splats.geometry.loop_closure.graph import (
+    estimate_scale_pairwise,
     run_pose_graph_optimization,
 )
-from collab_splats.geometry.loop_closure.graph import estimate_scale_pairwise
+from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
 from collab_splats.geometry.loop_closure.submap import Submap
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """Build 4×4 world-to-camera matrix from R (3×3) and t (3,)."""
@@ -55,6 +56,7 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
 # ---------------------------------------------------------------------------
 # Test 1: Scale estimation with rotation between submaps
 # ---------------------------------------------------------------------------
+
 
 def test_scale_estimation_survives_intersubmap_rotation():
     """Scale estimation with full w2c poses vs intrinsics-only (K=I→T=I).
@@ -92,7 +94,7 @@ def test_scale_estimation_survives_intersubmap_rotation():
     #   C_cam_curr = true_scale * R_w @ (C_cam_prev - scene_offset)
     #              = true_scale * R_w @ [-D, 0, 0]
     C_cam_curr = true_scale * (R_w @ np.array([-D, 0.0, 0.0]))
-    R_cam_curr = R_w.T          # compensate for world rotation
+    R_cam_curr = R_w.T  # compensate for world rotation
     t_cam_curr = -R_cam_curr @ C_cam_curr
     P_curr_ov = np.eye(4, dtype=np.float64)
     P_curr_ov[:3, :3] = R_cam_curr
@@ -110,30 +112,26 @@ def test_scale_estimation_survives_intersubmap_rotation():
 
     # New code: scale = 1/true_scale (the H_scale correction for a 3× curr world)
     expected = 1.0 / true_scale
-    assert abs(scale_new - expected) / expected < 0.05, (
-        f"New scale {scale_new:.4f} far from expected {expected:.4f}"
-    )
+    assert abs(scale_new - expected) / expected < 0.05, f"New scale {scale_new:.4f} far from expected {expected:.4f}"
     # Old code: X_curr is near origin (magnitude ~0.3) but X_prev is far (magnitude ~10)
     # → scale_old >> expected (regression guard)
-    assert scale_old > 5.0, (
-        f"Old code should give a large wrong scale, got {scale_old:.3f}"
-    )
+    assert scale_old > 5.0, f"Old code should give a large wrong scale, got {scale_old:.3f}"
 
 
 # ---------------------------------------------------------------------------
 # Test 2: submap_overlap default is 1
 # ---------------------------------------------------------------------------
 
+
 def test_loop_closure_config_default_overlap_is_1():
     cfg = LoopClosureConfig()
-    assert cfg.submap_overlap == 1, (
-        f"Expected default submap_overlap=1 (VGGT-SLAM parity), got {cfg.submap_overlap}"
-    )
+    assert cfg.submap_overlap == 1, f"Expected default submap_overlap=1 (VGGT-SLAM parity), got {cfg.submap_overlap}"
 
 
 # ---------------------------------------------------------------------------
 # Test 3: PGO with overlap=1 builds correct edge topology
 # ---------------------------------------------------------------------------
+
 
 def test_pgo_overlap_1_connects_submaps():
     """With overlap=1, PGO should produce N total unique frames (no duplication)
@@ -147,21 +145,14 @@ def test_pgo_overlap_1_connects_submaps():
     submaps = []
     global_t = 0.0
     for si in range(n_submaps):
-        poses = np.stack([
-            _make_w2c(np.eye(3), np.array([global_t + i * 0.1, 0.0, 0.0]))
-            for i in range(k)
-        ])
+        poses = np.stack([_make_w2c(np.eye(3), np.array([global_t + i * 0.1, 0.0, 0.0])) for i in range(k)])
         wp = rng.standard_normal((k, 5, 5, 3)).astype(np.float64) * 0.1
         submaps.append(_make_submap(poses.astype(np.float32), wp, submap_id=si))
         global_t += (k - 1) * 0.1  # advance by k-1 (1-frame overlap)
 
     total_frames = k + (k - 1) * (n_submaps - 1)  # 4 + 3 + 3 = 10 for overlap=1
-    result = run_pose_graph_optimization(
-        submaps, lc_submaps=[], total_frames=total_frames, overlap_frames=1
-    )
-    assert result.shape == (total_frames, 4, 4), (
-        f"Expected ({total_frames}, 4, 4), got {result.shape}"
-    )
+    result = run_pose_graph_optimization(submaps, lc_submaps=[], total_frames=total_frames, overlap_frames=1)
+    assert result.shape == (total_frames, 4, 4), f"Expected ({total_frames}, 4, 4), got {result.shape}"
     # First frame should be near identity (pinned by prior)
     assert np.allclose(result[0], np.eye(4), atol=0.1), "First frame should be near identity"
 
@@ -169,6 +160,7 @@ def test_pgo_overlap_1_connects_submaps():
 # ---------------------------------------------------------------------------
 # Test 4: Confidence masking reduces scale noise
 # ---------------------------------------------------------------------------
+
 
 def test_confidence_masking_reduces_scale_noise():
     """Confidence filtering excludes noisy low-conf points from scale estimation.
@@ -184,26 +176,26 @@ def test_confidence_masking_reduces_scale_noise():
     """
     rng = np.random.default_rng(42)
     world_scale = 2.0
-    expected_scale = 1.0 / world_scale   # 0.5
+    expected_scale = 1.0 / world_scale  # 0.5
 
     N_good = 20
     N_noisy = 80  # majority — enough to shift unmasked median far from truth
 
     # Good points: prev far from origin, curr = world_scale × prev → ratio = 0.5
-    X_prev_good = rng.standard_normal((N_good, 3)) + np.array([10., 0., 0.])
+    X_prev_good = rng.standard_normal((N_good, 3)) + np.array([10.0, 0.0, 0.0])
     X_curr_in_prev_good = world_scale * X_prev_good  # ratio ||prev||/||curr|| = 0.5
 
     # Noisy points: large curr norms, small prev norms → ratio ≈ 50 (far from 0.5)
-    X_prev_noisy = rng.standard_normal((N_noisy, 3)) * 0.01 + np.array([0.1, 0., 0.])
-    X_curr_in_prev_noisy = rng.standard_normal((N_noisy, 3)) * 5.0 + np.array([10., 0., 0.])
+    X_prev_noisy = rng.standard_normal((N_noisy, 3)) * 0.01 + np.array([0.1, 0.0, 0.0])
+    X_curr_in_prev_noisy = rng.standard_normal((N_noisy, 3)) * 5.0 + np.array([10.0, 0.0, 0.0])
 
     X_prev = np.vstack([X_prev_good, X_prev_noisy])
     X_curr_in_prev = np.vstack([X_curr_in_prev_good, X_curr_in_prev_noisy])
 
     # Confidence: good=50 (above threshold 25), noisy=5 (below threshold)
     conf_threshold = 25.0
-    conf_prev = np.array([50.] * N_good + [5.] * N_noisy, dtype=np.float32)
-    conf_curr = np.array([50.] * N_good + [5.] * N_noisy, dtype=np.float32)
+    conf_prev = np.array([50.0] * N_good + [5.0] * N_noisy, dtype=np.float32)
+    conf_curr = np.array([50.0] * N_good + [5.0] * N_noisy, dtype=np.float32)
 
     # Without masking: 80 noisy points dominate the median, pulling it away from 0.5
     scale_unmasked = estimate_scale_pairwise(X_curr_in_prev, X_prev)
@@ -216,10 +208,7 @@ def test_confidence_masking_reduces_scale_noise():
     err_masked = abs(scale_masked - expected_scale) / expected_scale
     err_unmasked = abs(scale_unmasked - expected_scale) / expected_scale
 
-    assert err_masked < 0.05, (
-        f"Masked scale {scale_masked:.3f} far from expected {expected_scale:.3f}"
-    )
+    assert err_masked < 0.05, f"Masked scale {scale_masked:.3f} far from expected {expected_scale:.3f}"
     assert err_unmasked > err_masked, (
-        f"Masking should improve estimate: masked_err={err_masked:.3f}, "
-        f"unmasked_err={err_unmasked:.3f}"
+        f"Masking should improve estimate: masked_err={err_masked:.3f}, " f"unmasked_err={err_unmasked:.3f}"
     )

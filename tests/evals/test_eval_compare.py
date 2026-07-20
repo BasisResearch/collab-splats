@@ -1,8 +1,9 @@
-"""Tests for evals/eval_compare.py — phase-2 unified comparison runner.
+"""Tests for evals/scripts/eval_compare.py — phase-2 unified comparison runner.
 
 Seeds fixtures via `evals.trajectory_io.write_tum`, runs `eval_compare.main`,
 and inspects the resulting `metrics.json` plus per-method alignment choices.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,6 +16,7 @@ import pytest
 from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "scripts"))
 
 pytest.importorskip("evo")
 
@@ -113,10 +115,14 @@ def test_compare_align_override_cli(tmp_path):
     pred = _scale_w2c_camera_positions(gt, s=2.0)
     results_dir = _seed_dir(tmp_path, gt, {"ours_baseline": pred})
 
-    _run_main([
-        "--results-dir", str(results_dir),
-        "--align-overrides", "ours_baseline=sim3",
-    ])
+    _run_main(
+        [
+            "--results-dir",
+            str(results_dir),
+            "--align-overrides",
+            "ours_baseline=sim3",
+        ]
+    )
     payload = json.loads((results_dir / "metrics.json").read_text())
     body = payload["methods"]["ours_baseline"]
     assert body["align"] == "sim3", "override should switch alignment to sim3"
@@ -134,8 +140,9 @@ def test_compare_unknown_method_warns_defaults_to_sim3(tmp_path, caplog):
 
     payload = json.loads((results_dir / "metrics.json").read_text())
     assert payload["methods"]["random_method"]["align"] == "sim3"
-    assert any("random_method" in rec.message for rec in caplog.records), \
-        f"expected warning mentioning random_method; got: {[r.message for r in caplog.records]}"
+    assert any(
+        "random_method" in rec.message for rec in caplog.records
+    ), f"expected warning mentioning random_method; got: {[r.message for r in caplog.records]}"
 
 
 def test_compare_raises_on_unexpected_file_type(tmp_path):
@@ -157,3 +164,55 @@ def test_compare_missing_gt_raises(tmp_path):
 
     with pytest.raises((FileNotFoundError, ValueError), match="gt"):
         _run_main(["--results-dir", str(results_dir)])
+
+
+# --- public helper names + grid aggregation ---------------------------------
+
+
+def test_public_scan_and_format_names(tmp_path):
+    """scan_results_dir / format_markdown are the public (un-prefixed) names."""
+    from eval_compare import scan_results_dir, format_markdown
+
+    gt = _random_w2c(5, seed=8)
+    results_dir = _seed_dir(tmp_path, gt, {"ours_baseline": gt.copy()})
+    methods, pending = scan_results_dir(results_dir, results_dir / "gt.tum")
+    assert "ours_baseline" in methods
+    md = format_markdown({"ours_baseline": {"status": "pending"}})
+    assert "ours_baseline" in md
+
+
+def _seed_cell(root: Path, cell: str, cond: str, ate_rmse: float) -> None:
+    cell_dir = root / cell
+    cell_dir.mkdir(parents=True)
+    (cell_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "_config": {"backbone": "vggt_omega", "dataset": "7scenes"},
+                cond: {
+                    "ate": {"rmse": ate_rmse},
+                    "rpe": {"trans_rmse": 0.01, "rot_rmse_deg": 0.5},
+                    "auc": {"auc_30": 80.0},
+                    "time_s": 1.0,
+                },
+            }
+        )
+    )
+
+
+def test_collect_grid_metrics_and_format(tmp_path):
+    """Two <cell>/metrics.json -> 2 rows; markdown renders 2 data lines."""
+    from eval_compare import collect_grid_metrics, format_markdown_rows
+
+    _seed_cell(tmp_path, "chess__vggt_omega__baseline", "baseline", 0.10)
+    _seed_cell(tmp_path, "chess__vggt_omega__lc", "lc", 0.05)
+
+    rows = collect_grid_metrics(tmp_path)
+    assert len(rows) == 2
+    assert {r["_cell"] for r in rows} == {
+        "chess__vggt_omega__baseline",
+        "chess__vggt_omega__lc",
+    }
+
+    md = format_markdown_rows(rows)
+    data_lines = [ln for ln in md.splitlines() if ln.startswith("|") and "---" not in ln and "ATE RMSE" not in ln]
+    assert len(data_lines) == 2

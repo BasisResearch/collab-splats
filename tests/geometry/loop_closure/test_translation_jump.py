@@ -1,11 +1,12 @@
 """Tests for translation-jump gate (item 15)."""
+
 import numpy as np
 import pytest
 import torch
 from pathlib import Path
 
 from collab_splats.geometry.loop_closure import Submap
-from collab_splats.geometry.loop_closure.closure import translation_jump_check
+from collab_splats.geometry.loop_closure.matching import translation_jump_check
 
 
 def _linear_submap(submap_id: int, k: int, dx: float, x_offset: float = 0.0) -> Submap:

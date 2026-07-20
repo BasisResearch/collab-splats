@@ -2,7 +2,7 @@
 
 Provides instrumentation for the LC pose graph (per-iteration loss capture,
 per-edge-type residual breakdown) plus ground-truth-based trajectory metrics
-(ATE, RPE, AUC) used by evals/eval_gt.py and exercised in tests/evals/ and
+(ATE, RPE, AUC) used by evals/scripts/eval.py and exercised in tests/evals/ and
 tests/geometry/loop_closure/.
 """
 
@@ -11,8 +11,7 @@ from __future__ import annotations
 import gtsam
 import numpy as np
 
-from .closure import umeyama_se3, umeyama_sim3
-from .graph import PoseGraph
+from .graph import PoseGraph, umeyama_se3, umeyama_sim3
 
 
 def _classify_edges(graph: gtsam.NonlinearFactorGraph) -> dict[str, list[int]]:

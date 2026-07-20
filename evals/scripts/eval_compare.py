@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 """Phase-2 unified comparison runner for the GT eval harness.
 
-Phase-1 runners (``eval_gt.py`` for our methods, ``run_vggt_long.py`` /
+Phase-1 runners (``eval.py`` for our methods, ``run_vggt_long.py`` /
 ``run_vggt_slam.py`` for external baselines) drop a per-method TUM trajectory
 into ``evals/results/<dataset_seq>/`` next to a ``gt.tum`` reference. This
 phase-2 runner ingests that directory and emits a single ``metrics.json``
 holding ATE + RPE for every method, plus a Markdown summary on stdout.
 
 Usage:
-    python evals/eval_compare.py --results-dir evals/results/chess_seq01
+    python evals/scripts/eval_compare.py --results-dir evals/results/chess_seq01
 
 Default alignment per method (override via ``--align-overrides``):
 
@@ -26,6 +26,7 @@ A method that is queued but not yet computed appears as a sentinel
 metric is run. Any non-``.tum`` non-``.pending`` file in the directory aborts
 the run — the directory is expected to be clean.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,7 +35,7 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from metrics import compute_ate, compute_rpe, compute_auc
 
 logger = logging.getLogger(__name__)
@@ -43,16 +44,16 @@ _DEFAULT_ALIGN: dict[str, str] = {
     # All monocular feedforward methods use sim3 — matches VGGT-SLAM's evo_ape -as protocol.
     # Even baseline/BA have scale ambiguity; SE(3) alignment would be unfair.
     "omega_baseline": "sim3",
-    "omega_ba":       "sim3",
-    "omega_lc":       "sim3",
+    "omega_ba": "sim3",
+    "omega_lc": "sim3",
     "vggtx_baseline": "sim3",
-    "vggtx_lc":       "sim3",
-    "vggt_slam":      "sim3",
-    "vggt_long":      "sim3",
+    "vggtx_lc": "sim3",
+    "vggt_slam": "sim3",
+    "vggt_long": "sim3",
     # legacy names (backward compat)
-    "ours_baseline":  "sim3",
-    "ours_ba":        "sim3",
-    "ours_lc":        "sim3",
+    "ours_baseline": "sim3",
+    "ours_ba": "sim3",
+    "ours_lc": "sim3",
 }
 _FALLBACK_ALIGN = "sim3"
 
@@ -81,12 +82,14 @@ def _resolve_align(method: str, overrides: dict[str, str]) -> str:
     logger.warning(
         "Unknown method %r — defaulting to align=%s (mono assumption). "
         "Pass --align-overrides %s=<se3|sim3|none> to silence.",
-        method, _FALLBACK_ALIGN, method,
+        method,
+        _FALLBACK_ALIGN,
+        method,
     )
     return _FALLBACK_ALIGN
 
 
-def _scan_results_dir(results_dir: Path, gt_path: Path) -> tuple[dict[str, Path], set[str]]:
+def scan_results_dir(results_dir: Path, gt_path: Path) -> tuple[dict[str, Path], set[str]]:
     """Return (method_name → tum path) and a set of pending method names.
 
     Raises if any non-.tum/non-.pending file is found, or if names collide.
@@ -118,13 +121,11 @@ def _scan_results_dir(results_dir: Path, gt_path: Path) -> tuple[dict[str, Path]
             )
     overlap = methods.keys() & pending
     if overlap:
-        raise ValueError(
-            f"method names appear as both .tum and .pending: {sorted(overlap)}"
-        )
+        raise ValueError(f"method names appear as both .tum and .pending: {sorted(overlap)}")
     return methods, pending
 
 
-def _format_markdown(methods: dict[str, dict]) -> str:
+def format_markdown(methods: dict[str, dict]) -> str:
     header = (
         "| method | status | align | ATE RMSE | RPE trans | RPE rot° | AUC@30 | loop_res↓ | chamfer_ratio↓ |\n"
         "|---|---|---|---|---|---|---|---|---|"
@@ -141,11 +142,15 @@ def _format_markdown(methods: dict[str, dict]) -> str:
         auc_val = body.get("auc", {}).get("auc_30", float("nan"))
         al = body.get("alignment") or {}
         loop_before = al.get("loop_match_residual", {}).get("mean_before", None)
-        loop_after  = al.get("loop_match_residual", {}).get("mean_after", None)
+        loop_after = al.get("loop_match_residual", {}).get("mean_after", None)
         chamfer_before = al.get("pointcloud_chamfer", {}).get("mean_before", None)
-        chamfer_after  = al.get("pointcloud_chamfer", {}).get("mean_after", None)
-        loop_str = f"{loop_before:.3f}→{loop_after:.3f}" if (loop_before is not None and loop_after is not None) else "null"
-        chamfer_ratio = (chamfer_after / chamfer_before) if (chamfer_before and chamfer_after and chamfer_before > 0) else None
+        chamfer_after = al.get("pointcloud_chamfer", {}).get("mean_after", None)
+        loop_str = (
+            f"{loop_before:.3f}→{loop_after:.3f}" if (loop_before is not None and loop_after is not None) else "null"
+        )
+        chamfer_ratio = (
+            (chamfer_after / chamfer_before) if (chamfer_before and chamfer_after and chamfer_before > 0) else None
+        )
         chamfer_str = f"{chamfer_ratio:.3f}" if chamfer_ratio is not None else "null"
         lines.append(
             f"| {name} | {status} | {body['align']} | "
@@ -157,12 +162,13 @@ def _format_markdown(methods: dict[str, dict]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--results-dir", type=Path, required=True,
-                        help="Directory holding gt.tum + per-method .tum files")
-    parser.add_argument("--gt-path", type=Path, default=None,
-                        help="Override GT path (default: <results-dir>/gt.tum)")
-    parser.add_argument("--align-overrides", nargs="*", default=None,
-                        help="Per-method alignment overrides, e.g. ours_baseline=sim3")
+    parser.add_argument(
+        "--results-dir", type=Path, required=True, help="Directory holding gt.tum + per-method .tum files"
+    )
+    parser.add_argument("--gt-path", type=Path, default=None, help="Override GT path (default: <results-dir>/gt.tum)")
+    parser.add_argument(
+        "--align-overrides", nargs="*", default=None, help="Per-method alignment overrides, e.g. ours_baseline=sim3"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -173,12 +179,10 @@ def main() -> None:
 
     gt_path: Path = args.gt_path if args.gt_path is not None else results_dir / "gt.tum"
     if not gt_path.is_file():
-        raise FileNotFoundError(
-            f"gt trajectory not found at {gt_path} — phase-2 needs a 'gt.tum' file"
-        )
+        raise FileNotFoundError(f"gt trajectory not found at {gt_path} — phase-2 needs a 'gt.tum' file")
 
     overrides = _parse_overrides(args.align_overrides)
-    methods, pending = _scan_results_dir(results_dir, gt_path)
+    methods, pending = scan_results_dir(results_dir, gt_path)
 
     out: dict[str, dict] = {}
     for name in sorted(pending):
@@ -204,9 +208,51 @@ def main() -> None:
     metrics_path = results_dir / "metrics.json"
     metrics_path.write_text(json.dumps(payload, indent=2))
 
-    print(_format_markdown(out))
+    print(format_markdown(out))
     print(f"\nWrote {metrics_path}")
 
 
 if __name__ == "__main__":
     main()
+
+
+########################################################################
+# Backward-compatible private aliases (pre-rename callers/tests)
+########################################################################
+
+_scan_results_dir = scan_results_dir
+_format_markdown = format_markdown
+
+
+########################################################################
+# Grid aggregation (config-driven eval.py)
+########################################################################
+
+
+def collect_grid_metrics(output_root: Path) -> list[dict]:
+    """Read every <cell>/metrics.json under a grid output root into flat rows.
+
+    Each single-cell metrics.json is keyed by condition (plus a ``_config``
+    block); one row is emitted per condition, tagged with its cell dir name.
+    """
+    rows = []
+    for mj in sorted(output_root.glob("*/metrics.json")):
+        data = json.loads(mj.read_text())
+        for cond, m in data.items():
+            if cond == "_config" or not isinstance(m, dict) or "ate" not in m:
+                continue
+            rows.append(m | {"_cell": mj.parent.name, "_condition": cond})
+    return rows
+
+
+def format_markdown_rows(rows: list[dict]) -> str:
+    """Render grid rows (cell + ATE/RPE/AUC) as a markdown table."""
+    header = "| cell | ATE RMSE | RPE trans | RPE rot deg | AUC@30 |\n" "|---|---|---|---|---|"
+    lines = [header]
+    for r in sorted(rows, key=lambda x: x.get("_cell", "")):
+        ate = r.get("ate", {}).get("rmse", float("nan"))
+        rpe_t = r.get("rpe", {}).get("trans_rmse", float("nan"))
+        rpe_r = r.get("rpe", {}).get("rot_rmse_deg", float("nan"))
+        auc = r.get("auc", {}).get("auc_30", float("nan"))
+        lines.append(f"| {r.get('_cell','?')} | {ate:.4f} | {rpe_t:.4f} | {rpe_r:.4f} | {auc:.4f} |")
+    return "\n".join(lines)

@@ -8,23 +8,22 @@ import numpy as np
 
 from collab_splats.preproc import extract_frames, sample_frames
 
+_IMG_EXTS = (".png", ".jpg", ".jpeg")
+
 
 @dataclass
 class EvalDataset:
     images: list[Path]
-    gt_poses: np.ndarray   # (N, 4, 4) world-to-cam float32
-    intrinsics: np.ndarray | None = None   # (N, 3, 3) float32, optional
+    gt_poses: np.ndarray  # (N, 4, 4) world-to-cam float32
+    intrinsics: np.ndarray | None = None  # (N, 3, 3) float32, optional
 
 
 def _load_7scenes(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     seq_dir = Path(seq_dir)
     images = sorted(seq_dir.glob("*.color.png"))[:max_frames]
-    poses = np.stack([
-        np.linalg.inv(
-            np.loadtxt(seq_dir / f"{p.stem.split('.')[0]}.pose.txt")
-        )
-        for p in images
-    ]).astype(np.float32)
+    poses = np.stack([np.linalg.inv(np.loadtxt(seq_dir / f"{p.stem.split('.')[0]}.pose.txt")) for p in images]).astype(
+        np.float32
+    )
     return EvalDataset(images=images, gt_poses=poses)
 
 
@@ -46,6 +45,7 @@ def _read_tum_groundtruth(path: Path) -> list[tuple[float, np.ndarray]]:
     Returns (timestamp, c2w 4x4 float64) pairs.
     """
     from scipy.spatial.transform import Rotation
+
     out: list[tuple[float, np.ndarray]] = []
     for line in path.read_text().splitlines():
         line = line.strip()
@@ -95,6 +95,7 @@ def _load_kitti(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     which inverts cam-to-world to world-to-cam for us.
     """
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from trajectory_io import kitti_file_to_w2c
 
@@ -108,9 +109,7 @@ def _load_kitti(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     elif alt.exists():
         poses_path = alt
     else:
-        raise FileNotFoundError(
-            f"KITTI poses file not found. Tried: {primary} and {alt}"
-        )
+        raise FileNotFoundError(f"KITTI poses file not found. Tried: {primary} and {alt}")
 
     poses = kitti_file_to_w2c(poses_path)[:max_frames].astype(np.float32)
     return EvalDataset(images=images, gt_poses=poses)
@@ -122,7 +121,7 @@ def _load_waymo(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     Waymo's tfrecord format requires the ``waymo-open-dataset`` pip wheel which
     pins TensorFlow and conflicts with the nerfstudio env's torch/CUDA stack.
     To keep this loader light, we expect the sequence to have been extracted by
-    ``evals/runners/extract_waymo.py`` (run in a sidecar env) into a flat
+    ``evals/data/extract_waymo.py`` (run in a sidecar env) into a flat
     on-disk layout::
 
         seq_dir/images/{000000.png, 000001.png, ...}   (front camera)
@@ -171,9 +170,7 @@ def _load_co3dv2(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     if not ann_path.exists():
         ann_path = seq_dir.parent / "frame_annotations.jgz"
     if not ann_path.exists():
-        raise FileNotFoundError(
-            f"frame_annotations.jgz not found in {seq_dir} or {seq_dir.parent}"
-        )
+        raise FileNotFoundError(f"frame_annotations.jgz not found in {seq_dir} or {seq_dir.parent}")
 
     with gzip.open(ann_path, "rt", encoding="utf-8") as f:
         all_annotations = _json.load(f)
@@ -181,9 +178,9 @@ def _load_co3dv2(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     # Filter to frames belonging to this sequence (by sequence_name field or path prefix)
     seq_name = seq_dir.name
     annotations = [
-        a for a in all_annotations
-        if a.get("sequence_name") == seq_name
-        or Path(a["image"]["path"]).parts[0] == seq_name
+        a
+        for a in all_annotations
+        if a.get("sequence_name") == seq_name or Path(a["image"]["path"]).parts[0] == seq_name
     ]
     if not annotations:
         # fall back: use all annotations (single-sequence file)
@@ -215,7 +212,7 @@ def _load_co3dv2(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
         #   => R_cv = S @ R.T,  T_cv = S @ T
         _S = np.array([-1.0, -1.0, 1.0], dtype=np.float32)
         pose = np.eye(4, dtype=np.float32)
-        pose[:3, :3] = _S[:, None] * R.T   # equivalent to diag(S) @ R.T
+        pose[:3, :3] = _S[:, None] * R.T  # equivalent to diag(S) @ R.T
         pose[:3, 3] = _S * T
         gt_poses_list.append(pose)
 
@@ -273,3 +270,42 @@ def get_dataset(name: str) -> Callable[..., EvalDataset]:
     if name not in _REGISTRY:
         raise KeyError(f"unknown dataset '{name}'. Available: {sorted(_REGISTRY)}")
     return _REGISTRY[name]
+
+
+########## SLAM frame selection (7-Scenes flat vs TUM rgb/) ##########
+
+
+def list_scene_images(seq_dir: Path) -> list[Path]:
+    """Sorted source images for a scene; handles 7-Scenes flat and TUM rgb/ layouts."""
+    rgb = seq_dir / "rgb"
+    root = rgb if rgb.is_dir() else seq_dir
+    return sorted(p for p in root.iterdir() if p.suffix.lower() in _IMG_EXTS and ".depth" not in p.name)
+
+
+def filter_images_to_list(images: list, list_file: Path) -> list:
+    """Keep only images whose basename appears in list_file (one path/basename per line)."""
+    allowed = {Path(line).name for line in Path(list_file).read_text().splitlines() if line.strip()}
+    return [p for p in images if Path(str(p)).name in allowed]
+
+
+def collect_frames(seq_dir: Path, image_list: Path | None = None, max_frames: int | None = None) -> list[str]:
+    """Source frames for a SLAM run: sorted scene images, optionally restricted to
+    image_list (basename match — TUM GT-gap parity), then capped at max_frames."""
+    images = list_scene_images(seq_dir)
+    if image_list is not None:
+        images = filter_images_to_list(images, image_list)
+    frames = [str(p) for p in images]
+    return frames[:max_frames] if max_frames is not None else frames
+
+
+def write_tum_allowed_frames(seq_dir: Path, out_file: Path) -> Path:
+    """Write GT-filtered TUM frame basenames (one per line) for --image_list restriction.
+
+    Uses `_load_tum` (max_frames=100_000, mirroring eval_gt.py's --keyframe_list load
+    path) so the SLAM reference only ever sees frames the ours-side dataset loader
+    keeps — eval_gt's parity guard aborts otherwise (TUM GT-gap filter).
+    """
+    ds = _load_tum(seq_dir, max_frames=100_000)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text("\n".join(Path(p).name for p in ds.images))
+    return out_file

@@ -1,10 +1,11 @@
-"""Verify LC intermediate state is exposed on the base creator after LoopClosure.run_inference()."""
+"""Verify n_loops_applied is set on the base creator after LoopClosure.run_inference()."""
+
 import numpy as np
 import torch
 from unittest.mock import MagicMock, patch
 
 from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator, FeedforwardResult
-from collab_splats.geometry.loop_closure import LoopClosureConfig, Submap
+from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
 
@@ -42,7 +43,7 @@ class _StubCreator(BaseFeedforwardCreator):
         pass
 
 
-def test_lc_state_attrs_set_after_run_inference():
+def test_n_loops_applied_set_after_run_inference():
     base = _StubCreator(camera_model="PINHOLE")
     creator = LoopClosure(base, config=LoopClosureConfig(submap_size=20, submap_overlap=4))
     creator.load_model()
@@ -50,10 +51,12 @@ def test_lc_state_attrs_set_after_run_inference():
     base.image_paths = [None] * 40
 
     # Patch retrieval extractor and pose graph optimization
-    with patch("collab_splats.localization.retrieval.BaseRetrievalExtractor.get") as mock_get, \
-         patch("collab_splats.geometry.loop_closure.closure.find_loop_closures", return_value=[]), \
-         patch("collab_splats.geometry.loop_closure.closure.run_pose_graph_optimization") as mock_pg, \
-         patch("collab_splats.geometry.loop_closure.closure.merge_submap_outputs") as mock_merge:
+    with (
+        patch("collab_splats.localization.retrieval.BaseRetrievalExtractor.get") as mock_get,
+        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", return_value=[]),
+        patch("collab_splats.geometry.loop_closure.wrapper.run_pose_graph_optimization") as mock_pg,
+        patch("collab_splats.geometry.loop_closure.wrapper.merge_submap_outputs") as mock_merge,
+    ):
         mock_extractor = MagicMock()
         mock_extractor.return_value = torch.zeros(20, 128)
         mock_get.return_value = MagicMock(return_value=mock_extractor)
@@ -61,11 +64,7 @@ def test_lc_state_attrs_set_after_run_inference():
         mock_merge.return_value = {}
         creator.run_inference()
 
-    assert hasattr(base, "_lc_submaps")
-    assert hasattr(base, "_lc_loop_submaps")
-    assert hasattr(base, "_lc_overlap_frames")
-    assert isinstance(base._lc_submaps, list)
-    assert all(isinstance(s, Submap) for s in base._lc_submaps)
-    assert base._lc_overlap_frames == 4
-    assert len(base._lc_submaps) == 2  # ceil((40-4)/20) = 2 submaps (step=submap_size=20)
-    assert base._lc_loop_submaps == []  # _verify_loop_candidate returns False
+    # The LC loop ran end-to-end (2 submaps over 40 frames); _verify_loop_candidate
+    # returns False, so no loops are accepted → n_loops_applied == 0.
+    assert hasattr(base, "n_loops_applied")
+    assert base.n_loops_applied == 0

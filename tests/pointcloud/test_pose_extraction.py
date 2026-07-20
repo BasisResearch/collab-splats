@@ -5,13 +5,14 @@ Old: decompose(H_opt) directly.
 
 VGGT-SLAM: projection_mat = proj_mats[idx] @ inv(homography_world).
 """
+
 from __future__ import annotations
 
 import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.closure import run_pose_graph_optimization
-from collab_splats.geometry.loop_closure.graph import decompose_camera, normalize_to_sl4
+from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
+from collab_splats.geometry.loop_closure.graph import decompose_camera
 from collab_splats.geometry.loop_closure.submap import Submap
 
 
@@ -53,7 +54,7 @@ def test_pose_extraction_formula_local_proj_inv_h_opt():
     R_local = ScipyR.from_euler("x", 5, degrees=True).as_matrix()
     local_proj = np.eye(4, dtype=np.float64)
     local_proj[:3, :3] = R_local
-    local_proj[:3, 3] = [0.05, 0., 0.]
+    local_proj[:3, 3] = [0.05, 0.0, 0.0]
 
     # New extraction
     corrected = local_proj @ np.linalg.inv(H_opt)
@@ -63,10 +64,12 @@ def test_pose_extraction_formula_local_proj_inv_h_opt():
     _, R_old, t_old, _ = decompose_camera(H_opt)
 
     # They must differ (formula change is meaningful)
-    assert not np.allclose(R_old, R_new, atol=0.01), \
-        "Old and new extraction must give different rotations for non-trivial inputs"
-    assert not np.allclose(t_old, t_new, atol=0.01), \
-        "Old and new extraction must give different translations for non-trivial inputs"
+    assert not np.allclose(
+        R_old, R_new, atol=0.01
+    ), "Old and new extraction must give different rotations for non-trivial inputs"
+    assert not np.allclose(
+        t_old, t_new, atol=0.01
+    ), "Old and new extraction must give different translations for non-trivial inputs"
 
 
 def test_pose_extraction_single_submap_first_frame_near_identity():
@@ -79,20 +82,15 @@ def test_pose_extraction_single_submap_first_frame_near_identity():
     """
     rng = np.random.default_rng(42)
     k = 4
-    poses = np.stack([
-        _make_w2c(np.eye(3), np.array([i * 0.1, 0., 0.])) for i in range(k)
-    ]).astype(np.float32)
+    poses = np.stack([_make_w2c(np.eye(3), np.array([i * 0.1, 0.0, 0.0])) for i in range(k)]).astype(np.float32)
     wp = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
 
     submap = _make_submap(poses, wp, submap_id=0)
-    result = run_pose_graph_optimization(
-        [submap], lc_submaps=[], total_frames=k, overlap_frames=1
-    )
+    result = run_pose_graph_optimization([submap], lc_submaps=[], total_frames=k, overlap_frames=1)
 
     assert result.shape == (k, 4, 4)
     # First frame: reference frame → near identity
-    assert np.allclose(result[0], np.eye(4), atol=0.1), \
-        f"First frame should be near identity, got\n{result[0]}"
+    assert np.allclose(result[0], np.eye(4), atol=0.1), f"First frame should be near identity, got\n{result[0]}"
 
 
 def test_pose_extraction_non_first_frame_uses_local_proj():
@@ -110,16 +108,16 @@ def test_pose_extraction_non_first_frame_uses_local_proj():
     rng = np.random.default_rng(99)
     R15 = ScipyR.from_euler("y", 15, degrees=True).as_matrix()
 
-    poses = np.stack([
-        _make_w2c(np.eye(3), np.array([0., 0., 0.])),
-        _make_w2c(R15, np.array([0.1, 0., 0.])),
-    ]).astype(np.float32)
+    poses = np.stack(
+        [
+            _make_w2c(np.eye(3), np.array([0.0, 0.0, 0.0])),
+            _make_w2c(R15, np.array([0.1, 0.0, 0.0])),
+        ]
+    ).astype(np.float32)
     wp = rng.standard_normal((2, 5, 5, 3)).astype(np.float32) * 0.1
 
     submap = _make_submap(poses, wp, submap_id=0)
-    result = run_pose_graph_optimization(
-        [submap], lc_submaps=[], total_frames=2, overlap_frames=1
-    )
+    result = run_pose_graph_optimization([submap], lc_submaps=[], total_frames=2, overlap_frames=1)
 
     assert result.shape == (2, 4, 4)
     R_out = result[1, :3, :3]
@@ -129,8 +127,9 @@ def test_pose_extraction_non_first_frame_uses_local_proj():
 
     # No-op PGO recovers the input world-to-cam pose: result[1] ≈ poses[1] = R_y(+15°).
     angle_recovered = _angle_deg(R_out, R15)
-    assert angle_recovered < 5.0, \
-        f"Single-submap PGO should recover input pose R_y(+15°) at frame 1, got {angle_recovered:.1f}° away"
+    assert (
+        angle_recovered < 5.0
+    ), f"Single-submap PGO should recover input pose R_y(+15°) at frame 1, got {angle_recovered:.1f}° away"
 
 
 def test_decompose_camera_handles_sl4_projective_scale():
@@ -140,18 +139,21 @@ def test_decompose_camera_handles_sl4_projective_scale():
     Tests that decompose_camera handles projective scaling via P[-1,-1] division.
     """
     # Construct H with H[3,3] = 2, so SL(4) norm will make H[3,3] != 1
-    R_input = np.array([
-        [1., 0., 0.],
-        [0., 0., -1.],
-        [0., 1., 0.],
-    ])
+    R_input = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    )
     t_input = np.array([0.1, -0.2, 0.5])
     H = np.eye(4)
     H[:3, :3] = R_input
     H[:3, 3] = t_input
     H[3, 3] = 2.0
 
-    H_sl4 = normalize_to_sl4(H)
+    # Inline SL(4) normalization (det=1): H / det(H)^(1/4).
+    H_sl4 = H / abs(np.linalg.det(H)) ** 0.25
     assert abs(H_sl4[3, 3] - 1.0) > 1e-6, "H[3,3] should differ from 1 after SL(4) norm"
     assert abs(np.linalg.det(H_sl4) - 1.0) < 1e-9, "SL(4) norm should enforce det=1"
 

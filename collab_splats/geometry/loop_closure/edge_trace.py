@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Level-2 loop-edge trace: compare our direct loop edges to VGGT-SLAM's composed chain.
 
 SLAM inserts each loop as a 2-frame LC submap with 3 constraints

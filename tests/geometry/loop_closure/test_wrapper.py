@@ -111,6 +111,7 @@ def test_vggtx_postprocess_populates_ba_fields():
 def test_vggtx_no_use_ba_field():
     """VGGTXCreator must not have use_ba after refactor."""
     from collab_splats.pointcloud.feedforward import VGGTXCreator
+
     field_names = {f.name for f in dataclasses.fields(VGGTXCreator)}
     assert "use_ba" not in field_names
 
@@ -118,12 +119,14 @@ def test_vggtx_no_use_ba_field():
 def test_vggtx_has_reproject():
     """VGGTXCreator must implement _reproject."""
     from collab_splats.pointcloud.feedforward import VGGTXCreator
+
     assert hasattr(VGGTXCreator, "_reproject")
 
 
 def test_mapanything_no_use_ba_field():
     """MapAnythingCreator must not have use_ba after refactor."""
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
+
     field_names = {f.name for f in dataclasses.fields(MapAnythingCreator)}
     assert "use_ba" not in field_names
 
@@ -131,6 +134,7 @@ def test_mapanything_no_use_ba_field():
 def test_mapanything_has_reproject():
     """MapAnythingCreator must implement _reproject."""
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
+
     assert hasattr(MapAnythingCreator, "_reproject")
 
 
@@ -159,6 +163,7 @@ def test_make_creator_with_lc():
 
 def test_make_creator_unknown_name():
     from collab_splats.pointcloud import make_creator
+
     with pytest.raises(KeyError):
         make_creator("unknown_backend")
 
@@ -379,7 +384,7 @@ def _make_raw(k: int) -> dict:
 def test_lc_loop_passes_k_plus_overlap_to_forward():
     """_run_lc_loop must pass submap_size+overlap_frames frames to _forward."""
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
-    from collab_splats.geometry.loop_closure.closure import LoopClosureConfig
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
 
     submap_size = 3
     overlap = 1
@@ -411,13 +416,15 @@ def test_lc_loop_passes_k_plus_overlap_to_forward():
     wrapper.base = base
     wrapper.config = cfg
 
-    with patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval, \
-         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", return_value=[]):
+    with (
+        patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
+        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", return_value=[]),
+    ):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         wrapper._run_lc_loop()
 
     # Non-final full windows should be submap_size + overlap = 4
     non_final = captured_sizes[:-1]
-    assert all(sz == submap_size + overlap for sz in non_final), (
-        f"Expected windows of size {submap_size + overlap}, got {non_final}"
-    )
+    assert all(
+        sz == submap_size + overlap for sz in non_final
+    ), f"Expected windows of size {submap_size + overlap}, got {non_final}"

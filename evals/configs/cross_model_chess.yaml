@@ -1,0 +1,16 @@
+# Cross-model chess benchmark: every feedforward backbone over 7-Scenes chess,
+# baseline vs loop-closure. One single-cell eval.py subprocess per (backbone x condition).
+name: cross_model_chess
+
+output_dir: evals/results/cross_model_chess
+
+# Chess seq-01 is >100 frames -> windowed inference.
+submap_size: 50
+max_frames: 500
+
+datasets:
+  - {name: chess, type: 7scenes, seq_dir: data/7scenes/chess/seq-01, keyframe_list: null}
+
+backbones: [vggt_spark, vggtx, vggt_omega, mapanything]
+
+conditions: [baseline, lc]

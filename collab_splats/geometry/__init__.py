@@ -1,7 +1,7 @@
 """Geometry backend: loop closure, bundle adjustment, and SE(3)/pose transforms."""
 
 from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
-from .loop_closure import LoopClosureConfig, PoseGraph, Submap
+from .loop_closure import PoseGraph, Submap
 from .transforms import (
     OPENGL_TO_OPENCV,
     extract_intrinsics,
@@ -19,6 +19,10 @@ def __getattr__(name):
         from .loop_closure import LoopClosure
 
         return LoopClosure
+    if name == "LoopClosureConfig":
+        from .loop_closure import LoopClosureConfig
+
+        return LoopClosureConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

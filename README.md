@@ -140,7 +140,7 @@ balanced. GUI toggles: camera visibility and flat per-node coloring (shows part 
 ## Evaluation
 
 ```bash
-/opt/venv/reconstruction/bin/python evals/eval_gt.py --help
+/opt/venv/reconstruction/bin/python evals/scripts/eval.py --help
 ```
 
 Results land in `evals/results/` (gitignored). See `docs/source/tutorials/evals/ground_truth_evals.ipynb` for visualization.

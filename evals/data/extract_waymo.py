@@ -9,7 +9,7 @@ it isolated). Example::
     conda activate waymo-export
     pip install waymo-open-dataset-tf-2-12-0
 
-    python evals/runners/extract_waymo.py \\
+    python evals/data/extract_waymo.py \\
         --tfrecord /data/waymo/segment-1234.tfrecord \\
         --output    evals/data/waymo/segment-1234 \\
         --camera    FRONT
@@ -23,6 +23,7 @@ The TUM trajectory is the camera-to-world transform: vehicle-to-world from
 ``frame.pose.transform`` composed with the camera-to-vehicle extrinsic from
 ``frame.context.camera_calibrations``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,6 @@ import io
 from pathlib import Path
 
 import numpy as np
-
 
 _CAMERA_NAMES = {
     "FRONT": 1,
@@ -55,6 +55,7 @@ def _require_waymo():
 
 def _quat_xyzw_from_matrix(R_mat: np.ndarray) -> tuple[float, float, float, float]:
     from scipy.spatial.transform import Rotation
+
     return tuple(Rotation.from_matrix(R_mat).as_quat())  # [x, y, z, w]
 
 
@@ -98,10 +99,7 @@ def extract_segment(
             t = T_c2w[:3, 3]
             qx, qy, qz, qw = _quat_xyzw_from_matrix(T_c2w[:3, :3])
             ts = frame.timestamp_micros / 1e6
-            gt_f.write(
-                f"{ts:.6f} {t[0]:.9f} {t[1]:.9f} {t[2]:.9f} "
-                f"{qx:.9f} {qy:.9f} {qz:.9f} {qw:.9f}\n"
-            )
+            gt_f.write(f"{ts:.6f} {t[0]:.9f} {t[1]:.9f} {t[2]:.9f} " f"{qx:.9f} {qy:.9f} {qz:.9f} {qw:.9f}\n")
             n += 1
     return n
 

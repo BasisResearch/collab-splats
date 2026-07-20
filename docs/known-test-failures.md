@@ -1,3 +1,17 @@
+# Known Test Failures
+
+## 2026-07-20 — evals + loop-closure aggressive cleanup (GREEN)
+
+Full suite (`/opt/venv/reconstruction/bin/python -m pytest tests/ -q`): **1121 passed, 2 skipped, 3 xfailed**. Migration gate `pytest tests/test_cu121_migration.py` → **24/24 PASS**.
+
+Pass count dropped from ~1200 (pre-cleanup) to 1121 **entirely by retiring scripts + their covering tests** (allowed: deleting a script deletes its test) — no behavior regressions. Retired test files: `test_cross_model_runner`, `test_run_lc_parity`, `test_build_benchmark_table`, `test_build_parity_table`, `test_lc_loop_pr`, `test_visualize_lc_correction`, `test_loop_ablation`, `test_loop_ablation_json`, `test_reconstruction_quality`, `test_lc_parity_common`, `test_lc_decisions`, `test_ate_utils_tum`, `test_run_vggt_slam_lc` (folded into `test_run_vggt_slam`). New tests added: `test_eval_config`, extended `test_datasets`.
+
+Known flaky (pre-existing, unrelated): `tests/dashboard/test_viz_utils.py::test_view_transform_scales_to_target_radius` — nondeterministic, fails ~1/3 of runs on identical code; surfaces intermittently, not a regression.
+
+**Untested surface note:** `evals/scripts/run_vggt_slam.py`'s ATE path (GT-TUM construction + `compute_ate`, Sim(3)) runs only on real GPU/SLAM runs — no unit coverage. Verify manually if that number matters.
+
+---
+
 # Known Test Failures — 2026-06-01 (GREEN)
 
 Run (conda env `reconstruction`, py3.11, **numpy 2.1.3**):

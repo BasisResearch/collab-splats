@@ -7,12 +7,12 @@ visualization. Heavy inference/eval → tmux, one model at a time (46 GB cgroup 
 
 ```bash
 PY=/opt/conda/envs/reconstruction/bin/python      # py3.11; NOT base conda
-$PY evals/eval_gt.py --help
+$PY evals/scripts/eval.py --help
 ```
 
 > **Note on the `evals` package name:** a same-named `evals` pip package is installed
-> and shadows this dir at import time. Tests import runner modules via
-> `sys.path.insert(0, ".../evals"); from runners.X import …` (see `tests/evals/`).
+> and shadows this dir at import time. Tests import script modules via
+> `sys.path.insert(0, ".../evals/scripts"); from scripts.X import …` (see `tests/evals/`).
 
 ---
 
@@ -20,8 +20,8 @@ $PY evals/eval_gt.py --help
 
 ```
 evals/
-  *.py            entry points + library (see tables below)
-  runners/        SLAM wrappers, benchmark drivers, parity/diagnostic tools
+  *.py            library modules (see tables below)
+  scripts/        entry points: SLAM wrappers, benchmark drivers, parity/diagnostic tools
   baselines/      committed reference results (frozen; see below)
   results/        gitignored scratch output of eval_gt runs
   data/           datasets (7-Scenes etc; large, gitignored)
@@ -36,7 +36,7 @@ evals/
 |---|---|
 | `eval_gt.py` | **Main GT eval runner.** Feedforward backbone × condition (`baseline`/`lc`/`ba`/`ba_track-density-N`) → ATE/RPE/AUC vs GT. Each condition runs in its own subprocess (clean GPU). Flags: `--backbone --conditions --submap_size --lc_scale_method --keyframe_list --lc_layer --output_ate`. Writes `metrics.json` (ATE, RPE trans+rot, AUC@{5,15,30}), TUM trajectories, plots. |
 | `eval_compare.py` | Phase-2 unified comparison runner over multiple methods/sequences. |
-| `eval_suite.sh` | Shell driver bundling a standard eval set. |
+| `eval.py` | Config-driven eval runner. For the standard 7-Scenes eval set: `eval.py --config configs/7scenes.yaml`. |
 
 ## Library (imported by the harness)
 
@@ -46,23 +46,41 @@ evals/
 | `ate_utils.py` | ATE vs 7-Scenes GT via `evo` (Sim3-aligned). |
 | `metrics.py` | Thin `evo` ATE/RPE wrapper + `compute_auc` (TUM-file pose AUC). |
 | `trajectory_io.py` | Trajectory read/write (TUM etc). |
-| `reconstruction_quality.py` | Submap-alignment quality metrics for LC validation (used by `eval_gt` subprocess mode). |
 
 ## Dataset downloaders (utility)
 
-`download_7scenes.py` · `download_7scenes.sh` · `download_co3dv2.sh` · `download_kitti.sh` · `download_tum.sh` · `download_waymo.sh` · `runners/extract_waymo.py` (tfrecord → flat layout).
+`data/download_datasets.py <dataset>` — one consolidated CLI with a subcommand per dataset: `7scenes` (`--parity` for the LC-parity set), `co3dv2`, `kitti`, `tum`, `waymo`. `data/extract_waymo.py` converts a Waymo tfrecord → flat layout.
 
-## `runners/` — SLAM wrappers, benchmark drivers, parity tools
+## `scripts/` — SLAM wrappers, benchmark drivers, parity tools
 
 **Active:**
 | file | role |
 |---|---|
-| `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). |
-| `run_vggt_slam_lc.py` | Run VGGT-SLAM on a sequence → dense TUM + ATE + loop count. Produced the long SLAM ref / loop probe. |
-| `run_disparity_sweep.py` | Disparity-sweep parity harness (ours vs SLAM) for any backbone (`--backbone`, default `vggt_spark`); generated `baselines/disparity_sweep/`. |
-| `run_cross_model_benchmark.py` | Serial `eval_gt` matrix over any backbones/framesets (`--backbones`, `--single_framesets`, `--windowed_framesets`, `--submap_size`); defaults reproduce the 2026-05-31 4-backbone matrix. |
-| `build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown table (`--reference_backbone`, default `vggt_spark`). |
+| `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). Loop closure via `--max_loops` (0 = published baseline; >0 also writes `selected_frames.txt` + ATE + `metrics.json`). |
 | `compare_loop_edges.py` | Loop-edge composition diff (ours vs SLAM). Kept: `compose_slam_chain` imported by `tests/geometry/loop_closure/test_loop_edge_chain.py`. |
+
+### VGGT-SLAM parity workflow
+
+`run_vggt_slam.py` is the single VGGT-SLAM wrapper; loop closure is a flag, not a
+separate script:
+
+```bash
+# Published no-LC baseline (paper defaults: submap_size=16, min_disparity=50)
+$PY evals/scripts/run_vggt_slam.py \
+    --image_dir data/7scenes/chess/seq-01 \
+    --output evals/results/chess_seq01/vggt_slam.tum \
+    --max_loops 0
+
+# Loop-closure run (also writes selected_frames.txt + ATE + metrics.json next to the TUM)
+$PY evals/scripts/run_vggt_slam.py \
+    --image_dir data/7scenes/chess/seq-01 \
+    --output evals/results/chess_seq01/vggt_slam_lc.tum \
+    --max_loops 1
+```
+
+Drop the output TUM into a results dir; `eval.py` aggregation over that dir surfaces
+it as a comparison row against the reconstruction backbones. `--seq_dir`/`--out_tum`
+are accepted as aliases for `--image_dir`/`--output`.
 
 ## Other eval tools (standalone)
 
@@ -137,15 +155,14 @@ so the sweep scripts are deleted. CO3Dv2 notes in `EVAL_NOTES.md`.
 ### D. Cross-model benchmark (2026-05-31)
 Goal: rank backbones; separate windowing cost from LC benefit. **Outcome:**
 `docs/superpowers/specs/2026-05-31-cross-model-benchmark-results.md`. The frozen
-2026-05-31 numbers live under `baselines/cross_model/`; to reproduce or extend
-them for a different backbone/frameset combination, use the generalized scripts:
+2026-05-31 numbers live under `baselines/cross_model/`. The bespoke sweep/table
+drivers that generated them have been retired; reproduce or extend the matrix for a
+different backbone/frameset via `eval.py --config configs/7scenes.yaml` (or
+`configs/cross_model_chess.yaml`). The VGGT-SLAM comparison anchor remains:
 
 | script | what it probed |
 |---|---|
-| `runners/run_cross_model_benchmark.py` | Serial `eval_gt` matrix — any `--backbones` × `--single_framesets`/`--windowed_framesets` (defaults reproduce the original 4-backbone matrix). |
-| `runners/build_benchmark_table.py` | Aggregate `cross_model/*/metrics.json` → markdown (`--reference_backbone`). |
-| `runners/run_disparity_sweep.py` | ours-vs-SLAM at min_disparity 10–50 for any `--backbone` → `baselines/disparity_sweep/`. |
-| `runners/run_vggt_slam.py` · `runners/run_vggt_slam_lc.py` | VGGT-SLAM wrappers (anchor + long ref / loop probe). |
+| `scripts/run_vggt_slam.py` | VGGT-SLAM wrapper (anchor + long ref / loop probe; LC via `--max_loops`). |
 
 > **Housekeeping:** if bundle-adjustment tuning is revisited, prefer writing
 > plots to the gitignored `results/` rather than the source tree.

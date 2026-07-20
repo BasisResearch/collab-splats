@@ -69,7 +69,7 @@ collab_splats/
   utils/
     torch_utils.py         # RegistryMixin, pytorch_gc, infer_batch_size, batch_iterator, get_device
 evals/
-  eval_gt.py               # compute script — CLI/tmux only, never run in notebook
+  scripts/eval.py          # compute script — CLI/tmux only, never run in notebook
   datasets.py              # dataset loaders (7-Scenes, CO3Dv2)
   results/                 # gitignored
 ```
@@ -95,7 +95,7 @@ evals/
 
 ## Evaluation
 
-- `evals/eval_gt.py` = compute (CLI/tmux only); notebooks in `docs/` = visualization only
+- `evals/scripts/eval.py` = compute (CLI/tmux only); notebooks in `docs/` = visualization only
 - Results: `evals/results/` (gitignored); pass `--submap_size 50` for >100-frame sequences
 
 ## Commit Conventions
@@ -107,5 +107,5 @@ Conventional commits with scope: `feat(pointcloud):`, `fix(ba):`, `refactor(sema
 ```bash
 black . && isort .                                                  # format
 /opt/venv/reconstruction/bin/python -m pytest tests/               # test
-/opt/venv/reconstruction/bin/python evals/eval_gt.py --help        # eval
+/opt/venv/reconstruction/bin/python evals/scripts/eval.py --help   # eval
 ```

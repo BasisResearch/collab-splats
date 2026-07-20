@@ -25,11 +25,11 @@ _VIDEO_EXTS = (".mp4", ".mov")
 # YYYY_MM_DD-session_XXXX field-session folders at the fieldwork_curated root
 _FIELD_SESSION_RE = re.compile(r"^\d{4}_\d{2}_\d{2}-session_\d{4}$")
 
-# Members skipped on every processed-scene pull: frames.zarr duplicates the frames/ jpg dir,
-# and the dense per-pixel arrays are optional in FeedforwardResult.load_zarr (absent -> None)
-# and unused by both the splats viewer and localization — they can be GBs per scene.
+# Members skipped on every processed-scene pull: the dense per-pixel arrays are optional in
+# FeedforwardResult.load_zarr (absent -> None) and unused by both the splats viewer and
+# localization — they can be GBs per scene. frames.zarr is NOT excluded: it is now the sole
+# persistent frame source, so pulled scenes need it (e.g. localization pixel reads).
 PULL_EXCLUDES = (
-    "frames.zarr/**",
     "feedforward.zarr/depth/**",
     "feedforward.zarr/world_points/**",
     "feedforward.zarr/confidence/**",

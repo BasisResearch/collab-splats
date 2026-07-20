@@ -14,6 +14,8 @@ input_path: null
 output_path: null
 
 preprocessing:
+  # Output: <output_path>/frames.zarr — canonical decode-once keyframe store
+  # (chunked images + selection records + provenance); no images/ JPG dir.
   frame_selection: uniform    # uniform | optical_flow
   frame_proportion: 0.1       # fraction of total frames to extract
   min_frames: 150             # extract at least this many frames

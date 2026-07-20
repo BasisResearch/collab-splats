@@ -13,7 +13,6 @@ import torch
 import yaml
 import zarr
 from PIL import Image
-from zarr.codecs import BloscCodec
 
 from collab_splats.dashboard.config import LocalizationConfig, RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
@@ -25,6 +24,7 @@ from collab_splats.pointcloud.feedforward import (
 )
 from collab_splats.pointcloud.utils import lift_features
 from collab_splats.preproc import extract_frame, sample_frames
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
 
@@ -41,16 +41,27 @@ logger = logging.getLogger(__name__)
 ########
 
 
-def _write_frames_zarr(frames: list[np.ndarray], path: Path) -> None:
-    """Write RGB frames (N, H, W, 3) uint8 to a zarr group at path/frames."""
-    arr = np.stack(frames).astype(np.uint8)
-    lz4 = BloscCodec(cname="lz4")
-    store = zarr.open(str(path), mode="w")
-    store.create_array("frames", data=arr, chunks=(1,) + arr.shape[1:], compressors=lz4)
+def _write_frames_zarr(
+    frames: list[np.ndarray], records: list[dict], path: Path, *, video_path: Path, method: str, max_frames: int
+) -> None:
+    """Write the canonical frames.zarr (FrameStore schema) — feeds CameraLocalizer.from_feedforward
+    so pixel reads bypass ff.image_paths (which may point at a directory this session doesn't own)."""
+    prov = {
+        "video_path": str(video_path),
+        "video_mtime": Path(video_path).stat().st_mtime,
+        "method": method,
+        "max_frames": max_frames,
+    }
+    FrameStore.create(path, frames, records, provenance=prov)
 
 
 def _write_frames_jpegs(frames: list[np.ndarray], frames_dir: Path) -> Path:
-    """Write frames as zero-padded JPEGs for creators that consume an image dir."""
+    """Write frames as zero-padded JPEGs for creators that consume an image dir.
+
+    NOTE: this frames/ dir is still needed by _local_ref_paths, which maps localization
+    reference thumbnails to out_dir/frames/<name>.jpg. Migrating those thumbnails to read
+    from frames.zarr is a separate follow-up (see frame-store Task 10b report).
+    """
     frames_dir.mkdir(parents=True, exist_ok=True)
     for i, f in enumerate(frames):
         Image.fromarray(f).save(frames_dir / f"{i:05d}.jpg")
@@ -145,7 +156,7 @@ def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: flo
 
 
 def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
-    """Sample frames per the configured method; return (frames, indices)."""
+    """Sample frames per the configured method; return (frames, records)."""
 
     # Live label shows images processed / total; log=False so per-frame pings don't flood the log.
     # Throttle to ~100 writes total (every 1% of frames) — the UI polls at 300ms regardless.
@@ -169,7 +180,7 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
         max_frames=config.max_frames,
         on_progress=on_progress,
     )
-    return frames, [r["frame_idx"] for r in records]
+    return frames, records
 
 
 ########
@@ -212,10 +223,20 @@ def run_pipeline(
         with op_log.attach_logging("collab_splats"):
             # Sample frames from video and persist for creator + viewer
             t = time.perf_counter()
-            frames, indices = _sample(Path(video_path), config, op_log)
-            _write_frames_zarr(frames, out_dir / "frames.zarr")
+            frames, records = _sample(Path(video_path), config, op_log)
+            sampling_method = "optical_flow" if config.sampling_method == "optical_flow" else "uniform"
+            _write_frames_zarr(
+                frames,
+                records,
+                out_dir / "frames.zarr",
+                video_path=video_path,
+                method=sampling_method,
+                max_frames=config.max_frames,
+            )
+            # frames/ jpgs feed setup_inference + semantics + localization ref thumbnails
+            # (_local_ref_paths); frames.zarr is the canonical store for pixel reads.
             image_dir = _write_frames_jpegs(frames, out_dir / "frames")
-            config.frame_indices = list(indices)
+            config.frame_indices = [r["frame_idx"] for r in records]
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 
             # Feedforward pointcloud reconstruction. Decompose run() into its 4 substeps so each
@@ -345,7 +366,13 @@ def _stamp_db_provenance(zarr_path: Path, extractor_name: str, out_dir: Path) ->
 
 
 def _build_localizer(
-    result, config: LocalizationConfig, zarr_path: Path, op_log: OperationLog, cache=None, scene_key=None
+    result,
+    config: LocalizationConfig,
+    zarr_path: Path,
+    op_log: OperationLog,
+    cache=None,
+    scene_key=None,
+    frames_zarr: "Path | None" = None,
 ):
     """Load (or build, with progress) the feature DB; keep the localizer warm in the
     SceneCache so consecutive runs skip index reload and extractor model load."""
@@ -372,6 +399,7 @@ def _build_localizer(
         extractor=extractor,
         extractor_name=config.extractor,
         zarr_path=zarr_path,
+        frames_zarr=frames_zarr,
         progress_callback=on_progress,
     )
     if cache is not None and scene_key is not None:
@@ -480,8 +508,17 @@ def run_localization(
             # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
             op_log.update_progress(25, f"localize: loading DB ({config.extractor})")
             with op_log.step(f"localize: DB ({config.extractor})"):
+                # frames.zarr is the sole persistent frame store and is now pulled for processed
+                # scenes too; guard defensively so any legacy scene without it falls back to image_paths.
+                frames_zarr = out_dir / "frames.zarr"
                 localizer = _build_localizer(
-                    result, config, out_dir / "feedforward.zarr", op_log, cache=cache, scene_key=(session, stem)
+                    result,
+                    config,
+                    out_dir / "feedforward.zarr",
+                    op_log,
+                    cache=cache,
+                    scene_key=(session, stem),
+                    frames_zarr=frames_zarr if frames_zarr.exists() else None,
                 )
             _stamp_db_provenance(out_dir / "feedforward.zarr", config.extractor, out_dir)
 

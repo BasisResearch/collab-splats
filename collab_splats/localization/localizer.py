@@ -16,6 +16,8 @@ import torch
 import zarr
 from zarr.codecs import BloscCodec
 
+from collab_splats.preproc.frame_store import FrameStore
+
 from .extractors import BaseLocalExtractor, DiskExtractor, LocalFeatures
 
 logger = logging.getLogger(__name__)
@@ -149,6 +151,7 @@ class CameraLocalizer:
         radius: float = 8.0,
         config: dict | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        frames_zarr: str | Path | None = None,
     ):
         """Build feature index from scene data.
 
@@ -165,6 +168,12 @@ class CameraLocalizer:
                            "refinement" → pycolmap refinement_options
                              (default: {"refine_focal_length": True,
                                         "refine_extra_params": True})
+            frames_zarr: optional canonical frames.zarr store. When given, frame pixels are
+                         read via FrameStore.image_by_frame_idx (source index parsed from each
+                         path's filename stem) instead of cv2.imread(path) — use this when
+                         image_paths reference a deleted temp export dir (e.g.
+                         FeedforwardResult.image_paths after the creator that built it was
+                         discarded). When None, falls back to reading image_paths directly.
         """
         self.config = config or {}
 
@@ -191,7 +200,9 @@ class CameraLocalizer:
         # TODO(future-C): pre-compute and store these features in feedforward.zarr so index
         # build is a zarr read (~1 s) instead of O(N) GPU inference. See spec 2026-05-29.
 
-        # Extract local features for all reference frames
+        # Extract local features for all reference frames. With frames_zarr, pixels come from
+        # the canonical store by source frame index rather than re-reading image_paths on disk.
+        store = FrameStore.open(frames_zarr) if frames_zarr is not None else None
         self._frame_features: list[LocalFeatures] = []
         first_hw: tuple[int, int] | None = None
         # Use tqdm in notebook/terminal when no external progress_callback is wired
@@ -205,10 +216,13 @@ class CameraLocalizer:
         else:
             _paths_iter = image_paths
         for path in _paths_iter:
-            bgr = cv2.imread(str(path))
-            if bgr is None:
-                raise FileNotFoundError(f"CameraLocalizer: cannot read {path}")
-            rgb = bgr[..., ::-1].copy()
+            if store is not None:
+                rgb = store.image_by_frame_idx(FrameStore.frame_idx_from_path(path))
+            else:
+                bgr = cv2.imread(str(path))
+                if bgr is None:
+                    raise FileNotFoundError(f"CameraLocalizer: cannot read {path}")
+                rgb = bgr[..., ::-1].copy()
             if first_hw is None:
                 first_hw = (rgb.shape[0], rgb.shape[1])
             feats = self._extractor.extract(rgb)
@@ -476,20 +490,27 @@ class CameraLocalizer:
         zarr_path: "str | Path",
         extractor_name: str,
         progress_callback: "Callable[[int, int], None] | None" = None,
+        frames_zarr: str | Path | None = None,
     ) -> None:
         """Extract features for new reconstruction frames; append to zarr cache.
 
         Does NOT update pts3d/extrinsics/intrinsics — caller must update those
         and call clear_localized_frames() + load_index() to rebuild assignments.
+        frames_zarr: optional canonical frames.zarr store — see __init__ for the
+        source-index-by-filename-stem lookup this enables in place of cv2.imread.
         """
         zarr_path = pathlib.Path(zarr_path)
         new_features: list[LocalFeatures] = []
+        store = FrameStore.open(frames_zarr) if frames_zarr is not None else None
 
         for i, path in enumerate(new_image_paths):
-            bgr = cv2.imread(str(path))
-            if bgr is None:
-                raise FileNotFoundError(f"CameraLocalizer.update_index: cannot read {path}")
-            rgb = bgr[..., ::-1].copy()
+            if store is not None:
+                rgb = store.image_by_frame_idx(FrameStore.frame_idx_from_path(path))
+            else:
+                bgr = cv2.imread(str(path))
+                if bgr is None:
+                    raise FileNotFoundError(f"CameraLocalizer.update_index: cannot read {path}")
+                rgb = bgr[..., ::-1].copy()
             feats = self._extractor.extract(rgb)
             new_features.append(feats)
             if progress_callback is not None:
@@ -722,6 +743,7 @@ class CameraLocalizer:
         progress_callback=None,
         zarr_path=None,
         extractor_name=None,
+        frames_zarr=None,
         **kwargs,
     ) -> "CameraLocalizer":
         """Construct from a FeedforwardResult. Loads from zarr cache if available.
@@ -733,6 +755,10 @@ class CameraLocalizer:
             progress_callback: Called as (frame_idx, total) during index build.
             zarr_path:         Override zarr cache path; falls back to result._zarr_path.
             extractor_name:    Override extractor registry key; auto-detected if None.
+            frames_zarr:       Canonical frames.zarr store, forwarded to __init__ on a cache
+                               miss. result.image_paths may point at a temp export dir already
+                               discarded by the creator that produced result — pass frames_zarr
+                               so pixels are read from the store instead.
             **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. radius).
 
         Returns:
@@ -784,6 +810,7 @@ class CameraLocalizer:
             image_paths=result.image_paths,
             extractor=extractor_inst,
             progress_callback=progress_callback,
+            frames_zarr=frames_zarr,
             **kwargs,
         )
 

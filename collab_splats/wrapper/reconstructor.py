@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ import yaml
 from mergedeep import merge
 
 from collab_splats.preproc import get_video_info, sample_frames
+from collab_splats.preproc.frame_store import FrameStore
 
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
@@ -49,30 +51,35 @@ _STAGE_DEPS: dict[str, list[str]] = {
 
 def _extract_frames(
     input_path: Path,
-    output_dir: Path,
+    frames_zarr: Path,
     frame_selection: str,
     frame_proportion: float,
     min_frames: int,
     max_frames: int | None,
-) -> list[Path]:
-    """Extract frames from video or copy from image dir into output_dir.
+) -> int:
+    """Extract frames from video or image dir into frames.zarr (sole persistent store).
 
-    Returns sorted list of extracted frame paths.
+    frames.zarr is the canonical decode-once keyframe store; no JPEG dir is written.
+    Returns the number of frames stored.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
     input_path = Path(input_path)
 
     if input_path.is_dir():
-        # Copy images from directory; reject non-image extensions
+        # Read source images from directory; reject non-image extensions
         exts = {".jpg", ".jpeg", ".png"}
         frames = sorted(p for p in input_path.iterdir() if p.suffix.lower() in exts)
-        for i, src in enumerate(frames):
-            shutil.copy(src, output_dir / f"frame_{i:04d}{src.suffix}")
-        return sorted(output_dir.iterdir())
+        if not frames:
+            return 0
+        frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in frames]
+        records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
+        prov = {"video_path": str(input_path), "video_mtime": None, "method": "dir", "max_frames": max_frames}
+        FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
+        return len(frame_arrays)
 
     # Video — 'optical_flow' picks high-motion frames; 'uniform' (default) spreads evenly
     if frame_selection == "optical_flow":
-        frame_arrays, _ = sample_frames(
+        method = "optical_flow"
+        frame_arrays, records = sample_frames(
             str(input_path),
             method="optical_flow",
             max_frames=max_frames if max_frames is not None else 200,
@@ -80,28 +87,33 @@ def _extract_frames(
     else:  # uniform
         # Derive target count from proportion, clamped to [min_frames, max_frames];
         # the uniform sampler spreads that count over the video itself
+        method = "uniform"
         total_frames = get_video_info(str(input_path))["total_frames"]
         target_count = max(min_frames, int(total_frames * frame_proportion))
         if max_frames is not None:
             target_count = min(target_count, max_frames)
-        frame_arrays, _ = sample_frames(
+        frame_arrays, records = sample_frames(
             str(input_path),
             method="uniform",
             max_frames=target_count,
         )
 
-    # Save extracted frames as JPEG files
-    paths: list[Path] = []
-    for i, frame in enumerate(frame_arrays):
-        dest = output_dir / f"frame_{i:04d}.jpg"
-        cv2.imwrite(str(dest), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        paths.append(dest)
-    return paths
+    # Write the canonical frames.zarr (decode-once keyframe store)
+    if frame_arrays:
+        prov = {
+            "video_path": str(input_path),
+            "video_mtime": input_path.stat().st_mtime,
+            "method": method,
+            "max_frames": max_frames,
+        }
+        FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
+
+    return len(frame_arrays)
 
 
 def _run_feedforward(
     backend: str,
-    images_dir: Path,
+    frames_zarr: Path,
     output_dir: Path,
     loop_closure: bool,
 ) -> "PointcloudResult":
@@ -130,8 +142,9 @@ def _run_feedforward(
     if loop_closure:
         creator = LoopClosure(base=creator)
 
-    # reconstruct() expects the root backend dir; build_colmap appends colmap/sparse/0 internally
-    result = creator.reconstruct(images_dir, output_dir)
+    # Feed inference frames from the canonical decode-once store (temp-exported for path-locked
+    # model preprocessing); build_colmap appends colmap/sparse/0 under output_dir internally
+    result = creator.reconstruct(FrameStore.open(frames_zarr), output_dir)
 
     # Persist FeedforwardResult to feedforward.zarr — required by semantics lift + mesh stages
     ff_outputs = getattr(creator, "outputs", None)
@@ -163,19 +176,23 @@ def _get_extractor(name: str):
 
 def _extract_2d_features(
     extractor_name: str,
-    image_paths: list[Path],
+    frames_zarr: Path,
     features_dir: Path,
 ) -> Path:
     """Extract 2D features for all frames, cache to features_dir/{name}/{name}.zarr.
 
+    extract_and_cache is strictly path-based, so the canonical store is exported to a
+    temp dir (same bridge pattern as feedforward preprocessing) and cleaned up after.
     Delegates to BaseFeatureExtractor.extract_and_cache which handles PIL loading,
     zarr layout (N, D, H_p, W_p), re-entrancy, and progress logging.
     """
     extractor = _get_extractor(extractor_name)
     cache_dir = features_dir / extractor_name
     cache_dir.mkdir(parents=True, exist_ok=True)
-    # extract_and_cache returns cache_dir/{name}.zarr
-    return extractor.extract_and_cache(image_paths, cache_dir)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        image_paths = FrameStore.open(frames_zarr).export(Path(tmp_dir))
+        # extract_and_cache returns cache_dir/{name}.zarr
+        return extractor.extract_and_cache(image_paths, cache_dir)
 
 
 def _lift_and_save(
@@ -205,7 +222,7 @@ def _lift_and_save(
     feature_maps = [torch.from_numpy(np.array(features_arr[i])) for i in range(features_arr.shape[0])]
 
     # Load FeedforwardResult with depth/pixel data for lifting
-    ff_result = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
+    ff_result = FeedforwardResult.load_zarr(feedforward_zarr)
 
     # Lift 2D features to 3D: (P, D)
     lifted = lift_features(feature_maps, ff_result)
@@ -289,7 +306,7 @@ def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool
         return False
 
 
-def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: float) -> Path:
+def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: float, frames_zarr: Path) -> Path:
     """Build the per-frame local-feature localization cache into feedforward.zarr.
 
     Loads the FeedforwardResult, runs the local matcher over every DB frame, and persists
@@ -303,13 +320,16 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
     extractor = BaseLocalExtractor.get(extractor_name)()
 
-    # from_feedforward is cache-first: on miss it runs GPU extraction + save_index
+    # from_feedforward is cache-first: on miss it runs GPU extraction + save_index.
+    # frames_zarr lets the miss path read pixels from the canonical store instead of
+    # ff.image_paths, which point at a temp export dir already discarded by the creator.
     CameraLocalizer.from_feedforward(
         ff,
         extractor=extractor,
         extractor_name=extractor_name,
         zarr_path=feedforward_zarr,
         radius=radius,
+        frames_zarr=frames_zarr,
     )
     logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
     return feedforward_zarr
@@ -376,9 +396,9 @@ class Reconstructor:
         return Path(self.config["output_path"]) / self.config["pointcloud"]["backend"]
 
     @property
-    def images_dir(self) -> Path:
-        """output_path / images/ — shared frame store across all backends."""
-        return Path(self.config["output_path"]) / "images"
+    def frames_zarr(self) -> Path:
+        """output_path / frames.zarr — canonical decode-once keyframe store for this run."""
+        return Path(self.config["output_path"]) / "frames.zarr"
 
     @property
     def features_dir(self) -> Path:
@@ -390,19 +410,19 @@ class Reconstructor:
     ########################################
 
     def preprocess(self, overwrite: bool = False) -> Path:
-        """Extract frames from input video/dir into images_dir."""
-        # Skip if frames already exist and overwrite not requested
-        if not overwrite and self.images_dir.exists() and any(self.images_dir.iterdir()):
-            logger.info("Frames already extracted at %s, skipping preprocess", self.images_dir)
-            return self.images_dir
+        """Extract frames from input video/dir into frames.zarr (sole persistent store)."""
+        # Skip if the store already exists and overwrite not requested
+        if not overwrite and self.frames_zarr.exists():
+            logger.info("Frames already extracted at %s, skipping preprocess", self.frames_zarr)
+            return self.frames_zarr
 
-        if overwrite and self.images_dir.exists():
-            shutil.rmtree(self.images_dir)
+        if overwrite and self.frames_zarr.exists():
+            shutil.rmtree(self.frames_zarr)
 
         pre_cfg = self.config["preprocessing"]
-        extracted = _extract_frames(
+        n_frames = _extract_frames(
             input_path=Path(self.config["input_path"]),
-            output_dir=self.images_dir,
+            frames_zarr=self.frames_zarr,
             frame_selection=pre_cfg["frame_selection"],
             frame_proportion=pre_cfg["frame_proportion"],
             min_frames=pre_cfg["min_frames"],
@@ -410,10 +430,10 @@ class Reconstructor:
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",
-            len(extracted),
-            self.images_dir,
+            n_frames,
+            self.frames_zarr,
         )
-        return self.images_dir
+        return self.frames_zarr
 
     def build_pointcloud(self, overwrite: bool = False) -> "PointcloudResult":
         """Run pointcloud stage. Sets self.pointcloud, returns PointcloudResult."""
@@ -450,7 +470,7 @@ class Reconstructor:
         else:
             result = _run_feedforward(
                 backend=pc_cfg["backend"],
-                images_dir=self.images_dir,
+                frames_zarr=self.frames_zarr,
                 output_dir=self.backend_dir,
                 loop_closure=pc_cfg["loop_closure"],
             )
@@ -475,8 +495,11 @@ class Reconstructor:
         colmap_dir = self.backend_dir / "colmap" / "sparse" / "0"
         recon = pycolmap.Reconstruction()
         recon.read(str(colmap_dir))
-        # Gather image paths from images_dir matching the reconstruction
-        image_paths = sorted(self.images_dir.glob("*.jpg")) + sorted(self.images_dir.glob("*.png"))
+        # Rebuild image_paths from frames.zarr: COLMAP registered names as frame_{source_idx:06d}.jpg
+        # (build_pycolmap_reconstruction takes names from FrameStore.export, which is 06d source-idx
+        # named), so derive the same names in store order to line up with the reconstruction.
+        frame_indices = FrameStore.open(self.frames_zarr).frame_indices()
+        image_paths = [Path(f"frame_{int(fi):06d}.jpg") for fi in frame_indices]
         return PointcloudResult(
             reconstruction=recon,
             frame=CoordinateFrame.COLMAP,
@@ -637,13 +660,11 @@ class Reconstructor:
         if result is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        image_paths = sorted(self.images_dir.glob("*.jpg")) + sorted(self.images_dir.glob("*.png"))
-
         # Stage 1: 2D feature extraction (cached at features_dir/extractor)
         zarr_path = self.features_dir / extractor_name / f"{extractor_name}.zarr"
         if overwrite or not zarr_path.exists():
             logger.info("Extracting 2D features with %s", extractor_name)
-            zarr_path = _extract_2d_features(extractor_name, image_paths, self.features_dir)
+            zarr_path = _extract_2d_features(extractor_name, self.frames_zarr, self.features_dir)
         else:
             logger.info("2D feature cache hit: %s", zarr_path)
 
@@ -711,7 +732,7 @@ class Reconstructor:
             )
             return feedforward_zarr
 
-        return _build_localization_db(feedforward_zarr, extractor_name, radius)
+        return _build_localization_db(feedforward_zarr, extractor_name, radius, self.frames_zarr)
 
     def run_pipeline(
         self,

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.preproc.viz import (
     plot_disparity_sensitivity,
     plot_frame_grid,
@@ -42,6 +43,14 @@ def _fake_records(n=30):
     ]
 
 
+def _fake_store(tmp_path, n=30, h=24, w=32):
+    """FrameStore covering source indices 0..n-1; each frame filled with its own index value."""
+    frames = [np.full((h, w, 3), i % 256, dtype=np.uint8) for i in range(n)]
+    records = [{"frame_idx": i, "blur_score": float(i)} for i in range(n)]
+    FrameStore.create(tmp_path / "frames.zarr", frames, records, provenance={"video_path": "v.mp4"})
+    return FrameStore.open(tmp_path / "frames.zarr")
+
+
 def test_plot_frame_grid_smoke():
     frames = [np.zeros((24, 32, 3), dtype=np.uint8)] * 4
     plot_frame_grid(frames, "grid")
@@ -71,28 +80,23 @@ def test_plot_disparity_sensitivity_monotonic():
     assert all(counts[i] >= counts[i + 1] for i in range(len(counts) - 1))
 
 
-def test_plot_quality_examples_three_rows(monkeypatch):
-    # Stub decode: records every call so we can assert a single decode pass
-    calls = []
-
-    def fake(_path, idxs):
-        calls.append(list(idxs))
-        return [np.zeros((24, 32, 3), dtype=np.uint8) for _ in idxs]
-
-    monkeypatch.setattr("collab_splats.preproc.viz.load_frames", fake)
-    plot_quality_examples("unused.mp4", _fake_records(), n_examples=3)
+def test_plot_quality_examples_three_rows(tmp_path):
+    store = _fake_store(tmp_path)
+    plot_quality_examples(store, _fake_records(), n_examples=3)
     # One row per non-empty category (accepted / blur / exposure), n_examples cols
-    assert len(plt.gcf().axes) == 9
-    # Exactly one load_frames call across all rows, covering every displayed frame
-    assert len(calls) == 1
-    assert len(calls[0]) == 9
+    axes = plt.gcf().axes
+    assert len(axes) == 9
+    # Displayed pixels for each axis must match the store's frame at that source index
+    for ax in axes:
+        frame_idx = int(ax.get_title().split()[0].lstrip("#"))
+        displayed = np.asarray(ax.images[0].get_array())
+        np.testing.assert_array_equal(displayed, store.image_by_frame_idx(frame_idx))
 
 
-def test_plot_quality_examples_skips_empty_categories(monkeypatch):
-    fake = lambda _path, idxs: [np.zeros((24, 32, 3), dtype=np.uint8) for _ in idxs]
-    monkeypatch.setattr("collab_splats.preproc.viz.load_frames", fake)
+def test_plot_quality_examples_skips_empty_categories(tmp_path):
+    store = _fake_store(tmp_path)
     records = [d for d in _fake_records() if d["reject_reason"] != "exposure"]
-    plot_quality_examples("unused.mp4", records, n_examples=3)
+    plot_quality_examples(store, records, n_examples=3)
     assert len(plt.gcf().axes) == 6  # accepted + blur rows only
     row_labels = {t.get_text() for ax in plt.gcf().axes for t in ax.texts}
     assert "Accepted" in row_labels
@@ -100,5 +104,6 @@ def test_plot_quality_examples_skips_empty_categories(monkeypatch):
     assert "Rejected: exposure" not in row_labels
 
 
-def test_plot_quality_examples_empty_input():
-    plot_quality_examples("unused.mp4", [])  # must not raise
+def test_plot_quality_examples_empty_input(tmp_path):
+    store = _fake_store(tmp_path, n=1)
+    plot_quality_examples(store, [])  # must not raise

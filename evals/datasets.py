@@ -6,7 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from collab_splats.preproc import extract_frames, sample_frames
+from collab_splats.preproc import sample_frames
+from collab_splats.preproc.frame_store import FrameStore
 
 _IMG_EXTS = (".png", ".jpg", ".jpeg")
 
@@ -247,10 +248,16 @@ def _load_video(seq_dir: Path, max_frames: int = 500, fps: float = 1.0) -> EvalD
     # Output frames into <stem>_frames/ sibling directory; created if absent
     frames_dir = seq_dir.parent / (seq_dir.stem + "_frames")
     frames_dir.mkdir(parents=True, exist_ok=True)
-    # Sample keyframes then write to disk so EvalDataset receives file paths
-    _, records = sample_frames(str(seq_dir), method="uniform", fps=fps)
-    indices = [r["frame_idx"] for r in records]
-    images = extract_frames(str(seq_dir), indices[:max_frames], frames_dir)
+    # Decode video once: sample_frames returns in-memory frames + records; write via FrameStore
+    frames, records = sample_frames(str(seq_dir), method="uniform", fps=fps)
+    frames, records = frames[:max_frames], records[:max_frames]
+    store = FrameStore.create(
+        frames_dir / "frames.zarr",
+        frames,
+        records,
+        provenance={"video_path": str(seq_dir), "method": "uniform", "max_frames": max_frames},
+    )
+    images = store.export(frames_dir)  # write JPEGs ONCE from in-memory frames, no re-decode
     # GT poses not available for raw video; zeros placeholder
     return EvalDataset(images=images, gt_poses=np.zeros((len(images), 4, 4), dtype=np.float32))
 

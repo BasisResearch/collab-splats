@@ -129,6 +129,25 @@ large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in
 
 ---
 
+## Where outputs land
+
+```
+<output_path>/
+  run_config.yaml              ← full merged config (exact settings used — for reproducibility)
+  frames.zarr                  ← canonical decode-once keyframe store (chunked images + records + provenance)
+  features/                    ← 2D feature cache (one subdir per extractor)
+  <backend>/                   ← e.g. vggt_omega/
+    feedforward.zarr           ← depth maps, poses, confidence, 3D points
+    semantics/
+      <extractor>/
+        features.zarr          ← lifted 3D features (N_points × n_components)
+        compressor.pt          ← PCA compressor weights (if n_components set)
+    mesh/
+      mesh.ply                 ← (only if mesh.enabled=true)
+```
+
+---
+
 ## Dashboard
 
 Point the dashboard at a scene's output dir to visualise results. It reads

@@ -1,6 +1,7 @@
 """run_localization orchestration with all heavy pieces faked."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -96,9 +97,11 @@ def wired(monkeypatch, tmp_path):
         image_paths = [Path("/orig/00000.jpg"), Path("/orig/00001.jpg")]
 
     monkeypatch.setattr(pipeline, "_load_feedforward_result", lambda out_dir: _FakeResult())
-    monkeypatch.setattr(
-        pipeline, "_build_localizer", lambda result, cfg, zarr_path, op_log, cache=None, scene_key=None: fake_localizer
-    )
+    # MagicMock (not a lambda) so tests can assert on call_args — in particular that
+    # frames_zarr is threaded through to the real from_feedforward call site.
+    build_localizer_mock = MagicMock(return_value=fake_localizer)
+    monkeypatch.setattr(pipeline, "_build_localizer", build_localizer_mock)
+    fake_localizer.build_localizer_mock = build_localizer_mock
     monkeypatch.setattr(pipeline, "_stamp_db_provenance", lambda zarr_path, extractor, out_dir: None)
     monkeypatch.setattr(pipeline, "extract_frame", lambda video, idx: np.zeros((48, 64, 3), np.uint8))
     monkeypatch.setattr(pipeline, "_resolve_query_intrinsics", lambda frame, cfg, op_log: np.eye(3, dtype=np.float32))
@@ -181,6 +184,30 @@ def test_ref_paths_remapped_to_local_frames_dir(tmp_path, wired):
 def test_pull_uses_minimal_excludes(tmp_path, wired):
     _, source = _run(tmp_path, wired)
     assert source.excludes == pipeline.PULL_EXCLUDES
+
+
+def test_build_localizer_receives_session_frames_zarr(tmp_path, wired):
+    """frames_zarr must be threaded into _build_localizer (-> from_feedforward) as the
+    session's own frames.zarr, not dropped or left implicit — this is what lets a cache
+    miss read pixels from the store instead of a possibly-stale ff.image_paths."""
+    scene = tmp_path / "2024_02_06" / "vid"
+    # Present locally, as it would be for a session that ran preprocessing on this machine.
+    (scene / "frames.zarr").mkdir(parents=True)
+
+    _run(tmp_path, wired)
+
+    wired.build_localizer_mock.assert_called_once()
+    kwargs = wired.build_localizer_mock.call_args.kwargs
+    assert kwargs["frames_zarr"] == scene / "frames.zarr"
+
+
+def test_build_localizer_gets_no_frames_zarr_when_absent(tmp_path, wired):
+    """Pulled scenes have no local frames.zarr (excluded from PULL_EXCLUDES) — must pass
+    None, not a dangling path FrameStore.open() would fail to open."""
+    _run(tmp_path, wired)
+
+    kwargs = wired.build_localizer_mock.call_args.kwargs
+    assert kwargs["frames_zarr"] is None
 
 
 def test_stamp_db_provenance_writes_attrs(tmp_path):

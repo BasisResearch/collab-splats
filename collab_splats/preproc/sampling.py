@@ -114,14 +114,48 @@ def get_video_info(video_path: str) -> dict:
     return zeros
 
 
+def _probe_dims(video_path: str) -> tuple[int, int]:
+    """Display (width, height) via a cheap ffprobe — no packet count / full demux."""
+    _require_ffmpeg()
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-select_streams",
+                "v:0",
+                "-show_streams",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        streams = json.loads(r.stdout or "{}").get("streams", [])
+    except Exception:
+        logger.debug("ffprobe dims failed for %s", video_path, exc_info=True)
+        return 0, 0
+    for s in streams:
+        if s.get("codec_type") != "video":
+            continue
+        w, h = int(s.get("width") or 0), int(s.get("height") or 0)
+        # Match get_video_info: 90/270 rotation swaps display W/H
+        if _rotation_degrees(s) in (90, 270):
+            w, h = h, w
+        return w, h
+    return 0, 0
+
+
 def _iter_frames(video_path: str) -> Iterator[np.ndarray]:
     """Yield every frame as BGR uint8 HWC via one ffmpeg rawvideo pipe.
 
     ffmpeg applies rotation metadata itself, so yielded dims always match
     get_video_info's display dims.
     """
-    info = get_video_info(str(video_path))
-    w, h = info["width"], info["height"]
+    w, h = _probe_dims(str(video_path))
     if w == 0 or h == 0:
         return
     cmd = ["ffmpeg", "-i", str(video_path), "-f", "rawvideo", "-pix_fmt", "bgr24", "-an", "pipe:1"]
@@ -138,24 +172,6 @@ def _iter_frames(video_path: str) -> Iterator[np.ndarray]:
         proc.stdout.close()
         proc.terminate()
         proc.wait()
-
-
-def _iter_frames_at(video_path: str, frame_indices: list[int]) -> Iterator[tuple[int, np.ndarray]]:
-    """Yield (index, BGR frame) for the requested indices via one streaming pass.
-
-    Indices are deduplicated and yielded in stream order; the decode stops
-    after the last requested index. Streaming beats per-index seeking: exact
-    for every codec, one process, no approximate-seek issues.
-    """
-    wanted = set(frame_indices)
-    if not wanted:
-        return
-    last = max(wanted)
-    for idx, frame in enumerate(_iter_frames(video_path)):
-        if idx in wanted:
-            yield idx, frame
-        if idx >= last:
-            break
 
 
 ########################################################################
@@ -208,14 +224,14 @@ def _combine_scores(
     histogram_similarity: float,
     min_disparity: float,
     rotation: float = 0.0,
-    motion_weight: float = 0.6,
-    coverage_weight: float = 0.4,
 ) -> float:
     """Weighted motion+coverage score in [0, 1] from raw per-frame signals.
 
     Single home for the selection formula — the selector and
     viz.plot_disparity_sensitivity both call this, so they can't drift apart.
     """
+    # Fixed motion/coverage weighting
+    motion_weight, coverage_weight = 0.6, 0.4
     # Motion: max of normalised translation and rotation components
     translation_score = min(disparity / max(min_disparity, 1e-6), 1.0)
     rotation_score = min(rotation / _ROTATION_THRESHOLD_DEG, 1.0)
@@ -230,33 +246,15 @@ class OpticalFlowFrameSelector:
     """Streaming keyframe selector: motion (LK flow + rotation) and coverage scoring.
 
     Holds the reference keyframe between calls — score each candidate frame
-    with score_frame(); promote selected frames with accept_frame(). Raw
-    signals accumulate in .stats for viz. Construct fresh per video.
+    with score_frame(); promote selected frames with accept_frame(). Construct
+    fresh per video.
     """
 
-    def __init__(
-        self,
-        min_disparity: float = 50.0,
-        motion_weight: float = 0.6,
-        coverage_weight: float = 0.4,
-    ):
-        # Validate weights; normalisation happens in _combine_scores
-        if not (0 <= motion_weight <= 1 and 0 <= coverage_weight <= 1):
-            raise ValueError("Weights must be between 0 and 1")
-        if motion_weight + coverage_weight == 0:
-            raise ValueError("At least one weight must be > 0")
+    def __init__(self, min_disparity: float = 50.0):
         self.min_disparity = min_disparity
-        self.motion_weight = motion_weight
-        self.coverage_weight = coverage_weight
         # Reference keyframe state, seeded on the first scored frame
         self.last_keyframe_gray: np.ndarray | None = None
         self.last_keyframe_pts: np.ndarray | None = None
-        # Accumulated raw signals for viz / sensitivity analysis
-        self.stats: dict[str, list] = {
-            "disparities": [],
-            "rotations": [],
-            "histogram_similarities": [],
-        }
 
     def score_frame(self, gray: np.ndarray) -> tuple[float, dict]:
         """Score a grayscale frame against the current keyframe.
@@ -276,18 +274,7 @@ class OpticalFlowFrameSelector:
             rotation = self._estimate_rotation(prev_pts, curr_pts)
         # Coverage signal: histogram correlation vs the keyframe
         hist_similarity = self._hist_similarity(gray)
-        # Accumulate raw signals for downstream plots
-        self.stats["disparities"].append(disparity)
-        self.stats["rotations"].append(rotation)
-        self.stats["histogram_similarities"].append(hist_similarity)
-        score = _combine_scores(
-            disparity,
-            hist_similarity,
-            self.min_disparity,
-            rotation=rotation,
-            motion_weight=self.motion_weight,
-            coverage_weight=self.coverage_weight,
-        )
+        score = _combine_scores(disparity, hist_similarity, self.min_disparity, rotation=rotation)
         return score, {
             "disparity": disparity,
             "rotation": rotation,
@@ -371,8 +358,6 @@ def sample_frames(
     max_frames: int | None = None,
     fps: float | None = None,
     min_disparity: float = 50.0,
-    motion_weight: float = 0.6,
-    coverage_weight: float = 0.4,
     blur_threshold: float = _DEFAULT_BLUR_THRESHOLD,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
@@ -384,7 +369,7 @@ def sample_frames(
             from `max_frames` when fps is None (falls back to 2.0 fps).
         "optical_flow": motion (LK disparity + rotation) + coverage (histogram
             diversity) scoring; frames scoring >= 0.5 are selected.
-            Uses min_disparity / motion_weight / coverage_weight.
+            Uses min_disparity.
 
     Both methods apply the quality gate (blur + exposure); `blur_threshold`
     tunes it (0.0 disables the blur check).
@@ -406,8 +391,6 @@ def sample_frames(
             video_path,
             max_frames=max_frames,
             min_disparity=min_disparity,
-            motion_weight=motion_weight,
-            coverage_weight=coverage_weight,
             blur_threshold=blur_threshold,
             on_progress=on_progress,
         )
@@ -505,17 +488,11 @@ def _sample_optical_flow(
     *,
     max_frames: int | None,
     min_disparity: float,
-    motion_weight: float,
-    coverage_weight: float,
     blur_threshold: float,
     on_progress: Callable[[int, int], None] | None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """Optical-flow keyframe selection; keeps selected frames full-res RGB."""
-    selector = OpticalFlowFrameSelector(
-        min_disparity=min_disparity,
-        motion_weight=motion_weight,
-        coverage_weight=coverage_weight,
-    )
+    selector = OpticalFlowFrameSelector(min_disparity=min_disparity)
     frames: list[np.ndarray] = []
     records: list[dict] = []
     for idx, frame, selected, quality, score, comp in _iter_scored_frames(
@@ -541,8 +518,6 @@ def score_frames(
     video_path: str,
     *,
     min_disparity: float = 50.0,
-    motion_weight: float = 0.6,
-    coverage_weight: float = 0.4,
     blur_threshold: float = _DEFAULT_BLUR_THRESHOLD,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> list[dict]:
@@ -552,11 +527,7 @@ def score_frames(
     exposure_std, reject_reason, disparity, rotation, histogram_similarity,
     score, selected.
     """
-    selector = OpticalFlowFrameSelector(
-        min_disparity=min_disparity,
-        motion_weight=motion_weight,
-        coverage_weight=coverage_weight,
-    )
+    selector = OpticalFlowFrameSelector(min_disparity=min_disparity)
     records: list[dict] = []
     for idx, _frame, selected, quality, score, comp in _iter_scored_frames(
         video_path,
@@ -587,40 +558,20 @@ def score_frames(
 ########################################################################
 
 
-def load_frames(video_path: str, frame_indices: list[int]) -> list[np.ndarray]:
-    """Read specific frames by index; returns RGB arrays in index order."""
-    return [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for _, f in _iter_frames_at(video_path, frame_indices)]
-
-
-def extract_frame(video_path: "str | Path", frame_idx: int) -> np.ndarray:
-    """Decode exactly one frame (0-based index) via ffmpeg; returns (H, W, 3) uint8 RGB.
-
-    Raises ValueError if frame_idx is past the end of the video.
-    """
-    _require_ffmpeg()
-    # Delegate to the shared rotation-aware streaming decode — dims always match
-    # get_video_info's display dims (ffmpeg applies rotation metadata itself)
-    for _, frame in _iter_frames_at(str(video_path), [frame_idx]):
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}")
-
-
-def extract_frame_fast(video_path: "str | Path", frame_idx: int) -> np.ndarray:
+def extract_frame(video_path: str | Path, frame_idx: int) -> np.ndarray:
     """Decode one frame via ffmpeg input-seek; returns (H, W, 3) uint8 RGB.
 
     Seeks by timestamp (frame_idx / fps) before demuxing — O(1) in frame depth, so a
     deep frame previews instantly. Exact on constant-frame-rate video; may land one
-    frame off near keyframes on VFR sources. Use extract_frame where exactness matters
-    (e.g. the localization run, which records frame_idx as provenance).
+    frame off near keyframes on VFR sources.
     """
     _require_ffmpeg()
     info = get_video_info(str(video_path))
     fps, w, h, total = info["fps"], info["width"], info["height"], info["total_frames"]
     if not fps or not w or not h:
-        # Unprobeable video: fall back to the exact streaming decode.
-        return extract_frame(video_path, frame_idx)
+        raise ValueError(f"cannot probe {video_path} for seek decode")
     if frame_idx < 0 or (total and frame_idx >= total):
-        raise ValueError(f"extract_frame_fast: frame {frame_idx} out of range for {video_path}")
+        raise ValueError(f"extract_frame: frame {frame_idx} out of range for {video_path}")
     # Seek to the frame midpoint, not its start: PTS float rounding can otherwise land
     # the demuxer just past the target timestamp and decode frame N+1 instead of N.
     seek_s = max(frame_idx - 0.5, 0) / fps
@@ -645,17 +596,5 @@ def extract_frame_fast(video_path: "str | Path", frame_idx: int) -> np.ndarray:
     raw = proc.stdout
     if len(raw) < w * h * 3:
         err = proc.stderr.decode(errors="replace")[-500:]
-        raise ValueError(f"extract_frame_fast: frame {frame_idx} not found in {video_path}: {err}")
+        raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}: {err}")
     return np.frombuffer(raw[: w * h * 3], dtype=np.uint8).reshape(h, w, 3).copy()
-
-
-def extract_frames(video_path: str, frame_indices: list[int], output_dir) -> list[Path]:
-    """Save specific frames as frame_NNNNNN.jpg in output_dir; returns saved paths."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    saved: list[Path] = []
-    for idx, frame in _iter_frames_at(video_path, frame_indices):
-        out_path = output_dir / f"frame_{idx:06d}.jpg"
-        cv2.imwrite(str(out_path), frame)
-        saved.append(out_path)
-    return saved

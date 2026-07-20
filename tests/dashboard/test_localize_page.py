@@ -88,7 +88,7 @@ def test_load_video_button_previews_current_frame(tmp_path, monkeypatch):
     shown = []
     monkeypatch.setattr(page, "_ensure_local_query_video", lambda *a: _P("/dev/null"))
     monkeypatch.setattr(
-        "collab_splats.preproc.extract_frame_fast",
+        "collab_splats.preproc.extract_frame",
         lambda video, idx: np.full((4, 4, 3), idx, dtype=np.uint8),
     )
     monkeypatch.setattr(page, "_show_frame", lambda f: shown.append(int(f[0, 0, 0])))
@@ -185,7 +185,7 @@ def test_frame_slider_preview_latest_wins(tmp_path, monkeypatch):
     shown = []
     monkeypatch.setattr(page, "_ensure_local_query_video", lambda *a: Path("/dev/null"))
     monkeypatch.setattr(
-        "collab_splats.preproc.extract_frame_fast",
+        "collab_splats.preproc.extract_frame",
         lambda video, idx: np.full((4, 4, 3), idx, dtype=np.uint8),
     )
     monkeypatch.setattr(page, "_show_frame", lambda f: shown.append(int(f[0, 0, 0])))

@@ -4,7 +4,7 @@ import pytest
 
 from collab_splats.preproc.sampling import (
     _iter_frames,
-    _iter_frames_at,
+    _probe_dims,
     _require_ffmpeg,
     get_video_info,
 )
@@ -48,6 +48,12 @@ def test_get_video_info_missing_file():
     assert info["total_frames"] == 0 and info["fps"] == 0.0
 
 
+def test_probe_dims_matches_full_info(tiny_video):
+    info = get_video_info(tiny_video)
+    w, h = _probe_dims(tiny_video)
+    assert (w, h) == (info["width"], info["height"])
+
+
 def test_require_ffmpeg_raises_without_binary(monkeypatch):
     # Simulate ffmpeg absent from PATH — the only decode backend must hard-fail
     monkeypatch.setattr("collab_splats.preproc.sampling.shutil.which", lambda _: None)
@@ -60,17 +66,6 @@ def test_iter_frames_yields_all_frames_bgr(tiny_video):
     assert len(frames) == 60
     assert frames[0].shape == (240, 320, 3)
     assert frames[0].dtype == np.uint8
-
-
-def test_iter_frames_at_yields_requested_indices(tiny_video):
-    got = list(_iter_frames_at(tiny_video, [5, 20, 20, 3]))
-    # Deduplicated, in stream order
-    assert [idx for idx, _ in got] == [3, 5, 20]
-    assert all(f.shape == (240, 320, 3) for _, f in got)
-
-
-def test_iter_frames_at_empty_indices(tiny_video):
-    assert list(_iter_frames_at(tiny_video, [])) == []
 
 
 ########################################################################
@@ -162,11 +157,11 @@ def test_selector_identical_frame_scores_low():
     assert components["disparity"] < 1.0
 
 
-def test_selector_rejects_invalid_weights():
-    with pytest.raises(ValueError):
-        OpticalFlowFrameSelector(motion_weight=0.0, coverage_weight=0.0)
-    with pytest.raises(ValueError):
-        OpticalFlowFrameSelector(motion_weight=1.5)
+def test_selector_has_no_stats_attr():
+    from collab_splats.preproc.sampling import OpticalFlowFrameSelector
+
+    sel = OpticalFlowFrameSelector(min_disparity=50.0)
+    assert not hasattr(sel, "stats")
 
 
 def test_combine_scores_monotonic_in_disparity():
@@ -325,27 +320,6 @@ def test_sample_frames_missing_file_returns_empty():
 
 
 ########################################################################
-# Frame I/O
-########################################################################
-
-from collab_splats.preproc.sampling import extract_frames, load_frames
-
-
-def test_load_frames_returns_rgb_arrays(tiny_video):
-    frames = load_frames(tiny_video, [0, 10, 30])
-    assert len(frames) == 3
-    bgr = list(_iter_frames(tiny_video))
-    np.testing.assert_array_equal(frames[1], bgr[10][:, :, ::-1])
-
-
-def test_extract_frames_writes_named_jpegs(tiny_video, tmp_path):
-    paths = extract_frames(tiny_video, [4, 2, 4], tmp_path / "out")
-    # Deduplicated, sorted, zero-padded names
-    assert [p.name for p in paths] == ["frame_000002.jpg", "frame_000004.jpg"]
-    assert all(p.exists() for p in paths)
-
-
-########################################################################
 # Public API
 ########################################################################
 
@@ -353,15 +327,13 @@ def test_extract_frames_writes_named_jpegs(tiny_video, tmp_path):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 9 public names — viz is opt-in and must NOT be re-exported
+    # Exactly the 7 public names — viz is opt-in and must NOT be re-exported
     assert set(preproc.__all__) == {
+        "FrameStore",
         "sample_frames",
         "score_frames",
         "get_video_info",
-        "load_frames",
-        "extract_frame_fast",
         "extract_frame",
-        "extract_frames",
         "compute_blur_score",
         "check_frame_quality",
     }

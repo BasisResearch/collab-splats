@@ -161,7 +161,6 @@ async function buildFrameStrip() {
   if (!strip) return;
   strip.innerHTML = '';
 
-  const relDir = info.frames_dir.replace('/workspace/outputs/', '');
   // IntersectionObserver for lazy loading
   const obs = new IntersectionObserver(entries => {
     entries.forEach(e => {
@@ -176,7 +175,7 @@ async function buildFrameStrip() {
   for (let i = 0; i < totalFrames; i++) {
     const img = document.createElement('img');
     img.className = 'sem-thumb';
-    img.dataset.src = `/outputs/${relDir}/frame_${String(i).padStart(6,'0')}.jpg`;
+    img.dataset.src = `/api/preprocess/frame/${i}`;
     img.style.cssText = 'height:72px;width:54px;object-fit:cover;border:2px solid #222;border-radius:2px;cursor:pointer;flex-shrink:0;background:#1a1a1a';
     img.addEventListener('click', () => loadFrame(i));
     strip.appendChild(img);

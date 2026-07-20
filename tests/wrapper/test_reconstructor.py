@@ -118,6 +118,32 @@ def test_reconstructor_init(tmp_path):
     assert rec.config["pointcloud"]["backend"] == "vggtx"
 
 
+def test_init_fills_defaults_from_base_yaml(tmp_path):
+    """A partial config gets missing keys filled from configs/base.yaml."""
+    partial = {
+        "input_path": str(tmp_path / "video.mp4"),
+        "output_path": str(tmp_path / "out"),
+    }
+    rec = Reconstructor(partial)
+    # min_frames comes from base.yaml (150), NOT a stale code default (300)
+    assert rec.config["preprocessing"]["min_frames"] == 150
+    # backend comes from base.yaml (vggt_omega)
+    assert rec.config["pointcloud"]["backend"] == "vggt_omega"
+
+
+def test_init_user_override_wins_over_base(tmp_path):
+    """User-supplied value overrides the base.yaml default."""
+    partial = {
+        "input_path": str(tmp_path / "video.mp4"),
+        "output_path": str(tmp_path / "out"),
+        "pointcloud": {"backend": "mapanything"},
+    }
+    rec = Reconstructor(partial)
+    assert rec.config["pointcloud"]["backend"] == "mapanything"
+    # sibling keys still filled from base
+    assert rec.config["pointcloud"]["method"] == "feedforward"
+
+
 def test_reconstructor_validate_missing_input_path(tmp_path):
     config = _make_config(tmp_path)
     del config["input_path"]

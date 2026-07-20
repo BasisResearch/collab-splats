@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import yaml
+from mergedeep import merge
 
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
@@ -20,6 +22,9 @@ logger = logging.getLogger(__name__)
 ########################################
 # Constants
 ########################################
+
+# base.yaml is the single source of defaults; __init__ merges any passed config over it.
+DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega"}
 _SFM_BACKENDS = {"colmap", "hloc"}
@@ -327,9 +332,16 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
 class Reconstructor:
     """5-stage environment reconstruction pipeline: preprocess → pointcloud → semantics / mesh / localize."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
-        """Initialize with validated config dict."""
-        self.config = self.validate_config(config)
+    def __init__(self, config: dict[str, Any], config_dir: str | Path = DEFAULT_CONFIG_DIR) -> None:
+        """Merge config over base.yaml defaults, validate, and store."""
+        # Load base defaults; deep-merge the caller's config over them so every key is present
+        base_path = Path(config_dir) / "base.yaml"
+        with open(base_path) as f:
+            defaults = yaml.safe_load(f) or {}
+        merged = merge({}, defaults, config)
+
+        # Validate shape, then store the fully-populated config
+        self.config = self.validate_config(merged)
         self.pointcloud: PointcloudResult | None = None
 
     @classmethod

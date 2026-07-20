@@ -55,16 +55,17 @@ def _write_frames_zarr(
     FrameStore.create(path, frames, records, provenance=prov)
 
 
-def _write_frames_jpegs(frames: list[np.ndarray], frames_dir: Path) -> Path:
-    """Write frames as zero-padded JPEGs for creators that consume an image dir.
+def _write_frames_jpegs(frames: list[np.ndarray], records: list[dict], frames_dir: Path) -> Path:
+    """Write frames as source-frame_idx-named JPEGs for path-locked creators (setup_inference,
+    semantics extraction) that require a real on-disk image directory.
 
-    NOTE: this frames/ dir is still needed by _local_ref_paths, which maps localization
-    reference thumbnails to out_dir/frames/<name>.jpg. Migrating those thumbnails to read
-    from frames.zarr is a separate follow-up (see frame-store Task 10b report).
+    Filenames must match FrameStore.frame_idx_from_path's convention (frame_{idx:06d}.jpg,
+    source video index — not list position) so that consumers reading this dir alongside
+    frames.zarr (e.g. localization ref thumbnails) resolve the same frame from both.
     """
     frames_dir.mkdir(parents=True, exist_ok=True)
-    for i, f in enumerate(frames):
-        Image.fromarray(f).save(frames_dir / f"{i:05d}.jpg")
+    for f, r in zip(frames, records):
+        Image.fromarray(f).save(frames_dir / f"frame_{int(r['frame_idx']):06d}.jpg")
     return frames_dir
 
 
@@ -233,9 +234,10 @@ def run_pipeline(
                 method=sampling_method,
                 max_frames=config.max_frames,
             )
-            # frames/ jpgs feed setup_inference + semantics + localization ref thumbnails
-            # (_local_ref_paths); frames.zarr is the canonical store for pixel reads.
-            image_dir = _write_frames_jpegs(frames, out_dir / "frames")
+            # frames/ jpgs feed path-locked consumers only (setup_inference, semantics);
+            # frames.zarr is the canonical store for pixel reads (localization ref thumbnails
+            # included — see _build_result_figures's frames_zarr threading).
+            image_dir = _write_frames_jpegs(frames, records, out_dir / "frames")
             config.frame_indices = [r["frame_idx"] for r in records]
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 

@@ -1,26 +1,28 @@
 # Known Test Failures
 
-## 2026-07-20 — frame-store refactor: notebook follow-ups (not a test failure, tracked here)
+## 2026-07-20 — frame-store refactor: notebook follow-ups (RESOLVED)
 
-`docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb` is broken by the
-frame-store refactor (`frames.zarr` replacing the `output_path/images/` JPG dir) beyond a
-trivial call-site fix: it imports `extract_frames` and `load_frames` from
-`collab_splats.preproc`, both removed from the public API (current surface:
-`FrameStore, sample_frames, score_frames, get_video_info, extract_frame, compute_blur_score,
-check_frame_quality`); and its `plot_quality_examples(VIDEO_PATH, frame_scores)` calls need a
-`FrameStore` (new signature: `plot_quality_examples(store, frame_scores, n_examples)`), but the
-notebook explores sampling directly against `VIDEO_PATH` before any store exists in its
-narrative. Needs a rework against a real pipeline run, not a mechanical edit — left as-is
-pending the broader notebook sweep already tracked in project memory ("6 notebooks broken by
-IMAGES removal await sweep + VGGT-Omega-primary").
-`docs/source/tutorials/07_localization/localization.ipynb` was fixed in place (no pipeline run
-needed): `result.image_paths` reference a per-run temp export dir that no longer exists by
-notebook time, so the query-image load and `plot_correspondences(...)` now go through
+`docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb` was broken by the
+frame-store refactor (`frames.zarr` replacing the `output_path/images/` JPG dir): it imported
+`extract_frames`/`load_frames` from `collab_splats.preproc` (both removed from the public API)
+and called `plot_quality_examples(VIDEO_PATH, frame_scores)` against a stale signature. Fixed:
+rewrote the broken cells against the current API (`FrameStore, sample_frames, score_frames,
+get_video_info, extract_frame, compute_blur_score, check_frame_quality`); the per-frame quality
+example cells (before any `frames.zarr` exists in the notebook's narrative) use a lightweight
+duck-typed frame lookup wrapping `extract_frame` instead of decoding the full video into a store.
+`docs/source/tutorials/07_localization/localization.ipynb` was fixed in place earlier (no
+pipeline run needed): `result.image_paths` reference a per-run temp export dir that no longer
+exists by notebook time, so the query-image load and `plot_correspondences(...)` now go through
 `FrameStore.open(OUTPUT_DIR / "frames.zarr")` / `frames_zarr=` instead of `cv2.imread`.
 
-See `docs/source/api/preproc.rst` ("Known limitations") for two accepted, intentionally
-unmigrated call sites: `transforms.json`'s `../images/` file_path (cosmetic, write-only) and
-the dashboard's `_local_ref_paths` JPG thumbnail dir.
+The two follow-ups previously tracked in `docs/source/api/preproc.rst` ("Known limitations")
+are also resolved: `transforms.json` no longer emits a dangling `../images/` `file_path` (drops
+the key entirely, adds `frame_idx`), and the dashboard's localization reference thumbnails
+(`_build_result_figures` in `collab_splats/dashboard/localize.py`) now read reconstruction-
+sourced frames from `frames.zarr` via `plot_correspondences(..., frames_zarr=...)`. The
+`out_dir/frames/` JPG dir itself remains — `creator.setup_inference` and semantic feature
+extraction are path-locked consumers that still need a real on-disk image directory — see
+`docs/source/api/preproc.rst` for the current state.
 
 ## 2026-07-20 — evals + loop-closure aggressive cleanup (GREEN)
 

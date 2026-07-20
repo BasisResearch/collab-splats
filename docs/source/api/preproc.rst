@@ -45,15 +45,15 @@ blur/exposure gating).
 Known limitations
 ------------------
 
-- **transforms.json still points at ``../images/``.** ``Reconstructor``
-  writes nerfstudio's ``file_path: "../images/{name}"`` for each frame
-  (`collab_splats/wrapper/reconstructor.py`) even though that directory no
-  longer exists. This is write-only and cosmetic — nothing in this repo
-  reads ``transforms.json`` back (``ns-train`` is driven from its own
-  images dir, not this file). Left dangling by design; repoint it only if
-  a workflow ever runs ``ns-train`` directly against a backend output dir.
-- **Dashboard localization reference thumbnails are not yet migrated.**
-  ``collab_splats/dashboard/pipeline.py``'s ``_local_ref_paths`` still reads
-  reference-frame thumbnails from an ``out_dir/frames/`` JPG dir written by
-  ``_write_frames_jpegs``, rather than from ``frames.zarr``. Tracked as a
-  follow-up in the frame-store work.
+- **``frames/`` JPG dir still exists, by design.** ``_write_frames_jpegs``
+  (`collab_splats/dashboard/pipeline.py`) still writes an
+  ``out_dir/frames/`` directory because ``creator.setup_inference`` and
+  semantic feature extraction are path-locked consumers that require a real
+  on-disk image directory. Filenames use the source ``frame_idx`` (matching
+  ``FrameStore.frame_idx_from_path``'s convention), so they stay addressable
+  from both the JPG dir and ``frames.zarr``. Dashboard localization
+  reference thumbnails (``_build_result_figures`` in
+  ``collab_splats/dashboard/localize.py``) read pixels from ``frames.zarr``
+  via ``plot_correspondences(..., frames_zarr=...)`` for reconstruction-
+  sourced frames; ``localized`` frames (appended post-hoc, never written to
+  ``frames.zarr``) still read from ``localized_frames/`` on disk.

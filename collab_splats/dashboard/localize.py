@@ -679,8 +679,11 @@ class LocalizePage(param.Parameterized):
                 cache=self._cache,  # keeps the localizer (and its extractor) warm across runs
             )
             # Figures + mesh read are slow — build them here so on_done only assigns panes.
+            frames_zarr = self._base_dir / scene_session / stem / "frames.zarr"
             with self._op_log.step("building result figures"):
-                figs = self._build_result_figures(out, config)
+                figs = self._build_result_figures(
+                    out, config, frames_zarr=frames_zarr if frames_zarr.exists() else None
+                )
             mesh = self._ensure_scene_mesh(scene_key, mesh_path)
             return (out, figs, mesh)
 
@@ -697,12 +700,16 @@ class LocalizePage(param.Parameterized):
 
     # ---- rendering -----------------------------------------------------
 
-    def _build_result_figures(self, out, config: LocalizationConfig) -> dict:
+    def _build_result_figures(self, out, config: LocalizationConfig, frames_zarr: "Path | None" = None) -> dict:
         """Build all matplotlib figures + stats HTML for a run output (worker thread — pure).
 
         Runs on the worker with the Agg backend. Figures are pyplot-managed (Gcf), so
         there is a theoretical cross-thread window vs the IOLoop's plt.close — benign
         under CPython/Agg; migrate viz to direct Figure() construction if it ever bites.
+
+        frames_zarr: canonical frames.zarr for this scene, when present. Only used for
+        'reconstruction'-sourced ref frames — 'localized' frames live in localized_frames/
+        JPGs only (never written to frames.zarr), so they always fall back to disk reads.
         """
         from collab_splats.localization.viz import (
             plot_correspondences,
@@ -730,6 +737,7 @@ class LocalizePage(param.Parameterized):
             for ref in top:
                 if counts[ref] == 0 or not Path(out.ref_image_paths[ref]).exists():
                     continue
+                is_reconstruction = ref < len(out.frame_sources) and out.frame_sources[ref] == "reconstruction"
                 mfig = plot_correspondences(
                     loc,
                     out.query_frame,
@@ -737,6 +745,7 @@ class LocalizePage(param.Parameterized):
                     max_pairs=config.max_pairs,
                     ref_idx=int(ref),
                     show=False,
+                    frames_zarr=frames_zarr if is_reconstruction else None,
                 )
                 if mfig is not None:
                     match_figs.append(mfig)

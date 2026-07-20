@@ -46,3 +46,8 @@ localization:
   enabled: false
   extractor: loma          # local matcher registry key (dinosalad was invalid — it is a RETRIEVAL extractor)
   radius: 8.0              # CameraLocalizer search radius
+
+# Used only when pointcloud.method: nerfstudio (ns-process-data + ns-train subprocesses)
+nerfstudio:
+  sfm_tool: hloc            # ns-process-data --sfm-tool
+  train_method: rade-features

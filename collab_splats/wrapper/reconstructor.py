@@ -29,7 +29,6 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
-_VALID_MESHERS = {"tsdf", "poisson"}
 _STAGE_ORDER = ["preprocess", "pointcloud", "semantics", "mesh", "localize"]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preprocess": [],
@@ -358,9 +357,11 @@ class Reconstructor:
             if field not in config or config[field] is None:
                 raise ValueError(f"Reconstructor config missing required field: '{field}'")
 
+        # Single-arg .get() returns None if absent — the membership checks below reject None,
+        # so no inline value defaults are needed (base.yaml is the sole default source).
         pc = config.get("pointcloud", {})
-        method = pc.get("method", "feedforward")
-        backend = pc.get("backend", "vggtx")
+        method = pc.get("method")
+        backend = pc.get("backend")
 
         if method not in _VALID_METHODS:
             raise ValueError(f"pointcloud.method must be one of {_VALID_METHODS}, got '{method}'")
@@ -373,11 +374,6 @@ class Reconstructor:
         if method == "sfm" and backend not in _SFM_BACKENDS:
             raise ValueError(f"pointcloud.backend must be one of {_SFM_BACKENDS} " f"for method='sfm', got '{backend}'")
 
-        mesh_cfg = config.get("mesh", {})
-        mesher = mesh_cfg.get("mesher", "tsdf")
-        if mesher not in _VALID_MESHERS:
-            raise ValueError(f"mesh.mesher must be one of {_VALID_MESHERS}, got '{mesher}'")
-
         return config
 
     ########################################
@@ -387,8 +383,7 @@ class Reconstructor:
     @property
     def backend_dir(self) -> Path:
         """output_path / backend — e.g. out/vggtx/. Backend subdir for all stage 2+ artifacts."""
-        backend = self.config["pointcloud"].get("backend", "nerfstudio")
-        return Path(self.config["output_path"]) / backend
+        return Path(self.config["output_path"]) / self.config["pointcloud"]["backend"]
 
     @property
     def images_dir(self) -> Path:
@@ -414,14 +409,14 @@ class Reconstructor:
         if overwrite and self.images_dir.exists():
             shutil.rmtree(self.images_dir)
 
-        pre_cfg = self.config.get("preprocessing", {})
+        pre_cfg = self.config["preprocessing"]
         extracted = _extract_frames(
             input_path=Path(self.config["input_path"]),
             output_dir=self.images_dir,
-            frame_selection=pre_cfg.get("frame_selection", "fps"),
-            frame_proportion=pre_cfg.get("frame_proportion", 0.1),
-            min_frames=pre_cfg.get("min_frames", 300),
-            max_frames=pre_cfg.get("max_frames"),
+            frame_selection=pre_cfg["frame_selection"],
+            frame_proportion=pre_cfg["frame_proportion"],
+            min_frames=pre_cfg["min_frames"],
+            max_frames=pre_cfg["max_frames"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",
@@ -432,8 +427,8 @@ class Reconstructor:
 
     def build_pointcloud(self, overwrite: bool = False) -> "PointcloudResult":
         """Run pointcloud stage. Sets self.pointcloud, returns PointcloudResult."""
-        pc_cfg = self.config.get("pointcloud", {})
-        method = pc_cfg.get("method", "feedforward")
+        pc_cfg = self.config["pointcloud"]
+        method = pc_cfg["method"]
 
         # Skip if COLMAP + feedforward.zarr both exist and overwrite not requested.
         # Require feedforward.zarr too — if a previous run was partial (zarr missing),
@@ -457,16 +452,16 @@ class Reconstructor:
             result = self._run_sfm()
         else:
             result = _run_feedforward(
-                backend=pc_cfg.get("backend", "vggtx"),
+                backend=pc_cfg["backend"],
                 images_dir=self.images_dir,
                 output_dir=self.backend_dir,
-                bundle_adjustment=pc_cfg.get("bundle_adjustment", False),
-                loop_closure=pc_cfg.get("loop_closure", False),
+                bundle_adjustment=pc_cfg["bundle_adjustment"],
+                loop_closure=pc_cfg["loop_closure"],
             )
 
         # Apply cleaning step if enabled
-        clean_cfg = pc_cfg.get("clean", {})
-        if clean_cfg.get("enabled", True):
+        clean_cfg = pc_cfg["clean"]
+        if clean_cfg["enabled"]:
             result = self._clean_pointcloud(result, clean_cfg)
 
         # Write nerfstudio-compatible transforms.json
@@ -513,7 +508,7 @@ class Reconstructor:
         pcd.colors = o3d.utility.Vector3dVector(colors.astype(float) / 255.0)
 
         # Statistical outlier removal — remove outlier point3D IDs from reconstruction in-place
-        if cfg.get("outlier_removal", True):
+        if cfg["outlier_removal"]:
             _, inlier_idx = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
             inlier_set = set(inlier_idx)
             for i, pid in enumerate(point3d_ids):
@@ -521,7 +516,7 @@ class Reconstructor:
                     result.reconstruction.delete_point3D(pid)
 
         # Optional voxel downsampling (affects visualization/density; no structural change)
-        voxel_size = cfg.get("voxel_size")
+        voxel_size = cfg["voxel_size"]
         if voxel_size is not None:
             pcd = pcd.voxel_down_sample(voxel_size)
 
@@ -577,9 +572,9 @@ class Reconstructor:
 
         from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
 
-        ns_cfg = self.config.get("nerfstudio", {})
-        sfm_tool = ns_cfg.get("sfm_tool", "hloc")
-        train_method = ns_cfg.get("train_method", "rade-features")
+        ns_cfg = self.config["nerfstudio"]
+        sfm_tool = ns_cfg["sfm_tool"]
+        train_method = ns_cfg["train_method"]
 
         ns_data_dir = Path(self.config["output_path"]) / "nerfstudio"
         input_path = Path(self.config["input_path"])
@@ -631,9 +626,9 @@ class Reconstructor:
         overwrite: bool = False,
     ) -> Path:
         """Extract 2D features (cached), lift to 3D, compress. Returns lifted zarr dir."""
-        sem_cfg = self.config.get("semantics", {})
-        extractor_name = sem_cfg.get("extractor", "dinov2")
-        n_components = sem_cfg.get("n_components", 64)
+        sem_cfg = self.config["semantics"]
+        extractor_name = sem_cfg["extractor"]
+        n_components = sem_cfg["n_components"]
 
         lifted_dir = self.backend_dir / "semantics" / extractor_name
 
@@ -700,9 +695,9 @@ class Reconstructor:
 
     def build_localization_db(self, result: "PointcloudResult | None" = None, overwrite: bool = False) -> Path:
         """Build/refresh the per-frame local-feature localization cache in feedforward.zarr."""
-        loc_cfg = self.config.get("localization", {})
-        extractor_name = loc_cfg.get("extractor", "loma")
-        radius = loc_cfg.get("radius", 8.0)
+        loc_cfg = self.config["localization"]
+        extractor_name = loc_cfg["extractor"]
+        radius = loc_cfg["radius"]
 
         feedforward_zarr = self.backend_dir / "feedforward.zarr"
         if not feedforward_zarr.exists():
@@ -740,11 +735,11 @@ class Reconstructor:
         if stages is None:
             # Build from config enabled flags; preprocess + pointcloud always included
             stages = ["preprocess", "pointcloud"]
-            if self.config.get("semantics", {}).get("enabled", False):
+            if self.config["semantics"]["enabled"]:
                 stages.append("semantics")
-            if self.config.get("mesh", {}).get("enabled", False):
+            if self.config["mesh"]["enabled"]:
                 stages.append("mesh")
-            if self.config.get("localization", {}).get("enabled", False):
+            if self.config["localization"]["enabled"]:
                 stages.append("localize")
 
         # Validate stage dependencies before starting any work

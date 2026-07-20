@@ -112,6 +112,23 @@ def _make_config(tmp_path, overrides=None):
     return config
 
 
+def test_no_inline_defaults_in_source():
+    """No cfg.get(key, default) with a VALUE default remains — base.yaml is the only source.
+
+    Structural {}/[] defaults (e.g. validate_config's config.get("pointcloud", {}) on a raw
+    partial config) are allowed.
+    """
+    import re
+    from pathlib import Path
+
+    src = Path("collab_splats/wrapper/reconstructor.py").read_text()
+    # Capture the default expression of each two-arg .get("key", <default>)
+    defaults = re.findall(r"\.get\(\s*['\"][^'\"]+['\"]\s*,\s*([^)]+)\)", src)
+    # Structural {}/[] defaults (validate_config's standalone guards) are allowed; value defaults are not
+    offenders = [d.strip() for d in defaults if d.strip() not in ("{}", "[]")]
+    assert offenders == [], f"inline value defaults still present: {offenders}"
+
+
 def test_reconstructor_init(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
@@ -162,6 +179,24 @@ def test_reconstructor_validate_bad_backend(tmp_path):
     config = _make_config(tmp_path, {"pointcloud": {"method": "feedforward", "backend": "badmodel"}})
     with pytest.raises(ValueError, match="backend"):
         Reconstructor.validate_config(config)
+
+
+def test_validate_config_ignores_mesher(tmp_path):
+    """mesh.mesher is no longer a validated knob — its absence never raises."""
+    config = {
+        "input_path": str(tmp_path / "v.mp4"),
+        "output_path": str(tmp_path / "out"),
+    }
+    # Reaches validate via __init__ (base-merged); must not raise on missing mesher
+    rec = Reconstructor(config)
+    assert "mesher" not in rec.config["mesh"]
+
+
+def test_valid_meshers_symbol_removed():
+    """_VALID_MESHERS constant is gone."""
+    from collab_splats.wrapper import reconstructor as R
+
+    assert not hasattr(R, "_VALID_MESHERS")
 
 
 def test_reconstructor_backend_dir(tmp_path):

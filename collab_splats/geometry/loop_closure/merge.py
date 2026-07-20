@@ -17,12 +17,25 @@ def dedup_overlap(
     corrected: dict[int, np.ndarray],
     total_frames: int,
 ) -> np.ndarray:
-    """Reconstruct (total_frames, 4, 4) from per-submap corrected poses, deduplicating overlap.
+    """
+    
+    Reconstruct (total_frames, 4, 4) from per-submap corrected poses, deduplicating overlap.
 
-    First-writer-wins: the overlap frame belongs to two adjacent submaps; we keep
-    submap-0's estimate (processed first). VGGT-SLAM does NOT dedup — its
-    write_poses_to_file (map.py:142-162) emits every submap's frames, so the
-    shared overlap frame appears twice in its TUM (a duplicate timestamp). evo
+    We connect submaps via an overlapping frame (e.g., if submap-0's last frame = 16, then
+    submap-1's first frame = 16). This overlap allows us to compute a relative transform 
+    between the two submaps, but we want to eliminate this duplicated frame in the final output.
+    Therefore, we assign the overlapping frame to the first submap (submap-0) and ignore that frame
+    in the second submap (submap-1).
+
+    VGGT-SLAM divergence: VGGT-SLAM (https://github.com/MIT-SPARK/VGGT-SLAM) does not perform
+    this deduplication -- every frame is written to a file via write_poses_to_file() (map.py:142-162). 
+    The overlap frame therefore is written twice with the same timestamp. 
+
+    Evo (https://github.com/MichaelGrupp/evo) is used to evaluate trajectory error
+    This means that the overlapping frame appears twice in the output file, with the same timestamp. 
+    When we run evo on this output, it associates by timestamp and keeps the first occurrence (from submap-0), 
+    so the two pipelines agree on the boundary pose despite SLAM's duplicate row.write_poses_to_file (map.py:142-162) 
+    emits every submap's frames, so the shared overlap frame appears twice in its TUM (a duplicate timestamp). evo
     associates by timestamp and keeps the first occurrence — also submap-0's — so
     the two pipelines agree on the boundary pose despite SLAM's duplicate row.
     """

@@ -392,3 +392,74 @@ def test_splatter_emits_deprecation_warning(tmp_path):
     assert any("deprecated" in str(warning.message).lower() for warning in w), \
         f"No deprecation warning found in: {[str(x.message) for x in w]}"
     assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
+
+
+########################################
+# Localization stage
+########################################
+
+def test_localize_in_stage_order_and_deps():
+    from collab_splats.wrapper import reconstructor as R
+    assert "localize" in R._STAGE_ORDER
+    assert R._STAGE_DEPS["localize"] == ["pointcloud"]
+
+
+def test_run_pipeline_auto_includes_localize_when_enabled(tmp_path):
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    rec = Reconstructor(config)
+    called = []
+    with patch.object(rec, "preprocess"), \
+         patch.object(rec, "build_pointcloud", return_value=None), \
+         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")):
+        rec.run_pipeline()
+    assert called == ["localize"]
+
+
+def test_run_pipeline_omits_localize_when_disabled(tmp_path):
+    config = _make_config(tmp_path, {"localization": {"enabled": False}})
+    rec = Reconstructor(config)
+    called = []
+    with patch.object(rec, "preprocess"), \
+         patch.object(rec, "build_pointcloud", return_value=None), \
+         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")):
+        rec.run_pipeline()
+    assert called == []
+
+
+def test_localize_without_pointcloud_raises(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    with pytest.raises(ValueError, match="requires 'pointcloud'"):
+        rec.run_pipeline(stages=["localize"])
+
+
+def test_build_localization_db_missing_zarr_raises(tmp_path):
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    rec = Reconstructor(config)
+    with pytest.raises(FileNotFoundError, match="feedforward.zarr"):
+        rec.build_localization_db()
+
+
+def test_build_localization_db_skips_when_exists(tmp_path):
+    from collab_splats.wrapper import reconstructor as R
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    rec = Reconstructor(config)
+    ff = rec.backend_dir / "feedforward.zarr"
+    ff.mkdir(parents=True)
+    with patch.object(R, "_localization_db_exists", return_value=True), \
+         patch.object(R, "_build_localization_db") as build:
+        out = rec.build_localization_db(overwrite=False)
+    build.assert_not_called()
+    assert out == ff
+
+
+def test_build_localization_db_runs_when_missing(tmp_path):
+    from collab_splats.wrapper import reconstructor as R
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma", "radius": 8.0}})
+    rec = Reconstructor(config)
+    ff = rec.backend_dir / "feedforward.zarr"
+    ff.mkdir(parents=True)
+    with patch.object(R, "_localization_db_exists", return_value=False), \
+         patch.object(R, "_build_localization_db") as build:
+        rec.build_localization_db(overwrite=False)
+    build.assert_called_once_with(ff, "loma", 8.0)

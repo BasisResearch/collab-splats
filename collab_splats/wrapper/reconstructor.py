@@ -24,12 +24,13 @@ _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
 _VALID_MESHERS = {"tsdf", "poisson"}
-_STAGE_ORDER = ["preprocess", "pointcloud", "semantics", "mesh"]
+_STAGE_ORDER = ["preprocess", "pointcloud", "semantics", "mesh", "localize"]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preprocess": [],
     "pointcloud": ["preprocess"],
     "semantics": ["pointcloud"],
     "mesh": ["pointcloud"],
+    "localize": ["pointcloud"],
 }
 
 
@@ -260,6 +261,46 @@ def _run_tsdf_mesh(
     )
     mesh_result = mesher.create(depths=depths, rgbs=rgbs, c2w=c2w, intrinsics=intrinsics)
     return mesh_result.mesh_path
+
+
+def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool:
+    """True if the local-feature DB group already exists in feedforward.zarr."""
+    import zarr as zarr_lib
+    try:
+        store = zarr_lib.open_group(str(feedforward_zarr), mode="r")
+        return (
+            "local_features" in store
+            and extractor_name in store["local_features"]
+            and "reconstruction" in store["local_features"][extractor_name]
+        )
+    except Exception:
+        return False
+
+
+def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: float) -> Path:
+    """Build the per-frame local-feature localization cache into feedforward.zarr.
+
+    Loads the FeedforwardResult, runs the local matcher over every DB frame, and persists
+    keypoints/descriptors to group local_features/{extractor_name}/reconstruction.
+    """
+    # Heavy deps kept inline so the module imports without GPU/model libs
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    from collab_splats.localization.localizer import CameraLocalizer
+    from collab_splats.localization.extractors import BaseLocalExtractor
+
+    ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
+    extractor = BaseLocalExtractor.get(extractor_name)()
+
+    # from_feedforward is cache-first: on miss it runs GPU extraction + save_index
+    CameraLocalizer.from_feedforward(
+        ff,
+        extractor=extractor,
+        extractor_name=extractor_name,
+        zarr_path=feedforward_zarr,
+        radius=radius,
+    )
+    logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
+    return feedforward_zarr
 
 
 ########################################
@@ -639,9 +680,28 @@ class Reconstructor:
         logger.info("Mesh saved to %s", out)
         return out
 
-    def localize(self, image: np.ndarray) -> np.ndarray:
-        """Localize query image into existing reconstruction. Returns (4, 4) c2w pose."""
-        raise NotImplementedError("localization not yet implemented")
+    def build_localization_db(self, result: "PointcloudResult | None" = None, overwrite: bool = False) -> Path:
+        """Build/refresh the per-frame local-feature localization cache in feedforward.zarr."""
+        loc_cfg = self.config.get("localization", {})
+        extractor_name = loc_cfg.get("extractor", "loma")
+        radius = loc_cfg.get("radius", 8.0)
+
+        feedforward_zarr = self.backend_dir / "feedforward.zarr"
+        if not feedforward_zarr.exists():
+            raise FileNotFoundError(
+                f"feedforward.zarr not found at {feedforward_zarr}. "
+                "Localization DB requires a feedforward pointcloud stage first."
+            )
+
+        # Skip if the DB group already exists and overwrite not requested
+        if not overwrite and _localization_db_exists(feedforward_zarr, extractor_name):
+            logger.info(
+                "Localization DB exists at %s :: local_features/%s, skipping",
+                feedforward_zarr, extractor_name,
+            )
+            return feedforward_zarr
+
+        return _build_localization_db(feedforward_zarr, extractor_name, radius)
 
     def run_pipeline(
         self,
@@ -665,6 +725,8 @@ class Reconstructor:
                 stages.append("semantics")
             if self.config.get("mesh", {}).get("enabled", False):
                 stages.append("mesh")
+            if self.config.get("localization", {}).get("enabled", False):
+                stages.append("localize")
 
         # Validate stage dependencies before starting any work
         stages_set = set(stages)
@@ -688,6 +750,8 @@ class Reconstructor:
                 self.extract_semantics(result=result, overwrite=overwrite)
             elif stage == "mesh":
                 self.mesh(result=result, overwrite=overwrite)
+            elif stage == "localize":
+                self.build_localization_db(result=result, overwrite=overwrite)
 
     def launch_dashboard(self) -> None:
         """Launch interactive dashboard for current reconstruction state."""

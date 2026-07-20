@@ -45,7 +45,12 @@ cheaply. This is upstream of feedforward and independent of loop closure.
 ### Store: `frames.zarr`
 
 A dedicated preproc artifact written next to other stage outputs (sibling of
-`feedforward.zarr`, not inside it — keyframes are upstream of the pointcloud stage).
+`feedforward.zarr`, not inside it — keyframes are upstream of the pointcloud stage). It is
+the **sole persistent frame source**: it replaces the old `output_path/images/` JPG dir
+*and* the `feedforward.zarr` `images` array (one canonical copy, not three). Consumers with
+path-locked APIs (VGGT-X / MapAnything model preprocessing, external extractors) get a
+**transient** `export(dir)` deleted after use — a derived copy, not persistent duplication.
+COLMAP (names + arrays), nerfstudio and splatter (raw video) never touch it.
 
 ```
 frames.zarr/
@@ -83,8 +88,10 @@ class FrameStore:
     def images(self, idxs=None) -> np.ndarray   # subset or all
     def record(self, i) -> dict
     def records(self) -> list[dict]
+    def image_by_frame_idx(self, frame_idx) -> np.ndarray   # lookup by SOURCE video index
     def frame_indices(self) -> np.ndarray
-    def is_stale(self, video_path, params) -> bool   # provenance mismatch
+    def is_stale(self, provenance) -> bool                   # provenance mismatch
+    def export(self, out_dir, *, ext="jpg") -> list[Path]    # transient dir for path-locked consumers
 ```
 
 - `is_stale` compares stored provenance against the current request so a stage can decide

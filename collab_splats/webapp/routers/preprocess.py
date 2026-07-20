@@ -6,12 +6,14 @@ import threading
 from pathlib import Path
 from typing import AsyncIterator
 
+import cv2
 import numpy as np
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from PIL import Image
 
 from collab_splats.preproc import get_video_info, sample_frames
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.webapp.state import get_session
 
 router = APIRouter(prefix="/api/preprocess")
@@ -20,6 +22,7 @@ router = APIRouter(prefix="/api/preprocess")
 ########################################################################
 # Info endpoint
 ########################################################################
+
 
 @router.get("/info")
 async def video_info() -> JSONResponse:
@@ -41,11 +44,37 @@ async def video_info() -> JSONResponse:
 
 
 ########################################################################
-# Frame writing helper
+# Frame serving route (reads frames.zarr, encodes JPG on demand)
 ########################################################################
 
+
+@router.get("/frame/{idx}")
+async def frame_jpeg(idx: int) -> Response:
+    """Return the idx-th selected keyframe as on-demand-encoded JPEG bytes."""
+    s = get_session()
+    if s.output_dir is None:
+        return JSONResponse({"ok": False, "error": "No session loaded"}, status_code=404)
+    frames_zarr = s.output_dir / "frames.zarr"
+    if not frames_zarr.exists():
+        return JSONResponse({"ok": False, "error": "No frames.zarr for this session"}, status_code=404)
+    store = FrameStore.open(frames_zarr)
+    if not 0 <= idx < len(store):
+        return JSONResponse({"ok": False, "error": f"idx {idx} out of range (0..{len(store) - 1})"}, status_code=404)
+    jpg = cv2.imencode(".jpg", cv2.cvtColor(store.image(idx), cv2.COLOR_RGB2BGR))[1].tobytes()
+    return Response(content=jpg, media_type="image/jpeg")
+
+
+########################################################################
+# Frame writing helpers
+########################################################################
+
+
 def _write_frames(frames: list[np.ndarray], output_dir: Path) -> Path:
-    """Write RGB numpy frames as JPEGs to output_dir/frames/. Return frames dir."""
+    """Write RGB numpy frames as JPEGs to output_dir/frames/. Return frames dir.
+
+    Still needed alongside frames.zarr: reconstruct.py passes this directory's
+    path directly to the feedforward creator (path-based flow), not the store.
+    """
     frames_dir = output_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
     for i, frame in enumerate(frames):
@@ -54,9 +83,23 @@ def _write_frames(frames: list[np.ndarray], output_dir: Path) -> Path:
     return frames_dir
 
 
+def _write_frames_zarr(
+    frames: list[np.ndarray], records: list[dict], output_dir: Path, *, video_path: Path, method: str, max_frames: int
+) -> None:
+    """Write the canonical frames.zarr (decode-once keyframe store) for on-demand JPG serving."""
+    prov = {
+        "video_path": str(video_path),
+        "video_mtime": video_path.stat().st_mtime,
+        "method": method,
+        "max_frames": max_frames,
+    }
+    FrameStore.create(output_dir / "frames.zarr", frames, records, provenance=prov)
+
+
 ########################################################################
 # SSE extraction generator
 ########################################################################
+
 
 def _sse(data: dict) -> str:
     """Format a dict as a Server-Sent Event line."""
@@ -86,11 +129,24 @@ async def _extract_sse(method: str, max_frames: int, min_disparity: float) -> As
         try:
             # Dispatch and window derivation live in the preproc library now
             sampling_method = "optical_flow" if method == "optical_flow" else "uniform"
-            frames, _ = sample_frames(
-                str(s.video_path), method=sampling_method, max_frames=max_frames,
-                min_disparity=min_disparity, on_progress=progress,
+            frames, records = sample_frames(
+                str(s.video_path),
+                method=sampling_method,
+                max_frames=max_frames,
+                min_disparity=min_disparity,
+                on_progress=progress,
             )
+            # Dual-write: frames/ JPEGs (reconstruct.py still consumes the dir path directly)
+            # and frames.zarr (canonical store; served on demand by GET /api/preprocess/frame/{idx})
             _write_frames(frames, s.output_dir)
+            _write_frames_zarr(
+                frames,
+                records,
+                s.output_dir,
+                video_path=s.video_path,
+                method=sampling_method,
+                max_frames=max_frames,
+            )
             loop.call_soon_threadsafe(
                 queue.put_nowait,
                 {"type": "done", "msg": f"{len(frames)} frames extracted", "count": len(frames)},
@@ -112,6 +168,7 @@ async def _extract_sse(method: str, max_frames: int, min_disparity: float) -> As
 ########################################################################
 # Extract endpoint
 ########################################################################
+
 
 @router.get("/extract")
 async def extract_frames(method: str = "optical_flow", max_frames: int = 200, min_disparity: float = 50.0):

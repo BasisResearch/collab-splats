@@ -55,17 +55,15 @@ async def list_methods() -> JSONResponse:
     s = get_session()
     if s.output_dir is None:
         return JSONResponse({"ok": False, "methods": []})
-    methods = [
-        p.name for p in s.output_dir.iterdir()
-        if p.is_dir() and (p / "feedforward.zarr").exists()
-    ]
+    methods = [p.name for p in s.output_dir.iterdir() if p.is_dir() and (p / "feedforward.zarr").exists()]
     return JSONResponse({"ok": True, "methods": sorted(methods)})
 
 
 async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncIterator[str]:
     s = get_session()
     if s.output_dir is None:
-        yield _sse({"type": "error", "msg": "No session loaded"}); return
+        yield _sse({"type": "error", "msg": "No session loaded"})
+        return
 
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
@@ -76,14 +74,23 @@ async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncItera
         try:
             import numpy as np  # noqa: PLC0415
             from PIL import Image as PILImage  # noqa: PLC0415
-            from collab_splats.localization import CameraLocalizer, XFeatExtractor, DiskExtractor  # noqa: PLC0415
-            from collab_splats.pointcloud.feedforward.base import FeedforwardResult  # noqa: PLC0415
+
+            from collab_splats.localization import (  # noqa: PLC0415
+                CameraLocalizer,
+                DiskExtractor,
+                XFeatExtractor,
+            )
+            from collab_splats.pointcloud.feedforward.base import (  # noqa: PLC0415
+                FeedforwardResult,
+            )
 
             zarr_path = output_dir / method / "feedforward.zarr"
             if not zarr_path.exists():
                 raise FileNotFoundError(f"feedforward.zarr not found at {zarr_path}")
 
-            loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"Method: {method}  extractor: {extractor_name}"})
+            loop.call_soon_threadsafe(
+                queue.put_nowait, {"type": "log", "msg": f"Method: {method}  extractor: {extractor_name}"}
+            )
 
             # Build/load local feature extractor
             ext = XFeatExtractor() if extractor_name.lower().startswith("xfeat") else DiskExtractor()
@@ -91,14 +98,23 @@ async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncItera
             # Progress callback for index building
             def _progress(i: int, total: int) -> None:
                 pct = int(i / max(total, 1) * 100)
-                loop.call_soon_threadsafe(queue.put_nowait, {"type": "progress", "pct": pct, "msg": f"Building index {i}/{total}"})
+                loop.call_soon_threadsafe(
+                    queue.put_nowait, {"type": "progress", "pct": pct, "msg": f"Building index {i}/{total}"}
+                )
 
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Loading feedforward result…"})
             ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
 
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Building/loading local feature index…"})
+            # frames.zarr sits at the session root (sibling of every backend's method dir), shared
+            # across methods; pass it so a cache-miss reads pixels from the store, not ff.image_paths
+            # (which may point at a temp export dir already discarded by the creator that built ff).
+            frames_zarr = output_dir / "frames.zarr"
             localizer = CameraLocalizer.from_feedforward(
-                ff, extractor=ext, zarr_path=zarr_path,
+                ff,
+                extractor=ext,
+                zarr_path=zarr_path,
+                frames_zarr=frames_zarr if frames_zarr.exists() else None,
                 progress_callback=_progress,
             )
 
@@ -118,12 +134,15 @@ async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncItera
                 pos = result.pose[:3, 3].tolist()
                 pose_info = f"position [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}], {result.n_inliers} inliers"
 
-            loop.call_soon_threadsafe(queue.put_nowait, {
-                "type": "done",
-                "msg": f"Localization: {pose_info}",
-                "n_inliers": result.n_inliers,
-                "pose": result.pose.tolist() if result.pose is not None else None,
-            })
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                {
+                    "type": "done",
+                    "msg": f"Localization: {pose_info}",
+                    "n_inliers": result.n_inliers,
+                    "pose": result.pose.tolist() if result.pose is not None else None,
+                },
+            )
         except Exception as exc:
             tb = traceback.format_exc()
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "msg": f"{exc}\n{tb}"})
@@ -139,6 +158,7 @@ async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncItera
 @router.get("/run")
 async def run_localize(query_path: str = "", extractor: str = "xfeat"):
     return StreamingResponse(
-        _run_sse(query_path, extractor), media_type="text/event-stream",
+        _run_sse(query_path, extractor),
+        media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

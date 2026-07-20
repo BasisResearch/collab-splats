@@ -9,6 +9,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.webapp.state import get_session
 
 router = APIRouter(prefix="/api/semantics")
@@ -22,10 +23,11 @@ async def feature_status() -> JSONResponse:
         return JSONResponse({"ok": False, "cached": []})
     backend_dir = s.output_dir / s.creator
     sem_dir = backend_dir / "semantics"
-    cached = sorted(
-        p.name for p in sem_dir.iterdir()
-        if p.is_dir() and (p / "features.zarr").exists()
-    ) if sem_dir.is_dir() else []
+    cached = (
+        sorted(p.name for p in sem_dir.iterdir() if p.is_dir() and (p / "features.zarr").exists())
+        if sem_dir.is_dir()
+        else []
+    )
     return JSONResponse({"ok": True, "cached": cached, "creator": s.creator})
 
 
@@ -33,7 +35,10 @@ async def feature_status() -> JSONResponse:
 async def list_methods() -> JSONResponse:
     """Return registered semantic extractor names."""
     from collab_splats.semantics.features import BaseFeatureExtractor
-    methods = sorted(BaseFeatureExtractor._registry.keys()) if hasattr(BaseFeatureExtractor, "_registry") else ["dinov2"]
+
+    methods = (
+        sorted(BaseFeatureExtractor._registry.keys()) if hasattr(BaseFeatureExtractor, "_registry") else ["dinov2"]
+    )
     return JSONResponse({"ok": True, "methods": methods})
 
 
@@ -44,7 +49,8 @@ def _sse(data: dict) -> str:
 async def _run_sse() -> AsyncIterator[str]:
     s = get_session()
     if s.output_dir is None:
-        yield _sse({"type": "error", "msg": "No session loaded"}); return
+        yield _sse({"type": "error", "msg": "No session loaded"})
+        return
 
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
@@ -59,8 +65,13 @@ async def _run_sse() -> AsyncIterator[str]:
         try:
             # Load from cache if it already exists — never re-extract by default
             if features_zarr.exists():
-                loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"✓ Features cached: {cache_dir.name}"})
-                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "msg": f"Loaded from cache ({cache_dir.relative_to(output_dir)})"})
+                loop.call_soon_threadsafe(
+                    queue.put_nowait, {"type": "log", "msg": f"✓ Features cached: {cache_dir.name}"}
+                )
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "done", "msg": f"Loaded from cache ({cache_dir.relative_to(output_dir)})"},
+                )
                 return
 
             zarr_path = backend_dir / "feedforward.zarr"
@@ -68,7 +79,10 @@ async def _run_sse() -> AsyncIterator[str]:
                 raise FileNotFoundError(f"feedforward.zarr not found at {zarr_path}")
 
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": f"Extractor: {extractor_name}"})
-            from collab_splats.semantics.features import BaseFeatureExtractor  # noqa: PLC0415
+            from collab_splats.semantics.features import (  # noqa: PLC0415
+                BaseFeatureExtractor,
+            )
+
             extractor = BaseFeatureExtractor.get(extractor_name)()
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Running feature extraction…"})
             # extract_and_cache_from_zarr handles images loading + caching internally
@@ -91,7 +105,10 @@ async def is_queryable() -> JSONResponse:
     """Return whether current extractor supports text queries."""
     s = get_session()
     try:
-        from collab_splats.semantics.features.base import BaseQueryableExtractor  # noqa: PLC0415
+        from collab_splats.semantics.features.base import (  # noqa: PLC0415
+            BaseQueryableExtractor,
+        )
+
         ext_cls = BaseQueryableExtractor.get(s.extractor)
         return JSONResponse({"ok": True, "queryable": True, "extractor": s.extractor})
     except Exception:
@@ -101,7 +118,9 @@ async def is_queryable() -> JSONResponse:
 @router.get("/frame_viz")
 async def frame_viz(idx: int = 0) -> JSONResponse:
     """Compute per-frame features, return PCA image + frame URL."""
-    import base64, io  # noqa: PLC0415
+    import base64  # noqa: PLC0415
+    import io
+
     import numpy as np  # noqa: PLC0415
     import torch  # noqa: PLC0415
 
@@ -109,24 +128,26 @@ async def frame_viz(idx: int = 0) -> JSONResponse:
     if s.output_dir is None:
         return JSONResponse({"ok": False, "error": "No session loaded"})
 
-    frames_dir = s.output_dir / "frames"
-    jpgs = sorted(frames_dir.glob("frame_*.jpg")) if frames_dir.is_dir() else []
-    if not jpgs:
+    frames_zarr = s.output_dir / "frames.zarr"
+    if not frames_zarr.exists():
+        return JSONResponse({"ok": False, "error": "No extracted frames found"})
+    store = FrameStore.open(frames_zarr)
+    if len(store) == 0:
         return JSONResponse({"ok": False, "error": "No extracted frames found"})
 
-    idx = max(0, min(idx, len(jpgs) - 1))
-    frame_path = jpgs[idx]
-    # Build /outputs-relative URL
-    frame_url = "/outputs" + str(frame_path).replace("/workspace/outputs", "")
+    idx = max(0, min(idx, len(store) - 1))
+    img_array = store.image(idx)  # (H, W, 3) uint8 RGB
+    # Route served by preprocess.py — same session, same store
+    frame_url = f"/api/preprocess/frame/{idx}"
 
     try:
         from PIL import Image as PILImage  # noqa: PLC0415
-        from collab_splats.semantics.features import BaseFeatureExtractor  # noqa: PLC0415
+
+        from collab_splats.semantics.features import (  # noqa: PLC0415
+            BaseFeatureExtractor,
+        )
 
         extractor = BaseFeatureExtractor.get(s.extractor)()
-        img = PILImage.open(str(frame_path)).convert("RGB")
-        import numpy as _np  # noqa: PLC0415
-        img_array = _np.array(img)
 
         # Run forward pass on single frame
         with torch.no_grad():
@@ -141,29 +162,33 @@ async def frame_viz(idx: int = 0) -> JSONResponse:
         # PCA → RGB via features_to_rgb
         pca_rgb = extractor.features_to_rgb(feats)  # (H', W', 3) uint8
         # Resize PCA to match frame image dimensions for consistent display
-        pca_img = PILImage.fromarray(pca_rgb.astype(_np.uint8)).resize(
-            (img.width, img.height), PILImage.BILINEAR
-        )
+        h, w = img_array.shape[:2]
+        pca_img = PILImage.fromarray(pca_rgb.astype(np.uint8)).resize((w, h), PILImage.BILINEAR)
         buf = io.BytesIO()
         pca_img.save(buf, format="PNG")
         pca_b64 = base64.b64encode(buf.getvalue()).decode()
 
-        return JSONResponse({
-            "ok": True,
-            "frame_url": frame_url,
-            "pca_b64": pca_b64,
-            "n_frames": len(jpgs),
-            "frame_idx": idx,
-        })
+        return JSONResponse(
+            {
+                "ok": True,
+                "frame_url": frame_url,
+                "pca_b64": pca_b64,
+                "n_frames": len(store),
+                "frame_idx": idx,
+            }
+        )
     except Exception as exc:
         import traceback  # noqa: PLC0415
+
         return JSONResponse({"ok": False, "error": f"{exc}\n{traceback.format_exc()}"})
 
 
 @router.get("/query_frame")
 async def query_frame(idx: int = 0, text: str = "", neg: str = "") -> JSONResponse:
     """Run text query on a single frame; return similarity heatmap as PNG base64."""
-    import base64, io  # noqa: PLC0415
+    import base64  # noqa: PLC0415
+    import io
+
     import numpy as _np  # noqa: PLC0415
     import torch  # noqa: PLC0415
 
@@ -173,22 +198,26 @@ async def query_frame(idx: int = 0, text: str = "", neg: str = "") -> JSONRespon
     if not text.strip():
         return JSONResponse({"ok": False, "error": "No query text"})
 
-    frames_dir = s.output_dir / "frames"
-    jpgs = sorted(frames_dir.glob("frame_*.jpg")) if frames_dir.is_dir() else []
-    if not jpgs:
+    frames_zarr = s.output_dir / "frames.zarr"
+    if not frames_zarr.exists():
+        return JSONResponse({"ok": False, "error": "No frames"})
+    store = FrameStore.open(frames_zarr)
+    if len(store) == 0:
         return JSONResponse({"ok": False, "error": "No frames"})
 
-    idx = max(0, min(idx, len(jpgs) - 1))
-    frame_path = jpgs[idx]
+    idx = max(0, min(idx, len(store) - 1))
+    img_array = store.image(idx)  # (H, W, 3) uint8 RGB
+    img_h, img_w = img_array.shape[:2]
 
     try:
-        from PIL import Image as PILImage  # noqa: PLC0415
-        from collab_splats.semantics.features.base import BaseQueryableExtractor  # noqa: PLC0415
         import matplotlib.cm as _cm  # noqa: PLC0415
+        from PIL import Image as PILImage  # noqa: PLC0415
+
+        from collab_splats.semantics.features.base import (  # noqa: PLC0415
+            BaseQueryableExtractor,
+        )
 
         extractor = BaseQueryableExtractor.get(s.extractor)()
-        img = PILImage.open(str(frame_path)).convert("RGB")
-        img_array = _np.array(img)
 
         with torch.no_grad():
             feats_list = extractor.forward([img_array])
@@ -206,9 +235,14 @@ async def query_frame(idx: int = 0, text: str = "", neg: str = "") -> JSONRespon
         # Check if compressor is available
         comp_dir = s.output_dir / s.creator / "semantics" / s.extractor / "compressor.pt"
         if comp_dir.is_dir():
-            from collab_splats.semantics.compression import FeatureAutoencoder  # noqa: PLC0415
             import torch.nn.functional as F  # noqa: PLC0415
-            comp = FeatureAutoencoder.load(comp_dir); comp.eval()
+
+            from collab_splats.semantics.compression import (  # noqa: PLC0415
+                FeatureAutoencoder,
+            )
+
+            comp = FeatureAutoencoder.load(comp_dir)
+            comp.eval()
             with torch.no_grad():
                 flat_normed = F.normalize(comp.per_point_encode(flat_normed), dim=-1)
                 text_vec = F.normalize(comp.per_point_encode(text_vec.unsqueeze(0)), dim=-1).squeeze(0)
@@ -224,16 +258,19 @@ async def query_frame(idx: int = 0, text: str = "", neg: str = "") -> JSONRespon
         mn, mx = sims_img.min(), sims_img.max()
         sims_norm = (sims_img - mn) / max(mx - mn, 1e-8)
         heatmap = (_cm.get_cmap("viridis")(sims_norm)[:, :, :3] * 255).astype(_np.uint8)
-        heatmap_pil = PILImage.fromarray(heatmap).resize((img.width, img.height), PILImage.BILINEAR)
+        heatmap_pil = PILImage.fromarray(heatmap).resize((img_w, img_h), PILImage.BILINEAR)
         buf = io.BytesIO()
         heatmap_pil.save(buf, format="PNG")
-        return JSONResponse({
-            "ok": True,
-            "heatmap_b64": base64.b64encode(buf.getvalue()).decode(),
-            "frame_idx": idx,
-        })
+        return JSONResponse(
+            {
+                "ok": True,
+                "heatmap_b64": base64.b64encode(buf.getvalue()).decode(),
+                "frame_idx": idx,
+            }
+        )
     except Exception as exc:
         import traceback  # noqa: PLC0415
+
         return JSONResponse({"ok": False, "error": f"{exc}\n{traceback.format_exc()}"})
 
 
@@ -244,6 +281,7 @@ async def run_semantics(extractor: str = ""):
     if extractor:
         s.extractor = extractor
     return StreamingResponse(
-        _run_sse(), media_type="text/event-stream",
+        _run_sse(),
+        media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

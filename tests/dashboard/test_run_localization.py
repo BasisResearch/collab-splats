@@ -97,7 +97,9 @@ def wired(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pipeline, "_load_feedforward_result", lambda out_dir: _FakeResult())
     monkeypatch.setattr(
-        pipeline, "_build_localizer", lambda result, cfg, zarr_path, op_log, cache=None, scene_key=None: fake_localizer
+        pipeline,
+        "_build_localizer",
+        lambda result, cfg, zarr_path, op_log, cache=None, scene_key=None, frames_zarr=None: fake_localizer,
     )
     monkeypatch.setattr(pipeline, "_stamp_db_provenance", lambda zarr_path, extractor, out_dir: None)
     monkeypatch.setattr(pipeline, "extract_frame", lambda video, idx: np.zeros((48, 64, 3), np.uint8))

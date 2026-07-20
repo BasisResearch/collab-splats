@@ -48,7 +48,7 @@ async function loadVideoInfo() {
   }
 
   if (data.frames_extracted > 0) {
-    renderFrameStrip(data.frames_extracted, data.frames_dir);
+    renderFrameStrip(data.frames_extracted);
     const status = document.getElementById('extract-status');
     if (status) {
       status.textContent = `✓ ${data.frames_extracted} frames`;
@@ -70,15 +70,13 @@ const _stripObserver = new IntersectionObserver((entries) => {
   });
 }, { root: document.getElementById('frame-strip'), rootMargin: '0px 200px' });
 
-function renderFrameStrip(count, framesDir) {
+function renderFrameStrip(count) {
   const strip = document.getElementById('frame-strip');
   if (!strip) return;
   strip.innerHTML = '';
-  const relDir = framesDir.replace('/workspace/outputs/', '');
   for (let i = 0; i < count; i++) {
     const img = document.createElement('img');
-    const padded = String(i).padStart(6, '0');
-    const url = `/outputs/${relDir}/frame_${padded}.jpg`;
+    const url = `/api/preprocess/frame/${i}`;
     // Don't set src yet — use data-src and let IntersectionObserver trigger load
     img.dataset.src = url;
     img.style.cssText = 'height:72px;width:54px;background:#1a1a1a;border:2px solid #222;border-radius:2px;cursor:pointer;flex-shrink:0;object-fit:cover';

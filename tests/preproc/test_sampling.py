@@ -162,11 +162,11 @@ def test_selector_identical_frame_scores_low():
     assert components["disparity"] < 1.0
 
 
-def test_selector_rejects_invalid_weights():
-    with pytest.raises(ValueError):
-        OpticalFlowFrameSelector(motion_weight=0.0, coverage_weight=0.0)
-    with pytest.raises(ValueError):
-        OpticalFlowFrameSelector(motion_weight=1.5)
+def test_selector_has_no_stats_attr():
+    from collab_splats.preproc.sampling import OpticalFlowFrameSelector
+
+    sel = OpticalFlowFrameSelector(min_disparity=50.0)
+    assert not hasattr(sel, "stats")
 
 
 def test_combine_scores_monotonic_in_disparity():

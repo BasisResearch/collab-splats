@@ -114,14 +114,48 @@ def get_video_info(video_path: str) -> dict:
     return zeros
 
 
+def _probe_dims(video_path: str) -> tuple[int, int]:
+    """Display (width, height) via a cheap ffprobe — no packet count / full demux."""
+    _require_ffmpeg()
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-select_streams",
+                "v:0",
+                "-show_streams",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        streams = json.loads(r.stdout or "{}").get("streams", [])
+    except Exception:
+        logger.debug("ffprobe dims failed for %s", video_path, exc_info=True)
+        return 0, 0
+    for s in streams:
+        if s.get("codec_type") != "video":
+            continue
+        w, h = int(s.get("width") or 0), int(s.get("height") or 0)
+        # Match get_video_info: 90/270 rotation swaps display W/H
+        if _rotation_degrees(s) in (90, 270):
+            w, h = h, w
+        return w, h
+    return 0, 0
+
+
 def _iter_frames(video_path: str) -> Iterator[np.ndarray]:
     """Yield every frame as BGR uint8 HWC via one ffmpeg rawvideo pipe.
 
     ffmpeg applies rotation metadata itself, so yielded dims always match
     get_video_info's display dims.
     """
-    info = get_video_info(str(video_path))
-    w, h = info["width"], info["height"]
+    w, h = _probe_dims(str(video_path))
     if w == 0 or h == 0:
         return
     cmd = ["ffmpeg", "-i", str(video_path), "-f", "rawvideo", "-pix_fmt", "bgr24", "-an", "pipe:1"]

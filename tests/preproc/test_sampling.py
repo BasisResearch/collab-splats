@@ -5,6 +5,7 @@ import pytest
 from collab_splats.preproc.sampling import (
     _iter_frames,
     _iter_frames_at,
+    _probe_dims,
     _require_ffmpeg,
     get_video_info,
 )
@@ -46,6 +47,12 @@ def test_get_video_info_values(tiny_video):
 def test_get_video_info_missing_file():
     info = get_video_info("/nonexistent/video.mp4")
     assert info["total_frames"] == 0 and info["fps"] == 0.0
+
+
+def test_probe_dims_matches_full_info(tiny_video):
+    info = get_video_info(tiny_video)
+    w, h = _probe_dims(tiny_video)
+    assert (w, h) == (info["width"], info["height"])
 
 
 def test_require_ffmpeg_raises_without_binary(monkeypatch):

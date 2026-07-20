@@ -78,6 +78,7 @@ class EvalCell:
     submap_size: int | None
     max_frames: int | None
     lc_layer: int | None
+    scale_method: str
     output_dir: Path
 
 
@@ -93,6 +94,9 @@ class EvalConfig:
     submap_size: int | None = None
     max_frames: int | None = None
     lc_layer: int | None = None
+    # Inter-submap scale estimation for the lc condition. Defaults to the
+    # parity method (rotation_only) so presets reproduce the frozen baselines.
+    scale_method: str = "rotation_only"
 
 
 def load_eval_config(path: Path) -> EvalConfig:
@@ -107,6 +111,7 @@ def load_eval_config(path: Path) -> EvalConfig:
         submap_size=raw.get("submap_size"),
         max_frames=raw.get("max_frames"),
         lc_layer=raw.get("lc_layer"),
+        scale_method=raw.get("scale_method", "rotation_only"),
     )
 
 
@@ -128,6 +133,7 @@ def build_grid(cfg: EvalConfig) -> list[EvalCell]:
                     submap_size=cfg.submap_size,
                     max_frames=cfg.max_frames,
                     lc_layer=cfg.lc_layer,
+                    scale_method=cfg.scale_method,
                     output_dir=cfg.output_dir,
                 )
             )
@@ -199,7 +205,7 @@ def _make_creator(
     condition: str,
     submap_size: int | None = None,
     backbone: str = "vggt_omega",
-    lc_scale_method: str = "se3",
+    lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
 ):
     """Build a (creator, ba_config) pair for the given condition.
@@ -256,7 +262,7 @@ def _run_condition(
     output_dir: Path,
     submap_size: int | None = None,
     backbone: str = "vggt_omega",
-    lc_scale_method: str = "se3",
+    lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
 ) -> tuple[np.ndarray, Any]:
     """Run condition, return (extrinsics (N,4,4), creator)."""
@@ -411,10 +417,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lc_scale_method",
         choices=["se3", "rotation_only", "pairwise_dist", "none"],
-        default="se3",
+        default="rotation_only",
         help="Inter-submap scale estimation method for lc condition. "
-        "se3=current (full SE3, biased), rotation_only=VGGT-SLAM style, "
-        "pairwise_dist=translation-invariant fix, none=skip scale (always 1.0).",
+        "rotation_only=VGGT-SLAM/parity default, se3=full SE3 (biased), "
+        "pairwise_dist=translation-invariant, none=skip scale (always 1.0).",
     )
     parser.add_argument(
         "--lc_layer",
@@ -470,7 +476,7 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
         args.output_dir / args._condition,
         submap_size=args.submap_size,
         backbone=backbone,
-        lc_scale_method=getattr(args, "lc_scale_method", "se3"),
+        lc_scale_method=getattr(args, "lc_scale_method", "rotation_only"),
         max_loops_per_submap=getattr(args, "max_loops_per_submap", None),
     )
     elapsed = time.perf_counter() - t0
@@ -519,6 +525,7 @@ def _build_cell_command(cell: EvalCell, cell_dir: Path) -> list[str]:
         cmd += ["--submap_size", str(cell.submap_size)]
     if cell.lc_layer is not None:
         cmd += ["--lc_layer", str(cell.lc_layer)]
+    cmd += ["--lc_scale_method", cell.scale_method]
     if cell.keyframe_list is not None:
         cmd += ["--keyframe_list", str(cell.keyframe_list)]
     return cmd
@@ -654,8 +661,9 @@ def main() -> None:
             ]
             if args.submap_size is not None:
                 cmd += ["--submap_size", str(args.submap_size)]
-            if getattr(args, "lc_scale_method", "se3") != "se3":
-                cmd += ["--lc_scale_method", args.lc_scale_method]
+            # Always forward scale_method so the leaf never falls back to a
+            # drifting default (default = rotation_only = parity method).
+            cmd += ["--lc_scale_method", getattr(args, "lc_scale_method", "rotation_only")]
             if getattr(args, "lc_layer", None) is not None:
                 cmd += ["--lc_layer", str(args.lc_layer)]
             if getattr(args, "max_loops_per_submap", None) is not None:

@@ -9,6 +9,9 @@ output_dir: evals/results/7scenes_grid
 submap_size: 20
 max_frames: 500
 
+# Inter-submap scale estimation for the lc condition (VGGT-SLAM parity method).
+scale_method: rotation_only
+
 # `name` is the cell label; `type` is the dataset loader key for --dataset.
 # Paths mirror the retired eval_suite.sh (data/7scenes/<scene>/seq-01).
 datasets:

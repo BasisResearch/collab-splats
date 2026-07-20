@@ -45,7 +45,6 @@ from pathlib import Path
 import yaml
 from mergedeep import merge
 
-from collab_splats.wrapper.config import ConfigLoader
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 logging.basicConfig(
@@ -91,11 +90,9 @@ def scene_output_dir(video, output_root):
 
 
 def build_scene_config(video, output_root, config_dir, override_config=None):
-    """Build a per-video config from base.yaml with input/output paths set."""
-    loader = ConfigLoader(config_dir)
-    config = merge({}, loader.base_config)  # copy of base.yaml
-    if override_config:
-        config = merge({}, config, override_config)  # shared --config overrides
+    """Build a per-video override dict. Reconstructor merges base.yaml defaults itself."""
+    # Only carry the shared --config overrides plus per-video paths; defaults come from base.yaml
+    config = merge({}, override_config) if override_config else {}
     config["input_path"] = str(video)
     config["output_path"] = str(scene_output_dir(video, output_root))
     return config
@@ -104,7 +101,7 @@ def build_scene_config(video, output_root, config_dir, override_config=None):
 def run_scene(video, output_root, config_dir, override_config, stages, overwrite):
     """Run the full pipeline for a single video. Returns the scene output path."""
     config = build_scene_config(video, output_root, config_dir, override_config)
-    r = Reconstructor(config)
+    r = Reconstructor(config, config_dir=config_dir)
 
     # Persist run_config.yaml for reproducibility before running any stage
     output_path = Path(r.config["output_path"])

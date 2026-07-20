@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from collab_splats.preproc.frame_store import FrameStore
+
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
 
@@ -59,7 +61,6 @@ def _extract_frames(
     import cv2
 
     from collab_splats.preproc import get_video_info, sample_frames
-    from collab_splats.preproc.frame_store import FrameStore
 
     output_dir.mkdir(parents=True, exist_ok=True)
     input_path = Path(input_path)

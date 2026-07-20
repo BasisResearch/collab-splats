@@ -123,7 +123,7 @@ def _extract_frames(
 
 def _run_feedforward(
     backend: str,
-    images_dir: Path,
+    frames_zarr: Path,
     output_dir: Path,
     bundle_adjustment: bool,
     loop_closure: bool,
@@ -153,8 +153,9 @@ def _run_feedforward(
     if loop_closure:
         creator = LoopClosure(base=creator)
 
-    # reconstruct() expects the root backend dir; build_colmap appends colmap/sparse/0 internally
-    result = creator.reconstruct(images_dir, output_dir)
+    # Feed inference frames from the canonical decode-once store (temp-exported for path-locked
+    # model preprocessing); build_colmap appends colmap/sparse/0 under output_dir internally
+    result = creator.reconstruct(FrameStore.open(frames_zarr), output_dir)
 
     # Persist FeedforwardResult to feedforward.zarr — required by semantics lift + mesh stages
     ff_outputs = getattr(creator, "outputs", None)
@@ -497,7 +498,7 @@ class Reconstructor:
         else:
             result = _run_feedforward(
                 backend=pc_cfg.get("backend", "vggtx"),
-                images_dir=self.images_dir,
+                frames_zarr=self.frames_zarr,
                 output_dir=self.backend_dir,
                 bundle_adjustment=pc_cfg.get("bundle_adjustment", False),
                 loop_closure=pc_cfg.get("loop_closure", False),

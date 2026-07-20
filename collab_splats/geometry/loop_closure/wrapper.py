@@ -35,6 +35,7 @@ from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_
 from collab_splats.localization import BaseRetrievalExtractor
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import FeedforwardResult, _raw_to_world_points
+from collab_splats.preproc.frame_store import FrameStore
 
 from .graph import run_pose_graph_optimization
 from .matching import find_loop_closures, translation_jump_check
@@ -139,19 +140,19 @@ class LoopClosure:
     def raw_outputs(self) -> Any:
         return self.base.raw_outputs
 
-    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
-        image_dir, output_dir = Path(image_dir), Path(output_dir)
+    def reconstruct(self, source: FrameStore | Path, output_dir: Path) -> PointcloudResult:
+        # source is a FrameStore (canonical keyframe store) or a legacy image dir
+        output_dir = Path(output_dir)
         self.load_model()
-        self.setup_inference(image_dir)
+        self.setup_inference(source)
         self.run_inference()
         self.postprocess()
         return self.build_colmap(output_dir)
 
-    def run(self, image_dir: Path) -> FeedforwardResult:
+    def run(self, source: FrameStore | Path) -> FeedforwardResult:
         """Run inference pipeline without COLMAP; return FeedforwardResult."""
-        image_dir = Path(image_dir)
         self.load_model()
-        self.setup_inference(image_dir)
+        self.setup_inference(source)
         self.run_inference()
         self.postprocess()
         result = self.base.outputs

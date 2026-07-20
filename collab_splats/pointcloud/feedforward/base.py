@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import tempfile
 import time
 from abc import abstractmethod
 from dataclasses import dataclass, field, replace
@@ -32,6 +33,7 @@ from vggt.utils.geometry import unproject_depth_map_to_point_map
 from zarr.codecs import BloscCodec
 
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+from collab_splats.preproc.frame_store import FrameStore
 
 from ..base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
 from ..utils import cross_frame_attention_ratio, reproject_pixels
@@ -747,32 +749,35 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     model: Any = field(default=None, init=False, repr=False)
     views: Any = field(default=None, init=False, repr=False)
     image_paths: list[Path] | None = field(default=None, init=False, repr=False)
+    # Holds the temp export of a FrameStore alive for the whole run (path-locked _preprocess)
+    _frame_export: Any = field(default=None, init=False, repr=False)
     original_coords: np.ndarray | None = field(default=None, init=False, repr=False)
     raw_outputs: Any = field(default=None, init=False, repr=False)
     outputs: FeedforwardResult | None = field(default=None, init=False, repr=False)
 
     # ── Pipeline orchestration ────────────────────────────────────────────────
 
-    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
-        image_dir, output_dir = Path(image_dir), Path(output_dir)
-        if not image_dir.exists():
-            raise FileNotFoundError(f"image_dir not found: {image_dir}")
+    def reconstruct(self, source: FrameStore | Path, output_dir: Path) -> PointcloudResult:
+        # source is a FrameStore (canonical keyframe store) or a legacy image dir
+        output_dir = Path(output_dir)
+        if not isinstance(source, FrameStore) and not Path(source).exists():
+            raise FileNotFoundError(f"image source not found: {source}")
         output_dir.mkdir(parents=True, exist_ok=True)
 
         self.load_model()
-        self.setup_inference(image_dir)
+        self.setup_inference(source)
         self.run_inference()
         self.postprocess()
         return self.build_colmap(output_dir)
 
-    def run(self, image_dir: Path, device: str | None = None) -> FeedforwardResult:
+    def run(self, source: FrameStore | Path, device: str | None = None) -> FeedforwardResult:
         """Run the full inference pipeline and return outputs.
 
         Convenience wrapper for load_model → setup_inference → run_inference → postprocess.
         Use reconstruct() instead if you also need COLMAP output written to disk.
         """
         self.load_model(device=device)
-        self.setup_inference(image_dir)
+        self.setup_inference(source)
         self.run_inference()
         self.postprocess()
         return self.outputs
@@ -784,11 +789,26 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         self.model = self._load_model(device)
         console.log(f"  done in {time.perf_counter() - t0:.1f}s")
 
-    def setup_inference(self, image_dir: Path) -> None:
+    def setup_inference(self, source: FrameStore | Path) -> None:
+        # Accept a FrameStore (or a frames.zarr path) via temp export, else a legacy image dir
         t0 = time.perf_counter()
         console.log("Preprocessing images...")
-        self.views, self.image_paths, self.original_coords = self._preprocess(Path(image_dir))
+        if isinstance(source, FrameStore):
+            self.views, self.image_paths, self.original_coords = self._preprocess_from_store(source)
+        elif Path(source).suffix == ".zarr":
+            self.views, self.image_paths, self.original_coords = self._preprocess_from_store(FrameStore.open(source))
+        else:
+            self.views, self.image_paths, self.original_coords = self._preprocess(Path(source))
         console.log(f"  → {len(self.image_paths)} images  done in {time.perf_counter() - t0:.1f}s")
+
+    def _preprocess_from_store(self, store: FrameStore) -> tuple[Any, list[Path], np.ndarray]:
+        """Export the FrameStore to a temp dir and run the existing path-based _preprocess."""
+        # Keep the temp dir alive for the whole run: inference reads the exported files and
+        # image_paths reference them until the creator is discarded.
+        self._frame_export = tempfile.TemporaryDirectory()
+        export_dir = Path(self._frame_export.name)
+        store.export(export_dir)  # frame_{source_idx:06d}.jpg
+        return self._preprocess(export_dir)
 
     def run_inference(self, **kwargs: Any) -> None:
         t0 = time.perf_counter()

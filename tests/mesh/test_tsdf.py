@@ -1,6 +1,7 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
-from pathlib import Path
 
 
 def _synthetic_frames(N=3, H=32, W=32):
@@ -22,8 +23,8 @@ def _synthetic_frames(N=3, H=32, W=32):
 
 
 def test_open3d_tsdf_returns_mesh_result(tmp_path):
-    from collab_splats.mesh.tsdf import Open3DTSDFFusion
     from collab_splats.mesh.base import MeshResult
+    from collab_splats.mesh.tsdf import Open3DTSDFFusion
 
     creator = Open3DTSDFFusion(output_dir=tmp_path, clean_repair=False)
     depths, rgbs, c2w, intrinsics = _synthetic_frames()

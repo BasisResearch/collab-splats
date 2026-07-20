@@ -44,7 +44,7 @@ DEFAULT_CONFIG_DIR = _REPO_ROOT / "configs"
 def build_scene_config(video, output_root, config_dir, override_config=None):
     """Build a per-scene config from base.yaml with input/output paths set."""
     loader = ConfigLoader(config_dir)
-    config = merge({}, loader.base_config)          # copy of base.yaml
+    config = merge({}, loader.base_config)  # copy of base.yaml
     if override_config:
         config = merge({}, config, override_config)  # shared --config overrides
     config["input_path"] = str(video)
@@ -98,17 +98,30 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument("videos", nargs="+", metavar="VIDEO", help="One or more video files.")
-    parser.add_argument("--output-root", required=True, type=Path, dest="output_root",
-                        help="Parent dir; each scene lands in <output-root>/<video-stem>/.")
-    parser.add_argument("--config", type=Path, default=None,
-                        help="Optional shared override YAML merged over base.yaml.")
-    parser.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR, dest="config_dir",
-                        help=f"Directory holding base.yaml. Default: {DEFAULT_CONFIG_DIR}")
-    parser.add_argument("--stages", default=None, metavar="STAGE[,STAGE,...]",
-                        help="Stages to run: preprocess,pointcloud,semantics,mesh,localize. "
-                             "Default: config-enabled stages.")
-    parser.add_argument("--overwrite", action="store_true",
-                        help="Re-run stages even if outputs already exist.")
+    parser.add_argument(
+        "--output-root",
+        required=True,
+        type=Path,
+        dest="output_root",
+        help="Parent dir; each scene lands in <output-root>/<video-stem>/.",
+    )
+    parser.add_argument(
+        "--config", type=Path, default=None, help="Optional shared override YAML merged over base.yaml."
+    )
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        default=DEFAULT_CONFIG_DIR,
+        dest="config_dir",
+        help=f"Directory holding base.yaml. Default: {DEFAULT_CONFIG_DIR}",
+    )
+    parser.add_argument(
+        "--stages",
+        default=None,
+        metavar="STAGE[,STAGE,...]",
+        help="Stages to run: preprocess,pointcloud,semantics,mesh,localize. " "Default: config-enabled stages.",
+    )
+    parser.add_argument("--overwrite", action="store_true", help="Re-run stages even if outputs already exist.")
     args = parser.parse_args()
 
     override_config = None

@@ -19,9 +19,7 @@ REGISTRY: dict[str, type[BaseMeshCreator]] = {
 
 def get_mesh_creator(method: str, output_dir: Path, **kwargs) -> BaseMeshCreator:
     if method not in REGISTRY:
-        raise ValueError(
-            f"Unknown mesh method {method!r}. Choose from: {sorted(REGISTRY)}"
-        )
+        raise ValueError(f"Unknown mesh method {method!r}. Choose from: {sorted(REGISTRY)}")
     return REGISTRY[method](output_dir=Path(output_dir), **kwargs)
 
 

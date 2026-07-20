@@ -1,5 +1,6 @@
-import pytest
 from pathlib import Path
+
+import pytest
 
 
 def test_get_mesh_creator_open3d_tsdf(tmp_path):

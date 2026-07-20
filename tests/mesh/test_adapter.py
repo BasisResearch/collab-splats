@@ -64,9 +64,9 @@ def _make_result_with_crop(N=2, model_H=8, model_W=8, orig_H=32, orig_W=16):
         image_paths.append(p)
 
     # VGGTOmega/VGGTX-style: coords in original-image pixel space; cr_x = orig_W > model_W
-    original_coords = np.tile(
-        [0.0, 0.0, float(orig_W), float(orig_H), float(orig_W), float(orig_H)], (N, 1)
-    ).astype(np.float32)
+    original_coords = np.tile([0.0, 0.0, float(orig_W), float(orig_H), float(orig_W), float(orig_H)], (N, 1)).astype(
+        np.float32
+    )
     intrinsics = np.eye(3, dtype=np.float32)[None].repeat(N, axis=0)
     intrinsics[:, 0, 2] = model_W / 2
     intrinsics[:, 1, 2] = model_H / 2
@@ -87,7 +87,8 @@ def test_tsdf_rgb_crop_applied_for_original_pixel_coords(tmp_path):
     """_feedforward_to_tsdf_inputs must crop RGB when original_coords exceed model dims."""
     result = _make_result_with_crop(N=2, model_H=8, model_W=8, orig_H=32, orig_W=16)
     mesh_result = pointcloud_to_mesh(
-        result, tmp_path / "mesh",
+        result,
+        tmp_path / "mesh",
         method="open3d_tsdf",
         voxel_size=0.05,
         sdf_trunc=0.2,
@@ -99,7 +100,8 @@ def test_tsdf_rgb_crop_applied_for_original_pixel_coords(tmp_path):
 def test_pointcloud_to_mesh_returns_mesh_result(tmp_path):
     result = _make_result(N=2, H=32, W=32)
     mesh_result = pointcloud_to_mesh(
-        result, tmp_path / "mesh",
+        result,
+        tmp_path / "mesh",
         method="open3d_tsdf",
         voxel_size=0.05,
         sdf_trunc=0.2,

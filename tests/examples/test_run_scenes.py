@@ -1,7 +1,7 @@
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -19,7 +19,8 @@ def _write_configs(tmp_path):
     cfg_dir = tmp_path / "configs"
     cfg_dir.mkdir()
     base = {
-        "input_path": None, "output_path": None,
+        "input_path": None,
+        "output_path": None,
         "pointcloud": {"method": "feedforward", "backend": "vggt_omega"},
         "semantics": {"enabled": False},
         "localization": {"enabled": False, "extractor": "loma"},
@@ -48,13 +49,18 @@ def test_build_scene_config_merges_override(tmp_path):
 def test_run_scenes_runs_pipeline_per_video(tmp_path):
     cfg_dir = _write_configs(tmp_path)
     v1, v2 = tmp_path / "a.mp4", tmp_path / "b.mp4"
-    v1.touch(); v2.touch()
+    v1.touch()
+    v2.touch()
     fake = MagicMock()
     fake.config = {"output_path": str(tmp_path / "out" / "a")}
     with patch.object(run_scenes, "Reconstructor", return_value=fake) as R:
         code = run_scenes.run_all(
-            [v1, v2], output_root=tmp_path / "out", config_dir=cfg_dir,
-            override_config=None, stages=None, overwrite=False,
+            [v1, v2],
+            output_root=tmp_path / "out",
+            config_dir=cfg_dir,
+            override_config=None,
+            stages=None,
+            overwrite=False,
         )
     assert R.call_count == 2
     assert fake.run_pipeline.call_count == 2
@@ -64,14 +70,19 @@ def test_run_scenes_runs_pipeline_per_video(tmp_path):
 def test_run_scenes_continues_on_failure(tmp_path):
     cfg_dir = _write_configs(tmp_path)
     v1, v2 = tmp_path / "a.mp4", tmp_path / "b.mp4"
-    v1.touch(); v2.touch()
+    v1.touch()
+    v2.touch()
     fake = MagicMock()
     fake.config = {"output_path": str(tmp_path / "out" / "x")}
     fake.run_pipeline.side_effect = [RuntimeError("boom"), None]
     with patch.object(run_scenes, "Reconstructor", return_value=fake):
         code = run_scenes.run_all(
-            [v1, v2], output_root=tmp_path / "out", config_dir=cfg_dir,
-            override_config=None, stages=None, overwrite=False,
+            [v1, v2],
+            output_root=tmp_path / "out",
+            config_dir=cfg_dir,
+            override_config=None,
+            stages=None,
+            overwrite=False,
         )
     assert fake.run_pipeline.call_count == 2  # did not abort after first failure
-    assert code == 1                          # non-zero because one failed
+    assert code == 1  # non-zero because one failed

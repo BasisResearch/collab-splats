@@ -42,6 +42,7 @@ echo "=== install collab-data (private) ==="
 /root/.local/bin/uv pip install --python "$PYTHON" "git+https://github.com/BasisResearch/collab-data.git" \
     || echo "WARN: collab-data not installed (no git auth in this environment) — re-run setup.sh at deploy."
 
+
 # Smoke test — mandatory: torch + the extensions this script compiled (bae, gsplat).
 # The full creator chain pulls cv2/open3d, which need GUI/X11 system libs absent in a Docker
 # BUILD stage but present at runtime — so import it best-effort here (verified for real in the

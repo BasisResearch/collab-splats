@@ -1,9 +1,9 @@
-from pathlib import Path
 import importlib.util
 import shutil
 import subprocess
 import warnings
-from unittest.mock import patch, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pycolmap
@@ -52,7 +52,11 @@ def test_config_dataset_override_merges(tmp_path):
     }
     (tmp_path / "base.yaml").write_text(yaml.dump(base))
     (tmp_path / "datasets").mkdir()
-    ds = {"input_path": "/data/v.mp4", "output_path": "/out", "pointcloud": {"backend": "mapanything", "bundle_adjustment": True}}
+    ds = {
+        "input_path": "/data/v.mp4",
+        "output_path": "/out",
+        "pointcloud": {"backend": "mapanything", "bundle_adjustment": True},
+    }
     (tmp_path / "datasets" / "ds.yaml").write_text(yaml.dump(ds))
 
     loader = ConfigLoader(tmp_path)
@@ -92,8 +96,10 @@ def _make_config(tmp_path, overrides=None):
         "output_path": str(tmp_path / "out"),
         "preprocessing": {"frame_selection": "fps", "frame_proportion": 0.1, "min_frames": 10},
         "pointcloud": {
-            "method": "feedforward", "backend": "vggtx",
-            "bundle_adjustment": False, "loop_closure": False,
+            "method": "feedforward",
+            "backend": "vggtx",
+            "bundle_adjustment": False,
+            "loop_closure": False,
             "clean": {"enabled": False},
         },
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
@@ -210,8 +216,10 @@ def test_build_pointcloud_skips_if_colmap_and_zarr_exist(tmp_path):
     (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
     mock_result = _make_mock_pointcloud_result(tmp_path)
 
-    with patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff, \
-         patch.object(rec, "_load_pointcloud_from_disk", return_value=mock_result):
+    with (
+        patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff,
+        patch.object(rec, "_load_pointcloud_from_disk", return_value=mock_result),
+    ):
         rec.build_pointcloud(overwrite=False)
 
     mock_ff.assert_not_called()
@@ -239,14 +247,19 @@ def test_build_pointcloud_method_dir_routing(tmp_path):
 
 def test_build_pointcloud_nerfstudio_dispatches_correctly(tmp_path):
     """Test that method='nerfstudio' dispatches to _run_nerfstudio."""
-    config = _make_config(tmp_path, {
-        "pointcloud": {"method": "nerfstudio", "backend": "vggtx"},
-        "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
-    })
+    config = _make_config(
+        tmp_path,
+        {
+            "pointcloud": {"method": "nerfstudio", "backend": "vggtx"},
+            "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
+        },
+    )
     rec = Reconstructor(config)
 
-    with patch.object(rec, "_run_nerfstudio") as mock_ns, \
-         patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff:
+    with (
+        patch.object(rec, "_run_nerfstudio") as mock_ns,
+        patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff,
+    ):
         mock_ns.return_value = _make_mock_pointcloud_result(tmp_path)
         rec.build_pointcloud(overwrite=True)
 
@@ -266,8 +279,10 @@ def test_extract_semantics_uses_feature_cache(tmp_path):
     cache_path = rec.features_dir / "dinov2" / "dinov2.zarr"
     cache_path.mkdir(parents=True)
 
-    with patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d, \
-         patch("collab_splats.wrapper.reconstructor._lift_and_save") as mock_lift:
+    with (
+        patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d,
+        patch("collab_splats.wrapper.reconstructor._lift_and_save") as mock_lift,
+    ):
         mock_lift.return_value = rec.backend_dir / "semantics" / "dinov2"
         rec.extract_semantics(result=mock_result, overwrite=False)
 
@@ -281,8 +296,10 @@ def test_extract_semantics_skips_if_lifted_exists(tmp_path):
     lifted_dir.mkdir(parents=True)
     (lifted_dir / "features.zarr").mkdir()
 
-    with patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d, \
-         patch("collab_splats.wrapper.reconstructor._lift_and_save") as mock_lift:
+    with (
+        patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d,
+        patch("collab_splats.wrapper.reconstructor._lift_and_save") as mock_lift,
+    ):
         rec.extract_semantics(overwrite=False)
 
     mock_2d.assert_not_called()
@@ -304,7 +321,9 @@ def test_mesh_skips_if_ply_exists(tmp_path):
 
 
 def test_mesh_runs_tsdf(tmp_path):
-    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04}})
+    config = _make_config(
+        tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04}}
+    )
     rec = Reconstructor(config)
     mock_result = _make_mock_pointcloud_result(tmp_path)
     rec.pointcloud = mock_result
@@ -357,10 +376,13 @@ def test_run_pipeline_dep_validation(tmp_path):
 
 
 def test_run_pipeline_default_uses_config_enabled(tmp_path):
-    config = _make_config(tmp_path, {
-        "semantics": {"enabled": True, "extractor": "dinov2"},
-        "mesh": {"enabled": False},
-    })
+    config = _make_config(
+        tmp_path,
+        {
+            "semantics": {"enabled": True, "extractor": "dinov2"},
+            "mesh": {"enabled": False},
+        },
+    )
     rec = Reconstructor(config)
     calls = []
 
@@ -389,8 +411,9 @@ def test_splatter_emits_deprecation_warning(tmp_path):
             Splatter(config)
         except Exception:
             pass  # Splatter init may fail due to missing deps; warning should still fire
-    assert any("deprecated" in str(warning.message).lower() for warning in w), \
-        f"No deprecation warning found in: {[str(x.message) for x in w]}"
+    assert any(
+        "deprecated" in str(warning.message).lower() for warning in w
+    ), f"No deprecation warning found in: {[str(x.message) for x in w]}"
     assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
 
 
@@ -398,8 +421,10 @@ def test_splatter_emits_deprecation_warning(tmp_path):
 # Localization stage
 ########################################
 
+
 def test_localize_in_stage_order_and_deps():
     from collab_splats.wrapper import reconstructor as R
+
     assert "localize" in R._STAGE_ORDER
     assert R._STAGE_DEPS["localize"] == ["pointcloud"]
 
@@ -408,9 +433,11 @@ def test_run_pipeline_auto_includes_localize_when_enabled(tmp_path):
     config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
     rec = Reconstructor(config)
     called = []
-    with patch.object(rec, "preprocess"), \
-         patch.object(rec, "build_pointcloud", return_value=None), \
-         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")):
+    with (
+        patch.object(rec, "preprocess"),
+        patch.object(rec, "build_pointcloud", return_value=None),
+        patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")),
+    ):
         rec.run_pipeline()
     assert called == ["localize"]
 
@@ -419,9 +446,11 @@ def test_run_pipeline_omits_localize_when_disabled(tmp_path):
     config = _make_config(tmp_path, {"localization": {"enabled": False}})
     rec = Reconstructor(config)
     called = []
-    with patch.object(rec, "preprocess"), \
-         patch.object(rec, "build_pointcloud", return_value=None), \
-         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")):
+    with (
+        patch.object(rec, "preprocess"),
+        patch.object(rec, "build_pointcloud", return_value=None),
+        patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")),
+    ):
         rec.run_pipeline()
     assert called == []
 
@@ -442,12 +471,15 @@ def test_build_localization_db_missing_zarr_raises(tmp_path):
 
 def test_build_localization_db_skips_when_exists(tmp_path):
     from collab_splats.wrapper import reconstructor as R
+
     config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
     rec = Reconstructor(config)
     ff = rec.backend_dir / "feedforward.zarr"
     ff.mkdir(parents=True)
-    with patch.object(R, "_localization_db_exists", return_value=True), \
-         patch.object(R, "_build_localization_db") as build:
+    with (
+        patch.object(R, "_localization_db_exists", return_value=True),
+        patch.object(R, "_build_localization_db") as build,
+    ):
         out = rec.build_localization_db(overwrite=False)
     build.assert_not_called()
     assert out == ff
@@ -455,11 +487,14 @@ def test_build_localization_db_skips_when_exists(tmp_path):
 
 def test_build_localization_db_runs_when_missing(tmp_path):
     from collab_splats.wrapper import reconstructor as R
+
     config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma", "radius": 8.0}})
     rec = Reconstructor(config)
     ff = rec.backend_dir / "feedforward.zarr"
     ff.mkdir(parents=True)
-    with patch.object(R, "_localization_db_exists", return_value=False), \
-         patch.object(R, "_build_localization_db") as build:
+    with (
+        patch.object(R, "_localization_db_exists", return_value=False),
+        patch.object(R, "_build_localization_db") as build,
+    ):
         rec.build_localization_db(overwrite=False)
     build.assert_called_once_with(ff, "loma", 8.0)

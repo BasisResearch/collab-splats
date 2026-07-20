@@ -1,6 +1,7 @@
 import numpy as np
 import open3d as o3d
 import pytest
+
 from collab_splats.mesh.utils import align_geometry_floor
 
 

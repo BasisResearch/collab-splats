@@ -1,4 +1,5 @@
 """5-stage reconstruction pipeline wrapper."""
+
 from __future__ import annotations
 
 import json
@@ -38,6 +39,7 @@ _STAGE_DEPS: dict[str, list[str]] = {
 # Helpers
 ########################################
 
+
 def _extract_frames(
     input_path: Path,
     output_dir: Path,
@@ -51,6 +53,7 @@ def _extract_frames(
     Returns sorted list of extracted frame paths.
     """
     import cv2
+
     from collab_splats.preproc import get_video_info, sample_frames
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +70,8 @@ def _extract_frames(
     # Video — dispatch to uniform or optical-flow sampling based on frame_selection
     if frame_selection == "optical_flow":
         frame_arrays, _ = sample_frames(
-            str(input_path), method="optical_flow",
+            str(input_path),
+            method="optical_flow",
             max_frames=max_frames if max_frames is not None else 200,
         )
     else:
@@ -78,7 +82,9 @@ def _extract_frames(
         if max_frames is not None:
             target_count = min(target_count, max_frames)
         frame_arrays, _ = sample_frames(
-            str(input_path), method="uniform", max_frames=target_count,
+            str(input_path),
+            method="uniform",
+            max_frames=target_count,
         )
 
     # Save extracted frames as JPEG files
@@ -103,8 +109,12 @@ def _run_feedforward(
     (semantics lift, mesh) can load depth/confidence/pixel data.
     """
     # Heavy dep imports — kept inline so module loads without GPU/model deps
-    from collab_splats.pointcloud.feedforward import VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+    from collab_splats.pointcloud.feedforward import (
+        MapAnythingCreator,
+        VGGTOmegaCreator,
+        VGGTXCreator,
+    )
 
     # Select creator class by backend name
     creator_map = {
@@ -140,6 +150,7 @@ def _run_feedforward(
 
     # Explicitly release model + GPU memory before next stage (semantics) loads its model
     import torch as _torch
+
     del creator
     if _torch.cuda.is_available():
         _torch.cuda.empty_cache()
@@ -152,6 +163,7 @@ def _run_feedforward(
 def _get_extractor(name: str):
     """Instantiate feature extractor by registry name."""
     from collab_splats.semantics.features import BaseFeatureExtractor
+
     return BaseFeatureExtractor.get(name)()
 
 
@@ -179,11 +191,12 @@ def _lift_and_save(
     n_components: int | None,
 ) -> Path:
     """Load 2D feature cache + FeedforwardResult, lift to 3D, compress, save."""
-    import torch
     import numpy as np
+    import torch
     import zarr as zarr_lib
-    from collab_splats.pointcloud.utils import lift_features
+
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    from collab_splats.pointcloud.utils import lift_features
 
     # Validate feedforward zarr exists before attempting load
     if not feedforward_zarr.exists():
@@ -206,7 +219,9 @@ def _lift_and_save(
     # Optional PCA compression via autoencoder
     if n_components is not None:
         import torch as _torch
+
         from collab_splats.semantics.compression import FeatureAutoencoder
+
         # Move lifted to GPU for autoencoder training; lift_features returns CPU tensor
         if _torch.cuda.is_available():
             lifted = lifted.cuda()
@@ -230,8 +245,8 @@ def _run_tsdf_mesh(
     sdf_trunc: float,
 ) -> Path:
     """Fuse depth + RGB from FeedforwardResult into TSDF mesh."""
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     # Load depth and RGB from feedforward zarr
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
@@ -250,7 +265,7 @@ def _run_tsdf_mesh(
 
     # c2w from PointcloudResult extrinsics (w2c → c2w)
     c2w = np.linalg.inv(result.extrinsics)  # (N, 4, 4)
-    intrinsics = result.intrinsics           # (N, 3, 3)
+    intrinsics = result.intrinsics  # (N, 3, 3)
 
     # Run TSDF fusion
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -266,6 +281,7 @@ def _run_tsdf_mesh(
 def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool:
     """True if the local-feature DB group already exists in feedforward.zarr."""
     import zarr as zarr_lib
+
     try:
         store = zarr_lib.open_group(str(feedforward_zarr), mode="r")
         return (
@@ -284,9 +300,9 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
     keypoints/descriptors to group local_features/{extractor_name}/reconstruction.
     """
     # Heavy deps kept inline so the module imports without GPU/model libs
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-    from collab_splats.localization.localizer import CameraLocalizer
     from collab_splats.localization.extractors import BaseLocalExtractor
+    from collab_splats.localization.localizer import CameraLocalizer
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
     extractor = BaseLocalExtractor.get(extractor_name)()
@@ -306,6 +322,7 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
 ########################################
 # Reconstructor
 ########################################
+
 
 class Reconstructor:
     """5-stage environment reconstruction pipeline: preprocess → pointcloud → semantics / mesh / localize."""
@@ -340,10 +357,7 @@ class Reconstructor:
                 f"for method='feedforward', got '{backend}'"
             )
         if method == "sfm" and backend not in _SFM_BACKENDS:
-            raise ValueError(
-                f"pointcloud.backend must be one of {_SFM_BACKENDS} "
-                f"for method='sfm', got '{backend}'"
-            )
+            raise ValueError(f"pointcloud.backend must be one of {_SFM_BACKENDS} " f"for method='sfm', got '{backend}'")
 
         mesh_cfg = config.get("mesh", {})
         mesher = mesh_cfg.get("mesher", "tsdf")
@@ -366,7 +380,10 @@ class Reconstructor:
             config_dir: Directory containing base.yaml and datasets/.
             overrides: Optional runtime overrides applied after merge.
         """
-        from collab_splats.wrapper.config import ConfigLoader  # optional heavy dep; lazy load
+        from collab_splats.wrapper.config import (
+            ConfigLoader,  # optional heavy dep; lazy load
+        )
+
         loader = ConfigLoader(config_dir)
         config = loader.load(dataset=dataset, overrides=overrides)
         return cls(config)
@@ -442,7 +459,8 @@ class Reconstructor:
         elif method == "sfm":
             warnings.warn(
                 "pointcloud.method='sfm' is experimental and not production-tested.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
             result = self._run_sfm()
         else:
@@ -468,6 +486,7 @@ class Reconstructor:
     def _load_pointcloud_from_disk(self) -> "PointcloudResult":
         """Load PointcloudResult from COLMAP reconstruction on disk."""
         import pycolmap
+
         from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
 
         colmap_dir = self.backend_dir / "colmap" / "sparse" / "0"
@@ -494,7 +513,7 @@ class Reconstructor:
 
         # Build ordered list of point3D IDs that matches result.points ordering
         point3d_ids = list(result.reconstruction.points3D.keys())
-        pts = result.points     # (P, 3)
+        pts = result.points  # (P, 3)
         colors = result.colors  # (P, 3) uint8
 
         pcd = o3d.geometry.PointCloud()
@@ -537,14 +556,16 @@ class Reconstructor:
 
         frames = []
         for img_path, K, pose in zip(image_paths, intrinsics, c2w):
-            frames.append({
-                "file_path": f"../images/{img_path.name}",
-                "fl_x": float(K[0, 0]),
-                "fl_y": float(K[1, 1]),
-                "cx": float(K[0, 2]),
-                "cy": float(K[1, 2]),
-                "transform_matrix": pose.tolist(),
-            })
+            frames.append(
+                {
+                    "file_path": f"../images/{img_path.name}",
+                    "fl_x": float(K[0, 0]),
+                    "fl_y": float(K[1, 1]),
+                    "cx": float(K[0, 2]),
+                    "cy": float(K[1, 2]),
+                    "transform_matrix": pose.tolist(),
+                }
+            )
 
         self.backend_dir.mkdir(parents=True, exist_ok=True)
         out = self.backend_dir / "transforms.json"
@@ -561,7 +582,8 @@ class Reconstructor:
         output_path/nerfstudio/ acts as nerfstudio data dir.
         """
         import pycolmap
-        from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
+
+        from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
 
         ns_cfg = self.config.get("nerfstudio", {})
         sfm_tool = ns_cfg.get("sfm_tool", "hloc")
@@ -573,19 +595,26 @@ class Reconstructor:
         # ns-process-data: frame extraction + SfM
         data_type = "video" if input_path.suffix.lower() in {".mp4", ".mov", ".avi"} else "images"
         process_cmd = [
-            "ns-process-data", data_type,
-            "--data", str(input_path),
-            "--output-dir", str(ns_data_dir),
-            "--sfm-tool", sfm_tool,
+            "ns-process-data",
+            data_type,
+            "--data",
+            str(input_path),
+            "--output-dir",
+            str(ns_data_dir),
+            "--sfm-tool",
+            sfm_tool,
         ]
         logger.info("Running ns-process-data: %s", " ".join(process_cmd))
         subprocess.run(process_cmd, check=True)
 
         # ns-train: train nerfstudio model
         train_cmd = [
-            "ns-train", train_method,
-            "--data", str(ns_data_dir),
-            "--output-dir", str(ns_data_dir / "outputs"),
+            "ns-train",
+            train_method,
+            "--data",
+            str(ns_data_dir),
+            "--output-dir",
+            str(ns_data_dir / "outputs"),
         ]
         logger.info("Running ns-train: %s", " ".join(train_cmd))
         subprocess.run(train_cmd, check=True)
@@ -593,15 +622,11 @@ class Reconstructor:
         # Load COLMAP sparse model produced by ns-process-data
         colmap_dir = ns_data_dir / "colmap" / "sparse" / "0"
         if not colmap_dir.exists():
-            raise RuntimeError(
-                f"ns-process-data did not produce COLMAP sparse model at {colmap_dir}"
-            )
+            raise RuntimeError(f"ns-process-data did not produce COLMAP sparse model at {colmap_dir}")
 
         recon = pycolmap.Reconstruction()
         recon.read(str(colmap_dir))
-        image_paths = sorted((ns_data_dir / "images").glob("*.jpg")) + sorted(
-            (ns_data_dir / "images").glob("*.png")
-        )
+        image_paths = sorted((ns_data_dir / "images").glob("*.jpg")) + sorted((ns_data_dir / "images").glob("*.png"))
         return PointcloudResult(
             reconstruction=recon,
             frame=CoordinateFrame.COLMAP,
@@ -697,7 +722,8 @@ class Reconstructor:
         if not overwrite and _localization_db_exists(feedforward_zarr, extractor_name):
             logger.info(
                 "Localization DB exists at %s :: local_features/%s, skipping",
-                feedforward_zarr, extractor_name,
+                feedforward_zarr,
+                extractor_name,
             )
             return feedforward_zarr
 
@@ -755,5 +781,8 @@ class Reconstructor:
 
     def launch_dashboard(self) -> None:
         """Launch interactive dashboard for current reconstruction state."""
-        from collab_splats.dashboard.__main__ import main as dashboard_main  # optional heavy dep; lazy load
+        from collab_splats.dashboard.__main__ import (
+            main as dashboard_main,  # optional heavy dep; lazy load
+        )
+
         dashboard_main()

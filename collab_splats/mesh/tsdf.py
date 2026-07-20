@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 
 try:
     import meshlib.mrmeshpy as mm
+
     _MM_AVAILABLE = True
 except ImportError:
     mm = None
@@ -98,8 +99,7 @@ class Open3DTSDFFusion(BaseMeshCreator):
         if self.clean_repair:
             # meshlib addPartByMask API incompatible with installed version.
             raise AssertionError(
-                "clean_repair disabled — meshlib addPartByMask API incompatible. "
-                "Set clean_repair=False."
+                "clean_repair disabled — meshlib addPartByMask API incompatible. " "Set clean_repair=False."
             )
 
         return MeshResult(mesh_path=final_path)

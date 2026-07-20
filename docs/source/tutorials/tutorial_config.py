@@ -3,14 +3,14 @@ from pathlib import Path
 import yaml
 
 # ── Edit these two variables to point at your data ───────────────────────────
-BASE_DIR   = Path("/workspace/outputs")
-DATASET    = "2024_02_06/C0043"  # <session-date>/<video-stem>
+BASE_DIR = Path("/workspace/outputs")
+DATASET = "2024_02_06/C0043"  # <session-date>/<video-stem>
 MAX_FRAMES = 30
 
 # ── Derived paths (do not edit) ───────────────────────────────────────────────
 OUTPUT_DIR = BASE_DIR / DATASET
-CACHE_DIR  = OUTPUT_DIR                    # alias — notebooks read canonical artifacts here
-FRAMES     = OUTPUT_DIR / "frames"         # pipeline-written keyframes (read-only for tutorials)
+CACHE_DIR = OUTPUT_DIR  # alias — notebooks read canonical artifacts here
+FRAMES = OUTPUT_DIR / "frames"  # pipeline-written keyframes (read-only for tutorials)
 TUTORIAL_CACHE = BASE_DIR / "tutorial_cache" / DATASET  # notebook scratch output (never synced)
 
 

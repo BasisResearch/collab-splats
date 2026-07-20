@@ -1,6 +1,0 @@
-# Rats - 2026-03-30 - PXL_20260330_141332968
-input_path: /workspace/fieldwork-data/rats/2026-03-30/PXL_20260330_141332968.TS.mp4
-output_path: /workspace/outputs/rats_pxl_20260330
-
-preprocessing:
-  frame_proportion: 0.25

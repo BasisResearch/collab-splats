@@ -1,6 +1,0 @@
-# Ants - 2025-11-16 - GH010210
-input_path: /workspace/fieldwork-data/ants/2025-11-16/SplatsSD/GH010210.MP4
-output_path: /workspace/outputs/ants_gh010210
-
-preprocessing:
-  frame_proportion: 0.08

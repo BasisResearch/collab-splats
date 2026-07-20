@@ -366,28 +366,6 @@ class Reconstructor:
 
         return config
 
-    @classmethod
-    def from_config_file(
-        cls,
-        dataset: str,
-        config_dir: str | Path,
-        overrides: dict[str, Any] | None = None,
-    ) -> Reconstructor:
-        """Create Reconstructor from YAML config hierarchy.
-
-        Args:
-            dataset: Dataset name (matches datasets/<dataset>.yaml).
-            config_dir: Directory containing base.yaml and datasets/.
-            overrides: Optional runtime overrides applied after merge.
-        """
-        from collab_splats.wrapper.config import (
-            ConfigLoader,  # optional heavy dep; lazy load
-        )
-
-        loader = ConfigLoader(config_dir)
-        config = loader.load(dataset=dataset, overrides=overrides)
-        return cls(config)
-
     ########################################
     # Path properties
     ########################################

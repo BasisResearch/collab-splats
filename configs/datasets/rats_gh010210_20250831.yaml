@@ -1,6 +1,0 @@
-# Rats - 2025-08-31 - GH010210
-input_path: /workspace/fieldwork-data/rats/2025-08-31/GH010210.MP4
-output_path: /workspace/outputs/rats_gh010210_20250831
-
-preprocessing:
-  frame_proportion: 0.25

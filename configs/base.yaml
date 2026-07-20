@@ -5,7 +5,7 @@
 #   input_path  — absolute path to input video or image directory
 #   output_path — absolute path to output root (created if absent)
 #
-# See configs/reconstruction/README.md for full documentation.
+# See configs/README.md for full documentation.
 
 input_path: null
 output_path: null

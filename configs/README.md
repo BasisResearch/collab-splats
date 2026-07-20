@@ -1,8 +1,83 @@
 # Reconstruction Pipeline Configs
 
-Configuration templates for `docs/examples/reconstruct.py`. Each run of the pipeline
-reads these files to know what data to process, which backend to use, and where
-to write outputs.
+`base.yaml` is the single template for the reconstruction pipeline. It defines every
+stage's defaults; each run sets `input_path` / `output_path` and overrides only what
+differs. There is no per-dataset config file — you point the runner at video paths.
+
+---
+
+## Running videos
+
+Use `docs/examples/run_pipeline.py` — the top-level entry point. Point it at a single
+video, several videos, or directories of videos:
+
+```bash
+# Single video
+python docs/examples/run_pipeline.py --output-root /workspace/outputs scene.MP4
+
+# Several videos + a directory (dirs are globbed for *.mp4/*.mov/*.avi)
+python docs/examples/run_pipeline.py --output-root /workspace/outputs \
+  /workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4 \
+  /workspace/fieldwork-data/rats/2024-07-11/SplatsSD/
+
+# Turn on extra stages via a shared override YAML
+python docs/examples/run_pipeline.py --output-root /workspace/outputs \
+  --config configs/minimal.yaml /workspace/fieldwork-data/birds/*.MP4
+
+# Specific steps only
+python docs/examples/run_pipeline.py --output-root /workspace/outputs \
+  --stages preprocess,pointcloud,localize scene.MP4
+```
+
+### Steps run per video
+
+1. **keyframe extraction** — sample sharp, well-exposed frames from the video
+2. **vggt_omega pointcloud** — feed-forward 3D reconstruction (poses + depth + points)
+3. **talk2dino semantics** — 2D features lifted to 3D, autoencoder-compressed
+4. **localization database** — per-frame local-feature cache for camera localization
+
+`preprocess` + `pointcloud` always run. `semantics`, `mesh`, and `localize` run only
+when enabled in the config (`semantics.enabled` / `mesh.enabled` /
+`localization.enabled`), or when named explicitly via `--stages`.
+
+### Where outputs land
+
+Each video is written to `<output-root>/<session-date>/<video-stem>/` when a date-like
+dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>/`:
+
+```
+<output-root>/2024_02_06/C0043/
+  run_config.yaml              ← full merged config (exact settings used — for reproducibility)
+  images/                      ← extracted keyframes
+  features/                    ← 2D feature cache (one subdir per extractor)
+  <backend>/                   ← e.g. vggt_omega/
+    feedforward.zarr           ← depth maps, poses, confidence, 3D points
+                               ←   (+ local_features/<extractor>/reconstruction if localize ran)
+    semantics/
+      <extractor>/
+        features.zarr          ← lifted 3D features (N_points × latent_dim)
+        compressor.pt          ← autoencoder weights (if semantics.n_components set)
+    mesh/
+      mesh.ply                 ← (only if mesh.enabled=true)
+```
+
+---
+
+## Reproducing an exact run
+
+Every output dir gets a `run_config.yaml` recording the exact settings used. Re-run it
+with `docs/examples/reconstruct.py` (the `input_path` / `output_path` are baked in):
+
+```bash
+python docs/examples/reconstruct.py \
+  --config /workspace/outputs/2024_02_06/C0043/run_config.yaml
+
+# Tweak a saved run and send it to a separate dir
+python docs/examples/reconstruct.py \
+  --config /workspace/outputs/2024_02_06/C0043/run_config.yaml \
+  output_path=/workspace/outputs/2024_02_06/C0043_vggtx \
+  pointcloud.backend=vggtx
+```
 
 ---
 
@@ -14,143 +89,48 @@ This project separates **code + configs** (versioned in git) from **data + outpu
 ```
 /workspace/
   collab-splats/               ← this repo (configs live here)
-    configs/reconstruction/
-    docs/examples/reconstruct.py
-    data/                      ← gitignored — eval benchmarks, downloaded on-demand
-
+    configs/base.yaml
+    docs/examples/run_pipeline.py
   fieldwork-data/              ← input videos (never in repo, ~GB each)
   outputs/                     ← reconstruction outputs (never in repo, ~10-50 GB per scene)
-    birds_c0043_omega/
-      run_config.yaml          ← exact settings that produced this output
-      vggt_omega/
-        feedforward.zarr
-        semantics/talk2dino/features.zarr
 ```
 
-**Why absolute paths?** This project runs in a fixed container environment
-(`/workspace/` mount). Absolute `/workspace/...` paths are stable across sessions.
-Portability across environments is handled by the container image + volume mounts,
-not by relative paths in config files.
-
-**Why not put configs with the data?** Configs are small text files that describe
-*intent* — what to run and how. They benefit from version control (git blame, diffs,
-review). Output data is large, mutable, and reproducible from the configs — it doesn't
-belong in git.
+Absolute `/workspace/...` paths are stable across sessions in the fixed container.
+Config is a small text file describing *intent* (what to run, how); output data is
+large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in git.
 
 ---
 
-## Running a dataset
-
-```bash
-# Standard run (uses base defaults: vggt_omega + talk2dino, semantics on)
-python docs/examples/reconstruct.py --dataset birds_c0043
-
-# Specific stages only
-python docs/examples/reconstruct.py --dataset birds_c0043 --stages preprocess,pointcloud
-
-# Override any config key at CLI (dotted key=value, any depth)
-python docs/examples/reconstruct.py --dataset birds_c0043 \
-  semantics.extractor=dinov2 \
-  pointcloud.bundle_adjustment=true
-
-# Experiment variant — send output to a separate dir
-python docs/examples/reconstruct.py --dataset birds_c0043 \
-  output_path=/workspace/outputs/birds_c0043_ba_experiment
-
-# Re-run from a saved config for exact reproducibility
-python docs/examples/reconstruct.py \
-  --config /workspace/outputs/birds_c0043_omega/run_config.yaml
-
-# Force re-run even if outputs exist
-python docs/examples/reconstruct.py --dataset birds_c0043 --overwrite
-```
-
----
-
-## Adding a new dataset
-
-1. Copy `datasets/birds_c0043.yaml` to `datasets/<your_name>.yaml`
-2. Set `input_path` to the absolute path of the video or image directory
-3. Set `output_path` to where outputs should be written (e.g. `/workspace/outputs/<your_name>`)
-4. Tune `preprocessing.frame_proportion` if needed (higher = more frames = slower but denser)
-5. Run: `python docs/examples/reconstruct.py --dataset <your_name>`
-
-Everything else inherits from `base.yaml`. Only override what differs.
-
----
-
-## Running experiments (multiple configs, same dataset)
-
-Don't create a new dataset YAML for each experiment. Override `output_path` at CLI instead:
-
-```bash
-# Experiment A: omega + talk2dino (base defaults)
-python docs/examples/reconstruct.py --dataset birds_c0043 \
-  output_path=/workspace/outputs/birds_c0043_omega_t2d
-
-# Experiment B: vggtx + dinov2
-python docs/examples/reconstruct.py --dataset birds_c0043 \
-  output_path=/workspace/outputs/birds_c0043_vggtx_dino \
-  pointcloud.backend=vggtx \
-  semantics.extractor=dinov2
-
-# Experiment C: omega + BA enabled
-python docs/examples/reconstruct.py --dataset birds_c0043 \
-  output_path=/workspace/outputs/birds_c0043_omega_ba \
-  pointcloud.bundle_adjustment=true
-```
-
-Each output dir gets its own `run_config.yaml` recording the exact settings used.
-Reproduce any experiment: `python docs/examples/reconstruct.py --config path/to/run_config.yaml`
-
----
-
-## Config key reference
+## Config key reference (`base.yaml`)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `input_path` | str | **required** | Absolute path to video (.MP4) or image directory |
-| `output_path` | str | **required** | Absolute path for outputs (created if absent) |
+| `input_path` | str | **set per run** | Absolute path to video (.MP4) or image directory |
+| `output_path` | str | **set per run** | Absolute path for outputs (created if absent) |
 | `preprocessing.frame_selection` | str | `fps` | Frame sampling: `fps` or `optical_flow` |
 | `preprocessing.frame_proportion` | float | `0.1` | Fraction of total frames to extract |
-| `preprocessing.min_frames` | int | `300` | Minimum frames regardless of proportion |
-| `preprocessing.max_frames` | int\|null | `null` | Cap on frames; null = no cap |
-| `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
+| `preprocessing.min_frames` | int | `150` | Minimum frames regardless of proportion |
+| `preprocessing.max_frames` | int\|null | `200` | Cap on frames (vggt_omega OOMs above ~300) |
+| `pointcloud.method` | str | `feedforward` | `feedforward`, `sfm`, or `nerfstudio` |
 | `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, or `mapanything` |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud |
 | `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points |
 | `semantics.enabled` | bool | `true` | Extract and lift semantic features |
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
-| `semantics.n_components` | int\|null | `64` | PCA compression dim; null = no compression |
+| `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
 | `mesh.enabled` | bool | `false` | Build TSDF/Poisson mesh (opt-in) |
 | `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
-
----
-
-## Where outputs land
-
-```
-<output_path>/
-  run_config.yaml              ← full merged config (exact settings used — for reproducibility)
-  images/                      ← extracted keyframes
-  features/                    ← 2D feature cache (one subdir per extractor)
-  <backend>/                   ← e.g. vggt_omega/
-    feedforward.zarr           ← depth maps, poses, confidence, 3D points
-    semantics/
-      <extractor>/
-        features.zarr          ← lifted 3D features (N_points × n_components)
-        compressor.pt          ← PCA compressor weights (if n_components set)
-    mesh/
-      mesh.ply                 ← (only if mesh.enabled=true)
-```
+| `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
+| `localization.extractor` | str | `loma` | Local matcher: `loma`, `loma-g`, `disk`, `xfeat` |
+| `localization.radius` | float | `8.0` | CameraLocalizer search radius |
 
 ---
 
 ## Dashboard
 
-Point the dashboard at `output_path` to visualise results. The dashboard reads
+Point the dashboard at a scene's output dir to visualise results. It reads
 `<backend>/feedforward.zarr` for the pointcloud and
 `<backend>/semantics/<extractor>/features.zarr` for semantic features.

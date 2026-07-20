@@ -1,15 +1,14 @@
-"""Tests for docs/examples/reconstruct.py CLI."""
+"""Tests for docs/examples/reconstruct.py CLI (reproduce-from-saved-config)."""
 
 import importlib.util
 import sys
-import yaml
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 SCRIPT_PATH = Path(__file__).parent.parent.parent / "docs" / "examples" / "reconstruct.py"
-DEFAULT_CONFIG_DIR = Path(__file__).parent.parent.parent / "configs"
 
 
 def _load_main():
@@ -20,60 +19,76 @@ def _load_main():
     return mod.main
 
 
-def _make_mock_reconstructor(tmp_path):
+def _make_mock_reconstructor(tmp_path, config=None):
     """Return (mock_cls, mock_instance) with config.output_path set to tmp_path."""
     mock_r = MagicMock()
-    mock_r.config = {
+    mock_r.config = config or {
+        "input_path": "/data/video.mp4",
         "output_path": str(tmp_path),
         "pointcloud": {"backend": "vggt_omega"},
     }
     mock_r.backend_dir = tmp_path / "vggt_omega"
     mock_cls = MagicMock()
-    mock_cls.from_config_file.return_value = mock_r
-    mock_cls.return_value = mock_r  # direct Reconstructor(config) path
+    mock_cls.return_value = mock_r
     return mock_cls, mock_r
 
 
-def test_dataset_arg_calls_from_config_file(monkeypatch, tmp_path):
-    """--dataset NAME calls Reconstructor.from_config_file with correct args."""
-    monkeypatch.setattr(sys, "argv", ["reconstruct.py", "--dataset", "birds_c0043"])
-    mock_cls, mock_r = _make_mock_reconstructor(tmp_path)
+def _write_config(tmp_path, **extra):
+    """Write a minimal saved config.yaml and return its path + data."""
+    cfg = {
+        "input_path": "/data/video.mp4",
+        "output_path": str(tmp_path),
+        "pointcloud": {"method": "feedforward", "backend": "vggt_omega"},
+        **extra,
+    }
+    path = tmp_path / "run_config.yaml"
+    path.write_text(yaml.dump(cfg))
+    return path, cfg
+
+
+def test_config_required(monkeypatch, tmp_path):
+    """--config is required — omitting it exits."""
+    monkeypatch.setattr(sys, "argv", ["reconstruct.py"])
+    main = _load_main()
+    with pytest.raises(SystemExit):
+        main()
+
+
+def test_config_loads_yaml_and_constructs_reconstructor(monkeypatch, tmp_path):
+    """--config PATH loads the YAML and builds Reconstructor(config)."""
+    path, cfg = _write_config(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["reconstruct.py", "--config", str(path)])
+    mock_cls, mock_r = _make_mock_reconstructor(tmp_path, config=cfg)
     main = _load_main()
 
     with patch("collab_splats.wrapper.reconstructor.Reconstructor", mock_cls):
         main()
 
-    mock_cls.from_config_file.assert_called_once_with(
-        dataset="birds_c0043",
-        config_dir=DEFAULT_CONFIG_DIR,
-        overrides=None,
-    )
+    mock_cls.assert_called_once_with(cfg)
 
 
 def test_stages_parsed_to_list(monkeypatch, tmp_path):
-    """--stages preprocess,pointcloud passes list to run_pipeline."""
+    """--stages preprocess,pointcloud passes a list to run_pipeline."""
+    path, cfg = _write_config(tmp_path)
     monkeypatch.setattr(
-        sys, "argv",
-        ["reconstruct.py", "--dataset", "birds_c0043", "--stages", "preprocess,pointcloud"],
+        sys,
+        "argv",
+        ["reconstruct.py", "--config", str(path), "--stages", "preprocess,pointcloud"],
     )
-    mock_cls, mock_r = _make_mock_reconstructor(tmp_path)
+    mock_cls, mock_r = _make_mock_reconstructor(tmp_path, config=cfg)
     main = _load_main()
 
     with patch("collab_splats.wrapper.reconstructor.Reconstructor", mock_cls):
         main()
 
-    mock_r.run_pipeline.assert_called_once_with(
-        stages=["preprocess", "pointcloud"], overwrite=False
-    )
+    mock_r.run_pipeline.assert_called_once_with(stages=["preprocess", "pointcloud"], overwrite=False)
 
 
 def test_overwrite_flag(monkeypatch, tmp_path):
     """--overwrite passes overwrite=True to run_pipeline."""
-    monkeypatch.setattr(
-        sys, "argv",
-        ["reconstruct.py", "--dataset", "birds_c0043", "--overwrite"],
-    )
-    mock_cls, mock_r = _make_mock_reconstructor(tmp_path)
+    path, cfg = _write_config(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["reconstruct.py", "--config", str(path), "--overwrite"])
+    mock_cls, mock_r = _make_mock_reconstructor(tmp_path, config=cfg)
     main = _load_main()
 
     with patch("collab_splats.wrapper.reconstructor.Reconstructor", mock_cls):
@@ -82,84 +97,39 @@ def test_overwrite_flag(monkeypatch, tmp_path):
     mock_r.run_pipeline.assert_called_once_with(stages=None, overwrite=True)
 
 
-def test_key_value_overrides_parsed(monkeypatch, tmp_path):
-    """KEY=VALUE positional args are parsed and passed as overrides dict."""
+def test_key_value_overrides_merged_into_config(monkeypatch, tmp_path):
+    """KEY=VALUE positional args are merged over the loaded config."""
+    path, cfg = _write_config(tmp_path)
     monkeypatch.setattr(
-        sys, "argv",
-        [
-            "reconstruct.py", "--dataset", "birds_c0043",
-            "pointcloud.backend=vggtx",
-            "semantics.enabled=true",
-        ],
+        sys,
+        "argv",
+        ["reconstruct.py", "--config", str(path), "pointcloud.backend=vggtx", "semantics.enabled=true"],
     )
-    mock_cls, mock_r = _make_mock_reconstructor(tmp_path)
+    mock_cls, mock_r = _make_mock_reconstructor(tmp_path, config=cfg)
     main = _load_main()
 
     with patch("collab_splats.wrapper.reconstructor.Reconstructor", mock_cls):
         main()
 
-    mock_cls.from_config_file.assert_called_once_with(
-        dataset="birds_c0043",
-        config_dir=DEFAULT_CONFIG_DIR,
-        overrides={"pointcloud": {"backend": "vggtx"}, "semantics": {"enabled": True}},
-    )
-
-
-def test_direct_config_path_loads_yaml(monkeypatch, tmp_path):
-    """--config /path/to/config.yaml loads YAML directly, skips dataset hierarchy."""
-    config_yaml = tmp_path / "myconfig.yaml"
-    cfg_data = {
-        "input_path": "/data/video.mp4",
-        "output_path": str(tmp_path / "out"),
-        "pointcloud": {"method": "feedforward", "backend": "vggtx"},
-        "semantics": {"enabled": True, "extractor": "dinov2", "n_components": 64},
-    }
-    config_yaml.write_text(yaml.dump(cfg_data))
-
-    monkeypatch.setattr(
-        sys, "argv",
-        ["reconstruct.py", "--config", str(config_yaml)],
-    )
-    mock_cls, mock_r = _make_mock_reconstructor(tmp_path / "out")
-    mock_r.config = {**cfg_data, "output_path": str(tmp_path / "out")}
-    main = _load_main()
-
-    with patch("collab_splats.wrapper.reconstructor.Reconstructor", mock_cls):
-        main()
-
-    # Should call Reconstructor(config) directly, not from_config_file
-    mock_cls.assert_called_once()
-    mock_cls.from_config_file.assert_not_called()
+    # Config passed to Reconstructor has overrides applied
+    (called_config,), _ = mock_cls.call_args
+    assert called_config["pointcloud"]["backend"] == "vggtx"
+    assert called_config["semantics"]["enabled"] is True
 
 
 def test_run_config_yaml_written_to_output_dir(monkeypatch, tmp_path):
-    """main() writes run_config.yaml into output_path before running pipeline."""
-    monkeypatch.setattr(sys, "argv", ["reconstruct.py", "--dataset", "birds_c0043"])
-    mock_cls, mock_r = _make_mock_reconstructor(tmp_path)
-    mock_r.config = {
-        "input_path": "/data/video.mp4",
-        "output_path": str(tmp_path),
-        "pointcloud": {"backend": "vggt_omega"},
-    }
+    """main() writes run_config.yaml into output_path before running the pipeline."""
+    out = tmp_path / "out"
+    path, cfg = _write_config(tmp_path)
+    cfg = {**cfg, "output_path": str(out)}
+    monkeypatch.setattr(sys, "argv", ["reconstruct.py", "--config", str(path)])
+    mock_cls, mock_r = _make_mock_reconstructor(out, config=cfg)
     main = _load_main()
 
     with patch("collab_splats.wrapper.reconstructor.Reconstructor", mock_cls):
         main()
 
-    run_cfg = tmp_path / "run_config.yaml"
+    run_cfg = out / "run_config.yaml"
     assert run_cfg.exists(), "run_config.yaml was not written"
     loaded = yaml.safe_load(run_cfg.read_text())
     assert loaded["pointcloud"]["backend"] == "vggt_omega"
-
-
-def test_dataset_and_config_are_mutually_exclusive(monkeypatch, tmp_path, capsys):
-    """--dataset and --config together cause argparse error (SystemExit)."""
-    config_yaml = tmp_path / "cfg.yaml"
-    config_yaml.write_text("{}")
-    monkeypatch.setattr(
-        sys, "argv",
-        ["reconstruct.py", "--dataset", "birds_c0043", "--config", str(config_yaml)],
-    )
-    main = _load_main()
-    with pytest.raises(SystemExit):
-        main()

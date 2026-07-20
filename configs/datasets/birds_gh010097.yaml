@@ -1,6 +1,0 @@
-# Birds - 2024-05-27 - GH010097
-input_path: /workspace/fieldwork-data/birds/2024-05-27/SplatsSD/GH010097.MP4
-output_path: /workspace/outputs/birds_gh010097
-
-preprocessing:
-  frame_proportion: 0.14

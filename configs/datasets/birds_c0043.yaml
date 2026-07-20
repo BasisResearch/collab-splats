@@ -1,6 +1,0 @@
-# Birds - 2024-02-06 - C0043
-input_path: /workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4
-output_path: /workspace/outputs/birds_c0043
-
-preprocessing:
-  frame_proportion: 0.25

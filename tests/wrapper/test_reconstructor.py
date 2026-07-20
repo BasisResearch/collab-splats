@@ -129,6 +129,29 @@ def test_no_inline_defaults_in_source():
     assert offenders == [], f"inline value defaults still present: {offenders}"
 
 
+def test_extract_frames_uniform_is_default_branch(tmp_path, monkeypatch):
+    """frame_selection='uniform' takes the uniform sampler branch (not optical_flow)."""
+    from collab_splats.wrapper import reconstructor as R
+
+    calls = {}
+
+    def fake_sample_frames(path, method, max_frames):
+        calls["method"] = method
+        return [np.zeros((4, 4, 3), dtype=np.uint8)], None
+
+    def fake_video_info(path):
+        return {"total_frames": 100}
+
+    monkeypatch.setattr(R, "sample_frames", fake_sample_frames)
+    monkeypatch.setattr(R, "get_video_info", fake_video_info)
+
+    out = tmp_path / "out"
+    video = tmp_path / "v.mp4"
+    video.touch()
+    R._extract_frames(video, out, "uniform", 0.1, 5, 50)
+    assert calls["method"] == "uniform"
+
+
 def test_reconstructor_init(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)

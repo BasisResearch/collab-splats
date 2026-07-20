@@ -10,9 +10,12 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import cv2
 import numpy as np
 import yaml
 from mergedeep import merge
+
+from collab_splats.preproc import get_video_info, sample_frames
 
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
@@ -56,10 +59,6 @@ def _extract_frames(
 
     Returns sorted list of extracted frame paths.
     """
-    import cv2
-
-    from collab_splats.preproc import get_video_info, sample_frames
-
     output_dir.mkdir(parents=True, exist_ok=True)
     input_path = Path(input_path)
 
@@ -71,14 +70,14 @@ def _extract_frames(
             shutil.copy(src, output_dir / f"frame_{i:04d}{src.suffix}")
         return sorted(output_dir.iterdir())
 
-    # Video — dispatch to uniform or optical-flow sampling based on frame_selection
+    # Video — 'optical_flow' picks high-motion frames; 'uniform' (default) spreads evenly
     if frame_selection == "optical_flow":
         frame_arrays, _ = sample_frames(
             str(input_path),
             method="optical_flow",
             max_frames=max_frames if max_frames is not None else 200,
         )
-    else:
+    else:  # uniform
         # Derive target count from proportion, clamped to [min_frames, max_frames];
         # the uniform sampler spreads that count over the video itself
         total_frames = get_video_info(str(input_path))["total_frames"]

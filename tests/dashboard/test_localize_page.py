@@ -365,3 +365,62 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
     figs = page._build_result_figures(out, LocalizationConfig(extractor="disk"))
     assert set(figs) == {"dist_fig", "match_figs", "stats_html"}
     assert figs["match_figs"] == []  # no ref indices -> no correspondence figures
+
+
+def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
+    """Non-empty match path: each ranked ref resolves to an RGB array (store for reconstruction
+    frames, disk for localized) and is passed to plot_correspondences as (ref_image, ref_idx)."""
+    import cv2
+    import matplotlib.figure
+
+    page = _page(tmp_path)
+
+    # Capture what plot_correspondences receives so we can assert the boundary wiring
+    calls = []
+
+    def _capture(loc, query_image, ref_image, ref_idx, **kwargs):
+        calls.append((ref_image, ref_idx))
+        return matplotlib.figure.Figure()
+
+    monkeypatch.setattr(
+        "collab_splats.localization.viz.plot_inlier_distribution",
+        lambda loc, n_frames=0, frame_sources=None: matplotlib.figure.Figure(),
+    )
+    monkeypatch.setattr("collab_splats.localization.viz.plot_correspondences", _capture)
+
+    # Fake store: reconstruction frames resolve to a known RGB array, no real zarr needed
+    store_pixels = np.full((4, 4, 3), 7, np.uint8)
+    monkeypatch.setattr(
+        "collab_splats.preproc.frame_store.FrameStore.open",
+        classmethod(lambda cls, path: SimpleNamespace(image_by_frame_idx=lambda fi: store_pixels)),
+    )
+
+    # ref 0 = reconstruction (store branch); ref 1 = localized (disk branch — write a real JPG)
+    localized_jpg = tmp_path / "localized_0001.jpg"
+    cv2.imwrite(str(localized_jpg), np.zeros((4, 4, 3), np.uint8))
+
+    loc = SimpleNamespace(
+        pose=np.eye(4, dtype=np.float32),
+        n_correspondences=8,
+        n_inliers=6,
+        ranked_ref_frames=[0, 1],
+    )
+    out = SimpleNamespace(
+        result=loc,
+        query_frame=np.zeros((4, 4, 3), np.uint8),
+        query_intrinsics=500.0 * np.eye(3, dtype=np.float32),
+        intrinsics_source="estimated (experimental)",
+        ref_image_paths=["frame_000000.jpg", str(localized_jpg)],
+        ref_extrinsics=np.eye(4, dtype=np.float32)[None],
+        frame_sources=["reconstruction", "localized"],
+    )
+    figs = page._build_result_figures(out, LocalizationConfig(extractor="disk"), frames_zarr=tmp_path / "frames.zarr")
+
+    # Both ranked refs produced a figure via correctly-typed (ref_image, ref_idx) calls
+    assert len(figs["match_figs"]) == 2
+    assert [ref_idx for _, ref_idx in calls] == [0, 1]
+    for ref_image, ref_idx in calls:
+        assert isinstance(ref_image, np.ndarray) and ref_image.ndim == 3
+        assert isinstance(ref_idx, int)
+    # Reconstruction frame came from the store (known pixel value), not disk
+    assert np.array_equal(calls[0][0], store_pixels)

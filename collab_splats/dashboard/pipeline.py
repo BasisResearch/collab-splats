@@ -324,7 +324,7 @@ class LocalizationRunOutput:
     result: "object"  # LocalizationResult
     query_frame: np.ndarray  # (H, W, 3) uint8 RGB
     query_intrinsics: np.ndarray  # (3, 3) — estimated or calibrated
-    intrinsics_source: str  # "estimated (experimental)" | "calibration file"
+    intrinsics_source: str  # "calibration file" | "proportions seed"
     ref_image_paths: list  # local paths, index-aligned with ref_frame_indices
     ref_extrinsics: np.ndarray  # (N, 4, 4) world-to-camera
     frame_sources: list  # per-frame 'reconstruction' | 'localized'
@@ -423,16 +423,15 @@ def _build_localizer(
     return localizer
 
 
-def _resolve_query_intrinsics(frame: np.ndarray, config: LocalizationConfig, op_log: OperationLog) -> np.ndarray:
-    """Calibration file when configured; else experimental feedforward estimate."""
+def _resolve_query_intrinsics(
+    frame: np.ndarray, config: LocalizationConfig, op_log: OperationLog
+) -> np.ndarray | None:
+    """User-supplied YAML calibration when configured; else None → proportions seed."""
     if config.calibration_path:
         data = yaml.safe_load(Path(config.calibration_path).read_text())
         return np.asarray(data["K"], dtype=np.float32).reshape(3, 3)
-
-    from collab_splats.localization.intrinsics import estimate_intrinsics
-
-    op_log.append_line("localize: intrinsics are ESTIMATED (experimental) — validate before trusting poses")
-    return estimate_intrinsics(frame)
+    # No calibration → let CameraLocalizer.localize seed K from image proportions.
+    return None
 
 
 def _local_ref_paths(localizer, out_dir: Path) -> list:
@@ -543,12 +542,14 @@ def run_localization(
             frame = extract_frame(query_video, frame_idx)
             op_log.update_progress(60, "localize: resolving query intrinsics")
             K = _resolve_query_intrinsics(frame, config, op_log)
-            intr_source = "calibration file" if config.calibration_path else "estimated (experimental)"
+            intr_source = "calibration file" if config.calibration_path else "proportions seed"
 
             # Pose: single-pose PnP + refinement — the DB is never modified here
             op_log.update_progress(70, "localize: matching + solving pose")
             with op_log.step("localize: matching + solving pose"):
                 loc = localizer.localize(frame, K)
+            # localize() seeds K from proportions when K is None — use what it actually used.
+            K = loc.query_intrinsics if K is None else K
             op_log.append_line(
                 f"localize: {loc.n_inliers}/{loc.n_correspondences} inliers"
                 + ("" if loc.pose is not None else " — POSE FAILED")

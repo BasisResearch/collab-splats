@@ -67,5 +67,5 @@ class LocalizationConfig:
     extractor: str = "loma-g"  # feature-DB / matcher registry key
     top_k_viz: int = 3  # match-pair figures shown, best-first
     append_to_db: bool = True  # persist successful poses to localized/
-    calibration_path: str | None = None  # per-camera K yaml override; None → estimate
+    calibration_path: str | None = None  # per-camera K yaml override; None → proportions seed
     max_pairs: int = 200  # line cap per match-pair figure

@@ -52,7 +52,11 @@ viewer-wired**.
 
 - True online/streaming ingest during capture (frames are on disk).
 - Online *incremental* PGO (iSAM). PGO re-solves per submap (VGGT-SLAM cadence, see below);
-  that is sufficient and keeps exact parity with the batch path.
+  that is sufficient and keeps exact parity with the batch path. **Online is a strict
+  superset** of windowed (windowed = online minus live ingest minus iSAM); switching later is
+  a localized swap of the frame source (behind `FrameStore`) + the solver (behind
+  `PoseGraph`), with spill/merge/graph-build unchanged. Those seams **already exist** — we do
+  not build them speculatively now; we simply do not cross them.
 - Changing keyframe selection or the VGGT/MapAnything backends' inference.
 - **Reducing the stored point count.** Submaps spill as full dense arrays. Voxel/conf
   downsampling of the *stored* payload (vs the on-read output reductions that already exist)
@@ -71,9 +75,15 @@ process one submap at a time, spill it to disk, and retain only compact state.
 
 For each window (submap) of keyframes:
 
-1. **Preprocess only this window** — `_preprocess_window(idxs)` on
-   `BaseFeedforwardCreator`, reading keyframes from `FrameStore` (Spec 1). Replaces the
-   load-everything `_preprocess`.
+1. **Preprocess only this window** — the caller (driver / `_run_lc_loop`) pulls the window's
+   frames from `FrameStore` (`store.read(idxs)`) and passes the **in-memory frame arrays**
+   into `_preprocess(frames)`. `_preprocess` is refactored from `_preprocess(image_dir: Path)`
+   to accept decoded frames, so `FrameStore` is the **sole I/O path** and decode-once (Spec 1)
+   is honored. This **deletes the `_preprocess_from_store` + `_frame_export` temp-JPG
+   round-trip** (`base.py:805-812`), which currently re-encodes zarr → JPG → re-reads —
+   fighting the frame store. Per-model crop/resize stays in each creator's `_preprocess`
+   (it differs per backend); only the *source* moves out. `image_paths` become `frame_idx`
+   labels (Spec 1 references frames by index, not filename).
 2. **Forward** — unchanged; GPU bounded by `submap_size`.
 3. **Spill to disk** — write the submap to
    `submaps.zarr/submap_NNN/{points, colors, poses, intrinsics, descriptors}`
@@ -87,11 +97,13 @@ For each window (submap) of keyframes:
 5. **Loop closure** — detect loops vs retained descriptors. On a candidate, **reload that
    one submap** from `submaps.zarr` (cheap) to run `_verify_loop_candidate` and to supply
    the loop-anchor world_points for scale reconciliation.
-6. **On verified loop** — add the loop-closure edge (the *next* `pg.optimize()` absorbs it,
-   as VGGT-SLAM's `add_edge` + per-submap optimize does). Loop detection additionally
-   triggers a **full-scene viewer re-upload** (all submaps' corrected extrinsics) vs the
-   latest-only push on a plain append — this is VGGT-SLAM's `update_all_submap_vis` vs
-   `update_latest_submap_vis` (`main.py:122-127`), a viewer-scope choice, **not** an extra
+6. **On verified loop** — stash the `lc_submap` (2 frames, small) for the loop edge; draw the
+   viewer loop **line** on accept. **When** the edge enters the graph is set by the A/B gate:
+   *deferred* → applied with all loop edges at the final solve; *live* → inserted now,
+   absorbed by the next per-submap `optimize()` (VGGT-SLAM `solver.py:294-295`). Either way
+   loop detection triggers a **full-scene viewer re-upload** (all submaps' corrected
+   extrinsics) vs the latest-only push on a plain append — VGGT-SLAM's `update_all_submap_vis`
+   vs `update_latest_submap_vis` (`main.py:122-127`), a viewer-scope choice, **not** an extra
    solve.
 7. **Viewer push** — subsample and `add_points` + frusta for the new submap (drifting until
    a loop corrects it).
@@ -225,7 +237,11 @@ chosen timing.
 
 ## Components / files
 
-- `pointcloud/feedforward/base.py` — `_preprocess_window(idxs)`.
+- `pointcloud/feedforward/base.py` — refactor `_preprocess(image_dir: Path)` →
+  `_preprocess(frames)` accepting decoded in-memory frames (per-model crop stays); caller
+  slices the window from `FrameStore`. **Deletes** `_preprocess_from_store` + `_frame_export`
+  temp-JPG hack (`base.py:805-812`). Touches all 3 creators' `_preprocess` (bounded; net
+  removes code).
 - `geometry/loop_closure/graph.py` — **`PoseGraph` gains incremental methods**
   `add_submap(submap, overlap_frames, ...)` (hoist `:445-575`: nodes, sequential edges,
   inter-submap `H_w`, scale estimation) and `add_loop_edge(lc, ...)` (hoist `:581-624`: loop
@@ -280,28 +296,43 @@ The one coupled piece: **loop-edge insertion + viewer pose-correction re-upload 
 A single conditional at one hook site. Keep it **parameterized and last** — do not hardcode a
 timing until the A/B returns, or a wrong guess forces a re-do of the snap cadence.
 
-## Example config (knobs)
+## Example config (extends base.yaml — do NOT re-invent the schema)
+
+`configs/base.yaml` is the SOLE default source (strict access, no inline `.get` defaults —
+`test_guard` in `tests/wrapper/test_reconstructor.py`). The streaming path reuses the
+existing `LoopClosureConfig` fields (`submap_size`, `submap_overlap`, `scale_method`,
+`conf_threshold` — already `wrapper.py:52-71`) and adds **only 4 keys**, pruned to avoid
+duplication and speculative knobs:
 
 ```yaml
+# configs/base.yaml — schema uses `preprocessing:` + `frame_selection:` (NOT `preprocess:`/`method:`)
+preprocessing:
+  frame_selection: optical_flow   # existing key; streaming wants motion-based selection
+  max_frames: 200                 # existing cap — see note below; streaming can lift it
+
 pointcloud:
   loop_closure: true
-  streaming: true                 # per-submap spill + per-submap PGO + merge-from-disk
-  loop_edge_timing: deferred      # deferred | live — set by the A/B gate (see spec §Parity)
-  submap_size: 20
-  submap_overlap: 1
-  spill_store: submaps.zarr        # dedicated checkpoint store
-  keep_submaps: true              # keep for resume/re-opt; false deletes after merge
+  loop_closure:                   # LoopClosureConfig (submap_size/overlap already live here)
+    streaming: true               # NEW — spill+merge-from-disk path; false = current batch
+    keep_submaps: true            # NEW — keep submaps.zarr for resume/re-opt; false deletes after merge
   viz:
-    enabled: true
-    port: 8080
-    max_points_per_submap: 50000
-    conf_percentile: 20.0
-preprocess:
-  method: optical_flow            # keyframe selector (Spec 1 store)
-  max_frames: null                # keyframe cap; null = no cap (stream the full scene).
-                                  # streaming's whole point is unbounded N — a small cap
-                                  # like 200 is only for quick tests, not the target.
+    enabled: false                # NEW — instantiate the viser Viewer
+    port: 8080                    # NEW — viser port
 ```
+
+**Deliberately NOT added** (reuse / no-overengineering):
+- `submap_size` / `submap_overlap` — already in `LoopClosureConfig`.
+- `spill_store` — derived path `<output_path>/submaps.zarr`, nothing to configure.
+- `loop_edge_timing` — A/B-disposable; the winner is **hardcoded**, not a shipped toggle
+  (shipping it = two code paths).
+- `viz.max_points_per_submap` / `conf_percentile` — `subsample_points` already defaults them;
+  expose only if tuning proves necessary.
+
+**base.yaml deltas to record for later:**
+- `preprocessing.max_frames: 200` comment says "vggt_omega OOMs above ~300 on GPU". Under
+  streaming, GPU is bounded by `submap_size`, **not** `max_frames` — so the cap can lift for
+  streaming runs. Leave `200` as the default (safe for batch); note that a streaming run may
+  override to a large value / null.
 
 ## Implementation principles
 
@@ -327,8 +358,16 @@ preprocess:
 - **Don't over-build the viewer hooks.** Guarded `if self.viz is not None:` call sites only;
   no incremental-PGO, mesh preview, or dashboard integration (explicit non-goals of the
   scene-viewer spec).
+- **Explore the package before writing anything.** Every task starts by finding the existing
+  function/config/helper to reuse (`graphify query` / grep the package) — reuse over new
+  code. Reused this pass: `LoopClosureConfig` fields (no new `submap_*` keys), `subsample_points`
+  defaults (no new viz knobs), `FrameStore.read` (no new IO), `PoseGraph` (methods added, not a
+  new solver). If new code is genuinely needed, pick the **simplest** thing that works — no
+  premature abstraction, no toggle for a mode that should just be the behavior (e.g.
+  `loop_edge_timing` is hardcoded to the A/B winner, not shipped).
 - **Inline block comments** on each logical block (window preprocess, spill, free, graph
-  update, loop verify, PGO, viewer push); one-line docstrings on new public methods.
+  update, loop verify, PGO, viewer push) so the code reads top-to-bottom for a human;
+  one-line docstrings on new public methods.
 
 ## Testing
 

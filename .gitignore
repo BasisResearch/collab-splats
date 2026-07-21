@@ -28,6 +28,9 @@ data/
 evals/data/*
 !evals/data/download_datasets.py
 !evals/data/extract_waymo.py
+# Committed tutorial example assets (video + external query frame); data/outputs/
+# stays ignored by the `data/` rule above and holds notebook-regenerated artifacts.
+!data/tutorial/
 
 # Reconstruction outputs (written to /workspace/outputs/ outside repo)
 outputs/

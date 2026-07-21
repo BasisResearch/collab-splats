@@ -323,7 +323,7 @@ class LocalizationRunOutput:
 
     result: "object"  # LocalizationResult
     query_frame: np.ndarray  # (H, W, 3) uint8 RGB
-    query_intrinsics: np.ndarray  # (3, 3) — estimated or calibrated
+    query_intrinsics: np.ndarray  # (3, 3) — proportions seed or calibrated
     intrinsics_source: str  # "calibration file" | "proportions seed"
     ref_image_paths: list  # local paths, index-aligned with ref_frame_indices
     ref_extrinsics: np.ndarray  # (N, 4, 4) world-to-camera
@@ -423,7 +423,7 @@ def _build_localizer(
     return localizer
 
 
-def _resolve_query_intrinsics(frame: np.ndarray, config: LocalizationConfig, op_log: OperationLog) -> np.ndarray | None:
+def _resolve_query_intrinsics(config: LocalizationConfig) -> np.ndarray | None:
     """User-supplied YAML calibration when configured; else None → proportions seed."""
     if config.calibration_path:
         data = yaml.safe_load(Path(config.calibration_path).read_text())
@@ -539,7 +539,7 @@ def run_localization(
             op_log.update_progress(55, f"localize: extracting frame {frame_idx}")
             frame = extract_frame(query_video, frame_idx)
             op_log.update_progress(60, "localize: resolving query intrinsics")
-            K = _resolve_query_intrinsics(frame, config, op_log)
+            K = _resolve_query_intrinsics(config)
             intr_source = "calibration file" if config.calibration_path else "proportions seed"
 
             # Pose: single-pose PnP + refinement — the DB is never modified here

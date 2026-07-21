@@ -104,7 +104,7 @@ def wired(monkeypatch, tmp_path):
     fake_localizer.build_localizer_mock = build_localizer_mock
     monkeypatch.setattr(pipeline, "_stamp_db_provenance", lambda zarr_path, extractor, out_dir: None)
     monkeypatch.setattr(pipeline, "extract_frame", lambda video, idx: np.zeros((48, 64, 3), np.uint8))
-    monkeypatch.setattr(pipeline, "_resolve_query_intrinsics", lambda frame, cfg, op_log: np.eye(3, dtype=np.float32))
+    monkeypatch.setattr(pipeline, "_resolve_query_intrinsics", lambda cfg: np.eye(3, dtype=np.float32))
     # Push runs inline (no thread) so the flag is set before assertions
     monkeypatch.setattr(
         pipeline,

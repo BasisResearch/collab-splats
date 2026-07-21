@@ -8,15 +8,14 @@ self-contained: no gcloud, no pre-baked artifacts.
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]  # docs/source/tutorials/ -> repo root
-_TUT_DATA = REPO_ROOT / "data" / "tutorial"
 MAX_FRAMES = 30
 
 # ── Committed inputs (read-only) ──────────────────────────────────────────────
-VIDEO_PATH = _TUT_DATA / "tutorial_example-video.mp4"
-QUERY_IMAGE = _TUT_DATA / "tutorial_example-frame.jpg"
+VIDEO_PATH = REPO_ROOT / "data/tutorial/tutorial_example-video.mp4"
+QUERY_IMAGE = REPO_ROOT / "data/tutorial/tutorial_example-frame.jpg"
 
 # ── Generated outputs (gitignored; notebooks write here) ──────────────────────
-OUTPUT_DIR = REPO_ROOT / "data" / "outputs"
+OUTPUT_DIR = REPO_ROOT / "data/outputs"
 FRAMES_ZARR = OUTPUT_DIR / "frames.zarr"          # canonical keyframes (nb 01 writes)
 RECON = OUTPUT_DIR / "feedforward.zarr"           # canonical reconstruction (nb 02 writes)
 CACHE_DIR = OUTPUT_DIR                             # alias kept for notebook readability

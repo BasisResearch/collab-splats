@@ -69,7 +69,7 @@ Removed: `BASE_DIR`, `DATASET` (only 1 notebook reference), `_infer_video_path` 
 Every keyframe read/write goes through the canonical `FrameStore` at `OUTPUT_DIR/frames.zarr` (`FrameStore.open`, `.image_by_frame_idx`, `.images`, `.frame_indices`, `.frame_idx_from_path`). This is the store the dashboard/`run_pipeline` already produce, and the pattern `07_localization` already uses.
 
 - **01_preprocessing** writes the canonical `OUTPUT_DIR/frames.zarr` (rename from `TUTORIAL_CACHE/keyframes.zarr`).
-- **02** (`bundle_adjustment`, `feedforward_methods`) and **04** (`feature_extraction`, `maskclip_vs_talk2dino`, `segmentation`) replace `FRAMES.glob("*.jpg")` with `FrameStore.open(FRAMES_ZARR)` reads.
+- **02** (`feedforward_methods`) and **04** (`feature_extraction`, `maskclip_vs_talk2dino`, `segmentation`) replace `FRAMES.glob("*.jpg")` with `FrameStore.open(FRAMES_ZARR)` reads. (`02/bundle_adjustment` and `02/slam_loop_closure` are out of scope — see below.)
 - **05** (`semantic_lifting`) reads images via `FrameStore` rather than the path-locked `FeedforwardResult.image_paths` jpgs (use `.image_by_frame_idx` keyed off `frame_idx_from_path`, mirroring 07).
 - Each stage persists its canonical artifact to `OUTPUT_DIR` so the next notebook consumes it (02 → `feedforward.zarr`, 04/05 → semantics). The jpg `FRAMES` dir is no longer produced or read.
 
@@ -97,7 +97,6 @@ New `docs/source/tutorials/notebook_utils.py` holds tutorial-presentation helper
 ### 6. Dead-code removal
 
 - Remove unused `import sys` (`03/visualization.ipynb`).
-- Move the mid-notebook inline `LoopClosure` import to the top import cell (`02/slam_loop_closure.ipynb`), per project import-at-top style.
 
 ## Implementation principles
 
@@ -114,6 +113,7 @@ New `docs/source/tutorials/notebook_utils.py` holds tutorial-presentation helper
 
 ## Out of scope
 
+- `02/bundle_adjustment` and `02/slam_loop_closure` notebooks (frames.zarr migration + dead-import cleanup deferred for both).
 - Reusing the pre-computed 6 GB outputs (the tutorial regenerates from the video).
 - Any change to the dashboard's gcloud/rclone scene pull.
 - Re-chunking or footprint work on the generated zarr stores.

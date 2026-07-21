@@ -5,7 +5,6 @@ so image_paths / frame_sources / extrinsics must all agree in length. _extrinsic
 reconstruction-only (assignment building depends on that) — the extrinsics property joins them.
 """
 
-import cv2
 import numpy as np
 import torch
 
@@ -30,16 +29,13 @@ class _FakeExtractor:
 
 
 def _make_localizer(tmp_path, n_frames=2):
-    """Build a localizer from synthetic images on disk (no GPU)."""
-    paths = []
-    for i in range(n_frames):
-        p = tmp_path / f"{i:05d}.jpg"
-        cv2.imwrite(str(p), np.full((48, 64, 3), 128, dtype=np.uint8))
-        paths.append(p)
+    """Build a localizer from synthetic RGB arrays (no GPU, no image IO)."""
+    images = [np.full((48, 64, 3), 128, dtype=np.uint8) for _ in range(n_frames)]
+    ids = [f"{i:05d}.jpg" for i in range(n_frames)]
     pts3d = np.random.default_rng(0).normal(size=(50, 3)).astype(np.float32)
     extr = np.tile(np.eye(4, dtype=np.float32), (n_frames, 1, 1))
     intr = np.tile(np.array([[60, 0, 32], [0, 60, 24], [0, 0, 1]], np.float32), (n_frames, 1, 1))
-    return CameraLocalizer(pts3d, extr, intr, paths, extractor=_FakeExtractor()), pts3d, extr, intr
+    return CameraLocalizer(pts3d, extr, intr, images=images, ids=ids, extractor=_FakeExtractor()), pts3d, extr, intr
 
 
 def _distinct_pose(tx: float) -> np.ndarray:

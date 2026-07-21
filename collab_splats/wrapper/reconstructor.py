@@ -6,7 +6,6 @@ import json
 import logging
 import shutil
 import subprocess
-import tempfile
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -179,20 +178,16 @@ def _extract_2d_features(
     frames_zarr: Path,
     features_dir: Path,
 ) -> Path:
-    """Extract 2D features for all frames, cache to features_dir/{name}/{name}.zarr.
+    """Extract 2D features for all frames straight from the canonical store.
 
-    extract_and_cache is strictly path-based, so the canonical store is exported to a
-    temp dir (same bridge pattern as feedforward preprocessing) and cleaned up after.
-    Delegates to BaseFeatureExtractor.extract_and_cache which handles PIL loading,
-    zarr layout (N, D, H_p, W_p), re-entrancy, and progress logging.
+    Delegates to BaseFeatureExtractor.extract_and_cache_from_zarr, which iterates the
+    frames zarr lazily (one chunk at a time) and writes cache_dir/{name}.zarr — no temp
+    JPG export, no full-RAM load.
     """
     extractor = _get_extractor(extractor_name)
     cache_dir = features_dir / extractor_name
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        image_paths = FrameStore.open(frames_zarr).export(Path(tmp_dir))
-        # extract_and_cache returns cache_dir/{name}.zarr
-        return extractor.extract_and_cache(image_paths, cache_dir)
+    return extractor.extract_and_cache_from_zarr(frames_zarr, cache_dir)
 
 
 def _lift_and_save(
@@ -316,20 +311,25 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
     from collab_splats.localization.extractors import BaseLocalExtractor
     from collab_splats.localization.localizer import CameraLocalizer
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    from collab_splats.preproc.frame_store import FrameStore
 
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
     extractor = BaseLocalExtractor.get(extractor_name)()
 
-    # from_feedforward is cache-first: on miss it runs GPU extraction + save_index.
-    # frames_zarr lets the miss path read pixels from the canonical store instead of
-    # ff.image_paths, which point at a temp export dir already discarded by the creator.
+    # Boundary adapter: canonical store → (images, ids) core objects. Lazy genexpr → zero
+    # reads on a cache hit; one partial-read per frame on a miss.
+    store = FrameStore.open(frames_zarr)
+    frame_indices = store.frame_indices()
+    images = (store.image_by_frame_idx(fi) for fi in frame_indices)
+    ids = [f"frame_{int(fi):06d}.jpg" for fi in frame_indices]
     CameraLocalizer.from_feedforward(
         ff,
+        images=images,
+        ids=ids,
         extractor=extractor,
         extractor_name=extractor_name,
         zarr_path=feedforward_zarr,
         radius=radius,
-        frames_zarr=frames_zarr,
     )
     logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
     return feedforward_zarr

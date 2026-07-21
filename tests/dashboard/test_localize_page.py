@@ -351,8 +351,7 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
         pose=np.eye(4, dtype=np.float32),
         n_correspondences=8,
         n_inliers=6,
-        ref_frame_indices=None,
-        inlier_mask=None,
+        ranked_ref_frames=[],
     )
     out = SimpleNamespace(
         result=loc,

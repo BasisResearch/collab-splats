@@ -9,14 +9,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pycolmap
 import torch
 import zarr
 from zarr.codecs import BloscCodec
-
-from collab_splats.preproc.frame_store import FrameStore
 
 from .extractors import BaseLocalExtractor, DiskExtractor, LocalFeatures
 
@@ -46,6 +43,23 @@ class LocalizationResult:
     pts2d_ref: np.ndarray | None = None  # (M, 2) reference-frame pixel coords
     ref_frame_indices: np.ndarray | None = None  # (M,) int32 — source reference frame per correspondence
     query_features: "LocalFeatures | None" = None  # always set by localize(); pass to add_localized_frame
+
+    @property
+    def ranked_ref_frames(self) -> list[int]:
+        """Reference-frame indices ordered by inlier-match count, most first.
+
+        Excludes frames with zero inliers. Empty when pose failed / no inliers.
+        Ties broken by lowest frame index.
+        Slice for the n best (``[:n]``) or take ``[0]`` for the single best.
+        """
+        # No inliers or no per-correspondence source frames → nothing to rank
+        if self.inlier_mask is None or self.ref_frame_indices is None:
+            return []
+        # Count inlier correspondences per reference frame; order desc with stable
+        # tie-break (ascending index), dropping zero-inlier frames
+        counts = np.bincount(self.ref_frame_indices[self.inlier_mask].astype(np.intp))
+        order = np.argsort(-counts, kind="stable")
+        return [int(i) for i in order if counts[i] > 0]
 
 
 def _build_frame_assignments(
@@ -146,12 +160,12 @@ class CameraLocalizer:
         pts3d: np.ndarray,
         extrinsics: np.ndarray,
         intrinsics: np.ndarray,
-        image_paths: list,
+        images,  # Iterable[np.ndarray] — RGB arrays, one per reference frame
+        ids: list[str],  # stable per-frame labels, index-aligned with images
         extractor=None,
         radius: float = 8.0,
         config: dict | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
-        frames_zarr: str | Path | None = None,
     ):
         """Build feature index from scene data.
 
@@ -159,7 +173,9 @@ class CameraLocalizer:
             pts3d:       (P, 3) float32 world-space 3D points.
             extrinsics:  (N, 4, 4) float32 world-to-camera transforms.
             intrinsics:  (N, 3, 3) float32 camera intrinsics K per frame.
-            image_paths: length-N list of source image paths.
+            images:      iterable of (H, W, 3) uint8 RGB arrays, one per reference frame.
+                         Pixel fetching is the caller's responsibility — this class does no image IO.
+            ids:         length-N list of stable per-frame string labels, index-aligned with images.
             extractor:   local feature extractor; defaults to DiskExtractor().
             radius:      pixel radius for 2D→3D keypoint assignment.
             config:      solver options dict. Keys:
@@ -168,12 +184,6 @@ class CameraLocalizer:
                            "refinement" → pycolmap refinement_options
                              (default: {"refine_focal_length": True,
                                         "refine_extra_params": True})
-            frames_zarr: optional canonical frames.zarr store. When given, frame pixels are
-                         read via FrameStore.image_by_frame_idx (source index parsed from each
-                         path's filename stem) instead of cv2.imread(path) — use this when
-                         image_paths reference a deleted temp export dir (e.g.
-                         FeedforwardResult.image_paths after the creator that built it was
-                         discarded). When None, falls back to reading image_paths directly.
         """
         self.config = config or {}
 
@@ -187,53 +197,42 @@ class CameraLocalizer:
         # Store image paths and provenance for duplicate guard and dashboard display.
         # _extrinsics stays reconstruction-only (assignment building depends on that); poses
         # for appended localized frames accumulate here and are joined by the extrinsics property.
-        self._image_paths: list[Path] = [Path(p) for p in image_paths]
+        self._image_paths: list[str] = [str(i) for i in ids]
         self._frame_sources: list[str] = []
         self._localized_extrinsics: list[np.ndarray] = []
 
         logger.info(
             "CameraLocalizer: building index for %d frames, %d 3D points",
-            len(image_paths),
+            len(ids),
             len(pts3d),
         )
 
         # TODO(future-C): pre-compute and store these features in feedforward.zarr so index
         # build is a zarr read (~1 s) instead of O(N) GPU inference. See spec 2026-05-29.
 
-        # Extract local features for all reference frames. With frames_zarr, pixels come from
-        # the canonical store by source frame index rather than re-reading image_paths on disk.
-        store = FrameStore.open(frames_zarr) if frames_zarr is not None else None
+        # Extract local features for all reference frames. Pixels are supplied by the caller
+        # as RGB arrays — this class performs no image IO.
         self._frame_features: list[LocalFeatures] = []
         first_hw: tuple[int, int] | None = None
-        # Use tqdm in notebook/terminal when no external progress_callback is wired
+        total = len(ids)
+        # tqdm only when no external progress_callback is wired
         if progress_callback is None:
             try:
                 from tqdm.auto import tqdm as _tqdm
 
-                _paths_iter = _tqdm(image_paths, desc="Indexing frames", unit="frame", leave=False)
+                _iter = _tqdm(zip(images, ids), total=total, desc="Indexing frames", unit="frame", leave=False)
             except ImportError:
-                _paths_iter = image_paths
+                _iter = zip(images, ids)
         else:
-            _paths_iter = image_paths
-        for path in _paths_iter:
-            if store is not None:
-                rgb = store.image_by_frame_idx(FrameStore.frame_idx_from_path(path))
-            else:
-                bgr = cv2.imread(str(path))
-                if bgr is None:
-                    raise FileNotFoundError(f"CameraLocalizer: cannot read {path}")
-                rgb = bgr[..., ::-1].copy()
+            _iter = zip(images, ids)
+        for rgb, fid in _iter:
             if first_hw is None:
                 first_hw = (rgb.shape[0], rgb.shape[1])
             feats = self._extractor.extract(rgb)
             self._frame_features.append(feats)
             if progress_callback is not None:
-                progress_callback(len(self._frame_features) - 1, len(image_paths))
-            logger.debug(
-                "  frame %s: %d keypoints",
-                path.name if hasattr(path, "name") else path,
-                len(feats.keypoints),
-            )
+                progress_callback(len(self._frame_features) - 1, total)
+            logger.debug("  frame %s: %d keypoints", fid, len(feats.keypoints))
 
         self._image_hw: tuple[int, int] = first_hw or (480, 640)
 
@@ -257,8 +256,8 @@ class CameraLocalizer:
         return list(self._frame_sources)
 
     @property
-    def image_paths(self) -> list:
-        """Reference image paths, index-aligned with frame_sources and extrinsics."""
+    def image_paths(self) -> list[str]:
+        """Stable per-frame labels/ids (strings), index-aligned with frame_sources and extrinsics."""
         return list(self._image_paths)
 
     @property
@@ -372,7 +371,7 @@ class CameraLocalizer:
 
         # ── Load reconstruction group ────────────────────────────────────────
         rec_group = store[rec_key]
-        rec_image_paths = [pathlib.Path(p) for p in rec_group.attrs["image_paths"]]
+        rec_image_paths = [str(p) for p in rec_group.attrs["image_paths"]]
         hw = tuple(int(x) for x in rec_group.attrs["hw"])
         offsets = rec_group["frame_offsets"][:]
         # Bulk decode is the first slow phase of a cache-hit load (descriptors can be GBs
@@ -404,13 +403,13 @@ class CameraLocalizer:
         # ── Load localized group (optional) ──────────────────────────────────
         loc_key = f"local_features/{extractor_name}/localized"
         loc_features: list[LocalFeatures] = []
-        loc_image_paths: list[pathlib.Path] = []
+        loc_image_paths: list[str] = []
         loc_extrinsics_list: list[np.ndarray] = []
         loc_intrinsics_list: list[np.ndarray] = []
 
         if loc_key in store:
             loc_group = store[loc_key]
-            loc_image_paths = [pathlib.Path(p) for p in loc_group.attrs.get("image_paths", [])]
+            loc_image_paths = [str(p) for p in loc_group.attrs.get("image_paths", [])]
             if loc_image_paths:
                 loc_offsets = loc_group["frame_offsets"][:]
                 loc_kpts = loc_group["keypoints"][:]
@@ -486,42 +485,35 @@ class CameraLocalizer:
 
     def update_index(
         self,
-        new_image_paths: list,
+        new_images,  # Iterable[np.ndarray] — RGB arrays for new reconstruction frames
+        new_ids: list[str],
         zarr_path: "str | Path",
         extractor_name: str,
         progress_callback: "Callable[[int, int], None] | None" = None,
-        frames_zarr: str | Path | None = None,
     ) -> None:
         """Extract features for new reconstruction frames; append to zarr cache.
 
-        Does NOT update pts3d/extrinsics/intrinsics — caller must update those
-        and call clear_localized_frames() + load_index() to rebuild assignments.
-        frames_zarr: optional canonical frames.zarr store — see __init__ for the
-        source-index-by-filename-stem lookup this enables in place of cv2.imread.
+        Pixels are supplied by the caller as RGB arrays (index-aligned with new_ids) —
+        this method performs no image IO. Does NOT update pts3d/extrinsics/intrinsics —
+        caller must update those and call clear_localized_frames() + load_index() to
+        rebuild assignments.
         """
         zarr_path = pathlib.Path(zarr_path)
-        new_features: list[LocalFeatures] = []
-        store = FrameStore.open(frames_zarr) if frames_zarr is not None else None
 
-        for i, path in enumerate(new_image_paths):
-            if store is not None:
-                rgb = store.image_by_frame_idx(FrameStore.frame_idx_from_path(path))
-            else:
-                bgr = cv2.imread(str(path))
-                if bgr is None:
-                    raise FileNotFoundError(f"CameraLocalizer.update_index: cannot read {path}")
-                rgb = bgr[..., ::-1].copy()
+        # Extract features for each supplied RGB array; no image IO here
+        new_features: list[LocalFeatures] = []
+        for i, (rgb, fid) in enumerate(zip(new_images, new_ids)):
             feats = self._extractor.extract(rgb)
             new_features.append(feats)
             if progress_callback is not None:
-                progress_callback(i, len(new_image_paths))
-            logger.debug("update_index: frame %s: %d kpts", path, len(feats.keypoints))
+                progress_callback(i, len(new_ids))
+            logger.debug("update_index: frame %s: %d kpts", fid, len(feats.keypoints))
 
-        # Update in-memory state
-        for path, feats in zip(new_image_paths, new_features):
+        # Update in-memory state — _image_paths holds string ids
+        for fid, feats in zip(new_ids, new_features):
             self._frame_features.append(feats)
             self._frame_sources.append("reconstruction")
-            self._image_paths.append(pathlib.Path(path))
+            self._image_paths.append(fid)
 
         # Append to reconstruction/ zarr group
         store = zarr.open(str(zarr_path), mode="a")
@@ -536,7 +528,7 @@ class CameraLocalizer:
 
         # Update attrs
         existing_paths = list(rec_group.attrs.get("image_paths", []))
-        existing_paths.extend([str(p) for p in new_image_paths])
+        existing_paths.extend([str(f) for f in new_ids])
         rec_group.attrs["image_paths"] = existing_paths
 
         # Append CSR data frame by frame
@@ -568,7 +560,7 @@ class CameraLocalizer:
 
         logger.info(
             "CameraLocalizer.update_index: appended %d frames to %s [%s]",
-            len(new_image_paths),
+            len(new_ids),
             zarr_path,
             extractor_name,
         )
@@ -594,8 +586,8 @@ class CameraLocalizer:
         """
         image_path = pathlib.Path(image_path)
 
-        # Duplicate guard
-        if image_path in self._image_paths:
+        # Duplicate guard — _image_paths holds string labels, compare on str
+        if str(image_path) in self._image_paths:
             logger.warning(
                 "CameraLocalizer.add_localized_frame: %s already in index, skipping",
                 image_path.name,
@@ -614,7 +606,7 @@ class CameraLocalizer:
         # Append in-memory; the pose keeps extrinsics aligned with image_paths/frame_sources
         self._frame_features.append(features)
         self._frame_sources.append("localized")
-        self._image_paths.append(image_path)
+        self._image_paths.append(str(image_path))
         self._assignments.extend(new_assignments)
         self._localized_extrinsics.append(np.asarray(pose))
 
@@ -739,11 +731,12 @@ class CameraLocalizer:
     def from_feedforward(
         cls,
         result,
+        images=None,
+        ids=None,
         extractor=None,
         progress_callback=None,
         zarr_path=None,
         extractor_name=None,
-        frames_zarr=None,
         **kwargs,
     ) -> "CameraLocalizer":
         """Construct from a FeedforwardResult. Loads from zarr cache if available.
@@ -751,14 +744,15 @@ class CameraLocalizer:
         Args:
             result:            FeedforwardResult (or duck-typed object with .points,
                                .extrinsics, .intrinsics, .image_paths, ._zarr_path).
+            images:            Caller-built reference pixel source (iterable of HxWx3 RGB
+                               arrays), aligned to result. Consumed ONLY on a cache miss;
+                               ignored on a cache hit (index loads from zarr).
+            ids:               Caller-built string labels aligned to images, used ONLY on a
+                               cache miss. Both images and ids are required to build.
             extractor:         Local feature extractor; defaults to DiskExtractor().
             progress_callback: Called as (frame_idx, total) during index build.
             zarr_path:         Override zarr cache path; falls back to result._zarr_path.
             extractor_name:    Override extractor registry key; auto-detected if None.
-            frames_zarr:       Canonical frames.zarr store, forwarded to __init__ on a cache
-                               miss. result.image_paths may point at a temp export dir already
-                               discarded by the creator that produced result — pass frames_zarr
-                               so pixels are read from the store instead.
             **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. radius).
 
         Returns:
@@ -783,10 +777,11 @@ class CameraLocalizer:
                 store = zarr.open(str(zarr_path), mode="r")
                 rec_key = f"local_features/{extractor_name}/reconstruction"
                 if rec_key in store:
-                    # Staleness check: warn if image_paths differ
-                    cached_paths = [pathlib.Path(p) for p in store[rec_key].attrs["image_paths"]]
-                    if cached_paths != list(result.image_paths):
-                        logger.warning("CameraLocalizer: cached image_paths differ from result — cache may be stale")
+                    # Staleness check: compare cached labels against ids (else result.image_paths)
+                    cached_paths = [str(p) for p in store[rec_key].attrs["image_paths"]]
+                    expected = [str(x) for x in (ids if ids is not None else result.image_paths)]
+                    if cached_paths != expected:
+                        logger.warning("CameraLocalizer: cached image_paths differ from expected — cache may be stale")
                     logger.info("CameraLocalizer: cache hit for '%s', loading from zarr", extractor_name)
                     return cls.load_index(
                         zarr_path=zarr_path,
@@ -802,15 +797,17 @@ class CameraLocalizer:
             except Exception as exc:
                 logger.warning("CameraLocalizer: cache load failed (%s), rebuilding", exc)
 
-        # Cache miss — build from GPU inference
+        # Cache miss — build from GPU inference using caller-built (images, ids)
+        if images is None or ids is None:
+            raise ValueError("from_feedforward: cache miss requires images and ids (caller must build them)")
         localizer = cls(
             pts3d=result.points,
             extrinsics=result.extrinsics,
             intrinsics=result.intrinsics,
-            image_paths=result.image_paths,
+            images=images,
+            ids=ids,
             extractor=extractor_inst,
             progress_callback=progress_callback,
-            frames_zarr=frames_zarr,
             **kwargs,
         )
 

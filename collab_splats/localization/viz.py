@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
-
-from collab_splats.preproc.frame_store import FrameStore
 
 from .localizer import LocalizationResult
 
@@ -19,16 +16,14 @@ logger = logging.getLogger(__name__)
 def plot_correspondences(
     loc: LocalizationResult,
     query_image: np.ndarray,
-    image_paths: list,
+    ref_image: np.ndarray,
+    ref_idx: int,
     max_pairs: int = 200,
     warp_corners: bool = False,
-    ref_idx: "int | None" = None,
     show: bool = True,
-    frames_zarr: str | Path | None = None,
 ) -> "plt.Figure | None":
-    """Side-by-side query + best reference frame with inlier/outlier connecting lines.
+    """Side-by-side query + reference frame with inlier/outlier connecting lines.
 
-    Best reference frame = one contributing the most inlier correspondences.
     Lines are green for inliers, red for outliers. White dots mark each keypoint.
     When warp_corners=True, draws both warped boundaries under the inlier homography:
     cyan quad on the reference side (query corners → reference space) and yellow quad
@@ -38,15 +33,12 @@ def plot_correspondences(
     Args:
         loc:          LocalizationResult from CameraLocalizer.localize().
         query_image:  HxWx3 uint8 RGB query image.
-        image_paths:  Reference image paths (same order as CameraLocalizer input).
+        ref_image:    HxWx3 uint8 RGB reference frame (caller-resolved).
+        ref_idx:      Index of ref_image in the reference set; the caller picks it,
+                      e.g. loc.ranked_ref_frames[0].
         max_pairs:    Cap on lines drawn — random subsample if exceeded.
         warp_corners: Draw homography-warped boundaries on both sides.
-        ref_idx:      Reference frame to plot; None selects the frame with most inliers.
         show:         Call plt.show() (notebook behaviour). Dashboard passes False.
-        frames_zarr:  Optional canonical frames.zarr store. When given, the reference frame
-                     is read via FrameStore.image_by_frame_idx (source index parsed from
-                     image_paths[best_ref_idx]'s filename stem) instead of cv2.imread — use
-                     this when image_paths reference a deleted temp export dir.
 
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
@@ -56,18 +48,11 @@ def plot_correspondences(
         logger.warning("plot_correspondences: no valid localization result to plot")
         return None
 
-    # Reference frame: caller override, else the frame with most inlier correspondences
-    if ref_idx is not None:
-        best_ref_idx = int(ref_idx)
-    else:
-        inlier_frames = loc.ref_frame_indices[loc.inlier_mask]
-        if len(inlier_frames) == 0:
-            logger.warning("plot_correspondences: zero inliers — nothing to plot")
-            return None
-        best_ref_idx = int(np.bincount(inlier_frames.astype(np.intp)).argmax())
-    frame_mask = loc.ref_frame_indices == best_ref_idx
+    # Reference frame resolved by the caller — select its correspondences
+    ref_idx = int(ref_idx)
+    frame_mask = loc.ref_frame_indices == ref_idx
     if not frame_mask.any():
-        logger.warning("plot_correspondences: no correspondences for frame %d", best_ref_idx)
+        logger.warning("plot_correspondences: no correspondences for frame %d", ref_idx)
         return None
 
     kpts0 = loc.pts2d[frame_mask]  # (K, 2) query
@@ -100,16 +85,6 @@ def plot_correspondences(
         rng = np.random.default_rng(0)
         idx = rng.choice(len(kpts0), max_pairs, replace=False)
         kpts0, kpts1, inliers = kpts0[idx], kpts1[idx], inliers[idx]
-
-    if frames_zarr is not None:
-        store = FrameStore.open(frames_zarr)
-        frame_idx = FrameStore.frame_idx_from_path(image_paths[best_ref_idx])
-        ref_image = store.image_by_frame_idx(frame_idx)
-    else:
-        ref_bgr = cv2.imread(str(image_paths[best_ref_idx]))
-        if ref_bgr is None:
-            raise FileNotFoundError(f"plot_correspondences: cannot read {image_paths[best_ref_idx]}")
-        ref_image = ref_bgr[..., ::-1].copy()
 
     W = query_image.shape[1]
     query_image_disp = query_image.copy()
@@ -165,7 +140,7 @@ def plot_correspondences(
     ax.scatter(kpts1[:, 0] * ref_scale + W, kpts1[:, 1] * ref_scale, s=8, c="white", zorder=3, linewidths=0)
     ax.axvline(W, color="white", linewidth=1, alpha=0.5)
     ax.axis("off")
-    ax.set_title(f"query ↔ reference frame {best_ref_idx} — " f"{inliers.sum()}/{len(inliers)} inliers shown")
+    ax.set_title(f"query ↔ reference frame {ref_idx} — " f"{inliers.sum()}/{len(inliers)} inliers shown")
     fig.tight_layout()
     if show:
         plt.show()

@@ -17,6 +17,7 @@ from collab_splats.localization import (
 
 def test_submodules_have_logger():
     from collab_splats.localization import extractors, localizer, retrieval, viz
+
     for mod in (extractors, localizer, retrieval, viz):
         assert hasattr(mod, "logger")
         assert isinstance(mod.logger, logging.Logger)
@@ -41,6 +42,7 @@ def test_base_local_extractor_registry():
 def test_disk_extractor_returns_keypoints_and_descriptors():
     """Requires network access to download DISK weights (~4 MB)."""
     from collab_splats.localization import DiskExtractor
+
     extractor = DiskExtractor()
     image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(image)
@@ -55,6 +57,7 @@ def test_disk_extractor_returns_keypoints_and_descriptors():
 @pytest.mark.slow
 def test_disk_extractor_match_returns_index_pairs():
     from collab_splats.localization import DiskExtractor
+
     extractor = DiskExtractor()
     img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(img)
@@ -67,6 +70,7 @@ def test_disk_extractor_match_returns_index_pairs():
 @pytest.mark.slow
 def test_xfeat_extractor_returns_keypoints_and_descriptors():
     from collab_splats.localization import XFeatExtractor
+
     extractor = XFeatExtractor()
     image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(image)
@@ -82,6 +86,7 @@ def test_xfeat_extractor_returns_keypoints_and_descriptors():
 @pytest.mark.slow
 def test_xfeat_extractor_match_returns_index_pairs():
     from collab_splats.localization import XFeatExtractor
+
     extractor = XFeatExtractor()
     img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = extractor.extract(img)
@@ -96,18 +101,16 @@ def test_build_frame_assignments_assigns_visible_points():
     # Two points in front of identity camera at z=5
     pts3d = np.array([[0.0, 0.0, 5.0], [1.0, 0.0, 5.0]], dtype=np.float32)
     K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float32)
-    extrinsics = np.eye(4, dtype=np.float32)[None]   # (1, 4, 4) identity
-    intrinsics = K[None]                              # (1, 3, 3)
+    extrinsics = np.eye(4, dtype=np.float32)[None]  # (1, 4, 4) identity
+    intrinsics = K[None]  # (1, 3, 3)
 
     # Expected projections: [0,0,5] → [320,240], [1,0,5] → [420,240]
     kpts = torch.tensor([[320.0, 240.0], [420.0, 240.0]])
-    assignments = _build_frame_assignments(
-        pts3d, extrinsics, intrinsics, [kpts], image_hw=(480, 640), radius=2.0
-    )
+    assignments = _build_frame_assignments(pts3d, extrinsics, intrinsics, [kpts], image_hw=(480, 640), radius=2.0)
 
     assert len(assignments) == 1
-    assert assignments[0][0] == 0   # kpt 0 → pt3d 0
-    assert assignments[0][1] == 1   # kpt 1 → pt3d 1
+    assert assignments[0][0] == 0  # kpt 0 → pt3d 0
+    assert assignments[0][1] == 1  # kpt 1 → pt3d 1
 
 
 def test_build_frame_assignments_ignores_points_behind_camera():
@@ -120,11 +123,9 @@ def test_build_frame_assignments_ignores_points_behind_camera():
     intrinsics = K[None]
     kpts = torch.tensor([[320.0, 240.0], [320.0, 241.0]])
 
-    assignments = _build_frame_assignments(
-        pts3d, extrinsics, intrinsics, [kpts], image_hw=(480, 640), radius=2.0
-    )
+    assignments = _build_frame_assignments(pts3d, extrinsics, intrinsics, [kpts], image_hw=(480, 640), radius=2.0)
 
-    assert 0 in assignments[0]    # front point assigned
+    assert 0 in assignments[0]  # front point assigned
     assert 1 not in assignments[0]  # behind-camera point not assigned
 
 
@@ -138,9 +139,7 @@ def test_build_frame_assignments_respects_radius():
 
     # Keypoint 50px away from projection — outside radius=10
     kpts = torch.tensor([[370.0, 240.0]])
-    assignments = _build_frame_assignments(
-        pts3d, extrinsics, intrinsics, [kpts], image_hw=(480, 640), radius=10.0
-    )
+    assignments = _build_frame_assignments(pts3d, extrinsics, intrinsics, [kpts], image_hw=(480, 640), radius=10.0)
     assert 0 not in assignments[0]
 
 
@@ -192,7 +191,7 @@ class _MockExtractor:
         return LocalFeatures(keypoints=kpts, descriptors=descs)
 
     def match(self, query: LocalFeatures, db: LocalFeatures, image_hw=None):
-        sim = query.descriptors @ db.descriptors.T   # (N, M)
+        sim = query.descriptors @ db.descriptors.T  # (N, M)
         best = sim.argmax(dim=1)
         valid = sim.max(dim=1).values > 0.5
         idx_q = torch.where(valid)[0]
@@ -204,9 +203,9 @@ class _MockExtractor:
 
 def test_camera_localizer_from_feedforward_classmethod():
     """from_feedforward classmethod constructs CameraLocalizer correctly."""
-    from collab_splats.localization import CameraLocalizer
     from unittest.mock import MagicMock
-    import tempfile, pathlib
+
+    from collab_splats.localization import CameraLocalizer
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()
     result = MagicMock()
@@ -215,106 +214,89 @@ def test_camera_localizer_from_feedforward_classmethod():
     result.intrinsics = intrinsics
     result._zarr_path = None
 
-    with tempfile.TemporaryDirectory() as tmp:
-        paths = []
-        for i in range(len(extrinsics)):
-            p = pathlib.Path(tmp) / f"frame_{i:04d}.png"
-            import cv2 as _cv2
-            _cv2.imwrite(str(p), np.zeros((480, 640, 3), dtype=np.uint8))
-            paths.append(p)
-        result.image_paths = paths
+    # Caller builds (images, ids) aligned to result; consumed on cache miss
+    images = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(len(extrinsics))]
+    ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
+    result.image_paths = ids
 
-        extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
-        loc = CameraLocalizer.from_feedforward(result, extractor=extractor)
-        assert loc is not None
+    extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
+    loc = CameraLocalizer.from_feedforward(result, images=images, ids=ids, extractor=extractor)
+    assert loc is not None
 
 
 def test_camera_localizer_recovers_known_pose():
     """CameraLocalizer should recover the identity pose for a camera at extrinsics[0]."""
     from collab_splats.localization import CameraLocalizer
-    import tempfile, pathlib
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()
     K = intrinsics[0]
 
-    with tempfile.TemporaryDirectory() as tmp:
-        paths = []
-        for i in range(len(extrinsics)):
-            p = pathlib.Path(tmp) / f"frame_{i:04d}.png"
-            import cv2 as _cv2
-            _cv2.imwrite(str(p), np.zeros((480, 640, 3), dtype=np.uint8))
-            paths.append(p)
+    images = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(len(extrinsics))]
+    ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
 
-        extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
-        loc = CameraLocalizer(pts3d, extrinsics, intrinsics, paths, extractor=extractor)
+    extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
+    loc = CameraLocalizer(pts3d, extrinsics, intrinsics, images=images, ids=ids, extractor=extractor)
 
-        # Query = camera 0 (identity extrinsic)
-        query_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        result = loc.localize(query_image, K)
+    # Query = camera 0 (identity extrinsic)
+    query_image = np.zeros((480, 640, 3), dtype=np.uint8)
+    result = loc.localize(query_image, K)
 
-        assert isinstance(result, LocalizationResult)
-        assert result.pose is not None, "localize() returned None pose — pycolmap failed"
-        assert result.pose.shape == (4, 4)
-        np.testing.assert_allclose(result.pose[:3, :3], extrinsics[0, :3, :3], atol=0.05)
-        np.testing.assert_allclose(result.pose[:3, 3], extrinsics[0, :3, 3], atol=0.05)
-        assert result.n_inliers > 0
-        assert result.inlier_mask is not None
-        assert result.inlier_mask.dtype == bool
-        assert len(result.inlier_mask) == result.n_correspondences
+    assert isinstance(result, LocalizationResult)
+    assert result.pose is not None, "localize() returned None pose — pycolmap failed"
+    assert result.pose.shape == (4, 4)
+    np.testing.assert_allclose(result.pose[:3, :3], extrinsics[0, :3, :3], atol=0.05)
+    np.testing.assert_allclose(result.pose[:3, 3], extrinsics[0, :3, 3], atol=0.05)
+    assert result.n_inliers > 0
+    assert result.inlier_mask is not None
+    assert result.inlier_mask.dtype == bool
+    assert len(result.inlier_mask) == result.n_correspondences
 
 
 def test_localization_result_fields_on_success():
     from collab_splats.localization import CameraLocalizer, LocalizationResult
-    import tempfile, pathlib
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()
     K = intrinsics[0]
 
-    with tempfile.TemporaryDirectory() as tmp:
-        paths = []
-        for i in range(len(extrinsics)):
-            p = pathlib.Path(tmp) / f"frame_{i:04d}.png"
-            import cv2 as _cv2
-            _cv2.imwrite(str(p), np.zeros((480, 640, 3), dtype=np.uint8))
-            paths.append(p)
+    images = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(len(extrinsics))]
+    ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
 
-        extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
-        loc = CameraLocalizer(pts3d, extrinsics, intrinsics, paths, extractor=extractor)
-        result = loc.localize(np.zeros((480, 640, 3), dtype=np.uint8), K)
+    extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
+    loc = CameraLocalizer(pts3d, extrinsics, intrinsics, images=images, ids=ids, extractor=extractor)
+    result = loc.localize(np.zeros((480, 640, 3), dtype=np.uint8), K)
 
-        assert isinstance(result, LocalizationResult)
-        assert result.pose is not None
-        assert result.inlier_mask is not None
-        assert result.inlier_mask.dtype == bool
-        assert len(result.inlier_mask) == result.n_correspondences
-        assert result.n_inliers > 0
-        assert result.pts2d_ref is not None
-        assert result.pts2d_ref.shape == result.pts2d.shape
-        assert result.ref_frame_indices is not None
-        assert len(result.ref_frame_indices) == result.n_correspondences
+    assert isinstance(result, LocalizationResult)
+    assert result.pose is not None
+    assert result.inlier_mask is not None
+    assert result.inlier_mask.dtype == bool
+    assert len(result.inlier_mask) == result.n_correspondences
+    assert result.n_inliers > 0
+    assert result.pts2d_ref is not None
+    assert result.pts2d_ref.shape == result.pts2d.shape
+    assert result.ref_frame_indices is not None
+    assert len(result.ref_frame_indices) == result.n_correspondences
 
 
 def test_camera_localizer_calls_progress_callback():
     """progress_callback(i, total) called once per reference frame, 0-indexed."""
     from collab_splats.localization import CameraLocalizer
-    import tempfile, pathlib, cv2 as _cv2
 
     pts3d, extrinsics, intrinsics = _make_synthetic_scene()
     extractor = _MockExtractor(pts3d, extrinsics, intrinsics)
     calls = []
 
-    with tempfile.TemporaryDirectory() as tmp:
-        paths = []
-        for i in range(len(extrinsics)):
-            p = pathlib.Path(tmp) / f"frame_{i:04d}.png"
-            _cv2.imwrite(str(p), np.zeros((480, 640, 3), dtype=np.uint8))
-            paths.append(p)
+    images = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(len(extrinsics))]
+    ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
 
-        CameraLocalizer(
-            pts3d, extrinsics, intrinsics, paths,
-            extractor=extractor,
-            progress_callback=lambda i, total: calls.append((i, total)),
-        )
+    CameraLocalizer(
+        pts3d,
+        extrinsics,
+        intrinsics,
+        images=images,
+        ids=ids,
+        extractor=extractor,
+        progress_callback=lambda i, total: calls.append((i, total)),
+    )
 
     total = len(extrinsics)
     assert len(calls) == total

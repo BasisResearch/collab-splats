@@ -27,6 +27,7 @@ from collab_splats.preproc import extract_frame, sample_frames
 from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
+from collab_splats.utils.image import open_image
 
 # VGGTOmegaCreator requires the vggt-omega submodule; only available when installed.
 try:
@@ -396,12 +397,25 @@ def _build_localizer(
             log=False,
         )
 
+    # Boundary adapter: build (images, ids) from the canonical store when present, else from
+    # the result's export paths. Lazy genexpr → zero reads on a cache hit.
+    if frames_zarr is not None:
+        store = FrameStore.open(frames_zarr)
+        frame_indices = store.frame_indices()
+        images = (store.image_by_frame_idx(fi) for fi in frame_indices)
+        ids = [f"frame_{int(fi):06d}.jpg" for fi in frame_indices]
+    else:
+        paths = [Path(p) for p in result.image_paths]
+        images = (np.asarray(open_image(p).convert("RGB")) for p in paths)
+        ids = [p.name for p in paths]
+
     localizer = CameraLocalizer.from_feedforward(
         result,
+        images=images,
+        ids=ids,
         extractor=extractor,
         extractor_name=config.extractor,
         zarr_path=zarr_path,
-        frames_zarr=frames_zarr,
         progress_callback=on_progress,
     )
     if cache is not None and scene_key is not None:

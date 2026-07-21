@@ -407,6 +407,40 @@ def test_extract_semantics_skips_if_lifted_exists(tmp_path):
     mock_lift.assert_not_called()
 
 
+def test_extract_2d_features_reads_zarr_directly(tmp_path):
+    """_extract_2d_features delegates straight to extract_and_cache_from_zarr — no temp-JPG bridge."""
+    from collab_splats.wrapper import reconstructor as rec_mod
+
+    frames_zarr = tmp_path / "frames.zarr"
+    features_dir = tmp_path / "features"
+    sentinel = tmp_path / "features" / "dinov2" / "dinov2.zarr"
+
+    # Fake extractor records the call and returns a sentinel cache path
+    class _FakeExtractor:
+        def __init__(self):
+            self.calls = []
+
+        def extract_and_cache_from_zarr(self, frames_zarr_path, cache_dir):
+            self.calls.append((frames_zarr_path, cache_dir))
+            return sentinel
+
+    fake = _FakeExtractor()
+
+    with (
+        patch.object(rec_mod, "_get_extractor", return_value=fake) as mock_get,
+        patch.object(rec_mod, "FrameStore") as mock_fs,
+    ):
+        result = rec_mod._extract_2d_features("dinov2", frames_zarr, features_dir)
+
+    # Extractor resolved by name, then fed the frames.zarr path + cache dir directly
+    mock_get.assert_called_once_with("dinov2")
+    assert fake.calls == [(frames_zarr, features_dir / "dinov2")]
+    # No temp-export bridge: FrameStore is never touched
+    mock_fs.open.assert_not_called()
+    # Sentinel cache path is propagated back unchanged
+    assert result == sentinel
+
+
 def test_mesh_skips_if_ply_exists(tmp_path):
     config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}})
     rec = Reconstructor(config)

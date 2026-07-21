@@ -729,26 +729,34 @@ class LocalizePage(param.Parameterized):
             f"(fx={out.query_intrinsics[0, 0]:.0f}){pose_msg}</div>"
         )
 
-        # Top-k match-pair figures, best-first
+        # Top-k match-pair figures, best-first. Boundary adapter: resolve each ranked ref frame's
+        # pixels to an RGB array — 'reconstruction' frames from the canonical store, 'localized'
+        # frames from their on-disk JPG (never written to frames.zarr).
+        from collab_splats.preproc.frame_store import FrameStore
+        from collab_splats.utils.image import open_image
+
+        store = FrameStore.open(frames_zarr) if frames_zarr is not None else None
         match_figs = []
-        if loc.ref_frame_indices is not None and loc.inlier_mask is not None:
-            counts = np.bincount(loc.ref_frame_indices[loc.inlier_mask].astype(np.intp), minlength=n_frames)
-            top = np.argsort(counts)[::-1][: config.top_k_viz]
-            for ref in top:
-                if counts[ref] == 0 or not Path(out.ref_image_paths[ref]).exists():
+        for ref in loc.ranked_ref_frames[: config.top_k_viz]:
+            is_reconstruction = ref < len(out.frame_sources) and out.frame_sources[ref] == "reconstruction"
+            if is_reconstruction and store is not None:
+                fi = FrameStore.frame_idx_from_path(out.ref_image_paths[ref])
+                ref_image = store.image_by_frame_idx(fi)
+            else:
+                # localized/ frame → disk (never written to frames.zarr)
+                if not Path(out.ref_image_paths[ref]).exists():
                     continue
-                is_reconstruction = ref < len(out.frame_sources) and out.frame_sources[ref] == "reconstruction"
-                mfig = plot_correspondences(
-                    loc,
-                    out.query_frame,
-                    out.ref_image_paths,
-                    max_pairs=config.max_pairs,
-                    ref_idx=int(ref),
-                    show=False,
-                    frames_zarr=frames_zarr if is_reconstruction else None,
-                )
-                if mfig is not None:
-                    match_figs.append(mfig)
+                ref_image = np.asarray(open_image(out.ref_image_paths[ref]).convert("RGB"))
+            mfig = plot_correspondences(
+                loc,
+                out.query_frame,
+                ref_image,
+                ref_idx=int(ref),
+                max_pairs=config.max_pairs,
+                show=False,
+            )
+            if mfig is not None:
+                match_figs.append(mfig)
         return {"dist_fig": dist_fig, "match_figs": match_figs, "stats_html": stats_html}
 
     def _ensure_scene_mesh(self, scene_key, mesh_path: Path):

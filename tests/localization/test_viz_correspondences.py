@@ -1,6 +1,5 @@
 """plot_correspondences: resolution-mismatch handling between query and reference."""
 
-import cv2
 import matplotlib
 import numpy as np
 
@@ -25,14 +24,13 @@ def _fake_result(n: int = 6) -> LocalizationResult:
     )
 
 
-def test_plot_correspondences_handles_resolution_mismatch(tmp_path):
+def test_plot_correspondences_handles_resolution_mismatch():
     """A 2988p-style query vs 1080p-style reference must plot, not raise on concat."""
     # Query taller than the reference (the GoPro-vs-reconstruction case, scaled down)
     query = np.zeros((120, 160, 3), dtype=np.uint8)
-    ref_path = tmp_path / "ref.jpg"
-    cv2.imwrite(str(ref_path), np.zeros((40, 60, 3), dtype=np.uint8))
+    ref_image = np.zeros((40, 60, 3), dtype=np.uint8)
     fig = plot_correspondences(
-        _fake_result(), query, [ref_path], max_pairs=10, ref_idx=0, show=False, warp_corners=False
+        _fake_result(), query, ref_image, ref_idx=0, max_pairs=10, show=False, warp_corners=False
     )
     assert fig is not None
     import matplotlib.pyplot as plt
@@ -40,12 +38,11 @@ def test_plot_correspondences_handles_resolution_mismatch(tmp_path):
     plt.close(fig)
 
 
-def test_plot_correspondences_same_resolution_still_works(tmp_path):
+def test_plot_correspondences_same_resolution_still_works():
     query = np.zeros((40, 60, 3), dtype=np.uint8)
-    ref_path = tmp_path / "ref.jpg"
-    cv2.imwrite(str(ref_path), np.zeros((40, 60, 3), dtype=np.uint8))
+    ref_image = np.zeros((40, 60, 3), dtype=np.uint8)
     fig = plot_correspondences(
-        _fake_result(), query, [ref_path], max_pairs=10, ref_idx=0, show=False, warp_corners=False
+        _fake_result(), query, ref_image, ref_idx=0, max_pairs=10, show=False, warp_corners=False
     )
     assert fig is not None
     import matplotlib.pyplot as plt

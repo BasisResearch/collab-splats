@@ -105,14 +105,19 @@ async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncItera
 
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Building/loading local feature index…"})
             # frames.zarr sits at the session root (sibling of every backend's method dir), shared
-            # across methods; pass it so a cache-miss reads pixels from the store, not ff.image_paths
-            # (which may point at a temp export dir already discarded by the creator that built ff).
+            # across methods. Boundary adapter: canonical store → (images, ids) core objects; the
+            # lazy genexpr does zero reads on a cache hit, one partial-read per frame on a miss.
             frames_zarr = output_dir / "frames.zarr"
+            store = FrameStore.open(frames_zarr)
+            frame_indices = store.frame_indices()
+            images = (store.image_by_frame_idx(fi) for fi in frame_indices)
+            ids = [f"frame_{int(fi):06d}.jpg" for fi in frame_indices]
             localizer = CameraLocalizer.from_feedforward(
                 ff,
+                images=images,
+                ids=ids,
                 extractor=ext,
                 zarr_path=zarr_path,
-                frames_zarr=frames_zarr if frames_zarr.exists() else None,
                 progress_callback=_progress,
             )
 

@@ -4,7 +4,6 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -33,15 +32,6 @@ def _fake_result(n_frames=4, per_frame=10):
         pts2d_ref=rng.uniform(0, 64, (m, 2)).astype(np.float32),
         ref_frame_indices=ref_idx,
     )
-
-
-def _write_ref_images(tmp_path, n=4):
-    paths = []
-    for i in range(n):
-        p = tmp_path / f"{i:05d}.jpg"
-        cv2.imwrite(str(p), np.full((48, 64, 3), 60, dtype=np.uint8))
-        paths.append(p)
-    return paths
 
 
 def test_distribution_returns_figure_uniform_totals():
@@ -92,20 +82,22 @@ def test_distribution_marks_localized_frames():
     plt.close(fig)
 
 
-def test_correspondences_returns_figure_and_accepts_ref_idx(tmp_path):
+def test_correspondences_returns_figure_and_accepts_ref_idx():
     loc = _fake_result()
     query = np.full((48, 64, 3), 100, dtype=np.uint8)
-    paths = _write_ref_images(tmp_path)
-    fig = plot_correspondences(loc, query, paths, ref_idx=2, show=False)
+    ref_image = np.full((48, 64, 3), 60, dtype=np.uint8)
+    fig = plot_correspondences(loc, query, ref_image, ref_idx=2, show=False)
     assert fig is not None
     assert "frame 2" in fig.axes[0].get_title()
     plt.close(fig)
 
 
-def test_correspondences_default_picks_best_frame(tmp_path):
+def test_correspondences_uses_ranked_ref_frame():
     loc = _fake_result()  # frame 3 has most inliers (4)
     query = np.full((48, 64, 3), 100, dtype=np.uint8)
-    paths = _write_ref_images(tmp_path)
-    fig = plot_correspondences(loc, query, paths, show=False)
+    ref_image = np.full((48, 64, 3), 60, dtype=np.uint8)
+    ranked = loc.ranked_ref_frames
+    ri = ranked[0]
+    fig = plot_correspondences(loc, query, ref_image, ref_idx=ri, show=False)
     assert "frame 3" in fig.axes[0].get_title()
     plt.close(fig)

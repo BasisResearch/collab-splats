@@ -423,9 +423,7 @@ def _build_localizer(
     return localizer
 
 
-def _resolve_query_intrinsics(
-    frame: np.ndarray, config: LocalizationConfig, op_log: OperationLog
-) -> np.ndarray | None:
+def _resolve_query_intrinsics(frame: np.ndarray, config: LocalizationConfig, op_log: OperationLog) -> np.ndarray | None:
     """User-supplied YAML calibration when configured; else None → proportions seed."""
     if config.calibration_path:
         data = yaml.safe_load(Path(config.calibration_path).read_text())

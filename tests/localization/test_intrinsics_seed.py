@@ -28,8 +28,12 @@ def test_seed_portrait_uses_max_dimension():
 def test_localizationresult_carries_intrinsics_field():
     K = seed_intrinsics(480, 640)
     r = LocalizationResult(
-        pose=None, n_correspondences=0, n_inliers=0,
-        pts2d=None, pts3d_matched=None, inlier_mask=None,
+        pose=None,
+        n_correspondences=0,
+        n_inliers=0,
+        pts2d=None,
+        pts3d_matched=None,
+        inlier_mask=None,
         query_intrinsics=K,
     )
     assert np.allclose(r.query_intrinsics, K)

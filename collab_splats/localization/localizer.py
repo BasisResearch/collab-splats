@@ -20,6 +20,20 @@ from .extractors import BaseLocalExtractor, DiskExtractor, LocalFeatures
 logger = logging.getLogger(__name__)
 
 
+def seed_intrinsics(height: int, width: int) -> np.ndarray:
+    """Model-free pinhole K seed from image proportions (COLMAP `1.2*max` rule).
+
+    Focal cannot be recovered from proportions alone, so use COLMAP's default
+    ``f = 1.2 * max(W, H)`` with a centered principal point and square pixels.
+    pycolmap focal refinement solves the true focal from 2D<->3D correspondences.
+    """
+    f = 1.2 * max(width, height)
+    return np.array(
+        [[f, 0.0, width / 2.0], [0.0, f, height / 2.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+
+
 @dataclass
 class LocalizationResult:
     """Output of CameraLocalizer.localize().
@@ -43,6 +57,7 @@ class LocalizationResult:
     pts2d_ref: np.ndarray | None = None  # (M, 2) reference-frame pixel coords
     ref_frame_indices: np.ndarray | None = None  # (M,) int32 — source reference frame per correspondence
     query_features: "LocalFeatures | None" = None  # always set by localize(); pass to add_localized_frame
+    query_intrinsics: np.ndarray | None = None  # (3, 3) K used for PnP (seed or supplied)
 
     @property
     def ranked_ref_frames(self) -> list[int]:
@@ -823,7 +838,7 @@ class CameraLocalizer:
     def localize(
         self,
         query_image: np.ndarray,
-        query_intrinsics: np.ndarray,
+        query_intrinsics: np.ndarray | None = None,
     ) -> LocalizationResult:
         """Estimate world-to-camera pose for a query image.
 
@@ -832,7 +847,8 @@ class CameraLocalizer:
 
         Args:
             query_image:      HxWx3 uint8 RGB image.
-            query_intrinsics: (3, 3) float32 or float64 camera matrix K.
+            query_intrinsics: (3, 3) K, or None to seed from image proportions
+                              (COLMAP 1.2*max rule) — pycolmap refines focal during PnP.
 
         Returns:
             LocalizationResult with pose (4, 4) and inlier data.
@@ -840,6 +856,13 @@ class CameraLocalizer:
         """
         # Extract local features from query image
         query_feats = self._extractor.extract(query_image)
+
+        # Seed intrinsics from image proportions when the query camera is uncalibrated;
+        # pycolmap focal refinement (enabled by default) solves the true focal from
+        # correspondences below.
+        if query_intrinsics is None:
+            H, W = query_image.shape[:2]
+            query_intrinsics = seed_intrinsics(H, W)
 
         logger.debug("CameraLocalizer.localize: query has %d keypoints", len(query_feats.keypoints))
 
@@ -887,6 +910,7 @@ class CameraLocalizer:
                 pts2d_ref=None,
                 ref_frame_indices=None,
                 query_features=query_feats,
+                query_intrinsics=query_intrinsics,
             )
 
         # Assemble correspondence arrays for PnP
@@ -944,6 +968,7 @@ class CameraLocalizer:
                 pts2d_ref=pts2d_ref,
                 ref_frame_indices=ref_frame_indices,
                 query_features=query_feats,
+                query_intrinsics=query_intrinsics,
             )
 
         logger.info(
@@ -968,4 +993,5 @@ class CameraLocalizer:
             pts2d_ref=pts2d_ref,
             ref_frame_indices=ref_frame_indices,
             query_features=query_feats,
+            query_intrinsics=query_intrinsics,
         )

@@ -81,7 +81,6 @@ def test_vggtx_postprocess_populates_ba_fields():
 
     creator = VGGTXCreator.__new__(VGGTXCreator)
     creator.conf_threshold = 1.0
-    creator.use_global_alignment = False
     creator.image_paths = [Path("a.jpg"), Path("b.jpg")]
     creator.original_coords = np.zeros((2, 6), dtype=np.float32)
 

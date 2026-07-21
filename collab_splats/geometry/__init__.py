@@ -23,6 +23,11 @@ def __getattr__(name):
         from .loop_closure import LoopClosureConfig
 
         return LoopClosureConfig
+    if name == "run_global_alignment":
+        # Parked VGGT-X native alignment; lazy for consistency with the hook above.
+        from .global_alignment import run_global_alignment
+
+        return run_global_alignment
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -38,4 +43,5 @@ __all__ = [
     "extrinsics_to_homogeneous",
     "invert_poses",
     "rotation_align_vectors",
+    "run_global_alignment",
 ]

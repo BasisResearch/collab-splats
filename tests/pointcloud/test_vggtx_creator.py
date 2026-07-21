@@ -10,7 +10,6 @@ from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
 
 def test_vggtx_defaults():
     c = VGGTXCreator()
-    assert c.use_global_alignment is False
     assert c.model_name == "facebook/VGGT-1B"
 
 
@@ -24,71 +23,10 @@ def test_vggtx_missing_image_dir_raises(tmp_path):
         c.reconstruct(tmp_path / "nonexistent", tmp_path / "out")
 
 
-
-
-def _make_raw_outputs(n=2):
-    """Build a minimal raw_outputs dict for _postprocess tests."""
-    import torch
-    return {
-        "images": torch.zeros(n, 3, 4, 4),
-        "extrinsic": np.eye(4)[None, :3, :].repeat(n, axis=0).astype(np.float32),
-        "intrinsics_downsampled": np.eye(3)[None].repeat(n, axis=0).astype(np.float32),
-        "depth": np.ones((n, 4, 4, 1), dtype=np.float32),
-        "depth_conf": np.ones((n, 4, 4), dtype=np.float32) * 100.0,
-    }
-
-
-def test_vggtx_postprocess_calls_global_alignment(tmp_path):
-    n = 2
-    image_paths = [tmp_path / f"frame_{i:04d}.jpg" for i in range(n)]
-    raw_outputs = _make_raw_outputs(n)
-
-    refined_ext = raw_outputs["extrinsic"].copy()
-    refined_int = raw_outputs["intrinsics_downsampled"].copy()
-
-    pts = np.zeros((5, 3), dtype=np.float32)
-    colors = np.zeros((5, 3), dtype=np.uint8)
-    pixel_indices = np.zeros((5, 3), dtype=np.int32)
-
-    creator = VGGTXCreator(use_global_alignment=True)
-    creator.image_paths = image_paths
-    creator.original_coords = np.zeros((n, 6), dtype=np.float32)
-
-    with patch("collab_splats.pointcloud.feedforward.vggtx.run_global_alignment",
-               return_value=(refined_ext, refined_int)) as mock_ga, \
-         patch("collab_splats.pointcloud.feedforward.vggtx.unproject_and_filter_points",
-               return_value=(pts, colors, pixel_indices)):
-        result = creator._postprocess(raw_outputs)
-
-    mock_ga.assert_called_once()
-    assert isinstance(result, FeedforwardResult)
-
-
-def test_vggtx_no_global_alignment_when_disabled(tmp_path):
-    n = 2
-    image_paths = [tmp_path / f"frame_{i:04d}.jpg" for i in range(n)]
-    raw_outputs = _make_raw_outputs(n)
-
-    pts = np.zeros((5, 3), dtype=np.float32)
-    colors = np.zeros((5, 3), dtype=np.uint8)
-    pixel_indices = np.zeros((5, 3), dtype=np.int32)
-
-    creator = VGGTXCreator(use_global_alignment=False)
-    creator.image_paths = image_paths
-    creator.original_coords = np.zeros((n, 6), dtype=np.float32)
-
-    with patch("collab_splats.pointcloud.feedforward.vggtx.run_global_alignment") as mock_ga, \
-         patch("collab_splats.pointcloud.feedforward.vggtx.unproject_and_filter_points",
-               return_value=(pts, colors, pixel_indices)):
-        result = creator._postprocess(raw_outputs)
-
-    mock_ga.assert_not_called()
-    assert isinstance(result, FeedforwardResult)
-
-
 @pytest.mark.gpu
 def test_vggtx_reconstruct_smoke(tmp_path):
     from PIL import Image as PILImage
+
     image_dir = tmp_path / "images"
     image_dir.mkdir()
     for i in range(3):
@@ -106,6 +44,7 @@ def test_vggtx_reconstruct_smoke(tmp_path):
 # ---------------------------------------------------------------------------
 # extract_intermediate_features — hook pattern
 # ---------------------------------------------------------------------------
+
 
 def _make_vggtx_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tokens=10):
     """VGGTXCreator backed by a mock model with real nn.Linear QKV layers.
@@ -227,9 +166,10 @@ def test_vggtx_extract_intermediate_features_layer_index():
 def test_patch_vggtx_compute_similarity_deleted():
     """_patch_vggtx_compute_similarity must not exist after refactor."""
     import collab_splats.pointcloud.feedforward.vggtx as vggtx_mod
-    assert not hasattr(vggtx_mod, "_patch_vggtx_compute_similarity"), (
-        "_patch_vggtx_compute_similarity still exists — delete it and its _load_model call"
-    )
+
+    assert not hasattr(
+        vggtx_mod, "_patch_vggtx_compute_similarity"
+    ), "_patch_vggtx_compute_similarity still exists — delete it and its _load_model call"
 
 
 def test_unproject_and_filter_points_extra_mask():
@@ -245,21 +185,24 @@ def test_unproject_and_filter_points_extra_mask():
     intrinsic = np.stack([np.eye(3)] * N).astype(np.float32)
 
     # Without extra_mask: all pixels survive (conf_threshold=0.0)
-    pts_all, _, _ = unproject_and_filter_points(
-        depth, depth_conf, images, extrinsic, intrinsic, conf_threshold=0.0
-    )
+    pts_all, _, _ = unproject_and_filter_points(depth, depth_conf, images, extrinsic, intrinsic, conf_threshold=0.0)
 
     # extra_mask zeros out frame 0 completely
     extra_mask = np.ones((N, H, W), dtype=bool)
     extra_mask[0] = False
     pts_masked, _, _ = unproject_and_filter_points(
-        depth, depth_conf, images, extrinsic, intrinsic, conf_threshold=0.0,
+        depth,
+        depth_conf,
+        images,
+        extrinsic,
+        intrinsic,
+        conf_threshold=0.0,
         extra_mask=extra_mask,
     )
 
-    assert len(pts_masked) < len(pts_all), (
-        f"Expected fewer points with extra_mask; got {len(pts_masked)} vs {len(pts_all)}"
-    )
+    assert len(pts_masked) < len(
+        pts_all
+    ), f"Expected fewer points with extra_mask; got {len(pts_masked)} vs {len(pts_all)}"
     # Frame 0 masked → only frame 1's H*W points survive
     assert len(pts_masked) == H * W, f"Expected {H*W}, got {len(pts_masked)}"
 

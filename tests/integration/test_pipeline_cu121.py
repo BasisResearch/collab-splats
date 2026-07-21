@@ -7,6 +7,7 @@ pycolmap 4.0.4 work through the full data-flow path.
 Run:
     /opt/conda/envs/nerfstudio/bin/python -m pytest tests/integration/test_pipeline_cu121.py -v
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,7 +16,6 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import torch
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ def test_vggtx_postprocess_pipeline(tmp_path):
     from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
 
     raw = _synthetic_vggtx_raw()
-    creator = VGGTXCreator(use_global_alignment=False)
+    creator = VGGTXCreator()
     creator.image_paths = [tmp_path / f"frame_{i:04d}.jpg" for i in range(N_FRAMES)]
     creator.original_coords = np.zeros((N_FRAMES, 6), dtype=np.float32)
     for i in range(N_FRAMES):
@@ -201,12 +201,15 @@ def test_mapanything_postprocess_pipeline(tmp_path):
     # synthetic_views already carry every required key, so reuse them as the mock preds.
     mock_processed = synthetic_views
 
-    with patch(
-        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
-        return_value=mock_processed,
-    ), patch(
-        "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
-        side_effect=lambda depth, *a, **kw: np.ones_like(depth),
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+            return_value=mock_processed,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
+            side_effect=lambda depth, *a, **kw: np.ones_like(depth),
+        ),
     ):
         result = creator._postprocess(synthetic_views)
 
@@ -234,9 +237,7 @@ def test_tsdf_mesh_synthetic(tmp_path):
     intrinsics = np.tile(K, (n, 1, 1))
 
     fusion = Open3DTSDFFusion(output_dir=tmp_path, clean_repair=False)
-    mesh_result = fusion.create(
-        depths=depths, rgbs=rgbs, c2w=c2w, intrinsics=intrinsics
-    )
+    mesh_result = fusion.create(depths=depths, rgbs=rgbs, c2w=c2w, intrinsics=intrinsics)
     assert mesh_result is not None
     assert isinstance(mesh_result.mesh_path, Path)
 
@@ -246,12 +247,9 @@ def test_nerfstudio_method_registry():
     import collab_splats.nerfstudio.method_configs.rade_gs  # noqa: F401
     import collab_splats.nerfstudio.method_configs.rade_features  # noqa: F401
     from nerfstudio.configs.method_configs import all_methods
-    assert "rade-gs" in all_methods, (
-        f"rade-gs not registered. Available: {sorted(all_methods)}"
-    )
-    assert "rade-features" in all_methods, (
-        f"rade-features not registered. Available: {sorted(all_methods)}"
-    )
+
+    assert "rade-gs" in all_methods, f"rade-gs not registered. Available: {sorted(all_methods)}"
+    assert "rade-features" in all_methods, f"rade-features not registered. Available: {sorted(all_methods)}"
 
 
 def test_pointcloudresult_new_api():

@@ -1,4 +1,10 @@
-"""Postprocessing operations shared across feedforward pointcloud creators."""
+"""VGGT-X native global alignment: feature matching + joint BA over poses/intrinsics.
+
+Parked utility. Not wired into any creator — VGGTXCreator's call site is commented
+out (see ``pointcloud/feedforward/vggtx.py``). Kept as an alternative to the LM
+bundle adjustment in ``bundle_adjustment.py`` for a future accuracy comparison
+(bae-vggt-parity)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,6 +15,7 @@ import numpy as np
 try:
     import torch
     from vggt.dependency.global_alignment import extract_matches, pose_optimization  # type: ignore
+
     _HAS_VGGT = True
 except ImportError:
     _HAS_VGGT = False
@@ -53,10 +60,7 @@ def run_global_alignment(
         Tuple of (refined_extrinsic, refined_intrinsic), same shapes as inputs.
     """
     if not _HAS_VGGT:
-        raise ImportError(
-            "VGGT-X not installed. "
-            "pip install git+https://github.com/Linketic/VGGT-X.git"
-        )
+        raise ImportError("VGGT-X not installed. " "pip install git+https://github.com/Linketic/VGGT-X.git")
 
     colmap_dir = Path(colmap_dir) if colmap_dir else Path(".")
     colmap_dir.mkdir(parents=True, exist_ok=True)

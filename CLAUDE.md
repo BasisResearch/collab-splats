@@ -52,6 +52,7 @@ collab_splats/
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
     transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV (ex utils/geometry.py)
     bundle_adjustment.py   # Levenberg-Marquardt BA
+    global_alignment.py    # VGGT-X native feature-match + joint BA (parked; not wired into any creator)
     loop_closure/          # submap pose graph (SL4/SE3), DINO-SALAD retrieval gate, LoopClosure wrapper
   localization/            # camera localization: query image → pose in known reconstruction
     retrieval.py           # Stage 1: BaseRetrievalExtractor, DinoSalad/PECLIP (also used by loop closure)

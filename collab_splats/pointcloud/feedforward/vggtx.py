@@ -23,7 +23,9 @@ from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
-from ..postproc import run_global_alignment
+# Global alignment is parked — the call site below is disabled. Re-enable both when
+# comparing VGGT-X native alignment against the LM bundle adjustment (bae-vggt-parity):
+#   from collab_splats.geometry.global_alignment import run_global_alignment
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
@@ -166,10 +168,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
                               single focal length (not separate fx/fy).
         model_name:           HuggingFace model ID loaded via
                               ``VGGT.from_pretrained``.
-        use_global_alignment: When True, runs ``run_global_alignment`` after the
-                              forward pass to refine poses via feature matching +
-                              bundle adjustment.  Adds significant compute time
-                              but improves accuracy on long sequences.
         chunk_size:           Attention chunk size for memory-efficient inference.
                               Reduce if OOM on long sequences.
         conf_threshold:       Depth confidence percentile cutoff (0–100).
@@ -189,7 +187,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
     camera_model: str = "SIMPLE_PINHOLE"
     model_name: str = "facebook/VGGT-1B"
-    use_global_alignment: bool = False
     chunk_size: int = 256
     conf_threshold: float = 35.0
     use_multiview_confidence: bool = False
@@ -325,14 +322,11 @@ class VGGTXCreator(BaseFeedforwardCreator):
         extrinsic = raw_outputs["extrinsic"]
         intrinsic = raw_outputs.get("intrinsics_downsampled", raw_outputs.get("intrinsics"))
 
-        # Optionally refine poses via global alignment (feature matching + BA)
-        if self.use_global_alignment:
-            extrinsic, intrinsic = run_global_alignment(
-                raw_outputs,
-                extrinsic,
-                intrinsic,
-                self.image_paths,
-            )
+        # Global alignment (feature matching + joint BA) is parked. Re-enable with the
+        # import at the top of this file to compare against LM BA (bae-vggt-parity):
+        # extrinsic, intrinsic = run_global_alignment(
+        #     raw_outputs, extrinsic, intrinsic, self.image_paths,
+        # )
 
         # Optionally compute geometric cross-view depth consistency mask
         mv_mask = None

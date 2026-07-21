@@ -72,9 +72,15 @@ inside `localize()`. No separate module, no separate estimation step for callers
 - **Delete** the file.
 
 ### `collab_splats/dashboard/pipeline.py`
-- Delete `_resolve_query_intrinsics` (lines ~426–435) and its heavy lazy import.
-- At the call site (~545), call `localize(frame)` with no K; read the seed back from
-  `result.query_intrinsics` to populate the pipeline dataclass field used by display.
+- **Keep** the `config.calibration_path` branch of `_resolve_query_intrinsics` — a real
+  user-supplied YAML calibration is an objective K and stays. Remove only the feedforward
+  fallback + its heavy lazy import; when no calibration is configured the resolver returns
+  `None` (proportions seed happens inside `localize`).
+- Call site (~545): `K = _resolve_query_intrinsics(frame, config, op_log)` may now be
+  `None`; pass it straight to `localize(frame, K)`. Read the seed back from
+  `result.query_intrinsics` for the dataclass field / DB append when `K is None`.
+- `intr_source` (~546): `"calibration file"` when configured, else `"proportions seed"`
+  (was `"estimated (experimental)"`).
 
 ### `collab_splats/dashboard/localize.py`
 - `localize.py:729` display of `out.query_intrinsics[0,0]` keeps working — the value now
@@ -102,8 +108,8 @@ inside `localize()`. No separate module, no separate estimation step for callers
 ## Out of scope (future work)
 
 - **EXIF-derived K** as a fallback when the query image carries lens metadata.
-- **User-supplied calibrated K** via `LocalizationConfig` (no such override today; the
-  optional `query_intrinsics` param leaves the door open).
+- **Broader calibration UX** — the `config.calibration_path` YAML override is kept as-is;
+  richer per-camera calibration management is future work.
 - **Geometry-only focal solver** (P3.5Pf / P4Pf) if refinement-from-seed proves unstable.
 
 ## Testing / verification

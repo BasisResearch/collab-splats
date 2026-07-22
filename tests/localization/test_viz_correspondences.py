@@ -1,12 +1,14 @@
 """plot_correspondences: resolution-mismatch handling between query and reference."""
 
+from types import SimpleNamespace
+
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
 
 from collab_splats.localization.localizer import LocalizationResult
-from collab_splats.localization.viz import plot_correspondences
+from collab_splats.localization.viz import correspondences_for_ref, plot_correspondences
 
 
 def _fake_result(n: int = 6) -> LocalizationResult:
@@ -30,7 +32,7 @@ def test_plot_correspondences_handles_resolution_mismatch():
     query = np.zeros((120, 160, 3), dtype=np.uint8)
     ref_image = np.zeros((40, 60, 3), dtype=np.uint8)
     fig = plot_correspondences(
-        _fake_result(), query, ref_image, ref_idx=0, max_pairs=10, show=False, warp_corners=False
+        query, ref_image, *correspondences_for_ref(_fake_result(), 0), max_pairs=10, show=False, warp_corners=False
     )
     assert fig is not None
     import matplotlib.pyplot as plt
@@ -38,11 +40,33 @@ def test_plot_correspondences_handles_resolution_mismatch():
     plt.close(fig)
 
 
+def test_plot_correspondences_plain_arrays():
+    """Array-based signature — no LocalizationResult required."""
+    rng = np.random.default_rng(2)
+    q = rng.integers(0, 255, (60, 80, 3), dtype=np.uint8)
+    r = rng.integers(0, 255, (60, 80, 3), dtype=np.uint8)
+    q_px = rng.uniform(0, 79, (10, 2)).astype(np.float32)
+    r_px = rng.uniform(0, 79, (10, 2)).astype(np.float32)
+    fig = plot_correspondences(q, r, q_px, r_px, inlier_mask=np.arange(10) % 2 == 0, show=False)
+    assert fig is not None
+
+
+def test_correspondences_for_ref_duck_typed():
+    loc = SimpleNamespace(
+        pts2d=np.zeros((4, 2), np.float32),
+        pts2d_ref=np.ones((4, 2), np.float32),
+        ref_frame_indices=np.array([0, 1, 1, 0]),
+        inlier_mask=np.array([True, False, True, True]),
+    )
+    q_px, r_px, mask = correspondences_for_ref(loc, 1)
+    assert len(q_px) == 2 and mask.tolist() == [False, True]
+
+
 def test_plot_correspondences_same_resolution_still_works():
     query = np.zeros((40, 60, 3), dtype=np.uint8)
     ref_image = np.zeros((40, 60, 3), dtype=np.uint8)
     fig = plot_correspondences(
-        _fake_result(), query, ref_image, ref_idx=0, max_pairs=10, show=False, warp_corners=False
+        query, ref_image, *correspondences_for_ref(_fake_result(), 0), max_pairs=10, show=False, warp_corners=False
     )
     assert fig is not None
     import matplotlib.pyplot as plt

@@ -340,7 +340,7 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
     # Stub the plotting functions so no real matplotlib rendering happens
     monkeypatch.setattr(
         "collab_splats.localization.viz.plot_inlier_distribution",
-        lambda loc, n_frames=0, frame_sources=None: matplotlib.figure.Figure(),
+        lambda ref_frame_indices, inlier_mask, n_frames=0, frame_sources=None: matplotlib.figure.Figure(),
     )
     monkeypatch.setattr(
         "collab_splats.localization.viz.plot_correspondences",
@@ -351,6 +351,8 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
         pose=np.eye(4, dtype=np.float32),
         n_correspondences=8,
         n_inliers=6,
+        ref_frame_indices=np.zeros(0, dtype=np.int32),
+        inlier_mask=np.zeros(0, dtype=bool),
         ranked_ref_frames=[],
     )
     out = SimpleNamespace(
@@ -369,7 +371,7 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
 
 def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
     """Non-empty match path: each ranked ref resolves to an RGB array (store for reconstruction
-    frames, disk for localized) and is passed to plot_correspondences as (ref_image, ref_idx)."""
+    frames, disk for localized) and its correspondences arrive pre-sliced as plain arrays."""
     import cv2
     import matplotlib.figure
 
@@ -378,13 +380,13 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
     # Capture what plot_correspondences receives so we can assert the boundary wiring
     calls = []
 
-    def _capture(loc, query_image, ref_image, ref_idx, **kwargs):
-        calls.append((ref_image, ref_idx))
+    def _capture(query_image, ref_image, query_px, ref_px, inlier_mask=None, **kwargs):
+        calls.append((ref_image, query_px, ref_px, inlier_mask))
         return matplotlib.figure.Figure()
 
     monkeypatch.setattr(
         "collab_splats.localization.viz.plot_inlier_distribution",
-        lambda loc, n_frames=0, frame_sources=None: matplotlib.figure.Figure(),
+        lambda ref_frame_indices, inlier_mask, n_frames=0, frame_sources=None: matplotlib.figure.Figure(),
     )
     monkeypatch.setattr("collab_splats.localization.viz.plot_correspondences", _capture)
 
@@ -399,10 +401,15 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
     localized_jpg = tmp_path / "localized_0001.jpg"
     cv2.imwrite(str(localized_jpg), np.zeros((4, 4, 3), np.uint8))
 
+    # Real correspondence arrays: frame 0 owns two pairs, frame 1 owns one
     loc = SimpleNamespace(
         pose=np.eye(4, dtype=np.float32),
         n_correspondences=8,
         n_inliers=6,
+        pts2d=np.array([[0, 0], [1, 1], [2, 2]], np.float32),
+        pts2d_ref=np.array([[3, 3], [4, 4], [5, 5]], np.float32),
+        ref_frame_indices=np.array([0, 0, 1], np.int32),
+        inlier_mask=np.array([True, False, True]),
         ranked_ref_frames=[0, 1],
     )
     out = SimpleNamespace(
@@ -416,11 +423,11 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
     )
     figs = page._build_result_figures(out, LocalizationConfig(extractor="disk"), frames_zarr=tmp_path / "frames.zarr")
 
-    # Both ranked refs produced a figure via correctly-typed (ref_image, ref_idx) calls
+    # Both ranked refs produced a figure with per-frame pre-sliced correspondence arrays
     assert len(figs["match_figs"]) == 2
-    assert [ref_idx for _, ref_idx in calls] == [0, 1]
-    for ref_image, ref_idx in calls:
+    assert [len(q_px) for _, q_px, _, _ in calls] == [2, 1]
+    for ref_image, q_px, r_px, mask in calls:
         assert isinstance(ref_image, np.ndarray) and ref_image.ndim == 3
-        assert isinstance(ref_idx, int)
+        assert len(q_px) == len(r_px) == len(mask)
     # Reconstruction frame came from the store (known pixel value), not disk
     assert np.array_equal(calls[0][0], store_pixels)

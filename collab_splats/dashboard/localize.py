@@ -712,6 +712,7 @@ class LocalizePage(param.Parameterized):
         JPGs only (never written to frames.zarr), so they always fall back to disk reads.
         """
         from collab_splats.localization.viz import (
+            correspondences_for_ref,
             plot_correspondences,
             plot_inlier_distribution,
         )
@@ -720,7 +721,9 @@ class LocalizePage(param.Parameterized):
         n_frames = len(out.ref_image_paths)
 
         # Bottom: inlier distribution + summary stats
-        dist_fig = plot_inlier_distribution(loc, n_frames=n_frames, frame_sources=out.frame_sources)
+        dist_fig = plot_inlier_distribution(
+            loc.ref_frame_indices, loc.inlier_mask, n_frames=n_frames, frame_sources=out.frame_sources
+        )
         ratio = 100 * loc.n_inliers / max(loc.n_correspondences, 1)
         pose_msg = "" if loc.pose is not None else " — <b style='color:#e05050'>POSE FAILED</b>"
         stats_html = (
@@ -748,10 +751,9 @@ class LocalizePage(param.Parameterized):
                     continue
                 ref_image = np.asarray(open_image(out.ref_image_paths[ref]).convert("RGB"))
             mfig = plot_correspondences(
-                loc,
                 out.query_frame,
                 ref_image,
-                ref_idx=int(ref),
+                *correspondences_for_ref(loc, int(ref)),
                 max_pairs=config.max_pairs,
                 show=False,
             )

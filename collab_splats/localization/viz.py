@@ -8,21 +8,38 @@ import cv2
 import numpy as np
 from matplotlib import pyplot as plt
 
-from .localizer import LocalizationResult
-
 logger = logging.getLogger(__name__)
 
 
+########################################################################
+# Adapters
+########################################################################
+
+
+def correspondences_for_ref(loc, ref_idx: int):
+    """(query_px, ref_px, inlier_mask) for one reference frame, from any object
+    exposing pts2d / pts2d_ref / ref_frame_indices / inlier_mask arrays."""
+    sel = loc.ref_frame_indices == ref_idx
+    mask = loc.inlier_mask[sel] if loc.inlier_mask is not None else None
+    return loc.pts2d[sel], loc.pts2d_ref[sel], mask
+
+
+########################################################################
+# Plots
+########################################################################
+
+
 def plot_correspondences(
-    loc: LocalizationResult,
     query_image: np.ndarray,
     ref_image: np.ndarray,
-    ref_idx: int,
+    query_px: np.ndarray,
+    ref_px: np.ndarray,
+    inlier_mask: "np.ndarray | None" = None,
     max_pairs: int = 200,
     warp_corners: bool = False,
     show: bool = True,
 ) -> "plt.Figure | None":
-    """Side-by-side query + reference frame with inlier/outlier connecting lines.
+    """Side-by-side query + reference image with inlier/outlier connecting lines.
 
     Lines are green for inliers, red for outliers. White dots mark each keypoint.
     When warp_corners=True, draws both warped boundaries under the inlier homography:
@@ -31,11 +48,12 @@ def plot_correspondences(
     so whichever fits inside its image is visible regardless of relative image sizes.
 
     Args:
-        loc:          LocalizationResult from CameraLocalizer.localize().
         query_image:  HxWx3 uint8 RGB query image.
-        ref_image:    HxWx3 uint8 RGB reference frame (caller-resolved).
-        ref_idx:      Index of ref_image in the reference set; the caller picks it,
-                      e.g. loc.ranked_ref_frames[0].
+        ref_image:    HxWx3 uint8 RGB reference image (caller-resolved).
+        query_px:     (K, 2) pixel coordinates in the query image.
+        ref_px:       (K, 2) pixel coordinates in the reference image. Use
+                      correspondences_for_ref() to slice a localizer result per frame.
+        inlier_mask:  (K,) bool; None draws every pair as an inlier.
         max_pairs:    Cap on lines drawn — random subsample if exceeded.
         warp_corners: Draw homography-warped boundaries on both sides.
         show:         Call plt.show() (notebook behaviour). Dashboard passes False.
@@ -43,21 +61,13 @@ def plot_correspondences(
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
     """
-
-    if loc.pose is None or loc.inlier_mask is None or loc.pts2d_ref is None or loc.ref_frame_indices is None:
-        logger.warning("plot_correspondences: no valid localization result to plot")
+    # Nothing to draw without correspondences
+    kpts0 = np.asarray(query_px)
+    kpts1 = np.asarray(ref_px)
+    if len(kpts0) == 0:
+        logger.warning("plot_correspondences: no correspondences to plot")
         return None
-
-    # Reference frame resolved by the caller — select its correspondences
-    ref_idx = int(ref_idx)
-    frame_mask = loc.ref_frame_indices == ref_idx
-    if not frame_mask.any():
-        logger.warning("plot_correspondences: no correspondences for frame %d", ref_idx)
-        return None
-
-    kpts0 = loc.pts2d[frame_mask]  # (K, 2) query
-    kpts1 = loc.pts2d_ref[frame_mask]  # (K, 2) reference
-    inliers = loc.inlier_mask[frame_mask]  # (K,) bool
+    inliers = np.ones(len(kpts0), dtype=bool) if inlier_mask is None else np.asarray(inlier_mask, dtype=bool)
 
     # Compute homography from all inliers before subsampling — subsampled set degrades H
     H = None
@@ -140,7 +150,7 @@ def plot_correspondences(
     ax.scatter(kpts1[:, 0] * ref_scale + W, kpts1[:, 1] * ref_scale, s=8, c="white", zorder=3, linewidths=0)
     ax.axvline(W, color="white", linewidth=1, alpha=0.5)
     ax.axis("off")
-    ax.set_title(f"query ↔ reference frame {ref_idx} — " f"{inliers.sum()}/{len(inliers)} inliers shown")
+    ax.set_title(f"query ↔ reference — {inliers.sum()}/{len(inliers)} inliers shown")
     fig.tight_layout()
     if show:
         plt.show()
@@ -148,7 +158,8 @@ def plot_correspondences(
 
 
 def plot_inlier_distribution(
-    loc: LocalizationResult,
+    ref_frame_indices: "np.ndarray | None",
+    inlier_mask: "np.ndarray | None",
     n_frames: "int | None" = None,
     frame_sources: "list[str] | None" = None,
 ) -> "plt.Figure | None":
@@ -161,25 +172,27 @@ def plot_inlier_distribution(
     is 'localized' get a red bar edge.
 
     Args:
-        loc:           LocalizationResult from CameraLocalizer.localize().
-        n_frames:      Total reference frames (bars include zero-match frames);
-                       defaults to max(ref_frame_indices) + 1.
-        frame_sources: Per-frame provenance list ('reconstruction' | 'localized').
+        ref_frame_indices: (M,) reference frame index per correspondence.
+        inlier_mask:       (M,) bool inlier flag per correspondence.
+        n_frames:          Total reference frames (bars include zero-match frames);
+                           defaults to max(ref_frame_indices) + 1.
+        frame_sources:     Per-frame provenance list ('reconstruction' | 'localized').
 
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
     """
-    if loc.ref_frame_indices is None or loc.inlier_mask is None:
+    if ref_frame_indices is None or inlier_mask is None:
         logger.warning("plot_inlier_distribution: no correspondence data to plot")
         return None
 
     # Clamp: bincount(minlength=n) never truncates, so a stale/short n_frames would
     # desync bar x-positions from counts — grow n to cover every referenced frame
-    idx = loc.ref_frame_indices.astype(np.intp)
+    idx = np.asarray(ref_frame_indices).astype(np.intp)
+    inlier_mask = np.asarray(inlier_mask, dtype=bool)
     n_used = int(idx.max()) + 1 if len(idx) else 0
     n = max(int(n_frames) if n_frames is not None else 0, n_used)
     totals = np.bincount(idx, minlength=n)
-    inliers = np.bincount(idx[loc.inlier_mask], minlength=n)
+    inliers = np.bincount(idx[inlier_mask], minlength=n)
 
     # Viridis by frame index — matches the time colouring of the 3D camera plot
     cmap = plt.get_cmap("viridis")
@@ -202,11 +215,13 @@ def plot_inlier_distribution(
             if t > 0:
                 ax.plot([xi - 0.4, xi + 0.4], [t, t], color="0.2", linewidth=1)
 
+    # Counts derived from the arrays — no result object needed for the summary
+    n_inliers = int(inlier_mask.sum())
+    n_correspondences = len(idx)
     ax.set_xlabel("reference image (time →)")
     ax.set_ylabel("inliers")
     ax.set_title(
-        f"{loc.n_inliers}/{loc.n_correspondences} inliers "
-        f"({100 * loc.n_inliers / max(loc.n_correspondences, 1):.0f}%)",
+        f"{n_inliers}/{n_correspondences} inliers " f"({100 * n_inliers / max(n_correspondences, 1):.0f}%)",
         fontsize=10,
     )
     fig.tight_layout()

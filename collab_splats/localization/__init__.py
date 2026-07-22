@@ -22,7 +22,7 @@ from .extractors import (
 )
 from .localizer import CameraLocalizer, LocalizationResult
 from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtractor
-from .viz import plot_correspondences, plot_inlier_distribution
+from .viz import correspondences_for_ref, plot_correspondences, plot_inlier_distribution
 
 __all__ = [
     "BaseLocalExtractor",
@@ -36,6 +36,7 @@ __all__ = [
     "LomaGExtractor",
     "PECLIPExtractor",
     "XFeatExtractor",
+    "correspondences_for_ref",
     "plot_correspondences",
     "plot_inlier_distribution",
 ]

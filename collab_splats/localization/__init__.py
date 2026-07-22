@@ -5,11 +5,14 @@ Three-stage pipeline:
   Stage 1 — Global retrieval: top-K visually similar reference frames via compact
              global descriptors (DINOv2-SALAD). Current use: loop closure detection.
 
-  Stage 2 — Local feature extraction + matching: DISK+LightGlue (default) or
-             XFeat+MNN. Each extractor owns its detect→match logic.
+  Stage 2 — Local feature extraction + matching: DISK+LightGlue (default),
+             XFeat+MNN, XFeat* semi-dense, or LoMa/LoMa-G. Each extractor owns
+             its detect→match logic and returns MatchResult pixel pairs.
 
-  Stage 3 — Pose estimation: 2D→3D keypoint assignment via torch.cdist NN,
-             then absolute pose via LO-RANSAC + Ceres refinement (pycolmap).
+  Stage 3 — Pose estimation: 2D→3D depth lookup — bilinear-sample each
+             reference frame's dense world_points at matched ref pixels
+             (hloc pose_from_cluster analog), then absolute pose via
+             LO-RANSAC + Ceres refinement (pycolmap).
 """
 
 from .extractors import (
@@ -18,9 +21,11 @@ from .extractors import (
     LocalFeatures,
     LomaExtractor,
     LomaGExtractor,
+    MatchResult,
     XFeatExtractor,
+    XFeatStarExtractor,
 )
-from .localizer import CameraLocalizer, LocalizationResult
+from .localizer import CameraLocalizer, LocalizationResult, sample_world_points
 from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtractor
 from .viz import correspondences_for_ref, plot_correspondences, plot_inlier_distribution
 
@@ -34,9 +39,12 @@ __all__ = [
     "LocalizationResult",
     "LomaExtractor",
     "LomaGExtractor",
+    "MatchResult",
     "PECLIPExtractor",
     "XFeatExtractor",
+    "XFeatStarExtractor",
     "correspondences_for_ref",
     "plot_correspondences",
     "plot_inlier_distribution",
+    "sample_world_points",
 ]

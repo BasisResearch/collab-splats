@@ -1,4 +1,4 @@
-"""Stage 3 — Pose estimation: 2D→3D assignment + absolute pose via LO-RANSAC (pycolmap)."""
+"""Stage 3 — Pose estimation: 2D→3D depth lookup + absolute pose via LO-RANSAC (pycolmap)."""
 
 from __future__ import annotations
 
@@ -49,6 +49,9 @@ def sample_world_points(
     grid = torch.from_numpy(px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1)
     wp = torch.from_numpy(world_points).permute(2, 0, 1)[None].float()  # (1,3,H,W)
     interp = F.grid_sample(wp, grid[None, None].float(), align_corners=True, mode="bilinear")[0, :, 0]  # (3,K)
+    # NaN-only invalidation is intentional: our backends (VGGT-X/MapAnything) emit
+    # dense world_points with no zero-encoding for unmapped pixels, and an exact-zero
+    # check could drop legitimate near-origin points.
     valid = ~torch.any(torch.isnan(interp), dim=0)
     # Out-of-bounds px → invalid (grid_sample pads with border values otherwise)
     in_bounds = torch.from_numpy((px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1))
@@ -497,10 +500,10 @@ class CameraLocalizer:
         extractor_name: "str | None" = None,
         provenance: "dict | None" = None,
     ) -> None:
-        """Add a successfully localized frame to the in-memory reference set.
+        """Add a successfully localized frame to the DB for provenance and retrieval.
 
-        Localized frames carry no world_points map, so they serve as match context
-        only — localize() skips them for 2D→3D lookup.
+        Localized frames carry no world_points map, so localize() skips them as
+        match sources — they are appended for record-keeping, not 2D→3D lookup.
         If zarr_path and extractor_name are provided, appends to localized/ in zarr.
         provenance: optional per-frame metadata (e.g. video_ref, session, camera,
         frame_idx) recorded alongside the localized frame in zarr.

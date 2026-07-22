@@ -361,7 +361,7 @@ class LomaExtractor(BaseLocalExtractor):
     transformer matcher, from the `lomatch` package. Detection and description
     run once per image at a fixed 784x784 inference resolution; keypoints are
     stored in original-image pixel coordinates so the zarr feature cache and
-    the 2D->3D assignment stage work unchanged.
+    the 2D->3D depth-lookup stage work unchanged.
 
     Weights: auto-downloaded to torch hub cache on first use (~723 MB for
     LoMa-B, plus the DaD detector).

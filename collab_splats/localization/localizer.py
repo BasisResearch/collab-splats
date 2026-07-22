@@ -273,6 +273,17 @@ class CameraLocalizer:
             ).astype(np.float32)
             rec_group.create_array("scores", data=all_scores, chunks=(max(all_scores.shape[0], 1),), compressors=lz4)
 
+        # scales: dense XFeat* only — skip if all None
+        has_scales = any(f.scales is not None for f in self._frame_features)
+        if has_scales:
+            all_scales = np.concatenate(
+                [
+                    f.scales.numpy() if f.scales is not None else np.zeros(len(f.keypoints), dtype=np.float32)
+                    for f in self._frame_features
+                ]
+            ).astype(np.float32)
+            rec_group.create_array("scales", data=all_scales, chunks=(max(all_scales.shape[0], 1),), compressors=lz4)
+
         logger.info(
             "CameraLocalizer.save_index: saved %d frames to %s [%s]",
             len(self._frame_features),
@@ -321,6 +332,7 @@ class CameraLocalizer:
             rec_group["descriptors"][:] if rec_group["descriptors"].shape[0] > 0 else np.zeros((0, 1), dtype=np.float32)
         )
         all_scores = rec_group["scores"][:] if "scores" in rec_group else None
+        all_scales = rec_group["scales"][:] if "scales" in rec_group else None
         logger.info(
             "CameraLocalizer: read %s keypoints / %.0f MB descriptors in %.1fs",
             f"{len(all_kpts):,}",
@@ -334,7 +346,8 @@ class CameraLocalizer:
             f_kpts = torch.from_numpy(all_kpts[s:e])
             f_descs = torch.from_numpy(all_descs[s:e])
             f_scores = torch.from_numpy(all_scores[s:e]) if all_scores is not None else None
-            rec_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores))
+            f_scales = torch.from_numpy(all_scales[s:e]) if all_scales is not None else None
+            rec_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores, scales=f_scales))
 
         # ── Load localized group (optional) ──────────────────────────────────
         loc_key = f"local_features/{extractor_name}/localized"
@@ -350,13 +363,17 @@ class CameraLocalizer:
                 loc_kpts = loc_group["keypoints"][:]
                 loc_descs = loc_group["descriptors"][:]
                 loc_scores = loc_group["scores"][:] if "scores" in loc_group else None
+                loc_scales = loc_group["scales"][:] if "scales" in loc_group else None
                 loc_ext = loc_group["extrinsics"][:]  # (N_loc, 4, 4)
                 for i in range(len(loc_offsets) - 1):
                     s, e = int(loc_offsets[i]), int(loc_offsets[i + 1])
                     f_kpts = torch.from_numpy(loc_kpts[s:e])
                     f_descs = torch.from_numpy(loc_descs[s:e])
                     f_scores = torch.from_numpy(loc_scores[s:e]) if loc_scores is not None else None
-                    loc_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores))
+                    f_scales = torch.from_numpy(loc_scales[s:e]) if loc_scales is not None else None
+                    loc_features.append(
+                        LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores, scales=f_scales)
+                    )
                     loc_extrinsics_list.append(loc_ext[i])
 
         # ── Assemble object without running __init__ extraction loop ──────────
@@ -456,6 +473,13 @@ class CameraLocalizer:
                 sc_arr.resize((old_sc + len(scores_np),))
                 sc_arr[old_sc:] = scores_np
 
+            if feats.scales is not None and "scales" in rec_group:
+                scales_np = feats.scales.numpy().astype(np.float32)
+                sl_arr = rec_group["scales"]
+                old_sl = sl_arr.shape[0]
+                sl_arr.resize((old_sl + len(scales_np),))
+                sl_arr[old_sl:] = scales_np
+
         logger.info(
             "CameraLocalizer.update_index: appended %d frames to %s [%s]",
             len(new_ids),
@@ -529,6 +553,7 @@ class CameraLocalizer:
         kpts_np = features.keypoints.numpy().astype(np.float32)
         descs_np = features.descriptors.numpy().astype(np.float32)
         scores_np = features.scores.numpy().astype(np.float32) if features.scores is not None else None
+        scales_np = features.scales.numpy().astype(np.float32) if features.scales is not None else None
 
         if loc_key not in store:
             # First localized frame — create group + arrays
@@ -546,6 +571,8 @@ class CameraLocalizer:
             )
             if scores_np is not None:
                 loc_group.create_array("scores", data=scores_np, chunks=(max(scores_np.shape[0], 1),), compressors=lz4)
+            if scales_np is not None:
+                loc_group.create_array("scales", data=scales_np, chunks=(max(scales_np.shape[0], 1),), compressors=lz4)
             loc_group.create_array("extrinsics", data=pose[np.newaxis], chunks=(1, 4, 4), compressors=lz4)
             loc_group.create_array("intrinsics", data=intrinsics[np.newaxis], chunks=(1, 3, 3), compressors=lz4)
         else:
@@ -582,6 +609,12 @@ class CameraLocalizer:
                 old_sc = sc_arr.shape[0]
                 sc_arr.resize((old_sc + len(scores_np),))
                 sc_arr[old_sc:] = scores_np
+
+            if scales_np is not None and "scales" in loc_group:
+                sl_arr = loc_group["scales"]
+                old_sl = sl_arr.shape[0]
+                sl_arr.resize((old_sl + len(scales_np),))
+                sl_arr[old_sl:] = scales_np
 
             ext_arr = loc_group["extrinsics"]
             n_loc = ext_arr.shape[0]

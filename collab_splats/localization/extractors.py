@@ -1,4 +1,5 @@
 """Stage 2 — Local feature extraction + matching: each extractor owns its detect→match logic."""
+
 from __future__ import annotations
 
 import copy
@@ -21,7 +22,7 @@ _XFEAT_PATH = str(pathlib.Path(__file__).parents[2] / "third_party" / "xfeat")
 if _XFEAT_PATH not in sys.path:
     sys.path.insert(0, _XFEAT_PATH)
 
-from modules.xfeat import XFeat             # third_party/xfeat/modules/
+from modules.xfeat import XFeat  # third_party/xfeat/modules/
 
 from collab_splats.utils.torch_utils import RegistryMixin
 
@@ -34,12 +35,15 @@ class LocalFeatures:
 
     `scores` is populated by extractors that produce per-keypoint saliency
     (e.g. XFeatExtractor). Extractors that don't produce scores (e.g. DiskExtractor)
-    leave it as None — their matchers don't require it.
+    leave it as None — their matchers don't require it. `scales` is populated only
+    by the dense XFeat* path, which needs per-keypoint extraction scale to apply
+    subpixel refinement offsets at match time.
     """
 
-    keypoints: torch.Tensor              # (N, 2) float32 pixel [x, y]
-    descriptors: torch.Tensor            # (N, D) float32
-    scores: torch.Tensor | None = None   # (N,) float32 — XFeat only
+    keypoints: torch.Tensor  # (N, 2) float32 pixel [x, y]
+    descriptors: torch.Tensor  # (N, D) float32
+    scores: torch.Tensor | None = None  # (N,) float32 — XFeat only
+    scales: torch.Tensor | None = None  # (N,) — dense XFeat* only
 
 
 @dataclass
@@ -47,7 +51,7 @@ class MatchResult:
     """Matched pixel coordinates between a query and one reference image."""
 
     query_px: np.ndarray  # (K, 2) float32 xy in query image
-    ref_px: np.ndarray    # (K, 2) float32 xy in reference image
+    ref_px: np.ndarray  # (K, 2) float32 xy in reference image
 
     def __len__(self) -> int:
         return len(self.query_px)
@@ -113,15 +117,13 @@ class DiskExtractor(BaseLocalExtractor):
             LocalFeatures with keypoints (N,2), descriptors (N,128), scores=None.
         """
         # Convert HxWx3 uint8 to 1xCxHxW float tensor in [0, 1]
-        img_t = (
-            torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-        ).to(self._device)
+        img_t = (torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0).to(self._device)
 
         # Detect keypoints and compute descriptors
         with torch.no_grad():
             features = self._disk(img_t, self._top_k, pad_if_not_divisible=True)
-        kpts = features[0].keypoints.cpu()    # (N, 2)
-        descs = features[0].descriptors.cpu() # (N, 128)
+        kpts = features[0].keypoints.cpu()  # (N, 2)
+        descs = features[0].descriptors.cpu()  # (N, 128)
 
         return LocalFeatures(keypoints=kpts, descriptors=descs)
 
@@ -160,7 +162,7 @@ class DiskExtractor(BaseLocalExtractor):
         with torch.no_grad():
             result = self._lightglue(data)
 
-        matches0 = result["matches0"][0].cpu()   # (N,)
+        matches0 = result["matches0"][0].cpu()  # (N,)
         valid = matches0 > -1
         idx_q = torch.where(valid)[0]
         idx_db = matches0[valid]
@@ -200,15 +202,13 @@ class XFeatExtractor(BaseLocalExtractor):
             LocalFeatures with keypoints (N,2), descriptors (N,64), scores (N,).
         """
         # Convert HxWx3 uint8 to 1xCxHxW float tensor in [0, 1]
-        img_t = (
-            torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-        )
+        img_t = torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0
 
         # Detect keypoints and compute descriptors
         out = self._xfeat.detectAndCompute(img_t, top_k=self._top_k)
-        kpts = out[0]["keypoints"].cpu()      # (N, 2)
-        scores = out[0]["scores"].cpu()       # (N,)
-        descs = out[0]["descriptors"].cpu()   # (N, 64)
+        kpts = out[0]["keypoints"].cpu()  # (N, 2)
+        scores = out[0]["scores"].cpu()  # (N,)
+        descs = out[0]["descriptors"].cpu()  # (N, 64)
 
         return LocalFeatures(keypoints=kpts, descriptors=descs, scores=scores)
 
@@ -267,6 +267,92 @@ class XFeatExtractor(BaseLocalExtractor):
         )
 
 
+@BaseLocalExtractor.register("xfeat-star")
+class XFeatStarExtractor(BaseLocalExtractor):
+    """XFeat* semi-dense matcher: cached dense features + pairwise match refinement.
+
+    Mirrors XFeat.match_xfeat_star (accelerated_features xfeat_matching notebook
+    flow) but splits it around the per-frame cache: detectAndComputeDense output
+    (keypoints/descriptors/scales) is stored per frame, then batch_match +
+    refine_matches run pairwise on the cached dicts — no image needed at match
+    time. Output pixel pairs carry subpixel-refined query coordinates.
+    """
+
+    def __init__(self, top_k: int = 4096, device: str | None = None):
+        self._top_k = top_k
+        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Load XFeat backbone (also hosts the fine_matcher head used at match time)
+        self._xfeat = XFeat()
+
+        logger.debug("XFeatStarExtractor: loaded on %s", self._device)
+
+    def extract(self, image: np.ndarray) -> LocalFeatures:
+        """Extract dense multiscale XFeat* keypoints, descriptors, and scales.
+
+        Args:
+            image: HxWx3 uint8 RGB image.
+
+        Returns:
+            LocalFeatures with keypoints (K,2), descriptors (K,64), scales (K,);
+            K = top_k, sorted most→least reliable.
+        """
+        # Convert HxWx3 uint8 to 1xCxHxW float tensor in [0, 1]
+        img_t = torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+
+        # Dense dual-scale extraction; batch dim of 1 is squeezed for caching
+        out = self._xfeat.detectAndComputeDense(img_t, top_k=self._top_k)
+        kpts = out["keypoints"][0].cpu()  # (K, 2)
+        descs = out["descriptors"][0].cpu()  # (K, 64)
+        scales = out["scales"][0].cpu()  # (K,)
+
+        return LocalFeatures(keypoints=kpts, descriptors=descs, scales=scales)
+
+    def match(
+        self,
+        query: LocalFeatures,
+        db: LocalFeatures,
+        image_hw: tuple[int, int],
+    ) -> MatchResult:
+        """Match cached dense features pairwise with subpixel refinement.
+
+        Composes XFeat.batch_match + refine_matches exactly as match_xfeat_star
+        does, but on two cached feature dicts instead of raw images. Query is
+        passed as d0, so refine_matches applies subpixel offsets to the QUERY
+        keypoints; ref_px stays on the db coarse grid (sampled for 2D→3D lookup).
+
+        Args:
+            query:    LocalFeatures from the query image (must have scales).
+            db:       LocalFeatures from the database image.
+            image_hw: (H, W) — unused; kept for the extractor interface.
+
+        Returns:
+            MatchResult of matched (query_px, ref_px) pixel pairs.
+        """
+        # Rebuild the batched dicts refine_matches expects (B=1)
+        d0 = {
+            "keypoints": query.keypoints.unsqueeze(0).to(self._device),
+            "descriptors": query.descriptors.unsqueeze(0).to(self._device),
+            "scales": query.scales.unsqueeze(0).to(self._device),
+        }
+        d1 = {
+            "keypoints": db.keypoints.unsqueeze(0).to(self._device),
+            "descriptors": db.descriptors.unsqueeze(0).to(self._device),
+        }
+
+        # Mutual-NN coarse match, then fine_matcher subpixel refinement (upstream
+        # wraps both in inference_mode via match_xfeat_star — replicate that)
+        with torch.inference_mode():
+            idxs_list = self._xfeat.batch_match(d0["descriptors"], d1["descriptors"])
+            pairs = self._xfeat.refine_matches(d0, d1, matches=idxs_list, batch_idx=0)
+
+        # (K, 4) rows are [x_query, y_query, x_ref, y_ref]
+        if len(pairs) == 0:
+            return _empty_match()
+        pairs = pairs.cpu().numpy().astype(np.float32)
+        return MatchResult(query_px=pairs[:, :2], ref_px=pairs[:, 2:])
+
+
 @BaseLocalExtractor.register("loma")
 class LomaExtractor(BaseLocalExtractor):
     """LoMa-B local feature extractor and matcher (ECCV 2026).
@@ -311,12 +397,12 @@ class LomaExtractor(BaseLocalExtractor):
         # HxWx3 uint8 -> (1,3,784,784) float [0,1]; LoMa normalizes internally.
         # Square resize is safe: keypoints come back normalized [-1,1], which is
         # resolution-invariant, and are denormalized against the ORIGINAL (W,H).
-        img_t = (
-            torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-        )
+        img_t = torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0) / 255.0
         img_t = F.interpolate(
-            img_t, size=(self._inference_hw, self._inference_hw),
-            mode="bilinear", align_corners=False,
+            img_t,
+            size=(self._inference_hw, self._inference_hw),
+            mode="bilinear",
+            align_corners=False,
         ).to(self._device)
 
         # Detect (normalized [-1,1] xy) then describe at those keypoints.
@@ -325,11 +411,9 @@ class LomaExtractor(BaseLocalExtractor):
         # any lomatch upgrade.
         with torch.inference_mode():
             det = self._loma.detect(img_t, num_keypoints=self._top_k)
-            kpts_n = det["keypoints"]            # (1, N, 2) normalized xy
-            probs = det["keypoint_probs"]        # (1, N)
-            descs = self._loma._descriptor.describe_keypoints(img_t, kpts_n)[
-                "descriptions"
-            ]                                    # (1, N, 256)
+            kpts_n = det["keypoints"]  # (1, N, 2) normalized xy
+            probs = det["keypoint_probs"]  # (1, N)
+            descs = self._loma._descriptor.describe_keypoints(img_t, kpts_n)["descriptions"]  # (1, N, 256)
 
         # Denormalize to original pixel coords: x_px = W * (x + 1) / 2
         wh = torch.tensor([W, H], dtype=torch.float32)

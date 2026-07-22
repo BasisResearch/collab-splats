@@ -188,6 +188,31 @@ def test_load_index_round_trip(tmp_path):
     assert loaded.image_paths == ids
 
 
+def test_load_index_round_trips_scales(tmp_path):
+    """Optional per-keypoint scales (dense XFeat*) survive save_index → load_index."""
+    pts3d, world_points, extrinsics, intrinsics = _make_scene()
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+
+    # Stamp synthetic scales onto the cached frame features (dense XFeat* path)
+    for f in localizer._frame_features:
+        f.scales = torch.rand(len(f.keypoints))
+
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "xfeat-star")
+
+    loaded = CameraLocalizer.load_index(
+        zarr_path=zarr_path,
+        extractor_name="xfeat-star",
+        world_points=world_points,
+        extrinsics=extrinsics,
+    )
+
+    for orig, rt in zip(localizer._frame_features, loaded._frame_features):
+        assert rt.scales is not None
+        np.testing.assert_allclose(rt.scales.numpy(), orig.scales.numpy(), rtol=1e-6)
+
+
 def test_load_index_missing_extractor_raises(tmp_path):
     """load_index raises KeyError when extractor cache not found."""
     zarr_path = _empty_zarr(tmp_path)

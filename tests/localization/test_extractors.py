@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from collab_splats.localization.extractors import (
+    BaseLocalExtractor,
     DiskExtractor,
     MatchResult,
     XFeatExtractor,
@@ -49,6 +50,20 @@ def test_match_returns_pixel_pairs_xfeat(image_pair):
     kq, kr = f0.keypoints.numpy(), f1.keypoints.numpy()
     assert all(((kq == q).all(axis=1)).any() for q in m.query_px[:5])
     assert all(((kr == r).all(axis=1)).any() for r in m.ref_px[:5])
+
+
+def test_xfeat_star_matches_shifted_image():
+    """XFeat* dense extract + refined pairwise match recovers a known shift."""
+    rng = np.random.default_rng(1)
+    img0 = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    img1 = np.roll(img0, 6, axis=1)
+    ex = BaseLocalExtractor.get("xfeat-star")(top_k=2048)
+    f0, f1 = ex.extract(img0), ex.extract(img1)
+    assert f0.scales is not None  # dense path caches scales
+    m = ex.match(f0, f1, img0.shape[:2])
+    assert isinstance(m, MatchResult) and len(m) > 50
+    dx = m.ref_px[:, 0] - m.query_px[:, 0]
+    assert abs(np.median(dx) - 6) < 1.5  # recovers the shift
 
 
 def test_empty_match_helper():

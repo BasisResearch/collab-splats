@@ -699,9 +699,80 @@ def test_run_feedforward_attaches_viewer_when_enabled(tmp_path):
             viz_port=9999,
         )
 
-    mock_lc_cls.assert_called_once_with(base=mock_creator)
+    mock_lc_cls.assert_called_once_with(base=mock_creator, config=None)
     mock_viewer_cls.assert_called_once_with(port=9999)
     assert mock_lc_instance.viz is mock_viewer_cls.return_value
+
+
+def test_run_feedforward_builds_lc_config_from_dict(tmp_path):
+    """A dict loop_closure builds a LoopClosureConfig from its knobs and passes it through."""
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
+    from collab_splats.wrapper import reconstructor as R
+
+    mock_creator = MagicMock()
+    mock_lc_instance = MagicMock(outputs=None)
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
+        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch.object(R, "FrameStore"),
+    ):
+        R._run_feedforward(
+            backend="vggtx",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure={"enabled": True, "submap_size": 32, "submap_overlap": 2},
+            viz_enabled=False,
+            viz_port=8080,
+        )
+
+    # LoopClosure got a config carrying the dict knobs
+    _, kwargs = mock_lc_cls.call_args
+    cfg = kwargs["config"]
+    assert isinstance(cfg, LoopClosureConfig)
+    assert (cfg.submap_size, cfg.submap_overlap) == (32, 2)
+
+
+def test_run_feedforward_dict_enabled_false_skips_lc(tmp_path):
+    """loop_closure={'enabled': False} runs the bare creator — no LoopClosure wrap."""
+    from collab_splats.wrapper import reconstructor as R
+
+    mock_creator = MagicMock(outputs=None)
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
+        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure") as mock_lc_cls,
+        patch.object(R, "FrameStore"),
+    ):
+        R._run_feedforward(
+            backend="vggtx",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure={"enabled": False, "submap_size": 32},
+            viz_enabled=False,
+            viz_port=8080,
+        )
+
+    mock_lc_cls.assert_not_called()
+
+
+def test_run_feedforward_invalid_lc_knob_raises(tmp_path):
+    """An unknown loop_closure knob fails loud with the valid-key list."""
+    from collab_splats.wrapper import reconstructor as R
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=MagicMock()),
+        patch.object(R, "FrameStore"),
+    ):
+        with pytest.raises(ValueError, match="Invalid pointcloud.loop_closure knob"):
+            R._run_feedforward(
+                backend="vggtx",
+                frames_zarr=tmp_path / "frames.zarr",
+                output_dir=tmp_path / "out",
+                loop_closure={"bogus_knob": 1},
+                viz_enabled=False,
+                viz_port=8080,
+            )
 
 
 def test_run_feedforward_no_viewer_when_viz_disabled(tmp_path):

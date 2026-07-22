@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import shutil
@@ -131,7 +132,7 @@ def _run_feedforward(
     backend: str,
     frames_zarr: Path,
     output_dir: Path,
-    loop_closure: bool,
+    loop_closure: bool | dict,
     viz_enabled: bool,
     viz_port: int,
 ) -> tuple["PointcloudResult", "Viewer | None"]:
@@ -141,14 +142,35 @@ def _run_feedforward(
     (semantics lift, mesh) can load depth/confidence/pixel data. Returns the
     PointcloudResult and the created Viewer (None unless loop_closure + viz_enabled),
     so callers can keep the viser server reachable after this function returns.
+
+    ``loop_closure`` is either a bool (enable with all LoopClosureConfig defaults) or
+    a dict of knobs (submap_size, submap_overlap, scale_method, …); an ``enabled`` key
+    in the dict toggles it, defaulting to True when any knobs are given.
     """
     # Heavy dep imports — kept inline so module loads without GPU/model deps
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+    from collab_splats.geometry.loop_closure.wrapper import (
+        LoopClosure,
+        LoopClosureConfig,
+    )
     from collab_splats.pointcloud.feedforward import (
         MapAnythingCreator,
         VGGTOmegaCreator,
         VGGTXCreator,
     )
+
+    # Normalize the bool|dict loop_closure config into (enabled, LoopClosureConfig|None)
+    if isinstance(loop_closure, dict):
+        # A knobs dict enables LC unless it explicitly sets enabled: false.
+        lc_enabled = loop_closure.get("enabled") is not False
+        lc_knobs = {k: v for k, v in loop_closure.items() if k != "enabled"}
+        try:
+            lc_config = LoopClosureConfig(**lc_knobs) if lc_knobs else None
+        except TypeError as e:
+            valid = [f.name for f in dataclasses.fields(LoopClosureConfig)]
+            raise ValueError(f"Invalid pointcloud.loop_closure knob ({e}); valid keys: {valid}") from e
+    else:
+        lc_enabled = bool(loop_closure)
+        lc_config = None
 
     # Select creator class by backend name
     creator_map = {
@@ -161,8 +183,8 @@ def _run_feedforward(
     # Wrap with loop closure if requested; viz has nothing to show without it, so only
     # attach the viser Viewer (also a heavy/websocket dep) when both are enabled
     viewer = None
-    if loop_closure:
-        creator = LoopClosure(base=creator)
+    if lc_enabled:
+        creator = LoopClosure(base=creator, config=lc_config)
         if viz_enabled:
             from collab_splats.viewer import Viewer
 

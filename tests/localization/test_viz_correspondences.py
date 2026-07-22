@@ -62,6 +62,23 @@ def test_correspondences_for_ref_duck_typed():
     assert len(q_px) == 2 and mask.tolist() == [False, True]
 
 
+def test_correspondences_for_ref_rescales_to_display_hw():
+    """ref_px scales from loc.ref_hw space to the display image's resolution."""
+    loc = SimpleNamespace(
+        pts2d=np.zeros((2, 2), np.float32),
+        pts2d_ref=np.array([[10.0, 20.0], [30.0, 40.0]], np.float32),
+        ref_frame_indices=np.array([0, 0]),
+        inlier_mask=None,
+        ref_hw=(100, 200),
+    )
+    # Display image is 2x the indexed resolution in both axes
+    _, r_px, _ = correspondences_for_ref(loc, 0, ref_image_hw=(200, 400))
+    np.testing.assert_allclose(r_px, [[20.0, 40.0], [60.0, 80.0]])
+    # Same resolution (or absent ref_hw) → untouched
+    _, r_same, _ = correspondences_for_ref(loc, 0, ref_image_hw=(100, 200))
+    np.testing.assert_allclose(r_same, loc.pts2d_ref)
+
+
 def test_plot_correspondences_same_resolution_still_works():
     query = np.zeros((40, 60, 3), dtype=np.uint8)
     ref_image = np.zeros((40, 60, 3), dtype=np.uint8)

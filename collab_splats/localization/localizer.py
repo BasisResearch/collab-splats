@@ -71,6 +71,10 @@ class LocalizationResult:
     (same ordering as pts2d), enabling visualisation of matched keypoint pairs
     across query and reference images.
     ref_frame_indices records which reference frame each correspondence came from.
+
+    pts2d_ref lives in the pixel space of the reference images the index was built
+    from, recorded in ref_hw — scale by (W_display / ref_hw[1], H_display / ref_hw[0])
+    before drawing on a reference image at a different resolution.
     """
 
     pose: np.ndarray | None  # (4, 4) world-to-camera, or None
@@ -83,6 +87,7 @@ class LocalizationResult:
     ref_frame_indices: np.ndarray | None = None  # (M,) int32 — source reference frame per correspondence
     query_features: "LocalFeatures | None" = None  # always set by localize(); pass to add_localized_frame
     query_intrinsics: np.ndarray | None = None  # (3, 3) K used for PnP (seed or supplied)
+    ref_hw: tuple[int, int] | None = None  # (H, W) pixel space of pts2d_ref (reference-image resolution)
 
     @property
     def ranked_ref_frames(self) -> list[int]:
@@ -792,7 +797,21 @@ class CameraLocalizer:
             m = self._extractor.match(query_feats, db_feats, self._image_hw)
             if len(m) == 0:
                 continue
-            pts3d, valid = sample_world_points(self._world_points[i], m.ref_px)
+            # Matched ref pixels live in the reference-image grid (_image_hw), which may be
+            # full resolution while world_points is model resolution — map between the two
+            # grids with the align_corners=True corner convention before sampling.
+            wp = self._world_points[i]
+            ref_px_wp = m.ref_px
+            if (wp.shape[0], wp.shape[1]) != tuple(self._image_hw):
+                scale = np.array(
+                    [
+                        (wp.shape[1] - 1) / max(self._image_hw[1] - 1, 1),
+                        (wp.shape[0] - 1) / max(self._image_hw[0] - 1, 1),
+                    ],
+                    dtype=np.float32,
+                )
+                ref_px_wp = m.ref_px * scale
+            pts3d, valid = sample_world_points(wp, ref_px_wp)
             if not valid.any():
                 continue
             all_q.append(m.query_px[valid])
@@ -818,6 +837,7 @@ class CameraLocalizer:
                 ref_frame_indices=None,
                 query_features=query_feats,
                 query_intrinsics=query_intrinsics,
+                ref_hw=tuple(self._image_hw),
             )
 
         # Assemble correspondence arrays for PnP
@@ -876,6 +896,7 @@ class CameraLocalizer:
                 ref_frame_indices=ref_frame_indices,
                 query_features=query_feats,
                 query_intrinsics=query_intrinsics,
+                ref_hw=tuple(self._image_hw),
             )
 
         logger.info(
@@ -901,4 +922,5 @@ class CameraLocalizer:
             ref_frame_indices=ref_frame_indices,
             query_features=query_feats,
             query_intrinsics=query_intrinsics,
+            ref_hw=tuple(self._image_hw),
         )

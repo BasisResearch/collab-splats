@@ -16,12 +16,23 @@ logger = logging.getLogger(__name__)
 ########################################################################
 
 
-def correspondences_for_ref(loc, ref_idx: int):
+def correspondences_for_ref(loc, ref_idx: int, ref_image_hw: "tuple[int, int] | None" = None):
     """(query_px, ref_px, inlier_mask) for one reference frame, from any object
-    exposing pts2d / pts2d_ref / ref_frame_indices / inlier_mask arrays."""
+    exposing pts2d / pts2d_ref / ref_frame_indices / inlier_mask arrays.
+
+    ref_px lives in the pixel space the localizer indexed (loc.ref_hw). Pass
+    ref_image_hw=(H, W) of the image you will draw on to rescale ref_px into its
+    space when the display resolution differs.
+    """
     sel = loc.ref_frame_indices == ref_idx
     mask = loc.inlier_mask[sel] if loc.inlier_mask is not None else None
-    return loc.pts2d[sel], loc.pts2d_ref[sel], mask
+    ref_px = loc.pts2d_ref[sel]
+    # Rescale ref pixels from the result's native space to the display image's space
+    ref_hw = getattr(loc, "ref_hw", None)
+    if ref_image_hw is not None and ref_hw is not None and tuple(ref_image_hw) != tuple(ref_hw):
+        scale = np.array([ref_image_hw[1] / ref_hw[1], ref_image_hw[0] / ref_hw[0]], dtype=np.float32)
+        ref_px = ref_px * scale
+    return loc.pts2d[sel], ref_px, mask
 
 
 ########################################################################

@@ -750,10 +750,12 @@ class LocalizePage(param.Parameterized):
                 if not Path(out.ref_image_paths[ref]).exists():
                     continue
                 ref_image = np.asarray(open_image(out.ref_image_paths[ref]).convert("RGB"))
+            # ref keypoints live in model-res space (loc.ref_hw) — rescale to the
+            # displayed frame's resolution or lines land in the top-left corner
             mfig = plot_correspondences(
                 out.query_frame,
                 ref_image,
-                *correspondences_for_ref(loc, int(ref)),
+                *correspondences_for_ref(loc, int(ref), ref_image_hw=ref_image.shape[:2]),
                 max_pairs=config.max_pairs,
                 show=False,
             )

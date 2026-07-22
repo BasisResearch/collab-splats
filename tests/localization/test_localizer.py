@@ -292,3 +292,49 @@ def test_localize_via_depth_lookup():
     assert res.pose is not None
     np.testing.assert_allclose(res.pose, np.eye(4), atol=1e-2)
     assert res.n_correspondences >= 10
+    assert res.ref_hw == (H, W)
+
+
+def test_localize_fullres_images_modelres_world_points():
+    """Ref images at 2x world_points resolution still localize — ref_px rescaled to the wp grid."""
+    Hm = Wm = 64  # model-res world_points grid
+    Hf = Wf = 128  # full-res reference/query images
+    rng = np.random.default_rng(1)
+    img = rng.integers(0, 255, (Hf, Wf, 3), dtype=np.uint8)
+
+    # Planar scene at z=2 under the FULL-RES pinhole K; model grid cell m maps to
+    # full-res pixel m * (Wf-1)/(Wm-1) (align_corners corner convention)
+    f = 100.0
+    K = np.array([[f, 0, Wf / 2], [0, f, Hf / 2], [0, 0, 1]], dtype=np.float32)
+    ms_x, ms_y = np.meshgrid(np.arange(Wm), np.arange(Hm))
+    px_full_x = ms_x * (Wf - 1) / (Wm - 1)
+    px_full_y = ms_y * (Hf - 1) / (Hm - 1)
+    z = 2.0
+    wp = np.stack(
+        [(px_full_x - Wf / 2) / f * z, (px_full_y - Hf / 2) / f * z, np.full(ms_x.shape, z, dtype=np.float64)], -1
+    ).astype(np.float32)
+
+    class StubExtractor(BaseLocalExtractor):
+        def extract(self, image):
+            # 4x3 grid in FULL-RES pixel space — collinear keypoints degenerate for planar PnP
+            k = torch.tensor([[16.0 + 28 * (i % 4), 16.0 + 36 * (i // 4)] for i in range(12)])
+            return LocalFeatures(keypoints=k, descriptors=torch.zeros(12, 4))
+
+        def match(self, query, db, image_hw):
+            px = query.keypoints.numpy().astype(np.float32)
+            return MatchResult(query_px=px, ref_px=px.copy())  # identity matches
+
+    loc = CameraLocalizer(
+        world_points=wp[None],  # (1, Hm, Wm, 3) — model res
+        extrinsics=np.eye(4, dtype=np.float32)[None],
+        images=[img],  # full res
+        ids=["frame_0"],
+        extractor=StubExtractor(),
+    )
+    res = loc.localize(img, query_intrinsics=K)
+    assert res.pose is not None
+    np.testing.assert_allclose(res.pose, np.eye(4), atol=1e-2)
+    assert res.n_correspondences >= 10
+    # pts2d_ref stays in the reference-image (full-res) space
+    assert res.ref_hw == (Hf, Wf)
+    assert res.pts2d_ref.max() > Wm  # not clipped into the model grid

@@ -55,10 +55,10 @@ class Viewer:
 
         # View controls: set the world up-axis and recenter the camera on the scene.
         self.up_direction = self.server.gui.add_dropdown(
-            "Up direction", ("+z", "-z", "+y", "-y", "+x", "-x"), initial_value="+z"
+            "Up direction", ("-y", "+y", "+z", "-z", "+x", "-x"), initial_value="-y"
         )
         self.up_direction.on_update(lambda _: self.server.scene.set_up_direction(self.up_direction.value))
-        self.server.scene.set_up_direction("+z")
+        self.server.scene.set_up_direction("-y")
         self.server.gui.add_button("Reset view").on_click(lambda _: self._reset_view())
 
     ########################################################

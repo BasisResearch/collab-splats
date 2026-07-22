@@ -24,10 +24,12 @@ def test_lc_collate_uses_window_views_not_full_sequence():
 
     def fake_postprocess(raw_list, views_ctx, apply_mask):
         captured_views.extend(views_ctx)
-        # Include depth_z/conf — collation emits them as 'depth'/'depth_conf'
+        # Include depth_z/conf — collation emits them as 'depth'/'depth_conf';
+        # img_no_norm is the [0,1] denormalized image collation stacks into 'colors'
         return [
             {"camera_poses": [torch.eye(4).unsqueeze(0)],
              "intrinsics": [torch.eye(3).unsqueeze(0)],
+             "img_no_norm": torch.full((1, 4, 4, 3), 0.5),
              "depth_z": torch.ones(1, 4, 4, 1),
              "conf": torch.ones(1, 4, 4)}
             for _ in raw_list

@@ -60,4 +60,5 @@ def test_loma_match_returns_pixel_pairs(loma_extractor):
 def test_loma_exported_from_localization_package():
     from collab_splats.localization import LomaExtractor as le
     from collab_splats.localization import LomaGExtractor as lge
+
     assert le is LomaExtractor and lge is LomaGExtractor

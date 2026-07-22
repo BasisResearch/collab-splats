@@ -1,5 +1,6 @@
-import torch
 import pytest
+import torch
+
 from collab_splats.localization import BaseRetrievalExtractor, DinoSaladExtractor
 
 
@@ -22,18 +23,22 @@ def test_base_extractor_forward_abstract():
 ########## PECLIPExtractor ############################
 ########################################################
 
+
 def test_registry_get_pe_clip():
     from collab_splats.localization import BaseRetrievalExtractor, PECLIPExtractor
+
     cls = BaseRetrievalExtractor.get("pe-clip")
     assert cls is PECLIPExtractor
 
 
 def test_pe_clip_forward_shape_and_norm():
     """forward() returns (1, 1024) unit-norm tensor without loading real weights."""
-    from collab_splats.localization import PECLIPExtractor
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     import torch
     from PIL import Image
+
+    from collab_splats.localization import PECLIPExtractor
 
     fake_img_emb = torch.randn(1, 1024)
     fake_img_emb = fake_img_emb / fake_img_emb.norm(dim=-1, keepdim=True)
@@ -59,9 +64,11 @@ def test_pe_clip_forward_shape_and_norm():
 
 def test_pe_clip_encode_text_shape_and_norm():
     """encode_text() returns (2, 1024) unit-norm tensor."""
-    from collab_splats.localization import PECLIPExtractor
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     import torch
+
+    from collab_splats.localization import PECLIPExtractor
 
     fake_text_emb = torch.randn(2, 1024)
     fake_text_emb = fake_text_emb / fake_text_emb.norm(dim=-1, keepdim=True)

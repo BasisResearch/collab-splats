@@ -51,9 +51,7 @@ def sample_world_points(
     interp = F.grid_sample(wp, grid[None, None].float(), align_corners=True, mode="bilinear")[0, :, 0]  # (3,K)
     valid = ~torch.any(torch.isnan(interp), dim=0)
     # Out-of-bounds px → invalid (grid_sample pads with border values otherwise)
-    in_bounds = torch.from_numpy(
-        (px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1)
-    )
+    in_bounds = torch.from_numpy((px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1))
     valid = (valid & in_bounds).numpy()
     return interp.T.numpy().astype(np.float32), valid
 
@@ -101,87 +99,6 @@ class LocalizationResult:
         return [int(i) for i in order if counts[i] > 0]
 
 
-def _build_frame_assignments(
-    pts3d: np.ndarray,
-    extrinsics: np.ndarray,
-    intrinsics: np.ndarray,
-    frame_keypoints: list[torch.Tensor],
-    image_hw: tuple[int, int],
-    radius: float = 8.0,
-) -> list[dict[int, int]]:
-    """For each reference frame, map keypoint indices to 3D point indices.
-
-    Projects all 3D points into each frame and assigns each keypoint to its
-    nearest visible projected point within `radius` pixels via torch.cdist.
-
-    Args:
-        pts3d:           (P, 3) world-space points.
-        extrinsics:      (N, 4, 4) world-to-camera transforms.
-        intrinsics:      (N, 3, 3) camera intrinsics K per frame.
-        frame_keypoints: list of N tensors, each (K_i, 2) keypoints for frame i.
-        image_hw:        (H, W) image dimensions for bounds filtering.
-        radius:          max pixel distance for a keypoint to claim a 3D point.
-
-    Returns:
-        List of N dicts: {kpt_idx: pt3d_idx} for each frame.
-    """
-    H, W = image_hw
-    assignments: list[dict[int, int]] = []
-
-    for i in range(len(frame_keypoints)):
-        R = extrinsics[i, :3, :3]  # (3, 3)
-        t = extrinsics[i, :3, 3]  # (3,)
-        K = intrinsics[i]  # (3, 3)
-
-        # Project pts3d into frame i — world-to-camera: p_cam = R @ p_world + t
-        pts_cam = pts3d @ R.T + t  # (P, 3)
-        visible_mask = pts_cam[:, 2] > 0  # in front of camera
-        visible_idx = np.where(visible_mask)[0]
-
-        frame_assignment: dict[int, int] = {}
-        kpts = frame_keypoints[i]
-
-        if len(visible_idx) == 0 or len(kpts) == 0:
-            assignments.append(frame_assignment)
-            continue
-
-        # Perspective projection: p_2d = K @ p_cam, then divide by depth
-        pts_cam_vis = pts_cam[visible_mask]  # (Q, 3)
-        pts_proj = pts_cam_vis @ K.T  # (Q, 3)
-        pts_proj_2d = pts_proj[:, :2] / pts_proj[:, 2:3]  # (Q, 2)  pixel coords
-
-        # Filter to image bounds
-        in_bounds = (
-            (pts_proj_2d[:, 0] >= 0) & (pts_proj_2d[:, 0] < W) & (pts_proj_2d[:, 1] >= 0) & (pts_proj_2d[:, 1] < H)
-        )
-        if not in_bounds.any():
-            assignments.append(frame_assignment)
-            continue
-
-        pts_proj_valid = torch.from_numpy(pts_proj_2d[in_bounds]).float()  # (V, 2)
-        valid_pt_idx = visible_idx[in_bounds]  # (V,) — original pt3d indices
-
-        # Nearest-neighbour via torch.cdist: shape (K_i, V)
-        dists = torch.cdist(kpts.float(), pts_proj_valid)  # (K_i, V)
-        min_dists, nearest = dists.min(dim=1)  # (K_i,)
-
-        # One-to-one: each 3D point is claimed by at most the closest keypoint
-        claimed: dict[int, tuple[int, float]] = {}  # valid_pt_local_idx → (kpt_idx, dist)
-        for kpt_idx in range(len(kpts)):
-            d = min_dists[kpt_idx].item()
-            if d < radius:
-                pt_local = int(nearest[kpt_idx])
-                if pt_local not in claimed or d < claimed[pt_local][1]:
-                    claimed[pt_local] = (kpt_idx, d)
-
-        for pt_local, (kpt_idx, _) in claimed.items():
-            frame_assignment[kpt_idx] = int(valid_pt_idx[pt_local])
-
-        assignments.append(frame_assignment)
-
-    return assignments
-
-
 class CameraLocalizer:
     """Locates a query camera within a known 3D scene.
 
@@ -196,55 +113,47 @@ class CameraLocalizer:
 
     def __init__(
         self,
-        pts3d: np.ndarray,
+        world_points: np.ndarray,
         extrinsics: np.ndarray,
-        intrinsics: np.ndarray,
         images,  # Iterable[np.ndarray] — RGB arrays, one per reference frame
         ids: list[str],  # stable per-frame labels, index-aligned with images
         extractor=None,
-        radius: float = 8.0,
         config: dict | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
     ):
         """Build feature index from scene data.
 
         Args:
-            pts3d:       (P, 3) float32 world-space 3D points.
-            extrinsics:  (N, 4, 4) float32 world-to-camera transforms.
-            intrinsics:  (N, 3, 3) float32 camera intrinsics K per frame.
-            images:      iterable of (H, W, 3) uint8 RGB arrays, one per reference frame.
-                         Pixel fetching is the caller's responsibility — this class does no image IO.
-            ids:         length-N list of stable per-frame string labels, index-aligned with images.
-            extractor:   local feature extractor; defaults to DiskExtractor().
-            radius:      pixel radius for 2D→3D keypoint assignment.
-            config:      solver options dict. Keys:
-                           "estimation" → pycolmap estimation_options
-                             (default: {"ransac": {"max_error": 50}})
-                           "refinement" → pycolmap refinement_options
-                             (default: {"refine_focal_length": True,
-                                        "refine_extra_params": True})
+            world_points: (N, H, W, 3) float32 world-space per-pixel point maps, one per
+                          reference frame — 2D→3D lookup samples these at matched ref pixels.
+            extrinsics:   (N, 4, 4) float32 world-to-camera transforms.
+            images:       iterable of (H, W, 3) uint8 RGB arrays, one per reference frame.
+                          Pixel fetching is the caller's responsibility — this class does no image IO.
+            ids:          length-N list of stable per-frame string labels, index-aligned with images.
+            extractor:    local feature extractor; defaults to DiskExtractor().
+            config:       solver options dict. Keys:
+                            "estimation" → pycolmap estimation_options
+                              (default: {"ransac": {"max_error": 50}})
+                            "refinement" → pycolmap refinement_options
+                              (default: {"refine_focal_length": True,
+                                         "refine_extra_params": True})
         """
         self.config = config or {}
 
         # Store scene geometry for use in localize()
-        self._pts3d = pts3d
+        self._world_points = world_points
         self._extrinsics = extrinsics
-        self._intrinsics = intrinsics
 
         self._extractor = extractor if extractor is not None else DiskExtractor()
 
         # Store image paths and provenance for duplicate guard and dashboard display.
-        # _extrinsics stays reconstruction-only (assignment building depends on that); poses
+        # _extrinsics stays reconstruction-only (world_points indexing depends on that); poses
         # for appended localized frames accumulate here and are joined by the extrinsics property.
         self._image_paths: list[str] = [str(i) for i in ids]
         self._frame_sources: list[str] = []
         self._localized_extrinsics: list[np.ndarray] = []
 
-        logger.info(
-            "CameraLocalizer: building index for %d frames, %d 3D points",
-            len(ids),
-            len(pts3d),
-        )
+        logger.info("CameraLocalizer: building index for %d frames", len(ids))
 
         # TODO(future-C): pre-compute and store these features in feedforward.zarr so index
         # build is a zarr read (~1 s) instead of O(N) GPU inference. See spec 2026-05-29.
@@ -274,16 +183,6 @@ class CameraLocalizer:
             logger.debug("  frame %s: %d keypoints", fid, len(feats.keypoints))
 
         self._image_hw: tuple[int, int] = first_hw or (480, 640)
-
-        # Build kpt→3D assignment maps (one per frame)
-        self._assignments = _build_frame_assignments(
-            pts3d=pts3d,
-            extrinsics=extrinsics,
-            intrinsics=intrinsics,
-            frame_keypoints=[f.keypoints for f in self._frame_features],
-            image_hw=self._image_hw,
-            radius=radius,
-        )
 
         self._frame_sources = ["reconstruction"] * len(self._frame_features)
 
@@ -386,14 +285,12 @@ class CameraLocalizer:
         cls,
         zarr_path: "str | Path",
         extractor_name: str,
-        pts3d: np.ndarray,
+        world_points: np.ndarray,
         extrinsics: np.ndarray,
-        intrinsics: np.ndarray,
         config: "dict | None" = None,
         extractor=None,
-        radius: float = 8.0,
     ) -> "CameraLocalizer":
-        """Load feature index from zarr; rebuild kpt→3D assignments from current geometry.
+        """Load feature index from zarr; attach current scene geometry (world_points, extrinsics).
 
         Loads reconstruction/ and localized/ (if present) groups and merges them.
         Raises KeyError if extractor_name reconstruction cache not found.
@@ -444,7 +341,6 @@ class CameraLocalizer:
         loc_features: list[LocalFeatures] = []
         loc_image_paths: list[str] = []
         loc_extrinsics_list: list[np.ndarray] = []
-        loc_intrinsics_list: list[np.ndarray] = []
 
         if loc_key in store:
             loc_group = store[loc_key]
@@ -455,7 +351,6 @@ class CameraLocalizer:
                 loc_descs = loc_group["descriptors"][:]
                 loc_scores = loc_group["scores"][:] if "scores" in loc_group else None
                 loc_ext = loc_group["extrinsics"][:]  # (N_loc, 4, 4)
-                loc_intr = loc_group["intrinsics"][:]  # (N_loc, 3, 3)
                 for i in range(len(loc_offsets) - 1):
                     s, e = int(loc_offsets[i]), int(loc_offsets[i + 1])
                     f_kpts = torch.from_numpy(loc_kpts[s:e])
@@ -463,53 +358,17 @@ class CameraLocalizer:
                     f_scores = torch.from_numpy(loc_scores[s:e]) if loc_scores is not None else None
                     loc_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores))
                     loc_extrinsics_list.append(loc_ext[i])
-                    loc_intrinsics_list.append(loc_intr[i])
-
-        # ── Build assignments ─────────────────────────────────────────────────
-        # Second slow phase: projecting every 3D point into every frame on CPU. This is
-        # usually the multi-minute part of a cache-hit load — log around it.
-        logger.info(
-            "CameraLocalizer: rebuilding keypoint→3D assignments (%d frames × %s points)",
-            len(rec_features),
-            f"{len(pts3d):,}",
-        )
-        t0 = time.perf_counter()
-        rec_assignments = _build_frame_assignments(
-            pts3d=pts3d,
-            extrinsics=extrinsics,
-            intrinsics=intrinsics,
-            frame_keypoints=[f.keypoints for f in rec_features],
-            image_hw=hw,
-            radius=radius,
-        )
-        logger.info("CameraLocalizer: assignments rebuilt in %.1fs", time.perf_counter() - t0)
-
-        if loc_features:
-            loc_ext_arr = np.stack(loc_extrinsics_list, axis=0)
-            loc_intr_arr = np.stack(loc_intrinsics_list, axis=0)
-            loc_assignments = _build_frame_assignments(
-                pts3d=pts3d,
-                extrinsics=loc_ext_arr,
-                intrinsics=loc_intr_arr,
-                frame_keypoints=[f.keypoints for f in loc_features],
-                image_hw=hw,
-                radius=radius,
-            )
-        else:
-            loc_assignments = []
 
         # ── Assemble object without running __init__ extraction loop ──────────
         obj = object.__new__(cls)
         obj.config = config or {}
-        obj._pts3d = pts3d
+        obj._world_points = world_points
         obj._extrinsics = extrinsics
-        obj._intrinsics = intrinsics
         obj._extractor = extractor if extractor is not None else DiskExtractor()
         obj._image_hw = hw
         obj._frame_features = rec_features + loc_features
         obj._frame_sources = ["reconstruction"] * len(rec_features) + ["localized"] * len(loc_features)
         obj._image_paths = rec_image_paths + loc_image_paths
-        obj._assignments = rec_assignments + loc_assignments
         # Keep the localized poses so extrinsics stays aligned with image_paths/frame_sources
         obj._localized_extrinsics = list(loc_extrinsics_list)
 
@@ -533,9 +392,9 @@ class CameraLocalizer:
         """Extract features for new reconstruction frames; append to zarr cache.
 
         Pixels are supplied by the caller as RGB arrays (index-aligned with new_ids) —
-        this method performs no image IO. Does NOT update pts3d/extrinsics/intrinsics —
+        this method performs no image IO. Does NOT update world_points/extrinsics —
         caller must update those and call clear_localized_frames() + load_index() to
-        rebuild assignments.
+        reattach current geometry.
         """
         zarr_path = pathlib.Path(zarr_path)
 
@@ -616,7 +475,8 @@ class CameraLocalizer:
     ) -> None:
         """Add a successfully localized frame to the in-memory reference set.
 
-        Rebuilds kpt→3D assignments for the new frame from existing pts3d + given pose.
+        Localized frames carry no world_points map, so they serve as match context
+        only — localize() skips them for 2D→3D lookup.
         If zarr_path and extractor_name are provided, appends to localized/ in zarr.
         provenance: optional per-frame metadata (e.g. video_ref, session, camera,
         frame_idx) recorded alongside the localized frame in zarr.
@@ -633,20 +493,10 @@ class CameraLocalizer:
             )
             return
 
-        # Build kpt→3D assignment for this frame using existing pts3d
-        new_assignments = _build_frame_assignments(
-            pts3d=self._pts3d,
-            extrinsics=pose[np.newaxis],  # (1, 4, 4)
-            intrinsics=intrinsics[np.newaxis],  # (1, 3, 3)
-            frame_keypoints=[features.keypoints],
-            image_hw=self._image_hw,
-        )
-
         # Append in-memory; the pose keeps extrinsics aligned with image_paths/frame_sources
         self._frame_features.append(features)
         self._frame_sources.append("localized")
         self._image_paths.append(str(image_path))
-        self._assignments.extend(new_assignments)
         self._localized_extrinsics.append(np.asarray(pose))
 
         # Persist to zarr if requested
@@ -781,8 +631,8 @@ class CameraLocalizer:
         """Construct from a FeedforwardResult. Loads from zarr cache if available.
 
         Args:
-            result:            FeedforwardResult (or duck-typed object with .points,
-                               .extrinsics, .intrinsics, .image_paths, ._zarr_path).
+            result:            FeedforwardResult (or duck-typed object with .world_points,
+                               .extrinsics, .image_paths, ._zarr_path).
             images:            Caller-built reference pixel source (iterable of HxWx3 RGB
                                arrays), aligned to result. Consumed ONLY on a cache miss;
                                ignored on a cache hit (index loads from zarr).
@@ -792,11 +642,15 @@ class CameraLocalizer:
             progress_callback: Called as (frame_idx, total) during index build.
             zarr_path:         Override zarr cache path; falls back to result._zarr_path.
             extractor_name:    Override extractor registry key; auto-detected if None.
-            **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. radius).
+            **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. config).
 
         Returns:
             CameraLocalizer ready to localize query images in the given scene.
         """
+        # Depth-lookup localization requires the dense per-frame world map
+        if getattr(result, "world_points", None) is None:
+            raise ValueError("FeedforwardResult has no world_points — re-save zarr or load with load_world_points=True")
+
         extractor_inst = extractor if extractor is not None else DiskExtractor()
 
         # Determine extractor_name via registry reverse-lookup
@@ -825,11 +679,10 @@ class CameraLocalizer:
                     return cls.load_index(
                         zarr_path=zarr_path,
                         extractor_name=extractor_name,
-                        pts3d=result.points,
+                        world_points=result.world_points,
                         extrinsics=result.extrinsics,
-                        intrinsics=result.intrinsics,
                         extractor=extractor_inst,
-                        **{k: v for k, v in kwargs.items() if k in ("config", "radius")},
+                        **{k: v for k, v in kwargs.items() if k in ("config",)},
                     )
             except KeyError:
                 logger.debug("CameraLocalizer: cache miss for '%s', building index", extractor_name)
@@ -840,9 +693,8 @@ class CameraLocalizer:
         if images is None or ids is None:
             raise ValueError("from_feedforward: cache miss requires images and ids (caller must build them)")
         localizer = cls(
-            pts3d=result.points,
+            world_points=result.world_points,
             extrinsics=result.extrinsics,
-            intrinsics=result.intrinsics,
             images=images,
             ids=ids,
             extractor=extractor_inst,
@@ -866,8 +718,9 @@ class CameraLocalizer:
     ) -> LocalizationResult:
         """Estimate world-to-camera pose for a query image.
 
-        Matches query against all N reference frames, collects 2D↔3D
-        correspondences, solves absolute pose via LO-RANSAC + Ceres refinement.
+        Matches query against all reference frames; each matched ref pixel yields a
+        3D point by sampling that frame's dense world_points map (hloc
+        pose_from_cluster model). Pose solved via LO-RANSAC + Ceres refinement.
 
         Args:
             query_image:      HxWx3 uint8 RGB image.
@@ -890,43 +743,37 @@ class CameraLocalizer:
 
         logger.debug("CameraLocalizer.localize: query has %d keypoints", len(query_feats.keypoints))
 
-        # Match query against all reference frames; deduplicate via best score per 3D point
-        best_score: dict[int, float] = {}  # pt3d_idx → best confidence so far
-        best_2d: dict[int, np.ndarray] = {}  # pt3d_idx → corresponding query 2D point
-        best_ref_2d: dict[int, np.ndarray] = {}  # pt3d_idx → reference 2D point
-        best_ref_frame: dict[int, int] = {}  # pt3d_idx → reference frame index
-
+        # Match against each reference frame; 3D via depth lookup at the matched ref pixel.
+        # _world_points holds exactly the reconstruction frames (index-aligned with the
+        # leading "reconstruction" entries of _frame_features); localized frames are only
+        # ever appended AFTER them and are skipped here, so indexing by i stays valid.
+        all_q, all_3d, all_ref, all_frame = [], [], [], []
         for i, db_feats in enumerate(self._frame_features):
+            if self._frame_sources[i] != "reconstruction":
+                continue  # localized frames carry no world_points
             if len(db_feats.keypoints) == 0:
                 continue
-            matches = self._extractor.match(query_feats, db_feats, self._image_hw)
-            if len(matches) == 0:
+            m = self._extractor.match(query_feats, db_feats, self._image_hw)
+            if len(m) == 0:
                 continue
+            pts3d, valid = sample_world_points(self._world_points[i], m.ref_px)
+            if not valid.any():
+                continue
+            all_q.append(m.query_px[valid])
+            all_3d.append(pts3d[valid])
+            all_ref.append(m.ref_px[valid])
+            all_frame.append(np.full(int(valid.sum()), i, dtype=np.int32))
 
-            # Resolve matched db keypoints to world 3D points via assignment map
-            assignment = self._assignments[i]
-            for q_idx, db_idx in matches.numpy():
-                db_idx = int(db_idx)
-                if db_idx not in assignment:
-                    continue
-                pt3d_idx = assignment[db_idx]
-                pt2d = query_feats.keypoints[int(q_idx)].numpy().astype(np.float32)
-                score = 1.0  # uniform confidence; match_lighterglue idx does not carry per-match scores
+        n_corr = sum(len(a) for a in all_q)
 
-                if pt3d_idx not in best_score or score > best_score[pt3d_idx]:
-                    best_score[pt3d_idx] = score
-                    best_2d[pt3d_idx] = pt2d
-                    best_ref_2d[pt3d_idx] = db_feats.keypoints[int(db_idx)].numpy().astype(np.float32)
-                    best_ref_frame[pt3d_idx] = i
-
-        if len(best_2d) < 4:
+        if n_corr < 4:
             logger.warning(
                 "CameraLocalizer: only %d 2D↔3D correspondences — need ≥4 for PnP",
-                len(best_2d),
+                n_corr,
             )
             return LocalizationResult(
                 pose=None,
-                n_correspondences=len(best_2d),
+                n_correspondences=n_corr,
                 n_inliers=0,
                 pts2d=None,
                 pts3d_matched=None,
@@ -938,10 +785,10 @@ class CameraLocalizer:
             )
 
         # Assemble correspondence arrays for PnP
-        pts2d = np.array(list(best_2d.values()), dtype=np.float32)
-        pts3d_matched = np.array([self._pts3d[idx] for idx in best_2d.keys()], dtype=np.float32)
-        pts2d_ref = np.array(list(best_ref_2d.values()), dtype=np.float32)
-        ref_frame_indices = np.array(list(best_ref_frame.values()), dtype=np.int32)
+        pts2d = np.concatenate(all_q).astype(np.float32)
+        pts3d_matched = np.concatenate(all_3d).astype(np.float32)
+        pts2d_ref = np.concatenate(all_ref).astype(np.float32)
+        ref_frame_indices = np.concatenate(all_frame).astype(np.int32)
 
         # Build pycolmap camera from query intrinsics
         H, W = query_image.shape[:2]

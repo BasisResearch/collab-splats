@@ -18,9 +18,8 @@ def test_index_features_match_direct_extraction():
 
     # Under test: build the index via the decoupled (images, ids) path.
     loc = CameraLocalizer(
-        pts3d=np.zeros((1, 3), np.float32),
+        world_points=np.zeros((3, 96, 128, 3), np.float32),
         extrinsics=np.tile(np.eye(4, dtype=np.float32), (3, 1, 1)),
-        intrinsics=np.tile(np.eye(3, dtype=np.float32), (3, 1, 1)),
         images=iter(frames),
         ids=ids,
         extractor=extractor,

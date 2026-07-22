@@ -1,4 +1,5 @@
 """Tests for local extractor match() pixel-pair contract (MatchResult)."""
+
 import numpy as np
 import pytest
 

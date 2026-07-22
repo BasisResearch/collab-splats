@@ -25,10 +25,10 @@ def _make_localizer(tmp_path, n_frames=2):
     """Build a localizer from synthetic RGB arrays (no GPU, no image IO)."""
     images = [np.full((48, 64, 3), 128, dtype=np.uint8) for _ in range(n_frames)]
     ids = [f"{i:05d}.jpg" for i in range(n_frames)]
-    pts3d = np.random.default_rng(0).normal(size=(50, 3)).astype(np.float32)
+    wp = np.random.default_rng(0).normal(size=(n_frames, 48, 64, 3)).astype(np.float32)
     extr = np.tile(np.eye(4, dtype=np.float32), (n_frames, 1, 1))
     intr = np.tile(np.array([[60, 0, 32], [0, 60, 24], [0, 0, 1]], np.float32), (n_frames, 1, 1))
-    return CameraLocalizer(pts3d, extr, intr, images=images, ids=ids, extractor=_FakeExtractor()), pts3d, extr, intr
+    return CameraLocalizer(wp, extr, images=images, ids=ids, extractor=_FakeExtractor()), wp, extr, intr
 
 
 def test_save_index_writes_build_attrs(tmp_path):
@@ -62,7 +62,7 @@ def test_save_index_rebuild_replaces_stale_attrs(tmp_path):
 
 
 def test_add_localized_frame_records_provenance(tmp_path):
-    loc, pts3d, extr, intr = _make_localizer(tmp_path)
+    loc, wp, extr, intr = _make_localizer(tmp_path)
     zp = tmp_path / "feedforward.zarr"
     loc.save_index(zp, "disk")
 
@@ -84,7 +84,7 @@ def test_add_localized_frame_records_provenance(tmp_path):
 
 
 def test_provenance_list_grows_per_frame(tmp_path):
-    loc, pts3d, extr, intr = _make_localizer(tmp_path)
+    loc, wp, extr, intr = _make_localizer(tmp_path)
     zp = tmp_path / "feedforward.zarr"
     loc.save_index(zp, "disk")
     feats = _FakeExtractor().extract(None)
@@ -105,7 +105,7 @@ def test_provenance_list_grows_per_frame(tmp_path):
 
 def test_append_backfills_pre_provenance_store(tmp_path):
     # Older stores lack the provenance attr entirely — appending must backfill {}
-    loc, pts3d, extr, intr = _make_localizer(tmp_path)
+    loc, wp, extr, intr = _make_localizer(tmp_path)
     zp = tmp_path / "feedforward.zarr"
     loc.save_index(zp, "disk")
     feats = _FakeExtractor().extract(None)

@@ -558,20 +558,25 @@ def score_frames(
 ########################################################################
 
 
-def extract_frame(video_path: str | Path, frame_idx: int) -> np.ndarray:
+def _seek_frame(
+    video_path: str | Path,
+    frame_idx: int,
+    *,
+    fps: float,
+    w: int,
+    h: int,
+    total: int = 0,
+) -> np.ndarray:
     """Decode one frame via ffmpeg input-seek; returns (H, W, 3) uint8 RGB.
 
-    Seeks by timestamp (frame_idx / fps) before demuxing — O(1) in frame depth, so a
-    deep frame previews instantly. Exact on constant-frame-rate video; may land one
-    frame off near keyframes on VFR sources.
+    Caller supplies pre-probed fps/w/h/total so a batch of seeks probes the video
+    only once. Seeks by timestamp (O(1) in frame depth).
     """
     _require_ffmpeg()
-    info = get_video_info(str(video_path))
-    fps, w, h, total = info["fps"], info["width"], info["height"], info["total_frames"]
     if not fps or not w or not h:
-        raise ValueError(f"cannot probe {video_path} for seek decode")
+        raise ValueError(f"cannot seek {video_path}: missing fps/width/height")
     if frame_idx < 0 or (total and frame_idx >= total):
-        raise ValueError(f"extract_frame: frame {frame_idx} out of range for {video_path}")
+        raise ValueError(f"_seek_frame: frame {frame_idx} out of range for {video_path}")
     # Seek to the frame midpoint, not its start: PTS float rounding can otherwise land
     # the demuxer just past the target timestamp and decode frame N+1 instead of N.
     seek_s = max(frame_idx - 0.5, 0) / fps
@@ -596,5 +601,22 @@ def extract_frame(video_path: str | Path, frame_idx: int) -> np.ndarray:
     raw = proc.stdout
     if len(raw) < w * h * 3:
         err = proc.stderr.decode(errors="replace")[-500:]
-        raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}: {err}")
+        raise ValueError(f"_seek_frame: frame {frame_idx} not found in {video_path}: {err}")
     return np.frombuffer(raw[: w * h * 3], dtype=np.uint8).reshape(h, w, 3).copy()
+
+
+def extract_frame(video_path: str | Path, frame_idx: int) -> np.ndarray:
+    """Decode one frame via ffmpeg input-seek; returns (H, W, 3) uint8 RGB.
+
+    Exact on constant-frame-rate video; may land one frame off near keyframes on
+    VFR sources.
+    """
+    info = get_video_info(str(video_path))
+    return _seek_frame(
+        video_path,
+        frame_idx,
+        fps=info["fps"],
+        w=info["width"],
+        h=info["height"],
+        total=info["total_frames"],
+    )

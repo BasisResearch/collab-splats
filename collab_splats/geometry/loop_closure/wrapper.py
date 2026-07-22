@@ -600,12 +600,13 @@ class LoopClosure:
     def _assemble_result(self, n_frames: int) -> FeedforwardResult:
         """Build FeedforwardResult from the GraphMap dense cloud (VGGT-SLAM correction-at-read)."""
         # Dense world cloud + corrected extrinsics come straight from the graph-corrected map.
-        points, colors = self.map.get_world_pointcloud(self.graph)
+        points, colors = self.map.get_world_pointcloud(self.graph, overlap=self.config.submap_overlap)
         extrinsics = self.map.get_corrected_extrinsics(self.graph, n_frames)
 
         # Cap the assembled cloud to the creator's point budget before it flows into
-        # build_colmap. get_world_pointcloud concatenates every submap's dense per-pixel
-        # points (~50M for a 500-frame scene); materializing that as pycolmap Point3D
+        # build_colmap. get_world_pointcloud concatenates each submap's dense per-pixel
+        # points (overlap-deduped, but still ~50M for a 500-frame scene); materializing
+        # that as pycolmap Point3D
         # objects blows the 50 GB cgroup and SIGKILLs. The old thin _postprocess applied
         # this same max_points cap — the LC path (postprocess no-op) must too. ATE-neutral:
         # trajectory error reads extrinsics, not points. conf already masked at read.

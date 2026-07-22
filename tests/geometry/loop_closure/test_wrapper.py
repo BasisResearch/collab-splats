@@ -705,7 +705,8 @@ def test_lc_output_assembled_from_graphmap():
     assert isinstance(out, FeedforwardResult)
 
     # points/colors are exactly the GraphMap dense cloud (float32/uint8, aligned, non-empty).
-    exp_pts, exp_cols = lc.map.get_world_pointcloud(lc.graph)
+    # overlap-deduped, matching _assemble_result's call (leading overlap frames dropped).
+    exp_pts, exp_cols = lc.map.get_world_pointcloud(lc.graph, overlap=lc.config.submap_overlap)
     assert out.points.shape[0] > 0
     assert out.points.dtype == np.float32 and out.points.shape[1] == 3
     assert out.colors.dtype == np.uint8 and out.colors.shape[1] == 3

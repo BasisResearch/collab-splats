@@ -101,6 +101,27 @@ def test_get_world_pointcloud_concats_submap_reads():
     assert points.shape[0] == colors.shape[0]  # index-aligned
 
 
+def test_get_world_pointcloud_overlap_dedups_leading_frames():
+    """overlap drops each non-first submap's leading overlap frames (first-writer dedup)."""
+    subs = [_dense(0), _dense(1)]
+    pg = PoseGraph()
+    for s in subs:
+        pg.add_submap(s, overlap_frames=1)
+        pg.optimize()
+    m = GraphMap()
+    for s in subs:
+        m.add_submap(s)
+    points, colors = m.get_world_pointcloud(pg, overlap=1)
+    # Submap 0 keeps all frames; submap 1 drops its leading frame (owned by submap 0).
+    exp_p = np.vstack([subs[0].get_points_in_world_frame(pg), subs[1].get_points_in_world_frame(pg, skip_first=1)])
+    exp_c = np.vstack([subs[0].get_points_colors(), subs[1].get_points_colors(skip_first=1)])
+    np.testing.assert_allclose(points, exp_p)
+    np.testing.assert_array_equal(colors, exp_c)
+    # Fewer points than the no-dedup concat (overlap frame removed).
+    full, _ = m.get_world_pointcloud(pg)
+    assert points.shape[0] < full.shape[0]
+
+
 def test_get_world_pointcloud_skips_lc_submaps():
     subs = [_dense(0), _dense(1, is_lc=True)]  # submap 1 is a loop-closure submap
     pg = PoseGraph()

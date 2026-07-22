@@ -46,16 +46,23 @@ class GraphMap:
             raise ValueError("GraphMap.get_latest_submap called on an empty map")
         return self.submaps[key]
 
-    def get_world_pointcloud(self, graph):
-        """Concatenated conf-masked world-frame (points, colors) over non-LC submaps."""
+    def get_world_pointcloud(self, graph, overlap: int = 0):
+        """Concatenated conf-masked world-frame (points, colors) over non-LC submaps.
+
+        overlap drops each non-first submap's leading `overlap` frames — they duplicate
+        the previous submap's trailing frames (dedup_overlap's first-writer rule for
+        poses, applied here to the dense cloud). Without it every seam is double-projected.
+        """
         pts_chunks, col_chunks = [], []
         for s in self.ordered_submaps_by_key():
             # Skip LC submaps (2-frame loop carriers) and degraded submaps without
             # dense points (MapAnything degraded path) — neither contributes cloud.
             if s.is_lc_submap or s.points is None:
                 continue
-            pts_chunks.append(s.get_points_in_world_frame(graph))
-            col_chunks.append(s.get_points_colors())
+            # Non-first submaps: drop the leading overlap frames the earlier submap owns.
+            skip = overlap if s.frame_start > 0 else 0
+            pts_chunks.append(s.get_points_in_world_frame(graph, skip_first=skip))
+            col_chunks.append(s.get_points_colors(skip_first=skip))
         points = np.vstack(pts_chunks) if pts_chunks else np.zeros((0, 3), dtype=np.float32)
         colors = np.vstack(col_chunks) if col_chunks else np.zeros((0, 3), dtype=np.uint8)
         return points, colors

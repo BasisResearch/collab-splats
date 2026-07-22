@@ -50,7 +50,7 @@ def _scan_output_dirs(base_dir: Path) -> list[str]:
 
 _ENV_MODELS = ["vggt_omega", "vggtx", "mapanything"]
 _EXTRACTORS = ["talk2dino", "maskclip", "dinov2"]
-_SAMPLERS = ["balanced", "optical_flow"]
+_SAMPLERS = ["uniform", "optical_flow"]
 
 # Per-model confidence default — mirrors each creator's own class default so the dashboard
 # reproduces the notebook (which instantiates creators with no conf override). A single shared
@@ -158,7 +158,10 @@ class SplatsApp(param.Parameterized):
         s = self._state
         self.session_select = pn.widgets.Select(name="Session", options=[])
         self.video_select = pn.widgets.Select(name="Video", options=[])
-        self.sampling = pn.widgets.Select(name="Frame sampling", options=_SAMPLERS, value=s.get("sampling", "balanced"))
+        # Migrate the pre-rename "balanced" label from saved settings to "uniform".
+        _sampling = s.get("sampling", "uniform")
+        _sampling = "uniform" if _sampling == "balanced" else _sampling
+        self.sampling = pn.widgets.Select(name="Frame sampling", options=_SAMPLERS, value=_sampling)
         # Number input (not a slider); upper bound + label set to the video's frame count on select.
         self.max_frames = pn.widgets.IntInput(name="Max frames", value=s.get("max_frames", 100), start=1, step=1)
         self.env_model = pn.widgets.Select(

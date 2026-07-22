@@ -17,7 +17,7 @@ class RunConfig:
     """All knobs for one pipeline run; serialised to run_config.yaml for provenance."""
 
     # Frame sampling
-    sampling_method: str = "balanced"  # "balanced" | "optical_flow"
+    sampling_method: str = "uniform"  # "uniform" | "optical_flow"
     max_frames: int = 100
     min_disparity: float = 50.0  # optical_flow only
 

@@ -330,16 +330,17 @@ class LocalizationRunOutput:
     frame_sources: list  # per-frame 'reconstruction' | 'localized'
 
 
-def _load_feedforward_result(out_dir: Path):
+def _load_feedforward_result(out_dir: Path, load_world_points: bool = False):
     """Load the reconstruction result from the local zarr (lazy heavy import)."""
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     # Localization reads only the required member set (remote pulls already exclude the
-    # dense arrays); skip decoding them for locally-generated scenes too.
+    # dense arrays); skip decoding them for locally-generated scenes too. world_points is
+    # opted in by the localizer path — CameraLocalizer.from_feedforward requires it.
     return FeedforwardResult.load_zarr(
         out_dir / "feedforward.zarr",
         load_depth=False,
-        load_world_points=False,
+        load_world_points=load_world_points,
         load_confidence=False,
         load_features=False,
         load_pixel_indices=False,
@@ -516,7 +517,7 @@ def run_localization(
                 source.pull_processed(session, stem, out_dir, excludes=PULL_EXCLUDES)
             op_log.update_progress(15, "localize: loading reconstruction")
             with op_log.step("localize: loading reconstruction"):
-                result = _load_feedforward_result(out_dir)
+                result = _load_feedforward_result(out_dir, load_world_points=True)
 
             # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
             op_log.update_progress(25, f"localize: loading DB ({config.extractor})")

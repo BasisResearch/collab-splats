@@ -125,7 +125,6 @@ large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
 | `localization.extractor` | str | `loma` | Local matcher: `loma`, `loma-g`, `disk`, `xfeat` |
-| `localization.radius` | float | `8.0` | CameraLocalizer search radius |
 
 ---
 

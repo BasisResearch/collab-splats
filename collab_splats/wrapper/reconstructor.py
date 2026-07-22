@@ -355,7 +355,7 @@ def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool
         return False
 
 
-def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: float, frames_zarr: Path) -> Path:
+def _build_localization_db(feedforward_zarr: Path, extractor_name: str, frames_zarr: Path) -> Path:
     """Build the per-frame local-feature localization cache into feedforward.zarr.
 
     Loads the FeedforwardResult, runs the local matcher over every DB frame, and persists
@@ -367,7 +367,7 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.preproc.frame_store import FrameStore
 
-    ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
+    ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True, load_world_points=True)
     extractor = BaseLocalExtractor.get(extractor_name)()
 
     # Boundary adapter: canonical store → (images, ids) core objects. Lazy genexpr → zero
@@ -383,7 +383,6 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
         extractor=extractor,
         extractor_name=extractor_name,
         zarr_path=feedforward_zarr,
-        radius=radius,
     )
     logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
     return feedforward_zarr
@@ -775,7 +774,6 @@ class Reconstructor:
         """Build/refresh the per-frame local-feature localization cache in feedforward.zarr."""
         loc_cfg = self.config["localization"]
         extractor_name = loc_cfg["extractor"]
-        radius = loc_cfg["radius"]
 
         feedforward_zarr = self.backend_dir / "feedforward.zarr"
         if not feedforward_zarr.exists():
@@ -793,7 +791,7 @@ class Reconstructor:
             )
             return feedforward_zarr
 
-        return _build_localization_db(feedforward_zarr, extractor_name, radius, self.frames_zarr)
+        return _build_localization_db(feedforward_zarr, extractor_name, self.frames_zarr)
 
     def _stage_output_exists(self, stage: str) -> bool:
         """True if `stage`'s on-disk output is already present (lets deps be reused across runs)."""

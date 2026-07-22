@@ -851,7 +851,7 @@ def test_run_feedforward_no_loop_closure_no_viewer(tmp_path):
 def test_build_localization_db_runs_when_missing(tmp_path):
     from collab_splats.wrapper import reconstructor as R
 
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma", "radius": 8.0}})
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
     rec = Reconstructor(config)
     ff = rec.backend_dir / "feedforward.zarr"
     ff.mkdir(parents=True)
@@ -860,4 +860,4 @@ def test_build_localization_db_runs_when_missing(tmp_path):
         patch.object(R, "_build_localization_db") as build,
     ):
         rec.build_localization_db(overwrite=False)
-    build.assert_called_once_with(ff, "loma", 8.0, rec.frames_zarr)
+    build.assert_called_once_with(ff, "loma", rec.frames_zarr)

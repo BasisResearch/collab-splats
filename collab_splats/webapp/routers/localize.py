@@ -101,7 +101,7 @@ async def _run_sse(query_path: str, extractor_name: str = "xfeat") -> AsyncItera
                 )
 
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Loading feedforward result…"})
-            ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
+            ff = FeedforwardResult.load_zarr(zarr_path, load_images=True, load_world_points=True)
 
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "log", "msg": "Building/loading local feature index…"})
             # frames.zarr sits at the session root (sibling of every backend's method dir), shared

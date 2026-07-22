@@ -1,14 +1,15 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
-from pathlib import Path
 
 from collab_splats.geometry.loop_closure import PoseGraph, Submap
 from collab_splats.geometry.loop_closure.eval import (
     _classify_edges,
     _per_edge_error,
-    capture_pose_graph_loss,
     ate_translation,
+    capture_pose_graph_loss,
     rpe,
     umeyama_align,
 )
@@ -22,18 +23,18 @@ def pg_with_loop():
     H2 = np.eye(4, dtype=np.float64)
     H3 = np.eye(4, dtype=np.float64)
     # nodes
-    pg.add_node(0, H0)
-    pg.add_node(1, H1)
-    pg.add_node(2, H2)
-    pg.add_node(3, H3)
-    pg.add_prior(0, H0)
+    pg.add_homography(0, H0)
+    pg.add_homography(1, H1)
+    pg.add_homography(2, H2)
+    pg.add_homography(3, H3)
+    pg.add_prior_factor(0, H0)
     # sequential edges (3 total)
-    pg.add_sequential_edge(0, 1, H1)
-    pg.add_sequential_edge(1, 2, H2)
-    pg.add_sequential_edge(2, 3, H3)
+    pg.add_between_factor(0, 1, H1)
+    pg.add_between_factor(1, 2, H2)
+    pg.add_between_factor(2, 3, H3)
     # loop edge (1 total) — loop-chain edges share the sequential-edge API/noise
     # (add_loop_edge was removed with the scale-reconciled 3-edge chain)
-    pg.add_sequential_edge(0, 3, H3)
+    pg.add_between_factor(0, 3, H3)
     return pg
 
 
@@ -191,150 +192,7 @@ def test_capture_pose_graph_loss_importable_from_package():
     assert callable(cpl)
 
 
-# ── merge_submap_outputs dedup index ──────────────────────────────────────────
-
-
-def _make_submap_with_raw(submap_id, frame_start, k, h=4, w=4):
-    """Build a minimal Submap with raw_outputs carrying intrinsics/depth/depth_conf."""
-    poses = np.tile(np.eye(4), (k, 1, 1)).astype(np.float32)
-    intr = np.tile(np.eye(3), (k, 1, 1)).astype(np.float32)
-    raw = {
-        "intrinsics": intr.copy(),
-        "extrinsic": poses[:, :3, :].copy(),
-        "depth": np.zeros((k, h, w), dtype=np.float32),
-        "depth_conf": np.ones((k, h, w), dtype=np.float32),
-    }
-    s = Submap(
-        submap_id=submap_id,
-        frames=torch.zeros(k, 3, h, w),
-        poses=poses,
-        intrinsics=intr,
-        retrieval_vectors=torch.zeros(k, 16),
-        image_paths=[Path(f"s{submap_id}_f{i}.jpg") for i in range(k)],
-        raw_outputs=raw,
-        frame_start=frame_start,
-    )
-    return s
-
-
-def test_merge_submap_outputs_dedup_rows_length_and_no_missing():
-    """_dedup_rows must have length N (total unique frames) with no -1 entries."""
-    from collab_splats.geometry.loop_closure.merge import merge_submap_outputs
-
-    # submap_size=5, overlap=2, step=3 → submaps at [0..4], [3..7], [6..9]
-    # N=10, M=5+5+4=14
-    submaps = [
-        _make_submap_with_raw(0, frame_start=0, k=5),
-        _make_submap_with_raw(1, frame_start=3, k=5),
-        _make_submap_with_raw(2, frame_start=6, k=4),
-    ]
-    N = 10
-    corrected = np.tile(np.eye(4), (N, 1, 1)).astype(np.float32)
-
-    merged = merge_submap_outputs(submaps, corrected)
-
-    dedup = merged["_dedup_rows"]
-    assert dedup.shape == (N,), f"expected ({N},), got {dedup.shape}"
-    assert (dedup >= 0).all(), "some global frames have no M-row mapping"
-    M = sum(len(s.poses) for s in submaps)
-    assert (dedup < M).all(), "dedup index out of bounds for M-expanded arrays"
-
-
-def test_merge_submap_outputs_dedup_rows_first_occurrence():
-    """For overlap frames, _dedup_rows should point to the FIRST submap occurrence."""
-    from collab_splats.geometry.loop_closure.merge import merge_submap_outputs
-
-    # submap 0 covers frames 0-2, submap 1 covers frames 1-3 (overlap at 1,2)
-    # M-expanded rows: [0,1,2] from s0 (rows 0,1,2) then [1,2,3] from s1 (rows 3,4,5)
-    # Frame 1 first appears at M-row 1 (submap 0), NOT row 3 (submap 1).
-    submaps = [
-        _make_submap_with_raw(0, frame_start=0, k=3),
-        _make_submap_with_raw(1, frame_start=1, k=3),
-    ]
-    N = 4
-    corrected = np.tile(np.eye(4), (N, 1, 1)).astype(np.float32)
-
-    merged = merge_submap_outputs(submaps, corrected)
-    dedup = merged["_dedup_rows"]
-
-    # Frame 0 → row 0 (only in s0)
-    assert dedup[0] == 0
-    # Frame 1 → row 1 (first occurrence in s0, not row 3 in s1)
-    assert dedup[1] == 1
-    # Frame 2 → row 2 (first occurrence in s0, not row 4 in s1)
-    assert dedup[2] == 2
-    # Frame 3 → row 5 (only in s1, local index 2 → M-row 3+2=5)
-    assert dedup[3] == 5
-
-
-def test_run_dedup_aligns_intrinsics_to_unique_frames():
-    """LoopClosure.run() aligns M-expanded intrinsics down to N unique frames.
-
-    The old _apply_ba wrapper API is gone; the M->N alignment now lives in
-    LoopClosure.run() via raw_outputs["_dedup_rows"]. After run(), the merged
-    M-row intrinsics must be remapped to N rows == intrinsics[dedup].
-    """
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
-    from collab_splats.pointcloud.feedforward import FeedforwardResult
-
-    N = 4  # unique global frames (extrinsics rows)
-    M = 6  # overlap-expanded merged rows (e.g. 2 submaps of 4 with overlap 2)
-    H, W = 8, 8
-
-    # FeedforwardResult where extrinsics=N but intrinsics/images/etc are M-rows.
-    extrinsics_N = np.tile(np.eye(4), (N, 1, 1)).astype(np.float32)
-    # Distinct per-row intrinsics so dedup remap is content-verifiable.
-    intrinsics_M = np.tile(np.eye(3), (M, 1, 1)).astype(np.float32)
-    intrinsics_M[:, 0, 0] = np.arange(M, dtype=np.float32) + 1.0
-
-    result = FeedforwardResult(
-        points=np.zeros((N * H * W, 3), dtype=np.float32),
-        colors=np.zeros((N * H * W, 3), dtype=np.uint8),
-        extrinsics=extrinsics_N,
-        intrinsics=intrinsics_M,
-        image_paths=[Path(f"frame_{i:04d}.png") for i in range(N)],
-        original_coords=np.zeros((N, 6), dtype=np.float32),
-        model_width=W,
-        model_height=H,
-        images=np.zeros((M, 3, H, W), dtype=np.float32),
-        confidence=np.ones((M, H, W), dtype=np.float32),
-        world_points=np.zeros((M, H, W, 3), dtype=np.float32),
-    )
-
-    # _dedup_rows maps each of the N unique frames to a merged M-row index.
-    dedup_rows = np.array([0, 1, 3, 5], dtype=np.int64)
-
-    # Minimal fake base: no-op pipeline stages; outputs/raw_outputs settable.
-    class FakeBase:
-        def __init__(self) -> None:
-            self.outputs = result
-            self.raw_outputs = {"_dedup_rows": dedup_rows}
-
-        def load_model(self) -> None:
-            pass
-
-        def setup_inference(self, image_dir) -> None:
-            pass
-
-        def run_inference(self, **kwargs) -> None:
-            pass
-
-        def postprocess(self, **kwargs) -> None:
-            pass
-
-    base = FakeBase()
-    # Bypass the LC loop override so run_inference stays the no-op base stage.
-    wrapper = LoopClosure(base)
-    wrapper.run_inference = base.run_inference
-
-    out = wrapper.run(Path("unused"))
-
-    # Intrinsics realigned to N rows and equal to the deduped selection.
-    assert out.intrinsics.shape[0] == N
-    np.testing.assert_array_equal(out.intrinsics, intrinsics_M[dedup_rows])
-    # Other M-row arrays are realigned too.
-    assert out.images.shape[0] == N
-    assert out.confidence.shape[0] == N
-    assert out.world_points.shape[0] == N
-    # Wrapper writes the realigned result back onto the base.
-    assert base.outputs is out
+# NOTE: the batch output-merge helper + its _dedup_rows index array were deleted in
+# P4.3c (output assembly now lives in GraphMap.get_world_pointcloud /
+# get_corrected_extrinsics). The former dedup-index tests covered a code path that no
+# longer exists in production.

@@ -1,12 +1,16 @@
 """Verify n_loops_applied is set on the base creator after LoopClosure.run_inference()."""
 
-import numpy as np
-import torch
 from unittest.mock import MagicMock, patch
 
-from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator, FeedforwardResult
+import numpy as np
+import torch
+
 from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+from collab_splats.pointcloud.feedforward import (
+    BaseFeedforwardCreator,
+    FeedforwardResult,
+)
 
 
 class _StubCreator(BaseFeedforwardCreator):
@@ -22,9 +26,17 @@ class _StubCreator(BaseFeedforwardCreator):
 
     def _forward(self, model, views, **kwargs):
         k = views.shape[0]
+        h = w = views.shape[-1]
+        # Varied positive depth_conf so window submaps carry a non-empty dense cloud
+        # (else _assemble_result fails fast on an empty point cloud).
+        rows = np.arange(h, dtype=np.float32)[:, None]
+        cols = np.arange(w, dtype=np.float32)[None, :]
+        depth_conf = np.tile(50.0 + 0.1 * (rows + cols), (k, 1, 1)).astype(np.float32)
         return {
             "extrinsic": np.tile(np.eye(4)[:3], (k, 1, 1)).astype(np.float32),
             "intrinsic": np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
+            "depth": np.ones((k, h, w, 1), dtype=np.float32),
+            "depth_conf": depth_conf,
         }
 
     def _verify_loop_candidate(self, frame1, frame2, verify_match_ratio=0.85):
@@ -50,18 +62,15 @@ def test_n_loops_applied_set_after_run_inference():
     base.views = torch.zeros(40, 3, 224, 224)
     base.image_paths = [None] * 40
 
-    # Patch retrieval extractor and pose graph optimization
+    # Patch the retrieval extractor and loop detection. The output is now assembled
+    # from the GraphMap (no batch PGO / merge helpers to patch).
     with (
         patch("collab_splats.localization.retrieval.BaseRetrievalExtractor.get") as mock_get,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", return_value=[]),
-        patch("collab_splats.geometry.loop_closure.wrapper.run_pose_graph_optimization") as mock_pg,
-        patch("collab_splats.geometry.loop_closure.wrapper.merge_submap_outputs") as mock_merge,
     ):
         mock_extractor = MagicMock()
         mock_extractor.return_value = torch.zeros(20, 128)
         mock_get.return_value = MagicMock(return_value=mock_extractor)
-        mock_pg.return_value = np.zeros((40, 4, 4))
-        mock_merge.return_value = {}
         creator.run_inference()
 
     # The LC loop ran end-to-end (2 submaps over 40 frames); _verify_loop_candidate

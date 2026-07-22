@@ -7,6 +7,7 @@ Provides:
   _compute_omega_original_coords — compute original_coords for Omega's center-crop transform
   VGGTOmegaCreator              — feedforward creator using VGGT-Omega depth + pose estimation
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,10 +18,11 @@ from typing import Any, ClassVar
 import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
-from PIL import Image
 from vggt_omega.models import VGGTOmega
 from vggt_omega.utils.load_fn import load_and_preprocess_images
 from vggt_omega.utils.pose_enc import encoding_to_camera
+
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
 from .base import (
     BaseFeedforwardCreator,
@@ -28,9 +30,9 @@ from .base import (
     _decode_verify_geometry,
     _raw_to_world_points,
     compute_multiview_depth_confidence,
+    frames_as_pil_source,
 )
 from .vggtx import unproject_and_filter_points
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +48,15 @@ VGGT_OMEGA_DEFAULT_RESOLUTION = 512
 ########## Inference utilities #########################################
 ########################################################################
 
-def _compute_omega_original_coords(image_paths: list[Path]) -> np.ndarray:
+
+def _compute_omega_original_coords(sizes: list[tuple[int, int]]) -> np.ndarray:
     """Compute original_coords after Omega's center-crop aspect-ratio enforcement.
 
     Mirrors the crop logic in vggt_omega.utils.load_fn._crop_to_supported_aspect_ratio
     so that _rescale_reconstruction_to_original_dimensions can invert the transform.
+
+    Args:
+        sizes: per-image ``(orig_w, orig_h)`` original-image dimensions.
 
     Returns:
         (N, 6) float32 array [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h] per image.
@@ -60,10 +66,7 @@ def _compute_omega_original_coords(image_paths: list[Path]) -> np.ndarray:
     _MAX_AR = 2.0
 
     coords = []
-    for p in image_paths:
-        # Read image dimensions without decoding pixels
-        with Image.open(p) as img:
-            orig_w, orig_h = img.size
+    for orig_w, orig_h in sizes:
         ar = orig_h / max(orig_w, 1)
 
         # Default: no crop
@@ -90,6 +93,7 @@ def _compute_omega_original_coords(image_paths: list[Path]) -> np.ndarray:
 ########################################################################
 ########## Creator #####################################################
 ########################################################################
+
 
 @dataclass
 class VGGTOmegaCreator(BaseFeedforwardCreator):
@@ -141,8 +145,8 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     model_path: str | None = None
     model_repo: str = VGGT_OMEGA_HF_REPO
     model_filename: str = VGGT_OMEGA_DEFAULT_FILENAME
-    resolution: int | None = None        # None → auto (512 standard, 256 text-aligned); explicit overrides
-    resize_mode: str = "balanced"        # mode= passed to load_and_preprocess_images
+    resolution: int | None = None  # None → auto (512 standard, 256 text-aligned); explicit overrides
+    resize_mode: str = "balanced"  # mode= passed to load_and_preprocess_images
     conf_threshold: float = 50.0
     use_multiview_confidence: bool = False
     mv_conf_threshold: float = 0.0
@@ -150,9 +154,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
 
     def __post_init__(self) -> None:
         if self.resize_mode not in {"balanced", "max_size"}:
-            raise ValueError(
-                f"resize_mode must be one of {{'balanced', 'max_size'}}, got {self.resize_mode!r}"
-            )
+            raise ValueError(f"resize_mode must be one of {{'balanced', 'max_size'}}, got {self.resize_mode!r}")
         if self.resolution is None:
             self.resolution = 256 if self.enable_text_alignment else 512
             logger.debug("VGGTOmegaCreator: resolved resolution=%d", self.resolution)
@@ -171,10 +173,12 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             if not ckpt_path.exists():
                 raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
         else:
-            ckpt_path = Path(hf_hub_download(
-                repo_id=self.model_repo,
-                filename=self.model_filename,
-            ))
+            ckpt_path = Path(
+                hf_hub_download(
+                    repo_id=self.model_repo,
+                    filename=self.model_filename,
+                )
+            )
 
         # Instantiate model, load checkpoint weights, move to device in eval mode (fp32 params)
         model = VGGTOmega(enable_alignment=self.enable_text_alignment)
@@ -183,22 +187,19 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         model = model.to(device)
         return model
 
-    def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]:
-        """Load and preprocess images from directory into VGGT-Omega input format."""
-        # Collect and sort image paths; reject non-image extensions
-        image_paths = sorted([
-            p for p in image_dir.iterdir()
-            if p.suffix.lower() in {".png", ".jpg", ".jpeg"}
-        ])
-        if not image_paths:
-            raise FileNotFoundError(f"No images found in {image_dir}")
+    def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
+        """Preprocess in-memory frames into VGGT-Omega input format."""
+        # Stable synthetic labels — no files on disk; the store/decoder is the sole IO path
+        image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
 
-        # Compute crop transform for each image (replicated from Omega's load_fn)
-        original_coords = _compute_omega_original_coords(image_paths)
+        # Compute crop transform for each image from its own dims (replicated from Omega's load_fn)
+        original_coords = _compute_omega_original_coords([(int(f.shape[1]), int(f.shape[0])) for f in frames])
 
-        # Load and preprocess images to model resolution via Omega's resize
-        image_names = [str(p) for p in image_paths]
-        images = load_and_preprocess_images(image_names, image_resolution=self.resolution, mode=self.resize_mode)
+        # Run Omega's resize in-memory (bit-identical to path load); .png names satisfy
+        # loaders' extension checks while PIL.Image.open is intercepted.
+        loader_names = [f"{p.name}.png" for p in image_paths]
+        with frames_as_pil_source(frames):
+            images = load_and_preprocess_images(loader_names, image_resolution=self.resolution, mode=self.resize_mode)
 
         return images, image_paths, original_coords
 
@@ -220,23 +221,23 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         ext, intr = encoding_to_camera(predictions["pose_enc"], image_shape)
 
         # Move to CPU float32 for downstream numpy ops; squeeze the batch dim (always 1)
-        extrinsic = ext.cpu().float().numpy().squeeze(0)   # (N, 3, 4)
-        intrinsic  = intr.cpu().float().numpy().squeeze(0) # (N, 3, 3) at model-res
-        depth      = predictions["depth"].squeeze(0).cpu().float().numpy()      # (N, H, W, 1)
-        depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy() # (N, H, W)
+        extrinsic = ext.cpu().float().numpy().squeeze(0)  # (N, 3, 4)
+        intrinsic = intr.cpu().float().numpy().squeeze(0)  # (N, 3, 3) at model-res
+        depth = predictions["depth"].squeeze(0).cpu().float().numpy()  # (N, H, W, 1)
+        depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy()  # (N, H, W)
 
         return {
             "images": images,
             "extrinsic": extrinsic,
-            "intrinsics": intrinsic,             # model-res K
-            "intrinsics_downsampled": intrinsic, # alias — _raw_to_world_points expects this key
+            "intrinsics": intrinsic,  # model-res K
+            "intrinsics_downsampled": intrinsic,  # alias — _raw_to_world_points expects this key
             "depth": depth,
             "depth_conf": depth_conf,
         }
 
     def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
         """Unproject depth maps to world-space points and build FeedforwardResult."""
-        extrinsic = raw_outputs["extrinsic"]   # (N, 3, 4) at model resolution
+        extrinsic = raw_outputs["extrinsic"]  # (N, 3, 4) at model resolution
         intrinsic = raw_outputs["intrinsics"]  # (N, 3, 3) at model resolution
 
         # Optionally compute geometric cross-view depth consistency mask
@@ -244,7 +245,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         if self.use_multiview_confidence:
             depth_np = raw_outputs["depth"]
             if depth_np.ndim == 4:
-                depth_np = depth_np.squeeze(-1)   # (N, H, W)
+                depth_np = depth_np.squeeze(-1)  # (N, H, W)
             extr_4x4 = extrinsics_to_homogeneous(extrinsic)
             mv_conf = compute_multiview_depth_confidence(
                 depth_np,
@@ -352,10 +353,8 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
 
         # Decode camera extrinsics + intrinsics from Omega pose encoding
         image_shape = (frames.shape[-2], frames.shape[-1])
-        ext_t, intr_t = encoding_to_camera(
-            predictions["pose_enc"].detach(), image_shape
-        )
-        ext_3x4 = ext_t.cpu().float().numpy().squeeze(0)   # (2, 3, 4) w2c
+        ext_t, intr_t = encoding_to_camera(predictions["pose_enc"].detach(), image_shape)
+        ext_3x4 = ext_t.cpu().float().numpy().squeeze(0)  # (2, 3, 4) w2c
         intrinsic = intr_t.cpu().float().numpy().squeeze(0)  # (2, 3, 3)
         captured["poses"] = extrinsics_to_homogeneous(ext_3x4)  # (2, 4, 4)
 

@@ -1,5 +1,45 @@
 # Known Test Failures
 
+## 2026-07-22 — LC resident RAM scales with frame count (KNOWN LIMIT, follow-up owed)
+
+P7.3 lean-RAM check (chess seq-01, **1000 frames**, vggt_omega, submap_size 16, lc): completed
+EXIT=0, ATE 0.0200m, 78 loops, `points3D.bin` 25 MB (the `_assemble_result` `max_points` cap holds
+at scale). **But peak cgroup = 50.0 GB / 50 — dead on the cap** (already 49.9 GB mid-loop at 94%,
+so it's resident accumulation, not the final-assembly spike).
+
+Root: `GraphMap` holds every submap's dense per-pixel `points`/`colors`/`conf` resident in a RAM
+dict for correction-at-read (VGGT-SLAM fat-submap design). ~63 submaps × ~16 frames of dense cloud
+≈ 50 GB at 1000 frames. P5.1b freed per-submap `raw_outputs` only; the dense cloud + `frames` stay.
+This is distinct from the FIXED SIGKILL (5.1 GB colmap Point3D blow-up, see below) — that was the
+assembly output; this is the in-loop working set. 1000 frames survives by luck; a larger scene or a
+side-shell OOMs.
+
+**Follow-up (not blocking):** subsample each submap's dense cloud at store time (`set_dense_points`,
+reuse `subsample_points`) → bounds resident to `n_submaps × capped_points`. Touches viewer/
+correction fidelity → needs its own validation (re-run P7.3, target < ~35 GB at 1k frames, confirm
+ATE + viewer unaffected). Until then: keep long scenes ≤ ~1000 keyframes on the 50 GB box.
+
+## 2026-07-21 — LC `ba` condition over windowed submaps: known gap (SCOPED OUT)
+
+The VGGT-SLAM loop-closure refactor assembles its output in `LoopClosure._assemble_result`
+(GraphMap dense cloud, correction-at-read) instead of `base._postprocess`. `_assemble_result`
+populates `points/colors/extrinsics/intrinsics` but **not** the optional `FeedforwardResult.images`
+tensor. The old `_postprocess` set `images=images`; BA's track extractor (`_extract_tracks_vggsfm`)
+does `images.to(device)`, so running the eval `ba` condition on the windowed path now raises
+`AttributeError: 'NoneType' object has no attribute 'to'`.
+
+This was masked until 2026-07-21: baseline used to OOM (5.1 GB `points3D.bin` → pycolmap
+Point3D blow-up → 50 GB cgroup SIGKILL) before the `ba` condition ran. The `max_points` cap fix
+(`_assemble_result` → `subsample_points`, restoring the 500k budget the skipped `postprocess`
+used to apply) fixed the OOM (baseline 0.0267m ATE, `points3D.bin` 25 MB, peak 22.9 GB), which
+surfaced the pre-existing `images` gap underneath.
+
+**Scoped out, not fixed:** BA-over-windowed is a parked feature (BA is currently
+VGGT-X/MapAnything-specific; see `project_ba_future_generalization`). P7 parity validation runs
+`--conditions baseline lc` (the actual LC-parity target). To revive `ba` over windowed submaps,
+`_assemble_result` must populate `images` by concatenating per-submap `frames` with the same
+first-occurrence overlap dedup it already uses for `intrinsics`.
+
 ## 2026-07-20 — frame-store refactor: notebook follow-ups (RESOLVED)
 
 `docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb` was broken by the

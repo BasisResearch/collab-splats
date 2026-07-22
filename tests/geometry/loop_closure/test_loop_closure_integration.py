@@ -1,10 +1,16 @@
 """Smoke tests: loop closure pipeline components integrate without crashing."""
-import numpy as np
-import torch
+
 from pathlib import Path
 
-from collab_splats.geometry.loop_closure import LoopClosureConfig, find_loop_closures
-from collab_splats.geometry.loop_closure import PoseGraph, Submap
+import numpy as np
+import torch
+
+from collab_splats.geometry.loop_closure import (
+    LoopClosureConfig,
+    PoseGraph,
+    Submap,
+    find_loop_closures,
+)
 
 
 def _make_submap(submap_id, k, vec_dim=128):
@@ -23,10 +29,10 @@ def test_pose_graph_two_nodes_no_loop():
     pg = PoseGraph()
     H0 = np.eye(4, dtype=np.float64)
     H1 = np.eye(4, dtype=np.float64)
-    pg.add_node(0, H0)
-    pg.add_prior(0, H0)
-    pg.add_node(1, H1)
-    pg.add_sequential_edge(0, 1, H1)
+    pg.add_homography(0, H0)
+    pg.add_prior_factor(0, H0)
+    pg.add_homography(1, H1)
+    pg.add_between_factor(0, 1, H1)
     pg.optimize()
     assert pg.get_homography(0).shape == (4, 4)
     assert pg.get_homography(1).shape == (4, 4)
@@ -44,14 +50,16 @@ def test_image_retrieval_detects_identical_submaps():
     d = 128
     base_vecs = torch.nn.functional.normalize(torch.randn(3, d), p=2, dim=1)
     s0 = Submap(
-        submap_id=0, frames=torch.zeros(3, 3, 64, 64),
+        submap_id=0,
+        frames=torch.zeros(3, 3, 64, 64),
         poses=np.tile(np.eye(4), (3, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (3, 1, 1)).astype(np.float32),
         retrieval_vectors=base_vecs,
         image_paths=[Path(f"f{i}.jpg") for i in range(3)],
     )
     s1 = Submap(
-        submap_id=1, frames=torch.zeros(3, 3, 64, 64),
+        submap_id=1,
+        frames=torch.zeros(3, 3, 64, 64),
         poses=np.tile(np.eye(4), (3, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (3, 1, 1)).astype(np.float32),
         retrieval_vectors=base_vecs.clone(),  # identical → distance ≈ 0
@@ -66,6 +74,7 @@ def test_image_retrieval_detects_identical_submaps():
 def test_verify_loop_candidate_returns_tuple():
     """F4: _verify_loop_candidate must return (bool, lc_data dict|None), not bare bool."""
     from unittest.mock import MagicMock
+
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
 
     creator = object.__new__(MapAnythingCreator)
@@ -78,17 +87,13 @@ def test_verify_loop_candidate_returns_tuple():
     B, heads, N, hd = 1, 1, 20, 4
     k = torch.zeros(B, heads, N, hd)
     q = torch.zeros(B, heads, N, hd)
-    k[:, :, :10, 0] = 10.0   # frame1 tokens align to dim 0
+    k[:, :, :10, 0] = 10.0  # frame1 tokens align to dim 0
     q[:, :, :10, 0] = 10.0
-    k[:, :, 10:, 1] = 10.0   # frame2 tokens align to dim 1 (orthogonal → low ratio)
+    k[:, :, 10:, 1] = 10.0  # frame2 tokens align to dim 1 (orthogonal → low ratio)
     q[:, :, 10:, 1] = 10.0
-    creator.extract_intermediate_features = lambda frames, layer_index=-1, **kw: {
-        "q": q, "k": k
-    }
+    creator.extract_intermediate_features = lambda frames, layer_index=-1, **kw: {"q": q, "k": k}
 
-    result = creator._verify_loop_candidate(
-        torch.zeros(3, 64, 64), torch.zeros(3, 64, 64)
-    )
+    result = creator._verify_loop_candidate(torch.zeros(3, 64, 64), torch.zeros(3, 64, 64))
     assert isinstance(result, tuple) and len(result) == 2
     accepted, lc_poses = result
     assert accepted is False

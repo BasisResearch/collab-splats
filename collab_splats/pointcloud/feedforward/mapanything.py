@@ -18,7 +18,6 @@ import numpy as np
 import timm.layers as _tl
 import timm.models.layers as _tml
 import torch
-from PIL import Image as PILImage
 from vggt.utils.helper import randomly_limit_trues
 
 if not hasattr(_tl, "DropPath"):
@@ -40,6 +39,7 @@ from .base import (
     FeedforwardResult,
     compute_multiview_depth_confidence,
     console,
+    frames_as_pil_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -195,39 +195,34 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         model.eval()
         return model
 
-    def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]:
-        # Collect and sort image paths; reject non-image extensions
-        exts = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
-        image_paths = sorted(p for p in Path(image_dir).iterdir() if p.suffix in exts)
-        if not image_paths:
-            raise FileNotFoundError(f"No images found in {image_dir}")
+    def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
+        # Stable synthetic labels — no files on disk; the store/decoder is the sole IO path
+        image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
 
-        # Load images via MapAnything's loader; derive model resolution from first image
+        # Run MapAnything's loader in-memory (bit-identical to path load); .png names
+        # satisfy load_images' extension check while PIL.Image.open is intercepted.
         # Map our public resize_mode to load_images' upstream name; pass resolution as the right kwarg
+        loader_names = [f"{p.name}.png" for p in image_paths]
         upstream_mode = _MA_RESIZE_MODE_MAP[self.resize_mode]
-        if self.resize_mode == "fixed":
-            views = load_images(
-                [str(p) for p in image_paths],
-                resize_mode=upstream_mode,
-                resolution_set=self.resolution,
-            )
-        else:
-            views = load_images(
-                [str(p) for p in image_paths],
-                resize_mode=upstream_mode,
-                size=self.resolution,
-            )
+        with frames_as_pil_source(frames):
+            if self.resize_mode == "fixed":
+                views = load_images(
+                    loader_names,
+                    resize_mode=upstream_mode,
+                    resolution_set=self.resolution,
+                )
+            else:
+                views = load_images(
+                    loader_names,
+                    resize_mode=upstream_mode,
+                    size=self.resolution,
+                )
         model_h: int = views[0]["img"].shape[-2]
         model_w: int = views[0]["img"].shape[-1]
 
-        # Read original image dimensions; open each file once to avoid double I/O
+        # Original image dimensions come from each frame's own (H, W)
         original_coords = np.array(
-            [
-                [0, 0, model_w, model_h, w, h]
-                for p in image_paths
-                for img in [PILImage.open(p)]
-                for w, h in [(img.width, img.height)]
-            ],
+            [[0, 0, model_w, model_h, int(f.shape[1]), int(f.shape[0])] for f in frames],
             dtype=np.float32,
         )
 
@@ -364,8 +359,8 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         model_h: int = self._processed_views[0]["img"].shape[-2]
         model_w: int = self._processed_views[0]["img"].shape[-1]
 
-        # After LC, merge_submap_outputs wraps the list in a dict with "_raw_list" key
-        # and attaches "extrinsic_global_4x4" (LC-corrected poses). Unwrap here.
+        # After LC, the per-frame outputs arrive wrapped in a dict with a "_raw_list" key
+        # and an "extrinsic_global_4x4" entry (LC-corrected poses). Unwrap here.
         lc_corrected_extrinsics: np.ndarray | None = None
         if isinstance(raw_outputs, dict) and "_raw_list" in raw_outputs:
             lc_corrected_extrinsics = raw_outputs.get("extrinsic_global_4x4")

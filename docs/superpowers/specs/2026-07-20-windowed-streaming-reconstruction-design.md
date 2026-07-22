@@ -1,10 +1,33 @@
 # Windowed Streaming Reconstruction — Design
 
 **Date:** 2026-07-20
-**Status:** draft
+**Status:** SUPERSEDED IN PART — see decision 015
 **Depends on:** [frame-store](2026-07-20-keyframe-store-design.md) (Spec 1)
 **Related:** [scene-viewer](2026-07-19-scene-viewer-design.md) (viewer + deferred LC hooks),
 [LC parity harness](../../../CLAUDE.md) memory `project_lc_parity_harness`
+
+> **⚠ REVISION (2026-07-21) — read [decision 015](../decisions/015-streaming-submap-centric-vs-scattered.md) first.**
+> The **disk-spill / `submaps.zarr` / `SubmapStore`** approach described throughout this spec is
+> **replaced** by a **minimal replication of VGGT-SLAM's in-RAM pipeline** (decision 015):
+> - **No disk store.** Submaps live in a RAM dict (VGGT-SLAM style), held **lean** — only finished
+>   local `points` + `colors` + `conf` + local `poses` + `intrinsics` + `descriptors`. **No
+>   `frames`, no `raw_outputs`** retained (the two heavy OOM terms).
+> - **Loop-verify reads frames from `frames.zarr`** by `frame_idx` (our one deviation from
+>   VGGT-SLAM, since we already have the decode-once store) — this is what removes the frame RAM.
+> - **Correction is graph-derived at read**, nothing corrected persisted: points via
+>   `Submap.get_world_points(H=graph.get_homography(frame_start))`, extrinsics via
+>   `PoseGraph.extract_extrinsics` (Phase A). Merge = iterate in-RAM submaps → conf-mask → concat,
+>   exactly VGGT-SLAM's `write_points_to_file`.
+> - **RAM is O(scene) but lean** (drops frames+raw_outputs) → handles low-thousands of keyframes;
+>   true O(window) disk spill is a deliberately-deferred later extension.
+> - **Parity gate shifts:** the streaming cloud is produced the VGGT-SLAM way (H-on-points), **not
+>   bitwise-identical** to the current batch `_postprocess`. Gate = windowed == a batch-D reference,
+>   validated **across all four backbones**, plus a documented tolerance vs current-batch.
+>
+> Wherever the sections below say "spill to `submaps.zarr`", "`SubmapStore`", "free the window",
+> "merge-from-disk", or "resume", read them per decision 015: in-RAM lean submaps, frames from
+> `frames.zarr`, in-RAM merge. The **PGO cadence, loop-edge A/B gate, viewer wiring, `_preprocess`
+> refactor, and config** sections remain valid as written.
 
 ## Context
 

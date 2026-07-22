@@ -99,7 +99,7 @@ def build_scene_config(video, output_root, config_dir, override_config=None):
 
 
 def run_scene(video, output_root, config_dir, override_config, stages, overwrite):
-    """Run the full pipeline for a single video. Returns the scene output path."""
+    """Run the full pipeline for a single video. Returns (output_path, Reconstructor)."""
     config = build_scene_config(video, output_root, config_dir, override_config)
     r = Reconstructor(config, config_dir=config_dir)
 
@@ -113,18 +113,26 @@ def run_scene(video, output_root, config_dir, override_config, stages, overwrite
 
     # Steps 1-4 (see module docstring) run here, governed by config + --stages
     r.run_pipeline(stages=stages, overwrite=overwrite)
-    return output_path
+    return output_path, r
 
 
-def run_all(videos, output_root, config_dir, override_config, stages, overwrite):
-    """Run every video; continue past failures. Returns the process exit code."""
+def run_all(videos, output_root, config_dir, override_config, stages, overwrite, keep_viewer=False):
+    """Run every video; continue past failures. Returns the process exit code.
+
+    When keep_viewer, blocks after the batch on the last successfully-reconstructed
+    scene's viser Viewer (if pointcloud.viz.enabled produced one), so the final scene
+    stays browsable. No viewer (viz disabled, or every video failed) logs a note and
+    returns normally rather than crashing.
+    """
     results = []
+    last_reconstructor = None
     for video in videos:
         video = Path(video)
         logger.info("=== Video: %s ===", video.name)
         try:
-            out = run_scene(video, output_root, config_dir, override_config, stages, overwrite)
+            out, r = run_scene(video, output_root, config_dir, override_config, stages, overwrite)
             results.append((video.name, "OK", str(out)))
+            last_reconstructor = r
         except Exception as exc:  # isolate one video's failure from the batch
             logger.exception("Video failed: %s", video.name)
             results.append((video.name, "FAIL", str(exc)))
@@ -134,6 +142,19 @@ def run_all(videos, output_root, config_dir, override_config, stages, overwrite)
     for name, status, info in results:
         logger.info("%s: %s (%s)", status, name, info)
     failed = [n for n, s, _ in results if s == "FAIL"]
+
+    # Optionally keep the last scene's viser viewer alive for browser inspection
+    if keep_viewer:
+        viewer = getattr(last_reconstructor, "viewer", None)
+        if viewer is not None:
+            logger.info("--keep-viewer: viser server staying up — inspect the scene in a browser (Ctrl-C to exit).")
+            viewer.serve_forever()
+        else:
+            logger.info(
+                "--keep-viewer set but no viewer was created (pointcloud.viz.enabled is false, "
+                "or no video succeeded); nothing to keep alive."
+            )
+
     return 1 if failed else 0
 
 
@@ -169,6 +190,12 @@ def main():
         help="Steps to run: preprocess,pointcloud,semantics,mesh,localize. " "Default: config-enabled steps.",
     )
     parser.add_argument("--overwrite", action="store_true", help="Re-run steps even if outputs already exist.")
+    parser.add_argument(
+        "--keep-viewer",
+        action="store_true",
+        dest="keep_viewer",
+        help="keep the viser viewer alive after reconstruction for browser inspection",
+    )
     args = parser.parse_args()
 
     override_config = None
@@ -190,6 +217,7 @@ def main():
         override_config=override_config,
         stages=stages,
         overwrite=args.overwrite,
+        keep_viewer=args.keep_viewer,
     )
     sys.exit(code)
 

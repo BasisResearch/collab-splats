@@ -1,4 +1,5 @@
 """Tests: result.intrinsics always at model resolution after _postprocess / reproject()."""
+
 from __future__ import annotations
 
 import tempfile
@@ -13,8 +14,8 @@ from PIL import Image as PILImage
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _make_raw_omega(model_h: int = 16, model_w: int = 8) -> dict:
     """Minimal raw_outputs dict as fixed VGGTOmega._forward returns.
@@ -27,8 +28,8 @@ def _make_raw_omega(model_h: int = 16, model_w: int = 8) -> dict:
     intr = np.eye(3, dtype=np.float32)[None].repeat(N, axis=0)
     intr[:, 0, 0] = 50.0
     intr[:, 1, 1] = 50.0
-    intr[:, 0, 2] = model_w / 2   # cx well inside W
-    intr[:, 1, 2] = model_h / 2   # cy well inside H
+    intr[:, 0, 2] = model_w / 2  # cx well inside W
+    intr[:, 1, 2] = model_h / 2  # cy well inside H
     return {
         "images": torch.zeros(N, 3, model_h, model_w),
         "extrinsic": np.eye(3, 4, dtype=np.float32)[None].repeat(N, axis=0),
@@ -46,13 +47,12 @@ def _make_omega_creator(N: int = 2) -> VGGTOmegaCreator:
     creator.max_points = 500_000
     creator.image_paths = [MagicMock() for _ in range(N)]
     # VGGTOmega-style original_coords: full image, no crop (AR in supported range)
-    creator.original_coords = np.array(
-        [[0, 0, 1080, 1920, 1080, 1920]] * N, dtype=np.float32
-    )
+    creator.original_coords = np.array([[0, 0, 1080, 1920, 1080, 1920]] * N, dtype=np.float32)
     return creator
 
 
 # ── VGGTOmega _postprocess invariant tests ─────────────────────────────────────
+
 
 def test_omega_result_intrinsics_cx_inside_model_width():
     """After _postprocess, result.intrinsics cx must be < model_width."""
@@ -84,6 +84,7 @@ def test_omega_result_intrinsics_cy_inside_model_height():
 
 # ── reproject() scaling test ───────────────────────────────────────────────────
 
+
 def test_reproject_uses_intrinsics_directly_no_scaling():
     """reproject() must use self.intrinsics without applying original_coords scaling.
 
@@ -98,8 +99,7 @@ def test_reproject_uses_intrinsics_directly_no_scaling():
 
     depth = np.ones((N, H, W), dtype=np.float32)
     # One point per frame, both at the principal point (col=cx, row=cy)
-    pixel_indices = np.array([[0, int(cy), int(cx)],
-                               [1, int(cy), int(cx)]], dtype=np.int32)
+    pixel_indices = np.array([[0, int(cy), int(cx)], [1, int(cy), int(cx)]], dtype=np.int32)
 
     intrinsics = np.eye(3, dtype=np.float32)[None].repeat(N, axis=0)
     intrinsics[:, 0, 0] = fx
@@ -139,47 +139,39 @@ def test_reproject_uses_intrinsics_directly_no_scaling():
 
 # ── _compute_vggtx_crop_coords tests (added in Task 6) ─────────────────────────
 
+
 def test_vggtx_crop_coords_portrait():
     """Portrait 1080×1920: height crop expected, cr_x = orig_w."""
     from collab_splats.pointcloud.feedforward.vggtx import _compute_vggtx_crop_coords
 
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "img.png"
-        PILImage.fromarray(np.zeros((1920, 1080, 3), dtype=np.uint8)).save(p)
-        coords = _compute_vggtx_crop_coords([p], target_size=518)
+    coords = _compute_vggtx_crop_coords([(1080, 1920)], target_size=518)
 
     assert coords.shape == (1, 6)
     tl_x, tl_y, cr_x, cr_y, orig_w, orig_h = coords[0]
     assert tl_x == 0.0
-    assert cr_x == 1080.0        # full width always kept
+    assert cr_x == 1080.0  # full width always kept
     assert orig_w == 1080.0
     assert orig_h == 1920.0
-    assert tl_y > 0              # portrait → height crop applied
-    assert cr_y < orig_h         # crop ends before image bottom
-    assert cr_y > tl_y           # non-empty crop
+    assert tl_y > 0  # portrait → height crop applied
+    assert cr_y < orig_h  # crop ends before image bottom
+    assert cr_y > tl_y  # non-empty crop
 
 
 def test_vggtx_crop_coords_landscape_no_crop():
     """Landscape 1920×1080: no height crop (height stays ≤ 518 after width resize)."""
     from collab_splats.pointcloud.feedforward.vggtx import _compute_vggtx_crop_coords
 
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "img.png"
-        PILImage.fromarray(np.zeros((1080, 1920, 3), dtype=np.uint8)).save(p)
-        coords = _compute_vggtx_crop_coords([p], target_size=518)
+    coords = _compute_vggtx_crop_coords([(1920, 1080)], target_size=518)
 
     tl_x, tl_y, cr_x, cr_y, orig_w, orig_h = coords[0]
     assert tl_y == 0.0
-    assert cr_y == orig_h        # no crop
+    assert cr_y == orig_h  # no crop
 
 
 def test_vggtx_crop_coords_cr_x_gt_target_size():
     """cr_x must always equal orig_w > target_size so the TSDF heuristic fires."""
     from collab_splats.pointcloud.feedforward.vggtx import _compute_vggtx_crop_coords
 
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "img.png"
-        PILImage.fromarray(np.zeros((1920, 1080, 3), dtype=np.uint8)).save(p)
-        coords = _compute_vggtx_crop_coords([p], target_size=518)
+    coords = _compute_vggtx_crop_coords([(1080, 1920)], target_size=518)
 
-    assert coords[0, 2] > 518   # cr_x = 1080 > model_W = 518
+    assert coords[0, 2] > 518  # cr_x = 1080 > model_W = 518

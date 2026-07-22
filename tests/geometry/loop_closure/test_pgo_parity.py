@@ -14,12 +14,10 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.graph import (
-    estimate_scale_pairwise,
-    run_pose_graph_optimization,
-)
-from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
+from collab_splats.geometry.loop_closure.graph import estimate_scale_pairwise
 from collab_splats.geometry.loop_closure.submap import Submap
+from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
+from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -151,7 +149,7 @@ def test_pgo_overlap_1_connects_submaps():
         global_t += (k - 1) * 0.1  # advance by k-1 (1-frame overlap)
 
     total_frames = k + (k - 1) * (n_submaps - 1)  # 4 + 3 + 3 = 10 for overlap=1
-    result = run_pose_graph_optimization(submaps, lc_submaps=[], total_frames=total_frames, overlap_frames=1)
+    result = drive_pose_graph(submaps, lc_submaps=[], total_frames=total_frames, overlap_frames=1)
     assert result.shape == (total_frames, 4, 4), f"Expected ({total_frames}, 4, 4), got {result.shape}"
     # First frame should be near identity (pinned by prior)
     assert np.allclose(result[0], np.eye(4), atol=0.1), "First frame should be near identity"

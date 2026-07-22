@@ -25,6 +25,9 @@ pointcloud:
   method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)
   backend: vggt_omega         # vggt_omega | vggtx | mapanything  (feedforward only)
   loop_closure: false
+  viz:
+    enabled: false          # instantiate the viser Viewer during loop closure
+    port: 8080              # viser server port
   # ── NOT YET IMPLEMENTED (raises NotImplementedError if enabled) ──
   bundle_adjustment: false    # BA at Reconstructor level not wired; pass to creator config directly
   clean:

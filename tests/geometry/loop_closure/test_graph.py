@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
@@ -49,6 +50,7 @@ def test_estimate_scale_pairwise_no_div_zero():
 ########################################
 
 import gtsam
+
 from collab_splats.geometry.loop_closure.graph import PoseGraph
 
 
@@ -62,32 +64,32 @@ def _translate_H(tx: float, ty: float, tz: float) -> np.ndarray:
     return H
 
 
-def test_sl4_add_node_initializes():
+def test_sl4_add_homography_initializes():
     pg = PoseGraph()
-    pg.add_node(0, _identity_H())
-    pg.add_node(1, _translate_H(0.1, 0, 0))
+    pg.add_homography(0, _identity_H())
+    pg.add_homography(1, _translate_H(0.1, 0, 0))
     assert 0 in pg._node_ids
     assert 1 in pg._node_ids
 
 
-def test_sl4_add_node_duplicate_noop():
+def test_sl4_add_homography_duplicate_noop():
     pg = PoseGraph()
-    pg.add_node(0, _identity_H())
-    pg.add_node(0, _translate_H(1, 1, 1))  # duplicate — must not raise or re-insert
+    pg.add_homography(0, _identity_H())
+    pg.add_homography(0, _translate_H(1, 1, 1))  # duplicate — must not raise or re-insert
     assert len(pg._node_ids) == 1
 
 
 def test_sl4_sequential_edge_optimize():
     pg = PoseGraph()
     # Translation matrices have det=1, so they already satisfy the SL(4)
-    # constraint; add_node/add_prior SL4-normalize on insert regardless.
+    # constraint; add_homography/add_prior_factor SL4-normalize on insert regardless.
     H0 = _identity_H()
     H1 = _translate_H(0.1, 0, 0)
-    pg.add_node(0, H0)
-    pg.add_node(1, H1)
-    pg.add_prior(0, H0)
+    pg.add_homography(0, H0)
+    pg.add_homography(1, H1)
+    pg.add_prior_factor(0, H0)
     H_rel = np.linalg.inv(H0) @ H1
-    pg.add_sequential_edge(0, 1, H_rel)
+    pg.add_between_factor(0, 1, H_rel)
     pg.optimize()
     H0_out = pg.get_homography(0)
     assert H0_out.shape == (4, 4)
@@ -98,13 +100,13 @@ def test_sl4_loop_edge_no_crash():
     pg = PoseGraph()
     Hs = [_translate_H(i * 0.1, 0, 0) for i in range(3)]
     for i, H in enumerate(Hs):
-        pg.add_node(i, H)
-    pg.add_prior(0, Hs[0])
-    pg.add_sequential_edge(0, 1, np.linalg.inv(Hs[0]) @ Hs[1])
-    pg.add_sequential_edge(1, 2, np.linalg.inv(Hs[1]) @ Hs[2])
+        pg.add_homography(i, H)
+    pg.add_prior_factor(0, Hs[0])
+    pg.add_between_factor(0, 1, np.linalg.inv(Hs[0]) @ Hs[1])
+    pg.add_between_factor(1, 2, np.linalg.inv(Hs[1]) @ Hs[2])
     # Loop-chain edges share the sequential-edge API and Gaussian noise
     # (add_loop_edge was removed with the scale-reconciled 3-edge chain).
-    pg.add_sequential_edge(2, 0, np.linalg.inv(Hs[2]) @ Hs[0])
+    pg.add_between_factor(2, 0, np.linalg.inv(Hs[2]) @ Hs[0])
     pg.optimize()  # must not raise
     for i in range(3):
         assert np.isfinite(pg.get_homography(i)).all()
@@ -113,8 +115,8 @@ def test_sl4_loop_edge_no_crash():
 def test_get_homography_post_optimize():
     pg = PoseGraph()
     H0 = _identity_H()
-    pg.add_node(0, H0)
-    pg.add_prior(0, H0)
+    pg.add_homography(0, H0)
+    pg.add_prior_factor(0, H0)
     pg.optimize()
     H_out = pg.get_homography(0)
     assert H_out.shape == (4, 4)
@@ -122,13 +124,15 @@ def test_get_homography_post_optimize():
 
 
 ########################################
-####### run_pose_graph_optimization ####
+####### incremental PoseGraph drive ####
 ########################################
 
 from pathlib import Path
+
 import torch
+
 from collab_splats.geometry.loop_closure.submap import Submap
-from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
+from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 
 def _make_real_submap(submap_id: int, k: int = 4, frame_start: int = 0) -> Submap:
@@ -149,10 +153,10 @@ def _make_real_submap(submap_id: int, k: int = 4, frame_start: int = 0) -> Subma
     )
 
 
-def test_run_pose_graph_optimization_returns_correct_shape():
+def test_incremental_pose_graph_returns_correct_shape():
     k = 4
     submaps = [_make_real_submap(0, k=k, frame_start=0), _make_real_submap(1, k=k, frame_start=k)]
-    result = run_pose_graph_optimization(
+    result = drive_pose_graph(
         submaps,
         lc_submaps=[],
         total_frames=k * 2,

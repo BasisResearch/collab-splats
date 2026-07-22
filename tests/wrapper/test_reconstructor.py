@@ -331,7 +331,7 @@ def test_build_pointcloud_feedforward_vggtx(tmp_path):
     rec = Reconstructor(config)
     mock_result = _make_mock_pointcloud_result(tmp_path)
 
-    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=mock_result) as mock_ff:
+    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(mock_result, None)) as mock_ff:
         result = rec.build_pointcloud(overwrite=True)
 
     mock_ff.assert_called_once()
@@ -618,6 +618,140 @@ def test_build_localization_db_skips_when_exists(tmp_path):
         out = rec.build_localization_db(overwrite=False)
     build.assert_not_called()
     assert out == ff
+
+
+########################################
+# Viz wiring (P6.2)
+########################################
+
+
+def test_base_yaml_has_viz_defaults(tmp_path):
+    """base.yaml exposes pointcloud.viz.enabled (default False) and pointcloud.viz.port (default 8080)."""
+    config = {
+        "input_path": str(tmp_path / "video.mp4"),
+        "output_path": str(tmp_path / "out"),
+    }
+    rec = Reconstructor(config)
+    assert rec.config["pointcloud"]["viz"]["enabled"] is False
+    assert rec.config["pointcloud"]["viz"]["port"] == 8080
+
+
+def test_build_pointcloud_passes_viz_config_to_run_feedforward(tmp_path):
+    """build_pointcloud reads pointcloud.viz.enabled/port strictly and forwards to _run_feedforward."""
+    config = _make_config(tmp_path, {"pointcloud": {"loop_closure": True, "viz": {"enabled": True, "port": 9001}}})
+    rec = Reconstructor(config)
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+
+    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(mock_result, None)) as mock_ff:
+        rec.build_pointcloud(overwrite=True)
+
+    _, kwargs = mock_ff.call_args
+    assert kwargs["loop_closure"] is True
+    assert kwargs["viz_enabled"] is True
+    assert kwargs["viz_port"] == 9001
+
+
+def test_build_pointcloud_exposes_viewer_when_viz_enabled(tmp_path):
+    """reconstructor.viewer is the Viewer instance _run_feedforward created, once build_pointcloud returns."""
+    config = _make_config(tmp_path, {"pointcloud": {"loop_closure": True, "viz": {"enabled": True, "port": 9001}}})
+    rec = Reconstructor(config)
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+    mock_viewer = MagicMock()
+
+    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(mock_result, mock_viewer)):
+        rec.build_pointcloud(overwrite=True)
+
+    assert rec.viewer is mock_viewer
+
+
+def test_reconstructor_viewer_none_when_viz_disabled(tmp_path):
+    """reconstructor.viewer stays None both before build_pointcloud and after, when viz is disabled."""
+    config = _make_config(tmp_path)  # viz.enabled defaults False
+    rec = Reconstructor(config)
+    assert rec.viewer is None
+
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(mock_result, None)):
+        rec.build_pointcloud(overwrite=True)
+
+    assert rec.viewer is None
+
+
+def test_run_feedforward_attaches_viewer_when_enabled(tmp_path):
+    """_run_feedforward attaches a Viewer to the LoopClosure creator when loop_closure + viz_enabled."""
+    from collab_splats.wrapper import reconstructor as R
+
+    mock_creator = MagicMock()
+    mock_lc_instance = MagicMock(outputs=None)
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
+        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
+        patch.object(R, "FrameStore"),
+    ):
+        R._run_feedforward(
+            backend="vggtx",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=True,
+            viz_enabled=True,
+            viz_port=9999,
+        )
+
+    mock_lc_cls.assert_called_once_with(base=mock_creator)
+    mock_viewer_cls.assert_called_once_with(port=9999)
+    assert mock_lc_instance.viz is mock_viewer_cls.return_value
+
+
+def test_run_feedforward_no_viewer_when_viz_disabled(tmp_path):
+    """No Viewer instantiated when viz_enabled=False, even with loop_closure=True."""
+    from collab_splats.wrapper import reconstructor as R
+
+    mock_creator = MagicMock()
+    mock_lc_instance = MagicMock(outputs=None)
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
+        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance),
+        patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
+        patch.object(R, "FrameStore"),
+    ):
+        R._run_feedforward(
+            backend="vggtx",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=True,
+            viz_enabled=False,
+            viz_port=8080,
+        )
+
+    mock_viewer_cls.assert_not_called()
+
+
+def test_run_feedforward_no_loop_closure_no_viewer(tmp_path):
+    """loop_closure=False never wraps the creator or attaches viz, even if viz_enabled=True."""
+    from collab_splats.wrapper import reconstructor as R
+
+    mock_creator = MagicMock(outputs=None)
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
+        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure") as mock_lc_cls,
+        patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
+        patch.object(R, "FrameStore"),
+    ):
+        R._run_feedforward(
+            backend="vggtx",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=False,
+            viz_enabled=True,
+            viz_port=8080,
+        )
+
+    mock_lc_cls.assert_not_called()
+    mock_viewer_cls.assert_not_called()
 
 
 def test_build_localization_db_runs_when_missing(tmp_path):

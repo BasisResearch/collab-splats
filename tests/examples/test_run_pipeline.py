@@ -145,3 +145,127 @@ def test_run_all_continues_on_failure(tmp_path):
         )
     assert fake.run_pipeline.call_count == 2  # did not abort after first failure
     assert code == 1  # non-zero because one failed
+
+
+########################################
+# run_all --keep-viewer — post-batch viser keep-alive (P6.3)
+########################################
+
+
+def test_run_all_keep_viewer_calls_serve_forever(tmp_path):
+    """keep_viewer=True + a produced viewer => serve_forever runs once the batch finishes."""
+    cfg_dir = _write_configs(tmp_path)
+    v = tmp_path / "a.mp4"
+    v.touch()
+    fake = MagicMock()
+    fake.config = {"output_path": str(tmp_path / "out" / "a")}
+    fake.viewer = MagicMock()  # stub Viewer — serve_forever must not really block/bind
+    with patch.object(run_pipeline, "Reconstructor", return_value=fake):
+        code = run_pipeline.run_all(
+            [v],
+            output_root=tmp_path / "out",
+            config_dir=cfg_dir,
+            override_config=None,
+            stages=None,
+            overwrite=False,
+            keep_viewer=True,
+        )
+    fake.viewer.serve_forever.assert_called_once()
+    assert code == 0
+
+
+def test_run_all_without_keep_viewer_skips_serve_forever(tmp_path):
+    """Default (keep_viewer=False): serve_forever is never touched even if a viewer exists."""
+    cfg_dir = _write_configs(tmp_path)
+    v = tmp_path / "a.mp4"
+    v.touch()
+    fake = MagicMock()
+    fake.config = {"output_path": str(tmp_path / "out" / "a")}
+    fake.viewer = MagicMock()
+    with patch.object(run_pipeline, "Reconstructor", return_value=fake):
+        run_pipeline.run_all(
+            [v],
+            output_root=tmp_path / "out",
+            config_dir=cfg_dir,
+            override_config=None,
+            stages=None,
+            overwrite=False,
+            keep_viewer=False,
+        )
+    fake.viewer.serve_forever.assert_not_called()
+
+
+def test_run_all_keep_viewer_no_viewer_exits_cleanly(tmp_path):
+    """keep_viewer=True but reconstructor.viewer is None (viz disabled): no crash, no serve_forever call."""
+    cfg_dir = _write_configs(tmp_path)
+    v = tmp_path / "a.mp4"
+    v.touch()
+    fake = MagicMock()
+    fake.config = {"output_path": str(tmp_path / "out" / "a")}
+    fake.viewer = None
+    with patch.object(run_pipeline, "Reconstructor", return_value=fake):
+        code = run_pipeline.run_all(
+            [v],
+            output_root=tmp_path / "out",
+            config_dir=cfg_dir,
+            override_config=None,
+            stages=None,
+            overwrite=False,
+            keep_viewer=True,
+        )
+    assert code == 0  # exits cleanly, no crash
+
+
+def test_main_wires_keep_viewer_flag_through_to_run_all(tmp_path, monkeypatch):
+    """--keep-viewer on the CLI reaches run_all's keep_viewer kwarg (end-to-end argparse check)."""
+    cfg_dir = _write_configs(tmp_path)
+    v = tmp_path / "a.mp4"
+    v.touch()
+
+    captured = {}
+
+    def fake_run_all(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(run_pipeline, "run_all", fake_run_all)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            "--output-root",
+            str(tmp_path / "out"),
+            "--config-dir",
+            str(cfg_dir),
+            "--keep-viewer",
+            str(v),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_pipeline.main()
+    assert exc.value.code == 0
+    assert captured["keep_viewer"] is True
+
+
+def test_main_defaults_keep_viewer_false(tmp_path, monkeypatch):
+    """Without --keep-viewer, run_all is called with keep_viewer=False."""
+    cfg_dir = _write_configs(tmp_path)
+    v = tmp_path / "a.mp4"
+    v.touch()
+
+    captured = {}
+
+    def fake_run_all(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(run_pipeline, "run_all", fake_run_all)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_pipeline.py", "--output-root", str(tmp_path / "out"), "--config-dir", str(cfg_dir), str(v)],
+    )
+    with pytest.raises(SystemExit):
+        run_pipeline.main()
+    assert captured["keep_viewer"] is False

@@ -20,13 +20,13 @@ import numpy as np
 import pytest
 import torch
 
+from collab_splats.geometry.loop_closure.edge_trace import compose_slam_chain
 from collab_splats.geometry.loop_closure.graph import (
     _lc_anchor_scale,
     _loop_chain_relatives,
-    run_pose_graph_optimization,
 )
-from collab_splats.geometry.loop_closure.edge_trace import compose_slam_chain
 from collab_splats.geometry.loop_closure.submap import Submap
+from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 # Image/grid geometry: full-res H*W LC grids vs subsample=8 strided regular grids
 H_IMG, W_IMG, STRIDE = 80, 80, 8
@@ -178,7 +178,7 @@ def _centre(w2c: np.ndarray) -> np.ndarray:
 
 
 def _run(submaps, lc_submaps, total_frames=7):
-    return run_pose_graph_optimization(
+    return drive_pose_graph(
         submaps,
         lc_submaps,
         total_frames=total_frames,

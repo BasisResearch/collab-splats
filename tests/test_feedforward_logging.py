@@ -14,7 +14,12 @@ class _MockCreator(BaseFeedforwardCreator):
     def _load_model(self, device: str) -> Any:
         return object()
 
-    def _preprocess(self, image_dir: Path):
+    def _decode_source(self, source: Any):
+        # Bypass real decode (setup_inference now decodes the source first); the
+        # logging tests only need a 2-frame batch, not on-disk images.
+        return ([None, None], [0, 1])
+
+    def _preprocess(self, frames: Any, frame_idxs: list[int]):
         return (
             [],
             [Path("a.jpg"), Path("b.jpg")],

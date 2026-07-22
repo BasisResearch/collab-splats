@@ -14,7 +14,6 @@ from typing import Any, ClassVar
 
 import numpy as np
 import torch
-from PIL import Image as PILImage
 from vggt.models.vggt import VGGT
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from vggt.utils.helper import randomly_limit_trues
@@ -33,6 +32,7 @@ from .base import (
     _raw_to_world_points,
     compute_multiview_depth_confidence,
     console,
+    frames_as_pil_source,
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -46,13 +46,18 @@ VGGTX_IMG_LOAD_RESOLUTION: int = 518
 # ── Preprocessing helpers ──────────────────────────────────────────────────────
 
 
-def _compute_vggtx_crop_coords(image_paths: list[Path], target_size: int = VGGTX_IMG_LOAD_RESOLUTION) -> np.ndarray:
+def _compute_vggtx_crop_coords(
+    sizes: list[tuple[int, int]], target_size: int = VGGTX_IMG_LOAD_RESOLUTION
+) -> np.ndarray:
     """Compute original_coords for VGGTX upstream crop mode.
 
     Upstream ``load_and_preprocess_images(mode="crop")`` resizes width→target_size then
     center-crops height to target_size when height > target_size.  This function computes
     the crop window in original-image pixel space so downstream consumers (TSDF RGB loader,
     COLMAP rescale) can invert the transform.
+
+    Args:
+        sizes: per-image ``(orig_w, orig_h)`` original-image dimensions.
 
     Returns:
         (N, 6) float32 array ``[tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]`` per image.
@@ -61,10 +66,7 @@ def _compute_vggtx_crop_coords(image_paths: list[Path], target_size: int = VGGTX
         For portrait images (height cropped): tl_y and cr_y mark the kept strip.
     """
     coords = []
-    for p in image_paths:
-        with PILImage.open(p) as img:
-            orig_w, orig_h = img.size  # PIL: (width, height)
-
+    for orig_w, orig_h in sizes:
         # Upstream: resize width → target_size, maintain AR; round height to div-by-14
         scale = target_size / orig_w
         new_h_raw = orig_h * scale
@@ -215,8 +217,8 @@ class VGGTXCreator(BaseFeedforwardCreator):
         model = model.to(device, dtype=dtype)
         return model
 
-    def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]:
-        """Load and preprocess images using upstream VGGT crop mode.
+    def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
+        """Preprocess in-memory frames using upstream VGGT crop mode.
 
         Resizes width to 518px then center-crops height to 518px when height > 518px.
         Matches the training preprocessing used by VGGT and VGGT-SLAM/SPARK.
@@ -224,27 +226,26 @@ class VGGTXCreator(BaseFeedforwardCreator):
         so the TSDF RGB loader and COLMAP rescale can invert the transform.
 
         Args:
-            image_dir: Directory containing ``.png``/``.jpg``/``.jpeg`` images.
+            frames:     (N, H, W, 3) uint8 RGB frames (or a list of per-image arrays).
+            frame_idxs: source frame indices, used for stable ``frame_{idx:06d}`` labels.
 
         Returns:
             (images, image_paths, original_coords) where original_coords is (N, 6)
             float32 ``[0, tl_y, orig_w, br_y, orig_w, orig_h]`` in original-image pixels.
-
-        Raises:
-            FileNotFoundError: If no supported images are found in image_dir.
         """
-        # Collect and sort image paths; reject non-image extensions
-        image_dir = Path(image_dir)
-        image_paths = sorted([p for p in image_dir.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"}])
-        if not image_paths:
-            raise FileNotFoundError(f"No images found in {image_dir}")
+        # Stable synthetic labels — no files on disk; the store/decoder is the sole IO path
+        image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
 
-        # Compute crop window in original-image pixel space for downstream consumers
-        original_coords = _compute_vggtx_crop_coords(image_paths, VGGTX_IMG_LOAD_RESOLUTION)
+        # Compute crop window in original-image pixel space from each frame's own dims
+        original_coords = _compute_vggtx_crop_coords(
+            [(int(f.shape[1]), int(f.shape[0])) for f in frames], VGGTX_IMG_LOAD_RESOLUTION
+        )
 
-        # Load and preprocess using upstream crop mode — matches VGGT training default
-        image_names = [str(p) for p in image_paths]
-        images = load_and_preprocess_images(image_names, mode="crop")
+        # Run upstream crop transform in-memory (bit-identical to path load); .png names
+        # satisfy loaders' extension checks while PIL.Image.open is intercepted.
+        loader_names = [f"{p.name}.png" for p in image_paths]
+        with frames_as_pil_source(frames):
+            images = load_and_preprocess_images(loader_names, mode="crop")
 
         return images, image_paths, original_coords
 

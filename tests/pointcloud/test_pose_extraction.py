@@ -11,9 +11,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
 from collab_splats.geometry.loop_closure.graph import decompose_camera
 from collab_splats.geometry.loop_closure.submap import Submap
+from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 
 def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
@@ -86,7 +86,7 @@ def test_pose_extraction_single_submap_first_frame_near_identity():
     wp = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
 
     submap = _make_submap(poses, wp, submap_id=0)
-    result = run_pose_graph_optimization([submap], lc_submaps=[], total_frames=k, overlap_frames=1)
+    result = drive_pose_graph([submap], lc_submaps=[], total_frames=k, overlap_frames=1)
 
     assert result.shape == (k, 4, 4)
     # First frame: reference frame → near identity
@@ -117,7 +117,7 @@ def test_pose_extraction_non_first_frame_uses_local_proj():
     wp = rng.standard_normal((2, 5, 5, 3)).astype(np.float32) * 0.1
 
     submap = _make_submap(poses, wp, submap_id=0)
-    result = run_pose_graph_optimization([submap], lc_submaps=[], total_frames=2, overlap_frames=1)
+    result = drive_pose_graph([submap], lc_submaps=[], total_frames=2, overlap_frames=1)
 
     assert result.shape == (2, 4, 4)
     R_out = result[1, :3, :3]

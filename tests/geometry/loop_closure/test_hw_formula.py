@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
 from collab_splats.geometry.loop_closure.submap import Submap
+from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 
 def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
@@ -96,9 +96,7 @@ def test_hw_formula_integration_two_submaps_rotated():
     curr_sub = _make_submap(poses_curr.astype(np.float32), wp_curr, submap_id=1)
 
     total_frames = k + (k - 1)  # 3 with overlap=1
-    result = run_pose_graph_optimization(
-        [prev_sub, curr_sub], lc_submaps=[], total_frames=total_frames, overlap_frames=1
-    )
+    result = drive_pose_graph([prev_sub, curr_sub], lc_submaps=[], total_frames=total_frames, overlap_frames=1)
 
     assert result.shape == (total_frames, 4, 4)
     # First frame (reference) should be near identity

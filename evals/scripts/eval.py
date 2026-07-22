@@ -207,6 +207,7 @@ def _make_creator(
     backbone: str = "vggt_omega",
     lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
+    loop_edge_timing: str = "deferred",
 ):
     """Build a (creator, ba_config) pair for the given condition.
 
@@ -214,8 +215,11 @@ def _make_creator(
     Returns (creator, BundleAdjustmentConfig) when BA should run after postprocess.
     """
     # Optional LoopClosureConfig override shared by every construction below;
-    # None = keep the LoopClosureConfig class default.
-    _lc_extra = {} if max_loops_per_submap is None else {"max_loops_per_submap": max_loops_per_submap}
+    # None = keep the LoopClosureConfig class default. loop_edge_timing threads the
+    # deferred|live A/B knob into every LC config.
+    _lc_extra = {"loop_edge_timing": loop_edge_timing}
+    if max_loops_per_submap is not None:
+        _lc_extra["max_loops_per_submap"] = max_loops_per_submap
     base = get_creator(backbone)()
     if condition == "lc":
         lc_cfg = LoopClosureConfig(
@@ -264,6 +268,7 @@ def _run_condition(
     backbone: str = "vggt_omega",
     lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
+    loop_edge_timing: str = "deferred",
 ) -> tuple[np.ndarray, Any]:
     """Run condition, return (extrinsics (N,4,4), creator)."""
     creator, ba_cfg = _make_creator(
@@ -272,6 +277,7 @@ def _run_condition(
         backbone=backbone,
         lc_scale_method=lc_scale_method,
         max_loops_per_submap=max_loops_per_submap,
+        loop_edge_timing=loop_edge_timing,
     )
     if ba_cfg is None:
         creator.reconstruct(image_dir, output_dir)
@@ -436,6 +442,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "default). Pass 1 for VGGT-SLAM parity runs (upstream caps at 1 loop/submap).",
     )
     parser.add_argument(
+        "--loop_edge_timing",
+        choices=["deferred", "live"],
+        default="deferred",
+        help="Loop-edge insertion timing for the lc condition. deferred=all loop edges "
+        "+ final solve after the window loop (repo default); live=insert each loop edge "
+        "during the window loop (VGGT-SLAM style). A/B knob.",
+    )
+    parser.add_argument(
         "--keyframe_list",
         type=Path,
         default=None,
@@ -478,6 +492,7 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
         backbone=backbone,
         lc_scale_method=getattr(args, "lc_scale_method", "rotation_only"),
         max_loops_per_submap=getattr(args, "max_loops_per_submap", None),
+        loop_edge_timing=getattr(args, "loop_edge_timing", "deferred"),
     )
     elapsed = time.perf_counter() - t0
 
@@ -664,6 +679,8 @@ def main() -> None:
             # Always forward scale_method so the leaf never falls back to a
             # drifting default (default = rotation_only = parity method).
             cmd += ["--lc_scale_method", getattr(args, "lc_scale_method", "rotation_only")]
+            # Forward loop_edge_timing (deferred|live A/B knob) to the leaf.
+            cmd += ["--loop_edge_timing", getattr(args, "loop_edge_timing", "deferred")]
             if getattr(args, "lc_layer", None) is not None:
                 cmd += ["--lc_layer", str(args.lc_layer)]
             if getattr(args, "max_loops_per_submap", None) is not None:

@@ -20,6 +20,7 @@ from collab_splats.preproc.frame_store import FrameStore
 
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
+    from collab_splats.viewer import Viewer
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +116,15 @@ def _run_feedforward(
     frames_zarr: Path,
     output_dir: Path,
     loop_closure: bool,
-) -> "PointcloudResult":
+    viz_enabled: bool,
+    viz_port: int,
+) -> tuple["PointcloudResult", "Viewer | None"]:
     """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
 
     Saves feedforward.zarr to output_dir after inference so downstream stages
-    (semantics lift, mesh) can load depth/confidence/pixel data.
+    (semantics lift, mesh) can load depth/confidence/pixel data. Returns the
+    PointcloudResult and the created Viewer (None unless loop_closure + viz_enabled),
+    so callers can keep the viser server reachable after this function returns.
     """
     # Heavy dep imports — kept inline so module loads without GPU/model deps
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
@@ -137,9 +142,20 @@ def _run_feedforward(
     }
     creator = creator_map[backend]()
 
-    # Wrap with loop closure if requested
+    # Wrap with loop closure if requested; viz has nothing to show without it, so only
+    # attach the viser Viewer (also a heavy/websocket dep) when both are enabled
+    viewer = None
     if loop_closure:
         creator = LoopClosure(base=creator)
+        if viz_enabled:
+            from collab_splats.viewer import Viewer
+
+            viewer = Viewer(port=viz_port)
+            creator.viz = viewer
+            # Force live loop-edge timing so the viewer shows each loop correcting the
+            # scene as it fires; deferred would defer the snap to a single end-of-run PGO.
+            # ATE is identical either way — this is purely the live-build experience.
+            creator.config.loop_edge_timing = "live"
 
     # Feed inference frames from the canonical decode-once store (temp-exported for path-locked
     # model preprocessing); build_colmap appends colmap/sparse/0 under output_dir internally
@@ -163,7 +179,7 @@ def _run_feedforward(
         _torch.cuda.synchronize()
     logger.info("Pointcloud model released from GPU")
 
-    return result
+    return result, viewer
 
 
 def _get_extractor(name: str):
@@ -354,6 +370,9 @@ class Reconstructor:
         # Validate shape, then store the fully-populated config
         self.config = self.validate_config(merged)
         self.pointcloud: PointcloudResult | None = None
+        # Set by build_pointcloud() when pointcloud.viz.enabled + loop_closure; lets callers
+        # (e.g. run_pipeline.py --keep-viewer) reach the viser server after run() returns.
+        self.viewer: "Viewer | None" = None
 
     @classmethod
     def validate_config(cls, config: dict[str, Any]) -> dict[str, Any]:
@@ -468,12 +487,15 @@ class Reconstructor:
             )
             result = self._run_sfm()
         else:
-            result = _run_feedforward(
+            result, viewer = _run_feedforward(
                 backend=pc_cfg["backend"],
                 frames_zarr=self.frames_zarr,
                 output_dir=self.backend_dir,
                 loop_closure=pc_cfg["loop_closure"],
+                viz_enabled=pc_cfg["viz"]["enabled"],
+                viz_port=pc_cfg["viz"]["port"],
             )
+            self.viewer = viewer
 
         # Apply cleaning step if enabled
         clean_cfg = pc_cfg["clean"]

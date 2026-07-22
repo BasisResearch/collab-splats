@@ -2,6 +2,7 @@
 
 All tests mock vggt_omega.models and checkpoint loading — no GPU or HF download required.
 """
+
 from __future__ import annotations
 
 import logging
@@ -13,16 +14,19 @@ import pytest
 import torch
 import torch.nn as nn
 
-from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator, FeedforwardResult
+from collab_splats.pointcloud.feedforward import (
+    BaseFeedforwardCreator,
+    FeedforwardResult,
+)
 from collab_splats.pointcloud.feedforward.vggt_omega import (
     VGGTOmegaCreator,
     _compute_omega_original_coords,
 )
 
-
 ########################################################################
 ########## Helpers #####################################################
 ########################################################################
+
 
 def _make_raw_outputs(n: int = 2, h: int = 4, w: int = 4) -> dict:
     """Minimal raw_outputs dict matching VGGTOmegaCreator._forward output format."""
@@ -75,6 +79,7 @@ def _make_mock_model(n_frames: int = 2, num_heads: int = 2, n_blocks: int = 2, h
 ########## Structural tests ############################################
 ########################################################################
 
+
 def test_vggt_omega_creator_is_feedforward_creator():
     """VGGTOmegaCreator inherits from BaseFeedforwardCreator."""
     assert issubclass(VGGTOmegaCreator, BaseFeedforwardCreator)
@@ -103,6 +108,7 @@ def test_vggt_omega_creator_missing_image_dir_raises(tmp_path):
 def test_vggt_omega_has_logger():
     """Module exposes a module-level logger."""
     import collab_splats.pointcloud.feedforward.vggt_omega as mod
+
     assert hasattr(mod, "logger")
     assert isinstance(mod.logger, logging.Logger)
 
@@ -111,13 +117,10 @@ def test_vggt_omega_has_logger():
 ########## _compute_omega_original_coords ##############################
 ########################################################################
 
-def test_compute_omega_original_coords_normal_ar(tmp_path):
-    """Square image — no crop; coords are full-frame."""
-    import PIL.Image
-    img_path = tmp_path / "square.png"
-    PIL.Image.new("RGB", (64, 64), color=0).save(img_path)
 
-    coords = _compute_omega_original_coords([img_path])
+def test_compute_omega_original_coords_normal_ar():
+    """Square image — no crop; coords are full-frame."""
+    coords = _compute_omega_original_coords([(64, 64)])
     assert coords.shape == (1, 6)
     assert coords.dtype == np.float32
     tl_x, tl_y, cr_x, cr_y, orig_w, orig_h = coords[0]
@@ -129,13 +132,9 @@ def test_compute_omega_original_coords_normal_ar(tmp_path):
     assert orig_h == pytest.approx(64.0)
 
 
-def test_compute_omega_original_coords_tall_image_crops_height(tmp_path):
+def test_compute_omega_original_coords_tall_image_crops_height():
     """Tall image (AR > 2.0) — height is center-cropped."""
-    import PIL.Image
-    img_path = tmp_path / "tall.png"
-    PIL.Image.new("RGB", (100, 400), color=0).save(img_path)  # AR = 4.0 > 2.0
-
-    coords = _compute_omega_original_coords([img_path])
+    coords = _compute_omega_original_coords([(100, 400)])  # AR = 4.0 > 2.0
     tl_x, tl_y, cr_x, cr_y, orig_w, orig_h = coords[0]
     # crop_h = 100 * 2.0 = 200; tl_y = (400 - 200) / 2 = 100; cr_y = 100 + 200 = 300
     assert tl_x == pytest.approx(0.0)
@@ -146,13 +145,9 @@ def test_compute_omega_original_coords_tall_image_crops_height(tmp_path):
     assert orig_h == pytest.approx(400.0)
 
 
-def test_compute_omega_original_coords_wide_image_crops_width(tmp_path):
+def test_compute_omega_original_coords_wide_image_crops_width():
     """Wide image (AR < 0.5) — width is center-cropped."""
-    import PIL.Image
-    img_path = tmp_path / "wide.png"
-    PIL.Image.new("RGB", (400, 100), color=0).save(img_path)  # AR = 0.25 < 0.5
-
-    coords = _compute_omega_original_coords([img_path])
+    coords = _compute_omega_original_coords([(400, 100)])  # AR = 0.25 < 0.5
     tl_x, tl_y, cr_x, cr_y, orig_w, orig_h = coords[0]
     # crop_w = 100 / 0.5 = 200; tl_x = (400 - 200) / 2 = 100; cr_x = 100 + 200 = 300
     assert tl_x == pytest.approx(100.0)
@@ -161,16 +156,9 @@ def test_compute_omega_original_coords_wide_image_crops_width(tmp_path):
     assert cr_y == pytest.approx(100.0)
 
 
-def test_compute_omega_original_coords_multiple_images(tmp_path):
+def test_compute_omega_original_coords_multiple_images():
     """Multiple images — coords shape (N, 6)."""
-    import PIL.Image
-    paths = []
-    for i, (w, h) in enumerate([(64, 64), (100, 400), (400, 100)]):
-        p = tmp_path / f"img{i}.png"
-        PIL.Image.new("RGB", (w, h), color=0).save(p)
-        paths.append(p)
-
-    coords = _compute_omega_original_coords(paths)
+    coords = _compute_omega_original_coords([(64, 64), (100, 400), (400, 100)])
     assert coords.shape == (3, 6)
     assert coords.dtype == np.float32
 
@@ -179,35 +167,38 @@ def test_compute_omega_original_coords_multiple_images(tmp_path):
 ########## _preprocess #################################################
 ########################################################################
 
-def test_preprocess_empty_dir_raises(tmp_path):
-    """_preprocess raises FileNotFoundError when no images present."""
+
+def test_setup_inference_empty_dir_raises(tmp_path):
+    """setup_inference raises FileNotFoundError when no images present."""
     creator = VGGTOmegaCreator()
     with pytest.raises(FileNotFoundError, match="No images found"):
-        creator._preprocess(tmp_path)
+        creator.setup_inference(tmp_path)
 
 
-def test_preprocess_returns_correct_shapes(tmp_path):
+def test_preprocess_returns_correct_shapes():
     """_preprocess returns (views [N,3,H,W], paths, original_coords [N,6])."""
-    import PIL.Image
-    for i in range(3):
-        PIL.Image.new("RGB", (64, 64), color=i * 80).save(tmp_path / f"frame_{i:04d}.jpg")
+    frames = [np.full((64, 64, 3), i * 80, dtype=np.uint8) for i in range(3)]
+    frame_idxs = [0, 1, 2]
 
     creator = VGGTOmegaCreator(resolution=64)
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.load_and_preprocess_images",
-               return_value=torch.zeros(3, 3, 64, 64)):
-        views, image_paths, original_coords = creator._preprocess(tmp_path)
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.load_and_preprocess_images",
+        return_value=torch.zeros(3, 3, 64, 64),
+    ):
+        views, image_paths, original_coords = creator._preprocess(frames, frame_idxs)
 
     assert views.shape == (3, 3, 64, 64)
     assert len(image_paths) == 3
     assert original_coords.shape == (3, 6)
     assert original_coords.dtype == np.float32
-    # Verify image_paths are sorted by name
-    assert [p.name for p in image_paths] == sorted(p.name for p in image_paths)
+    # Labels are stable frame_{idx:06d} names in frame order
+    assert [p.name for p in image_paths] == [f"frame_{i:06d}" for i in frame_idxs]
 
 
 ########################################################################
 ########## _forward ####################################################
 ########################################################################
+
 
 def test_forward_output_keys(tmp_path):
     """_forward returns dict with required keys for downstream processing."""
@@ -227,8 +218,10 @@ def test_forward_output_keys(tmp_path):
     creator.original_coords = np.array([[0, 0, w, h, w, h]] * n, dtype=np.float32)
 
     views = torch.zeros(n, 3, h, w)
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-               return_value=(torch.zeros(1, n, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, n, 3, 3))):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
+        return_value=(torch.zeros(1, n, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, n, 3, 3)),
+    ):
         raw = creator._forward(mock_model, views)
 
     required_keys = {"images", "extrinsic", "intrinsics", "intrinsics_downsampled", "depth", "depth_conf"}
@@ -254,8 +247,9 @@ def test_forward_extrinsic_shape(tmp_path):
 
     ext_tensor = torch.zeros(1, n, 3, 4)
     intr_tensor = torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, n, 3, 3).contiguous()
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-               return_value=(ext_tensor, intr_tensor)):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera", return_value=(ext_tensor, intr_tensor)
+    ):
         raw = creator._forward(mock_model, torch.zeros(n, 3, h, w))
 
     assert raw["extrinsic"].shape == (n, 3, 4)
@@ -266,6 +260,7 @@ def test_forward_extrinsic_shape(tmp_path):
 ########################################################################
 ########## _postprocess ################################################
 ########################################################################
+
 
 def test_postprocess_returns_feedforward_result(tmp_path):
     """_postprocess returns a FeedforwardResult with correct shapes."""
@@ -283,8 +278,10 @@ def test_postprocess_returns_feedforward_result(tmp_path):
     creator.model = MagicMock()
     creator.model.parameters = lambda: iter([nn.Parameter(torch.zeros(1))])
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
-               return_value=(pts, colors, pixel_indices)):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
+        return_value=(pts, colors, pixel_indices),
+    ):
         result = creator._postprocess(raw)
 
     assert isinstance(result, FeedforwardResult)
@@ -311,8 +308,10 @@ def test_postprocess_world_points_populated(tmp_path):
     creator.model = MagicMock()
     creator.model.parameters = lambda: iter([nn.Parameter(torch.zeros(1))])
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
-               return_value=(pts, colors, pixel_indices)):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
+        return_value=(pts, colors, pixel_indices),
+    ):
         result = creator._postprocess(raw)
 
     assert result.world_points is not None
@@ -324,6 +323,7 @@ def test_postprocess_world_points_populated(tmp_path):
 ########################################################################
 ########## _load_model #################################################
 ########################################################################
+
 
 def test_load_model_with_explicit_path(tmp_path):
     """_load_model with model_path skips hf_hub_download."""
@@ -337,9 +337,12 @@ def test_load_model_with_explicit_path(tmp_path):
     mock_model_instance.eval.return_value = mock_model_instance
     mock_model_instance.to.return_value = mock_model_instance
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
-               return_value=mock_model_instance) as mock_cls, \
-         patch("collab_splats.pointcloud.feedforward.vggt_omega.hf_hub_download") as mock_hf:
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_model_instance
+        ) as mock_cls,
+        patch("collab_splats.pointcloud.feedforward.vggt_omega.hf_hub_download") as mock_hf,
+    ):
         creator._load_model("cpu")
 
     mock_hf.assert_not_called()
@@ -366,10 +369,12 @@ def test_load_model_without_path_calls_hf_download(tmp_path):
     mock_model_instance.eval.return_value = mock_model_instance
     mock_model_instance.to.return_value = mock_model_instance
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
-               return_value=mock_model_instance), \
-         patch("collab_splats.pointcloud.feedforward.vggt_omega.hf_hub_download",
-               return_value=str(ckpt_path)) as mock_hf:
+    with (
+        patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_model_instance),
+        patch(
+            "collab_splats.pointcloud.feedforward.vggt_omega.hf_hub_download", return_value=str(ckpt_path)
+        ) as mock_hf,
+    ):
         creator._load_model("cpu")
 
     mock_hf.assert_called_once_with(
@@ -393,8 +398,7 @@ def test_load_model_keeps_fp32_params(tmp_path):
     mock_model_instance.eval.return_value = mock_model_instance
     mock_model_instance.to.return_value = mock_model_instance
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
-               return_value=mock_model_instance):
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_model_instance):
         creator._load_model("cpu")
 
     # No .to() call may pass a low-precision dtype
@@ -402,14 +406,16 @@ def test_load_model_keeps_fp32_params(tmp_path):
         dtype = call.kwargs.get("dtype")
         if dtype is None and len(call.args) > 1:
             dtype = call.args[1]
-        assert dtype not in (torch.bfloat16, torch.float16), (
-            f"_load_model cast model to {dtype}; VGGTOmega heads require fp32 params"
-        )
+        assert dtype not in (
+            torch.bfloat16,
+            torch.float16,
+        ), f"_load_model cast model to {dtype}; VGGTOmega heads require fp32 params"
 
 
 ########################################################################
 ########## extract_intermediate_features ###############################
 ########################################################################
+
 
 def test_extract_intermediate_features_returns_q_k_poses():
     """Hook fires on inter_frame_blocks[-1]; returns q, k, poses."""
@@ -417,11 +423,11 @@ def test_extract_intermediate_features_returns_q_k_poses():
     creator = VGGTOmegaCreator.__new__(VGGTOmegaCreator)
     creator.model = model
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-               return_value=(torch.zeros(1, 2, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3))):
-        result = creator.extract_intermediate_features(
-            torch.zeros(2, 3, 16, 16), layer_index=-1
-        )
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
+        return_value=(torch.zeros(1, 2, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3)),
+    ):
+        result = creator.extract_intermediate_features(torch.zeros(2, 3, 16, 16), layer_index=-1)
 
     assert "q" in result and "k" in result
     assert "poses" in result
@@ -443,8 +449,10 @@ def test_extract_intermediate_features_hook_removed_after_call():
     block = model.aggregator.inter_frame_blocks[-1]
     assert len(block.attn.qkv._forward_hooks) == 0
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-               return_value=(torch.zeros(1, 2, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3))):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
+        return_value=(torch.zeros(1, 2, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3)),
+    ):
         creator.extract_intermediate_features(torch.zeros(2, 3, 4, 4), layer_index=-1)
 
     assert len(block.attn.qkv._forward_hooks) == 0
@@ -463,8 +471,10 @@ def test_extract_intermediate_features_hook_removed_on_error():
 
     block = model.aggregator.inter_frame_blocks[-1]
     with pytest.raises(RuntimeError, match="simulated failure"):
-        with patch("collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-                   return_value=(torch.zeros(1, 2, 3, 4), torch.zeros(1, 2, 3, 3))):
+        with patch(
+            "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
+            return_value=(torch.zeros(1, 2, 3, 4), torch.zeros(1, 2, 3, 3)),
+        ):
             creator.extract_intermediate_features(torch.zeros(2, 3, 4, 4), layer_index=-1)
 
     assert len(block.attn.qkv._forward_hooks) == 0
@@ -473,6 +483,7 @@ def test_extract_intermediate_features_hook_removed_on_error():
 ########################################################################
 ########## _reproject ##################################################
 ########################################################################
+
 
 def test_reproject_returns_pts3d_colors(tmp_path):
     """_reproject returns (pts3d, colors) tuple."""
@@ -486,8 +497,10 @@ def test_reproject_returns_pts3d_colors(tmp_path):
     pixel_indices = np.zeros((5, 3), dtype=np.int32)
 
     creator = VGGTOmegaCreator()
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
-               return_value=(pts, colors, pixel_indices)):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
+        return_value=(pts, colors, pixel_indices),
+    ):
         result_pts, result_colors = creator._reproject(raw, extrinsics_3x4, intrinsics)
 
     assert result_pts.shape == (5, 3)
@@ -497,6 +510,7 @@ def test_reproject_returns_pts3d_colors(tmp_path):
 ########################################################################
 ########## resolution / resize_mode / enable_text_alignment ############
 ########################################################################
+
 
 def test_enable_text_alignment_auto_sets_resolution_256():
     """resolution=None + enable_text_alignment=True → resolved to 256."""
@@ -538,8 +552,7 @@ def test_load_model_passes_enable_alignment_true(tmp_path):
     mock_instance.eval.return_value = mock_instance
     mock_instance.to.return_value = mock_instance
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
-               return_value=mock_instance) as mock_cls:
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_instance) as mock_cls:
         creator._load_model("cpu")
 
     mock_cls.assert_called_once_with(enable_alignment=True)
@@ -555,8 +568,7 @@ def test_load_model_passes_enable_alignment_false(tmp_path):
     mock_instance.eval.return_value = mock_instance
     mock_instance.to.return_value = mock_instance
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
-               return_value=mock_instance) as mock_cls:
+    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_instance) as mock_cls:
         creator._load_model("cpu")
 
     mock_cls.assert_called_once_with(enable_alignment=False)
@@ -576,8 +588,10 @@ def test_postprocess_passes_max_points():
     creator.model = MagicMock()
     creator.model.parameters = lambda: iter([nn.Parameter(torch.zeros(1))])
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
-               return_value=(pts, colors, pixel_indices)) as mock_unproj:
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
+        return_value=(pts, colors, pixel_indices),
+    ) as mock_unproj:
         creator._postprocess(raw)
 
     call_kwargs = mock_unproj.call_args[1]
@@ -596,8 +610,10 @@ def test_reproject_passes_max_points():
 
     creator = VGGTOmegaCreator(max_points=99_000)
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
-               return_value=(pts, colors, pixel_indices)) as mock_unproj:
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.unproject_and_filter_points",
+        return_value=(pts, colors, pixel_indices),
+    ) as mock_unproj:
         creator._reproject(raw, extrinsics_3x4, intrinsics)
 
     call_kwargs = mock_unproj.call_args[1]
@@ -606,8 +622,10 @@ def test_reproject_passes_max_points():
 
 def test_omega_use_multiview_confidence_calls_compute_fn(tmp_path):
     """VGGTOmegaCreator with use_multiview_confidence=True calls compute_multiview_depth_confidence."""
-    import numpy as np
     from unittest.mock import patch
+
+    import numpy as np
+
     from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
 
     N, H, W = 2, 4, 4

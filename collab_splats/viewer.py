@@ -9,6 +9,7 @@ http://<host>:<port>. No GL/display needed on the host (websocket only).
 from __future__ import annotations
 
 import logging
+import threading
 import zlib
 from typing import Optional
 
@@ -109,6 +110,20 @@ class Viewer:
         """Upsert named line segments; segments (M, 2, 3) float."""
         colors = np.tile(np.asarray(color, dtype=np.uint8), (len(segments), 2, 1))
         self.server.scene.add_line_segments(name, points=np.asarray(segments), colors=colors, line_width=line_width)
+
+    ########################################################
+    ########## Keep-alive #################################
+    ########################################################
+
+    def serve_forever(self, poll: float = 0.5) -> None:
+        """Block so the viser server thread survives pipeline end (Ctrl-C / _stop to exit)."""
+        if not hasattr(self, "_stop"):
+            self._stop = threading.Event()
+        try:
+            while not self._stop.is_set():
+                self._stop.wait(poll)
+        except KeyboardInterrupt:
+            pass
 
     ########################################################
     ########## GUI toggle handlers ########################

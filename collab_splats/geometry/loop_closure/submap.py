@@ -1,3 +1,4 @@
+# Ported from VGGT-SLAM (github.com/MIT-SPARK/VGGT-SLAM), adapted for collab-splats.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -10,11 +11,11 @@ import torch  # TODO(spec-2): torch dep in submap violates coupling rule — fix
 @dataclass
 class Submap:
     submap_id: int
-    frames: torch.Tensor  # (K, 3, H, W) — raw image tensors on CPU
     poses: np.ndarray  # (K, 4, 4) float32 — world-to-cam homogeneous
     intrinsics: np.ndarray  # (K, 3, 3) float32 — camera intrinsics
     retrieval_vectors: torch.Tensor  # (K, D) float32 — DINO-SALAD global descriptors
     image_paths: list[Path]
+    frames: torch.Tensor | None = None  # (K, 3, H, W) — raw image tensors on CPU
     is_lc_submap: bool = False
     frame_start: int = 0  # global index of this submap's first frame in the full sequence
     raw_outputs: dict | None = field(default=None, repr=False)  # raw _forward() dict, for merging
@@ -22,6 +23,28 @@ class Submap:
         default=None, repr=False
     )  # (K, P, 3) float32 — per-frame 3D points in local frame
     world_points_conf: np.ndarray | None = field(default=None, repr=False)  # (K, P) float32 — per-point confidence
+    # Dense per-frame data (fat Submap, mirrors VGGT-SLAM): full-resolution points/colors/conf.
+    points: np.ndarray | None = field(default=None, repr=False)  # (K, H, W, 3) float32 — dense local points
+    colors: np.ndarray | None = field(default=None, repr=False)  # (K, H, W, 3) uint8 — per-pixel RGB
+    conf: np.ndarray | None = field(default=None, repr=False)  # (K, H, W) float32 — per-pixel confidence
+    conf_masks: np.ndarray | None = field(default=None, repr=False)  # (K, H, W) bool — conf >= threshold
+    conf_threshold: float | None = None  # percentile-derived confidence cutoff
+
+    # VGGT-SLAM's default confidence percentile for thresholding dense points.
+    _CONF_PCT = 25.0
+
+    def __post_init__(self) -> None:
+        """Derive conf_threshold from dense conf when not explicitly provided."""
+        if self.conf is not None and self.conf.size > 0 and self.conf_threshold is None:
+            self.conf_threshold = float(np.percentile(self.conf, self._CONF_PCT)) + 1e-6
+
+    def set_dense_points(self, points: np.ndarray, colors: np.ndarray, conf: np.ndarray) -> None:
+        """Set dense per-frame points/colors/conf and derive conf_threshold (mirrors __post_init__)."""
+        self.points = points
+        self.colors = colors
+        self.conf = conf
+        if conf is not None and conf.size > 0:
+            self.conf_threshold = float(np.percentile(conf, self._CONF_PCT)) + 1e-6
 
     def get_world_points(self, H: np.ndarray | None = None) -> np.ndarray:
         """Return world_points in global frame.
@@ -57,6 +80,70 @@ class Submap:
             return self.poses.copy()
         H = np.array(H, dtype=np.float64)
         return np.stack([(H @ p.astype(np.float64)).astype(np.float32) for p in self.poses])
+
+    ########################################
+    ###### Graph-corrected world reads #####
+    ########################################
+
+    def filter_data_by_confidence(self, data: np.ndarray) -> np.ndarray:
+        """Boolean-index a per-frame (K, H, W, ...) array by conf > conf_threshold."""
+        return data[self.conf > self.conf_threshold]
+
+    def get_points_in_world_frame(self, graph) -> np.ndarray:
+        """Return (M, 3) graph-corrected, confidence-masked dense points in world frame.
+
+        Per frame i: apply the optimized SL(4) homography for node ``frame_start + i``
+        to this frame's dense points, dehomogenize by /w, then keep only points with
+        ``conf > conf_threshold``. Frame order + conf mask match get_points_colors.
+        """
+        if self.points is None:
+            raise ValueError(f"Submap {self.submap_id} has no dense points")
+        if self.conf is None:
+            raise ValueError(f"Submap {self.submap_id} has no conf; cannot compute world-frame points")
+        out = []
+        for i in range(self.points.shape[0]):
+            H = graph.get_homography(self.frame_start + i).astype(np.float64)
+            flat = self.points[i].reshape(-1, 3).astype(np.float64)  # (H*W, 3)
+            hom = np.hstack([flat, np.ones((flat.shape[0], 1), dtype=np.float64)])
+            out_hom = (H @ hom.T).T  # (H*W, 4)
+            # Dehomogenize by /w, guarding near-zero w (projective plane-at-infinity).
+            w = out_hom[:, 3:4]
+            w = np.where(np.abs(w) < 1e-10, 1e-10, w)
+            world = out_hom[:, :3] / w
+            # Confidence mask this frame's points — same predicate/order as get_points_colors.
+            mask = self.conf[i].reshape(-1) > self.conf_threshold
+            out.append(world[mask])
+        return np.vstack(out).astype(np.float32)
+
+    def get_points_colors(self) -> np.ndarray:
+        """Return (M, 3) per-point RGB, conf-masked to align with get_points_in_world_frame."""
+        if self.conf is None:
+            raise ValueError(f"Submap {self.submap_id} has no conf; cannot compute world-frame points")
+        return self.filter_data_by_confidence(self.colors).reshape(-1, 3)
+
+    def get_all_poses_world(self, graph) -> np.ndarray:
+        """Return (S, 4, 4) world-to-cam poses via K @ inv(H_opt) → decompose_camera.
+
+        Must produce the SAME poses as PoseGraph.extract_extrinsics for these frames.
+        decompose_camera implements only VGGT-SLAM's no_inverse=True branch (R is
+        camera-to-world, t = inv(K) @ P[:,3]), so we store R.T (world-to-cam) — NOT R
+        as upstream get_all_poses_world does — mirroring extract_extrinsics' convention.
+        """
+        # Inline import breaks the graph↔submap circular import.
+        from .graph import decompose_camera
+
+        poses = []
+        for i in range(self.poses.shape[0]):
+            K_4x4 = np.eye(4, dtype=np.float64)
+            K_4x4[:3, :3] = self.intrinsics[i].astype(np.float64)
+            proj = K_4x4 @ np.linalg.inv(graph.get_homography(self.frame_start + i))
+            proj = proj / proj[-1, -1]
+            _, rot, trans, _ = decompose_camera(proj[:3, :])
+            pose = np.eye(4, dtype=np.float32)
+            pose[:3, :3] = rot.T.astype(np.float32)
+            pose[:3, 3] = trans.astype(np.float32)
+            poses.append(pose)
+        return np.stack(poses, axis=0)
 
 
 def assert_world_to_cam(poses: np.ndarray, atol: float = 0.1) -> None:

@@ -13,14 +13,15 @@ from __future__ import annotations
 
 import copy
 import logging
-import tempfile
 import time
 from abc import abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, ClassVar, Optional
 
 import numpy as np
+import PIL.Image
 import pycolmap
 import torch
 import torch.nn.functional as F
@@ -671,6 +672,51 @@ def _rescale_reconstruction_to_original_dimensions(
     return reconstruction
 
 
+# ── In-memory frame decoding ──────────────────────────────────────────────────
+
+
+@contextmanager
+def frames_as_pil_source(frames: Any):
+    """Feed decoded RGB frames to a path-based image loader in memory.
+
+    The upstream loaders (VGGT / VGGT-Omega / MapAnything) open every input path
+    via ``PIL.Image.open``.  While this context is active, ``PIL.Image.open``
+    instead returns ``Image.fromarray(frame)`` for each frame in order — this is
+    bit-identical to opening the source file, because ``frames`` holds the exact
+    decoded RGB pixels ``Image.open(path).convert("RGB")`` would have produced.
+    That lets the FrameStore/decoder be the sole IO path while every upstream
+    resize/crop/normalise step stays byte-for-byte unchanged (no temp files).
+
+    Single-threaded use only: it patches the process-global ``PIL.Image.open`` and
+    hands out frames via one shared positional counter, so it assumes the loader
+    opens each frame exactly once, in list order (all supported loaders do).
+
+    Args:
+        frames: sequence of (H, W, 3) uint8 RGB arrays, in load order.
+    """
+    imgs = iter(PIL.Image.fromarray(np.ascontiguousarray(f)) for f in frames)
+    original_open = PIL.Image.open
+    PIL.Image.open = lambda *a, **k: next(imgs)
+    try:
+        yield
+    finally:
+        PIL.Image.open = original_open
+
+
+def _decode_dir_to_frames(image_dir: Path) -> tuple[list[np.ndarray], list[int]]:
+    """Decode an image directory to (frames, labels) — the legacy eval IO path.
+
+    Returns per-image (H, W, 3) uint8 RGB arrays sorted by filename, plus integer
+    labels 0..N-1 matching that order.
+    """
+    image_dir = Path(image_dir)
+    paths = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"})
+    if not paths:
+        raise FileNotFoundError(f"No images found in {image_dir}")
+    frames = [np.asarray(PIL.Image.open(p).convert("RGB"), dtype=np.uint8) for p in paths]
+    return frames, list(range(len(paths)))
+
+
 # ── Abstract pipeline ─────────────────────────────────────────────────────────
 
 
@@ -690,10 +736,11 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         eval mode, and return it.  Do not store GPU state outside the returned
         model object.
 
-    ``_preprocess(image_dir: Path) -> tuple[Any, list[Path], np.ndarray]``
-        Load and preprocess images from ``image_dir``.  Return:
+    ``_preprocess(frames, frame_idxs) -> tuple[Any, list[Path], np.ndarray]``
+        Preprocess in-memory decoded ``frames`` ((N, H, W, 3) uint8, or a list of
+        per-image arrays) whose source indices are ``frame_idxs``.  Return:
           views           — model-specific input batch (tensor or list of dicts)
-          image_paths     — ordered list of image Paths (length N)
+          image_paths     — ordered ``frame_{idx:06d}`` Paths (length N)
           original_coords — (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
 
     ``_forward(model, views, **kwargs) -> Any``
@@ -749,8 +796,6 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     model: Any = field(default=None, init=False, repr=False)
     views: Any = field(default=None, init=False, repr=False)
     image_paths: list[Path] | None = field(default=None, init=False, repr=False)
-    # Holds the temp export of a FrameStore alive for the whole run (path-locked _preprocess)
-    _frame_export: tempfile.TemporaryDirectory | None = field(default=None, init=False, repr=False)
     original_coords: np.ndarray | None = field(default=None, init=False, repr=False)
     raw_outputs: Any = field(default=None, init=False, repr=False)
     outputs: FeedforwardResult | None = field(default=None, init=False, repr=False)
@@ -790,26 +835,26 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         console.log(f"  done in {time.perf_counter() - t0:.1f}s")
 
     def setup_inference(self, source: FrameStore | Path) -> None:
-        # Accept a FrameStore (or a frames.zarr path) via temp export, else a legacy image dir
+        # Decode the source (FrameStore, frames.zarr, or legacy image dir) into an
+        # in-memory frame batch, then run the model-specific in-memory preprocess.
         t0 = time.perf_counter()
         console.log("Preprocessing images...")
-        if isinstance(source, FrameStore):
-            result = self._preprocess_from_store(source)
-        elif Path(source).suffix == ".zarr":
-            result = self._preprocess_from_store(FrameStore.open(source))
-        else:
-            result = self._preprocess(Path(source))
-        self.views, self.image_paths, self.original_coords = result
+        frames, frame_idxs = self._decode_source(source)
+        self.views, self.image_paths, self.original_coords = self._preprocess(frames, frame_idxs)
         console.log(f"  → {len(self.image_paths)} images  done in {time.perf_counter() - t0:.1f}s")
 
-    def _preprocess_from_store(self, store: FrameStore) -> tuple[Any, list[Path], np.ndarray]:
-        """Export the FrameStore to a temp dir and run the existing path-based _preprocess."""
-        # Keep the temp dir alive for the whole run: inference reads the exported files and
-        # image_paths reference them until the creator is discarded.
-        self._frame_export = tempfile.TemporaryDirectory()
-        export_dir = Path(self._frame_export.name)
-        store.export(export_dir)  # frame_{source_idx:06d}.jpg
-        return self._preprocess(export_dir)
+    def _decode_source(self, source: FrameStore | Path) -> tuple[Any, list[int]]:
+        """Decode any inference source into (frames, frame_idxs) for _preprocess.
+
+        FrameStore / frames.zarr → the store's decode-once keyframes; legacy image
+        dir → PIL-decoded arrays with integer sort-order labels.
+        """
+        if isinstance(source, FrameStore):
+            return source.images(), source.frame_indices().tolist()
+        if Path(source).suffix == ".zarr":
+            store = FrameStore.open(source)
+            return store.images(), store.frame_indices().tolist()
+        return _decode_dir_to_frames(Path(source))
 
     def run_inference(self, **kwargs: Any) -> None:
         t0 = time.perf_counter()
@@ -867,7 +912,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     def _load_model(self, device: str) -> Any: ...
 
     @abstractmethod
-    def _preprocess(self, image_dir: Path) -> tuple[Any, list[Path], np.ndarray]: ...
+    def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]: ...
 
     @abstractmethod
     def _forward(self, model: Any, views: Any, **kwargs: Any) -> Any: ...

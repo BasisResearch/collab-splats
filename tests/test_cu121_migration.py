@@ -108,7 +108,6 @@ def test_import_all_modules():
         "collab_splats.geometry.loop_closure",
         "collab_splats.geometry.loop_closure.matching",
         "collab_splats.geometry.loop_closure.graph",
-        "collab_splats.geometry.loop_closure.merge",
         "collab_splats.geometry.loop_closure.submap",
         "collab_splats.semantics",
         "collab_splats.semantics.features",

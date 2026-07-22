@@ -1,6 +1,7 @@
 """Smoke tests for the generic viser scene Viewer (no browser needed)."""
 
 import socket
+import threading
 
 import numpy as np
 import pytest
@@ -53,3 +54,12 @@ def test_add_frustum_with_image(viewer):
 def test_add_lines(viewer):
     segments = np.array([[[0, 0, 0], [1, 1, 1]]], dtype=np.float32)  # (1, 2, 3)
     viewer.add_lines("loop_edges", segments)  # smoke: no exception
+
+
+def test_serve_forever_returns_when_stop_already_set():
+    """serve_forever exits promptly when its stop event is pre-set (no port bind needed)."""
+    # __new__ avoids binding a viser port; serve_forever only touches _stop.
+    v = Viewer.__new__(Viewer)
+    v._stop = threading.Event()
+    v._stop.set()
+    v.serve_forever(poll=0.01)  # returns immediately since stop is already set

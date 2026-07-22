@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
-from collab_splats.geometry.loop_closure.merge import dedup_overlap
+
+from collab_splats.geometry.loop_closure.graph import dedup_overlap
 
 
 def _identity_poses(k: int) -> np.ndarray:

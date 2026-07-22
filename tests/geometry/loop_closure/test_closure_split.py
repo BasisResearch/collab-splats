@@ -1,12 +1,12 @@
 import numpy as np
 
-from collab_splats.geometry.loop_closure.graph import run_pose_graph_optimization
+from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 
-def test_run_pose_graph_optimization_unchanged_signature(identity_submap_factory):
-    """Backward compat: existing callers still work."""
+def test_incremental_pose_graph_drive_shape(identity_submap_factory):
+    """Batch per-submap cadence via the incremental PoseGraph returns (N, 4, 4)."""
     submaps = [identity_submap_factory(i, k=3) for i in range(2)]
-    corrected = run_pose_graph_optimization(
+    corrected = drive_pose_graph(
         submaps=submaps,
         lc_submaps=[],
         total_frames=5,  # 2*3 - 1 overlap

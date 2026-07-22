@@ -1,13 +1,17 @@
 import logging
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-from collab_splats.pointcloud.feedforward import MapAnythingCreator, BaseFeedforwardCreator
+
+from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
+from collab_splats.pointcloud.feedforward import (
+    BaseFeedforwardCreator,
+    MapAnythingCreator,
+)
 from collab_splats.pointcloud.feedforward.base import _raw_to_world_points
-from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
 from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel
 
 
@@ -52,30 +56,29 @@ def test_mapanything_forward_calls_model_forward():
     assert result is mock_raw
 
 
-def test_mapanything_preprocess_sets_processed_views(tmp_path):
+def test_mapanything_preprocess_sets_processed_views():
     import torch
-    from PIL import Image as PILImage
 
-    image_dir = tmp_path / "imgs"
-    image_dir.mkdir()
-    for i in range(2):
-        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(
-            image_dir / f"frame_{i:04d}.jpg"
-        )
+    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)]
+    frame_idxs = [0, 1]
 
-    fake_views = [{"img": torch.zeros(1, 3, 224, 224), "data_norm_type": "imagenet"}
-                  for _ in range(2)]
+    fake_views = [{"img": torch.zeros(1, 3, 224, 224), "data_norm_type": "imagenet"} for _ in range(2)]
     fake_validated = fake_views
     fake_processed = [{"img": torch.zeros(1, 3, 224, 224)} for _ in range(2)]
 
-    with patch("collab_splats.pointcloud.feedforward.mapanything.load_images",
-               return_value=fake_views), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
-               return_value=fake_validated) as mock_validate, \
-         patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=fake_processed) as mock_preprocess:
+    with (
+        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+            return_value=fake_validated,
+        ) as mock_validate,
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=fake_processed,
+        ) as mock_preprocess,
+    ):
         creator = MapAnythingCreator()
-        creator._preprocess(image_dir)
+        creator._preprocess(frames, frame_idxs)
 
     mock_validate.assert_called_once_with(fake_views)
     mock_preprocess.assert_called_once_with(fake_validated)
@@ -117,21 +120,22 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
     creator.image_paths = [Path(f"/fake/img_{i}.jpg") for i in range(n)]
     creator.original_coords = np.zeros((n, 6), dtype=np.float32)
 
-    with patch("collab_splats.pointcloud.feedforward.mapanything"
-               ".postprocess_model_outputs_for_inference",
-               return_value=fake_processed) as mock_post:
+    with patch(
+        "collab_splats.pointcloud.feedforward.mapanything" ".postprocess_model_outputs_for_inference",
+        return_value=fake_processed,
+    ) as mock_post:
         creator._postprocess(raw_outputs)
 
     # raw_outputs is mutated in-place before postprocess is called;
     # mock captures the reference so we inspect dtype at call time
     called_raw = mock_post.call_args[0][0]
     for pred in called_raw:
-        assert pred["pts3d_cam"].dtype == torch.float32, (
-            f"pts3d_cam not cast to float32 before postprocess: {pred['pts3d_cam'].dtype}"
-        )
-        assert pred["pts3d"].dtype == torch.float32, (
-            f"pts3d not cast to float32 before postprocess: {pred['pts3d'].dtype}"
-        )
+        assert (
+            pred["pts3d_cam"].dtype == torch.float32
+        ), f"pts3d_cam not cast to float32 before postprocess: {pred['pts3d_cam'].dtype}"
+        assert (
+            pred["pts3d"].dtype == torch.float32
+        ), f"pts3d not cast to float32 before postprocess: {pred['pts3d'].dtype}"
 
 
 def test_mapanything_full_pipeline_cpu_mock(tmp_path):
@@ -146,13 +150,10 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
     image_dir = tmp_path / "imgs"
     image_dir.mkdir()
     for i in range(2):
-        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(
-            image_dir / f"frame_{i:04d}.jpg"
-        )
+        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(image_dir / f"frame_{i:04d}.jpg")
 
     n, h, w = 2, 8, 8
-    fake_views = [{"img": torch.zeros(1, 3, h, w), "data_norm_type": "imagenet"}
-                  for _ in range(n)]
+    fake_views = [{"img": torch.zeros(1, 3, h, w), "data_norm_type": "imagenet"} for _ in range(n)]
     fake_processed = [{"img": torch.zeros(1, 3, h, w)} for _ in range(n)]
 
     # Raw outputs from model.forward() — bf16 as produced under autocast
@@ -163,7 +164,7 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
             "ray_directions": torch.zeros(1, h, w, 3, dtype=torch.bfloat16),
             "depth_along_ray": torch.ones(1, h, w, 1, dtype=torch.bfloat16),
             "cam_trans": torch.zeros(1, 3, dtype=torch.bfloat16),
-            "cam_quats": torch.tensor([[1., 0., 0., 0.]], dtype=torch.bfloat16),
+            "cam_quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.bfloat16),
             "metric_scaling_factor": torch.ones(1, dtype=torch.bfloat16),
         }
         for _ in range(n)
@@ -188,14 +189,21 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
     mock_model.parameters.side_effect = lambda: iter([param])
     mock_model.forward.return_value = fake_raw
 
-    with patch("collab_splats.pointcloud.feedforward.mapanything.load_images",
-               return_value=fake_views), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
-               return_value=fake_views), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=fake_processed), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
-               return_value=fake_post):
+    with (
+        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+            return_value=fake_views,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=fake_processed,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+            return_value=fake_post,
+        ),
+    ):
 
         creator = MapAnythingCreator()
         creator.model = mock_model
@@ -220,6 +228,7 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
 def test_reproject_output_shapes():
     """_reproject returns (P,3) float32 pts3d and (P,3) uint8 colors."""
     import torch
+
     creator = MapAnythingCreator()
     n, h, w = 2, 4, 4
     raw_outputs = [
@@ -245,6 +254,7 @@ def test_reproject_output_shapes():
 def test_reproject_depth_mask_filters_zero_depth():
     """Points with depth_z <= 0 are excluded from output."""
     import torch
+
     creator = MapAnythingCreator()
     h, w = 4, 4
     raw_outputs = [
@@ -255,7 +265,7 @@ def test_reproject_depth_mask_filters_zero_depth():
             "img_no_norm": torch.zeros(1, h, w, 3, dtype=torch.float32),
         }
     ]
-    raw_outputs[0]["depth_z"][0, :h//2, :, 0] = 0.0
+    raw_outputs[0]["depth_z"][0, : h // 2, :, 0] = 0.0
     extrinsics_3x4 = np.eye(4)[:3, :][np.newaxis].astype(np.float32)
     intrinsics = np.eye(3)[np.newaxis].astype(np.float32)
 
@@ -268,6 +278,7 @@ def test_reproject_depth_mask_filters_zero_depth():
 def test_reproject_identity_extrinsic_preserves_cam_points():
     """Identity extrinsic (world2cam=I) → world pts == pts3d_cam."""
     import torch
+
     creator = MapAnythingCreator()
     h, w = 2, 2
     raw_outputs = [
@@ -279,22 +290,22 @@ def test_reproject_identity_extrinsic_preserves_cam_points():
         }
     ]
     raw_outputs[0]["pts3d_cam"][0] = torch.tensor(
-        [[1., 2., 3.], [4., 5., 6.], [7., 8., 9.], [0., 1., 2.]]
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [0.0, 1.0, 2.0]]
     ).reshape(h, w, 3)
     extrinsics_3x4 = np.eye(4)[:3, :][np.newaxis].astype(np.float32)
     intrinsics = np.eye(3)[np.newaxis].astype(np.float32)
 
     pts3d, _ = creator._reproject(raw_outputs, extrinsics_3x4, intrinsics)
 
-    expected = np.array([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.], [0., 1., 2.]], dtype=np.float32)
+    expected = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [0.0, 1.0, 2.0]], dtype=np.float32)
     np.testing.assert_allclose(pts3d, expected, atol=1e-5)
-
 
 
 def test_mapanything_forward_transfers_tensors_to_device():
     """_forward must move _processed_views tensors to model device before model.forward()."""
-    import torch
     from contextlib import nullcontext
+
+    import torch
 
     # meta device is always available without GPU; CPU→meta transfer is observable
     mock_param = MagicMock()
@@ -303,9 +314,11 @@ def test_mapanything_forward_transfers_tensors_to_device():
     mock_model.parameters.side_effect = lambda: iter([mock_param])
 
     captured_views = []
+
     def capture_and_return(views, **kwargs):
         captured_views.extend(views)
         return []
+
     mock_model.forward.side_effect = capture_and_return
 
     cpu_tensor = torch.zeros(1, 3, 4, 4)  # starts on CPU
@@ -320,8 +333,7 @@ def test_mapanything_forward_transfers_tensors_to_device():
     # Tensor must have been transferred to meta device before model.forward() was called
     assert len(captured_views) == 1
     assert captured_views[0]["img"].device.type == "meta", (
-        f"Expected meta device, got {captured_views[0]['img'].device.type} — "
-        "tensor was not transferred in _forward"
+        f"Expected meta device, got {captured_views[0]['img'].device.type} — " "tensor was not transferred in _forward"
     )
     # Non-tensor values must be unchanged
     assert creator._processed_views[0]["scalar"] == 1.0
@@ -346,6 +358,7 @@ def test_mapanything_load_model_standard():
 @pytest.mark.gpu
 def test_mapanything_reconstruct_smoke(tmp_path):
     from PIL import Image as PILImage
+
     image_dir = tmp_path / "images"
     image_dir.mkdir()
     for i in range(3):
@@ -384,14 +397,15 @@ def test_mapanything_run_inference_smoke(tmp_path):
     creator.postprocess()
 
     assert creator.outputs.confidence is not None, "confidence should be set when use_multiview_confidence=True"
-    assert not creator.outputs.confidence.isnan().any(), (
-        "confidence contains NaN — dtype cast regression in _postprocess"
-    )
+    assert (
+        not creator.outputs.confidence.isnan().any()
+    ), "confidence contains NaN — dtype cast regression in _postprocess"
 
 
 # ---------------------------------------------------------------------------
 # extract_intermediate_features — hook pattern
 # ---------------------------------------------------------------------------
+
 
 def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tokens=10):
     """MapAnythingCreator backed by mock model with real nn.Linear QKV layers.
@@ -400,6 +414,7 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
     forward hook fires.  Returns (creator, blocks, n_tokens, num_heads, head_dim).
     """
     import torch.nn as nn
+
     total_dim = num_heads * head_dim
 
     # Real nn.Linear so register_forward_hook actually triggers
@@ -414,15 +429,13 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
     def mock_forward(views, **kwargs):
         # Simulate info_sharing calling QKV on all blocks
         import torch
+
         x = torch.randn(1, n_tokens, total_dim)
         for qkv in qkv_linears:
             qkv(x)
         # Two per-view preds with float-castable pointmaps — the post-forward
         # pose recipe float-casts pts3d_cam/pts3d before postprocessing.
-        return [
-            {"pts3d_cam": torch.zeros(1, 4, 4, 3), "pts3d": torch.zeros(1, 4, 4, 3)}
-            for _ in range(2)
-        ]
+        return [{"pts3d_cam": torch.zeros(1, 4, 4, 3), "pts3d": torch.zeros(1, 4, 4, 3)} for _ in range(2)]
 
     mock_model = MagicMock()
     mock_model.info_sharing.self_attention_blocks = blocks
@@ -436,6 +449,7 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
 def _patch_mapanything_postprocess():
     """Patch module-level postprocess to yield identity camera_poses for 2 views."""
     import torch
+
     return patch(
         "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
         return_value=[{"camera_poses": torch.eye(4).unsqueeze(0)} for _ in range(2)],
@@ -446,11 +460,17 @@ def test_mapanything_extract_intermediate_features_shapes():
     """Hook fires on last block; q/k shapes correct; poses derived from forward."""
     import numpy as np
     import torch
+
     creator, blocks, n_tokens, num_heads, head_dim = _make_mapanything_with_mock_model()
     frames = torch.zeros(2, 3, 16, 16)
 
-    with patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=[{}] * 2), _patch_mapanything_postprocess():
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=[{}] * 2,
+        ),
+        _patch_mapanything_postprocess(),
+    ):
         result = creator.extract_intermediate_features(frames, layer_index=-1)
 
     assert "q" in result and "k" in result
@@ -464,13 +484,19 @@ def test_mapanything_extract_intermediate_features_shapes():
 def test_mapanything_extract_intermediate_features_hook_removed():
     """Hook removed after call — no accumulated hooks on repeated calls."""
     import torch
+
     creator, blocks, n_tokens, num_heads, head_dim = _make_mapanything_with_mock_model()
     frames = torch.zeros(2, 3, 16, 16)
     qkv = blocks[-1].attn.qkv
     assert len(qkv._forward_hooks) == 0
 
-    with patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=[{}] * 2), _patch_mapanything_postprocess():
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=[{}] * 2,
+        ),
+        _patch_mapanything_postprocess(),
+    ):
         creator.extract_intermediate_features(frames, layer_index=-1)
 
     assert len(qkv._forward_hooks) == 0
@@ -479,6 +505,7 @@ def test_mapanything_extract_intermediate_features_hook_removed():
 def test_mapanything_extract_intermediate_features_layer_index():
     """Non-default layer_index taps the correct block."""
     import torch
+
     creator, blocks, n_tokens, num_heads, head_dim = _make_mapanything_with_mock_model(n_blocks=3)
     frames = torch.zeros(2, 3, 16, 16)
 
@@ -490,8 +517,13 @@ def test_mapanything_extract_intermediate_features_layer_index():
         return orig_register(fn)
 
     blocks[0].attn.qkv.register_forward_hook = spy_register
-    with patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=[{}] * 2), _patch_mapanything_postprocess():
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=[{}] * 2,
+        ),
+        _patch_mapanything_postprocess(),
+    ):
         creator.extract_intermediate_features(frames, layer_index=0)
 
     assert hooked_blocks == [0]
@@ -499,9 +531,9 @@ def test_mapanything_extract_intermediate_features_layer_index():
 
 def test_mapanything_verify_loop_candidate_not_on_class():
     """MapAnythingCreator must not define its own _verify_loop_candidate."""
-    assert "_verify_loop_candidate" not in MapAnythingCreator.__dict__, (
-        "_verify_loop_candidate still defined on MapAnythingCreator — base class only"
-    )
+    assert (
+        "_verify_loop_candidate" not in MapAnythingCreator.__dict__
+    ), "_verify_loop_candidate still defined on MapAnythingCreator — base class only"
 
 
 @pytest.mark.gpu
@@ -517,9 +549,9 @@ def test_mapanything_run_inference_loop_closure_smoke(tmp_path):
     if not bicycle.exists():
         pytest.skip(f"{bicycle} not available on this host")
 
-    from collab_splats.pointcloud.feedforward import MapAnythingCreator
     from collab_splats.geometry.loop_closure import LoopClosureConfig
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+    from collab_splats.pointcloud.feedforward import MapAnythingCreator
 
     base = MapAnythingCreator(camera_model="PINHOLE")
     creator = LoopClosure(base, config=LoopClosureConfig())
@@ -531,6 +563,7 @@ def test_mapanything_run_inference_loop_closure_smoke(tmp_path):
 ########################################################################
 ########## resize_mode + resolution ####################################
 ########################################################################
+
 
 def test_mapanything_resize_mode_default():
     """Default resize_mode is 'fixed'."""
@@ -545,25 +578,27 @@ def test_mapanything_invalid_resize_mode_raises():
         MapAnythingCreator(resize_mode="bogus")
 
 
-def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(tmp_path):
+def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping():
     """resize_mode='fixed' passes resize_mode='fixed_mapping' + resolution_set to load_images."""
-    from PIL import Image as PILImage
-    img_dir = tmp_path / "imgs"
-    img_dir.mkdir()
-    for i in range(2):
-        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(img_dir / f"f{i}.jpg")
+    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)]
+    frame_idxs = [0, 1]
 
     fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
     fake_views = [fake_view, fake_view]
 
     c = MapAnythingCreator(resize_mode="fixed", resolution=518)
-    with patch("collab_splats.pointcloud.feedforward.mapanything.load_images",
-               return_value=fake_views) as mock_li, \
-         patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
-               return_value=fake_views), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=fake_views):
-        c._preprocess(img_dir)
+    with (
+        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views) as mock_li,
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+            return_value=fake_views,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=fake_views,
+        ),
+    ):
+        c._preprocess(frames, frame_idxs)
 
     call_kwargs = mock_li.call_args[1]
     assert call_kwargs.get("resize_mode") == "fixed_mapping"
@@ -571,25 +606,27 @@ def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(
     assert "size" not in call_kwargs
 
 
-def test_mapanything_preprocess_longest_side_calls_load_images_with_size(tmp_path):
+def test_mapanything_preprocess_longest_side_calls_load_images_with_size():
     """resize_mode='longest_side' passes resize_mode='longest_side' + size= to load_images."""
-    from PIL import Image as PILImage
-    img_dir = tmp_path / "imgs"
-    img_dir.mkdir()
-    for i in range(2):
-        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(img_dir / f"f{i}.jpg")
+    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)]
+    frame_idxs = [0, 1]
 
     fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
     fake_views = [fake_view, fake_view]
 
     c = MapAnythingCreator(resize_mode="longest_side", resolution=512)
-    with patch("collab_splats.pointcloud.feedforward.mapanything.load_images",
-               return_value=fake_views) as mock_li, \
-         patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
-               return_value=fake_views), \
-         patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-               return_value=fake_views):
-        c._preprocess(img_dir)
+    with (
+        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views) as mock_li,
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+            return_value=fake_views,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=fake_views,
+        ),
+    ):
+        c._preprocess(frames, frame_idxs)
 
     call_kwargs = mock_li.call_args[1]
     assert call_kwargs.get("resize_mode") == "longest_side"
@@ -600,8 +637,10 @@ def test_mapanything_preprocess_longest_side_calls_load_images_with_size(tmp_pat
 def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
     """After refactor, use_multiview_confidence calls compute_multiview_depth_confidence,
     not the upstream postprocess_model_outputs_for_inference with use_multiview_confidence=True."""
-    import numpy as np
     from unittest.mock import patch
+
+    import numpy as np
+
     from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
 
     upstream_calls = []
@@ -611,41 +650,45 @@ def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
         N = len(raw_outputs)
         H, W = 4, 4
         import torch
+
         preds = []
         for _ in range(N):
-            preds.append({
-                "mask": [torch.ones(1, H, W, 1)],
-                "depth_z": [torch.ones(1, H, W, 1) * 2.0],
-                "pts3d": [torch.zeros(1, H, W, 3)],
-                "img_no_norm": [torch.zeros(1, H, W, 3)],
-                "camera_poses": [torch.eye(4).unsqueeze(0)],
-                "intrinsics": [torch.eye(3).unsqueeze(0)],
-            })
+            preds.append(
+                {
+                    "mask": [torch.ones(1, H, W, 1)],
+                    "depth_z": [torch.ones(1, H, W, 1) * 2.0],
+                    "pts3d": [torch.zeros(1, H, W, 3)],
+                    "img_no_norm": [torch.zeros(1, H, W, 3)],
+                    "camera_poses": [torch.eye(4).unsqueeze(0)],
+                    "intrinsics": [torch.eye(3).unsqueeze(0)],
+                }
+            )
         return preds
 
     mv_conf_return = np.ones((2, 4, 4), dtype=np.float32)
 
-    with patch(
-        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
-        side_effect=fake_postprocess,
-    ), patch(
-        "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
-        return_value=mv_conf_return,
-    ) as mock_mv:
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+            side_effect=fake_postprocess,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
+            return_value=mv_conf_return,
+        ) as mock_mv,
+    ):
         creator = MapAnythingCreator(use_multiview_confidence=True)
         H, W = 4, 4
-        creator._processed_views = [
-            {"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(2)
-        ]
+        creator._processed_views = [{"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(2)]
         creator.image_paths = []
         creator.original_coords = np.zeros((2, 6), dtype=np.float32)
 
         raw_outputs = [{"dummy": i} for i in range(2)]
         result = creator._postprocess(raw_outputs)
 
-    assert all(not v for v in upstream_calls), (
-        f"postprocess_model_outputs_for_inference called with use_multiview_confidence=True: {upstream_calls}"
-    )
+    assert all(
+        not v for v in upstream_calls
+    ), f"postprocess_model_outputs_for_inference called with use_multiview_confidence=True: {upstream_calls}"
     mock_mv.assert_called_once()
 
 

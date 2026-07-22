@@ -2,6 +2,13 @@
 import numpy as np
 import pytest
 
+from collab_splats.localization.extractors import (
+    DiskExtractor,
+    MatchResult,
+    XFeatExtractor,
+    _empty_match,
+)
+
 
 @pytest.fixture(scope="module")
 def image_pair():
@@ -15,38 +22,36 @@ def image_pair():
 
 def test_match_returns_pixel_pairs_disk(image_pair):
     """match() returns MatchResult whose pixels correspond to detected keypoints."""
-    from collab_splats.localization.extractors import DiskExtractor, MatchResult
-
     img0, img1 = image_pair
     ex = DiskExtractor(top_k=256)
     f0, f1 = ex.extract(img0), ex.extract(img1)
     m = ex.match(f0, f1, img0.shape[:2])
     assert isinstance(m, MatchResult)
     assert m.query_px.shape == m.ref_px.shape and m.query_px.shape[1] == 2
-    if len(m.query_px):
-        kq = f0.keypoints.numpy()
-        assert all(((kq == q).all(axis=1)).any() for q in m.query_px[:5])
+    assert len(m) > 0
+    # Matched pixels must be drawn from the detected keypoints on both sides
+    kq, kr = f0.keypoints.numpy(), f1.keypoints.numpy()
+    assert all(((kq == q).all(axis=1)).any() for q in m.query_px[:5])
+    assert all(((kr == r).all(axis=1)).any() for r in m.ref_px[:5])
 
 
 def test_match_returns_pixel_pairs_xfeat(image_pair):
     """XFeat match() returns MatchResult with pixels drawn from detected keypoints."""
-    from collab_splats.localization.extractors import MatchResult, XFeatExtractor
-
     img0, img1 = image_pair
     ex = XFeatExtractor(top_k=256)
     f0, f1 = ex.extract(img0), ex.extract(img1)
     m = ex.match(f0, f1, img0.shape[:2])
     assert isinstance(m, MatchResult)
     assert m.query_px.shape == m.ref_px.shape and m.query_px.shape[1] == 2
-    if len(m.query_px):
-        kq = f0.keypoints.numpy()
-        assert all(((kq == q).all(axis=1)).any() for q in m.query_px[:5])
+    assert len(m) > 0
+    # Matched pixels must be drawn from the detected keypoints on both sides
+    kq, kr = f0.keypoints.numpy(), f1.keypoints.numpy()
+    assert all(((kq == q).all(axis=1)).any() for q in m.query_px[:5])
+    assert all(((kr == r).all(axis=1)).any() for r in m.ref_px[:5])
 
 
 def test_empty_match_helper():
     """_empty_match returns a zero-length float32 MatchResult."""
-    from collab_splats.localization.extractors import MatchResult, _empty_match
-
     m = _empty_match()
     assert isinstance(m, MatchResult)
     assert len(m) == 0

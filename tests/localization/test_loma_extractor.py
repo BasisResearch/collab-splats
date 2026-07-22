@@ -7,6 +7,7 @@ from collab_splats.localization import (
     LomaExtractor,
     LomaGExtractor,
 )
+from collab_splats.localization.extractors import MatchResult
 
 
 def test_loma_registry():
@@ -43,8 +44,6 @@ def test_loma_extract_shapes(loma_extractor):
 
 @pytest.mark.slow
 def test_loma_match_returns_pixel_pairs(loma_extractor):
-    from collab_splats.localization.extractors import MatchResult
-
     img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = loma_extractor.extract(img)
     matches = loma_extractor.match(feats, feats, image_hw=(480, 640))

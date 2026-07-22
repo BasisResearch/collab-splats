@@ -26,7 +26,7 @@ Usage:
 
     # Run specific stages only
     python docs/examples/reconstruct.py \\
-        --config .../run_config.yaml --stages preprocess,pointcloud,localize
+        --config .../run_config.yaml --stages preproc,pointcloud,localize
 
     # Force re-run even if outputs already exist
     python docs/examples/reconstruct.py --config .../run_config.yaml --overwrite
@@ -65,7 +65,7 @@ def main() -> None:
         "--stages",
         default=None,
         metavar="STAGE[,STAGE,...]",
-        help="Comma-separated stages to run: preprocess,pointcloud,semantics,mesh,localize. "
+        help="Comma-separated stages to run: preproc,pointcloud,semantics,mesh,localize. "
         "Default: all enabled stages in config.",
     )
     parser.add_argument(

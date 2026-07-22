@@ -11,7 +11,7 @@
 # loop_closure (reconstructor.py) — no need to set it here.
 #
 #   python docs/examples/run_pipeline.py --config configs/loop_closure.yaml \
-#       --stages preprocess,pointcloud --keep-viewer \
+#       --stages preproc,pointcloud --keep-viewer \
 #       --output-root /path/to/out /path/to/scene.MP4
 #
 # Then browse http://<host>:8080. Headless (no viewer)? Set viz.enabled: false.
@@ -33,9 +33,9 @@ pointcloud:
   loop_closure:
     enabled: true
     submap_size: 32           # frames per window — larger = stronger per-submap geometry
-    submap_overlap: 2         # shared frames between windows — MORE = sturdier registration
+    submap_overlap: 4         # shared frames between windows — MORE = sturdier registration
                               # (1 = VGGT-SLAM parity, a single-frame hinge; fragile)
-    lc_retrieval_threshold: 0.95   # DINO-SALAD loop gate; lower = stricter acceptance
+    lc_retrieval_threshold: 0.99   # DINO-SALAD loop gate; lower = stricter acceptance
     max_loops_per_submap: 5
     scale_method: rotation_only    # se3 | rotation_only | pairwise_dist | none
   viz:

@@ -10,7 +10,7 @@ Pipeline steps per video (executed by Reconstructor.run_pipeline):
   3. talk2dino semantics   — 2D features lifted to 3D, autoencoder-compressed
   4. localization database  — per-frame local-feature cache for camera localization
 
-preprocess + pointcloud always run. semantics, mesh, and localize run only when
+preproc + pointcloud always run. semantics, mesh, and localize run only when
 enabled in the config (semantics.enabled / mesh.enabled / localization.enabled).
 Override the set explicitly with --stages.
 
@@ -28,7 +28,7 @@ Usage:
 
     # Specific steps only
     python docs/examples/run_pipeline.py --output-root /workspace/outputs \\
-        --stages preprocess,pointcloud,localize scene.MP4
+        --stages preproc,pointcloud,localize scene.MP4
 
 Each video V is written to  <output-root>/<session-date>/<V-stem>/  when a date-like
 dir (YYYY-MM-DD) appears in V's path, else  <output-root>/<V-stem>/ . A per-scene
@@ -187,7 +187,7 @@ def main():
         "--stages",
         default=None,
         metavar="STAGE[,STAGE,...]",
-        help="Steps to run: preprocess,pointcloud,semantics,mesh,localize. " "Default: config-enabled steps.",
+        help="Steps to run: preproc,pointcloud,semantics,mesh,localize. " "Default: config-enabled steps.",
     )
     parser.add_argument("--overwrite", action="store_true", help="Re-run steps even if outputs already exist.")
     parser.add_argument(

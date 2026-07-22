@@ -35,10 +35,10 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
-_STAGE_ORDER = ["preprocess", "pointcloud", "semantics", "mesh", "localize"]
+_STAGE_ORDER = ["preproc", "pointcloud", "semantics", "mesh", "localize"]
 _STAGE_DEPS: dict[str, list[str]] = {
-    "preprocess": [],
-    "pointcloud": ["preprocess"],
+    "preproc": [],
+    "pointcloud": ["preproc"],
     "semantics": ["pointcloud"],
     "mesh": ["pointcloud"],
     "localize": ["pointcloud"],
@@ -395,7 +395,7 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, radius: 
 
 
 class Reconstructor:
-    """5-stage environment reconstruction pipeline: preprocess → pointcloud → semantics / mesh / localize."""
+    """5-stage environment reconstruction pipeline: preproc → pointcloud → semantics / mesh / localize."""
 
     def __init__(self, config: dict[str, Any], config_dir: str | Path = DEFAULT_CONFIG_DIR) -> None:
         """Merge config over base.yaml defaults, validate, and store."""
@@ -797,8 +797,8 @@ class Reconstructor:
 
     def _stage_output_exists(self, stage: str) -> bool:
         """True if `stage`'s on-disk output is already present (lets deps be reused across runs)."""
-        # Only preprocess/pointcloud are ever depended on; others have no reusable marker.
-        if stage == "preprocess":
+        # Only preproc/pointcloud are ever depended on; others have no reusable marker.
+        if stage == "preproc":
             return self.frames_zarr.exists()
         if stage == "pointcloud":
             colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
@@ -814,7 +814,7 @@ class Reconstructor:
         """Run named stages in dependency order.
 
         Args:
-            stages: Subset of ["preprocess", "pointcloud", "semantics", "mesh"].
+            stages: Subset of ["preproc", "pointcloud", "semantics", "mesh"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
 
@@ -822,8 +822,8 @@ class Reconstructor:
             ValueError: If stages list violates dependency ordering.
         """
         if stages is None:
-            # Build from config enabled flags; preprocess + pointcloud always included
-            stages = ["preprocess", "pointcloud"]
+            # Build from config enabled flags; preproc + pointcloud always included
+            stages = ["preproc", "pointcloud"]
             if self.config["semantics"]["enabled"]:
                 stages.append("semantics")
             if self.config["mesh"]["enabled"]:
@@ -848,7 +848,7 @@ class Reconstructor:
         result = None
         for stage in [s for s in _STAGE_ORDER if s in stages_set]:
             logger.info("=== Stage: %s ===", stage)
-            if stage == "preprocess":
+            if stage == "preproc":
                 self.preprocess(overwrite=overwrite)
             elif stage == "pointcloud":
                 result = self.build_pointcloud(overwrite=overwrite)

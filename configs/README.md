@@ -26,7 +26,7 @@ python docs/examples/run_pipeline.py --output-root /workspace/outputs \
 
 # Specific steps only
 python docs/examples/run_pipeline.py --output-root /workspace/outputs \
-  --stages preprocess,pointcloud,localize scene.MP4
+  --stages preproc,pointcloud,localize scene.MP4
 ```
 
 ### Steps run per video

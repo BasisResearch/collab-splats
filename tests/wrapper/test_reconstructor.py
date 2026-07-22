@@ -478,13 +478,13 @@ def test_run_pipeline_calls_stages_in_order(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.frames_zarr
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
     rec.mesh = lambda result=None, overwrite=False: calls.append("mesh") or tmp_path
 
-    rec.run_pipeline(stages=["preprocess", "pointcloud", "semantics", "mesh"])
-    assert calls == ["preprocess", "pointcloud", "semantics", "mesh"]
+    rec.run_pipeline(stages=["preproc", "pointcloud", "semantics", "mesh"])
+    assert calls == ["preproc", "pointcloud", "semantics", "mesh"]
 
 
 def test_run_pipeline_subset(tmp_path):
@@ -492,11 +492,11 @@ def test_run_pipeline_subset(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.frames_zarr
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
 
-    rec.run_pipeline(stages=["preprocess", "pointcloud"])
-    assert calls == ["preprocess", "pointcloud"]
+    rec.run_pipeline(stages=["preproc", "pointcloud"])
+    assert calls == ["preproc", "pointcloud"]
     assert "semantics" not in calls
     assert "mesh" not in calls
 
@@ -525,11 +525,11 @@ def test_run_pipeline_dep_satisfied_by_existing_output(tmp_path):
 
 
 def test_run_pipeline_missing_dep_output_still_raises(tmp_path):
-    """pointcloud with no frames.zarr and no preprocess stage → hard error."""
+    """pointcloud with no frames.zarr and no preproc stage → hard error."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
 
-    with pytest.raises(ValueError, match="preprocess"):
+    with pytest.raises(ValueError, match="preproc"):
         rec.run_pipeline(stages=["pointcloud"])
 
 

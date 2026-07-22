@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-import torch
 
 from collab_splats.localization import (
     BaseLocalExtractor,
@@ -43,15 +42,19 @@ def test_loma_extract_shapes(loma_extractor):
 
 
 @pytest.mark.slow
-def test_loma_match_returns_index_pairs(loma_extractor):
+def test_loma_match_returns_pixel_pairs(loma_extractor):
+    from collab_splats.localization.extractors import MatchResult
+
     img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     feats = loma_extractor.extract(img)
     matches = loma_extractor.match(feats, feats, image_hw=(480, 640))
-    assert matches.ndim == 2 and matches.shape[1] == 2
-    assert matches.dtype == torch.long
-    # Self-match: most matches should be the identity pair
+    assert isinstance(matches, MatchResult)
+    assert matches.query_px.shape == matches.ref_px.shape
+    assert matches.query_px.shape[1] == 2
+    assert matches.query_px.dtype == np.float32
+    # Self-match: some matches should land on the identical pixel
     if len(matches) > 0:
-        diag = (matches[:, 0] == matches[:, 1]).sum()
+        diag = (matches.query_px == matches.ref_px).all(axis=1).sum()
         assert diag > 0
 
 

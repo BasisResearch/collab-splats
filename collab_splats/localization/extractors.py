@@ -42,6 +42,23 @@ class LocalFeatures:
     scores: torch.Tensor | None = None   # (N,) float32 — XFeat only
 
 
+@dataclass
+class MatchResult:
+    """Matched pixel coordinates between a query and one reference image."""
+
+    query_px: np.ndarray  # (K, 2) float32 xy in query image
+    ref_px: np.ndarray    # (K, 2) float32 xy in reference image
+
+    def __len__(self) -> int:
+        return len(self.query_px)
+
+
+def _empty_match() -> MatchResult:
+    """Zero-length MatchResult."""
+    z = np.zeros((0, 2), dtype=np.float32)
+    return MatchResult(query_px=z, ref_px=z)
+
+
 class BaseLocalExtractor(RegistryMixin, ABC):
     """Abstract base for local feature extractors with name-based registry.
 
@@ -61,8 +78,8 @@ class BaseLocalExtractor(RegistryMixin, ABC):
         query: LocalFeatures,
         db: LocalFeatures,
         image_hw: tuple[int, int],
-    ) -> torch.Tensor:
-        """Return (K, 2) int64 [query_idx, db_idx] match pairs."""
+    ) -> MatchResult:
+        """Return MatchResult of matched (query_px, ref_px) pixel pairs."""
 
 
 @BaseLocalExtractor.register("disk")
@@ -113,7 +130,7 @@ class DiskExtractor(BaseLocalExtractor):
         query: LocalFeatures,
         db: LocalFeatures,
         image_hw: tuple[int, int],
-    ) -> torch.Tensor:
+    ) -> MatchResult:
         """Match query features against database features using LightGlue.
 
         Args:
@@ -122,7 +139,7 @@ class DiskExtractor(BaseLocalExtractor):
             image_hw: (H, W) — required for LightGlue coordinate normalisation.
 
         Returns:
-            matches: (K, 2) int64 — [query_idx, db_idx] pairs.
+            MatchResult of matched (query_px, ref_px) pixel pairs.
         """
         # LightGlue normalize_keypoints expects image_size as [W, H] (not [H, W])
         wh = torch.tensor([[image_hw[1], image_hw[0]]], dtype=torch.float32)
@@ -148,8 +165,11 @@ class DiskExtractor(BaseLocalExtractor):
         idx_q = torch.where(valid)[0]
         idx_db = matches0[valid]
         if len(idx_q) == 0:
-            return torch.zeros((0, 2), dtype=torch.long)
-        return torch.stack([idx_q, idx_db], dim=1)
+            return _empty_match()
+        return MatchResult(
+            query_px=query.keypoints[idx_q].numpy().astype(np.float32),
+            ref_px=db.keypoints[idx_db].numpy().astype(np.float32),
+        )
 
 
 @BaseLocalExtractor.register("xfeat")
@@ -197,11 +217,11 @@ class XFeatExtractor(BaseLocalExtractor):
         query: LocalFeatures,
         db: LocalFeatures,
         image_hw: tuple[int, int],
-    ) -> torch.Tensor:
+    ) -> MatchResult:
         """Match query features against database features using XFeat LighterGlue.
 
         Canonical XFeat+LG pipeline: detectAndCompute output dict (with image_size
-        added) passed to match_lighterglue. Returns index pairs, same contract as
+        added) passed to match_lighterglue. Returns pixel pairs, same contract as
         DiskExtractor.match().
 
         Args:
@@ -210,7 +230,7 @@ class XFeatExtractor(BaseLocalExtractor):
             image_hw: (H, W) — required for LighterGlue coordinate normalisation.
 
         Returns:
-            matches: (K, 2) int64 — [query_idx, db_idx] pairs.
+            MatchResult of matched (query_px, ref_px) pixel pairs.
         """
         # match_lighterglue expects image_size as (W, H)
         W, H = image_hw[1], image_hw[0]
@@ -238,8 +258,13 @@ class XFeatExtractor(BaseLocalExtractor):
         finally:
             LightGlue.default_conf = saved_conf
         if len(idx) == 0:
-            return torch.zeros((0, 2), dtype=torch.long)
-        return torch.from_numpy(idx).long()
+            return _empty_match()
+        idx_q = torch.from_numpy(np.asarray(idx[:, 0])).long()
+        idx_db = torch.from_numpy(np.asarray(idx[:, 1])).long()
+        return MatchResult(
+            query_px=query.keypoints[idx_q].numpy().astype(np.float32),
+            ref_px=db.keypoints[idx_db].numpy().astype(np.float32),
+        )
 
 
 @BaseLocalExtractor.register("loma")
@@ -321,7 +346,7 @@ class LomaExtractor(BaseLocalExtractor):
         query: LocalFeatures,
         db: LocalFeatures,
         image_hw: tuple[int, int],
-    ) -> torch.Tensor:
+    ) -> MatchResult:
         """Match query features against database features with the LoMa matcher.
 
         Args:
@@ -330,7 +355,7 @@ class LomaExtractor(BaseLocalExtractor):
             image_hw: (H, W) — used to re-normalize pixel coords to [-1, 1].
 
         Returns:
-            matches: (K, 2) int64 — [query_idx, db_idx] pairs.
+            MatchResult of matched (query_px, ref_px) pixel pairs.
         """
         # Pixel -> normalized [-1,1] (inverse of loma.loma.to_pixel_coords)
         wh = torch.tensor([image_hw[1], image_hw[0]], dtype=torch.float32)
@@ -348,9 +373,13 @@ class LomaExtractor(BaseLocalExtractor):
         m0 = m0[0].cpu()
         valid = m0 > -1
         idx_q = torch.where(valid)[0]
+        idx_db = m0[valid].long()
         if len(idx_q) == 0:
-            return torch.zeros((0, 2), dtype=torch.long)
-        return torch.stack([idx_q, m0[valid]], dim=1).long()
+            return _empty_match()
+        return MatchResult(
+            query_px=query.keypoints[idx_q].numpy().astype(np.float32),
+            ref_px=db.keypoints[idx_db].numpy().astype(np.float32),
+        )
 
 
 @BaseLocalExtractor.register("loma-g")

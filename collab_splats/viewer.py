@@ -46,6 +46,21 @@ class Viewer:
         self.color_by_node = self.server.gui.add_checkbox("Color by node", initial_value=False)
         self.color_by_node.on_update(lambda _: self._apply_point_colors())
 
+        # Live point-size slider — the single source of truth for dot size; new clouds
+        # and restyles read it (add_points falls back to this when size is unspecified).
+        self.point_size = self.server.gui.add_slider(
+            "Point size", min=0.0005, max=0.02, step=0.0005, initial_value=0.003
+        )
+        self.point_size.on_update(lambda _: self._apply_point_size())
+
+        # View controls: set the world up-axis and recenter the camera on the scene.
+        self.up_direction = self.server.gui.add_dropdown(
+            "Up direction", ("+z", "-z", "+y", "-y", "+x", "-x"), initial_value="+z"
+        )
+        self.up_direction.on_update(lambda _: self.server.scene.set_up_direction(self.up_direction.value))
+        self.server.scene.set_up_direction("+z")
+        self.server.gui.add_button("Reset view").on_click(lambda _: self._reset_view())
+
     ########################################################
     ########## Scene nodes (upsert by name) ###############
     ########################################################
@@ -55,7 +70,7 @@ class Viewer:
         name: str,
         points: np.ndarray,
         colors: np.ndarray,
-        point_size: float = 0.01,
+        point_size: float = 0.003,
     ) -> None:
         """Upsert a named point cloud; points (N, 3) float, colors (N, 3) uint8."""
         shown = self._flat_color(name, len(points)) if self.color_by_node.value else colors
@@ -138,6 +153,25 @@ class Viewer:
         """Re-upload each cloud with flat or original colors (no in-place recolor in viser)."""
         for name, (_, points, colors, point_size) in list(self.points.items()):
             self.add_points(name, points, colors, point_size=point_size)
+
+    def _apply_point_size(self) -> None:
+        """Re-upload every cloud at the slider's size (viser point_size is set at add time)."""
+        size = self.point_size.value
+        for name, (_, points, colors, _) in list(self.points.items()):
+            self.add_points(name, points, colors, point_size=size)
+
+    def _reset_view(self) -> None:
+        """Recenter every connected client's camera on the scene's point-cloud bounds."""
+        if not self.points:
+            return
+        # Scene centroid + extent from all clouds; frame the camera one extent back
+        # along -Z looking at the centroid (up-axis handled by set_up_direction).
+        pts = np.concatenate([p for (_, p, _, _) in self.points.values()])
+        center = pts.mean(axis=0)
+        extent = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))) or 1.0
+        for client in self.server.get_clients().values():
+            client.camera.look_at = center
+            client.camera.position = center + np.array([0.0, 0.0, -extent])
 
     def _flat_color(self, name: str, n: int) -> np.ndarray:
         """Deterministic per-name palette color, broadcast to (n, 3)."""

@@ -342,6 +342,14 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             "intrinsics": intrs,
             "intrinsics_downsampled": intrs,
         }
+        # Per-pixel RGB from the postprocessed denormalized image. The window's 'img' is
+        # dinov2/ImageNet-normalized (range ~[-2.1, 2.6]), unusable as color; img_no_norm
+        # is [0, 1] at model (= depth) resolution — added by postprocess_model_outputs_for_inference
+        # (respects each view's data_norm_type), same source _postprocess/_reproject use.
+        # The wrapper prefers these over its frame-tensor color heuristic when present.
+        out["colors"] = np.stack(
+            [(p["img_no_norm"][0].cpu().float().numpy() * 255.0).astype(np.uint8) for p in processed]
+        )
         # Guard: postprocess variants may omit depth_z/conf — warn and omit the
         # geometry keys (same posture as the LC-side pts3d handling) so LC still
         # runs; anchor/sequential scale then falls back without submap points.

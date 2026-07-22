@@ -277,13 +277,18 @@ class LoopClosure:
         # full-res per-pixel points from depth unprojection, per-pixel RGB, and conf.
         if "depth" in raw_lc and "depth_conf" in raw_lc:
             dense_points = unproject_depth_map_to_point_map(raw_lc["depth"], ext_3x4, intrinsics).astype(np.float32)
-            # (k, C, H, W) -> (k, H, W, 3). VGGT-SLAM scales [0, 1] frames by 255;
-            # guard against already-[0, 255] frames (backend preprocessing varies).
-            frames_hw3 = frames_cpu.float().numpy().transpose(0, 2, 3, 1)
-            if frames_hw3.size and frames_hw3.max() > 1.0:
-                dense_colors = frames_hw3.astype(np.uint8)
+            if "colors" in raw_lc:
+                # Backend supplied denormalized (k, H, W, 3) uint8 RGB (e.g. MapAnything,
+                # whose frame tensors are dinov2-normalized and unusable as color).
+                dense_colors = raw_lc["colors"].astype(np.uint8)
             else:
-                dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
+                # (k, C, H, W) -> (k, H, W, 3). VGGT-SLAM scales [0, 1] frames by 255;
+                # guard against already-[0, 255] frames (backend preprocessing varies).
+                frames_hw3 = frames_cpu.float().numpy().transpose(0, 2, 3, 1)
+                if frames_hw3.size and frames_hw3.max() > 1.0:
+                    dense_colors = frames_hw3.astype(np.uint8)
+                else:
+                    dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
             submap.set_dense_points(dense_points, dense_colors, raw_lc["depth_conf"].astype(np.float32))
 
         # Free the per-submap raw prediction dict now that points/colors/conf have been

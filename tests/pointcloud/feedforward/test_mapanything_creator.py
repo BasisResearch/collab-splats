@@ -718,6 +718,8 @@ def _fake_frames(n_frames: int, h: int, w: int):
             {
                 "camera_poses": c2w.unsqueeze(0),
                 "intrinsics": intr.unsqueeze(0),
+                # postprocess always adds denormalized [0, 1] RGB (used for dense colors)
+                "img_no_norm": torch.zeros(1, h, w, 3),
                 "depth_z": torch.ones(1, h, w, 1, dtype=torch.bfloat16),
                 "conf": torch.full((1, h, w), 0.5 + 0.25 * i, dtype=torch.bfloat16),
             }
@@ -747,6 +749,10 @@ def test_lc_collate_outputs_carries_depth_keys():
     assert out["depth_conf"].shape == (n, h, w)
     assert out["depth_conf"].dtype == np.float32
     np.testing.assert_array_equal(out["intrinsics_downsampled"], out["intrinsics"])
+
+    # Denormalized per-pixel RGB (dense colors) sourced from postprocess img_no_norm
+    assert out["colors"].shape == (n, h, w, 3)
+    assert out["colors"].dtype == np.uint8
 
 
 def test_lc_collate_outputs_feeds_raw_to_world_points():

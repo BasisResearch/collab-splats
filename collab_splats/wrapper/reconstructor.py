@@ -69,12 +69,21 @@ def _extract_frames(
         exts = {".jpg", ".jpeg", ".png"}
         frames = sorted(p for p in input_path.iterdir() if p.suffix.lower() in exts)
         if not frames:
-            return 0
+            raise ValueError(f"No images ({sorted(exts)}) found in directory {input_path}")
         frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in frames]
         records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
         prov = {"video_path": str(input_path), "video_mtime": None, "method": "dir", "max_frames": max_frames}
         FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
         return len(frame_arrays)
+
+    # Fail loud on an unreadable/empty video — 0 total frames means a bad path or a
+    # codec ffmpeg can't decode, which otherwise silently yields an empty store.
+    total_frames = get_video_info(str(input_path))["total_frames"]
+    if total_frames == 0:
+        raise ValueError(
+            f"No frames decoded from {input_path} (0 total frames). "
+            "Check the path exists and is a video ffmpeg can read."
+        )
 
     # Video — 'optical_flow' picks high-motion frames; 'uniform' (default) spreads evenly
     if frame_selection == "optical_flow":
@@ -88,7 +97,6 @@ def _extract_frames(
         # Derive target count from proportion, clamped to [min_frames, max_frames];
         # the uniform sampler spreads that count over the video itself
         method = "uniform"
-        total_frames = get_video_info(str(input_path))["total_frames"]
         target_count = max(min_frames, int(total_frames * frame_proportion))
         if max_frames is not None:
             target_count = min(target_count, max_frames)
@@ -98,15 +106,23 @@ def _extract_frames(
             max_frames=target_count,
         )
 
+    # Every candidate failed the quality gate (or selector rejected all) — refuse to
+    # write an empty store that would only surface as a downstream FileNotFound.
+    if not frame_arrays:
+        raise ValueError(
+            f"0 frames selected from {input_path} ({total_frames} decoded) with "
+            f"frame_selection={frame_selection!r}. All frames failed the quality gate — "
+            "loosen the blur threshold or use a sharper video."
+        )
+
     # Write the canonical frames.zarr (decode-once keyframe store)
-    if frame_arrays:
-        prov = {
-            "video_path": str(input_path),
-            "video_mtime": input_path.stat().st_mtime,
-            "method": method,
-            "max_frames": max_frames,
-        }
-        FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
+    prov = {
+        "video_path": str(input_path),
+        "video_mtime": input_path.stat().st_mtime,
+        "method": method,
+        "max_frames": max_frames,
+    }
+    FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
 
     return len(frame_arrays)
 

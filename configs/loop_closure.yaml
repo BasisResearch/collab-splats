@@ -1,0 +1,45 @@
+# Loop-closure reconstruction override (deep-merged over configs/base.yaml).
+#
+# Two things loop closure buys you:
+#   1. Submaps  → constant per-window GPU memory → process MANY more frames than
+#      the monolithic ~300-frame OOM ceiling (hence the raised max_frames below).
+#   2. Loop PGO → snaps accumulated drift out when the camera revisits a place.
+#
+# viz is on: watch the scene build live in a browser — submaps appear as they're
+# added, loop lines draw when loop closure fires, each loop corrects the scene live.
+# loop_edge_timing is forced to "live" automatically whenever viz.enabled +
+# loop_closure (reconstructor.py) — no need to set it here.
+#
+#   python docs/examples/run_pipeline.py --config configs/loop_closure.yaml \
+#       --stages preprocess,pointcloud --keep-viewer \
+#       --output-root /path/to/out /path/to/scene.MP4
+#
+# Then browse http://<host>:8080. Headless (no viewer)? Set viz.enabled: false.
+
+preprocessing:
+  # Optical-flow selection scores frames by motion (LK flow + rotation) + coverage
+  # (spatial histogram) → picks distinct viewpoints, drops near-static redundant
+  # frames. More scene diversity + broader coverage → better loop detection than uniform.
+  frame_selection: optical_flow
+  # RAISE to actually feed more frames — otherwise submaps just re-chunk the same
+  # 200 keyframes into windows (same coverage, no benefit). RAM-bound, not GPU-bound:
+  # fat submaps stay resident (~50 GB at 1000 frames). Keep <= ~1000 on the 50 GB box.
+  max_frames: 1000
+  min_frames: 300
+
+pointcloud:
+  loop_closure: true          # enable the submap + loop-closure pipeline
+  viz:
+    enabled: true             # live viser Viewer during loop closure
+    port: 8080
+
+# ── LoopClosureConfig knobs are NOT YET surfaced to YAML ──────────────────────
+# reconstructor.py builds LoopClosure(base=creator) with no config, so these use
+# the LoopClosureConfig() defaults (collab_splats/geometry/loop_closure/wrapper.py:51):
+#   submap_size: 20            # frames per window (GPU-memory knob; smaller = more, finer loops)
+#   submap_overlap: 1          # 1 = VGGT-SLAM parity
+#   lc_retrieval_threshold: 0.95   # DINO-SALAD gate; lower = stricter loop acceptance
+#   max_loops_per_submap: 5
+#   scale_method: rotation_only
+# To change them today, edit those defaults directly. To drive them from this file,
+# the reconstructor must accept loop_closure as a dict (small wiring change — ask).

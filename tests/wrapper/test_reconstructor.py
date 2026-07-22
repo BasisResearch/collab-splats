@@ -510,6 +510,29 @@ def test_run_pipeline_dep_validation(tmp_path):
         rec.run_pipeline(stages=["semantics"])
 
 
+def test_run_pipeline_dep_satisfied_by_existing_output(tmp_path):
+    """`--stages pointcloud` alone runs when a prior preprocess's frames.zarr exists on disk."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    calls = []
+
+    # Preprocess output already present → dependency is satisfied without re-running it.
+    rec.frames_zarr.mkdir(parents=True, exist_ok=True)
+    rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+
+    rec.run_pipeline(stages=["pointcloud"])
+    assert calls == ["pointcloud"]
+
+
+def test_run_pipeline_missing_dep_output_still_raises(tmp_path):
+    """pointcloud with no frames.zarr and no preprocess stage → hard error."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+
+    with pytest.raises(ValueError, match="preprocess"):
+        rec.run_pipeline(stages=["pointcloud"])
+
+
 def test_run_pipeline_default_uses_config_enabled(tmp_path):
     config = _make_config(
         tmp_path,

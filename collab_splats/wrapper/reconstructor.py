@@ -795,6 +795,17 @@ class Reconstructor:
 
         return _build_localization_db(feedforward_zarr, extractor_name, radius, self.frames_zarr)
 
+    def _stage_output_exists(self, stage: str) -> bool:
+        """True if `stage`'s on-disk output is already present (lets deps be reused across runs)."""
+        # Only preprocess/pointcloud are ever depended on; others have no reusable marker.
+        if stage == "preprocess":
+            return self.frames_zarr.exists()
+        if stage == "pointcloud":
+            colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
+            zarr_done = (self.backend_dir / "feedforward.zarr").exists()
+            return colmap_done and zarr_done
+        return False
+
     def run_pipeline(
         self,
         stages: list[str] | None = None,
@@ -820,14 +831,17 @@ class Reconstructor:
             if self.config["localization"]["enabled"]:
                 stages.append("localize")
 
-        # Validate stage dependencies before starting any work
+        # Validate stage dependencies before starting any work. A dependency is
+        # satisfied when it's in this run's stages OR its output already exists on
+        # disk — so `--stages pointcloud` reuses a prior preprocess's frames.zarr.
         stages_set = set(stages)
         for stage in stages:
             for dep in _STAGE_DEPS.get(stage, []):
-                if dep not in stages_set:
+                if dep not in stages_set and not self._stage_output_exists(dep):
                     raise ValueError(
-                        f"Stage '{stage}' requires '{dep}' but '{dep}' is not in stages={stages}. "
-                        f"Add '{dep}' to the stages list."
+                        f"Stage '{stage}' requires '{dep}', but '{dep}' is neither in "
+                        f"stages={stages} nor already on disk. Add '{dep}' to the stages list "
+                        f"(or run it first)."
                     )
 
         # Execute stages in canonical order

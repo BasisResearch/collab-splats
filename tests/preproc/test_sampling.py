@@ -228,11 +228,42 @@ def test_uniform_derives_window_from_max_frames(tiny_video):
     assert len(frames) == 6
 
 
-def test_uniform_picks_sharpest_in_window(blur_pattern_video):
-    # Even frames blurred → the sharpest frame in every window is odd
-    _, records = sample_frames(blur_pattern_video, method="uniform", fps=7.5, blur_threshold=0.0)
-    assert len(records) > 0
-    assert all(r["frame_idx"] % 2 == 1 for r in records)
+def test_uniform_derives_count_from_max_frames_exact(tiny_video):
+    # fps omitted: 60-frame video, request 6 → exactly 6 evenly-spaced frames
+    frames, records = sample_frames(tiny_video, method="uniform", max_frames=6)
+    assert len(frames) == len(records) == 6
+    assert set(records[0]) == {"frame_idx", "blur_score"}
+    # indices are non-decreasing source-video indices within range
+    idxs = [r["frame_idx"] for r in records]
+    assert idxs == sorted(idxs) and idxs[0] >= 0 and idxs[-1] < 60
+
+
+def test_uniform_best_effort_keeps_count_when_gate_rejects_all(tiny_video):
+    # Impossible blur threshold → every frame fails the gate, but best-effort
+    # keeps one per position, so the count still hits the target.
+    frames, _ = sample_frames(tiny_video, method="uniform", max_frames=8, blur_threshold=1e12)
+    assert len(frames) == 8
+
+
+def test_uniform_selects_in_one_pass_not_whole_video(tiny_video, monkeypatch):
+    # Single ffmpeg select pass over a bounded index set — NOT a whole-video
+    # Python decode (_iter_frames), and not one subprocess per frame.
+    import collab_splats.preproc.sampling as s
+
+    monkeypatch.setattr(s, "_iter_frames", lambda *a, **k: (_ for _ in ()).throw(AssertionError("full decode")))
+    passes = {"n": 0, "wanted": 0}
+    real = s._iter_selected_frames
+
+    def counting(video_path, indices, w, h):
+        passes["n"] += 1
+        passes["wanted"] = len(indices)
+        return real(video_path, indices, w, h)
+
+    monkeypatch.setattr(s, "_iter_selected_frames", counting)
+    frames, _ = sample_frames(tiny_video, method="uniform", max_frames=4)
+    assert len(frames) == 4
+    assert passes["n"] == 1  # one ffmpeg pass, not one per frame
+    assert passes["wanted"] < 60  # decodes a subset, not the whole 60-frame video
 
 
 def test_uniform_frames_are_rgb(tiny_video):
@@ -276,9 +307,13 @@ def test_optical_flow_gate_rejects_all_blurred(tiny_video):
 
 
 def test_sample_frames_on_progress_called(tiny_video):
+    # Progress is reported over the selected count (fps=10 on a 2s video = 20),
+    # not the whole source-frame count.
     calls = []
-    sample_frames(tiny_video, method="uniform", fps=10.0, on_progress=lambda done, total: calls.append((done, total)))
-    assert calls and calls[-1][0] == 60 and calls[-1][1] == 60
+    frames, _ = sample_frames(
+        tiny_video, method="uniform", fps=10.0, on_progress=lambda done, total: calls.append((done, total))
+    )
+    assert calls and calls[-1] == (len(frames), len(frames)) == (20, 20)
 
 
 def test_score_frames_one_record_per_frame(tiny_video):

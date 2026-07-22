@@ -35,6 +35,9 @@ _DEFAULT_BLUR_THRESHOLD = 50.0
 # Exposure bounds: mean outside this range = blown out; std below = no contrast.
 _EXPOSURE_MEAN_RANGE = (20.0, 235.0)
 _EXPOSURE_MIN_STD = 10.0
+# Uniform sampling: when a target position fails the quality gate, consider at
+# most this many frames outward (each side) as a usable substitute.
+_VALID_PROBE_MAX = 3
 
 # Optical-flow selection: combined score at or above this selects the frame.
 _SELECT_THRESHOLD = 0.5
@@ -364,9 +367,14 @@ def sample_frames(
     """Select frames from a video for reconstruction.
 
     Methods:
-        "uniform": one frame per fixed window — the sharpest usable frame in
-            each. Window size comes from `fps` (samples/second), or is derived
-            from `max_frames` when fps is None (falls back to 2.0 fps).
+        "uniform": one frame per evenly-spaced position, decoded in a single
+            ffmpeg pass (a `select` filter emits only the wanted frames) — returns
+            exactly max_frames frames (fewer only when the video is shorter).
+            Spacing comes from `fps` (samples/second), or from `max_frames` when
+            fps is None (falls back to 2.0 fps). Each position is validated
+            against the quality gate; a failing position substitutes the sharpest
+            usable neighbour, and best-effort keeps the sharpest frame when none
+            passes, so the count stays exact.
         "optical_flow": motion (LK disparity + rotation) + coverage (histogram
             diversity) scoring; frames scoring >= 0.5 are selected.
             Uses min_disparity.
@@ -397,6 +405,52 @@ def sample_frames(
     raise ValueError(f"Unknown method: {method!r} (expected 'uniform' or 'optical_flow')")
 
 
+def _iter_selected_frames(video_path: str, indices: list[int], w: int, h: int) -> Iterator[np.ndarray]:
+    """Yield BGR frames for the given source indices via one ffmpeg select pass.
+
+    ffmpeg decodes in a single streaming pipe (in C) but a `select` filter emits
+    only the requested frame numbers, in ascending source order — so Python
+    touches len(indices) frames, not the whole video. The caller zips the yields
+    with sorted(indices) to key frames by source index.
+    """
+    _require_ffmpeg()
+    if not indices:
+        return
+    # select='eq(n\,i)+eq(n\,j)+...' passes only these frame numbers; -vsync 0
+    # keeps them 1:1 (no constant-frame-rate resampling / duplication).
+    expr = "+".join(f"eq(n\\,{i})" for i in indices)
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-i",
+        str(video_path),
+        "-vf",
+        f"select={expr}",
+        "-vsync",
+        "0",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-an",
+        "pipe:1",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    frame_size = w * h * 3
+    try:
+        # Read fixed-size frames until the pipe runs dry
+        while True:
+            raw = proc.stdout.read(frame_size)
+            if len(raw) < frame_size:
+                break
+            yield np.frombuffer(raw, np.uint8).reshape(h, w, 3).copy()
+    finally:
+        proc.stdout.close()
+        proc.terminate()
+        proc.wait()
+
+
 def _sample_uniform(
     video_path: str,
     *,
@@ -405,44 +459,65 @@ def _sample_uniform(
     blur_threshold: float,
     on_progress: Callable[[int, int], None] | None,
 ) -> tuple[list[np.ndarray], list[dict]]:
-    """Uniform windows over the video; keep the sharpest usable frame per window."""
+    """Evenly-spaced sampling in one ffmpeg pass; validate each position against
+    the quality gate, substituting the sharpest usable neighbour (best-effort,
+    so the count is exact)."""
     info = get_video_info(str(video_path))
     total = info["total_frames"]
     if total == 0:
         return [], []
-    # Window size: from fps if given, else spread max_frames over the video
-    native_fps = info["fps"] or 30.0
+    native_fps, w, h = info["fps"] or 30.0, info["width"], info["height"]
+    # Target positions: from fps (samples/second) if given, else spread
+    # max_frames evenly over the video; fall back to 2.0 fps when neither is set.
     if fps is not None:
-        interval = max(1, int(round(native_fps / fps)))
+        step = max(1, int(round(native_fps / fps)))
+        targets = list(range(0, total, step))
     elif max_frames:
-        interval = max(1, total // max_frames)
+        n = min(max_frames, total)
+        targets = np.unique(np.linspace(0, total - 1, n).round().astype(int)).tolist()
     else:
-        interval = max(1, int(round(native_fps / 2.0)))
-    report, close = _progress_reporter(total, "Uniform sampling", on_progress)
+        step = max(1, int(round(native_fps / 2.0)))
+        targets = list(range(0, total, step))
+    # max_frames is a hard cap in every mode (e.g. fps + max_frames together)
+    if max_frames is not None:
+        targets = targets[:max_frames]
+    if not targets:
+        return [], []
+    # Validation window: radius half the target spacing, capped, and kept under
+    # spacing/2 so neighbouring windows never overlap (deterministic index map).
+    spacing = targets[1] - targets[0] if len(targets) > 1 else total
+    radius = min(max((spacing - 1) // 2, 0), _VALID_PROBE_MAX)
+    # Per-target candidate indices (clamped to range, dedup); flatten to one
+    # sorted set of frames to decode in a single pass.
+    windows = [sorted({min(max(t + o, 0), total - 1) for o in range(-radius, radius + 1)}) for t in targets]
+    wanted = sorted({i for win in windows for i in win})
+    # One ffmpeg pass → frames keyed by source index (in-C decode, ~len(wanted)
+    # frames reach Python).
+    frame_by_idx = dict(zip(wanted, _iter_selected_frames(video_path, wanted, w, h)))
+    report, close = _progress_reporter(len(targets), "Uniform sampling", on_progress)
     frames: list[np.ndarray] = []
     records: list[dict] = []
-    best: tuple[float, int, np.ndarray] | None = None  # (blur, idx, frame)
     try:
-        for idx, frame in enumerate(_iter_frames(video_path)):
-            report(idx + 1)
-            # Track the sharpest gate-passing frame within the current window
-            gray = _analysis_gray(frame)
-            blur = compute_blur_score(gray)
-            usable, _ = check_frame_quality(gray, blur_threshold, blur_score=blur)
-            if usable and (best is None or blur > best[0]):
-                best = (blur, idx, frame)
-            # Window boundary: flush the best frame and start the next window
-            if (idx + 1) % interval == 0:
-                if best is not None:
-                    frames.append(cv2.cvtColor(best[2], cv2.COLOR_BGR2RGB))
-                    records.append({"frame_idx": best[1], "blur_score": best[0]})
-                best = None
-                if max_frames is not None and len(frames) >= max_frames:
-                    return frames, records
-        # Final partial window
-        if best is not None and (max_frames is None or len(frames) < max_frames):
-            frames.append(cv2.cvtColor(best[2], cv2.COLOR_BGR2RGB))
-            records.append({"frame_idx": best[1], "blur_score": best[0]})
+        # Per position, pick the sharpest gate-passing frame in its window; fall
+        # back to the sharpest frame when none passes, so the count stays exact.
+        for done, win in enumerate(windows):
+            best = None  # ((usable, blur), idx, bgr) — prefer usable, then sharp
+            for idx in win:
+                bgr = frame_by_idx.get(idx)
+                if bgr is None:
+                    continue
+                gray = _analysis_gray(bgr)
+                blur = compute_blur_score(gray)
+                usable, _ = check_frame_quality(gray, blur_threshold, blur_score=blur)
+                key = (usable, blur)
+                if best is None or key > best[0]:
+                    best = (key, idx, bgr)
+            if best is None:
+                continue  # window fully dropped by ffmpeg (should not happen)
+            key, idx, bgr = best
+            frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+            records.append({"frame_idx": idx, "blur_score": key[1]})
+            report(done + 1)
     finally:
         close()
     return frames, records

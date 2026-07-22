@@ -41,6 +41,38 @@ def test_get_points_in_world_frame_conf_masked():
     assert pts.shape[0] <= 2 * 4 * 5  # conf mask may drop points
 
 
+def test_get_points_in_world_frame_skip_first_drops_leading_frames():
+    """skip_first excludes leading overlap frames; points and colors stay aligned."""
+    s = _dense_submap(S=3)
+    pg = PoseGraph()
+    pg.add_submap(s, overlap_frames=1)
+    pg.optimize()
+
+    full_pts = s.get_points_in_world_frame(pg)
+    full_cols = s.get_points_colors()
+    # Points dropped by skipping frame 0 == that frame's conf-passing points.
+    frame0_kept = int((s.conf[0] > s.conf_threshold).sum())
+
+    skip_pts = s.get_points_in_world_frame(pg, skip_first=1)
+    skip_cols = s.get_points_colors(skip_first=1)
+    assert skip_pts.shape[0] == full_pts.shape[0] - frame0_kept
+    assert skip_cols.shape[0] == skip_pts.shape[0]  # still index-aligned
+    # Remaining points are exactly the tail (frames 1..) of the full set.
+    np.testing.assert_allclose(skip_pts, full_pts[frame0_kept:])
+    np.testing.assert_array_equal(skip_cols, full_cols[frame0_kept:])
+
+
+def test_get_points_in_world_frame_skip_all_returns_empty():
+    """A pure-overlap tail submap (skip_first >= frames) yields an empty (0,3) array."""
+    s = _dense_submap(S=2)
+    pg = PoseGraph()
+    pg.add_submap(s, overlap_frames=1)
+    pg.optimize()
+    pts = s.get_points_in_world_frame(pg, skip_first=2)
+    assert pts.shape == (0, 3)
+    assert s.get_points_colors(skip_first=2).shape == (0, 3)
+
+
 def test_get_all_poses_world_matches_extract_extrinsics():
     s = _dense_submap()
     pg = PoseGraph()

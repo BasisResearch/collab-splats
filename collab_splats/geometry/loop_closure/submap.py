@@ -85,23 +85,31 @@ class Submap:
     ###### Graph-corrected world reads #####
     ########################################
 
-    def filter_data_by_confidence(self, data: np.ndarray) -> np.ndarray:
-        """Boolean-index a per-frame (K, H, W, ...) array by conf > conf_threshold."""
-        return data[self.conf > self.conf_threshold]
+    def filter_data_by_confidence(self, data: np.ndarray, skip_first: int = 0) -> np.ndarray:
+        """Boolean-index a per-frame (K, H, W, ...) array by conf > conf_threshold.
 
-    def get_points_in_world_frame(self, graph) -> np.ndarray:
+        skip_first drops the leading `skip_first` frames before masking (used to
+        exclude a submap's overlap frames from visualization — see dedup_overlap).
+        """
+        return data[skip_first:][self.conf[skip_first:] > self.conf_threshold]
+
+    def get_points_in_world_frame(self, graph, skip_first: int = 0) -> np.ndarray:
         """Return (M, 3) graph-corrected, confidence-masked dense points in world frame.
 
         Per frame i: apply the optimized SL(4) homography for node ``frame_start + i``
         to this frame's dense points, dehomogenize by /w, then keep only points with
         ``conf > conf_threshold``. Frame order + conf mask match get_points_colors.
+
+        skip_first drops the leading `skip_first` frames (a submap's overlap frames,
+        which the previous submap already owns per dedup_overlap) — pass the same
+        value to get_points_colors so points and colors stay aligned.
         """
         if self.points is None:
             raise ValueError(f"Submap {self.submap_id} has no dense points")
         if self.conf is None:
             raise ValueError(f"Submap {self.submap_id} has no conf; cannot compute world-frame points")
         out = []
-        for i in range(self.points.shape[0]):
+        for i in range(skip_first, self.points.shape[0]):
             H = graph.get_homography(self.frame_start + i).astype(np.float64)
             flat = self.points[i].reshape(-1, 3).astype(np.float64)  # (H*W, 3)
             hom = np.hstack([flat, np.ones((flat.shape[0], 1), dtype=np.float64)])
@@ -113,13 +121,19 @@ class Submap:
             # Confidence mask this frame's points — same predicate/order as get_points_colors.
             mask = self.conf[i].reshape(-1) > self.conf_threshold
             out.append(world[mask])
+        # skip_first can consume every frame (a tail submap that is pure overlap) — return empty.
+        if not out:
+            return np.empty((0, 3), dtype=np.float32)
         return np.vstack(out).astype(np.float32)
 
-    def get_points_colors(self) -> np.ndarray:
-        """Return (M, 3) per-point RGB, conf-masked to align with get_points_in_world_frame."""
+    def get_points_colors(self, skip_first: int = 0) -> np.ndarray:
+        """Return (M, 3) per-point RGB, conf-masked to align with get_points_in_world_frame.
+
+        skip_first must match the value passed to get_points_in_world_frame.
+        """
         if self.conf is None:
             raise ValueError(f"Submap {self.submap_id} has no conf; cannot compute world-frame points")
-        return self.filter_data_by_confidence(self.colors).reshape(-1, 3)
+        return self.filter_data_by_confidence(self.colors, skip_first=skip_first).reshape(-1, 3)
 
     def get_all_poses_world(self, graph) -> np.ndarray:
         """Return (S, 4, 4) world-to-cam poses via K @ inv(H_opt) → decompose_camera.

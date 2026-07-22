@@ -440,15 +440,23 @@ class LoopClosure:
             # LC carrier / degraded submaps have no dense cloud — nothing to draw.
             if submap.is_lc_submap or submap.points is None:
                 return
+            # Skip this submap's leading overlap frames: they duplicate the previous
+            # submap's trailing frames (dedup_overlap assigns overlap to the earlier
+            # submap). Without this, every seam draws O frames' points + frusta twice.
+            skip = self.config.submap_overlap if submap.frame_start > 0 else 0
+            world_pts = submap.get_points_in_world_frame(self.graph, skip_first=skip)
+            # A pure-overlap tail submap trims to nothing — leave the scene untouched.
+            if world_pts.shape[0] == 0:
+                return
             pts, cols = subsample_points(
-                submap.get_points_in_world_frame(self.graph),
-                submap.get_points_colors(),
+                world_pts,
+                submap.get_points_colors(skip_first=skip),
                 max_points=50000,
             )
             self.viz.add_points(f"submap_{submap.submap_id}", pts, cols)
-            # Per-frame frusta at the corrected world-to-cam poses.
+            # Per-frame frusta at the corrected world-to-cam poses (overlap frames skipped).
             poses = submap.get_all_poses_world(self.graph)
-            for i in range(poses.shape[0]):
+            for i in range(skip, poses.shape[0]):
                 self.viz.add_frustum(f"submap_{submap.submap_id}/cam_{i}", poses[i], submap.intrinsics[i])
         except Exception as e:
             logger.warning("viewer submap push failed (submap %s): %s", submap.submap_id, e)

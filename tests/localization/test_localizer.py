@@ -13,6 +13,7 @@ from collab_splats.localization import (
     LocalizationResult,
     XFeatExtractor,
 )
+from collab_splats.localization.localizer import sample_world_points
 
 
 def test_submodules_have_logger():
@@ -302,3 +303,28 @@ def test_camera_localizer_calls_progress_callback():
     assert len(calls) == total
     assert calls[0] == (0, total)
     assert calls[-1] == (total - 1, total)
+
+
+def test_sample_world_points_bilinear_and_invalid():
+    """Exact-pixel and bilinear samples return grid values; NaN cells are invalid."""
+    # 4x4 grid whose world point at (row r, col c) is (c, r, 1)
+    H = W = 4
+    wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
+    wp[0, 0] = np.nan  # unmapped pixel
+
+    px = np.array([[2.0, 1.0], [1.5, 2.5], [0.0, 0.0]], dtype=np.float32)  # xy
+    pts, valid = sample_world_points(wp, px)
+    assert pts.shape == (3, 3) and valid.dtype == bool
+    np.testing.assert_allclose(pts[0], [2.0, 1.0, 1.0], atol=1e-5)   # exact pixel
+    np.testing.assert_allclose(pts[1], [1.5, 2.5, 1.0], atol=1e-5)   # bilinear midpoint
+    assert not valid[2] and valid[0] and valid[1]                     # NaN cell dropped
+
+
+def test_sample_world_points_out_of_bounds():
+    """Pixels outside the image bounds are marked invalid."""
+    H = W = 4
+    wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
+
+    px = np.array([[10.0, 1.0]], dtype=np.float32)  # x beyond W-1
+    _, valid = sample_world_points(wp, px)
+    assert not valid[0]

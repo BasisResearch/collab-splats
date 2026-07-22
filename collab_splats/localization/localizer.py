@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 import torch
+import torch.nn.functional as F
 import zarr
 from zarr.codecs import BloscCodec
 
@@ -32,6 +33,29 @@ def seed_intrinsics(height: int, width: int) -> np.ndarray:
         [[f, 0.0, width / 2.0], [0.0, f, height / 2.0], [0.0, 0.0, 1.0]],
         dtype=np.float32,
     )
+
+
+def sample_world_points(
+    world_points: np.ndarray,  # (H, W, 3) world-space per-pixel points
+    px: np.ndarray,  # (K, 2) float32 xy pixel coords
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bilinear-sample per-pixel world points at px (hloc interpolate_scan analog).
+
+    Returns (pts3d (K,3) float32, valid (K,) bool) — invalid where the sample
+    touches NaN (unmapped pixels) or falls outside the image.
+    """
+    H, W, _ = world_points.shape
+    # Normalize to [-1, 1] for grid_sample (align_corners=True convention)
+    grid = torch.from_numpy(px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1)
+    wp = torch.from_numpy(world_points).permute(2, 0, 1)[None].float()  # (1,3,H,W)
+    interp = F.grid_sample(wp, grid[None, None].float(), align_corners=True, mode="bilinear")[0, :, 0]  # (3,K)
+    valid = ~torch.any(torch.isnan(interp), dim=0)
+    # Out-of-bounds px → invalid (grid_sample pads with border values otherwise)
+    in_bounds = torch.from_numpy(
+        (px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1)
+    )
+    valid = (valid & in_bounds).numpy()
+    return interp.T.numpy().astype(np.float32), valid
 
 
 @dataclass

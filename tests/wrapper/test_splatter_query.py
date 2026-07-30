@@ -11,7 +11,7 @@ def _make_splatter_with_model(tmp_path, n_verts=50):
     from collab_splats.wrapper.splatter import Splatter
 
     mesh_pt = tmp_path / "mesh_features.pt"
-    mesh_ply = tmp_path / "mesh_tsdf_clean.ply"
+    mesh_ply = tmp_path / "mesh_clean.ply"
     mesh_ply.touch()
 
     s = object.__new__(Splatter)
@@ -82,7 +82,7 @@ def test_query_mesh_output_fn_writes_ply(tmp_path):
     """When output_fn is given, a PLY is written AND np.ndarray is still returned."""
     o3d = pytest.importorskip("open3d")
 
-    mesh_ply = tmp_path / "mesh_tsdf_clean.ply"
+    mesh_ply = tmp_path / "mesh_clean.ply"
     m = o3d.geometry.TriangleMesh()
     m.vertices = o3d.utility.Vector3dVector(np.zeros((50, 3)))
     m.triangles = o3d.utility.Vector3iVector(np.zeros((1, 3), dtype=np.int32))
@@ -118,7 +118,7 @@ def test_query_mesh_fast_path_skips_eval_setup(tmp_path):
     import torch
     from unittest.mock import MagicMock, patch
 
-    mesh_path = tmp_path / "mesh_tsdf_clean.ply"
+    mesh_path = tmp_path / "mesh_clean.ply"
     mesh_path.touch()
     features = torch.zeros(5, 13)
     torch.save(features, tmp_path / "mesh_features.pt")
@@ -152,7 +152,7 @@ def test_query_mesh_fast_path_decoder_reconstructed_from_state(tmp_path):
     from unittest.mock import MagicMock, patch
 
     input_dim, hidden_dim, output_dim = 13, 4, 8
-    mesh_path = tmp_path / "mesh_tsdf_clean.ply"
+    mesh_path = tmp_path / "mesh_clean.ply"
     mesh_path.touch()
     features = torch.zeros(5, input_dim)
     torch.save(features, tmp_path / "mesh_features.pt")
@@ -188,7 +188,7 @@ def test_query_mesh_falls_back_to_eval_setup_when_no_decoder(tmp_path):
     from unittest.mock import MagicMock, patch
     from types import SimpleNamespace
 
-    mesh_path = tmp_path / "mesh_tsdf_clean.ply"
+    mesh_path = tmp_path / "mesh_clean.ply"
     mesh_path.touch()
     features = torch.zeros(5, 13)
     torch.save(features, tmp_path / "mesh_features.pt")

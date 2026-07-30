@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 import time
@@ -16,7 +17,6 @@ from PIL import Image
 
 from collab_splats.dashboard.config import LocalizationConfig, RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.sources import PULL_EXCLUDES, SessionSource
 from collab_splats.mesh.utils import persist_mesh_vertex_features, pointcloud_to_mesh
 from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
@@ -25,9 +25,11 @@ from collab_splats.pointcloud.feedforward import (
 from collab_splats.pointcloud.utils import lift_features
 from collab_splats.preproc import extract_frame, sample_frames
 from collab_splats.preproc.frame_store import FrameStore
-from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.remote import PULL_EXCLUDES, SceneSource
+from collab_splats.semantics.compression import FeatureAutoencoder, write_point_features
 from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.utils.image import open_image
+from collab_splats.utils.torch_utils import batch_iterator
 
 # VGGTOmegaCreator requires the vggt-omega submodule; only available when installed.
 try:
@@ -56,20 +58,6 @@ def _write_frames_zarr(
     FrameStore.create(path, frames, records, provenance=prov)
 
 
-def _write_frames_jpegs(frames: list[np.ndarray], records: list[dict], frames_dir: Path) -> Path:
-    """Write frames as source-frame_idx-named JPEGs for path-locked creators (setup_inference,
-    semantics extraction) that require a real on-disk image directory.
-
-    Filenames must match FrameStore.frame_idx_from_path's convention (frame_{idx:06d}.jpg,
-    source video index — not list position) so that consumers reading this dir alongside
-    frames.zarr (e.g. localization ref thumbnails) resolve the same frame from both.
-    """
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    for f, r in zip(frames, records):
-        Image.fromarray(f).save(frames_dir / f"frame_{int(r['frame_idx']):06d}.jpg")
-    return frames_dir
-
-
 def _build_creator(env_model: str, conf: float):
     """Instantiate the selected feedforward creator with its confidence arg."""
     if env_model == "vggt_omega":
@@ -83,46 +71,196 @@ def _build_creator(env_model: str, conf: float):
     raise ValueError(f"unknown env_model: {env_model}")
 
 
-def _extract_semantics(extractor_name: str, image_dir: Path, out_dir: Path) -> None:
-    """Extract + cache patch features for the sampled frames."""
+def _extract_semantics(extractor_name: str, frames_zarr: Path, out_dir: Path) -> None:
+    """Extract + cache patch features straight from frames.zarr — no JPG export.
+
+    The cache path the extractor returns is deliberately dropped: every consumer resolves
+    the store by glob (load_feature_maps), including the viewer's legacy lift, which has no
+    handle to thread through.
+    """
     extractor = BaseFeatureExtractor.get(extractor_name)()
-    image_paths = sorted(image_dir.glob("*.jpg"))
-    extractor.extract_and_cache(image_paths, out_dir)
+    extractor.extract_and_cache_from_zarr(frames_zarr, out_dir)
 
 
-# Feature-compression autoencoder defaults (matches the semantic_lifting tutorial).
-_AE_LATENT_DIM = 64
-_AE_EPOCHS = 10
+# Decode chunk for load_point_features. A one-shot per_point_decode of a 500k-point scene
+# materialises ~2.3 GB of float32 at 768-D on the CPU; the container cap is 46.6 GB shared
+# with concurrent work, so the decode streams into a preallocated output instead.
+_DECODE_BATCH_SIZE = 65_536
 
 
-def _load_feature_maps(semantics_dir: Path) -> list[torch.Tensor]:
+def load_feature_maps(semantics_dir: Path) -> list[torch.Tensor]:
     """Load per-frame dense feature maps (D, H_p, W_p) from the cached semantics zarr."""
-    store_path = next(Path(semantics_dir).glob("*.zarr"))
+    # semantics_dir also holds the lifted per-point features.zarr; the 2D cache is the
+    # extractor-named store. Wildcard-glob without this filter picks either one at random.
+    store_path = next(p for p in Path(semantics_dir).glob("*.zarr") if p.name != "features.zarr")
     arr = zarr.open(str(store_path), mode="r")["features"]  # (N, D, H_p, W_p)
     return [torch.from_numpy(np.asarray(arr[i])) for i in range(arr.shape[0])]
 
 
+########
+# Feature-compression autoencoder policy — ONE gate, shared by both dashboard fit paths
+########
+
+# base.yaml is the single source of defaults for the whole project (see configs/README.md);
+# the dashboard reads the same semantics: block rather than carrying its own numbers.
+_CONFIG_DIR = Path(__file__).parents[2] / "configs"
+
+
+@dataclass(frozen=True)
+class AutoencoderPolicy:
+    """Latent width + fit gate applied to every dashboard feature-compression autoencoder."""
+
+    latent_dim: int | None  # None == semantics.n_components: null == no compression
+    target_cosine: float
+    max_epochs: int
+
+
+@functools.lru_cache(maxsize=1)
+def semantics_ae_policy() -> AutoencoderPolicy:
+    """Read the one autoencoder policy from configs/base.yaml's semantics: block.
+
+    Shared by the fresh-reconstruction lift (_lift_and_compress) and the legacy self-upgrade
+    (viewer._save_point_features) so a scene is never held to two different fidelity bars.
+    """
+    semantics = yaml.safe_load((_CONFIG_DIR / "base.yaml").read_text())["semantics"]
+    return AutoencoderPolicy(
+        latent_dim=semantics["n_components"],
+        target_cosine=float(semantics["target_cosine"]),
+        max_epochs=int(semantics["max_epochs"]),
+    )
+
+
+def resolve_latent_dim(input_dim: int, latent_dim: "int | None") -> int:
+    """Clamp the configured latent width to the input width, warning when the clamp binds.
+
+    The clamp is a real guard (tiny fixtures, and n_components: null asks for full width),
+    but an identity-width autoencoder buys no compression AND still costs a lossy
+    encode/decode round-trip — strictly worse than storing the features directly.
+    """
+    resolved = input_dim if latent_dim is None else min(int(latent_dim), input_dim)
+    if resolved >= input_dim:
+        logger.warning(
+            "autoencoder latent width clamped to the %d-D input (requested %s) — compression is a "
+            "no-op and the encode/decode round-trip is lossy",
+            input_dim,
+            latent_dim,
+        )
+    return resolved
+
+
+########
+# Semantics layout resolution (read path)
+########
+
+
+def resolve_semantics_dir(scene_dir: Path) -> "Path | None":
+    """A scene's flat `{scene}/semantics/` dir, or None when it has none.
+
+    Flat only, deliberately. The dashboard is a browser over its OWN scenes: its loader gates on
+    and reads flat `{scene}/feedforward.zarr` and flat `{scene}/mesh/mesh.ply`, so a published
+    (Reconstructor) scene — everything one level deeper under `{scene}/{backend}/` — fails on the
+    pointcloud before semantics is ever consulted. Resolving a backend-keyed semantics dir would
+    only serve a hybrid tree (flat pointcloud + nested semantics) that no writer produces.
+    Migrating the dashboard to the published layout instead would orphan every dashboard scene
+    already on disk, which is why the read path stays flat.
+
+    A flat dir holding only the 2D patch cache still resolves: that is exactly the legacy scene
+    viewer.ensure_lifted lifts on demand, and None would strand it with no semantics forever.
+    """
+    flat = Path(scene_dir) / "semantics"
+    return flat if flat.is_dir() else None
+
+
+def _is_full_dim(attrs) -> bool:
+    """True when features.zarr's self-describing attrs say the stored codes are already full-dim.
+
+    Written by every producer; `latent_dim == input_dim` is the uncompressed
+    (`semantics.n_components: null`) case, which legitimately has no autoencoder.pt.
+    """
+    input_dim, latent_dim = attrs.get("input_dim"), attrs.get("latent_dim")
+    return input_dim is not None and latent_dim is not None and int(latent_dim) >= int(input_dim)
+
+
+def point_features_cached(semantics_dir: Path) -> bool:
+    """True when semantics/features.zarr exists AND is readable (weights present, or full-dim)."""
+    sem_dir = Path(semantics_dir)
+    store_path = sem_dir / "features.zarr"
+    if not store_path.exists():
+        return False
+    if (sem_dir / "autoencoder.pt").exists():
+        return True
+    # No weights: usable only if the codes describe themselves as full-dim. Anything else is a
+    # half-written pair (crash between the two writes) — report NOT cached so the caller re-lifts.
+    try:
+        return _is_full_dim(zarr.open(str(store_path), mode="r").attrs)
+    except Exception:
+        return False
+
+
+def load_point_features(semantics_dir: Path, *, decode: bool = True) -> np.ndarray:
+    """Read semantics/features.zarr; decode latent codes back to full dim by default.
+
+    Consumers that compare features across scenes must decode — the 64-D bases of two
+    independently-trained autoencoders are not aligned, the decoded space is.
+    """
+    sem_dir = Path(semantics_dir)
+    store = zarr.open(str(sem_dir / "features.zarr"), mode="r")
+    codes = np.asarray(store["features"])
+    if not decode:
+        return codes
+    # Weights present -> always decode, even when the attrs report equal widths: an
+    # equal-width autoencoder still encodes (see _save_point_features's latent_dim clamp),
+    # so its codes are not full-dim features. Weights absent is the ambiguous case the
+    # attrs disambiguate: full-dim-by-design vs latent codes orphaned by a crashed write.
+    if not (sem_dir / "autoencoder.pt").exists():
+        if _is_full_dim(store.attrs):
+            return torch.nn.functional.normalize(torch.from_numpy(codes), dim=1).cpu().numpy()
+        raise FileNotFoundError(
+            f"{sem_dir / 'features.zarr'} holds {codes.shape[1]}-D per-point codes but the "
+            f"autoencoder that decodes them ({sem_dir / 'autoencoder.pt'}) is missing — the pair "
+            "was written only halfway (interrupted run). Returning the raw codes would be silent "
+            f"garbage; re-lift this scene's semantic features instead (delete {sem_dir / 'features.zarr'} "
+            "and re-run the semantics step)."
+        )
+    ae = FeatureAutoencoder.load(sem_dir)
+    # Streamed decode into a preallocated output: peak stays at (result + one chunk) instead
+    # of holding codes, decoded and normalized copies of the whole cloud at once. Row-wise
+    # normalize and the decoder's linear layers are both row-independent, so chunking is exact.
+    codes_t = torch.from_numpy(codes)
+    decoded = torch.empty((codes_t.shape[0], ae.input_dim), dtype=torch.float32)
+    with torch.no_grad():
+        start = 0
+        for (chunk,) in batch_iterator(_DECODE_BATCH_SIZE, codes_t):
+            end = start + len(chunk)
+            decoded[start:end] = torch.nn.functional.normalize(ae.per_point_decode(chunk), dim=1)
+            start = end
+    return decoded.numpy()
+
+
 def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> None:
-    """Train a feature-compression autoencoder, lift COMPRESSED maps to points, cache decoded.
+    """Train a feature-compression autoencoder, lift COMPRESSED maps to points, cache latent codes.
 
     Order matches the semantic_lifting tutorial and is what makes this fast: train the AE on the
     2D patch features, encode each map (D→latent) on GPU, then lift the small latent maps to
     points — lift_features cost scales with channel count, so lifting `latent` (e.g. 64) instead
-    of the full D (e.g. 768) is ~D/latent× cheaper. Decode per-point back to D, L2-normalise, and
-    cache so the first query is instant. Everything except the lift runs on the GPU.
+    of the full D (e.g. 768) is ~D/latent× cheaper. The latent codes are cached as they are; the
+    decode to D happens on read (load_point_features). Everything except the lift runs on the GPU.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    feature_maps = _load_feature_maps(semantics_dir)  # list of (D, H_p, W_p) on CPU
+    feature_maps = load_feature_maps(semantics_dir)  # list of (D, H_p, W_p) on CPU
     input_dim = feature_maps[0].shape[0]
 
-    # Train the AE on flattened 2D patch features (all frames) — GPU; stream loss to the log
+    # Train the AE on flattened 2D patch features (all frames) — GPU; stream loss to the log.
+    # Width + fit gate come from the shared config policy, same as the legacy self-upgrade.
     op_log.update_progress(80, "semantics: fitting autoencoder")
     t = time.perf_counter()
-    ae = FeatureAutoencoder(input_dim=input_dim, latent_dim=_AE_LATENT_DIM).to(device)
+    policy = semantics_ae_policy()
+    ae = FeatureAutoencoder(input_dim=input_dim, latent_dim=resolve_latent_dim(input_dim, policy.latent_dim)).to(device)
     patches = torch.cat([fm.flatten(1).T for fm in feature_maps]).to(device)  # (N*H_p*W_p, D)
     ae.fit(
         patches,
-        epochs=_AE_EPOCHS,
+        epochs=policy.max_epochs,
+        target_cosine=policy.target_cosine,
         on_epoch=lambda e, t_, loss: op_log.append_line(f"semantics: autoencoder epoch {e}/{t_}  loss={loss:.4f}"),
     )
     op_log.append_line(f"semantics: autoencoder fit in {time.perf_counter() - t:.1f}s")
@@ -133,13 +271,11 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     with torch.no_grad():
         compressed_maps = [ae.encode(fm.to(device)).detach().cpu() for fm in feature_maps]
     compressed_pts = lift_features(compressed_maps, result)  # (P, latent) — fast
-    with torch.no_grad():
-        decoded = ae.per_point_decode(compressed_pts.to(device))  # (P, D)
-        normed = torch.nn.functional.normalize(decoded, dim=1)
     op_log.update_progress(94, "semantics: caching lifted features")
-    np.save(Path(semantics_dir) / "lifted_normed.npy", normed.detach().cpu().numpy())
-    ae.save(Path(semantics_dir))
-    op_log.append_line(f"semantics: lift + decode + cache in {time.perf_counter() - t:.1f}s")
+    # Persist LATENT codes + weights (not decoded 768-D): same artifact pair the
+    # Reconstructor path writes, ~12x smaller, and decodable on read.
+    write_point_features(Path(semantics_dir), compressed_pts.detach().cpu().numpy(), ae)
+    op_log.append_line(f"semantics: lift + encode + cache in {time.perf_counter() - t:.1f}s")
 
 
 def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: float = 0.03) -> None:
@@ -148,12 +284,18 @@ def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: flo
     No-op (logged) if the mesh or the lifted point features are missing — neither is fatal
     to the run.
     """
-    mesh_path = Path(out_dir) / "mesh" / "mesh_tsdf.ply"
-    lifted_path = Path(out_dir) / "semantics" / "lifted_normed.npy"
-    if not mesh_path.exists() or not lifted_path.exists():
-        logger.warning("mesh feature transfer skipped: mesh=%s lifted=%s", mesh_path.exists(), lifted_path.exists())
+    mesh_path = Path(out_dir) / "mesh" / "mesh.ply"
+    features_zarr = Path(out_dir) / "semantics" / "features.zarr"
+    if not mesh_path.exists() or not features_zarr.exists():
+        logger.warning(
+            "mesh feature transfer skipped: mesh=%s features=%s", mesh_path.exists(), features_zarr.exists()
+        )
         return
-    point_features = np.load(lifted_path)
+    # DECODED features, not latent codes: the only reader of vertex_features.npy
+    # (viewer.load_mesh_vertex_features) does no decode and feeds score_queries, which
+    # compares against full-dim text embeddings. Matches viewer.ensure_mesh_features,
+    # which derives the same array from decoded point features on legacy scenes.
+    point_features = load_point_features(Path(out_dir) / "semantics")
     persist_mesh_vertex_features(mesh_path, result.points, point_features, k=k, sdf_trunc=sdf_trunc)
 
 
@@ -190,14 +332,14 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
 ########
 
 
-def _push_async(source: SessionSource, out_dir: Path, session: str, stem: str, op_log: OperationLog) -> None:
-    """Push the output tree to fieldwork_processed in a detached, non-fatal thread."""
+def _push_async(source: SceneSource, out_dir: Path, scene: str, op_log: OperationLog) -> None:
+    """Push the output tree to the processed bucket in a detached, non-fatal thread."""
 
     def _worker() -> None:
         t0 = time.perf_counter()
-        op_log.append_line("push: uploading to fieldwork_processed")
+        op_log.append_line("push: uploading to environments-processed")
         try:
-            source.push_outputs(out_dir, session, stem, on_line=op_log.append_line)
+            source.push_outputs(out_dir, scene, on_line=op_log.append_line)
             op_log.append_line(f"push: done in {time.perf_counter() - t0:.1f}s")
         except Exception as exc:  # non-fatal: outputs already on local disk
             logger.exception("push failed")
@@ -209,17 +351,16 @@ def _push_async(source: SessionSource, out_dir: Path, session: str, stem: str, o
 def run_pipeline(
     *,
     video_path: Path,
-    session: str,
-    stem: str,
+    scene: str,
     config: RunConfig,
     op_log: OperationLog,
-    source: SessionSource,
+    source: SceneSource,
     base_dir: Path,
 ) -> Path:
-    """Execute the full pipeline; write outputs under base_dir/session/stem; push in background."""
-    out_dir = Path(base_dir) / session / stem
+    """Execute the full pipeline; write outputs under base_dir/scene; push in background."""
+    out_dir = Path(base_dir) / scene
     out_dir.mkdir(parents=True, exist_ok=True)
-    op_log.start_op(f"{session}/{stem}")
+    op_log.start_op(scene)
     # Bridge collab_splats module logs (e.g. creator/semantics '%d/%d frames') into the dashboard log.
     try:
         with op_log.attach_logging("collab_splats"):
@@ -235,10 +376,10 @@ def run_pipeline(
                 method=sampling_method,
                 max_frames=config.max_frames,
             )
-            # frames/ jpgs feed path-locked consumers only (setup_inference, semantics);
-            # frames.zarr is the canonical store for pixel reads (localization ref thumbnails
-            # included — see _build_result_figures's frames_zarr threading).
-            image_dir = _write_frames_jpegs(frames, records, out_dir / "frames")
+            # frames.zarr is the sole frame store: setup_inference and semantics extraction both
+            # read it directly, and localization ref thumbnails resolve pixels through it (see
+            # _build_result_figures's frames_zarr threading). No JPG export.
+            frames_zarr = out_dir / "frames.zarr"
             config.frame_indices = [r["frame_idx"] for r in records]
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 
@@ -252,7 +393,7 @@ def run_pipeline(
             op_log.append_line(f"pointcloud: model loaded in {time.perf_counter() - t:.1f}s")
             t = time.perf_counter()
             op_log.update_progress(32, "pointcloud: preprocessing images")
-            creator.setup_inference(image_dir)
+            creator.setup_inference(frames_zarr)
             op_log.append_line(f"pointcloud: preprocessed in {time.perf_counter() - t:.1f}s")
             t = time.perf_counter()
             op_log.update_progress(42, "pointcloud: running inference")
@@ -284,7 +425,7 @@ def run_pipeline(
             # Extract and cache semantic patch features
             op_log.update_progress(72, f"semantics: extracting features ({config.semantic_extractor})")
             t = time.perf_counter()
-            _extract_semantics(config.semantic_extractor, image_dir, out_dir / "semantics")
+            _extract_semantics(config.semantic_extractor, frames_zarr, out_dir / "semantics")
             op_log.append_line(f"semantics: extracted in {time.perf_counter() - t:.1f}s")
 
             # Lift features to points + train compression autoencoder eagerly (instant queries later);
@@ -295,15 +436,16 @@ def run_pipeline(
             op_log.update_progress(94, "mesh: transferring features to vertices")
             _transfer_mesh_features(result, out_dir)
 
-            # Persist provenance: frame indices + video ref baked into run_config.yaml
+            # Persist provenance: frame indices + video ref baked into run_config.yaml. The ref is
+            # scene-relative — the flat curated layout has no path prefix above the scene id.
             config.to_yaml(
                 out_dir / "run_config.yaml",
-                video_ref=f"reconstruction/{session}/{stem}/{Path(video_path).name}",
+                video_ref=f"{scene}/{Path(video_path).name}",
             )
 
         # Local outputs ready: mark complete and push in the background (non-fatal).
-        op_log.update_progress(95, "pushing to fieldwork_processed (background)")
-        _push_async(source, out_dir, session, stem, op_log)
+        op_log.update_progress(95, "pushing to environments-processed (background)")
+        _push_async(source, out_dir, scene, op_log)
         op_log.finish_op()
         return out_dir
     except Exception as exc:
@@ -468,19 +610,18 @@ def read_localized_group(zarr_path: Path, extractor: str, out_dir: Path) -> "tup
 
 def load_browse_data(
     *,
-    session: str,
-    stem: str,
+    scene: str,
     extractor: str,
-    source: SessionSource,
+    source: SceneSource,
     base_dir: Path,
     op_log: OperationLog,
 ) -> BrowseData:
     """Non-GPU DB browse load: minimal pull if absent, then ref extrinsics + stored localized poses."""
-    out_dir = Path(base_dir) / session / stem
+    out_dir = Path(base_dir) / scene
     # Minimal pull only when the zarr is not yet local (same excludes as run_localization)
     if not (out_dir / "feedforward.zarr").exists():
         with op_log.step("browse: pulling reconstruction"):
-            source.pull_processed(session, stem, out_dir, excludes=PULL_EXCLUDES)
+            source.pull_processed(scene, out_dir, excludes=PULL_EXCLUDES)
     result = _load_feedforward_result(out_dir)
     loc_ext, loc_paths = read_localized_group(out_dir / "feedforward.zarr", extractor, out_dir)
     return BrowseData(
@@ -488,7 +629,7 @@ def load_browse_data(
         ref_extrinsics=np.asarray(result.extrinsics),
         localized_extrinsics=loc_ext,
         localized_image_paths=loc_paths,
-        mesh_path=out_dir / "mesh" / "mesh_tsdf.ply",
+        mesh_path=out_dir / "mesh" / "mesh.ply",
     )
 
 
@@ -496,25 +637,24 @@ def run_localization(
     *,
     query_video: Path,
     frame_idx: int,
-    session: str,
-    stem: str,
+    scene: str,
     config: LocalizationConfig,
     op_log: OperationLog,
-    source: SessionSource,
+    source: SceneSource,
     base_dir: Path,
     provenance: "dict | None" = None,
     cache=None,
 ) -> LocalizationRunOutput:
     """Localize one query-video frame against an existing reconstruction; optionally
     append the result to the localized/ DB group and push incrementally."""
-    out_dir = Path(base_dir) / session / stem
+    out_dir = Path(base_dir) / scene
     op_log.start_op(f"localize {Path(query_video).name}#{frame_idx}")
     try:
         with op_log.attach_logging("collab_splats"):
             # Reconstruction data: pull once (minimal set), then load from local zarr
             op_log.update_progress(5, "localize: pulling reconstruction")
             if not (out_dir / "feedforward.zarr").exists():
-                source.pull_processed(session, stem, out_dir, excludes=PULL_EXCLUDES)
+                source.pull_processed(scene, out_dir, excludes=PULL_EXCLUDES)
             op_log.update_progress(15, "localize: loading reconstruction")
             with op_log.step("localize: loading reconstruction"):
                 result = _load_feedforward_result(out_dir, load_world_points=True)
@@ -531,7 +671,7 @@ def run_localization(
                     out_dir / "feedforward.zarr",
                     op_log,
                     cache=cache,
-                    scene_key=(session, stem),
+                    scene_key=scene,
                     frames_zarr=frames_zarr if frames_zarr.exists() else None,
                 )
             _stamp_db_provenance(out_dir / "feedforward.zarr", config.extractor, out_dir)
@@ -570,8 +710,8 @@ def run_localization(
                     extractor_name=config.extractor,
                     provenance=provenance,
                 )
-                op_log.update_progress(92, "localize: pushing to fieldwork_processed (background)")
-                _push_async(source, out_dir, session, stem, op_log)
+                op_log.update_progress(92, "localize: pushing to environments-processed (background)")
+                _push_async(source, out_dir, scene, op_log)
 
             output = LocalizationRunOutput(
                 result=loc,

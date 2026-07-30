@@ -21,6 +21,8 @@ These tasks are started but not complete — do not assume their targets are don
 - **bae-vggt-parity** — verify BA matches upstream `zitongzhan/vggt --implementation bae` ([spec](docs/superpowers/specs/2026-05-20-bae-vggt-parity-design.md))
 - **loma-matcher** — LoMa local matcher for localization ([spec](docs/superpowers/specs/2026-07-08-loma-matcher-integration-design.md) · [plan](docs/superpowers/plans/2026-07-08-loma-matcher-integration.md))
 
+Recently completed (2026-07-30): **gcloud-remote-pipeline** — 12-task GCS remote processing pass: `environments-curated` → reconstruct → `environments-processed/<scene>/` with an `rclone check --one-way` verified push and post-push local cleanup (nothing is deleted until the push verifies); `sparse_pc.ply` now written binary; TSDF output unified on `mesh/mesh.ply` (no legacy `mesh_tsdf.ply` fallback — old scenes need `mesh(overwrite=True)` once); semantics converged on `features.zarr` + `autoencoder.pt` under `<backend>/semantics/<extractor>/`; `SessionSource` → `collab_splats/remote/SceneSource`; new driver `docs/examples/run_pipeline_remote.py` ([spec](docs/superpowers/specs/2026-07-29-gcloud-remote-pipeline-design.md) · [plan](docs/superpowers/plans/2026-07-29-gcloud-remote-pipeline.md)). Processed-scene output contract + known limitations: `configs/README.md`.
+
 Recently completed (2026-07-17): **dashboard-ux-feedback** — 12-task responsiveness/visibility pass: global busy lock, step-level op-log timings, debounced frame preview, all blocking work off the IOLoop, fast-bind server (page up in ~3s, import progress streams to the page) ([spec](docs/superpowers/specs/2026-07-16-dashboard-ux-feedback-design.md) · [plan](docs/superpowers/plans/2026-07-16-dashboard-ux-feedback.md)). **Before committing any dashboard change, run the smoke gate:** `python -m collab_splats.dashboard --smoke` (must print SMOKE PASS). Manual browser checklist (plan Task 12 step 3) still owed. Browsing via IP needs `--websocket-origin`.
 
 Recently completed (2026-07-16): **dashboard-loadtime** — 16-task perf pass (F1-F8, F10-F16; F9 zarr re-chunk deferred to a future decision doc) ([spec](docs/superpowers/specs/2026-07-16-dashboard-loadtime-design.md) · [plan](docs/superpowers/plans/2026-07-16-dashboard-loadtime.md)). Manual browser smoke checklist still owed.
@@ -49,6 +51,7 @@ collab_splats/
     base.py                # BasePointcloudCreator, PointcloudResult
     feedforward/           # BaseFeedforwardCreator (5-step template method), VGGTXCreator, MapAnythingCreator, FeedforwardResult
     utils.py               # lift_features, reproject_pixels, colmap_reconstruction_to_result
+    export.py              # write_pointcloud_ply: binary sparse_pc.ply writer
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
     transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV (ex utils/geometry.py)
     bundle_adjustment.py   # Levenberg-Marquardt BA
@@ -60,13 +63,18 @@ collab_splats/
     localizer.py           # Stage 3: CameraLocalizer, zarr feature cache
     viz.py                 # plot_correspondences
   semantics/               # 2D feature extraction
-    features.py            # BaseFeatureExtractor + RegistryMixin; registered DINOv2/SAM extractors
+    features/              # BaseFeatureExtractor + RegistryMixin (base.py); registered
+                           #   dinov2, maskclip, talk2dino — all ViT-width (384-1024D)
+    compression.py         # FeatureAutoencoder: per-point encode/decode + recon_cosine
+    segmentation/          # BaseSegmentation; registered insid3, mobilesamv2, sam3
   preproc/                 # video preprocessing: frame sampling + quality gate
     sampling.py            # ffmpeg-only decode, blur/exposure gate, sample_frames (uniform | optical_flow)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)
   mesh/                    # TSDF + Poisson meshing (base, poisson, tsdf, utils)
   nerfstudio/              # nerfstudio method configs, models, datamanagers
-  dashboard/               # interactive video/scene browser
+  wrapper/                 # stage orchestration: Reconstructor (config-driven pipeline), batch drivers, Splatter
+  remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed
+  dashboard/               # interactive video/scene browser (reads the FLAT dashboard layout only)
   utils/
     torch_utils.py         # RegistryMixin, pytorch_gc, infer_batch_size, batch_iterator, get_device
 evals/

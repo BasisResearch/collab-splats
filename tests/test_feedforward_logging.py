@@ -102,6 +102,10 @@ def test_build_colmap_logs_timing(capsys, tmp_path):
     creator.postprocess()
     capsys.readouterr()
     mock_recon = MagicMock()
+    # points3D has to be a real mapping: a bare MagicMock is truthy but iterates empty, so
+    # PointcloudResult.points skips its empty-guard and yields a (0,) array that the
+    # sparse_pc.ply writer build_colmap now calls rejects as mis-shaped.
+    mock_recon.points3D = {}
     with patch("collab_splats.pointcloud.feedforward.build_pycolmap_reconstruction", return_value=mock_recon), \
          patch("collab_splats.pointcloud.feedforward.base._rescale_reconstruction_to_original_dimensions", return_value=mock_recon):
         creator.build_colmap(tmp_path)

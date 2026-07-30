@@ -157,8 +157,6 @@ dev = [
   "pytest-cov",
   "pytest-xdist",
   "pytest-benchmark",
-  "pytest-asyncio",  # drives FastAPI/ASGI async webapp tests (asyncio_mode="auto")
-  "httpx",           # AsyncClient + ASGITransport in tests/webapp/
   "mypy",
   "ruff",
   "nbval",
@@ -211,7 +209,6 @@ exclude = "build"
 # --doctest-modules removed: no doctests in codebase; it scanned all importable
 # CUDA modules causing multi-minute startup.
 addopts = "--ignore=tests/test_meshlib.py --import-mode=importlib"
-asyncio_mode = "auto"
 testpaths = ["./tests"]
 pythonpath = ["."]
 markers = [

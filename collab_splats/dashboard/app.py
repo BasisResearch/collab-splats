@@ -18,13 +18,13 @@ import panel as pn
 import param
 import yaml
 
-from collab_splats.dashboard.async_utils import run_off_loop
+from collab_splats.dashboard.async_utils import ensure_local_video, run_off_loop
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.localize import SceneCache
 from collab_splats.dashboard.operation_log import OperationLog, busy_html
-from collab_splats.dashboard.sources import PULL_EXCLUDES, SessionSource
 from collab_splats.dashboard.viewer import SplitViewer
+from collab_splats.remote import PULL_EXCLUDES, SceneSource
 
 # NB: collab_splats.dashboard.pipeline and pointcloud.feedforward pull in the full
 # reconstruction + TSDF mesh stack (~18s import). They are imported lazily inside the
@@ -75,17 +75,16 @@ def _split_terms(text: str) -> list[str]:
     return [t.strip() for t in text.split(",") if t.strip()]
 
 
-def _video_options(videos: list, processed: "set[str]") -> dict:
-    """Dropdown label -> value map: union of curated videos and processed scenes.
+def _scene_options(scenes: list, processed: "set[str]") -> dict:
+    """Dropdown label -> value map: union of curated and processed scene ids.
 
-    Leads with a blank entry (nothing loads until the user picks). Curated videos with
-    processed outputs get a ✓; processed scenes whose source video is missing from
-    fieldwork_curated still appear (value = stem — the load path only needs the stem).
+    Leads with a blank entry (nothing loads until the user picks). Curated scenes with
+    processed outputs get a ✓; processed scenes whose curated source dir is gone still
+    appear — the load path needs only the scene id.
     """
-    options = {"— select a video —": ""}
-    options.update({(f"{v} ✓" if Path(v).stem in processed else v): v for v in videos})
-    curated_stems = {Path(v).stem for v in videos}
-    options.update({f"{stem} ✓ (no source video)": stem for stem in sorted(processed - curated_stems)})
+    options = {"— select a scene —": ""}
+    options.update({(f"{s} ✓" if s in processed else s): s for s in scenes})
+    options.update({f"{s} ✓ (no source video)": s for s in sorted(processed - set(scenes))})
     return options
 
 
@@ -95,7 +94,7 @@ class SplatsApp(param.Parameterized):
     def __init__(
         self,
         base_dir: Path = Path("/workspace/outputs"),
-        source: SessionSource | None = None,
+        source: SceneSource | None = None,
         gpu_worker: GpuWorker | None = None,
         op_log: OperationLog | None = None,
         cache: SceneCache | None = None,
@@ -103,27 +102,27 @@ class SplatsApp(param.Parameterized):
     ) -> None:
         super().__init__(**params)
         self._base_dir = Path(base_dir)
-        self._source = source if source is not None else SessionSource()
+        self._source = source if source is not None else SceneSource()
         self._gpu = gpu_worker if gpu_worker is not None else GpuWorker()
         # Shared across sessions (passed from run_app) so a page refresh re-attaches to an
         # in-flight run's progress instead of spawning a fresh, disconnected log.
         self._op_log = op_log if op_log is not None else OperationLog()
         # Session-level cache of expensive loads, shared with LocalizePage via the shell.
         self._cache = cache if cache is not None else SceneCache()
-        self._current_scene: tuple[str, str] | None = None  # (session, stem) currently displayed
-        self._loading_scene: tuple[str, str] | None = None  # (session, stem) load in flight
+        self._current_scene: str | None = None  # scene id currently displayed
+        self._loading_scene: str | None = None  # scene id whose load is in flight
         self._loaded_order: deque = deque()  # "loaded" insertion order for keep-last-N eviction
         self._viewer = SplitViewer(op_log=self._op_log)
         # Persisted UI state survives browser reloads (each reload rebuilds widgets fresh).
         self._state_path = self._base_dir / ".dashboard_state.yaml"
         self._state = self._load_state()
         self._state_dirty = False  # set by _persist_state, cleared by _flush_state
-        self._restored_selection = False  # session/video restored once, after options load
-        self._suppress_autoload = False  # gate _on_video during programmatic option/restore churn
+        self._restored_selection = False  # scene restored once, after options load
+        self._suppress_autoload = False  # gate _on_scene during programmatic option/restore churn
         self._cache_check_token = 0  # latest-wins token for Run's remote-cache check
         self._cache_check_active = False  # keeps widgets locked through the check window
         self._build_sidebar()
-        self._refresh_sessions()
+        self._refresh_scenes()
 
     def _load_state(self) -> dict:
         """Load persisted widget values; empty dict if absent/unreadable."""
@@ -156,8 +155,9 @@ class SplatsApp(param.Parameterized):
         """Build all sidebar widgets and wire callbacks."""
         # Seed each widget from persisted state (falls back to the literal default).
         s = self._state
-        self.session_select = pn.widgets.Select(name="Session", options=[])
-        self.video_select = pn.widgets.Select(name="Video", options=[])
+        # One dropdown, one scene id: a curated scene dir holds exactly one video, so the old
+        # two-level (session -> video) cascade has nothing left to cascade.
+        self.scene_select = pn.widgets.Select(name="Scene", options=[])
         # Migrate the pre-rename "balanced" label from saved settings to "uniform".
         _sampling = s.get("sampling", "uniform")
         _sampling = "uniform" if _sampling == "balanced" else _sampling
@@ -209,8 +209,7 @@ class SplatsApp(param.Parameterized):
         # Cross-tab busy indicator: filled while any GpuWorker job is in flight.
         self.busy_note = pn.pane.HTML("", sizing_mode="stretch_width")
 
-        self.session_select.param.watch(self._on_session, "value")
-        self.video_select.param.watch(self._on_video, "value")
+        self.scene_select.param.watch(self._on_scene, "value")
         self.env_model.param.watch(self._on_env_model, "value")
         self.run_query_btn.on_click(self._on_query)
         self.view_mode.param.watch(self._on_view_mode, "value")
@@ -219,10 +218,9 @@ class SplatsApp(param.Parameterized):
         self.force_btn.on_click(lambda e: self._on_run(e, force=True))
 
         # Persist these widgets' values to disk on any change so a browser reload restores them.
-        # session/video are restored once, after their options populate (see _restore_selection).
+        # scene is restored once, after its options populate (see _restore_selection).
         self._persisted = {
-            "session_select": self.session_select,
-            "video_select": self.video_select,
+            "scene_select": self.scene_select,
             "sampling": self.sampling,
             "max_frames": self.max_frames,
             "env_model": self.env_model,
@@ -246,8 +244,7 @@ class SplatsApp(param.Parameterized):
 
         self._sidebar = pn.Column(
             "## Source",
-            self.session_select,
-            self.video_select,
+            self.scene_select,
             pn.Card(self.sampling, self.max_frames, self.min_disparity, title="Frame sampling", collapsed=True),
             pn.Card(self.env_model, self.conf, title="Environment model", collapsed=True),
             pn.Card(
@@ -276,8 +273,7 @@ class SplatsApp(param.Parameterized):
             self.run_query_btn,
             self.view_mode,
             self.normalize_view,
-            self.session_select,
-            self.video_select,
+            self.scene_select,
         )
         for w in widgets:
             w.disabled = busy
@@ -296,8 +292,8 @@ class SplatsApp(param.Parameterized):
 
     # ---- data wiring ---------------------------------------------------
 
-    def _refresh_sessions(self) -> None:
-        """List sessions on a background thread; set options back on the IOLoop.
+    def _refresh_scenes(self) -> None:
+        """List curated + processed scenes on a background thread; set options on the IOLoop.
 
         rclone listing is a blocking network call; running it inline would stall the
         IOLoop during document init (the same class of freeze as the heavy imports).
@@ -306,126 +302,88 @@ class SplatsApp(param.Parameterized):
 
         def work():
             # step()'s FAILED line is the user-visible surface (no error_op: that would
-            # clobber a concurrent run's is_running); fall through with an empty list
-            # so the dropdown doesn't wedge.
+            # clobber a concurrent run's is_running). The two listings fail independently:
+            # curated-only or processed-only beats an empty dropdown.
             try:
-                with self._op_log.step("listing sessions"):
-                    names = self._source.list_sessions()
+                with self._op_log.step("listing scenes"):
+                    scenes = self._source.list_scenes()
             except Exception as exc:
-                logger.warning("session listing failed: %s", exc)
-                names = []
-            self._apply_sessions(names, doc)
+                logger.warning("curated scene listing failed: %s", exc)
+                self._op_log.append_line(f"curated listing FAILED: {exc}")
+                scenes = []
+            try:
+                with self._op_log.step("listing processed scenes"):
+                    processed = set(self._source.list_processed_scenes())
+            except Exception as exc:
+                logger.warning("processed scene listing failed: %s", exc)
+                self._op_log.append_line(f"processed listing FAILED: {exc}")
+                processed = set()
+            self._apply_scenes(scenes, processed, doc)
 
-        self._session_thread = threading.Thread(target=work, name="session-list", daemon=True)
-        self._session_thread.start()
+        self._scene_thread = threading.Thread(target=work, name="scene-list", daemon=True)
+        self._scene_thread.start()
 
-    def _apply_sessions(self, names: list[str], doc) -> None:
-        """Set the session dropdown options on the IOLoop (or inline if no doc)."""
+    def _apply_scenes(self, scenes: list[str], processed: "set[str]", doc) -> None:
+        """Set the scene dropdown options on the IOLoop (or inline if no doc)."""
 
         def setter():
-            # Blank-first: plain list options auto-flip value→options[0], firing a videos
-            # listing for a session nobody picked — its late apply then overwrote the
-            # restored session's video list (session said 2024_02_06, videos showed
-            # 2023_11_05's). With the blank entry nothing fires until an explicit pick.
+            # Blank-first: plain list options auto-flip value→options[0], which would load a
+            # scene nobody picked. With the blank entry nothing fires until an explicit pick.
+            restored = False
             self._suppress_autoload = True
             try:
-                options = {"— select a session —": ""}
-                options.update({n: n for n in names})
-                self.session_select.options = options
+                if not scenes and not processed:
+                    self.scene_select.options = {"— listing failed; reload the page to retry —": ""}
+                else:
+                    self.scene_select.options = _scene_options(scenes, processed)
                 if not self._restored_selection:
                     self._restored_selection = True
-                    self._restore_selection(names)
+                    restored = self._restore_selection(scenes, processed)
             finally:
                 self._suppress_autoload = False
-            self._autoload_current()
+            # Explicit-select UX: a restored selection never auto-loads — a page reload must
+            # not kick off a multi-GB pull nobody asked for. The user reselects or clicks Run.
+            if not restored:
+                self._autoload_current()
 
         if doc is not None:
             doc.add_next_tick_callback(setter)
         else:
             setter()
 
-    def _restore_selection(self, names: list[str]) -> None:
-        """Re-apply the persisted session once options are available (session only).
+    def _restore_selection(self, scenes: list[str], processed: "set[str]") -> bool:
+        """Re-apply the persisted scene once options are available; True when restored."""
+        scene = self._state.get("scene_select")
+        if not scene or (scene not in scenes and scene not in processed):
+            return False
+        self.scene_select.value = scene
+        return True
 
-        Setting the value fires _on_session, which populates the video options off the
-        IOLoop — no listing here: a synchronous rclone call would block the IOLoop and
-        race the watcher's own fetch (two writers left the dropdown empty on reload).
-        """
-        sess = self._state.get("session_select")
-        if not sess or sess not in names:
-            return
-        self.session_select.value = sess
-
-    def _on_session(self, event) -> None:
-        """Populate video dropdown when session changes (rclone list runs off the IOLoop)."""
-        if not event.new:
-            return
-        session = event.new
-
-        # Blocking rclone listings off the IOLoop; set options back on the loop.
-        # step() logs start/done and its FAILED line surfaces listing errors. The two
-        # listings fail independently: curated-only or processed-only beats an empty
-        # dropdown, and a total failure shows a retry hint instead of silence.
-        def fetch():
-            with self._op_log.step(f"listing videos ({session})"):
-                try:
-                    videos = self._source.list_videos(session)
-                except Exception as exc:
-                    logger.warning("curated video listing failed: %s", exc)
-                    self._op_log.append_line(f"curated listing FAILED: {exc}")
-                    videos = []
-                try:
-                    processed = set(self._source.list_processed_stems(session))
-                except Exception as exc:
-                    logger.warning("processed listing failed: %s", exc)
-                    self._op_log.append_line(f"processed listing FAILED: {exc}")
-                    processed = set()
-            if not videos and not processed:
-                return {"— listing failed; reselect the session to retry —": ""}
-            return _video_options(videos, processed)
-
-        def apply(options: dict) -> None:
-            # Latest-wins: a slow listing for a superseded session must not clobber the
-            # current session's video list (the session/video mismatch bug).
-            if self.session_select.value != session:
-                return
-            self.video_select.options = options
-            # Explicit-select UX: a session switch never auto-loads. The blank entry is
-            # selected until the user picks a video, which fires _on_video -> load.
-            self.video_select.value = ""
-
-        self._video_list_thread = run_off_loop(
-            fetch,
-            apply,
-            label="video-list",
-            doc=pn.state.curdoc,
-        )
-
-    def _on_video(self, event) -> None:
-        """Auto-load cached outputs when a video is selected (skipped during programmatic churn)."""
+    def _on_scene(self, event) -> None:
+        """Auto-load cached outputs when a scene is selected (skipped during programmatic churn)."""
         if self._suppress_autoload or not event.new:
             return
         # _autoload_current probes the frame bound itself — calling it here too started a
         # duplicate remote download while the first fetch was still mid-flight.
         self._autoload_current()
 
-    def _update_max_frames_bound(self, session: str, name: str) -> None:
-        """Set the Max-frames bound to the video's frame count — fetch/probe off the IOLoop.
+    def _update_max_frames_bound(self, scene: str) -> None:
+        """Set the Max-frames bound to the scene video's frame count — fetch/probe off the IOLoop.
 
         ffprobe is a subprocess even for local files; never run it inline in a watcher.
         """
-        if not session or not name:
+        if not scene:
             return
 
         def work() -> int:
-            video = self._ensure_local_video(session, name)  # no-op when already local
+            video = self._ensure_local_video(scene)  # no-op when already local
             from collab_splats.preproc import get_video_info
 
             return int(get_video_info(str(video)).get("total_frames") or 0)
 
         def apply(total: int) -> None:
-            # Latest-wins: a slow probe for a superseded video must not clobber the bound.
-            if self.video_select.value != name or total <= 0:
+            # Latest-wins: a slow probe for a superseded scene must not clobber the bound.
+            if self.scene_select.value != scene or total <= 0:
                 return
             self.max_frames.end = total
             self.max_frames.name = f"Max frames (video has {total})"
@@ -439,23 +397,22 @@ class SplatsApp(param.Parameterized):
         )
 
     def _autoload_current(self) -> None:
-        """Load cached outputs for the currently-selected session/video, if present."""
-        name = self.video_select.value
-        if not name:
+        """Load cached outputs for the currently-selected scene, if present."""
+        scene = self.scene_select.value
+        if not scene:
             return
-        session, stem = self.session_select.value, Path(name).stem
-        self._update_max_frames_bound(session, name)
+        self._update_max_frames_bound(scene)
         # A refresh mid-run must not clobber the shared op_log or queue a load behind the pipeline.
         if self._op_log.is_running:
             return
-        out = self._base_dir / session / stem
+        out = self._base_dir / scene
         if (out / "feedforward.zarr").exists():
-            self._load_outputs(session, stem)
+            self._load_outputs(scene)
             return
         # Remote check is a blocking rclone list -> run off the IOLoop, then load if present.
         run_off_loop(
-            lambda: self._source.has_processed(session, stem),
-            lambda ok: self._load_outputs(session, stem) if ok else None,
+            lambda: self._source.has_processed(scene),
+            lambda ok: self._load_outputs(scene) if ok else None,
             label="has-processed",
             doc=pn.state.curdoc,
             on_error=lambda exc: self._op_log.append_line(f"server check failed: {exc}"),
@@ -483,31 +440,32 @@ class SplatsApp(param.Parameterized):
             mesh_clean_repair=self.mesh_clean.value,
         )
 
-    def _ensure_local_video(self, session: str, name: str) -> Path:
+    def _ensure_local_video(self, scene: str) -> Path:
         """Return local video path, fetching from source if needed (progress -> op_log)."""
-        local = self._base_dir / session / Path(name).stem / name
-        if local.exists():
-            return local
-        on_line = self._op_log.rclone_progress("⬇ fetching video")
-        return self._source.fetch_video(session, name, local.parent, on_line=on_line)
+        return ensure_local_video(
+            scene,
+            base_dir=self._base_dir,
+            source=self._source,
+            op_log=self._op_log,
+            label="⬇ fetching video",
+        )
 
     def _on_run(self, event, force: bool) -> None:
         """Run or reload the pipeline, respecting cache and force flag."""
         # Flush pending UI state so the config driving this run is durable on disk.
         self._flush_state()
-        session, name = self.session_select.value, self.video_select.value
-        if not session or not name:
-            self._op_log.error_op("select a session and a video first")
+        scene = self.scene_select.value
+        if not scene:
+            self._op_log.error_op("select a scene first")
             return
-        stem = Path(name).stem
-        out = self._base_dir / session / stem
+        out = self._base_dir / scene
         if force:
             # Force re-run: drop cached loads so the post-run load re-reads fresh outputs.
-            self._invalidate_scene(session, stem)
-            self._start_run(session, name, stem)
+            self._invalidate_scene(scene)
+            self._start_run(scene)
             return
         if (out / "feedforward.zarr").exists():
-            self._load_outputs(session, stem)
+            self._load_outputs(scene)
             return
         # Remote-cache check is a blocking rclone list — off the IOLoop (a cold check
         # inside the click handler froze the whole page), then load or run on the result.
@@ -517,7 +475,7 @@ class SplatsApp(param.Parameterized):
         token = self._cache_check_token
         self._cache_check_active = True
         self._set_busy(True)
-        self._op_log.append_line(f"checking server for {stem}…")
+        self._op_log.append_line(f"checking server for {scene}…")
 
         def apply(ok: bool) -> None:
             if token != self._cache_check_token:
@@ -525,9 +483,9 @@ class SplatsApp(param.Parameterized):
             self._cache_check_active = False
             self._sync_busy()  # re-enable unless the shared worker is mid-job
             if ok:
-                self._load_outputs(session, stem)
+                self._load_outputs(scene)
             else:
-                self._start_run(session, name, stem)
+                self._start_run(scene)
 
         def on_error(exc: Exception) -> None:
             if token != self._cache_check_token:
@@ -537,15 +495,15 @@ class SplatsApp(param.Parameterized):
             self._op_log.error_op(f"server check failed: {exc}")
 
         self._cache_check_thread = run_off_loop(
-            lambda: self._source.has_processed(session, stem),
+            lambda: self._source.has_processed(scene),
             apply,
             label="has-processed",
             doc=pn.state.curdoc,
             on_error=on_error,
         )
 
-    def _start_run(self, session: str, name: str, stem: str) -> None:
-        """Enqueue the full pipeline for a video (IOLoop thread)."""
+    def _start_run(self, scene: str) -> None:
+        """Enqueue the full pipeline for a scene (IOLoop thread)."""
         config = self._current_config()
         doc = pn.state.curdoc
 
@@ -553,11 +511,10 @@ class SplatsApp(param.Parameterized):
             # Lazy import: pulls the heavy reconstruction/mesh stack only when a run starts.
             from collab_splats.dashboard.pipeline import run_pipeline
 
-            video = self._ensure_local_video(session, name)
+            video = self._ensure_local_video(scene)
             run_pipeline(
                 video_path=video,
-                session=session,
-                stem=stem,
+                scene=scene,
                 config=config,
                 op_log=self._op_log,
                 source=self._source,
@@ -571,27 +528,27 @@ class SplatsApp(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            self._invalidate_scene(session, stem)  # fresh outputs -> stale cache/display
-            self._load_outputs(session, stem)  # re-enqueues a load job
+            self._invalidate_scene(scene)  # fresh outputs -> stale cache/display
+            self._load_outputs(scene)  # re-enqueues a load job
 
         self._set_busy(True)
-        self._op_log.start_op(f"running {stem}")
+        self._op_log.start_op(f"running {scene}")
         self._gpu.submit(job, on_done, doc)
 
-    def _dispatch_load(self, session: str, stem: str) -> None:
+    def _dispatch_load(self, scene: str) -> None:
         """Schedule an outputs load (called from a worker job's completion)."""
-        self._load_outputs(session, stem)
+        self._load_outputs(scene)
 
-    def _invalidate_scene(self, session: str, stem: str) -> None:
+    def _invalidate_scene(self, scene: str) -> None:
         """Drop cached loads for a scene (Force re-run / fresh pipeline output)."""
         # Drop every kind, not just "loaded" — LocalizePage caches its "mesh" (and
         # localizer) entries under the same shared cache and must not serve stale ones.
-        self._cache.drop_scene((session, stem))
-        if self._current_scene == (session, stem):
+        self._cache.drop_scene(scene)
+        if self._current_scene == scene:
             self._current_scene = None  # ensure the next load is not short-circuited
-        self._source.invalidate(("has_processed", session, stem))
+        self._source.invalidate(("has_processed", scene))
 
-    def _remember_loaded(self, key: tuple[str, str]) -> None:
+    def _remember_loaded(self, key: str) -> None:
         """Track "loaded" insertion order; evict beyond the last N scenes (memory cap)."""
         # Re-loads move the key to the back instead of duplicating it in the deque.
         if key in self._loaded_order:
@@ -600,43 +557,44 @@ class SplatsApp(param.Parameterized):
         while len(self._loaded_order) > _LOADED_CACHE_KEEP:
             self._cache.drop(self._loaded_order.popleft(), "loaded")
 
-    def _load_outputs(self, session: str, stem: str) -> None:
+    def _load_outputs(self, scene: str) -> None:
         """Enqueue loading FeedforwardResult + semantics; render on the IOLoop when done."""
         # Already displayed and idle -> nothing to do (reselect of the same scene). The
         # is_running guard keeps a mid-run reselect loading: _current_scene may point at
         # soon-to-be-stale output while a run/load is in flight, so don't trust it then.
-        if self._current_scene == (session, stem) and not self._op_log.is_running:
+        if self._current_scene == scene and not self._op_log.is_running:
             return
-        # In-flight dedupe: the session-switch path and the video watcher can both request
+        # In-flight dedupe: the options-apply path and the scene watcher can both request
         # the same load in one churn; queueing it twice doubles the pull + render.
-        if self._loading_scene == (session, stem):
+        if self._loading_scene == scene:
             return
-        self._loading_scene = (session, stem)
-        out = self._base_dir / session / stem
+        self._loading_scene = scene
+        out = self._base_dir / scene
         doc = pn.state.curdoc  # captured on the IOLoop at call time
         max_points = self.max_display_points.value
 
         def job():
-            # Lazy import: FeedforwardResult lives in the heavy feedforward package.
+            # Lazy imports: FeedforwardResult lives in the heavy feedforward package, and
+            # dashboard.pipeline pulls that same stack at module import.
+            from collab_splats.dashboard.pipeline import resolve_semantics_dir
             from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
             # Session cache: skip the pull + zarr/npy reads when this scene was already loaded.
-            cached = self._cache.get((session, stem), "loaded")
+            cached = self._cache.get(scene, "loaded")
             if cached is not None:
-                self._op_log.append_line(f"{stem}: using in-memory cache")
+                self._op_log.append_line(f"{scene}: using in-memory cache")
                 return cached
             if not (out / "feedforward.zarr").exists():
-                with self._op_log.step(f"{stem}: pulling from server"):
+                with self._op_log.step(f"{scene}: pulling from server"):
                     self._source.pull_processed(
-                        session,
-                        stem,
+                        scene,
                         out,
                         excludes=PULL_EXCLUDES,
                         on_line=self._op_log.rclone_progress("⬇ pulling from server"),
                     )
             # Display needs only points/colors/extrinsics; skip decoding dense arrays
             # (GBs when present locally). The lift path reloads them on demand.
-            with self._op_log.step(f"{stem}: reading feedforward.zarr"):
+            with self._op_log.step(f"{scene}: reading feedforward.zarr"):
                 result = FeedforwardResult.load_zarr(
                     out / "feedforward.zarr",
                     load_depth=False,
@@ -645,20 +603,21 @@ class SplatsApp(param.Parameterized):
                     load_features=False,
                     load_pixel_indices=False,
                 )
-            semantics_dir = out / "semantics"
-            # TSDF writes mesh_tsdf.ply (see mesh/tsdf.py), not mesh.ply.
-            mesh_path = out / "mesh" / "mesh_tsdf.ply"
-            # lifted_normed=None defers the (P, D) feature read to the first query: the viewer's
-            # ensure_lifted loads the cached lifted_normed.npy from semantics_dir (or lifts from
-            # the feature zarr for older runs). Tuple keeps 4 slots so cache/on_done unpack as-is.
+            # Flat `{scene}/semantics/`, matching the flat feedforward.zarr gated on above — the
+            # dashboard browses its own scenes, not the published backend-keyed tree. None when absent.
+            semantics_dir = resolve_semantics_dir(out)
+            mesh_path = out / "mesh" / "mesh.ply"
+            # point_features=None defers the (P, D) feature read to the first query: the viewer's
+            # ensure_lifted decodes the cached semantics/features.zarr (or lifts from the 2D
+            # feature zarr for older runs). Tuple keeps 4 slots so cache/on_done unpack as-is.
             value = (
                 result,
                 mesh_path if mesh_path.exists() else None,
-                semantics_dir if semantics_dir.exists() else None,
+                semantics_dir,
                 None,
             )
-            self._cache.put((session, stem), "loaded", value)
-            self._remember_loaded((session, stem))
+            self._cache.put(scene, "loaded", value)
+            self._remember_loaded(scene)
             return value
 
         def on_done(res):
@@ -668,7 +627,7 @@ class SplatsApp(param.Parameterized):
             if isinstance(res, Exception):
                 self._op_log.error_op(str(res))
                 return
-            result, mesh_path, semantics_dir, lifted_normed = res
+            result, mesh_path, semantics_dir, point_features = res
             # Timed: the render phase (geometry build + software-GL + full-scene websocket
             # serialize for TWO panes) is the slow tail of a load — make it visible.
             try:
@@ -682,16 +641,14 @@ class SplatsApp(param.Parameterized):
                     result,
                     mesh_path=mesh_path,
                     semantics_dir=semantics_dir,
-                    lifted_normed=lifted_normed,
+                    point_features=point_features,
                     max_points=max_points,
                 )
-            self._current_scene = (session, stem)  # reselects of this scene now short-circuit
+            self._current_scene = scene  # reselects of this scene now short-circuit
             self._op_log.finish_op()
 
         self._set_busy(True)
-        # Session in the label: stems repeat across sessions ("loading C0043" is ambiguous
-        # right after a session switch).
-        self._op_log.start_op(f"loading {session}/{stem}")
+        self._op_log.start_op(f"loading {scene}")
         self._gpu.submit(job, on_done, doc)
 
     def _on_view_mode(self, event) -> None:
@@ -705,7 +662,7 @@ class SplatsApp(param.Parameterized):
         reused across modes.
         """
         mode = event.new
-        scene_key = self._current_scene
+        scene = self._current_scene
         query = self._viewer.active_query()
         need_score = bool(query) and self._viewer.cached_query_colors(mode) is None
         positive, negative, extractor_name = query if query else ([], [], "")
@@ -715,12 +672,12 @@ class SplatsApp(param.Parameterized):
             # Mesh mode: materialise the polydata off the IOLoop; share it with LocalizePage
             # via the SceneCache so neither page re-reads the .ply the other already loaded.
             if mode == "mesh":
-                preloaded = self._cache.get(scene_key, "mesh") if scene_key else None
+                preloaded = self._cache.get(scene, "mesh") if scene else None
                 loaded = self._viewer.ensure_mesh_polydata(preloaded=preloaded, op_log=self._op_log)
-                if loaded and scene_key:
-                    self._cache.put(scene_key, "mesh", self._viewer.mesh_polydata())
+                if loaded and scene:
+                    self._cache.put(scene, "mesh", self._viewer.mesh_polydata())
             if need_score:
-                fetched = self._ensure_lift_inputs(scene_key)
+                fetched = self._ensure_lift_inputs(scene)
                 # Explicit target mode: set_mode runs later in on_done, so self._viewer.mode
                 # is still the OUTGOING mode here — scoring on it produced wrong-length
                 # colours (mesh-vertex vs point) and an IndexError in render_query.
@@ -733,7 +690,7 @@ class SplatsApp(param.Parameterized):
                 )
                 if fetched:
                     # Lift is cached now (viewer saved the npy) -> drop the fetched GBs.
-                    self._cleanup_lift_inputs(scene_key)
+                    self._cleanup_lift_inputs(scene)
                 return result
             return None
 
@@ -759,19 +716,28 @@ class SplatsApp(param.Parameterized):
 
     _LIFT_MEMBERS = ("pixel_indices", "depth", "confidence", "conf")  # 'conf' = legacy key
 
-    def _ensure_lift_inputs(self, scene_key) -> bool:
+    def _ensure_lift_inputs(self, scene: "str | None") -> bool:
         """Fetch the dense zarr members a first-query feature lift needs (worker thread).
 
-        New runs cache semantics/lifted_normed.npy so the lift never runs; legacy scenes
+        New runs cache semantics/features.zarr so the lift never runs; legacy scenes
         lift from pixel_indices/depth/confidence, which the display pull excludes
         (PULL_EXCLUDES) — fetch them on demand or the lift fails. Returns True when a
         fetch happened, so the caller can clean the members up once the lift is cached.
         """
-        if scene_key is None:
+        if scene is None:
             return False
-        session, stem = scene_key
-        out = self._base_dir / session / stem
-        if (out / "semantics" / "lifted_normed.npy").exists():
+        out = self._base_dir / scene
+        # Lazy: dashboard.pipeline pulls the heavy feedforward stack at module import.
+        # point_features_cached, not a bare exists(): a features.zarr missing the weights that
+        # decode it is unreadable, and reporting it as cached starves the re-lift of the dense
+        # members it needs — the scene would be stuck with no way to recover.
+        from collab_splats.dashboard.pipeline import (
+            point_features_cached,
+            resolve_semantics_dir,
+        )
+
+        semantics_dir = resolve_semantics_dir(out)
+        if semantics_dir is not None and point_features_cached(semantics_dir):
             return False  # cached per-point features -> no lift, no dense arrays needed
         zarr_dir = out / "feedforward.zarr"
         if not zarr_dir.exists():
@@ -780,28 +746,35 @@ class SplatsApp(param.Parameterized):
         conf_missing = not (zarr_dir / "confidence").exists() and not (zarr_dir / "conf").exists()
         if not core_missing and not conf_missing:
             return False
-        with self._op_log.step(f"{stem}: fetching dense arrays for feature lift (legacy scene)"):
+        with self._op_log.step(f"{scene}: fetching dense arrays for feature lift (legacy scene)"):
             self._source.pull_zarr_members(
-                session,
-                stem,
+                scene,
                 out,
                 self._LIFT_MEMBERS,
                 on_line=self._op_log.rclone_progress("⬇ fetching dense arrays"),
             )
         return True
 
-    def _cleanup_lift_inputs(self, scene_key) -> None:
+    def _cleanup_lift_inputs(self, scene: "str | None") -> None:
         """Delete on-demand-fetched dense members once the lift is cached (worker thread).
 
         Runs ONLY when _ensure_lift_inputs fetched this call — fresh local runs keep
         their dense arrays (the pipeline wrote them; push_outputs uploads them). The
-        npy guard keeps the members when the lift failed, so a retry can still run.
+        cached-features guard keeps the members when the lift failed, so a retry can still run.
         """
-        if scene_key is None:
+        if scene is None:
             return
-        session, stem = scene_key
-        out = self._base_dir / session / stem
-        if not (out / "semantics" / "lifted_normed.npy").exists():
+        out = self._base_dir / scene
+        # Lazy: dashboard.pipeline pulls the heavy feedforward stack at module import.
+        # A features.zarr whose weights are missing is not a completed lift — deleting the
+        # dense members on the strength of it would leave the scene with nothing to re-lift from.
+        from collab_splats.dashboard.pipeline import (
+            point_features_cached,
+            resolve_semantics_dir,
+        )
+
+        semantics_dir = resolve_semantics_dir(out)
+        if semantics_dir is None or not point_features_cached(semantics_dir):
             return  # lift didn't complete -> keep the inputs for a retry
         freed = 0
         for member in self._LIFT_MEMBERS:
@@ -810,24 +783,24 @@ class SplatsApp(param.Parameterized):
                 freed += sum(f.stat().st_size for f in member_dir.rglob("*") if f.is_file())
                 shutil.rmtree(member_dir, ignore_errors=True)
         if freed:
-            self._op_log.append_line(f"{stem}: removed fetched dense arrays ({freed / 1e9:.1f} GB freed)")
+            self._op_log.append_line(f"{scene}: removed fetched dense arrays ({freed / 1e9:.1f} GB freed)")
 
     def _on_query(self, event) -> None:
         """Score the positive/negative query off the IOLoop; recolour the right pane on done."""
         positive = _split_terms(self.pos_query.value)
         negative = _split_terms(self.neg_query.value)
         extractor_name = self.extractor.value
-        scene_key = self._current_scene
+        scene = self._current_scene
         doc = pn.state.curdoc
 
         def job():
-            fetched = self._ensure_lift_inputs(scene_key)
+            fetched = self._ensure_lift_inputs(scene)
             result = self._viewer.score_query(
                 positive=positive, negative=negative, extractor_name=extractor_name, op_log=self._op_log
             )
             if fetched:
                 # Lift is cached now (viewer saved the npy) -> the fetched GBs are dead weight.
-                self._cleanup_lift_inputs(scene_key)
+                self._cleanup_lift_inputs(scene)
             return result
 
         def on_done(res):

@@ -477,9 +477,10 @@ class Splatter:
             if splats_path.exists():
                 self.config["mesh_info"]["splats"] = splats_path
         else:
-            candidates = [mesh_dir / "mesh_tsdf_clean.ply", mesh_dir / "mesh_tsdf.ply"]
-            mesh_path = next((p for p in candidates if p.exists()), None)
-            if mesh_path is None:
+            # mesh.ply is the only name any mesher in this repo writes; the clean_repair
+            # variant that would have produced a mesh_clean.ply raises (mesh/tsdf.py).
+            mesh_path = mesh_dir / "mesh.ply"
+            if not mesh_path.exists():
                 raise FileNotFoundError(
                     f"No mesh found in {mesh_dir}. Re-run mesh() with overwrite=True."
                 )

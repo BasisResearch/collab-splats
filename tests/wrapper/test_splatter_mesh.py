@@ -80,7 +80,7 @@ def test_mesh_else_branch_sets_splats_key(tmp_path):
     s = object.__new__(Splatter)
     mesh_dir = tmp_path / "rade-features" / "mesh"
     mesh_dir.mkdir(parents=True)
-    (mesh_dir / "mesh_tsdf_clean.ply").write_bytes(b"ply")
+    (mesh_dir / "mesh.ply").write_bytes(b"ply")
     (mesh_dir / "splats.ply").write_bytes(b"ply")
     (mesh_dir / "mesh_features.pt").write_bytes(b"pt")
 
@@ -105,7 +105,7 @@ def test_mesh_else_branch_no_splats_key_when_missing(tmp_path):
     s = object.__new__(Splatter)
     mesh_dir = tmp_path / "rade-features" / "mesh"
     mesh_dir.mkdir(parents=True)
-    (mesh_dir / "mesh_tsdf_clean.ply").write_bytes(b"ply")
+    (mesh_dir / "mesh.ply").write_bytes(b"ply")
 
     s.config = {
         "output_path": tmp_path,
@@ -117,6 +117,29 @@ def test_mesh_else_branch_no_splats_key_when_missing(tmp_path):
         s.mesh(overwrite=False)
 
     assert "splats" not in s.config["mesh_info"]
+
+
+def test_mesh_else_branch_requires_mesh_ply(tmp_path):
+    """mesh_clean.ply is not a filename anything in this repo writes — no dead probe for it.
+
+    The clean_repair path that would have produced it raises (mesh/tsdf.py), so accepting the
+    name only makes a stale/hand-placed file look like a valid mesh.
+    """
+    from collab_splats.wrapper.splatter import Splatter
+
+    s = object.__new__(Splatter)
+    mesh_dir = tmp_path / "rade-features" / "mesh"
+    mesh_dir.mkdir(parents=True)
+    (mesh_dir / "mesh_clean.ply").write_bytes(b"ply")
+
+    s.config = {
+        "output_path": tmp_path,
+        "method": "rade-features",
+        "model_config_path": str(tmp_path / "config.yml"),
+    }
+
+    with patch.object(Splatter, "_select_run"), pytest.raises(FileNotFoundError, match="No mesh found"):
+        s.mesh(overwrite=False)
 
 
 def test_extract_mesh_features_saves_decoder(tmp_path):
@@ -134,7 +157,7 @@ def test_extract_mesh_features_saves_decoder(tmp_path):
         gauss_params={"distill_features": torch.zeros(10, 13)},
     )
 
-    mesh_path = tmp_path / "mesh_tsdf_clean.ply"
+    mesh_path = tmp_path / "mesh_clean.ply"
     mesh_path.touch()
 
     splatter = object.__new__(Splatter)

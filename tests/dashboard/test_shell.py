@@ -6,12 +6,20 @@ import panel as pn
 
 from collab_splats.dashboard.app import SplatsApp
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.sources import SessionSource
+from collab_splats.remote import SceneSource
 
 
-class _NoopSource(SessionSource):
+class _NoopSource(SceneSource):
+    """A source that can never reach the network, for composition-only tests.
+
+    Listings do NOT fail soft: _require_client() raises on a None client, and skipping
+    super().__init__() also leaves the memo attributes unset. That is deliberate here — these tests
+    only assert how the shell is composed, and composition must not trigger a listing. If one ever
+    does, it surfaces as a raise rather than silently reading an empty bucket.
+    """
+
     def __init__(self):
-        self._client = None  # degrade: listings fail soft, nothing remote
+        self._client = None
 
 
 def _app(tmp_path):

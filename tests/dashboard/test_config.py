@@ -5,7 +5,7 @@ from collab_splats.dashboard.config import RunConfig
 
 def test_runconfig_defaults():
     cfg = RunConfig()
-    assert cfg.sampling_method == "balanced"
+    assert cfg.sampling_method == "uniform"
     assert cfg.max_frames == 100
     assert cfg.env_model == "vggt_omega"
     assert cfg.conf_threshold == 50.0  # vggt_omega native default (matches notebook)
@@ -22,10 +22,10 @@ def test_runconfig_yaml_roundtrip(tmp_path: Path):
     cfg = RunConfig(env_model="mapanything", conf_threshold=35.0, query_positive="chair")
     cfg.frame_indices = [0, 5, 10]
     path = tmp_path / "run_config.yaml"
-    cfg.to_yaml(path, video_ref="reconstruction/2026_05_07/clip_03.mp4")
+    cfg.to_yaml(path, video_ref="2026_05_07-birds-clip_03/clip_03.mp4")
     loaded = RunConfig.from_yaml(path)
     assert loaded.env_model == "mapanything"
     assert loaded.conf_threshold == 35.0
     assert loaded.query_positive == "chair"
     assert loaded.frame_indices == [0, 5, 10]
-    assert loaded.video_ref == "reconstruction/2026_05_07/clip_03.mp4"
+    assert loaded.video_ref == "2026_05_07-birds-clip_03/clip_03.mp4"

@@ -69,9 +69,8 @@ def test_add_localized_frame_records_provenance(tmp_path):
     feats = _FakeExtractor().extract(None)
     pose = np.eye(4, dtype=np.float32)
     prov = {
-        "video_ref": "2024_02_06-session_0001/rgb_1/cam.mp4",
-        "session": "2024_02_06-session_0001",
-        "camera": "rgb_1",
+        "video_ref": "2024_02_06-office-cam_01",
+        "scene": "2024_02_06-office-cam_01",
         "frame_idx": 42,
     }
     loc.add_localized_frame(
@@ -80,7 +79,7 @@ def test_add_localized_frame_records_provenance(tmp_path):
 
     lg = zarr.open(str(zp), mode="r")["local_features/disk/localized"]
     assert lg.attrs["provenance"][0]["frame_idx"] == 42
-    assert lg.attrs["provenance"][0]["camera"] == "rgb_1"
+    assert lg.attrs["provenance"][0]["scene"] == "2024_02_06-office-cam_01"
 
 
 def test_provenance_list_grows_per_frame(tmp_path):

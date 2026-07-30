@@ -1,7 +1,13 @@
+"""run_pipeline.py: CLI surface only.
+
+The per-scene helpers this script used to define now live in
+collab_splats.wrapper.batch and are tested in tests/wrapper/test_batch.py. What is
+left here is the script's own responsibility: argparse wiring into run_all.
+"""
+
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -29,191 +35,21 @@ def _write_configs(tmp_path):
     return cfg_dir
 
 
-########################################
-# collect_videos — file + directory expansion
-########################################
+def _capture_run_all(monkeypatch):
+    """Swap run_all for a recorder so main() never reconstructs anything."""
+    captured = {}
 
+    def fake_run_all(**kwargs):
+        captured.update(kwargs)
+        return 0
 
-def test_collect_videos_passes_files_through(tmp_path):
-    v1, v2 = tmp_path / "a.MP4", tmp_path / "b.mov"
-    v1.touch()
-    v2.touch()
-    got = run_pipeline.collect_videos([v1, v2])
-    assert [p.name for p in got] == ["a.MP4", "b.mov"]
-
-
-def test_collect_videos_expands_directory(tmp_path):
-    d = tmp_path / "clips"
-    d.mkdir()
-    (d / "c1.mp4").touch()
-    (d / "c2.MOV").touch()
-    (d / "notes.txt").touch()  # non-video ignored
-    got = run_pipeline.collect_videos([d])
-    assert sorted(p.name for p in got) == ["c1.mp4", "c2.MOV"]
-
-
-def test_collect_videos_mixed_and_empty_dir(tmp_path):
-    v = tmp_path / "solo.avi"
-    v.touch()
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    got = run_pipeline.collect_videos([v, empty])
-    assert [p.name for p in got] == ["solo.avi"]  # empty dir contributes nothing
+    monkeypatch.setattr(run_pipeline, "run_all", fake_run_all)
+    return captured
 
 
 ########################################
-# scene_output_dir — date-based layout matching live outputs/
+# main() — argparse wiring into run_all
 ########################################
-
-
-def test_scene_output_dir_uses_parent_date(tmp_path):
-    video = Path("/data/fieldwork/birds/2024-02-06/SplatsSD/C0043.MP4")
-    out = run_pipeline.scene_output_dir(video, "/out")
-    assert out == Path("/out/2024_02_06/C0043")
-
-
-def test_scene_output_dir_falls_back_to_stem(tmp_path):
-    video = Path("/data/misc/clip.mp4")  # no date dir in path
-    out = run_pipeline.scene_output_dir(video, "/out")
-    assert out == Path("/out/clip")
-
-
-########################################
-# build_scene_config — path wiring + override merge
-########################################
-
-
-def test_build_scene_config_maps_paths(tmp_path):
-    cfg_dir = _write_configs(tmp_path)
-    video = Path("/data/birds/2024-02-06/SplatsSD/C0043.MP4")
-    config = run_pipeline.build_scene_config(video, "/out", cfg_dir)
-    assert config["input_path"] == "/data/birds/2024-02-06/SplatsSD/C0043.MP4"
-    assert config["output_path"] == "/out/2024_02_06/C0043"
-    assert config["pointcloud"]["backend"] == "vggt_omega"  # base preserved
-
-
-def test_build_scene_config_merges_override(tmp_path):
-    cfg_dir = _write_configs(tmp_path)
-    override = {"localization": {"enabled": True}}
-    config = run_pipeline.build_scene_config(Path("/data/x.mp4"), "/out", cfg_dir, override)
-    assert config["localization"]["enabled"] is True
-    assert config["localization"]["extractor"] == "loma"  # base preserved
-
-
-########################################
-# run_all — per-video execution + failure isolation
-########################################
-
-
-def test_run_all_runs_pipeline_per_video(tmp_path):
-    cfg_dir = _write_configs(tmp_path)
-    v1, v2 = tmp_path / "a.mp4", tmp_path / "b.mp4"
-    v1.touch()
-    v2.touch()
-    fake = MagicMock()
-    fake.config = {"output_path": str(tmp_path / "out" / "a")}
-    with patch.object(run_pipeline, "Reconstructor", return_value=fake) as R:
-        code = run_pipeline.run_all(
-            [v1, v2],
-            output_root=tmp_path / "out",
-            config_dir=cfg_dir,
-            override_config=None,
-            stages=None,
-            overwrite=False,
-        )
-    assert R.call_count == 2
-    assert fake.run_pipeline.call_count == 2
-    assert code == 0
-
-
-def test_run_all_continues_on_failure(tmp_path):
-    cfg_dir = _write_configs(tmp_path)
-    v1, v2 = tmp_path / "a.mp4", tmp_path / "b.mp4"
-    v1.touch()
-    v2.touch()
-    fake = MagicMock()
-    fake.config = {"output_path": str(tmp_path / "out" / "x")}
-    fake.run_pipeline.side_effect = [RuntimeError("boom"), None]
-    with patch.object(run_pipeline, "Reconstructor", return_value=fake):
-        code = run_pipeline.run_all(
-            [v1, v2],
-            output_root=tmp_path / "out",
-            config_dir=cfg_dir,
-            override_config=None,
-            stages=None,
-            overwrite=False,
-        )
-    assert fake.run_pipeline.call_count == 2  # did not abort after first failure
-    assert code == 1  # non-zero because one failed
-
-
-########################################
-# run_all --keep-viewer — post-batch viser keep-alive (P6.3)
-########################################
-
-
-def test_run_all_keep_viewer_calls_serve_forever(tmp_path):
-    """keep_viewer=True + a produced viewer => serve_forever runs once the batch finishes."""
-    cfg_dir = _write_configs(tmp_path)
-    v = tmp_path / "a.mp4"
-    v.touch()
-    fake = MagicMock()
-    fake.config = {"output_path": str(tmp_path / "out" / "a")}
-    fake.viewer = MagicMock()  # stub Viewer — serve_forever must not really block/bind
-    with patch.object(run_pipeline, "Reconstructor", return_value=fake):
-        code = run_pipeline.run_all(
-            [v],
-            output_root=tmp_path / "out",
-            config_dir=cfg_dir,
-            override_config=None,
-            stages=None,
-            overwrite=False,
-            keep_viewer=True,
-        )
-    fake.viewer.serve_forever.assert_called_once()
-    assert code == 0
-
-
-def test_run_all_without_keep_viewer_skips_serve_forever(tmp_path):
-    """Default (keep_viewer=False): serve_forever is never touched even if a viewer exists."""
-    cfg_dir = _write_configs(tmp_path)
-    v = tmp_path / "a.mp4"
-    v.touch()
-    fake = MagicMock()
-    fake.config = {"output_path": str(tmp_path / "out" / "a")}
-    fake.viewer = MagicMock()
-    with patch.object(run_pipeline, "Reconstructor", return_value=fake):
-        run_pipeline.run_all(
-            [v],
-            output_root=tmp_path / "out",
-            config_dir=cfg_dir,
-            override_config=None,
-            stages=None,
-            overwrite=False,
-            keep_viewer=False,
-        )
-    fake.viewer.serve_forever.assert_not_called()
-
-
-def test_run_all_keep_viewer_no_viewer_exits_cleanly(tmp_path):
-    """keep_viewer=True but reconstructor.viewer is None (viz disabled): no crash, no serve_forever call."""
-    cfg_dir = _write_configs(tmp_path)
-    v = tmp_path / "a.mp4"
-    v.touch()
-    fake = MagicMock()
-    fake.config = {"output_path": str(tmp_path / "out" / "a")}
-    fake.viewer = None
-    with patch.object(run_pipeline, "Reconstructor", return_value=fake):
-        code = run_pipeline.run_all(
-            [v],
-            output_root=tmp_path / "out",
-            config_dir=cfg_dir,
-            override_config=None,
-            stages=None,
-            overwrite=False,
-            keep_viewer=True,
-        )
-    assert code == 0  # exits cleanly, no crash
 
 
 def test_main_wires_keep_viewer_flag_through_to_run_all(tmp_path, monkeypatch):
@@ -222,13 +58,7 @@ def test_main_wires_keep_viewer_flag_through_to_run_all(tmp_path, monkeypatch):
     v = tmp_path / "a.mp4"
     v.touch()
 
-    captured = {}
-
-    def fake_run_all(**kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(run_pipeline, "run_all", fake_run_all)
+    captured = _capture_run_all(monkeypatch)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -254,13 +84,7 @@ def test_main_defaults_keep_viewer_false(tmp_path, monkeypatch):
     v = tmp_path / "a.mp4"
     v.touch()
 
-    captured = {}
-
-    def fake_run_all(**kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(run_pipeline, "run_all", fake_run_all)
+    captured = _capture_run_all(monkeypatch)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -269,3 +93,53 @@ def test_main_defaults_keep_viewer_false(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         run_pipeline.main()
     assert captured["keep_viewer"] is False
+
+
+def test_main_parses_stages_and_override_config(tmp_path, monkeypatch):
+    """--stages splits on commas; --config is loaded as the shared override dict."""
+    cfg_dir = _write_configs(tmp_path)
+    v = tmp_path / "a.mp4"
+    v.touch()
+    override = tmp_path / "override.yaml"
+    override.write_text(yaml.dump({"localization": {"enabled": True}}))
+
+    captured = _capture_run_all(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            "--output-root",
+            str(tmp_path / "out"),
+            "--config-dir",
+            str(cfg_dir),
+            "--config",
+            str(override),
+            "--stages",
+            "preproc, pointcloud",
+            str(v),
+        ],
+    )
+    with pytest.raises(SystemExit):
+        run_pipeline.main()
+    assert captured["stages"] == ["preproc", "pointcloud"]
+    assert captured["override_config"] == {"localization": {"enabled": True}}
+    assert captured["videos"] == [v]
+
+
+def test_main_exits_two_when_no_videos_found(tmp_path, monkeypatch):
+    """An empty directory yields no videos: exit code 2, run_all never called."""
+    cfg_dir = _write_configs(tmp_path)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    captured = _capture_run_all(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_pipeline.py", "--output-root", str(tmp_path / "out"), "--config-dir", str(cfg_dir), str(empty)],
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_pipeline.main()
+    assert exc.value.code == 2
+    assert captured == {}

@@ -24,7 +24,7 @@ Usage:
 
     # Turn on localization + semantics via a shared override YAML
     python docs/examples/run_pipeline.py --output-root /workspace/outputs \\
-        --config configs/minimal.yaml /data/birds/*.MP4
+        --config my_overrides.yaml /data/birds/*.MP4   # your own YAML, merged over base.yaml
 
     # Specific steps only
     python docs/examples/run_pipeline.py --output-root /workspace/outputs \\
@@ -38,124 +38,18 @@ the batch; the process exits non-zero if any video failed.
 
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 
 import yaml
-from mergedeep import merge
 
-from collab_splats.wrapper.reconstructor import Reconstructor
+from collab_splats.wrapper.batch import DEFAULT_CONFIG_DIR, collect_videos, run_all
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-_REPO_ROOT = Path(__file__).parent.parent.parent
-DEFAULT_CONFIG_DIR = _REPO_ROOT / "configs"
-_VIDEO_EXTS = {".mp4", ".mov", ".avi"}
-_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-
-def collect_videos(paths):
-    """Expand each path (a video file or a directory of videos) into a flat video list."""
-    videos = []
-    for p in paths:
-        p = Path(p)
-        if p.is_dir():
-            # Non-recursive: only videos directly inside the directory
-            found = sorted(f for f in p.iterdir() if f.suffix.lower() in _VIDEO_EXTS)
-            if not found:
-                logger.warning("No videos (%s) in directory: %s", sorted(_VIDEO_EXTS), p)
-            videos.extend(found)
-        else:
-            videos.append(p)
-    return videos
-
-
-def scene_output_dir(video, output_root):
-    """Derive <output-root>/<session-date>/<stem>, matching the live outputs/ layout.
-
-    Session date = first YYYY-MM-DD dir in the video's parents (dashes -> underscores).
-    Falls back to <output-root>/<stem> when no date dir is present.
-    """
-    output_root = Path(output_root)
-    stem = Path(video).stem
-    for parent in Path(video).parents:
-        if _DATE_RE.fullmatch(parent.name):
-            return output_root / parent.name.replace("-", "_") / stem
-    return output_root / stem
-
-
-def build_scene_config(video, output_root, config_dir, override_config=None):
-    """Build a per-video override dict. Reconstructor merges base.yaml defaults itself."""
-    # Only carry the shared --config overrides plus per-video paths; defaults come from base.yaml
-    config = merge({}, override_config) if override_config else {}
-    config["input_path"] = str(video)
-    config["output_path"] = str(scene_output_dir(video, output_root))
-    return config
-
-
-def run_scene(video, output_root, config_dir, override_config, stages, overwrite):
-    """Run the full pipeline for a single video. Returns (output_path, Reconstructor)."""
-    config = build_scene_config(video, output_root, config_dir, override_config)
-    r = Reconstructor(config, config_dir=config_dir)
-
-    # Persist run_config.yaml for reproducibility before running any stage
-    output_path = Path(r.config["output_path"])
-    output_path.mkdir(parents=True, exist_ok=True)
-    run_cfg = output_path / "run_config.yaml"
-    if not run_cfg.exists() or overwrite:
-        with open(run_cfg, "w") as f:
-            yaml.dump(r.config, f, default_flow_style=False, sort_keys=False)
-
-    # Steps 1-4 (see module docstring) run here, governed by config + --stages
-    r.run_pipeline(stages=stages, overwrite=overwrite)
-    return output_path, r
-
-
-def run_all(videos, output_root, config_dir, override_config, stages, overwrite, keep_viewer=False):
-    """Run every video; continue past failures. Returns the process exit code.
-
-    When keep_viewer, blocks after the batch on the last successfully-reconstructed
-    scene's viser Viewer (if pointcloud.viz.enabled produced one), so the final scene
-    stays browsable. No viewer (viz disabled, or every video failed) logs a note and
-    returns normally rather than crashing.
-    """
-    results = []
-    last_reconstructor = None
-    for video in videos:
-        video = Path(video)
-        logger.info("=== Video: %s ===", video.name)
-        try:
-            out, r = run_scene(video, output_root, config_dir, override_config, stages, overwrite)
-            results.append((video.name, "OK", str(out)))
-            last_reconstructor = r
-        except Exception as exc:  # isolate one video's failure from the batch
-            logger.exception("Video failed: %s", video.name)
-            results.append((video.name, "FAIL", str(exc)))
-
-    # Summary
-    logger.info("==== Summary ====")
-    for name, status, info in results:
-        logger.info("%s: %s (%s)", status, name, info)
-    failed = [n for n, s, _ in results if s == "FAIL"]
-
-    # Optionally keep the last scene's viser viewer alive for browser inspection
-    if keep_viewer:
-        viewer = getattr(last_reconstructor, "viewer", None)
-        if viewer is not None:
-            logger.info("--keep-viewer: viser server staying up — inspect the scene in a browser (Ctrl-C to exit).")
-            viewer.serve_forever()
-        else:
-            logger.info(
-                "--keep-viewer set but no viewer was created (pointcloud.viz.enabled is false, "
-                "or no video succeeded); nothing to keep alive."
-            )
-
-    return 1 if failed else 0
 
 
 def main():

@@ -9,7 +9,6 @@ import numpy as np
 import panel as pn
 import pyvista as pv
 import torch
-import zarr
 
 from collab_splats.dashboard.viz_utils import (
     PCD_KWARGS,
@@ -31,17 +30,15 @@ logger = logging.getLogger(__name__)
 ########################################################################
 
 
-def _load_feature_maps(semantics_dir) -> list:
-    """Load per-frame dense feature maps (D, H_p, W_p) from the cached zarr."""
-    # Layout: cache_dir/{name}.zarr is a zarr group; array "features" is (N, D, H_p, W_p)
-    store_path = next(Path(semantics_dir).glob("*.zarr"))
-    arr = zarr.open(str(store_path), mode="r")["features"]
-    return [torch.from_numpy(np.asarray(arr[i])) for i in range(arr.shape[0])]
+def lift_point_features(result, semantics_dir) -> np.ndarray:
+    """Lift cached 2D features to points and L2-normalise -> (P, D) float32.
 
-
-def load_lifted_normed(result, semantics_dir) -> np.ndarray:
-    """Lift cached features to points and L2-normalise -> (P, D) float32."""
-    # Lazy import: pointcloud.utils pulls the heavy feedforward stack.
+    Legacy path for scenes with no cached semantics/features.zarr. Returns FULL-dim
+    features (no autoencoder involved), directly comparable to text embeddings.
+    """
+    # Lazy import: pointcloud.utils and dashboard.pipeline both pull the heavy feedforward
+    # stack; load_feature_maps is the single shared definition (dashboard.pipeline owns it).
+    from collab_splats.dashboard.pipeline import load_feature_maps
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.pointcloud.utils import lift_features
 
@@ -52,17 +49,59 @@ def load_lifted_normed(result, semantics_dir) -> np.ndarray:
         # world_points/features are unused by the lift; skip them to halve peak memory.
         result = FeedforwardResult.load_zarr(result._zarr_path, load_world_points=False, load_features=False)
 
-    feature_maps = _load_feature_maps(semantics_dir)
+    feature_maps = load_feature_maps(semantics_dir)
     lifted = lift_features(feature_maps, result)
     lifted = lifted.detach().cpu().numpy().astype(np.float32)
     norms = np.linalg.norm(lifted, axis=1, keepdims=True)
     return lifted / (norms + 1e-8)
 
 
+def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None) -> None:
+    """Persist full-dim point features as the canonical latent-codes + weights pair.
+
+    The on-demand lift yields full-dim features and no autoencoder, but the canonical
+    layout is features.zarr (latent) + autoencoder.pt (weights that decode it) — so fit a
+    fresh autoencoder here rather than writing a full-dim features.zarr nothing can read.
+
+    Width and fit gate come from the ONE shared config policy (configs/base.yaml semantics:),
+    so a self-upgraded legacy scene is held to exactly the bar a fresh reconstruction is.
+    target_cosine early-stops with max_epochs only as a ceiling, so this is bounded work on a
+    query path, not a 100-epoch stall — a 768->64 fit normally reaches 0.95 in a few epochs.
+    """
+    # Lazy import: semantics.compression re-exports through semantics/__init__, which pulls
+    # the extractors and SAM (~14s), and dashboard.pipeline pulls the feedforward stack —
+    # the same costs the other lazy imports here avoid.
+    from collab_splats.dashboard.pipeline import resolve_latent_dim, semantics_ae_policy
+    from collab_splats.semantics.compression import (
+        FeatureAutoencoder,
+        write_point_features,
+    )
+
+    feats = torch.from_numpy(np.asarray(features, dtype=np.float32))
+    if torch.cuda.is_available():
+        feats = feats.cuda()
+    policy = semantics_ae_policy()
+    ae = FeatureAutoencoder(
+        input_dim=feats.shape[1], latent_dim=resolve_latent_dim(feats.shape[1], policy.latent_dim)
+    )
+    ae.fit(feats, epochs=policy.max_epochs, target_cosine=policy.target_cosine)
+    with torch.no_grad():
+        codes = ae.per_point_encode(feats)
+    # Shared writer: codes + attrs + weights, and it cleans the zarr up if the weights fail
+    # to save — an orphaned features.zarr would make this scene look cached and unreadable.
+    write_point_features(Path(semantics_dir), codes.detach().cpu().numpy(), ae)
+    # Unlike the old np.save cache this round-trips through encode/decode, so record how
+    # well it reconstructs. Training-set-measured -> "fit cosine", not a quality claim.
+    msg = f"fit cosine {ae.recon_cosine:.4f} after {ae.epochs_run} epochs (target {policy.target_cosine})"
+    logger.info("cached lifted features: %s", msg)
+    if op_log is not None:
+        op_log.append_line(f"query: {msg}")
+
+
 def load_mesh_vertex_features(mesh_dir) -> "np.ndarray | None":
     """Load cached mesh vertex features and L2-normalise -> (M, D) float32, or None if absent.
 
-    Matches load_lifted_normed's normalization so mesh features share the point feature
+    Matches lift_point_features's normalization so mesh features share the point feature
     space and can be scored by the same extractor.score_queries call.
     """
     path = Path(mesh_dir) / "vertex_features.npy"
@@ -109,7 +148,7 @@ class SplitViewer:
         self._mesh_path: Path | None = None
         self._mesh_polydata: pv.PolyData | None = None
         self._mesh_vertex_features: np.ndarray | None = None
-        self._lifted_normed: np.ndarray | None = None
+        self._point_features: np.ndarray | None = None
         self._semantics_dir: Path | None = None
         self._display_idx: np.ndarray | None = None
         # Decimated cloud currently displayed in the right pane (pointcloud mode only);
@@ -136,7 +175,7 @@ class SplitViewer:
         self,
         result,
         mesh_path: Path | None,
-        lifted_normed: np.ndarray | None = None,
+        point_features: np.ndarray | None = None,
         semantics_dir: Path | None = None,
         max_points: int = 500_000,
     ) -> None:
@@ -144,7 +183,7 @@ class SplitViewer:
 
         Features are NOT lifted here — lifting 500k points takes minutes and is only
         needed for queries. semantics_dir is stashed so the first query can lift lazily
-        (see ensure_lifted). lifted_normed may be passed pre-computed (tests).
+        (see ensure_lifted). point_features may be passed pre-computed (tests).
         """
         self._result = result
         self._mesh_path = Path(mesh_path) if mesh_path else None
@@ -152,7 +191,7 @@ class SplitViewer:
         # mode must not pay a blocking pv.read + feature np.load on the IOLoop at every load.
         self._mesh_polydata = None
         self._mesh_vertex_features = None
-        self._lifted_normed = lifted_normed
+        self._point_features = point_features
         self._semantics_dir = Path(semantics_dir) if semantics_dir else None
         # New scene -> drop any prior query state so the right pane starts on plain RGB.
         self._last_query = None
@@ -194,32 +233,41 @@ class SplitViewer:
 
     def ensure_lifted(self, op_log=None) -> None:
         """Lazily load/lift per-point features on first query (off-loop)."""
-        if self._lifted_normed is not None or self._semantics_dir is None:
+        if self._point_features is not None or self._semantics_dir is None:
             return
-        # Fast path: the pipeline caches L2-normalised per-point features next to the scene;
-        # loading the npy is instant vs the minutes-long lift from the feature zarr below.
-        cached_path = self._semantics_dir / "lifted_normed.npy"
-        if cached_path.exists():
+        # Fast path: the pipeline caches latent codes + weights next to the scene; reading and
+        # decoding them is instant vs the minutes-long lift from the 2D feature zarr below.
+        # DECODED (not latent) because score_queries compares against text embeddings.
+        # point_features_cached, not a bare exists(): a features.zarr whose required weights are
+        # missing is unreadable, and falling through re-lifts and rewrites the pair (self-heal)
+        # instead of leaving the scene permanently stuck on an unusable cache.
+        # Lazy: pipeline pulls the heavy feedforward stack at module import.
+        from collab_splats.dashboard.pipeline import (
+            load_point_features,
+            point_features_cached,
+        )
+
+        if point_features_cached(self._semantics_dir):
             if op_log is not None:
                 op_log.append_line("query: loading cached point features")
-            self._lifted_normed = np.load(cached_path)
+            self._point_features = load_point_features(self._semantics_dir)
             return
         if op_log is not None:
             op_log.append_line("query: lifting features to points (first query — may take minutes)")
         try:
-            self._lifted_normed = load_lifted_normed(self._result, self._semantics_dir)
+            self._point_features = lift_point_features(self._result, self._semantics_dir)
         except Exception as exc:
             logger.warning("feature lift failed: %s", exc)
             # Surface in the dashboard console too — the query silently showing plain
             # RGB with only a server-side warning is indistinguishable from "no match".
             if op_log is not None:
                 op_log.append_line(f"feature lift FAILED: {exc}")
-            self._lifted_normed = None
+            self._point_features = None
             return
-        # Self-upgrade: persist the lift so this legacy scene never pays it again (the
-        # npy joins the output tree and rides along on the next push to the bucket).
+        # Self-upgrade: persist the lift as the canonical artifact pair so this legacy scene
+        # never pays it again (both files join the output tree and ride along on the next push).
         try:
-            np.save(cached_path, self._lifted_normed)
+            _save_point_features(self._semantics_dir, self._point_features, op_log=op_log)
             if op_log is not None:
                 op_log.append_line("query: cached lifted features (scene upgraded — future queries are instant)")
         except Exception:
@@ -234,16 +282,16 @@ class SplitViewer:
         """
         if self._mesh_vertex_features is not None:
             return
-        if self._lifted_normed is None or self._mesh_polydata is None:
+        if self._point_features is None or self._mesh_polydata is None:
             return
-        # Lazy import: mesh.utils pulls the heavy feedforward stack (matches load_lifted_normed).
+        # Lazy import: mesh.utils pulls the heavy feedforward stack (matches lift_point_features).
         from collab_splats.mesh.utils import features2vertex
 
         if op_log is not None:
             op_log.append_line("query: transferring features to mesh vertices (first mesh query)")
         # Vertices come straight from the cached PolyData — no second disk read of the .ply.
         vertices = np.asarray(self._mesh_polydata.points)
-        vf = features2vertex(vertices, self._result.points, self._lifted_normed)
+        vf = features2vertex(vertices, self._result.points, self._point_features)
         norms = np.linalg.norm(vf, axis=1, keepdims=True)
         self._mesh_vertex_features = (vf / (norms + 1e-8)).astype(np.float32)
 
@@ -418,7 +466,7 @@ class SplitViewer:
 
         # Lift features on first query (cached thereafter); no semantics -> plain RGB.
         self.ensure_lifted(op_log)
-        if self._lifted_normed is None:
+        if self._point_features is None:
             _stage("query: no semantic features for this scene — showing plain RGB")
             return self._result.colors
 
@@ -435,7 +483,7 @@ class SplitViewer:
         if target == "mesh" and self._mesh_vertex_features is not None:
             feature_array = self._mesh_vertex_features
         else:
-            feature_array = self._lifted_normed
+            feature_array = self._point_features
         features = torch.from_numpy(feature_array)  # (N, D)
 
         _stage(f"query: scoring {features.shape[0]} elements")

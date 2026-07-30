@@ -45,14 +45,14 @@ blur/exposure gating).
 Known limitations
 ------------------
 
-- **``frames/`` JPG dir still exists, by design.** ``_write_frames_jpegs``
-  (`collab_splats/dashboard/pipeline.py`) still writes an
-  ``out_dir/frames/`` directory because ``creator.setup_inference`` and
-  semantic feature extraction are path-locked consumers that require a real
-  on-disk image directory. Filenames use the source ``frame_idx`` (matching
-  ``FrameStore.frame_idx_from_path``'s convention), so they stay addressable
-  from both the JPG dir and ``frames.zarr``. Dashboard localization
-  reference thumbnails (``_build_result_figures`` in
+- **No ``frames/`` JPG dir is written.** ``frames.zarr`` is the sole frame
+  store: ``creator.setup_inference`` takes the store path directly, and
+  semantic feature extraction streams from it via
+  ``BaseFeatureExtractor.extract_and_cache_from_zarr`` — neither consumer is
+  path-locked any more, so the JPG export (and the ``_write_frames_jpegs``
+  helper that produced it) is gone. Path-locked third-party tools get
+  transient JPGs on demand from ``FrameStore.export(tmp_dir)``. Dashboard
+  localization reference thumbnails (``_build_result_figures`` in
   ``collab_splats/dashboard/localize.py``) read pixels from ``frames.zarr``
   via ``plot_correspondences(..., frames_zarr=...)`` for reconstruction-
   sourced frames; ``localized`` frames (appended post-hoc, never written to

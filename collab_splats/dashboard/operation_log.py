@@ -9,7 +9,7 @@ from typing import Any, Callable
 import panel as pn
 import param
 
-from collab_splats.dashboard.sources import parse_rclone_percent
+from collab_splats.remote import parse_rclone_percent
 
 
 class _OpLogHandler(logging.Handler):

@@ -899,12 +899,16 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         sparse_dir.mkdir(parents=True, exist_ok=True)
         recon.write_binary(str(sparse_dir))
         self._write_transforms(sparse_dir, Path(output_dir))
-        console.log(f"  done in {time.perf_counter() - t0:.1f}s")
-        return PointcloudResult(
+
+        # Replace the ASCII sparse_pc.ply colmap_to_json just wrote with a binary one
+        result = PointcloudResult(
             reconstruction=recon,
             frame=CoordinateFrame.COLMAP,
             image_paths=o.image_paths,
         )
+        self._write_ply(result, Path(output_dir))
+        console.log(f"  done in {time.perf_counter() - t0:.1f}s")
+        return result
 
     # ── Abstract interface ────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
 import numpy as np
 import pycolmap
 
@@ -12,8 +13,8 @@ from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_
 
 
 class CoordinateFrame(str, Enum):
-    COLMAP = "colmap"         # w2c, OpenCV axes, world -Y up
-    NERFSTUDIO = "nerfstudio" # c2w, OpenGL axes, world +Z up
+    COLMAP = "colmap"  # w2c, OpenCV axes, world -Y up
+    NERFSTUDIO = "nerfstudio"  # c2w, OpenGL axes, world +Z up
 
 
 @dataclass
@@ -25,11 +26,11 @@ class PointcloudResult:
     image_paths defines the canonical frame ordering for extrinsics/intrinsics.
     """
 
-    reconstruction: pycolmap.Reconstruction          # primary — always set
-    frame: CoordinateFrame                           # coord system of world origin
-    image_paths: list[Path]                          # canonical frame ordering (N entries)
-    confidence: np.ndarray | None = None             # (P,) float32 — feedforward per-point
-    world_transform: np.ndarray | None = None        # (3, 4) applied COLMAP→nerfstudio axis swap
+    reconstruction: pycolmap.Reconstruction  # primary — always set
+    frame: CoordinateFrame  # coord system of world origin
+    image_paths: list[Path]  # canonical frame ordering (N entries)
+    confidence: np.ndarray | None = None  # (P,) float32 — feedforward per-point
+    world_transform: np.ndarray | None = None  # (3, 4) applied COLMAP→nerfstudio axis swap
 
     @property
     def points(self) -> np.ndarray:
@@ -92,9 +93,7 @@ class PointcloudResult:
             fy = cam.focal_length_y
             cx = cam.principal_point_x
             cy = cam.principal_point_y
-            K = np.array([[fx, 0, cx],
-                          [0, fy, cy],
-                          [0,  0,  1]], dtype=np.float32)
+            K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
             result.append(K)
         return np.stack(result) if result else np.zeros((0, 3, 3), dtype=np.float32)
 
@@ -107,7 +106,7 @@ class BasePointcloudCreator(ABC):
         Produces:
             {output_dir}/colmap/sparse/0/{cameras,images,points3D}.bin
             {output_dir}/transforms.json
-            {output_dir}/sparse_pc.ply
+            {output_dir}/sparse_pc.ply   (binary little-endian from the feedforward path; see pointcloud/export.py)
 
         Raises:
             RuntimeError: if reconstruction fails
@@ -117,4 +116,18 @@ class BasePointcloudCreator(ABC):
 
     def _write_transforms(self, sparse_dir: Path, output_dir: Path) -> None:
         from nerfstudio.process_data.colmap_utils import colmap_to_json
+
         colmap_to_json(recon_dir=sparse_dir, output_dir=output_dir)
+
+    def _write_ply(self, result: PointcloudResult, output_dir: Path, max_points: int | None = None) -> Path:
+        """Overwrite nerfstudio's ASCII sparse_pc.ply with our binary one.
+
+        colmap_to_json always emits an ASCII sparse_pc.ply and points transforms.json
+        at that filename, so we keep the name and replace the bytes — smaller file,
+        no coordinate truncation, same consumers.
+        """
+        # Inline, not top-level: export.py -> pointcloud/utils.py -> `from .base import
+        # PointcloudResult` cycles back to this module, so a module-top import fails at import time.
+        from collab_splats.pointcloud.export import write_pointcloud_ply
+
+        return write_pointcloud_ply(result.points, result.colors, Path(output_dir) / "sparse_pc.ply", max_points)

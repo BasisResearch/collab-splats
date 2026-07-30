@@ -13,11 +13,15 @@ from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
+import torch
 import yaml
+import zarr
 from mergedeep import merge
 
+from collab_splats.pointcloud.export import write_pointcloud_ply
 from collab_splats.preproc import get_video_info, sample_frames
 from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.semantics.compression import FeatureAutoencoder, write_point_features
 
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
@@ -135,6 +139,7 @@ def _run_feedforward(
     loop_closure: bool | dict,
     viz_enabled: bool,
     viz_port: int,
+    max_points: int,
 ) -> tuple["PointcloudResult", "Viewer | None"]:
     """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
 
@@ -178,7 +183,8 @@ def _run_feedforward(
         "mapanything": MapAnythingCreator,
         "vggt_omega": VGGTOmegaCreator,
     }
-    creator = creator_map[backend]()
+    # max_points caps the confidence mask during inference — a memory guard, not a preference
+    creator = creator_map[backend](max_points=max_points)
 
     # Wrap with loop closure if requested; viz has nothing to show without it, so only
     # attach the viser Viewer (also a heavy/websocket dep) when both are enabled
@@ -249,12 +255,19 @@ def _lift_and_save(
     feedforward_zarr: Path,
     output_dir: Path,
     n_components: int | None,
+    target_cosine: float | None,
+    max_epochs: int,
 ) -> Path:
-    """Load 2D feature cache + FeedforwardResult, lift to 3D, compress, save."""
-    import numpy as np
-    import torch
-    import zarr as zarr_lib
+    """Load 2D feature cache + FeedforwardResult, lift to 3D, compress, save.
 
+    Writes output_dir/features.zarr (latent codes) and, when compressing,
+    output_dir/autoencoder.pt (weights + fit metrics) — the pair a consumer needs
+    to recover full-dimensionality features.
+
+    target_cosine/max_epochs are required, not defaulted: they are the config's single
+    autoencoder policy, and a default here would be a fourth copy of it to drift from.
+    """
+    # Heavy optional stack — pointcloud.utils pulls the feedforward extra
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.pointcloud.utils import lift_features
 
@@ -266,7 +279,7 @@ def _lift_and_save(
         )
 
     # Load feature maps from zarr cache: (N, D, H_p, W_p)
-    store = zarr_lib.open(str(zarr_path), mode="r")
+    store = zarr.open(str(zarr_path), mode="r")
     features_arr = store["features"]
     feature_maps = [torch.from_numpy(np.array(features_arr[i])) for i in range(features_arr.shape[0])]
 
@@ -276,24 +289,20 @@ def _lift_and_save(
     # Lift 2D features to 3D: (P, D)
     lifted = lift_features(feature_maps, ff_result)
 
-    # Optional PCA compression via autoencoder
+    # Optional autoencoder compression → latent codes persisted alongside the weights
+    ae = None
     if n_components is not None:
-        import torch as _torch
-
-        from collab_splats.semantics.compression import FeatureAutoencoder
-
         # Move lifted to GPU for autoencoder training; lift_features returns CPU tensor
-        if _torch.cuda.is_available():
+        if torch.cuda.is_available():
             lifted = lifted.cuda()
         ae = FeatureAutoencoder(input_dim=lifted.shape[-1], latent_dim=n_components)
-        ae.fit(lifted)  # (N, input_dim) flat tensor
+        ae.fit(lifted, epochs=max_epochs, target_cosine=target_cosine)
         lifted = ae.per_point_encode(lifted)
-        ae.save(output_dir / "compressor.pt")
 
-    # Save lifted features as zarr
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_store = zarr_lib.open(str(output_dir / "features.zarr"), mode="w")
-    out_store["features"] = lifted.detach().cpu().numpy()
+    # One writer for both halves of the pair — it also stamps input_dim/latent_dim on the
+    # zarr attrs, which is what tells a reader whether autoencoder.pt is required at all
+    # (n_components=None writes full-dim codes and no weights, legitimately).
+    write_point_features(output_dir, lifted.detach().cpu().numpy(), ae)
     return output_dir
 
 
@@ -531,6 +540,7 @@ class Reconstructor:
                 loop_closure=pc_cfg["loop_closure"],
                 viz_enabled=pc_cfg["viz"]["enabled"],
                 viz_port=pc_cfg["viz"]["port"],
+                max_points=pc_cfg["max_points"],
             )
             self.viewer = viewer
 
@@ -538,6 +548,10 @@ class Reconstructor:
         clean_cfg = pc_cfg["clean"]
         if clean_cfg["enabled"]:
             result = self._clean_pointcloud(result, clean_cfg)
+
+        # Re-export the PLY from the FINAL result — clean may have dropped points since
+        # the creator wrote its copy. Density is opt-in via pointcloud.export_max_points.
+        self._export_pointcloud_ply(result)
 
         # Write nerfstudio-compatible transforms.json
         self._write_transforms_json(result)
@@ -601,8 +615,22 @@ class Reconstructor:
         logger.info("Pointcloud after cleaning: %d points", result.reconstruction.num_points3D())
         return result
 
+    def _export_pointcloud_ply(self, result: "PointcloudResult") -> Path:
+        """Write backend_dir/sparse_pc.ply (binary) from the post-clean result."""
+        self.backend_dir.mkdir(parents=True, exist_ok=True)
+        return write_pointcloud_ply(
+            result.points,
+            result.colors,
+            self.backend_dir / "sparse_pc.ply",
+            self.config["pointcloud"]["export_max_points"],
+        )
+
     def _write_transforms_json(self, result: "PointcloudResult") -> None:
-        """Write nerfstudio-compatible transforms.json from PointcloudResult."""
+        """Merge pose+intrinsics frames into backend_dir/transforms.json.
+
+        Frames are frame_idx-keyed against frames.zarr, not file_path-keyed against an
+        images/ dir, so stock nerfstudio dataparsers cannot load this file as-is.
+        """
         # Nothing to write if reconstruction has no registered images
         if not result.reconstruction.images:
             return
@@ -635,7 +663,16 @@ class Reconstructor:
 
         self.backend_dir.mkdir(parents=True, exist_ok=True)
         out = self.backend_dir / "transforms.json"
-        out.write_text(json.dumps({"camera_model": "PINHOLE", "frames": frames}, indent=2))
+
+        # Merge over whatever colmap_to_json already wrote: it owns ply_file_path and
+        # applied_transform (splatfacto needs both), we own camera_model + frames.
+        payload: dict = {}
+        if out.exists():
+            payload = json.loads(out.read_text())
+        payload["camera_model"] = "PINHOLE"
+        payload["frames"] = frames
+
+        out.write_text(json.dumps(payload, indent=2))
         logger.info("transforms.json written to %s", out)
 
     def _run_sfm(self) -> "PointcloudResult":
@@ -731,7 +768,14 @@ class Reconstructor:
         # Stage 2: Lift to 3D and save
         feedforward_zarr = self.backend_dir / "feedforward.zarr"
         logger.info("Lifting 2D features to 3D pointcloud")
-        out_dir = _lift_and_save(zarr_path, feedforward_zarr, lifted_dir, n_components)
+        out_dir = _lift_and_save(
+            zarr_path,
+            feedforward_zarr,
+            lifted_dir,
+            n_components,
+            target_cosine=sem_cfg["target_cosine"],
+            max_epochs=sem_cfg["max_epochs"],
+        )
         return out_dir
 
     def mesh(

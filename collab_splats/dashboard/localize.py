@@ -1,4 +1,4 @@
-"""Localization page: localize an rgb_X field-camera frame against a reconstruction."""
+"""Localization page: localize a frame from one curated scene's video against another scene's reconstruction."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ import panel as pn
 import param
 import pyvista as pv
 
-from collab_splats.dashboard.async_utils import run_off_loop
+from collab_splats.dashboard.async_utils import ensure_local_video
 from collab_splats.dashboard.config import LocalizationConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.operation_log import OperationLog, busy_html
-from collab_splats.dashboard.sources import SessionSource
+from collab_splats.remote import SceneSource
 
 # NB: pipeline / localization viz imports are lazy (inside run/render paths) — they pull
 # the heavy reconstruction stack, and the page must render immediately on launch.
@@ -48,11 +48,11 @@ def subsample_step(n_cameras: int) -> int:
     return 1 if n_cameras <= _SUBSAMPLE_ABOVE else 3
 
 
-def select_options(items: list, hint: str = "— select —") -> dict:
+def select_options(items: list, hint: str) -> dict:
     """Blank-first dropdown map: nothing auto-selects or cascades until the user picks.
 
     Auto-picking the first option cascaded listings/fetches for a scene the user never
-    chose (and displayed the wrong video names against fieldwork_curated).
+    chose, and the video name it displayed came from a bucket the scene did not live in.
     """
     options = {hint: ""}
     options.update({i: i for i in items})
@@ -72,9 +72,9 @@ def preselect_method(
 
 
 class SceneCache:
-    """Session-level cache of expensive loads, keyed ((session, stem), kind).
+    """Session-level cache of expensive loads, keyed (scene, kind).
 
-    Known kinds: 'loaded' = SplatsApp's (result, mesh_path, semantics_dir, lifted_normed)
+    Known kinds: 'loaded' = SplatsApp's (result, mesh_path, semantics_dir, point_features)
     tuple; 'mesh' = LocalizePage's pyvista mesh; 'localizer:*' = GPU-holding localizers.
     CPU loads (mesh, arrays) persist across tabs; GPU-holding entries use the
     'localizer:*' kind prefix so drop_kind('localizer') can evict them on tab switch."""
@@ -131,7 +131,7 @@ class LocalizePage(param.Parameterized):
     def __init__(
         self,
         base_dir: Path,
-        source: SessionSource,
+        source: SceneSource,
         gpu_worker: GpuWorker,
         op_log: OperationLog,
         cache: SceneCache | None = None,
@@ -145,9 +145,7 @@ class LocalizePage(param.Parameterized):
         self._cache = cache if cache is not None else SceneCache()
         self._preview_token = 0  # latest slider request; stale extracts are dropped
         self._preview_timer: threading.Timer | None = None
-        # Serializes query-video fetches: the on-select prefetch and a Load-video click
-        # raced two rclone downloads of the SAME file (frame decoded from a partial file).
-        self._fetch_lock = threading.Lock()
+        self._dbs: list[str] = []  # feature DBs listed for the selected scene
         self._build_sidebar()
         self._build_main()
         self._refresh_listings()
@@ -155,12 +153,13 @@ class LocalizePage(param.Parameterized):
     # ---- sidebar -------------------------------------------------------
 
     def _build_sidebar(self) -> None:
-        """Scene (reconstruction) + query (field camera) + method widgets."""
-        self.scene_session = pn.widgets.Select(name="Scene session", options=[])
-        self.scene_video = pn.widgets.Select(name="Scene video", options=[])
-        self.field_session = pn.widgets.Select(name="Field session", options=[])
-        self.camera = pn.widgets.Select(name="Camera (rgb only)", options=[])
-        self.query_video = pn.widgets.Select(name="Query video", options=[])
+        """Scene (reconstruction) + query scene + method widgets.
+
+        One dropdown per side: scene ids are flat and a curated scene dir holds exactly one
+        video, so a query video IS just another curated scene — no session/camera levels.
+        """
+        self.scene = pn.widgets.Select(name="Scene", options=[])
+        self.query_scene = pn.widgets.Select(name="Query scene", options=[])
         self.frame_slider = pn.widgets.IntSlider(name="Frame", start=0, end=0, value=0)
         self.load_video_btn = pn.widgets.Button(label="Load video / preview frame", button_type="default")
         self.method = pn.widgets.Select(name="Method", options=_METHODS, value=_DEFAULT_METHOD)
@@ -170,11 +169,8 @@ class LocalizePage(param.Parameterized):
         # Cross-tab busy indicator: filled while any GpuWorker job is in flight.
         self.busy_note = pn.pane.HTML("", sizing_mode="stretch_width")
 
-        self.scene_session.param.watch(self._on_scene_session, "value")
-        self.scene_video.param.watch(self._on_scene_video, "value")
-        self.field_session.param.watch(self._on_field_session, "value")
-        self.camera.param.watch(self._on_camera, "value")
-        self.query_video.param.watch(self._on_query_video, "value")
+        self.scene.param.watch(self._on_scene, "value")
+        self.query_scene.param.watch(self._on_query_scene, "value")
         self.frame_slider.param.watch(self._on_frame_slider, "value")
         self.load_video_btn.on_click(self._on_load_video)
         self.method.param.watch(self._on_method, "value")
@@ -182,12 +178,9 @@ class LocalizePage(param.Parameterized):
 
         self._sidebar = pn.Column(
             "## Scene",
-            self.scene_session,
-            self.scene_video,
+            self.scene,
             "## Query",
-            self.field_session,
-            self.camera,
-            self.query_video,
+            self.query_scene,
             self.frame_slider,
             self.load_video_btn,
             "## Localization",
@@ -206,11 +199,8 @@ class LocalizePage(param.Parameterized):
         widgets = (
             self.run_btn,
             self.load_video_btn,
-            self.scene_session,
-            self.scene_video,
-            self.field_session,
-            self.camera,
-            self.query_video,
+            self.scene,
+            self.query_scene,
             self.method,
             self.append_db,
         )
@@ -235,7 +225,7 @@ class LocalizePage(param.Parameterized):
         Panes constructed before a server document exists (the old __init__ pattern) bind
         to a stale/absent Bokeh doc and silently drop updates; nothing display-bound may
         outlive a main() build. Watchers firing before main() (e.g. _show_frame via
-        _on_query_video during __init__) write state here and render on build.
+        _on_query_scene during __init__) write state here and render on build.
         """
         # left: which content owns the left column — 'placeholder' | 'frame' | 'run' | 'browse'
         self._state: dict = {"frame": None, "run": None, "browse": None, "left": "placeholder"}
@@ -281,7 +271,7 @@ class LocalizePage(param.Parameterized):
             # Placeholder until something is selected — a blank pane reads as broken
             self._panes["matches_col"][:] = [
                 pn.pane.HTML(
-                    "<i style='color:#888'>Select a scene and a query video, then Run. "
+                    "<i style='color:#888'>Select a scene and a query scene, then Run. "
                     "The selected frame previews here; progress shows in the Operations console.</i>"
                 )
             ]
@@ -341,7 +331,11 @@ class LocalizePage(param.Parameterized):
     # ---- listings (background threads, options set on the IOLoop) -------
 
     def _refresh_listings(self) -> None:
-        """Populate scene sessions and field sessions off the IOLoop (rclone is blocking)."""
+        """Populate the processed-scene and curated query-scene dropdowns off the IOLoop.
+
+        rclone listing is blocking; both listings fail independently so one outage does not
+        wedge the other dropdown.
+        """
         doc = pn.state.curdoc
 
         def work():
@@ -349,58 +343,40 @@ class LocalizePage(param.Parameterized):
             # clobber a concurrent run's is_running); fall through with empty lists
             # so the dropdowns don't wedge.
             try:
-                with self._op_log.step("listing scene sessions"):
-                    scenes = self._source.list_sessions()
+                with self._op_log.step("listing processed scenes"):
+                    scenes = self._source.list_processed_scenes()
             except Exception as exc:
-                logger.warning("scene session listing failed: %s", exc)
+                logger.warning("processed scene listing failed: %s", exc)
                 scenes = []
             try:
-                with self._op_log.step("listing field sessions"):
-                    fields = self._source.list_field_sessions()
+                with self._op_log.step("listing curated scenes"):
+                    queries = self._source.list_scenes()
             except Exception as exc:
-                logger.warning("field session listing failed: %s", exc)
-                fields = []
+                logger.warning("curated scene listing failed: %s", exc)
+                queries = []
 
             def setter():
-                # Blank-first: no session auto-selects, so no listing cascade fires
+                # Blank-first: no scene auto-selects, so no DB listing or video fetch fires
                 # until the user explicitly picks one.
-                self.scene_session.options = select_options(scenes, "— select scene session —")
-                self.field_session.options = select_options(fields, "— select field session —")
+                self.scene.options = select_options(scenes, "— select scene —")
+                self.query_scene.options = select_options(queries, "— select query scene —")
 
             doc.add_next_tick_callback(setter) if doc is not None else setter()
 
         threading.Thread(target=work, name="localize-list", daemon=True).start()
 
-    def _on_scene_session(self, event) -> None:
-        """Populate scene-video dropdown off the IOLoop (rclone list is blocking)."""
-        if not event.new:
-            return
-        session = event.new
-
-        # step()'s FAILED line surfaces listing errors in the op log (run_off_loop swallows).
-        def fetch():
-            with self._op_log.step("listing scene videos"):
-                return [Path(v).stem for v in self._source.list_videos(session)]
-
-        run_off_loop(
-            fetch,
-            lambda stems: setattr(self.scene_video, "options", select_options(stems, "— select scene video —")),
-            label="scene-video-list",
-            doc=pn.state.curdoc,
-        )
-
-    def _on_scene_video(self, event) -> None:
+    def _on_scene(self, event) -> None:
         """Scene chosen → discover remote feature DBs and preselect the method."""
         if not event.new:
             return
-        session, stem = self.scene_session.value, event.new
+        scene = event.new
         doc = pn.state.curdoc
 
         def work():
             # step() logs start/done and FAILED; bail on failure (note stays as-is).
             try:
                 with self._op_log.step("listing feature DBs"):
-                    dbs = self._source.list_localization_dbs(session, stem)
+                    dbs = self._source.list_localization_dbs(scene)
             except Exception as exc:
                 logger.warning("feature DB listing failed: %s", exc, exc_info=True)
                 return
@@ -417,24 +393,23 @@ class LocalizePage(param.Parameterized):
             # Stored-DB browse: render existing localized poses without a run (non-GPU).
             # Extractor computed here, not read from the widget — the setter races us.
             _, extractor = preselect_method(dbs, _METHODS)
-            self._load_browse(session, stem, extractor, doc)
+            self._load_browse(scene, extractor, doc)
 
         threading.Thread(target=work, name="db-list", daemon=True).start()
 
-    def _load_browse(self, session: str, stem: str, extractor: str, doc) -> None:
+    def _load_browse(self, scene: str, extractor: str, doc) -> None:
         """Background thread: load stored-DB browse data + mesh, then render (no GPU)."""
         try:
             from collab_splats.dashboard.pipeline import load_browse_data
 
             data = load_browse_data(
-                session=session,
-                stem=stem,
+                scene=scene,
                 extractor=extractor,
                 source=self._source,
                 base_dir=self._base_dir,
                 op_log=self._op_log,
             )
-            mesh = self._ensure_scene_mesh((session, stem), data.mesh_path)
+            mesh = self._ensure_scene_mesh(scene, data.mesh_path)
         except Exception as exc:
             logger.warning("browse load failed", exc_info=True)
             self._op_log.append_line(f"DB browse FAILED: {exc}")
@@ -456,8 +431,8 @@ class LocalizePage(param.Parameterized):
     def _on_method(self, event) -> None:
         """Refresh the DB note and re-browse the stored DB for the newly picked extractor."""
         self._update_db_note()
-        session, stem = self.scene_session.value, self.scene_video.value
-        if not (session and stem) or self._gpu.busy:
+        scene = self.scene.value
+        if not scene or self._gpu.busy:
             return
         # Already browsing this extractor (e.g. the scene-select setter just set the
         # preselected method) — skip the duplicate load.
@@ -466,14 +441,14 @@ class LocalizePage(param.Parameterized):
             return
         threading.Thread(
             target=self._load_browse,
-            args=(session, stem, event.new, pn.state.curdoc),
+            args=(scene, event.new, pn.state.curdoc),
             name="browse-load",
             daemon=True,
         ).start()
 
     def _update_db_note(self) -> None:
         """DB status for the selected method: reuse (+ localized count) or build-on-run warning."""
-        dbs = getattr(self, "_dbs", [])
+        dbs = self._dbs
         browse = self._state.get("browse")
         count = ""
         if browse is not None and browse[0].extractor == self.method.value:
@@ -487,54 +462,18 @@ class LocalizePage(param.Parameterized):
                 "Run will build it (GPU, minutes)</span>"
             )
 
-    def _on_field_session(self, event) -> None:
-        """Populate camera dropdown off the IOLoop (rclone list is blocking)."""
+    def _on_query_scene(self, event) -> None:
+        """Fetch the query scene's video in the background; set slider bound + preview frame 0."""
         if not event.new:
             return
-        fs = event.new
-
-        # step()'s FAILED line surfaces listing errors in the op log (run_off_loop swallows).
-        def fetch():
-            with self._op_log.step("listing cameras"):
-                return self._source.list_rgb_cameras(fs)
-
-        run_off_loop(
-            fetch,
-            lambda cams: setattr(self.camera, "options", select_options(cams, "— select camera —")),
-            label="camera-list",
-            doc=pn.state.curdoc,
-        )
-
-    def _on_camera(self, event) -> None:
-        """Populate query-video dropdown off the IOLoop (rclone list is blocking)."""
-        if not event.new:
-            return
-        fs, cam = self.field_session.value, event.new
-
-        # step()'s FAILED line surfaces listing errors in the op log (run_off_loop swallows).
-        def fetch():
-            with self._op_log.step("listing camera videos"):
-                return self._source.list_camera_videos(fs, cam)
-
-        run_off_loop(
-            fetch,
-            lambda videos: setattr(self.query_video, "options", select_options(videos, "— select query video —")),
-            label="camera-video-list",
-            doc=pn.state.curdoc,
-        )
-
-    def _on_query_video(self, event) -> None:
-        """Fetch the video in the background; set slider bound + preview frame 0."""
-        if not event.new:
-            return
-        fs, cam, name = self.field_session.value, self.camera.value, event.new
+        query_scene = event.new
         doc = pn.state.curdoc
 
         def work():
             # step() logs fetch start/done/FAILED; the extra line marks the preview loss.
             try:
-                with self._op_log.step(f"fetching query video {name}"):
-                    video = self._ensure_local_query_video(fs, cam, name)
+                with self._op_log.step(f"fetching query video {query_scene}"):
+                    video = self._ensure_local_query_video(query_scene)
                     from collab_splats.preproc import extract_frame, get_video_info
 
                     total = int(get_video_info(str(video)).get("total_frames") or 1)
@@ -562,8 +501,8 @@ class LocalizePage(param.Parameterized):
         if self._gpu.busy:
             self._op_log.append_line("busy — preview after the current job finishes")
             return
-        if not (self.field_session.value and self.camera.value and self.query_video.value):
-            self._op_log.append_line("select a field session, camera, and query video first")
+        if not self.query_scene.value:
+            self._op_log.append_line("select a query scene first")
             return
         self._preview_token += 1
         if self._preview_timer is not None:
@@ -579,7 +518,7 @@ class LocalizePage(param.Parameterized):
         """Debounced live preview: decode + show the frame shortly after the slider settles."""
         if self._gpu.busy:
             return  # a run owns the panes; the slider still sets the run's frame_idx
-        if not (self.field_session.value and self.camera.value and self.query_video.value):
+        if not self.query_scene.value:
             return
         self._preview_token += 1
         if self._preview_timer is not None:
@@ -596,10 +535,10 @@ class LocalizePage(param.Parameterized):
         """Timer thread: fast-seek decode, then marshal display back to the IOLoop."""
         if token != self._preview_token:
             return  # superseded by a newer slider position
-        fs, cam, name = self.field_session.value, self.camera.value, self.query_video.value
+        query_scene = self.query_scene.value
         t0 = time.perf_counter()
         try:
-            video = self._ensure_local_query_video(fs, cam, name)
+            video = self._ensure_local_query_video(query_scene)
             from collab_splats.preproc import extract_frame
 
             frame = extract_frame(video, frame_idx)
@@ -619,16 +558,19 @@ class LocalizePage(param.Parameterized):
 
         doc.add_next_tick_callback(show) if doc is not None else show()
 
-    def _ensure_local_query_video(self, field_session: str, camera: str, name: str) -> Path:
-        # Lock: the on-select prefetch thread and a Load-video click can request the same
-        # file concurrently — two racing rclone writers let a frame decode from a partial
-        # file. The second caller blocks, then hits the exists() fast path.
-        with self._fetch_lock:
-            local = self._base_dir / "queries" / field_session / camera / name
-            if local.exists():
-                return local
-            on_line = self._op_log.rclone_progress("⬇ fetching query video")
-            return self._source.fetch_field_video(field_session, camera, name, local.parent, on_line=on_line)
+    def _ensure_local_query_video(self, scene: str) -> Path:
+        """Return the query scene's local video path, fetching it once if needed.
+
+        Shares the splats page's cache location: a query scene IS a curated scene, so a scene
+        already reconstructed locally must not download its video a second time.
+        """
+        return ensure_local_video(
+            scene,
+            base_dir=self._base_dir,
+            source=self._source,
+            op_log=self._op_log,
+            label="⬇ fetching query video",
+        )
 
     def _show_frame(self, frame: np.ndarray) -> None:
         """Record the selected query frame as page state and render it if panes exist."""
@@ -642,35 +584,33 @@ class LocalizePage(param.Parameterized):
         return LocalizationConfig(extractor=self.method.value, append_to_db=self.append_db.value)
 
     def _on_run(self, event) -> None:
-        scene_session = self.scene_session.value
-        stem = self.scene_video.value
-        fs, cam, name = self.field_session.value, self.camera.value, self.query_video.value
+        scene = self.scene.value
+        query_scene = self.query_scene.value
         frame_idx = self.frame_slider.value
-        if not (scene_session and stem and fs and cam and name):
-            self._op_log.error_op("select a scene and a query video first")
+        if not (scene and query_scene):
+            self._op_log.error_op("select a scene and a query scene first")
             return
         config = self._current_config()
-        provenance = {
-            "video_ref": f"{fs}/{cam}/{name}",
-            "session": fs,
-            "camera": cam,
-            "frame_idx": int(frame_idx),
-        }
         # Captured for the worker: on_done must only assign panes, never hit the disk
-        scene_key = (scene_session, stem)
-        mesh_path = self._base_dir / scene_session / stem / "mesh" / "mesh_tsdf.ply"
+        mesh_path = self._base_dir / scene / "mesh" / "mesh.ply"
         doc = pn.state.curdoc
 
         def job():
             # Lazy import: pulls the heavy stack only when a run starts (mirrors SplatsApp)
             from collab_splats.dashboard.pipeline import run_localization
 
-            video = self._ensure_local_query_video(fs, cam, name)
+            video = self._ensure_local_query_video(query_scene)
+            # video_ref must name the file, not just the scene: a curated dir may hold more
+            # than one video, and this string persists into the zarr localized/ attrs.
+            provenance = {
+                "video_ref": f"{query_scene}/{video.name}",
+                "scene": query_scene,
+                "frame_idx": int(frame_idx),
+            }
             out = run_localization(
                 query_video=video,
                 frame_idx=frame_idx,
-                session=scene_session,
-                stem=stem,
+                scene=scene,
                 config=config,
                 op_log=self._op_log,
                 source=self._source,
@@ -679,12 +619,12 @@ class LocalizePage(param.Parameterized):
                 cache=self._cache,  # keeps the localizer (and its extractor) warm across runs
             )
             # Figures + mesh read are slow — build them here so on_done only assigns panes.
-            frames_zarr = self._base_dir / scene_session / stem / "frames.zarr"
+            frames_zarr = self._base_dir / scene / "frames.zarr"
             with self._op_log.step("building result figures"):
                 figs = self._build_result_figures(
                     out, config, frames_zarr=frames_zarr if frames_zarr.exists() else None
                 )
-            mesh = self._ensure_scene_mesh(scene_key, mesh_path)
+            mesh = self._ensure_scene_mesh(scene, mesh_path)
             return (out, figs, mesh)
 
         def on_done(res):
@@ -763,13 +703,13 @@ class LocalizePage(param.Parameterized):
                 match_figs.append(mfig)
         return {"dist_fig": dist_fig, "match_figs": match_figs, "stats_html": stats_html}
 
-    def _ensure_scene_mesh(self, scene_key, mesh_path: Path):
+    def _ensure_scene_mesh(self, scene: str, mesh_path: Path):
         """Read the scene mesh with cache (worker thread — pv.read is a blocking disk read)."""
-        mesh = self._cache.get(scene_key, "mesh")
+        mesh = self._cache.get(scene, "mesh")
         if mesh is None and mesh_path.exists():
             with self._op_log.step("reading scene mesh"):
                 mesh = pv.read(str(mesh_path))
-            self._cache.put(scene_key, "mesh", mesh)
+            self._cache.put(scene, "mesh", mesh)
         return mesh
 
     def _handle_run_done(self, res) -> None:

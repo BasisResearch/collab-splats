@@ -6,8 +6,11 @@ Layout mirrors the code tree: a module at `<source-path>/<module>/` has its docs
 
 ## Examples
 
-- [examples/reconstruct.py](examples/reconstruct.py) — CLI entry point for the Reconstructor pipeline
-- [examples/run_all_datasets.sh](examples/run_all_datasets.sh) — batch reconstruction across all dataset configs
+- [examples/run_pipeline.py](examples/run_pipeline.py) — main driver: local videos / directories of videos
+- [examples/run_pipeline_remote.py](examples/run_pipeline_remote.py) — same pipeline over `environments-curated` GCS scenes, pushing to `environments-processed/`
+- [examples/reconstruct.py](examples/reconstruct.py) — re-run a saved `run_config.yaml`
+
+Driver flags, output layout, and the processed-scene contract: [../configs/README.md](../configs/README.md).
 
 ## Module Notebooks
 

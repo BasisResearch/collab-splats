@@ -1,11 +1,11 @@
 """Tests for SplitViewer: off-screen, synthetic data, no GPU/models."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
+import zarr
 
 from collab_splats.dashboard.viewer import SplitViewer
+from collab_splats.semantics.compression import FeatureAutoencoder
 
 
 class _FakeResult:
@@ -78,7 +78,7 @@ def test_recolor_by_similarity_updates_right(monkeypatch):
     res = _FakeResult(p=20)
     v.load(res, mesh_path=None)
     # Inject lifted features directly (normalised) and a fake queryable extractor
-    v._lifted_normed = np.random.rand(20, 8).astype(np.float32)
+    v._point_features = np.random.rand(20, 8).astype(np.float32)
 
     seen = {}
 
@@ -102,7 +102,7 @@ def test_query_empty_positive_resets_right(monkeypatch):
     v = SplitViewer(off_screen=True)
     res = _FakeResult(p=12)
     v.load(res, mesh_path=None)
-    v._lifted_normed = np.random.rand(12, 8).astype(np.float32)
+    v._point_features = np.random.rand(12, 8).astype(np.float32)
     # No positive terms -> reset to RGB, no extractor call
     colors = v.score_query(positive=[], negative=[], extractor_name="talk2dino")
     assert np.array_equal(colors, res.colors)
@@ -136,7 +136,7 @@ def test_score_query_returns_colors_without_rendering():
     v = SplitViewer(off_screen=True)
     v._result = MagicMock()
     v._result.colors = np.zeros((4, 3), dtype=np.uint8)
-    v._lifted_normed = np.eye(4, dtype=np.float32)
+    v._point_features = np.eye(4, dtype=np.float32)
     fake = MagicMock()
     import torch
 
@@ -151,19 +151,20 @@ def test_score_query_blank_positive_returns_rgb():
     v = SplitViewer(off_screen=True)
     v._result = MagicMock()
     v._result.colors = np.full((4, 3), 7, dtype=np.uint8)
-    v._lifted_normed = None
+    v._point_features = None
     colors = v.score_query(positive=[], negative=[], extractor_name="talk2dino")
     assert np.array_equal(colors, v._result.colors)
 
 
-def test_score_query_lazily_lifts_on_first_query(monkeypatch):
+def test_score_query_lazily_lifts_on_first_query(tmp_path, monkeypatch):
     import torch
 
     v = SplitViewer(off_screen=True)
     v._result = MagicMock()
     v._result.colors = np.zeros((4, 3), dtype=np.uint8)
-    v._lifted_normed = None
-    v._semantics_dir = Path("semdir")  # set by load(); no cached npy -> triggers lazy lift
+    v._point_features = None
+    # tmp_path, not a relative dir: the lift self-upgrade writes the artifact pair here.
+    v._semantics_dir = tmp_path / "semdir"
 
     called = {}
 
@@ -171,29 +172,29 @@ def test_score_query_lazily_lifts_on_first_query(monkeypatch):
         called["dir"] = semantics_dir
         return np.eye(4, dtype=np.float32)
 
-    monkeypatch.setattr("collab_splats.dashboard.viewer.load_lifted_normed", fake_lift)
+    monkeypatch.setattr("collab_splats.dashboard.viewer.lift_point_features", fake_lift)
     ext = MagicMock()
     ext.score_queries.return_value = torch.tensor([0.1, 0.2, 0.3, 0.4])
     monkeypatch.setattr(v, "_get_extractor", lambda n: ext)
 
     colors = v.score_query(positive=["chair"], extractor_name="talk2dino")
-    assert called["dir"] == Path("semdir")  # lifted lazily on first query
+    assert called["dir"] == tmp_path / "semdir"  # lifted lazily on first query
     assert colors.shape == (4, 3)
 
 
-def test_score_query_blank_positive_does_not_lift(monkeypatch):
+def test_score_query_blank_positive_does_not_lift(tmp_path, monkeypatch):
     v = SplitViewer(off_screen=True)
     v._result = MagicMock()
     v._result.colors = np.full((4, 3), 5, dtype=np.uint8)
-    v._lifted_normed = None
-    v._semantics_dir = "semdir"
+    v._point_features = None
+    v._semantics_dir = tmp_path / "semdir"
     lifted_called = {"n": 0}
 
     def fake_lift(result, semantics_dir):
         lifted_called["n"] += 1
         return np.eye(4, dtype=np.float32)
 
-    monkeypatch.setattr("collab_splats.dashboard.viewer.load_lifted_normed", fake_lift)
+    monkeypatch.setattr("collab_splats.dashboard.viewer.lift_point_features", fake_lift)
     v.score_query(positive=[], extractor_name="talk2dino")
     assert lifted_called["n"] == 0  # blank query must not pay the 6-min lift
 
@@ -234,7 +235,7 @@ def test_score_query_uses_mesh_features_in_mesh_mode(monkeypatch):
     v._mesh_path = None  # no mesh on disk -> ensure_mesh_polydata is a no-op
     v._mesh_polydata = None
     v._result = type("R", (), {"colors": np.zeros((5, 3), dtype=np.uint8)})()
-    v._lifted_normed = np.ones((5, 4), dtype=np.float32)  # 5 points
+    v._point_features = np.ones((5, 4), dtype=np.float32)  # 5 points
     v._mesh_vertex_features = np.ones((3, 4), dtype=np.float32)  # 3 vertices
     v._extractor_cache = {"talk2dino": _StubExtractor()}
     monkeypatch.setattr(v, "ensure_lifted", lambda op_log=None: None)
@@ -304,7 +305,7 @@ def _write_tiny_mesh(path):
 
 
 def test_render_right_colors_mesh_per_vertex(tmp_path):
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     verts = _write_tiny_mesh(mesh_path)
 
     v = SplitViewer(off_screen=True)
@@ -319,7 +320,7 @@ def test_render_right_colors_mesh_per_vertex(tmp_path):
 
 
 def test_render_right_mesh_size_mismatch_falls_back(tmp_path):
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     _write_tiny_mesh(mesh_path)
 
     v = SplitViewer(off_screen=True)
@@ -337,7 +338,7 @@ def test_mesh_read_from_disk_once_across_renders(tmp_path, monkeypatch):
     """Mesh is read once (lazily) and reused; mode/normalize/query don't re-read from disk."""
     import collab_splats.dashboard.viewer as viewer_mod
 
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     _write_tiny_mesh(mesh_path)
 
     # Count pv.read calls from BEFORE load: the lazy ensure is the single allowed read.
@@ -377,7 +378,7 @@ def _write_mesh_6v(path):
 def test_score_query_lazy_transfers_mesh_features_when_absent(tmp_path):
     import torch
 
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     verts = _write_mesh_6v(mesh_path)
 
     captured = {}
@@ -394,7 +395,7 @@ def test_score_query_lazy_transfers_mesh_features_when_absent(tmp_path):
     assert v._mesh_vertex_features is None  # no persisted vertex_features.npy (old run)
 
     v.mode = "mesh"
-    v._lifted_normed = np.eye(6, 4, dtype=np.float32)  # 6 point features
+    v._point_features = np.eye(6, 4, dtype=np.float32)  # 6 point features
     v._extractor_cache = {"talk2dino": _Stub()}
 
     colors = v.score_query(positive=["x"], op_log=None)
@@ -413,7 +414,7 @@ def test_load_does_not_read_mesh_eagerly(monkeypatch, tmp_path):
 
     reads = []
     monkeypatch.setattr(viewer_mod.pv, "read", lambda p: reads.append(p) or viewer_mod.pv.PolyData())
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     mesh_path.touch()
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(), mesh_path=mesh_path)
@@ -427,7 +428,7 @@ def test_ensure_mesh_polydata_reads_once(monkeypatch, tmp_path):
 
     reads = []
     monkeypatch.setattr(viewer_mod.pv, "read", lambda p: reads.append(p) or viewer_mod.pv.PolyData())
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     mesh_path.touch()
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(), mesh_path=mesh_path)
@@ -444,7 +445,7 @@ def test_ensure_mesh_polydata_uses_preloaded_without_reading(monkeypatch, tmp_pa
 
     reads = []
     monkeypatch.setattr(viewer_mod.pv, "read", lambda p: reads.append(p) or pv.PolyData())
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     mesh_path.touch()
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(), mesh_path=mesh_path)
@@ -471,14 +472,28 @@ def test_mesh_mode_without_mesh_logs():
     assert any("mesh not found" in line for line in op_log.log_lines)
 
 
-def test_ensure_lifted_uses_cached_npy_fast_path(tmp_path):
-    """First query must load the cached lifted_normed.npy, not re-lift from the feature zarr."""
+def test_ensure_lifted_uses_cached_features_zarr_fast_path(tmp_path):
+    """First query must read the cached features.zarr, not re-lift from the 2D feature zarr.
+
+    The cached artifact is LATENT codes, so the fast path must hand back DECODED full-dim
+    features — score_queries compares them against full-dim text embeddings.
+    """
+    from collab_splats.dashboard.pipeline import load_point_features
+
     sem_dir = tmp_path / "semantics"
     sem_dir.mkdir()
-    cached = np.random.rand(20, 8).astype(np.float32)
-    np.save(sem_dir / "lifted_normed.npy", cached)
+    codes = np.random.rand(20, 8).astype(np.float32)
+    store = zarr.open(str(sem_dir / "features.zarr"), mode="w")
+    store["features"] = codes
+    FeatureAutoencoder(input_dim=32, latent_dim=8).save(sem_dir)
 
     v = SplitViewer(off_screen=True)
-    v.load(_FakeResult(p=20), mesh_path=None, semantics_dir=sem_dir)  # no lifted_normed passed
+    v.load(_FakeResult(p=20), mesh_path=None, semantics_dir=sem_dir)  # no point_features passed
     v.ensure_lifted()
-    np.testing.assert_array_equal(v._lifted_normed, cached)
+    # Decoded to the autoencoder's input_dim, not the 8-D latent width it was stored at
+    assert v._point_features.shape == (20, 32)
+    np.testing.assert_allclose(v._point_features, load_point_features(sem_dir), rtol=1e-6)
+    # Rows must be unit-norm: score_queries takes raw dot products against L2-normalized text
+    # embeddings, so an un-normalized row silently scales its own similarity. Asserted here
+    # rather than only against load_point_features, where a dropped normalize cancels out.
+    np.testing.assert_allclose(np.linalg.norm(v._point_features, axis=1), 1.0, rtol=1e-5)

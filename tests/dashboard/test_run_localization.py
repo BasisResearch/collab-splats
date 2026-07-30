@@ -13,6 +13,9 @@ from collab_splats.dashboard.config import LocalizationConfig
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.localization.localizer import LocalizationResult
 
+# Flat curated scene id — the reconstruction being localized against.
+SCENE = "2024_02_06-office-vid"
+
 ########
 # Fakes
 ########
@@ -23,13 +26,18 @@ class _FakeSource:
         self.pulled = False
         self.pushed = False
         self.excludes = None
+        self.pull_args = None
 
-    def pull_processed(self, session, stem, dest, excludes=()):
+    def pull_processed(self, scene, dest, excludes=()):
         self.pulled = True
         self.excludes = excludes
-        (Path(dest) / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+        self.pull_args = (scene, dest)
+        # Guard: only materialise under an absolute dest — a swapped-arg call would otherwise
+        # create a stray relative directory named after the scene id in the cwd.
+        if Path(dest).is_absolute():
+            (Path(dest) / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
 
-    def push_outputs(self, out_dir, session, stem, on_line=None):
+    def push_outputs(self, out_dir, scene, on_line=None):
         self.pushed = True
 
 
@@ -109,7 +117,7 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(
         pipeline,
         "_push_async",
-        lambda source, out_dir, session, stem, op_log: source.push_outputs(out_dir, session, stem),
+        lambda source, out_dir, scene, op_log: source.push_outputs(out_dir, scene),
     )
     return fake_localizer
 
@@ -119,13 +127,12 @@ def _run(tmp_path, wired, append=True, source=None):
     out = pipeline.run_localization(
         query_video=tmp_path / "cam.mp4",
         frame_idx=42,
-        session="2024_02_06",
-        stem="vid",
+        scene=SCENE,
         config=LocalizationConfig(append_to_db=append),
         op_log=OperationLog(),
         source=source,
         base_dir=tmp_path,
-        provenance={"camera": "rgb_1", "frame_idx": 42},
+        provenance={"scene": "2024_02_06-office-query", "frame_idx": 42},
     )
     return out, source
 
@@ -155,7 +162,7 @@ def test_ref_paths_and_extrinsics_stay_index_aligned(tmp_path, wired):
 
 def test_append_and_push_on_success(tmp_path, wired):
     out, source = _run(tmp_path, wired, append=True)
-    assert wired.appended == {"camera": "rgb_1", "frame_idx": 42}
+    assert wired.appended == {"scene": "2024_02_06-office-query", "frame_idx": 42}
     assert source.pushed
 
 
@@ -176,9 +183,9 @@ def test_no_append_on_failed_pose(tmp_path, wired):
 def test_ref_paths_remapped_to_local_frames_dir(tmp_path, wired):
     """Reconstruction frames map to frames/; localized frames map to localized_frames/."""
     out, _ = _run(tmp_path, wired)
-    scene = tmp_path / "2024_02_06" / "vid"
-    assert out.ref_image_paths[0] == scene / "frames" / "00000.jpg"
-    assert out.ref_image_paths[2] == scene / "localized_frames" / "cam_f000007.jpg"
+    out_dir = tmp_path / SCENE
+    assert out.ref_image_paths[0] == out_dir / "frames" / "00000.jpg"
+    assert out.ref_image_paths[2] == out_dir / "localized_frames" / "cam_f000007.jpg"
 
 
 def test_pull_uses_minimal_excludes(tmp_path, wired):
@@ -186,19 +193,26 @@ def test_pull_uses_minimal_excludes(tmp_path, wired):
     assert source.excludes == pipeline.PULL_EXCLUDES
 
 
-def test_build_localizer_receives_session_frames_zarr(tmp_path, wired):
+def test_pull_targets_the_scene_id_and_its_local_dir(tmp_path, wired):
+    """pull_processed(scene, dest) is positional and untyped, and mirrors
+    push_outputs(local_dir, scene) — a swap is silent, so pin the order."""
+    _, source = _run(tmp_path, wired)
+    assert source.pull_args == (SCENE, tmp_path / SCENE)
+
+
+def test_build_localizer_receives_scene_frames_zarr(tmp_path, wired):
     """frames_zarr must be threaded into _build_localizer (-> from_feedforward) as the
-    session's own frames.zarr, not dropped or left implicit — this is what lets a cache
+    scene's own frames.zarr, not dropped or left implicit — this is what lets a cache
     miss read pixels from the store instead of a possibly-stale ff.image_paths."""
-    scene = tmp_path / "2024_02_06" / "vid"
-    # Present locally, as it would be for a session that ran preprocessing on this machine.
-    (scene / "frames.zarr").mkdir(parents=True)
+    out_dir = tmp_path / SCENE
+    # Present locally, as it would be for a scene that ran preprocessing on this machine.
+    (out_dir / "frames.zarr").mkdir(parents=True)
 
     _run(tmp_path, wired)
 
     wired.build_localizer_mock.assert_called_once()
     kwargs = wired.build_localizer_mock.call_args.kwargs
-    assert kwargs["frames_zarr"] == scene / "frames.zarr"
+    assert kwargs["frames_zarr"] == out_dir / "frames.zarr"
 
 
 def test_build_localizer_gets_no_frames_zarr_when_absent(tmp_path, wired):
@@ -212,14 +226,14 @@ def test_build_localizer_gets_no_frames_zarr_when_absent(tmp_path, wired):
 
 def test_stamp_db_provenance_writes_attrs(tmp_path):
     """Real (unpatched) _stamp_db_provenance: run_config provenance lands on the group."""
-    out_dir = tmp_path / "s" / "v"
+    out_dir = tmp_path / SCENE
     out_dir.mkdir(parents=True)
     (out_dir / "run_config.yaml").write_text(
         yaml.safe_dump(
             {
                 "env_model": "vggtx",
                 "frame_indices": [0, 5, 10],
-                "video_ref": "reconstruction/s/v/v.mp4",
+                "video_ref": f"{SCENE}/vid.mp4",
             }
         )
     )

@@ -1,26 +1,40 @@
-"""Tests for load_lifted_normed module-level helper."""
+"""Tests for lift_point_features module-level helper."""
 
 from unittest.mock import patch
 
 import numpy as np
 import torch
 
-from collab_splats.dashboard.viewer import load_lifted_normed
+from collab_splats.dashboard.viewer import lift_point_features
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
 
-def test_load_lifted_normed_normalises():
+def test_lift_point_features_normalises():
     fake_lifted = torch.tensor([[3.0, 4.0], [0.0, 2.0]])  # norms 5, 2
+
+    def fake_lift(feature_maps, result):
+        # Proves the load_feature_maps patch is still intercepting: a patch that stopped
+        # biting would hand the real (globbing) loader an object() and never reach here.
+        assert feature_maps == ["sentinel-map"]
+        return fake_lifted
+
     with (
-        patch("collab_splats.pointcloud.utils.lift_features", return_value=fake_lifted),
-        patch("collab_splats.dashboard.viewer._load_feature_maps", return_value=["fm"]),
+        patch("collab_splats.pointcloud.utils.lift_features", fake_lift),
+        patch("collab_splats.dashboard.pipeline.load_feature_maps", return_value=["sentinel-map"]),
     ):
-        out = load_lifted_normed(result=object(), semantics_dir=object())
+        out = lift_point_features(result=object(), semantics_dir=object())
     norms = np.linalg.norm(out, axis=1)
     assert np.allclose(norms, 1.0, atol=1e-5)
 
 
-def test_load_lifted_normed_reloads_dense_on_demand(tmp_path):
+def test_viewer_has_no_private_feature_map_loader():
+    """One shared definition (item 5) — the byte-identical viewer copy is gone."""
+    import collab_splats.dashboard.viewer as viewer_mod
+
+    assert not hasattr(viewer_mod, "_load_feature_maps")
+
+
+def test_lift_point_features_reloads_dense_on_demand(tmp_path):
     """A lean display result must be re-hydrated from its zarr before lifting."""
     # Dense-bearing store: depth + confidence + pixel_indices persisted on disk.
     n, p, h, w = 2, 5, 4, 4
@@ -57,44 +71,138 @@ def test_load_lifted_normed_reloads_dense_on_demand(tmp_path):
 
     with (
         patch("collab_splats.pointcloud.utils.lift_features", fake_lift),
-        patch("collab_splats.dashboard.viewer._load_feature_maps", return_value=[]),
+        patch("collab_splats.dashboard.pipeline.load_feature_maps", return_value=[]),
     ):
-        load_lifted_normed(lean, tmp_path)
+        lift_point_features(lean, tmp_path)
     assert seen["dense"] is True
 
 
 def test_ensure_lifted_self_upgrades_legacy_scene(tmp_path, monkeypatch):
-    """A successful on-demand lift persists lifted_normed.npy so the scene upgrades."""
+    """A successful on-demand lift persists the canonical artifact pair so the scene upgrades."""
     import numpy as np
+    import zarr
 
     import collab_splats.dashboard.viewer as viewer_mod
     from collab_splats.dashboard.operation_log import OperationLog
     from collab_splats.dashboard.viewer import SplitViewer
 
     lifted = np.ones((5, 4), dtype=np.float32)
-    monkeypatch.setattr(viewer_mod, "load_lifted_normed", lambda result, sem: lifted)
+    monkeypatch.setattr(viewer_mod, "lift_point_features", lambda result, sem: lifted)
     op_log = OperationLog()
     viewer = SplitViewer(off_screen=True, op_log=op_log)
     viewer._result = object()  # anything non-None; the lift itself is stubbed
     viewer._semantics_dir = tmp_path
     viewer.ensure_lifted(op_log)
-    saved = tmp_path / "lifted_normed.npy"
-    assert saved.exists()
-    np.testing.assert_array_equal(np.load(saved), lifted)
+    # Both halves of the pair — codes alone are unreadable without the weights
+    assert (tmp_path / "features.zarr").exists()
+    assert (tmp_path / "autoencoder.pt").is_file()
+    codes = np.asarray(zarr.open(str(tmp_path / "features.zarr"), mode="r")["features"])
+    assert codes.shape == (5, 4)  # 5 points; latent capped at the 4-D input width
     assert any("scene upgraded" in line for line in op_log.log_lines)
 
 
-def test_ensure_lifted_failure_does_not_write_npy(tmp_path, monkeypatch):
+def test_ensure_lifted_relifts_when_cached_codes_lack_weights(tmp_path, monkeypatch):
+    """Orphaned codes are not a cache: re-lift and rewrite the complete pair (self-heal).
+
+    Reading them back would raise (or, worse, hand back undecoded codes) on every query with
+    no path out — the scene must recover by redoing the lift it never finished caching.
+    """
+    import zarr
+
+    import collab_splats.dashboard.viewer as viewer_mod
+    from collab_splats.dashboard.viewer import SplitViewer
+    from collab_splats.semantics.compression import (
+        FeatureAutoencoder,
+        write_point_features,
+    )
+
+    # Half-written pair: latent codes on disk, the weights that decode them missing.
+    write_point_features(tmp_path, np.zeros((4, 2), dtype=np.float32), FeatureAutoencoder(input_dim=5, latent_dim=2))
+    (tmp_path / "autoencoder.pt").unlink()
+
+    monkeypatch.setattr(viewer_mod, "lift_point_features", lambda result, sem: np.ones((5, 4), dtype=np.float32))
+    viewer = SplitViewer(off_screen=True)
+    viewer._result = object()
+    viewer._semantics_dir = tmp_path
+    viewer.ensure_lifted()
+
+    assert viewer._point_features.shape == (5, 4)  # the fresh lift, not the stale (4, 2) codes
+    assert (tmp_path / "autoencoder.pt").is_file()  # pair completed
+    assert np.asarray(zarr.open(str(tmp_path / "features.zarr"), mode="r")["features"]).shape == (5, 4)
+
+
+def test_save_point_features_gates_fit_on_the_shared_policy(tmp_path, monkeypatch):
+    """The self-upgrade fit is gated on reconstruction fidelity, not just an epoch ceiling.
+
+    Both dashboard fit paths now read ONE policy from configs/base.yaml (item 7): the
+    self-upgrade must not be held to a stricter (or looser) bar than a fresh reconstruction.
+    """
+    import collab_splats.dashboard.viewer as viewer_mod
+    from collab_splats.dashboard.pipeline import semantics_ae_policy
+    from collab_splats.semantics import compression
+
+    seen = {}
+    real_fit = compression.FeatureAutoencoder.fit
+
+    def spy_fit(self, features, **kwargs):
+        seen.update(kwargs)
+        return real_fit(self, features, **kwargs)
+
+    monkeypatch.setattr(compression.FeatureAutoencoder, "fit", spy_fit)
+    viewer_mod._save_point_features(tmp_path, np.random.rand(8, 4).astype(np.float32))
+
+    policy = semantics_ae_policy()
+    assert seen["target_cosine"] == policy.target_cosine
+    assert seen["epochs"] == policy.max_epochs
+
+
+def test_save_point_features_takes_no_latent_dim_argument(tmp_path):
+    """item 12: the always-default param is gone; the width comes from the shared policy."""
+    import inspect
+
+    import collab_splats.dashboard.viewer as viewer_mod
+
+    assert "latent_dim" not in inspect.signature(viewer_mod._save_point_features).parameters
+
+
+def test_save_point_features_latent_width_comes_from_the_policy(tmp_path):
+    """A wider-than-latent input must actually compress to the configured width."""
+    import zarr
+
+    import collab_splats.dashboard.viewer as viewer_mod
+    from collab_splats.dashboard.pipeline import semantics_ae_policy
+
+    latent = semantics_ae_policy().latent_dim
+    feats = np.random.rand(32, latent * 2).astype(np.float32)
+    viewer_mod._save_point_features(tmp_path, feats)
+
+    codes = np.asarray(zarr.open(str(tmp_path / "features.zarr"), mode="r")["features"])
+    assert codes.shape == (32, latent)
+
+
+def test_save_point_features_warns_when_the_latent_clamp_binds(tmp_path, caplog):
+    """item 10: a <=latent-width input gets no compression and a lossy round-trip."""
+    import logging
+
+    import collab_splats.dashboard.viewer as viewer_mod
+
+    with caplog.at_level(logging.WARNING, logger="collab_splats.dashboard.pipeline"):
+        viewer_mod._save_point_features(tmp_path, np.random.rand(8, 4).astype(np.float32))
+    assert "no-op" in caplog.text
+
+
+def test_ensure_lifted_failure_does_not_write_artifacts(tmp_path, monkeypatch):
     import collab_splats.dashboard.viewer as viewer_mod
     from collab_splats.dashboard.viewer import SplitViewer
 
     def boom(result, sem):
         raise RuntimeError("missing pixel_indices")
 
-    monkeypatch.setattr(viewer_mod, "load_lifted_normed", boom)
+    monkeypatch.setattr(viewer_mod, "lift_point_features", boom)
     viewer = SplitViewer(off_screen=True)
     viewer._result = object()
     viewer._semantics_dir = tmp_path
     viewer.ensure_lifted(None)
-    assert viewer._lifted_normed is None
-    assert not (tmp_path / "lifted_normed.npy").exists()
+    assert viewer._point_features is None
+    assert not (tmp_path / "features.zarr").exists()
+    assert not (tmp_path / "autoencoder.pt").exists()

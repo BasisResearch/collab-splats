@@ -100,8 +100,9 @@ Three structural unblocks (deps-by-default, `tests/nerfstudio_methods` rename, t
   `multiprocessing.Process` but never stubbed `is_alive()` → `while proc.is_alive()` spun forever.
   Unmasked once `panel` was installed (before, those tests failed collection). Fixed with
   `proc_mock.is_alive.return_value = False`.
-- **Group C (webapp async)** — app is FastAPI/ASGI; added `pytest-asyncio` + `httpx` to
-  `pyproject [dev]`. (Not tornado — the pytest "pytest-tornasync" hint was a red herring.)
+- **Group C (webapp async)** — HISTORICAL. Was a FastAPI/ASGI app needing `pytest-asyncio` +
+  `httpx`. `collab_splats/webapp/` was deleted 2026-07-29 (dead prototype, superseded by
+  `collab_splats/dashboard/`); both dev deps and `asyncio_mode = "auto"` went with it.
 - **Two real product bugs found + handled** (the "no regressions" assumption was wrong):
   - `docs/examples/reconstruct.py` `_REPO_ROOT` was `.parent.parent` after the move from
     `scripts/`, pointing `--config_dir` at the nonexistent `docs/configs`. **Fixed** to

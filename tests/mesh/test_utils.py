@@ -130,7 +130,7 @@ def test_persist_mesh_vertex_features(tmp_path):
         o3d.utility.Vector3dVector(verts),
         o3d.utility.Vector3iVector(tris),
     )
-    mesh_path = tmp_path / "mesh_tsdf.ply"
+    mesh_path = tmp_path / "mesh.ply"
     o3d.io.write_triangle_mesh(str(mesh_path), mesh)
 
     points = verts.copy()

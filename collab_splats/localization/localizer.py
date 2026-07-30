@@ -510,8 +510,8 @@ class CameraLocalizer:
         Localized frames carry no world_points map, so localize() skips them as
         match sources — they are appended for record-keeping, not 2D→3D lookup.
         If zarr_path and extractor_name are provided, appends to localized/ in zarr.
-        provenance: optional per-frame metadata (e.g. video_ref, session, camera,
-        frame_idx) recorded alongside the localized frame in zarr.
+        provenance: optional per-frame metadata (e.g. video_ref, scene, frame_idx)
+        recorded alongside the localized frame in zarr; stored opaquely, never indexed.
         Single-writer; not thread-safe across concurrent callers.
         Call clear_localized_frames() after BA/LC updates that invalidate poses.
         """

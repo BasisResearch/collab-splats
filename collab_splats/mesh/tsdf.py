@@ -92,7 +92,8 @@ class Open3DTSDFFusion(BaseMeshCreator):
 
         mesh = volume.extract_triangle_mesh()
 
-        raw_path = self.output_dir / "mesh_tsdf.ply"
+        # Filename matches Reconstructor.mesh()'s skip-check and the dashboard's mesh lookup
+        raw_path = self.output_dir / "mesh.ply"
         o3d.io.write_triangle_mesh(str(raw_path), mesh)
         final_path = raw_path
 

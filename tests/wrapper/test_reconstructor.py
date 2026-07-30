@@ -11,6 +11,7 @@ import pytest
 import yaml
 from mergedeep import merge
 
+from collab_splats.mesh.tsdf import Open3DTSDFFusion
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 # Import ConfigLoader directly from config.py to avoid wrapper/__init__.py
@@ -289,6 +290,11 @@ def _make_mock_pointcloud_result(tmp_path):
     result = MagicMock()
     result.reconstruction = pycolmap.Reconstruction()  # empty, no images
     result.image_paths = [tmp_path / "images" / "frame_0001.jpg"]
+    # Match the real PointcloudResult.points/.colors shape for an empty reconstruction
+    # (pointcloud/base.py) — a bare MagicMock's default __len__/__iter__ produces a
+    # malformed (0,) array instead of (0, 3), which write_pointcloud_ply rejects.
+    result.points = np.zeros((0, 3), dtype=np.float32)
+    result.colors = np.zeros((0, 3), dtype=np.uint8)
     return result
 
 
@@ -441,6 +447,64 @@ def test_extract_2d_features_reads_zarr_directly(tmp_path):
     assert result == sentinel
 
 
+def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
+    """Drive the real _lift_and_save with the heavy lift/loader stubbed. Returns the output dir."""
+    import torch
+    import zarr
+
+    from collab_splats.wrapper import reconstructor as rec_mod
+
+    # 2D feature cache the writer reads: (N, D, H_p, W_p)
+    cache = zarr.open(str(tmp_path / "dinov2.zarr"), mode="w")
+    cache["features"] = np.zeros((2, dim, 2, 2), dtype=np.float32)
+    (tmp_path / "feedforward.zarr").mkdir()
+    out_dir = tmp_path / "semantics" / "dinov2"
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", MagicMock()),
+        patch("collab_splats.pointcloud.utils.lift_features", return_value=torch.rand(n_points, dim)),
+    ):
+        # Both training args are required; these tests assert file layout, so no early stop
+        rec_mod._lift_and_save(
+            tmp_path / "dinov2.zarr",
+            tmp_path / "feedforward.zarr",
+            out_dir,
+            n_components,
+            target_cosine=None,
+            max_epochs=1,
+        )
+    return out_dir
+
+
+def test_lift_and_save_writes_autoencoder_pt_beside_features(tmp_path):
+    """The real writer lands semantics/<extractor>/autoencoder.pt — not a compressor.pt directory.
+
+    FeatureAutoencoder.save() mkdirs the path it is given, so passing a filename silently
+    creates a DIRECTORY of that name and no consumer can load the weights.
+    """
+    import zarr
+
+    out_dir = _run_lift_and_save(tmp_path, n_components=8)
+
+    assert (out_dir / "autoencoder.pt").is_file()
+    assert not (out_dir / "compressor.pt").exists()
+    store = zarr.open(str(out_dir / "features.zarr"), mode="r")
+    assert np.asarray(store["features"]).shape == (6, 8)  # latent codes
+    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8}
+
+
+def test_lift_and_save_uncompressed_writes_full_dim_and_no_weights(tmp_path):
+    """n_components: null is supported: full-dim codes, no autoencoder, attrs say so."""
+    import zarr
+
+    out_dir = _run_lift_and_save(tmp_path, n_components=None)
+
+    assert not (out_dir / "autoencoder.pt").exists()
+    store = zarr.open(str(out_dir / "features.zarr"), mode="r")
+    assert np.asarray(store["features"]).shape == (6, 32)
+    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 32}
+
+
 def test_mesh_skips_if_ply_exists(tmp_path):
     config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}})
     rec = Reconstructor(config)
@@ -453,6 +517,36 @@ def test_mesh_skips_if_ply_exists(tmp_path):
 
     mock_mesh.assert_not_called()
     assert result == mesh_path
+
+
+def test_mesh_skip_check_matches_tsdf_writer_filename(tmp_path):
+    """mesh()'s skip-check fires on the file the real TSDF writer actually laid down.
+
+    Neither filename is hardcoded here: the mesher writes the file and mesh() looks for it,
+    so the test breaks if either side renames the mesh independently of the other.
+    """
+    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}})
+    rec = Reconstructor(config)
+
+    # Genuine write path: a tiny synthetic TSDF run produces the mesh file itself
+    fusion = Open3DTSDFFusion(output_dir=rec.backend_dir / "mesh", clean_repair=False)
+    depths = np.ones((2, 32, 32), dtype=np.float32)
+    rgbs = np.full((2, 32, 32, 3), 0.5, dtype=np.float32)
+    c2w = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)
+    intrinsics = np.eye(3, dtype=np.float32)[None].repeat(2, axis=0)
+    intrinsics[:, 0, 0] = intrinsics[:, 1, 1] = 32.0
+    intrinsics[:, 0, 2] = intrinsics[:, 1, 2] = 16.0
+    written = fusion.create(depths, rgbs, c2w, intrinsics).mesh_path
+    # Pin the writer side separately: without this, a writer regression surfaces below as the
+    # same "No PointcloudResult available" fall-through as a reader regression, hiding which broke
+    assert written.exists()
+
+    # Skip must short-circuit on that exact file rather than re-running TSDF
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
+        result = rec.mesh(overwrite=False)
+
+    mock_mesh.assert_not_called()
+    assert result == written
 
 
 def test_mesh_runs_tsdf(tmp_path):
@@ -720,6 +814,7 @@ def test_run_feedforward_attaches_viewer_when_enabled(tmp_path):
             loop_closure=True,
             viz_enabled=True,
             viz_port=9999,
+            max_points=500_000,
         )
 
     mock_lc_cls.assert_called_once_with(base=mock_creator, config=None)
@@ -747,6 +842,7 @@ def test_run_feedforward_builds_lc_config_from_dict(tmp_path):
             loop_closure={"enabled": True, "submap_size": 32, "submap_overlap": 2},
             viz_enabled=False,
             viz_port=8080,
+            max_points=500_000,
         )
 
     # LoopClosure got a config carrying the dict knobs
@@ -774,6 +870,7 @@ def test_run_feedforward_dict_enabled_false_skips_lc(tmp_path):
             loop_closure={"enabled": False, "submap_size": 32},
             viz_enabled=False,
             viz_port=8080,
+            max_points=500_000,
         )
 
     mock_lc_cls.assert_not_called()
@@ -795,6 +892,7 @@ def test_run_feedforward_invalid_lc_knob_raises(tmp_path):
                 loop_closure={"bogus_knob": 1},
                 viz_enabled=False,
                 viz_port=8080,
+                max_points=500_000,
             )
 
 
@@ -818,6 +916,7 @@ def test_run_feedforward_no_viewer_when_viz_disabled(tmp_path):
             loop_closure=True,
             viz_enabled=False,
             viz_port=8080,
+            max_points=500_000,
         )
 
     mock_viewer_cls.assert_not_called()
@@ -842,6 +941,7 @@ def test_run_feedforward_no_loop_closure_no_viewer(tmp_path):
             loop_closure=False,
             viz_enabled=True,
             viz_port=8080,
+            max_points=500_000,
         )
 
     mock_lc_cls.assert_not_called()

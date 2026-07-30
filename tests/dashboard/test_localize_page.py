@@ -1,5 +1,6 @@
 """Pure-logic tests for the localize page helpers."""
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -16,15 +17,27 @@ from collab_splats.dashboard.localize import (
 )
 from collab_splats.dashboard.operation_log import OperationLog
 
+# Flat curated scene ids: reconstruction scene + the scene supplying the query video.
+SCENE = "2026_05_07-birds-clip_03"
+QUERY = "2026_05_08-birds-handheld"
 
-def _page(tmp_path):
+
+def _page(tmp_path, source=None):
     """Build a LocalizePage with mocked source/worker (listing threads return empty)."""
-    source = MagicMock()
-    source.list_sessions.return_value = []
-    source.list_field_sessions.return_value = []
+    if source is None:
+        source = MagicMock()
+        source.list_scenes.return_value = []
+        source.list_processed_scenes.return_value = []
     worker = MagicMock()
     worker.busy = False  # MagicMock attrs are truthy; the preview busy-gate needs a real flag
     return LocalizePage(base_dir=tmp_path, source=source, gpu_worker=worker, op_log=OperationLog())
+
+
+def _join_threads(name):
+    """Join every live background thread the page spawned under `name` (deterministic options)."""
+    for t in threading.enumerate():
+        if t.name == name:
+            t.join(timeout=5)
 
 
 def test_camera_centers_inverts_world_to_camera():
@@ -60,22 +73,22 @@ def test_preselect_prefers_loma_among_multiple_dbs():
 
 def test_scene_cache_roundtrip():
     cache = SceneCache()
-    assert cache.get(("s", "v"), "mesh") is None
-    cache.put(("s", "v"), "mesh", object())
-    assert cache.get(("s", "v"), "mesh") is not None
+    assert cache.get(SCENE, "mesh") is None
+    cache.put(SCENE, "mesh", object())
+    assert cache.get(SCENE, "mesh") is not None
     cache.clear()
-    assert cache.get(("s", "v"), "mesh") is None
+    assert cache.get(SCENE, "mesh") is None
 
 
 def test_scene_cache_drop_kind_prefix():
     cache = SceneCache()
-    cache.put(("s", "v"), "mesh", object())
-    cache.put(("s", "v"), "localizer:loma-g", object())
-    cache.put(("s", "w"), "localizer:disk", object())
+    cache.put(SCENE, "mesh", object())
+    cache.put(SCENE, "localizer:loma-g", object())
+    cache.put(QUERY, "localizer:disk", object())
     cache.drop_kind("localizer")
-    assert cache.get(("s", "v"), "localizer:loma-g") is None
-    assert cache.get(("s", "w"), "localizer:disk") is None
-    assert cache.get(("s", "v"), "mesh") is not None  # CPU loads survive
+    assert cache.get(SCENE, "localizer:loma-g") is None
+    assert cache.get(QUERY, "localizer:disk") is None
+    assert cache.get(SCENE, "mesh") is not None  # CPU loads survive
 
 
 def test_load_video_button_previews_current_frame(tmp_path, monkeypatch):
@@ -92,12 +105,8 @@ def test_load_video_button_previews_current_frame(tmp_path, monkeypatch):
         lambda video, idx: np.full((4, 4, 3), idx, dtype=np.uint8),
     )
     monkeypatch.setattr(page, "_show_frame", lambda f: shown.append(int(f[0, 0, 0])))
-    page.field_session.options = ["fs"]
-    page.field_session.value = "fs"
-    page.camera.options = ["rgb_0"]
-    page.camera.value = "rgb_0"
-    page.query_video.options = ["v.mp4"]
-    page.query_video.value = "v.mp4"
+    page.query_scene.options = [QUERY]
+    page.query_scene.value = QUERY
     shown.clear()  # drop the on-select frame-0 preview
     page.frame_slider.end = 100
     page.frame_slider.value = 0  # no watcher fire (already 0) -> no debounce in flight
@@ -117,7 +126,7 @@ def test_load_video_button_previews_current_frame(tmp_path, monkeypatch):
 def test_load_video_button_requires_selection(tmp_path):
     page = _page(tmp_path)
     page._on_load_video(None)
-    assert any("select a field session" in line for line in page._op_log.log_lines)
+    assert any("select a query scene" in line for line in page._op_log.log_lines)
 
 
 def test_select_options_blank_first():
@@ -133,25 +142,25 @@ def test_scene_dropdowns_do_not_auto_cascade(tmp_path):
     from collab_splats.dashboard.localize import select_options
 
     page = _page(tmp_path)
-    page.scene_session.options = select_options(["s1"], "— select scene session —")
+    page.scene.options = select_options([SCENE], "— select scene —")
     # Blank/None both mean "nothing picked"; the watchers guard on falsy values.
-    assert not page.scene_session.value
+    assert not page.scene.value
 
 
 def test_scene_cache_evicts_oldest_mesh_beyond_keep():
     cache = SceneCache()
     for i in range(5):  # _KIND_KEEP["mesh"] == 3
-        cache.put(("s", f"v{i}"), "mesh", f"m{i}")
-    assert cache.get(("s", "v0"), "mesh") is None
-    assert cache.get(("s", "v1"), "mesh") is None
-    assert cache.get(("s", "v4"), "mesh") == "m4"
+        cache.put(f"2026_05_07-birds-v{i}", "mesh", f"m{i}")
+    assert cache.get("2026_05_07-birds-v0", "mesh") is None
+    assert cache.get("2026_05_07-birds-v1", "mesh") is None
+    assert cache.get("2026_05_07-birds-v4", "mesh") == "m4"
 
 
 def test_scene_cache_unbounded_kinds_untouched():
     cache = SceneCache()
     for i in range(5):
-        cache.put(("s", f"v{i}"), "localizer:disk", i)
-    assert cache.get(("s", "v0"), "localizer:disk") == 0
+        cache.put(f"2026_05_07-birds-v{i}", "localizer:disk", i)
+    assert cache.get("2026_05_07-birds-v0", "localizer:disk") == 0
 
 
 def test_localize_set_busy_disables_widgets(tmp_path):
@@ -159,12 +168,11 @@ def test_localize_set_busy_disables_widgets(tmp_path):
     page.set_busy(True)
     for w in (
         page.run_btn,
-        page.scene_session,
-        page.scene_video,
-        page.field_session,
-        page.camera,
-        page.query_video,
+        page.load_video_btn,
+        page.scene,
+        page.query_scene,
         page.method,
+        page.append_db,
     ):
         assert w.disabled
     page.set_busy(False)
@@ -189,12 +197,8 @@ def test_frame_slider_preview_latest_wins(tmp_path, monkeypatch):
         lambda video, idx: np.full((4, 4, 3), idx, dtype=np.uint8),
     )
     monkeypatch.setattr(page, "_show_frame", lambda f: shown.append(int(f[0, 0, 0])))
-    page.field_session.options = ["fs"]
-    page.field_session.value = "fs"
-    page.camera.options = ["rgb_0"]
-    page.camera.value = "rgb_0"
-    page.query_video.options = ["v.mp4"]
-    page.query_video.value = "v.mp4"
+    page.query_scene.options = [QUERY]
+    page.query_scene.value = QUERY
     shown.clear()  # ignore any on-select frame-0 preview
     page._preview_token = 2
     page._preview_frame(token=1, frame_idx=5, doc=None)  # superseded -> dropped
@@ -290,22 +294,102 @@ def test_render_browse_paints_header_and_scene(tmp_path, monkeypatch):
     assert page._panes["dist"].object is None  # browse clears stale run figures
 
 
-def test_scene_video_select_triggers_browse_load(tmp_path, monkeypatch):
-    """Choosing a scene video spawns the browse load with the preselected extractor."""
+def test_refresh_listings_wires_processed_to_scene_and_curated_to_query(tmp_path):
+    """Scene = reconstructions (processed bucket); Query = any curated video. The two buckets
+    are given DISJOINT contents here so a swap of the two listings cannot pass."""
+    source = MagicMock()
+    source.list_processed_scenes.return_value = [SCENE]
+    source.list_scenes.return_value = [QUERY]
+    page = _page(tmp_path, source=source)
+    _join_threads("localize-list")
+    assert set(page.scene.options.values()) == {"", SCENE}
+    assert set(page.query_scene.options.values()) == {"", QUERY}
+
+
+def test_refresh_listings_sets_options_on_the_ioloop(tmp_path, monkeypatch):
+    """Options must be assigned inside a next-tick callback: mutating widgets from the listing
+    thread writes to the Bokeh document off its IOLoop and silently drops updates."""
+    import panel as pn
+
+    class _FakeDoc:
+        session_context = None  # panel's state.session_args probes this on a live curdoc
+
+        def __init__(self):
+            self.callbacks = []
+
+        def add_next_tick_callback(self, cb):
+            self.callbacks.append(cb)
+
+    source = MagicMock()
+    source.list_processed_scenes.return_value = [SCENE]
+    source.list_scenes.return_value = [QUERY]
+    doc = _FakeDoc()
+    monkeypatch.setattr(pn.state, "curdoc", doc)
+    page = _page(tmp_path, source=source)
+    _join_threads("localize-list")
+    assert not page.scene.options  # nothing set yet — the setter is queued, not run
+    assert len(doc.callbacks) == 1
+    doc.callbacks[0]()
+    assert set(page.scene.options.values()) == {"", SCENE}
+    assert set(page.query_scene.options.values()) == {"", QUERY}
+
+
+def test_localize_scene_watcher_ignores_the_blank_option(tmp_path):
+    """The blank '— select scene —' entry must not cascade a remote feature-DB listing."""
+    page = _page(tmp_path)
+    page._source.list_localization_dbs.reset_mock()
+    page._on_scene(SimpleNamespace(new=""))
+    _join_threads("db-list")
+    page._source.list_localization_dbs.assert_not_called()
+
+
+def test_run_provenance_names_the_query_video_file(tmp_path, monkeypatch):
+    """Provenance is permanent (run_config.yaml -> zarr attrs): video_ref must identify the
+    FILE, since a curated dir may hold more than one video, plus the scene id and frame."""
+    import collab_splats.dashboard.pipeline as pipeline
+
+    page = _page(tmp_path)
+    page._source.list_localization_dbs.return_value = ["loma"]
+    monkeypatch.setattr(page, "_load_browse", lambda *a, **k: None)
+    monkeypatch.setattr(page, "_ensure_local_query_video", lambda s: tmp_path / s / "handheld.MP4")
+    monkeypatch.setattr(page, "_build_result_figures", lambda *a, **k: {})
+    monkeypatch.setattr(page, "_ensure_scene_mesh", lambda *a: None)
+    seen = {}
+    monkeypatch.setattr(pipeline, "run_localization", lambda **kw: seen.update(kw) or SimpleNamespace())
+    submitted = []
+    page._gpu.submit = lambda job, on_done, doc: submitted.append(job)
+
+    page.scene.options = [SCENE]
+    page.scene.value = SCENE
+    page.query_scene.options = [QUERY]
+    page.query_scene.value = QUERY
+    page.frame_slider.end = 100
+    page.frame_slider.value = 7
+    page._on_run(None)
+
+    assert len(submitted) == 1
+    submitted[0]()  # the worker job builds provenance from the fetched video
+    assert seen["provenance"] == {
+        "video_ref": f"{QUERY}/handheld.MP4",
+        "scene": QUERY,
+        "frame_idx": 7,
+    }
+
+
+def test_scene_select_triggers_browse_load(tmp_path, monkeypatch):
+    """Choosing a scene spawns the browse load with the preselected extractor."""
     import time
 
     page = _page(tmp_path)
     calls = []
-    monkeypatch.setattr(page, "_load_browse", lambda session, stem, extractor, doc: calls.append(extractor))
+    monkeypatch.setattr(page, "_load_browse", lambda scene, extractor, doc: calls.append((scene, extractor)))
     page._source.list_localization_dbs.return_value = ["loma"]
-    page.scene_session.options = ["sess"]
-    page.scene_session.value = "sess"
-    page._on_scene_video(SimpleNamespace(new="vid"))
-    for _ in range(50):  # _on_scene_video runs its work() on a thread
+    page._on_scene(SimpleNamespace(new=SCENE))
+    for _ in range(50):  # _on_scene runs its work() on a thread
         if calls:
             break
         time.sleep(0.1)
-    assert calls == ["loma"]
+    assert calls == [(SCENE, "loma")]
 
 
 def test_db_note_includes_localized_count(tmp_path):

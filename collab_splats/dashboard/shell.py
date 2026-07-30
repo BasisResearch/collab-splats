@@ -12,7 +12,7 @@ from collab_splats.dashboard.app import SplatsApp
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.localize import LocalizePage, SceneCache
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.dashboard.sources import SessionSource
+from collab_splats.remote import SceneSource
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +23,12 @@ class DashboardShell:
     def __init__(
         self,
         base_dir: Path,
-        source: SessionSource | None = None,
+        source: SceneSource | None = None,
         gpu_worker: GpuWorker | None = None,
         op_log: OperationLog | None = None,
     ) -> None:
         # Shared session-wide collaborators: one source/worker/log/cache across both pages.
-        source = source if source is not None else SessionSource()
+        source = source if source is not None else SceneSource()
         gpu_worker = gpu_worker if gpu_worker is not None else GpuWorker()
         op_log = op_log if op_log is not None else OperationLog()
         self._cache = SceneCache()

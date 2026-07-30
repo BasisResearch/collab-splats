@@ -25,6 +25,12 @@ pointcloud:
   method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)
   backend: vggt_omega         # vggt_omega | vggtx | mapanything  (feedforward only)
   loop_closure: false
+  # Inference-time memory guard: caps the confidence mask so a full-resolution cloud is
+  # never materialised (BaseFeedforwardCreator.max_points). Lower it on small-GPU/RAM machines.
+  max_points: 500000
+  # Export density for sparse_pc.ply. null = write every reconstructed point (default);
+  # set an int to thin the exported file only — inference is unaffected.
+  export_max_points: null
   viz:
     enabled: false          # instantiate the viser Viewer during loop closure
     port: 8080              # viser server port
@@ -39,7 +45,17 @@ pointcloud:
 semantics:
   enabled: true
   extractor: talk2dino        # talk2dino | dinov2 | maskclip
-  n_components: 64            # PCA compression dim; null = no compression
+  n_components: 64            # autoencoder latent dim; null = no compression
+  # Stop training once mean reconstruction cosine hits this, with max_epochs as the
+  # ceiling. Cross-scene comparison happens in decoded 768-D space, so fidelity is the
+  # right stop signal — more epochs cannot align two scenes' 64-D bases.
+  # NOTE: the cosine is measured on the TRAINING set, so this gate is optimistic on small
+  # scenes — few-hundred-patch fits can hit 1.0 in-sample while generalizing far worse.
+  # At production scale (10^5–10^6 patches through 768→64) the in/out-of-sample gap
+  # largely collapses; on tiny scenes read a passing target as "fit completed", not
+  # "features are trustworthy".
+  target_cosine: 0.95
+  max_epochs: 100
 
 mesh:
   enabled: false

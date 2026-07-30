@@ -141,3 +141,80 @@ def test_persist_mesh_vertex_features(tmp_path):
     assert out.shape == (3, 2)
     saved = np.load(mesh_path.parent / "vertex_features.npy")
     np.testing.assert_allclose(saved, out)
+
+
+########
+# clean_repair_mesh — component filtering + hole filling (meshlib)
+########
+
+
+def _holed_sphere_with_strays(path, radius=1.0, resolution=20):
+    """Sphere missing a cap, plus one stray blob inside its bbox and one far outside."""
+    import open3d as o3d
+
+    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius, resolution=resolution)
+    tris = np.asarray(sphere.triangles)
+    sphere.triangles = o3d.utility.Vector3iVector(tris[:-12])  # punch a hole
+    sphere.remove_unreferenced_vertices()
+
+    inside = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=6)
+    inside.translate((0.2, 0.0, 0.0))
+    outside = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=6)
+    outside.translate((radius * 9, 0.0, 0.0))
+
+    o3d.io.write_triangle_mesh(str(path), sphere + inside + outside)
+    return path
+
+
+def test_clean_repair_mesh_drops_out_of_bounds_components_and_fills_holes(tmp_path):
+    """The two jobs of the cleanup, on a mesh built to need both.
+
+    A TSDF scene comes out with floating specks from stray depth and small holes where coverage
+    thinned. Detached geometry *inside* the room (furniture) must survive — that is why the
+    bounding-box test exists instead of a plain keep-the-largest.
+    """
+    import open3d as o3d
+
+    from collab_splats.mesh.utils import clean_repair_mesh
+
+    mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply")
+    before = o3d.io.read_triangle_mesh(str(mesh_path))
+    assert len(before.cluster_connected_triangles()[2]) == 3
+    assert not before.is_watertight()
+
+    out = clean_repair_mesh(mesh_path, max_hole_size=3.0)
+
+    assert out == mesh_path  # rewritten in place, not to a new name
+    after = o3d.io.read_triangle_mesh(str(mesh_path))
+    # The far blob is dropped, the one inside the bbox is kept, and the sphere's hole is closed.
+    assert len(after.cluster_connected_triangles()[2]) == 2
+    assert after.is_watertight()
+
+
+def test_clean_repair_mesh_leaves_large_holes_alone(tmp_path):
+    """A hole bigger than max_hole_size is a real opening (unscanned wall), not a defect."""
+    import open3d as o3d
+
+    from collab_splats.mesh.utils import clean_repair_mesh
+
+    mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply")
+    clean_repair_mesh(mesh_path, max_hole_size=1e-6)  # below any real perimeter → fill nothing
+
+    after = o3d.io.read_triangle_mesh(str(mesh_path))
+    assert not after.is_watertight()  # the hole survived
+    assert len(after.get_non_manifold_edges(allow_boundary_edges=False)) == 14  # same boundary
+    assert len(after.cluster_connected_triangles()[2]) == 2  # component filtering still ran
+
+
+def test_clean_repair_mesh_use_largest_keeps_only_the_main_component(tmp_path):
+    """use_largest=True is the aggressive mode: everything but the biggest body is discarded."""
+    import open3d as o3d
+
+    from collab_splats.mesh.utils import clean_repair_mesh
+
+    mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply")
+    clean_repair_mesh(mesh_path, use_largest=True)
+
+    after = o3d.io.read_triangle_mesh(str(mesh_path))
+    assert len(after.cluster_connected_triangles()[2]) == 1  # the in-bbox blob went too
+    assert after.is_watertight()

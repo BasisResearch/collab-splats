@@ -242,10 +242,11 @@ def test_reconstructor_no_images_dir(tmp_path):
     assert rec.frames_zarr == tmp_path / "out" / "frames.zarr"
 
 
-def test_reconstructor_features_dir(tmp_path):
+def test_reconstructor_semantics_cache_dir(tmp_path):
+    """The 2D cache is scene-level: it depends on the frames only, not on the backend."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    assert rec.features_dir == tmp_path / "out" / "features"
+    assert rec.semantics_cache_dir == tmp_path / "out" / "semantics"
 
 
 def test_preprocess_skips_if_frames_zarr_exists(tmp_path):
@@ -383,14 +384,14 @@ def test_extract_semantics_uses_feature_cache(tmp_path):
     rec.pointcloud = mock_result
 
     # Pre-populate 2D cache so extraction is skipped
-    cache_path = rec.features_dir / "dinov2" / "dinov2.zarr"
+    cache_path = rec.semantics_cache_dir / "dinov2.zarr"
     cache_path.mkdir(parents=True)
 
     with (
         patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d,
         patch("collab_splats.wrapper.reconstructor._lift_and_save") as mock_lift,
     ):
-        mock_lift.return_value = rec.backend_dir / "semantics" / "dinov2"
+        mock_lift.return_value = rec.backend_dir / "semantics"
         rec.extract_semantics(result=mock_result, overwrite=False)
 
     mock_2d.assert_not_called()  # cache hit — no extraction
@@ -399,9 +400,9 @@ def test_extract_semantics_uses_feature_cache(tmp_path):
 def test_extract_semantics_skips_if_lifted_exists(tmp_path):
     config = _make_config(tmp_path, {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}})
     rec = Reconstructor(config)
-    lifted_dir = rec.backend_dir / "semantics" / "dinov2"
+    lifted_dir = rec.backend_dir / "semantics"
     lifted_dir.mkdir(parents=True)
-    (lifted_dir / "features.zarr").mkdir()
+    (lifted_dir / "dinov2_lifted.zarr").mkdir()
 
     with (
         patch("collab_splats.wrapper.reconstructor._extract_2d_features") as mock_2d,
@@ -418,8 +419,8 @@ def test_extract_2d_features_reads_zarr_directly(tmp_path):
     from collab_splats.wrapper import reconstructor as rec_mod
 
     frames_zarr = tmp_path / "frames.zarr"
-    features_dir = tmp_path / "features"
-    sentinel = tmp_path / "features" / "dinov2" / "dinov2.zarr"
+    cache_dir = tmp_path / "semantics"
+    sentinel = cache_dir / "dinov2.zarr"
 
     # Fake extractor records the call and returns a sentinel cache path
     class _FakeExtractor:
@@ -436,11 +437,12 @@ def test_extract_2d_features_reads_zarr_directly(tmp_path):
         patch.object(rec_mod, "_get_extractor", return_value=fake) as mock_get,
         patch.object(rec_mod, "FrameStore") as mock_fs,
     ):
-        result = rec_mod._extract_2d_features("dinov2", frames_zarr, features_dir)
+        result = rec_mod._extract_2d_features("dinov2", frames_zarr, cache_dir)
 
-    # Extractor resolved by name, then fed the frames.zarr path + cache dir directly
+    # Extractor resolved by name, then fed the frames.zarr path + cache dir directly. The dir
+    # is used as given: the extractor names the store, so no per-extractor subdir is joined on.
     mock_get.assert_called_once_with("dinov2")
-    assert fake.calls == [(frames_zarr, features_dir / "dinov2")]
+    assert fake.calls == [(frames_zarr, cache_dir)]
     # No temp-export bridge: FrameStore is never touched
     mock_fs.open.assert_not_called()
     # Sentinel cache path is propagated back unchanged
@@ -458,7 +460,7 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
     cache = zarr.open(str(tmp_path / "dinov2.zarr"), mode="w")
     cache["features"] = np.zeros((2, dim, 2, 2), dtype=np.float32)
     (tmp_path / "feedforward.zarr").mkdir()
-    out_dir = tmp_path / "semantics" / "dinov2"
+    out_dir = tmp_path / "semantics"
 
     with (
         patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", MagicMock()),
@@ -466,6 +468,7 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
     ):
         # Both training args are required; these tests assert file layout, so no early stop
         rec_mod._lift_and_save(
+            "dinov2",
             tmp_path / "dinov2.zarr",
             tmp_path / "feedforward.zarr",
             out_dir,
@@ -476,8 +479,8 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
     return out_dir
 
 
-def test_lift_and_save_writes_autoencoder_pt_beside_features(tmp_path):
-    """The real writer lands semantics/<extractor>/autoencoder.pt — not a compressor.pt directory.
+def test_lift_and_save_writes_weights_beside_codes(tmp_path):
+    """The real writer lands semantics/<extractor>_ae.pt — not a compressor.pt directory.
 
     FeatureAutoencoder.save() mkdirs the path it is given, so passing a filename silently
     creates a DIRECTORY of that name and no consumer can load the weights.
@@ -486,9 +489,9 @@ def test_lift_and_save_writes_autoencoder_pt_beside_features(tmp_path):
 
     out_dir = _run_lift_and_save(tmp_path, n_components=8)
 
-    assert (out_dir / "autoencoder.pt").is_file()
+    assert (out_dir / "dinov2_ae.pt").is_file()
     assert not (out_dir / "compressor.pt").exists()
-    store = zarr.open(str(out_dir / "features.zarr"), mode="r")
+    store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert np.asarray(store["features"]).shape == (6, 8)  # latent codes
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8}
 
@@ -499,8 +502,8 @@ def test_lift_and_save_uncompressed_writes_full_dim_and_no_weights(tmp_path):
 
     out_dir = _run_lift_and_save(tmp_path, n_components=None)
 
-    assert not (out_dir / "autoencoder.pt").exists()
-    store = zarr.open(str(out_dir / "features.zarr"), mode="r")
+    assert not (out_dir / "dinov2_ae.pt").exists()
+    store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert np.asarray(store["features"]).shape == (6, 32)
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 32}
 
@@ -508,7 +511,7 @@ def test_lift_and_save_uncompressed_writes_full_dim_and_no_weights(tmp_path):
 def test_mesh_skips_if_ply_exists(tmp_path):
     config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}})
     rec = Reconstructor(config)
-    mesh_path = rec.backend_dir / "mesh" / "mesh.ply"
+    mesh_path = rec.backend_dir / "mesh.ply"
     mesh_path.parent.mkdir(parents=True)
     mesh_path.touch()
 
@@ -529,7 +532,7 @@ def test_mesh_skip_check_matches_tsdf_writer_filename(tmp_path):
     rec = Reconstructor(config)
 
     # Genuine write path: a tiny synthetic TSDF run produces the mesh file itself
-    fusion = Open3DTSDFFusion(output_dir=rec.backend_dir / "mesh", clean_repair=False)
+    fusion = Open3DTSDFFusion(output_dir=rec.backend_dir, clean_repair=False)
     depths = np.ones((2, 32, 32), dtype=np.float32)
     rgbs = np.full((2, 32, 32, 3), 0.5, dtype=np.float32)
     c2w = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)
@@ -561,10 +564,70 @@ def test_mesh_runs_tsdf(tmp_path):
     (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
-        mock_mesh.return_value = rec.backend_dir / "mesh" / "mesh.ply"
+        mock_mesh.return_value = rec.backend_dir / "mesh.ply"
         result = rec.mesh(result=mock_result, overwrite=True)
 
     mock_mesh.assert_called_once()
+
+
+def test_mesh_forwards_clean_repair_from_config(tmp_path):
+    """clean_repair is reachable from a config file — the CLI/remote path is the one that meshes.
+
+    Before this key existed, only the dashboard could ask for cleanup, so a config-driven run had
+    no way to turn it on.
+    """
+    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf", "clean_repair": True}})
+    rec = Reconstructor(config)
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
+        mock_mesh.return_value = rec.backend_dir / "mesh.ply"
+        rec.mesh(result=mock_result, overwrite=True)
+
+    assert mock_mesh.call_args.kwargs["clean_repair"] is True
+
+
+def test_mesh_clean_repair_defaults_off(tmp_path):
+    """base.yaml is the sole default source, and the default must not cost every run a second pass."""
+    rec = Reconstructor(_make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}}))
+    mock_result = _make_mock_pointcloud_result(tmp_path)
+    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
+        mock_mesh.return_value = rec.backend_dir / "mesh.ply"
+        rec.mesh(result=mock_result, overwrite=True)
+
+    assert mock_mesh.call_args.kwargs["clean_repair"] is False
+
+
+def test_run_tsdf_mesh_passes_clean_repair_to_the_fusion(tmp_path):
+    """The flag has to survive the last hop too — mesh() → _run_tsdf_mesh → Open3DTSDFFusion."""
+    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
+
+    result = MagicMock()
+    result.extrinsics = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)
+    result.intrinsics = np.eye(3, dtype=np.float32)[None].repeat(2, axis=0)
+
+    ff = MagicMock()
+    ff.depth = np.ones((2, 8, 8), dtype=np.float32)
+    ff.images = np.zeros((2, 3, 8, 8), dtype=np.float32)
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
+        patch("collab_splats.mesh.tsdf.Open3DTSDFFusion") as mock_fusion,
+    ):
+        _run_tsdf_mesh(
+            result=result,
+            feedforward_zarr=tmp_path / "feedforward.zarr",
+            output_dir=tmp_path,
+            voxel_size=0.01,
+            sdf_trunc=0.04,
+            depth_trunc=1.0,
+            clean_repair=True,
+        )
+
+    assert mock_fusion.call_args.kwargs["clean_repair"] is True
 
 
 def test_run_pipeline_calls_stages_in_order(tmp_path):

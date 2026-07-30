@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,17 +8,9 @@ import numpy as np
 import open3d as o3d
 from tqdm.auto import tqdm
 
-try:
-    import meshlib.mrmeshpy as mm
-
-    _MM_AVAILABLE = True
-except ImportError:
-    mm = None
-    _MM_AVAILABLE = False
-
+from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
 from collab_splats.mesh.base import BaseMeshCreator, MeshResult
 from collab_splats.mesh.utils import clean_repair_mesh
-from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +27,10 @@ class Open3DTSDFFusion(BaseMeshCreator):
     sdf_trunc: float = 0.04
     depth_trunc: float = 20.0
     depth_scale: float = 1.0
-    clean_repair: bool = True
+    # Opt-in: cleanup rewrites the fused mesh and costs a second pass over it, so a caller asks
+    # for it rather than getting it silently. Config-driven runs reach this default — that is why
+    # it is the value that works, not the one that raises.
+    clean_repair: bool = False
     clean_max_hole_size: float = 3.0
     clean_max_edge_splits: int = 10000
     clean_use_largest: bool = False
@@ -93,14 +87,18 @@ class Open3DTSDFFusion(BaseMeshCreator):
         mesh = volume.extract_triangle_mesh()
 
         # Filename matches Reconstructor.mesh()'s skip-check and the dashboard's mesh lookup
-        raw_path = self.output_dir / "mesh.ply"
-        o3d.io.write_triangle_mesh(str(raw_path), mesh)
-        final_path = raw_path
+        mesh_path = self.output_dir / "mesh.ply"
+        o3d.io.write_triangle_mesh(str(mesh_path), mesh)
 
+        # Opt-in cleanup, rewriting in place: mesh.ply is the one name every reader in this repo
+        # uses (Reconstructor's skip-check, splatter, dashboard, the remote push), and a separate
+        # mesh_clean.ply would mean each of them needs a second probe and a precedence rule.
         if self.clean_repair:
-            # meshlib addPartByMask API incompatible with installed version.
-            raise AssertionError(
-                "clean_repair disabled — meshlib addPartByMask API incompatible. " "Set clean_repair=False."
+            clean_repair_mesh(
+                mesh_path,
+                max_hole_size=self.clean_max_hole_size,
+                max_edge_splits=self.clean_max_edge_splits,
+                use_largest=self.clean_use_largest,
             )
 
-        return MeshResult(mesh_path=final_path)
+        return MeshResult(mesh_path=mesh_path)

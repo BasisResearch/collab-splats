@@ -77,8 +77,8 @@ def test_fit_rejects_empty_features():
 def test_metrics_survive_save_load(tmp_path):
     ae = FeatureAutoencoder(input_dim=32, latent_dim=8)
     ae.fit(_features(), epochs=2)
-    ae.save(tmp_path)
-    loaded = FeatureAutoencoder.load(tmp_path)
+    ae.save(tmp_path, "talk2dino")
+    loaded = FeatureAutoencoder.load(tmp_path, "talk2dino")
     assert loaded.recon_cosine == ae.recon_cosine
     assert loaded.recon_mse == ae.recon_mse
     assert loaded.epochs_run == ae.epochs_run
@@ -96,9 +96,9 @@ def test_load_legacy_checkpoint_without_metrics(tmp_path):
         "regularization_kwargs": {},
         "state_dict": ae.state_dict(),
     }
-    torch.save(payload, tmp_path / "autoencoder.pt")
+    torch.save(payload, tmp_path / "talk2dino_ae.pt")
 
-    loaded = FeatureAutoencoder.load(tmp_path)
+    loaded = FeatureAutoencoder.load(tmp_path, "talk2dino")
     assert loaded.recon_cosine == 0.0
     assert loaded.recon_mse == 0.0
     assert loaded.epochs_run == 0

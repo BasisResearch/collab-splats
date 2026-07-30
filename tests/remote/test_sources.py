@@ -484,11 +484,11 @@ def test_push_outputs_targets_scene_dir_with_excludes(monkeypatch, tmp_path):
 
 
 def test_push_excludes_raw_feature_maps():
-    """features/ is regenerable from frames + extractor, and is the bulk of the tree."""
-    assert "/features/**" in PUSH_EXCLUDES
+    """The scene-root 2D cache is regenerable from frames + extractor, and is the bulk of the tree."""
+    assert "/semantics/**" in PUSH_EXCLUDES
     # rclone reads a leading slash as "relative to the transfer root". fnmatch has no such notion,
     # so model it: strip the anchor and match the root-relative path.
-    assert any(fnmatch.fnmatchcase("features/dinov2/0000.npy", p.lstrip("/")) for p in PUSH_EXCLUDES)
+    assert any(fnmatch.fnmatchcase("semantics/dinov2.zarr/c/0", p.lstrip("/")) for p in PUSH_EXCLUDES)
 
 
 @pytest.mark.parametrize("name", ("frames.zarr/zarr.json", "frames.zarr/images/c/0/0/0", "frames.zarr"))
@@ -709,19 +709,20 @@ def test_streaming_failure_tail_keeps_the_error_over_progress_lines(monkeypatch,
 
 
 def test_push_excludes_anchor_the_2d_feature_cache_at_the_scene_root():
-    """Unanchored, `features/**` also excludes `<backend>/feedforward.zarr/features/**`.
+    """Unanchored, `semantics/**` would also exclude `<backend>/semantics/**` — the deliverable.
 
     Measured with rclone v1.53.3-DEV, local->local `copy --dry-run` over a tree holding both
     `features/x` and `sub/feedforward.zarr/features/x`: `--exclude 'features/**'` skipped BOTH,
-    while `--exclude '/features/**'` skipped only the root one. The intended target is
-    Reconstructor.features_dir == output_path/"features" — depth 1 under the pushed root — so
-    anchoring still excludes it.
+    while `--exclude '/features/**'` skipped only the root one. The same rule applies here, and
+    the stakes are higher: the intended target is Reconstructor.semantics_cache_dir ==
+    output_path/"semantics" (regenerable 2D patch maps, depth 1 under the pushed root), while the
+    nested namesake `<backend>/semantics/` holds the lifted per-point features the push exists to
+    publish. Dropping the slash would silently ship scenes with no semantics.
     """
-    assert "/features/**" in PUSH_EXCLUDES
-    assert "features/**" not in PUSH_EXCLUDES, "unanchored: rclone matches it at any depth"
-    # The nested namesake is real data, not a regenerable cache: PULL_EXCLUDES lists it as a member
-    # worth skipping on a *display* pull, and FeedforwardResult reads it back.
-    assert any(p.endswith("feedforward.zarr/features/**") for p in PULL_EXCLUDES)
+    assert "/semantics/**" in PUSH_EXCLUDES
+    assert "semantics/**" not in PUSH_EXCLUDES, "unanchored: rclone matches it at any depth"
+    # Nothing may exclude the lifted pair under the backend dir, at any depth
+    assert not any("semantics" in p and not p.startswith("/") for p in PUSH_EXCLUDES)
 
 
 ########

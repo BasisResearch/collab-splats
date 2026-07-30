@@ -21,7 +21,7 @@ def _fake_frames(n=3):
     return frames, records
 
 
-def _write_semantics(semantics_dir, n_points=32, latent=8, input_dim=32):
+def _write_semantics(semantics_dir, n_points=32, latent=8, input_dim=32, extractor="talk2dino"):
     """Write the semantics artifact pair a scene dir is expected to carry.
 
     latent MUST stay != input_dim: with equal widths latent codes and decoded features have
@@ -30,7 +30,7 @@ def _write_semantics(semantics_dir, n_points=32, latent=8, input_dim=32):
     assert latent != input_dim, "fixture must not hide a latent/decoded mixup behind equal widths"
     torch.manual_seed(0)
     codes = np.random.default_rng(0).random((n_points, latent), dtype=np.float32)
-    write_point_features(semantics_dir, codes, FeatureAutoencoder(input_dim=input_dim, latent_dim=latent))
+    write_point_features(semantics_dir, extractor, codes, FeatureAutoencoder(input_dim=input_dim, latent_dim=latent))
 
 
 class _InlineThread:
@@ -146,12 +146,10 @@ def test_transfer_mesh_features_writes_decoded_features(tmp_path):
 
     from collab_splats.dashboard import pipeline
 
-    mesh_dir = tmp_path / "mesh"
-    mesh_dir.mkdir()
     verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
     tris = np.array([[0, 1, 2]], dtype=np.int32)
     mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris))
-    o3d.io.write_triangle_mesh(str(mesh_dir / "mesh.ply"), mesh)
+    o3d.io.write_triangle_mesh(str(tmp_path / "mesh.ply"), mesh)
 
     sem_dir = tmp_path / "semantics"
     _write_semantics(sem_dir, n_points=3, latent=2, input_dim=5)
@@ -163,7 +161,7 @@ def test_transfer_mesh_features_writes_decoded_features(tmp_path):
 
     pipeline._transfer_mesh_features(_Result(), tmp_path, k=1, sdf_trunc=0.5)
 
-    out = np.load(mesh_dir / "vertex_features.npy")
+    out = np.load(tmp_path / "vertex_features.npy")
     assert out.shape == (3, 5)  # decoded input_dim, NOT the 2-D latent width
     np.testing.assert_allclose(out, pipeline.load_point_features(sem_dir), rtol=1e-5, atol=1e-6)
 
@@ -174,13 +172,16 @@ def test_transfer_mesh_features_writes_decoded_features(tmp_path):
 
 
 def test_lift_and_compress_caches_latent_codes_not_decoded(tmp_path):
-    """features.zarr gets the LATENT codes (+ weights + dim attrs), never the decoded features.
+    """The lifted store gets the LATENT codes (+ weights + dim attrs), never the decoded features.
 
     Input width 80 vs latent 64 so the two are distinguishable: writing decoded features (or
     lifting the raw maps instead of the encoded ones) lands 80 columns and fails here.
     """
     sem_dir = tmp_path / "semantics"
     sem_dir.mkdir()
+    # The 2D cache store is where the write path recovers the extractor name from — it is handed
+    # the directory, never the extractor, so both halves of the pair are named after this stem.
+    zarr.open(str(sem_dir / "talk2dino.zarr"), mode="w")
     maps = [torch.randn(80, 2, 2) for _ in range(2)]  # (D, H_p, W_p)
 
     # Fake lift returns the maps it was handed, flattened to points — so the stored width
@@ -195,10 +196,10 @@ def test_lift_and_compress_caches_latent_codes_not_decoded(tmp_path):
         pl._lift_and_compress(object(), sem_dir, MagicMock())
 
     latent = pl.semantics_ae_policy().latent_dim
-    store = zarr.open(str(sem_dir / "features.zarr"), mode="r")
+    store = zarr.open(str(sem_dir / "talk2dino_lifted.zarr"), mode="r")
     assert np.asarray(store["features"]).shape == (8, latent)
     assert dict(store.attrs) == {"input_dim": 80, "latent_dim": latent}
-    assert (sem_dir / "autoencoder.pt").is_file()
+    assert (sem_dir / "talk2dino_ae.pt").is_file()
     # Round-trip: the cached pair decodes back to the full input width
     assert pl.load_point_features(sem_dir).shape == (8, 80)
 
@@ -206,9 +207,9 @@ def test_lift_and_compress_caches_latent_codes_not_decoded(tmp_path):
 def test_load_point_features_full_dim_pair_needs_no_weights(tmp_path):
     """semantics.n_components: null writes full-dim codes and no autoencoder — still readable."""
     feats = np.random.default_rng(0).random((6, 5), dtype=np.float32)
-    write_point_features(tmp_path, feats)  # ae=None -> uncompressed
+    write_point_features(tmp_path, "talk2dino", feats)  # ae=None -> uncompressed
 
-    assert not (tmp_path / "autoencoder.pt").exists()
+    assert not (tmp_path / "talk2dino_ae.pt").exists()
     assert pl.point_features_cached(tmp_path)
     out = pl.load_point_features(tmp_path)
     # Returned as-is apart from the L2 normalization every consumer expects
@@ -218,7 +219,7 @@ def test_load_point_features_full_dim_pair_needs_no_weights(tmp_path):
 def test_load_point_features_rejects_latent_codes_without_weights(tmp_path):
     """Half-written pair (codes, no weights): raise, never hand back undecoded codes."""
     _write_semantics(tmp_path, n_points=4, latent=2, input_dim=5)
-    (tmp_path / "autoencoder.pt").unlink()  # crash between the two writes
+    (tmp_path / "talk2dino_ae.pt").unlink()  # crash between the two writes
 
     assert not pl.point_features_cached(tmp_path)  # -> caller re-lifts instead of getting stuck
     with pytest.raises(FileNotFoundError, match="re-lift"):
@@ -227,7 +228,7 @@ def test_load_point_features_rejects_latent_codes_without_weights(tmp_path):
 
 def test_load_point_features_rejects_legacy_codes_without_weights(tmp_path):
     """Pre-attrs scenes with no weights are indistinguishable from orphans — raise, don't guess."""
-    store = zarr.open(str(tmp_path / "features.zarr"), mode="w")
+    store = zarr.open(str(tmp_path / "talk2dino_lifted.zarr"), mode="w")
     store["features"] = np.zeros((4, 2), dtype=np.float32)  # no dim attrs
 
     assert not pl.point_features_cached(tmp_path)
@@ -277,6 +278,7 @@ def test_lift_and_compress_fit_uses_the_shared_policy(tmp_path):
     """The fresh-reconstruction fit is gated on the config's fidelity target, not just epochs."""
     sem_dir = tmp_path / "semantics"
     sem_dir.mkdir()
+    zarr.open(str(sem_dir / "talk2dino.zarr"), mode="w")  # the stem both written halves take their name from
     maps = [torch.randn(80, 2, 2) for _ in range(2)]
     seen = {}
     real_fit = FeatureAutoencoder.fit
@@ -336,8 +338,8 @@ def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tm
     _write_semantics(sem_dir, n_points=37, latent=8, input_dim=32)
 
     # Reference: decode every code in ONE call through the same weights.
-    codes = torch.from_numpy(np.asarray(zarr.open(str(sem_dir / "features.zarr"), mode="r")["features"]))
-    ae = FeatureAutoencoder.load(sem_dir)
+    codes = torch.from_numpy(np.asarray(zarr.open(str(sem_dir / "talk2dino_lifted.zarr"), mode="r")["features"]))
+    ae = FeatureAutoencoder.load(sem_dir, "talk2dino")
     with torch.no_grad():
         expected = torch.nn.functional.normalize(ae.per_point_decode(codes), dim=1).numpy()
 
@@ -430,7 +432,7 @@ def test_load_browse_data_composes_result_and_zarr(tmp_path, monkeypatch):
     assert data.extractor == "loma"
     assert data.ref_extrinsics.shape == (3, 4, 4)
     assert data.localized_extrinsics.shape == (1, 4, 4)
-    assert data.mesh_path == out_dir / "mesh" / "mesh.ply"
+    assert data.mesh_path == out_dir / "mesh.ply"
 
 
 def test_load_browse_data_pulls_scene_into_its_local_dir(tmp_path, monkeypatch):

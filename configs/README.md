@@ -49,16 +49,16 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
 <output-root>/2024_02_06/C0043/
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
   frames.zarr                  ← decode-once keyframe store (there is no images/ dir)
-  features/                    ← 2D feature cache (one subdir per extractor)
+  semantics/
+    <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/
     feedforward.zarr           ← depth maps, poses, confidence, 3D points
                                ←   (+ local_features/<extractor>/reconstruction if localize ran)
+    sparse_pc.ply
+    mesh.ply                   ← (only if mesh.enabled=true)
     semantics/
-      <extractor>/
-        features.zarr          ← lifted 3D features (N_points × latent_dim)
-        autoencoder.pt         ← autoencoder weights (if semantics.n_components set)
-    mesh/
-      mesh.ply                 ← (only if mesh.enabled=true)
+      <extractor>_lifted.zarr  ← lifted 3D features (N_points × latent_dim)
+      <extractor>_ae.pt        ← autoencoder weights (if semantics.n_components set)
 ```
 
 ---
@@ -198,16 +198,22 @@ large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in
 <output_path>/
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
   frames.zarr                  ← canonical decode-once keyframe store (chunked images + records + provenance)
-  features/                    ← 2D feature cache (one subdir per extractor)
+  semantics/
+    <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/
     feedforward.zarr           ← depth maps, poses, confidence, 3D points
+    sparse_pc.ply
+    mesh.ply                   ← (only if mesh.enabled=true)
     semantics/
-      <extractor>/
-        features.zarr          ← lifted 3D features (N_points × n_components)
-        autoencoder.pt         ← autoencoder weights, needed to decode them (if n_components set)
-    mesh/
-      mesh.ply                 ← (only if mesh.enabled=true)
+      <extractor>_lifted.zarr  ← lifted 3D features (N_points × n_components)
+      <extractor>_ae.pt        ← autoencoder weights, needed to decode them (if n_components set)
 ```
+
+The 2D patch cache sits at the scene root because it depends only on the frames; the lift is
+what depends on the backend, so `<extractor>_lifted.zarr` sits under `<backend>/`. The
+`_lifted` suffix is what separates the two in the dashboard's flat layout, where both live in
+one `semantics/` dir. Naming both halves after the extractor also lets two extractors coexist
+in the same scene instead of overwriting each other.
 
 ### Processed scene layout
 
@@ -216,10 +222,10 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | path | consumer |
 |---|---|
 | `<backend>/sparse_pc.ply` | any pipeline — binary little-endian, float32 xyz + uchar rgb |
-| `<backend>/mesh/mesh.ply` | any pipeline |
+| `<backend>/mesh.ply` | any pipeline |
 | `<backend>/transforms.json` | camera poses, `ply_file_path`, `applied_transform` (splatfacto) |
-| `<backend>/semantics/<extractor>/features.zarr` | per-point latent codes (`semantics.n_components`-D) |
-| `<backend>/semantics/<extractor>/autoencoder.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
+| `<backend>/semantics/<extractor>_lifted.zarr` | per-point latent codes (`semantics.n_components`-D) |
+| `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
 | `<backend>/feedforward.zarr` | further processing inside this repo (depth, poses, confidence) |
 | `frames.zarr` | the keyframes the reconstruction was built from; required to localize |
@@ -231,8 +237,9 @@ latent code is only meaningful next to the point set it indexes. `frames.zarr` s
 scene root instead: the keyframes are decoded once from the video and shared by every
 backend that reconstructs the scene.
 
-Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote/sources.py`): `features/**` (raw 2D
-feature maps, regenerable from frames + extractor) and the source video, which the remote
+Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote/sources.py`): `/semantics/**` at the
+scene root (raw 2D patch maps, regenerable from frames + extractor — note the leading slash,
+which is what keeps `<backend>/semantics/**` in the push) and the source video, which the remote
 driver fetches into the very scene dir it later pushes and which already lives in
 `environments-curated`. `frames.zarr` **is** pushed — it is the sole persistent keyframe
 store, so localization or a correspondence plot against a published scene works directly,
@@ -259,25 +266,30 @@ scenes.
 #### The dashboard cannot browse a scene published by the remote driver
 
 The published tree is backend-keyed (`<scene>/<backend>/feedforward.zarr`) and the dashboard reads
-flat (`<scene>/feedforward.zarr`, `<scene>/semantics/`, `<scene>/mesh/mesh.ply`). Pointing the
+flat (`<scene>/feedforward.zarr`, `<scene>/semantics/`, `<scene>/mesh.ply`). Pointing the
 dashboard at a published scene does not just fail to load — its existence gate never trips, so the
 scene re-pulls from GCS on every select and then errors in the op log. This is deliberate: the
 dashboard's flat layout is what every dashboard scene already on disk uses, and unifying the read
 path would orphan them all. Use the viewer or a notebook for published scenes.
 
-#### Scenes reconstructed before the mesh rename need one re-run
+#### Scenes reconstructed before the layout rename need one re-run
 
-The TSDF output is now `mesh/mesh.ply`. Older scenes still hold the previous
-`mesh_tsdf.ply` name, so `wrapper/splatter.py` raises `FileNotFoundError` and the dashboard
-shows no mesh. There is deliberately no legacy fallback — it would restore the two-name
-ambiguity the rename removed. Such scenes need `mesh(overwrite=True)` run once.
+The TSDF output is now `<backend>/mesh.ply` (was `mesh/mesh_tsdf.ply`, then `mesh/mesh.ply`),
+so older scenes make `wrapper/splatter.py` raise `FileNotFoundError` and the dashboard show no
+mesh. Semantics moved the same way: the 2D cache is `<scene>/semantics/<extractor>.zarr` (was
+`features/<extractor>/<extractor>.zarr`) and the lifted pair is
+`<backend>/semantics/<extractor>_lifted.zarr` + `_ae.pt` (was
+`<backend>/semantics/<extractor>/features.zarr` + `autoencoder.pt`). There are deliberately no
+legacy fallbacks — they would restore exactly the two-name ambiguity the rename removed. Such
+scenes need `mesh(overwrite=True)` and `extract_semantics(overwrite=True)` run once; the 2D
+cache re-extracts, which is the expensive half.
 
 ---
 
 ## Dashboard
 
 The dashboard browses **dashboard-produced scenes**, whose tree is flat: it reads
-`<scene>/feedforward.zarr` for the pointcloud, `<scene>/semantics/features.zarr` for semantic
-features, and `<scene>/mesh/mesh.ply` for the mesh. Point it at a scene the dashboard itself
+`<scene>/feedforward.zarr` for the pointcloud, `<scene>/semantics/<extractor>_lifted.zarr` for
+semantic features, and `<scene>/mesh.ply` for the mesh. Point it at a scene the dashboard itself
 built. It cannot read the backend-keyed tree the remote driver publishes — see "The dashboard
 cannot browse a scene published by the remote driver" under Where outputs land.

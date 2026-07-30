@@ -69,16 +69,12 @@ def test_fit_reduces_loss():
     # Baseline: cosine sim before training
     ae = _make_ae()
     with torch.no_grad():
-        sim_before = F.cosine_similarity(
-            ae.per_point_decode(ae.per_point_encode(features)), features
-        ).mean().item()
+        sim_before = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
 
     ae.fit(features, epochs=30, batch_size=N, lr=1e-2)
 
     with torch.no_grad():
-        sim_after = F.cosine_similarity(
-            ae.per_point_decode(ae.per_point_encode(features)), features
-        ).mean().item()
+        sim_after = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
 
     assert sim_after > sim_before, f"cosine sim did not improve: {sim_before:.3f} → {sim_after:.3f}"
 
@@ -120,8 +116,8 @@ def test_save_load_roundtrip():
         expected = ae.per_point_encode(x)
 
     with tempfile.TemporaryDirectory() as tmp:
-        ae.save(Path(tmp))
-        ae2 = FeatureAutoencoder.load(Path(tmp))
+        ae.save(Path(tmp), "talk2dino")
+        ae2 = FeatureAutoencoder.load(Path(tmp), "talk2dino")
 
     with torch.no_grad():
         actual = ae2.per_point_encode(x)
@@ -161,16 +157,12 @@ def test_fit_with_reg_target():
         regularization_kwargs=REG_KWARGS,
     )
     with torch.no_grad():
-        sim_before = F.cosine_similarity(
-            ae.per_point_decode(ae.per_point_encode(features)), features
-        ).mean().item()
+        sim_before = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
 
     ae.fit(features, reg_target=reg_target, epochs=30, batch_size=N, lr=1e-2)
 
     with torch.no_grad():
-        sim_after = F.cosine_similarity(
-            ae.per_point_decode(ae.per_point_encode(features)), features
-        ).mean().item()
+        sim_after = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
 
     assert sim_after > sim_before, f"cosine sim did not improve: {sim_before:.3f} → {sim_after:.3f}"
 
@@ -199,8 +191,8 @@ def test_save_load_roundtrip_with_reg():
         expected = ae.per_point_encode(x)
 
     with tempfile.TemporaryDirectory() as tmp:
-        ae.save(Path(tmp))
-        ae2 = FeatureAutoencoder.load(Path(tmp))
+        ae.save(Path(tmp), "talk2dino")
+        ae2 = FeatureAutoencoder.load(Path(tmp), "talk2dino")
 
     assert ae2.reg_head is not None
     assert ae2.reg_head.out_features == REG_DIM

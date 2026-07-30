@@ -265,8 +265,8 @@ class FeatureAutoencoder(nn.Module):
     # Persistence
     ####################################################################
 
-    def save(self, path: Path) -> None:
-        """Save autoencoder to ``path/autoencoder.pt``.
+    def save(self, path: Path, extractor: str) -> None:
+        """Save autoencoder to ``path/<extractor>_ae.pt``.
 
         Moves model to CPU before saving so the checkpoint is device-agnostic,
         then restores the original device.
@@ -289,19 +289,21 @@ class FeatureAutoencoder(nn.Module):
             "recon_mse": self.recon_mse,
             "epochs_run": self.epochs_run,
         }
-        torch.save(payload, path / "autoencoder.pt")
+        weights_path = ae_path(path, extractor)
+        torch.save(payload, weights_path)
 
         # Restore original device
         self.to(device)
-        logger.info("saved autoencoder → %s/autoencoder.pt", path)
+        logger.info("saved autoencoder → %s", weights_path)
 
     @classmethod
-    def load(cls, path: Path) -> "FeatureAutoencoder":
-        """Load autoencoder from ``path/autoencoder.pt``."""
+    def load(cls, path: Path, extractor: str) -> "FeatureAutoencoder":
+        """Load autoencoder from ``path/<extractor>_ae.pt``."""
         path = Path(path)
 
         # Reconstruct architecture from saved hyperparams, then load weights
-        payload = torch.load(path / "autoencoder.pt", map_location="cpu", weights_only=True)
+        weights_path = ae_path(path, extractor)
+        payload = torch.load(weights_path, map_location="cpu", weights_only=True)
         ae = cls(
             input_dim=payload["input_dim"],
             latent_dim=payload["latent_dim"],
@@ -315,33 +317,66 @@ class FeatureAutoencoder(nn.Module):
         ae.epochs_run = payload.get("epochs_run", 0)
         ae.eval()
 
-        logger.info("loaded autoencoder ← %s/autoencoder.pt", path)
+        logger.info("loaded autoencoder ← %s", weights_path)
         return ae
 
 
 ########################################################################
-# Per-point artifact pair (features.zarr + autoencoder.pt)
+# Per-point artifact pair (<extractor>_lifted.zarr + <extractor>_ae.pt)
 ########################################################################
 
+# Role suffixes. `_lifted` is load-bearing, not decorative: the dashboard's flat layout puts the
+# backend-agnostic 2D patch cache (`<extractor>.zarr`) and the lifted per-point codes in the SAME
+# directory, so the filename is the only thing that can tell the two apart there.
+LIFTED_SUFFIX = "_lifted.zarr"
+AE_SUFFIX = "_ae.pt"
 
-def write_point_features(out_dir: Path, codes: np.ndarray, ae: Optional[FeatureAutoencoder] = None) -> None:
-    """Write the canonical per-point pair: out_dir/features.zarr (+ autoencoder.pt when compressed).
+
+def lifted_store_path(out_dir: Path, extractor: str) -> Path:
+    """Path of one extractor's per-point latent store."""
+    return Path(out_dir) / f"{extractor}{LIFTED_SUFFIX}"
+
+
+def ae_path(out_dir: Path, extractor: str) -> Path:
+    """Path of the autoencoder that decodes ``lifted_store_path``'s codes."""
+    return Path(out_dir) / f"{extractor}{AE_SUFFIX}"
+
+
+def find_lifted_extractor(out_dir: Path) -> Optional[str]:
+    """Name of the single lifted extractor in ``out_dir``, or None when there is none.
+
+    Lets callers that only know the directory (the dashboard) resolve the pair without being
+    told the extractor. Raises on multiple matches rather than picking one — a wrong guess
+    would silently mix one extractor's codes with another's decoder.
+    """
+    stems = sorted(p.name[: -len(LIFTED_SUFFIX)] for p in Path(out_dir).glob(f"*{LIFTED_SUFFIX}"))
+    if not stems:
+        return None
+    if len(stems) > 1:
+        raise ValueError(f"{out_dir} holds several lifted stores {stems} — pass the extractor explicitly")
+    return stems[0]
+
+
+def write_point_features(
+    out_dir: Path, extractor: str, codes: np.ndarray, ae: Optional[FeatureAutoencoder] = None
+) -> None:
+    """Write the per-point pair: ``out_dir/<extractor>_lifted.zarr`` (+ ``_ae.pt`` when compressed).
 
     Single writer for every lifting path. Records input_dim/latent_dim on the zarr group's attrs
     so the artifact is self-describing: equal widths (ae=None) mean full-dim codes that need no
     weights, unequal widths mean the weights are REQUIRED to decode them. Without that marker a
-    missing autoencoder.pt is ambiguous — uncompressed-by-design vs latent codes orphaned by a
+    missing autoencoder is ambiguous — uncompressed-by-design vs latent codes orphaned by a
     crash — and a reader would have to guess, silently handing back undecoded codes.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     codes = np.asarray(codes)
-    features_zarr = out_dir / "features.zarr"
+    lifted_zarr = lifted_store_path(out_dir, extractor)
 
     # Codes first, then attrs, then weights; a failure anywhere after the store is created
     # removes it again so no half-pair (unreadable codes) is ever left behind on disk.
     try:
-        store = zarr.open(str(features_zarr), mode="w")
+        store = zarr.open(str(lifted_zarr), mode="w")
         store["features"] = codes
         store.attrs.update(
             {
@@ -350,7 +385,7 @@ def write_point_features(out_dir: Path, codes: np.ndarray, ae: Optional[FeatureA
             }
         )
         if ae is not None:
-            ae.save(out_dir)
+            ae.save(out_dir, extractor)
     except Exception:
-        shutil.rmtree(features_zarr, ignore_errors=True)
+        shutil.rmtree(lifted_zarr, ignore_errors=True)
         raise

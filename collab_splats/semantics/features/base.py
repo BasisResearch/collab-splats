@@ -22,13 +22,14 @@ import torchvision.transforms as T
 from PIL import Image
 from transformers import AutoModel
 
-from collab_splats.utils.image import open_image, resize_image
-from collab_splats.utils.torch_utils import RegistryMixin
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.semantics.utils import (
     compute_semantic_contrast,
     get_device,
     interpolate_to_patch_size,
 )
+from collab_splats.utils.image import open_image, resize_image
+from collab_splats.utils.torch_utils import RegistryMixin
 
 # TORCH_HOME: respects $TORCH_HOME env var, falls back to ~/.cache/torch (torch default)
 TORCH_HOME = os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
@@ -189,8 +190,12 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         from PIL import Image as _PILImage
 
         zarr_path = Path(cache_dir) / f"{self.name}.zarr"
-        frames_store = zarr.open(str(frames_zarr_path), mode="r")
-        N = int(frames_store.attrs["n_frames"])
+        # Read through FrameStore, not raw zarr keys: the store's arrays are `images`/`frame_idx`
+        # and its attrs are record_keys/provenance/schema_version. Indexing an invented `frames`
+        # key or an `n_frames` attr is how this path stayed broken — both look plausible and
+        # neither exists.
+        frames = FrameStore.open(frames_zarr_path)
+        N = len(frames)
 
         # Validate existing cache before running extraction
         if skip_existing and zarr_path.exists():
@@ -206,7 +211,7 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
 
         # Probe first frame to learn output shape (D, H_p, W_p) before allocating store
-        first_frame = _PILImage.fromarray(frames_store["frames"][0]).convert("RGB")
+        first_frame = _PILImage.fromarray(frames.image(0)).convert("RGB")
         with torch.no_grad():
             [first_feat] = self.forward([first_frame])
         D, H_p, W_p = first_feat.shape
@@ -234,7 +239,7 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
         # Iterate remaining frames lazily — never loads more than one frame into RAM
         for i in range(1, N):
-            pil_img = _PILImage.fromarray(frames_store["frames"][i]).convert("RGB")
+            pil_img = _PILImage.fromarray(frames.image(i)).convert("RGB")
             with torch.no_grad():
                 [feat] = self.forward([pil_img])
             arr[i] = feat.cpu().float().numpy()

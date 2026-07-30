@@ -52,14 +52,14 @@ PULL_EXCLUDES = (
 # PULL_EXCLUDES above already assumes. Excluding it here made pulling it impossible.
 # Bracket classes rather than bare `*.mp4`: rclone globs are case sensitive and camera
 # files are commonly uppercase (C0043.MP4).
-# The feature-cache pattern is anchored with a leading slash. rclone matches an unanchored
-# pattern at ANY depth (measured, v1.53.3-DEV: `--exclude 'features/**'` on a local copy also
-# skipped `sub/feedforward.zarr/features/x`), which would have dropped the feedforward.zarr
-# `features` member — real data that PULL_EXCLUDES lists and FeedforwardResult reads back. The
-# intended target is Reconstructor.features_dir, i.e. `features/` at the pushed root, so
-# anchoring still excludes it.
+# The 2D-cache pattern MUST keep its leading slash. rclone matches an unanchored pattern at ANY
+# depth (measured, v1.53.3-DEV: `--exclude 'features/**'` on a local copy also skipped
+# `sub/feedforward.zarr/features/x`). Unanchored, `semantics/**` would also match
+# `<backend>/semantics/**` — the lifted per-point features, which are the whole point of the push —
+# and it would still match the feedforward.zarr `features` member. Anchored it hits exactly
+# Reconstructor.semantics_cache_dir, the regenerable patch cache at the pushed root.
 PUSH_EXCLUDES = (
-    "/features/**",
+    "/semantics/**",
     "*.[Mm][Pp]4",
     "*.[Mm][Oo][Vv]",
     "*.[Aa][Vv][Ii]",
@@ -400,7 +400,7 @@ class SceneSource:
 
         The scene pull skips the dense per-pixel arrays (PULL_EXCLUDES) because display
         never needs them — but the feature lift on legacy scenes (no cached
-        semantics/features.zarr) does. This pulls exactly the named members on demand.
+        semantics/<extractor>_lifted.zarr) does. This pulls exactly the named members on demand.
         """
         dest = Path(dest_dir) / "feedforward.zarr"
         dest.mkdir(parents=True, exist_ok=True)

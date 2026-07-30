@@ -202,12 +202,11 @@ def test_score_query_blank_positive_does_not_lift(tmp_path, monkeypatch):
 def test_load_mesh_vertex_features_normalizes(tmp_path):
     from collab_splats.dashboard.viewer import load_mesh_vertex_features
 
-    mesh_dir = tmp_path / "mesh"
-    mesh_dir.mkdir()
+    # vertex_features.npy sits beside mesh.ply, which is now the scene dir itself
     feats = np.array([[3.0, 4.0], [0.0, 2.0]], dtype=np.float32)
-    np.save(mesh_dir / "vertex_features.npy", feats)
+    np.save(tmp_path / "vertex_features.npy", feats)
 
-    out = load_mesh_vertex_features(mesh_dir)
+    out = load_mesh_vertex_features(tmp_path)
     norms = np.linalg.norm(out, axis=1)
     np.testing.assert_allclose(norms, [1.0, 1.0], rtol=1e-5)
 
@@ -472,8 +471,8 @@ def test_mesh_mode_without_mesh_logs():
     assert any("mesh not found" in line for line in op_log.log_lines)
 
 
-def test_ensure_lifted_uses_cached_features_zarr_fast_path(tmp_path):
-    """First query must read the cached features.zarr, not re-lift from the 2D feature zarr.
+def test_ensure_lifted_uses_cached_lifted_store_fast_path(tmp_path):
+    """First query must read the cached lifted store, not re-lift from the 2D feature zarr.
 
     The cached artifact is LATENT codes, so the fast path must hand back DECODED full-dim
     features — score_queries compares them against full-dim text embeddings.
@@ -483,9 +482,9 @@ def test_ensure_lifted_uses_cached_features_zarr_fast_path(tmp_path):
     sem_dir = tmp_path / "semantics"
     sem_dir.mkdir()
     codes = np.random.rand(20, 8).astype(np.float32)
-    store = zarr.open(str(sem_dir / "features.zarr"), mode="w")
+    store = zarr.open(str(sem_dir / "talk2dino_lifted.zarr"), mode="w")
     store["features"] = codes
-    FeatureAutoencoder(input_dim=32, latent_dim=8).save(sem_dir)
+    FeatureAutoencoder(input_dim=32, latent_dim=8).save(sem_dir, "talk2dino")
 
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(p=20), mesh_path=None, semantics_dir=sem_dir)  # no point_features passed

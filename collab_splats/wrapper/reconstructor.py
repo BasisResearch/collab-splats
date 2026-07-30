@@ -21,7 +21,11 @@ from mergedeep import merge
 from collab_splats.pointcloud.export import write_pointcloud_ply
 from collab_splats.preproc import get_video_info, sample_frames
 from collab_splats.preproc.frame_store import FrameStore
-from collab_splats.semantics.compression import FeatureAutoencoder, write_point_features
+from collab_splats.semantics.compression import (
+    FeatureAutoencoder,
+    lifted_store_path,
+    write_point_features,
+)
 
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
@@ -236,7 +240,7 @@ def _get_extractor(name: str):
 def _extract_2d_features(
     extractor_name: str,
     frames_zarr: Path,
-    features_dir: Path,
+    cache_dir: Path,
 ) -> Path:
     """Extract 2D features for all frames straight from the canonical store.
 
@@ -245,12 +249,12 @@ def _extract_2d_features(
     JPG export, no full-RAM load.
     """
     extractor = _get_extractor(extractor_name)
-    cache_dir = features_dir / extractor_name
     cache_dir.mkdir(parents=True, exist_ok=True)
     return extractor.extract_and_cache_from_zarr(frames_zarr, cache_dir)
 
 
 def _lift_and_save(
+    extractor_name: str,
     zarr_path: Path,
     feedforward_zarr: Path,
     output_dir: Path,
@@ -260,8 +264,8 @@ def _lift_and_save(
 ) -> Path:
     """Load 2D feature cache + FeedforwardResult, lift to 3D, compress, save.
 
-    Writes output_dir/features.zarr (latent codes) and, when compressing,
-    output_dir/autoencoder.pt (weights + fit metrics) — the pair a consumer needs
+    Writes output_dir/{extractor}_lifted.zarr (latent codes) and, when compressing,
+    output_dir/{extractor}_ae.pt (weights + fit metrics) — the pair a consumer needs
     to recover full-dimensionality features.
 
     target_cosine/max_epochs are required, not defaulted: they are the config's single
@@ -300,9 +304,9 @@ def _lift_and_save(
         lifted = ae.per_point_encode(lifted)
 
     # One writer for both halves of the pair — it also stamps input_dim/latent_dim on the
-    # zarr attrs, which is what tells a reader whether autoencoder.pt is required at all
+    # zarr attrs, which is what tells a reader whether the weights are required at all
     # (n_components=None writes full-dim codes and no weights, legitimately).
-    write_point_features(output_dir, lifted.detach().cpu().numpy(), ae)
+    write_point_features(output_dir, extractor_name, lifted.detach().cpu().numpy(), ae)
     return output_dir
 
 
@@ -313,6 +317,7 @@ def _run_tsdf_mesh(
     voxel_size: float,
     sdf_trunc: float,
     depth_trunc: float,
+    clean_repair: bool = False,
 ) -> Path:
     """Fuse depth + RGB from FeedforwardResult into TSDF mesh."""
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
@@ -344,6 +349,7 @@ def _run_tsdf_mesh(
         voxel_size=voxel_size,
         sdf_trunc=sdf_trunc,
         depth_trunc=depth_trunc,
+        clean_repair=clean_repair,
     )
     mesh_result = mesher.create(depths=depths, rgbs=rgbs, c2w=c2w, intrinsics=intrinsics)
     return mesh_result.mesh_path
@@ -466,9 +472,13 @@ class Reconstructor:
         return Path(self.config["output_path"]) / "frames.zarr"
 
     @property
-    def features_dir(self) -> Path:
-        """output_path / features/ — shared 2D feature cache, extractor-scoped subdirs."""
-        return Path(self.config["output_path"]) / "features"
+    def semantics_cache_dir(self) -> Path:
+        """output_path / semantics/ — 2D patch cache, one {extractor}.zarr per extractor.
+
+        Scene-level, not backend-level: the 2D features depend only on the frames, so every
+        backend lifts from the same cache. The per-backend lift lands under backend_dir.
+        """
+        return Path(self.config["output_path"]) / "semantics"
 
     ########################################
     # Pipeline stages
@@ -741,27 +751,29 @@ class Reconstructor:
         result: "PointcloudResult | None" = None,
         overwrite: bool = False,
     ) -> Path:
-        """Extract 2D features (cached), lift to 3D, compress. Returns lifted zarr dir."""
+        """Extract 2D features (cached), lift to 3D, compress. Returns the lifted-pair dir."""
         sem_cfg = self.config["semantics"]
         extractor_name = sem_cfg["extractor"]
         n_components = sem_cfg["n_components"]
 
-        lifted_dir = self.backend_dir / "semantics" / extractor_name
+        lifted_dir = self.backend_dir / "semantics"
 
-        # Skip if lifted features already on disk
-        if not overwrite and (lifted_dir / "features.zarr").exists():
-            logger.info("Lifted features exist at %s, skipping", lifted_dir)
+        # Skip if this extractor's lifted features are already on disk. The extractor is in the
+        # filename, so two extractors coexist here instead of overwriting each other.
+        lifted_store = lifted_store_path(lifted_dir, extractor_name)
+        if not overwrite and lifted_store.exists():
+            logger.info("Lifted features exist at %s, skipping", lifted_store)
             return lifted_dir
 
         result = result or self.pointcloud
         if result is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        # Stage 1: 2D feature extraction (cached at features_dir/extractor)
-        zarr_path = self.features_dir / extractor_name / f"{extractor_name}.zarr"
+        # Stage 1: 2D feature extraction (cached at semantics/{extractor}.zarr, scene-level)
+        zarr_path = self.semantics_cache_dir / f"{extractor_name}.zarr"
         if overwrite or not zarr_path.exists():
             logger.info("Extracting 2D features with %s", extractor_name)
-            zarr_path = _extract_2d_features(extractor_name, self.frames_zarr, self.features_dir)
+            zarr_path = _extract_2d_features(extractor_name, self.frames_zarr, self.semantics_cache_dir)
         else:
             logger.info("2D feature cache hit: %s", zarr_path)
 
@@ -769,6 +781,7 @@ class Reconstructor:
         feedforward_zarr = self.backend_dir / "feedforward.zarr"
         logger.info("Lifting 2D features to 3D pointcloud")
         out_dir = _lift_and_save(
+            extractor_name,
             zarr_path,
             feedforward_zarr,
             lifted_dir,
@@ -784,7 +797,7 @@ class Reconstructor:
         overwrite: bool = False,
     ) -> Path:
         """Build mesh from pointcloud depth maps. Returns path to mesh.ply."""
-        mesh_path = self.backend_dir / "mesh" / "mesh.ply"
+        mesh_path = self.backend_dir / "mesh.ply"
 
         # Skip if mesh already on disk
         if not overwrite and mesh_path.exists():
@@ -806,10 +819,11 @@ class Reconstructor:
         out = _run_tsdf_mesh(
             result=result,
             feedforward_zarr=feedforward_zarr,
-            output_dir=self.backend_dir / "mesh",
+            output_dir=self.backend_dir,
             voxel_size=mesh_cfg["voxel_size"],
             sdf_trunc=mesh_cfg["sdf_trunc"],
             depth_trunc=mesh_cfg["depth_trunc"],
+            clean_repair=mesh_cfg["clean_repair"],
         )
         logger.info("Mesh saved to %s", out)
         return out

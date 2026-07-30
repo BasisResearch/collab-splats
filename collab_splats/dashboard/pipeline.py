@@ -26,7 +26,14 @@ from collab_splats.pointcloud.utils import lift_features
 from collab_splats.preproc import extract_frame, sample_frames
 from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.remote import PULL_EXCLUDES, SceneSource
-from collab_splats.semantics.compression import FeatureAutoencoder, write_point_features
+from collab_splats.semantics.compression import (
+    LIFTED_SUFFIX,
+    FeatureAutoencoder,
+    ae_path,
+    find_lifted_extractor,
+    lifted_store_path,
+    write_point_features,
+)
 from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.utils.image import open_image
 from collab_splats.utils.torch_utils import batch_iterator
@@ -88,12 +95,29 @@ def _extract_semantics(extractor_name: str, frames_zarr: Path, out_dir: Path) ->
 _DECODE_BATCH_SIZE = 65_536
 
 
+def cache_store_path(semantics_dir: Path) -> Path:
+    """The 2D patch cache store in semantics_dir — `{extractor}.zarr`.
+
+    The flat dashboard layout keeps the 2D cache and the lifted per-point store side by side in
+    one dir, so the `_lifted` suffix is the ONLY thing separating them; a bare `*.zarr` glob
+    picks either at random. Its stem is the extractor name, which is how the write paths here
+    (which are handed a directory, never an extractor) recover it.
+    """
+    sem_dir = Path(semantics_dir)
+    store = next((p for p in sem_dir.glob("*.zarr") if not p.name.endswith(LIFTED_SUFFIX)), None)
+    if store is None:
+        raise FileNotFoundError(f"no 2D feature cache (*.zarr) in {sem_dir} — extract this scene's semantics first")
+    return store
+
+
+def cache_extractor_name(semantics_dir: Path) -> str:
+    """Extractor whose 2D cache is in semantics_dir — the name both lifted-pair halves carry."""
+    return cache_store_path(semantics_dir).stem
+
+
 def load_feature_maps(semantics_dir: Path) -> list[torch.Tensor]:
     """Load per-frame dense feature maps (D, H_p, W_p) from the cached semantics zarr."""
-    # semantics_dir also holds the lifted per-point features.zarr; the 2D cache is the
-    # extractor-named store. Wildcard-glob without this filter picks either one at random.
-    store_path = next(p for p in Path(semantics_dir).glob("*.zarr") if p.name != "features.zarr")
-    arr = zarr.open(str(store_path), mode="r")["features"]  # (N, D, H_p, W_p)
+    arr = zarr.open(str(cache_store_path(semantics_dir)), mode="r")["features"]  # (N, D, H_p, W_p)
     return [torch.from_numpy(np.asarray(arr[i])) for i in range(arr.shape[0])]
 
 
@@ -157,7 +181,7 @@ def resolve_semantics_dir(scene_dir: Path) -> "Path | None":
     """A scene's flat `{scene}/semantics/` dir, or None when it has none.
 
     Flat only, deliberately. The dashboard is a browser over its OWN scenes: its loader gates on
-    and reads flat `{scene}/feedforward.zarr` and flat `{scene}/mesh/mesh.ply`, so a published
+    and reads flat `{scene}/feedforward.zarr` and flat `{scene}/mesh.ply`, so a published
     (Reconstructor) scene — everything one level deeper under `{scene}/{backend}/` — fails on the
     pointcloud before semantics is ever consulted. Resolving a backend-keyed semantics dir would
     only serve a hybrid tree (flat pointcloud + nested semantics) that no writer produces.
@@ -172,22 +196,23 @@ def resolve_semantics_dir(scene_dir: Path) -> "Path | None":
 
 
 def _is_full_dim(attrs) -> bool:
-    """True when features.zarr's self-describing attrs say the stored codes are already full-dim.
+    """True when the lifted store's self-describing attrs say the stored codes are full-dim.
 
     Written by every producer; `latent_dim == input_dim` is the uncompressed
-    (`semantics.n_components: null`) case, which legitimately has no autoencoder.pt.
+    (`semantics.n_components: null`) case, which legitimately has no weights.
     """
     input_dim, latent_dim = attrs.get("input_dim"), attrs.get("latent_dim")
     return input_dim is not None and latent_dim is not None and int(latent_dim) >= int(input_dim)
 
 
 def point_features_cached(semantics_dir: Path) -> bool:
-    """True when semantics/features.zarr exists AND is readable (weights present, or full-dim)."""
+    """True when the lifted store exists AND is readable (weights present, or full-dim)."""
     sem_dir = Path(semantics_dir)
-    store_path = sem_dir / "features.zarr"
-    if not store_path.exists():
+    extractor = find_lifted_extractor(sem_dir)
+    if extractor is None:
         return False
-    if (sem_dir / "autoencoder.pt").exists():
+    store_path = lifted_store_path(sem_dir, extractor)
+    if ae_path(sem_dir, extractor).exists():
         return True
     # No weights: usable only if the codes describe themselves as full-dim. Anything else is a
     # half-written pair (crash between the two writes) — report NOT cached so the caller re-lifts.
@@ -198,13 +223,16 @@ def point_features_cached(semantics_dir: Path) -> bool:
 
 
 def load_point_features(semantics_dir: Path, *, decode: bool = True) -> np.ndarray:
-    """Read semantics/features.zarr; decode latent codes back to full dim by default.
+    """Read the lifted per-point store; decode latent codes back to full dim by default.
 
     Consumers that compare features across scenes must decode — the 64-D bases of two
     independently-trained autoencoders are not aligned, the decoded space is.
     """
     sem_dir = Path(semantics_dir)
-    store = zarr.open(str(sem_dir / "features.zarr"), mode="r")
+    extractor = find_lifted_extractor(sem_dir)
+    if extractor is None:
+        raise FileNotFoundError(f"no *{LIFTED_SUFFIX} store in {sem_dir} — lift this scene's features first")
+    store = zarr.open(str(lifted_store_path(sem_dir, extractor)), mode="r")
     codes = np.asarray(store["features"])
     if not decode:
         return codes
@@ -212,17 +240,17 @@ def load_point_features(semantics_dir: Path, *, decode: bool = True) -> np.ndarr
     # equal-width autoencoder still encodes (see _save_point_features's latent_dim clamp),
     # so its codes are not full-dim features. Weights absent is the ambiguous case the
     # attrs disambiguate: full-dim-by-design vs latent codes orphaned by a crashed write.
-    if not (sem_dir / "autoencoder.pt").exists():
+    if not ae_path(sem_dir, extractor).exists():
         if _is_full_dim(store.attrs):
             return torch.nn.functional.normalize(torch.from_numpy(codes), dim=1).cpu().numpy()
         raise FileNotFoundError(
-            f"{sem_dir / 'features.zarr'} holds {codes.shape[1]}-D per-point codes but the "
-            f"autoencoder that decodes them ({sem_dir / 'autoencoder.pt'}) is missing — the pair "
+            f"{lifted_store_path(sem_dir, extractor)} holds {codes.shape[1]}-D per-point codes but the "
+            f"autoencoder that decodes them ({ae_path(sem_dir, extractor)}) is missing — the pair "
             "was written only halfway (interrupted run). Returning the raw codes would be silent "
-            f"garbage; re-lift this scene's semantic features instead (delete {sem_dir / 'features.zarr'} "
-            "and re-run the semantics step)."
+            f"garbage; re-lift this scene's semantic features instead (delete "
+            f"{lifted_store_path(sem_dir, extractor)} and re-run the semantics step)."
         )
-    ae = FeatureAutoencoder.load(sem_dir)
+    ae = FeatureAutoencoder.load(sem_dir, extractor)
     # Streamed decode into a preallocated output: peak stays at (result + one chunk) instead
     # of holding codes, decoded and normalized copies of the whole cloud at once. Row-wise
     # normalize and the decoder's linear layers are both row-independent, so chunking is exact.
@@ -274,7 +302,9 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     op_log.update_progress(94, "semantics: caching lifted features")
     # Persist LATENT codes + weights (not decoded 768-D): same artifact pair the
     # Reconstructor path writes, ~12x smaller, and decodable on read.
-    write_point_features(Path(semantics_dir), compressed_pts.detach().cpu().numpy(), ae)
+    write_point_features(
+        Path(semantics_dir), cache_extractor_name(semantics_dir), compressed_pts.detach().cpu().numpy(), ae
+    )
     op_log.append_line(f"semantics: lift + encode + cache in {time.perf_counter() - t:.1f}s")
 
 
@@ -284,18 +314,17 @@ def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: flo
     No-op (logged) if the mesh or the lifted point features are missing — neither is fatal
     to the run.
     """
-    mesh_path = Path(out_dir) / "mesh" / "mesh.ply"
-    features_zarr = Path(out_dir) / "semantics" / "features.zarr"
-    if not mesh_path.exists() or not features_zarr.exists():
-        logger.warning(
-            "mesh feature transfer skipped: mesh=%s features=%s", mesh_path.exists(), features_zarr.exists()
-        )
+    mesh_path = Path(out_dir) / "mesh.ply"
+    sem_dir = Path(out_dir) / "semantics"
+    has_features = point_features_cached(sem_dir)
+    if not mesh_path.exists() or not has_features:
+        logger.warning("mesh feature transfer skipped: mesh=%s features=%s", mesh_path.exists(), has_features)
         return
     # DECODED features, not latent codes: the only reader of vertex_features.npy
     # (viewer.load_mesh_vertex_features) does no decode and feeds score_queries, which
     # compares against full-dim text embeddings. Matches viewer.ensure_mesh_features,
     # which derives the same array from decoded point features on legacy scenes.
-    point_features = load_point_features(Path(out_dir) / "semantics")
+    point_features = load_point_features(sem_dir)
     persist_mesh_vertex_features(mesh_path, result.points, point_features, k=k, sdf_trunc=sdf_trunc)
 
 
@@ -413,7 +442,7 @@ def run_pipeline(
             t = time.perf_counter()
             pointcloud_to_mesh(
                 result,
-                out_dir / "mesh",
+                out_dir,
                 method="open3d_tsdf",
                 voxel_size=config.mesh_voxel_size,
                 sdf_trunc=config.mesh_sdf_trunc,
@@ -629,7 +658,7 @@ def load_browse_data(
         ref_extrinsics=np.asarray(result.extrinsics),
         localized_extrinsics=loc_ext,
         localized_image_paths=loc_paths,
-        mesh_path=out_dir / "mesh" / "mesh.ply",
+        mesh_path=out_dir / "mesh.ply",
     )
 
 

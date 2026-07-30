@@ -592,7 +592,7 @@ class LocalizePage(param.Parameterized):
             return
         config = self._current_config()
         # Captured for the worker: on_done must only assign panes, never hit the disk
-        mesh_path = self._base_dir / scene / "mesh" / "mesh.ply"
+        mesh_path = self._base_dir / scene / "mesh.ply"
         doc = pn.state.curdoc
 
         def job():

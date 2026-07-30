@@ -62,6 +62,7 @@ mesh:
   voxel_size: 0.005         # dashboard-parity TSDF defaults
   sdf_trunc: 0.02
   depth_trunc: 1.0          # drop depth samples beyond this range (metres)
+  clean_repair: false       # drop out-of-bounds components + fill small holes, rewriting mesh.ply
 
 localization:
   enabled: false

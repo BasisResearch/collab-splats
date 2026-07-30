@@ -606,10 +606,10 @@ class SplatsApp(param.Parameterized):
             # Flat `{scene}/semantics/`, matching the flat feedforward.zarr gated on above — the
             # dashboard browses its own scenes, not the published backend-keyed tree. None when absent.
             semantics_dir = resolve_semantics_dir(out)
-            mesh_path = out / "mesh" / "mesh.ply"
+            mesh_path = out / "mesh.ply"
             # point_features=None defers the (P, D) feature read to the first query: the viewer's
-            # ensure_lifted decodes the cached semantics/features.zarr (or lifts from the 2D
-            # feature zarr for older runs). Tuple keeps 4 slots so cache/on_done unpack as-is.
+            # ensure_lifted decodes the cached lifted store (or lifts from the 2D feature zarr
+            # for older runs). Tuple keeps 4 slots so cache/on_done unpack as-is.
             value = (
                 result,
                 mesh_path if mesh_path.exists() else None,
@@ -719,7 +719,7 @@ class SplatsApp(param.Parameterized):
     def _ensure_lift_inputs(self, scene: "str | None") -> bool:
         """Fetch the dense zarr members a first-query feature lift needs (worker thread).
 
-        New runs cache semantics/features.zarr so the lift never runs; legacy scenes
+        New runs cache the lifted store so the lift never runs; legacy scenes
         lift from pixel_indices/depth/confidence, which the display pull excludes
         (PULL_EXCLUDES) — fetch them on demand or the lift fails. Returns True when a
         fetch happened, so the caller can clean the members up once the lift is cached.
@@ -728,7 +728,7 @@ class SplatsApp(param.Parameterized):
             return False
         out = self._base_dir / scene
         # Lazy: dashboard.pipeline pulls the heavy feedforward stack at module import.
-        # point_features_cached, not a bare exists(): a features.zarr missing the weights that
+        # point_features_cached, not a bare exists(): a lifted store missing the weights that
         # decode it is unreadable, and reporting it as cached starves the re-lift of the dense
         # members it needs — the scene would be stuck with no way to recover.
         from collab_splats.dashboard.pipeline import (
@@ -766,7 +766,7 @@ class SplatsApp(param.Parameterized):
             return
         out = self._base_dir / scene
         # Lazy: dashboard.pipeline pulls the heavy feedforward stack at module import.
-        # A features.zarr whose weights are missing is not a completed lift — deleting the
+        # A lifted store whose weights are missing is not a completed lift — deleting the
         # dense members on the strength of it would leave the scene with nothing to re-lift from.
         from collab_splats.dashboard.pipeline import (
             point_features_cached,

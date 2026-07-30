@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 def lift_point_features(result, semantics_dir) -> np.ndarray:
     """Lift cached 2D features to points and L2-normalise -> (P, D) float32.
 
-    Legacy path for scenes with no cached semantics/features.zarr. Returns FULL-dim
+    Legacy path for scenes with no cached lifted store. Returns FULL-dim
     features (no autoencoder involved), directly comparable to text embeddings.
     """
     # Lazy import: pointcloud.utils and dashboard.pipeline both pull the heavy feedforward
@@ -60,8 +60,8 @@ def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None)
     """Persist full-dim point features as the canonical latent-codes + weights pair.
 
     The on-demand lift yields full-dim features and no autoencoder, but the canonical
-    layout is features.zarr (latent) + autoencoder.pt (weights that decode it) — so fit a
-    fresh autoencoder here rather than writing a full-dim features.zarr nothing can read.
+    layout is {extractor}_lifted.zarr (latent) + {extractor}_ae.pt (weights that decode it) —
+    so fit a fresh autoencoder here rather than writing full-dim codes nothing can read.
 
     Width and fit gate come from the ONE shared config policy (configs/base.yaml semantics:),
     so a self-upgraded legacy scene is held to exactly the bar a fresh reconstruction is.
@@ -71,7 +71,11 @@ def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None)
     # Lazy import: semantics.compression re-exports through semantics/__init__, which pulls
     # the extractors and SAM (~14s), and dashboard.pipeline pulls the feedforward stack —
     # the same costs the other lazy imports here avoid.
-    from collab_splats.dashboard.pipeline import resolve_latent_dim, semantics_ae_policy
+    from collab_splats.dashboard.pipeline import (
+        cache_extractor_name,
+        resolve_latent_dim,
+        semantics_ae_policy,
+    )
     from collab_splats.semantics.compression import (
         FeatureAutoencoder,
         write_point_features,
@@ -81,15 +85,13 @@ def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None)
     if torch.cuda.is_available():
         feats = feats.cuda()
     policy = semantics_ae_policy()
-    ae = FeatureAutoencoder(
-        input_dim=feats.shape[1], latent_dim=resolve_latent_dim(feats.shape[1], policy.latent_dim)
-    )
+    ae = FeatureAutoencoder(input_dim=feats.shape[1], latent_dim=resolve_latent_dim(feats.shape[1], policy.latent_dim))
     ae.fit(feats, epochs=policy.max_epochs, target_cosine=policy.target_cosine)
     with torch.no_grad():
         codes = ae.per_point_encode(feats)
     # Shared writer: codes + attrs + weights, and it cleans the zarr up if the weights fail
-    # to save — an orphaned features.zarr would make this scene look cached and unreadable.
-    write_point_features(Path(semantics_dir), codes.detach().cpu().numpy(), ae)
+    # to save — orphaned codes would make this scene look cached and unreadable.
+    write_point_features(Path(semantics_dir), cache_extractor_name(semantics_dir), codes.detach().cpu().numpy(), ae)
     # Unlike the old np.save cache this round-trips through encode/decode, so record how
     # well it reconstructs. Training-set-measured -> "fit cosine", not a quality claim.
     msg = f"fit cosine {ae.recon_cosine:.4f} after {ae.epochs_run} epochs (target {policy.target_cosine})"
@@ -238,7 +240,7 @@ class SplitViewer:
         # Fast path: the pipeline caches latent codes + weights next to the scene; reading and
         # decoding them is instant vs the minutes-long lift from the 2D feature zarr below.
         # DECODED (not latent) because score_queries compares against text embeddings.
-        # point_features_cached, not a bare exists(): a features.zarr whose required weights are
+        # point_features_cached, not a bare exists(): a lifted store whose required weights are
         # missing is unreadable, and falling through re-lifts and rewrites the pair (self-heal)
         # instead of leaving the scene permanently stuck on an unusable cache.
         # Lazy: pipeline pulls the heavy feedforward stack at module import.

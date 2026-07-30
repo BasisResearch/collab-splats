@@ -12,7 +12,7 @@ from PIL import Image as PILImage
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
-from tqdm.auto import tqdm, trange
+from tqdm.auto import tqdm
 
 from collab_splats.mesh.base import MeshResult
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
@@ -219,88 +219,93 @@ def persist_mesh_vertex_features(
 
 
 def clean_repair_mesh(
-    mesh_path: str,
+    mesh_path: str | Path,
     max_hole_size: float = 3.0,
     max_edge_splits: int = 10000,
     use_largest: bool = False,  # if True, selects only the largest
-):
+) -> Path:
+    """Drop stray components and fill small holes in a mesh on disk, rewriting it in place.
+
+    Args:
+        mesh_path: Mesh to clean. Overwritten with the result.
+        max_hole_size: Fill holes whose perimeter is below this; larger ones are real openings
+            (an unscanned wall, the open side of a room) and get left alone.
+        max_edge_splits: Subdivision ceiling for each patch, so one huge hole cannot explode
+            the triangle count.
+        use_largest: Keep only the biggest component. Off by default — that also throws away
+            legitimate detached geometry (furniture, objects) that sits inside the scene.
+    Returns:
+        The path written (same as mesh_path).
+    """
     if not _MM_AVAILABLE:
         raise ImportError("meshlib is required for clean_repair_mesh. Install it with: pip install meshlib")
 
-    # Load mesh
-    mesh = mm.loadMesh(mesh_path)
+    mesh_path = Path(mesh_path)
+    mesh = mm.loadMesh(str(mesh_path))
 
-    # Identify all connected components
+    # Split into connected components and seed the output with the biggest one — for a TSDF
+    # scene that is the room itself; everything else is either scene content or noise.
     components = mm.getAllComponents(mesh)
-
-    # Determine component sizes
     sizes = [mask.count() for mask in components]
-
-    # Always find largest cluster
     largest_idx = max(range(len(sizes)), key=lambda i: sizes[i])
 
-    # Add the largest component
     combined = mm.Mesh()
-    combined.addPartByMask(mesh, components[largest_idx])
+    combined.addMeshPart(mm.MeshPart(mesh, components[largest_idx]))
 
-    # Initialize n_removed before any branch
     n_removed = 0
-
-    # Remove the largest component from list of idxs
     if not use_largest:
-        idxs = list(range(len(sizes)))
-        idxs.remove(largest_idx)
-
-        # Add the remaining components if they fall within the bounds
+        # Keep every other component whose bounding box sits inside the main one, drop the rest.
+        # That is the cheap separator between scene content and the floating specks TSDF leaves
+        # outside the room from stray depth.
+        idxs = [i for i in range(len(sizes)) if i != largest_idx]
         combined_bounds = combined.getBoundingBox()
 
-        ## THIS IS REALLY HACKY AND INEFFIENCT CHANGE SOMETIME
         for idx in tqdm(idxs, desc="Finding components within bounds"):
             _temp = mm.Mesh()
-            _temp.addPartByMask(mesh, components[idx])
+            _temp.addMeshPart(mm.MeshPart(mesh, components[idx]))
 
             if combined_bounds.contains(_temp.getBoundingBox()):
-                combined.addPartByMask(mesh, components[idx])
+                combined.addMeshPart(mm.MeshPart(mesh, components[idx]))
             else:
                 n_removed += 1
 
-    logger.info("Removed %d components", n_removed)
+    logger.info("Kept %d of %d components (removed %d)", len(sizes) - n_removed, len(sizes), n_removed)
     mesh = combined
 
-    # Compute average edge length
-    avg_edge_length = 0.0
-    num_edges = 0
+    # Patch size follows the mesh's own resolution, so a fill matches the surface around it.
+    # Native call, not a Python loop over edges: ~94s of pybind round-trips on a 4.7M-triangle
+    # scene versus sub-millisecond, same value to 1e-8.
+    avg_edge_length = mesh.averageEdgeLength()
 
-    for i in trange(mesh.topology.undirectedEdgeSize(), desc="Calculating average edge length"):
-        dir_edge = mm.EdgeId(i * 2)
-        org = mesh.topology.org(dir_edge)
-        dest = mesh.topology.dest(dir_edge)
-        avg_edge_length += (mesh.points.vec[dest.get()] - mesh.points.vec[org.get()]).length()
-        num_edges += 1
-    avg_edge_length /= num_edges
-
-    # Fill holes
+    # Fill each small hole, then subdivide + smooth the new faces so the patch is not a flat cap.
     hole_ids = mesh.topology.findHoleRepresentiveEdges()
     fill_params = mm.FillHoleParams()
+    n_filled = 0
 
     for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
-        if mesh.holePerimiter(he) < max_hole_size:
-            new_faces = mm.FaceBitSet()
-            fill_params.outNewFaces = new_faces
-            mm.fillHole(mesh, he, fill_params)
+        perimeter = mesh.holePerimeter(he)
+        if perimeter >= max_hole_size:
+            logger.debug("Skipping hole %s of perimeter %s", he, perimeter)
+            continue
 
-            new_verts = mm.VertBitSet()
-            subdiv_settings = mm.SubdivideSettings()
-            subdiv_settings.maxEdgeLen = avg_edge_length
-            subdiv_settings.maxEdgeSplits = max_edge_splits
-            subdiv_settings.region = new_faces
-            subdiv_settings.newVerts = new_verts
-            mm.subdivideMesh(mesh, subdiv_settings)
-            mm.positionVertsSmoothly(mesh, new_verts)
-        else:
-            logger.debug("Skipping hole %s of perimeter %s", he, mesh.holePerimiter(he))
+        new_faces = mm.FaceBitSet()
+        fill_params.outNewFaces = new_faces
+        mm.fillHole(mesh, he, fill_params)
 
-    return mesh
+        new_verts = mm.VertBitSet()
+        subdiv_settings = mm.SubdivideSettings()
+        subdiv_settings.maxEdgeLen = avg_edge_length
+        subdiv_settings.maxEdgeSplits = max_edge_splits
+        subdiv_settings.region = new_faces
+        subdiv_settings.newVerts = new_verts
+        mm.subdivideMesh(mesh, subdiv_settings)
+        mm.positionVertsSmoothly(mesh, new_verts)
+        n_filled += 1
+
+    logger.info("Filled %d of %d holes (max_hole_size=%s)", n_filled, len(hole_ids), max_hole_size)
+
+    mm.saveMesh(mesh, str(mesh_path))
+    return mesh_path
 
 
 def align_geometry_floor(

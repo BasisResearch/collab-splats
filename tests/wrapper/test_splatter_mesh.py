@@ -122,8 +122,8 @@ def test_mesh_else_branch_no_splats_key_when_missing(tmp_path):
 def test_mesh_else_branch_requires_mesh_ply(tmp_path):
     """mesh_clean.ply is not a filename anything in this repo writes — no dead probe for it.
 
-    The clean_repair path that would have produced it raises (mesh/tsdf.py), so accepting the
-    name only makes a stale/hand-placed file look like a valid mesh.
+    clean_repair rewrites mesh.ply in place (mesh/tsdf.py), so accepting the name only makes a
+    stale/hand-placed file look like a valid mesh.
     """
     from collab_splats.wrapper.splatter import Splatter
 

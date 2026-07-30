@@ -1,7 +1,4 @@
-from pathlib import Path
-
 import numpy as np
-import pytest
 
 
 def _synthetic_frames(N=3, H=32, W=32):
@@ -42,18 +39,36 @@ def test_open3d_tsdf_writes_ply(tmp_path):
     assert result.mesh_path.suffix == ".ply"
 
 
-def test_open3d_tsdf_clean_repair_raises_meshlib_incompatible(tmp_path):
-    """clean_repair=True is hard-disabled: the installed meshlib's addPartByMask
-    API is incompatible (tsdf.py:98-103), so create() raises AssertionError
-    pointing the user to clean_repair=False. Accepted-environment behavior —
-    do NOT install meshlib, do NOT change production.
+def test_open3d_tsdf_clean_repair_runs_and_keeps_one_mesh_ply(tmp_path):
+    """clean_repair=True cleans in place — no second filename for readers to probe for.
+
+    Every reader in the repo (Reconstructor's skip-check, splatter, the dashboard, the remote
+    push) looks for `mesh.ply`; a separate `mesh_clean.ply` would need a precedence rule in each.
     """
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
 
     creator = Open3DTSDFFusion(output_dir=tmp_path, clean_repair=True)
     depths, rgbs, c2w, intrinsics = _synthetic_frames()
-    with pytest.raises(AssertionError, match="clean_repair disabled"):
-        creator.create(depths, rgbs, c2w, intrinsics)
+    result = creator.create(depths, rgbs, c2w, intrinsics)
+
+    assert result.mesh_path == tmp_path / "mesh.ply"
+    assert result.mesh_path.exists()
+    assert not (tmp_path / "mesh_clean.ply").exists()
+    assert sorted(p.name for p in tmp_path.glob("*.ply")) == ["mesh.ply"]
+
+
+def test_open3d_tsdf_defaults_to_no_clean_repair(tmp_path):
+    """The default must be the value that works — it is what the Reconstructor path gets.
+
+    `_run_tsdf_mesh` constructs the fusion without passing clean_repair, so a True default that
+    raised made every config-driven mesh stage die after fusing every frame.
+    """
+    from collab_splats.mesh.tsdf import Open3DTSDFFusion
+
+    creator = Open3DTSDFFusion(output_dir=tmp_path)
+    assert creator.clean_repair is False
+    depths, rgbs, c2w, intrinsics = _synthetic_frames()
+    assert creator.create(depths, rgbs, c2w, intrinsics).mesh_path.exists()
 
 
 def test_open3d_tsdf_creates_output_dir(tmp_path):

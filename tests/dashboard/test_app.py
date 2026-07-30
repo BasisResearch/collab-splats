@@ -57,9 +57,9 @@ def test_refresh_scenes_lists_off_loop(tmp_path):
     ran_on = {}
     source = MagicMock()
     source.list_scenes.side_effect = lambda: ran_on.setdefault("curated", threading.current_thread().name) and []
-    source.list_processed_scenes.side_effect = lambda: ran_on.setdefault(
-        "processed", threading.current_thread().name
-    ) and []
+    source.list_processed_scenes.side_effect = (
+        lambda: ran_on.setdefault("processed", threading.current_thread().name) and []
+    )
     with patch("collab_splats.dashboard.app.SplitViewer"):
         app = SplatsApp(base_dir=tmp_path, source=source, gpu_worker=_RecordingWorker())
     app._scene_thread.join(timeout=5)
@@ -265,13 +265,13 @@ def test_load_outputs_on_done_renders_into_viewer(tmp_path):
 ########
 
 
-def _write_features_zarr(sem_dir):
+def _write_features_zarr(sem_dir, extractor="talk2dino"):
     """Minimal lifted per-point store at an arbitrary semantics dir."""
     import numpy as np
     import zarr
 
     sem_dir.mkdir(parents=True, exist_ok=True)
-    zarr.open(str(sem_dir / "features.zarr"), mode="w")["features"] = np.zeros((3, 4), dtype=np.float32)
+    zarr.open(str(sem_dir / f"{extractor}_lifted.zarr"), mode="w")["features"] = np.zeros((3, 4), dtype=np.float32)
     return sem_dir
 
 
@@ -402,7 +402,7 @@ def test_load_does_not_eager_load_features(tmp_path, monkeypatch):
     (out / "feedforward.zarr").mkdir(parents=True)
     sem_dir = out / "semantics"
     sem_dir.mkdir()
-    (sem_dir / "features.zarr").mkdir()  # contents irrelevant — nothing may open it yet
+    (sem_dir / "talk2dino_lifted.zarr").mkdir()  # contents irrelevant — nothing may open it yet
     monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p, **kwargs: object())
 
     # Any eager read of the cached features (decode or on-demand lift) opens a store under
@@ -763,7 +763,7 @@ def test_render_query_length_mismatch_falls_back(tmp_path):
 
 
 def test_ensure_lift_inputs_pulls_missing_dense_members(tmp_path, monkeypatch):
-    """Legacy scene (no semantics/features.zarr, dense arrays excluded by the pull) fetches them."""
+    """Legacy scene (no lifted store, dense arrays excluded by the pull) fetches them."""
     app, _src = _app(tmp_path)
     (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
     pulls = []
@@ -775,8 +775,8 @@ def test_ensure_lift_inputs_pulls_missing_dense_members(tmp_path, monkeypatch):
     assert any("fetching dense arrays" in line for line in app._op_log.log_lines)
 
 
-def _write_cached_features(sem_dir, *, weights=True):
-    """Write a semantics dir the way the pipeline does: features.zarr (+ autoencoder.pt)."""
+def _write_cached_features(sem_dir, *, weights=True, extractor="talk2dino"):
+    """Write a semantics dir the way the pipeline does: <extractor>_lifted.zarr (+ _ae.pt)."""
     import numpy as np
 
     from collab_splats.semantics.compression import (
@@ -785,13 +785,13 @@ def _write_cached_features(sem_dir, *, weights=True):
     )
 
     ae = FeatureAutoencoder(input_dim=8, latent_dim=4)
-    write_point_features(sem_dir, np.zeros((4, 4), dtype=np.float32), ae)
+    write_point_features(sem_dir, extractor, np.zeros((4, 4), dtype=np.float32), ae)
     if not weights:
-        (sem_dir / "autoencoder.pt").unlink()  # half-written pair: codes nothing can decode
+        (sem_dir / f"{extractor}_ae.pt").unlink()  # half-written pair: codes nothing can decode
 
 
 def test_ensure_lift_inputs_skips_when_lifted_cached(tmp_path, monkeypatch):
-    """Cached semantics/features.zarr means the lift never runs -> no dense-array fetch."""
+    """A cached lifted store means the lift never runs -> no dense-array fetch."""
     app, _src = _app(tmp_path)
     (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
     _write_cached_features(tmp_path / SCENE / "semantics")
@@ -804,7 +804,7 @@ def test_ensure_lift_inputs_skips_when_lifted_cached(tmp_path, monkeypatch):
 def test_ensure_lift_inputs_refetches_when_cached_features_lack_weights(tmp_path, monkeypatch):
     """Orphaned codes are not a usable cache: fetch the dense members so the re-lift can run.
 
-    Reporting the scene as cached on features.zarr alone strands it — the lift it needs has
+    Reporting the scene as cached on the lifted store alone strands it — the lift it needs has
     no inputs, and the unreadable cache is never rewritten.
     """
     app, _src = _app(tmp_path)
@@ -831,7 +831,7 @@ def test_ensure_lift_inputs_skips_when_members_present(tmp_path, monkeypatch):
 
 
 def test_cleanup_lift_inputs_removes_members_after_lift(tmp_path):
-    """Fetched dense members are deleted once the cached features.zarr exists."""
+    """Fetched dense members are deleted once the cached lifted pair exists."""
     app, _src = _app(tmp_path)
     out = tmp_path / SCENE
     for member in ("pixel_indices", "depth", "confidence"):
@@ -858,7 +858,7 @@ def test_cleanup_lift_inputs_keeps_members_when_weights_missing(tmp_path):
 
 
 def test_cleanup_lift_inputs_keeps_members_when_lift_failed(tmp_path):
-    """No cached features.zarr (lift failed) -> members stay so a retry can run."""
+    """No cached lifted store (lift failed) -> members stay so a retry can run."""
     app, _src = _app(tmp_path)
     out = tmp_path / SCENE
     d = out / "feedforward.zarr" / "depth"

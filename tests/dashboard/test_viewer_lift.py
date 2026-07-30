@@ -4,9 +4,22 @@ from unittest.mock import patch
 
 import numpy as np
 import torch
+import zarr
 
 from collab_splats.dashboard.viewer import lift_point_features
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+EXTRACTOR = "talk2dino"
+
+
+def _write_2d_cache(semantics_dir, extractor=EXTRACTOR):
+    """Put the 2D patch cache in place — the write paths read the extractor off its stem.
+
+    Every real caller of the on-demand lift has it: the lift itself reads its feature maps out
+    of this very store, so a semantics dir without one cannot reach the save.
+    """
+    semantics_dir.mkdir(parents=True, exist_ok=True)
+    zarr.open(str(semantics_dir / f"{extractor}.zarr"), mode="w")["features"] = np.zeros((1, 4, 2, 2), dtype=np.float32)
 
 
 def test_lift_point_features_normalises():
@@ -79,24 +92,22 @@ def test_lift_point_features_reloads_dense_on_demand(tmp_path):
 
 def test_ensure_lifted_self_upgrades_legacy_scene(tmp_path, monkeypatch):
     """A successful on-demand lift persists the canonical artifact pair so the scene upgrades."""
-    import numpy as np
-    import zarr
-
     import collab_splats.dashboard.viewer as viewer_mod
     from collab_splats.dashboard.operation_log import OperationLog
     from collab_splats.dashboard.viewer import SplitViewer
 
     lifted = np.ones((5, 4), dtype=np.float32)
     monkeypatch.setattr(viewer_mod, "lift_point_features", lambda result, sem: lifted)
+    _write_2d_cache(tmp_path)
     op_log = OperationLog()
     viewer = SplitViewer(off_screen=True, op_log=op_log)
     viewer._result = object()  # anything non-None; the lift itself is stubbed
     viewer._semantics_dir = tmp_path
     viewer.ensure_lifted(op_log)
     # Both halves of the pair — codes alone are unreadable without the weights
-    assert (tmp_path / "features.zarr").exists()
-    assert (tmp_path / "autoencoder.pt").is_file()
-    codes = np.asarray(zarr.open(str(tmp_path / "features.zarr"), mode="r")["features"])
+    assert (tmp_path / f"{EXTRACTOR}_lifted.zarr").exists()
+    assert (tmp_path / f"{EXTRACTOR}_ae.pt").is_file()
+    codes = np.asarray(zarr.open(str(tmp_path / f"{EXTRACTOR}_lifted.zarr"), mode="r")["features"])
     assert codes.shape == (5, 4)  # 5 points; latent capped at the 4-D input width
     assert any("scene upgraded" in line for line in op_log.log_lines)
 
@@ -107,8 +118,6 @@ def test_ensure_lifted_relifts_when_cached_codes_lack_weights(tmp_path, monkeypa
     Reading them back would raise (or, worse, hand back undecoded codes) on every query with
     no path out — the scene must recover by redoing the lift it never finished caching.
     """
-    import zarr
-
     import collab_splats.dashboard.viewer as viewer_mod
     from collab_splats.dashboard.viewer import SplitViewer
     from collab_splats.semantics.compression import (
@@ -117,8 +126,11 @@ def test_ensure_lifted_relifts_when_cached_codes_lack_weights(tmp_path, monkeypa
     )
 
     # Half-written pair: latent codes on disk, the weights that decode them missing.
-    write_point_features(tmp_path, np.zeros((4, 2), dtype=np.float32), FeatureAutoencoder(input_dim=5, latent_dim=2))
-    (tmp_path / "autoencoder.pt").unlink()
+    _write_2d_cache(tmp_path)
+    write_point_features(
+        tmp_path, EXTRACTOR, np.zeros((4, 2), dtype=np.float32), FeatureAutoencoder(input_dim=5, latent_dim=2)
+    )
+    (tmp_path / f"{EXTRACTOR}_ae.pt").unlink()
 
     monkeypatch.setattr(viewer_mod, "lift_point_features", lambda result, sem: np.ones((5, 4), dtype=np.float32))
     viewer = SplitViewer(off_screen=True)
@@ -127,8 +139,8 @@ def test_ensure_lifted_relifts_when_cached_codes_lack_weights(tmp_path, monkeypa
     viewer.ensure_lifted()
 
     assert viewer._point_features.shape == (5, 4)  # the fresh lift, not the stale (4, 2) codes
-    assert (tmp_path / "autoencoder.pt").is_file()  # pair completed
-    assert np.asarray(zarr.open(str(tmp_path / "features.zarr"), mode="r")["features"]).shape == (5, 4)
+    assert (tmp_path / f"{EXTRACTOR}_ae.pt").is_file()  # pair completed
+    assert np.asarray(zarr.open(str(tmp_path / f"{EXTRACTOR}_lifted.zarr"), mode="r")["features"]).shape == (5, 4)
 
 
 def test_save_point_features_gates_fit_on_the_shared_policy(tmp_path, monkeypatch):
@@ -149,6 +161,7 @@ def test_save_point_features_gates_fit_on_the_shared_policy(tmp_path, monkeypatc
         return real_fit(self, features, **kwargs)
 
     monkeypatch.setattr(compression.FeatureAutoencoder, "fit", spy_fit)
+    _write_2d_cache(tmp_path)
     viewer_mod._save_point_features(tmp_path, np.random.rand(8, 4).astype(np.float32))
 
     policy = semantics_ae_policy()
@@ -167,16 +180,15 @@ def test_save_point_features_takes_no_latent_dim_argument(tmp_path):
 
 def test_save_point_features_latent_width_comes_from_the_policy(tmp_path):
     """A wider-than-latent input must actually compress to the configured width."""
-    import zarr
-
     import collab_splats.dashboard.viewer as viewer_mod
     from collab_splats.dashboard.pipeline import semantics_ae_policy
 
     latent = semantics_ae_policy().latent_dim
     feats = np.random.rand(32, latent * 2).astype(np.float32)
+    _write_2d_cache(tmp_path)
     viewer_mod._save_point_features(tmp_path, feats)
 
-    codes = np.asarray(zarr.open(str(tmp_path / "features.zarr"), mode="r")["features"])
+    codes = np.asarray(zarr.open(str(tmp_path / f"{EXTRACTOR}_lifted.zarr"), mode="r")["features"])
     assert codes.shape == (32, latent)
 
 
@@ -186,6 +198,7 @@ def test_save_point_features_warns_when_the_latent_clamp_binds(tmp_path, caplog)
 
     import collab_splats.dashboard.viewer as viewer_mod
 
+    _write_2d_cache(tmp_path)
     with caplog.at_level(logging.WARNING, logger="collab_splats.dashboard.pipeline"):
         viewer_mod._save_point_features(tmp_path, np.random.rand(8, 4).astype(np.float32))
     assert "no-op" in caplog.text
@@ -199,10 +212,11 @@ def test_ensure_lifted_failure_does_not_write_artifacts(tmp_path, monkeypatch):
         raise RuntimeError("missing pixel_indices")
 
     monkeypatch.setattr(viewer_mod, "lift_point_features", boom)
+    _write_2d_cache(tmp_path)
     viewer = SplitViewer(off_screen=True)
     viewer._result = object()
     viewer._semantics_dir = tmp_path
     viewer.ensure_lifted(None)
     assert viewer._point_features is None
-    assert not (tmp_path / "features.zarr").exists()
-    assert not (tmp_path / "autoencoder.pt").exists()
+    assert not (tmp_path / f"{EXTRACTOR}_lifted.zarr").exists()
+    assert not (tmp_path / f"{EXTRACTOR}_ae.pt").exists()

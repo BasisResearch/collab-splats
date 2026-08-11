@@ -73,7 +73,7 @@ def test_flat_dir_name_keeps_hyphens_in_video_stem():
 
 
 ########
-# plan_copies
+# plan_pairs
 ########
 
 
@@ -87,38 +87,72 @@ def _touch(path):
 def tree(tmp_path):
     """Miniature capture tree mirroring the real gdrive-src shapes."""
     root = tmp_path / "gdrive-src"
-    # src-only folder: must be skipped
-    _touch(root / "2026-06-29" / "GoproSplat" / "src" / "GH010221.MP4")
-    # spaces in the parent name, also src-only
-    _touch(root / "2026-06-29" / "Phone pics and splat videos" / "src" / "IMG_4085.MOV")
-    # root-level videos alongside a src/ folder: only the root-level ones are taken
+    # Pair with an extension AND case difference: .mp4 edit, .MP4 original
     _touch(root / "2026-07-15" / "Goprosplat" / "GH010228.mp4")
-    _touch(root / "2026-07-15" / "Goprosplat" / "GH010229.mp4")
     _touch(root / "2026-07-15" / "Goprosplat" / "src" / "GH010228.MP4")
-    # noise that must not be picked up
+    # Edit with no original in src/: skipped
+    _touch(root / "2026-07-15" / "Goprosplat" / "GH010229.mp4")
+    # Original with no edit: skipped
+    _touch(root / "2026-06-29" / "GoproSplat" / "src" / "GH010221.MP4")
+    # Spaces in the parent name, and a .mp4 edit against a .MOV original
+    _touch(root / "2026-06-29" / "Phone pics and splat videos" / "IMG_4085.mp4")
+    _touch(root / "2026-06-29" / "Phone pics and splat videos" / "src" / "IMG_4085.MOV")
+    # Videos directly in a date folder with no src/ anywhere: camera originals, skipped
+    _touch(root / "2026-06-03" / "GH010218.MP4")
+    # Noise that must never be picked up
     _touch(root / "2026-07-15" / "Goprosplat" / ".DS_Store")
     _touch(root / "notes.txt")
     _touch(root / "scratch" / "whatever.mp4")
     return root
 
 
-def test_plan_copies_skips_src_only_folders(tree):
-    names = [name for _, name in preproc.plan_copies(tree)]
-    assert names == ["2026_07_15-Goprosplat-GH010228", "2026_07_15-Goprosplat-GH010229"]
+def test_plan_pairs_returns_only_videos_with_a_src_counterpart(tree):
+    names = [p.name for p in preproc.plan_pairs(tree)]
+    assert names == [
+        "2026_06_29-Phone_pics_and_splat_videos-IMG_4085",
+        "2026_07_15-Goprosplat-GH010228",
+    ]
 
 
-def test_plan_copies_ignores_undated_top_level_dirs(tree):
-    videos = [v for v, _ in preproc.plan_copies(tree)]
-    assert all("scratch" not in v.parts for v in videos)
+def test_plan_pairs_matches_across_case(tree):
+    pair = next(p for p in preproc.plan_pairs(tree) if p.name.endswith("GH010228"))
+    assert pair.edit.name == "GH010228.mp4"
+    assert pair.source.name == "GH010228.MP4"
 
 
-def test_plan_copies_raises_on_name_collision(tmp_path):
+def test_plan_pairs_matches_across_extension(tree):
+    pair = next(p for p in preproc.plan_pairs(tree) if p.name.endswith("IMG_4085"))
+    assert pair.edit.suffix == ".mp4"
+    assert pair.source.suffix == ".MOV"
+
+
+def test_plan_pairs_ignores_undated_top_level_dirs(tree):
+    assert all("scratch" not in p.edit.parts for p in preproc.plan_pairs(tree))
+
+
+def test_plan_pairs_walks_videos_directly_in_a_date_folder(tmp_path):
+    # The old plan_copies never looked here, so 2026-06-03/GH010218-220.MP4 were invisible
     root = tmp_path / "gdrive-src"
+    _touch(root / "2026-06-03" / "GH010218.mp4")
+    _touch(root / "2026-06-03" / "src" / "GH010218.MP4")
+    assert [p.name for p in preproc.plan_pairs(root)] == ["2026_06_03-2026_06_03-GH010218"]
+
+
+def test_plan_pairs_never_treats_a_src_video_as_an_edit(tmp_path):
+    # A video inside src/ is a camera original even if src/src/ somehow existed
+    root = tmp_path / "gdrive-src"
+    _touch(root / "2026-07-15" / "Goprosplat" / "src" / "GH010228.MP4")
+    assert preproc.plan_pairs(root) == []
+
+
+def test_plan_pairs_raises_on_name_collision(tmp_path):
     # "gopro splat" and "gopro-splat" both sanitize to gopro_splat
-    _touch(root / "2026-07-15" / "gopro splat" / "GH010228.mp4")
-    _touch(root / "2026-07-15" / "gopro-splat" / "GH010228.mp4")
+    root = tmp_path / "gdrive-src"
+    for parent in ("gopro splat", "gopro-splat"):
+        _touch(root / "2026-07-15" / parent / "GH010228.mp4")
+        _touch(root / "2026-07-15" / parent / "src" / "GH010228.MP4")
     with pytest.raises(ValueError, match="collision"):
-        preproc.plan_copies(root)
+        preproc.plan_pairs(root)
 
 
 ########

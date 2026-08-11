@@ -106,3 +106,68 @@ def flat_dir_name(date, parent, video):
     the name on the first two hyphens.
     """
     return f"{date.replace('-', '_')}-{sanitize(parent)}-{video.stem}"
+
+
+########
+# Pairing
+########
+
+
+class Pair(NamedTuple):
+    """One Resolve export and the camera original it was cut from."""
+
+    edit: Path
+    source: Path
+    name: str
+
+
+def find_source(video):
+    """Return the camera original for `video`, or None if it has no src/ counterpart.
+
+    Matches on stem only: the real tree differs by case (GH010234.mp4 vs src/GH010234.MP4)
+    and by extension (IMG_4085.mp4 vs src/IMG_4085.MOV), so neither can be compared directly.
+    """
+    src_dir = video.parent / "src"
+    if not src_dir.is_dir():
+        return None
+    stem = video.stem.lower()
+    for candidate in find_videos(src_dir):
+        if candidate.stem.lower() == stem:
+            return candidate
+    return None
+
+
+def plan_pairs(source_root):
+    """Walk the capture tree and return every (edit, source) pair, sorted by flat name.
+
+    A video is an edit iff <parent>/src/<stem>.* exists. Videos with no counterpart are
+    camera originals that have not been edited yet; they are skipped and logged, and enter
+    scope automatically once exported. Raises ValueError on a flat-name collision, which
+    would otherwise silently overwrite one capture with another.
+    """
+    pairs = []
+    skipped = 0
+    for date_dir in sorted(p for p in source_root.iterdir() if p.is_dir()):
+        if not _DATE_RE.fullmatch(date_dir.name):
+            logger.info("skip %s: not a YYYY-MM-DD directory", date_dir.name)
+            continue
+        # Videos may sit directly in the date folder or one level down in a named parent.
+        # The old plan_copies only looked one level down, so the former were invisible.
+        folders = [date_dir] + sorted(p for p in date_dir.iterdir() if p.is_dir() and p.name != "src")
+        for folder in folders:
+            for video in find_videos(folder):
+                source = find_source(video)
+                if source is None:
+                    logger.info("skip %s: no src/ counterpart (unedited original)", video.name)
+                    skipped += 1
+                    continue
+                pairs.append(Pair(video, source, flat_dir_name(date_dir.name, folder.name, video)))
+
+    seen = {}
+    for pair in pairs:
+        if pair.name in seen:
+            raise ValueError(f"flat name collision {pair.name!r}: {seen[pair.name]} and {pair.edit}")
+        seen[pair.name] = pair.edit
+
+    logger.info("%d pairs, %d originals skipped", len(pairs), skipped)
+    return sorted(pairs, key=lambda p: p.name)

@@ -82,7 +82,10 @@ def build_scene_config(video, output_root, override_config=None, name: str | Non
     """Build a per-video override dict. Reconstructor merges base.yaml defaults itself."""
     # Only carry the shared --config overrides plus per-video paths; defaults come from base.yaml
     config = merge({}, override_config) if override_config else {}
-    config["input_path"] = str(video)
+    # A processed re-run has no local video: keep the pulled config's input_path, which records the
+    # original run's input and is read by nothing when preproc does not run.
+    if video is not None:
+        config["input_path"] = str(video)
     config["output_path"] = str(scene_output_dir(video, output_root, name=name))
     return config
 
@@ -108,10 +111,11 @@ def run_scene(
     # Persist run_config.yaml for reproducibility before running any stage
     output_path = Path(r.config["output_path"])
     output_path.mkdir(parents=True, exist_ok=True)
+    # Always rewrite: r.config is by definition what ran. A pulled scene arrives with the original
+    # run's config, so a conditional write would push back a file describing a different run.
     run_cfg = output_path / "run_config.yaml"
-    if not run_cfg.exists() or overwrite:
-        with open(run_cfg, "w") as f:
-            yaml.dump(r.config, f, default_flow_style=False, sort_keys=False)
+    with open(run_cfg, "w") as f:
+        yaml.dump(r.config, f, default_flow_style=False, sort_keys=False)
 
     # preproc/pointcloud/semantics/mesh/localize run here, governed by config + stages
     r.run_pipeline(stages=stages, overwrite=overwrite)

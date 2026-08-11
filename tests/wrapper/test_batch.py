@@ -263,19 +263,23 @@ def test_run_scene_writes_run_config_and_returns_reconstructor(tmp_path, monkeyp
         assert yaml.safe_load(f)["output_path"] == str(out_dir)
 
 
-def test_run_scene_overwrite_governs_stale_run_config(tmp_path, monkeypatch):
-    """overwrite decides whether an existing run_config.yaml is refreshed or left stale."""
+def test_run_scene_always_refreshes_run_config(tmp_path, monkeypatch):
+    """run_config.yaml always reflects the config that actually ran; overwrite governs stage
+    outputs only, not this bookkeeping file — a pulled scene's stale config must never survive."""
     _patch_reconstructor(monkeypatch)
     out_dir = tmp_path / "out" / "C0043"
     out_dir.mkdir(parents=True)
     run_cfg = out_dir / "run_config.yaml"
     run_cfg.write_text("stale: true\n")
 
-    # overwrite=False keeps whatever is already on disk
+    # overwrite=False still refreshes run_config.yaml
     batch.run_scene(tmp_path / "C0043.MP4", tmp_path / "out", None, None, None, False, name="C0043")
-    assert yaml.safe_load(run_cfg.read_text()) == {"stale": True}
+    refreshed = yaml.safe_load(run_cfg.read_text())
+    assert refreshed["output_path"] == str(out_dir)
+    assert "stale" not in refreshed
 
-    # overwrite=True rewrites it with the config actually used for this run
+    # overwrite=True also refreshes it (unaffected by the flag either way)
+    run_cfg.write_text("stale: true\n")
     batch.run_scene(tmp_path / "C0043.MP4", tmp_path / "out", None, None, None, True, name="C0043")
     refreshed = yaml.safe_load(run_cfg.read_text())
     assert refreshed["output_path"] == str(out_dir)
@@ -284,3 +288,43 @@ def test_run_scene_overwrite_governs_stale_run_config(tmp_path, monkeypatch):
 
 def test_video_exts_is_public():
     assert batch.VIDEO_EXTS == {".mp4", ".mov", ".avi"}
+
+
+########
+# Processed re-run: no local video
+########
+
+
+def test_build_scene_config_without_video_keeps_pulled_input_path(tmp_path):
+    """A processed re-run has no local video; the pulled config's input_path must survive."""
+    override = {"input_path": "/on/another/machine/C0043.MP4", "mesh": {"voxel_size": 0.01}}
+    config = batch.build_scene_config(None, tmp_path / "out", override, name="2026_07_20-birds-C0043")
+    assert config["input_path"] == "/on/another/machine/C0043.MP4"
+    assert config["output_path"] == str(tmp_path / "out" / "2026_07_20-birds-C0043")
+
+
+def test_build_scene_config_with_video_sets_input_path(tmp_path):
+    video = tmp_path / "C0043.MP4"
+    config = batch.build_scene_config(video, tmp_path / "out", {"input_path": "/stale/path.mp4"})
+    assert config["input_path"] == str(video)
+
+
+def test_run_scene_rewrites_existing_run_config(tmp_path, monkeypatch):
+    """A pulled scene always ships a run_config.yaml; it must be replaced by what actually ran."""
+    out_dir = tmp_path / "out" / "scene"
+    out_dir.mkdir(parents=True)
+    (out_dir / "run_config.yaml").write_text(yaml.dump({"mesh": {"voxel_size": 0.99}}))
+
+    class _FakeReconstructor:
+        def __init__(self, config, config_dir=None):
+            self.config = dict(config)
+            self.config["mesh"] = {"voxel_size": 0.005}
+
+        def run_pipeline(self, stages=None, overwrite=False):
+            pass
+
+    monkeypatch.setattr(batch, "Reconstructor", _FakeReconstructor)
+    batch.run_scene(None, tmp_path / "out", None, {"output_path": str(out_dir)}, ["mesh"], False, name="scene")
+
+    written = yaml.safe_load((out_dir / "run_config.yaml").read_text())
+    assert written["mesh"]["voxel_size"] == 0.005

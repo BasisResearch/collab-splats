@@ -190,3 +190,70 @@ def test_copy_video_replaces_truncated_destination(tmp_path):
 
     assert preproc.copy_video(src, dest_dir) == 5
     assert (dest_dir / "GH010228.mp4").read_bytes() == b"video"
+
+
+########
+# Idempotency
+########
+
+
+def test_source_fingerprint_records_size_and_mtime(tmp_path):
+    src = tmp_path / "GH010228.MP4"
+    src.write_bytes(b"video")
+    fp = preproc.source_fingerprint(src)
+    assert fp["size_bytes"] == 5
+    assert fp["mtime"] == pytest.approx(src.stat().st_mtime)
+
+
+def test_metadata_round_trips(tmp_path):
+    dest = tmp_path / "2026_07_15-Goprosplat-GH010228"
+    dest.mkdir(parents=True)
+    video = Path("GH010228.mp4")
+    preproc.write_metadata(dest, video, {"unique_id": "x", "source": {"size_bytes": 5}})
+    assert preproc.metadata_path(dest, video).name == "GH010228_metadata.json"
+    assert preproc.read_metadata(dest, video)["source"]["size_bytes"] == 5
+
+
+def test_read_metadata_returns_none_when_absent(tmp_path):
+    assert preproc.read_metadata(tmp_path, Path("GH010228.mp4")) is None
+
+
+def test_needs_copy_is_true_on_a_fresh_destination(tmp_path):
+    src = tmp_path / "src" / "GH010228.MP4"
+    edit = tmp_path / "GH010228.mp4"
+    _touch(src)
+    edit.write_bytes(b"video")
+    pair = preproc.Pair(edit, src, "scene")
+    assert preproc.needs_copy(pair, tmp_path / "out") is True
+
+
+def test_needs_copy_is_false_when_the_recorded_source_still_matches(tmp_path):
+    # The trap: injection grows the curated mp4 past its source size, so a destination-size
+    # check would re-copy forever. The gate keys off the fingerprint in the sidecar instead.
+    src = tmp_path / "src" / "GH010228.MP4"
+    edit = tmp_path / "GH010228.mp4"
+    _touch(src)
+    edit.write_bytes(b"video")
+    dest = tmp_path / "out"
+    dest.mkdir()
+    (dest / "GH010228.mp4").write_bytes(b"video plus an injected gpmd track")
+    pair = preproc.Pair(edit, src, "scene")
+    preproc.write_metadata(dest, edit, {"source": preproc.source_fingerprint(edit)})
+
+    assert preproc.needs_copy(pair, dest) is False
+    assert preproc.needs_copy(pair, dest, force=True) is True
+
+
+def test_needs_copy_is_true_when_the_source_changed(tmp_path):
+    src = tmp_path / "src" / "GH010228.MP4"
+    edit = tmp_path / "GH010228.mp4"
+    _touch(src)
+    edit.write_bytes(b"video")
+    dest = tmp_path / "out"
+    dest.mkdir()
+    (dest / "GH010228.mp4").write_bytes(b"video")
+    pair = preproc.Pair(edit, src, "scene")
+    preproc.write_metadata(dest, edit, {"source": preproc.source_fingerprint(edit)})
+
+    edit.write_bytes(b"a re-exported, different edit")
+    assert preproc.needs_copy(pair, dest) is True

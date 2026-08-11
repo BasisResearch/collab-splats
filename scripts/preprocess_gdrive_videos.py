@@ -171,3 +171,75 @@ def plan_pairs(source_root):
 
     logger.info("%d pairs, %d originals skipped", len(pairs), skipped)
     return sorted(pairs, key=lambda p: p.name)
+
+
+########
+# Copy and idempotency
+########
+
+
+def copy_video(video, dest_dir, force=False):
+    """Copy `video` into `dest_dir` under its original filename; return bytes copied.
+
+    Writes to a `.partial` sidecar and renames, so an interrupted run cannot leave a
+    truncated file that looks complete. Returns 0 when an up-to-date copy already exists.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / video.name
+    size = video.stat().st_size
+
+    # Existing copy of the right size is treated as done unless forced
+    if dest.exists() and not force and dest.stat().st_size == size:
+        logger.info("exists  %s", dest.relative_to(dest_dir.parent))
+        return 0
+
+    logger.info("copying %s (%.1f GB)", dest.relative_to(dest_dir.parent), size / 1e9)
+    partial = dest.with_suffix(dest.suffix + ".partial")
+    shutil.copy2(video, partial)
+    os.replace(partial, dest)
+    return size
+
+
+def metadata_path(dest_dir, video):
+    """Return the JSON sidecar path for `video` inside `dest_dir`."""
+    return dest_dir / f"{video.stem}_metadata.json"
+
+
+def read_metadata(dest_dir, video):
+    """Return the JSON sidecar as a dict, or None when it does not exist."""
+    path = metadata_path(dest_dir, video)
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())
+
+
+def write_metadata(dest_dir, video, payload):
+    """Write the JSON sidecar for `video` and return its path."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path = metadata_path(dest_dir, video)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return path
+
+
+def source_fingerprint(path):
+    """Return the size and mtime used to decide whether a curated copy is still current."""
+    stat = path.stat()
+    return {"size_bytes": stat.st_size, "mtime": stat.st_mtime}
+
+
+def needs_copy(pair, dest_dir, force=False):
+    """Return True when the curated copy is missing or its recorded source has changed.
+
+    The comparison is against the fingerprint stored in the JSON sidecar, never against the
+    destination's own size. Injection adds a gpmd track and static tags, so the curated mp4
+    ends up larger than the file it was copied from; a destination-size check would fail on
+    every subsequent run, clobber the injected file, and re-upload ~7 GB each time.
+    """
+    if force:
+        return True
+    if not (dest_dir / pair.edit.name).is_file():
+        return True
+    recorded = (read_metadata(dest_dir, pair.edit) or {}).get("source")
+    if not recorded:
+        return True
+    return recorded != source_fingerprint(pair.edit)

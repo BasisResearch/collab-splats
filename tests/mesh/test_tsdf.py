@@ -59,10 +59,10 @@ def test_open3d_tsdf_clean_repair_runs_and_keeps_one_mesh_ply(tmp_path):
 
 
 def test_open3d_tsdf_defaults_to_no_clean_repair(tmp_path):
-    """The default must be the value that works — it is what the Reconstructor path gets.
+    """The default must be the value that works — cleanup is opt-in.
 
-    `_run_tsdf_mesh` constructs the fusion without passing clean_repair, so a True default that
-    raised made every config-driven mesh stage die after fusing every frame.
+    A True default that raised would make every caller who omits the flag die after fusing
+    every frame. `_run_tsdf_mesh` forwards it explicitly; notebooks and evals often do not.
     """
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
 

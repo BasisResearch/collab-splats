@@ -323,39 +323,36 @@ def _run_tsdf_mesh(
     depth_trunc: float,
     clean_repair: bool = False,
 ) -> Path:
-    """Fuse depth + RGB from FeedforwardResult into TSDF mesh."""
-    from collab_splats.mesh.tsdf import Open3DTSDFFusion
+    """Fuse depth + RGB from feedforward.zarr into a TSDF mesh, using COLMAP poses."""
+    from collab_splats.mesh.utils import pointcloud_to_mesh
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
-    # Load depth and RGB from feedforward zarr
-    ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True)
+    # world_points is the largest array in the store and the mesh path no longer reads it
+    ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True, load_world_points=False)
 
-    depths = ff.depth  # (N, H, W) float32 metres
-    if depths is None:
-        raise ValueError("FeedforwardResult has no depth — cannot mesh.")
+    # COLMAP is the pose authority — BA and loop-closure corrections land in the reconstruction,
+    # not back in the zarr. Intrinsics stay the zarr's: build_colmap rescaled COLMAP's camera to
+    # original resolution, while the zarr's depth and RGB are at model resolution.
+    if ff.depth is None:
+        raise ValueError(f"{feedforward_zarr} has no depth — cannot mesh.")
+    if result.extrinsics.shape[0] != ff.depth.shape[0]:
+        raise ValueError(
+            f"Frame-count mismatch: COLMAP reconstruction has {result.extrinsics.shape[0]} "
+            f"images but {feedforward_zarr} has {ff.depth.shape[0]}. They are from different "
+            "runs — re-run the pointcloud stage, or point --stages mesh at the matching scene."
+        )
+    ff.extrinsics = result.extrinsics
 
-    # images is (N, 3, H, W) torch tensor; convert to (N, H, W, 3) float32 numpy
-    if ff.images is None:
-        raise ValueError("FeedforwardResult has no images — cannot mesh.")
-    imgs = ff.images
-    if hasattr(imgs, "numpy"):
-        imgs = imgs.numpy()
-    rgbs = np.ascontiguousarray(imgs.transpose(0, 2, 3, 1)).astype(np.float32) / 255.0
-
-    # c2w from PointcloudResult extrinsics (w2c → c2w)
-    c2w = np.linalg.inv(result.extrinsics)  # (N, 4, 4)
-    intrinsics = result.intrinsics  # (N, 3, 3)
-
-    # Run TSDF fusion
     output_dir.mkdir(parents=True, exist_ok=True)
-    mesher = Open3DTSDFFusion(
-        output_dir=output_dir,
+    mesh_result = pointcloud_to_mesh(
+        ff,
+        output_dir,
+        method="open3d_tsdf",
         voxel_size=voxel_size,
         sdf_trunc=sdf_trunc,
         depth_trunc=depth_trunc,
         clean_repair=clean_repair,
     )
-    mesh_result = mesher.create(depths=depths, rgbs=rgbs, c2w=c2w, intrinsics=intrinsics)
     return mesh_result.mesh_path
 
 

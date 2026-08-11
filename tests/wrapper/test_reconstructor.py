@@ -8,11 +8,15 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pycolmap
 import pytest
+import torch
 import yaml
 from mergedeep import merge
 
 from collab_splats.mesh.tsdf import Open3DTSDFFusion
-from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
+from collab_splats.pointcloud.feedforward.base import (
+    FeedforwardResult,
+    build_pycolmap_reconstruction,
+)
 from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.wrapper.reconstructor import Reconstructor
 
@@ -603,21 +607,117 @@ def test_mesh_clean_repair_defaults_off(tmp_path):
     assert mock_mesh.call_args.kwargs["clean_repair"] is False
 
 
-def test_run_tsdf_mesh_passes_clean_repair_to_the_fusion(tmp_path):
-    """The flag has to survive the last hop too — mesh() → _run_tsdf_mesh → Open3DTSDFFusion."""
+def _tsdf_mesh_doubles(n_colmap=2, n_zarr=2, model_hw=(8, 8)):
+    """(PointcloudResult double with original-res K, FeedforwardResult with model-res K)."""
+    H, W = model_hw
+
+    # COLMAP camera after _rescale_reconstruction_to_original_dimensions: 2x the model grid
+    result = MagicMock()
+    result.extrinsics = np.eye(4, dtype=np.float32)[None].repeat(n_colmap, axis=0)
+    result.extrinsics[:, 0, 3] = 7.0  # distinctive, so the two pose sources are separable
+    K_orig = np.eye(3, dtype=np.float32)[None].repeat(n_colmap, axis=0)
+    K_orig[:, 0, 0] = K_orig[:, 1, 1] = 2.0 * W
+    K_orig[:, 0, 2] = W  # cx = W → principal point outside a W-wide image
+    K_orig[:, 1, 2] = H
+    result.intrinsics = K_orig
+
+    K_model = np.eye(3, dtype=np.float32)[None].repeat(n_zarr, axis=0)
+    K_model[:, 0, 0] = K_model[:, 1, 1] = float(W)
+    K_model[:, 0, 2] = W / 2
+    K_model[:, 1, 2] = H / 2
+    ff = FeedforwardResult(
+        points=np.zeros((1, 3), dtype=np.float32),
+        colors=np.zeros((1, 3), dtype=np.uint8),
+        extrinsics=np.eye(4, dtype=np.float32)[None].repeat(n_zarr, axis=0),
+        intrinsics=K_model,
+        image_paths=[Path(f"frame_{i:04d}.png") for i in range(n_zarr)],
+        original_coords=np.tile([0, 0, W, H, W, H], (n_zarr, 1)).astype(np.float32),
+        model_width=W,
+        model_height=H,
+        images=torch.zeros((n_zarr, 3, H, W), dtype=torch.float32),
+        depth=np.ones((n_zarr, H, W), dtype=np.float32),
+    )
+    return result, ff
+
+
+def test_run_tsdf_mesh_fuses_zarr_intrinsics_not_colmap(tmp_path):
+    """Regression: COLMAP K is original-res, zarr depth is model-res. Fuse with the zarr K."""
     from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
 
-    result = MagicMock()
-    result.extrinsics = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)
-    result.intrinsics = np.eye(3, dtype=np.float32)[None].repeat(2, axis=0)
-
-    ff = MagicMock()
-    ff.depth = np.ones((2, 8, 8), dtype=np.float32)
-    ff.images = np.zeros((2, 3, 8, 8), dtype=np.float32)
-
+    result, ff = _tsdf_mesh_doubles()
+    mock_creator = MagicMock()
     with (
         patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
-        patch("collab_splats.mesh.tsdf.Open3DTSDFFusion") as mock_fusion,
+        patch("collab_splats.mesh.get_mesh_creator", return_value=mock_creator),
+    ):
+        _run_tsdf_mesh(
+            result=result,
+            feedforward_zarr=tmp_path / "feedforward.zarr",
+            output_dir=tmp_path,
+            voxel_size=0.01,
+            sdf_trunc=0.04,
+            depth_trunc=2.0,
+            clean_repair=False,
+        )
+
+    fused_K = mock_creator.create.call_args[0][3]
+    np.testing.assert_allclose(fused_K, ff.intrinsics)
+    assert not np.allclose(fused_K, result.intrinsics)
+
+
+def test_run_tsdf_mesh_uses_colmap_poses(tmp_path):
+    """COLMAP stays the pose authority — BA and LC corrections land there, not in the zarr."""
+    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
+
+    result, ff = _tsdf_mesh_doubles()
+    mock_creator = MagicMock()
+    with (
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
+        patch("collab_splats.mesh.get_mesh_creator", return_value=mock_creator),
+    ):
+        _run_tsdf_mesh(
+            result=result,
+            feedforward_zarr=tmp_path / "feedforward.zarr",
+            output_dir=tmp_path,
+            voxel_size=0.01,
+            sdf_trunc=0.04,
+            depth_trunc=2.0,
+            clean_repair=False,
+        )
+
+    fused_c2w = mock_creator.create.call_args[0][2]
+    np.testing.assert_allclose(fused_c2w, np.linalg.inv(result.extrinsics), atol=1e-5)
+
+
+def test_run_tsdf_mesh_raises_on_frame_count_mismatch(tmp_path):
+    """Stage re-runs can pair a COLMAP dir with a feedforward.zarr from a different run."""
+    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
+
+    result, ff = _tsdf_mesh_doubles(n_colmap=3, n_zarr=2)
+    with (
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
+        pytest.raises(ValueError, match="feedforward.zarr"),
+    ):
+        _run_tsdf_mesh(
+            result=result,
+            feedforward_zarr=tmp_path / "feedforward.zarr",
+            output_dir=tmp_path,
+            voxel_size=0.01,
+            sdf_trunc=0.04,
+            depth_trunc=2.0,
+            clean_repair=False,
+        )
+
+
+def test_run_tsdf_mesh_passes_clean_repair_to_the_fusion(tmp_path):
+    """The flag has to survive the last hop too — mesh() → _run_tsdf_mesh → the mesh creator."""
+    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
+
+    result, ff = _tsdf_mesh_doubles()
+    mock_creator = MagicMock()
+    with (
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
+        patch("collab_splats.mesh.get_mesh_creator", return_value=mock_creator) as mock_get,
     ):
         _run_tsdf_mesh(
             result=result,
@@ -629,7 +729,8 @@ def test_run_tsdf_mesh_passes_clean_repair_to_the_fusion(tmp_path):
             clean_repair=True,
         )
 
-    assert mock_fusion.call_args.kwargs["clean_repair"] is True
+    assert mock_get.call_args.kwargs["clean_repair"] is True
+    assert mock_get.call_args.kwargs["depth_trunc"] == 1.0
 
 
 def test_run_pipeline_calls_stages_in_order(tmp_path):

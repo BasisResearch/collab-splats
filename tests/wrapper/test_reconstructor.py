@@ -12,6 +12,8 @@ import yaml
 from mergedeep import merge
 
 from collab_splats.mesh.tsdf import Open3DTSDFFusion
+from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 # Import ConfigLoader directly from config.py to avoid wrapper/__init__.py
@@ -1041,6 +1043,58 @@ def test_leaf_stages_derived_from_dep_graph():
     assert R.LEAF_STAGES == expected
     # Today's graph, spelled out so a failure above reads as a real change rather than a typo.
     assert expected == {"semantics", "mesh", "localize"}
+
+
+def _seed_disk_reconstruction(rec, frame_idxs, image_names):
+    """Write a frames.zarr and a COLMAP reconstruction the way a finished run leaves them."""
+    FrameStore.create(
+        rec.frames_zarr,
+        [np.zeros((4, 6, 3), dtype=np.uint8) for _ in frame_idxs],
+        [{"frame_idx": fi} for fi in frame_idxs],
+        provenance={"video_path": "v.mp4"},
+    )
+    n = len(frame_idxs)
+    recon = build_pycolmap_reconstruction(
+        pts3d=np.zeros((1, 3), dtype=np.float32),
+        colors=np.zeros((1, 3), dtype=np.uint8),
+        extrinsics=np.stack([np.eye(4, dtype=np.float32)] * n),
+        intrinsics=np.stack([np.eye(3, dtype=np.float32)] * n),
+        image_width=6,
+        image_height=4,
+        image_names=image_names,
+    )
+    colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
+    colmap_dir.mkdir(parents=True, exist_ok=True)
+    recon.write(str(colmap_dir))
+
+
+def test_load_pointcloud_from_disk_matches_registered_image_names(tmp_path):
+    """Loading a finished reconstruction off disk — the whole basis of a leaf-stage re-run."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    # Sparse source indices, as a quality-gated selection always produces: a loader that assumed
+    # row position rather than frame_idx would survive a contiguous 0,1,2 store.
+    frame_idxs = [2, 16]
+    # Names built the way the creators build them — Path(f"frame_{idx:06d}"), no extension
+    # (vggt_omega.py, vggtx.py, mapanything.py) — rather than re-spelled by hand here.
+    _seed_disk_reconstruction(rec, frame_idxs, [Path(f"frame_{i:06d}").name for i in frame_idxs])
+
+    result = rec._load_pointcloud_from_disk()
+    assert [p.name for p in result.image_paths] == ["frame_000002", "frame_000016"]
+    # extrinsics is where a naming mismatch actually bites: it looks every image_path up by name.
+    # Every other test mocks this loader, so nothing else exercises the round trip.
+    assert result.extrinsics.shape == (2, 4, 4)
+
+
+def test_load_pointcloud_from_disk_rejects_a_disagreeing_store(tmp_path):
+    """A store the reconstruction does not describe must name both, not raise a bare KeyError."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    # The reconstruction registers a frame the store never selected, and vice versa.
+    _seed_disk_reconstruction(rec, [2, 16], ["frame_000002", "frame_000099"])
+
+    with pytest.raises(ValueError, match="frame_000016"):
+        rec._load_pointcloud_from_disk()
 
 
 def test_stage_output_exists_mesh(tmp_path):

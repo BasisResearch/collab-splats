@@ -580,11 +580,24 @@ class Reconstructor:
         colmap_dir = self.backend_dir / "colmap" / "sparse" / "0"
         recon = pycolmap.Reconstruction()
         recon.read(str(colmap_dir))
-        # Rebuild image_paths from frames.zarr: COLMAP registered names as frame_{source_idx:06d}.jpg
-        # (build_pycolmap_reconstruction takes names from FrameStore.export, which is 06d source-idx
-        # named), so derive the same names in store order to line up with the reconstruction.
+        # Rebuild image_paths from frames.zarr in store order, so it lines up with the per-frame
+        # arrays the downstream stages index. The feedforward creators register COLMAP images as
+        # frame_{source_idx:06d} with NO extension (vggt_omega.py, vggtx.py, mapanything.py) — the
+        # frame_*.jpg spelling elsewhere is the zarr/localization id namespace, not this one.
         frame_indices = FrameStore.open(self.frames_zarr).frame_indices()
-        image_paths = [Path(f"frame_{int(fi):06d}.jpg") for fi in frame_indices]
+        image_paths = [Path(f"frame_{int(fi):06d}") for fi in frame_indices]
+        # That naming is a contract between the store and the reconstruction, and nothing enforces
+        # it at write time. Check it here: unchecked, a mismatch surfaces as a bare KeyError from
+        # PointcloudResult.extrinsics, several frames into a stage and — on the remote path — after
+        # a multi-GB pull that says nothing about which two artifacts disagree.
+        registered = {img.name for img in recon.images.values()}
+        missing = [p.name for p in image_paths if p.name not in registered]
+        if missing:
+            raise ValueError(
+                f"{len(missing)} of {len(image_paths)} frames in {self.frames_zarr} are not "
+                f"registered in {colmap_dir} (first: {missing[0]}); the frame store and the "
+                f"reconstruction describe different runs."
+            )
         return PointcloudResult(
             reconstruction=recon,
             frame=CoordinateFrame.COLMAP,

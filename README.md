@@ -78,11 +78,38 @@ repo. It configures the `collab-data` remote and verifies access:
 ./scripts/setup_local_rclone.sh
 ```
 
+**Curated environment videos.** `scripts/preprocess_gdrive_videos.py` turns the nested Drive
+export into one folder per video and carries the capture metadata across: DaVinci Resolve
+strips every timed data track on export, so the script pairs each export against its camera
+original in `src/`, solves the trim offset from audio, and writes the metadata back as
+static tags plus a retimed `gpmd` track inside the mp4, with a full-rate Parquet sidecar
+beside it. `scripts/push_curated.sh` uploads that tree to the `environments-curated` bucket.
+Both are re-runnable and skip work already done.
+
+Only videos that have a `src/` counterpart are processed; an unedited camera original is
+skipped and enters scope automatically once it is exported.
+
+```sh
+python scripts/preprocess_gdrive_videos.py --dry-run   # ../gdrive-src -> ../environments-curated
+python scripts/preprocess_gdrive_videos.py
+python scripts/preprocess_gdrive_videos.py --only GH010234   # one clip
+python scripts/preprocess_gdrive_videos.py --index-only      # rebuild index.csv alone
+
+./scripts/push_curated.sh --dry-run            # -> collab-data:environments-curated
+./scripts/push_curated.sh
+```
+
+Each curated folder holds the video, a `_metadata.json` sidecar, and a `_telemetry.parquet`
+sidecar when the camera recorded IMU. `environments-curated/index.csv` is a two-column
+`unique_id,gps` table regenerated from the sidecars on every run.
+
+`exiftool` is required alongside `ffmpeg` for this pipeline.
+
 ### 4. System requirements
 
 - **NVIDIA driver + GPU** at runtime (model warmup loads CUDA kernels at import).
 - **build-essential** (gcc/g++) + a CUDA toolkit at build time for the source extensions.
-- Optional: `colmap`, `ffmpeg`, `rclone` for the COLMAP and data pipelines.
+- Optional: `colmap`, `ffmpeg`, `exiftool`, `rclone` for the COLMAP and data pipelines.
 
 All subsequent commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`. The interpreter is always `/opt/venv/reconstruction/bin/python` (py3.11).
 

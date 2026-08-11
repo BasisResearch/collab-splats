@@ -1,15 +1,19 @@
-"""Tests for scripts/flatten_dataset.py naming and tree-walk rules."""
+"""Tests for scripts/preprocess_gdrive_videos.py."""
 
+import csv
 import importlib.util
+import io
+import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 # scripts/ is not an importable package, so load the module by file path
-_SCRIPT = Path(__file__).parents[2] / "scripts" / "flatten_dataset.py"
-_spec = importlib.util.spec_from_file_location("flatten_dataset", _SCRIPT)
-flatten_dataset = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(flatten_dataset)
+_SCRIPT = Path(__file__).parents[2] / "scripts" / "preprocess_gdrive_videos.py"
+_spec = importlib.util.spec_from_file_location("preprocess_gdrive_videos", _SCRIPT)
+preproc = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(preproc)
 
 
 ########
@@ -31,7 +35,7 @@ _spec.loader.exec_module(flatten_dataset)
     ],
 )
 def test_sanitize(raw, expected):
-    assert flatten_dataset.sanitize(raw) == expected
+    assert preproc.sanitize(raw) == expected
 
 
 ########
@@ -41,13 +45,13 @@ def test_sanitize(raw, expected):
 
 def test_flat_dir_name_uses_underscore_date_and_hyphen_delimiter():
     video = Path("/x/2026-07-15/Goprosplat/GH010228.mp4")
-    assert flatten_dataset.flat_dir_name("2026-07-15", "Goprosplat", video) == "2026_07_15-Goprosplat-GH010228"
+    assert preproc.flat_dir_name("2026-07-15", "Goprosplat", video) == "2026_07_15-Goprosplat-GH010228"
 
 
 def test_flat_dir_name_preserves_parent_case():
     video = Path("/x/GH010228.mp4")
-    lower = flatten_dataset.flat_dir_name("2026-07-15", "Goprosplat", video)
-    upper = flatten_dataset.flat_dir_name("2026-07-15", "GoproSplat", video)
+    lower = preproc.flat_dir_name("2026-07-15", "Goprosplat", video)
+    upper = preproc.flat_dir_name("2026-07-15", "GoproSplat", video)
     assert lower != upper
 
 
@@ -55,7 +59,7 @@ def test_flat_dir_name_keeps_video_stem_verbatim():
     # Dots in the video name survive; only the parent folder is sanitized
     video = Path("/x/PXL_20260630_002106958.TS.mp4")
     assert (
-        flatten_dataset.flat_dir_name("2026-06-29", "Phone pics and splat videos", video)
+        preproc.flat_dir_name("2026-06-29", "Phone pics and splat videos", video)
         == "2026_06_29-Phone_pics_and_splat_videos-PXL_20260630_002106958.TS"
     )
 
@@ -63,7 +67,7 @@ def test_flat_dir_name_keeps_video_stem_verbatim():
 def test_flat_dir_name_keeps_hyphens_in_video_stem():
     # The stem is last, so its hyphens stay parseable via split("-", 2)
     video = Path("/x/clip-take-2.mp4")
-    name = flatten_dataset.flat_dir_name("2026-07-15", "splats", video)
+    name = preproc.flat_dir_name("2026-07-15", "splats", video)
     assert name == "2026_07_15-splats-clip-take-2"
     assert name.split("-", 2) == ["2026_07_15", "splats", "clip-take-2"]
 
@@ -99,12 +103,12 @@ def tree(tmp_path):
 
 
 def test_plan_copies_skips_src_only_folders(tree):
-    names = [name for _, name in flatten_dataset.plan_copies(tree)]
+    names = [name for _, name in preproc.plan_copies(tree)]
     assert names == ["2026_07_15-Goprosplat-GH010228", "2026_07_15-Goprosplat-GH010229"]
 
 
 def test_plan_copies_ignores_undated_top_level_dirs(tree):
-    videos = [v for v, _ in flatten_dataset.plan_copies(tree)]
+    videos = [v for v, _ in preproc.plan_copies(tree)]
     assert all("scratch" not in v.parts for v in videos)
 
 
@@ -114,7 +118,7 @@ def test_plan_copies_raises_on_name_collision(tmp_path):
     _touch(root / "2026-07-15" / "gopro splat" / "GH010228.mp4")
     _touch(root / "2026-07-15" / "gopro-splat" / "GH010228.mp4")
     with pytest.raises(ValueError, match="collision"):
-        flatten_dataset.plan_copies(root)
+        preproc.plan_copies(root)
 
 
 ########
@@ -127,7 +131,7 @@ def test_copy_video_writes_original_filename(tmp_path):
     src.write_bytes(b"video")
     dest_dir = tmp_path / "out" / "2026_07_15-Goprosplat-GH010228"
 
-    assert flatten_dataset.copy_video(src, dest_dir) == 5
+    assert preproc.copy_video(src, dest_dir) == 5
     assert (dest_dir / "GH010228.mp4").read_bytes() == b"video"
     # No .partial sidecar is left behind
     assert list(dest_dir.iterdir()) == [dest_dir / "GH010228.mp4"]
@@ -138,9 +142,9 @@ def test_copy_video_skips_existing_same_size(tmp_path):
     src.write_bytes(b"video")
     dest_dir = tmp_path / "out" / "scene"
 
-    flatten_dataset.copy_video(src, dest_dir)
-    assert flatten_dataset.copy_video(src, dest_dir) == 0
-    assert flatten_dataset.copy_video(src, dest_dir, force=True) == 5
+    preproc.copy_video(src, dest_dir)
+    assert preproc.copy_video(src, dest_dir) == 0
+    assert preproc.copy_video(src, dest_dir, force=True) == 5
 
 
 def test_copy_video_replaces_truncated_destination(tmp_path):
@@ -150,5 +154,5 @@ def test_copy_video_replaces_truncated_destination(tmp_path):
     dest_dir.mkdir(parents=True)
     (dest_dir / "GH010228.mp4").write_bytes(b"vi")
 
-    assert flatten_dataset.copy_video(src, dest_dir) == 5
+    assert preproc.copy_video(src, dest_dir) == 5
     assert (dest_dir / "GH010228.mp4").read_bytes() == b"video"

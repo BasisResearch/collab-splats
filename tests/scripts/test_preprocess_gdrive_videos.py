@@ -519,6 +519,8 @@ def test_build_payload_satisfies_the_index_contract():
     assert payload["has_imu"] is True
     # Cuts plus colour correction only, so lens geometry still describes the exported pixels
     assert payload["intrinsics"]["valid_for_edit"] is True
+    # No locked fix at or after 4.2 s in _DUMP, so this exercises the whole-source fallback
+    assert payload["gps_source_anchored"] is True
 
 
 def test_build_payload_records_a_missing_fix_as_null():
@@ -534,3 +536,40 @@ def test_build_payload_records_a_missing_fix_as_null():
     )
     assert payload["gps"] is None
     assert payload["has_imu"] is False
+    # No fix anywhere, so the flag must not claim an approximate fix exists
+    assert payload["gps_source_anchored"] is False
+
+
+def test_build_payload_marks_a_fix_inside_the_cut_as_exact():
+    # The cut starts at 0.5 s and _DUMP has a locked fix at 1.001 s, so the fix comes
+    # from inside the trim and must not be labelled source-anchored
+    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
+    payload = preproc.build_payload(
+        pair,
+        _DUMP,
+        preproc.Alignment(0.5, 0.997, True),
+        duration_s=131.4,
+        unique_id="2026_07_22-splats-GH010234",
+        has_imu=True,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    assert payload["gps"]["latitude"] == pytest.approx(42.3532)
+    assert payload["gps_source_anchored"] is False
+
+
+def test_build_payload_marks_a_rejected_alignment_as_source_anchored():
+    # Alignment failed, so the trim window is unknown and the fix is taken from the
+    # whole source; the flag records that the value is approximate
+    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
+    payload = preproc.build_payload(
+        pair,
+        _DUMP,
+        preproc.Alignment(0.0, 0.21, False),
+        duration_s=131.4,
+        unique_id="2026_07_22-splats-GH010234",
+        has_imu=True,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    assert payload["gps"]["latitude"] == pytest.approx(42.3532)
+    assert payload["gps_source_anchored"] is True
+    assert payload["alignment"]["ok"] is False

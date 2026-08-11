@@ -1,5 +1,7 @@
 """prepare_scene/discover_scenes: leaf-only routing, failure modes, config merge."""
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -173,3 +175,14 @@ def test_discover_scenes_lists_curated_otherwise():
     assert discover_scenes(source, None) == ["curated-only-scene", SCENE]
     assert discover_scenes(source, ["preproc", "pointcloud"]) == ["curated-only-scene", SCENE]
     assert not any(c[0] == "list_processed_scenes" for c in source.calls)
+
+
+def test_importing_the_remote_package_stays_light():
+    """rerun imports the pipeline; dashboard/operation_log imports this package on the fast bind."""
+    # Pins why discover_scenes/prepare_scene are absent from collab_splats.remote.__all__:
+    # re-exporting them here drags torch into the dashboard's light import path.
+    code = (
+        "import sys; import collab_splats.remote; "
+        "assert 'torch' not in sys.modules, 'collab_splats.remote import pulled torch'"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=120)

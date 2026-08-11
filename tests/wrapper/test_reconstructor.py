@@ -1150,6 +1150,24 @@ def test_run_pipeline_named_stage_with_overwrite_runs(tmp_path):
     assert calls == ["mesh"]
 
 
+def test_run_pipeline_named_upstream_stages_resume_instead_of_refusing(tmp_path):
+    """`--stages preproc,pointcloud,localize` retried after a localize failure must not refuse."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    # Both upstream stages already complete on disk; only the named leaf still has work.
+    rec.frames_zarr.mkdir(parents=True, exist_ok=True)
+    _seed_pointcloud_markers(rec)
+    calls = []
+    rec.preprocess = lambda overwrite=False: calls.append("preproc")
+    rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
+    rec.build_localization_db = lambda overwrite=False: calls.append("localize")
+
+    # Reaching localize at all is the assertion: the refusal is scoped to leaf stages, so the
+    # two completed non-leaf stages fall through to their own skip-checks as before.
+    rec.run_pipeline(stages=["preproc", "pointcloud", "localize"])
+    assert calls == ["preproc", "pointcloud", "localize"]
+
+
 def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
     """stages=None comes from config enabled flags — resume behaviour must not become an error."""
     config = _make_config(tmp_path, {"mesh": {"enabled": True}})

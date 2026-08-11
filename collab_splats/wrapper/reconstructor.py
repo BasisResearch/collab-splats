@@ -529,9 +529,7 @@ class Reconstructor:
         # Skip if COLMAP + feedforward.zarr both exist and overwrite not requested.
         # Require feedforward.zarr too — if a previous run was partial (zarr missing),
         # we must re-run inference rather than loading stale COLMAP.
-        colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
-        zarr_done = (self.backend_dir / "feedforward.zarr").exists()
-        if not overwrite and colmap_done and zarr_done:
+        if not overwrite and self._stage_output_exists("pointcloud"):
             logger.info("Pointcloud exists at %s, loading from disk", self.backend_dir / "colmap")
             self.pointcloud = self._load_pointcloud_from_disk()
             return self.pointcloud
@@ -925,10 +923,13 @@ class Reconstructor:
                         f"stages={stages} nor already on disk. Add '{dep}' to the stages list "
                         f"(or run it first)."
                     )
-            # Refuse a stage the caller NAMED whose output already exists, instead of silently
-            # no-op'ing. A remote re-run would otherwise pull the whole scene, skip every stage,
-            # push nothing and report success.
-            if named and not overwrite and self._stage_output_exists(stage):
+            # Refuse a LEAF stage the caller NAMED whose output already exists, instead of
+            # silently no-op'ing. A remote re-run would otherwise pull the whole scene, skip
+            # every stage, push nothing and report success. Scoped to leaves because every
+            # re-run set is leaf-only by construction, while a named non-leaf stage is how the
+            # local drivers resume: `--stages preproc,pointcloud,localize` after a localize
+            # failure must skip the two completed upstream stages, not refuse them.
+            if named and stage in LEAF_STAGES and not overwrite and self._stage_output_exists(stage):
                 raise ValueError(f"Stage '{stage}' output already exists; pass overwrite=True to replace it.")
 
         # Execute stages in canonical order

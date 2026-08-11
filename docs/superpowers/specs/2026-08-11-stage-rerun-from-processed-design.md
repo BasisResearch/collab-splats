@@ -132,10 +132,10 @@ inline exists-checks with `if not overwrite and self._stage_output_exists(<stage
 Extends the loop that already validates dependencies (`:894`):
 
 ```python
-        # Refuse a stage the caller NAMED whose output already exists, instead of silently
-        # no-op'ing. A remote re-run would otherwise pull the whole scene, skip every stage,
-        # push nothing and report success.
-        if not overwrite and self._stage_output_exists(stage):
+        # Refuse a LEAF stage the caller NAMED whose output already exists, instead of
+        # silently no-op'ing. A remote re-run would otherwise pull the whole scene, skip
+        # every stage, push nothing and report success.
+        if stage in LEAF_STAGES and not overwrite and self._stage_output_exists(stage):
             raise ValueError(
                 f"Stage '{stage}' output already exists; pass overwrite=True to replace it."
             )
@@ -147,17 +147,29 @@ re-run of `run_pipeline.py` resume rather than fail. Naming a stage means asking
 inheriting it from config does not. `run_pipeline` reassigns `stages` when it defaults, so
 capture the distinction first: `named = stages is not None`, and guard the new check with it.
 
+**And only to leaf stages.** Every re-run set is leaf-only by construction, so scoping the
+refusal to leaves costs the feature nothing — while a named *non-leaf* stage is exactly how the
+local drivers resume. `docs/examples/run_pipeline.py:31` documents
+`--stages preproc,pointcloud,localize scene.MP4`, and `scene_output_dir` is deterministic
+(date + stem), so retrying that command after `localize` fails re-enters the same output dir
+with `preproc` and `pointcloud` already done. An unscoped refusal turns that documented retry
+into a `ValueError` — and, under the remote driver, into a FAIL row per already-built scene.
+Skipping a completed *upstream* stage to reach the stage you asked for is resume, not silent
+retargeting.
+
 Audited against every caller: `dashboard/pipeline.py:380` defines its own unrelated
 `run_pipeline` and constructs no `Reconstructor`, so the dashboard is untouched. The six
 explicit-stage test call sites in `tests/wrapper/test_reconstructor.py` all pass, because the
-check fires only when a *named* stage's own output exists —
+check fires only when a *named leaf* stage's own output exists —
 `test_run_pipeline_dep_satisfied_by_existing_output` (`:680`) creates `frames.zarr` but names
-only `pointcloud`, whose marker is absent.
+only `pointcloud`, which is not a leaf and whose marker is absent anyway.
 
-### 4. `collab_splats/remote/rerun.py` — new, one function
+### 4. `collab_splats/remote/rerun.py` — new, two functions
 
 Routing, transport and config assembly. No filesystem-layout knowledge: that lives in
-`Reconstructor`.
+`Reconstructor`. Both functions share one predicate, `_is_rerun(stages)`
+(`bool(stages) and set(stages) <= LEAF_STAGES`), so the bucket a scene is *discovered* in can
+never disagree with the bucket it is *fetched* from.
 
 ```python
 def prepare_scene(source, scene, scene_dir, stages, override_config, on_line=None):
@@ -210,6 +222,20 @@ conditional rather than a table:
     cfg.pop("localization" if stage == "localize" else stage, None)
 ```
 
+`--all` needs the same routing. The driver's `--all` lists the *curated* bucket, so a leaf re-run
+over `--all` would otherwise enumerate scenes that may never have been processed and fail every
+one of them on `has_processed`. The work list has to come from whichever bucket the run reads
+from:
+
+```python
+def discover_scenes(source, stages) -> list[str]:
+    """Scene ids for an --all run, from whichever bucket this run reads from."""
+    # A leaf-only re-run consumes environments-processed, so that is what --all must enumerate.
+    return source.list_processed_scenes() if _is_rerun(stages) else source.list_scenes()
+```
+
+`list_processed_scenes` already exists on `SceneSource`; this adds no transport code.
+
 ### 5. `wrapper/batch.py` — two small changes
 
 - `build_scene_config`: set `input_path` only when `video is not None`. A processed re-run has
@@ -221,10 +247,12 @@ conditional rather than a table:
   params. Drop the condition and always write it: `r.config` is by definition what ran, so
   rewriting is never wrong, and it costs no new code. The `--overwrite` path already rewrote.
 
-### 6. `docs/examples/run_pipeline_remote.py` — one call site
+### 6. `docs/examples/run_pipeline_remote.py` — two call sites
 
-Step 1 of the per-scene loop becomes `video, scene_config = prepare_scene(...)`, and
-`scene_config` is passed to `batch.run_scene` in place of `override_config`. Everything else —
+`--all` discovery becomes `scene_ids = discover_scenes(source, stages)`, staying inside the
+existing `try` that maps an rclone failure to `EXIT_REMOTE_UNAVAILABLE`. Step 1 of the per-scene
+loop becomes `video, scene_config = prepare_scene(...)`, and `scene_config` is passed to
+`batch.run_scene` in place of `override_config`. Everything else —
 the failure isolation, the `check_available()` re-probe, the SKIPPED rows, the summary, the
 exit codes — is unchanged.
 

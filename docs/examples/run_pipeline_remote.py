@@ -29,7 +29,8 @@ A --stages set that includes preproc or pointcloud always rebuilds from the cura
 so a re-run can never leave a stale downstream artifact behind. A leaf re-run of a scene with
 no processed outputs fails that scene; the config is authoritative, so a --config backend that
 disagrees with the pulled run_config.yaml is an error rather than a silent retarget. Naming a
-stage whose output already exists is refused — pass --overwrite to replace it.
+leaf stage whose output already exists is refused — pass --overwrite to replace it. Named
+non-leaf stages still skip when done, so a retry of a partly-finished run resumes as before.
 
 Credentials come from the existing rclone remote (`collab-data`) — nothing is read
 from the environment or passed on the command line. One scene's failure does not abort
@@ -59,7 +60,11 @@ from pathlib import Path
 
 import yaml
 
-from collab_splats.remote import PUSH_EXCLUDES, SCENE_ID_RE, SceneSource, discover_scenes, prepare_scene
+from collab_splats.remote import PUSH_EXCLUDES, SCENE_ID_RE, SceneSource
+
+# Imported from the submodule, not the package: rerun pulls in the pipeline (torch), and
+# collab_splats.remote itself must stay light for the dashboard's fast bind.
+from collab_splats.remote.rerun import discover_scenes, prepare_scene
 from collab_splats.wrapper import batch
 
 logging.basicConfig(
@@ -93,7 +98,8 @@ def run_remote(
     if scenes:
         scene_ids = list(scenes)
     else:
-        # The whole work list comes from here, and list_scenes raises on any rclone failure by design
+        # The whole work list comes from here, and both listings discover_scenes dispatches to
+        # (curated, or processed for a leaf re-run) raise on any rclone failure by design
         # (absence on GCS is an empty listing, never an exit code). Uncaught, a dead or unconfigured
         # remote exited 1 with a traceback — telling an unattended runner "some scenes failed" when
         # nothing had even been attempted, and leaving EXIT_REMOTE_UNAVAILABLE unreachable at start.
@@ -120,14 +126,10 @@ def run_remote(
         try:
             # 1. Fetch inputs: the curated video, or the processed scene pulled back for a
             # leaf-stage re-run (which returns video=None and a config carrying its provenance)
-            video, scene_config = prepare_scene(
-                source, scene, scene_dir, stages, override_config, on_line=logger.info
-            )
+            video, scene_config = prepare_scene(source, scene, scene_dir, stages, override_config, on_line=logger.info)
 
             # 2. Same pipeline as the local driver; name= pins the output dir to the scene id
-            out, _ = batch.run_scene(
-                video, output_root, config_dir, scene_config, stages, overwrite, name=scene
-            )
+            out, _ = batch.run_scene(video, output_root, config_dir, scene_config, stages, overwrite, name=scene)
 
             # 3. Push, excluding regenerable artifacts and the fetched video (see PUSH_EXCLUDES)
             source.push_outputs(out, scene, on_line=logger.info)

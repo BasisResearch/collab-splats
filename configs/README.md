@@ -125,6 +125,55 @@ transport fault is the actionable cause, and the scenes that never ran are safe 
 Credentials come from the existing rclone remote (`collab-data`) — nothing is read from
 the environment or passed on the command line.
 
+### Re-running one stage against a processed scene
+
+`--stages` naming only *leaf* stages — `mesh`, `semantics`, `localize` — pulls the scene back
+out of `environments-processed` instead of rebuilding it from its curated video:
+
+```bash
+# Re-mesh every processed scene with a new voxel size
+python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs \
+  --stages mesh --overwrite --config remesh.yaml --all
+
+# Add semantics to one scene reconstructed without it (no --overwrite: nothing to replace)
+python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs \
+  --stages semantics 2026_07_20-birds-C0043
+```
+
+A leaf stage is one nothing else depends on, so re-running it cannot invalidate anything
+downstream. Any `--stages` set that includes `preproc` or `pointcloud` therefore takes the
+normal path — full rebuild from the curated video — and a run can never leave a stale
+downstream artifact next to a fresh upstream one. The rule is derived from the dependency
+graph in `Reconstructor`, not a hardcoded list.
+
+With `--all`, the bucket listed follows the same rule: a leaf re-run enumerates
+`environments-processed`, everything else enumerates `environments-curated`.
+
+The whole scene is pulled, with no excludes. `PULL_EXCLUDES` is the *viewer's* default and
+drops `depth`/`world_points`/`images` — exactly what meshing reads.
+
+Four things are errors rather than surprises, and each fails only its own scene:
+
+| situation | outcome |
+|---|---|
+| scene has no processed outputs | `FileNotFoundError` — run the full pipeline first |
+| pulled scene has no `run_config.yaml` | `FileNotFoundError` — the backend is unknowable |
+| `--config` backend ≠ pulled backend | `ValueError` naming both — never a silent retarget |
+| named leaf stage's output already exists | `ValueError` — pass `--overwrite` to replace it |
+
+That last one applies only to *leaf* stages named on `--stages`. When `--stages` is omitted the
+set comes from the config's `enabled` flags, where skipping completed stages is what makes a
+re-run resume rather than fail. Naming a leaf stage means asking for it; inheriting it from
+config does not. Named *non-leaf* stages also still skip when already done — that is how
+`--stages preproc,pointcloud,localize` resumes after a `localize` failure.
+
+Config for a re-run is the pulled `run_config.yaml` minus the sections of the stages being
+re-run, with `base.yaml` and `--config` supplying fresh parameters for exactly those. Provenance
+for every stage that is *not* re-running is preserved verbatim.
+
+Nothing here deletes a remote object. The push is still `rclone copy`, so a re-run overwrites
+the artifacts it produced and leaves everything else in place.
+
 ---
 
 ## Reproducing an exact run

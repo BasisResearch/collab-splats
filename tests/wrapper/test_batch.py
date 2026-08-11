@@ -316,9 +316,11 @@ def test_run_scene_rewrites_existing_run_config(tmp_path, monkeypatch):
     (out_dir / "run_config.yaml").write_text(yaml.dump({"mesh": {"voxel_size": 0.99}}))
 
     class _FakeReconstructor:
+        # A value base.yaml would never hold, so a pass here can only mean run_scene wrote back
+        # what the Reconstructor resolved — not that a real base.yaml merge happened to match.
         def __init__(self, config, config_dir=None):
             self.config = dict(config)
-            self.config["mesh"] = {"voxel_size": 0.005}
+            self.config["mesh"] = {"voxel_size": 0.777}
 
         def run_pipeline(self, stages=None, overwrite=False):
             pass
@@ -327,4 +329,4 @@ def test_run_scene_rewrites_existing_run_config(tmp_path, monkeypatch):
     batch.run_scene(None, tmp_path / "out", None, {"output_path": str(out_dir)}, ["mesh"], False, name="scene")
 
     written = yaml.safe_load((out_dir / "run_config.yaml").read_text())
-    assert written["mesh"]["voxel_size"] == 0.005
+    assert written["mesh"]["voxel_size"] == 0.777

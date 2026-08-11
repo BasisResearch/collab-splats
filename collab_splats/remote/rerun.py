@@ -55,7 +55,12 @@ def prepare_scene(source, scene: str, scene_dir: Path, stages, override_config, 
         raise FileNotFoundError(f"{scene}: pulled scene has no run_config.yaml; backend is unknowable")
     with open(run_cfg) as f:
         pulled = yaml.safe_load(f)
-    backend = pulled["pointcloud"]["backend"]
+    # An empty or hand-edited run_config parses to None or to a dict with no pointcloud section.
+    # Subscripting it raw surfaces as a bare TypeError/KeyError in the driver's FAIL row, after a
+    # multi-GB pull — say what is wrong instead, like the missing-file case above.
+    backend = (pulled or {}).get("pointcloud", {}).get("backend")
+    if not backend:
+        raise ValueError(f"{scene}: pulled run_config.yaml has no pointcloud.backend; backend is unknowable")
 
     # Retargeting must be typed, and a typed one that disagrees with the data is a mistake.
     asked = (override_config or {}).get("pointcloud", {}).get("backend")
@@ -66,7 +71,8 @@ def prepare_scene(source, scene: str, scene_dir: Path, stages, override_config, 
     # stages' sections lets base.yaml + --config supply fresh params for exactly those.
     cfg = merge({}, pulled)
     for stage in stages:
-        # Stage name == config section, except localize → localization.
+        # Stage name == config section holds across LEAF_STAGES except localize → localization.
+        # It is not a general rule (preproc → preprocessing), but only leaves reach this loop.
         cfg.pop("localization" if stage == "localize" else stage, None)
     logger.info("%s: re-run %s from processed (backend=%s)", scene, ",".join(stages), backend)
     return None, merge(cfg, override_config or {})

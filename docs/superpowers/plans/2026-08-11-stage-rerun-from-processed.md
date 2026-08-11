@@ -888,6 +888,20 @@ is no light home for the stage graph under `wrapper/` (`wrapper/__init__.py` imp
 `from collab_splats.remote.rerun import ...`. Pinned by
 `test_importing_the_remote_package_stays_light`.
 
+The final whole-implementation review then closed one real test gap and three minor items. The
+merge claim — pop a section, `base.yaml` refills it — had no end-to-end coverage: every test
+stopped at `prepare_scene`'s dict and asserted the pop rather than the refill, and
+`test_run_scene_rewrites_existing_run_config`'s fake echoed the literal `0.005` that happens to be
+base.yaml's real value, so it read as proof of a merge it never performed. Closed by
+`test_dropped_section_is_refilled_by_base_yaml_end_to_end`, which runs `prepare_scene`'s output
+through `batch.build_scene_config` and a real `Reconstructor` and compares against `base.yaml`
+read at test time; the fake's literal moved to `0.777`, a value base.yaml cannot hold. Also:
+`prepare_scene` now raises a named `ValueError` when the pulled `run_config.yaml` is empty or has
+no `pointcloud.backend`, instead of a bare `TypeError`/`KeyError` after a multi-GB pull;
+`test_leaf_stages_derived_from_dep_graph` recomputes the set from `_STAGE_DEPS` rather than
+comparing to a frozen literal; and `run_pipeline`'s docstring now lists `localize` and documents
+the refusal under `Raises:`.
+
 ## Owed after this plan
 
 One live run watched by a human — no test touches GCS:

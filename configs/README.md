@@ -152,12 +152,13 @@ With `--all`, the bucket listed follows the same rule: a leaf re-run enumerates
 The whole scene is pulled, with no excludes. `PULL_EXCLUDES` is the *viewer's* default and
 drops `depth`/`world_points`/`images` — exactly what meshing reads.
 
-Four things are errors rather than surprises, and each fails only its own scene:
+Five things are errors rather than surprises, and each fails only its own scene:
 
 | situation | outcome |
 |---|---|
 | scene has no processed outputs | `FileNotFoundError` — run the full pipeline first |
 | pulled scene has no `run_config.yaml` | `FileNotFoundError` — the backend is unknowable |
+| pulled `run_config.yaml` has no `pointcloud.backend` | `ValueError` — the backend is unknowable |
 | `--config` backend ≠ pulled backend | `ValueError` naming both — never a silent retarget |
 | named leaf stage's output already exists | `ValueError` — pass `--overwrite` to replace it |
 

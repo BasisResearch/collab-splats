@@ -8,6 +8,8 @@ import pytest
 import yaml
 
 from collab_splats.remote.rerun import discover_scenes, prepare_scene
+from collab_splats.wrapper import batch
+from collab_splats.wrapper.reconstructor import DEFAULT_CONFIG_DIR, Reconstructor
 
 SCENE = "2026_07_20-birds-C0043"
 
@@ -93,7 +95,10 @@ def test_override_config_passes_through_on_the_curated_path(tmp_path):
     source = _FakeSource()
     override = {"mesh": {"voxel_size": 0.001}}
     _, config = prepare_scene(source, SCENE, tmp_path / SCENE, None, override)
-    assert config is override
+    assert config == override
+    # Nothing from the processed bucket leaks into a curated run — the pulled config carries a
+    # pointcloud section, so its absence is what proves this path never read one.
+    assert "pointcloud" not in config
 
 
 ########
@@ -110,6 +115,19 @@ def test_unprocessed_scene_raises(tmp_path):
 def test_pull_without_run_config_raises(tmp_path):
     source = _FakeSource(run_config=None)
     with pytest.raises(FileNotFoundError, match="run_config.yaml"):
+        prepare_scene(source, SCENE, tmp_path / SCENE, ["mesh"], None)
+
+
+def test_empty_run_config_raises_a_named_error(tmp_path):
+    """A truncated run_config must not surface as a bare TypeError after a multi-GB pull."""
+    source = _FakeSource(run_config={})
+    with pytest.raises(ValueError, match="pointcloud.backend"):
+        prepare_scene(source, SCENE, tmp_path / SCENE, ["mesh"], None)
+
+
+def test_run_config_without_a_backend_raises(tmp_path):
+    source = _FakeSource(run_config={"pointcloud": {"method": "feedforward"}})
+    with pytest.raises(ValueError, match="pointcloud.backend"):
         prepare_scene(source, SCENE, tmp_path / SCENE, ["mesh"], None)
 
 
@@ -150,6 +168,27 @@ def test_localize_drops_the_localization_section(tmp_path):
     _, config = prepare_scene(source, SCENE, tmp_path / SCENE, ["localize"], None)
     assert "localization" not in config
     assert config["mesh"]["voxel_size"] == 0.02  # untouched stage keeps its provenance
+
+
+def test_dropped_section_is_refilled_by_base_yaml_end_to_end(tmp_path):
+    """The pop is only worth anything if the gap it leaves is actually refilled downstream."""
+    # Every other merge test here stops at prepare_scene's dict and so asserts the implementation
+    # (the pop) rather than the behaviour. This one runs the output through both real consumers —
+    # build_scene_config, then Reconstructor's base.yaml merge — which is the claim being made.
+    source = _FakeSource()
+    _, config = prepare_scene(source, SCENE, tmp_path / SCENE, ["mesh"], None)
+    scene_config = batch.build_scene_config(None, tmp_path / "out", config, name=SCENE)
+    rec = Reconstructor(scene_config)
+
+    # Read base.yaml instead of hardcoding its numbers: a retuned TSDF default must not break this,
+    # and a hardcoded value that happens to match base would prove nothing.
+    base_mesh = yaml.safe_load((DEFAULT_CONFIG_DIR / "base.yaml").read_text())["mesh"]
+    assert rec.config["mesh"] == base_mesh
+    assert rec.config["mesh"]["voxel_size"] != PULLED_CONFIG["mesh"]["voxel_size"]
+    # The other half of the contract: a stage NOT being re-run keeps the pulled scene's provenance
+    # rather than falling back to base.yaml (whose default backend is vggt_omega, not vggtx).
+    assert rec.config["pointcloud"]["backend"] == "vggtx"
+    assert rec.config["preprocessing"]["max_frames"] == 250
 
 
 def test_plan_is_logged(tmp_path, caplog):

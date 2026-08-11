@@ -891,12 +891,13 @@ class Reconstructor:
         """Run named stages in dependency order.
 
         Args:
-            stages: Subset of ["preproc", "pointcloud", "semantics", "mesh"].
+            stages: Subset of ["preproc", "pointcloud", "semantics", "mesh", "localize"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
 
         Raises:
-            ValueError: If stages list violates dependency ordering.
+            ValueError: If stages list violates dependency ordering, or if a named LEAF_STAGES
+                stage already has output on disk and overwrite is False.
         """
         # Naming a stage means asking for it; inheriting it from config does not. Capture the
         # distinction before `stages` is reassigned below.

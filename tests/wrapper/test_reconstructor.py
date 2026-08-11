@@ -1035,7 +1035,12 @@ def test_leaf_stages_derived_from_dep_graph():
     """LEAF_STAGES is whatever nothing depends on — not a hardcoded list."""
     from collab_splats.wrapper import reconstructor as R
 
-    assert R.LEAF_STAGES == frozenset({"semantics", "mesh", "localize"})
+    # Recomputed from the graph rather than compared to a literal: adding a stage that consumes
+    # mesh output must move mesh out of LEAF_STAGES, and a frozen literal would not notice.
+    expected = {s for s in R._STAGE_ORDER if not any(s in deps for deps in R._STAGE_DEPS.values())}
+    assert R.LEAF_STAGES == expected
+    # Today's graph, spelled out so a failure above reads as a real change rather than a typo.
+    assert expected == {"semantics", "mesh", "localize"}
 
 
 def test_stage_output_exists_mesh(tmp_path):

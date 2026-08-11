@@ -147,6 +147,25 @@ Flat functions, mirroring the existing layout.
 4. `python -m collab_splats.dashboard --smoke` must print `SMOKE PASS`.
 5. `/opt/venv/reconstruction/bin/python -m pytest tests/ -p no:randomly`.
 
+### Measured after the fix (2026-08-11)
+
+`data/outputs/` has no `colmap/` dir, so verification ran the adapter directly and then
+`_run_tsdf_mesh` against a `PointcloudResult` double carrying the 2.81×-rescaled COLMAP K.
+Both paths agree exactly — the original-resolution K no longer reaches the fusion.
+
+| config | verts | tris | bbox | mean vertex colour |
+|---|---|---|---|---|
+| `depth_trunc=20` (matches case A) | 5,060,214 | 6,904,130 | 9.29×3.15×6.31 | 0.5271 |
+| `depth_trunc=2.0` (shipping baseline) | 711,079 | 915,039 | 3.24×1.48×2.35 | 0.4509 |
+
+Case A reproduces to 0.0004% (5,060,214 vs the 5,060,194 measured by the standalone harness) —
+the adapter uses `invert_poses` where the harness used `np.linalg.inv`, a float32 rounding
+difference.
+
+**`depth_trunc: 2.0` still costs 86% of vertices** (711k vs 5.06M). It is not the bug, but on
+this scene it is the dominant remaining limit on mesh extent — the mesh stops at a 3.24 m box.
+Depth here is non-metric, so `2.0` is not "2 metres". Revisiting it is separate work.
+
 ## Consequences
 
 Every `mesh.ply` on disk — local and under `environments-processed/` — was fused with

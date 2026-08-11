@@ -414,6 +414,20 @@ def test_solve_offset_rejects_silence():
     assert result.ok is False
 
 
+def test_solve_offset_survives_a_silent_source_window():
+    # A source that opens with digital silence drives the denominator to zero at lag 0.
+    # The guard must yield 0 there rather than a nan, which would otherwise win the argmax
+    # and return a confidently wrong offset.
+    rng = _rng()
+    body = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    source = np.concatenate([np.zeros(preproc.AUDIO_RATE, dtype=np.float32), body])
+
+    result = preproc.solve_offset(body, source)
+    assert result.ok is True
+    assert abs(result.offset_s - 1.0) <= 1.0 / preproc.AUDIO_RATE
+    assert np.isfinite(result.r)
+
+
 def test_solve_offset_threshold_is_overridable():
     rng = _rng()
     edit = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)

@@ -273,6 +273,8 @@ def test_needs_copy_is_true_when_the_source_changed(tmp_path):
         (151.2093, "lon", "151 deg 12' 33.48\" E"),
         (0.0, "lat", "0 deg 0' 0.00\" N"),
         (0.0, "lon", "0 deg 0' 0.00\" E"),
+        (42.34999986, "lat", "42 deg 21' 0.00\" N"),
+        (41.9999999, "lat", "42 deg 0' 0.00\" N"),
     ],
 )
 def test_format_dms(value, axis, expected):

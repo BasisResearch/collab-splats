@@ -259,12 +259,12 @@ def format_dms(value, axis):
     """
     hemisphere = ("N", "S") if axis == "lat" else ("E", "W")
     letter = hemisphere[0] if value >= 0 else hemisphere[1]
-    magnitude = abs(value)
-    degrees = int(magnitude)
-    minutes_full = (magnitude - degrees) * 60
-    minutes = int(minutes_full)
-    seconds = (minutes_full - minutes) * 60
-    return f"{degrees} deg {minutes}' {seconds:.2f}\" {letter}"
+    # Round to hundredths of a second before splitting, so a value that rounds up to 60.00
+    # carries into the minutes instead of producing a malformed "60.00" seconds field
+    total_seconds = round(abs(value) * 3600, 2)
+    degrees, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{int(degrees)} deg {int(minutes)}' {seconds:.2f}\" {letter}"
 
 
 def format_gps(lat, lon):

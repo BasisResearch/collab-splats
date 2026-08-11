@@ -380,3 +380,121 @@ def align(pair, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
     else:
         logger.warning("%s: alignment rejected (r=%.4f < %.2f)", pair.name, result.r, min_r)
     return result
+
+
+########
+# Metadata extraction
+########
+
+
+def _ungrouped(doc):
+    """Strip exiftool's `-G3` document prefix, so Doc12:SampleTime becomes SampleTime."""
+    return {key.split(":", 1)[-1]: value for key, value in doc.items()}
+
+
+def exif_dump(path):
+    """Return exiftool's full JSON dump for `path`, timed metadata included.
+
+    -ee walks the embedded documents, which is what surfaces the per-chunk GPMF payloads;
+    -n gives raw numbers rather than formatted strings; -G3 tags each value with the
+    document it came from, which is how samples stay grouped by 1 Hz chunk.
+    """
+    command = ["exiftool", "-ee", "-api", "LargeFileSupport=1", "-json", "-n", "-G3", str(path)]
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def probe_duration(path):
+    """Return the container duration of `path` in seconds."""
+    command = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=nw=1:nk=1", str(path),
+    ]
+    return float(subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip())
+
+
+def find_gpmd_index(path):
+    """Return the stream index of the gpmd data track, or None when there is not one.
+
+    GPMF rides a `bin_data` stream tagged `gpmd`; Sony's rtmd and the phone tracks are
+    different tags, so matching on the tag is what keeps injection GoPro-only for now.
+    """
+    command = [
+        "ffprobe", "-v", "error", "-select_streams", "d",
+        "-show_entries", "stream=index,codec_tag_string", "-of", "json", str(path),
+    ]
+    streams = json.loads(subprocess.run(command, capture_output=True, text=True, check=True).stdout)
+    for stream in streams.get("streams", []):
+        if stream.get("codec_tag_string") == "gpmd":
+            return int(stream["index"])
+    return None
+
+
+def static_tags(dump):
+    """Return the container-level tags that are true of the edit regardless of the trim."""
+    wanted = (
+        "Make", "Model", "SerialNumber", "FirmwareVersion", "CreateDate", "MediaCreateDate",
+        "FieldOfView", "LensProjection", "ProjectionType", "ElectronicImageStabilization",
+        "GPSCoordinates", "GPSAltitude",
+    )
+    tags = {}
+    for doc in dump:
+        flat = _ungrouped(doc)
+        for key in wanted:
+            if key in flat and key not in tags:
+                tags[key] = flat[key]
+    return tags
+
+
+def first_fix(dump, start_s=0.0):
+    """Return the first locked GPS fix at or after `start_s`, or None when there is none.
+
+    A GoPro emits 0,0 before satellite lock, so those samples are discarded rather than
+    trusted — 4 of the 33 originals never lock at all. Clips with no GPS track (Pixel,
+    iPhone) fall back to the single container fix, which has no time and is reported at 0.
+    """
+    best = None
+    for doc in dump:
+        flat = _ungrouped(doc)
+        lat, lon = flat.get("GPSLatitude"), flat.get("GPSLongitude")
+        if lat is None or lon is None:
+            continue
+        if float(lat) == 0.0 and float(lon) == 0.0:
+            continue
+        when = float(flat.get("SampleTime", 0.0))
+        if when < start_s:
+            continue
+        if best is None or when < best["source_time"]:
+            best = {"latitude": float(lat), "longitude": float(lon), "source_time": when}
+    return best
+
+
+def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerprint):
+    """Assemble the JSON sidecar for one pair.
+
+    `gps` is the first locked fix inside the trimmed edit when alignment succeeded, and the
+    first fix anywhere in the source when it did not — the edit window is unknown in that
+    case, and `gps_source_anchored` records it so the value is never mistaken for exact. A
+    successful alignment whose own window never locks (satellite fix acquired just after the
+    cut, say) falls back to that same whole-source search rather than reporting no GPS at all.
+    """
+    fix = first_fix(dump, start_s=alignment.offset_s) if alignment.ok else None
+    anchored = fix is None
+    if anchored:
+        fix = first_fix(dump, start_s=0.0)
+    return {
+        "unique_id": unique_id,
+        "edit": str(pair.edit),
+        "source": fingerprint,
+        "source_path": str(pair.source),
+        "duration_s": duration_s,
+        "has_imu": has_imu,
+        "gps": fix,
+        "gps_source_anchored": anchored and fix is not None,
+        "alignment": {"offset_s": alignment.offset_s, "r": alignment.r, "ok": alignment.ok},
+        "static_tags": static_tags(dump),
+        # The edits are cuts plus colour correction with no geometric transform, so lens
+        # geometry still describes the exported pixels. If a clip is ever reframed or
+        # stabilized, this flag is what has to flip.
+        "intrinsics": {"valid_for_edit": True, "reason": "cuts and colour correction only, no reframe"},
+    }

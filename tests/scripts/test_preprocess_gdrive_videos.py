@@ -434,3 +434,103 @@ def test_solve_offset_threshold_is_overridable():
     source = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
 
     assert preproc.solve_offset(edit, source, min_r=0.0).ok is True
+
+
+########
+# Metadata extraction
+########
+
+# One 1 Hz GPMF chunk per document, shaped the way exiftool -ee -json -G3 -n returns them
+_DUMP = [
+    {
+        "Main:Make": "GoPro",
+        "Main:Model": "GoPro Max",
+        "Main:SerialNumber": "C123456789",
+        "Main:FirmwareVersion": "H19.03.02.00",
+        "Main:CreateDate": "2026:07:22 14:31:08",
+        "Main:FieldOfView": "Wide",
+    },
+    {
+        "Doc1:SampleTime": 0.0,
+        "Doc1:SampleDuration": 1.001,
+        "Doc1:GPSLatitude": 0.0,
+        "Doc1:GPSLongitude": 0.0,
+        "Doc1:GPSDateTime": "2026:07:22 14:31:08",
+    },
+    {
+        "Doc2:SampleTime": 1.001,
+        "Doc2:SampleDuration": 1.001,
+        "Doc2:GPSLatitude": 42.3532,
+        "Doc2:GPSLongitude": -71.0659,
+        "Doc2:GPSDateTime": "2026:07:22 14:31:09",
+    },
+]
+
+
+def test_static_tags_strips_the_group_prefix():
+    tags = preproc.static_tags(_DUMP)
+    assert tags["Model"] == "GoPro Max"
+    assert tags["SerialNumber"] == "C123456789"
+    assert tags["CreateDate"] == "2026:07:22 14:31:08"
+
+
+def test_first_fix_skips_the_unlocked_zero_zero_sample():
+    # A GoPro emits 0,0 before satellite lock; treating that as a fix would put every early
+    # clip in the Gulf of Guinea
+    fix = preproc.first_fix(_DUMP)
+    assert fix["latitude"] == pytest.approx(42.3532)
+    assert fix["longitude"] == pytest.approx(-71.0659)
+    assert fix["source_time"] == pytest.approx(1.001)
+
+
+def test_first_fix_returns_none_when_nothing_locked():
+    assert preproc.first_fix([{"Doc1:SampleTime": 0.0, "Doc1:GPSLatitude": 0.0, "Doc1:GPSLongitude": 0.0}]) is None
+
+
+def test_first_fix_reads_a_container_location_when_there_is_no_track():
+    # Pixel and iPhone carry a single point and no GPS track at all
+    dump = [{"Main:GPSLatitude": 42.3532, "Main:GPSLongitude": -71.0659}]
+    fix = preproc.first_fix(dump)
+    assert fix["latitude"] == pytest.approx(42.3532)
+    assert fix["source_time"] == 0.0
+
+
+def test_first_fix_honours_the_trim_window():
+    # A fix before the cut starts is not where this clip was shot
+    fix = preproc.first_fix(_DUMP, start_s=1.5)
+    assert fix is None
+
+
+def test_build_payload_satisfies_the_index_contract():
+    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
+    payload = preproc.build_payload(
+        pair,
+        _DUMP,
+        preproc.Alignment(4.2, 0.997, True),
+        duration_s=131.4,
+        unique_id="2026_07_22-splats-GH010234",
+        has_imu=True,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    assert payload["unique_id"] == "2026_07_22-splats-GH010234"
+    assert payload["gps"]["latitude"] == pytest.approx(42.3532)
+    assert payload["alignment"] == {"offset_s": 4.2, "r": 0.997, "ok": True}
+    assert payload["source"] == {"size_bytes": 5, "mtime": 1.0}
+    assert payload["has_imu"] is True
+    # Cuts plus colour correction only, so lens geometry still describes the exported pixels
+    assert payload["intrinsics"]["valid_for_edit"] is True
+
+
+def test_build_payload_records_a_missing_fix_as_null():
+    pair = preproc.Pair(Path("/x/PXL.mp4"), Path("/x/src/PXL.mp4"), "2026_06_29-Phone-PXL")
+    payload = preproc.build_payload(
+        pair,
+        [{"Main:Model": "Pixel 9 Pro"}],
+        preproc.Alignment(0.0, 0.99, True),
+        duration_s=44.2,
+        unique_id="2026_06_29-Phone-PXL",
+        has_imu=False,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    assert payload["gps"] is None
+    assert payload["has_imu"] is False

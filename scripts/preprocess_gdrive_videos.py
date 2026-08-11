@@ -498,3 +498,97 @@ def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerp
         # stabilized, this flag is what has to flip.
         "intrinsics": {"valid_for_edit": True, "reason": "cuts and colour correction only, no reframe"},
     }
+
+
+########
+# Telemetry
+########
+
+# Column prefix -> (exiftool tag, component count). GPS9 is read as 5-wide because only the
+# first five components (lat, lon, altitude, 2D speed, 3D speed) are stable across firmware.
+#
+# VERIFY AGAINST REAL FOOTAGE: the exiftool tag names below are the documented GPMF stream
+# names, but exiftool renames some of them per firmware. Run
+#   exiftool -ee -api LargeFileSupport=1 -json -n -G3 <original> | python -c \
+#     "import json,sys; print(sorted({k.split(':',1)[-1] for d in json.load(sys.stdin) for k in d}))"
+# on one GoPro original and correct any mismatch before relying on the output. A wrong name
+# yields an empty column, not an exception, so this fails quietly if left unchecked.
+_GPMF_STREAMS = {
+    "accl": ("Accelerometer", 3),
+    "gyro": ("Gyroscope", 3),
+    "grav": ("GravityVector", 3),
+    "cori": ("CameraOrientation", 4),
+    "iori": ("ImageOrientation", 4),
+    "gps": ("GPSTrack", 5),
+}
+_AXES = {3: ("x", "y", "z"), 4: ("w", "x", "y", "z"), 5: ("lat", "lon", "alt", "speed2d", "speed3d")}
+
+
+def expand_gpmf(dump, key, components):
+    """Expand 1 Hz GPMF chunks into per-sample (times, values) on the source time axis.
+
+    exiftool returns one value-set per chunk with every sample concatenated — a single
+    Accelerometer chunk is a flat run of triplets — plus SampleTime and SampleDuration.
+    Samples are spread evenly across the chunk, which is the best placement available:
+    GPMF carries no per-sample timestamp, only a per-chunk one.
+    """
+    times, values = [], []
+    for doc in dump:
+        flat = _ungrouped(doc)
+        raw = flat.get(key)
+        if raw is None:
+            continue
+        numbers = [float(x) for x in (raw if isinstance(raw, list) else str(raw).split())]
+        if not numbers or len(numbers) % components:
+            logger.warning("skipping ragged %s chunk: %d values for %d components", key, len(numbers), components)
+            continue
+        count = len(numbers) // components
+        start = float(flat.get("SampleTime", 0.0))
+        step = float(flat.get("SampleDuration", 1.0)) / count
+        for i in range(count):
+            times.append(start + i * step)
+            values.append(tuple(numbers[i * components:(i + 1) * components]))
+    return times, values
+
+
+def telemetry_table(dump, alignment, duration_s):
+    """Build the per-sample telemetry table, or None when the clip carries no IMU.
+
+    Every stream is resampled onto the union of sample times so one table holds all of them;
+    GPS at ~18 Hz shares the table with nulls elsewhere, which Parquet run-length encodes to
+    nothing, so one file beats two. `edit_time` and `in_edit` are null when alignment failed:
+    the cut window is unknown, so any value would be a guess.
+    """
+    streams = {}
+    for prefix, (key, components) in _GPMF_STREAMS.items():
+        times, values = expand_gpmf(dump, key, components)
+        if times:
+            streams[prefix] = (times, values, components)
+    if not streams:
+        return None
+
+    axis = sorted({t for times, _, _ in streams.values() for t in times})
+    columns = {"source_time": axis}
+    for prefix, (times, values, components) in streams.items():
+        lookup = dict(zip(times, values))
+        for i, name in enumerate(_AXES[components]):
+            columns[f"{prefix}_{name}"] = [lookup[t][i] if t in lookup else None for t in axis]
+
+    if alignment.ok:
+        columns["edit_time"] = [t - alignment.offset_s for t in axis]
+        end = alignment.offset_s + duration_s
+        columns["in_edit"] = [alignment.offset_s <= t <= end for t in axis]
+    else:
+        columns["edit_time"] = [None] * len(axis)
+        columns["in_edit"] = [None] * len(axis)
+
+    return pa.table(columns)
+
+
+def write_telemetry(table, dest_dir, video):
+    """Write the telemetry table beside the curated video and return its path."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path = dest_dir / f"{video.stem}_telemetry.parquet"
+    pq.write_table(table, path, compression="zstd")
+    logger.info("telemetry: %d rows -> %s", table.num_rows, path.name)
+    return path

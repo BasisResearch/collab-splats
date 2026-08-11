@@ -29,6 +29,7 @@ dependencies = [
     "numpy>=1.26",
     "zarr>=2.16",
     "numcodecs",
+    "pyarrow",          # columnar telemetry sidecars written by scripts/preprocess_gdrive_videos.py
     "scipy>=1.11",
     "lightning",
     "pillow",

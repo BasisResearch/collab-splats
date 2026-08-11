@@ -573,3 +573,89 @@ def test_build_payload_marks_a_rejected_alignment_as_source_anchored():
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is True
     assert payload["alignment"]["ok"] is False
+
+
+########
+# Telemetry
+########
+
+# Two 1 Hz chunks, each holding 3 accelerometer triplets — the shape exiftool returns
+_IMU_DUMP = [
+    {
+        "Doc1:SampleTime": 0.0,
+        "Doc1:SampleDuration": 1.0,
+        "Doc1:Accelerometer": "1 2 3 4 5 6 7 8 9",
+        "Doc1:Gyroscope": "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9",
+    },
+    {
+        "Doc2:SampleTime": 1.0,
+        "Doc2:SampleDuration": 1.0,
+        "Doc2:Accelerometer": "10 11 12 13 14 15 16 17 18",
+        "Doc2:Gyroscope": "1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9",
+    },
+]
+
+
+def test_expand_gpmf_spreads_samples_across_the_chunk_duration():
+    times, values = preproc.expand_gpmf(_IMU_DUMP, "Accelerometer", 3)
+    assert len(times) == 6
+    assert values[0] == (1.0, 2.0, 3.0)
+    assert values[3] == (10.0, 11.0, 12.0)
+    # Three samples spread over a 1 s chunk land at 0, 1/3, 2/3
+    assert times[1] == pytest.approx(1 / 3)
+    assert times[3] == pytest.approx(1.0)
+
+
+def test_expand_gpmf_accepts_a_list_payload():
+    # exiftool returns a list rather than a space-joined string for some tags
+    dump = [{"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:Accelerometer": [1, 2, 3]}]
+    times, values = preproc.expand_gpmf(dump, "Accelerometer", 3)
+    assert values == [(1.0, 2.0, 3.0)]
+    assert times == [0.0]
+
+
+def test_expand_gpmf_returns_empty_for_a_missing_key():
+    assert preproc.expand_gpmf(_IMU_DUMP, "Gravity", 3) == ([], [])
+
+
+def test_expand_gpmf_skips_a_ragged_chunk():
+    # A truncated payload cannot be split into whole triplets; dropping it beats guessing
+    dump = [{"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:Accelerometer": "1 2 3 4"}]
+    assert preproc.expand_gpmf(dump, "Accelerometer", 3) == ([], [])
+
+
+def test_telemetry_table_carries_both_time_axes():
+    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+    columns = table.column_names
+    assert "source_time" in columns and "edit_time" in columns and "in_edit" in columns
+    assert "accl_x" in columns and "gyro_z" in columns
+    edit_time = table.column("edit_time").to_pylist()
+    source_time = table.column("source_time").to_pylist()
+    # edit_time is source_time shifted by the solved offset
+    assert edit_time[3] == pytest.approx(source_time[3] - 0.5)
+
+
+def test_telemetry_table_marks_samples_outside_the_cut():
+    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+    in_edit = table.column("in_edit").to_pylist()
+    # The cut runs 0.5 s to 1.5 s in source time, so the first and last samples fall outside
+    assert in_edit[0] is False
+    assert in_edit[3] is True
+    assert in_edit[-1] is False
+
+
+def test_telemetry_table_nulls_edit_time_when_alignment_failed():
+    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.0, 0.2, False), duration_s=1.0)
+    assert set(table.column("edit_time").to_pylist()) == {None}
+    assert set(table.column("in_edit").to_pylist()) == {None}
+
+
+def test_telemetry_table_is_none_without_imu():
+    assert preproc.telemetry_table([{"Main:Model": "Pixel 9 Pro"}], preproc.Alignment(0.0, 0.99, True), 44.2) is None
+
+
+def test_write_telemetry_names_the_file_after_the_video(tmp_path):
+    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+    path = preproc.write_telemetry(table, tmp_path, Path("GH010234.mp4"))
+    assert path.name == "GH010234_telemetry.parquet"
+    assert path.is_file()

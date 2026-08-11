@@ -301,6 +301,8 @@ def index_rows(curated_root):
 
 def write_index(curated_root):
     """Regenerate <curated-root>/index.csv from the sidecars and return its path."""
+    # --index-only may run on a machine that has never produced this directory
+    curated_root.mkdir(parents=True, exist_ok=True)
     rows = index_rows(curated_root)
     path = curated_root / INDEX_NAME
     with path.open("w", newline="") as handle:
@@ -751,7 +753,10 @@ def main(argv=None):
     if args.only:
         pairs = [p for p in pairs if args.only in p.name]
     if not pairs:
-        logger.warning("no pairs found under %s", args.source_root)
+        if args.only:
+            logger.warning("no pairs matched --only %r under %s", args.only, args.source_root)
+        else:
+            logger.warning("no pairs found under %s", args.source_root)
         return 0
 
     if args.dry_run:
@@ -778,7 +783,7 @@ def main(argv=None):
         logger.warning("alignment rejected, telemetry left in source time: %s", name)
 
     if args.push:
-        subprocess.run([str(PUSH_SCRIPT)], check=True)
+        subprocess.run([str(PUSH_SCRIPT), "--source", str(args.output_root)], check=True)
     return 0
 
 

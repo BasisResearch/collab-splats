@@ -745,3 +745,113 @@ def test_main_only_filters_to_one_clip(tree, tmp_path, monkeypatch, caplog):
         preproc.main(["--source-root", str(tree), "--output-root", str(out), "--only", "GH010228", "--dry-run"])
     assert "GH010228" in caplog.text
     assert "IMG_4085" not in caplog.text
+
+
+########
+# process_pair
+########
+
+
+@pytest.fixture
+def stub_externals(monkeypatch):
+    """Replace the ffmpeg/exiftool/ffprobe calls so process_pair runs without real media."""
+    calls = {"inject": 0}
+
+    def fake_inject(curated, source, alignment, duration_s, tags):
+        calls["inject"] += 1
+        # Injection grows the curated file past its source: the idempotency trap itself
+        curated.write_bytes(curated.read_bytes() + b"-gpmd-track")
+        return True
+
+    monkeypatch.setattr(preproc, "align", lambda pair, **kw: preproc.Alignment(0.5, 0.99, True))
+    monkeypatch.setattr(preproc, "exif_dump", lambda path: _IMU_DUMP)
+    monkeypatch.setattr(preproc, "probe_duration", lambda path: 1.0)
+    monkeypatch.setattr(preproc, "inject", fake_inject)
+    return calls
+
+
+def _pair(tmp_path):
+    """Build a Pair whose edit and camera original both exist on disk."""
+    edit = tmp_path / "GH010234.mp4"
+    source = tmp_path / "src" / "GH010234.MP4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    edit.write_bytes(b"edited video")
+    source.write_bytes(b"camera original")
+    return preproc.Pair(edit, source, "2026_07_22-splats-GH010234")
+
+
+def test_process_pair_writes_video_sidecar_and_telemetry(tmp_path, stub_externals):
+    pair = _pair(tmp_path)
+    out = tmp_path / "curated"
+
+    record = preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    folder = out / pair.name
+    assert record["status"] == "processed"
+    assert record["imu"] is True
+    assert record["injected"] is True
+    assert (folder / "GH010234.mp4").is_file()
+    assert (folder / "GH010234_metadata.json").is_file()
+    assert (folder / "GH010234_telemetry.parquet").is_file()
+
+
+def test_process_pair_skips_a_second_run_over_an_injected_file(tmp_path, stub_externals):
+    # The trap this pipeline exists to avoid: injection left the curated mp4 larger than
+    # its source, so a destination-size check would re-copy and re-inject forever
+    pair = _pair(tmp_path)
+    out = tmp_path / "curated"
+    preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    after_first = (out / pair.name / "GH010234.mp4").read_bytes()
+
+    record = preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    assert record == {"name": pair.name, "status": "skipped"}
+    assert stub_externals["inject"] == 1
+    assert (out / pair.name / "GH010234.mp4").read_bytes() == after_first
+
+
+def test_process_pair_reinjects_from_the_pristine_edit_under_force(tmp_path, stub_externals):
+    pair = _pair(tmp_path)
+    out = tmp_path / "curated"
+    preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    record = preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=True)
+
+    assert record["status"] == "processed"
+    assert stub_externals["inject"] == 2
+    # The forced re-copy starts from the pristine edit, so the track is not injected twice
+    assert (out / pair.name / "GH010234.mp4").read_bytes() == b"edited video-gpmd-track"
+
+
+def test_process_pair_records_a_rejected_alignment(tmp_path, stub_externals, monkeypatch):
+    monkeypatch.setattr(preproc, "align", lambda pair, **kw: preproc.Alignment(0.0, 0.2, False))
+    pair = _pair(tmp_path)
+
+    record = preproc.process_pair(pair, tmp_path / "curated", preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    assert record["aligned"] is False
+
+
+def test_main_warns_about_every_unaligned_clip(tree, tmp_path, monkeypatch, caplog):
+    # The summary's one job a human must not miss: which clips carry source-time telemetry
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(
+        preproc,
+        "process_pair",
+        lambda pair, out, min_r, force: {
+            "name": pair.name, "status": "processed",
+            "aligned": False, "r": 0.2, "imu": True, "injected": False,
+        },
+    )
+    with caplog.at_level("WARNING"):
+        preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out")])
+
+    assert caplog.text.count("alignment rejected") == 2
+
+
+def test_main_says_when_only_matched_nothing(tree, tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+    with caplog.at_level("WARNING"):
+        preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out"), "--only", "nope"])
+
+    assert "no pairs matched" in caplog.text

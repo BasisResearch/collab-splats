@@ -8,15 +8,14 @@ import numpy as np
 import open3d as o3d
 import torch
 import torch.nn.functional as F
-from PIL import Image as PILImage
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 from tqdm.auto import tqdm
 
+from collab_splats.geometry.transforms import invert_poses
 from collab_splats.mesh.base import MeshResult
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-from collab_splats.geometry.transforms import invert_poses
 
 try:
     import meshlib.mrmeshpy as mm
@@ -411,39 +410,34 @@ def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_r
 def _feedforward_to_tsdf_inputs(
     result: FeedforwardResult,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Project world_points → per-frame Z depth, load RGBs, invert extrinsics → c2w.
+    """Unpack a FeedforwardResult into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
+
+    Everything returned is at model resolution and mutually pixel-aligned: depth, images and
+    intrinsics all come off the same forward pass. Nothing is re-derived or re-read from disk.
 
     Raises:
-        ValueError: if result.world_points is None.
+        ValueError: if result.depth or result.images is None.
     """
-    if result.world_points is None:
+    # depth and images are the model's own outputs — all three backends populate both, so a
+    # fallback derivation here would be dead code (and was measurably worse: see the design doc)
+    if result.depth is None:
         raise ValueError(
-            "result.world_points is None. Access creator.outputs after reconstruct() — "
-            "MapAnythingCreator, VGGTXCreator, and VGGTOmegaCreator all populate "
-            "world_points during _postprocess()."
+            "result.depth is None — cannot mesh. Access creator.outputs after reconstruct(), "
+            "or load the zarr with load_depth=True."
+        )
+    if result.images is None:
+        raise ValueError(
+            "result.images is None — cannot mesh. Access creator.outputs after reconstruct(), "
+            "or load the zarr with load_images=True."
         )
 
-    world_points = result.world_points  # (N, H, W, 3)
-    N, H, W, _ = world_points.shape
+    depths = np.ascontiguousarray(result.depth, dtype=np.float32)  # (N, H, W)
 
-    depths = np.empty((N, H, W), dtype=np.float32)
-    for i in range(N):
-        R = result.extrinsics[i, :3, :3]  # (3, 3) world-to-cam rotation
-        t = result.extrinsics[i, :3, 3]  # (3,) world-to-cam translation
-        cam_pts = world_points[i] @ R.T + t  # (H, W, 3)
-        depths[i] = cam_pts[..., 2].clip(0)  # Z >= 0; negatives are boundary artefacts
-
-    rgbs = np.empty((N, H, W, 3), dtype=np.float32)
-    for i, path in enumerate(result.image_paths):
-        img = PILImage.open(path).convert("RGB")
-        if result.original_coords is not None:
-            tl_x, tl_y, cr_x, cr_y = result.original_coords[i, :4]
-            # VGGTOmega and VGGTXCreator crop-mode store original-image-pixel coords;
-            # cr_x = orig_w > model_W signals a crop must be applied before resize.
-            if cr_x > W + 1 or cr_y > H + 1:
-                img = img.crop((float(tl_x), float(tl_y), float(cr_x), float(cr_y)))
-        img = img.resize((W, H), PILImage.BILINEAR)
-        rgbs[i] = np.asarray(img, dtype=np.float32) / 255.0
+    # images is (N, 3, H, W) in [0, 1] — torch from a live creator, numpy from load_zarr
+    imgs = result.images
+    if hasattr(imgs, "numpy"):
+        imgs = imgs.detach().cpu().numpy()
+    rgbs = np.ascontiguousarray(imgs.transpose(0, 2, 3, 1), dtype=np.float32)  # (N, H, W, 3)
 
     c2w = invert_poses(result.extrinsics).astype(np.float32)
 
@@ -463,7 +457,8 @@ def pointcloud_to_mesh(
     from their subclass.
 
     Args:
-        result:          creator.outputs after reconstruct(). Requires world_points populated.
+        result:          FeedforwardResult with populated depth + images. Access creator.outputs
+                         after reconstruct(), or load_zarr(path, load_images=True).
         output_dir:      Directory to write mesh output.
         method:          Registry key — "open3d_tsdf", "depth_normal_poisson", "gaussians_poisson".
         **mesher_kwargs: Forwarded to the mesh creator constructor (voxel_size, sdf_trunc, etc.).
@@ -472,7 +467,7 @@ def pointcloud_to_mesh(
         MeshResult with mesh_path pointing to the output PLY.
 
     Raises:
-        ValueError: if result.world_points is None or method is not in the registry.
+        ValueError: if result.depth/result.images are None or method is not in the registry.
     """
     from collab_splats.mesh import get_mesh_creator
 

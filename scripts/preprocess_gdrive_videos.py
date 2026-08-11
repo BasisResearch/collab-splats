@@ -243,3 +243,32 @@ def needs_copy(pair, dest_dir, force=False):
     if not recorded:
         return True
     return recorded != source_fingerprint(pair.edit)
+
+
+########
+# GPS formatting
+########
+
+
+def format_dms(value, axis):
+    """Format a signed decimal degree as degrees, minutes and 2-decimal seconds.
+
+    The sign becomes the hemisphere letter, so the output never carries a leading minus:
+    -71.0659 with axis="lon" gives 71 deg 3' 57.24" W. This matches the exiftool convention
+    already in use when reading these files by hand.
+    """
+    hemisphere = ("N", "S") if axis == "lat" else ("E", "W")
+    letter = hemisphere[0] if value >= 0 else hemisphere[1]
+    magnitude = abs(value)
+    degrees = int(magnitude)
+    minutes_full = (magnitude - degrees) * 60
+    minutes = int(minutes_full)
+    seconds = (minutes_full - minutes) * 60
+    return f"{degrees} deg {minutes}' {seconds:.2f}\" {letter}"
+
+
+def format_gps(lat, lon):
+    """Format a fix as a single human-readable string, or "" when there is no fix."""
+    if lat is None or lon is None:
+        return ""
+    return f"{format_dms(lat, 'lat')}, {format_dms(lon, 'lon')}"

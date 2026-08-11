@@ -257,3 +257,38 @@ def test_needs_copy_is_true_when_the_source_changed(tmp_path):
 
     edit.write_bytes(b"a re-exported, different edit")
     assert preproc.needs_copy(pair, dest) is True
+
+
+########
+# DMS formatting
+########
+
+
+@pytest.mark.parametrize(
+    "value,axis,expected",
+    [
+        (42.3532, "lat", "42 deg 21' 11.52\" N"),
+        (-71.0659, "lon", "71 deg 3' 57.24\" W"),
+        (-33.8688, "lat", "33 deg 52' 7.68\" S"),
+        (151.2093, "lon", "151 deg 12' 33.48\" E"),
+        (0.0, "lat", "0 deg 0' 0.00\" N"),
+        (0.0, "lon", "0 deg 0' 0.00\" E"),
+    ],
+)
+def test_format_dms(value, axis, expected):
+    assert preproc.format_dms(value, axis) == expected
+
+
+def test_format_dms_never_emits_a_leading_minus():
+    # The hemisphere letter carries the sign; a minus as well would be double-signed
+    assert "-" not in preproc.format_dms(-71.0659, "lon")
+
+
+def test_format_gps_joins_both_axes():
+    assert preproc.format_gps(42.3532, -71.0659) == "42 deg 21' 11.52\" N, 71 deg 3' 57.24\" W"
+
+
+@pytest.mark.parametrize("lat,lon", [(None, -71.0659), (42.3532, None), (None, None)])
+def test_format_gps_is_blank_without_a_fix(lat, lon):
+    # Blank, never 0,0 and never a sentinel string
+    assert preproc.format_gps(lat, lon) == ""

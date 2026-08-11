@@ -309,3 +309,74 @@ def write_index(curated_root):
         writer.writerows(rows)
     logger.info("index: %d rows -> %s", len(rows), path)
     return path
+
+
+########
+# Alignment
+########
+
+
+class Alignment(NamedTuple):
+    """Where the edit sits inside its source, and how well the audio matched."""
+
+    offset_s: float
+    r: float
+    ok: bool
+
+
+def solve_offset(edit, source, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
+    """Locate `edit` inside `source` by normalized cross-correlation.
+
+    Resolve cuts and colour-corrects but never alters audio content, so the edit's audio is
+    a literal subsegment of the source and a true match correlates near 1.0. A wrong lag
+    over N samples lands near 1/sqrt(N) — about 0.0006 for a minute at 8 kHz — so the two
+    cases are three orders of magnitude apart and the 0.95 gate is not delicate.
+
+    The lag search is restricted to feasible positions, so an offset that would run the edit
+    past the end of the source cannot be returned at all.
+    """
+    n, m = len(edit), len(source)
+    if n == 0 or n > m:
+        logger.warning("alignment impossible: edit has %d samples, source has %d", n, m)
+        return Alignment(0.0, 0.0, False)
+
+    # Remove the DC component from both so the correlation measures shape, not offset
+    e = np.asarray(edit, dtype=np.float64) - np.mean(edit)
+    s = np.asarray(source, dtype=np.float64) - np.mean(source)
+    e_energy = float(np.sqrt(np.dot(e, e)))
+    if e_energy == 0.0:
+        logger.warning("alignment impossible: the edit's audio has no variance (silence)")
+        return Alignment(0.0, 0.0, False)
+
+    # Correlation at every feasible lag; "valid" gives exactly m - n + 1 positions
+    numerator = signal.fftconvolve(s, e[::-1], mode="valid")
+    # Energy of each length-n window of the source, via a cumulative sum
+    cumulative = np.concatenate(([0.0], np.cumsum(s * s)))
+    window_energy = np.sqrt(np.maximum(cumulative[n:] - cumulative[:-n], 0.0))
+    denominator = window_energy * e_energy
+    with np.errstate(invalid="ignore", divide="ignore"):
+        r = np.where(denominator > 0, numerator / denominator, 0.0)
+
+    lag = int(np.argmax(r))
+    peak = float(r[lag])
+    return Alignment(lag / rate, peak, peak >= min_r)
+
+
+def decode_audio(path, rate=AUDIO_RATE):
+    """Decode `path` to a mono float32 array at `rate` Hz via ffmpeg."""
+    command = [
+        "ffmpeg", "-v", "error", "-i", str(path),
+        "-vn", "-ac", "1", "-ar", str(rate), "-f", "f32le", "-",
+    ]
+    result = subprocess.run(command, capture_output=True, check=True)
+    return np.frombuffer(result.stdout, dtype=np.float32)
+
+
+def align(pair, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
+    """Solve where the edit sits inside its camera original, from audio alone."""
+    result = solve_offset(decode_audio(pair.edit, rate), decode_audio(pair.source, rate), rate, min_r)
+    if result.ok:
+        logger.info("%s: offset %.3f s (r=%.4f)", pair.name, result.offset_s, result.r)
+    else:
+        logger.warning("%s: alignment rejected (r=%.4f < %.2f)", pair.name, result.r, min_r)
+    return result

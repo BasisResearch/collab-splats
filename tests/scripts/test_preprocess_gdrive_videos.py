@@ -350,3 +350,73 @@ def test_write_index_survives_a_partial_run(tmp_path):
     preproc.write_index(tmp_path)
     rows = list(csv.reader(io.StringIO((tmp_path / "index.csv").read_text())))
     assert len(rows) == 3  # header + 2 clips
+
+
+########
+# Alignment
+########
+
+
+def _rng():
+    """Deterministic generator so alignment tests never flake."""
+    return np.random.default_rng(20260811)
+
+
+def test_solve_offset_recovers_a_known_trim():
+    rng = _rng()
+    body = rng.standard_normal(preproc.AUDIO_RATE * 3).astype(np.float32)
+    head = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    tail = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    source = np.concatenate([head, body, tail])
+
+    result = preproc.solve_offset(body, source)
+    assert result.ok is True
+    assert result.r == pytest.approx(1.0, abs=1e-4)
+    # Within one audio sample of the true 1.0 s offset
+    assert abs(result.offset_s - 1.0) <= 1.0 / preproc.AUDIO_RATE
+
+
+def test_solve_offset_is_unaffected_by_a_gain_change():
+    # Normalized correlation is scale-free, so a level difference must not lower r
+    rng = _rng()
+    body = rng.standard_normal(preproc.AUDIO_RATE * 2).astype(np.float32)
+    source = np.concatenate([rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32), body])
+
+    result = preproc.solve_offset(body * 0.25, source)
+    assert result.ok is True
+    assert result.r == pytest.approx(1.0, abs=1e-4)
+
+
+def test_solve_offset_rejects_uncorrelated_audio():
+    rng = _rng()
+    edit = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    source = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
+
+    result = preproc.solve_offset(edit, source)
+    assert result.ok is False
+    assert result.r < preproc.DEFAULT_ALIGN_MIN_R
+
+
+def test_solve_offset_rejects_an_edit_longer_than_its_source():
+    rng = _rng()
+    edit = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
+    source = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+
+    result = preproc.solve_offset(edit, source)
+    assert result.ok is False
+    assert result.offset_s == 0.0
+
+
+def test_solve_offset_rejects_silence():
+    # A constant signal has zero variance, so correlation is undefined rather than perfect
+    source = np.zeros(preproc.AUDIO_RATE * 3, dtype=np.float32)
+    result = preproc.solve_offset(np.zeros(preproc.AUDIO_RATE, dtype=np.float32), source)
+    assert result.ok is False
+
+
+def test_solve_offset_threshold_is_overridable():
+    rng = _rng()
+    edit = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    source = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
+
+    assert preproc.solve_offset(edit, source, min_r=0.0).ok is True

@@ -51,6 +51,14 @@ class Open3DTSDFFusion(BaseMeshCreator):
             c2w:        (N, 4, 4) float32, cam-to-world OpenCV
             intrinsics: (N, 3, 3) float32
         """
+        # rgbs is scaled to uint8 below; [0, 255] input would wrap to a black mesh instead of
+        # failing, which is how the Reconstructor path shipped black meshes unnoticed
+        if rgbs.size and float(np.nanmax(rgbs)) > 1.5:
+            raise ValueError(
+                f"rgbs must be in [0, 1], got max {float(np.nanmax(rgbs)):.3f}. "
+                "Pass FeedforwardResult.images directly — it is already normalised."
+            )
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         N, H, W = depths.shape

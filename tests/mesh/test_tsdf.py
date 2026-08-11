@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 
 def _synthetic_frames(N=3, H=32, W=32):
@@ -79,3 +80,13 @@ def test_open3d_tsdf_creates_output_dir(tmp_path):
     depths, rgbs, c2w, intrinsics = _synthetic_frames()
     creator.create(depths, rgbs, c2w, intrinsics)
     assert nested.exists()
+
+
+def test_open3d_tsdf_rejects_rgb_in_0_255_range(tmp_path):
+    """rgbs is documented [0, 1]; [0, 255] silently fuses a black mesh, so refuse it."""
+    from collab_splats.mesh.tsdf import Open3DTSDFFusion
+
+    creator = Open3DTSDFFusion(output_dir=tmp_path, clean_repair=False)
+    depths, rgbs, c2w, intrinsics = _synthetic_frames()
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        creator.create(depths, rgbs * 255.0, c2w, intrinsics)

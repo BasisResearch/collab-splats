@@ -659,3 +659,42 @@ def test_write_telemetry_names_the_file_after_the_video(tmp_path):
     path = preproc.write_telemetry(table, tmp_path, Path("GH010234.mp4"))
     assert path.name == "GH010234_telemetry.parquet"
     assert path.is_file()
+
+
+########
+# Injection
+########
+
+
+def test_gpmd_command_trims_the_source_before_mapping_it():
+    command = preproc.gpmd_command(
+        Path("/out/GH010234.mp4"), Path("/src/GH010234.MP4"), 4.2, 131.4, 3, Path("/out/tmp.mp4")
+    )
+    # -ss and -t must precede the -i they apply to, or ffmpeg trims the wrong input
+    assert command.index("-ss") < command.index("/src/GH010234.MP4")
+    assert command[command.index("-ss") + 1] == "4.2"
+    assert command[command.index("-t") + 1] == "131.4"
+
+
+def test_gpmd_command_copies_every_curated_stream_and_only_the_gpmd_track():
+    command = preproc.gpmd_command(
+        Path("/out/GH010234.mp4"), Path("/src/GH010234.MP4"), 4.2, 131.4, 3, Path("/out/tmp.mp4")
+    )
+    assert "-map" in command and "0" in command
+    assert "1:3" in command
+    # -c copy keeps the edit's pixels untouched; -copy_unknown is what lets bin_data through
+    assert "-c" in command and "copy" in command
+    assert "-copy_unknown" in command
+
+
+def test_tag_command_overwrites_in_place():
+    command = preproc.tag_command(Path("/out/GH010234.mp4"), {"Model": "GoPro Max"})
+    assert "-overwrite_original" in command
+    assert "-Model=GoPro Max" in command
+    # QuickTimeUTC stops exiftool reinterpreting the capture time in local time
+    assert "-api" in command and "QuickTimeUTC" in command
+
+
+def test_tag_command_skips_empty_values():
+    command = preproc.tag_command(Path("/out/GH010234.mp4"), {"Model": "GoPro Max", "SerialNumber": None})
+    assert not any(arg.startswith("-SerialNumber") for arg in command)

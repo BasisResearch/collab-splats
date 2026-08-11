@@ -592,3 +592,67 @@ def write_telemetry(table, dest_dir, video):
     pq.write_table(table, path, compression="zstd")
     logger.info("telemetry: %d rows -> %s", table.num_rows, path.name)
     return path
+
+
+########
+# Injection
+########
+
+# Written into the curated file so a re-run can tell an injected mp4 from a fresh copy
+PROVENANCE_TAG = "preprocess_gdrive_videos"
+
+
+def gpmd_command(curated, source, offset_s, duration_s, gpmd_index, out):
+    """Build the ffmpeg call that grafts the trimmed gpmd track onto the curated video.
+
+    -ss and -t precede the second -i so they trim that input rather than the first. -c copy
+    leaves the edit's pixels untouched, and -copy_unknown is what allows the bin_data gpmd
+    stream through at all — without it ffmpeg silently drops unrecognized track types.
+    """
+    return [
+        "ffmpeg", "-v", "error", "-y",
+        "-i", str(curated),
+        "-ss", f"{offset_s}", "-t", f"{duration_s}", "-i", str(source),
+        "-map", "0", "-map", f"1:{gpmd_index}",
+        "-c", "copy", "-copy_unknown",
+        str(out),
+    ]
+
+
+def tag_command(curated, tags):
+    """Build the exiftool call that writes static tags into the finished container."""
+    command = ["exiftool", "-overwrite_original", "-api", "QuickTimeUTC"]
+    for key, value in tags.items():
+        if value in (None, ""):
+            continue
+        command.append(f"-{key}={value}")
+    command.append(f"-Software={PROVENANCE_TAG}")
+    command.append(str(curated))
+    return command
+
+
+def inject(curated, source, alignment, duration_s, tags):
+    """Write metadata back into the curated video; return True when a gpmd track landed.
+
+    Order matters. ffmpeg runs first because it rewrites the container; exiftool runs second
+    to write tags into the final one. Reversed, ffmpeg drops the tags. The remux goes to a
+    temporary file that is only moved into place on success, so a failure leaves the curated
+    video exactly as it was.
+    """
+    injected = False
+    gpmd_index = find_gpmd_index(source) if alignment.ok else None
+    if gpmd_index is not None:
+        temp = curated.with_suffix(curated.suffix + ".inject")
+        command = gpmd_command(curated, source, alignment.offset_s, duration_s, gpmd_index, temp)
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            os.replace(temp, curated)
+            injected = True
+        else:
+            temp.unlink(missing_ok=True)
+            logger.error("gpmd injection failed for %s: %s", curated.name, result.stderr.strip().splitlines()[-1:])
+    elif not alignment.ok:
+        logger.warning("%s: no gpmd injected, alignment was rejected", curated.name)
+
+    subprocess.run(tag_command(curated, tags), capture_output=True, text=True, check=True)
+    return injected

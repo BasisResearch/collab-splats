@@ -471,6 +471,25 @@ def first_fix(dump, start_s=0.0):
     return best
 
 
+def has_gps_track(dump):
+    """Return True when the dump carries timed GPS samples rather than one container fix."""
+    for doc in dump:
+        flat = _ungrouped(doc)
+        if "SampleTime" in flat and flat.get("GPSLatitude") is not None and flat.get("GPSLongitude") is not None:
+            return True
+    return False
+
+
+def first_chunk_at_or_after(dump, start_s):
+    """Return the smallest GPMF SampleTime at or after `start_s`, or None when there is none."""
+    later = []
+    for doc in dump:
+        when = _ungrouped(doc).get("SampleTime")
+        if when is not None and float(when) >= start_s:
+            later.append(float(when))
+    return min(later) if later else None
+
+
 def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerprint):
     """Assemble the JSON sidecar for one pair.
 
@@ -484,6 +503,15 @@ def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerp
     anchored = fix is None
     if anchored:
         fix = first_fix(dump, start_s=0.0)
+    # A container-only fix (phone clips) is one untimed whole-file coordinate reported at 0,
+    # so any non-zero offset skips it and falls through to the whole-source search. That is
+    # not the same as losing a timed fix, so it must not be labelled source-anchored.
+    anchored = anchored and fix is not None and has_gps_track(dump)
+
+    # GPMF chunks are 1 Hz, so the injected track starts on the first chunk boundary at or
+    # after the cut, up to ~1 s late. The residual is what a consumer needs to reconcile the
+    # injected track against the Parquet sidecar, which stays on the true source time axis.
+    first_chunk = first_chunk_at_or_after(dump, alignment.offset_s)
     return {
         "unique_id": unique_id,
         "edit": str(pair.edit),
@@ -492,7 +520,9 @@ def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerp
         "duration_s": duration_s,
         "has_imu": has_imu,
         "gps": fix,
-        "gps_source_anchored": anchored and fix is not None,
+        "gps_source_anchored": anchored,
+        "gpmd_first_chunk_s": first_chunk,
+        "gpmd_residual_s": None if first_chunk is None else first_chunk - alignment.offset_s,
         "alignment": {"offset_s": alignment.offset_s, "r": alignment.r, "ok": alignment.ok},
         "static_tags": static_tags(dump),
         # The edits are cuts plus colour correction with no geometric transform, so lens
@@ -506,8 +536,8 @@ def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerp
 # Telemetry
 ########
 
-# Column prefix -> (exiftool tag, component count). GPS9 is read as 5-wide because only the
-# first five components (lat, lon, altitude, 2D speed, 3D speed) are stable across firmware.
+# Column prefix -> (exiftool tag, component count). These are the wide tags: one chunk holds
+# a flat run of N-tuples that has to be sliced back apart.
 #
 # VERIFY AGAINST REAL FOOTAGE: the exiftool tag names below are the documented GPMF stream
 # names, but exiftool renames some of them per firmware. Run
@@ -521,9 +551,17 @@ _GPMF_STREAMS = {
     "grav": ("GravityVector", 3),
     "cori": ("CameraOrientation", 4),
     "iori": ("ImageOrientation", 4),
-    "gps": ("GPSTrack", 5),
 }
-_AXES = {3: ("x", "y", "z"), 4: ("w", "x", "y", "z"), 5: ("lat", "lon", "alt", "speed2d", "speed3d")}
+_AXES = {3: ("x", "y", "z"), 4: ("w", "x", "y", "z")}
+
+# GPS is not a wide tag. exiftool splits the GPMF GPS stream into parallel single-value tags,
+# one document per fix, so it is read by zipping them rather than by slicing one run. The tag
+# formerly used here, a 5-wide "GPSTrack", was wrong twice over: exiftool's GPSTrack is the
+# scalar heading from the EXIF GPS group, not the GPMF stream, so every chunk logged
+# "skipping ragged GPSTrack chunk: 1 values for 5 components" and gps_* was always empty.
+# Any of these may be absent on a given firmware; a missing one leaves its column null.
+_GPMF_GPS_TAGS = ("GPSLatitude", "GPSLongitude", "GPSAltitude", "GPSSpeed", "GPSSpeed3D")
+_GPMF_GPS_AXES = ("lat", "lon", "alt", "speed2d", "speed3d")
 
 
 def expand_gpmf(dump, key, components):
@@ -553,27 +591,58 @@ def expand_gpmf(dump, key, components):
     return times, values
 
 
-def telemetry_table(dump, alignment, duration_s):
-    """Build the per-sample telemetry table, or None when the clip carries no IMU.
+def expand_gpmf_parallel(dump, keys):
+    """Zip parallel single-value GPMF tags into one (times, values) row per timed document.
 
-    Every stream is resampled onto the union of sample times so one table holds all of them;
-    GPS at ~18 Hz shares the table with nulls elsewhere, which Parquet run-length encodes to
-    nothing, so one file beats two. `edit_time` and `in_edit` are null when alignment failed:
-    the cut window is unknown, so any value would be a guess.
+    exiftool emits the GPS stream as one document per fix carrying GPSLatitude, GPSLongitude
+    and friends side by side, rather than as one wide tag. A key that is absent yields None
+    for that component, so a firmware that drops GPSSpeed3D still produces the other columns.
+    Documents with no SampleTime are skipped: the container-level document carries GPSAltitude
+    and a single whole-file coordinate, and that is not a timed sample.
+    """
+    times, values = [], []
+    for doc in dump:
+        flat = _ungrouped(doc)
+        if "SampleTime" not in flat:
+            continue
+        row = tuple(None if flat.get(key) is None else float(flat[key]) for key in keys)
+        if all(value is None for value in row):
+            continue
+        times.append(float(flat["SampleTime"]))
+        values.append(row)
+    return times, values
+
+
+def telemetry_table(dump, alignment, duration_s):
+    """Build the per-sample telemetry table, or None when no configured stream produced data.
+
+    The streams do not share a time axis. Each GPMF chunk carries its own sample count, so the
+    per-sample step `SampleDuration / count` differs from stream to stream and the resulting
+    axes are very nearly disjoint. This table is therefore the *union* of every stream's sample
+    times, and each column is sparse: a typical row carries one stream's values and nulls in
+    every other column, so the row count runs well above any single stream's rate. Nothing is
+    resampled — a null means "this stream has no sample at this instant", not missing data. The
+    fill ratio of each column is logged so that sparsity is observable rather than a surprise.
+
+    `edit_time` and `in_edit` are null when alignment failed: the cut window is unknown, so any
+    value would be a guess.
     """
     streams = {}
     for prefix, (key, components) in _GPMF_STREAMS.items():
         times, values = expand_gpmf(dump, key, components)
         if times:
-            streams[prefix] = (times, values, components)
+            streams[prefix] = (times, values, _AXES[components])
+    gps_times, gps_values = expand_gpmf_parallel(dump, _GPMF_GPS_TAGS)
+    if gps_times:
+        streams["gps"] = (gps_times, gps_values, _GPMF_GPS_AXES)
     if not streams:
         return None
 
     axis = sorted({t for times, _, _ in streams.values() for t in times})
     columns = {"source_time": axis}
-    for prefix, (times, values, components) in streams.items():
+    for prefix, (times, values, axes) in streams.items():
         lookup = dict(zip(times, values))
-        for i, name in enumerate(_AXES[components]):
+        for i, name in enumerate(axes):
             columns[f"{prefix}_{name}"] = [lookup[t][i] if t in lookup else None for t in axis]
 
     if alignment.ok:
@@ -584,7 +653,16 @@ def telemetry_table(dump, alignment, duration_s):
         columns["edit_time"] = [None] * len(axis)
         columns["in_edit"] = [None] * len(axis)
 
-    return pa.table(columns)
+    table = pa.table(columns)
+    # Report the real sparsity of the union axis, so a reader never has to guess whether a
+    # half-null column means a wrong tag name or simply a stream on its own clock
+    fills = [
+        f"{name}={1.0 - table.column(name).null_count / table.num_rows:.0%}"
+        for name in table.column_names
+        if name != "source_time"
+    ]
+    logger.info("telemetry: %d rows on the union time axis, fill %s", table.num_rows, " ".join(fills))
+    return table
 
 
 def write_telemetry(table, dest_dir, video):
@@ -602,6 +680,18 @@ def write_telemetry(table, dest_dir, video):
 
 # Written into the curated file so a re-run can tell an injected mp4 from a fresh copy
 PROVENANCE_TAG = "preprocess_gdrive_videos"
+
+# The subset of static_tags exiftool will actually write. LensProjection and
+# ElectronicImageStabilization are read-only derived tags — exiftool answers "Sorry, <tag> is
+# not writable" and, when other tags in the same call do land, still exits 0. Determined
+# empirically with `exiftool -overwrite_original -n -<tag>=<value>` per tag on a synthesized
+# mp4; the two rejected ones stay in static_tags so the JSON sidecar keeps carrying them.
+_WRITABLE_TAGS = frozenset(
+    {
+        "Make", "Model", "SerialNumber", "FirmwareVersion", "CreateDate", "MediaCreateDate",
+        "FieldOfView", "ProjectionType", "GPSCoordinates", "GPSAltitude",
+    }
+)
 
 
 def gpmd_command(curated, source, offset_s, duration_s, gpmd_index, out):
@@ -623,9 +713,12 @@ def gpmd_command(curated, source, offset_s, duration_s, gpmd_index, out):
 
 def tag_command(curated, tags):
     """Build the exiftool call that writes static tags into the finished container."""
-    command = ["exiftool", "-overwrite_original", "-api", "QuickTimeUTC"]
+    # -n is not optional. exif_dump reads with -n, so GPSCoordinates arrives already raw
+    # ("42.3532 -71.0659 5.2"); writing it back without -n runs PrintConvInv over a raw value,
+    # which warns, writes nothing for that tag, and still exits 0 whenever any other tag lands.
+    command = ["exiftool", "-overwrite_original", "-api", "QuickTimeUTC", "-n"]
     for key, value in tags.items():
-        if value in (None, ""):
+        if value in (None, "") or key not in _WRITABLE_TAGS:
             continue
         command.append(f"-{key}={value}")
     command.append(f"-Software={PROVENANCE_TAG}")
@@ -655,7 +748,10 @@ def inject(curated, source, alignment, duration_s, tags):
     elif gpmd_index is None:
         logger.info("%s: no gpmd track in the source, writing static tags only", curated.name)
     else:
-        temp = curated.with_suffix(curated.suffix + ".inject")
+        # ".inject" goes before the extension, not after: ffmpeg infers the output muxer from
+        # the final suffix, and "GH010234.mp4.inject" makes it exit 1 with "Unable to find a
+        # suitable output format" before it reads a single frame.
+        temp = curated.with_suffix(".inject" + curated.suffix)
         command = gpmd_command(curated, source, alignment.offset_s, duration_s, gpmd_index, temp)
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode == 0:
@@ -665,8 +761,14 @@ def inject(curated, source, alignment, duration_s, tags):
             temp.unlink(missing_ok=True)
             logger.error("gpmd injection failed for %s: %s", curated.name, _last_stderr_line(result.stderr))
 
-    # Logged rather than raised: one clip with unwritable tags must not abort the run
+    # Logged rather than raised: one clip with unwritable tags must not abort the run.
+    # exiftool's exit code cannot carry this signal — a tag that fails to convert or is not
+    # writable is reported only as a stderr warning, and the process still exits 0 as long as
+    # some other tag in the same call landed. So the stderr text is the check, not the code.
     tagged = subprocess.run(tag_command(curated, tags), capture_output=True, text=True, check=False)
+    for line in tagged.stderr.splitlines():
+        if "Warning:" in line or "Error" in line:
+            logger.warning("static tags for %s: %s", curated.name, line.strip())
     if tagged.returncode != 0:
         logger.error("static tags failed for %s: %s", curated.name, _last_stderr_line(tagged.stderr))
     return injected
@@ -684,6 +786,14 @@ def require_binaries():
         raise SystemExit(f"missing required tools: {', '.join(missing)}")
 
 
+def push(output_root, dry_run=False):
+    """Run the rclone push script over `output_root`, forwarding --dry-run."""
+    command = [str(PUSH_SCRIPT), "--source", str(output_root)]
+    if dry_run:
+        command.append("--dry-run")
+    subprocess.run(command, check=True)
+
+
 def process_pair(pair, output_root, min_r, force):
     """Run copy, align, extract and inject for one pair; return a summary record."""
     dest_dir = output_root / pair.name
@@ -692,9 +802,10 @@ def process_pair(pair, output_root, min_r, force):
     if needs_copy(pair, dest_dir, force=force):
         copy_video(pair.edit, dest_dir, force=True)
     else:
+        # needs_copy already returns True whenever force is set, so reaching here means
+        # the copy is current and not forced: there is nothing left to do
         logger.info("%s: up to date", pair.name)
-        if not force:
-            return {"name": pair.name, "status": "skipped"}
+        return {"name": pair.name, "status": "skipped"}
 
     alignment = align(pair, min_r=min_r)
     dump = exif_dump(pair.source)
@@ -739,12 +850,13 @@ def main(argv=None):
     parser.add_argument("--align-min-r", type=float, default=DEFAULT_ALIGN_MIN_R, help="minimum correlation to accept")
     args = parser.parse_args(argv)
 
-    require_binaries()
-
-    # --index-only never reads the source tree, so it works on a machine with no Drive mount
+    # --index-only reads only the JSON sidecars, so it must not demand ffmpeg or exiftool;
+    # the whole point is that it works on a machine with no Drive mount and no media tools
     if args.index_only:
         write_index(args.output_root)
         return 0
+
+    require_binaries()
 
     if not args.source_root.is_dir():
         parser.error(f"source root does not exist: {args.source_root}")
@@ -764,26 +876,43 @@ def main(argv=None):
         for pair in pairs:
             logger.info("%s/%s  <- %s", pair.name, pair.edit.name, pair.source)
         logger.info("dry run: %d pairs, %.1f GB", len(pairs), total / 1e9)
+        # A dry run that was also asked to push forwards the flag rather than dropping it
+        if args.push:
+            push(args.output_root, dry_run=True)
         return 0
 
-    records = [process_pair(pair, args.output_root, args.align_min_r, args.force) for pair in pairs]
+    # A single unreadable clip — no audio track, a truncated download — must not throw away a
+    # multi-hour run that has already copied gigabytes. Record the failure and keep going, so
+    # write_index and the summary still run.
+    records = []
+    for pair in pairs:
+        try:
+            records.append(process_pair(pair, args.output_root, args.align_min_r, args.force))
+        except Exception:
+            logger.exception("%s: failed, skipping", pair.name)
+            records.append({"name": pair.name, "status": "failed"})
     write_index(args.output_root)
 
     processed = [r for r in records if r["status"] == "processed"]
+    failed = [r["name"] for r in records if r["status"] == "failed"]
     unaligned = [r["name"] for r in processed if not r["aligned"]]
     logger.info(
-        "done: %d processed, %d skipped, %d with IMU, %d injected",
+        "done: %d processed, %d skipped, %d failed, %d with IMU, %d injected",
         len(processed),
-        len(records) - len(processed),
+        sum(1 for r in records if r["status"] == "skipped"),
+        len(failed),
         sum(1 for r in processed if r["imu"]),
         sum(1 for r in processed if r["injected"]),
     )
     # Surfaced loudly: these clips carry source-time telemetry and no injected track
     for name in unaligned:
         logger.warning("alignment rejected, telemetry left in source time: %s", name)
+    # Likewise: nothing was written for these at all, so they need a human
+    for name in failed:
+        logger.warning("processing failed, nothing curated: %s", name)
 
     if args.push:
-        subprocess.run([str(PUSH_SCRIPT), "--source", str(args.output_root)], check=True)
+        push(args.output_root, dry_run=False)
     return 0
 
 

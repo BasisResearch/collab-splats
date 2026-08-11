@@ -4,6 +4,8 @@ import csv
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -557,6 +559,79 @@ def test_build_payload_marks_a_fix_inside_the_cut_as_exact():
     assert payload["gps_source_anchored"] is False
 
 
+def test_build_payload_does_not_anchor_a_container_only_fix():
+    # A phone clip has one untimed whole-file coordinate reported at 0, so any non-zero offset
+    # skips it and falls through to the whole-source search. That is not a lost timed fix, and
+    # labelling it source-anchored stamped the flag on every phone clip in the tree.
+    pair = preproc.Pair(Path("/x/PXL.mp4"), Path("/x/src/PXL.mp4"), "2026_06_29-Phone-PXL")
+    payload = preproc.build_payload(
+        pair,
+        [{"Main:Model": "Pixel 9 Pro", "Main:GPSLatitude": 42.3532, "Main:GPSLongitude": -71.0659}],
+        preproc.Alignment(4.2, 0.99, True),
+        duration_s=44.2,
+        unique_id="2026_06_29-Phone-PXL",
+        has_imu=False,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    assert payload["gps"]["latitude"] == pytest.approx(42.3532)
+    assert payload["gps_source_anchored"] is False
+
+
+def test_build_payload_records_the_gpmd_chunk_residual():
+    # GPMF chunks are 1 Hz, so the injected track starts on the first boundary at or after the
+    # cut. The residual is what a consumer needs to line the injected track up with the Parquet.
+    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
+    payload = preproc.build_payload(
+        pair,
+        _DUMP,
+        preproc.Alignment(0.4, 0.997, True),
+        duration_s=131.4,
+        unique_id="2026_07_22-splats-GH010234",
+        has_imu=True,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    # _DUMP has chunks at 0.0 and 1.001; the first at or after 0.4 is 1.001
+    assert payload["gpmd_first_chunk_s"] == pytest.approx(1.001)
+    assert payload["gpmd_residual_s"] == pytest.approx(0.601)
+
+
+def test_build_payload_records_a_null_residual_without_a_gpmd_track():
+    pair = preproc.Pair(Path("/x/PXL.mp4"), Path("/x/src/PXL.mp4"), "2026_06_29-Phone-PXL")
+    payload = preproc.build_payload(
+        pair,
+        [{"Main:Model": "Pixel 9 Pro"}],
+        preproc.Alignment(0.0, 0.99, True),
+        duration_s=44.2,
+        unique_id="2026_06_29-Phone-PXL",
+        has_imu=False,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    assert payload["gpmd_first_chunk_s"] is None
+    assert payload["gpmd_residual_s"] is None
+
+
+def test_build_payload_reaches_the_csv_index_through_the_real_sidecar(tmp_path):
+    # The seam every other index test skips by hand-building its sidecar: rename `latitude` in
+    # build_payload and those tests all stay green while every GPS cell in the CSV goes blank
+    unique_id = "2026_07_22-splats-GH010234"
+    video = Path("GH010234.mp4")
+    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), unique_id)
+    payload = preproc.build_payload(
+        pair,
+        _DUMP,
+        preproc.Alignment(0.5, 0.997, True),
+        duration_s=131.4,
+        unique_id=unique_id,
+        has_imu=True,
+        fingerprint={"size_bytes": 5, "mtime": 1.0},
+    )
+    preproc.write_metadata(tmp_path / unique_id, video, payload)
+
+    rows = preproc.index_rows(tmp_path)
+
+    assert rows == [(unique_id, "42 deg 21' 11.52\" N, 71 deg 3' 57.24\" W")]
+
+
 def test_build_payload_marks_a_rejected_alignment_as_source_anchored():
     # Alignment failed, so the trim window is unknown and the fix is taken from the
     # whole source; the flag records that the value is approximate
@@ -618,10 +693,61 @@ def test_expand_gpmf_returns_empty_for_a_missing_key():
     assert preproc.expand_gpmf(_IMU_DUMP, "Gravity", 3) == ([], [])
 
 
-def test_expand_gpmf_skips_a_ragged_chunk():
-    # A truncated payload cannot be split into whole triplets; dropping it beats guessing
+def test_expand_gpmf_skips_a_ragged_chunk(caplog):
+    # A truncated payload cannot be split into whole triplets; dropping it beats guessing.
+    # The warning is the load-bearing half: a wrong tag name shows up here and nowhere else,
+    # so an empty return with no warning would look identical to a clip that has no IMU.
     dump = [{"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:Accelerometer": "1 2 3 4"}]
-    assert preproc.expand_gpmf(dump, "Accelerometer", 3) == ([], [])
+    with caplog.at_level("WARNING"):
+        assert preproc.expand_gpmf(dump, "Accelerometer", 3) == ([], [])
+    assert "ragged Accelerometer chunk: 4 values for 3 components" in caplog.text
+
+
+########
+# expand_gpmf_parallel
+########
+
+# exiftool emits the GPMF GPS stream as one document per fix with the components side by side,
+# not as one wide tag — the shape the old 5-wide GPSTrack read could never match
+_GPS_DUMP = [
+    {
+        "Doc1:SampleTime": 0.0,
+        "Doc1:GPSLatitude": 42.3532,
+        "Doc1:GPSLongitude": -71.0659,
+        "Doc1:GPSAltitude": 5.2,
+        "Doc1:GPSSpeed": 1.5,
+        "Doc1:GPSSpeed3D": 1.6,
+    },
+    {
+        "Doc2:SampleTime": 0.5,
+        "Doc2:GPSLatitude": 42.3533,
+        "Doc2:GPSLongitude": -71.0660,
+        "Doc2:GPSAltitude": 5.3,
+        "Doc2:GPSSpeed": 1.7,
+        "Doc2:GPSSpeed3D": 1.8,
+    },
+]
+
+
+def test_expand_gpmf_parallel_zips_one_row_per_document():
+    times, values = preproc.expand_gpmf_parallel(_GPS_DUMP, preproc._GPMF_GPS_TAGS)
+    assert times == [0.0, 0.5]
+    assert values[0] == (42.3532, -71.0659, 5.2, 1.5, 1.6)
+    assert values[1] == (42.3533, -71.0660, 5.3, 1.7, 1.8)
+
+
+def test_expand_gpmf_parallel_tolerates_an_absent_component():
+    # Firmware that omits GPSSpeed3D must still yield the other four, not an empty stream
+    dump = [{"Doc1:SampleTime": 0.0, "Doc1:GPSLatitude": 42.3532, "Doc1:GPSLongitude": -71.0659}]
+    times, values = preproc.expand_gpmf_parallel(dump, preproc._GPMF_GPS_TAGS)
+    assert times == [0.0]
+    assert values == [(42.3532, -71.0659, None, None, None)]
+
+
+def test_expand_gpmf_parallel_ignores_the_untimed_container_document():
+    # The container carries GPSAltitude and one whole-file coordinate; it is not a sample
+    dump = [{"Main:GPSLatitude": 42.3532, "Main:GPSLongitude": -71.0659, "Main:GPSAltitude": 5.2}]
+    assert preproc.expand_gpmf_parallel(dump, preproc._GPMF_GPS_TAGS) == ([], [])
 
 
 def test_telemetry_table_carries_both_time_axes():
@@ -652,6 +778,49 @@ def test_telemetry_table_nulls_edit_time_when_alignment_failed():
 
 def test_telemetry_table_is_none_without_imu():
     assert preproc.telemetry_table([{"Main:Model": "Pixel 9 Pro"}], preproc.Alignment(0.0, 0.99, True), 44.2) is None
+
+
+def test_telemetry_table_populates_the_gps_columns():
+    # The regression this guards: gps was read as one 5-wide "GPSTrack", which is exiftool's
+    # scalar heading, so every chunk was skipped as ragged and gps_* was always null
+    table = preproc.telemetry_table(_GPS_DUMP, preproc.Alignment(0.0, 0.99, True), duration_s=1.0)
+    assert {"gps_lat", "gps_lon", "gps_alt", "gps_speed2d", "gps_speed3d"} <= set(table.column_names)
+    assert table.column("gps_lat").to_pylist() == [pytest.approx(42.3532), pytest.approx(42.3533)]
+    assert table.column("gps_speed3d").to_pylist() == [pytest.approx(1.6), pytest.approx(1.8)]
+
+
+def test_telemetry_table_never_reads_gps_as_a_ragged_wide_tag(caplog):
+    # A wrong tag name announces itself as a ragged-chunk warning; there must be none
+    with caplog.at_level("WARNING"):
+        preproc.telemetry_table(_GPS_DUMP, preproc.Alignment(0.0, 0.99, True), duration_s=1.0)
+    assert "ragged" not in caplog.text
+
+
+def test_telemetry_table_logs_the_row_count_and_fill_ratio(caplog):
+    # The streams do not share a time axis, so the union is sparse; the log is how a reader
+    # learns that a half-null column is expected rather than a bug
+    with caplog.at_level("INFO"):
+        preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+    assert "rows on the union time axis" in caplog.text
+    assert "accl_x=100%" in caplog.text
+
+
+def test_telemetry_table_columns_are_sparse_on_a_disjoint_axis():
+    # Two streams whose chunks hold different sample counts land on different instants, so
+    # the union carries both and each column is null wherever the other stream sampled
+    dump = [
+        {
+            "Doc1:SampleTime": 0.0,
+            "Doc1:SampleDuration": 1.0,
+            "Doc1:Accelerometer": "1 2 3 4 5 6",
+            "Doc1:Gyroscope": "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9",
+        }
+    ]
+    table = preproc.telemetry_table(dump, preproc.Alignment(0.0, 0.99, True), duration_s=1.0)
+    # 2 accelerometer samples at 0, 0.5 and 3 gyro samples at 0, 1/3, 2/3: union is 4 instants
+    assert table.num_rows == 4
+    assert table.column("accl_x").null_count == 2
+    assert table.column("gyro_x").null_count == 1
 
 
 def test_write_telemetry_names_the_file_after_the_video(tmp_path):
@@ -698,6 +867,164 @@ def test_tag_command_overwrites_in_place():
 def test_tag_command_skips_empty_values():
     command = preproc.tag_command(Path("/out/GH010234.mp4"), {"Model": "GoPro Max", "SerialNumber": None})
     assert not any(arg.startswith("-SerialNumber") for arg in command)
+
+
+def test_tag_command_writes_raw_numeric_values():
+    # exif_dump reads with -n, so GPSCoordinates arrives already raw. Writing it back without
+    # -n runs PrintConvInv over a raw value: exiftool warns, drops the tag, and still exits 0
+    command = preproc.tag_command(Path("/out/GH010234.mp4"), {"GPSCoordinates": "42.3532 -71.0659 5.2"})
+    assert "-n" in command
+    assert "-GPSCoordinates=42.3532 -71.0659 5.2" in command
+
+
+def test_tag_command_drops_tags_exiftool_cannot_write():
+    # exiftool answers "Sorry, <tag> is not writable" for these two. They stay in the JSON
+    # sidecar via static_tags, but passing them to exiftool only buys a warning.
+    tags = {"Model": "GoPro Max", "LensProjection": "Fisheye", "ElectronicImageStabilization": 1}
+    command = preproc.tag_command(Path("/out/GH010234.mp4"), tags)
+    assert "-Model=GoPro Max" in command
+    assert not any(arg.startswith("-LensProjection") for arg in command)
+    assert not any(arg.startswith("-ElectronicImageStabilization") for arg in command)
+
+
+def test_static_tags_still_carries_the_unwritable_tags():
+    # Dropping them from the exiftool call must not drop them from the sidecar
+    dump = [{"Main:LensProjection": "Fisheye", "Main:ElectronicImageStabilization": 1}]
+    tags = preproc.static_tags(dump)
+    assert tags["LensProjection"] == "Fisheye"
+    assert tags["ElectronicImageStabilization"] == 1
+
+
+def test_inject_warns_on_an_exiftool_warning_despite_a_zero_exit(tmp_path, monkeypatch, caplog):
+    # The branch this replaces was dead: exiftool exits 0 whenever any tag in the call lands,
+    # so a dropped tag shows up only in stderr. Asserting on the returncode would prove nothing.
+    curated = tmp_path / "GH010234.mp4"
+    curated.write_bytes(b"video")
+    stderr = "Warning: Error converting value for ItemList:GPSCoordinates (PrintConvInv)\n"
+    monkeypatch.setattr(
+        preproc.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "1 image files updated\n", stderr),
+    )
+    with caplog.at_level("WARNING"):
+        injected = preproc.inject(curated, tmp_path / "src.MP4", preproc.Alignment(0.0, 0.2, False), 1.0, {})
+
+    assert injected is False
+    assert "PrintConvInv" in caplog.text
+    assert "GH010234.mp4" in caplog.text
+
+
+def test_inject_logs_a_non_zero_exiftool_exit_as_an_error(tmp_path, monkeypatch, caplog):
+    curated = tmp_path / "GH010234.mp4"
+    curated.write_bytes(b"video")
+    monkeypatch.setattr(
+        preproc.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "Error: nothing to write\n"),
+    )
+    with caplog.at_level("WARNING"):
+        preproc.inject(curated, tmp_path / "src.MP4", preproc.Alignment(0.0, 0.2, False), 1.0, {})
+
+    assert "static tags failed" in caplog.text
+    assert any(record.levelname == "ERROR" for record in caplog.records)
+
+
+########
+# Injection against the real binaries
+########
+
+_HAS_MEDIA_TOOLS = all(shutil.which(name) for name in ("ffmpeg", "ffprobe", "exiftool"))
+
+
+def _synth_video(path, duration=1, extra_args=()):
+    """Render a one-second mp4 with colour bars and a tone via ffmpeg's lavfi sources."""
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-y",
+            "-f", "lavfi", "-i", f"testsrc=size=320x240:rate=30:duration={duration}",
+            "-f", "lavfi", "-i", f"sine=frequency=440:duration={duration}",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+            *extra_args, str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
+def _synth_gpmd_source(path, duration=2):
+    """Render an mp4 carrying a data track tagged `gpmd`, the way a GoPro original does.
+
+    ffmpeg cannot author a bin_data stream from scratch, so a timecode track is rendered and
+    its four-character format code is patched from `tmcd` to `gpmd`. ffprobe then reports the
+    stream exactly as it reports a real GoPro's GPMF track, which is all find_gpmd_index reads.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_name("tmcd_" + path.name)
+    _synth_video(staging, duration=duration, extra_args=("-timecode", "00:00:00:00"))
+    path.write_bytes(staging.read_bytes().replace(b"tmcd", b"gpmd"))
+    staging.unlink()
+    return path
+
+
+def _stream_tags(path):
+    """Return the codec_tag_string of every stream in `path`, via ffprobe."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_tag_string", "-of", "json", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [s["codec_tag_string"] for s in json.loads(result.stdout)["streams"]]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _HAS_MEDIA_TOOLS, reason="needs ffmpeg, ffprobe and exiftool")
+def test_inject_really_grafts_a_gpmd_track_onto_the_curated_video(tmp_path):
+    # The four argv-shape tests above never ran ffmpeg, which is how a temp file named
+    # "GH010234.mp4.inject" survived: ffmpeg cannot infer a muxer from that suffix and exits 1
+    # with "Unable to find a suitable output format", so every GoPro clip took the failure path.
+    curated = _synth_video(tmp_path / "GH010234.mp4")
+    source = _synth_gpmd_source(tmp_path / "src" / "GH010234.MP4")
+    before = curated.stat().st_size
+    assert "gpmd" not in _stream_tags(curated)
+
+    injected = preproc.inject(
+        curated, source, preproc.Alignment(0.0, 0.99, True), 1.0, {"Model": "GoPro Max"}
+    )
+
+    assert injected is True
+    assert "gpmd" in _stream_tags(curated)
+    assert curated.stat().st_size > before
+    # The remux left no temporary behind, under either spelling
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["GH010234.mp4"]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _HAS_MEDIA_TOOLS, reason="needs ffmpeg, ffprobe and exiftool")
+def test_inject_really_writes_raw_gps_static_tags(tmp_path):
+    # GPSCoordinates comes off exif_dump raw; without -n exiftool silently drops it and exits 0
+    curated = _synth_video(tmp_path / "GH010234.mp4")
+    source = _synth_gpmd_source(tmp_path / "src" / "GH010234.MP4")
+
+    preproc.inject(
+        curated,
+        source,
+        preproc.Alignment(0.0, 0.99, True),
+        1.0,
+        {"Model": "GoPro Max", "GPSCoordinates": "42.3532 -71.0659 5.2"},
+    )
+
+    result = subprocess.run(
+        ["exiftool", "-n", "-json", "-GPSCoordinates", "-Model", "-Software", str(curated)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tags = json.loads(result.stdout)[0]
+    assert tags["GPSCoordinates"] == "42.3532 -71.0659 5.2"
+    assert tags["Model"] == "GoPro Max"
+    assert tags["Software"] == preproc.PROVENANCE_TAG
 
 
 def test_last_stderr_line_picks_the_last_meaningful_line():
@@ -847,6 +1174,60 @@ def test_main_warns_about_every_unaligned_clip(tree, tmp_path, monkeypatch, capl
         preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out")])
 
     assert caplog.text.count("alignment rejected") == 2
+
+
+def test_main_survives_a_clip_that_raises(tree, tmp_path, monkeypatch, caplog):
+    # A clip with no audio track makes ffmpeg exit 1 and decode_audio raise. Before this, the
+    # exception left main after gigabytes had already been copied: no index, no summary.
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    def explode_on_one(pair, out, min_r, force):
+        if "GH010228" in pair.name:
+            raise subprocess.CalledProcessError(1, ["ffmpeg"], stderr="Output file does not contain any stream")
+        return {"name": pair.name, "status": "processed", "aligned": True, "r": 0.99, "imu": True, "injected": True}
+
+    monkeypatch.setattr(preproc, "process_pair", explode_on_one)
+    out = tmp_path / "curated"
+    with caplog.at_level("INFO"):
+        assert preproc.main(["--source-root", str(tree), "--output-root", str(out)]) == 0
+
+    # The run finished: the index was still written and the survivor still counted
+    assert (out / "index.csv").is_file()
+    assert "1 processed, 0 skipped, 1 failed" in caplog.text
+    # And the casualty is named individually, not buried in a count
+    assert "processing failed, nothing curated: 2026_07_15-Goprosplat-GH010228" in caplog.text
+
+
+def test_main_dry_run_forwards_the_flag_to_the_push_script(tree, tmp_path, monkeypatch):
+    # --dry-run --push used to return before the push block, so --push did nothing at all
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+    calls = []
+    monkeypatch.setattr(preproc, "push", lambda root, dry_run=False: calls.append(dry_run))
+
+    preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out"), "--dry-run", "--push"])
+
+    assert calls == [True]
+
+
+def test_push_appends_dry_run_only_when_asked(monkeypatch):
+    commands = []
+    monkeypatch.setattr(preproc.subprocess, "run", lambda command, **kwargs: commands.append(command))
+
+    preproc.push(Path("/out"), dry_run=True)
+    preproc.push(Path("/out"), dry_run=False)
+
+    assert commands[0] == [str(preproc.PUSH_SCRIPT), "--source", "/out", "--dry-run"]
+    assert commands[1] == [str(preproc.PUSH_SCRIPT), "--source", "/out"]
+
+
+def test_main_index_only_does_not_demand_the_media_tools(tmp_path, monkeypatch):
+    # --index-only reads sidecars alone, so it must work on a machine with no ffmpeg
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: None)
+    out = tmp_path / "curated"
+    _curated(out, "2026_07_22-splats-GH010234", "GH010234", {"latitude": 42.3532, "longitude": -71.0659})
+
+    assert preproc.main(["--output-root", str(out), "--index-only"]) == 0
+    assert (out / "index.csv").is_file()
 
 
 def test_main_says_when_only_matched_nothing(tree, tmp_path, monkeypatch, caplog):

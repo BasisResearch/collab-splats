@@ -1,7 +1,7 @@
 #!/bin/bash
 # Push the flat curated video tree to the environments-curated GCS bucket via rclone.
 #
-# Expects the layout produced by scripts/flatten_dataset.py:
+# Expects the layout produced by scripts/preprocess_gdrive_videos.py:
 #   <source>/YYYY_MM_DD-PARENT-VIDEO/<video>.mp4
 #
 # Re-runnable: rclone skips objects that already match on size and modtime, so a

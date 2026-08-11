@@ -51,6 +51,10 @@ _STAGE_DEPS: dict[str, list[str]] = {
     "mesh": ["pointcloud"],
     "localize": ["pointcloud"],
 }
+# A stage is re-runnable on its own iff nothing depends on it → {semantics, mesh, localize}.
+# Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
+# mesh from this set automatically, so callers gating on it can never disagree with _STAGE_DEPS.
+LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in _STAGE_DEPS.values()))
 
 
 ########################################
@@ -760,12 +764,11 @@ class Reconstructor:
 
         # Skip if this extractor's lifted features are already on disk. The extractor is in the
         # filename, so two extractors coexist here instead of overwriting each other.
-        lifted_store = lifted_store_path(lifted_dir, extractor_name)
-        if not overwrite and lifted_store.exists():
-            logger.info("Lifted features exist at %s, skipping", lifted_store)
+        if not overwrite and self._stage_output_exists("semantics"):
+            logger.info("Lifted features exist at %s, skipping", lifted_store_path(lifted_dir, extractor_name))
             return lifted_dir
 
-        result = result or self.pointcloud
+        result = result or self._resolve_result()
         if result is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
@@ -800,11 +803,11 @@ class Reconstructor:
         mesh_path = self.backend_dir / "mesh.ply"
 
         # Skip if mesh already on disk
-        if not overwrite and mesh_path.exists():
+        if not overwrite and self._stage_output_exists("mesh"):
             logger.info("Mesh exists at %s, skipping", mesh_path)
             return mesh_path
 
-        result = result or self.pointcloud
+        result = result or self._resolve_result()
         if result is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
@@ -828,7 +831,7 @@ class Reconstructor:
         logger.info("Mesh saved to %s", out)
         return out
 
-    def build_localization_db(self, result: "PointcloudResult | None" = None, overwrite: bool = False) -> Path:
+    def build_localization_db(self, overwrite: bool = False) -> Path:
         """Build/refresh the per-frame local-feature localization cache in feedforward.zarr."""
         loc_cfg = self.config["localization"]
         extractor_name = loc_cfg["extractor"]
@@ -841,7 +844,7 @@ class Reconstructor:
             )
 
         # Skip if the DB group already exists and overwrite not requested
-        if not overwrite and _localization_db_exists(feedforward_zarr, extractor_name):
+        if not overwrite and self._stage_output_exists("localize"):
             logger.info(
                 "Localization DB exists at %s :: local_features/%s, skipping",
                 feedforward_zarr,
@@ -853,14 +856,34 @@ class Reconstructor:
 
     def _stage_output_exists(self, stage: str) -> bool:
         """True if `stage`'s on-disk output is already present (lets deps be reused across runs)."""
-        # Only preproc/pointcloud are ever depended on; others have no reusable marker.
         if stage == "preproc":
             return self.frames_zarr.exists()
         if stage == "pointcloud":
             colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
             zarr_done = (self.backend_dir / "feedforward.zarr").exists()
             return colmap_done and zarr_done
+        # Leaf-stage markers. Only preproc/pointcloud are ever depended on, but run_pipeline also
+        # needs these to refuse a named stage whose output already exists — and each leaf stage's
+        # own skip-check reads them, so they live here once instead of three times.
+        if stage == "mesh":
+            return (self.backend_dir / "mesh.ply").exists()
+        if stage == "semantics":
+            lifted = lifted_store_path(self.backend_dir / "semantics", self.config["semantics"]["extractor"])
+            return lifted.exists()
+        if stage == "localize":
+            feedforward_zarr = self.backend_dir / "feedforward.zarr"
+            return feedforward_zarr.exists() and _localization_db_exists(
+                feedforward_zarr, self.config["localization"]["extractor"]
+            )
         return False
+
+    def _resolve_result(self) -> "PointcloudResult | None":
+        """PointcloudResult for a stage-2+ run, loading from COLMAP on disk if not in memory."""
+        # A stage run on its own never calls build_pointcloud(), so self.pointcloud is None even
+        # when a complete reconstruction is already sitting in backend_dir.
+        if self.pointcloud is None and self._stage_output_exists("pointcloud"):
+            self.pointcloud = self._load_pointcloud_from_disk()
+        return self.pointcloud
 
     def run_pipeline(
         self,
@@ -877,6 +900,9 @@ class Reconstructor:
         Raises:
             ValueError: If stages list violates dependency ordering.
         """
+        # Naming a stage means asking for it; inheriting it from config does not. Capture the
+        # distinction before `stages` is reassigned below.
+        named = stages is not None
         if stages is None:
             # Build from config enabled flags; preproc + pointcloud always included
             stages = ["preproc", "pointcloud"]
@@ -899,6 +925,11 @@ class Reconstructor:
                         f"stages={stages} nor already on disk. Add '{dep}' to the stages list "
                         f"(or run it first)."
                     )
+            # Refuse a stage the caller NAMED whose output already exists, instead of silently
+            # no-op'ing. A remote re-run would otherwise pull the whole scene, skip every stage,
+            # push nothing and report success.
+            if named and not overwrite and self._stage_output_exists(stage):
+                raise ValueError(f"Stage '{stage}' output already exists; pass overwrite=True to replace it.")
 
         # Execute stages in canonical order
         result = None
@@ -913,7 +944,7 @@ class Reconstructor:
             elif stage == "mesh":
                 self.mesh(result=result, overwrite=overwrite)
             elif stage == "localize":
-                self.build_localization_db(result=result, overwrite=overwrite)
+                self.build_localization_db(overwrite=overwrite)
 
     def launch_dashboard(self) -> None:
         """Launch interactive dashboard for current reconstruction state."""

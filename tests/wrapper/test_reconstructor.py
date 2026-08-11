@@ -1024,3 +1024,142 @@ def test_build_localization_db_runs_when_missing(tmp_path):
     ):
         rec.build_localization_db(overwrite=False)
     build.assert_called_once_with(ff, "loma", rec.frames_zarr)
+
+
+########################################
+# Leaf-stage re-run (stage-rerun-from-processed)
+########################################
+
+
+def test_leaf_stages_derived_from_dep_graph():
+    """LEAF_STAGES is whatever nothing depends on — not a hardcoded list."""
+    from collab_splats.wrapper import reconstructor as R
+
+    assert R.LEAF_STAGES == frozenset({"semantics", "mesh", "localize"})
+
+
+def test_stage_output_exists_mesh(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    assert rec._stage_output_exists("mesh") is False
+    rec.backend_dir.mkdir(parents=True, exist_ok=True)
+    (rec.backend_dir / "mesh.ply").touch()
+    assert rec._stage_output_exists("mesh") is True
+
+
+def test_stage_output_exists_semantics_is_per_extractor(tmp_path):
+    """The marker is this run's extractor — another extractor's lifted store must not satisfy it."""
+    from collab_splats.semantics.compression import lifted_store_path
+
+    config = _make_config(tmp_path, {"semantics": {"extractor": "dinov2"}})
+    rec = Reconstructor(config)
+    sem_dir = rec.backend_dir / "semantics"
+    sem_dir.mkdir(parents=True)
+    lifted_store_path(sem_dir, "talk2dino").mkdir()
+    assert rec._stage_output_exists("semantics") is False
+    lifted_store_path(sem_dir, "dinov2").mkdir()
+    assert rec._stage_output_exists("semantics") is True
+
+
+def test_stage_output_exists_localize(tmp_path):
+    from collab_splats.wrapper import reconstructor as R
+
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    rec = Reconstructor(config)
+    # No zarr at all: absent, and _localization_db_exists must not even be consulted.
+    assert rec._stage_output_exists("localize") is False
+    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    with patch.object(R, "_localization_db_exists", return_value=True):
+        assert rec._stage_output_exists("localize") is True
+    with patch.object(R, "_localization_db_exists", return_value=False):
+        assert rec._stage_output_exists("localize") is False
+
+
+def _seed_pointcloud_markers(rec):
+    """Make _stage_output_exists('pointcloud') true without running the stage."""
+    colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
+    colmap_dir.mkdir(parents=True, exist_ok=True)
+    (colmap_dir / "cameras.bin").touch()
+    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+
+
+def test_mesh_resolves_result_from_disk_when_not_in_memory(tmp_path):
+    """`--stages mesh` on a pulled scene: self.pointcloud is None but COLMAP is on disk."""
+    from collab_splats.wrapper import reconstructor as R
+
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    _seed_pointcloud_markers(rec)
+    loaded = _make_mock_pointcloud_result(tmp_path)
+    rec._load_pointcloud_from_disk = lambda: loaded
+
+    with patch.object(R, "_run_tsdf_mesh", return_value=rec.backend_dir / "mesh.ply") as run_mesh:
+        rec.mesh()
+
+    assert run_mesh.call_args.kwargs["result"] is loaded
+    assert rec.pointcloud is loaded  # cached, so a second leaf stage does not re-read COLMAP
+
+
+def test_mesh_without_pointcloud_on_disk_still_raises(tmp_path):
+    """Nothing in memory and nothing on disk is still a hard error, not a silent skip."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    with pytest.raises(ValueError, match="No PointcloudResult"):
+        rec.mesh()
+
+
+def test_extract_semantics_resolves_result_from_disk(tmp_path):
+    from collab_splats.wrapper import reconstructor as R
+
+    config = _make_config(tmp_path, {"semantics": {"extractor": "dinov2"}})
+    rec = Reconstructor(config)
+    _seed_pointcloud_markers(rec)
+    loaded = _make_mock_pointcloud_result(tmp_path)
+    rec._load_pointcloud_from_disk = lambda: loaded
+    # 2D cache hit so the extractor never loads; only the lift is exercised.
+    rec.semantics_cache_dir.mkdir(parents=True, exist_ok=True)
+    (rec.semantics_cache_dir / "dinov2.zarr").mkdir()
+
+    with patch.object(R, "_lift_and_save", return_value=rec.backend_dir / "semantics") as lift:
+        rec.extract_semantics()
+
+    lift.assert_called_once()
+    assert rec.pointcloud is loaded
+
+
+def test_run_pipeline_refuses_named_stage_whose_output_exists(tmp_path):
+    """A named no-op must fail loudly: a remote re-run would otherwise pull GBs and push nothing."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    _seed_pointcloud_markers(rec)
+    (rec.backend_dir / "mesh.ply").touch()
+
+    with pytest.raises(ValueError, match="already exists"):
+        rec.run_pipeline(stages=["mesh"])
+
+
+def test_run_pipeline_named_stage_with_overwrite_runs(tmp_path):
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    _seed_pointcloud_markers(rec)
+    (rec.backend_dir / "mesh.ply").touch()
+    calls = []
+    rec.mesh = lambda result=None, overwrite=False: calls.append("mesh")
+
+    rec.run_pipeline(stages=["mesh"], overwrite=True)
+    assert calls == ["mesh"]
+
+
+def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
+    """stages=None comes from config enabled flags — resume behaviour must not become an error."""
+    config = _make_config(tmp_path, {"mesh": {"enabled": True}})
+    rec = Reconstructor(config)
+    _seed_pointcloud_markers(rec)
+    (rec.backend_dir / "mesh.ply").touch()
+    calls = []
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
+    rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
+    rec.mesh = lambda result=None, overwrite=False: calls.append("mesh")
+
+    rec.run_pipeline()  # must not raise
+    assert calls == ["preproc", "pointcloud", "mesh"]

@@ -19,6 +19,18 @@ Usage:
     # Keep the local copy for inspection (skips the delete, not the push)
     python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs --all --keep-local
 
+    # Re-run only the leaf stages (mesh, semantics, localize) against already-processed
+    # scenes: the scene is pulled back out of environments-processed instead of being
+    # rebuilt from video. --all then lists environments-processed, not curated.
+    python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs \\
+        --stages mesh --overwrite --config remesh.yaml --all
+
+A --stages set that includes preproc or pointcloud always rebuilds from the curated video,
+so a re-run can never leave a stale downstream artifact behind. A leaf re-run of a scene with
+no processed outputs fails that scene; the config is authoritative, so a --config backend that
+disagrees with the pulled run_config.yaml is an error rather than a silent retarget. Naming a
+stage whose output already exists is refused — pass --overwrite to replace it.
+
 Credentials come from the existing rclone remote (`collab-data`) — nothing is read
 from the environment or passed on the command line. One scene's failure does not abort
 the batch. A scene whose reconstruction fails is not pushed and keeps its local dir on
@@ -47,7 +59,7 @@ from pathlib import Path
 
 import yaml
 
-from collab_splats.remote import PUSH_EXCLUDES, SCENE_ID_RE, SceneSource
+from collab_splats.remote import PUSH_EXCLUDES, SCENE_ID_RE, SceneSource, discover_scenes, prepare_scene
 from collab_splats.wrapper import batch
 
 logging.basicConfig(
@@ -86,7 +98,9 @@ def run_remote(
         # remote exited 1 with a traceback — telling an unattended runner "some scenes failed" when
         # nothing had even been attempted, and leaving EXIT_REMOTE_UNAVAILABLE unreachable at start.
         try:
-            scene_ids = source.list_scenes()
+            # A leaf-only --stages set re-runs from environments-processed, so that is the bucket
+            # the work list must come from; anything else starts from curated video.
+            scene_ids = discover_scenes(source, stages)
         except Exception as exc:
             logger.error("cannot list curated scenes — rclone is not working: %s", exc)
             return EXIT_REMOTE_UNAVAILABLE
@@ -104,12 +118,15 @@ def run_remote(
         out = None
         failure = None
         try:
-            # 1. Pull the video into the scene's own output dir so cleanup is one rmtree
-            video = source.fetch_video(scene, scene_dir, on_line=logger.info)
+            # 1. Fetch inputs: the curated video, or the processed scene pulled back for a
+            # leaf-stage re-run (which returns video=None and a config carrying its provenance)
+            video, scene_config = prepare_scene(
+                source, scene, scene_dir, stages, override_config, on_line=logger.info
+            )
 
             # 2. Same pipeline as the local driver; name= pins the output dir to the scene id
             out, _ = batch.run_scene(
-                video, output_root, config_dir, override_config, stages, overwrite, name=scene
+                video, output_root, config_dir, scene_config, stages, overwrite, name=scene
             )
 
             # 3. Push, excluding regenerable artifacts and the fetched video (see PUSH_EXCLUDES)
@@ -208,7 +225,12 @@ def main():
         "--stages",
         default=None,
         metavar="STAGE[,STAGE,...]",
-        help="Steps to run: preproc,pointcloud,semantics,mesh,localize. Default: config-enabled steps.",
+        help=(
+            "Steps to run: preproc,pointcloud,semantics,mesh,localize. Default: config-enabled steps. "
+            "A leaf-only set (mesh,semantics,localize) re-runs against scenes pulled back from "
+            "environments-processed instead of rebuilding from curated video; any set including "
+            "preproc or pointcloud rebuilds from video as before."
+        ),
     )
     parser.add_argument("--overwrite", action="store_true", help="Re-run steps even if outputs already exist.")
     parser.add_argument(

@@ -668,3 +668,119 @@ def inject(curated, source, alignment, duration_s, tags):
     if tagged.returncode != 0:
         logger.error("static tags failed for %s: %s", curated.name, _last_stderr_line(tagged.stderr))
     return injected
+
+
+########
+# Pipeline
+########
+
+
+def require_binaries():
+    """Exit before any work when a required external tool is missing."""
+    missing = [name for name in ("ffmpeg", "ffprobe", "exiftool") if shutil.which(name) is None]
+    if missing:
+        raise SystemExit(f"missing required tools: {', '.join(missing)}")
+
+
+def process_pair(pair, output_root, min_r, force):
+    """Run copy, align, extract and inject for one pair; return a summary record."""
+    dest_dir = output_root / pair.name
+    curated = dest_dir / pair.edit.name
+
+    if needs_copy(pair, dest_dir, force=force):
+        copy_video(pair.edit, dest_dir, force=True)
+    else:
+        logger.info("%s: up to date", pair.name)
+        if not force:
+            return {"name": pair.name, "status": "skipped"}
+
+    alignment = align(pair, min_r=min_r)
+    dump = exif_dump(pair.source)
+    duration_s = probe_duration(curated)
+
+    table = telemetry_table(dump, alignment, duration_s)
+    if table is not None:
+        write_telemetry(table, dest_dir, pair.edit)
+
+    payload = build_payload(
+        pair, dump, alignment, duration_s, pair.name, table is not None, source_fingerprint(pair.edit)
+    )
+    injected = inject(curated, pair.source, alignment, duration_s, payload["static_tags"])
+    payload["gpmd_injected"] = injected
+    write_metadata(dest_dir, pair.edit, payload)
+
+    return {
+        "name": pair.name,
+        "status": "processed",
+        "aligned": alignment.ok,
+        "r": alignment.r,
+        "imu": table is not None,
+        "injected": injected,
+    }
+
+
+########
+# Entry point
+########
+
+
+def main(argv=None):
+    """Parse args and run the curation pipeline."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--source-root", type=Path, default=DEFAULT_SOURCE_ROOT, help="nested capture tree to read")
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT, help="flat curated tree to write")
+    parser.add_argument("--only", help="process only pairs whose flat name contains this substring")
+    parser.add_argument("--dry-run", action="store_true", help="log the plan and total size, change nothing")
+    parser.add_argument("--force", action="store_true", help="re-copy and re-inject even when up to date")
+    parser.add_argument("--index-only", action="store_true", help="rebuild index.csv from the sidecars and stop")
+    parser.add_argument("--push", action="store_true", help="run scripts/push_curated.sh after processing")
+    parser.add_argument("--align-min-r", type=float, default=DEFAULT_ALIGN_MIN_R, help="minimum correlation to accept")
+    args = parser.parse_args(argv)
+
+    require_binaries()
+
+    # --index-only never reads the source tree, so it works on a machine with no Drive mount
+    if args.index_only:
+        write_index(args.output_root)
+        return 0
+
+    if not args.source_root.is_dir():
+        parser.error(f"source root does not exist: {args.source_root}")
+
+    pairs = plan_pairs(args.source_root)
+    if args.only:
+        pairs = [p for p in pairs if args.only in p.name]
+    if not pairs:
+        logger.warning("no pairs found under %s", args.source_root)
+        return 0
+
+    if args.dry_run:
+        total = sum(p.edit.stat().st_size for p in pairs)
+        for pair in pairs:
+            logger.info("%s/%s  <- %s", pair.name, pair.edit.name, pair.source)
+        logger.info("dry run: %d pairs, %.1f GB", len(pairs), total / 1e9)
+        return 0
+
+    records = [process_pair(pair, args.output_root, args.align_min_r, args.force) for pair in pairs]
+    write_index(args.output_root)
+
+    processed = [r for r in records if r["status"] == "processed"]
+    unaligned = [r["name"] for r in processed if not r["aligned"]]
+    logger.info(
+        "done: %d processed, %d skipped, %d with IMU, %d injected",
+        len(processed),
+        len(records) - len(processed),
+        sum(1 for r in processed if r["imu"]),
+        sum(1 for r in processed if r["injected"]),
+    )
+    # Surfaced loudly: these clips carry source-time telemetry and no injected track
+    for name in unaligned:
+        logger.warning("alignment rejected, telemetry left in source time: %s", name)
+
+    if args.push:
+        subprocess.run([str(PUSH_SCRIPT)], check=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

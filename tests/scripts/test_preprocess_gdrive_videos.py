@@ -704,3 +704,44 @@ def test_last_stderr_line_picks_the_last_meaningful_line():
     assert preproc._last_stderr_line("warning: x\nfatal: y\n\n") == "fatal: y"
     assert preproc._last_stderr_line("   \n\n") == "(no stderr)"
     assert preproc._last_stderr_line("") == "(no stderr)"
+
+
+########
+# CLI
+########
+
+
+def test_require_binaries_names_what_is_missing(monkeypatch):
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: None if name == "exiftool" else "/usr/bin/" + name)
+    with pytest.raises(SystemExit, match="exiftool"):
+        preproc.require_binaries()
+
+
+def test_require_binaries_passes_when_everything_is_present(monkeypatch):
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+    assert preproc.require_binaries() is None
+
+
+def test_main_dry_run_copies_nothing(tree, tmp_path, monkeypatch):
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+    out = tmp_path / "curated"
+    assert preproc.main(["--source-root", str(tree), "--output-root", str(out), "--dry-run"]) == 0
+    assert not out.exists()
+
+
+def test_main_index_only_rebuilds_without_touching_video(tmp_path, monkeypatch):
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+    out = tmp_path / "curated"
+    _curated(out, "2026_07_22-splats-GH010234", "GH010234", {"latitude": 42.3532, "longitude": -71.0659})
+    assert preproc.main(["--output-root", str(out), "--index-only"]) == 0
+    rows = list(csv.reader(io.StringIO((out / "index.csv").read_text())))
+    assert rows[1][0] == "2026_07_22-splats-GH010234"
+
+
+def test_main_only_filters_to_one_clip(tree, tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
+    out = tmp_path / "curated"
+    with caplog.at_level("INFO"):
+        preproc.main(["--source-root", str(tree), "--output-root", str(out), "--only", "GH010228", "--dry-run"])
+    assert "GH010228" in caplog.text
+    assert "IMG_4085" not in caplog.text

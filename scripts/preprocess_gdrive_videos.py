@@ -631,17 +631,28 @@ def tag_command(curated, tags):
     return command
 
 
+def _last_stderr_line(text):
+    """Return the last non-empty stderr line, so a failure logs as one readable line."""
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    return lines[-1] if lines else "(no stderr)"
+
+
 def inject(curated, source, alignment, duration_s, tags):
     """Write metadata back into the curated video; return True when a gpmd track landed.
 
     Order matters. ffmpeg runs first because it rewrites the container; exiftool runs second
     to write tags into the final one. Reversed, ffmpeg drops the tags. The remux goes to a
     temporary file that is only moved into place on success, so a failure leaves the curated
-    video exactly as it was.
+    video exactly as it was. A failure in either external tool is logged and the run continues;
+    the return value reports only whether a gpmd track landed.
     """
     injected = False
     gpmd_index = find_gpmd_index(source) if alignment.ok else None
-    if gpmd_index is not None:
+    if not alignment.ok:
+        logger.warning("%s: no gpmd injected, alignment was rejected", curated.name)
+    elif gpmd_index is None:
+        logger.info("%s: no gpmd track in the source, writing static tags only", curated.name)
+    else:
         temp = curated.with_suffix(curated.suffix + ".inject")
         command = gpmd_command(curated, source, alignment.offset_s, duration_s, gpmd_index, temp)
         result = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -650,9 +661,10 @@ def inject(curated, source, alignment, duration_s, tags):
             injected = True
         else:
             temp.unlink(missing_ok=True)
-            logger.error("gpmd injection failed for %s: %s", curated.name, result.stderr.strip().splitlines()[-1:])
-    elif not alignment.ok:
-        logger.warning("%s: no gpmd injected, alignment was rejected", curated.name)
+            logger.error("gpmd injection failed for %s: %s", curated.name, _last_stderr_line(result.stderr))
 
-    subprocess.run(tag_command(curated, tags), capture_output=True, text=True, check=True)
+    # Logged rather than raised: one clip with unwritable tags must not abort the run
+    tagged = subprocess.run(tag_command(curated, tags), capture_output=True, text=True, check=False)
+    if tagged.returncode != 0:
+        logger.error("static tags failed for %s: %s", curated.name, _last_stderr_line(tagged.stderr))
     return injected

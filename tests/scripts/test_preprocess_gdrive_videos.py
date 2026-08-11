@@ -698,3 +698,9 @@ def test_tag_command_overwrites_in_place():
 def test_tag_command_skips_empty_values():
     command = preproc.tag_command(Path("/out/GH010234.mp4"), {"Model": "GoPro Max", "SerialNumber": None})
     assert not any(arg.startswith("-SerialNumber") for arg in command)
+
+
+def test_last_stderr_line_picks_the_last_meaningful_line():
+    assert preproc._last_stderr_line("warning: x\nfatal: y\n\n") == "fatal: y"
+    assert preproc._last_stderr_line("   \n\n") == "(no stderr)"
+    assert preproc._last_stderr_line("") == "(no stderr)"

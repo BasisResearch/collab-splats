@@ -272,3 +272,40 @@ def format_gps(lat, lon):
     if lat is None or lon is None:
         return ""
     return f"{format_dms(lat, 'lat')}, {format_dms(lon, 'lon')}"
+
+
+########
+# CSV index
+########
+
+
+def index_rows(curated_root):
+    """Scan the curated tree and return (unique_id, gps) rows sorted by unique_id.
+
+    Derived entirely from the JSON sidecars, so the index can never drift from them and a
+    partial run still produces a complete file: clips this run did not touch still have
+    their sidecar on disk.
+    """
+    rows = []
+    for sidecar in sorted(curated_root.glob("*/*_metadata.json")):
+        payload = json.loads(sidecar.read_text())
+        gps = payload.get("gps") or {}
+        rows.append(
+            (
+                payload.get("unique_id", sidecar.parent.name),
+                format_gps(gps.get("latitude"), gps.get("longitude")),
+            )
+        )
+    return sorted(rows)
+
+
+def write_index(curated_root):
+    """Regenerate <curated-root>/index.csv from the sidecars and return its path."""
+    rows = index_rows(curated_root)
+    path = curated_root / INDEX_NAME
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["unique_id", "gps"])
+        writer.writerows(rows)
+    logger.info("index: %d rows -> %s", len(rows), path)
+    return path

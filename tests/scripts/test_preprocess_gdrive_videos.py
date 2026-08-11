@@ -294,3 +294,59 @@ def test_format_gps_joins_both_axes():
 def test_format_gps_is_blank_without_a_fix(lat, lon):
     # Blank, never 0,0 and never a sentinel string
     assert preproc.format_gps(lat, lon) == ""
+
+
+########
+# CSV index
+########
+
+
+def _curated(root, unique_id, stem, gps):
+    """Write a minimal curated folder with just the JSON sidecar the index reads."""
+    folder = root / unique_id
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{stem}_metadata.json").write_text(json.dumps({"unique_id": unique_id, "gps": gps}))
+    return folder
+
+
+def test_index_rows_are_sorted_by_unique_id(tmp_path):
+    _curated(tmp_path, "2026_07_22-splats-GH010234", "GH010234", {"latitude": 42.3532, "longitude": -71.0659})
+    _curated(tmp_path, "2026_06_29-splats-GH010221", "GH010221", {"latitude": 42.0, "longitude": -71.0})
+    rows = preproc.index_rows(tmp_path)
+    assert [r[0] for r in rows] == ["2026_06_29-splats-GH010221", "2026_07_22-splats-GH010234"]
+
+
+def test_index_rows_format_gps_as_dms(tmp_path):
+    _curated(tmp_path, "2026_07_22-splats-GH010234", "GH010234", {"latitude": 42.3532, "longitude": -71.0659})
+    assert preproc.index_rows(tmp_path)[0][1] == "42 deg 21' 11.52\" N, 71 deg 3' 57.24\" W"
+
+
+def test_index_rows_leave_gps_blank_without_a_fix(tmp_path):
+    _curated(tmp_path, "2026_06_29-Phone-PXL_20260629_225753909.TS", "PXL_20260629_225753909.TS", None)
+    assert preproc.index_rows(tmp_path)[0][1] == ""
+
+
+def test_write_index_has_exactly_two_columns(tmp_path):
+    _curated(tmp_path, "2026_07_22-splats-GH010234", "GH010234", {"latitude": 42.3532, "longitude": -71.0659})
+    path = preproc.write_index(tmp_path)
+    assert path.name == "index.csv"
+    rows = list(csv.reader(io.StringIO(path.read_text())))
+    assert rows[0] == ["unique_id", "gps"]
+    assert len(rows[1]) == 2
+
+
+def test_write_index_quotes_the_inch_mark_so_it_round_trips(tmp_path):
+    # The DMS string contains both a comma and a double quote; csv must survive both
+    _curated(tmp_path, "2026_07_22-splats-GH010234", "GH010234", {"latitude": 42.3532, "longitude": -71.0659})
+    path = preproc.write_index(tmp_path)
+    rows = list(csv.reader(io.StringIO(path.read_text())))
+    assert rows[1][1] == "42 deg 21' 11.52\" N, 71 deg 3' 57.24\" W"
+
+
+def test_write_index_survives_a_partial_run(tmp_path):
+    # Rebuilding from sidecars means an untouched clip still appears in the index
+    _curated(tmp_path, "2026_07_22-splats-GH010234", "GH010234", {"latitude": 42.3532, "longitude": -71.0659})
+    _curated(tmp_path, "2026_06_29-splats-GH010221", "GH010221", None)
+    preproc.write_index(tmp_path)
+    rows = list(csv.reader(io.StringIO((tmp_path / "index.csv").read_text())))
+    assert len(rows) == 3  # header + 2 clips

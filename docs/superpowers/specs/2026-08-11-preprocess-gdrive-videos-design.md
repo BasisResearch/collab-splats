@@ -160,9 +160,30 @@ to 0.90-0.94, that clip is rejected. The consequence is a fallback to source-tim
 with no injection, reported in the run summary rather than swallowed, and `--align-min-r`
 lowers the bar if the real footage lands there.
 
-Structural feasibility needs no separate gate. The lag search is restricted to
-`0 <= lag <= len(source) - len(edit)`, so an offset that would run the edit past the end of
-the source cannot be returned at all.
+Structural feasibility needs no separate gate, but the search range does need slack at the
+end. **Corrected after implementation:** this section originally claimed the lag search was
+restricted to `0 <= lag <= len(source) - len(edit)`, "so an offset that would run the edit
+past the end of the source cannot be returned at all" — describing a bug as though it were a
+safety property.
+
+Resolve re-encodes audio to AAC, and the encoder's priming padding leaves the decoded edit
+slightly longer than the region it was cut from. The true lag can therefore sit just *above*
+`len(source) - len(edit)` and be unreachable. Measured on the real pair `2026-06-03/GH010218`:
+the true lag was 272 samples (34 ms) past that ceiling, so the clip scored `r = 0.09` and was
+rejected as unalignable — while windowed correlation showed a clean contiguous head trim
+matching at `r = 0.993-0.998` across its whole length with zero drift.
+
+The fix appends `ALIGN_TOLERANCE_S` (1.0 s, roughly 25x the observed overrun) of silence to
+the source before searching, so such a lag stays reachable. Lags landing inside the padding
+have no energy, so the existing `denominator > 0` guard scores them 0 and they cannot win the
+argmax; the widened range admits no false matches. Verified: the same pair now returns
+`offset 6.9902 s, r 0.9967`, identical at 0.25 s, 1 s and 5 s of padding, while two genuinely
+mismatched real pairs score 0.027 and 0.014. An edit longer than source plus tolerance is
+still rejected outright.
+
+This does not cover an edit whose audio begins *before* the source's first sample, which
+would need negative lags. Such a clip scores low and lands in the rejected list — it fails
+visibly rather than silently.
 
 **extract** — `exiftool -ee -api LargeFileSupport=1 -json -n -G3` on the original. This uses
 the tool already installed and adds no gpmf-parser or node dependency. GPMF comes back as

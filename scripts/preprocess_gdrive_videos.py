@@ -787,12 +787,20 @@ def gpmd_command(curated, source, offset_s, duration_s, gpmd_index, out):
     -ss and -t precede the second -i so they trim that input rather than the first. -c copy
     leaves the edit's pixels untouched, and -copy_unknown is what allows the bin_data gpmd
     stream through at all — without it ffmpeg silently drops unrecognized track types.
+
+    "-map 0 -map -0:d" — map everything from the curated export, then exclude its data
+    streams again. Resolve's export carries a `tmcd` timecode stream that ffprobe reports as
+    codec_name=unknown; the mp4 muxer has no tag for that, so "-map 0" alone drags it into the
+    remux and the write aborts before a header is even produced ("Could not find tag for codec
+    none in stream #2 ... Could not write header"), and every GoPro clip silently ends up with
+    no gpmd track. Excluding the input's data streams sidesteps that entirely: the mp4 muxer
+    still regenerates a `tmcd` track from container metadata on its own, so nothing is lost.
     """
     return [
         "ffmpeg", "-v", "error", "-y",
         "-i", str(curated),
         "-ss", f"{offset_s}", "-t", f"{duration_s}", "-i", str(source),
-        "-map", "0", "-map", f"1:{gpmd_index}",
+        "-map", "0", "-map", "-0:d", "-map", f"1:{gpmd_index}",
         "-c", "copy", "-copy_unknown",
         str(out),
     ]

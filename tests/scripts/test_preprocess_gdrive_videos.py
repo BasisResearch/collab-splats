@@ -1075,6 +1075,21 @@ def test_gpmd_command_copies_every_curated_stream_and_only_the_gpmd_track():
     assert "-copy_unknown" in command
 
 
+def test_gpmd_command_excludes_the_curated_datas_streams_after_mapping_them():
+    # The curated export's tmcd stream reports codec_name=unknown, and the mp4 muxer has no
+    # tag for that: "-map 0" alone drags it in and the remux dies before writing a header
+    # ("Could not find tag for codec none in stream #2 ... Could not write header"), so every
+    # GoPro clip silently ends up with no gpmd track. "-map -0:d" drops input 0's data streams
+    # again after "-map 0" pulls them in, which is why it must appear strictly after it.
+    command = preproc.gpmd_command(
+        Path("/out/GH010234.mp4"), Path("/src/GH010234.MP4"), 4.2, 131.4, 3, Path("/out/tmp.mp4")
+    )
+    assert command.index("0") < command.index("-0:d")
+    map_indices = [i for i, arg in enumerate(command) if arg == "-map"]
+    assert command[map_indices[0] + 1] == "0"
+    assert command[map_indices[1] + 1] == "-0:d"
+
+
 def test_tag_command_overwrites_in_place():
     command = preproc.tag_command(Path("/out/GH010234.mp4"), {"Model": "GoPro Max"})
     assert "-overwrite_original" in command
@@ -1203,7 +1218,14 @@ def test_inject_really_grafts_a_gpmd_track_onto_the_curated_video(tmp_path):
     # The four argv-shape tests above never ran ffmpeg, which is how a temp file named
     # "GH010234.mp4.inject" survived: ffmpeg cannot infer a muxer from that suffix and exits 1
     # with "Unable to find a suitable output format", so every GoPro clip took the failure path.
-    curated = _synth_video(tmp_path / "GH010234.mp4")
+    #
+    # The curated file also carries a timecode track (-timecode), matching a real DaVinci
+    # Resolve export: ffprobe reports its codec as "unknown", the mp4 muxer has no tag for
+    # that, and "-map 0" alone drags it into the remux and aborts it before a header is even
+    # written. This reproduces that failure for real: with the "-map -0:d" fix removed from
+    # gpmd_command, this test fails with the muxer's own "Could not find tag for codec none in
+    # stream #2 ... Could not write header" rather than the misleading assertion below.
+    curated = _synth_video(tmp_path / "GH010234.mp4", extra_args=("-timecode", "00:00:00:00"))
     source = _synth_gpmd_source(tmp_path / "src" / "GH010234.MP4")
     before = curated.stat().st_size
     assert "gpmd" not in _stream_tags(curated)

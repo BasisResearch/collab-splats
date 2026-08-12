@@ -494,3 +494,17 @@ special-cased, because the stated rule is "process files that have both" and the
 - Idempotency: a second run skips and leaves the curated mp4 byte-identical
 - `index.csv`: two columns, correct DMS, and a phone clip picks up its container GPS
 - 125 tests pass; ruff reports only the pre-existing `EXE001`
+
+### Exhaustive pairing check
+
+Every edit was correlated against every source — all 34 x 34 = 1,156 combinations — using a
+20 s probe from each edit's midpoint. A probe is the wrong tool for deriving a precise offset
+but the right one for screening content identity, and it makes the sweep tractable.
+
+**All 34 edits match their assigned source best.** Correct pairs score 0.9882 to 1.0000; the
+best incorrect match anywhere in the matrix is 0.1344; the smallest winning margin is 0.8656.
+The `r >= 0.95` gate therefore sits in a band that is empty from 0.1344 to 0.9882, and no
+pairing in the tree is wrong or even close to ambiguous.
+
+This supersedes the three hand-picked negative controls quoted above as the basis for the
+threshold: those sampled 3 of 1,122 possible wrong pairings, and this covers all of them.

@@ -79,6 +79,12 @@ AUDIO_RATE = 8000
 # 1.0 and a wrong lag lands near 1/sqrt(N). See the spec for why the gap is this wide.
 DEFAULT_ALIGN_MIN_R = 0.95
 
+# How far past the end of the source an edit's audio may extend and still align. Resolve
+# re-encodes audio to AAC, whose priming padding makes the decoded edit slightly longer than
+# the region it was cut from — 34 ms on GH010218. Without this slack the true lag sits above
+# the search ceiling and cannot be found at all, and the clip is rejected at r = 0.09.
+ALIGN_TOLERANCE_S = 1.0
+
 INDEX_NAME = "index.csv"
 
 
@@ -334,9 +340,16 @@ def solve_offset(edit, source, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
     over N samples lands near 1/sqrt(N) — about 0.0006 for a minute at 8 kHz — so the two
     cases are three orders of magnitude apart and the 0.95 gate is not delicate.
 
-    The lag search is restricted to feasible positions, so an offset that would run the edit
-    past the end of the source cannot be returned at all.
+    The search allows the edit to overrun the source's end by up to `ALIGN_TOLERANCE_S`:
+    Resolve re-encodes audio to AAC, and the encoder's priming padding makes the decoded edit
+    slightly longer than the region it was cut from, pushing the true lag just past what a
+    strictly-fitting search could reach. An edit longer than source plus that tolerance is
+    still rejected outright.
     """
+    # Pad so a lag just past the source's end stays reachable. Lags landing inside the
+    # padding have no energy, so the denominator guard below scores them 0 and they cannot
+    # win the argmax — the slack widens the search without admitting false matches.
+    source = np.concatenate([np.asarray(source, dtype=np.float64), np.zeros(round(ALIGN_TOLERANCE_S * rate))])
     n, m = len(edit), len(source)
     if n == 0 or n > m:
         logger.warning("alignment impossible: edit has %d samples, source has %d", n, m)

@@ -438,6 +438,35 @@ def test_solve_offset_threshold_is_overridable():
     assert preproc.solve_offset(edit, source, min_r=0.0).ok is True
 
 
+def test_solve_offset_recovers_a_lag_that_overruns_the_source_end():
+    # The GH010218 regression: Resolve's AAC re-encode leaves the decoded edit longer than the
+    # region it was cut from, so the true lag sits just above len(source) - len(edit). Before
+    # the tolerance existed that lag was unreachable and the clip scored 0.09 instead of 1.0.
+    rng = _rng()
+    body = rng.standard_normal(preproc.AUDIO_RATE * 3).astype(np.float32)
+    head = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    source = np.concatenate([head, body])
+    # A short tail with no counterpart in the source, standing in for the encoder's padding
+    edit = np.concatenate([body, rng.standard_normal(400).astype(np.float32)])
+    # The true lag exceeds what a strictly-fitting search could reach
+    assert preproc.AUDIO_RATE > len(source) - len(edit)
+
+    result = preproc.solve_offset(edit, source)
+    assert result.ok is True
+    assert abs(result.offset_s - 1.0) <= 1.0 / preproc.AUDIO_RATE
+
+
+def test_solve_offset_rejects_an_edit_longer_than_the_source_plus_tolerance():
+    # The tolerance widens the search; it must not become a way to accept nonsense
+    rng = _rng()
+    edit = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
+    source = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+
+    result = preproc.solve_offset(edit, source)
+    assert result.ok is False
+    assert result.offset_s == 0.0
+
+
 ########
 # Metadata extraction
 ########

@@ -71,6 +71,9 @@ PUSH_SCRIPT = _REPO_ROOT / "scripts" / "push_curated.sh"
 _VIDEO_EXTS = {".mp4", ".mov", ".avi"}
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
+# exiftool's -G3 group names: "Doc7" is one 1 Hz GPMF chunk, "Doc7-3" a GPS fix inside it
+_DOC_GROUP_RE = re.compile(r"Doc(\d+)(?:-(\d+))?")
+
 # Audio is decoded mono at this rate purely to solve the trim offset; one sample is 125 us,
 # far finer than a 59.94 fps frame, so the offset is frame-exact.
 AUDIO_RATE = 8000
@@ -402,9 +405,59 @@ def align(pair, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
 ########
 
 
-def _ungrouped(doc):
-    """Strip exiftool's `-G3` document prefix, so Doc12:SampleTime becomes SampleTime."""
-    return {key.split(":", 1)[-1]: value for key, value in doc.items()}
+class Chunk(NamedTuple):
+    """One `DocN` GPMF document group and the `DocN-M` GPS sub-samples nested inside it."""
+
+    number: int
+    tags: dict
+    subs: list
+
+
+def iter_documents(dump):
+    """Regroup an exiftool -G3 dump into (container tags, chunks in document order).
+
+    exiftool returns exactly ONE JSON object for the whole file and encodes the embedded
+    document in each key's *prefix*: `Main:Model` is the container, `Doc7:Accelerometer` is the
+    7th 1 Hz GPMF chunk, and `Doc7-3:GPSLatitude` is the 3rd extra GPS fix inside that chunk.
+    Splitting the prefix off and merging what is left — which is what a flat dict of tag names
+    amounts to — collapses all 381 chunks of a GoPro clip onto one key, last write winning, and
+    throws away every sample but one. Chunks come back in numeric order (Doc2 before Doc10) and
+    each chunk's subs in theirs; unprefixed keys such as SourceFile join the container tags.
+    """
+    main, chunks, subs = {}, {}, {}
+    for doc in dump:
+        for key, value in doc.items():
+            group, _, tag = key.rpartition(":")
+            match = _DOC_GROUP_RE.fullmatch(group)
+            if match is None:
+                main[tag] = value
+            elif match[2] is None:
+                chunks.setdefault(int(match[1]), {})[tag] = value
+            else:
+                subs.setdefault((int(match[1]), int(match[2])), {})[tag] = value
+
+    # A sub-group whose parent chunk carries no tags of its own still gets a chunk to hang off
+    nested = {number: [] for number in chunks}
+    for parent, index in sorted(subs):
+        nested.setdefault(parent, []).append(subs[(parent, index)])
+    return main, [Chunk(number, chunks.get(number, {}), nested[number]) for number in sorted(nested)]
+
+
+def gps_fixes(chunk):
+    """Return one GPMF chunk's GPS fixes as (source_time, tags), earliest first.
+
+    A chunk carries one representative fix of its own plus a `DocN-M` sub-group for every further
+    fix in the same second — about 18 of them — and GPMF timestamps none of them: only the chunk
+    has a SampleTime. The fixes are therefore spread evenly across the chunk's window, the same
+    placement expand_gpmf uses for the IMU streams.
+    """
+    fixes = [chunk.tags] if "GPSLatitude" in chunk.tags or "GPSLongitude" in chunk.tags else []
+    fixes += chunk.subs
+    if not fixes:
+        return []
+    start = float(chunk.tags.get("SampleTime", 0.0))
+    step = float(chunk.tags.get("SampleDuration", 1.0)) / len(fixes)
+    return [(start + i * step, tags) for i, tags in enumerate(fixes)]
 
 
 def exif_dump(path):
@@ -413,8 +466,14 @@ def exif_dump(path):
     -ee walks the embedded documents, which is what surfaces the per-chunk GPMF payloads;
     -n gives raw numbers rather than formatted strings; -G3 tags each value with the
     document it came from, which is how samples stay grouped by 1 Hz chunk.
+
+    -b is what makes the IMU readable at all. Without it every wide GPMF tag — Accelerometer,
+    Gyroscope, CameraOrientation, ImageOrientation, GravityVector, WhiteBalanceRGB — comes back
+    as the literal string "(Binary data 10610 bytes, use -b option to extract)" rather than
+    numbers. It costs about 5 s and a 15 MB dump on a 2 GB original, and no non-telemetry blob in
+    these files is large enough to matter.
     """
-    command = ["exiftool", "-ee", "-api", "LargeFileSupport=1", "-json", "-n", "-G3", str(path)]
+    command = ["exiftool", "-ee", "-api", "LargeFileSupport=1", "-json", "-n", "-G3", "-b", str(path)]
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
 
@@ -446,19 +505,19 @@ def find_gpmd_index(path):
 
 
 def static_tags(dump):
-    """Return the container-level tags that are true of the edit regardless of the trim."""
+    """Return the container-level tags that are true of the edit regardless of the trim.
+
+    Read from the Main group alone. The GPMF chunks repeat tag names the container also uses —
+    GPSAltitude on every chunk, Model and SerialNumber on the trailing device chunk — so a
+    dump-wide search answers a whole-file question with one sample's value.
+    """
     wanted = (
         "Make", "Model", "SerialNumber", "FirmwareVersion", "CreateDate", "MediaCreateDate",
         "FieldOfView", "LensProjection", "ProjectionType", "ElectronicImageStabilization",
         "GPSCoordinates", "GPSAltitude",
     )
-    tags = {}
-    for doc in dump:
-        flat = _ungrouped(doc)
-        for key in wanted:
-            if key in flat and key not in tags:
-                tags[key] = flat[key]
-    return tags
+    main, _ = iter_documents(dump)
+    return {key: main[key] for key in wanted if key in main}
 
 
 def first_fix(dump, start_s=0.0):
@@ -468,38 +527,43 @@ def first_fix(dump, start_s=0.0):
     trusted — 4 of the 33 originals never lock at all. Clips with no GPS track (Pixel,
     iPhone) fall back to the single container fix, which has no time and is reported at 0.
     """
-    best = None
-    for doc in dump:
-        flat = _ungrouped(doc)
-        lat, lon = flat.get("GPSLatitude"), flat.get("GPSLongitude")
-        if lat is None or lon is None:
-            continue
-        if float(lat) == 0.0 and float(lon) == 0.0:
-            continue
-        when = float(flat.get("SampleTime", 0.0))
-        if when < start_s:
-            continue
-        if best is None or when < best["source_time"]:
-            best = {"latitude": float(lat), "longitude": float(lon), "source_time": when}
-    return best
+    main, chunks = iter_documents(dump)
+    for chunk in sorted(chunks, key=lambda c: float(c.tags.get("SampleTime", 0.0))):
+        for when, tags in gps_fixes(chunk):
+            if when < start_s:
+                continue
+            fix = _coordinate(tags, when)
+            if fix is not None:
+                return fix
+
+    # The container fix is one untimed whole-file coordinate, so it can only answer a search
+    # that starts at the beginning; a trimmed edit's window says nothing about where it sits
+    if start_s > 0.0:
+        return None
+    return _coordinate(main, 0.0)
+
+
+def _coordinate(tags, when):
+    """Return the locked fix `tags` carries at `when`, or None when it holds no usable one."""
+    lat, lon = tags.get("GPSLatitude"), tags.get("GPSLongitude")
+    if lat is None or lon is None:
+        return None
+    if float(lat) == 0.0 and float(lon) == 0.0:
+        return None
+    return {"latitude": float(lat), "longitude": float(lon), "source_time": when}
 
 
 def has_gps_track(dump):
     """Return True when the dump carries timed GPS samples rather than one container fix."""
-    for doc in dump:
-        flat = _ungrouped(doc)
-        if "SampleTime" in flat and flat.get("GPSLatitude") is not None and flat.get("GPSLongitude") is not None:
-            return True
-    return False
+    _, chunks = iter_documents(dump)
+    return any("SampleTime" in chunk.tags and gps_fixes(chunk) for chunk in chunks)
 
 
 def first_chunk_at_or_after(dump, start_s):
     """Return the smallest GPMF SampleTime at or after `start_s`, or None when there is none."""
-    later = []
-    for doc in dump:
-        when = _ungrouped(doc).get("SampleTime")
-        if when is not None and float(when) >= start_s:
-            later.append(float(when))
+    _, chunks = iter_documents(dump)
+    later = [float(chunk.tags["SampleTime"]) for chunk in chunks if "SampleTime" in chunk.tags]
+    later = [when for when in later if when >= start_s]
     return min(later) if later else None
 
 
@@ -554,10 +618,11 @@ def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerp
 #
 # VERIFY AGAINST REAL FOOTAGE: the exiftool tag names below are the documented GPMF stream
 # names, but exiftool renames some of them per firmware. Run
-#   exiftool -ee -api LargeFileSupport=1 -json -n -G3 <original> | python -c \
-#     "import json,sys; print(sorted({k.split(':',1)[-1] for d in json.load(sys.stdin) for k in d}))"
+#   exiftool -ee -api LargeFileSupport=1 -json -n -G3 -b <original> | python -c \
+#     "import json,sys; print(sorted({k.rsplit(':',1)[-1] for d in json.load(sys.stdin) for k in d}))"
 # on one GoPro original and correct any mismatch before relying on the output. A wrong name
-# yields an empty column, not an exception, so this fails quietly if left unchecked.
+# yields an empty column, not an exception, so this fails quietly if left unchecked. The split
+# is on the LAST colon: the group prefix is what carries the document number.
 _GPMF_STREAMS = {
     "accl": ("Accelerometer", 3),
     "gyro": ("Gyroscope", 3),
@@ -567,8 +632,9 @@ _GPMF_STREAMS = {
 }
 _AXES = {3: ("x", "y", "z"), 4: ("w", "x", "y", "z")}
 
-# GPS is not a wide tag. exiftool splits the GPMF GPS stream into parallel single-value tags,
-# one document per fix, so it is read by zipping them rather than by slicing one run. The tag
+# GPS is not a wide tag. exiftool splits the GPMF GPS stream into parallel single-value tags —
+# one fix on the chunk plus one `DocN-M` sub-group per further fix in that second — so it is read
+# by zipping them across the chunk's window rather than by slicing one run. The tag
 # formerly used here, a 5-wide "GPSTrack", was wrong twice over: exiftool's GPSTrack is the
 # scalar heading from the EXIF GPS group, not the GPMF stream, so every chunk logged
 # "skipping ragged GPSTrack chunk: 1 values for 5 components" and gps_* was always empty.
@@ -586,18 +652,24 @@ def expand_gpmf(dump, key, components):
     GPMF carries no per-sample timestamp, only a per-chunk one.
     """
     times, values = [], []
-    for doc in dump:
-        flat = _ungrouped(doc)
-        raw = flat.get(key)
+    _, chunks = iter_documents(dump)
+    for chunk in chunks:
+        raw = chunk.tags.get(key)
         if raw is None:
             continue
-        numbers = [float(x) for x in (raw if isinstance(raw, list) else str(raw).split())]
+        try:
+            numbers = [float(x) for x in (raw if isinstance(raw, list) else str(raw).split())]
+        except ValueError:
+            # Belt and braces against a dump read without -b, whose payload is the literal
+            # "(Binary data 10610 bytes, use -b option to extract)": one clip must not raise
+            logger.warning("skipping non-numeric %s chunk: %.60s", key, raw)
+            continue
         if not numbers or len(numbers) % components:
             logger.warning("skipping ragged %s chunk: %d values for %d components", key, len(numbers), components)
             continue
         count = len(numbers) // components
-        start = float(flat.get("SampleTime", 0.0))
-        step = float(flat.get("SampleDuration", 1.0)) / count
+        start = float(chunk.tags.get("SampleTime", 0.0))
+        step = float(chunk.tags.get("SampleDuration", 1.0)) / count
         for i in range(count):
             times.append(start + i * step)
             values.append(tuple(numbers[i * components:(i + 1) * components]))
@@ -605,24 +677,26 @@ def expand_gpmf(dump, key, components):
 
 
 def expand_gpmf_parallel(dump, keys):
-    """Zip parallel single-value GPMF tags into one (times, values) row per timed document.
+    """Zip parallel single-value GPMF tags into one (times, values) row per GPS fix.
 
-    exiftool emits the GPS stream as one document per fix carrying GPSLatitude, GPSLongitude
-    and friends side by side, rather than as one wide tag. A key that is absent yields None
-    for that component, so a firmware that drops GPSSpeed3D still produces the other columns.
-    Documents with no SampleTime are skipped: the container-level document carries GPSAltitude
-    and a single whole-file coordinate, and that is not a timed sample.
+    exiftool emits the GPS stream as single-value tags carrying GPSLatitude, GPSLongitude and
+    friends side by side, rather than as one wide tag: one representative fix on the 1 Hz chunk
+    itself and the ~18 further fixes of that second as `DocN-M` sub-groups, which is where the
+    stream's real rate lives. A key that is absent yields None for that component, so a firmware
+    that drops GPSSpeed3D still produces the other columns. The container document is not a
+    sample and never appears here — it has no chunk and no time.
     """
     times, values = [], []
-    for doc in dump:
-        flat = _ungrouped(doc)
-        if "SampleTime" not in flat:
+    _, chunks = iter_documents(dump)
+    for chunk in chunks:
+        if "SampleTime" not in chunk.tags:
             continue
-        row = tuple(None if flat.get(key) is None else float(flat[key]) for key in keys)
-        if all(value is None for value in row):
-            continue
-        times.append(float(flat["SampleTime"]))
-        values.append(row)
+        for when, tags in gps_fixes(chunk):
+            row = tuple(None if tags.get(key) is None else float(tags[key]) for key in keys)
+            if all(value is None for value in row):
+                continue
+            times.append(when)
+            values.append(row)
     return times, values
 
 

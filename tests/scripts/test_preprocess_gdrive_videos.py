@@ -471,38 +471,121 @@ def test_solve_offset_rejects_an_edit_longer_than_the_source_plus_tolerance():
 # Metadata extraction
 ########
 
-# One 1 Hz GPMF chunk per document, shaped the way exiftool -ee -json -G3 -n returns them
+# exiftool returns exactly ONE object for the whole file and encodes the embedded document in
+# each key's PREFIX, not in separate objects: `Main:` is the container, `DocN:` is one 1 Hz GPMF
+# chunk, and `DocN-M:` is an extra GPS fix inside chunk N that carries no time of its own. The key
+# structure below is copied from GH010218.MP4; only the values are shortened. Chunk 4 is the real
+# trailing device chunk, which repeats Model/SerialNumber over a zero-length window.
 _DUMP = [
     {
-        "Main:Make": "GoPro",
+        "SourceFile": "/x/src/GH010218.MP4",
         "Main:Model": "GoPro Max",
-        "Main:SerialNumber": "C123456789",
-        "Main:FirmwareVersion": "H19.03.02.00",
-        "Main:CreateDate": "2026:07:22 14:31:08",
-        "Main:FieldOfView": "Wide",
-    },
-    {
+        "Main:FirmwareVersion": "H19.03.02.00.00",
+        "Main:CreateDate": "2026:06:03 14:18:06",
+        "Main:MediaCreateDate": "2026:06:03 14:18:06",
+        "Main:FieldOfView": "L",
+        "Main:LensProjection": "GPRO",
+        "Main:ElectronicImageStabilization": "HS EIS",
+        "Main:GPSCoordinates": "42.3528 -71.0655",
+        "Main:GPSLatitude": 42.3528,
+        "Main:GPSLongitude": -71.0655,
+        # Chunk 1: no satellite lock yet, so every fix in the window reads 0,0
         "Doc1:SampleTime": 0.0,
         "Doc1:SampleDuration": 1.001,
+        "Doc1:GPSDateTime": "2026:06:03 17:42:53.970",
         "Doc1:GPSLatitude": 0.0,
         "Doc1:GPSLongitude": 0.0,
-        "Doc1:GPSDateTime": "2026:07:22 14:31:08",
-    },
-    {
+        "Doc1:GPSAltitude": 15.445,
+        "Doc1-1:GPSLatitude": 0.0,
+        "Doc1-1:GPSLongitude": 0.0,
+        "Doc1-1:GPSAltitude": 15.48,
+        # Chunk 2: locked
         "Doc2:SampleTime": 1.001,
         "Doc2:SampleDuration": 1.001,
+        "Doc2:GPSDateTime": "2026:06:03 17:42:54.970",
         "Doc2:GPSLatitude": 42.3532,
         "Doc2:GPSLongitude": -71.0659,
-        "Doc2:GPSDateTime": "2026:07:22 14:31:09",
-    },
+        "Doc2:GPSAltitude": 15.52,
+        "Doc2-1:GPSLatitude": 42.3533,
+        "Doc2-1:GPSLongitude": -71.0660,
+        "Doc2-1:GPSAltitude": 15.55,
+        "Doc3:SampleTime": 2.002,
+        "Doc3:SampleDuration": 1.001,
+        "Doc3:GPSLatitude": 42.3534,
+        "Doc3:GPSLongitude": -71.0661,
+        "Doc3:GPSAltitude": 15.60,
+        "Doc4:SampleTime": 0.0,
+        "Doc4:SampleDuration": 0.0,
+        "Doc4:Model": "GoPro Max",
+        "Doc4:SerialNumber": "C3441325104321",
+        "Doc4:FirmwareVersion": "H19.03.02.00.00",
+    }
 ]
 
 
-def test_static_tags_strips_the_group_prefix():
+def test_iter_documents_groups_by_key_prefix():
+    main, chunks = preproc.iter_documents(_DUMP)
+    assert main["Model"] == "GoPro Max"
+    # A key with no prefix at all is a whole-file fact like any other Main tag
+    assert main["SourceFile"] == "/x/src/GH010218.MP4"
+    assert [chunk.number for chunk in chunks] == [1, 2, 3, 4]
+    assert chunks[0].tags["SampleTime"] == 0.0
+    assert chunks[1].subs == [{"GPSLatitude": 42.3533, "GPSLongitude": -71.0660, "GPSAltitude": 15.55}]
+
+
+def test_iter_documents_orders_chunks_numerically_not_lexically():
+    # Doc10 sorts before Doc2 as text, which would put the samples on the wrong time axis
+    dump = [
+        {
+            "Doc10:SampleTime": 9.009,
+            "Doc2:SampleTime": 1.001,
+            "Doc2-2:GPSLatitude": 42.3533,
+            "Doc2-1:GPSLatitude": 42.3532,
+        }
+    ]
+    _, chunks = preproc.iter_documents(dump)
+    assert [chunk.number for chunk in chunks] == [2, 10]
+    # And the sub-samples run in their own numeric order within the parent chunk
+    assert [sub["GPSLatitude"] for sub in chunks[0].subs] == [42.3532, 42.3533]
+
+
+def test_exif_dump_asks_for_the_binary_payloads(monkeypatch):
+    # Without -b every wide IMU tag reads "(Binary data 10610 bytes, use -b option to extract)"
+    # instead of numbers, and the telemetry expansion dies on the first chunk
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+    monkeypatch.setattr(preproc.subprocess, "run", fake_run)
+    assert preproc.exif_dump(Path("/x/src/GH010218.MP4")) == []
+    assert "-b" in commands[0]
+    assert "-ee" in commands[0] and "-G3" in commands[0] and "-n" in commands[0]
+
+
+def test_static_tags_reads_the_main_group():
     tags = preproc.static_tags(_DUMP)
     assert tags["Model"] == "GoPro Max"
-    assert tags["SerialNumber"] == "C123456789"
-    assert tags["CreateDate"] == "2026:07:22 14:31:08"
+    assert tags["FirmwareVersion"] == "H19.03.02.00.00"
+    assert tags["CreateDate"] == "2026:06:03 14:18:06"
+    assert tags["GPSCoordinates"] == "42.3528 -71.0655"
+
+
+def test_static_tags_prefers_the_main_group_over_a_chunk_of_the_same_name():
+    # Bug A: with the whole file in one object, a dump-wide search let the LAST DocN group win.
+    # GPSAltitude is per-sample on every GPMF chunk, so the sidecar reported one sample's
+    # altitude as the container's.
+    dump = [{"Main:GPSAltitude": 5.2, "Doc1:SampleTime": 0.0, "Doc1:GPSAltitude": 15.445}]
+    assert preproc.static_tags(dump)["GPSAltitude"] == 5.2
+
+
+def test_static_tags_omits_a_tag_only_the_chunks_carry():
+    # GH010218's container has no GPSAltitude and no SerialNumber at all; both live only on the
+    # GPMF chunks, so reading dump-wide invented whole-file values out of per-chunk ones
+    tags = preproc.static_tags(_DUMP)
+    assert "GPSAltitude" not in tags
+    assert "SerialNumber" not in tags
 
 
 def test_first_fix_skips_the_unlocked_zero_zero_sample():
@@ -512,6 +595,30 @@ def test_first_fix_skips_the_unlocked_zero_zero_sample():
     assert fix["latitude"] == pytest.approx(42.3532)
     assert fix["longitude"] == pytest.approx(-71.0659)
     assert fix["source_time"] == pytest.approx(1.001)
+
+
+def test_first_fix_returns_the_first_chunk_not_the_last():
+    # Bug A on the metadata side: collapsing every DocN group onto one key left only the clip's
+    # LAST fix, so GH010218 reported 42.3526494 — the far end of the walk — as its location
+    dump = [
+        {
+            "Doc1:SampleTime": 0.0,
+            "Doc1:SampleDuration": 1.001,
+            "Doc1:GPSLatitude": 42.3527878,
+            "Doc1:GPSLongitude": -71.065473,
+            "Doc2:SampleTime": 1.001,
+            "Doc2:SampleDuration": 1.001,
+            "Doc2:GPSLatitude": 42.3527,
+            "Doc2:GPSLongitude": -71.0653,
+            "Doc3:SampleTime": 2.002,
+            "Doc3:SampleDuration": 1.001,
+            "Doc3:GPSLatitude": 42.3526494,
+            "Doc3:GPSLongitude": -71.0651,
+        }
+    ]
+    fix = preproc.first_fix(dump)
+    assert fix["latitude"] == pytest.approx(42.3527878)
+    assert fix["source_time"] == 0.0
 
 
 def test_first_fix_returns_none_when_nothing_locked():
@@ -526,10 +633,23 @@ def test_first_fix_reads_a_container_location_when_there_is_no_track():
     assert fix["source_time"] == 0.0
 
 
+def test_first_fix_prefers_a_timed_chunk_fix_over_the_container_fix():
+    # _DUMP carries both; the container coordinate is rounded and has no time, so it is only
+    # ever the fallback for clips with no GPMF track
+    assert preproc.first_fix(_DUMP)["latitude"] == pytest.approx(42.3532)
+
+
 def test_first_fix_honours_the_trim_window():
     # A fix before the cut starts is not where this clip was shot
+    assert preproc.first_fix(_DUMP, start_s=3.5) is None
+
+
+def test_first_fix_reads_a_sub_sample_inside_the_chunk_window():
+    # The DocN-M fixes have no time of their own; they are spread across their parent chunk, so
+    # chunk 2's single sub-sample lands halfway through the 1.001 s window at 1.5015 s
     fix = preproc.first_fix(_DUMP, start_s=1.5)
-    assert fix is None
+    assert fix["latitude"] == pytest.approx(42.3533)
+    assert fix["source_time"] == pytest.approx(1.5015)
 
 
 def test_build_payload_satisfies_the_index_contract():
@@ -683,31 +803,47 @@ def test_build_payload_marks_a_rejected_alignment_as_source_anchored():
 # Telemetry
 ########
 
-# Two 1 Hz chunks, each holding 3 accelerometer triplets — the shape exiftool returns
+# Three 1 Hz chunks, each holding 3 accelerometer triplets, all inside the single object exiftool
+# really returns. The real chunks hold ~202 triplets over 1.001 s; the runs are shortened and the
+# duration rounded to 1.0 so the per-sample arithmetic below stays readable.
 _IMU_DUMP = [
     {
+        "Main:Model": "GoPro Max",
         "Doc1:SampleTime": 0.0,
         "Doc1:SampleDuration": 1.0,
         "Doc1:Accelerometer": "1 2 3 4 5 6 7 8 9",
         "Doc1:Gyroscope": "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9",
-    },
-    {
         "Doc2:SampleTime": 1.0,
         "Doc2:SampleDuration": 1.0,
         "Doc2:Accelerometer": "10 11 12 13 14 15 16 17 18",
         "Doc2:Gyroscope": "1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9",
-    },
+        "Doc3:SampleTime": 2.0,
+        "Doc3:SampleDuration": 1.0,
+        "Doc3:Accelerometer": "19 20 21 22 23 24 25 26 27",
+        "Doc3:Gyroscope": "2.1 2.2 2.3 2.4 2.5 2.6 2.7 2.8 2.9",
+    }
 ]
 
 
 def test_expand_gpmf_spreads_samples_across_the_chunk_duration():
     times, values = preproc.expand_gpmf(_IMU_DUMP, "Accelerometer", 3)
-    assert len(times) == 6
+    assert len(times) == 9
     assert values[0] == (1.0, 2.0, 3.0)
     assert values[3] == (10.0, 11.0, 12.0)
     # Three samples spread over a 1 s chunk land at 0, 1/3, 2/3
     assert times[1] == pytest.approx(1 / 3)
     assert times[3] == pytest.approx(1.0)
+
+
+def test_expand_gpmf_yields_samples_from_every_chunk():
+    # Bug A: every DocN group lives in ONE object, so stripping the prefix collapsed all 381
+    # chunks onto one key and expand_gpmf saw a single chunk's worth of samples for the clip
+    times, values = preproc.expand_gpmf(_IMU_DUMP, "Accelerometer", 3)
+    assert values[0] == (1.0, 2.0, 3.0)
+    assert values[3] == (10.0, 11.0, 12.0)
+    assert values[6] == (19.0, 20.0, 21.0)
+    assert times == sorted(times)
+    assert times[-1] == pytest.approx(2 + 2 / 3)
 
 
 def test_expand_gpmf_accepts_a_list_payload():
@@ -720,6 +856,19 @@ def test_expand_gpmf_accepts_a_list_payload():
 
 def test_expand_gpmf_returns_empty_for_a_missing_key():
     assert preproc.expand_gpmf(_IMU_DUMP, "Gravity", 3) == ([], [])
+
+
+def test_expand_gpmf_skips_a_binary_placeholder_chunk(caplog):
+    # Bug B: read without -b, every wide IMU tag comes back as the literal string
+    # "(Binary data 10610 bytes, use -b option to extract)" and float() raised ValueError on
+    # "(Binary", killing the whole clip. exif_dump passes -b now, but a payload that is not
+    # numbers must be logged and skipped the same way a ragged one is.
+    placeholder = "(Binary data 10610 bytes, use -b option to extract)"
+    dump = [{"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:Accelerometer": placeholder}]
+    with caplog.at_level("WARNING"):
+        assert preproc.expand_gpmf(dump, "Accelerometer", 3) == ([], [])
+    assert "Accelerometer" in caplog.text
+    assert "Binary data" in caplog.text
 
 
 def test_expand_gpmf_skips_a_ragged_chunk(caplog):
@@ -736,33 +885,65 @@ def test_expand_gpmf_skips_a_ragged_chunk(caplog):
 # expand_gpmf_parallel
 ########
 
-# exiftool emits the GPMF GPS stream as one document per fix with the components side by side,
-# not as one wide tag — the shape the old 5-wide GPSTrack read could never match
+# exiftool emits the GPMF GPS stream as parallel single-value tags, not as one wide tag — the
+# shape the old 5-wide GPSTrack read could never match. The chunk carries one representative fix
+# and every further fix in the same second rides along as a DocN-M sub-group with no time at all.
 _GPS_DUMP = [
     {
         "Doc1:SampleTime": 0.0,
+        "Doc1:SampleDuration": 1.0,
         "Doc1:GPSLatitude": 42.3532,
         "Doc1:GPSLongitude": -71.0659,
         "Doc1:GPSAltitude": 5.2,
         "Doc1:GPSSpeed": 1.5,
         "Doc1:GPSSpeed3D": 1.6,
-    },
+        "Doc1-1:GPSLatitude": 42.3533,
+        "Doc1-1:GPSLongitude": -71.0660,
+        "Doc1-1:GPSAltitude": 5.3,
+        "Doc1-1:GPSSpeed": 1.7,
+        "Doc1-1:GPSSpeed3D": 1.8,
+    }
+]
+
+# Two chunks carrying three fixes each, the real ~18 Hz-inside-1 Hz shape in miniature
+_GPS_SUBSAMPLE_DUMP = [
     {
-        "Doc2:SampleTime": 0.5,
+        "Doc1:SampleTime": 0.0,
+        "Doc1:SampleDuration": 1.0,
+        "Doc1:GPSLatitude": 42.3532,
+        "Doc1:GPSLongitude": -71.0659,
+        "Doc1-1:GPSLatitude": 42.35321,
+        "Doc1-1:GPSLongitude": -71.06591,
+        "Doc1-2:GPSLatitude": 42.35322,
+        "Doc1-2:GPSLongitude": -71.06592,
+        "Doc2:SampleTime": 1.0,
+        "Doc2:SampleDuration": 1.0,
         "Doc2:GPSLatitude": 42.3533,
         "Doc2:GPSLongitude": -71.0660,
-        "Doc2:GPSAltitude": 5.3,
-        "Doc2:GPSSpeed": 1.7,
-        "Doc2:GPSSpeed3D": 1.8,
-    },
+        "Doc2-1:GPSLatitude": 42.35331,
+        "Doc2-1:GPSLongitude": -71.06601,
+        "Doc2-2:GPSLatitude": 42.35332,
+        "Doc2-2:GPSLongitude": -71.06602,
+    }
 ]
 
 
-def test_expand_gpmf_parallel_zips_one_row_per_document():
+def test_expand_gpmf_parallel_zips_one_row_per_fix():
+    # Chunk 1 holds its own fix plus one sub-sample, so the two fixes split the 1 s window
     times, values = preproc.expand_gpmf_parallel(_GPS_DUMP, preproc._GPMF_GPS_TAGS)
     assert times == [0.0, 0.5]
     assert values[0] == (42.3532, -71.0659, 5.2, 1.5, 1.6)
     assert values[1] == (42.3533, -71.0660, 5.3, 1.7, 1.8)
+
+
+def test_expand_gpmf_parallel_emits_every_sub_sample():
+    # The GPS stream runs at ~18 Hz inside a 1 Hz chunk; reading the chunk's own fix alone threw
+    # away 17 fixes in every 18
+    times, values = preproc.expand_gpmf_parallel(_GPS_SUBSAMPLE_DUMP, preproc._GPMF_GPS_TAGS)
+    assert len(times) == 6
+    assert times == sorted(times)
+    assert times[:3] == [pytest.approx(0.0), pytest.approx(1 / 3), pytest.approx(2 / 3)]
+    assert [round(v[0], 5) for v in values] == [42.3532, 42.35321, 42.35322, 42.3533, 42.35331, 42.35332]
 
 
 def test_expand_gpmf_parallel_tolerates_an_absent_component():
@@ -816,6 +997,15 @@ def test_telemetry_table_populates_the_gps_columns():
     assert {"gps_lat", "gps_lon", "gps_alt", "gps_speed2d", "gps_speed3d"} <= set(table.column_names)
     assert table.column("gps_lat").to_pylist() == [pytest.approx(42.3532), pytest.approx(42.3533)]
     assert table.column("gps_speed3d").to_pylist() == [pytest.approx(1.6), pytest.approx(1.8)]
+
+
+def test_telemetry_table_carries_more_gps_rows_than_chunks():
+    # Bug A on the telemetry side: one fix per chunk gave a 1 Hz GPS column out of a ~18 Hz
+    # stream. Two chunks holding three fixes each must produce six populated rows, not two.
+    table = preproc.telemetry_table(_GPS_SUBSAMPLE_DUMP, preproc.Alignment(0.0, 0.99, True), duration_s=2.0)
+    populated = [value for value in table.column("gps_lat").to_pylist() if value is not None]
+    assert len(populated) == 6
+    assert table.num_rows == 6
 
 
 def test_telemetry_table_never_reads_gps_as_a_ragged_wide_tag(caplog):

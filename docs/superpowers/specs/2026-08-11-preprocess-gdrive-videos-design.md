@@ -449,3 +449,48 @@ from "any telemetry stream produced rows", so a GPMF dump carrying GPS and no ac
 would set it true; unreachable on the footage in hand. And the full repository test suite
 has never run on this branch — it needs CUDA and a container-only interpreter, so only
 `tests/scripts/test_preprocess_gdrive_videos.py` (110 tests) has been exercised.
+
+## Verification against the real tree (2026-08-12)
+
+Run after the three real-footage defects above were fixed. **Several figures earlier in this
+spec are stale and are superseded here** — the capture tree grew between design and
+verification, gaining `2026-03-27`, `2026-03-30` and `2026-04-03` entirely, and gaining
+exports for `GH010224`-`GH010227`, which the pairing section lists as unedited orphans.
+
+| Quantity | Spec said | Actually measured |
+|---|---|---|
+| Pairs in scope | 19 | **34** |
+| Transfer size | ~7 GB | **12.7 GB** |
+| Originals skipped | 29 | **0** |
+| Curated folders | 18 to 19 | 34 |
+
+### Alignment calibration
+
+Every one of the 34 pairs aligns and is accepted. **Minimum r among true pairs: 0.9882**
+(`PXL_20260630_002106958.TS`); 22 of 34 score 0.999 or better. Against this, two
+deliberately mismatched real pairs score 0.027 and 0.014. The gate at `r >= 0.95` therefore
+sits in an empty band with roughly 15x margin on both sides, and needs no adjustment. This
+supersedes the earlier note that the threshold was an unvalidated prediction.
+
+Six pairs have an edit *longer* than its source — `GH010219`, `GH010224`, `GH010227`,
+`GH010230`, `GH010235`, `GH010236` — which the pre-`ALIGN_TOLERANCE_S` code rejected
+outright as "alignment impossible". The tolerance fix was not a one-clip patch.
+
+### Ten pairs are copies, not edits
+
+Ten parent-level files are byte-identical to their `src/` counterpart — matching size and
+matching head hash — so the parent file *is* the camera original, copied up a level rather
+than exported from Resolve. All ten are phone clips (Pixel `.TS`, `IMG_*`).
+
+They satisfy the pairing rule and process harmlessly: offset 0.0, `r` 1.0, static tags
+rewritten, no telemetry to recover. But the premise of this pipeline does not apply to them
+— Resolve never touched them, so nothing was destroyed. They are recorded here rather than
+special-cased, because the stated rule is "process files that have both" and they do.
+
+### Confirmed working end to end
+
+- GoPro clip: 3,266 telemetry rows, `gpmd` injected, streams `avc1 mp4a gpmd tmcd`
+- Phone clip with no IMU: processes cleanly, no telemetry sidecar, no injection, no crash
+- Idempotency: a second run skips and leaves the curated mp4 byte-identical
+- `index.csv`: two columns, correct DMS, and a phone clip picks up its container GPS
+- 125 tests pass; ruff reports only the pre-existing `EXE001`

@@ -416,12 +416,31 @@ Both carry `skipif(not _HAS_MEDIA_TOOLS)`, and `.github/workflows/test.yml` neve
 ffmpeg or exiftool, so both skip rather than fail. Adding those two binaries to the CI
 image is what makes the guard real.
 
-**The GPMF tag names are still unverified against real footage.** `_GPMF_STREAMS` and
-`_GPMF_GPS_TAGS` use the documented exiftool names, but exiftool renames some per firmware
-and a wrong name yields an empty column rather than an exception — it fails quietly. Run
-the tag dump in the script's own comment against one GoPro original before trusting the
-Parquet. The GPS path additionally assumes each per-component tag is scalar, matching the
-existing assumption in `first_fix`.
+**~~The GPMF tag names are still unverified against real footage.~~ RESOLVED, and the run
+found three further defects** — every one invisible to the test suite because the fixtures
+were invented from an assumed exiftool output shape rather than sampled from a real dump.
+That is the root cause worth carrying forward: a fixture that encodes a guess validates the
+guess.
+
+1. **`exiftool -json -G3` returns one object for the whole file**, not one per document. The
+   document is encoded in the key prefix (`Main:`, `Doc1:`, `Doc1-1:`). The original
+   `_ungrouped` stripped that prefix, collapsing all 380 accelerometer chunks and 6910 GPS
+   samples onto one key, last-write-wins. Telemetry would have carried 1 chunk of 381, and
+   `first_fix` returned the clip's *last* fix. Fixed by parsing the prefixes into ordered
+   documents: `Main` for container tags, `DocN` per 1 Hz chunk, `DocN-M` for the ~18 Hz GPS
+   sub-samples inside chunk N.
+2. **The IMU tags come back as `(Binary data N bytes, use -b option to extract)`** and
+   crashed the parser. `exiftool` needs `-b`. Cost measured: 4.9 s and a 15 MB dump for a
+   2.15 GB original, with no junk blobs.
+3. **The remux could never write.** `-map 0` pulled in the Resolve export's `tmcd` stream,
+   whose codec the mp4 muxer cannot tag, so ffmpeg aborted before the gpmd track landed —
+   silently costing the pipeline its entire purpose. Fixed with `-map -0:d`. Timecode is not
+   lost: the muxer regenerates a `tmcd` track from metadata.
+
+Verified end to end on `2026-06-03/GH010218`: 104,416 Parquet rows (76,783 accelerometer and
+gyroscope at 202 Hz, 6,909 GPS), curated streams `avc1 mp4a gpmd tmcd`, injected track
+carrying 374 chunks against the source's 381, `gpmd_injected: true`, and the mp4 reading back
+`GoPro Max` with `42 deg 21' 10.08" N, 71 deg 3' 55.80" W`.
 
 **Three cosmetic residuals, left deliberately.** `gpmd_first_chunk_s` and `gpmd_residual_s`
 are emitted as `0.0` even when alignment failed and no track was injected — recoverable

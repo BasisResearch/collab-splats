@@ -10,6 +10,7 @@
 # Usage:
 #   ./scripts/push_curated.sh --dry-run          # show what would transfer
 #   ./scripts/push_curated.sh                    # push
+#   ./scripts/push_curated.sh --verbose          # log one line per file as it transfers
 #   ./scripts/push_curated.sh --source /data/x --bucket other-bucket
 #
 # One-time setup (see README "Data access"):
@@ -25,11 +26,13 @@ SOURCE="${REPO_ROOT}/../environments-curated"
 REMOTE="collab-data"
 BUCKET="environments-curated"
 DRY_RUN=""
+VERBOSE=""
 
 # Parse args; unknown flags are a hard error rather than a silent no-op
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN="--dry-run"; shift ;;
+        -v|--verbose) VERBOSE="1"; shift ;;
         --source)  SOURCE="$2"; shift 2 ;;
         --remote)  REMOTE="$2"; shift 2 ;;
         --bucket)  BUCKET="$2"; shift 2 ;;
@@ -56,17 +59,25 @@ fi
 
 echo "Pushing ${SOURCE} -> ${REMOTE}:${BUCKET} ${DRY_RUN}"
 
-# Flags mirror SessionSource.push_outputs (collab_splats/dashboard/sources.py) so uploads
-# behave identically to the dashboard's. No --progress: it redraws with carriage returns,
-# which is unreadable once the output is piped or logged; --stats-one-line covers progress.
+# Default is a single rolling summary line. --verbose swaps that for -v, which logs one line
+# per file as it transfers; the two fight over the same output, so they are exclusive rather
+# than additive. Stats slow to 5s under -v so the periodic totals do not bury the file list.
+# Neither affects what is transferred.
+PROGRESS=(--stats 2s --stats-one-line)
+if [[ -n "$VERBOSE" ]]; then
+    PROGRESS=(--stats 5s -v)
+fi
+
+# Transfer flags mirror SessionSource.push_outputs (collab_splats/dashboard/sources.py) so
+# uploads behave identically to the dashboard's. No --progress: it redraws with carriage
+# returns, which is unreadable once the output is piped or logged.
 rclone copy "$SOURCE" "${REMOTE}:${BUCKET}" \
     --gcs-bucket-policy-only \
     --transfers 8 \
     --retries 3 \
     --timeout 300s \
     --contimeout 60s \
-    --stats 2s \
-    --stats-one-line \
+    "${PROGRESS[@]}" \
     --exclude ".DS_Store" \
     ${DRY_RUN}
 

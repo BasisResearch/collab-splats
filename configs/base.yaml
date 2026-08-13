@@ -41,7 +41,10 @@ pointcloud:
     window_size: 32           # sliding-window length; upstream default, see README
     overlap_size: 3           # frames shared between adjacent windows
     reset_every: 0            # hard-reset TTT fast weights every N frames; 0 = never
-    conf_threshold: 50.0      # depth-confidence PERCENTILE (0-100), not a raw value
+    conf_threshold: 50.0      # depth-confidence PERCENTILE when > 1.0; a value <= 1.0 is
+                              # read as a RAW confidence instead. LoGeR's post-sigmoid
+                              # confidences sit in ~[0.014, 0.117], so a raw 1.0 keeps
+                              # nothing — do not write 1.0 meaning "1st percentile".
   loop_closure: false
   # Inference-time memory guard: caps the confidence mask so a full-resolution cloud is
   # never materialised (BaseFeedforwardCreator.max_points). Lower it on small-GPU/RAM machines.

@@ -284,8 +284,9 @@ first use.
 captures where drift accumulates — the TTT memory is designed to carry state across the
 sequence.
 
-**Avoid it for:** short sequences (<100 frames), where the set-based VGGT models see every
-frame jointly and the windowing buys nothing; anything needing loop closure, which
+**Avoid it for:** short sequences — reasoning, not measured: below roughly a couple of
+windows the set-based VGGT models see every frame jointly and the windowing buys nothing,
+but no crossover has been swept; anything needing loop closure, which
 `loger` refuses (thresholds are calibrated per backbone and none exists yet); captures
 where intrinsics genuinely vary, e.g. zoom, which the shared-K fit cannot represent; and
 unordered image collections — LoGeR's windows are sequential, whereas the VGGT family is
@@ -301,9 +302,10 @@ plausibly-but-globally-wrong. There is no fallback focal; a degenerate fit raise
 **`max_frames` is not tuned for LoGeR.** The default 300 is VGGT-Omega's GPU limit and
 lives in the preproc stage, which runs first. Raise it to use LoGeR's windowing. The real
 ceiling is `FeedforwardResult`, which holds dense per-frame images, world points, depth,
-and confidence — roughly 8 MB/frame at the default pixel budget — against a 46.6 GB
-container cap. That limit applies to every backend equally; LoGeR is merely the first one
-able to feed it enough frames to matter.
+and confidence — 8.13 MB/frame at LoGeR's default `pixel_limit` of 255,000 — against a
+46.6 GB container cap. The cap binds every backend; the per-frame figure is LoGeR's own,
+since each backend resolves frames differently. LoGeR is merely the first backend able to
+feed the buffer enough frames for the cap to matter.
 
 ---
 

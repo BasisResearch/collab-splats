@@ -16,10 +16,16 @@ output_path: null
 preprocessing:
   # Output: <output_path>/frames.zarr — canonical decode-once keyframe store
   # (chunked images + selection records + provenance); no images/ JPG dir.
-  frame_selection: uniform    # uniform | optical_flow
-  frame_proportion: 0.1       # fraction of total frames to extract
-  min_frames: 150             # extract at least this many frames
-  max_frames: 200             # cap at 200 — vggt_omega OOMs above ~300 on 44 GB GPU
+  #
+  # Each method has ONE density knob. max_frames is the frame budget: the target
+  # COUNT for 'uniform', a ceiling for 'fps' and 'optical_flow'.
+  frame_selection: fps        # fps | uniform | optical_flow
+  fps: 1.0                    # 'fps' only: samples/second. Fixes the baseline between
+                              # consecutive frames regardless of video length — which a
+                              # count-based knob cannot do.
+  min_frames: null            # 'fps' only: floor on the resulting count. null = fps is
+                              # honoured literally (a floor would make it a hint).
+  max_frames: 300             # frame budget; vggt_omega OOMs above ~300 on a 44 GB GPU
 
 pointcloud:
   method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)
@@ -58,7 +64,7 @@ semantics:
   max_epochs: 100
 
 mesh:
-  enabled: false
+  enabled: true
   voxel_size: 0.005         # dashboard-parity TSDF defaults
   sdf_trunc: 0.02
   depth_trunc: 1.0          # drop depth samples beyond this range (metres)

@@ -66,8 +66,8 @@ def _extract_frames(
     input_path: Path,
     frames_zarr: Path,
     frame_selection: str,
-    frame_proportion: float,
-    min_frames: int,
+    fps: float | None,
+    min_frames: int | None,
     max_frames: int | None,
 ) -> int:
     """Extract frames from video or image dir into frames.zarr (sole persistent store).
@@ -85,7 +85,13 @@ def _extract_frames(
             raise ValueError(f"No images ({sorted(exts)}) found in directory {input_path}")
         frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in frames]
         records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
-        prov = {"video_path": str(input_path), "video_mtime": None, "method": "dir", "max_frames": max_frames}
+        prov = {
+            "video_path": str(input_path),
+            "video_mtime": None,
+            "method": "dir",
+            "fps": None,
+            "max_frames": max_frames,
+        }
         FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
         return len(frame_arrays)
 
@@ -98,26 +104,26 @@ def _extract_frames(
             "Check the path exists and is a video ffmpeg can read."
         )
 
-    # Video — 'optical_flow' picks high-motion frames; 'uniform' (default) spreads evenly
-    if frame_selection == "optical_flow":
-        method = "optical_flow"
+    # Video — 'fps' samples at a constant wall-clock rate (band-bounded), 'uniform'
+    # spreads exactly max_frames over the whole video, 'optical_flow' picks high-motion
+    # frames. Each method gets only its own knobs; sample_frames rejects the others.
+    if frame_selection == "fps":
         frame_arrays, records = sample_frames(
             str(input_path),
-            method="optical_flow",
-            max_frames=max_frames if max_frames is not None else 200,
+            method="fps",
+            fps=fps,
+            min_frames=min_frames,
+            max_frames=max_frames,
         )
-    else:  # uniform
-        # Derive target count from proportion, clamped to [min_frames, max_frames];
-        # the uniform sampler spreads that count over the video itself
-        method = "uniform"
-        target_count = max(min_frames, int(total_frames * frame_proportion))
-        if max_frames is not None:
-            target_count = min(target_count, max_frames)
-        frame_arrays, records = sample_frames(
-            str(input_path),
-            method="uniform",
-            max_frames=target_count,
+    elif frame_selection == "uniform":
+        frame_arrays, records = sample_frames(str(input_path), method="uniform", max_frames=max_frames)
+    elif frame_selection == "optical_flow":
+        frame_arrays, records = sample_frames(str(input_path), method="optical_flow", max_frames=max_frames)
+    else:
+        raise ValueError(
+            f"preprocessing.frame_selection must be 'fps', 'uniform' or 'optical_flow', got {frame_selection!r}"
         )
+    method = frame_selection
 
     # Every candidate failed the quality gate (or selector rejected all) — refuse to
     # write an empty store that would only surface as a downstream FileNotFound.
@@ -133,6 +139,7 @@ def _extract_frames(
         "video_path": str(input_path),
         "video_mtime": input_path.stat().st_mtime,
         "method": method,
+        "fps": fps,
         "max_frames": max_frames,
     }
     FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
@@ -500,7 +507,7 @@ class Reconstructor:
             input_path=Path(self.config["input_path"]),
             frames_zarr=self.frames_zarr,
             frame_selection=pre_cfg["frame_selection"],
-            frame_proportion=pre_cfg["frame_proportion"],
+            fps=pre_cfg["fps"],
             min_frames=pre_cfg["min_frames"],
             max_frames=pre_cfg["max_frames"],
         )

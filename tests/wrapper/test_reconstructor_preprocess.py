@@ -30,7 +30,7 @@ def _make_config(tmp_path, video_path):
     return {
         "input_path": str(video_path),
         "output_path": str(tmp_path / "out"),
-        "preprocessing": {"frame_selection": "uniform", "frame_proportion": 0.1, "min_frames": 1, "max_frames": 5},
+        "preprocessing": {"frame_selection": "uniform", "fps": 1.0, "min_frames": None, "max_frames": 5},
         "pointcloud": {
             "method": "feedforward",
             "backend": "vggtx",

@@ -17,27 +17,35 @@
 # Then browse http://<host>:8080. Headless (no viewer)? Set viz.enabled: false.
 
 preprocessing:
-  # UNIFORM, not optical_flow: LC chains submaps through their shared overlap frame,
-  # so it needs steady frame-to-frame overlap. optical_flow picks high-motion,
-  # low-overlap frames → wide baseline across the submap hinge → submaps fail to
-  # register → misaligned scene. Diversity helps coverage but hurts LC alignment.
-  frame_selection: uniform
-  # RAISE to actually feed more frames — otherwise submaps just re-chunk the same
-  # 200 keyframes into windows (same coverage, no benefit). RAM-bound, not GPU-bound:
-  # fat submaps stay resident (~50 GB at 1000 frames). Keep <= ~1000 on the 50 GB box.
+  # fps, NOT optical_flow: LC chains submaps through their shared overlap frame, so it
+  # needs steady frame-to-frame overlap. optical_flow picks high-motion, low-overlap
+  # frames → wide baseline across the submap hinge → submaps fail to register →
+  # misaligned scene. Diversity helps coverage but hurts LC alignment.
+  frame_selection: fps
+  fps: 4.0
+  # min_frames is the floor fps alone cannot guarantee: RAISE it to actually feed more
+  # frames, otherwise submaps just re-chunk the same 200 keyframes into windows (same
+  # coverage, no benefit). RAM-bound, not GPU-bound: fat submaps stay resident (~50 GB at
+  # 1000 frames). Keep max_frames <= ~1000 on the 50 GB box.
+  #
+  # OWED: the LC calibrations (submap_size, submap_overlap, lc_retrieval_threshold, the
+  # per-backbone target layers) and the 4-backbone ATE numbers were all measured under
+  # 'uniform' spacing. The mechanism is unaffected; the numbers need re-verification.
   max_frames: 600
   min_frames: 300
 
 pointcloud:
+  method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)
+  backend: vggt_omega         # vggt_omega | vggtx | mapanything  (feedforward only)
   # loop_closure accepts a bool (defaults) or this dict of LoopClosureConfig knobs.
   loop_closure:
     enabled: true
-    submap_size: 32           # frames per window — larger = stronger per-submap geometry
-    submap_overlap: 4         # shared frames between windows — MORE = sturdier registration
+    submap_size: 64           # frames per window — larger = stronger per-submap geometry
+    submap_overlap: 1         # shared frames between windows — MORE = sturdier registration
                               # (1 = VGGT-SLAM parity, a single-frame hinge; fragile)
-    lc_retrieval_threshold: 0.99   # DINO-SALAD loop gate; lower = stricter acceptance
-    max_loops_per_submap: 5
-    scale_method: rotation_only    # se3 | rotation_only | pairwise_dist | none
+    lc_retrieval_threshold: 0.95  # DINO-SALAD loop gate; lower = stricter acceptance
+    max_loops_per_submap: 2
+    scale_method: rotation_only    # rotation_only | se3 | pairwise_dist | none
   viz:
     enabled: true             # live viser Viewer during loop closure
     port: 8080

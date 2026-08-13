@@ -4,7 +4,7 @@
 
 preprocessing:
   frame_selection: fps
-  frame_proportion: 0.1
+  fps: 1.0
   min_frames: 300
   max_frames: null
 

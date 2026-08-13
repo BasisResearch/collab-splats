@@ -215,16 +215,46 @@ large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in
 
 ---
 
+## Choosing a frame sampler
+
+Each method has exactly one density knob. `max_frames` is the frame budget — the
+target count for `uniform`, a ceiling for the other two.
+
+| `frame_selection` | Density knob | What it holds constant |
+|---|---|---|
+| `fps` | `preprocessing.fps` | Wall-clock interval between frames — so the baseline between consecutive frames is fixed regardless of how long the video is. Count floats. |
+| `uniform` | `preprocessing.max_frames` | Frame count. Spacing floats with video length. |
+| `optical_flow` | `min_disparity` (creator-level) | Inter-frame motion. Both count and spacing float. |
+
+Prefer `fps` for reconstruction: registration quality depends on the baseline
+between consecutive frames, and a count-based knob leaves that free to vary by an
+order of magnitude between a 1-minute and a 20-minute video.
+
+**The band.** `fps` yields a count that grows with video length, so
+`[min_frames, max_frames]` bounds it. Outside the band the targets are re-spread
+evenly across the **whole** video and the effective fps is logged at WARNING —
+never truncated, which would hand the reconstructor a scene that stops halfway.
+
+**`max_frames` still dominates on long video.** At `fps: 1.0` the default
+`max_frames: 300` binds past ~5 minutes, and beyond that the spacing is whatever
+300 frames over the whole video gives you. The cap is a measured GPU limit, not a
+preference — `fps` cannot route around it.
+
+**Passing a knob that belongs to another method raises `ValueError`** (e.g. `fps=`
+with `frame_selection: uniform`). There is no silently-ignored knob.
+
+---
+
 ## Config key reference (`base.yaml`)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `input_path` | str | **set per run** | Absolute path to video (.MP4) or image directory |
 | `output_path` | str | **set per run** | Absolute path for outputs (created if absent) |
-| `preprocessing.frame_selection` | str | `fps` | Frame sampling: `fps` or `optical_flow` |
-| `preprocessing.frame_proportion` | float | `0.1` | Fraction of total frames to extract |
-| `preprocessing.min_frames` | int | `150` | Minimum frames regardless of proportion |
-| `preprocessing.max_frames` | int\|null | `200` | Cap on frames (vggt_omega OOMs above ~300) |
+| `preprocessing.frame_selection` | str | `fps` | Frame sampling: `fps`, `uniform`, or `optical_flow` |
+| `preprocessing.fps` | float | `1.0` | `fps` method only: samples per second |
+| `preprocessing.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
+| `preprocessing.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300) |
 | `pointcloud.method` | str | `feedforward` | `feedforward`, `sfm`, or `nerfstudio` |
 | `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, or `mapanything` |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud |

@@ -19,7 +19,7 @@ from zarr.codecs import BloscCodec
 logger = logging.getLogger(__name__)
 
 # Provenance keys that decide whether a stored run may be reused as-is.
-_STALENESS_KEYS = ("video_path", "video_mtime", "method", "max_frames")
+_STALENESS_KEYS = ("video_path", "video_mtime", "method", "fps", "max_frames")
 
 
 class FrameStore:

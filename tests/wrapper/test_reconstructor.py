@@ -31,7 +31,7 @@ ConfigLoader = config_module.ConfigLoader
 
 def test_config_load_base_defaults(tmp_path):
     base = {
-        "preprocessing": {"frame_selection": "fps", "frame_proportion": 0.1, "min_frames": 300},
+        "preprocessing": {"frame_selection": "fps", "fps": 1.0, "min_frames": 300},
         "pointcloud": {"method": "feedforward", "backend": "vggtx", "bundle_adjustment": False, "loop_closure": False},
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 1024},
         "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
@@ -101,7 +101,7 @@ def _make_config(tmp_path, overrides=None):
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "preprocessing": {"frame_selection": "uniform", "frame_proportion": 0.1, "min_frames": 10},
+        "preprocessing": {"frame_selection": "uniform", "fps": 1.0, "min_frames": 10},
         "pointcloud": {
             "method": "feedforward",
             "backend": "vggtx",
@@ -136,27 +136,68 @@ def test_no_inline_defaults_in_source():
     assert offenders == [], f"inline value defaults still present: {offenders}"
 
 
-def test_extract_frames_uniform_is_default_branch(tmp_path, monkeypatch):
-    """frame_selection='uniform' takes the uniform sampler branch (not optical_flow)."""
+def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
+    """Each frame_selection value reaches its own sampler with only its own knobs."""
     from collab_splats.wrapper import reconstructor as R
 
     calls = {}
 
-    def fake_sample_frames(path, method, max_frames):
-        calls["method"] = method
+    def fake_sample_frames(path, **kwargs):
+        calls.clear()
+        calls.update(kwargs)
         return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
 
-    def fake_video_info(path):
-        return {"total_frames": 100}
-
     monkeypatch.setattr(R, "sample_frames", fake_sample_frames)
-    monkeypatch.setattr(R, "get_video_info", fake_video_info)
+    monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
 
     out = tmp_path / "out"
     video = tmp_path / "v.mp4"
     video.touch()
-    R._extract_frames(video, out, "uniform", 0.1, 5, 50)
-    assert calls["method"] == "uniform"
+
+    # fps: rate + both band bounds
+    R._extract_frames(video, out / "a.zarr", "fps", 2.0, 5, 50)
+    assert calls == {"method": "fps", "fps": 2.0, "min_frames": 5, "max_frames": 50}
+
+    # uniform: max_frames is the count; no fps, no floor
+    R._extract_frames(video, out / "b.zarr", "uniform", None, 5, 50)
+    assert calls == {"method": "uniform", "max_frames": 50}
+
+    # optical_flow: max_frames caps the selector
+    R._extract_frames(video, out / "c.zarr", "optical_flow", None, 5, 50)
+    assert calls == {"method": "optical_flow", "max_frames": 50}
+
+
+def test_extract_frames_rejects_unknown_selection(tmp_path, monkeypatch):
+    from collab_splats.wrapper import reconstructor as R
+
+    monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
+    video = tmp_path / "v.mp4"
+    video.touch()
+    with pytest.raises(ValueError, match="frame_selection"):
+        R._extract_frames(video, tmp_path / "out.zarr", "balanced", None, 5, 50)
+
+
+def test_extract_frames_records_fps_in_provenance(tmp_path, monkeypatch):
+    """frames.zarr must record the rate a scene was sampled at, not just the cap."""
+    from collab_splats.wrapper import reconstructor as R
+
+    monkeypatch.setattr(
+        R,
+        "sample_frames",
+        lambda path, **kw: ([np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]),
+    )
+    monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
+
+    video = tmp_path / "v.mp4"
+    video.touch()
+    R._extract_frames(video, tmp_path / "out" / "frames.zarr", "fps", 2.0, None, 50)
+
+    store = R.FrameStore.open(tmp_path / "out" / "frames.zarr")
+    prov = dict(store._store.attrs["provenance"])
+    assert prov["fps"] == 2.0
+    assert prov["method"] == "fps"
+    # fps must be a staleness key, or changing the rate silently reuses old frames
+    assert store.is_stale({**prov, "fps": 4.0})
 
 
 def test_from_config_file_removed():
@@ -177,8 +218,11 @@ def test_init_fills_defaults_from_base_yaml(tmp_path):
         "output_path": str(tmp_path / "out"),
     }
     rec = Reconstructor(partial)
-    # min_frames comes from base.yaml (150), NOT a stale code default (300)
-    assert rec.config["preprocessing"]["min_frames"] == 150
+    # min_frames is null in base.yaml so fps is honoured literally, NOT a stale code default
+    assert rec.config["preprocessing"]["min_frames"] is None
+    # fps comes from base.yaml (1.0), and fps is the default selection method
+    assert rec.config["preprocessing"]["fps"] == 1.0
+    assert rec.config["preprocessing"]["frame_selection"] == "fps"
     # backend comes from base.yaml (vggt_omega)
     assert rec.config["pointcloud"]["backend"] == "vggt_omega"
 

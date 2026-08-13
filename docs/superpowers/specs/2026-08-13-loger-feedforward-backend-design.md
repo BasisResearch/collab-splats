@@ -108,8 +108,26 @@ measures exactly how good an approximation it is.
 
 ### The fit
 
-`_estimate_shared_focal(local_points, conf)`, ported from `run_loger.py`'s
-`estimate_focal_lengths` / `_focal_from_frame` / `_weighted_median` / `_snap_square_pixels`.
+`_estimate_shared_focal(local_points, conf)` is **ported**, and from the fork we do *not*
+vendor — so the attribution has to be exact. Source: PolyCam `LoGeR` @ `5d7c1a7`,
+`run_loger.py`, four functions collapsed into one:
+
+| Upstream | Line | Fate |
+|---|---|---|
+| `estimate_focal_lengths(local_points, conf, shared=True)` | 206 | merged; `shared=False` branch dropped |
+| `_focal_from_frame(local_pts, conf_frame, uu, vv, H, W)` | 180 | merged; the per-pixel inversion and all three guards preserved |
+| `_weighted_median(values, w, max_n=50000)` | 167 | merged verbatim |
+| `_snap_square_pixels(fx, fy, tol=0.02)` | 195 | merged verbatim |
+
+`load_images` (L117, `pixel_limit=255000`) and `build_forward_kwargs` (L149) are **read for
+their behaviour, not ported** — the resize rule is reimplemented against `frames_as_pil_source`
+because we never touch disk, and the forward kwargs come from the vendored yaml directly.
+
+**Neither repository ships a LICENSE file** — checked both clones. So the ported helper carries a
+docstring naming the source repo, commit, file, and the four functions, and `third_party/README.md`
+records the same. The absence is worth a flag to the user before this ships, since we are copying
+~40 lines rather than only calling a vendored tree. The rest of `run_loger.py` — CLI, PLY export,
+disk IO — is discarded.
 
 **It is a weighted median, not a least-squares fit.** Each valid pixel yields its own focal
 estimate directly by inverting the pinhole model — `fx_pp = uu * Z / X`, `fy_pp = vv * Z / Y`,
@@ -156,16 +174,20 @@ set-based and has no ordering requirement.
 
 ## Footprint
 
-**2 new files, 7 modified in the repo**, zero new pip deps, plus one environment step.
+**3 new files, 9 modified**, zero new pip deps.
 
-The environment step is the vendored tree: `third_party/LoGeR/` = upstream @ `7685b7a`. It is
-gitignored (`.gitignore:7`), so it is a setup action, not a repo change; the pinned commit is
-recorded in the tracked `third_party/README.md`.
+The vendored tree `third_party/LoGeR/` (upstream @ `7685b7a`) is itself gitignored
+(`.gitignore:7`), but it does not arrive by hand. `third_party/README.md` states the policy:
+"Setup scripts own the clone + patch lifecycle" and "New entries: add a row to the table below
+and wire up in the relevant setup script." So the clone is a tracked script, not an instruction
+in a doc.
 
 | | Path | Why |
 |---|---|---|
-| new | `collab_splats/pointcloud/feedforward/loger.py` | `LoGeRCreator` + one module-level helper |
+| new | `collab_splats/pointcloud/feedforward/loger.py` | `LoGeRCreator` + one module-level helper. Bare-name file, matching `vggtx.py` / `vggt_omega.py` / `mapanything.py` — not the `vggt_spark_creator.py` outlier |
 | new | `tests/pointcloud/test_loger_creator.py` | mirrors `test_vggt_omega_creator.py` |
+| new | `setup/loger.sh` | clones upstream @ `7685b7a` into `third_party/LoGeR/`, idempotent `if [ ! -d ... ]` guard following `setup/vggt_slam.sh`. Its own script because `setup/feedforward.sh` — named in `third_party/README.md` — does not exist |
+| mod | `third_party/README.md` | table row: path, upstream, populated-by, used-by; plus the pinned commit and the missing-LICENSE note |
 | mod | `collab_splats/pointcloud/feedforward/__init__.py` | guarded export, `try/except ImportError`, same shape as `VGGTOmegaCreator` |
 | mod | `collab_splats/pointcloud/__init__.py` | `_LOGER_AVAILABLE` guard + `_REGISTRY["loger"]`, mirroring `_OMEGA_AVAILABLE` at lines 8–28 |
 | mod | `collab_splats/wrapper/reconstructor.py` | `_FEEDFORWARD_BACKENDS` (L43), `creator_map` (L189), per-backend kwargs passthrough (L195), LC refusal, `max_frames` warning |
@@ -176,15 +198,35 @@ recorded in the tracked `third_party/README.md`.
 
 ### Reused unchanged — no new code
 
-`unproject_and_filter_points` (`vggtx.py:92`), `invert_poses` (`geometry/transforms.py`),
-`build_pycolmap_reconstruction`, `_rescale_reconstruction_to_original_dimensions`,
-`frames_as_pil_source`, `FeedforwardResult` and its zarr IO, `_raw_to_world_points`,
-`compute_multiview_depth_confidence`, and the whole 5-step template.
+Every one of these is called, not copied. Sources given so the plan cannot silently
+re-implement one:
+
+| Function | Source | Note |
+|---|---|---|
+| `unproject_and_filter_points` | `feedforward/vggtx.py:92` | cross-backend import; `vggt_omega.py:34` already does exactly `from .vggtx import unproject_and_filter_points`, so this is established precedent, not a new coupling |
+| `_raw_to_world_points` | `feedforward/base.py:317` | called with `subsample=1`; the signature default is `8` |
+| `compute_multiview_depth_confidence` | `feedforward/base.py:378` | |
+| `build_pycolmap_reconstruction` | `feedforward/base.py:498` | invoked by the base template, not by us |
+| `_rescale_reconstruction_to_original_dimensions` | `feedforward/base.py:580` | |
+| `frames_as_pil_source` | `feedforward/base.py:679` | |
+| `invert_poses` | `geometry/transforms.py:39` | |
+| `FeedforwardResult` + its zarr IO | `feedforward/base.py` | |
+
+**Not reused, deliberately:** `_decode_verify_geometry` (`base.py:290`). VGGT-Omega imports it,
+so copying Omega's import block wholesale would pull it in — but it exists only to serve
+`_verify_loop_candidate`, and LoGeR refuses loop closure. Listed here so it is not added by
+pattern-matching.
 
 ### Genuinely new, and why
 
 1. `_estimate_shared_focal(local_points, conf)` — justified above. ~40 lines.
 2. `LoGeRCreator` itself.
+
+`loger.py` follows the sibling modules' shape, which is a house style rather than an accident:
+a module docstring opening with a `Provides:` block that lists the public names (see
+`vggt_omega.py:1-9`), `########` section dividers between constants / inference utilities /
+creator, module-level `_LOGER_*` constants for the repo id and defaults, and `logger =
+logging.getLogger(__name__)`.
 
 **No `_loger_original_coords` helper.** An earlier draft proposed one. It is unnecessary: LoGeR
 crops nothing, so every row is `[0, 0, orig_w, orig_h, orig_w, orig_h]` and the whole thing is
@@ -209,12 +251,30 @@ which exists because Omega's crop arithmetic is genuinely non-trivial.)
   vendored backends have simply never been added. `loger` gets its stanza; back-filling the
   other two is a separate, unrelated change.
 
-## Data flow: the five template methods
+## Data flow: the template methods
+
+`BaseFeedforwardCreator` declares **six** `@abstractmethod`s, not five: `_load_model` (915),
+`_preprocess` (918), `_forward` (921), `_postprocess` (924), `extract_intermediate_features`
+(927), and `_reproject` (1023). This matters twice over: LoGeR's `NotImplementedError` for
+`extract_intermediate_features` is the ABC contract being satisfied, not a courtesy stub — the
+class will not instantiate without it; and the base class docstring's own "5-step pipeline /
+four abstract methods" wording is stale. Pre-existing, out of scope, noted so this spec does not
+inherit the error.
 
 ### `_load_model(device)`
 
-`sys.path.insert(0, third_party/LoGeR)` → `from loger.models.pi3 import Pi3` → remove in
-`finally`. Read `ckpts/{variant}/original_config.yaml` from the vendored tree.
+Follow VGGT-SPARK's `sys.path` idiom exactly (`vggt_spark_creator.py:33-35, 124-126`), not a
+looser version of it:
+
+- module-level constant `_LOGER_ROOT = Path(__file__).resolve().parents[3] / "third_party" / "LoGeR"`
+- inside `_load_model`, a `_patched = _LOGER_ROOT not in sys.path` flag guards the insert, and
+  the `finally` removes the path **only if this call added it**
+
+The flag is the part worth copying. Without it, a re-entrant or nested load pops a path the
+caller installed. Import is `from loger.models.pi3 import Pi3` with `# noqa: PLC0415`, matching
+SPARK.
+
+Read `ckpts/{variant}/original_config.yaml` from the vendored tree.
 
 **`se3` lives in the `model:` block but is a forward kwarg.** `LoGeR_star` sets `se3: true`
 under `model:`, yet `se3` is not a `Pi3.__init__` parameter — it is popped inside `forward`
@@ -260,19 +320,32 @@ assert frame-size uniformity and raise otherwise.
 remove a whole 14 px from one axis. So aspect ratio is not exactly preserved; the image is
 stretched by up to a few percent on one axis.
 
-This does not distort the pointcloud, for two reasons that both depend on *not* forcing square
-pixels:
+This does not distort the pointcloud, but only because **three** separate places all keep `fx`
+and `fy` distinct. Every one is a place where an isotropic "simplification" would bake the error
+in:
 
 1. `_estimate_shared_focal` fits `fx` and `fy` **separately**, so the anisotropy is absorbed into
    the K rather than corrupting the geometry. `_snap_square_pixels` merges them only when they
    already agree within 2%.
 2. `_rescale_reconstruction_to_original_dimensions` scales with separate `scale_x` and `scale_y`,
    so the original-resolution K recovers the true aspect.
+3. **`LoGeRCreator.camera_model` must be `"PINHOLE"`.** This one is easy to miss and would be
+   silent. `build_pycolmap_reconstruction` (`base.py:551-554`) branches on it:
 
-If either of those became isotropic — forcing `fx == fy`, or scaling K by a single factor — the
-error would be baked in. This is recorded because the correctness is non-obvious and easy to
-"simplify" away. The model is also trained with this exact preprocessing, so the stretch is
-in-distribution.
+   ```python
+   if camera_model == "PINHOLE":
+       params = [K[0, 0], K[1, 1], K[0, 2], K[1, 2]]
+   else:  # SIMPLE_PINHOLE
+       params = [(K[0, 0] + K[1, 1]) / 2.0, K[0, 2], K[1, 2]]
+   ```
+
+   `SIMPLE_PINHOLE` averages `fx` and `fy` away on export — discarding exactly the anisotropy
+   points 1 and 2 worked to preserve, with no error and no warning. And this is not a
+   hypothetical: `vggtx.py:190` sets `camera_model = "SIMPLE_PINHOLE"` today. Copying VGGT-X's
+   class body would inherit it. `base.py:793` defaults to `"PINHOLE"` and `vggt_omega.py:144`
+   sets it explicitly; LoGeR sets it explicitly too, with a comment pointing at this paragraph.
+
+The model is also trained with this exact preprocessing, so the stretch is in-distribution.
 
 Cropping to a multiple of 14 instead would be worse: it discards field of view, and
 `original_coords` would need Omega's crop arithmetic back.
@@ -336,8 +409,9 @@ The plan records the measured residual as a number rather than assuming which ca
 
 ### `_reproject(raw, extrinsics_3x4, intrinsics)`
 
-Byte-for-byte VGGT-Omega's implementation, ~8 lines: delegate to `unproject_and_filter_points`
-with the refined poses.
+Byte-for-byte VGGT-Omega's implementation (`vggt_omega.py:310-324`, ~15 lines): delegate to
+`unproject_and_filter_points` with the refined extrinsics and intrinsics, returning
+`(pts3d, colors)` and dropping `pixel_indices`.
 
 ## Error handling
 
@@ -359,6 +433,18 @@ backbone so far has needed its own retrieval-layer and threshold sweep: SPARK 0.
 VGGT-X L10/1.17, Omega L13/1.55, MapAnything L4/1.46. Shipping uncalibrated thresholds would
 produce quietly worse trajectories. Refuse instead. Calibration is a separate piece of work with
 its own sweep.
+
+**The refusal has to be at the `Reconstructor` level, and that is not arbitrary.**
+`_verify_loop_candidate` is **concrete on the base class** (`base.py:960`), not abstract, so
+`LoGeRCreator` inherits a working one — and it calls `extract_intermediate_features`, which
+LoGeR raises from. Without the up-front `ValueError`, enabling LC on `loger` would not fail at
+the config boundary; it would run preprocessing and the full forward pass, then die with a bare
+`NotImplementedError` from inside the LC loop. Same outcome, far worse diagnostics, minutes of
+GPU time later. The guard converts that into an immediate, named refusal.
+
+LoGeR therefore also skips the LC `ClassVar` calibration block that `vggt_omega.py:140-142`
+carries (`_lc_layer_index`, `default_verify_match_ratio`). Inventing values for a refused
+feature would be dead configuration.
 
 ### Multiview confidence belongs to an existing design, not this one
 
@@ -469,8 +555,24 @@ it enough frames to matter.
 
 ## Testing
 
-`tests/pointcloud/test_loger_creator.py`, flat functions, mirroring
-`test_vggt_omega_creator.py`. Every fast test uses a fake model — no weights, no GPU, no network.
+Flat functions, mirroring `test_vggt_omega_creator.py`. Every fast test uses a fake model — no
+weights, no GPU, no network.
+
+**Not all of it goes in one new file.** Three of these have established homes, and a monolithic
+`test_loger_creator.py` would duplicate them:
+
+| Test | Goes in | Why |
+|---|---|---|
+| 5 (`original_coords` → original-res K) | `tests/pointcloud/test_feedforward_intrinsics.py` | that file already owns "result.intrinsics at model resolution" across backends, including `_compute_vggtx_crop_coords` coverage |
+| 9 (registry) | `tests/pointcloud/test_registry.py` | already holds one `test_get_creator_<backend>` per backend |
+| vendored tree absent → guarded import | `tests/pointcloud/feedforward/test_spark_load_guard.py` pattern, as a new sibling | exact precedent exists |
+
+The rest go in `tests/pointcloud/test_loger_creator.py`.
+
+One caveat on test 9: `test_registry.py` covers `colmap`, `hloc`, `mapanything`, `vggtx` and
+deliberately omits `vggt_omega`/`vggt_spark`, because optional vendored backends are absent in a
+bare checkout. So the `loger` case needs a `skipif` on availability, or it follows the same
+omission. Prefer the guarded test — it is the only thing that proves the registry wiring.
 
 **Unit, against a synthetic pinhole scene:**
 
@@ -529,3 +631,8 @@ until it passes.
    `2026-08-12-multiview-confidence-all-models-design.md`; `loger` should be added to its scope.
 6. Sparse `FeedforwardResult` for long sequences — rejected here for consistency; would need
    its own design covering all four backends.
+7. **Neither LoGeR repository ships a LICENSE file.** Vendoring an unlicensed tree into
+   `third_party/` matches what we already do for other backends, but this design additionally
+   *copies* ~40 lines out of PolyCam's `run_loger.py`. Flagged for the user's call before the
+   port lands; the fallback is to reimplement the estimator from the pinhole identity, which is
+   a handful of lines of standard geometry, and cite the original only as prior art.

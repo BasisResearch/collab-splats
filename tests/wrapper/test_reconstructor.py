@@ -1025,6 +1025,7 @@ def test_run_feedforward_attaches_viewer_when_enabled(tmp_path):
             viz_enabled=True,
             viz_port=9999,
             max_points=500_000,
+            use_multiview_confidence=False,
         )
 
     mock_lc_cls.assert_called_once_with(base=mock_creator, config=None)
@@ -1053,6 +1054,7 @@ def test_run_feedforward_builds_lc_config_from_dict(tmp_path):
             viz_enabled=False,
             viz_port=8080,
             max_points=500_000,
+            use_multiview_confidence=False,
         )
 
     # LoopClosure got a config carrying the dict knobs
@@ -1081,6 +1083,7 @@ def test_run_feedforward_dict_enabled_false_skips_lc(tmp_path):
             viz_enabled=False,
             viz_port=8080,
             max_points=500_000,
+            use_multiview_confidence=False,
         )
 
     mock_lc_cls.assert_not_called()
@@ -1103,6 +1106,7 @@ def test_run_feedforward_invalid_lc_knob_raises(tmp_path):
                 viz_enabled=False,
                 viz_port=8080,
                 max_points=500_000,
+                use_multiview_confidence=False,
             )
 
 
@@ -1127,6 +1131,7 @@ def test_run_feedforward_no_viewer_when_viz_disabled(tmp_path):
             viz_enabled=False,
             viz_port=8080,
             max_points=500_000,
+            use_multiview_confidence=False,
         )
 
     mock_viewer_cls.assert_not_called()
@@ -1152,6 +1157,7 @@ def test_run_feedforward_no_loop_closure_no_viewer(tmp_path):
             viz_enabled=True,
             viz_port=8080,
             max_points=500_000,
+            use_multiview_confidence=False,
         )
 
     mock_lc_cls.assert_not_called()

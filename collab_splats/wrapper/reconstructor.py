@@ -155,6 +155,7 @@ def _run_feedforward(
     viz_enabled: bool,
     viz_port: int,
     max_points: int,
+    use_multiview_confidence: bool,
 ) -> tuple["PointcloudResult", "Viewer | None"]:
     """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
 
@@ -198,8 +199,10 @@ def _run_feedforward(
         "mapanything": MapAnythingCreator,
         "vggt_omega": VGGTOmegaCreator,
     }
-    # max_points caps the confidence mask during inference — a memory guard, not a preference
-    creator = creator_map[backend](max_points=max_points)
+    # max_points caps the confidence mask during inference — a memory guard, not a preference.
+    # use_multiview_confidence is the only mv knob exposed: rel_thresh and min_views stay as
+    # calibrated creator field defaults so nobody hand-tunes bare floats in YAML.
+    creator = creator_map[backend](max_points=max_points, use_multiview_confidence=use_multiview_confidence)
 
     # Wrap with loop closure if requested; viz has nothing to show without it, so only
     # attach the viser Viewer (also a heavy/websocket dep) when both are enabled
@@ -557,6 +560,7 @@ class Reconstructor:
                 viz_enabled=pc_cfg["viz"]["enabled"],
                 viz_port=pc_cfg["viz"]["port"],
                 max_points=pc_cfg["max_points"],
+                use_multiview_confidence=pc_cfg["use_multiview_confidence"],
             )
             self.viewer = viewer
 

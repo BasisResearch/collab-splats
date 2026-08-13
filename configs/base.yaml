@@ -34,6 +34,10 @@ pointcloud:
   # Inference-time memory guard: caps the confidence mask so a full-resolution cloud is
   # never materialised (BaseFeedforwardCreator.max_points). Lower it on small-GPU/RAM machines.
   max_points: 500000
+  # Geometric cross-view depth consistency filter. Drops points whose depth disagrees with
+  # the other views that see them. rel_thresh and min_views are calibrated per-backend
+  # creator defaults, deliberately not exposed here.
+  use_multiview_confidence: false
   # Export density for sparse_pc.ply. null = write every reconstructed point (default);
   # set an int to thin the exported file only — inference is unaffected.
   export_max_points: null

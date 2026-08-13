@@ -444,6 +444,17 @@ def compute_multiview_depth_confidence(
     the reprojected and sampled depths agree within abs_thresh + rel_thresh * depth.
     Returns per-pixel inlier ratio across overlapping views, in [0, 1].
 
+    Contract — violating any of these produces silent garbage, so the last two are asserted:
+      * depth is **Z-depth** along the camera's +Z axis. NOT ray length, NOT disparity, NOT
+        shifted-affine. The VGGT family and MapAnything both satisfy this.
+      * Scale invariance holds only with abs_thresh=0.0: multiply all depth and translations
+        by s and expected_d, sampled_d and the tolerance all scale together. This is what
+        lets one function serve every backbone despite their different depth scales.
+      * depth, intrinsics and extrinsics are pixel-aligned at ONE resolution, OpenCV
+        convention, +Z forward. Mixing model-res depth with original-res K is the bug class
+        behind the 2026-08-11 mesh regression.
+      * N agrees across all three arrays.
+
     Args:
         depth:       (N, H, W) float32 Z-depth per frame.
         intrinsics:  (N, 3, 3) float32 pinhole intrinsics in pixel units.
@@ -460,6 +471,24 @@ def compute_multiview_depth_confidence(
     """
     dev = torch.device(device if device != "cuda" or torch.cuda.is_available() else "cpu")
     N, H, W = depth.shape
+
+    # Validate the alignment contract before any GPU work — a silent mismatch here is the
+    # bug class behind the 2026-08-11 mesh regression.
+    if len(intrinsics) != N or len(extrinsics) != N:
+        raise ValueError(
+            f"length mismatch: depth has {N} frames, intrinsics {len(intrinsics)}, " f"extrinsics {len(extrinsics)}"
+        )
+    # The principal point must land strictly inside the depth grid. This is the tightest
+    # bound that still admits any legitimately off-centre crop, and it is tight enough to
+    # matter: pairing model-res depth with an original-res K that is only 2x larger puts
+    # cx at exactly W, so anything looser than "strictly inside" would miss the common case.
+    cx, cy = float(intrinsics[0][0, 2]), float(intrinsics[0][1, 2])
+    if not (0 < cx < W and 0 < cy < H):
+        raise ValueError(
+            f"intrinsics/depth resolution mismatch: principal point ({cx:.1f}, {cy:.1f}) "
+            f"lies outside a {W}x{H} depth grid. Model-resolution depth was probably "
+            f"paired with original-resolution intrinsics."
+        )
 
     depth_t = torch.from_numpy(depth.astype(np.float32)).to(dev)
     K = torch.from_numpy(intrinsics.astype(np.float32)).to(dev)
@@ -561,11 +590,10 @@ def compute_multiview_depth_confidence(
 
     # ratio is 0 where no view overlapped; the judged flag distinguishes "no evidence"
     # from "evidence against", which the mask helper needs and a bare ratio cannot express.
-    ratio = torch.where(
-        valid_sum > 0,
-        inlier_sum / valid_sum.clamp(min=1.0),
-        torch.zeros_like(inlier_sum),
-    )
+    # valid_sum > 0 already guards the division; the discarded branch needs a finite
+    # denominator only to keep the division from emitting NaN into an unselected slot.
+    safe_denom = torch.where(valid_sum > 0, valid_sum, torch.ones_like(valid_sum))
+    ratio = torch.where(valid_sum > 0, inlier_sum / safe_denom, torch.zeros_like(inlier_sum))
     judged = (valid_sum.reshape(N, -1).sum(dim=1) > 0).cpu().numpy()
     return MultiviewConfidence(
         ratio=ratio.cpu().numpy().astype(np.float32),

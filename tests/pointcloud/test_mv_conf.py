@@ -1,4 +1,5 @@
 """Unit tests for compute_multiview_depth_confidence in base.py."""
+
 import numpy as np
 import pytest
 
@@ -63,8 +64,13 @@ def test_compute_mv_conf_depth_masks_source():
     depth_masks[0] = False
 
     mv_conf = compute_multiview_depth_confidence(
-        depth, intrinsics, extrinsics,
-        depth_masks=depth_masks, abs_thresh=0.0, rel_thresh=0.1, device="cpu",
+        depth,
+        intrinsics,
+        extrinsics,
+        depth_masks=depth_masks,
+        abs_thresh=0.0,
+        rel_thresh=0.1,
+        device="cpu",
     ).ratio
 
     assert np.all(mv_conf[0] == 0.0), f"Frame 0 should be 0; got {mv_conf[0]}"
@@ -79,9 +85,7 @@ def test_compute_mv_conf_output_shape():
         K = _make_intrinsics(H, W)
         intrinsics = np.stack([K] * N)
         extrinsics = np.stack([np.eye(4, dtype=np.float32)] * N)
-        out = compute_multiview_depth_confidence(
-            depth, intrinsics, extrinsics, device="cpu"
-        ).ratio
+        out = compute_multiview_depth_confidence(depth, intrinsics, extrinsics, device="cpu").ratio
         assert out.shape == (N, H, W), f"N={N}: expected {(N,H,W)}, got {out.shape}"
 
 
@@ -110,9 +114,64 @@ def test_nearest_sampling_no_fabricated_depth():
     judged_px = out.valid_count[0] > 0
     assert judged_px.sum() > 0
     assert np.all(out.ratio[0][judged_px] == 1.0), (
-        f"{int((out.ratio[0][judged_px] < 1.0).sum())} judged px below 1.0 — "
-        f"sampler is fabricating depth"
+        f"{int((out.ratio[0][judged_px] < 1.0).sum())} judged px below 1.0 — " f"sampler is fabricating depth"
     )
+
+
+def test_scale_invariance():
+    """Scaling depth and translations by a constant leaves the output identical.
+
+    This is the property that lets one function serve five backbones with different depth
+    scales, and it is why abs_thresh must stay 0.0 for non-metric depth.
+    """
+    N, H, W = 3, 8, 8
+    rng = np.random.default_rng(11)
+    depth = (rng.random((N, H, W)).astype(np.float32) + 0.5) * 2.0
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    for i in range(N):
+        extr[i, 0, 3] = 0.25 * i
+    kw = dict(abs_thresh=0.0, rel_thresh=0.05, device="cpu")
+
+    base = compute_multiview_depth_confidence(depth, np.stack([K] * N), extr, **kw)
+
+    # A power of two so the rescaling is exact in float32 and the comparison isolates the
+    # invariance itself. With an arbitrary factor a handful of pixels sitting exactly on the
+    # tolerance boundary flip on rounding alone, which says nothing about the property.
+    s = 8.0
+    extr_s = extr.copy()
+    extr_s[:, :3, 3] *= s
+    scaled = compute_multiview_depth_confidence(depth * s, np.stack([K] * N), extr_s, **kw)
+
+    np.testing.assert_array_equal(base.inlier_count, scaled.inlier_count)
+    np.testing.assert_array_equal(base.valid_count, scaled.valid_count)
+    np.testing.assert_allclose(base.ratio, scaled.ratio, rtol=1e-6, atol=1e-6)
+
+
+def test_intrinsics_resolution_mismatch_raises():
+    """K implying a different pixel grid than depth.shape is the mesh-regression bug class."""
+    N, H, W = 2, 8, 8
+    depth = np.full((N, H, W), 4.0, dtype=np.float32)
+    # K for an image 2x larger than the depth grid — the realistic model-res vs
+    # original-res pairing, which puts the principal point on the far edge at (8, 8).
+    K_big = np.array([[16.0, 0.0, 8.0], [0.0, 16.0, 8.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+    with pytest.raises(ValueError, match="resolution"):
+        compute_multiview_depth_confidence(
+            depth,
+            np.stack([K_big, K_big]),
+            np.stack([np.eye(4, dtype=np.float32)] * 2),
+            device="cpu",
+        )
+
+
+def test_shape_mismatch_raises():
+    """N must agree across depth, intrinsics and extrinsics."""
+    depth = np.full((3, 8, 8), 4.0, dtype=np.float32)
+    K = _make_intrinsics(8, 8)
+    with pytest.raises(ValueError, match="length"):
+        compute_multiview_depth_confidence(
+            depth, np.stack([K, K]), np.stack([np.eye(4, dtype=np.float32)] * 2), device="cpu"
+        )
 
 
 def test_occluded_view_excluded_not_penalised():
@@ -134,8 +193,13 @@ def test_occluded_view_excluded_not_penalised():
     # a single depth plane and the AABB test correctly finds them disjoint — which would
     # skip the occluding pair entirely and make this test vacuous.
     out = compute_multiview_depth_confidence(
-        depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.05,
-        pair_gate=False, device="cpu",
+        depth,
+        np.stack([K] * N),
+        extr,
+        abs_thresh=0.0,
+        rel_thresh=0.05,
+        pair_gate=False,
+        device="cpu",
     )
     assert np.all(out.ratio[0] == 1.0), f"view 0 penalised for being occluded: {out.ratio[0].min()}"
     assert np.all(out.valid_count[0] == 1), "the occluding view should leave the denominator"
@@ -152,8 +216,13 @@ def test_free_space_violation_still_counts_as_outlier():
     # pair_gate=False for the same reason as the occlusion test: constant depth maps give
     # degenerate single-plane frusta that the AABB test correctly separates.
     out = compute_multiview_depth_confidence(
-        depth, np.stack([K, K]), extr, abs_thresh=0.0, rel_thresh=0.05,
-        pair_gate=False, device="cpu",
+        depth,
+        np.stack([K, K]),
+        extr,
+        abs_thresh=0.0,
+        rel_thresh=0.05,
+        pair_gate=False,
+        device="cpu",
     )
     assert np.all(out.ratio[0] == 0.0), "free-space violation must count against"
     assert np.all(out.valid_count[0] == 1), "the violating view must stay in the denominator"
@@ -208,9 +277,7 @@ def test_pair_gate_skips_disjoint_views():
     K = _make_intrinsics(H, W)
     extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
     extr[1, 0, 3] = 1000.0
-    out = compute_multiview_depth_confidence(
-        depth, np.stack([K, K]), extr, pair_gate=True, device="cpu"
-    )
+    out = compute_multiview_depth_confidence(depth, np.stack([K, K]), extr, pair_gate=True, device="cpu")
     assert out.valid_count.max() == 0, "disjoint views should contribute nothing"
     assert out.judged.tolist() == [False, False]
 
@@ -221,8 +288,12 @@ def test_returns_multiview_confidence_dataclass():
     depth = np.full((N, H, W), 5.0, dtype=np.float32)
     K = _make_intrinsics(H, W)
     out = compute_multiview_depth_confidence(
-        depth, np.stack([K, K]), np.stack([np.eye(4, dtype=np.float32)] * 2),
-        abs_thresh=0.0, rel_thresh=0.1, device="cpu",
+        depth,
+        np.stack([K, K]),
+        np.stack([np.eye(4, dtype=np.float32)] * 2),
+        abs_thresh=0.0,
+        rel_thresh=0.1,
+        device="cpu",
     )
     assert isinstance(out, MultiviewConfidence)
     assert out.ratio.shape == (N, H, W)
@@ -261,9 +332,7 @@ def test_single_view_is_unjudged():
     H, W = 4, 4
     depth = np.full((1, H, W), 3.0, dtype=np.float32)
     K = _make_intrinsics(H, W)
-    out = compute_multiview_depth_confidence(
-        depth, K[None], np.eye(4, dtype=np.float32)[None], device="cpu"
-    )
+    out = compute_multiview_depth_confidence(depth, K[None], np.eye(4, dtype=np.float32)[None], device="cpu")
     assert out.judged.tolist() == [False]
     assert out.valid_count.max() == 0
     assert out.inlier_count.max() == 0

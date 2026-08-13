@@ -15,6 +15,12 @@ from collab_splats.pointcloud.feedforward.base import MultiviewConfidence, _raw_
 from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel
 
 
+def _centred_k(h: int, w: int) -> torch.Tensor:
+    """Plausible pinhole K for an h x w grid: focal = the long side, principal point centred."""
+    f = float(max(h, w))
+    return torch.tensor([[f, 0.0, w / 2.0], [0.0, f, h / 2.0], [0.0, 0.0, 1.0]])
+
+
 def test_mapanything_defaults():
     c = MapAnythingCreator()
     assert c.model_name == "facebook/map-anything"
@@ -109,7 +115,9 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
             "mask": torch.ones(1, h, w, 1, dtype=torch.bool),
             "depth_z": torch.ones(1, h, w, 1),
             "img_no_norm": torch.zeros(1, h, w, 3),
-            "intrinsics": torch.eye(3).unsqueeze(0),
+            # Centred pinhole K at the fixture resolution. Identity K puts the principal point
+            # at (0, 0), which the mv resolution contract rejects as a K built for another grid.
+            "intrinsics": _centred_k(h, w).unsqueeze(0),
             "camera_poses": torch.eye(4).unsqueeze(0),
         }
         for _ in range(n)
@@ -178,7 +186,9 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
             "mask": torch.ones(1, h, w, 1, dtype=torch.bool),
             "depth_z": torch.ones(1, h, w, 1),
             "img_no_norm": torch.zeros(1, h, w, 3),
-            "intrinsics": torch.eye(3).unsqueeze(0),
+            # Centred pinhole K at the fixture resolution. Identity K puts the principal point
+            # at (0, 0), which the mv resolution contract rejects as a K built for another grid.
+            "intrinsics": _centred_k(h, w).unsqueeze(0),
             "camera_poses": torch.eye(4).unsqueeze(0),
         }
         for _ in range(n)

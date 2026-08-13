@@ -4,6 +4,12 @@
 **Status:** design — ready for planning
 **Supersedes:** `2026-08-12-multiview-confidence-all-models-design.md` (the original handoff; its
 task list rests on premises that did not survive verification — see "Corrections to the handoff")
+**Amended 2026-08-13** against measurement on all four backbones —
+`2026-08-13-multiview-confidence-measured-report.md`. Three claims in this doc were overstated and
+are corrected inline: the sampler halo is ≤0.2pp (not the central risk), the occlusion fix cannot
+change the mask at any K (persisted-ratio improvement only), and the sparse-cloud point-count
+acceptance gate is as dead as the mesh-vertex gate. Measured cost: **0.56 s at N=30**
+(0.65 ms/pair), ~11 min at N=1000 — the handoff's frame-window mitigation is unnecessary.
 
 ## Goal
 
@@ -24,8 +30,12 @@ Verification found four premises that do not hold:
    a knob-dict. There is no generic creator-kwarg path to extend.
 2. **T1's mesh gate measures nothing.** `mesh/utils.py:434` fuses `result.depth` raw, with no
    confidence mask. mv confidence only feeds `extra_mask` into `unproject_and_filter_points`, which
-   produces `points`/`colors`/`pixel_indices`. **A filter cannot move the mesh.** Sparse cloud point
-   count replaces the vertex-count gate.
+   produces `points`/`colors`/`pixel_indices`. **A filter cannot move the mesh.**
+   *(Amended 2026-08-13, measured:* the sparse-cloud point count is dead for the same reason.
+   `unproject_and_filter_points` randomly caps to `max_points` **after** filtering
+   (`pointcloud/utils.py:322-323`); the masked pool is 3.8–4.0M pixels against a 500k cap, so all
+   four backbones return exactly 500,000 points with and without mv. mv changes cloud composition,
+   never its size. **Acceptance must be measured at pixel-mask level or against GT depth.**)
 3. **The Omega intrinsics caution is a non-issue.** `vggt_omega.py:233` sets
    `"intrinsics_downsampled": intrinsic` — a literal alias of the same model-res array. Both call
    sites use the identical object. Worth locking with a test, not worth investigating.
@@ -51,20 +61,28 @@ And one finding the handoff did not anticipate, which reorders the whole task:
 | Denominator | `inlier + outlier` | `valid_sum` | Equivalent — both count valid projections |
 | `abs`/`rel` at the MapAnything call site | 0.02 / 0.02 | 0.02 / 0.02 | Preserved ✓ |
 
-**Why the sampler divergence matters.** Bilinear interpolation across a depth discontinuity produces
-a value that lies on no surface: blending foreground 2.0 m and background 8.0 m yields 4.4 m. That
-manufactures both false outliers (a rejection halo around every object boundary) and false inliers
-(a wrong depth confirmed by a fabricated match). Meta calibrated `abs=0.02, rel=0.02` against
-*nearest* sampling; we run those constants against bilinear. **Restoring nearest is the conservative
-move; keeping bilinear is the unvalidated one.**
+**Why the sampler divergence matters — MEASURED, and far smaller than this section originally
+claimed.** The mechanism is real: bilinear interpolation across a depth discontinuity produces a
+value that lies on no surface (blending foreground 2.0 m and background 8.0 m yields 4.4 m),
+manufacturing both false outliers and false inliers. Meta calibrated `abs=0.02, rel=0.02` against
+*nearest*; we run those constants against bilinear.
 
-**Why the halo has not bitten yet.** Every `mv_conf_threshold` in the repo is `0.0` — keep any pixel
-with ≥1 agreeing view. A halo is per-pair, and edges sit at different places from different
-viewpoints, so a pixel must be edge-straddled in *all* pairs to die. MapAnything is further protected
-by passing `depth_masks=combined_mask` (`mapanything.py:447`), pre-pruning edge pixels; the VGGT
-paths pass `None`. Raising the threshold — which is exactly what calibration does — removes the
-first protection, and the VGGT paths never had the second. **The defect is latent and this task is
-the trigger.**
+But the effect size is negligible. Measured halo delta (nearest − bilinear) at depth edges:
+**−0.19pp (Omega), +0.02pp (VGGT-X), +0.06pp (SPARK); interior ≤0.02pp everywhere** — at every
+`rel_thresh` in {0.02, 0.05, 0.10} and both edge definitions (10% and 30% relative depth jump). On
+MapAnything's real shipping config the sampler change moves 36,442 pixels, 1.32% of valid, +0.519pp
+retention.
+
+The original estimate conflated "pixels near an edge in the *source* frame" with "pixels whose
+*projection* lands within a pixel of an edge in the *target* frame" — the latter is a far thinner
+set. Compounding this: the learned confidence filter already removes edges preferentially (edges are
+12.2% of valid pixels but **0.2%** of learned-kept pixels on Omega), so most of what bilinear blurs
+is gone before mv runs.
+
+**Restoring nearest is still correct** — it is upstream parity, it is where Meta's constants were
+calibrated, and it costs nothing. It is simply not the central risk of Step A, and it does not
+justify the "latent defect, this task is the trigger" framing this section previously carried. Full
+numbers: `2026-08-13-multiview-confidence-measured-report.md`.
 
 **Upstream does not refine depth.** `mapanything/utils/inference.py:401-402` replaces the *learned
 confidence* with the mv ratio (`processed_output["conf"] = mv_conf_list[i]`); `depth_z` is never
@@ -130,7 +148,20 @@ Replace `mv_conf_threshold: float` with `min_views: int` — "at least K other v
   `ratio > 0 ⟺ inlier_count > 0`. Bit-identical to today, so the parity gate holds by construction.
 - K=2 is the MVS standard (COLMAP fusion, MVSNet).
 
-### Occlusion asymmetry — the one improvement over upstream
+### Occlusion asymmetry — improves the persisted ratio only, never the mask
+
+**Amended 2026-08-13, measured: this change cannot alter the filter at any K.** Symmetric and
+asymmetric produce byte-identical masks on all four backbones at K=1,2,3,4, and differ by exactly
+**0 pixels** on MapAnything's real shipping config. The reason is structural and stronger than the
+K=1 proof below: the occlusion policy alters only `valid_count` (the denominator), while `min_views`
+thresholds `inlier_count` (the numerator). Under count thresholding the fix is **inert**.
+
+Keep it — but justify it as improving the **persisted `ratio`** for downstream consumers (splat
+depth supervision, per-frame diagnostics), not as improving the filter. It is not an argument for
+Step B carrying filter risk, and `test_positive_mask_invariant_across_occlusion_policy` should
+assert invariance at K=1..4, not only K=1.
+
+The mechanism, unchanged:
 
 `base.py:481` tests `|expected − sampled| < tol` symmetrically. But the two directions mean opposite
 things:
@@ -271,11 +302,17 @@ Any test touching semantics write paths must respect the artifact-naming contrac
 
 ## Acceptance criteria
 
-1. `base.py` matches upstream on sampler, pair gating and no-overlap semantics; MapAnything's sparse
-   cloud point count on `data/outputs/` recorded before and after Step A, with any change explained.
-2. Occlusion exclusion landed, with the `(inlier_count ≥ 1)` invariance property test passing.
-3. All four backbones share one code path, one `min_views` semantic, and per-backbone calibrated
-   `rel_thresh`; sweep table recorded in the completion notes.
+1. `base.py` matches upstream on sampler, pair gating and no-overlap semantics. Gate: MapAnything's
+   **pixel-level mask retention** on `data/outputs/`, not point count (see correction 2 above —
+   `max_points` saturates). Measured baseline to reproduce: shipping mask keeps **81.646%** of
+   2,752,924 valid pixels; after the sampler change, **82.165%** (+0.519pp, 36,442 px differing).
+   A larger deviation than that means something else changed.
+2. Occlusion exclusion landed, with the mask-invariance property test passing **at K=1..4** (measured
+   invariant at all four; the doc's proof covers only K=1).
+3. All four backbones share one code path and one `min_views` semantic. **One `rel_thresh` for all
+   three VGGT backbones, not per-backbone** — measured retention at `rel_thresh=0.05`, K=1 is
+   86.03% / 86.56% / 86.32% (Omega / VGGT-X / SPARK), inside 0.53pp at every K. Sweep table recorded
+   in the completion notes.
 4. `use_multiview_confidence` is the only mv key in `configs/base.yaml`.
 5. `mv_ratio` / `mv_inlier_count` / `mv_valid_count` persisted when computed; absent otherwise.
 6. Spark verified to execute the path in a fresh process.

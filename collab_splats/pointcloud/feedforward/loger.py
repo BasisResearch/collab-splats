@@ -49,6 +49,7 @@ from ...geometry.transforms import estimate_intrinsics_from_points, extrinsics_t
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
+    _mv_result_fields,
     _raw_to_world_points,
     compute_multiview_depth_confidence,
     multiview_mask,
@@ -414,6 +415,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
         # Optional geometric cross-view depth consistency mask
         mv_mask = None
+        mv_conf = None
         if self.use_multiview_confidence:
             depth_np = raw_outputs["depth"]
             if depth_np.ndim == 4:
@@ -479,6 +481,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
             confidence=torch.from_numpy(raw_outputs["depth_conf"]),
             world_points=world_points,
             depth=depth,
+            **_mv_result_fields(mv_conf),
         )
 
     def _reproject(

@@ -705,6 +705,43 @@ def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
         not v for v in upstream_calls
     ), f"postprocess_model_outputs_for_inference called with use_multiview_confidence=True: {upstream_calls}"
     mock_mv.assert_called_once()
+    # The mv arrays ride out on the result so save_zarr can persist them
+    np.testing.assert_array_equal(result.mv_ratio, mv_conf_return.ratio)
+    np.testing.assert_array_equal(result.mv_inlier_count, mv_conf_return.inlier_count)
+    np.testing.assert_array_equal(result.mv_valid_count, mv_conf_return.valid_count)
+
+
+def test_mapanything_postprocess_leaves_mv_fields_none_when_disabled():
+    """No mv computation means no mv arrays — save_zarr must omit the keys, not write zeros."""
+    creator = MapAnythingCreator(use_multiview_confidence=False)
+    H, W = 4, 4
+    n = 2
+
+    def fake_postprocess(raw_outputs, processed_views, **kwargs):
+        return [
+            {
+                "mask": [torch.ones(1, H, W, 1)],
+                "depth_z": [torch.ones(1, H, W, 1) * 2.0],
+                "pts3d": [torch.zeros(1, H, W, 3)],
+                "img_no_norm": [torch.zeros(1, H, W, 3)],
+                "camera_poses": [torch.eye(4).unsqueeze(0)],
+                "intrinsics": [_centred_k(H, W).unsqueeze(0)],
+            }
+            for _ in range(len(raw_outputs))
+        ]
+
+    with patch(
+        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+        side_effect=fake_postprocess,
+    ):
+        creator._processed_views = [{"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(n)]
+        creator.image_paths = []
+        creator.original_coords = np.zeros((n, 6), dtype=np.float32)
+        result = creator._postprocess([{"dummy": i} for i in range(n)])
+
+    assert result.mv_ratio is None
+    assert result.mv_inlier_count is None
+    assert result.mv_valid_count is None
 
 
 ########################################################################

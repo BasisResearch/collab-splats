@@ -28,6 +28,7 @@ from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
     _decode_verify_geometry,
+    _mv_result_fields,
     _raw_to_world_points,
     compute_multiview_depth_confidence,
     frames_as_pil_source,
@@ -248,6 +249,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
 
         # Optionally compute geometric cross-view depth consistency mask
         mv_mask = None
+        mv_conf = None
         if self.use_multiview_confidence:
             depth_np = raw_outputs["depth"]
             if depth_np.ndim == 4:
@@ -311,6 +313,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             confidence=conf,
             world_points=world_points,
             depth=raw_outputs["depth"].squeeze(-1) if raw_outputs["depth"].ndim == 4 else raw_outputs["depth"],
+            **_mv_result_fields(mv_conf),
         )
 
     def _reproject(

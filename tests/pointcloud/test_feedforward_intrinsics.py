@@ -190,7 +190,9 @@ def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
 
     _rescale_reconstruction_to_original_dimensions (base.py:748-840) is duck-typed
     over pycolmap — it touches only .images/.cameras, .model.name, .params, .width,
-    .height and .name.  A SimpleNamespace stands in because constructing a real
+    .height, .name, .camera_id (to look the camera up) and .points2D (iterated only
+    when shift_point2d_to_original_res=True, which this helper leaves at its default
+    False, so an empty list suffices).  A SimpleNamespace stands in because constructing a real
     pycolmap.Reconstruction needs a Frame binding (`Check failed: image.HasFrameId()`)
     that is pure ceremony for a camera-only assertion.
     """
@@ -209,6 +211,7 @@ def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
     _rescale_reconstruction_to_original_dimensions(
         reconstruction,
         [Path("0.png")],
+        # Rows are [x0, y0, x1, y1, W, H]; the rescale reads only the last two (base.py:793).
         np.array([[0, 0, orig_w, orig_h, orig_w, orig_h]], dtype=np.float32),
         (model_w, model_h),
     )
@@ -224,6 +227,9 @@ def test_loger_pinhole_k_round_trips_to_original_resolution():
     (base.py:803-805) recovers the true focal exactly on both axes.
     """
     orig_w, orig_h = 640, 480
+    # 255_000 is LoGeR's shipping pixel budget (LoGeRCreator.pixel_limit default,
+    # loger.py:196), inlined rather than imported so these tests stay independent of
+    # the creator — the camera model below is likewise passed as a literal.
     model_w, model_h = _compute_target_size(orig_w, orig_h, 255_000)
 
     # A square-pixel physical camera: one true focal, f = 1600 px at original resolution
@@ -241,6 +247,12 @@ def test_loger_pinhole_k_round_trips_to_original_resolution():
         (model_w, model_h),
         (orig_w, orig_h),
     )
+    # params[1] is the load-bearing assertion.  At 640x480 -> 574x434 scale_x > scale_y,
+    # so SIMPLE_PINHOLE's max(scale_x, scale_y) IS scale_x and params[0] round-trips
+    # under both camera models.  Keep params[0] (it pins that x round-trips at all) but
+    # do not delete params[1] believing params[0] covers the model choice — it does not.
+    # rel=1e-6: original_image_sizes is float32, so the scales carry ~2.4e-8 relative
+    # error (measured); 1e-8 flakes.
     assert params[0] == pytest.approx(f, rel=1e-6)
     assert params[1] == pytest.approx(f, rel=1e-6)
 

@@ -2067,18 +2067,106 @@ def test_loop_closure_with_loger_is_refused(tmp_path):
         )
 
 
-def test_creator_kwargs_reach_the_constructor():
-    # The per-backend config block is the only way to set model knobs from yaml.
-    creator = LoGeRCreator(max_points=1234, window_size=64, variant="LoGeR")
-    assert creator.max_points == 1234
-    assert creator.window_size == 64
-    assert creator.variant == "LoGeR"
+class _KwargsRecorded(Exception):
+    """Sentinel: the creator was constructed, so stop before any inference runs."""
+
+
+def test_creator_kwargs_reach_the_constructor(tmp_path, monkeypatch):
+    # The per-backend config block is the only way to set model knobs from yaml, so the
+    # thing under test is the _run_feedforward passthrough — NOT that LoGeRCreator accepts
+    # kwargs, which was already true before this task. Substituting a recording stub that
+    # raises as soon as it is constructed pins the plumbing without running inference.
+    from collab_splats.pointcloud import feedforward as ff_mod
+    from collab_splats.wrapper.reconstructor import _run_feedforward
+
+    seen = {}
+
+    class _Recorder:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+            raise _KwargsRecorded
+
+    monkeypatch.setattr(ff_mod, "LoGeRCreator", _Recorder)
+
+    with pytest.raises(_KwargsRecorded):
+        _run_feedforward(
+            backend="loger",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=False,
+            viz_enabled=False,
+            viz_port=8080,
+            max_points=1234,
+            creator_kwargs={"window_size": 64, "variant": "LoGeR"},
+        )
+
+    assert seen == {"max_points": 1234, "window_size": 64, "variant": "LoGeR"}
+
+
+def test_creator_kwargs_may_not_redeclare_max_points(tmp_path):
+    # max_points is already passed explicitly; a duplicate would surface as an opaque
+    # TypeError from the constructor rather than naming the config key at fault.
+    from collab_splats.wrapper.reconstructor import _run_feedforward
+
+    with pytest.raises(ValueError, match="max_points"):
+        _run_feedforward(
+            backend="loger",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=False,
+            viz_enabled=False,
+            viz_port=8080,
+            max_points=1000,
+            creator_kwargs={"max_points": 5},
+        )
 ```
+
+> **Plan correction (verified against the tree before dispatch).**
+>
+> **1. The drafted `test_creator_kwargs_reach_the_constructor` tested nothing this task adds.** It
+> constructed `LoGeRCreator(max_points=1234, window_size=64, variant="LoGeR")` directly — never
+> touching `_run_feedforward`, the new `creator_kwargs` parameter, the `pc_cfg.get(...)`
+> passthrough, or the duplicate-`max_points` rejection. It passes identically before and after
+> Task 10. That matters more than usual here because the commit message itself describes
+> `creator_kwargs` as a **generic passthrough for every backend** — scope beyond "add loger" —
+> which would have landed with zero coverage. Rewritten above to drive `_run_feedforward`, plus a
+> second test for the rejection branch.
+>
+> One thing to verify rather than assume in the recorder test: it patches `LoGeRCreator` on
+> `collab_splats.pointcloud.feedforward`, which works only because `_run_feedforward` imports the
+> name from that package *inside the function body* (`:175-179`), so the lookup happens at call
+> time. **Confirm the patch actually takes effect** — assert `seen` is non-empty rather than
+> trusting `pytest.raises` alone, since a patch that missed would surface as a real construction
+> attempt and could plausibly raise something else that the test then mistakes for success.
+>
+> **2. Line numbers had drifted; these are re-verified.** `_FEEDFORWARD_BACKENDS` really is at
+> `reconstructor.py:43` and `FrameStore` really is imported at `:23`, but: the deferred
+> `from collab_splats.pointcloud.feedforward import (...)` block is at **:175-179**, not "around
+> 165"; the creator-selection block is **:195-202** (`creator_map = {` at :196,
+> `creator = creator_map[backend](max_points=max_points)` at :202), so "replace line 195" is both
+> off by one and mis-scoped; and the call-site `max_points=pc_cfg["max_points"]` is at **:559**,
+> not 552. **Re-verify all of these yourself before editing** — another session is active in this
+> working tree and they may drift again.
+>
+> **3. `pc_cfg.get(...)` is safe**, checked: `pc_cfg = self.config["pointcloud"]`
+> (`reconstructor.py:523`) is a plain dict merged from yaml by `mergedeep`, not a strict-access
+> wrapper, so `.get` exists and returns the default.
+>
+> **4. `_run_feedforward`'s signature ends at `max_points: int` (:143-151)**, so appending
+> `creator_kwargs: dict | None = None` is safe — no non-defaulted parameter follows it.
+>
+> **5. Owed to Task 12, not here:** nothing writes a `pointcloud.loger:` block into `base.yaml`.
+> Until it exists, `pc_cfg.get("loger", {})` returns `{}` and LoGeR runs at its dataclass
+> defaults. That is correct behaviour, not a bug — but the config surface is not real until
+> Task 12 adds the block.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -k "backend or loop_closure or creator_kwargs" -v -p no:randomly`
-Expected: 2 failed (`loger` not in the set; no `ValueError` raised)
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -k "backend or loop_closure or creator_kwargs or max_points" -v -p no:randomly`
+Expected: 4 failed — `loger` not in `_FEEDFORWARD_BACKENDS`; no `ValueError` for LC; and both
+`creator_kwargs` tests failing on `_run_feedforward() got an unexpected keyword argument`.
+**Check what `-k` actually selects before trusting the count** — `backend` and `max_points` are
+broad substrings and may match unrelated tests already in the file.
 
 - [ ] **Step 3: Wire the Reconstructor**
 

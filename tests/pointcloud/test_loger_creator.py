@@ -356,11 +356,18 @@ class _FakeLoGeR(torch.nn.Module):
         poses[:, 0, 3] = np.arange(n, dtype=np.float32)
         self.camera_poses = torch.from_numpy(poses)[None]  # (1,N,4,4)
         self.seen_kwargs: dict = {}
+        self.seen_images_shape: tuple = ()
 
     def forward(self, images, **kwargs):
+        # Record the input rather than consuming it: the fixed synthetic scene is what every
+        # assertion below is written against, so the OUTPUTS must stay input-independent.
         self.seen_kwargs = kwargs
+        self.seen_images_shape = tuple(images.shape)
+        # `+ self._p` (a zeros Parameter) leaves the values untouched but makes this output
+        # require grad, so dropping torch.no_grad() in _forward turns .numpy() into a raise
+        # instead of a silent autograd-tracked run.
         return {
-            "local_points": self.local_points,
+            "local_points": self.local_points + self._p,
             "conf": self.conf,
             "camera_poses": self.camera_poses,
             "points": self.local_points,
@@ -418,6 +425,9 @@ def test_forward_fits_and_broadcasts_intrinsics():
     assert raw["intrinsics"].shape == (n, 3, 3)
     assert raw["intrinsics"][0, 0, 0] == pytest.approx(fx, rel=1e-3)
     assert raw["intrinsics"][0, 1, 1] == pytest.approx(fy, rel=1e-3)
+    # np.broadcast_to alone returns a read-only zero-stride view over one 3x3; the .copy()
+    # is what makes this N real matrices. Without it any downstream in-place write raises.
+    assert raw["intrinsics"].flags["OWNDATA"]
     # _raw_to_world_points hard-requires this key and returns (None, None) without it
     # (collab_splats/pointcloud/feedforward/base.py:335).
     np.testing.assert_allclose(raw["intrinsics_downsampled"], raw["intrinsics"])
@@ -452,16 +462,50 @@ def test_forward_extracts_depth_from_the_third_channel():
 
 
 def test_forward_passes_window_knobs_and_se3():
+    # All NINE kwargs are asserted, not just the four backed by dataclass fields: _forward's
+    # comment claims parity with build_forward_kwargs (github.com/PolyCam/LoGeR @ 5d7c1a7,
+    # run_loger.py:149-164) and nothing else enforces that claim — mutating any of the five
+    # literals otherwise survives the whole file. Every field-backed knob is set to a
+    # NON-default value (defaults are 32/3/0/1, se3 False) so a hardcode dies here too.
     n, h, w = 2, 56, 70
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
-    creator = _loaded_creator(se3=True, window_size=16, overlap_size=4)
+    creator = _loaded_creator(se3=True, window_size=16, overlap_size=4, reset_every=8, num_iterations=3)
 
     creator._forward(model, torch.rand(n, 3, h, w))
 
     assert model.seen_kwargs["window_size"] == 16
     assert model.seen_kwargs["overlap_size"] == 4
+    assert model.seen_kwargs["reset_every"] == 8
+    assert model.seen_kwargs["num_iterations"] == 3
     assert model.seen_kwargs["se3"] is True
     assert model.seen_kwargs["sim3"] is False
+    assert model.seen_kwargs["sim3_scale_mode"] == "median"
+    assert model.seen_kwargs["turn_off_ttt"] is False
+    assert model.seen_kwargs["turn_off_swa"] is False
+
+
+def test_forward_adds_the_batch_dimension_pi3_requires():
+    # _preprocess hands _forward an (N, 3, H, W) stack; Pi3 takes (B, N, 3, H, W). The fake
+    # ignores its input by design, so without recording the shape here, dropping the
+    # images[None] passes every other assertion in this file while the real model would read
+    # N as the batch size and 3 as the frame count.
+    n, h, w = 2, 56, 70
+    model = _FakeLoGeR(n, h, w, 80.0, 80.0)
+
+    _loaded_creator()._forward(model, torch.rand(n, 3, h, w))
+
+    assert len(model.seen_images_shape) == 5
+    assert model.seen_images_shape == (1, n, 3, h, w)
+
+
+def test_forward_runs_under_no_grad():
+    # _FakeLoGeR derives local_points from its _p Parameter, so autograd tracking would make
+    # the .numpy() calls raise. Assert plain ndarrays out so the reason is stated here rather
+    # than left as an unexplained RuntimeError in whichever test happens to run first.
+    n, h, w = 2, 56, 70
+    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+    assert isinstance(raw["local_points"], np.ndarray)
+    assert isinstance(raw["depth"], np.ndarray)
 
 
 def test_forward_rejects_rgb_outside_unit_range():
@@ -470,3 +514,17 @@ def test_forward_rejects_rgb_outside_unit_range():
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
     with pytest.raises(AssertionError, match=r"\[0, 1\]"):
         _loaded_creator()._forward(model, torch.rand(n, 3, h, w) * 255.0)
+
+
+@pytest.mark.parametrize("fill", [torch.zeros, torch.ones])
+def test_forward_accepts_the_rgb_range_boundaries(fill):
+    # The bounds are INCLUSIVE, and nothing else here says so: every other test feeds
+    # torch.rand, which never emits exactly 0.0 or 1.0, so tightening either `<=` to `<`
+    # survives. A pure-black pixel is common in real frames and `<` would reject the frame.
+    n, h, w = 2, 56, 70
+    model = _FakeLoGeR(n, h, w, 80.0, 80.0)
+
+    # The fake's outputs do not depend on its input, so both extremes run to completion.
+    raw = _loaded_creator()._forward(model, fill(n, 3, h, w))
+
+    assert raw["extrinsic"].shape == (n, 3, 4)

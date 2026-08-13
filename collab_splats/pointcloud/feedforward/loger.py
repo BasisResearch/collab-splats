@@ -377,16 +377,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
         camera_poses = preds["camera_poses"].squeeze(0).cpu().float().numpy()  # (N,4,4) c2w
         extrinsic = invert_poses(camera_poses)[:, :3, :].astype(np.float32)  # (N,3,4) w2c
 
-        # LoGeR predicts no intrinsics — solve one shared K and broadcast it per frame.
-        #
-        # The threshold is passed EXPLICITLY, not inherited. estimate_intrinsics_from_points
-        # defaults to 0.1, which is right for a calibrated head but wrong for this one:
-        # sigmoid over the measured logit range -4.257..-2.019 gives a confidence band of
-        # [0.0140, 0.1172], so 0.1 is its 92nd PERCENTILE. At the default only 7.9% of
-        # pixels survive (12,217/155,232 on the Task 1 run), and a slightly duller scene —
-        # all logits below -2.2, still inside the measured band — admits none at all and
-        # raises. LOGER_CONF_THRESHOLD sits near the bottom of the band so the gate rejects
-        # only what the model calls junk, and the weighted median does the rest of the work.
+        # LoGeR predicts no intrinsics — solve one shared K and broadcast it per frame. The
+        # threshold is passed EXPLICITLY rather than inheriting estimate_intrinsics_from_points'
+        # 0.1 default, which this uncalibrated conf head cannot clear; see LOGER_CONF_THRESHOLD.
         k = estimate_intrinsics_from_points(local_points, depth_conf, LOGER_CONF_THRESHOLD)
         intrinsic = np.broadcast_to(k, (local_points.shape[0], 3, 3)).copy()
 

@@ -6,10 +6,14 @@ camera intrinsics, so K is fitted from its camera-frame pointmap by
 ``collab_splats.geometry.transforms.estimate_intrinsics_from_points``.
 
 Upstream sources.  Two forks are involved and they are NOT interchangeable.  Neither
-ships a LICENSE, so no code here is copied from either — the maths is written from
-first principles and the forks are cited as prior art and as the behavioural reference
-we match.  Citations carry repo, commit, file, and line because third_party/ is
-gitignored and cannot be read from this repo alone:
+ships a LICENSE, so nothing here is taken from either as an artifact — the forks are
+cited as prior art and as the behavioural reference we match.  One honest caveat:
+``_compute_target_size`` is written to a behavioural spec, but a greedy decrement to
+an area budget has close to one natural form, so its arithmetic necessarily converges
+on upstream's line for line.  That convergence is disclosed rather than disguised, and
+it is measured by a parity test instead of asserted.  Citations carry repo, commit,
+file, and line because third_party/ is gitignored and cannot be read from this repo
+alone:
 
   * VENDORED — the tree we actually execute against
     (setup/loger.sh clones it into third_party/LoGeR/):
@@ -22,16 +26,13 @@ Provides:
   LOGER_VARIANTS       — the two shipped variants
   LOGER_CONF_THRESHOLD — confidence floor for the K fit, measured not inherited
   _compute_target_size — patch-aligned resize matching the vendored loader
-  LoGeRCreator         — feedforward creator using LoGeR depth + pose
+  LoGeRCreator         — feedforward creator using LoGeR depth + pose (lands in Task 8)
 """
 
 from __future__ import annotations
 
-import logging
 import math
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 ########################################################################
 ########## Constants ###################################################
@@ -83,17 +84,21 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
     ``LoGeRCreator.camera_model`` is ``"PINHOLE"``.  Cropping instead would discard
     field of view and reintroduce crop arithmetic in ``original_coords``.
     """
-    # Area-budget scale factor
-    scale = math.sqrt(pixel_limit / (orig_w * orig_h)) if orig_w * orig_h > 0 else 1.0
+    # Area-budget scale factor. Upstream guards this against zero area and falls through
+    # to a 14x14 image; we do not carry that over, because our only caller passes frame
+    # store dimensions, which are positive by construction. A zero here means the store
+    # is corrupt, and a ZeroDivisionError naming this line is a more useful failure than
+    # a silent 14x14 tensor that the model would happily consume.
+    scale = math.sqrt(pixel_limit / (orig_w * orig_h))
     w_target, h_target = orig_w * scale, orig_h * scale
 
     # Round each axis to a whole number of patches, then shrink whichever axis is
     # furthest above the target aspect until the budget is met.
-    k, m = round(w_target / _PATCH), round(h_target / _PATCH)
-    while (k * _PATCH) * (m * _PATCH) > pixel_limit:
-        if k / m > w_target / h_target:
-            k -= 1
+    patches_w, patches_h = round(w_target / _PATCH), round(h_target / _PATCH)
+    while (patches_w * _PATCH) * (patches_h * _PATCH) > pixel_limit:
+        if patches_w / patches_h > w_target / h_target:
+            patches_w -= 1
         else:
-            m -= 1
+            patches_h -= 1
 
-    return max(1, k) * _PATCH, max(1, m) * _PATCH
+    return max(1, patches_w) * _PATCH, max(1, patches_h) * _PATCH

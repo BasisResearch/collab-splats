@@ -480,14 +480,18 @@ def compute_multiview_depth_confidence(
             in_bounds = (px_norm[:, 0] >= -1) & (px_norm[:, 0] <= 1) & (px_norm[:, 1] >= -1) & (px_norm[:, 1] <= 1)
             valid_ij = src_valid & in_front & in_bounds  # (H*W,)
 
-            # Sample frame-j depth at projected locations using bilinear interpolation
+            # Sample frame-j depth at projected locations. NEAREST, matching upstream
+            # mapanything/utils/multiview_confidence.py: bilinear across a depth
+            # discontinuity returns a value lying on no surface (blending 2.0 and 8.0
+            # yields 4.4), manufacturing both false outliers and false inliers. Meta
+            # calibrated abs=0.02, rel=0.02 against nearest.
             # Reshape to (1, H, W, 2): px_norm is ordered as the flattened source meshgrid,
             # so grid[0, r, c, :] = the normalised target coord where source pixel (r, c) projects.
             grid = px_norm.reshape(1, H, W, 2)
             sampled_d = F.grid_sample(
                 depth_t[j].unsqueeze(0).unsqueeze(0),  # (1, 1, H, W)
                 grid,
-                mode="bilinear",
+                mode="nearest",
                 padding_mode="zeros",
                 align_corners=True,
             ).squeeze()  # (H, W)

@@ -85,6 +85,36 @@ def test_compute_mv_conf_output_shape():
         assert out.shape == (N, H, W), f"N={N}: expected {(N,H,W)}, got {out.shape}"
 
 
+def test_nearest_sampling_no_fabricated_depth():
+    """Bilinear across a depth step invents a depth on no surface; nearest cannot.
+
+    Two cameras separated along x view a scene that is 2.0 deep on the left half and
+    8.0 on the right. Sampled depth must be one of the two surface depths, never between.
+    """
+    N, H, W = 2, 16, 16
+    depth = np.empty((N, H, W), dtype=np.float32)
+    depth[:, :, : W // 2] = 2.0
+    depth[:, :, W // 2 :] = 8.0
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    extr[1, 0, 3] = 0.05  # small baseline so the step lands mid-pixel in view 1
+
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K, K]), extr, abs_thresh=0.0, rel_thresh=0.05, device="cpu"
+    )
+    # Every pixel here sits on a rigid surface seen by both cameras, so with nearest
+    # sampling every comparison is against a real surface depth and all of them agree.
+    # Under bilinear the column just left of the step samples 0.6*2.0 + 0.4*8.0 = 3.6 —
+    # a depth on no surface — and is scored an outlier. Judged pixels only: the last
+    # column projects off the right edge of view 1 and has no partner at all.
+    judged_px = out.valid_count[0] > 0
+    assert judged_px.sum() > 0
+    assert np.all(out.ratio[0][judged_px] == 1.0), (
+        f"{int((out.ratio[0][judged_px] < 1.0).sum())} judged px below 1.0 — "
+        f"sampler is fabricating depth"
+    )
+
+
 def test_returns_multiview_confidence_dataclass():
     """The function returns MultiviewConfidence with ratio, both counts, and judged."""
     N, H, W = 2, 4, 4

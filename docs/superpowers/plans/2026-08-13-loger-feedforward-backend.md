@@ -529,6 +529,14 @@ def estimate_intrinsics_from_points(
     # ~157 degree horizontal FOV and f = 10 * W is ~6 degrees.  Real cameras live well
     # inside that; values outside it are degenerate inversions from pixels near the
     # principal axis, where X or Y is small enough that u_c * Z / X explodes.
+    #
+    # These bounds are also what enforce _compute_weighted_median's finite precondition,
+    # and that is not incidental: the `valid` mask above cannot do it, because inf passes
+    # `z > 1e-3`.  A surviving inf would not poison the median visibly — argsort sorts it
+    # to the tail, so it holds weight ABOVE the half-mass point and biases the focal
+    # upward while staying finite enough for the np.isfinite check below to wave through.
+    # The upper bound rejects inf (`inf < w * 10` is False) and NaN fails both
+    # comparisons.  Do not loosen these to a bare `>` without adding an isfinite mask.
     ok_fx = (fx_vals > w * 0.1) & (fx_vals < w * 10)
     ok_fy = (fy_vals > h * 0.1) & (fy_vals < h * 10)
     fx = _compute_weighted_median(fx_vals[ok_fx], weights[ok_fx])

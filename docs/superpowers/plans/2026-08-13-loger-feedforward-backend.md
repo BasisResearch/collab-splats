@@ -1390,9 +1390,30 @@ The sigmoid-before-fit ordering lives here and is load-bearing.
 >
 > That makes **7** tests in this task, not 6.
 >
-> `_FakeLoGeR` calls `_synthetic_local_points`. **Confirm that helper already exists in the test
-> file from an earlier task before using it** — if it does not, it must be written here, and say
-> so in your report rather than inventing a different helper name.
+> `_FakeLoGeR` calls `_synthetic_local_points`. **That helper does NOT exist yet** — verified
+> against `tests/pointcloud/test_loger_creator.py` at commit `3ad4a4e`, whose only module-level
+> helpers are `_creator`, `stub_pi3`, and `_fake_frames`. Write it here, above `_FakeLoGeR`:
+>
+> ```python
+> def _synthetic_local_points(h: int, w: int, fx: float, fy: float, z: float = 2.0) -> np.ndarray:
+>     """Exact pinhole camera-frame pointmap, so a K fit over it must recover (fx, fy)."""
+>     # The principal point must match the one estimate_intrinsics_from_points assumes —
+>     # cx=(W-1)/2, cy=(H-1)/2 (collab_splats/geometry/transforms.py:159-162), NOT w/2.
+>     # Off-by-half-a-pixel here biases the recovered focal, and the assertions below would
+>     # then be pinning the bias rather than the fit.
+>     uu, vv = np.meshgrid(
+>         np.arange(w, dtype=np.float32) - (w - 1) / 2.0,
+>         np.arange(h, dtype=np.float32) - (h - 1) / 2.0,
+>     )
+>     # Forward pinhole: X = u_c * Z / fx, Y = v_c * Z / fy, channel 2 IS Z. Constant z is what
+>     # lets the depth test assert a single number independently of the focals.
+>     pts = np.stack([uu * z / fx, vv * z / fy, np.full_like(uu, z)], axis=-1)
+>     return pts[None].astype(np.float32)  # (1,H,W,3)
+> ```
+>
+> The `(h, w) = (56, 70)` used by every test below is deliberate: both `(w-1)/2` and `(h-1)/2`
+> land on `.5`, so no pixel has `x == 0` or `y == 0` and none is dropped by that function's
+> `abs(x) > 1e-6` validity gate. Both are also multiples of the patch size 14.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1600,8 +1621,9 @@ Three conversions the rest of the pipeline depends on:
 - sigmoid on conf. LoGeR's conf_head is a bare LinearPts3d with no activation
   (Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:172); upstream activates at the
   call site (PolyCam/LoGeR @ 5d7c1a7, run_loger.py:481). It runs before the K
-  fit, whose conf > 0.1 gate thresholds a probability — on raw logits it would
-  admit roughly half of all pixels instead of a 10% floor.
+  fit, whose gate thresholds a probability. The measured logits are entirely
+  negative (-4.257..-2.019), so skipping the sigmoid admits ZERO pixels and the
+  fit raises — it does not merely shift the gate.
 - invert_poses on camera_poses. LoGeR returns c2w, FeedforwardResult wants w2c.
 - depth straight off channel 2, since the model builds cat([xy * z, z]).
 

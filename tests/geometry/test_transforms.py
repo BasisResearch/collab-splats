@@ -248,3 +248,69 @@ def test_fit_accepts_trailing_axis_confidence():
     k3 = estimate_intrinsics_from_points(pts, np.ones((1, h, w), np.float32))
     np.testing.assert_allclose(k4, k3)
 
+
+def test_fit_weights_by_confidence_not_by_count():
+    # A plain np.median would follow the 60% majority; the weighted median follows the
+    # mass. Every other estimator test uses uniform confidence, so swapping np.median in
+    # survives all of them.
+    h, w = 112, 154
+    good = _synthetic_local_points(h, w, 400.0, 400.0)
+    bad = _synthetic_local_points(h, w, 800.0, 800.0)
+
+    # 60% of pixels carry the wrong focal, but only marginal confidence.
+    rng = np.random.default_rng(3)
+    is_bad = rng.random((1, h, w)) < 0.60
+    pts = np.where(is_bad[..., None], bad, good)
+    conf = np.where(is_bad, np.float32(0.11), np.float32(1.0))
+
+    k = estimate_intrinsics_from_points(pts, conf)
+
+    assert k[0, 0] == pytest.approx(400.0, rel=1e-2)
+    assert k[1, 1] == pytest.approx(400.0, rel=1e-2)
+
+
+def test_conf_threshold_gates_below_the_floor():
+    # The gate is a hard floor, separate from the weighting: sub-floor pixels must not
+    # contribute at all. Deleting `conf > conf_threshold` from the validity mask leaves
+    # every other test green, because the one test using conf=0.0 is already caught by
+    # the weighted median's own zero-mass guard.
+    h, w = 56, 70
+    pts = _synthetic_local_points(h, w, 80.0, 80.0)
+
+    # Uniformly just under the floor: nothing survives, so it must fail loudly.
+    with pytest.raises(RuntimeError, match="intrinsics fit failed"):
+        estimate_intrinsics_from_points(pts, np.full((1, h, w), 0.09, np.float32))
+
+    # Just over it: the same pointmap fits cleanly.
+    k = estimate_intrinsics_from_points(pts, np.full((1, h, w), 0.11, np.float32))
+    assert k[0, 0] == pytest.approx(80.0, rel=1e-3)
+
+
+def test_focal_bounds_reject_both_infinities():
+    # Non-finite focals pass the validity mask — `z > 1e-3` and `|x| > 1e-6` constrain
+    # the point, not the quotient — so ONLY the FOV bounds stop them. Both bounds are
+    # load-bearing, and this pins one each: fx is corrupted to -inf (caught by the lower
+    # bound) and fy to +inf (caught by the upper).
+    #
+    # The corrupted fraction has to exceed half. Every clean pixel here carries exactly
+    # fx=400, so a minority of leaked infinities would shift the half-mass index inside a
+    # constant array and change nothing — the mutation is only observable when the
+    # infinity is itself returned and trips the isfinite check.
+    h, w = 112, 154
+    pts = _synthetic_local_points(h, w, 400.0, 400.0)
+    conf = np.ones((1, h, w), dtype=np.float32)
+
+    # Give X the sign opposite to its centred column so u_c * Z / X is negative, then
+    # overflow it: |uu| * 1e38 already exceeds float32 range before the tiny divisor.
+    uu = np.broadcast_to(np.arange(w, dtype=np.float32) - (w - 1) / 2.0, (1, h, w))
+    rng = np.random.default_rng(11)
+    hit = rng.random((1, h, w)) < 0.60
+    pts[..., 0] = np.where(hit, -np.sign(uu) * 2e-6, pts[..., 0])
+    pts[..., 2] = np.where(hit, np.float32(1e38), pts[..., 2])
+
+    # Y is untouched, so inflating Z drives fy = v_c * Z / Y to +inf on the same pixels.
+    k = estimate_intrinsics_from_points(pts, conf)
+
+    assert k[0, 0] == pytest.approx(400.0, rel=1e-2)
+    assert k[1, 1] == pytest.approx(400.0, rel=1e-2)
+

@@ -130,9 +130,17 @@ def estimate_intrinsics_from_points(
             (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/models/pi3.py:772-775``) —
             which is the reason this is an approximation.
         conf: (N, H, W) or (N, H, W, 1) per-pixel confidence, **already activated into
-            [0, 1]**.  ``conf_threshold`` is a probability floor; passing raw logits
-            would admit roughly half of all pixels instead.
-        conf_threshold: minimum confidence for a pixel to contribute.
+            [0, 1]**.  ``conf_threshold`` compares against a probability, so passing raw
+            logits does not merely shift the gate — a head whose logits are all negative
+            (LoGeR's measured range is -4.257..-2.019) admits *no* pixels at all and the
+            fit raises.
+        conf_threshold: minimum confidence for a pixel to contribute.  0.1 is a
+            reasonable floor for a calibrated head and is deliberately NOT tuned to any
+            one backend, but an uncalibrated head can put its whole band underneath it:
+            LoGeR's measured post-sigmoid range is [0.0140, 0.1172], where 0.1 is the
+            92nd percentile and keeps only 7.9% of pixels.  Callers wrapping an
+            uncalibrated head should measure their own band and pass an explicit value
+            rather than inherit this default.
 
     Returns:
         (3, 3) float32 K, shared across frames, centre-principal by construction.
@@ -187,8 +195,9 @@ def estimate_intrinsics_from_points(
     if fx is None or fy is None or not np.isfinite(fx) or not np.isfinite(fy) or fx <= 0 or fy <= 0:
         raise RuntimeError(
             f"Pinhole intrinsics fit failed over {n} frames: "
-            f"{int(valid.sum())}/{valid.size} pixels passed the validity mask, "
-            f"{int(ok_fx.sum())} survived the fx bounds and {int(ok_fy.sum())} the fy bounds "
+            f"{int(valid.sum())}/{valid.size} pixels passed the validity mask "
+            f"({int((conf > conf_threshold).sum())} cleared conf_threshold={conf_threshold}), "
+            f"of which {int(ok_fx.sum())} survived the fx bounds and {int(ok_fy.sum())} the fy bounds "
             f"(fx={fx}, fy={fy}). No fallback focal is applied by design."
         )
 

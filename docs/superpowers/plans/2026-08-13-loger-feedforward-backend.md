@@ -1080,7 +1080,7 @@ Expected: **15 passed, 6 xfailed** (as shipped — the review round added a sixt
 
 Two corrections to what this plan originally said here. The old figure of "24 passed" was simply
 wrong arithmetic. And the five tests added by this task **cannot pass yet**: `LoGeRCreator`
-subclasses `BasePointcloudCreator`, an `abc.ABC` (`collab_splats/pointcloud/base.py:4`), and
+subclasses `BasePointcloudCreator`, an `abc.ABC` (`collab_splats/pointcloud/base.py:101`), and
 four abstract methods remain unimplemented until Task 8, so `LoGeRCreator()` raises
 `TypeError: Can't instantiate abstract class`. Do NOT stub those methods to get past it — that
 would pre-empt Tasks 6-8. Mark the five with the module-level
@@ -1143,7 +1143,7 @@ only a model: key, so the build_forward_kwargs fallbacks at PolyCam/LoGeR @
 
 > **Step 0 of this task replaces the xfail scheme with a partial subclass.** Task 5 shipped
 > its tests behind `_NEEDS_FULL_CREATOR` because `LoGeRCreator` subclasses an `abc.ABC`
-> (`collab_splats/pointcloud/base.py:4`) and cannot be instantiated until the last abstract
+> (`collab_splats/pointcloud/base.py:101`) and cannot be instantiated until the last abstract
 > method lands. Extending that marker through Tasks 6 and 7 would leave **16 tests carrying no
 > signal at all** — `_preprocess` and `_forward` would sit unverified under three commits of
 > later work, and a bug in either would surface at Task 8 with the hardest possible debugging
@@ -1162,7 +1162,7 @@ only a model: key, so the build_forward_kwargs fallbacks at PolyCam/LoGeR @
 > ```python
 > def _creator(**kwargs) -> LoGeRCreator:
 >     """LoGeRCreator with only the not-yet-implemented abstract methods stubbed out."""
->     # BasePointcloudCreator is an abc.ABC (collab_splats/pointcloud/base.py:4). Stubbing
+>     # BasePointcloudCreator is an abc.ABC (collab_splats/pointcloud/base.py:101). Stubbing
 >     # ONLY the unwritten methods keeps every test below pointed at real code as it lands,
 >     # rather than deferring all signal to the task that happens to close the ABC.
 >     # Each task deletes the stub it just implemented. Task 8 deletes this helper entirely.
@@ -1611,7 +1611,7 @@ _raw_to_world_points hard-requires that key."
 - Modify: `tests/pointcloud/test_loger_creator.py`
 
 > **Task 8 closes the ABC.** `LoGeRCreator` subclasses `BasePointcloudCreator`, an `abc.ABC`
-> (`collab_splats/pointcloud/base.py:4`), so it is **uninstantiable** until the last abstract
+> (`collab_splats/pointcloud/base.py:101`), so it is **uninstantiable** until the last abstract
 > methods land here. Tasks 6-7 ran their tests through `_creator`, a helper returning a subclass
 > that stubs whichever abstract methods were not yet written.
 >
@@ -1639,7 +1639,7 @@ _raw_to_world_points hard-requires that key."
 >
 > ```python
 > def test_creator_is_instantiable():
->     # The five abstract methods of BasePointcloudCreator (collab_splats/pointcloud/base.py:4)
+>     # The five abstract methods of BasePointcloudCreator (collab_splats/pointcloud/base.py:101)
 >     # are all concrete as of this task. Tasks 6-7 needed a stub subclass to run at all; this
 >     # asserts that crutch is genuinely gone rather than merely deleted from the call sites.
 >     assert isinstance(LoGeRCreator(), LoGeRCreator)
@@ -2203,6 +2203,27 @@ upstream's _snap_square_pixels is deliberately not applied."
 - Modify: `configs/base.yaml`
 - Modify: `configs/README.md`
 - Modify: `docs/source/api/pointcloud.rst`
+- Modify: `docs/superpowers/specs/2026-08-13-loger-feedforward-backend-design.md`
+
+> **Step 0: the owed citation sweep.** This task already touches docs, so the deferred citation
+> work lands here. Three groups, all in the spec:
+>
+> 1. **~7 bare `run_loger.py:NNN` references in the prose.** `run_loger.py` exists ONLY in
+>    `github.com/PolyCam/LoGeR @ 5d7c1a7` — it is not in the vendored tree — so they are not
+>    fork-ambiguous, but they still fail the repo+commit+file+line contract. Add the pin.
+> 2. **~9 `feedforward/base.py:NNN` references** (spec lines 284-287, 293, 296, 439, 451, 583).
+>    These are first-party, so no repo pin is needed, but **every line number must be re-verified
+>    against the current file** — this is `collab_splats/pointcloud/feedforward/base.py`, a
+>    different file from `collab_splats/pointcloud/base.py`, and the two have been conflated
+>    once already on this task.
+> 3. **Anything citing `collab_splats/pointcloud/base.py`.** The class `BasePointcloudCreator`
+>    is at **line 101**; line 4 is the `from abc import ABC, abstractmethod` line. Five instances
+>    of the wrong `:4` were already corrected in this plan and one in the test file — check
+>    nothing else carries it.
+>
+> **Verify, do not remember.** Wrong line ranges have been caught three separate times on this
+> task (`basic.py:51-63` → `:55-61`, `base.py:4` → `:101`, and a reviewer's own off-by-two on
+> that same line). Open each file and read the line before writing the citation.
 
 - [ ] **Step 1: Update `configs/base.yaml`**
 

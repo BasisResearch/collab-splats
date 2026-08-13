@@ -3041,6 +3041,30 @@ of the two paths is wrong and that is a finding. Do not report this run as evide
 preserves resize anisotropy — Task 11's unit test is what proves that, on a deliberately anisotropic
 `640x480 → 574x434` input.
 
+> **Plan correction — Step 4 states a transposed resolution as "measured". The conclusion
+> survives; the numbers in it do not.**
+>
+> Measured with `ffprobe -select_streams v:0 -show_entries stream=width,height,nb_frames,r_frame_rate`:
+> `data/tutorial/tutorial_example-video.mp4` is **1080x1920 portrait**, 2388 frames, 24000/1001 fps —
+> not `1920x1080`. `_compute_target_size` therefore returns **378x672**, not `672x378`. This is the
+> same `(w, h)`-vs-`(h, w)` axis-order trap that Task 13's correction (b) already caught once on this
+> feature; `_compute_target_size` returns `(w, h)`.
+>
+> **The substantive claim is unaffected:** both orientations scale by exactly `0.350000` on both axes
+> (`378/1080 = 672/1920 = 0.35`, `378*672 = 254016 <= 255_000`), so the run still cannot exercise
+> resize anisotropy, and Step 4's warning not to read it as evidence for PINHOLE still stands.
+>
+> **What to change when running it:** expect `cam.width, cam.height` to print `1080 1920`. Do not
+> treat that as a broken export — the drafted text primes you to expect the transpose, and this is
+> exactly the sort of mismatch that gets "fixed" in the wrong place.
+>
+> **Related measurement, recorded here because it changes what Task 13's number means:** the only real
+> footage in this repo (`data/tutorial/`, and `data/outputs/frames.zarr` which shares the portrait
+> geometry) is *exactly isotropic* under this mapping. The synthetic `640x480 -> 574x434` fixture used
+> by Task 13 and Task 11 is **anisotropic** (`sx = 0.896875`, `sy = 0.904167`) and is the only thing
+> in the suite that puts the two axes on different scale factors. So the synthetic fixture is not a
+> weaker substitute for real data here — for the anisotropy question it is the *stronger* one.
+
 - [ ] **Step 5: Sweep the frame ceiling**
 
 The binding constraint is probably `FeedforwardResult`'s dense per-frame fields (~8 MB/frame), not LoGeR's windowing. Measure rather than guess.

@@ -80,9 +80,8 @@ The failure modes are inverted, which matters for how we guard each:
   plausibly-but-globally-wrong if the pointmap is scaled oddly or the confidence mask is
   unrepresentative. That is a *silent* failure, so it needs a numeric check, not a range guard.
 
-Note it is **not** square-pixel by construction. `_snap_square_pixels(fx, fy, tol=0.02)`
-averages the two only when they already agree within 2%; otherwise they stay distinct. That
-matters — see the aspect-ratio discussion under `_preprocess`.
+Note it is **not** square-pixel: `fx` and `fy` are estimated independently and kept that way.
+That matters — see the aspect-ratio discussion under `_preprocess`.
 
 ### What LoGeR's pointmap actually is
 
@@ -114,14 +113,20 @@ vendor — so the attribution has to be exact. Source: PolyCam `LoGeR` @ `5d7c1a
 
 | Upstream | Line | Fate |
 |---|---|---|
-| `estimate_focal_lengths(local_points, conf, shared=True)` | 206 | merged; `shared=False` branch dropped |
-| `_focal_from_frame(local_pts, conf_frame, uu, vv, H, W)` | 180 | merged; the per-pixel inversion and all three guards preserved |
-| `_weighted_median(values, w, max_n=50000)` | 167 | merged verbatim |
-| `_snap_square_pixels(fx, fy, tol=0.02)` | 195 | merged verbatim |
+| `estimate_focal_lengths(local_points, conf, shared=True)` | 206 | merged; `shared=False` branch and the `1.2·max(W,H)` fallback dropped |
+| `_focal_from_frame(local_pts, conf_frame, uu, vv, H, W)` | 180 | **inlined** — single call site once `shared=False` is gone; the per-pixel inversion and all three guards preserved |
+| `_weighted_median(values, w, max_n=50000)` | 167 | kept as the one helper, verbatim |
+| `_snap_square_pixels(fx, fy, tol=0.02)` | 195 | **not ported** — no consumer observes it, see below |
 
-`load_images` (L117, `pixel_limit=255000`) and `build_forward_kwargs` (L149) are **read for
-their behaviour, not ported** — the resize rule is reimplemented against `frames_as_pil_source`
-because we never touch disk, and the forward kwargs come from the vendored yaml directly.
+`build_forward_kwargs` (L149) is **read for its behaviour, not ported** — the forward kwargs come
+from the vendored yaml directly.
+
+**The resize rule is cited to the vendored tree, not to PolyCam.** `run_loger.py:117
+load_images` implements it, but so does `loger/utils/basic.py:51-63` inside the package we
+actually ship (`load_images_as_tensor`), with identical arithmetic:
+`scale = sqrt(PIXEL_LIMIT / (W*H))`, independent `round(·/14)` per axis, then the shrink loop.
+Porting ~10 lines out of a file we vendor is better provenance than copying the same lines from
+a fork we discard.
 
 **Neither repository ships a LICENSE file** — checked both clones. So the ported helper carries a
 docstring naming the source repo, commit, file, and the four functions, and `third_party/README.md`
@@ -144,22 +149,40 @@ Three behaviours to preserve, all in `_focal_from_frame`:
 - `_weighted_median` subsamples above 50 000 samples with a seeded RNG (`default_rng(42)`), so
   the result is deterministic
 
-**`fx` and `fy` are estimated independently** and merged by `_snap_square_pixels` only when
-within 2% — load-bearing, see `_preprocess`.
+**`fx` and `fy` are estimated independently and stay independent.** Load-bearing — see
+`_preprocess`.
 
 Shared across frames is correct for our inputs: `frames.zarr` comes from a single video, one
 physical camera, and the config exposes no zoom.
 
-**Two branches of the original are dropped**, both because they are dead or wrong for us:
+#### What we drop, and what we keep
 
-1. `estimate_focal_lengths(shared=False)` — the per-frame path. We always want shared, and a
-   parameter that is always its default should not exist.
-2. The `max(W, H) * 1.2` fallback on fit failure (the same heuristic as
+The four upstream functions total ~78 lines. Three cuts bring it to **two functions, ~35 lines**:
+
+1. **`estimate_focal_lengths(shared=False)`** — the per-frame branch. We always want shared, and
+   a parameter that is always its default should not exist.
+2. **The `max(W, H) * 1.2` fallback** on fit failure (the same heuristic as
    `localization/localizer.py:24 seed_intrinsics`). We raise instead: a wrong-but-plausible K
    against real depth is precisely the `be24be2` mesh-intrinsics regression.
+3. **`_snap_square_pixels` entirely** (10 lines). It averages `fx` and `fy` when they agree
+   within 2%. Trace what consumes them: `camera_model="PINHOLE"` stores both
+   (`base.py:552`), `unproject_and_filter_points` uses both, and
+   `_rescale_reconstruction_to_original_dimensions` scales each by its own factor. **No consumer
+   can observe whether they were snapped** — it is a sub-1% no-op that exists to prettify
+   upstream's COLMAP export. Deleting it also makes the anisotropy argument categorical rather
+   than conditional: `fx` and `fy` are *never* merged.
 
-Roughly 40 lines after those cuts. Justified because there is no alternative — the model emits
-no K.
+With `shared=False` gone, **`_focal_from_frame` is called exactly once**, so it is inlined — a
+six-parameter helper with a single call site is a function boundary earning nothing.
+
+**`_weighted_median` stays, subsampling included**, and that is a considered keep rather than an
+oversight. The pooled sample count is `H*W*N`: at the 255k pixel budget and 300 frames that is
+76.5M values, and a weighted median needs a full `argsort` — roughly 600 MB of workspace and
+seconds of wall-clock. At the 1000-frame sequences this backend exists to enable it is 255M.
+The 50k cap is a memory guard at exactly the frame counts LoGeR is for, and the seeded RNG is
+what keeps it reproducible.
+
+Justified because there is no alternative — the model emits no K.
 
 ### When to choose LoGeR over the alternatives
 
@@ -174,7 +197,7 @@ set-based and has no ordering requirement.
 
 ## Footprint
 
-**3 new files, 9 modified**, zero new pip deps.
+**3 new files, 8 modified**, zero new pip deps.
 
 The vendored tree `third_party/LoGeR/` (upstream @ `7685b7a`) is itself gitignored
 (`.gitignore:7`), but it does not arrive by hand. `third_party/README.md` states the policy:
@@ -194,7 +217,12 @@ in a doc.
 | mod | `configs/base.yaml` | backend comment + `pointcloud.loger:` kwargs block (see below) |
 | mod | `configs/README.md` | backend row, intrinsics note, when-to-choose, `max_frames` guidance |
 | mod | `docs/source/api/pointcloud.rst` | one `automodule` stanza for `feedforward.loger` |
-| mod | `docs/source/conf.py` | `"loger"` added to `autodoc_mock_imports` (line 37) — the vendored package is not importable on a docs build |
+
+**No `docs/source/conf.py` change.** An earlier draft added `"loger"` to `autodoc_mock_imports`.
+Unnecessary: the vendored import happens *inside* `_load_model` behind the `sys.path` insert, so
+autodoc never imports `loger` at all. The list needs `vggt` and `mapanything` precisely because
+`vggtx.py` and `mapanything.py` import them at module level. Following SPARK's deferred-import
+pattern buys the docs build for free.
 
 ### Reused unchanged — no new code
 
@@ -208,18 +236,32 @@ re-implement one:
 | `compute_multiview_depth_confidence` | `feedforward/base.py:378` | |
 | `build_pycolmap_reconstruction` | `feedforward/base.py:498` | invoked by the base template, not by us |
 | `_rescale_reconstruction_to_original_dimensions` | `feedforward/base.py:580` | |
-| `frames_as_pil_source` | `feedforward/base.py:679` | |
 | `invert_poses` | `geometry/transforms.py:39` | |
 | `FeedforwardResult` + its zarr IO | `feedforward/base.py` | |
 
-**Not reused, deliberately:** `_decode_verify_geometry` (`base.py:290`). VGGT-Omega imports it,
-so copying Omega's import block wholesale would pull it in — but it exists only to serve
-`_verify_loop_candidate`, and LoGeR refuses loop closure. Listed here so it is not added by
-pattern-matching.
+**Not reused, deliberately — two:**
+
+- `_decode_verify_geometry` (`base.py:290`). VGGT-Omega imports it, so copying Omega's import
+  block wholesale would pull it in — but it exists only to serve `_verify_loop_candidate`, and
+  LoGeR refuses loop closure.
+- **`frames_as_pil_source` (`base.py:679`)**, which an earlier draft listed as reuse. It does not
+  fit, and the reason is worth stating so nobody re-adds it. That helper monkeypatches the
+  process-global `PIL.Image.open` in order to drive a **path-based** upstream loader in memory —
+  that is why VGGT-X, Omega, and MapAnything need it. LoGeR's loader,
+  `load_images_as_tensor` (`loger/utils/basic.py:11`), takes a **directory or an .mp4** and
+  enumerates it with `os.listdir`; patching `Image.open` cannot drive it, and running it as
+  written would require real files on disk, breaking the rule that the frame store is the sole
+  IO path.
+
+  So `_preprocess` resizes the decoded frames with PIL directly: compute the target size, then
+  `PIL.Image.fromarray(f).resize(..., LANCZOS)` per frame, stack, scale to `[0, 1]`. About six
+  lines, and it drops a global-state monkeypatch and its single-threaded caveat rather than
+  adding them. This is a simplification, not a compromise.
 
 ### Genuinely new, and why
 
-1. `_estimate_shared_focal(local_points, conf)` — justified above. ~40 lines.
+1. `_estimate_shared_focal(local_points, conf)` plus `_weighted_median` — justified above.
+   Two functions, ~35 lines, down from the four functions / ~78 lines upstream.
 2. `LoGeRCreator` itself.
 
 `loger.py` follows the sibling modules' shape, which is a house style rather than an accident:
@@ -239,6 +281,19 @@ which exists because Omega's crop arithmetic is genuinely non-trivial.)
 - `extract_intermediate_features` raises `NotImplementedError` naming LoGeR's native windowed
   TTT memory as the reason.
 - No loop closure in the first cut.
+
+### One reduction considered and rejected
+
+`_reproject` is byte-identical between `vggtx.py` and `vggt_omega.py` — both are a docstring
+plus one `unproject_and_filter_points` call — and LoGeR's would be a third copy. Hoisting a
+concrete default onto `BaseFeedforwardCreator` would delete ~30 lines across the tree, since
+only MapAnything genuinely differs (it consumes `list[dict]` camera-frame points and would keep
+its override).
+
+**Not doing it here.** It converts an abstract method to concrete on the shared base and edits
+two shipping backends' BA path, for zero LoGeR benefit — regression risk in exchange for line
+count, on a spec whose whole premise is minimal additions. Worth its own small refactor later;
+recorded so the duplication is a known choice rather than an oversight.
 
 ### Pre-existing gaps, noted not fixed
 
@@ -303,10 +358,10 @@ defaults, which are wrong for both variants (`ttt_inter_multi` is 4 in both conf
 ### `_preprocess(frames, frame_idxs) -> (views, image_paths, original_coords)`
 
 Synthetic `frame_{idx:06d}` labels, the VGGT-Omega convention — the frame store is the only IO
-path and there are no real filenames. Target size from LoGeR's own rule:
+path and there are no real filenames. Target size from LoGeR's own rule (`loger/utils/basic.py:51-63`):
 `scale = sqrt(pixel_limit / (W * H))`, round each axis to a multiple of 14, shrink the longer
-axis until under budget. PIL LANCZOS → `(N, 3, H, W)` float in `[0, 1]`, fed through
-`frames_as_pil_source` so nothing touches disk.
+axis until under budget. Then PIL LANCZOS per frame → `(N, 3, H, W)` float in `[0, 1]`. No
+monkeypatch — see the `frames_as_pil_source` note above.
 
 LoGeR derives the target size from frame 0 alone. Rather than inherit that silent assumption we
 assert frame-size uniformity and raise otherwise.
@@ -324,9 +379,10 @@ This does not distort the pointcloud, but only because **three** separate places
 and `fy` distinct. Every one is a place where an isotropic "simplification" would bake the error
 in:
 
-1. `_estimate_shared_focal` fits `fx` and `fy` **separately**, so the anisotropy is absorbed into
-   the K rather than corrupting the geometry. `_snap_square_pixels` merges them only when they
-   already agree within 2%.
+1. `_estimate_shared_focal` fits `fx` and `fy` **separately** and never merges them, so the
+   anisotropy is absorbed into the K rather than corrupting the geometry. (Upstream's
+   `_snap_square_pixels` would have merged them under 2%; it is not ported — see the fit
+   section.)
 2. `_rescale_reconstruction_to_original_dimensions` scales with separate `scale_x` and `scale_y`,
    so the original-resolution K recovers the true aspect.
 3. **`LoGeRCreator.camera_model` must be `"PINHOLE"`.** This one is easy to miss and would be
@@ -563,41 +619,42 @@ weights, no GPU, no network.
 
 | Test | Goes in | Why |
 |---|---|---|
-| 5 (`original_coords` → original-res K) | `tests/pointcloud/test_feedforward_intrinsics.py` | that file already owns "result.intrinsics at model resolution" across backends, including `_compute_vggtx_crop_coords` coverage |
-| 9 (registry) | `tests/pointcloud/test_registry.py` | already holds one `test_get_creator_<backend>` per backend |
+| 4 (`original_coords` → original-res K) | `tests/pointcloud/test_feedforward_intrinsics.py` | that file already owns "result.intrinsics at model resolution" across backends, including `_compute_vggtx_crop_coords` coverage |
+| 8 (registry) | `tests/pointcloud/test_registry.py` | already holds one `test_get_creator_<backend>` per backend |
 | vendored tree absent → guarded import | `tests/pointcloud/feedforward/test_spark_load_guard.py` pattern, as a new sibling | exact precedent exists |
 
 The rest go in `tests/pointcloud/test_loger_creator.py`.
 
-One caveat on test 9: `test_registry.py` covers `colmap`, `hloc`, `mapanything`, `vggtx` and
+One caveat on test 8: `test_registry.py` covers `colmap`, `hloc`, `mapanything`, `vggtx` and
 deliberately omits `vggt_omega`/`vggt_spark`, because optional vendored backends are absent in a
 bare checkout. So the `loger` case needs a `skipif` on availability, or it follows the same
 omission. Prefer the guarded test — it is the only thing that proves the registry wiring.
 
 **Unit, against a synthetic pinhole scene:**
 
-1. **Focal fit recovers a known focal.** Build `local_points` from a synthetic depth map and a
-   known `f`; assert `_estimate_shared_focal` returns it within tolerance. Ground truth is exact
-   here because no model is involved.
-2. **Anisotropic focal is recovered, not flattened.** Build a scene with `fx/fy = 1.10` — well
-   past `_snap_square_pixels`' 2% tolerance — and assert both come back distinct. This is the
-   test that protects the aspect-ratio argument under `_preprocess`; a "simplification" to
-   `fx == fy` must fail loudly here.
-3. **The median is robust.** Corrupt 30% of points *with high confidence* and assert the
+1. **Focal fit recovers a known focal**, `@pytest.mark.parametrize`d over `(fx, fy)` — one
+   isotropic case and one at `fx/fy = 1.10`. Build `local_points` from a synthetic depth map and
+   the known focals; assert `_estimate_shared_focal` returns both within tolerance and, in the
+   anisotropic case, that they stay distinct. Ground truth is exact because no model is
+   involved. One parametrized test rather than two near-duplicate ones, and the anisotropic row
+   is what protects the aspect-ratio argument under `_preprocess`: any "simplification" to
+   `fx == fy` fails here.
+2. **The median is robust.** Corrupt 30% of points *with high confidence* and assert the
    estimate still holds. A weighted median survives this; a least-squares fit would not. Written
    against median semantics deliberately — the estimator is a weighted median, not a fit.
-4. **Degenerate input raises** rather than falling back: empty mask, NaN, negative depth.
-5. **`original_coords`** is `[0,0,w,h,w,h]` per frame and round-trips through
+3. **Degenerate input raises** rather than falling back: empty mask, NaN, negative depth.
+4. **`original_coords`** is `[0,0,w,h,w,h]` per frame and round-trips through
    `_rescale_reconstruction_to_original_dimensions` to original-resolution K — with `fx != fy`
    preserved, since that function must scale x and y separately.
-6. **c2w → w2c inversion.** Fake `camera_poses`; assert `result.extrinsics` is world-to-camera,
+5. **c2w → w2c inversion.** Fake `camera_poses`; assert `result.extrinsics` is world-to-camera,
    not the raw model output. The single easiest thing to get backwards.
-7. **`FeedforwardResult` field contract** — shapes and dtypes, `depth` is (N,H,W) not
-   (N,H,W,1), colors uint8.
-8. **Refusals**: `extract_intermediate_features` raises `NotImplementedError`; LC plus `loger`
+6. **`FeedforwardResult` field contract** — shapes and dtypes, `depth` is (N,H,W) not
+   (N,H,W,1), colors uint8. Includes `camera_model == "PINHOLE"`, so the
+   `(fx + fy) / 2` collapse under `SIMPLE_PINHOLE` cannot creep back in.
+7. **Refusals**: `extract_intermediate_features` raises `NotImplementedError`; LC plus `loger`
    raises `ValueError`; a `model:` key that is neither `se3` nor a `Pi3.__init__` parameter
    raises.
-9. **Registry**: `get_creator("loger")` returns `LoGeRCreator` when the vendored tree is
+8. **Registry**: `get_creator("loger")` returns `LoGeRCreator` when the vendored tree is
    present. (Note there is no `list_creators()` — `pointcloud/__init__.py` exposes only
    `get_creator` and `make_creator`.)
 
@@ -633,6 +690,6 @@ until it passes.
    its own design covering all four backends.
 7. **Neither LoGeR repository ships a LICENSE file.** Vendoring an unlicensed tree into
    `third_party/` matches what we already do for other backends, but this design additionally
-   *copies* ~40 lines out of PolyCam's `run_loger.py`. Flagged for the user's call before the
+   *copies* ~35 lines out of PolyCam's `run_loger.py`. Flagged for the user's call before the
    port lands; the fallback is to reimplement the estimator from the pinhole identity, which is
    a handful of lines of standard geometry, and cite the original only as prior art.

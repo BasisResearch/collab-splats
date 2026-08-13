@@ -32,6 +32,19 @@
 | mod | `tests/pointcloud/test_registry.py` | `test_get_creator_loger` (skipif) |
 | mod | `tests/pointcloud/test_feedforward_intrinsics.py` | `original_coords` → original-res K round-trip |
 
+### Attribution convention (applies to every task)
+
+**Every line of ported or adapted code carries a citation naming the repository, the pinned commit, the file, and the line range.** A bare filename is not enough — `run_loger.py:167` is ambiguous between the two forks, and `pi3.py:172` is a line number in a tree that is gitignored and therefore unreadable from the repo alone.
+
+Two upstreams are involved and they are not interchangeable:
+
+| Short form used below | Means |
+|---|---|
+| **PolyCam @ 5d7c1a7** | `github.com/PolyCam/LoGeR` @ `5d7c1a7` — the fork we port the intrinsics estimator *from*. Not vendored. |
+| **Junyi42 @ 7685b7a** | `github.com/Junyi42/LoGeR` @ `7685b7a` — the tree we *vendor* into `third_party/LoGeR/` (Task 1). |
+
+Write the long form in the code, not the short form. Every module-level helper docstring and every non-obvious inline comment that reflects upstream behaviour states which of the two it came from. When a comment cites vendored-tree behaviour we depend on but do not copy (the conf head emitting logits, `se3` being popped inside `forward`), that is still a citation and still names repo, commit, file, and line — a reader cannot check it otherwise, because `third_party/` is gitignored.
+
 ### One deliberate deviation from the spec
 
 The spec's "Genuinely new" section names **two** new functions. This plan adds a **third**, `_loger_target_size`. Justification, since the spec requires one for every addition: it is a ~10-line ported algorithm with a `while` loop and a citation (`loger/utils/basic.py:51-63`), it is the sole source of the resize anisotropy that three other decisions depend on, and it is the only part of `_preprocess` that can be tested without a model. Inlining it would make the anisotropy untestable in isolation. This is a different case from the rejected `_loger_original_coords`, which would have wrapped `np.tile` of a constant row.
@@ -274,6 +287,15 @@ LoGeR is a Pi3 backbone plus a TTT fast-weight memory, run with sliding-window
 inference and overlap stitching.  Unlike every other backend we run, it predicts
 no camera intrinsics, so K is solved from its camera-frame pointmap.
 
+Upstream sources.  Two forks are involved and they are NOT interchangeable; every
+port and every behavioural claim below cites one of them by repo, commit, file, and
+line, because third_party/ is gitignored and cannot be read from this repo alone:
+
+  * VENDORED (setup/loger.sh clones into third_party/LoGeR/):
+      github.com/Junyi42/LoGeR @ 7685b7a
+  * PORTED FROM (not vendored, not a dependency — code copied out by hand):
+      github.com/PolyCam/LoGeR @ 5d7c1a7
+
 Provides:
   LOGER_HF_REPO               — HuggingFace repo holding both checkpoints
   LOGER_VARIANTS              — the two shipped variants
@@ -315,8 +337,9 @@ _PATCH = 14
 def _weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int = 50_000) -> float | None:
     """Confidence-weighted median, subsampled above ``max_n`` with a seeded RNG.
 
-    Ported from PolyCam LoGeR @ 5d7c1a7, ``run_loger.py:167``.  Returns ``None``
-    for an empty input so the caller can raise rather than invent a value.
+    Ported from github.com/PolyCam/LoGeR @ 5d7c1a7, ``run_loger.py:167``
+    (``_weighted_median``).  Returns ``None`` for an empty input so the caller can
+    raise rather than invent a value.
     """
     if len(values) == 0:
         return None
@@ -346,7 +369,7 @@ Expected: 4 passed
 git add collab_splats/pointcloud/feedforward/loger.py tests/pointcloud/test_loger_creator.py
 git commit -m "feat(loger): add confidence-weighted median helper
 
-Ported from PolyCam LoGeR run_loger.py:167. The 50k subsample cap is a memory
+Ported from github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:167. The 50k cap is a memory
 guard at the frame counts this backend targets: the pooled per-pixel sample
 population is H*W*N, which is 255M values at 1000 frames, and a weighted median
 needs a full argsort. The fixed seed keeps the estimate reproducible."
@@ -467,14 +490,16 @@ def _estimate_shared_intrinsics(local_points: np.ndarray, conf: np.ndarray) -> n
     """Fit one pinhole K to LoGeR's camera-frame pointmap by confidence-weighted median.
 
     LoGeR has no intrinsics head, so K is solved rather than predicted.  Ported from
-    PolyCam LoGeR @ 5d7c1a7, ``run_loger.py`` (``estimate_focal_lengths`` at :206 with
-    ``_focal_from_frame`` at :180 inlined; ``_snap_square_pixels`` at :195 deliberately
-    not ported — it would merge fx and fy at model resolution, which the separate-axis
-    rescale downstream then un-merges incorrectly).
+    github.com/PolyCam/LoGeR @ 5d7c1a7, ``run_loger.py``: ``estimate_focal_lengths``
+    at :206 with ``_focal_from_frame`` at :180 inlined.  ``_snap_square_pixels`` at
+    :195 is deliberately NOT ported — it would merge fx and fy at model resolution,
+    which the separate-axis rescale downstream then un-merges incorrectly.
 
     Args:
         local_points: (N, H, W, 3) camera-frame points.  LoGeR builds these as
-            ``cat([xy * z, z])``, so channel 2 is depth and ``xy`` is a free ray field.
+            ``cat([xy * z, z])`` (Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:772-775),
+            so channel 2 is depth and ``xy`` is a free per-pixel ray field — not
+            constrained to any pinhole K, which is why this fit is an approximation.
         conf: (N, H, W) or (N, H, W, 1) confidence, **already sigmoid-activated**.
             The ``> 0.1`` gate below is a threshold on a probability; on raw logits it
             would admit roughly half of all pixels instead of a deliberate floor.
@@ -631,9 +656,10 @@ Append a new section to `collab_splats/pointcloud/feedforward/loger.py`:
 def _loger_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[int, int]:
     """LoGeR's own resize rule: scale to an area budget, then align both axes to 14.
 
-    Ported from the vendored tree, ``loger/utils/basic.py:51-63``
-    (``load_images_as_tensor``) rather than from PolyCam's copy of the same
-    arithmetic, since we ship that file.
+    Ported from the VENDORED tree — github.com/Junyi42/LoGeR @ 7685b7a,
+    ``loger/utils/basic.py:51-63`` (inside ``load_images_as_tensor``) — rather than
+    from PolyCam's copy of the same arithmetic, since that is the tree we actually
+    run against.
 
     The two axes round **independently**, so exact aspect ratio is not preserved —
     the image is stretched by up to a few percent on one axis.  That is in
@@ -697,7 +723,8 @@ from collab_splats.pointcloud.feedforward.loger import LoGeRCreator
 def test_creator_defaults_match_upstream_effective_values():
     # These are NOT from the shipped yaml — both original_config.yaml files hold
     # only a model: key, so build_forward_kwargs' fallbacks are what actually run.
-    # window_size/overlap_size are run_loger.py argparse defaults (:47, :49).
+    # window_size/overlap_size are argparse defaults from PolyCam/LoGeR @ 5d7c1a7,
+    # run_loger.py:47 and :49.
     c = LoGeRCreator()
     assert c.variant == "LoGeR_star"
     assert c.window_size == 32
@@ -722,8 +749,9 @@ def test_unknown_variant_rejected_at_construction():
 
 def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch):
     # A forward-only key silently dropped is how LoGeR* would degrade invisibly:
-    # se3 lives under model: but is popped inside forward (pi3.py:589), so a naive
-    # signature filter would discard it. Anything else unknown must stop the run.
+    # se3 lives under model: but is popped inside forward (Junyi42/LoGeR @ 7685b7a,
+    # loger/models/pi3.py:589), so a naive signature filter would discard it.
+    # Anything else unknown must stop the run.
     from collab_splats.pointcloud.feedforward import loger as loger_mod
 
     ckpt_dir = tmp_path / "ckpts" / "LoGeR_star"
@@ -809,11 +837,12 @@ class LoGeRCreator(BaseFeedforwardCreator):
                         pair, not merely a weight file — the two ``original_config.yaml``
                         differ (``ttt_pre_norm`` vs ``se3``).
         model_path:     Local checkpoint override.  ``None`` → download from HuggingFace.
-        window_size:    Sliding-window length.  ``run_loger.py:47`` default.
-        overlap_size:   Frames shared between adjacent windows.  ``run_loger.py:49``.
+        window_size:    Sliding-window length.  Default from PolyCam/LoGeR @ 5d7c1a7,
+                        ``run_loger.py:47`` (argparse).
+        overlap_size:   Frames shared between adjacent windows.  Same source, :49.
         reset_every:    Hard-reset the TTT fast weights every N frames; ``0`` disables.
         num_iterations: TTT inner-loop iterations per step.
-        pixel_limit:    Area budget for the resize.  ``run_loger.py:117`` default.
+        pixel_limit:    Area budget for the resize.  Same source, :117.
         conf_threshold: Depth-confidence **percentile** cutoff (0–100), matching
                         ``vggt_omega``.  ``unproject_and_filter_points`` reads values
                         > 1.0 as a percentile and <= 1.0 as a raw confidence
@@ -828,8 +857,8 @@ class LoGeRCreator(BaseFeedforwardCreator):
     model_repo: str = LOGER_HF_REPO
 
     # Window knobs.  These do NOT come from the shipped yaml: both original_config.yaml
-    # files contain only a model: key, so run_loger.py's build_forward_kwargs (:149-164)
-    # always falls through to these values.
+    # files contain only a model: key, so build_forward_kwargs (PolyCam/LoGeR @ 5d7c1a7,
+    # run_loger.py:149-164) always falls through to these values.
     window_size: int = 32
     overlap_size: int = 3
     reset_every: int = 0
@@ -859,7 +888,8 @@ class LoGeRCreator(BaseFeedforwardCreator):
         model_cfg = dict(yaml.safe_load(cfg_path.read_text()).get("model", {}))
 
         # se3 sits under model: but is not a Pi3.__init__ parameter — it is popped
-        # inside forward (pi3.py:589). Route it out before validating the rest.
+        # inside forward (Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589).
+        # Route it out before validating the rest.
         self._se3 = bool(model_cfg.pop("se3", False))
 
         # Vendored tree is not pip-installed. The flag makes the finally idempotent:
@@ -937,13 +967,15 @@ Reads the vendored per-variant original_config.yaml, which is authoritative:
 the two variants differ from each other and both set ttt_inter_multi=4 where
 the Pi3 constructor defaults to 2.
 
-se3 is routed out of the model: block explicitly because it is a forward kwarg
-(popped at pi3.py:589), not a constructor parameter. Any other unrecognised
-model: key raises rather than being dropped — a silent drop is precisely how
-LoGeR* would have run in the wrong alignment mode.
+se3 is routed out of the model: block explicitly because it is a forward kwarg,
+popped inside forward at Junyi42/LoGeR @ 7685b7a loger/models/pi3.py:589, not a
+constructor parameter. Any other unrecognised model: key raises rather than
+being dropped — a silent drop is precisely how LoGeR* would have run in the
+wrong alignment mode.
 
 Window knobs are dataclass defaults, not yaml reads: both shipped configs hold
-only a model: key, so run_loger.py's fallbacks are what actually run."
+only a model: key, so the build_forward_kwargs fallbacks at PolyCam/LoGeR @
+5d7c1a7 run_loger.py:149-164 are what actually run."
 ```
 
 ---
@@ -1121,9 +1153,10 @@ class _FakeLoGeR(torch.nn.Module):
 
 
 def test_forward_applies_sigmoid_to_raw_confidence_logits():
-    # LoGeR's conf_head is a bare LinearPts3d (pi3.py:172) with no activation;
-    # upstream applies sigmoid at the call site (run_loger.py:481). The K fit's
-    # conf > 0.1 gate is a threshold on a probability, so this must run first.
+    # LoGeR's conf_head is a bare LinearPts3d with no activation (Junyi42/LoGeR @
+    # 7685b7a, loger/models/pi3.py:172); upstream applies sigmoid at the call site
+    # (PolyCam/LoGeR @ 5d7c1a7, run_loger.py:481). The K fit's conf > 0.1 gate is a
+    # threshold on a probability, so this must run first.
     n, h, w = 3, 56, 70
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
     views = torch.rand(n, 3, h, w)
@@ -1211,8 +1244,9 @@ Add to `LoGeRCreator`, after `_preprocess`:
             f"LoGeR expects RGB in [0, 1]; got [{float(images.min())}, {float(images.max())}]"
         )
 
-        # Pi3 takes (B, N, 3, H, W). Kwargs mirror run_loger.py's build_forward_kwargs
-        # (:149-164) so behaviour matches upstream exactly.
+        # Pi3 takes (B, N, 3, H, W). Kwargs mirror build_forward_kwargs in
+        # PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164, so behaviour matches
+        # upstream exactly.
         with torch.no_grad():
             preds = model(
                 images[None],
@@ -1229,8 +1263,9 @@ Add to `LoGeRCreator`, after `_preprocess`:
 
         local_points = preds["local_points"].squeeze(0).cpu().float().numpy()  # (N,H,W,3)
 
-        # conf_head is a bare LinearPts3d (pi3.py:172) with NO output activation — the
-        # model emits logits and upstream activates at the call site (run_loger.py:481).
+        # conf_head is a bare LinearPts3d with NO output activation — Junyi42/LoGeR @
+        # 7685b7a, loger/models/pi3.py:172 — so the model emits logits, and upstream
+        # activates at the call site (PolyCam/LoGeR @ 5d7c1a7, run_loger.py:481).
         # This must run before the K fit, whose conf > 0.1 gate is a threshold on a
         # probability: on raw logits it would admit roughly half of all pixels.
         depth_conf = torch.sigmoid(preds["conf"]).squeeze(0).cpu().float().numpy()
@@ -1245,7 +1280,8 @@ Add to `LoGeRCreator`, after `_preprocess`:
         k = _estimate_shared_intrinsics(local_points, depth_conf)
         intrinsic = np.broadcast_to(k, (local_points.shape[0], 3, 3)).copy()
 
-        # Channel 2 IS depth: the model builds local_points as cat([xy * z, z]).
+        # Channel 2 IS depth: the model builds local_points as cat([xy * z, z]) at
+        # Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:772-775.
         depth = local_points[..., 2:3]  # (N,H,W,1)
 
         return {
@@ -1273,9 +1309,10 @@ git commit -m "feat(loger): add LoGeRCreator._forward
 Three conversions the rest of the pipeline depends on:
 
 - sigmoid on conf. LoGeR's conf_head is a bare LinearPts3d with no activation
-  (pi3.py:172); upstream activates at the call site (run_loger.py:481). It runs
-  before the K fit, whose conf > 0.1 gate thresholds a probability — on raw
-  logits it would admit roughly half of all pixels instead of a 10% floor.
+  (Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:172); upstream activates at the
+  call site (PolyCam/LoGeR @ 5d7c1a7, run_loger.py:481). It runs before the K
+  fit, whose conf > 0.1 gate thresholds a probability — on raw logits it would
+  admit roughly half of all pixels instead of a 10% floor.
 - invert_poses on camera_poses. LoGeR returns c2w, FeedforwardResult wants w2c.
 - depth straight off channel 2, since the model builds cat([xy * z, z]).
 
@@ -1869,7 +1906,7 @@ The `backend` line and the new block become:
   # pipeline-level guard above.
   loger:
     variant: LoGeR_star       # LoGeR | LoGeR_star (SE(3)); selects config AND weights
-    window_size: 32           # sliding-window length (run_loger.py default)
+    window_size: 32           # sliding-window length (PolyCam/LoGeR run_loger.py default)
     overlap_size: 3           # frames shared between adjacent windows
     reset_every: 0            # hard-reset TTT fast weights every N frames; 0 = never
     conf_threshold: 50.0      # depth-confidence PERCENTILE (0-100), not a raw value

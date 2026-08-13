@@ -2935,10 +2935,26 @@ cam = list(r.cameras.values())[0]
 print(cam.model.name, cam.params, cam.width, cam.height)
 assert cam.model.name == 'PINHOLE', 'SIMPLE_PINHOLE would have averaged fx and fy away'
 assert len(cam.params) == 4
+print('fx, fy =', cam.params[0], cam.params[1], '| ratio', cam.params[0] / cam.params[1])
 print('points3D:', r.num_points3D(), '| images:', r.num_images())
 " "$SPARSE"
 ```
 Expected: `PINHOLE` with four params, and non-zero point/image counts.
+
+**What this step does and does not prove — read before recording the result.** The tutorial video is
+**1920x1080** (measured, see Step 5), and `_compute_target_size` maps that to **672x378** at the
+default `pixel_limit=255_000`: `sx = 672/1920 = 0.350000` and `sy = 378/1080 = 0.350000` — *exactly*
+isotropic. So on this input the original-resolution rescale applies the same factor to both axes, and
+this run **cannot** exercise the resize anisotropy that motivated PINHOLE in the first place.
+
+That does not make the step vacuous, but it does change what it measures. Any `fx != fy` you see here
+comes from the **estimator** fitting the two axes independently, not from the resize. Record the
+printed ratio as exactly that — the estimator's own anisotropy on a square-pixel source, where the
+ground truth is `fx == fy`. It is the same quantity Task 13 measures as its residual, now observed
+end-to-end through COLMAP export and rescale, so the two numbers should agree; if they disagree, one
+of the two paths is wrong and that is a finding. Do not report this run as evidence that PINHOLE
+preserves resize anisotropy — Task 11's unit test is what proves that, on a deliberately anisotropic
+`640x480 → 574x434` input.
 
 - [ ] **Step 5: Sweep the frame ceiling**
 
@@ -2971,14 +2987,31 @@ EOF
 done
 ```
 
-`min_frames` and `max_frames` are both pinned to N. Setting `max_frames` alone measures nothing: it is a cap, and the actual extracted count is decided by the sampler, so the run would process whatever the sampler chose rather than N. Pinning the floor too forces the count and is robust to `preprocessing.frame_proportion` being removed — a concurrent change as of 2026-08-13. Read `configs/base.yaml`'s `preprocessing:` block before running this and drop any key that no longer exists.
+`min_frames` and `max_frames` are both pinned to N. Setting `max_frames` alone measures nothing: it is a cap, and the actual extracted count is decided by the sampler, so the run would process whatever the sampler chose rather than N.
 
-Confirm the tutorial video has enough source frames to reach 1000 before trusting the top row:
-```bash
-ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames \
-    -of csv=p=0 data/tutorial/tutorial_example-video.mp4
-```
-If it holds fewer than ~1000 frames, the sweep cannot reach the ceiling with this input — say so in Step 6 rather than reporting an unreached limit as a measured one.
+**Both preconditions for this were re-verified against the post-`fps-frame-sampling` sampler on
+2026-08-13 — do not re-hedge them, but do re-check if that code moves again:**
+
+1. **`min_frames` is legal here only because `frame_selection` is `fps`.** `sample_frames` raises
+   `ValueError` if `min_frames is not None` under any other method (`preproc/sampling.py:424-427`),
+   and the floor is `fps`-only by design. `configs/base.yaml` currently defaults
+   `frame_selection: fps`, so the sweep YAML above inherits it and the floor is accepted. **If you
+   add `frame_selection: uniform` to any sweep YAML you must also drop `min_frames`, or the run dies
+   before decoding a single frame.**
+2. **Pinning both knobs yields exactly N**, not approximately N. `_sample_fps` clamps
+   `max_frames` first and `min_frames` second (`preproc/sampling.py:611-618`), so
+   `bounded = max(min(requested, N), min(N, total))` collapses to `N` for any `N <= total`. The
+   re-spread then calls `_uniform_targets(total, N)` over the **whole** video rather than truncating.
+   The blur gate does not erode the count either — it substitutes the sharpest neighbour inside its
+   validation window instead of dropping the frame.
+
+**The video is already measured — do not re-run ffprobe to decide whether the sweep is reachable.**
+`data/tutorial/tutorial_example-video.mp4` is **2388 frames, 1920x1080, 24000/1001 = 23.976 fps**
+(≈99.6 s). All four rows are therefore reachable: 1000 < 2388. Note that at the base `fps: 1.0` an
+unpinned run would sample only ~100 frames, which is why every row here overrides both knobs.
+
+If a row fails, attribute the failure before recording it: a `ValueError` naming `min_frames` is
+precondition 1 above, not a memory ceiling.
 
 Repeat the highest surviving count with `pointcloud.loger.reset_every: 64` added to that YAML, to see whether resetting the TTT fast weights moves the ceiling.
 

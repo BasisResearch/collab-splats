@@ -37,6 +37,7 @@ from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
+    _mv_result_fields,
     compute_multiview_depth_confidence,
     console,
     frames_as_pil_source,
@@ -113,32 +114,11 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     Attributes:
         model_name:               HuggingFace model ID to load via
                                   ``MapAnything.from_pretrained``.
-        confidence_percentile:    Percentile threshold (0–100) applied to the
-                                  learned model confidence when
-                                  ``use_multiview_confidence=False``. Has no
-                                  effect when ``use_multiview_confidence=True``
-                                  — see that field's note below.
-        use_multiview_confidence: When True, replaces the learned confidence
-                                  signal with geometric cross-view consistency
-                                  (mv_conf = inlier_ratio across overlapping
-                                  views). Pixels with mv_conf > 0 are kept;
-                                  pixels with mv_conf == 0 (no view agrees on
-                                  their depth) are discarded.
-
-                                  **Why ``confidence_percentile`` is bypassed:**
-                                  mv_conf is a quantized inlier ratio (k/N for
-                                  integer k, N). Most pixels reach conf=1.0
-                                  when views agree closely, so
-                                  ``torch.quantile(conf, p)`` collapses to 1.0
-                                  for any p where >0% of pixels are at 1.0.
-                                  The upstream strict ``conf > threshold``
-                                  then excludes every pixel including those at
-                                  exactly 1.0. Percentile-based thresholding is
-                                  designed for smooth learned-confidence
-                                  distributions, not quantized inlier ratios.
-                                  We bypass it and threshold the shared
-                                  ``compute_multiview_depth_confidence`` output on
-                                  an inlier *count* via ``min_views`` instead.
+        confidence_percentile:    Percentile threshold (0–100) applied to the learned
+                                  model confidence. Always applied, including when
+                                  ``use_multiview_confidence=True``.
+        use_multiview_confidence: When True, ANDs a geometric cross-view depth
+                                  consistency mask onto the learned-confidence mask.
         mv_conf_abs_thresh:       Absolute depth tolerance (metres) passed to
                                   ``compute_multiview_depth_confidence`` when
                                   ``use_multiview_confidence=True``. Calibrated
@@ -161,6 +141,18 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                                   ``"square"``: resize all images to ``resolution × resolution``.
         resolution:               Lookup-table selector for ``"fixed"`` (518 or 512); target
                                   size in pixels for ``"longest_side"`` and ``"square"``.
+
+    Multiview confidence and the learned confidence percentile are INTERSECTED, not
+    substituted. Upstream replaces the learned confidence with the mv ratio
+    (mapanything/utils/inference.py:401-402); we keep both filters and AND them, which is
+    strictly more conservative.
+
+    Do not reintroduce a percentile threshold on the mv output. mv confidence is a quantized
+    inlier ratio k/N: most pixels reach exactly 1.0 when views agree, so ``torch.quantile``
+    collapses to 1.0 for any percentile where more than 0% of pixels sit at the atom, and a
+    strict ``conf > threshold`` then excludes every pixel including those at exactly 1.0.
+    ``min_views`` thresholds the integer count instead, which is where the discreteness
+    actually lives. ``min_views=1`` is exactly equivalent to the old ``mv_conf_threshold=0.0``.
     """
 
     # MapAnything info_sharing blocks have no special tokens (no camera/register
@@ -443,6 +435,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         stacked_colors = np.stack(colors_grid)  # (N, H, W, 3)
 
         # Apply shared geometric mv_conf filter (replaces upstream use_multiview_confidence path)
+        mv_conf = None
         if self.use_multiview_confidence:
             stacked_depth = np.stack(depth_list)  # (N, H, W)
             stacked_intr = np.stack(intrinsics_list)  # (N, 3, 3)
@@ -495,6 +488,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             confidence=_conf,
             world_points=_world_points,
             depth=_depth,
+            **_mv_result_fields(mv_conf),
         )
 
     def extract_intermediate_features(

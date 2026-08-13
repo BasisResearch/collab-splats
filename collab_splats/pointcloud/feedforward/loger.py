@@ -431,7 +431,12 @@ class LoGeRCreator(BaseFeedforwardCreator):
             depth_conf=raw_outputs["depth_conf"],
             images=raw_outputs["images"],
             extrinsic=extrinsic,
-            intrinsic=raw_outputs["intrinsics_downsampled"],
+            # The same local K that becomes result.intrinsics below, NOT the
+            # "intrinsics_downsampled" alias. _forward binds both names to one array today,
+            # so this is a no-op; it stops being one the moment a genuinely downsampled K
+            # lands, at which point the current spelling would unproject the cloud with the
+            # downsampled K while result.intrinsics reported full-res — silently.
+            intrinsic=intrinsic,
             conf_threshold=self.conf_threshold,
             max_points=self.max_points,
             extra_mask=mv_mask,

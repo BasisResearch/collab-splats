@@ -602,6 +602,45 @@ def test_reproject_returns_points_and_colors_for_refined_poses():
     np.testing.assert_array_equal(moved_colors, colors)
 
 
+def test_reproject_uses_the_intrinsics_it_is_handed():
+    # The mirror of the pose test above, on the other argument. _reproject's contract is
+    # that BOTH the refined poses and the refined K come from its parameters; passing the
+    # stored K on both calls leaves a mutant that reads raw_outputs["intrinsics"] invisible.
+    # n=1 because the fake's camera 0 sits at the world origin with identity rotation, so
+    # world coordinates ARE camera coordinates and the pinhole relation is exact rather
+    # than entangled with the pose.
+    creator, raw, _ = _forward_and_postprocess(n=1)
+    pts, colors = creator._reproject(raw, raw["extrinsic"], raw["intrinsics"])
+
+    # x_c = (u - cx) * z / fx, y_c = (v - cy) * z / fy, z_c = z. Halving both focals must
+    # therefore double the two lateral axes at fixed depth and leave depth untouched — a
+    # predicted direction and magnitude, not merely "something changed". Measured exact.
+    softer = raw["intrinsics"].copy()
+    softer[:, 0, 0] /= 2.0
+    softer[:, 1, 1] /= 2.0
+    wider_pts, wider_colors = creator._reproject(raw, raw["extrinsic"], softer)
+
+    np.testing.assert_allclose(
+        wider_pts, pts * np.array([2.0, 2.0, 1.0], dtype=np.float32), atol=1e-4
+    )
+    # Guard against the relation being satisfied trivially by a cloud that did not move.
+    assert np.abs(wider_pts - pts).max() > 0.1
+    # Colors come from the images, not the camera model, so the halved K must not touch them.
+    np.testing.assert_array_equal(wider_colors, colors)
+
+
+def test_max_points_caps_the_returned_cloud():
+    # max_points defaults to 500_000 (base.py:794) against an 11,760-point scene, so the cap
+    # never engages and a mutant changing it dies only by crashing on None, never because a
+    # test noticed the cap. Construct below the scene size so it actually bites. Measured:
+    # the cut is EXACT, not approximate, and the three arrays stay index-aligned through it.
+    _, _, result = _forward_and_postprocess(max_points=100)
+
+    assert len(result.points) == 100
+    assert len(result.colors) == 100
+    assert len(result.pixel_indices) == 100
+
+
 def test_multiview_confidence_mask_is_wired_and_off_by_default():
     # Found by mutation: forcing this branch either way — permanently off, or permanently
     # on — passed every other test in this file, so the flag was decorative. Both

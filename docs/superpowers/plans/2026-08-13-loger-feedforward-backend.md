@@ -2353,63 +2353,164 @@ This belongs in `test_feedforward_intrinsics.py`, which already owns "result.int
 
 Append to `tests/pointcloud/test_feedforward_intrinsics.py`:
 
+> **Plan correction — the drafted test was a tautology, and its inputs do not work.**
+> Measured against the tree before dispatch; all four points below are defects in the original
+> draft, not preferences.
+>
+> **(a) It never called production code.** It built `k_model` itself as `f * scale_x`, then
+> asserted `k_model[0,0] / scale_x == f` — algebraically `f` regardless of what the codebase does.
+> It would pass with the entire LoGeR feature reverted. The real function is
+> `_rescale_reconstruction_to_original_dimensions` and it must actually be invoked.
+>
+> **(b) `1920x1080` is exactly isotropic at this pixel budget**, so the anisotropy assertion
+> `k_model[0,0] != approx(k_model[1,1])` fails immediately — while Step 2 claimed "Expected:
+> PASS". Measured: `1920x1080 → 672x378`, `sx = sy = 0.350000`, ratio `1.000000`. Same for
+> `1280x720` and `3840x2160`. **Use `640x480 → 574x434`** (`sx=0.896875`, `sy=0.904167`, ratio
+> `0.991935`), which is genuinely anisotropic. `1440x1080` and `1600x1200` also work.
+>
+> **(c) The citation `base.py:580` is wrong twice over.** The rescale is at
+> `collab_splats/pointcloud/feedforward/base.py:801-805`, and it **multiplies** by
+> `scale = original/model` — the reciprocal of the draft's `scale_x = model/original`. Writing the
+> comment as "the rescale is exactly this division" inverts the production convention.
+>
+> **(d) The "snap to the mean" it argues against does not live in the rescale.** The mean is in
+> `build_colmap` at `base.py:719-722`
+> (`params = [(K[0,0] + K[1,1]) / 2.0, ...]` for `SIMPLE_PINHOLE`); the rescale's SIMPLE_PINHOLE
+> branch then applies `max(scale_x, scale_y)` (`base.py:801-802`), not a mean. The real penalty is
+> the **composite of those two stages**, and it is worth measuring rather than asserting.
+>
+> **Measured composite** for a square-pixel `f = 1600` camera at `640x480`:
+>
+> | camera_model | recovered focal | error |
+> |---|---|---|
+> | `PINHOLE` | `fx = fy = 1600.0000` | `~2e-8` relative — exact |
+> | `SIMPLE_PINHOLE` | `f = 1606.5041` | **+6.504 px, +0.41%** |
+>
+> That 6.5 px is the concrete reason `LoGeRCreator.camera_model` is `"PINHOLE"`, and the test
+> below pins it by driving both real functions.
+
+Add to the **top-level imports** of the file (house style: no inline imports):
+
 ```python
-def test_loger_original_coords_rescale_recovers_anisotropic_focals():
-    """LoGeR's model-res K must rescale to original resolution with fx != fy intact.
+from types import SimpleNamespace
 
-    This is the third of the three places that keep fx and fy distinct. Our resize
-    rounds each axis to a multiple of 14 independently, so a square-pixel camera
-    genuinely produces fx != fy at model resolution; _rescale_... divides by
-    scale_x and scale_y separately, which recovers the true focals exactly.
+from collab_splats.pointcloud.feedforward.base import (
+    _rescale_reconstruction_to_original_dimensions,
+)
+from collab_splats.pointcloud.feedforward.loger import _compute_target_size
+```
+
+Then append:
+
+```python
+def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
+    """Run the real rescale over a single camera and return its original-res params.
+
+    _rescale_reconstruction_to_original_dimensions is duck-typed over pycolmap — it
+    touches only .images/.cameras, .model.name, .params, .width, .height and .name.
+    A SimpleNamespace stands in because constructing a real pycolmap.Reconstruction
+    needs a Frame binding (`Check failed: image.HasFrameId()`) that is pure ceremony
+    for a camera-only assertion.
     """
-    import numpy as np
+    model_w, model_h = model_wh
+    orig_w, orig_h = orig_wh
+    camera = SimpleNamespace(
+        model=SimpleNamespace(name=camera_model),
+        params=np.array(params, dtype=np.float64),
+        width=model_w,
+        height=model_h,
+    )
+    reconstruction = SimpleNamespace(
+        images={1: SimpleNamespace(camera_id=1, name="0.png", points2D=[])},
+        cameras={1: camera},
+    )
+    _rescale_reconstruction_to_original_dimensions(
+        reconstruction,
+        [Path("0.png")],
+        np.array([[0, 0, orig_w, orig_h, orig_w, orig_h]], dtype=np.float32),
+        (model_w, model_h),
+    )
+    return reconstruction.cameras[1].params
 
-    from collab_splats.pointcloud.feedforward.loger import _compute_target_size
 
-    orig_w, orig_h = 1920, 1080
-    model_w, model_h = _compute_target_size(orig_w, orig_h, pixel_limit=255_000)
+def test_loger_pinhole_k_round_trips_to_original_resolution():
+    """LoGeR's model-res K must rescale back to original resolution with fx != fy intact.
 
-    # A square-pixel physical camera, f = 1600 px at original resolution
+    _compute_target_size rounds each axis to a multiple of 14 independently, so a
+    square-pixel physical camera genuinely produces fx != fy at model resolution.
+    PINHOLE carries both focals through and the per-axis rescale recovers the true
+    focal exactly on both axes.
+    """
+    orig_w, orig_h = 640, 480
+    model_w, model_h = _compute_target_size(orig_w, orig_h, 255_000)
+
+    # A square-pixel physical camera: one true focal, f = 1600 px at original resolution
     f = 1600.0
     scale_x, scale_y = model_w / orig_w, model_h / orig_h
-    k_model = np.array(
-        [[f * scale_x, 0.0, (model_w - 1) / 2.0],
-         [0.0, f * scale_y, (model_h - 1) / 2.0],
-         [0.0, 0.0, 1.0]],
-        dtype=np.float32,
+    fx_model, fy_model = f * scale_x, f * scale_y
+
+    # The anisotropy is real, not a rounding artefact — guard the premise of the test
+    assert fx_model != pytest.approx(fy_model, rel=1e-3)
+
+    # build_colmap's PINHOLE branch (base.py:719-720) keeps both focals
+    params = _rescaled_camera_params(
+        "PINHOLE",
+        [fx_model, fy_model, (model_w - 1) / 2.0, (model_h - 1) / 2.0],
+        (model_w, model_h),
+        (orig_w, orig_h),
+    )
+    assert params[0] == pytest.approx(f, rel=1e-6)
+    assert params[1] == pytest.approx(f, rel=1e-6)
+
+
+def test_simple_pinhole_would_lose_the_focal_loger_keeps():
+    """Why LoGeRCreator.camera_model is PINHOLE: SIMPLE_PINHOLE costs 6.5 px here.
+
+    Two production stages compose. build_colmap averages fx and fy into one param
+    for SIMPLE_PINHOLE (base.py:721-722), then the rescale multiplies that single
+    param by max(scale_x, scale_y) (base.py:801-802) rather than per axis. Neither
+    stage is lossy alone; together they do not round-trip.
+    """
+    orig_w, orig_h = 640, 480
+    model_w, model_h = _compute_target_size(orig_w, orig_h, 255_000)
+    f = 1600.0
+    fx_model = f * (model_w / orig_w)
+    fy_model = f * (model_h / orig_h)
+
+    params = _rescaled_camera_params(
+        "SIMPLE_PINHOLE",
+        [(fx_model + fy_model) / 2.0, (model_w - 1) / 2.0, (model_h - 1) / 2.0],
+        (model_w, model_h),
+        (orig_w, orig_h),
     )
 
-    # Independent per-axis rounding makes these genuinely different at model res
-    assert k_model[0, 0] != pytest.approx(k_model[1, 1], rel=1e-3)
-
-    # The rescale is exactly this division, per axis (base.py:580)
-    fx_orig = k_model[0, 0] / scale_x
-    fy_orig = k_model[1, 1] / scale_y
-    assert fx_orig == pytest.approx(f, rel=1e-5)
-    assert fy_orig == pytest.approx(f, rel=1e-5)
-
-    # And this is why the square-pixel snap is not applied: snapping at model
-    # resolution would set both to their mean, which the separate-axis division
-    # then un-averages incorrectly.
-    snapped = (k_model[0, 0] + k_model[1, 1]) / 2.0
-    assert snapped / scale_x != pytest.approx(f, rel=1e-4)
+    # Measured: 1606.5041 against a true 1600.0 — +6.504 px, +0.41%
+    assert params[0] == pytest.approx(1606.5041, abs=1e-3)
+    assert params[0] != pytest.approx(f, rel=1e-3)
 ```
 
-- [ ] **Step 2: Run the test**
+- [ ] **Step 2: Run the tests**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_feedforward_intrinsics.py -k loger -v -p no:randomly`
-Expected: PASS (the test asserts arithmetic that Tasks 3 and 4 already made true)
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_feedforward_intrinsics.py -v -p no:randomly`
 
-If the final assertion fails because `scale_x == scale_y` exactly for `1920x1080` at this budget, the resize happened to be isotropic for that input. Substitute an input size where `_compute_target_size` produces different per-axis scales — check with:
-```bash
-/opt/venv/reconstruction/bin/python -c "
-from collab_splats.pointcloud.feedforward.loger import _compute_target_size
-for ow, oh in [(1920,1080),(1280,720),(640,480),(3840,2160),(1440,1080)]:
-    w, h = _compute_target_size(ow, oh, 255_000)
-    print(ow, oh, '->', w, h, '| sx/sy =', (w/ow)/(h/oh))
-"
-```
-Pick a row where `sx/sy` differs from 1.0 by more than 0.5%.
+Expected: PASS. These assert behaviour Tasks 3 and 4 already made true, so they pass on first
+run — that is expected here and is **not** a licence to skip Step 2b.
+
+- [ ] **Step 2b: Prove the tests can fail**
+
+A test that passes on first write has demonstrated nothing. Confirm each one is load-bearing:
+
+1. Change `"PINHOLE"` to `"SIMPLE_PINHOLE"` in the first test's `_rescaled_camera_params` call.
+   `test_loger_pinhole_k_round_trips_to_original_resolution` must fail **on the assertion**, not
+   on an index error. Restore.
+2. In `base.py:801`, change `max(scale_x, scale_y)` to `min(scale_x, scale_y)`.
+   `test_simple_pinhole_would_lose_the_focal_loger_keeps` must fail. Restore, and verify the
+   restore with `md5sum` — **`base.py` is being edited by a concurrent session, so never restore
+   it with git.**
+3. Change `orig_w, orig_h` to `1920, 1080` in either test. The anisotropy guard must fail,
+   demonstrating that the isotropic-input trap is actively detected rather than silently passing.
+
+Report which mutations killed which tests.
 
 - [ ] **Step 3: Commit**
 
@@ -2420,9 +2521,15 @@ git commit -m "test(loger): pin the model-res to original-res K round-trip
 Lives alongside the existing cross-backend intrinsics-resolution tests rather
 than in test_loger_creator.py, since that file already owns this contract.
 
-The final assertion is the one that matters: it shows averaging fx and fy at
-model resolution does NOT round-trip, which is the concrete reason upstream's
-upstream's _snap_square_pixels is deliberately not applied."
+Both tests drive the real _rescale_reconstruction_to_original_dimensions over a
+duck-typed camera rather than re-deriving its arithmetic, so they fail if the
+rescale changes. The second one is the load-bearing half: it measures that
+SIMPLE_PINHOLE recovers 1606.50 px against a true 1600.0 — build_colmap averages
+fx and fy, then the rescale scales that single param by max(scale_x, scale_y)
+instead of per axis. That 6.5 px is why LoGeRCreator.camera_model is PINHOLE.
+
+Uses 640x480 as the source size: 1920x1080 is exactly isotropic at this pixel
+budget (sx = sy = 0.35), so it cannot exercise the fx != fy path at all." -- tests/pointcloud/test_feedforward_intrinsics.py
 ```
 
 ---

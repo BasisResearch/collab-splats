@@ -25,27 +25,16 @@ Two checkpoints on HF `Junyi42/LoGeR`, as raw `latest.pt` files under per-varian
 subdirectories: `LoGeR` and `LoGeR_star` (LoGeR* uses SE(3)). Each ships an
 `original_config.yaml` in the repo itself, so model kwargs need no download.
 
-### LoGeR is a restricted trained model, not a flexible architecture
+### The shipped yaml is authoritative
 
-`Pi3.__init__` exposes `pi3x` and `pi3x_metric`, which look like runtime options. They are not —
-they are training-time architecture switches, and **neither shipped config sets them**, so both
-checkpoints run `pi3x=False`.
+`variant` selects a config-plus-weights pair, not merely a weight file: the two configs differ
+from each other (`ttt_pre_norm: true` on `LoGeR`, absent on `LoGeR_star`; `se3: true` on
+`LoGeR_star` only), and both set `ttt_inter_multi: 4` where the `Pi3` constructor default is `2`.
 
-`pi3x=True` swaps `self.point_head` for a different `ConvHead` (`num_features=4`,
-`dim_out=[2, 1]`), and `pi3x_metric` additionally creates `self.metric_token`,
-`self.metric_decoder`, and `self.metric_head`. Those are differently-shaped and additional
-parameters, so `load_state_dict(strict=True)` against a LoGeR checkpoint fails. There is no
-drop-in upgrade path to the Pi3* architecture without Pi3*-trained weights.
-
-One consequence worth recording: the metric branch (`metric_head(...).exp()` scaling camera
-translation, `pi3.py:792`) is exactly what would produce metric depth, and it is off. **LoGeR
-depth is non-metric, like every other backend we run.** No `depth_trunc` win here.
-
-The two variants also differ from each other architecturally — `ttt_pre_norm: true` on `LoGeR`,
-absent on `LoGeR_star`; `se3: true` on `LoGeR_star` only — so `variant` selects a
-config-plus-weights pair, not merely a weight file. Both set `ttt_inter_multi: 4` where the
-`Pi3` default is `2`, which is why the shipped yaml is authoritative and constructor defaults
-must never be relied on.
+So the vendored `original_config.yaml` is read and applied verbatim, and `Pi3` constructor
+defaults are never relied on. Scope note: we run LoGeR as trained and shipped — no architecture
+variants, no alternative backbones. **LoGeR depth is non-metric**, like every other backend we
+run, so there is no `depth_trunc` win here.
 
 ## Source selection: which fork
 
@@ -79,7 +68,7 @@ This is the substantive difference and the main source of implementation risk.
 |---|---|---|
 | VGGT-X / VGGT-Omega / VGGT-SPARK | `pose_encoding_to_extri_intri(pose_enc, hw)` — direct network output, FOV-parameterised, regressed jointly with pose | yes |
 | MapAnything | `p["intrinsics"]` after `postprocess_model_outputs_for_inference` — derived from predicted ray directions | yes |
-| **LoGeR** | **nothing predicts it.** `CameraHead` returns pose only. K is **solved** by least-squares pinhole fit to the predicted pointmap | **shared across frames** (our choice) |
+| **LoGeR** | **nothing predicts it.** `CameraHead` returns pose only. K is **solved** by a confidence-weighted median pinhole fit to the predicted pointmap | **shared across frames** (our choice) |
 
 The failure modes are inverted, which matters for how we guard each:
 
@@ -97,8 +86,7 @@ matters — see the aspect-ratio discussion under `_preprocess`.
 
 ### What LoGeR's pointmap actually is
 
-On the non-`pi3x` path — which is the path both shipped checkpoints take — the point head emits
-three channels which are split and recombined (`pi3.py:772-775`):
+The point head emits three channels, split and recombined (`pi3.py:772-775`):
 
 ```python
 ret = self.point_head([point_hidden[:, self.patch_start_idx:]], (H, W)).reshape(B, Nw, H, W, -1)
@@ -121,22 +109,39 @@ measures exactly how good an approximation it is.
 ### The fit
 
 `_estimate_shared_focal(local_points, conf)`, ported from `run_loger.py`'s
-`estimate_focal_lengths` / `_focal_from_frame` / `_snap_square_pixels`.
+`estimate_focal_lengths` / `_focal_from_frame` / `_weighted_median` / `_snap_square_pixels`.
 
-`local_points[..., 2]` **is** depth, per the construction above. So each valid pixel gives one
-equation of the pinhole model, and a confidence-weighted least squares over all frames yields
-`fx` and `fy`. **`fx` and `fy` are fitted independently** and only merged by
-`_snap_square_pixels` when within 2% — this is load-bearing, see `_preprocess`.
+**It is a weighted median, not a least-squares fit.** Each valid pixel yields its own focal
+estimate directly by inverting the pinhole model — `fx_pp = uu * Z / X`, `fy_pp = vv * Z / Y`,
+where `local_points[..., 2]` is `Z` per the construction above — and the estimate is the
+confidence-weighted median over all of them. That is a deliberate robustness property: a median
+is unmoved by the outliers a squared-error fit would chase, which matters because the ray field
+is unconstrained at depth discontinuities.
+
+Three behaviours to preserve, all in `_focal_from_frame`:
+
+- validity mask `Z > 1e-3`, `|X| > 1e-6`, `|Y| > 1e-6`, `conf > 0.1` — the last is a hard
+  threshold, not a weight
+- sanity bounds `W*0.1 < fx < W*10` and `H*0.1 < fy < H*10` applied before the median
+- `_weighted_median` subsamples above 50 000 samples with a seeded RNG (`default_rng(42)`), so
+  the result is deterministic
+
+**`fx` and `fy` are estimated independently** and merged by `_snap_square_pixels` only when
+within 2% — load-bearing, see `_preprocess`.
 
 Shared across frames is correct for our inputs: `frames.zarr` comes from a single video, one
 physical camera, and the config exposes no zoom.
 
-Roughly 40 lines. Justified because there is no alternative — the model emits no K.
+**Two branches of the original are dropped**, both because they are dead or wrong for us:
 
-**The port drops one branch.** `estimate_focal_lengths` falls back to `max(W, H) * 1.2` when the
-fit fails (the same heuristic as `localization/localizer.py:24 seed_intrinsics`). We delete it
-and raise instead: a wrong-but-plausible K against real depth is precisely the `be24be2`
-mesh-intrinsics regression.
+1. `estimate_focal_lengths(shared=False)` — the per-frame path. We always want shared, and a
+   parameter that is always its default should not exist.
+2. The `max(W, H) * 1.2` fallback on fit failure (the same heuristic as
+   `localization/localizer.py:24 seed_intrinsics`). We raise instead: a wrong-but-plausible K
+   against real depth is precisely the `be24be2` mesh-intrinsics regression.
+
+Roughly 40 lines after those cuts. Justified because there is no alternative — the model emits
+no K.
 
 ### When to choose LoGeR over the alternatives
 
@@ -151,12 +156,15 @@ set-based and has no ordering requirement.
 
 ## Footprint
 
-3 new files, 7 modified, zero new pip deps.
+**2 new files, 7 modified in the repo**, zero new pip deps, plus one environment step.
+
+The environment step is the vendored tree: `third_party/LoGeR/` = upstream @ `7685b7a`. It is
+gitignored (`.gitignore:7`), so it is a setup action, not a repo change; the pinned commit is
+recorded in the tracked `third_party/README.md`.
 
 | | Path | Why |
 |---|---|---|
-| new | `third_party/LoGeR/` | vendored upstream @ `7685b7a`, gitignored, pinned in tracked `third_party/README.md` |
-| new | `collab_splats/pointcloud/feedforward/loger.py` | `LoGeRCreator` + two module-level helpers |
+| new | `collab_splats/pointcloud/feedforward/loger.py` | `LoGeRCreator` + one module-level helper |
 | new | `tests/pointcloud/test_loger_creator.py` | mirrors `test_vggt_omega_creator.py` |
 | mod | `collab_splats/pointcloud/feedforward/__init__.py` | guarded export, `try/except ImportError`, same shape as `VGGTOmegaCreator` |
 | mod | `collab_splats/pointcloud/__init__.py` | `_LOGER_AVAILABLE` guard + `_REGISTRY["loger"]`, mirroring `_OMEGA_AVAILABLE` at lines 8–28 |
@@ -168,20 +176,21 @@ set-based and has no ordering requirement.
 
 ### Reused unchanged — no new code
 
-`unproject_and_filter_points` (`vggtx.py:92`), `invert_poses` and `extrinsics_to_homogeneous`
-(`geometry/transforms.py`), `build_pycolmap_reconstruction`,
-`_rescale_reconstruction_to_original_dimensions`, `frames_as_pil_source`, `FeedforwardResult`
-and its zarr IO, `compute_multiview_depth_confidence`, and the whole 5-step template.
+`unproject_and_filter_points` (`vggtx.py:92`), `invert_poses` (`geometry/transforms.py`),
+`build_pycolmap_reconstruction`, `_rescale_reconstruction_to_original_dimensions`,
+`frames_as_pil_source`, `FeedforwardResult` and its zarr IO, `_raw_to_world_points`,
+`compute_multiview_depth_confidence`, and the whole 5-step template.
 
 ### Genuinely new, and why
 
 1. `_estimate_shared_focal(local_points, conf)` — justified above. ~40 lines.
-2. `_loger_original_coords(sizes, model_hw)` — ~15 lines. LoGeR resizes without cropping, so
-   each row is `[0, 0, orig_w, orig_h, orig_w, orig_h]`. This is *strictly simpler* than
-   `_compute_omega_original_coords`'s crop arithmetic and cannot be replaced by it, because that
-   function computes a crop that LoGeR never performs. Needed so
-   `_rescale_reconstruction_to_original_dimensions` can invert the resize.
-3. `LoGeRCreator` itself.
+2. `LoGeRCreator` itself.
+
+**No `_loger_original_coords` helper.** An earlier draft proposed one. It is unnecessary: LoGeR
+crops nothing, so every row is `[0, 0, orig_w, orig_h, orig_w, orig_h]` and the whole thing is
+two lines inline in `_preprocess`. A named function for `np.tile` of a constant row is the kind
+of premature abstraction the code style rules out. (Contrast `_compute_omega_original_coords`,
+which exists because Omega's crop arithmetic is genuinely non-trivial.)
 
 ### Deliberately not implemented
 
@@ -207,16 +216,23 @@ and its zarr IO, `compute_multiview_depth_confidence`, and the whole 5-step temp
 `sys.path.insert(0, third_party/LoGeR)` → `from loger.models.pi3 import Pi3` → remove in
 `finally`. Read `ckpts/{variant}/original_config.yaml` from the vendored tree.
 
-**The yaml's `model:` block mixes constructor kwargs and forward kwargs, so routing is
-three-way, not a filter.** `LoGeR_star` sets `se3: true`, but `se3` is not a `Pi3.__init__`
-parameter — it is popped inside `forward` (`pi3.py:589`, mutually exclusive with `sim3`). A
-naive `inspect.signature(Pi3.__init__)` filter would silently discard it and run LoGeR* in the
-wrong alignment mode. So:
+**`se3` lives in the `model:` block but is a forward kwarg.** `LoGeR_star` sets `se3: true`
+under `model:`, yet `se3` is not a `Pi3.__init__` parameter — it is popped inside `forward`
+(`pi3.py:589`, mutually exclusive with `sim3`). A naive `inspect.signature(Pi3.__init__)` filter
+would silently discard it and run LoGeR* in the wrong alignment mode.
 
-- key in `inspect.signature(Pi3.__init__)` → constructor kwarg
-- otherwise, key in the known forward-kwarg set (`se3`, `sim3`, `window_size`, `overlap_size`,
-  `reset_every`, `num_iterations`) → forward kwarg
-- otherwise → **raise**, naming the key. Silent drops are how LoGeR* would degrade invisibly.
+Verified against `run_loger.py`'s `build_forward_kwargs`, `se3` is the **only** such intruder —
+the window knobs (`window_size`, `overlap_size`, `reset_every`, `num_iterations`) come from the
+yaml's `training_settings` block, not `model:`. So the rule is deliberately narrow rather than a
+maintained allowlist that would drift against upstream:
+
+- pull `se3` out of `model:` explicitly, route it to forward kwargs
+- every remaining `model:` key must be in `inspect.signature(Pi3.__init__)`, else **raise**,
+  naming the key
+
+Raising rather than dropping is the point: a silent drop is exactly how LoGeR* would degrade
+invisibly, and a future upstream config gaining a second forward-only key should stop the run,
+not be guessed at.
 
 Re-parse `ttt_insert_after` / `attn_insert_after` when they arrive as `"[4,8]"` strings. Weights
 via `hf_hub_download("Junyi42/LoGeR", f"{variant}/latest.pt")`, `torch.load(map_location="cpu")`,
@@ -268,8 +284,13 @@ Cropping to a multiple of 14 instead would be worse: it discards field of view, 
 | `local_points[..., 2:3]` | (N,H,W,1) | `depth` | already depth; model builds `cat([xy*z, z])` |
 | `sigmoid(conf)` | (N,H,W,1) | `depth_conf` | squeeze trailing axis |
 | `camera_poses` | (N,4,4) **c2w** | `extrinsic` | `invert_poses(...)[:, :3, :]` → w2c (N,3,4) |
-| `points` | (N,H,W,3) | `native_points` | already world-space, kept free |
 | — | — | `intrinsics` | fitted K broadcast to (N,3,3) |
+| — | — | `intrinsics_downsampled` | alias to the same K — `_raw_to_world_points` expects the key (`vggtx.py:304`) |
+
+LoGeR's native `points` is **discarded**, not retained. An earlier draft kept it as a
+parity-test reference, which contradicts this spec's own memory analysis: another (N,H,W,3)
+float32 array is ~3 MB/frame resident for the entire run, purely to serve a `slow`-marked test
+that is skipped by default. The parity test runs the model itself and reads `points` there.
 
 `camera_poses` is camera-to-world. `pi3.py:807` proves it:
 `points = einsum('bnij,bnhwj->bnhwi', camera_poses, homogenize_points(local_points))`. Our
@@ -301,9 +322,9 @@ non-pinhole geometry that K-unprojection cannot reproduce, so it is potentially 
 But `world_points` feeding BA and LC alongside a K that cannot reproduce it means BA spends its
 first iterations fighting the model.
 
-**Decision: use `_raw_to_world_points`, matching vggtx and vggt_omega.** Native `points` is
-retained in the raw dict solely as the parity-test reference. Consistency wins because the
-residual between the two is measurable, and the parity test measures precisely it:
+**Decision: use `_raw_to_world_points`, matching vggtx and vggt_omega.** Consistency wins
+because the residual between the two clouds is measurable, and the parity test measures
+precisely it:
 
 - Residual small (≲0.5% of scene scale) → the model is effectively pinhole and the two clouds
   are interchangeable; consistency is free.
@@ -393,9 +414,12 @@ Two guards: `max_points` is already passed explicitly, so it must be rejected fr
 rather than producing a duplicate-kwarg `TypeError`; and unknown keys surface as the
 constructor's own `TypeError`, which is the correct failure.
 
-LoGeR's remaining knobs (`reset_every`, `pixel_limit`, `use_multiview_confidence`) are
-`LoGeRCreator.__init__` parameters, defaulted from the vendored `original_config.yaml`, and
-therefore also settable from the block.
+LoGeR's remaining knobs are `LoGeRCreator.__init__` parameters and therefore also settable from
+the block. Their defaults come from three different places, which the implementation must not
+conflate: `window_size` / `overlap_size` / `reset_every` / `num_iterations` from the vendored
+`original_config.yaml`'s `training_settings`; `pixel_limit = 255000` from `run_loger.py`'s
+function default; `use_multiview_confidence = False` is ours, matching VGGT-X and Omega, and
+appears in no LoGeR config at all.
 
 ### `preprocessing.max_frames`
 
@@ -453,23 +477,34 @@ it enough frames to matter.
 1. **Focal fit recovers a known focal.** Build `local_points` from a synthetic depth map and a
    known `f`; assert `_estimate_shared_focal` returns it within tolerance. Ground truth is exact
    here because no model is involved.
-2. **Confidence weighting bites.** Corrupt 30% of points and give them low confidence; assert
-   the fit still recovers `f`. Proves the weighting is not decorative.
-3. **Degenerate input raises** rather than falling back: empty mask, NaN, negative depth.
-4. **`_loger_original_coords`** emits `[0,0,w,h,w,h]` and round-trips through
-   `_rescale_reconstruction_to_original_dimensions` to original-resolution K.
-5. **c2w → w2c inversion.** Fake `camera_poses`; assert `result.extrinsics` is world-to-camera,
+2. **Anisotropic focal is recovered, not flattened.** Build a scene with `fx/fy = 1.10` — well
+   past `_snap_square_pixels`' 2% tolerance — and assert both come back distinct. This is the
+   test that protects the aspect-ratio argument under `_preprocess`; a "simplification" to
+   `fx == fy` must fail loudly here.
+3. **The median is robust.** Corrupt 30% of points *with high confidence* and assert the
+   estimate still holds. A weighted median survives this; a least-squares fit would not. Written
+   against median semantics deliberately — the estimator is a weighted median, not a fit.
+4. **Degenerate input raises** rather than falling back: empty mask, NaN, negative depth.
+5. **`original_coords`** is `[0,0,w,h,w,h]` per frame and round-trips through
+   `_rescale_reconstruction_to_original_dimensions` to original-resolution K — with `fx != fy`
+   preserved, since that function must scale x and y separately.
+6. **c2w → w2c inversion.** Fake `camera_poses`; assert `result.extrinsics` is world-to-camera,
    not the raw model output. The single easiest thing to get backwards.
-6. **`FeedforwardResult` field contract** — shapes and dtypes, `depth` is (N,H,W) not
+7. **`FeedforwardResult` field contract** — shapes and dtypes, `depth` is (N,H,W) not
    (N,H,W,1), colors uint8.
-7. **Refusals**: `extract_intermediate_features` raises `NotImplementedError`; LC plus `loger`
-   raises `ValueError`.
-8. **Registry**: `"loger" in list_creators()` when the vendored tree is present.
+8. **Refusals**: `extract_intermediate_features` raises `NotImplementedError`; LC plus `loger`
+   raises `ValueError`; a `model:` key that is neither `se3` nor a `Pi3.__init__` parameter
+   raises.
+9. **Registry**: `get_creator("loger")` returns `LoGeRCreator` when the vendored tree is
+   present. (Note there is no `list_creators()` — `pointcloud/__init__.py` exposes only
+   `get_creator` and `make_creator`.)
 
 **Integration — the parity check.** Marked `@pytest.mark.slow`, skipped without weights:
 
-Unproject `depth` with the fitted K and `invert_poses(camera_poses)`, and compare against
-LoGeR's native `points`. Assert median per-point error under a scene-scale-relative tolerance.
+Run the model, then unproject `depth` with the fitted K and `invert_poses(camera_poses)` and
+compare against LoGeR's native `points`, read from the model output inside the test. Assert
+median per-point error under a scene-scale-relative tolerance, and **log the residual** — it is
+open item 3, not merely a pass/fail.
 
 This one assertion simultaneously proves the focal fit, the pose inversion, the depth
 extraction, and that `unproject_and_filter_points` is a legitimate reuse — because LoGeR itself
@@ -494,5 +529,3 @@ until it passes.
    `2026-08-12-multiview-confidence-all-models-design.md`; `loger` should be added to its scope.
 6. Sparse `FeedforwardResult` for long sequences — rejected here for consistency; would need
    its own design covering all four backends.
-7. Pi3* / `pi3x` — no drop-in path without Pi3*-trained weights. If such a checkpoint is
-   published, the metric branch would give metric depth and is worth revisiting.

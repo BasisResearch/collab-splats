@@ -725,6 +725,7 @@ gitignored and cannot be read from this repo alone:
 Provides:
   LOGER_HF_REPO        — HuggingFace repo holding both checkpoints
   LOGER_VARIANTS       — the two shipped variants
+  LOGER_CONF_THRESHOLD — confidence floor for the K fit, measured not inherited
   _compute_target_size — patch-aligned resize matching the vendored loader
   LoGeRCreator         — feedforward creator using LoGeR depth + pose
 """
@@ -743,6 +744,15 @@ logger = logging.getLogger(__name__)
 
 LOGER_HF_REPO = "Junyi42/LoGeR"
 LOGER_VARIANTS = ("LoGeR", "LoGeR_star")
+
+# Confidence floor for the K fit, passed explicitly to estimate_intrinsics_from_points
+# instead of taking its 0.1 default. LoGeR's conf head is uncalibrated: measured logits
+# on the Task 1 run span -4.257..-2.019, so the post-sigmoid band is [0.0140, 0.1172] and
+# 0.1 is its 92nd percentile — the default keeps 7.9% of pixels (12,217/155,232) and a
+# marginally duller scene keeps none, raising. 0.02 sits just above the band floor, so it
+# rejects only what the model calls junk; the confidence WEIGHTING inside the median is
+# what actually discriminates. Re-measure this if the checkpoint changes.
+LOGER_CONF_THRESHOLD = 0.02
 
 # Vendored tree, populated by setup/loger.sh.  parents[3] resolves
 # collab_splats/pointcloud/feedforward/loger.py -> repo root.
@@ -1385,8 +1395,10 @@ Add to `LoGeRCreator`, after `_preprocess`:
         # conf_head is a bare LinearPts3d with NO output activation — Junyi42/LoGeR @
         # 7685b7a, loger/models/pi3.py:172 — so the model emits logits, and upstream
         # activates at the call site (PolyCam/LoGeR @ 5d7c1a7, run_loger.py:481).
-        # This must run before the K fit, whose conf > 0.1 gate is a threshold on a
-        # probability: on raw logits it would admit roughly half of all pixels.
+        # This must run before the K fit, whose conf gate is a threshold on a
+        # probability. Measured on the Task 1 run, the raw logits span -4.257..-2.019 —
+        # entirely negative — so skipping the sigmoid does not merely shift the gate, it
+        # admits ZERO pixels and the fit raises.
         depth_conf = torch.sigmoid(preds["conf"]).squeeze(0).cpu().float().numpy()
         if depth_conf.ndim == 4:
             depth_conf = depth_conf.squeeze(-1)  # (N,H,W)
@@ -1396,7 +1408,16 @@ Add to `LoGeRCreator`, after `_preprocess`:
         extrinsic = invert_poses(camera_poses)[:, :3, :].astype(np.float32)  # (N,3,4) w2c
 
         # LoGeR predicts no intrinsics — solve one shared K and broadcast it per frame.
-        k = estimate_intrinsics_from_points(local_points, depth_conf)
+        #
+        # The threshold is passed EXPLICITLY, not inherited. estimate_intrinsics_from_points
+        # defaults to 0.1, which is right for a calibrated head but wrong for this one:
+        # sigmoid over the measured logit range -4.257..-2.019 gives a confidence band of
+        # [0.0140, 0.1172], so 0.1 is its 92nd PERCENTILE. At the default only 7.9% of
+        # pixels survive (12,217/155,232 on the Task 1 run), and a slightly duller scene —
+        # all logits below -2.2, still inside the measured band — admits none at all and
+        # raises. LOGER_CONF_THRESHOLD sits near the bottom of the band so the gate rejects
+        # only what the model calls junk, and the weighted median does the rest of the work.
+        k = estimate_intrinsics_from_points(local_points, depth_conf, LOGER_CONF_THRESHOLD)
         intrinsic = np.broadcast_to(k, (local_points.shape[0], 3, 3)).copy()
 
         # Channel 2 IS depth: the model builds local_points as cat([xy * z, z]) at

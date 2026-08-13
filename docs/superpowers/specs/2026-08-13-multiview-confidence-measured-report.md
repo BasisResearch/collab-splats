@@ -141,13 +141,69 @@ Measurement contradicts three things in
    composition, never its size. Acceptance must be measured at pixel-mask level, or against
    GT depth on 7-Scenes.
 
+## Step D — GT-depth calibration (7-Scenes chess/seq-01, 60 frames)
+
+Run with the shipping `compute_multiview_depth_confidence` + `multiview_mask`. Each backbone
+reconstructed with `use_multiview_confidence=False` so the zarr holds unfiltered depth
+(`evals/scripts/eval_run_backend.py`), then swept (`evals/scripts/eval_multiview_conf.py`).
+Non-metric depth is median-aligned to GT before any error is computed: scale 2.77 (omega),
+2.94 (vggtx), 0.91 (mapanything — near 1.0, as expected for the metric backend).
+
+**The median is the wrong statistic and nearly cost us the conclusion.** mv removes a small
+tail of gross outliers; median relative error moves by <0.002 across the entire grid. The
+readouts that discriminate are p90 and the fraction of retained pixels off by >10% (`out10`).
+The harness now reports median, p90, p95, out10 and retention.
+
+| backbone | variant | retention | median | p90 | out10 |
+|---|---|---|---|---|---|
+| vggt_omega | unfiltered | 1.0000 | 0.0224 | 0.2202 | 0.1569 |
+| vggt_omega | learned conf p50 | 0.5456 | 0.0178 | 0.0395 | 0.0372 |
+| vggt_omega | mv rel=0.05 K=1 (shipping default) | 0.9990 | 0.0224 | 0.2197 | 0.1565 |
+| vggt_omega | mv rel=0.01 K=2 | 0.9840 | 0.0221 | 0.2109 | 0.1484 |
+| vggt_omega | mv rel=0.01 K=8 | 0.9404 | 0.0214 | 0.1822 | 0.1297 |
+| vggt_omega | mv rel=0.01 K=16 | 0.8966 | 0.0209 | 0.1419 | 0.1145 |
+| vggtx | unfiltered | 1.0000 | 0.0220 | 0.2148 | 0.1622 |
+| vggtx | learned conf p50 | 0.5656 | 0.0177 | 0.1829 | 0.1357 |
+| vggtx | mv rel=0.01 K=2 | 0.9887 | 0.0217 | 0.2108 | 0.1568 |
+| vggtx | mv rel=0.01 K=16 | 0.9320 | 0.0208 | 0.1918 | 0.1401 |
+| mapanything | unfiltered | 1.0000 | 0.0184 | 0.1089 | 0.1062 |
+| mapanything | learned conf p50 | 0.7780 | 0.0156 | 0.0938 | 0.0952 |
+| mapanything | mv rel=0.01 K=2 | 0.9956 | 0.0183 | 0.1088 | 0.1060 |
+| mapanything | mv rel=0.01 K=16 | 0.9487 | 0.0177 | 0.1023 | 0.1019 |
+
+Full grid (rel ∈ {0.01, 0.02, 0.05, 0.10} × K ∈ {1, 2, 4, 8, 16}) in
+`evals/results/mv_sweep_<backend>.json`.
+
+**Findings.**
+
+1. **Sanity condition holds.** Every backbone is monotone in the same direction and its
+   optimum sits at the same grid corner (rel=0.01, largest K). `rel_thresh` is behaving
+   scale-invariantly; the spread is backbone consistency, not a convention bug.
+
+2. **mv is real but small, and pixel-efficient.** Best case (omega, rel=0.01 K=16): out10
+   0.1569 → 0.1145, a 27% relative cut in gross outliers for 10.3% of pixels. p90 drops 36%.
+   Per pixel dropped, that is ~2.6× more outlier reduction than the learned-confidence
+   percentile achieves (0.6×), which spends 45% of pixels for a 76% cut. The two filters are
+   complementary — evidence for intersecting them rather than substituting, which is what the
+   code does.
+
+3. **The shipping defaults are inert.** rel=0.05, K=1 retains 99.9% and moves out10 by
+   0.0004. Enabling `use_multiview_confidence` at those values costs the pairwise compute and
+   buys nothing measurable. The knob only earns its keep at rel≈0.01 with K≥8.
+
+4. **Large K is unsafe as an absolute count.** `min_views` is a count, not a fraction, so K=16
+   on a sequence with fewer than 17 overlapping views drops every judged pixel. The setting
+   that measures best here is exactly the setting that silently empties a short scene. Any
+   default above K=2 needs either a fraction-of-partners form or a guard against N.
+
+5. **MapAnything gains least** (out10 −4% at K=16) — its depth is already the most cross-view
+   consistent of the three, consistent with it being the metric backend.
+
 ## What this does not establish
 
-Retention is not accuracy. Nothing here shows the pixels mv removes are *wrong* — only that
-they disagree across views, that the disagreement is not an overlap artifact, and that it is
-concentrated where a human would expect a reconstruction defect. The GT-depth evaluation on
-7-Scenes (Step D of the parity spec) remains the test that decides whether default-on is
-justified, and it is unchanged by this report.
+Step D measures depth-map accuracy against GT on one scene of one dataset (chess/seq-01, 60
+frames). It does not establish downstream effect on the sparse cloud, the mesh, or ATE, and
+it does not cover a sequence long enough to test K≥16 against short-scene safety.
 
 ## Reproduction
 
@@ -157,3 +213,15 @@ over learned confidence), `mv_interpret.py` (kill-set composition), `mv_perframe
 (per-frame overlap vs agreement), `mv_mapany_parity.py` (MapAnything shipping-config parity),
 `run_backend.py` (one backend per fresh process — required for SPARK's
 `_assert_loaded_from_spark` guard).
+
+Step D is reproducible from the repo, not the scratchpad:
+
+```bash
+for B in vggt_omega vggtx mapanything; do
+  /opt/venv/reconstruction/bin/python evals/scripts/eval_run_backend.py --backend $B \
+      --seq data/7scenes/chess/seq-01 --out evals/results/mv_$B --max-frames 60
+  /opt/venv/reconstruction/bin/python evals/scripts/eval_multiview_conf.py \
+      --zarr evals/results/mv_$B/feedforward.zarr --seq data/7scenes/chess/seq-01 \
+      --max-frames 60 --out evals/results/mv_sweep_$B.json
+done
+```

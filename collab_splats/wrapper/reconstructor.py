@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # base.yaml is the single source of defaults; __init__ merges any passed config over it.
 DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 
-_FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega"}
+_FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
 _STAGE_ORDER = ["preproc", "pointcloud", "semantics", "mesh", "localize"]
@@ -156,6 +156,7 @@ def _run_feedforward(
     viz_port: int,
     max_points: int,
     use_multiview_confidence: bool,
+    creator_kwargs: dict | None = None,
 ) -> tuple["PointcloudResult", "Viewer | None"]:
     """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
 
@@ -174,6 +175,7 @@ def _run_feedforward(
         LoopClosureConfig,
     )
     from collab_splats.pointcloud.feedforward import (
+        LoGeRCreator,
         MapAnythingCreator,
         VGGTOmegaCreator,
         VGGTXCreator,
@@ -193,16 +195,62 @@ def _run_feedforward(
         lc_enabled = bool(loop_closure)
         lc_config = None
 
+    # LoGeR refuses loop closure in this cut. Refuse here rather than in the creator:
+    # _verify_loop_candidate is concrete on BaseFeedforwardCreator, so an LC run would
+    # otherwise complete a full forward pass before dying inside the LC loop. LC verify
+    # thresholds are calibrated per backbone and none exists for LoGeR. Read the normalised
+    # lc_enabled, not the raw arg — loop_closure={"enabled": False} is a truthy object with
+    # falsy intent, and refusing a config that explicitly disables LC would be wrong.
+    if backend == "loger" and lc_enabled:
+        raise ValueError(
+            "pointcloud.loop_closure is not supported with backend 'loger'. LoGeR's windowed "
+            "TTT memory already carries state across frames, and loop closure verification "
+            "thresholds are calibrated per backbone. Use vggt_omega, vggtx, or mapanything."
+        )
+
+    # max_frames: 300 is a VGGT-Omega GPU property that lives in the preproc stage, and
+    # preproc has already run by the time we get here. Flipping to loger at defaults
+    # therefore processes exactly as many frames as Omega would, and LoGeR appears to
+    # buy nothing. Warn rather than change behaviour — the true ceiling is unmeasured.
+    # Best-effort: a purely advisory message must never take down a run that would
+    # otherwise succeed, and .exists() guards absence but not a corrupt or half-written
+    # store, so swallow anything FrameStore.open raises.
+    if backend == "loger":
+        try:
+            n_frames = len(FrameStore.open(frames_zarr)) if Path(frames_zarr).exists() else 0
+        except Exception:
+            logger.debug("Could not count frames for the LoGeR max_frames advisory", exc_info=True)
+            n_frames = 0
+        if 0 < n_frames <= 300:
+            logger.warning(
+                "LoGeR is running on %d frames. preprocessing.max_frames defaults to 300, "
+                "which is VGGT-Omega's GPU limit, not LoGeR's — LoGeR uses sliding-window "
+                "inference and is built for longer sequences. Raise max_frames to use it.",
+                n_frames,
+            )
+
     # Select creator class by backend name
     creator_map = {
         "vggtx": VGGTXCreator,
         "mapanything": MapAnythingCreator,
         "vggt_omega": VGGTOmegaCreator,
+        "loger": LoGeRCreator,
     }
     # max_points caps the confidence mask during inference — a memory guard, not a preference.
     # use_multiview_confidence is the only mv knob exposed: rel_thresh and min_views stay as
     # calibrated creator field defaults so nobody hand-tunes bare floats in YAML.
-    creator = creator_map[backend](max_points=max_points, use_multiview_confidence=use_multiview_confidence)
+    # Both are passed explicitly, so a duplicate in the per-backend config block would surface
+    # as an opaque TypeError naming neither the key nor its config path. Reject those two by
+    # name; unknown keys are left to the constructor's own TypeError, which names them.
+    extra = dict(creator_kwargs or {})
+    for reserved in ("max_points", "use_multiview_confidence"):
+        if reserved in extra:
+            raise ValueError(f"pointcloud.{backend}.{reserved} is not settable; use pointcloud.{reserved}")
+    creator = creator_map[backend](
+        max_points=max_points,
+        use_multiview_confidence=use_multiview_confidence,
+        **extra,
+    )
 
     # Wrap with loop closure if requested; viz has nothing to show without it, so only
     # attach the viser Viewer (also a heavy/websocket dep) when both are enabled
@@ -561,6 +609,7 @@ class Reconstructor:
                 viz_port=pc_cfg["viz"]["port"],
                 max_points=pc_cfg["max_points"],
                 use_multiview_confidence=pc_cfg["use_multiview_confidence"],
+                creator_kwargs=pc_cfg.get(pc_cfg["backend"], {}),
             )
             self.viewer = viewer
 

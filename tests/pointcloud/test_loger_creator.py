@@ -10,6 +10,7 @@ from PIL import Image
 
 from collab_splats.pointcloud.feedforward import loger as loger_mod
 from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
+from collab_splats.wrapper.reconstructor import _FEEDFORWARD_BACKENDS, _run_feedforward
 
 
 @pytest.fixture
@@ -690,3 +691,131 @@ def test_extract_intermediate_features_refuses():
     # refusal must be explicit.
     with pytest.raises(NotImplementedError, match="loop closure"):
         LoGeRCreator().extract_intermediate_features(torch.rand(2, 3, 56, 70))
+
+
+########################################
+# Reconstructor wiring
+########################################
+
+
+def test_loger_is_a_recognised_feedforward_backend():
+    # vggt_spark is in _REGISTRY but absent here, so it is unreachable from
+    # Reconstructor. loger must be in both.
+    assert "loger" in _FEEDFORWARD_BACKENDS
+
+
+def test_loop_closure_with_loger_is_refused(tmp_path):
+    # Refuse at the Reconstructor level, before any inference. _verify_loop_candidate
+    # is concrete on the base class, so without this an LC run would burn a full
+    # forward pass and then raise NotImplementedError deep in the LC loop.
+    # Catch broadly, then assert the type: with the refusal removed this call still dies,
+    # but on the absent frames.zarr further down. pytest.raises(ValueError) would report
+    # that as a bare FileNotFoundError traceback, which pins nothing about the refusal.
+    with pytest.raises(Exception) as excinfo:
+        _run_feedforward(
+            backend="loger",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=True,
+            viz_enabled=False,
+            viz_port=8080,
+            max_points=1000,
+            use_multiview_confidence=False,
+        )
+
+    assert isinstance(
+        excinfo.value, ValueError
+    ), f"expected the LC refusal, got {type(excinfo.value).__name__}: {excinfo.value}"
+    assert "loop closure" in str(excinfo.value)
+    assert "loger" in str(excinfo.value)
+
+
+def test_loop_closure_disabled_by_dict_is_not_refused(tmp_path):
+    # loop_closure is bool|dict, and {"enabled": False} is a truthy object with falsy
+    # intent. The refusal reads the normalised lc_enabled, so this config must get past
+    # it — it dies later, on the absent frames.zarr, which is a different failure.
+    with pytest.raises(Exception) as excinfo:
+        _run_feedforward(
+            backend="loger",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure={"enabled": False},
+            viz_enabled=False,
+            viz_port=8080,
+            max_points=1000,
+            use_multiview_confidence=False,
+        )
+
+    assert "loop closure" not in str(excinfo.value)
+
+
+class _KwargsRecorded(Exception):
+    """Sentinel: the creator was constructed, so stop before any inference runs."""
+
+
+def test_creator_kwargs_reach_the_constructor(tmp_path, monkeypatch):
+    # The per-backend config block is the only way to set model knobs from yaml, so the
+    # thing under test is the _run_feedforward passthrough — NOT that LoGeRCreator accepts
+    # kwargs, which was already true before this task. Substituting a recording stub that
+    # raises as soon as it is constructed pins the plumbing without running inference.
+    from collab_splats.pointcloud import feedforward as ff_mod
+
+    seen = {}
+
+    class _Recorder:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+            raise _KwargsRecorded
+
+    monkeypatch.setattr(ff_mod, "LoGeRCreator", _Recorder)
+
+    with pytest.raises(_KwargsRecorded):
+        _run_feedforward(
+            backend="loger",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=False,
+            viz_enabled=False,
+            viz_port=8080,
+            max_points=1234,
+            use_multiview_confidence=False,
+            creator_kwargs={"window_size": 64, "variant": "LoGeR"},
+        )
+
+    # Non-empty first: a monkeypatch that missed its target would let a real creator be
+    # constructed, and that could raise for its own reasons that pytest.raises misreads.
+    assert seen, "LoGeRCreator was never constructed — the monkeypatch did not take"
+    # .get() not [] — a dropped passthrough must die as an AssertionError naming what did
+    # arrive, not as a bare KeyError that looks like a typo in the test.
+    assert seen.get("window_size") == 64, f"creator_kwargs did not reach the constructor; saw {sorted(seen)}"
+    assert seen.get("variant") == "LoGeR", f"creator_kwargs did not reach the constructor; saw {sorted(seen)}"
+    assert seen.get("max_points") == 1234
+
+
+@pytest.mark.parametrize("reserved", ["max_points", "use_multiview_confidence"])
+def test_creator_kwargs_may_not_redeclare_a_reserved_key(tmp_path, reserved):
+    # Both keys are already passed explicitly; a duplicate would surface as an opaque
+    # TypeError from the constructor rather than naming the config key at fault.
+    # Catch broadly, then assert the type: without the guard this raises the opaque
+    # TypeError itself, and pytest.raises(ValueError) would surface that as a raw
+    # traceback rather than as "the guard is missing".
+    with pytest.raises(Exception) as excinfo:
+        _run_feedforward(
+            backend="loger",
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            loop_closure=False,
+            viz_enabled=False,
+            viz_port=8080,
+            max_points=1000,
+            use_multiview_confidence=False,
+            creator_kwargs={reserved: 5},
+        )
+
+    assert isinstance(
+        excinfo.value, ValueError
+    ), f"expected a named ValueError for {reserved!r}, got {type(excinfo.value).__name__}: {excinfo.value}"
+    # The message must name the offending key and its config path, which is the entire
+    # reason this guard exists instead of letting the constructor's TypeError through.
+    assert reserved in str(excinfo.value)
+    assert f"pointcloud.loger.{reserved}" in str(excinfo.value)

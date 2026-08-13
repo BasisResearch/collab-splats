@@ -266,11 +266,17 @@ def _fake_frames(n: int, h: int, w: int) -> np.ndarray:
 
 
 def test_preprocess_returns_patch_aligned_unit_range_tensor():
+    # Non-default pixel_limit, and the exact expected shape rather than a divisibility
+    # check: (H, W) both being multiples of 14 is also true of the transposed size, so
+    # `% 14 == 0` alone cannot tell a correct resize from an axis swap, and a hardcoded
+    # budget from the field being ignored altogether.
+    creator = _creator(pixel_limit=100_000)
     frames = _fake_frames(4, 480, 640)
-    views, image_paths, original_coords = _creator()._preprocess(frames, [0, 5, 10, 15])
+    views, image_paths, original_coords = creator._preprocess(frames, [0, 5, 10, 15])
 
     assert views.shape[0] == 4 and views.shape[1] == 3
-    assert views.shape[2] % 14 == 0 and views.shape[3] % 14 == 0
+    # _compute_target_size returns (w, h); views is (N, 3, H, W) — hence the reversal.
+    assert tuple(views.shape[2:]) == _compute_target_size(640, 480, 100_000)[::-1]
     assert views.dtype == torch.float32
     # unproject_and_filter_points reads these as colors; _forward asserts the range.
     assert float(views.min()) >= 0.0 and float(views.max()) <= 1.0
@@ -296,9 +302,12 @@ def test_preprocess_rejects_non_uniform_frame_sizes():
         _creator()._preprocess(frames, [0, 1])
 
 
-def test_preprocess_rejects_out_of_order_frames():
+@pytest.mark.parametrize("frame_idxs", [[0, 10, 5], [0, 5, 5]])
+def test_preprocess_rejects_out_of_order_frames(frame_idxs):
     # Windows and overlap stitching assume temporal order; out-of-order input
     # degrades quality with no error. No other backend cares, so this is LoGeR's.
+    # The duplicate case is the one a `b < a` guard would let through, and duplicates
+    # also collide in the frame_{idx:06d} labels — hence "strictly" ascending.
     frames = _fake_frames(3, 480, 640)
     with pytest.raises(ValueError, match="ascending"):
-        _creator()._preprocess(frames, [0, 10, 5])
+        _creator()._preprocess(frames, frame_idxs)

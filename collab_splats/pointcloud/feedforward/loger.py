@@ -267,12 +267,17 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
     def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
         """Resize decoded frames to LoGeR's patch-aligned budget; return (N,3,H,W) in [0,1]."""
-        # Windows and overlap stitching assume temporal order. frames.zarr is ordered
+        # Windows and overlap stitching assume temporal order, and equal indices would
+        # additionally collide in the frame_{idx:06d} labels below. frames.zarr is ordered
         # by construction today, so this guards an assumption rather than a known bug.
-        if any(b <= a for a, b in zip(frame_idxs, frame_idxs[1:])):
-            raise ValueError(
-                f"LoGeR requires strictly ascending frame_idxs (sliding-window inference); got {frame_idxs}"
-            )
+        # Report the offending pair, not frame_idxs itself: at the 300-frame budget that
+        # would put a 300-element list in the traceback and bury the one bad index.
+        for i, (a, b) in enumerate(zip(frame_idxs, frame_idxs[1:])):
+            if b <= a:
+                raise ValueError(
+                    f"LoGeR requires strictly ascending frame_idxs (sliding-window inference); "
+                    f"got frame_idxs[{i}]={a} >= frame_idxs[{i + 1}]={b}; sort before calling"
+                )
 
         # LoGeR derives the target size from frame 0 alone
         # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:53-54, inside
@@ -280,7 +285,10 @@ class LoGeRCreator(BaseFeedforwardCreator):
         # assumption, refuse mixed sizes.
         shapes = {(int(f.shape[0]), int(f.shape[1])) for f in frames}
         if len(shapes) != 1:
-            raise ValueError(f"LoGeR needs uniform frame sizes; got {sorted(shapes)}")
+            raise ValueError(
+                f"LoGeR needs uniform frame sizes; got {sorted(shapes)}. All frames must share "
+                "one resolution; re-extract the frame store."
+            )
 
         orig_h, orig_w = shapes.pop()
         target_w, target_h = _compute_target_size(orig_w, orig_h, self.pixel_limit)
@@ -295,7 +303,12 @@ class LoGeRCreator(BaseFeedforwardCreator):
         resized = np.stack(
             [np.asarray(Image.fromarray(f).resize((target_w, target_h), Image.LANCZOS)) for f in frames]
         )
-        views = torch.from_numpy(resized).permute(0, 3, 1, 2).float() / 255.0
+        # div_ rather than `/ 255.0`: the out-of-place divide would hold two full float32
+        # copies at once, and this is the backend built for long sequences — measured at
+        # 300 frames of 1080p that second copy is 914 MB. Safe in place because `resized`
+        # is uint8 (PIL RGB always decodes to uint8), so .float() always allocates a fresh
+        # tensor and never aliases the numpy buffer.
+        views = torch.from_numpy(resized).permute(0, 3, 1, 2).float().div_(255.0)
 
         # Stable synthetic labels — the frame store is the sole IO path, no filenames exist
         image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]

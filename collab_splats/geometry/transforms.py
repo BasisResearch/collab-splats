@@ -71,6 +71,10 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     at half the total mass.  Prior art for using one to reduce per-pixel focal
     estimates: github.com/PolyCam/LoGeR @ 5d7c1a7, ``run_loger.py:167``.  Returns
     ``None`` for an empty input so the caller can raise rather than invent a value.
+
+    Values must be finite. ``np.argsort`` sorts ``inf`` and ``NaN`` to the tail, so
+    non-finite entries would hold weight above the half-mass point and bias the result
+    upward rather than poison it visibly — callers filter them before calling.
     """
     if len(values) == 0:
         return None
@@ -85,7 +89,12 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     # Sort by value, then walk the cumulative weight to the halfway mass.
     order = np.argsort(values)
     values, weights = values[order], weights[order]
-    cumw = np.cumsum(weights)
+    cumw = np.cumsum(weights, dtype=np.float64)
+
+    # All-zero weights carry no mass to bisect; searchsorted would return index 0 and
+    # hand back the smallest value as if it were an estimate. Report "no estimate".
+    if cumw[-1] <= 0:
+        return None
     return float(values[np.searchsorted(cumw, cumw[-1] / 2.0)])
 
 

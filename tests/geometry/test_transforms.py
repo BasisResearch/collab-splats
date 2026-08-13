@@ -135,14 +135,22 @@ def test_compute_weighted_median_equal_weights_matches_plain_median():
 def test_compute_weighted_median_follows_the_weight_mass():
     # Weight concentrated on the low values pulls the median down, even though
     # the high values are the numerical majority by count.
-    values = np.array([1.0, 1.0, 9.0, 9.0, 9.0], dtype=np.float32)
-    weights = np.array([50.0, 50.0, 1.0, 1.0, 1.0], dtype=np.float32)
+    # Deliberately unsorted: this is what pins the argsort. Pre-sorted input would
+    # pass even if the sort were deleted.
+    values = np.array([9.0, 1.0, 9.0, 1.0, 9.0], dtype=np.float32)
+    weights = np.array([1.0, 50.0, 1.0, 50.0, 1.0], dtype=np.float32)
     assert _compute_weighted_median(values, weights) == pytest.approx(1.0)
 
 
 def test_compute_weighted_median_empty_returns_none():
     # Signals "no estimate" to the caller, which raises rather than falling back.
     assert _compute_weighted_median(np.array([]), np.array([])) is None
+
+
+def test_compute_weighted_median_zero_weights_returns_none():
+    # No confidence mass to bisect. Must not silently return the smallest value.
+    values = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    assert _compute_weighted_median(values, np.zeros(3, dtype=np.float32)) is None
 
 
 def test_compute_weighted_median_subsamples_deterministically():
@@ -153,5 +161,7 @@ def test_compute_weighted_median_subsamples_deterministically():
     weights = np.ones_like(values)
     first = _compute_weighted_median(values, weights, max_n=1000)
     assert first == _compute_weighted_median(values, weights, max_n=1000)
+    # ...and that subsampling did not move the estimate off the true median.
+    assert first == pytest.approx(float(np.median(values)), abs=1.0)
 
 

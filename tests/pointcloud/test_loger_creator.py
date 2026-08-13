@@ -641,6 +641,20 @@ def test_max_points_caps_the_returned_cloud():
     assert len(result.pixel_indices) == 100
 
 
+def test_max_points_caps_the_reprojected_cloud():
+    # The mirror of the cap test above on the BA path, which had only a crash pin: at the
+    # 500_000 default the cap never engages against the 11,760-point scene, so a mutant
+    # doubling _reproject's max_points survived the whole suite and only `None` died — as a
+    # TypeError inside randomly_limit_trues (vggtx.py:144), which says nothing about whether
+    # the cap is applied. Construct below the scene size so it bites here too. The cut is
+    # EXACT when it engages: randomly_limit_trues draws size=max_trues without replacement.
+    creator, raw, _ = _forward_and_postprocess(max_points=100)
+    pts, colors = creator._reproject(raw, raw["extrinsic"], raw["intrinsics"])
+
+    assert len(pts) == 100
+    assert len(colors) == 100
+
+
 def test_multiview_confidence_mask_is_wired_and_off_by_default():
     # Found by mutation: forcing this branch either way — permanently off, or permanently
     # on — passed every other test in this file, so the flag was decorative. Both

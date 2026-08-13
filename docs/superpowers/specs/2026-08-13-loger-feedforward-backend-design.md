@@ -107,16 +107,28 @@ measures exactly how good an approximation it is.
 
 ### The fit
 
-`_estimate_shared_focal(local_points, conf)` is **ported**, and from the fork we do *not*
-vendor — so the attribution has to be exact. Source: PolyCam `LoGeR` @ `5d7c1a7`,
-`run_loger.py`, four functions collapsed into one:
+`_estimate_shared_intrinsics(local_points, conf) -> np.ndarray` returns a `(3, 3)` `float32` K.
+It is **ported**, and from the fork we do *not* vendor — so the attribution has to be exact.
+Source: PolyCam `LoGeR` @ `5d7c1a7`, `run_loger.py`, four functions collapsed into one:
 
 | Upstream | Line | Fate |
 |---|---|---|
 | `estimate_focal_lengths(local_points, conf, shared=True)` | 206 | merged; `shared=False` branch and the `1.2·max(W,H)` fallback dropped |
 | `_focal_from_frame(local_pts, conf_frame, uu, vv, H, W)` | 180 | **inlined** — single call site once `shared=False` is gone; the per-pixel inversion and all three guards preserved |
 | `_weighted_median(values, w, max_n=50000)` | 167 | kept as the one helper, verbatim |
-| `_snap_square_pixels(fx, fy, tol=0.02)` | 195 | **not ported** — no consumer observes it, see below |
+| `_snap_square_pixels(fx, fy, tol=0.02)` | 195 | **not ported** — harmful at model resolution, see below |
+
+**Why it returns K and not `(fx, fy)`.** The principal point is not a separate decision the
+caller gets to make — it is *already inside the estimator*. The pixel grid is built centred,
+`u_centered = np.arange(W) - (W - 1) / 2.0` (`run_loger.py:209-210`), so every per-pixel focal
+`uu * Z / X` is conditioned on `cx = (W - 1) / 2`. Returning only the focals splits one
+calibration across two places and obliges the caller to independently rediscover that
+convention. A caller that reasonably writes `W / 2.0` instead introduces a half-pixel principal
+offset that nothing in the pipeline would flag — it is within the noise of the parity test and
+would surface only as a small systematic reprojection bias in localization. Returning the
+assembled matrix makes the convention unstatable-wrongly: the estimator owns the grid, so the
+estimator owns `cx`, `cy`. The caller's remaining job is one broadcast to `(N, 3, 3)`, since the
+fit is shared across frames.
 
 `build_forward_kwargs` (L149) is **read for its behaviour, not ported** — the forward kwargs come
 from the vendored yaml directly.
@@ -144,10 +156,22 @@ is unconstrained at depth discontinuities.
 Three behaviours to preserve, all in `_focal_from_frame`:
 
 - validity mask `Z > 1e-3`, `|X| > 1e-6`, `|Y| > 1e-6`, `conf > 0.1` — the last is a hard
-  threshold, not a weight
+  threshold, not a weight, **and it is a threshold on sigmoid-activated confidence** (below)
 - sanity bounds `W*0.1 < fx < W*10` and `H*0.1 < fy < H*10` applied before the median
 - `_weighted_median` subsamples above 50 000 samples with a seeded RNG (`default_rng(42)`), so
   the result is deterministic
+
+**The sigmoid is the caller's job, and the estimator depends on it having run.** LoGeR's
+`conf_head` is a bare `LinearPts3d(patch_size=14, dec_embed_dim=1024, output_dim=1)`
+(`loger/models/pi3.py:172`) with **no output activation** — the model emits logits. Upstream
+applies the activation outside the model, at `run_loger.py:481`:
+`preds["conf"] = torch.sigmoid(preds["conf"])`. So `_forward` must call `torch.sigmoid` on the
+raw head output before anything else touches it. Skipping it is not a scaling nuisance that
+washes out downstream: the `conf > 0.1` gate is calibrated against a probability, and on raw
+logits `> 0.1` admits roughly half of all pixels instead of a deliberate ~10% floor, quietly
+feeding the median the low-confidence pixels the gate exists to exclude. The fit would still
+return a plausible number, which is what makes it worth naming here rather than leaving to be
+inferred from upstream. Recorded as a hard ordering requirement in the `_forward` table.
 
 **`fx` and `fy` are estimated independently and stay independent.** Load-bearing — see
 `_preprocess`.
@@ -164,13 +188,37 @@ The four upstream functions total ~78 lines. Three cuts bring it to **two functi
 2. **The `max(W, H) * 1.2` fallback** on fit failure (the same heuristic as
    `localization/localizer.py:24 seed_intrinsics`). We raise instead: a wrong-but-plausible K
    against real depth is precisely the `be24be2` mesh-intrinsics regression.
-3. **`_snap_square_pixels` entirely** (10 lines). It averages `fx` and `fy` when they agree
-   within 2%. Trace what consumes them: `camera_model="PINHOLE"` stores both
-   (`base.py:552`), `unproject_and_filter_points` uses both, and
-   `_rescale_reconstruction_to_original_dimensions` scales each by its own factor. **No consumer
-   can observe whether they were snapped** — it is a sub-1% no-op that exists to prettify
-   upstream's COLMAP export. Deleting it also makes the anisotropy argument categorical rather
-   than conditional: `fx` and `fy` are *never* merged.
+3. **`_snap_square_pixels` entirely** (10 lines) — and the reason is stronger than an earlier
+   draft claimed. That draft said no consumer observes it. In fact, **at model resolution it
+   injects error**, precisely in the band where it fires.
+
+   Take a physical camera with square pixels, `fx_orig = fy_orig = f`. Our resize scales the
+   axes by *different* factors `s_x ≠ s_y` (independent `round(·/14)`), so the true
+   model-resolution focals are `f·s_x` and `f·s_y` — genuinely unequal, by the aspect
+   distortion, typically a few percent. The estimator recovers both correctly. Then:
+
+   - **snapped:** both become `f(s_x + s_y)/2`, and
+     `_rescale_reconstruction_to_original_dimensions` divides by `s_x` and `s_y` separately,
+     giving `f(s_x + s_y)/(2 s_x) ≠ f`. Residual error ≈ `(s_y/s_x − 1)/2`, up to ~1%.
+   - **not snapped:** `f·s_x / s_x = f`, exact.
+
+   The 2% snap tolerance is the same order as the anisotropy the resize introduces, so the snap
+   fires exactly when it destroys a correction that was right. It makes sense upstream, where
+   `run_loger.py` exports at model resolution and never rescales. It does not survive contact
+   with our rescale step.
+
+   Deleting it also makes the anisotropy argument categorical rather than conditional: `fx` and
+   `fy` are *never* merged.
+
+   **There is a version of the idea that is useful**, and it is worth recording rather than
+   losing. If the camera really does have square pixels, then `fx_m/s_x` and `fy_m/s_y` are two
+   independent estimates of the same scalar `f`, so averaging them halves the variance. The
+   snap belongs in **original-resolution space, after the scales are divided out** — not at
+   model resolution. Left out of the first cut: it would need `s_x`/`s_y` threaded into the
+   estimator (or a hook after `_rescale_...`, which is base-class code we do not own), and the
+   gain is only worth having if the estimator's own variance exceeds the ~1% it would trade
+   away. That is measurable from the parity test, so it becomes a follow-up with a number
+   behind it rather than a guess.
 
 With `shared=False` gone, **`_focal_from_frame` is called exactly once**, so it is inlined — a
 six-parameter helper with a single call site is a function boundary earning nothing.
@@ -260,7 +308,7 @@ re-implement one:
 
 ### Genuinely new, and why
 
-1. `_estimate_shared_focal(local_points, conf)` plus `_weighted_median` — justified above.
+1. `_estimate_shared_intrinsics(local_points, conf)` plus `_weighted_median` — justified above.
    Two functions, ~35 lines, down from the four functions / ~78 lines upstream.
 2. `LoGeRCreator` itself.
 
@@ -379,7 +427,7 @@ This does not distort the pointcloud, but only because **three** separate places
 and `fy` distinct. Every one is a place where an isotropic "simplification" would bake the error
 in:
 
-1. `_estimate_shared_focal` fits `fx` and `fy` **separately** and never merges them, so the
+1. `_estimate_shared_intrinsics` fits `fx` and `fy` **separately** and never merges them, so the
    anisotropy is absorbed into the K rather than corrupting the geometry. (Upstream's
    `_snap_square_pixels` would have merged them under 2%; it is not ported — see the fit
    section.)
@@ -411,10 +459,45 @@ Cropping to a multiple of 14 instead would be worse: it discards field of view, 
 | LoGeR output | shape | our key | transform |
 |---|---|---|---|
 | `local_points[..., 2:3]` | (N,H,W,1) | `depth` | already depth; model builds `cat([xy*z, z])` |
-| `sigmoid(conf)` | (N,H,W,1) | `depth_conf` | squeeze trailing axis |
+| `conf` | (N,H,W,1) | `depth_conf` | **`torch.sigmoid` first** (head emits logits, `pi3.py:172`), then squeeze trailing axis |
 | `camera_poses` | (N,4,4) **c2w** | `extrinsic` | `invert_poses(...)[:, :3, :]` → w2c (N,3,4) |
-| — | — | `intrinsics` | fitted K broadcast to (N,3,3) |
+| — | — | `intrinsics` | `_estimate_shared_intrinsics(...)` → (3,3), broadcast to (N,3,3) |
 | — | — | `intrinsics_downsampled` | alias to the same K — `_raw_to_world_points` expects the key (`vggtx.py:304`) |
+
+Ordering is load-bearing: sigmoid runs **before** the K fit, because the fit's `conf > 0.1` gate
+is a threshold on a probability.
+
+#### `conf_threshold` means a percentile here, not a value
+
+`unproject_and_filter_points` overloads its threshold argument (`vggtx.py:132-138`):
+
+```python
+if conf_threshold > 1.0:
+    threshold_val = float(np.percentile(depth_conf, conf_threshold))
+else:
+    threshold_val = float(conf_threshold)
+```
+
+`> 1.0` is a **percentile**; `<= 1.0` is a **raw confidence value**. VGGT's confidence is
+exponential and unbounded above, so its backends pass percentiles (`vggtx.py:193` = 35.0,
+`vggt_omega.py:150` = 50.0) and never touch the raw branch. LoGeR's confidence is sigmoid, so it
+lands in `[0, 1]` and *both* branches are now reachable in a way they were not before — a raw
+threshold is meaningful for the first time.
+
+`LoGeRCreator.conf_threshold` is a **percentile**, default `50.0`, matching `vggt_omega`. The
+percentile branch is scale-free, so it transfers across the confidence-distribution change
+without recalibration, whereas a raw value tuned on sigmoid confidence would be a new number with
+no evidence behind it. The class docstring says which convention the default uses, because
+somebody will otherwise read `50.0` as a confidence and lower it to `0.5` — which is a legal
+value that silently switches semantics from "drop the bottom half" to "drop everything below
+0.5", a very different mask.
+
+Note the resulting asymmetry inside this one backend, since it is genuinely confusing on a first
+read: the K fit gates on a **raw** `conf > 0.1` (upstream's, preserved verbatim), while the
+pointcloud mask gates on a **percentile**. They are different thresholds serving different jobs —
+the first is a fixed floor on what may inform a calibration, the second is a density knob on the
+exported cloud — and both are correct as written. Called out in an inline comment at the fit's
+mask so the two are not "unified" by a later reader.
 
 LoGeR's native `points` is **discarded**, not retained. An earlier draft kept it as a
 parity-test reference, which contradicts this spec's own memory analysis: another (N,H,W,3)
@@ -478,7 +561,8 @@ Fail loudly, no silent fallbacks — consistent with "hard imports, no stub back
 | `third_party/LoGeR` absent | `feedforward/__init__.py` | `ImportError` swallowed by the guarded export, so `loger` never enters `_REGISTRY` and `make_creator("loger")` raises unknown-backend. Same as Omega/SPARK. |
 | `loop_closure` truthy with `backend: loger` | `_run_feedforward` | `ValueError`. LC thresholds are per-backbone and uncalibrated here — see below. |
 | Frame sizes non-uniform | `_preprocess` | `ValueError`. LoGeR sizes from frame 0 only; refuse rather than silently mis-resize the rest. |
-| Focal fit degenerate (empty conf mask, non-finite, `f <= 0`) | `_estimate_shared_focal` | `RuntimeError` naming frame count and mask survivors. **No `1.2 * max(W,H)` fallback** — see the intrinsics section. |
+| `frame_idxs` not strictly ascending | `_preprocess` | `ValueError`. LoGeR's windows and overlap stitching assume temporal order; out-of-order input degrades quality with no error. `frames.zarr` is ordered by construction today, so this is a one-line assert protecting an assumption the other backends do not make. |
+| Focal fit degenerate (empty conf mask, non-finite, `f <= 0`) | `_estimate_shared_intrinsics` | `RuntimeError` naming frame count and mask survivors. **No `1.2 * max(W,H)` fallback** — see the intrinsics section. |
 | RGB outside `[0, 1]` | `_forward` | `AssertionError`. Guards the `a157421` `[0,255]` bug class at the source. LoGeR's `ToTensor` gives `[0,1]`, matching VGGT-X, but this is asserted rather than assumed. |
 | `extract_intermediate_features` called | creator | `NotImplementedError` naming LoGeR's windowed TTT memory. |
 
@@ -632,13 +716,15 @@ omission. Prefer the guarded test — it is the only thing that proves the regis
 
 **Unit, against a synthetic pinhole scene:**
 
-1. **Focal fit recovers a known focal**, `@pytest.mark.parametrize`d over `(fx, fy)` — one
-   isotropic case and one at `fx/fy = 1.10`. Build `local_points` from a synthetic depth map and
-   the known focals; assert `_estimate_shared_focal` returns both within tolerance and, in the
-   anisotropic case, that they stay distinct. Ground truth is exact because no model is
-   involved. One parametrized test rather than two near-duplicate ones, and the anisotropic row
-   is what protects the aspect-ratio argument under `_preprocess`: any "simplification" to
-   `fx == fy` fails here.
+1. **The fit recovers a known K**, `@pytest.mark.parametrize`d over `(fx, fy)` — one isotropic
+   case and one at `fx/fy = 1.10`. Build `local_points` from a synthetic depth map and the known
+   focals; assert `_estimate_shared_intrinsics` returns a `(3, 3)` matrix whose `fx`/`fy` match
+   within tolerance, stay distinct in the anisotropic case, **and whose `cx`/`cy` equal
+   `((W-1)/2, (H-1)/2)`**. Ground truth is exact because no model is involved. One parametrized
+   test rather than two near-duplicate ones. The anisotropic row protects the aspect-ratio
+   argument under `_preprocess` — any "simplification" to `fx == fy` fails here — and the
+   principal-point assertion is what makes the centred-grid convention a tested contract rather
+   than a comment, since the synthetic scene is generated about that same centre.
 2. **The median is robust.** Corrupt 30% of points *with high confidence* and assert the
    estimate still holds. A weighted median survives this; a least-squares fit would not. Written
    against median semantics deliberately — the estimator is a weighted median, not a fit.
@@ -650,7 +736,9 @@ omission. Prefer the guarded test — it is the only thing that proves the regis
    not the raw model output. The single easiest thing to get backwards.
 6. **`FeedforwardResult` field contract** — shapes and dtypes, `depth` is (N,H,W) not
    (N,H,W,1), colors uint8. Includes `camera_model == "PINHOLE"`, so the
-   `(fx + fy) / 2` collapse under `SIMPLE_PINHOLE` cannot creep back in.
+   `(fx + fy) / 2` collapse under `SIMPLE_PINHOLE` cannot creep back in, and
+   `0 <= depth_conf <= 1`, which is the cheapest available proof that the sigmoid ran — feed the
+   fake model logits outside `[0, 1]` so an un-activated path cannot pass.
 7. **Refusals**: `extract_intermediate_features` raises `NotImplementedError`; LC plus `loger`
    raises `ValueError`; a `model:` key that is neither `se3` nor a `Pi3.__init__` parameter
    raises.
@@ -693,3 +781,6 @@ until it passes.
    *copies* ~35 lines out of PolyCam's `run_loger.py`. Flagged for the user's call before the
    port lands; the fallback is to reimplement the estimator from the pinhole identity, which is
    a handful of lines of standard geometry, and cite the original only as prior art.
+8. **Square-pixel averaging in original-resolution space.** Dropped from the first cut with a
+   reason (see the fit section) rather than dismissed. Revisit only if the parity test shows the
+   estimator's own spread exceeds the ~1% the model-resolution version would cost.

@@ -31,8 +31,8 @@ from collab_splats.pointcloud.feedforward.base import (
 
 logger = logging.getLogger(__name__)
 
-REL_THRESHOLDS = (0.02, 0.05, 0.10)
-MIN_VIEWS = (1, 2, 3, 4)
+REL_THRESHOLDS = (0.01, 0.02, 0.05, 0.10)
+MIN_VIEWS = (1, 2, 4, 8, 16)
 
 
 def load_7scenes_depth(color_paths: list[Path]) -> np.ndarray:
@@ -52,13 +52,30 @@ def median_align(pred: np.ndarray, gt: np.ndarray, both_valid: np.ndarray) -> fl
     return float(np.median(gt[both_valid]) / np.median(pred[both_valid]))
 
 
-def retained_error(pred_s: np.ndarray, gt: np.ndarray, keep: np.ndarray) -> tuple[float, float]:
-    """(median relative error, retention) over pixels that are kept AND have GT."""
-    sel = keep & (gt > 0) & (pred_s > 0)
+def retained_error(pred_s: np.ndarray, gt: np.ndarray, keep: np.ndarray) -> dict:
+    """Error stats over pixels that are kept AND have GT, plus the retention fraction.
+
+    The median alone cannot judge this filter: mv drops a small tail of gross outliers, which
+    moves p90/p95 and the >10% outlier fraction while leaving the median flat.
+    """
+    gt_ok = (gt > 0) & (pred_s > 0)
+    sel = keep & gt_ok
     if not sel.any():
-        return float("nan"), 0.0
+        return {
+            "median_rel_err": float("nan"),
+            "p90": float("nan"),
+            "p95": float("nan"),
+            "frac_over_10pct": float("nan"),
+            "retention": 0.0,
+        }
     rel = np.abs(pred_s[sel] - gt[sel]) / gt[sel]
-    return float(np.median(rel)), float(sel.sum() / ((gt > 0) & (pred_s > 0)).sum())
+    return {
+        "median_rel_err": float(np.median(rel)),
+        "p90": float(np.percentile(rel, 90)),
+        "p95": float(np.percentile(rel, 95)),
+        "frac_over_10pct": float((rel > 0.10).mean()),
+        "retention": float(sel.sum() / gt_ok.sum()),
+    }
 
 
 def main() -> None:
@@ -87,39 +104,51 @@ def main() -> None:
     depth_s = depth * s
     logger.info("median alignment scale = %.4f", s)
 
-    # Baseline: learned confidence percentile only, matching the creators' conf_threshold
+    # Reference row: no filtering at all, so every filtered row can be read as a delta
     rows = []
+    stats = retained_error(depth_s, gt, depth > 0)
+    rows.append({"variant": "unfiltered", "rel_thresh": None, "min_views": None, **stats})
+    logger.info(
+        "unfiltered: med=%.4f p90=%.4f p95=%.4f out10=%.4f retention=%.4f",
+        stats["median_rel_err"],
+        stats["p90"],
+        stats["p95"],
+        stats["frac_over_10pct"],
+        stats["retention"],
+    )
+
+    # Baseline: learned confidence percentile only, matching the creators' conf_threshold
     if "confidence" in z:
         conf = z["confidence"][:]
         thr = float(np.percentile(conf, 50.0))
-        err, ret = retained_error(depth_s, gt, (conf >= thr) & (depth > 0))
-        rows.append(
-            {
-                "variant": "learned_conf_p50",
-                "rel_thresh": None,
-                "min_views": None,
-                "median_rel_err": err,
-                "retention": ret,
-            }
+        stats = retained_error(depth_s, gt, (conf >= thr) & (depth > 0))
+        rows.append({"variant": "learned_conf_p50", "rel_thresh": None, "min_views": None, **stats})
+        logger.info(
+            "baseline learned_conf_p50: med=%.4f p90=%.4f p95=%.4f out10=%.4f retention=%.4f",
+            stats["median_rel_err"],
+            stats["p90"],
+            stats["p95"],
+            stats["frac_over_10pct"],
+            stats["retention"],
         )
-        logger.info("baseline learned_conf_p50: err=%.4f retention=%.4f", err, ret)
 
     # Sweep the shipping function
     for rel in REL_THRESHOLDS:
         mv = compute_multiview_depth_confidence(depth, K, E, abs_thresh=0.0, rel_thresh=rel)
         for k in MIN_VIEWS:
             keep = multiview_mask(mv, depth > 0, min_views=k)
-            err, ret = retained_error(depth_s, gt, keep)
-            rows.append(
-                {
-                    "variant": "mv",
-                    "rel_thresh": rel,
-                    "min_views": k,
-                    "median_rel_err": err,
-                    "retention": ret,
-                }
+            stats = retained_error(depth_s, gt, keep)
+            rows.append({"variant": "mv", "rel_thresh": rel, "min_views": k, **stats})
+            logger.info(
+                "rel=%.2f K=%d: med=%.4f p90=%.4f p95=%.4f out10=%.4f retention=%.4f",
+                rel,
+                k,
+                stats["median_rel_err"],
+                stats["p90"],
+                stats["p95"],
+                stats["frac_over_10pct"],
+                stats["retention"],
             )
-            logger.info("rel=%.2f K=%d: err=%.4f retention=%.4f", rel, k, err, ret)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps({"zarr": str(args.zarr), "seq": str(args.seq), "scale": s, "rows": rows}, indent=2))

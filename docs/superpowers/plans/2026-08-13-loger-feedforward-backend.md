@@ -1075,7 +1075,25 @@ class LoGeRCreator(BaseFeedforwardCreator):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: 24 passed
+Expected: **15 passed, 5 xfailed**.
+
+Two corrections to what this plan originally said here. The old figure of "24 passed" was simply
+wrong arithmetic. And the five tests added by this task **cannot pass yet**: `LoGeRCreator`
+subclasses `BasePointcloudCreator`, an `abc.ABC` (`collab_splats/pointcloud/base.py:4`), and
+four abstract methods remain unimplemented until Task 8, so `LoGeRCreator()` raises
+`TypeError: Can't instantiate abstract class`. Do NOT stub those methods to get past it — that
+would pre-empt Tasks 6-8. Mark the five with the module-level
+
+```python
+_NEEDS_FULL_CREATOR = pytest.mark.xfail(
+    raises=TypeError,
+    strict=True,
+    reason="LoGeRCreator's abstract methods land in Tasks 6-8; remove this marker there",
+)
+```
+
+and let Task 8's Step 0 delete it. `strict=True` is load-bearing: it converts these to failures
+the moment they start passing, which is what forces the marker out.
 
 - [ ] **Step 5: Verify the real checkpoint loads**
 
@@ -1474,6 +1492,18 @@ _raw_to_world_points hard-requires that key."
 **Files:**
 - Modify: `collab_splats/pointcloud/feedforward/loger.py`
 - Modify: `tests/pointcloud/test_loger_creator.py`
+
+> **Task 8 closes the ABC.** `LoGeRCreator` subclasses `BasePointcloudCreator`, an `abc.ABC`
+> (`collab_splats/pointcloud/base.py:4`), so it is **uninstantiable** until the last abstract
+> method (`_reproject`) lands here. Tasks 5-7 therefore ship tests that cannot run yet, marked
+> with `_NEEDS_FULL_CREATOR` — a `pytest.mark.xfail(raises=TypeError, strict=True)` defined at
+> the top of `tests/pointcloud/test_loger_creator.py`.
+>
+> **Step 0 of this task: delete `_NEEDS_FULL_CREATOR` and every `@_NEEDS_FULL_CREATOR`
+> decorator.** `strict=True` means those tests turn XPASS the moment `_reproject` exists, and
+> pytest reports XPASS-under-strict as a **failure** — so the suite forces this cleanup rather
+> than letting the marker outlive its cause. If you see unexplained XPASS failures when starting
+> Task 8, this is why; the fix is to remove the marker, never to loosen it to `strict=False`.
 
 - [ ] **Step 1: Write the failing tests**
 

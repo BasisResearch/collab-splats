@@ -74,6 +74,11 @@ class FeedforwardResult:
     depth: "np.ndarray | None" = None  # (N, H, W) float32 depth maps (normalised to 3-D across backends)
     features: "np.ndarray | None" = None  # (P, D) float32 — feature vector per point, index-aligned with points
     pixel_indices: "np.ndarray | None" = None  # (P, 3) int32 — [frame_id, row, col] source pixel for each point
+    # Geometric cross-view depth consistency, populated only when mv was computed.
+    # The counts are what the later triangulate/align work thresholds on.
+    mv_ratio: "np.ndarray | None" = None  # (N, H, W) float32 — inlier / valid
+    mv_inlier_count: "np.ndarray | None" = None  # (N, H, W) int32
+    mv_valid_count: "np.ndarray | None" = None  # (N, H, W) int32
     _zarr_path: "Path | None" = field(default=None, init=False, repr=False, compare=False)
 
     def save(self, path: Path) -> None:
@@ -170,6 +175,17 @@ class FeedforwardResult:
                 conf_np = conf_np.detach().cpu().numpy()
             chunks = (1, conf_np.shape[1], conf_np.shape[2])
             store.create_array("confidence", data=conf_np, chunks=chunks, compressors=lz4)
+
+        # Save mv confidence arrays (N, H, W) chunked by frame. Absent entirely when mv was
+        # not computed — never a zeros array, which a consumer cannot distinguish from
+        # "every pixel disagreed". Existing scenes are not backfilled.
+        for name, arr in (
+            ("mv_ratio", self.mv_ratio),
+            ("mv_inlier_count", self.mv_inlier_count),
+            ("mv_valid_count", self.mv_valid_count),
+        ):
+            if arr is not None:
+                store.create_array(name, data=arr, chunks=(1, arr.shape[1], arr.shape[2]), compressors=lz4)
 
         # Save images (tensor → numpy) chunked by frame: (1, 3, H, W)
         # Cast bfloat16 → float32 first; zarr/numpy do not support bfloat16.
@@ -448,6 +464,17 @@ def multiview_mask(mv: MultiviewConfidence, valid_depth: np.ndarray, min_views: 
         (mv.inlier_count >= min_views) & valid_depth,
         valid_depth,
     )
+
+
+def _mv_result_fields(mv: "MultiviewConfidence | None") -> dict:
+    """The three FeedforwardResult mv kwargs, empty when mv was not computed.
+
+    Splatting an empty dict leaves the fields at None, which is what makes save_zarr omit
+    the arrays rather than write zeros.
+    """
+    if mv is None:
+        return {}
+    return {"mv_ratio": mv.ratio, "mv_inlier_count": mv.inlier_count, "mv_valid_count": mv.valid_count}
 
 
 def compute_multiview_depth_confidence(

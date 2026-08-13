@@ -247,10 +247,12 @@ def test_loger_pinhole_k_round_trips_to_original_resolution():
         (model_w, model_h),
         (orig_w, orig_h),
     )
-    # params[1] is the load-bearing assertion.  At 640x480 -> 574x434 scale_x > scale_y,
-    # so SIMPLE_PINHOLE's max(scale_x, scale_y) IS scale_x and params[0] round-trips
-    # under both camera models.  Keep params[0] (it pins that x round-trips at all) but
-    # do not delete params[1] believing params[0] covers the model choice — it does not.
+    # params[1] is the load-bearing assertion.  The rescale scales by orig/model — the
+    # RECIPROCAL of this test's local scale_x/scale_y — so its factors are 640/574 =
+    # 1.1150 on x and 480/434 = 1.1060 on y.  SIMPLE_PINHOLE's max() therefore picks the
+    # x factor, which is exactly what inverts fx_model = f * scale_x, so params[0]
+    # round-trips under BOTH camera models.  Keep params[0] (it pins that x round-trips
+    # at all) but do not delete params[1] believing params[0] covers the model choice.
     # rel=1e-6: original_image_sizes is float32, so the scales carry ~2.4e-8 relative
     # error (measured); 1e-8 flakes.
     assert params[0] == pytest.approx(f, rel=1e-6)

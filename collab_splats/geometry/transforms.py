@@ -59,6 +59,36 @@ def extract_intrinsics(K: np.ndarray) -> tuple[float, float, float, float]:
     return float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
 
 
+########################################################################
+########## Intrinsics estimation #######################################
+########################################################################
+
+
+def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int = 50_000) -> float | None:
+    """Confidence-weighted median, subsampled above ``max_n`` with a seeded RNG.
+
+    Textbook definition — sort by value, walk the cumulative weight, return the value
+    at half the total mass.  Prior art for using one to reduce per-pixel focal
+    estimates: github.com/PolyCam/LoGeR @ 5d7c1a7, ``run_loger.py:167``.  Returns
+    ``None`` for an empty input so the caller can raise rather than invent a value.
+    """
+    if len(values) == 0:
+        return None
+
+    # A weighted median needs a full argsort, and the pooled per-pixel population is
+    # H*W*N — 76.5M values at 300 frames, 255M at the 1000-frame sequences the LoGeR
+    # backend exists for.  The cap bounds that; the fixed seed keeps it reproducible.
+    if len(values) > max_n:
+        idx = np.random.default_rng(42).choice(len(values), max_n, replace=False)
+        values, weights = values[idx], weights[idx]
+
+    # Sort by value, then walk the cumulative weight to the halfway mass.
+    order = np.argsort(values)
+    values, weights = values[order], weights[order]
+    cumw = np.cumsum(weights)
+    return float(values[np.searchsorted(cumw, cumw[-1] / 2.0)])
+
+
 def rotation_align_vectors(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
     """Return 3x3 rotation matrix R such that R @ src ≈ dst.
 

@@ -6,6 +6,7 @@ from collab_splats.geometry.transforms import (
     invert_poses,
     extract_intrinsics,
     rotation_align_vectors,
+    _compute_weighted_median,
 )
 
 
@@ -122,5 +123,35 @@ def test_rotation_align_vectors_antiparallel():
     R = rotation_align_vectors(src, dst)
     result = R @ src
     np.testing.assert_allclose(result, dst, atol=1e-6)
+
+
+def test_compute_weighted_median_equal_weights_matches_plain_median():
+    # With uniform weights the weighted median is the ordinary median.
+    values = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    weights = np.ones_like(values)
+    assert _compute_weighted_median(values, weights) == pytest.approx(3.0)
+
+
+def test_compute_weighted_median_follows_the_weight_mass():
+    # Weight concentrated on the low values pulls the median down, even though
+    # the high values are the numerical majority by count.
+    values = np.array([1.0, 1.0, 9.0, 9.0, 9.0], dtype=np.float32)
+    weights = np.array([50.0, 50.0, 1.0, 1.0, 1.0], dtype=np.float32)
+    assert _compute_weighted_median(values, weights) == pytest.approx(1.0)
+
+
+def test_compute_weighted_median_empty_returns_none():
+    # Signals "no estimate" to the caller, which raises rather than falling back.
+    assert _compute_weighted_median(np.array([]), np.array([])) is None
+
+
+def test_compute_weighted_median_subsamples_deterministically():
+    # Above max_n the seeded RNG must give the same answer every call — the
+    # intrinsics fit is otherwise non-reproducible at production frame counts.
+    rng = np.random.default_rng(0)
+    values = rng.normal(100.0, 10.0, size=200_000).astype(np.float32)
+    weights = np.ones_like(values)
+    first = _compute_weighted_median(values, weights, max_n=1000)
+    assert first == _compute_weighted_median(values, weights, max_n=1000)
 
 

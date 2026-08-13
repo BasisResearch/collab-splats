@@ -1614,6 +1614,13 @@ Add to `LoGeRCreator`, after `_preprocess`:
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
 Expected: **34 passed** (27 after Task 6, plus the 7 written here).
 
+Landed at **35** in commit `d72f32f`: an eighth test was needed because every test here runs
+`_FakeLoGeR` at conf logit 4.0 (sigmoid 0.982), which clears both `LOGER_CONF_THRESHOLD` and the
+library's 0.1 default — so omitting the explicit threshold survived mutation, leaving the one
+constant this module exists to justify untested. `_FakeLoGeR` gained a `conf_logit` parameter and
+a test runs at logit -3.0 (sigmoid 0.0474, inside LoGeR's measured band and below 0.1). Later
+tasks count up from 35.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -1840,7 +1847,7 @@ Add to `LoGeRCreator`, after `_forward`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **39 passed, 0 xfailed** (34 after Task 7, plus the 5 written here). Zero xfails and
+Expected: **40 passed, 0 xfailed** (35 after Task 7, plus the 5 written here). Zero xfails and
 zero stub scaffolding is the real completion signal for this task.
 
 - [ ] **Step 5: Commit**

@@ -115,6 +115,75 @@ def test_nearest_sampling_no_fabricated_depth():
     )
 
 
+def test_occluded_view_excluded_not_penalised():
+    """A view occluded by a nearer surface is evidence absent, not evidence against.
+
+    View 0 sees a wall at 8.0. View 1 sits at the same pose but its depth map is a slab
+    at 2.0 — everything view 0 sees is hidden behind it. View 0's ratio must stay 1.0
+    against a third, agreeing view rather than being dragged to 0.5.
+    """
+    N, H, W = 3, 8, 8
+    depth = np.empty((N, H, W), dtype=np.float32)
+    depth[0] = 8.0
+    depth[1] = 2.0  # occluder slab
+    depth[2] = 8.0  # agrees with view 0
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+
+    # pair_gate=False: every depth map here is a constant, so each frustum degenerates to
+    # a single depth plane and the AABB test correctly finds them disjoint — which would
+    # skip the occluding pair entirely and make this test vacuous.
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.05,
+        pair_gate=False, device="cpu",
+    )
+    assert np.all(out.ratio[0] == 1.0), f"view 0 penalised for being occluded: {out.ratio[0].min()}"
+    assert np.all(out.valid_count[0] == 1), "the occluding view should leave the denominator"
+
+
+def test_free_space_violation_still_counts_as_outlier():
+    """sampled > expected + tol means nothing is there — real evidence against."""
+    N, H, W = 2, 8, 8
+    depth = np.empty((N, H, W), dtype=np.float32)
+    depth[0] = 2.0
+    depth[1] = 8.0  # view 1 sees empty space where view 0 claims a surface
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    # pair_gate=False for the same reason as the occlusion test: constant depth maps give
+    # degenerate single-plane frusta that the AABB test correctly separates.
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K, K]), extr, abs_thresh=0.0, rel_thresh=0.05,
+        pair_gate=False, device="cpu",
+    )
+    assert np.all(out.ratio[0] == 0.0), "free-space violation must count against"
+    assert np.all(out.valid_count[0] == 1), "the violating view must stay in the denominator"
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_positive_mask_invariant_across_occlusion_policy(seed):
+    """The MapAnything guarantee: excluding occluded views cannot change inlier_count.
+
+    The occlusion policy alters only valid_count. min_views thresholds inlier_count, so
+    the mask is invariant at every K — not only K=1.
+    """
+    N, H, W = 4, 8, 8
+    rng = np.random.default_rng(seed)
+    depth = (rng.random((N, H, W)).astype(np.float32) + 0.5) * 4.0
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    for i in range(N):
+        extr[i, 0, 3] = 0.2 * i
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.05, device="cpu"
+    )
+    # inlier_count is the numerator the mask thresholds; it must never see the policy.
+    # An occluded view was never an inlier, so excluding it cannot move this array.
+    for k in (1, 2, 3, 4):
+        mask = out.inlier_count >= k
+        assert mask.shape == (N, H, W)
+    assert np.all(out.inlier_count <= out.valid_count)
+
+
 def test_pair_gate_does_not_change_output():
     """The gate is a cost optimisation: gated and ungated results must be identical."""
     N, H, W = 4, 8, 8

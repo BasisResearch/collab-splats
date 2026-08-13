@@ -544,12 +544,20 @@ def compute_multiview_depth_confidence(
             ).squeeze()  # (H, W)
             sampled_d_flat = sampled_d.reshape(-1)  # (H*W,)
 
-            # Count inliers: depth agreement within abs + rel tolerance
+            # The two directions of disagreement mean opposite things:
+            #   sampled < expected - tol  → something is in front: the view is OCCLUDED.
+            #                               Evidence absent, so drop it from the denominator.
+            #   sampled > expected + tol  → nothing is there: a FREE-SPACE VIOLATION.
+            #                               Real evidence against, so keep it as an outlier.
+            # Counting occlusion as disagreement punishes correct geometry for being hidden.
             tol = abs_thresh + rel_thresh * expected_d.abs()
-            inlier = (torch.abs(expected_d - sampled_d_flat) < tol) & valid_ij & (sampled_d_flat > 0)
+            has_depth = sampled_d_flat > 0
+            inlier = (torch.abs(expected_d - sampled_d_flat) < tol) & valid_ij & has_depth
+            occluded = (sampled_d_flat < expected_d - tol) & valid_ij & has_depth
+            counted = valid_ij & ~occluded
 
             inlier_sum[i] += inlier.reshape(H, W).float()
-            valid_sum[i] += valid_ij.reshape(H, W).float()
+            valid_sum[i] += counted.reshape(H, W).float()
 
     # ratio is 0 where no view overlapped; the judged flag distinguishes "no evidence"
     # from "evidence against", which the mask helper needs and a bare ratio cannot express.

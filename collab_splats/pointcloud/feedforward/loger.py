@@ -345,14 +345,37 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
         return views, image_paths, original_coords
 
-    def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
-        """Run windowed LoGeR inference; return raw outputs plus a solved shared K."""
-        # _se3 is populated by _load_model from the variant's yaml. None means _forward was
+    def _forward_kwargs(self) -> dict:
+        """Kwargs for one Pi3 forward pass — the single definition, shared with the parity test."""
+        # _se3 is populated by _load_model from the variant's yaml. None means we were
         # reached without it — refuse rather than pick a default, because both values are
         # legitimate (LoGeR is False, LoGeR_star is True) and guessing runs the wrong
         # alignment mode with no error anywhere downstream.
         if self._se3 is None:
             raise RuntimeError("LoGeRCreator._forward requires _load_model to have run (se3 unset)")
+
+        # Mirrors build_forward_kwargs in github.com/PolyCam/LoGeR @ 5d7c1a7,
+        # run_loger.py:149-164, so behaviour matches upstream exactly; each name is popped in
+        # Pi3.forward at github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:584-593.
+        # sim3 stays False unconditionally: it and se3 are mutually exclusive and raise
+        # together (same file, :595-596), so LoGeR_star's se3=True has no valid sim3
+        # counterpart.
+        return dict(
+            window_size=self.window_size,
+            overlap_size=self.overlap_size,
+            reset_every=self.reset_every,
+            num_iterations=self.num_iterations,
+            sim3=False,
+            sim3_scale_mode="median",
+            se3=self._se3,
+            turn_off_ttt=False,
+            turn_off_swa=False,
+        )
+
+    def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
+        """Run windowed LoGeR inference; return raw outputs plus a solved shared K."""
+        # Built first so the se3 guard fires before any device work.
+        forward_kwargs = self._forward_kwargs()
 
         device = next(model.parameters()).device
         images = views.to(device)
@@ -362,25 +385,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
             0.0 <= float(images.min()) and float(images.max()) <= 1.0
         ), f"LoGeR expects RGB in [0, 1]; got [{float(images.min())}, {float(images.max())}]"
 
-        # Pi3 takes (B, N, 3, H, W). Kwargs mirror build_forward_kwargs in
-        # github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164, so behaviour matches
-        # upstream exactly; each name is popped in Pi3.forward at
-        # github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:584-593. sim3 stays False
-        # unconditionally: it and se3 are mutually exclusive and raise together (same file,
-        # :595-596), so LoGeR_star's se3=True has no valid sim3 counterpart.
+        # Pi3 takes (B, N, 3, H, W); the kwargs come from _forward_kwargs above.
         with torch.no_grad():
-            preds = model(
-                images[None],
-                window_size=self.window_size,
-                overlap_size=self.overlap_size,
-                reset_every=self.reset_every,
-                num_iterations=self.num_iterations,
-                sim3=False,
-                sim3_scale_mode="median",
-                se3=self._se3,
-                turn_off_ttt=False,
-                turn_off_swa=False,
-            )
+            preds = model(images[None], **forward_kwargs)
 
         local_points = preds["local_points"].squeeze(0).cpu().float().numpy()  # (N,H,W,3)
 

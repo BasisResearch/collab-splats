@@ -1,6 +1,7 @@
 """LoGeR feedforward backend: resize rule and creator contract."""
 import sys
 import types
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -18,6 +19,7 @@ from collab_splats.pointcloud.feedforward.loger import (
     _LOGER_ROOT,
     _compute_target_size,
 )
+from collab_splats.preproc.sampling import _seek_frame, get_video_info
 from collab_splats.wrapper import reconstructor as R
 from collab_splats.wrapper.reconstructor import _FEEDFORWARD_BACKENDS
 
@@ -712,56 +714,97 @@ def test_extract_intermediate_features_refuses():
         LoGeRCreator().extract_intermediate_features(torch.rand(2, 3, 56, 70))
 
 
+# The residual measured below is a recorded finding, so its input has to be fixed and
+# CI-reproducible: 8 frames at fixed indices out of the tutorial video committed to this
+# repo. Stride 24 is ~1 fps at the source's 24000/1001, the frame rate base.yaml ships as
+# its default, so the inter-frame motion is what the model sees in production.
+_PARITY_VIDEO = Path(__file__).resolve().parents[2] / "data" / "tutorial" / "tutorial_example-video.mp4"
+_PARITY_FRAME_IDXS = list(range(0, 192, 24))
+
+# 3:4 centre crop of the 1080x1920 portrait source. The crop is the point: uncropped,
+# _compute_target_size maps 1080x1920 -> 378x672 with sx == sy == 0.35 EXACTLY, so the
+# separately fitted fx and fy can never disagree and the measurement is vacuous. Cropped,
+# 810x1080 -> 434x574 with sx 0.535802 vs sy 0.531481 — 0.81% anisotropy, which is what
+# makes the shared-K fit work for its living.
+_PARITY_CROP_W, _PARITY_CROP_H = 810, 1080
+
+
+def _tutorial_frames() -> np.ndarray:
+    """Fixed tutorial-video frames, 3:4 centre-cropped, as (N, H, W, 3) uint8 RGB."""
+    # Probe once for the whole batch: get_video_info demuxes for the packet count,
+    # _seek_frame does not, so hoisting it out of the loop is 8x cheaper than extract_frame.
+    info = get_video_info(str(_PARITY_VIDEO))
+    frames = np.stack(
+        [
+            _seek_frame(
+                _PARITY_VIDEO, idx, fps=info["fps"], w=info["width"], h=info["height"],
+                total=info["total_frames"],
+            )
+            for idx in _PARITY_FRAME_IDXS
+        ]
+    )
+
+    # Centre-crop both axes. Assert first: a silently clamped slice would change the
+    # aspect ratio and therefore the anisotropy this fixture exists to produce.
+    assert frames.shape[1] >= _PARITY_CROP_H and frames.shape[2] >= _PARITY_CROP_W, (
+        f"tutorial video is {frames.shape[2]}x{frames.shape[1]}, too small for the "
+        f"{_PARITY_CROP_W}x{_PARITY_CROP_H} 3:4 crop"
+    )
+    top = (frames.shape[1] - _PARITY_CROP_H) // 2
+    left = (frames.shape[2] - _PARITY_CROP_W) // 2
+    return frames[:, top: top + _PARITY_CROP_H, left: left + _PARITY_CROP_W]
+
+
 @pytest.mark.slow
-def test_pinhole_residual_against_logers_native_pointcloud():
+@pytest.mark.skipif(not _LOGER_ROOT.exists(), reason="vendored tree absent (setup/loger.sh)")
+@pytest.mark.skipif(not _PARITY_VIDEO.exists(), reason="tutorial video absent (data/tutorial/)")
+def test_pinhole_residual_against_logers_native_pointcloud(record_property):
     """Unproject depth with the fitted K and compare to LoGeR's own world points.
 
     LoGeR's `xy` is a free per-pixel ray field, not constrained to any pinhole K, so
     the native cloud can encode lens distortion and per-frame ray variation that
     K-unprojection cannot reproduce. This measures how large that gap actually is.
     """
-    if not _LOGER_ROOT.exists():
-        pytest.skip("third_party/LoGeR not vendored")
-
-    n, orig_h, orig_w = 8, 480, 640
     creator = LoGeRCreator()
+    frames = _tutorial_frames()
+    n, orig_h, orig_w = frames.shape[:3]
     # Derive model resolution rather than hardcoding it — _compute_target_size rounds
     # each axis to a multiple of 14 under creator.pixel_limit, and the reshape below
     # raises on any mismatch.
     w, h = _compute_target_size(orig_w, orig_h, creator.pixel_limit)
     model = creator._load_model("cuda")
 
-    rng = np.random.default_rng(11)
-    frames = rng.integers(0, 256, size=(n, orig_h, orig_w, 3), dtype=np.uint8)
-    views, image_paths, original_coords = creator._preprocess(frames, list(range(n)))
-    creator.image_paths, creator.original_coords = image_paths, original_coords
-
+    # image_paths/original_coords are _postprocess' inputs, not _forward's — discarded here.
+    views, _, _ = creator._preprocess(frames, list(range(n)))
     raw = creator._forward(model, views)
 
-    # LoGeR's own world points, straight off the model. This DELIBERATELY re-runs the
-    # model rather than deriving native from `raw`: _forward obtains `extrinsic` by
-    # invert_poses(camera_poses), so a derived native would apply OUR inversion to both
-    # sides and cancel it — silently voiding this test's coverage of the pose inversion.
-    # Taking native from LoGeR's own preds["points"] keeps it independent. (TTT fast
-    # weights are per-call state, not module state, so the second pass is not
-    # contaminated by the first.)
+    # LoGeR's own world points, straight off the model. This DELIBERATELY re-runs the model
+    # rather than deriving native from `raw`: taking native from LoGeR's own preds["points"]
+    # keeps it independent of OUR postprocessing, so the comparison below is between two
+    # pipelines and not between one pipeline and itself. (TTT fast weights are per-call
+    # state, not module state, so the second pass is not contaminated by the first.)
+    #
+    # NOT covered here: the c2w->w2c pose inversion. _forward inverts camera_poses and
+    # _raw_to_world_points (collab_splats/pointcloud/feedforward/base.py) inverts it
+    # straight back, so the inversion CANCELS inside `ours` — patching invert_poses to
+    # identity leaves this test passing at an unchanged residual. It is pinned by
+    # test_forward_inverts_camera_poses_to_world_to_camera above, not here.
     with torch.no_grad():
-        native = model(
-            views.to("cuda")[None],
-            window_size=creator.window_size, overlap_size=creator.overlap_size,
-            reset_every=creator.reset_every, num_iterations=creator.num_iterations,
-            sim3=False, sim3_scale_mode="median", se3=creator._se3,
-            turn_off_ttt=False, turn_off_swa=False,
-        )["points"].squeeze(0).cpu().float().numpy()
+        native = model(views.to("cuda")[None], **creator._forward_kwargs())["points"]
+    native = native.squeeze(0).cpu().float().numpy()
 
     # Ours, via the fitted K and the same reuse path production takes
     ours, _ = _raw_to_world_points(raw, subsample=1)
     ours = ours.reshape(n, h, w, 3)
+    # Same grid on both sides. Without this a resolution change makes native[mask] raise
+    # IndexError instead of failing the residual — a crash that pins nothing.
+    assert native.shape == ours.shape
 
     # Confident pixels only — the residual is meaningless where the model is unsure.
-    # raw["depth_conf"] is ALREADY post-sigmoid and this head's measured band is
-    # [0.0140, 0.1172], so any fixed threshold near 0.5 selects nothing. Gate on
-    # LOGER_CONF_THRESHOLD, the same floor the K fit uses.
+    # raw["depth_conf"] is ALREADY post-sigmoid, and this head is uncalibrated: measured on
+    # this fixture the band is [0.0001, 0.9842] and 74.1% of pixels clear the gate, so a
+    # fixed threshold near 0.5 would throw away a large part of a genuinely confident
+    # frame. Gate on LOGER_CONF_THRESHOLD, the same floor the K fit uses.
     mask = raw["depth_conf"] > LOGER_CONF_THRESHOLD
     # Fail loudly on an empty mask. Without this the medians below are nan, the assert
     # reads as "LoGeR is non-pinhole", and you would record a fabricated finding from a
@@ -774,17 +817,32 @@ def test_pinhole_residual_against_logers_native_pointcloud():
     err = np.linalg.norm(ours[mask] - native[mask], axis=-1)
     scene_scale = float(np.percentile(np.linalg.norm(native[mask], axis=-1), 95))
     median_rel = float(np.median(err)) / scene_scale
+    p95_rel = float(np.percentile(err, 95)) / scene_scale
+    p99_rel = float(np.percentile(err, 99)) / scene_scale
 
-    # LOG IT — this number is the deliverable, not the pass/fail
-    print(f"\nPINHOLE RESIDUAL: median {median_rel * 100:.3f}% of scene scale "
-          f"(abs {np.median(err):.4f}, scene scale {scene_scale:.3f}, "
-          f"p95 {np.percentile(err, 95) / scene_scale * 100:.3f}%)")
+    # RECORD IT — these numbers are the deliverable, not the pass/fail, and the tail is the
+    # half that matters for mesh and BA. record_property survives a normal run; a print is
+    # swallowed without -s.
+    record_property("pinhole_residual_median_pct", round(median_rel * 100, 4))
+    record_property("pinhole_residual_p95_pct", round(p95_rel * 100, 4))
+    record_property("pinhole_residual_p99_pct", round(p99_rel * 100, 4))
+    record_property("pinhole_scene_scale", round(scene_scale, 4))
+    record_property("pinhole_conf_pass_fraction", round(float(mask.mean()), 4))
+    record_property("pinhole_conf_band", f"[{raw['depth_conf'].min():.4f}, {raw['depth_conf'].max():.4f}]")
 
-    assert median_rel < 0.02, (
+    # 0.4%, CALIBRATED BY MUTATION, not chosen for comfort. The original 2% gate was
+    # measured inert on this fixture: multiplying the fitted fx by 1.05 in _forward moved
+    # the median only 0.2724% -> 0.4933% and the test still PASSED, so 2% did not pin the
+    # focal fit at all. 0.4% sits between the two — 47% headroom over the unmutated value,
+    # which is ample because the measurement is bit-reproducible run to run (0.2724 /
+    # 0.6872 / 0.9429 twice) — and trips at roughly a 3% focal error.
+    assert median_rel < 0.004, (
         f"Fitted-K unprojection diverges from LoGeR's native cloud by "
-        f"{median_rel * 100:.2f}% of scene scale. The model is meaningfully "
-        f"non-pinhole; the shared-K fit is then also lossy for the mesh and BA "
-        f"paths, which outranks the world_points decision. See spec open item 3."
+        f"{median_rel * 100:.3f}% of scene scale at the median (p95 {p95_rel * 100:.3f}%, "
+        f"p99 {p99_rel * 100:.3f}%), against a measured 0.272% baseline. Either the shared-K "
+        f"fit has regressed — +5% on fx reads as 0.493% here — or LoGeR is more non-pinhole "
+        f"on this input than when this was calibrated, in which case the fit is also lossy "
+        f"for the mesh and BA paths. See spec open item 3."
     )
 
 

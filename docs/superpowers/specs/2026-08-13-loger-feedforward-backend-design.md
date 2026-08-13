@@ -802,11 +802,20 @@ compare against LoGeR's native `points`, read from the model output inside the t
 median per-point error under a scene-scale-relative tolerance, and **log the residual** — it is
 open item 3, not merely a pass/fail.
 
-This one assertion simultaneously proves the focal fit, the pose inversion, the depth
-extraction, and that `unproject_and_filter_points` is a legitimate reuse — because LoGeR itself
-computes `points = camera_poses @ homogenize(local_points)`, so any of those four being wrong
-breaks it. It is the reason reusing the existing unprojection is both the minimal choice and the
-verifiable one: zero new production code carries the validation.
+This one assertion proves the focal fit, the depth extraction, and that
+`unproject_and_filter_points` is a legitimate reuse — because LoGeR itself computes
+`points = camera_poses @ homogenize(local_points)`, so any of those three being wrong breaks it.
+It is the reason reusing the existing unprojection is both the minimal choice and the verifiable
+one: zero new production code carries the validation.
+
+**Correction (2026-08-13, measured).** This originally claimed a fourth thing, the c2w->w2c pose
+inversion. It does not cover it. `_forward` inverts `camera_poses` and `_raw_to_world_points`
+inverts it straight back, so the inversion cancels inside our side of the comparison: patching
+`invert_poses` to the identity leaves the test passing at an unchanged residual. The inversion is
+pinned by `test_forward_inverts_camera_poses_to_world_to_camera` instead. The second forward pass
+is still justified, but for a different reason than originally written — it takes `native` from
+LoGeR's own `preds["points"]` rather than from our postprocessing, keeping the two sides
+independent.
 
 **Smoke test, first implementation task, gates everything else:** import `Pi3` under torch
 2.5.1+cu121 and run one forward pass on 8 frames. LoGeR pins torch 2.6.0 and we run 2.5.1; the
@@ -817,17 +826,31 @@ until it passes.
 
 1. Torch 2.5.1 vs LoGeR's pinned 2.6.0 — smoke test gates the work.
 2. The `max_frames` ceiling for `loger` is unmeasured. Sweep, then document.
-3. **The pinhole residual is MEASURED (2026-08-13): median 0.355% of scene scale** — abs
-   0.0013 against a 95th-percentile scene scale of 0.360, p95 0.714%. Measured by
+3. **The pinhole residual is MEASURED (2026-08-13): median 0.272%, p95 0.687%, p99 0.943% of
+   scene scale.** Fixture: 8 frames at fixed indices `range(0, 192, 24)` (~1 fps) out of the
+   committed `data/tutorial/tutorial_example-video.mp4`, centre-cropped 810x1080 (3:4) out of
+   the 1080x1920 portrait source, run at the 434x574 model resolution, `LoGeR_star`, gating on
+   `depth_conf > LOGER_CONF_THRESHOLD` (74.1% of pixels pass; the conf band is
+   [0.0001, 0.9842]). Scene scale, the 95th percentile point norm, is 1.234. Measured by
    `test_pinhole_residual_against_logers_native_pointcloud`
-   (`tests/pointcloud/test_loger_creator.py`) on 8 frames of 480x640 random-noise input at the
-   574x434 model resolution, `LoGeR_star`, gating on `depth_conf > LOGER_CONF_THRESHOLD`. The
-   shared-K approximation is therefore tight: unprojecting depth with the fitted K reproduces
-   LoGeR's own `points` to well inside the 2% threshold, so the non-pinhole freedom in LoGeR's
-   `xy` ray field costs sub-percent geometry and the finding does NOT escalate to the mesh or
-   BA paths. Caveat: random-noise frames are a weak scene — the model has no real structure to
-   distort — so this is a lower bound; re-measure on a real sequence before relying on it for
-   a wide-FOV or distorted-lens capture.
+   (`tests/pointcloud/test_loger_creator.py`), bit-reproducible across runs. The crop is
+   load-bearing: uncropped, `_compute_target_size` maps 1080x1920 to 378x672 at
+   sx == sy == 0.35 exactly, so fx and fy cannot disagree and the measurement is vacuous.
+
+   **Read this as "the median is tight, the tail is not negligible", not as a clean bill of
+   health.** Calibration by mutation: multiplying the fitted `fx` by 1.05 moves the median to
+   0.493%, so the observed p99 of 0.943% is of the same order as a ~5-10% focal error on the
+   worst pixels. The median says the shared-K fit reproduces LoGeR's own `points` to a quarter
+   of a percent for a typical pixel; the p99 says roughly one pixel in a hundred carries an
+   error a TSDF or a BA residual would see, and those pixels are not randomly placed — the
+   non-pinhole freedom in LoGeR's `xy` field is largest off-axis, which is exactly where a
+   mesh shows it. Not yet measured: whether that tail actually degrades mesh extent or BA
+   convergence. Until it is, treat shared-K as adequate for the point cloud and UNVERIFIED for
+   the mesh and BA paths, and re-measure on a wide-FOV or distorted-lens capture before
+   assuming it carries.
+
+   The 0.4% assertion threshold is itself calibrated by mutation, not chosen: the 2% the
+   design originally proposed was measured INERT — a +5% fx error passed it.
 4. Loop closure calibration for the LoGeR backbone — separate work, refused until then.
 5. Multiview confidence calibration — owned by
    `2026-08-12-multiview-confidence-all-models-design.md`; `loger` should be added to its scope.

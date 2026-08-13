@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -11,7 +12,11 @@ import pytest
 import torch
 from PIL import Image as PILImage
 
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.feedforward.base import (
+    FeedforwardResult,
+    _rescale_reconstruction_to_original_dimensions,
+)
+from collab_splats.pointcloud.feedforward.loger import _compute_target_size
 from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -175,3 +180,92 @@ def test_vggtx_crop_coords_cr_x_gt_target_size():
     coords = _compute_vggtx_crop_coords([(1080, 1920)], target_size=518)
 
     assert coords[0, 2] > 518  # cr_x = 1080 > model_W = 518
+
+
+# ── LoGeR PINHOLE round-trip tests (added in Task 11) ──────────────────────────
+
+
+def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
+    """Run the real rescale over a single camera and return its original-res params.
+
+    _rescale_reconstruction_to_original_dimensions (base.py:748-840) is duck-typed
+    over pycolmap — it touches only .images/.cameras, .model.name, .params, .width,
+    .height and .name.  A SimpleNamespace stands in because constructing a real
+    pycolmap.Reconstruction needs a Frame binding (`Check failed: image.HasFrameId()`)
+    that is pure ceremony for a camera-only assertion.
+    """
+    model_w, model_h = model_wh
+    orig_w, orig_h = orig_wh
+    camera = SimpleNamespace(
+        model=SimpleNamespace(name=camera_model),
+        params=np.array(params, dtype=np.float64),
+        width=model_w,
+        height=model_h,
+    )
+    reconstruction = SimpleNamespace(
+        images={1: SimpleNamespace(camera_id=1, name="0.png", points2D=[])},
+        cameras={1: camera},
+    )
+    _rescale_reconstruction_to_original_dimensions(
+        reconstruction,
+        [Path("0.png")],
+        np.array([[0, 0, orig_w, orig_h, orig_w, orig_h]], dtype=np.float32),
+        (model_w, model_h),
+    )
+    return reconstruction.cameras[1].params
+
+
+def test_loger_pinhole_k_round_trips_to_original_resolution():
+    """LoGeR's model-res K must rescale back to original resolution with fx != fy intact.
+
+    _compute_target_size rounds each axis to a multiple of 14 independently, so a
+    square-pixel physical camera genuinely produces fx != fy at model resolution.
+    PINHOLE carries both focals through (base.py:719-720) and the per-axis rescale
+    (base.py:803-805) recovers the true focal exactly on both axes.
+    """
+    orig_w, orig_h = 640, 480
+    model_w, model_h = _compute_target_size(orig_w, orig_h, 255_000)
+
+    # A square-pixel physical camera: one true focal, f = 1600 px at original resolution
+    f = 1600.0
+    scale_x, scale_y = model_w / orig_w, model_h / orig_h
+    fx_model, fy_model = f * scale_x, f * scale_y
+
+    # The anisotropy is real, not a rounding artefact — guard the premise of the test
+    assert fx_model != pytest.approx(fy_model, rel=1e-3)
+
+    # build_colmap's PINHOLE branch keeps both focals
+    params = _rescaled_camera_params(
+        "PINHOLE",
+        [fx_model, fy_model, (model_w - 1) / 2.0, (model_h - 1) / 2.0],
+        (model_w, model_h),
+        (orig_w, orig_h),
+    )
+    assert params[0] == pytest.approx(f, rel=1e-6)
+    assert params[1] == pytest.approx(f, rel=1e-6)
+
+
+def test_simple_pinhole_would_lose_the_focal_loger_keeps():
+    """Why LoGeRCreator.camera_model is PINHOLE: SIMPLE_PINHOLE costs 6.5 px here.
+
+    Two production stages compose.  build_colmap averages fx and fy into one param
+    for SIMPLE_PINHOLE (base.py:721-722), then the rescale multiplies that single
+    param by max(scale_x, scale_y) (base.py:801-802) rather than per axis
+    (base.py:803-805).  Neither stage is lossy alone; together they do not round-trip.
+    """
+    orig_w, orig_h = 640, 480
+    model_w, model_h = _compute_target_size(orig_w, orig_h, 255_000)
+    f = 1600.0
+    fx_model = f * (model_w / orig_w)
+    fy_model = f * (model_h / orig_h)
+
+    params = _rescaled_camera_params(
+        "SIMPLE_PINHOLE",
+        [(fx_model + fy_model) / 2.0, (model_w - 1) / 2.0, (model_h - 1) / 2.0],
+        (model_w, model_h),
+        (orig_w, orig_h),
+    )
+
+    # Measured: 1606.5041 against a true 1600.0 — +6.504 px, +0.41%
+    assert params[0] == pytest.approx(1606.5041, abs=1e-3)
+    assert params[0] != pytest.approx(f, rel=1e-3)

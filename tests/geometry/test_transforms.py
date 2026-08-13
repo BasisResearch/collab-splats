@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from collab_splats.geometry.transforms import (
     OPENGL_TO_OPENCV,
+    estimate_intrinsics_from_points,
     extrinsics_to_homogeneous,
     invert_poses,
     extract_intrinsics,
@@ -164,4 +165,86 @@ def test_compute_weighted_median_subsamples_deterministically():
     # ...and that subsampling did not move the estimate off the true median.
     assert first == pytest.approx(float(np.median(values)), abs=1.0)
 
+
+def _synthetic_local_points(h: int, w: int, fx: float, fy: float, depth: float = 2.0) -> np.ndarray:
+    """Exact camera-frame pointmap for a centre-principal pinhole camera, shape (1,H,W,3).
+
+    Built about the same centre the estimator assumes, cx=(W-1)/2 and cy=(H-1)/2,
+    so recovery is exact and the principal-point assertion below is meaningful.
+    """
+    uu, vv = np.meshgrid(
+        np.arange(w, dtype=np.float32) - (w - 1) / 2.0,
+        np.arange(h, dtype=np.float32) - (h - 1) / 2.0,
+    )
+    z = np.full((h, w), depth, dtype=np.float32)
+    return np.stack([uu * z / fx, vv * z / fy, z], axis=-1)[None].astype(np.float32)
+
+
+@pytest.mark.parametrize("fx,fy", [(320.0, 320.0), (352.0, 320.0)])
+def test_fit_recovers_known_intrinsics(fx, fy):
+    # The anisotropic row (fx/fy = 1.10) is what protects the aspect-ratio argument:
+    # our resize rounds each axis to a multiple of 14 independently, so a real camera
+    # genuinely produces fx != fy at model resolution. Any "simplification" that
+    # averages them fails here.
+    h, w = 224, 308
+    pts = _synthetic_local_points(h, w, fx, fy)
+    conf = np.ones((1, h, w), dtype=np.float32)
+
+    k = estimate_intrinsics_from_points(pts, conf)
+
+    assert k.shape == (3, 3)
+    assert k[0, 0] == pytest.approx(fx, rel=1e-3)
+    assert k[1, 1] == pytest.approx(fy, rel=1e-3)
+    # cx/cy are decided by the estimator's own centred grid, not by the caller.
+    assert k[0, 2] == pytest.approx((w - 1) / 2.0)
+    assert k[1, 2] == pytest.approx((h - 1) / 2.0)
+    assert k[2, 2] == pytest.approx(1.0)
+    if fx != fy:
+        assert k[0, 0] != pytest.approx(k[1, 1], rel=1e-3)
+
+
+def test_fit_survives_confident_outliers():
+    # Corrupt 30% of pixels AND give them full confidence. A weighted median is
+    # unmoved; a least-squares fit would be dragged toward the corrupted focal.
+    h, w = 112, 154
+    fx = fy = 160.0
+    pts = _synthetic_local_points(h, w, fx, fy)
+    conf = np.ones((1, h, w), dtype=np.float32)
+
+    rng = np.random.default_rng(7)
+    bad = rng.random((1, h, w)) < 0.30
+    pts[bad, 0] *= 0.5  # halving X doubles the implied fx for those pixels
+    pts[bad, 1] *= 0.5
+
+    k = estimate_intrinsics_from_points(pts, conf)
+
+    assert k[0, 0] == pytest.approx(fx, rel=1e-2)
+    assert k[1, 1] == pytest.approx(fy, rel=1e-2)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda p, c: (p, np.zeros_like(c)), id="empty_conf_mask"),
+        pytest.param(lambda p, c: (np.full_like(p, np.nan), c), id="nan_points"),
+        pytest.param(lambda p, c: (p * np.array([1, 1, -1], np.float32), c), id="negative_depth"),
+    ],
+)
+def test_degenerate_input_raises_instead_of_falling_back(mutate):
+    # No 1.2*max(W,H) fallback focal, by design: a silently-wrong K is exactly the
+    # regression class of be24be2, which produced a plausible mesh from a bad camera.
+    h, w = 56, 70
+    pts, conf = mutate(_synthetic_local_points(h, w, 80.0, 80.0), np.ones((1, h, w), np.float32))
+    with pytest.raises(RuntimeError, match="intrinsics fit failed"):
+        estimate_intrinsics_from_points(pts, conf)
+
+
+def test_fit_accepts_trailing_axis_confidence():
+    # LoGeR's conf head emits (N,H,W,1); the estimator must not require a squeeze
+    # from its caller, since _forward and the tests reach it by different routes.
+    h, w = 56, 70
+    pts = _synthetic_local_points(h, w, 80.0, 80.0)
+    k4 = estimate_intrinsics_from_points(pts, np.ones((1, h, w, 1), np.float32))
+    k3 = estimate_intrinsics_from_points(pts, np.ones((1, h, w), np.float32))
+    np.testing.assert_allclose(k4, k3)
 

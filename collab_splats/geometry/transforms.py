@@ -101,6 +101,108 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     return float(values[np.searchsorted(cumw, cumw[-1] / 2.0)])
 
 
+def estimate_intrinsics_from_points(
+    local_points: np.ndarray, conf: np.ndarray, conf_threshold: float = 0.1
+) -> np.ndarray:
+    """Fit one shared pinhole K to a camera-frame pointmap by confidence-weighted median.
+
+    This is a **fit**, not a readout: the pointmap is not guaranteed to be consistent
+    with any single pinhole camera, so the returned K is the best shared pinhole
+    explanation of it rather than a recovered ground truth.  Callers that need to know
+    how good that explanation is should measure the reprojection residual.
+
+    For backends whose model emits no intrinsics head.  Invert the pinhole model at
+    every pixel — ``u_c = fx * X / Z``, so ``fx = u_c * Z / X`` — and reduce the pooled
+    per-pixel estimates with a confidence-weighted median.  One K is returned for the
+    whole batch, which is correct when every frame comes from the same physical camera
+    at the same resolution.
+
+    Prior art for the same approach: github.com/PolyCam/LoGeR @ 5d7c1a7,
+    ``run_loger.py``, ``estimate_focal_lengths`` at :206 over ``_focal_from_frame`` at
+    :180.  That fork also has ``_snap_square_pixels`` at :195, which we deliberately do
+    **not** do — it would merge fx and fy, and a caller that rescales the two axes
+    separately then un-merges the average incorrectly.
+
+    Args:
+        local_points: (N, H, W, 3) camera-frame points, channel 2 being depth.  Note
+            that a pointmap head is free to emit a per-pixel ray field not constrained
+            to any pinhole K — LoGeR's, for instance, is built as ``cat([xy * z, z])``
+            (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/models/pi3.py:772-775``) —
+            which is the reason this is an approximation.
+        conf: (N, H, W) or (N, H, W, 1) per-pixel confidence, **already activated into
+            [0, 1]**.  ``conf_threshold`` is a probability floor; passing raw logits
+            would admit roughly half of all pixels instead.
+        conf_threshold: minimum confidence for a pixel to contribute.
+
+    Returns:
+        (3, 3) float32 K, shared across frames, centre-principal by construction.
+
+    Raises:
+        RuntimeError: if too few pixels survive to fit either focal.  There is no
+            fallback focal on purpose.
+    """
+    n, h, w, _ = local_points.shape
+    if conf.ndim == 4:
+        conf = conf.squeeze(-1)
+
+    # Centred pixel grid.  This line is why the function returns K and not (fx, fy):
+    # every per-pixel focal below is conditioned on cx=(W-1)/2, cy=(H-1)/2, so the
+    # principal point is already decided here and must not be re-chosen by a caller.
+    uu, vv = np.meshgrid(
+        np.arange(w, dtype=np.float32) - (w - 1) / 2.0,
+        np.arange(h, dtype=np.float32) - (h - 1) / 2.0,
+    )
+
+    # Invert the pinhole model per pixel: u_c = fx * X / Z  =>  fx = u_c * Z / X.
+    x, y, z = local_points[..., 0], local_points[..., 1], local_points[..., 2]
+    valid = (z > 1e-3) & (np.abs(x) > 1e-6) & (np.abs(y) > 1e-6) & (conf > conf_threshold)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        fx_per_pixel = uu * z / x
+        fy_per_pixel = vv * z / y
+
+    fx_vals, fy_vals = fx_per_pixel[valid], fy_per_pixel[valid]
+    weights = conf[valid]
+
+    # Sanity bounds before the median, derived from field of view: f = 0.1 * W is a
+    # ~157 degree horizontal FOV and f = 10 * W is ~6 degrees.  Real cameras live well
+    # inside that; values outside it are degenerate inversions from pixels near the
+    # principal axis, where X or Y is small enough that u_c * Z / X explodes.
+    #
+    # These bounds are also what enforce _compute_weighted_median's finite precondition,
+    # and that is not incidental: the `valid` mask above cannot do it, because inf passes
+    # `z > 1e-3`.  A surviving non-finite value would not poison the median visibly, it
+    # would skew it — argsort sorts +inf and NaN to the tail (biasing the focal upward)
+    # and -inf to the head (biasing it downward), and `u_c * Z / X` produces -inf as
+    # readily as +inf as X approaches zero from below.  Either way the result stays
+    # finite enough for the np.isfinite check below to wave it through.  BOTH bounds are
+    # load-bearing: the upper rejects +inf, the lower rejects -inf, and NaN fails both.
+    # Do not loosen either to a one-sided test without adding an explicit isfinite mask.
+    ok_fx = (fx_vals > w * 0.1) & (fx_vals < w * 10)
+    ok_fy = (fy_vals > h * 0.1) & (fy_vals < h * 10)
+    fx = _compute_weighted_median(fx_vals[ok_fx], weights[ok_fx])
+    fy = _compute_weighted_median(fy_vals[ok_fy], weights[ok_fy])
+
+    # Fail loudly.  Upstream falls back to 1.2 * max(W, H); we do not, because a
+    # plausible-but-wrong K fails silently all the way through to the mesh.
+    if fx is None or fy is None or not np.isfinite(fx) or not np.isfinite(fy) or fx <= 0 or fy <= 0:
+        raise RuntimeError(
+            f"Pinhole intrinsics fit failed over {n} frames: "
+            f"{int(valid.sum())}/{valid.size} pixels passed the validity mask, "
+            f"{int(ok_fx.sum())} survived the fx bounds and {int(ok_fy.sum())} the fy bounds "
+            f"(fx={fx}, fy={fy}). No fallback focal is applied by design."
+        )
+
+    # fx and fy stay distinct.  Callers whose preprocessing rounds the two axes
+    # independently (LoGeR's does, to multiples of 14) produce genuinely non-square
+    # pixels, and that anisotropy belongs in K rather than being averaged away.
+    return np.array(
+        [[fx, 0.0, (w - 1) / 2.0],
+         [0.0, fy, (h - 1) / 2.0],
+         [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+
+
 def rotation_align_vectors(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
     """Return 3x3 rotation matrix R such that R @ src ≈ dst.
 

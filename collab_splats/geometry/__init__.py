@@ -4,6 +4,7 @@ from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 from .loop_closure import PoseGraph, Submap
 from .transforms import (
     OPENGL_TO_OPENCV,
+    estimate_intrinsics_from_points,
     extract_intrinsics,
     extrinsics_to_homogeneous,
     invert_poses,
@@ -39,6 +40,7 @@ __all__ = [
     "LoopClosureConfig",
     "PoseGraph",
     "Submap",
+    "estimate_intrinsics_from_points",
     "extract_intrinsics",
     "extrinsics_to_homogeneous",
     "invert_poses",

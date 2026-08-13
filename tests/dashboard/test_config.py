@@ -5,7 +5,8 @@ from collab_splats.dashboard.config import RunConfig
 
 def test_runconfig_defaults():
     cfg = RunConfig()
-    assert cfg.sampling_method == "uniform"
+    assert cfg.sampling_method == "fps"
+    assert cfg.fps == 1.0
     assert cfg.max_frames == 100
     assert cfg.env_model == "vggt_omega"
     assert cfg.conf_threshold == 50.0  # vggt_omega native default (matches notebook)

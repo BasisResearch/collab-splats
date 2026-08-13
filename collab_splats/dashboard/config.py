@@ -16,8 +16,10 @@ import yaml
 class RunConfig:
     """All knobs for one pipeline run; serialised to run_config.yaml for provenance."""
 
-    # Frame sampling
-    sampling_method: str = "uniform"  # "uniform" | "optical_flow"
+    # Frame sampling — one density knob per method; max_frames is the frame budget
+    # (the COUNT for "uniform", a ceiling for "fps"/"optical_flow").
+    sampling_method: str = "fps"  # "fps" | "uniform" | "optical_flow"
+    fps: float = 1.0  # fps only — samples/second
     max_frames: int = 100
     min_disparity: float = 50.0  # optical_flow only
 

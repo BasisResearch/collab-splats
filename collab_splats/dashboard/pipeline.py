@@ -52,7 +52,14 @@ logger = logging.getLogger(__name__)
 
 
 def _write_frames_zarr(
-    frames: list[np.ndarray], records: list[dict], path: Path, *, video_path: Path, method: str, max_frames: int
+    frames: list[np.ndarray],
+    records: list[dict],
+    path: Path,
+    *,
+    video_path: Path,
+    method: str,
+    fps: float | None,
+    max_frames: int,
 ) -> None:
     """Write the canonical frames.zarr (FrameStore schema) — feeds CameraLocalizer.from_feedforward
     so pixel reads bypass ff.image_paths (which may point at a directory this session doesn't own)."""
@@ -60,6 +67,7 @@ def _write_frames_zarr(
         "video_path": str(video_path),
         "video_mtime": Path(video_path).stat().st_mtime,
         "method": method,
+        "fps": fps,
         "max_frames": max_frames,
     }
     FrameStore.create(path, frames, records, provenance=prov)
@@ -344,16 +352,32 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
         )
 
     op_log.update_progress(5, f"sampling: {config.sampling_method}")
-    # One call; records carry true source frame indices for both methods
-    method = "optical_flow" if config.sampling_method == "optical_flow" else "uniform"
-    frames, records = sample_frames(
+    # One call; records carry true source frame indices for every method. Each method has
+    # ONE density knob and sample_frames rejects a knob belonging to another, so each
+    # branch passes only its own.
+    method = config.sampling_method
+    if method == "fps":
+        return sample_frames(
+            str(video_path),
+            method="fps",
+            fps=config.fps,
+            max_frames=config.max_frames,
+            on_progress=on_progress,
+        )
+    if method == "optical_flow":
+        return sample_frames(
+            str(video_path),
+            method="optical_flow",
+            min_disparity=config.min_disparity,
+            max_frames=config.max_frames,
+            on_progress=on_progress,
+        )
+    return sample_frames(
         str(video_path),
-        method=method,
-        min_disparity=config.min_disparity,
+        method="uniform",
         max_frames=config.max_frames,
         on_progress=on_progress,
     )
-    return frames, records
 
 
 ########
@@ -396,13 +420,14 @@ def run_pipeline(
             # Sample frames from video and persist for creator + viewer
             t = time.perf_counter()
             frames, records = _sample(Path(video_path), config, op_log)
-            sampling_method = "optical_flow" if config.sampling_method == "optical_flow" else "uniform"
+            sampling_method = config.sampling_method
             _write_frames_zarr(
                 frames,
                 records,
                 out_dir / "frames.zarr",
                 video_path=video_path,
                 method=sampling_method,
+                fps=config.fps if sampling_method == "fps" else None,
                 max_frames=config.max_frames,
             )
             # frames.zarr is the sole frame store: setup_inference and semantics extraction both

@@ -50,7 +50,7 @@ def _scan_output_dirs(base_dir: Path) -> list[str]:
 
 _ENV_MODELS = ["vggt_omega", "vggtx", "mapanything"]
 _EXTRACTORS = ["talk2dino", "maskclip", "dinov2"]
-_SAMPLERS = ["uniform", "optical_flow"]
+_SAMPLERS = ["fps", "uniform", "optical_flow"]
 
 # Per-model confidence default — mirrors each creator's own class default so the dashboard
 # reproduces the notebook (which instantiates creators with no conf override). A single shared
@@ -159,10 +159,13 @@ class SplatsApp(param.Parameterized):
         # two-level (session -> video) cascade has nothing left to cascade.
         self.scene_select = pn.widgets.Select(name="Scene", options=[])
         # Migrate the pre-rename "balanced" label from saved settings to "uniform".
-        _sampling = s.get("sampling", "uniform")
+        _sampling = s.get("sampling", "fps")
         _sampling = "uniform" if _sampling == "balanced" else _sampling
         self.sampling = pn.widgets.Select(name="Frame sampling", options=_SAMPLERS, value=_sampling)
+        # fps is the density knob of the fps sampler only (see _bind_visibility below).
+        self.fps = pn.widgets.FloatInput(name="fps (samples/sec)", value=s.get("fps", 1.0), start=0.01, step=0.5)
         # Number input (not a slider); upper bound + label set to the video's frame count on select.
+        # Frame budget: the COUNT for "uniform", a ceiling for "fps"/"optical_flow".
         self.max_frames = pn.widgets.IntInput(name="Max frames", value=s.get("max_frames", 100), start=1, step=1)
         self.env_model = pn.widgets.Select(
             name="Environment model", options=_ENV_MODELS, value=s.get("env_model", "vggt_omega")
@@ -222,6 +225,7 @@ class SplatsApp(param.Parameterized):
         self._persisted = {
             "scene_select": self.scene_select,
             "sampling": self.sampling,
+            "fps": self.fps,
             "max_frames": self.max_frames,
             "env_model": self.env_model,
             "conf": self.conf,
@@ -241,11 +245,15 @@ class SplatsApp(param.Parameterized):
 
         # min_disparity is consumed only by the optical-flow sampler; hide it otherwise.
         _bind_visibility(self.min_disparity, self.sampling, lambda v: v == "optical_flow")
+        # fps is consumed only by the fps sampler; hide it otherwise.
+        _bind_visibility(self.fps, self.sampling, lambda v: v == "fps")
 
         self._sidebar = pn.Column(
             "## Source",
             self.scene_select,
-            pn.Card(self.sampling, self.max_frames, self.min_disparity, title="Frame sampling", collapsed=True),
+            pn.Card(
+                self.sampling, self.fps, self.max_frames, self.min_disparity, title="Frame sampling", collapsed=True
+            ),
             pn.Card(self.env_model, self.conf, title="Environment model", collapsed=True),
             pn.Card(
                 self.extractor, self.pos_query, self.neg_query, self.run_query_btn, title="Semantics", collapsed=False
@@ -427,6 +435,7 @@ class SplatsApp(param.Parameterized):
         """Build RunConfig from current widget values."""
         return RunConfig(
             sampling_method=self.sampling.value,
+            fps=self.fps.value,
             max_frames=self.max_frames.value,
             min_disparity=self.min_disparity.value,
             env_model=self.env_model.value,

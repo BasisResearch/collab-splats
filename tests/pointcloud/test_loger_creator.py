@@ -821,8 +821,8 @@ def test_pinhole_residual_against_logers_native_pointcloud(record_property):
     p99_rel = float(np.percentile(err, 99)) / scene_scale
 
     # RECORD IT — these numbers are the deliverable, not the pass/fail, and the tail is the
-    # half that matters for mesh and BA. record_property survives a normal run; a print is
-    # swallowed without -s.
+    # half that matters for mesh and BA. record_property lands in the JUnit XML, so these
+    # surface under --junitxml where a bare print needs -s; without either flag neither shows.
     record_property("pinhole_residual_median_pct", round(median_rel * 100, 4))
     record_property("pinhole_residual_p95_pct", round(p95_rel * 100, 4))
     record_property("pinhole_residual_p99_pct", round(p99_rel * 100, 4))
@@ -843,6 +843,18 @@ def test_pinhole_residual_against_logers_native_pointcloud(record_property):
         f"fit has regressed — +5% on fx reads as 0.493% here — or LoGeR is more non-pinhole "
         f"on this input than when this was calibrated, in which case the fit is also lossy "
         f"for the mesh and BA paths. See spec open item 3."
+    )
+
+    # Gate the TAIL too, not only the median. The spec's open item 3 names the tail as the
+    # unverified mesh/BA risk, so a regression that fattens p99 while leaving the median flat
+    # is exactly the one that must not pass silently. Measured to be the more sensitive of the
+    # two: the +5% fx mutation moves p99 0.9429% -> 1.837% (1.95x) against the median's 1.81x.
+    # 0.013 sits between the two with 38% headroom over the reproducible baseline.
+    assert p99_rel < 0.013, (
+        f"Fitted-K unprojection diverges from LoGeR's native cloud by {p99_rel * 100:.3f}% of "
+        f"scene scale at p99 (median {median_rel * 100:.3f}%, p95 {p95_rel * 100:.3f}%), against "
+        f"a measured 0.943% baseline. The tail fattened without the median necessarily moving — "
+        f"the worst pixels sit off-axis, where a mesh would show them. See spec open item 3."
     )
 
 

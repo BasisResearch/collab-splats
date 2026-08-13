@@ -802,11 +802,20 @@ compare against LoGeR's native `points`, read from the model output inside the t
 median per-point error under a scene-scale-relative tolerance, and **log the residual** — it is
 open item 3, not merely a pass/fail.
 
-This one assertion proves the focal fit, the depth extraction, and that
-`unproject_and_filter_points` is a legitimate reuse — because LoGeR itself computes
+This one assertion proves the focal fit, the depth extraction, and that `_raw_to_world_points`
+is a legitimate reuse — because LoGeR itself computes
 `points = camera_poses @ homogenize(local_points)`, so any of those three being wrong breaks it.
 It is the reason reusing the existing unprojection is both the minimal choice and the verifiable
-one: zero new production code carries the validation.
+one.
+
+**Two corrections to the paragraph above (2026-08-13, measured).** It named
+`unproject_and_filter_points`; that function is real (`vggtx.py`) but is NOT what this test
+exercises. The test calls `_raw_to_world_points`, which performs no filtering at all — it builds a
+dense meshgrid and runs its own unprojection loop (`feedforward/base.py`). Corrected inline above.
+It also claimed "zero new production code carries the validation", which is no longer true:
+`LoGeRCreator._forward_kwargs()` was extracted from `_forward` specifically so the parity test and
+production issue the identical model call, because a drifting duplicate would make `native`
+silently wrong. That is a deliberate and small addition, not an accident — but it is not zero.
 
 **Correction (2026-08-13, measured).** This originally claimed a fourth thing, the c2w->w2c pose
 inversion. It does not cover it. `_forward` inverts `camera_poses` and `_raw_to_world_points`

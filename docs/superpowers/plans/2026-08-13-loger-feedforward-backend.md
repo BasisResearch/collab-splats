@@ -1316,6 +1316,10 @@ Add to `LoGeRCreator`, after `_load_model`:
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
 Expected: **26 passed** (22 after Step 0, plus the 4 written here). No xfails remain in this file.
 
+Task 6's quality review then raised the out-of-order test to a parametrized pair (out-of-order and
+duplicate, since `b <= a` weakened to `b < a` survived otherwise), landing the file at **27** in
+commit `225d629`. Later tasks count up from 27, not 26.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -1608,7 +1612,7 @@ Add to `LoGeRCreator`, after `_preprocess`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **33 passed** (26 after Task 6, plus the 7 written here).
+Expected: **34 passed** (27 after Task 6, plus the 7 written here).
 
 - [ ] **Step 5: Commit**
 
@@ -1836,7 +1840,7 @@ Add to `LoGeRCreator`, after `_forward`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **38 passed, 0 xfailed** (33 after Task 7, plus the 5 written here). Zero xfails and
+Expected: **39 passed, 0 xfailed** (34 after Task 7, plus the 5 written here). Zero xfails and
 zero stub scaffolding is the real completion signal for this task.
 
 - [ ] **Step 5: Commit**

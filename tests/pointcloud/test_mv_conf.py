@@ -368,7 +368,29 @@ def test_unjudged_view_keeps_pixels():
 
 
 def test_multiview_mask_respects_min_views():
-    """Judged views threshold on inlier_count; min_views is a count, not a ratio."""
+    """A judged pixel whose partners disagree is dropped; min_views is a count, not a ratio."""
+    N, H, W = 3, 4, 4
+    # Co-located cameras so the warp is the identity in pixel space, with depth varying across
+    # the grid so the frustum AABBs are fat enough to survive the pair gate. View 2 sits 30%
+    # nearer than the other two, disagreeing with both at rel_thresh=0.1.
+    base = np.linspace(4.0, 6.0, H * W, dtype=np.float32).reshape(H, W)
+    depth = np.stack([base, base, base * 0.7])
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.1, device="cpu"
+    )
+    # The odd view out is judged and every partner it has votes against it.
+    assert out.judged[2] and np.all(out.inlier_count[2] == 0)
+    keep = multiview_mask(out, depth > 0, min_views=1)
+    assert not np.any(keep[2]), "a judged view with zero agreeing partners must be dropped"
+    # Views 0 and 1 agree with each other; being nearer, view 2 occludes them, so it never
+    # judges them back — one reachable partner each, and it says yes.
+    assert np.all(keep[:2])
+
+
+def test_min_views_above_partner_count_clamps_instead_of_emptying():
+    """K larger than a pixel's partner count degrades to 'all partners agree', not 'delete'."""
     N, H, W = 3, 4, 4
     depth = np.full((N, H, W), 5.0, dtype=np.float32)
     K = _make_intrinsics(H, W)
@@ -376,8 +398,11 @@ def test_multiview_mask_respects_min_views():
     out = compute_multiview_depth_confidence(
         depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.1, device="cpu"
     )
-    assert np.all(multiview_mask(out, depth > 0, min_views=2))
-    assert not np.any(multiview_mask(out, depth > 0, min_views=3))
+    # Every pixel has 2 partners and both agree. min_views is an ABSOLUTE count, so an
+    # unclamped K=16 would be unsatisfiable and would empty a short sequence outright.
+    assert np.all(out.valid_count == 2)
+    for k in (1, 2, 3, 16):
+        assert np.all(multiview_mask(out, depth > 0, min_views=k)), f"min_views={k} emptied the mask"
 
 
 def test_multiview_mask_respects_valid_depth():

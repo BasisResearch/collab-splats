@@ -196,6 +196,14 @@ Full grid (rel ∈ {0.01, 0.02, 0.05, 0.10} × K ∈ {1, 2, 4, 8, 16}) in
    that measures best here is exactly the setting that silently empties a short scene. Any
    default above K=2 needs either a fraction-of-partners form or a guard against N.
 
+   **Resolved by a per-pixel clamp** (`required = min(min_views, valid_count)` in
+   `multiview_mask`). A pixel with fewer partners than K is asked to satisfy every partner it
+   has rather than an unreachable count — the same principle that already lets an unjudged view
+   keep its pixels, applied one level down. K=1 is unaffected (`min(1, valid_count) == 1`
+   wherever a view is judged), so MapAnything's shipping mask stays byte-identical. Note this
+   makes the K≥8 rows above *upper bounds* on how aggressive large K can be: on a scene with
+   fewer partners than K, the clamp turns "K agree" into "all agree", which is weaker.
+
 5. **MapAnything gains least** (out10 −4% at K=16) — its depth is already the most cross-view
    consistent of the three, consistent with it being the metric backend.
 

@@ -150,13 +150,20 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     resolution: int | None = None  # None → auto (512 standard, 256 text-aligned); explicit overrides
     resize_mode: str = "balanced"  # mode= passed to load_and_preprocess_images
     conf_threshold: float = 50.0
+    # Off by default: on 7-Scenes chess/seq-01 mv never beat the learned confidence at
+    # comparable retention — it is a complementary tail filter, not a replacement. See
+    # docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D.
     use_multiview_confidence: bool = False
-    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0.
-    min_views: int = 1
+    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0 and is
+    # inert (99.9% retention). K=2 is the largest count that is safe on a short sequence —
+    # min_views is an absolute count, so K > N-1 empties every judged view.
+    min_views: int = 2
     # abs_thresh stays 0.0 — VGGT depth is non-metric, so a fixed-unit tolerance is
     # meaningless and would break the scale invariance the shared function relies on.
     mv_conf_abs_thresh: float = 0.0
-    mv_conf_rel_thresh: float = 0.05
+    # 0.01, not 0.05: the sweep found 0.05 removes almost nothing (out10 −0.3%) while 0.01 at
+    # K=2 cuts the >10%-error pixel fraction by 5.4% for 1.6% of pixels.
+    mv_conf_rel_thresh: float = 0.01
     enable_text_alignment: bool = False  # VGGTOmega(enable_alignment=True); sets resolution=256 when None
 
     def __post_init__(self) -> None:

@@ -175,7 +175,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     # MapAnything depth is metric, so a 2 cm absolute floor is meaningful here and only here.
     mv_conf_abs_thresh: float = 0.02
     mv_conf_rel_thresh: float = 0.02
-    # K=1 is exactly the old mv_conf_threshold=0.0 — this preserves shipping behaviour.
+    # K=1 is exactly the old mv_conf_threshold=0.0 — this preserves shipping behaviour. The
+    # Step D sweep leaves it alone deliberately: MapAnything gains least from mv of the three
+    # swept backbones (out10 −4% even at K=16), so tightening here would cost parity for
+    # nothing. The VGGT-family creators carry the calibrated rel=0.01, K=2 instead.
     min_views: int = 1
     minibatch_size: int = 1
     resize_mode: str = "fixed"  # "fixed" (aspect-ratio lookup table), "longest_side", "square"

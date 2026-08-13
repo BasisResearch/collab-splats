@@ -454,14 +454,22 @@ def multiview_mask(mv: MultiviewConfidence, valid_depth: np.ndarray, min_views: 
     Unjudged views — those with no overlapping partners — keep their valid pixels. Absence
     of evidence is not evidence of absence.
 
+    The same principle bounds K per pixel: a pixel seen by fewer than K other views is asked
+    to satisfy every partner it has, not an unreachable count. Without this, K=2 on a 3-frame
+    scene deletes the whole reconstruction — the count is absolute, so K > partners is
+    unsatisfiable, and the measured optimum (K=16) is exactly the setting that empties a short
+    sequence. K=1 is unaffected: min(1, valid_count) == 1 wherever a view is judged at all,
+    so the old threshold=0.0 equivalence still holds exactly.
+
     Args:
         mv:          Output of compute_multiview_depth_confidence.
         valid_depth: (N, H, W) bool — pixels eligible before mv filtering.
         min_views:   K in "at least K other views agree". K=1 is the old threshold=0.0.
     """
+    required = np.minimum(min_views, mv.valid_count)
     return np.where(
         mv.judged[:, None, None],
-        (mv.inlier_count >= min_views) & valid_depth,
+        (mv.inlier_count >= required) & (mv.valid_count > 0) & valid_depth,
         valid_depth,
     )
 

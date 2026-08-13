@@ -193,13 +193,20 @@ class VGGTXCreator(BaseFeedforwardCreator):
     model_name: str = "facebook/VGGT-1B"
     chunk_size: int = 256
     conf_threshold: float = 35.0
+    # Off by default: on 7-Scenes chess/seq-01 mv never beat the learned confidence at
+    # comparable retention — it is a complementary tail filter, not a replacement. See
+    # docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D.
     use_multiview_confidence: bool = False
-    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0.
-    min_views: int = 1
+    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0 and is
+    # inert (99.7% retention). K=2 is the largest count that is safe on a short sequence —
+    # min_views is an absolute count, so K > N-1 empties every judged view.
+    min_views: int = 2
     # abs_thresh stays 0.0 — VGGT depth is non-metric, so a fixed-unit tolerance is
     # meaningless and would break the scale invariance the shared function relies on.
     mv_conf_abs_thresh: float = 0.0
-    mv_conf_rel_thresh: float = 0.05
+    # 0.01, not 0.05: the sweep found 0.05 removes almost nothing, while 0.01 at K=2 cuts the
+    # >10%-error pixel fraction by 3.3% for 1.1% of pixels.
+    mv_conf_rel_thresh: float = 0.01
 
     def _load_model(self, device: str) -> Any:
         """Load VGGT-X from HuggingFace and move to device.

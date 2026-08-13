@@ -37,6 +37,10 @@ pointcloud:
   # Geometric cross-view depth consistency filter. Drops points whose depth disagrees with
   # the other views that see them. rel_thresh and min_views are calibrated per-backend
   # creator defaults, deliberately not exposed here.
+  # Off: measured on 7-Scenes chess/seq-01 it cuts the >10%-error pixel fraction by ~5% for
+  # ~2% of pixels — real but small, and it costs O(N^2) pairwise warping. The learned
+  # confidence percentile is the stronger filter; mv is complementary and ANDed on top.
+  # See docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D.
   use_multiview_confidence: false
   # Export density for sparse_pc.ply. null = write every reconstructed point (default);
   # set an int to thin the exported file only — inference is unaffected.

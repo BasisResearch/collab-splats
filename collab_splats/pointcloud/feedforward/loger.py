@@ -45,7 +45,11 @@ import yaml
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
-from ...geometry.transforms import estimate_intrinsics_from_points, extrinsics_to_homogeneous, invert_poses
+from ...geometry.transforms import (
+    estimate_intrinsics_from_points,
+    extrinsics_to_homogeneous,
+    invert_poses,
+)
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
@@ -191,13 +195,18 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
     pixel_limit: int = 255_000
     conf_threshold: float = 50.0
+    # Off by default. LoGeR was not in the Step D sweep; it inherits the VGGT-family
+    # calibration because rel_thresh is scale-invariant and all three swept backbones
+    # optimised at the same grid corner. Sweep it before trusting these on LoGeR.
     use_multiview_confidence: bool = False
-    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0.
-    min_views: int = 1
+    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0 and is
+    # inert. K=2 is the largest count that is safe on a short sequence — min_views is an
+    # absolute count, so K > N-1 empties every judged view.
+    min_views: int = 2
     # abs_thresh stays 0.0 — LoGeR depth is non-metric, so a fixed-unit tolerance is
     # meaningless and would break the scale invariance the shared function relies on.
     mv_conf_abs_thresh: float = 0.0
-    mv_conf_rel_thresh: float = 0.05
+    mv_conf_rel_thresh: float = 0.01
 
     # Resolved in _load_model from the variant's yaml. se3 is declared under model:
     # but is a forward kwarg, so it cannot ride along in the constructor kwargs. None

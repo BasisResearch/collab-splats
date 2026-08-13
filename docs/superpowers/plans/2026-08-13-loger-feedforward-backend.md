@@ -19,9 +19,12 @@
 | | Path | Responsibility |
 |---|---|---|
 | new | `setup/loger.sh` | Clone upstream `Junyi42/LoGeR` @ `7685b7a` into `third_party/LoGeR/`. Idempotent. |
-| new | `collab_splats/pointcloud/feedforward/loger.py` | `LoGeRCreator` + `_compute_weighted_median` + `_estimate_loger_intrinsics` + `_compute_loger_target_size` |
-| new | `tests/pointcloud/test_loger_creator.py` | Fit, resize, forward, postprocess, refusals |
+| new | `collab_splats/pointcloud/feedforward/loger.py` | `LoGeRCreator` + `_compute_target_size` |
+| new | `tests/pointcloud/test_loger_creator.py` | Resize, forward, postprocess, refusals |
 | new | `tests/pointcloud/feedforward/test_loger_load_guard.py` | Absent-tree guarded-import behaviour |
+| mod | `collab_splats/geometry/transforms.py` | `estimate_intrinsics_from_points` (public) + `_compute_weighted_median` (private). Model-agnostic, sits beside `extract_intrinsics`; LoGeR is only the first caller. |
+| mod | `collab_splats/geometry/__init__.py` | Re-export `estimate_intrinsics_from_points` |
+| mod | `tests/geometry/test_transforms.py` | Median + intrinsics-fit tests |
 | mod | `third_party/README.md` | Table row + pinned commit + missing-LICENSE note |
 | mod | `collab_splats/pointcloud/feedforward/__init__.py` | Guarded `LoGeRCreator` export |
 | mod | `collab_splats/pointcloud/__init__.py` | `_LOGER_AVAILABLE` + `_REGISTRY["loger"]` |
@@ -45,9 +48,11 @@ Two upstreams are involved and they are not interchangeable:
 
 Write the long form in the code, not the short form. Every module-level helper docstring and every non-obvious inline comment that reflects upstream behaviour states which of the two it came from. When a comment cites vendored-tree behaviour we depend on but do not copy (the conf head emitting logits, `se3` being popped inside `forward`), that is still a citation and still names repo, commit, file, and line — a reader cannot check it otherwise, because `third_party/` is gitignored.
 
-### One deliberate deviation from the spec
+### Two deliberate deviations from the spec
 
-The spec's "Genuinely new" section names **two** new functions. This plan adds a **third**, `_compute_loger_target_size`. Justification, since the spec requires one for every addition: it is a ~10-line algorithm with a `while` loop that must stay behaviourally identical to the vendored loader (`loger/utils/basic.py:51-63`) or the model receives out-of-distribution input, it is the sole source of the resize anisotropy that three other decisions depend on, and it is the only part of `_preprocess` that can be tested without a model — including against the vendored loader directly. Inlining it would make the anisotropy untestable in isolation. This is a different case from the rejected `_loger_original_coords`, which would have wrapped `np.tile` of a constant row.
+**1. Placement.** The spec put both new functions in `loger.py`. Two of the three now live in `collab_splats/geometry/transforms.py` instead — `estimate_intrinsics_from_points` (public) and its private helper `_compute_weighted_median`. The maths is model-agnostic: it takes a camera-frame pointmap and per-pixel confidence, which any pointmap backend without an intrinsics head produces. `transforms.py` already describes itself as "Pure-numpy camera geometry utilities shared across the pipeline" and already holds `extract_intrinsics`, and the repo's precedent for a function that *produces* a K is `seed_intrinsics` (`localization/localizer.py:24`) — verb + noun, no backend tag. Leaving them in `loger.py` would put a third intrinsics helper in a fourth location. Cost of the move, stated plainly: one caller today, and the `conf > 0.1` gate becomes a documented keyword default instead of a constant.
+
+**2. A third function.** The spec's "Genuinely new" section names **two**. This plan adds `_compute_target_size`, which does stay in `loger.py`. Justification, since the spec requires one for every addition: it is a ~10-line algorithm with a `while` loop that must stay behaviourally identical to the vendored loader (`loger/utils/basic.py:51-63`) or the model receives out-of-distribution input, it is the sole source of the resize anisotropy that three other decisions depend on, and it is the only part of `_preprocess` that can be tested without a model — including against the vendored loader directly. Inlining it would make the anisotropy untestable in isolation. This is a different case from the rejected `_loger_original_coords`, which would have wrapped `np.tile` of a constant row.
 
 ---
 
@@ -236,26 +241,23 @@ Verified a forward pass runs under torch 2.5.1+cu121 despite LoGeR pinning
 
 ---
 
-## Task 2: `_compute_compute_weighted_median`
+## Task 2: `_compute_weighted_median`
 
 **Licence decision (2026-08-13, user):** neither LoGeR fork ships a `LICENSE`, so nothing is copied into tracked source. Tasks 2, 3, and 4 are **written from the underlying maths** — a cumulative-weight-to-half median, the pinhole identity `fx = u_c * Z / X`, and an area-budget resize are each textbook. Both repos are cited as **prior art and as the behavioural reference we match**, never as the source of the lines. Task 4 additionally pins that behavioural match with a measured parity test against the vendored loader, so "we match upstream" is a test result rather than an assertion.
 
+**Placement decision (2026-08-13, user).** The median and the intrinsics fit do **not** live in `loger.py`. They go in `collab_splats/geometry/transforms.py`, whose module docstring already reads "Pure-numpy camera geometry utilities shared across the pipeline" and which already holds `extract_intrinsics`. Reasons: the maths is model-agnostic (any pointmap backend with no intrinsics head needs it), the repo's precedent for "function that produces a K" is `seed_intrinsics` (`localization/localizer.py:24`) — tag-free, verb + noun — and putting a third intrinsics helper in a fourth location would worsen an existing scatter. `transforms.py` imports numpy only, so nothing heavy follows it in.
+
+Consequence for task ordering: **Task 2 no longer creates `loger.py`.** Task 4 does.
+
 **Files:**
-- Create: `collab_splats/pointcloud/feedforward/loger.py`
-- Create: `tests/pointcloud/test_loger_creator.py`
+- Modify: `collab_splats/geometry/transforms.py`
+- Modify: `tests/geometry/test_transforms.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/pointcloud/test_loger_creator.py`:
+Append to `tests/geometry/test_transforms.py`. Add `_compute_weighted_median` to the existing `from collab_splats.geometry.transforms import (...)` block at the top of that file, then append these four tests:
 
 ```python
-"""LoGeR feedforward backend: intrinsics fit, resize rule, creator contract."""
-import numpy as np
-import pytest
-
-from collab_splats.pointcloud.feedforward.loger import _compute_weighted_median
-
-
 def test_compute_weighted_median_equal_weights_matches_plain_median():
     # With uniform weights the weighted median is the ordinary median.
     values = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
@@ -288,67 +290,16 @@ def test_compute_weighted_median_subsamples_deterministically():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: collection error, `ModuleNotFoundError: No module named 'collab_splats.pointcloud.feedforward.loger'`
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_transforms.py -v -p no:randomly`
+Expected: collection error, `ImportError: cannot import name '_compute_weighted_median' from 'collab_splats.geometry.transforms'`
 
-- [ ] **Step 3: Write the module skeleton and the helper**
+- [ ] **Step 3: Write the helper**
 
-Create `collab_splats/pointcloud/feedforward/loger.py`:
+Append to `collab_splats/geometry/transforms.py`, immediately after `extract_intrinsics`, under a new section divider matching the file's existing `########`-style:
 
 ```python
-"""LoGeR feedforward backend: intrinsics fit, resize rule, and creator.
-
-LoGeR is a Pi3 backbone plus a TTT fast-weight memory, run with sliding-window
-inference and overlap stitching.  Unlike every other backend we run, it predicts
-no camera intrinsics, so K is solved from its camera-frame pointmap.
-
-Upstream sources.  Two forks are involved and they are NOT interchangeable.  Neither
-ships a LICENSE, so no code here is copied from either — the maths below is written
-from first principles and the forks are cited as prior art and as the behavioural
-reference we match.  Citations carry repo, commit, file, and line because third_party/
-is gitignored and cannot be read from this repo alone:
-
-  * VENDORED — the tree we actually execute against
-    (setup/loger.sh clones it into third_party/LoGeR/):
-      github.com/Junyi42/LoGeR @ 7685b7a
-  * PRIOR ART — read for reference, not vendored, not a dependency, nothing copied:
-      github.com/PolyCam/LoGeR @ 5d7c1a7
-
-Provides:
-  LOGER_HF_REPO              — HuggingFace repo holding both checkpoints
-  LOGER_VARIANTS             — the two shipped variants
-  _compute_weighted_median   — confidence-weighted median with a seeded subsample
-  _estimate_loger_intrinsics — fit one pinhole K to LoGeR's camera-frame pointmap
-  _compute_loger_target_size — patch-aligned resize matching the vendored loader
-  LoGeRCreator               — feedforward creator using LoGeR depth + pose
-"""
-
-from __future__ import annotations
-
-import logging
-import math
-from pathlib import Path
-
-import numpy as np
-
-logger = logging.getLogger(__name__)
-
 ########################################################################
-########## Constants ###################################################
-########################################################################
-
-LOGER_HF_REPO = "Junyi42/LoGeR"
-LOGER_VARIANTS = ("LoGeR", "LoGeR_star")
-
-# Vendored tree, populated by setup/loger.sh.  parents[3] resolves
-# collab_splats/pointcloud/feedforward/loger.py -> repo root.
-_LOGER_ROOT = Path(__file__).resolve().parents[3] / "third_party" / "LoGeR"
-
-# LoGeR's ViT patch size; every model-resolution image dimension is a multiple of it.
-_PATCH = 14
-
-########################################################################
-########## Intrinsics fit ##############################################
+########## Intrinsics estimation #######################################
 ########################################################################
 
 
@@ -378,16 +329,18 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     return float(values[np.searchsorted(cumw, cumw[-1] / 2.0)])
 ```
 
+`transforms.py` imports numpy only and must stay that way — use `np.isfinite`/`np.argsort` rather than adding a `math` import.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: 4 passed
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_transforms.py -v -p no:randomly`
+Expected: all pre-existing tests still pass, plus the 4 new ones.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/pointcloud/feedforward/loger.py tests/pointcloud/test_loger_creator.py
-git commit -m "feat(loger): add confidence-weighted median helper
+git add collab_splats/geometry/transforms.py tests/geometry/test_transforms.py
+git commit -m "feat(geometry): add confidence-weighted median helper
 
 Written from the textbook definition, not copied: neither LoGeR fork ships a
 LICENSE. github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:167 is cited as prior
@@ -401,22 +354,22 @@ the estimate reproducible."
 
 ---
 
-## Task 3: `_estimate_loger_intrinsics`
+## Task 3: `estimate_intrinsics_from_points`
 
 The core new algorithm. LoGeR emits no K; this solves one by inverting the pinhole model per pixel and taking a confidence-weighted median. It returns the whole `(3,3)` matrix rather than `(fx, fy)` because the centred pixel grid already fixes `cx`/`cy`.
 
+**Public, and named for what it does, not for its caller.** It sits beside `extract_intrinsics` in `geometry/transforms.py` and is exported from `collab_splats.geometry`. Nothing in it is LoGeR-specific — it takes a camera-frame pointmap and per-pixel confidence, both of which any pointmap backend without an intrinsics head produces. LoGeR is simply the first caller. The `conf > 0.1` gate is therefore a keyword argument with a documented default rather than a buried constant.
+
 **Files:**
-- Modify: `collab_splats/pointcloud/feedforward/loger.py`
-- Modify: `tests/pointcloud/test_loger_creator.py`
+- Modify: `collab_splats/geometry/transforms.py`
+- Modify: `collab_splats/geometry/__init__.py`
+- Modify: `tests/geometry/test_transforms.py`
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/pointcloud/test_loger_creator.py`:
+Add `estimate_intrinsics_from_points` to the existing import block at the top of `tests/geometry/test_transforms.py`, then append:
 
 ```python
-from collab_splats.pointcloud.feedforward.loger import _estimate_loger_intrinsics
-
-
 def _synthetic_local_points(h: int, w: int, fx: float, fy: float, depth: float = 2.0) -> np.ndarray:
     """Exact camera-frame pointmap for a centre-principal pinhole camera, shape (1,H,W,3).
 
@@ -441,7 +394,7 @@ def test_fit_recovers_known_intrinsics(fx, fy):
     pts = _synthetic_local_points(h, w, fx, fy)
     conf = np.ones((1, h, w), dtype=np.float32)
 
-    k = _estimate_loger_intrinsics(pts, conf)
+    k = estimate_intrinsics_from_points(pts, conf)
 
     assert k.shape == (3, 3)
     assert k[0, 0] == pytest.approx(fx, rel=1e-3)
@@ -467,7 +420,7 @@ def test_fit_survives_confident_outliers():
     pts[bad, 0] *= 0.5  # halving X doubles the implied fx for those pixels
     pts[bad, 1] *= 0.5
 
-    k = _estimate_loger_intrinsics(pts, conf)
+    k = estimate_intrinsics_from_points(pts, conf)
 
     assert k[0, 0] == pytest.approx(fx, rel=1e-2)
     assert k[1, 1] == pytest.approx(fy, rel=1e-2)
@@ -487,7 +440,7 @@ def test_degenerate_input_raises_instead_of_falling_back(mutate):
     h, w = 56, 70
     pts, conf = mutate(_synthetic_local_points(h, w, 80.0, 80.0), np.ones((1, h, w), np.float32))
     with pytest.raises(RuntimeError, match="intrinsics fit failed"):
-        _estimate_loger_intrinsics(pts, conf)
+        estimate_intrinsics_from_points(pts, conf)
 
 
 def test_fit_accepts_trailing_axis_confidence():
@@ -495,40 +448,53 @@ def test_fit_accepts_trailing_axis_confidence():
     # from its caller, since _forward and the tests reach it by different routes.
     h, w = 56, 70
     pts = _synthetic_local_points(h, w, 80.0, 80.0)
-    k4 = _estimate_loger_intrinsics(pts, np.ones((1, h, w, 1), np.float32))
-    k3 = _estimate_loger_intrinsics(pts, np.ones((1, h, w), np.float32))
+    k4 = estimate_intrinsics_from_points(pts, np.ones((1, h, w, 1), np.float32))
+    k3 = estimate_intrinsics_from_points(pts, np.ones((1, h, w), np.float32))
     np.testing.assert_allclose(k4, k3)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: `ImportError: cannot import name '_estimate_loger_intrinsics'`
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_transforms.py -v -p no:randomly`
+Expected: `ImportError: cannot import name 'estimate_intrinsics_from_points'`
 
 - [ ] **Step 3: Implement the estimator**
 
-Append to the "Intrinsics fit" section of `collab_splats/pointcloud/feedforward/loger.py`:
+Append to the "Intrinsics estimation" section of `collab_splats/geometry/transforms.py`, after `_compute_weighted_median`:
 
 ```python
-def _estimate_loger_intrinsics(local_points: np.ndarray, conf: np.ndarray) -> np.ndarray:
-    """Fit one pinhole K to LoGeR's camera-frame pointmap by confidence-weighted median.
+def estimate_intrinsics_from_points(
+    local_points: np.ndarray, conf: np.ndarray, conf_threshold: float = 0.1
+) -> np.ndarray:
+    """Fit one shared pinhole K to a camera-frame pointmap by confidence-weighted median.
 
-    LoGeR has no intrinsics head, so K is solved rather than predicted, by inverting
-    the pinhole model at every pixel and reducing with a weighted median.  Prior art
-    for the same approach: github.com/PolyCam/LoGeR @ 5d7c1a7, ``run_loger.py``,
-    ``estimate_focal_lengths`` at :206 over ``_focal_from_frame`` at :180.  That fork
-    also has ``_snap_square_pixels`` at :195, which we deliberately do **not** do — it
-    would merge fx and fy at model resolution, which the separate-axis rescale
-    downstream then un-merges incorrectly.
+    This is a **fit**, not a readout: the pointmap is not guaranteed to be consistent
+    with any single pinhole camera, so the returned K is the best shared pinhole
+    explanation of it rather than a recovered ground truth.  Callers that need to know
+    how good that explanation is should measure the reprojection residual.
+
+    For backends whose model emits no intrinsics head.  Invert the pinhole model at
+    every pixel — ``u_c = fx * X / Z``, so ``fx = u_c * Z / X`` — and reduce the pooled
+    per-pixel estimates with a confidence-weighted median.  One K is returned for the
+    whole batch, which is correct when every frame comes from the same physical camera
+    at the same resolution.
+
+    Prior art for the same approach: github.com/PolyCam/LoGeR @ 5d7c1a7,
+    ``run_loger.py``, ``estimate_focal_lengths`` at :206 over ``_focal_from_frame`` at
+    :180.  That fork also has ``_snap_square_pixels`` at :195, which we deliberately do
+    **not** do — it would merge fx and fy, and a caller that rescales the two axes
+    separately then un-merges the average incorrectly.
 
     Args:
-        local_points: (N, H, W, 3) camera-frame points.  LoGeR builds these as
-            ``cat([xy * z, z])`` (Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:772-775),
-            so channel 2 is depth and ``xy`` is a free per-pixel ray field — not
-            constrained to any pinhole K, which is why this fit is an approximation.
-        conf: (N, H, W) or (N, H, W, 1) confidence, **already sigmoid-activated**.
-            The ``> 0.1`` gate below is a threshold on a probability; on raw logits it
-            would admit roughly half of all pixels instead of a deliberate floor.
+        local_points: (N, H, W, 3) camera-frame points, channel 2 being depth.  Note
+            that a pointmap head is free to emit a per-pixel ray field not constrained
+            to any pinhole K — LoGeR's, for instance, is built as ``cat([xy * z, z])``
+            (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/models/pi3.py:772-775``) —
+            which is the reason this is an approximation.
+        conf: (N, H, W) or (N, H, W, 1) per-pixel confidence, **already activated into
+            [0, 1]**.  ``conf_threshold`` is a probability floor; passing raw logits
+            would admit roughly half of all pixels instead.
+        conf_threshold: minimum confidence for a pixel to contribute.
 
     Returns:
         (3, 3) float32 K, shared across frames, centre-principal by construction.
@@ -551,7 +517,7 @@ def _estimate_loger_intrinsics(local_points: np.ndarray, conf: np.ndarray) -> np
 
     # Invert the pinhole model per pixel: u_c = fx * X / Z  =>  fx = u_c * Z / X.
     x, y, z = local_points[..., 0], local_points[..., 1], local_points[..., 2]
-    valid = (z > 1e-3) & (np.abs(x) > 1e-6) & (np.abs(y) > 1e-6) & (conf > 0.1)
+    valid = (z > 1e-3) & (np.abs(x) > 1e-6) & (np.abs(y) > 1e-6) & (conf > conf_threshold)
     with np.errstate(divide="ignore", invalid="ignore"):
         fx_per_pixel = uu * z / x
         fy_per_pixel = vv * z / y
@@ -570,16 +536,17 @@ def _estimate_loger_intrinsics(local_points: np.ndarray, conf: np.ndarray) -> np
 
     # Fail loudly.  Upstream falls back to 1.2 * max(W, H); we do not, because a
     # plausible-but-wrong K fails silently all the way through to the mesh.
-    if fx is None or fy is None or not math.isfinite(fx) or not math.isfinite(fy) or fx <= 0 or fy <= 0:
+    if fx is None or fy is None or not np.isfinite(fx) or not np.isfinite(fy) or fx <= 0 or fy <= 0:
         raise RuntimeError(
-            f"LoGeR intrinsics fit failed over {n} frames: "
+            f"Pinhole intrinsics fit failed over {n} frames: "
             f"{int(valid.sum())}/{valid.size} pixels passed the validity mask, "
             f"{int(ok_fx.sum())} survived the fx bounds and {int(ok_fy.sum())} the fy bounds "
             f"(fx={fx}, fy={fy}). No fallback focal is applied by design."
         )
 
-    # fx and fy stay distinct — our resize rounds each axis to a multiple of 14
-    # independently, so the anisotropy is real and belongs in K.
+    # fx and fy stay distinct.  Callers whose preprocessing rounds the two axes
+    # independently (LoGeR's does, to multiples of 14) produce genuinely non-square
+    # pixels, and that anisotropy belongs in K rather than being averaged away.
     return np.array(
         [[fx, 0.0, (w - 1) / 2.0],
          [0.0, fy, (h - 1) / 2.0],
@@ -588,50 +555,70 @@ def _estimate_loger_intrinsics(local_points: np.ndarray, conf: np.ndarray) -> np
     )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Export it from the package**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: 11 passed (4 from Task 2, 7 here)
+`estimate_intrinsics_from_points` is public, so it joins the explicit re-export list in `collab_splats/geometry/__init__.py` — both the `from .transforms import (...)` block and `__all__`, each of which is alphabetically sorted. `_compute_weighted_median` is private and is **not** exported.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/ -v -p no:randomly`
+Expected: all pre-existing geometry tests still pass, plus the 4 from Task 2 and the 7 here.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add collab_splats/pointcloud/feedforward/loger.py tests/pointcloud/test_loger_creator.py
-git commit -m "feat(loger): solve shared pinhole K from LoGeR's pointmap
+git add collab_splats/geometry/transforms.py collab_splats/geometry/__init__.py tests/geometry/test_transforms.py
+git commit -m "feat(geometry): fit a shared pinhole K from a camera-frame pointmap
 
-LoGeR has no intrinsics head, so K is fitted rather than predicted: invert the
-pinhole model per pixel and take a confidence-weighted median, shared across
-frames. Written from that identity, not copied — neither fork ships a LICENSE.
-github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:180-206 is prior art for the
-same approach; the validity bounds here are derived from field of view
-(f = 0.1*W is ~157 degrees, f = 10*W is ~6).
+Some backends emit a pointmap but no intrinsics head, so K has to be fitted
+rather than read out: invert the pinhole model per pixel and take a
+confidence-weighted median, shared across frames. Written from that identity,
+not copied — neither LoGeR fork ships a LICENSE. github.com/PolyCam/LoGeR @
+5d7c1a7, run_loger.py:180-206 is prior art for the same approach; the validity
+bounds here are derived from field of view (f = 0.1*W is ~157 degrees, f = 10*W
+is ~6).
 
-Returns the full 3x3 rather than (fx, fy) because the centred pixel
-grid already fixes cx=(W-1)/2 — splitting that across caller and callee would
-let a caller pick W/2 and introduce a silent half-pixel offset.
+Lives in geometry/transforms.py beside extract_intrinsics rather than in the
+first caller's module: the maths is model-agnostic, and the repo's precedent for
+a function that produces a K is seed_intrinsics (localization/localizer.py:24) —
+verb + noun, no backend tag. LoGeR is only the first caller.
 
-fx and fy stay independent: the resize rounds each axis to a multiple of 14
-separately, so the anisotropy is real. Upstream's square-pixel snap is not
-ported — averaging at model resolution is un-averaged wrongly by the
-separate-axis rescale downstream.
+Returns the full 3x3 rather than (fx, fy) because the centred pixel grid already
+fixes cx=(W-1)/2 — splitting that across caller and callee would let a caller
+pick W/2 and introduce a silent half-pixel offset.
+
+fx and fy stay independent. Upstream's square-pixel snap is deliberately not
+applied: a caller that rescales the two axes separately then un-averages it
+wrongly.
 
 No fallback focal on degenerate input; it raises."
 ```
 
 ---
 
-## Task 4: `_compute_loger_target_size`
+## Task 4: `_compute_target_size`
+
+This task **creates** `loger.py` — Tasks 2 and 3 put their helpers in `geometry/transforms.py`, so `_compute_target_size` is the first thing that actually belongs in the backend module.
+
+It stays a module-level function rather than becoming a method or property on `LoGeRCreator`. A property does not fit (it takes `orig_w, orig_h`); a method would work and would drop the `pixel_limit` parameter by reading `self.pixel_limit`, but both direct siblings in this package — `_compute_omega_original_coords` (`vggt_omega.py:52`) and `_compute_vggtx_crop_coords` (`vggtx.py:49`) — are module-level functions doing exactly this job for their backend, and the explicit `pixel_limit` argument is what lets the parity test pin 255,000 independently of any instance config. `_preprocess` passes `self.pixel_limit`. The `loger` tag is dropped from the name because the module path already carries it.
 
 **Files:**
-- Modify: `collab_splats/pointcloud/feedforward/loger.py`
-- Modify: `tests/pointcloud/test_loger_creator.py`
+- Create: `collab_splats/pointcloud/feedforward/loger.py`
+- Create: `tests/pointcloud/test_loger_creator.py`
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/pointcloud/test_loger_creator.py`:
+Create `tests/pointcloud/test_loger_creator.py`:
 
 ```python
-from collab_splats.pointcloud.feedforward.loger import _compute_loger_target_size
+"""LoGeR feedforward backend: resize rule and creator contract."""
+import sys
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from collab_splats.pointcloud.feedforward.loger import _LOGER_ROOT, _compute_target_size
 
 
 @pytest.mark.parametrize(
@@ -641,7 +628,7 @@ from collab_splats.pointcloud.feedforward.loger import _compute_loger_target_siz
 def test_target_size_is_patch_aligned_and_within_budget(orig_w, orig_h):
     # Both invariants are load-bearing: a non-multiple of 14 crashes the ViT
     # patch embedding, and exceeding the budget is what OOMs long sequences.
-    w, h = _compute_loger_target_size(orig_w, orig_h, pixel_limit=255_000)
+    w, h = _compute_target_size(orig_w, orig_h, pixel_limit=255_000)
     assert w % 14 == 0 and h % 14 == 0
     assert w >= 14 and h >= 14
     assert w * h <= 255_000
@@ -650,7 +637,7 @@ def test_target_size_is_patch_aligned_and_within_budget(orig_w, orig_h):
 def test_target_size_preserves_orientation():
     # Landscape stays landscape. Independent per-axis rounding perturbs the exact
     # ratio by a few percent, but must never transpose it.
-    w, h = _compute_loger_target_size(1920, 1080, pixel_limit=255_000)
+    w, h = _compute_target_size(1920, 1080, pixel_limit=255_000)
     assert w > h
 
 
@@ -660,14 +647,14 @@ def test_target_size_aspect_error_is_small_but_real():
     # change makes it exactly zero, the separate-focal machinery is still correct
     # but this test documents why it is there.
     orig_w, orig_h = 1920, 1080
-    w, h = _compute_loger_target_size(orig_w, orig_h, pixel_limit=255_000)
+    w, h = _compute_target_size(orig_w, orig_h, pixel_limit=255_000)
     ratio_error = abs((w / h) / (orig_w / orig_h) - 1.0)
     assert ratio_error < 0.05
 
 
 def test_target_size_upscales_small_images_to_the_budget():
     # The rule is an area budget, not a cap: a tiny input is scaled up to fill it.
-    w, h = _compute_loger_target_size(64, 48, pixel_limit=255_000)
+    w, h = _compute_target_size(64, 48, pixel_limit=255_000)
     assert w * h > 200_000
 
 
@@ -693,35 +680,73 @@ def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
     upstream = load_images_as_tensor(str(tmp_path), pixel_limit=255_000)
     _, _, up_h, up_w = upstream.shape
 
-    assert _compute_loger_target_size(orig_w, orig_h, pixel_limit=255_000) == (up_w, up_h)
-```
-
-This test needs two imports at the top of the test file — add them alongside the existing ones:
-
-```python
-import sys
-
-from PIL import Image
-
-from collab_splats.pointcloud.feedforward.loger import _LOGER_ROOT
+    assert _compute_target_size(orig_w, orig_h, pixel_limit=255_000) == (up_w, up_h)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -k target_size -v -p no:randomly`
-Expected: `ImportError: cannot import name '_compute_loger_target_size'`
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
+Expected: collection error, `ModuleNotFoundError: No module named 'collab_splats.pointcloud.feedforward.loger'`
 
 - [ ] **Step 3: Implement**
 
-Append a new section to `collab_splats/pointcloud/feedforward/loger.py`:
+Create `collab_splats/pointcloud/feedforward/loger.py`:
 
 ```python
+"""LoGeR feedforward backend: resize rule and creator.
+
+LoGeR is a Pi3 backbone plus a TTT fast-weight memory, run with sliding-window
+inference and overlap stitching.  Unlike every other backend we run it predicts no
+camera intrinsics, so K is fitted from its camera-frame pointmap by
+``collab_splats.geometry.transforms.estimate_intrinsics_from_points``.
+
+Upstream sources.  Two forks are involved and they are NOT interchangeable.  Neither
+ships a LICENSE, so no code here is copied from either — the maths is written from
+first principles and the forks are cited as prior art and as the behavioural reference
+we match.  Citations carry repo, commit, file, and line because third_party/ is
+gitignored and cannot be read from this repo alone:
+
+  * VENDORED — the tree we actually execute against
+    (setup/loger.sh clones it into third_party/LoGeR/):
+      github.com/Junyi42/LoGeR @ 7685b7a
+  * PRIOR ART — read for reference, not vendored, not a dependency, nothing copied:
+      github.com/PolyCam/LoGeR @ 5d7c1a7
+
+Provides:
+  LOGER_HF_REPO        — HuggingFace repo holding both checkpoints
+  LOGER_VARIANTS       — the two shipped variants
+  _compute_target_size — patch-aligned resize matching the vendored loader
+  LoGeRCreator         — feedforward creator using LoGeR depth + pose
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+########################################################################
+########## Constants ###################################################
+########################################################################
+
+LOGER_HF_REPO = "Junyi42/LoGeR"
+LOGER_VARIANTS = ("LoGeR", "LoGeR_star")
+
+# Vendored tree, populated by setup/loger.sh.  parents[3] resolves
+# collab_splats/pointcloud/feedforward/loger.py -> repo root.
+_LOGER_ROOT = Path(__file__).resolve().parents[3] / "third_party" / "LoGeR"
+
+# LoGeR's ViT patch size; every model-resolution image dimension is a multiple of it.
+_PATCH = 14
+
 ########################################################################
 ########## Preprocessing ###############################################
 ########################################################################
 
 
-def _compute_loger_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[int, int]:
+def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[int, int]:
     """Scale to an area budget, then align both axes to a whole number of patches.
 
     Unlike the other two helpers this one is not free to differ from upstream: the
@@ -737,7 +762,7 @@ def _compute_loger_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tu
     The two axes round **independently**, so exact aspect ratio is not preserved —
     the image is stretched by up to a few percent on one axis.  That is in
     distribution (the model trains with this preprocessing) and is absorbed into K,
-    because ``_estimate_loger_intrinsics`` fits fx and fy separately and
+    because ``estimate_intrinsics_from_points`` fits fx and fy separately and
     ``LoGeRCreator.camera_model`` is ``"PINHOLE"``.  Cropping instead would discard
     field of view and reintroduce crop arithmetic in ``original_coords``.
     """
@@ -760,7 +785,7 @@ def _compute_loger_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tu
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: 23 passed (4 from Task 2, 7 from Task 3, 12 here). If the 4 parity cases report `skipped`, the vendored tree is missing — re-run `setup/loger.sh` rather than accepting the skip, because those 4 are the only thing standing between us and silently feeding the model out-of-distribution input.
+Expected: 12 passed. If the 4 parity cases report `skipped`, the vendored tree is missing — re-run `setup/loger.sh` rather than accepting the skip, because those 4 are the only thing standing between us and silently feeding the model out-of-distribution input.
 
 - [ ] **Step 5: Commit**
 
@@ -878,7 +903,11 @@ import yaml
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+from collab_splats.geometry.transforms import (
+    estimate_intrinsics_from_points,
+    extrinsics_to_homogeneous,
+    invert_poses,
+)
 
 from .base import (
     BaseFeedforwardCreator,
@@ -907,7 +936,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
     length, where the set-based VGGT family OOMs past a few hundred frames.
 
     Unlike every other backend, LoGeR predicts no intrinsics; K is solved from its
-    camera-frame pointmap by ``_estimate_loger_intrinsics`` and shared across frames.
+    camera-frame pointmap by ``estimate_intrinsics_from_points`` and shared across frames.
 
     Attributes:
         camera_model:   pycolmap camera model.  ``"PINHOLE"``, not ``"SIMPLE_PINHOLE"``,
@@ -1141,7 +1170,7 @@ Add to `LoGeRCreator`, after `_load_model`:
             raise ValueError(f"LoGeR needs uniform frame sizes; got {sorted(shapes)}")
 
         orig_h, orig_w = shapes.pop()
-        target_w, target_h = _compute_loger_target_size(orig_w, orig_h, self.pixel_limit)
+        target_w, target_h = _compute_target_size(orig_w, orig_h, self.pixel_limit)
         logger.debug("LoGeRCreator: %dx%d -> %dx%d", orig_w, orig_h, target_w, target_h)
 
         # Resize in memory with PIL directly. No frames_as_pil_source monkeypatch:
@@ -1357,7 +1386,7 @@ Add to `LoGeRCreator`, after `_preprocess`:
         extrinsic = invert_poses(camera_poses)[:, :3, :].astype(np.float32)  # (N,3,4) w2c
 
         # LoGeR predicts no intrinsics — solve one shared K and broadcast it per frame.
-        k = _estimate_loger_intrinsics(local_points, depth_conf)
+        k = estimate_intrinsics_from_points(local_points, depth_conf)
         intrinsic = np.broadcast_to(k, (local_points.shape[0], 3, 3)).copy()
 
         # Channel 2 IS depth: the model builds local_points as cat([xy * z, z]) at
@@ -1894,10 +1923,10 @@ def test_loger_original_coords_rescale_recovers_anisotropic_focals():
     """
     import numpy as np
 
-    from collab_splats.pointcloud.feedforward.loger import _compute_loger_target_size
+    from collab_splats.pointcloud.feedforward.loger import _compute_target_size
 
     orig_w, orig_h = 1920, 1080
-    model_w, model_h = _compute_loger_target_size(orig_w, orig_h, pixel_limit=255_000)
+    model_w, model_h = _compute_target_size(orig_w, orig_h, pixel_limit=255_000)
 
     # A square-pixel physical camera, f = 1600 px at original resolution
     f = 1600.0
@@ -1930,12 +1959,12 @@ def test_loger_original_coords_rescale_recovers_anisotropic_focals():
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_feedforward_intrinsics.py -k loger -v -p no:randomly`
 Expected: PASS (the test asserts arithmetic that Tasks 3 and 4 already made true)
 
-If the final assertion fails because `scale_x == scale_y` exactly for `1920x1080` at this budget, the resize happened to be isotropic for that input. Substitute an input size where `_compute_loger_target_size` produces different per-axis scales — check with:
+If the final assertion fails because `scale_x == scale_y` exactly for `1920x1080` at this budget, the resize happened to be isotropic for that input. Substitute an input size where `_compute_target_size` produces different per-axis scales — check with:
 ```bash
 /opt/venv/reconstruction/bin/python -c "
-from collab_splats.pointcloud.feedforward.loger import _compute_loger_target_size
+from collab_splats.pointcloud.feedforward.loger import _compute_target_size
 for ow, oh in [(1920,1080),(1280,720),(640,480),(3840,2160),(1440,1080)]:
-    w, h = _compute_loger_target_size(ow, oh, 255_000)
+    w, h = _compute_target_size(ow, oh, 255_000)
     print(ow, oh, '->', w, h, '| sx/sy =', (w/ow)/(h/oh))
 "
 ```

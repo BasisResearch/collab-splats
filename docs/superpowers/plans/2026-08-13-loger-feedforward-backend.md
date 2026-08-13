@@ -1849,7 +1849,9 @@ _snap_square_pixels is not ported."
 
 - [ ] **Step 1: Update `configs/base.yaml`**
 
-Replace lines 22 and 26 and add the block. Line 22 becomes:
+**`configs/base.yaml` is being edited concurrently** (a `preprocessing.frame_proportion` removal as of 2026-08-13). Read the file immediately before editing, match on content rather than the line numbers quoted here, and stage with an explicit pathspec at commit time so an unrelated concurrent edit is not swept in.
+
+Replace the `max_frames` and `backend` lines and add the block. `max_frames` becomes:
 
 ```yaml
   max_frames: 300             # cap — vggt_omega OOMs above ~300 on 44 GB GPU.
@@ -1858,7 +1860,7 @@ Replace lines 22 and 26 and add the block. Line 22 becomes:
                               # caps it too. See configs/README.md.
 ```
 
-Line 26 and the new block become:
+The `backend` line and the new block become:
 
 ```yaml
   backend: vggt_omega         # vggt_omega | vggtx | mapanything | loger  (feedforward only)
@@ -1877,17 +1879,19 @@ Note the stale "cap at 200" comment beside a value of 300 is corrected as part o
 
 - [ ] **Step 2: Update `configs/README.md`**
 
-Line 227 becomes:
+Same concurrency caution as Step 1 — match on row content, not line numbers.
+
+The `preprocessing.max_frames` row becomes:
 ```markdown
 | `preprocessing.max_frames` | int\|null | `300` | Cap on frames (vggt_omega OOMs above ~300; not a LoGeR limit — see below) |
 ```
 
-Line 229 becomes:
+The `pointcloud.backend` row becomes:
 ```markdown
 | `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, `mapanything`, or `loger` |
 ```
 
-Add a new row after line 229:
+Add a new row directly after it:
 ```markdown
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
 ```
@@ -2162,8 +2166,8 @@ SCRATCH=/tmp/claude-0/-workspace-collab-splats/d78ed8d1-0f5a-4555-8eb3-eecc7f2e3
 for N in 300 500 750 1000; do
   cat > "$SCRATCH/loger_sweep_$N.yaml" <<EOF
 preprocessing:
+  min_frames: $N
   max_frames: $N
-  frame_proportion: 1.0
 pointcloud:
   backend: loger
 semantics:
@@ -2182,7 +2186,14 @@ EOF
 done
 ```
 
-`frame_proportion: 1.0` is raised alongside `max_frames` because the two interact — the default 0.1 would cap extraction well below the requested count and the sweep would measure nothing. Confirm the tutorial video has enough source frames to reach 1000 before trusting the top row.
+`min_frames` and `max_frames` are both pinned to N. Setting `max_frames` alone measures nothing: it is a cap, and the actual extracted count is decided by the sampler, so the run would process whatever the sampler chose rather than N. Pinning the floor too forces the count and is robust to `preprocessing.frame_proportion` being removed — a concurrent change as of 2026-08-13. Read `configs/base.yaml`'s `preprocessing:` block before running this and drop any key that no longer exists.
+
+Confirm the tutorial video has enough source frames to reach 1000 before trusting the top row:
+```bash
+ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames \
+    -of csv=p=0 data/tutorial/tutorial_example-video.mp4
+```
+If it holds fewer than ~1000 frames, the sweep cannot reach the ceiling with this input — say so in Step 6 rather than reporting an unreached limit as a measured one.
 
 Repeat the highest surviving count with `pointcloud.loger.reset_every: 64` added to that YAML, to see whether resetting the TTT fast weights moves the ceiling.
 
@@ -2232,6 +2243,6 @@ git commit -m "docs: record loger backend completion in CLAUDE.md"
 
 **Two spec claims were corrected during planning**, both verified against the vendored tree: the window knobs do not come from a `training_settings` block (there is none — both configs hold only `model:`), and `overlap_size` defaults to 3, not 8. `_run_feedforward` also takes explicit scalars and never sees `pc_cfg`, so the kwargs passthrough needed a parameter plus a call-site change rather than the single line the spec showed. All three are fixed in the spec at `1f06798`.
 
-**Three plan-authoring errors were caught and fixed** by checking against the code rather than assuming: `FrameStore` has no `.count` — the frame count is `__len__` (`frame_store.py:65`), and it is already imported at `reconstructor.py:23`; `run_pipeline.py` has no `--set` flag, taking positional video paths plus `--output-root` and a `--config` override YAML, so Task 14 writes override files instead; and the sweep must raise `preprocessing.frame_proportion` alongside `max_frames`, since the default 0.1 would cap extraction below the requested count and the sweep would measure nothing.
+**Three plan-authoring errors were caught and fixed** by checking against the code rather than assuming: `FrameStore` has no `.count` — the frame count is `__len__` (`frame_store.py:65`), and it is already imported at `reconstructor.py:23`; `run_pipeline.py` has no `--set` flag, taking positional video paths plus `--output-root` and a `--config` override YAML, so Task 14 writes override files instead; and the sweep must pin `preprocessing.min_frames` alongside `max_frames`, since `max_frames` alone is only a cap and the sampler would decide the real count. `min_frames`/`max_frames` was chosen over raising `frame_proportion` because that key is being removed in concurrent work as of 2026-08-13; the floor-and-cap form survives either way.
 
 **Two things this plan cannot pin down in advance**, each with an explicit check step rather than an assumption: LoGeR's exact output key names and `conf` rank (Task 1 Step 5 records them; Task 7 depends on them), and whether `1920x1080` happens to resize isotropically at the default pixel budget (Task 11 Step 2 gives a fallback input).

@@ -1618,8 +1618,13 @@ Landed at **35** in commit `d72f32f`: an eighth test was needed because every te
 `_FakeLoGeR` at conf logit 4.0 (sigmoid 0.982), which clears both `LOGER_CONF_THRESHOLD` and the
 library's 0.1 default — so omitting the explicit threshold survived mutation, leaving the one
 constant this module exists to justify untested. `_FakeLoGeR` gained a `conf_logit` parameter and
-a test runs at logit -3.0 (sigmoid 0.0474, inside LoGeR's measured band and below 0.1). Later
-tasks count up from 35.
+a test runs at logit -3.0 (sigmoid 0.0474, inside LoGeR's measured band and below 0.1).
+
+A post-review coverage round (`082e08d`) then took the file to **39**: the source comment claimed
+parity with upstream's `build_forward_kwargs` while five of the nine kwargs were mutable with the
+suite green, and the RGB assert's bounds were untested because `torch.rand` never emits exactly
+0.0 or 1.0 — a pure-black pixel is common in real frames and `<` would reject it. Later tasks
+count up from **39**.
 
 - [ ] **Step 5: Commit**
 
@@ -1847,7 +1852,7 @@ Add to `LoGeRCreator`, after `_forward`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **40 passed, 0 xfailed** (35 after Task 7, plus the 5 written here). Zero xfails and
+Expected: **44 passed, 0 xfailed** (39 after Task 7, plus the 5 written here). Zero xfails and
 zero stub scaffolding is the real completion signal for this task.
 
 - [ ] **Step 5: Commit**

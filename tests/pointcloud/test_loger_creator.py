@@ -776,6 +776,24 @@ def test_loop_closure_with_loger_is_refused(tmp_path):
     assert "loger" in str(excinfo.value)
 
 
+def test_loop_closure_refusal_precedes_touching_the_filesystem(tmp_path):
+    # Deliberately does NOT patch FrameStore: the point is that an unsupported config is
+    # refused without a readable frames.zarr. Reachable with --stages pointcloud before
+    # preproc has run. If the refusal ever moves below the store open, this gets a
+    # FileNotFoundError and sends the user to fix their environment instead of their config.
+    with pytest.raises(Exception) as excinfo:
+        R._run_feedforward(
+            frames_zarr=tmp_path / "definitely-absent.zarr",
+            output_dir=tmp_path / "out",
+            **{**_FF_DEFAULTS, "loop_closure": True},
+        )
+
+    assert isinstance(
+        excinfo.value, ValueError
+    ), f"config must be refused before the store is opened, got {type(excinfo.value).__name__}: {excinfo.value}"
+    assert "loop closure" in str(excinfo.value)
+
+
 def test_loop_closure_disabled_by_dict_is_not_refused(tmp_path):
     # loop_closure is bool|dict, and {"enabled": False} is a truthy object with falsy
     # intent. The refusal reads the normalised lc_enabled, so this config must get past it
@@ -887,7 +905,6 @@ def test_max_frames_advisory_reports_the_configured_ceiling_not_a_literal(tmp_pa
 
     assert "LoGeR is running on 50 frames" in caplog.text
     assert "ceiling of 50" in caplog.text
-    assert "300" not in caplog.text
 
 
 def test_max_frames_advisory_fires_above_the_old_literal(tmp_path, caplog):

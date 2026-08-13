@@ -156,6 +156,9 @@ def _run_feedforward(
     viz_port: int,
     max_points: int,
     use_multiview_confidence: bool,
+    # Keyword-only: these two are optional and order-independent, so a positional caller
+    # must not be able to silently bind one to the other.
+    *,
     max_frames: int | None = None,
     creator_kwargs: dict[str, Any] | None = None,
 ) -> tuple["PointcloudResult", "Viewer | None"]:
@@ -203,31 +206,36 @@ def _run_feedforward(
         lc_enabled = bool(loop_closure)
         lc_config = None
 
+    # LoGeR refuses loop closure in this cut. Refuse here rather than in the creator:
+    # _verify_loop_candidate is concrete on BaseFeedforwardCreator, so an LC run would
+    # otherwise complete a full forward pass before dying inside the LC loop. LC verify
+    # thresholds are calibrated per backbone and none exists for LoGeR. Read the normalised
+    # lc_enabled, not the raw arg — loop_closure={"enabled": False} is a truthy object with
+    # falsy intent, and refusing an explicit disable would be wrong.
+    #
+    # Keep this ahead of the store open, and do NOT merge it into the advisory block below:
+    # validate config before touching the filesystem. A config error is the user's to fix,
+    # an IO error is environmental, and reporting the environmental one first sends them to
+    # the wrong place. Reachable with --stages pointcloud when preproc has not run.
+    if backend == "loger" and lc_enabled:
+        raise ValueError(
+            "pointcloud.loop_closure is not supported with backend 'loger'. LoGeR's windowed "
+            "TTT memory already carries state across frames, and loop closure verification "
+            "thresholds are calibrated per backbone. Use vggt_omega, vggtx, or mapanything."
+        )
+
     # Open the canonical decode-once keyframe store once and reuse it: the LoGeR advisory
-    # below needs the frame count and inference needs the store itself. Opening it here also
-    # surfaces a missing store before the model loads rather than several GB later. The
-    # handle is zarr mode="r" — immutable, lazy, and cheap to hold across the span.
+    # below needs the frame count and inference needs the store itself. The handle is zarr
+    # mode="r" — immutable, lazy, and cheap to hold across the span.
     store = FrameStore.open(frames_zarr)
 
+    # preprocessing.max_frames is a VGGT-Omega GPU property applied in the preproc stage,
+    # which has already run by the time we get here. Flipping to loger under that same
+    # ceiling therefore processes exactly as many frames as Omega would, and LoGeR appears
+    # to buy nothing. Warn rather than change behaviour — LoGeR's true ceiling is unmeasured.
+    # None means no ceiling was configured, so there is no advice to give. Unlike the refusal
+    # above, this genuinely needs the store, so it belongs after the open.
     if backend == "loger":
-        # LoGeR refuses loop closure in this cut. Refuse here rather than in the creator:
-        # _verify_loop_candidate is concrete on BaseFeedforwardCreator, so an LC run would
-        # otherwise complete a full forward pass before dying inside the LC loop. LC verify
-        # thresholds are calibrated per backbone and none exists for LoGeR. Read the
-        # normalised lc_enabled, not the raw arg — loop_closure={"enabled": False} is a
-        # truthy object with falsy intent, and refusing an explicit disable would be wrong.
-        if lc_enabled:
-            raise ValueError(
-                "pointcloud.loop_closure is not supported with backend 'loger'. LoGeR's windowed "
-                "TTT memory already carries state across frames, and loop closure verification "
-                "thresholds are calibrated per backbone. Use vggt_omega, vggtx, or mapanything."
-            )
-
-        # preprocessing.max_frames is a VGGT-Omega GPU property applied in the preproc stage,
-        # which has already run by the time we get here. Flipping to loger under that same
-        # ceiling therefore processes exactly as many frames as Omega would, and LoGeR appears
-        # to buy nothing. Warn rather than change behaviour — LoGeR's true ceiling is
-        # unmeasured. None means no ceiling was configured, so there is no advice to give.
         n_frames = len(store)
         if max_frames is not None and n_frames <= max_frames:
             logger.warning(

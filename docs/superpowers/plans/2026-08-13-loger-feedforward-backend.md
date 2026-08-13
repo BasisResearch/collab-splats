@@ -223,6 +223,19 @@ Verified a forward pass runs under torch 2.5.1+cu121 despite LoGeR pinning
 
 ---
 
+### Task 1 measured results (2026-08-13, commit `3cf792d`) — later tasks are written against these
+
+- **Output keys (10):** `attn_gate_scale`, `avg_gate_scale`, `camera_poses`, `camera_qvec`, `conf`, `local_camera_poses`, `local_camera_qvec`, `local_points`, `metric`, `points`. All four the plan assumes are present, so Task 7's key access is safe.
+- **Shapes at 8 frames, 336x462:** `local_points` and `points` `(1,8,336,462,3)`, `conf` `(1,8,336,462,1)`, `camera_poses` `(1,8,4,4)`, all float32.
+- **`conf` carries a trailing axis of 1.** Task 7's `squeeze(-1)` after `squeeze(0)` is REQUIRED, not defensive.
+- **Raw `conf` range: `-4.257` to `-2.019`** — entirely negative, confirming the head is unactivated and the sigmoid is ours to apply. (Values are low because the smoke input was random noise; sigmoid maps this to ~0.014-0.117.)
+- **Peak VRAM 6.77 GB, forward 18.0 s** at 8 frames — Task 14's sweep baseline.
+- **The two `model:` configs are NOT key-identical.** Both carry `attn_insert_after: [10,18,26,34]`, `ttt_head_dim: 512`, `ttt_insert_after` (18 even values 0-34), `ttt_inter_multi: 4`. But `ttt_pre_norm: True` is **LoGeR-only** and `se3: True` is **LoGeR_star-only**. Task 5's `model_cfg.pop("se3", False)` two-argument form is therefore load-bearing — neither key can be assumed present.
+- **`Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead`** fires on every run. Functionally fine, but every timing number in Task 14 measures the slow RoPE2D path. Report it as such rather than as LoGeR's achievable speed.
+- **No `LICENSE` or `COPYING` at the vendored tree's top level** — verified, not assumed. The licence question below is real.
+
+---
+
 ## Task 2: `_weighted_median`
 
 **Files:**
@@ -2269,7 +2282,7 @@ git commit -m "docs: record loger backend completion in CLAUDE.md"
 
 ## Owed to the user before this ships
 
-1. **The missing LICENSE.** Neither LoGeR repository ships one, and this work *copies* ~35 lines out of PolyCam's `run_loger.py` in addition to vendoring an unlicensed tree. Spec open item 7. The fallback is reimplementing the estimator from the pinhole identity — a handful of lines of standard geometry — citing the original only as prior art. **Raise this before Task 3 lands**, since Task 3 is where the copied code enters the repo.
+1. **The missing LICENSE.** Neither LoGeR repository ships one — confirmed against the vendored tree in Task 1, not assumed. Spec open item 7. **This gates Task 2, not Task 3** as originally written: `_weighted_median` is itself a port from PolyCam's `run_loger.py:167`, so copied code enters the repo one task earlier than the plan first said. Task 4 is affected too, porting ~10 lines out of the vendored Junyi42 tree. The fallback is reimplementing all three from first principles — a cumulative-weight-to-half median, the pinhole identity `fx = u_c * Z / X`, and an area-budget resize are each textbook — citing the originals as prior art rather than as source.
 2. **Loop closure calibration** for the LoGeR backbone. Refused until then; needs its own clean-negative sweep like the other four backbones. Spec open item 4.
 3. **Multiview confidence** — owned by `2026-08-12-multiview-confidence-all-models-design.md`; `loger` should be added to its scope. Spec open item 5.
 4. **Square-pixel averaging in original-resolution space** — dropped from this cut with a reason, revisit only if Task 13's residual shows the estimator's spread exceeds the ~1% the model-resolution version would cost. Spec open item 8.

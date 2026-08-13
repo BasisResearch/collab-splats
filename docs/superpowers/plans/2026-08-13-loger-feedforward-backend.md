@@ -2569,6 +2569,24 @@ budget (sx = sy = 0.35), so it cannot exercise the fx != fy path at all." -- tes
 > that same line; `basic.py:16` → `:21`; `basic.py:52-53` → `:53-54`). Open each file and read
 > the line before writing the citation.
 
+> **Required deliverable inherited from Task 10 — do not drop it.** Task 10 added the call-site
+> passthrough `creator_kwargs=pc_cfg.get(pc_cfg["backend"], {})` in `_run_feedforward`'s caller.
+> Mutating that expression to a literal `{}` is currently killed by **no test**, and both the
+> implementer and the spec reviewer confirmed it. That was accepted for Task 10 on a specific
+> ground: with no `pointcloud.<backend>:` block anywhere in `base.yaml`, `pc_cfg.get(...)` returns
+> `{}` for every backend, so the mutant is **semantically identical to the real code** and no test
+> could distinguish them.
+>
+> **Adding the `pointcloud.loger:` block below is exactly what ends that.** The moment it exists,
+> the passthrough carries real values and the mutant becomes a genuine silent-no-op bug: LoGeR
+> would run at dataclass defaults while the YAML says otherwise, with nothing failing. **This task
+> must therefore add a `Reconstructor`-level test** that builds a config containing a
+> `pointcloud.loger:` block, drives the path that calls `_run_feedforward`, and asserts a value
+> from that block reaches the creator. Substituting a recording stub for `LoGeRCreator` (as
+> `test_creator_kwargs_reach_the_constructor` does) avoids running inference. **Verify it by
+> mutating the call site to `creator_kwargs={}` and confirming your new test fails** — if it does
+> not, the test is not doing its job.
+
 - [ ] **Step 1: Update `configs/base.yaml`**
 
 **`configs/base.yaml` is being edited concurrently** (a `preprocessing.frame_proportion` removal as of 2026-08-13). Read the file immediately before editing, match on content rather than the line numbers quoted here, and stage with an explicit pathspec at commit time so an unrelated concurrent edit is not swept in.

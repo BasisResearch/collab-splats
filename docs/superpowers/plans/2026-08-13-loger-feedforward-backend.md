@@ -1075,7 +1075,8 @@ class LoGeRCreator(BaseFeedforwardCreator):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **15 passed, 5 xfailed**.
+Expected: **15 passed, 6 xfailed** (as shipped — the review round added a sixth test pinning the
+`_se3` capture). Task 6 Step 0 converts all six to real passes.
 
 Two corrections to what this plan originally said here. The old figure of "24 passed" was simply
 wrong arithmetic. And the five tests added by this task **cannot pass yet**: `LoGeRCreator`
@@ -1140,6 +1141,68 @@ only a model: key, so the build_forward_kwargs fallbacks at PolyCam/LoGeR @
 - Modify: `collab_splats/pointcloud/feedforward/loger.py`
 - Modify: `tests/pointcloud/test_loger_creator.py`
 
+> **Step 0 of this task replaces the xfail scheme with a partial subclass.** Task 5 shipped
+> its tests behind `_NEEDS_FULL_CREATOR` because `LoGeRCreator` subclasses an `abc.ABC`
+> (`collab_splats/pointcloud/base.py:4`) and cannot be instantiated until the last abstract
+> method lands. Extending that marker through Tasks 6 and 7 would leave **16 tests carrying no
+> signal at all** — `_preprocess` and `_forward` would sit unverified under three commits of
+> later work, and a bug in either would surface at Task 8 with the hardest possible debugging
+> context. Stub only the methods not yet written instead, so each task's tests exercise the
+> real implementation the moment it lands.
+>
+> **Step 0:** add the `_creator` helper below, replace every `LoGeRCreator(` call in the
+> existing tests with `_creator(`, and delete `_NEEDS_FULL_CREATOR` and all six
+> `@_NEEDS_FULL_CREATOR` decorators.
+>
+> All six convert, including `test_unknown_variant_rejected_at_construction`: the helper
+> forwards `**kwargs` straight to `__init__`, so `_creator(variant="LoGeR_turbo")` still runs
+> the real `__post_init__` and still raises the real `ValueError`. The subclass overrides
+> nothing that any of these tests assert on.
+>
+> ```python
+> def _creator(**kwargs) -> LoGeRCreator:
+>     """LoGeRCreator with only the not-yet-implemented abstract methods stubbed out."""
+>     # BasePointcloudCreator is an abc.ABC (collab_splats/pointcloud/base.py:4). Stubbing
+>     # ONLY the unwritten methods keeps every test below pointed at real code as it lands,
+>     # rather than deferring all signal to the task that happens to close the ABC.
+>     # Each task deletes the stub it just implemented. Task 8 deletes this helper entirely.
+>     class _PartialLoGeRCreator(LoGeRCreator):
+>         def _preprocess(self, frames, frame_idxs):
+>             raise NotImplementedError
+>
+>         def _forward(self, model, views, **kwargs):
+>             raise NotImplementedError
+>
+>         def _postprocess(self, raw):
+>             raise NotImplementedError
+>
+>         def _reproject(self, raw, extrinsics, intrinsics):
+>             raise NotImplementedError
+>
+>         def extract_intermediate_features(self, images):
+>             raise NotImplementedError
+>
+>     return _PartialLoGeRCreator(**kwargs)
+> ```
+>
+> All **five** abstract methods are stubbed here, because Task 5 implemented none of them —
+> `_load_model` is a concrete method on `BaseFeedforwardCreator`, not one of the abstract five.
+> **Each later task deletes the stub for the method it implements**, in the same step that
+> implements it, so the tests written that task hit real code rather than the stub. Task 6
+> deletes `_preprocess`, Task 7 deletes `_forward`, Task 8 deletes the remaining three along
+> with the whole helper.
+>
+> **Read the real signatures off `collab_splats/pointcloud/base.py` before writing the stubs
+> — do not trust the argument names above.** A stub whose signature disagrees with the
+> abstract method still satisfies the ABC (Python does not check signatures), so a mismatch
+> would go unnoticed here and then fail for real in Task 8. If any signature differs from what
+> is written above, use the real one and say so in your report.
+>
+> Run `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
+> after Step 0 alone. Expected: **21 passed** — the 6 previously-xfailed tests now run for real.
+> If any of them FAILS rather than passes, stop and report: that means Task 5's code is wrong
+> and the xfail was hiding it, which is exactly what this step exists to find out.
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `tests/pointcloud/test_loger_creator.py`:
@@ -1152,7 +1215,7 @@ def _fake_frames(n: int, h: int, w: int) -> np.ndarray:
 
 def test_preprocess_returns_patch_aligned_unit_range_tensor():
     frames = _fake_frames(4, 480, 640)
-    views, image_paths, original_coords = LoGeRCreator()._preprocess(frames, [0, 5, 10, 15])
+    views, image_paths, original_coords = _creator()._preprocess(frames, [0, 5, 10, 15])
 
     assert views.shape[0] == 4 and views.shape[1] == 3
     assert views.shape[2] % 14 == 0 and views.shape[3] % 14 == 0
@@ -1168,7 +1231,7 @@ def test_preprocess_original_coords_is_full_frame():
     # LoGeR resizes and never crops, so every row is the whole image. This is what
     # _rescale_reconstruction_to_original_dimensions consumes.
     frames = _fake_frames(3, 480, 640)
-    _, _, original_coords = LoGeRCreator()._preprocess(frames, [0, 1, 2])
+    _, _, original_coords = _creator()._preprocess(frames, [0, 1, 2])
 
     assert original_coords.shape == (3, 6)
     np.testing.assert_allclose(original_coords, np.tile([0, 0, 640, 480, 640, 480], (3, 1)))
@@ -1178,7 +1241,7 @@ def test_preprocess_rejects_non_uniform_frame_sizes():
     # LoGeR sizes from frame 0 alone; refuse rather than silently mis-resize the rest.
     frames = [_fake_frames(1, 480, 640)[0], _fake_frames(1, 240, 320)[0]]
     with pytest.raises(ValueError, match="uniform"):
-        LoGeRCreator()._preprocess(frames, [0, 1])
+        _creator()._preprocess(frames, [0, 1])
 
 
 def test_preprocess_rejects_out_of_order_frames():
@@ -1186,15 +1249,18 @@ def test_preprocess_rejects_out_of_order_frames():
     # degrades quality with no error. No other backend cares, so this is LoGeR's.
     frames = _fake_frames(3, 480, 640)
     with pytest.raises(ValueError, match="ascending"):
-        LoGeRCreator()._preprocess(frames, [0, 10, 5])
+        _creator()._preprocess(frames, [0, 10, 5])
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -k preprocess -v -p no:randomly`
-Expected: 4 failed, `AttributeError` or `NotImplementedError` from the abstract method
+Expected: 4 failed with `NotImplementedError` raised by the `_preprocess` stub in `_creator`.
 
 - [ ] **Step 3: Implement**
+
+**Also delete the `_preprocess` stub from `_creator`'s `_PartialLoGeRCreator`** — otherwise the
+stub keeps shadowing the real method and all four tests above go on hitting `NotImplementedError`.
 
 Add to `LoGeRCreator`, after `_load_model`:
 
@@ -1241,7 +1307,7 @@ Add to `LoGeRCreator`, after `_load_model`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: 28 passed
+Expected: **25 passed** (21 after Step 0, plus the 4 written here). No xfails remain in this file.
 
 - [ ] **Step 5: Commit**
 
@@ -1271,6 +1337,55 @@ The sigmoid-before-fit ordering lives here and is load-bearing.
 **Files:**
 - Modify: `collab_splats/pointcloud/feedforward/loger.py`
 - Modify: `tests/pointcloud/test_loger_creator.py`
+
+> **`_se3` is `None` until `_load_model` runs, and `_forward` must refuse it.** Task 5's review
+> changed the field to `bool | None` defaulting to `None`, precisely so an unset flag cannot be
+> mistaken for "LoGeR mode" — `False` is a *valid* value, so a `False` default would have made
+> the unset case indistinguishable from the real LoGeR variant and silently selected the wrong
+> alignment mode. That guard has to be honoured here: every test below constructs a creator
+> without calling `_load_model`, so `self._se3` is `None` at `_forward` time.
+>
+> Add this at the top of `_forward`, before anything else:
+>
+> ```python
+>         # _se3 is populated by _load_model from the variant's yaml. None means _forward was
+>         # reached without it — refuse rather than pick a default, because both values are
+>         # legitimate (LoGeR is False, LoGeR_star is True) and guessing runs the wrong
+>         # alignment mode with no error anywhere downstream.
+>         if self._se3 is None:
+>             raise RuntimeError("LoGeRCreator._forward requires _load_model to have run (se3 unset)")
+> ```
+>
+> Do NOT default `_se3` inside `_creator` — that would restore the exact silent default the
+> field change removed. Add a second, explicitly-named helper instead, and use it for the six
+> tests that are not about the flag:
+>
+> ```python
+> def _loaded_creator(se3: bool = False, **kwargs) -> LoGeRCreator:
+>     """_creator with _se3 set to what _load_model would have read from the variant yaml."""
+>     # Named parameter, not a hidden default: these tests stub the model, so _load_model never
+>     # runs and _forward's se3 guard would otherwise fire on every one of them.
+>     creator = _creator(**kwargs)
+>     creator._se3 = se3
+>     return creator
+> ```
+>
+> Add one test for the refusal itself, which uses bare `_creator()` so `_se3` stays `None`:
+>
+> ```python
+> def test_forward_refuses_to_run_before_load_model_sets_se3():
+>     # _se3 is None until _load_model reads the variant yaml. Both real values are valid, so
+>     # there is nothing safe to default to — guessing picks an alignment mode silently.
+>     n, h, w = 2, 56, 70
+>     with pytest.raises(RuntimeError, match="se3 unset"):
+>         _creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+> ```
+>
+> That makes **7** tests in this task, not 6.
+>
+> `_FakeLoGeR` calls `_synthetic_local_points`. **Confirm that helper already exists in the test
+> file from an earlier task before using it** — if it does not, it must be written here, and say
+> so in your report rather than inventing a different helper name.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1315,7 +1430,7 @@ def test_forward_applies_sigmoid_to_raw_confidence_logits():
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
     views = torch.rand(n, 3, h, w)
 
-    raw = LoGeRCreator()._forward(model, views)
+    raw = _loaded_creator()._forward(model, views)
 
     assert raw["depth_conf"].shape == (n, h, w)
     assert raw["depth_conf"].min() >= 0.0 and raw["depth_conf"].max() <= 1.0
@@ -1328,7 +1443,7 @@ def test_forward_inverts_camera_poses_to_world_to_camera():
     n, h, w = 3, 56, 70
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
 
-    raw = LoGeRCreator()._forward(model, torch.rand(n, 3, h, w))
+    raw = _loaded_creator()._forward(model, torch.rand(n, 3, h, w))
 
     assert raw["extrinsic"].shape == (n, 3, 4)
     # c2w camera 2 sits at x=+2, so the w2c translation must be -2, not +2.
@@ -1338,7 +1453,7 @@ def test_forward_inverts_camera_poses_to_world_to_camera():
 def test_forward_fits_and_broadcasts_intrinsics():
     n, h, w = 3, 56, 70
     fx, fy = 88.0, 80.0
-    raw = LoGeRCreator()._forward(_FakeLoGeR(n, h, w, fx, fy), torch.rand(n, 3, h, w))
+    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, fx, fy), torch.rand(n, 3, h, w))
 
     assert raw["intrinsics"].shape == (n, 3, 3)
     assert raw["intrinsics"][0, 0, 0] == pytest.approx(fx, rel=1e-3)
@@ -1351,7 +1466,7 @@ def test_forward_extracts_depth_from_the_third_channel():
     # LoGeR builds local_points as cat([xy * z, z]), so channel 2 IS depth — no
     # reprojection needed to recover it.
     n, h, w = 2, 56, 70
-    raw = LoGeRCreator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
     assert raw["depth"].shape == (n, h, w, 1)
     np.testing.assert_allclose(raw["depth"], 2.0, rtol=1e-5)
 
@@ -1359,8 +1474,7 @@ def test_forward_extracts_depth_from_the_third_channel():
 def test_forward_passes_window_knobs_and_se3():
     n, h, w = 2, 56, 70
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
-    creator = LoGeRCreator(window_size=16, overlap_size=4)
-    creator._se3 = True
+    creator = _loaded_creator(se3=True, window_size=16, overlap_size=4)
 
     creator._forward(model, torch.rand(n, 3, h, w))
 
@@ -1375,15 +1489,18 @@ def test_forward_rejects_rgb_outside_unit_range():
     n, h, w = 2, 56, 70
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
     with pytest.raises(AssertionError, match=r"\[0, 1\]"):
-        LoGeRCreator()._forward(model, torch.rand(n, 3, h, w) * 255.0)
+        _loaded_creator()._forward(model, torch.rand(n, 3, h, w) * 255.0)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -k forward -v -p no:randomly`
-Expected: 6 failed
+Expected: 7 failed with `NotImplementedError` raised by the `_forward` stub in `_creator`.
 
 - [ ] **Step 3: Implement**
+
+**Also delete the `_forward` stub from `_creator`'s `_PartialLoGeRCreator`**, so these tests
+reach the real method instead of the stub.
 
 Add to `LoGeRCreator`, after `_preprocess`:
 
@@ -1463,7 +1580,7 @@ Add to `LoGeRCreator`, after `_preprocess`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: 34 passed
+Expected: **32 passed** (25 after Task 6, plus the 7 written here).
 
 - [ ] **Step 5: Commit**
 
@@ -1495,15 +1612,40 @@ _raw_to_world_points hard-requires that key."
 
 > **Task 8 closes the ABC.** `LoGeRCreator` subclasses `BasePointcloudCreator`, an `abc.ABC`
 > (`collab_splats/pointcloud/base.py:4`), so it is **uninstantiable** until the last abstract
-> method (`_reproject`) lands here. Tasks 5-7 therefore ship tests that cannot run yet, marked
-> with `_NEEDS_FULL_CREATOR` — a `pytest.mark.xfail(raises=TypeError, strict=True)` defined at
-> the top of `tests/pointcloud/test_loger_creator.py`.
+> methods land here. Tasks 6-7 ran their tests through `_creator`, a helper returning a subclass
+> that stubs whichever abstract methods were not yet written.
 >
-> **Step 0 of this task: delete `_NEEDS_FULL_CREATOR` and every `@_NEEDS_FULL_CREATOR`
-> decorator.** `strict=True` means those tests turn XPASS the moment `_reproject` exists, and
-> pytest reports XPASS-under-strict as a **failure** — so the suite forces this cleanup rather
-> than letting the marker outlive its cause. If you see unexplained XPASS failures when starting
-> Task 8, this is why; the fix is to remove the marker, never to loosen it to `strict=False`.
+> **Step 0 of this task: delete the `_creator` helper and its `_PartialLoGeRCreator`, and point
+> every remaining call at the real `LoGeRCreator`.** After `_postprocess`, `_reproject`, and
+> `extract_intermediate_features` land below, nothing is abstract and the stub scaffolding must
+> not outlive its cause — a lingering stub would silently shadow a real method that someone
+> later breaks.
+>
+> **`_loaded_creator` survives**, rebased onto the real class:
+>
+> ```python
+> def _loaded_creator(se3: bool = False, **kwargs) -> LoGeRCreator:
+>     """LoGeRCreator with _se3 set to what _load_model would have read from the variant yaml."""
+>     creator = LoGeRCreator(**kwargs)
+>     creator._se3 = se3
+>     return creator
+> ```
+>
+> It is still needed: these tests stub the model, so `_load_model` never runs and `_forward`'s
+> `se3` guard would fire on every one of them.
+>
+> Add one test asserting the ABC is genuinely closed, which is the thing the scaffolding was
+> standing in for all along:
+>
+> ```python
+> def test_creator_is_instantiable():
+>     # The five abstract methods of BasePointcloudCreator (collab_splats/pointcloud/base.py:4)
+>     # are all concrete as of this task. Tasks 6-7 needed a stub subclass to run at all; this
+>     # asserts that crutch is genuinely gone rather than merely deleted from the call sites.
+>     assert isinstance(LoGeRCreator(), LoGeRCreator)
+> ```
+>
+> That makes **5** tests in this task, not 4.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1511,7 +1653,7 @@ Append to `tests/pointcloud/test_loger_creator.py`:
 
 ```python
 def _forward_and_postprocess(n=3, h=56, w=70, fx=88.0, fy=80.0, **creator_kwargs):
-    creator = LoGeRCreator(**creator_kwargs)
+    creator = _loaded_creator(**creator_kwargs)
     views, image_paths, original_coords = creator._preprocess(_fake_frames(n, 112, 140), list(range(n)))
     creator.image_paths, creator.original_coords = image_paths, original_coords
     raw = creator._forward(_FakeLoGeR(n, views.shape[2], views.shape[3], fx, fy), views)
@@ -1558,7 +1700,7 @@ def test_extract_intermediate_features_refuses():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -k "postprocess or reproject or intermediate" -v -p no:randomly`
-Expected: 4 failed
+Expected: 4 failed (`test_creator_is_instantiable` is not matched by that `-k` filter; it fails too, with `TypeError: Can't instantiate abstract class`, until Step 3 lands).
 
 - [ ] **Step 3: Implement**
 
@@ -1665,7 +1807,8 @@ Add to `LoGeRCreator`, after `_forward`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: 38 passed
+Expected: **37 passed, 0 xfailed** (32 after Task 7, plus the 5 written here). Zero xfails and
+zero stub scaffolding is the real completion signal for this task.
 
 - [ ] **Step 5: Commit**
 

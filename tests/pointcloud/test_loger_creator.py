@@ -1,6 +1,7 @@
 """LoGeR feedforward backend: resize rule and creator contract."""
 import sys
 import types
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -8,9 +9,11 @@ import torch
 import yaml
 from PIL import Image
 
+from collab_splats.pointcloud import feedforward as ff_mod
 from collab_splats.pointcloud.feedforward import loger as loger_mod
 from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
-from collab_splats.wrapper.reconstructor import _FEEDFORWARD_BACKENDS, _run_feedforward
+from collab_splats.wrapper import reconstructor as R
+from collab_splats.wrapper.reconstructor import _FEEDFORWARD_BACKENDS
 
 
 @pytest.fixture
@@ -698,6 +701,58 @@ def test_extract_intermediate_features_refuses():
 ########################################
 
 
+# Everything _run_feedforward needs that these tests do not vary. Each test overrides the
+# one or two arguments it is actually about, so the varying argument is visible at a glance
+# rather than buried in eight identical lines.
+_FF_DEFAULTS = dict(
+    backend="loger",
+    loop_closure=False,
+    viz_enabled=False,
+    viz_port=8080,
+    max_points=1000,
+    use_multiview_confidence=False,
+)
+
+
+def _call_run_feedforward(tmp_path, *, n_frames=10, **overrides):
+    """Invoke _run_feedforward with the frame store and every creator class stubbed out.
+
+    The stub creator records its kwargs and the store it was handed, and runs to completion
+    rather than raising — an early abort would skip the reconstruct call, and the store is
+    opened for that call. Returns a namespace of (seen, store, sources).
+    """
+    seen = {}
+    sources = []
+
+    class _StubCreator:
+        # None makes _run_feedforward skip the feedforward.zarr save without touching disk.
+        outputs = None
+
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        def reconstruct(self, source, output_dir):
+            sources.append(source)
+            return MagicMock()
+
+    # Patch all four creators, not just LoGeR, so `backend` can vary freely. FrameStore is
+    # patched on the reconstructor module because that is where the name is looked up.
+    with (
+        patch.object(R, "FrameStore") as mock_store,
+        patch.object(ff_mod, "LoGeRCreator", _StubCreator),
+        patch.object(ff_mod, "VGGTXCreator", _StubCreator),
+        patch.object(ff_mod, "VGGTOmegaCreator", _StubCreator),
+        patch.object(ff_mod, "MapAnythingCreator", _StubCreator),
+    ):
+        mock_store.open.return_value.__len__.return_value = n_frames
+        R._run_feedforward(
+            frames_zarr=tmp_path / "frames.zarr",
+            output_dir=tmp_path / "out",
+            **{**_FF_DEFAULTS, **overrides},
+        )
+    return types.SimpleNamespace(seen=seen, store=mock_store, sources=sources)
+
+
 def test_loger_is_a_recognised_feedforward_backend():
     # vggt_spark is in _REGISTRY but absent here, so it is unreachable from
     # Reconstructor. loger must be in both.
@@ -708,20 +763,11 @@ def test_loop_closure_with_loger_is_refused(tmp_path):
     # Refuse at the Reconstructor level, before any inference. _verify_loop_candidate
     # is concrete on the base class, so without this an LC run would burn a full
     # forward pass and then raise NotImplementedError deep in the LC loop.
-    # Catch broadly, then assert the type: with the refusal removed this call still dies,
-    # but on the absent frames.zarr further down. pytest.raises(ValueError) would report
-    # that as a bare FileNotFoundError traceback, which pins nothing about the refusal.
+    # Catch broadly, then assert the type: with the refusal removed this call simply
+    # succeeds, and pytest.raises(ValueError) reports "DID NOT RAISE" — but if some
+    # unrelated error ever surfaced instead, this names it rather than hiding it.
     with pytest.raises(Exception) as excinfo:
-        _run_feedforward(
-            backend="loger",
-            frames_zarr=tmp_path / "frames.zarr",
-            output_dir=tmp_path / "out",
-            loop_closure=True,
-            viz_enabled=False,
-            viz_port=8080,
-            max_points=1000,
-            use_multiview_confidence=False,
-        )
+        _call_run_feedforward(tmp_path, loop_closure=True)
 
     assert isinstance(
         excinfo.value, ValueError
@@ -732,61 +778,30 @@ def test_loop_closure_with_loger_is_refused(tmp_path):
 
 def test_loop_closure_disabled_by_dict_is_not_refused(tmp_path):
     # loop_closure is bool|dict, and {"enabled": False} is a truthy object with falsy
-    # intent. The refusal reads the normalised lc_enabled, so this config must get past
-    # it — it dies later, on the absent frames.zarr, which is a different failure.
-    with pytest.raises(Exception) as excinfo:
-        _run_feedforward(
-            backend="loger",
-            frames_zarr=tmp_path / "frames.zarr",
-            output_dir=tmp_path / "out",
-            loop_closure={"enabled": False},
-            viz_enabled=False,
-            viz_port=8080,
-            max_points=1000,
-            use_multiview_confidence=False,
-        )
+    # intent. The refusal reads the normalised lc_enabled, so this config must get past it
+    # and reach the creator — reaching the creator is exactly what "not refused" means.
+    res = _call_run_feedforward(tmp_path, loop_closure={"enabled": False})
 
-    assert "loop closure" not in str(excinfo.value)
+    assert res.seen, "the {'enabled': False} config never reached the creator"
 
 
-class _KwargsRecorded(Exception):
-    """Sentinel: the creator was constructed, so stop before any inference runs."""
-
-
-def test_creator_kwargs_reach_the_constructor(tmp_path, monkeypatch):
+def test_creator_kwargs_reach_the_constructor(tmp_path):
     # The per-backend config block is the only way to set model knobs from yaml, so the
     # thing under test is the _run_feedforward passthrough — NOT that LoGeRCreator accepts
-    # kwargs, which was already true before this task. Substituting a recording stub that
-    # raises as soon as it is constructed pins the plumbing without running inference.
-    from collab_splats.pointcloud import feedforward as ff_mod
+    # kwargs, which was already true before this task. The recording stub pins the plumbing
+    # without running inference.
+    res = _call_run_feedforward(
+        tmp_path,
+        max_points=1234,
+        creator_kwargs={"window_size": 64, "variant": "LoGeR"},
+    )
 
-    seen = {}
-
-    class _Recorder:
-        def __init__(self, **kwargs):
-            seen.update(kwargs)
-            raise _KwargsRecorded
-
-    monkeypatch.setattr(ff_mod, "LoGeRCreator", _Recorder)
-
-    with pytest.raises(_KwargsRecorded):
-        _run_feedforward(
-            backend="loger",
-            frames_zarr=tmp_path / "frames.zarr",
-            output_dir=tmp_path / "out",
-            loop_closure=False,
-            viz_enabled=False,
-            viz_port=8080,
-            max_points=1234,
-            use_multiview_confidence=False,
-            creator_kwargs={"window_size": 64, "variant": "LoGeR"},
-        )
-
-    # Non-empty first: a monkeypatch that missed its target would let a real creator be
-    # constructed, and that could raise for its own reasons that pytest.raises misreads.
-    assert seen, "LoGeRCreator was never constructed — the monkeypatch did not take"
+    # Non-empty first: a patch that missed its target would let a real creator be
+    # constructed, and that could raise for its own reasons the assertions below misread.
+    assert res.seen, "LoGeRCreator was never constructed — the patch did not take"
     # .get() not [] — a dropped passthrough must die as an AssertionError naming what did
     # arrive, not as a bare KeyError that looks like a typo in the test.
+    seen = res.seen
     assert seen.get("window_size") == 64, f"creator_kwargs did not reach the constructor; saw {sorted(seen)}"
     assert seen.get("variant") == "LoGeR", f"creator_kwargs did not reach the constructor; saw {sorted(seen)}"
     assert seen.get("max_points") == 1234
@@ -796,21 +811,11 @@ def test_creator_kwargs_reach_the_constructor(tmp_path, monkeypatch):
 def test_creator_kwargs_may_not_redeclare_a_reserved_key(tmp_path, reserved):
     # Both keys are already passed explicitly; a duplicate would surface as an opaque
     # TypeError from the constructor rather than naming the config key at fault.
-    # Catch broadly, then assert the type: without the guard this raises the opaque
-    # TypeError itself, and pytest.raises(ValueError) would surface that as a raw
-    # traceback rather than as "the guard is missing".
+    # Catch broadly, then assert the type: without the guard this raises that opaque
+    # TypeError, and pytest.raises(ValueError) would surface it as a raw traceback
+    # rather than as "the guard is missing".
     with pytest.raises(Exception) as excinfo:
-        _run_feedforward(
-            backend="loger",
-            frames_zarr=tmp_path / "frames.zarr",
-            output_dir=tmp_path / "out",
-            loop_closure=False,
-            viz_enabled=False,
-            viz_port=8080,
-            max_points=1000,
-            use_multiview_confidence=False,
-            creator_kwargs={reserved: 5},
-        )
+        _call_run_feedforward(tmp_path, creator_kwargs={reserved: 5})
 
     assert isinstance(
         excinfo.value, ValueError
@@ -819,3 +824,86 @@ def test_creator_kwargs_may_not_redeclare_a_reserved_key(tmp_path, reserved):
     # reason this guard exists instead of letting the constructor's TypeError through.
     assert reserved in str(excinfo.value)
     assert f"pointcloud.loger.{reserved}" in str(excinfo.value)
+
+
+########################################
+# max_frames advisory
+########################################
+
+
+def test_frame_store_is_opened_once_and_handed_to_the_creator(tmp_path):
+    # The advisory needs a frame count and inference needs the store; opening twice was
+    # duplicated work and left the advisory guarding an error that is fatal regardless.
+    # The stub creator must run to completion for this to mean anything — an early abort
+    # would skip reconstruct, and reconstruct is where the second open used to happen.
+    res = _call_run_feedforward(tmp_path, max_frames=500)
+
+    assert res.store.open.call_count == 1, f"frames.zarr opened {res.store.open.call_count}x, expected once"
+    assert res.sources == [res.store.open.return_value], "the creator was handed a different store"
+
+
+def test_max_frames_advisory_fires_at_the_ceiling(tmp_path, caplog):
+    # The boundary is inclusive: running at exactly the ceiling is the case the advisory
+    # exists for — that is a run that used its whole budget and may have been truncated.
+    with caplog.at_level("WARNING"):
+        _call_run_feedforward(tmp_path, n_frames=300, max_frames=300)
+
+    assert "LoGeR is running on 300 frames" in caplog.text
+
+
+def test_max_frames_advisory_is_silent_above_the_ceiling(tmp_path, caplog):
+    # More frames than the ceiling means max_frames is not what limited this run, so there
+    # is nothing to advise.
+    with caplog.at_level("WARNING"):
+        _call_run_feedforward(tmp_path, n_frames=301, max_frames=300)
+
+    assert "LoGeR is running on" not in caplog.text
+
+
+def test_max_frames_advisory_is_silent_without_a_ceiling(tmp_path, caplog):
+    # max_frames is optional in preproc (None = no ceiling for the fps sampler). No ceiling
+    # means no advice, and must not raise on the None comparison.
+    with caplog.at_level("WARNING"):
+        _call_run_feedforward(tmp_path, n_frames=10, max_frames=None)
+
+    assert "LoGeR is running on" not in caplog.text
+
+
+def test_max_frames_advisory_is_loger_only(tmp_path, caplog):
+    # The ceiling is VGGT-Omega's own GPU limit, so Omega running at it is correct, not
+    # noteworthy. Only LoGeR is being under-used by it.
+    with caplog.at_level("WARNING"):
+        _call_run_feedforward(tmp_path, backend="vggt_omega", n_frames=300, max_frames=300)
+
+    assert "LoGeR is running on" not in caplog.text
+
+
+def test_max_frames_advisory_reports_the_configured_ceiling_not_a_literal(tmp_path, caplog):
+    # The ceiling was hardcoded as 300 in both the condition and the message text. Pin the
+    # threaded value in the message: a run of 50 under a ceiling of 50 must quote 50, where
+    # a restored 300 literal would quote a number nobody configured.
+    with caplog.at_level("WARNING"):
+        _call_run_feedforward(tmp_path, n_frames=50, max_frames=50)
+
+    assert "LoGeR is running on 50 frames" in caplog.text
+    assert "ceiling of 50" in caplog.text
+    assert "300" not in caplog.text
+
+
+def test_max_frames_advisory_fires_above_the_old_literal(tmp_path, caplog):
+    # Pins the threaded value in the *condition*, which the message assertions above cannot
+    # reach. 400 frames under a raised ceiling of 500 is still a capped run and must warn;
+    # a restored `n_frames <= 300` would fall silent here.
+    with caplog.at_level("WARNING"):
+        _call_run_feedforward(tmp_path, n_frames=400, max_frames=500)
+
+    assert "LoGeR is running on 400 frames" in caplog.text
+
+
+def test_max_frames_advisory_is_silent_below_the_old_literal(tmp_path, caplog):
+    # The other direction: 100 frames under a lowered ceiling of 50 means the ceiling did
+    # not limit this run, so no advice is due. A restored `n_frames <= 300` would fire.
+    with caplog.at_level("WARNING"):
+        _call_run_feedforward(tmp_path, n_frames=100, max_frames=50)
+
+    assert "LoGeR is running on" not in caplog.text

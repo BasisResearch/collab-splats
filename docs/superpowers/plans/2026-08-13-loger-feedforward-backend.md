@@ -2745,12 +2745,16 @@ def test_pinhole_residual_against_logers_native_pointcloud():
     if not _LOGER_ROOT.exists():
         pytest.skip("third_party/LoGeR not vendored")
 
-    n, h, w = 8, 336, 462
+    n, orig_h, orig_w = 8, 480, 640
     creator = LoGeRCreator()
+    # Derive model resolution rather than hardcoding it — _compute_target_size rounds
+    # each axis to a multiple of 14 under creator.pixel_limit, and the reshape below
+    # raises on any mismatch.
+    w, h = _compute_target_size(orig_w, orig_h, creator.pixel_limit)
     model = creator._load_model("cuda")
 
     rng = np.random.default_rng(11)
-    frames = rng.integers(0, 256, size=(n, 480, 640, 3), dtype=np.uint8)
+    frames = rng.integers(0, 256, size=(n, orig_h, orig_w, 3), dtype=np.uint8)
     views, image_paths, original_coords = creator._preprocess(frames, list(range(n)))
     creator.image_paths, creator.original_coords = image_paths, original_coords
 
@@ -2770,8 +2774,19 @@ def test_pinhole_residual_against_logers_native_pointcloud():
     ours, _ = _raw_to_world_points(raw, subsample=1)
     ours = ours.reshape(n, h, w, 3)
 
-    # Confident pixels only — the residual is meaningless where the model is unsure
-    mask = raw["depth_conf"] > 0.5
+    # Confident pixels only — the residual is meaningless where the model is unsure.
+    # raw["depth_conf"] is ALREADY post-sigmoid (loger.py:392) and this head's measured
+    # band is [0.0140, 0.1172], so any fixed threshold near 0.5 selects nothing. Gate on
+    # LOGER_CONF_THRESHOLD, the same floor the K fit uses (loger.py:79, :403).
+    mask = raw["depth_conf"] > LOGER_CONF_THRESHOLD
+    # Fail loudly on an empty mask. Without this the medians below are nan, the assert
+    # reads as "LoGeR is non-pinhole", and the plan's own instruction not to relax the
+    # threshold would send you chasing a measurement that never happened.
+    assert mask.sum() > 0, (
+        f"confidence mask selected 0 of {mask.size} pixels at "
+        f"threshold {LOGER_CONF_THRESHOLD}; conf range "
+        f"[{raw['depth_conf'].min():.4f}, {raw['depth_conf'].max():.4f}]"
+    )
     err = np.linalg.norm(ours[mask] - native[mask], axis=-1)
     scene_scale = float(np.percentile(np.linalg.norm(native[mask], axis=-1), 95))
     median_rel = float(np.median(err)) / scene_scale
@@ -2789,7 +2804,33 @@ def test_pinhole_residual_against_logers_native_pointcloud():
     )
 ```
 
-Add `from collab_splats.pointcloud.feedforward.base import _raw_to_world_points` and `from collab_splats.pointcloud.feedforward.loger import _LOGER_ROOT` to the test file's imports.
+Add `from collab_splats.pointcloud.feedforward.base import _raw_to_world_points` and
+`from collab_splats.pointcloud.feedforward.loger import _LOGER_ROOT, LOGER_CONF_THRESHOLD, _compute_target_size`
+to the test file's imports (several may already be there — check before adding duplicates).
+
+> **Plan correction — two defects, verified against the tree. One of them fails silently in the
+> most misleading way possible.**
+>
+> **(a) `mask = raw["depth_conf"] > 0.5` selects ZERO pixels.** `_forward` stores
+> `depth_conf = torch.sigmoid(preds["conf"])` (`loger.py:392`), so the value is already
+> post-sigmoid, and this head's measured logit span `-4.257..-2.019` puts the whole band in
+> `[0.0140, 0.1172]`. Nothing ever exceeds `0.5`. The consequence is not a clean failure:
+> `np.median` of an empty array is `nan`, `nan < 0.02` is `False`, and the assertion fires with
+> its "the model is meaningfully non-pinhole" message. Step 2 then tells you **not** to relax the
+> threshold because "that result is the finding" — so the plan as drafted walks you into
+> recording a fabricated finding from a measurement that never ran. Fixed above by gating on
+> `LOGER_CONF_THRESHOLD` and asserting the mask is non-empty first.
+>
+> **(b) `n, h, w = 8, 336, 462` is the wrong model resolution.** With `pixel_limit = 255_000`
+> (`loger.py:196`) and a `640x480` source, `_compute_target_size` returns `(574, 434)` — measured.
+> `ours.reshape(n, 336, 462, 3)` raises `ValueError: cannot reshape array of size ...`. Also note
+> the ordering trap: `_compute_target_size` returns `(w, h)`, while the reshape wants
+> `(n, h, w, 3)`. Fixed above by deriving both from `creator.pixel_limit`.
+>
+> Two things that DO check out, so leave them alone: `@pytest.mark.slow` is registered
+> (`pyproject.toml:214-216`), and `_raw_to_world_points(raw, subsample=8)` really does read
+> `'depth'`, `'extrinsic'`, `'intrinsics_downsampled'` (`feedforward/base.py:333,342-343`) — which
+> is what the `"intrinsics_downsampled"` alias in `_forward` exists to satisfy.
 
 - [ ] **Step 2: Run it**
 
@@ -2799,7 +2840,11 @@ Run:
 ```
 Expected: PASS, with the `PINHOLE RESIDUAL:` line printed.
 
-**If it fails the 2% threshold:** do not raise the threshold to make it pass. That result is the finding — LoGeR is meaningfully non-pinhole, and the spec says it "outranks this decision entirely". Record the number, stop, and report; the `world_points` source and the mesh/BA implications need revisiting before this ships.
+**If it fails the 2% threshold:** first confirm the mask assertion passed — a real measurement
+must have happened before its result means anything. Then do not raise the threshold to make it
+pass. That result is the finding — LoGeR is meaningfully non-pinhole, and the spec says it
+"outranks this decision entirely". Record the number, stop, and report; the `world_points` source
+and the mesh/BA implications need revisiting before this ships.
 
 Random-noise frames are a weak test scene. If the residual looks implausible either way, re-run against `data/tutorial/`'s real video through `frames.zarr` before trusting it.
 

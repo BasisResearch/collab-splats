@@ -1075,8 +1075,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **15 passed, 6 xfailed** (as shipped — the review round added a sixth test pinning the
-`_se3` capture). Task 6 Step 0 converts all six to real passes.
+Expected: **15 passed, 7 xfailed** (as shipped — the review rounds added a sixth test pinning the
+`_se3` capture and a seventh rejecting an empty `model:` block). Task 6 Step 0 converts all seven
+to real passes.
 
 Two corrections to what this plan originally said here. The old figure of "24 passed" was simply
 wrong arithmetic. And the five tests added by this task **cannot pass yet**: `LoGeRCreator`
@@ -1151,10 +1152,10 @@ only a model: key, so the build_forward_kwargs fallbacks at PolyCam/LoGeR @
 > real implementation the moment it lands.
 >
 > **Step 0:** add the `_creator` helper below, replace every `LoGeRCreator(` call in the
-> existing tests with `_creator(`, and delete `_NEEDS_FULL_CREATOR` and all six
+> existing tests with `_creator(`, and delete `_NEEDS_FULL_CREATOR` and all seven
 > `@_NEEDS_FULL_CREATOR` decorators.
 >
-> All six convert, including `test_unknown_variant_rejected_at_construction`: the helper
+> All seven convert, including `test_unknown_variant_rejected_at_construction`: the helper
 > forwards `**kwargs` straight to `__init__`, so `_creator(variant="LoGeR_turbo")` still runs
 > the real `__post_init__` and still raises the real `ValueError`. The subclass overrides
 > nothing that any of these tests assert on.
@@ -1199,7 +1200,7 @@ only a model: key, so the build_forward_kwargs fallbacks at PolyCam/LoGeR @
 > is written above, use the real one and say so in your report.
 >
 > Run `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-> after Step 0 alone. Expected: **21 passed** — the 6 previously-xfailed tests now run for real.
+> after Step 0 alone. Expected: **22 passed** — the 7 previously-xfailed tests now run for real.
 > If any of them FAILS rather than passes, stop and report: that means Task 5's code is wrong
 > and the xfail was hiding it, which is exactly what this step exists to find out.
 
@@ -1307,7 +1308,7 @@ Add to `LoGeRCreator`, after `_load_model`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **25 passed** (21 after Step 0, plus the 4 written here). No xfails remain in this file.
+Expected: **26 passed** (22 after Step 0, plus the 4 written here). No xfails remain in this file.
 
 - [ ] **Step 5: Commit**
 
@@ -1580,7 +1581,7 @@ Add to `LoGeRCreator`, after `_preprocess`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **32 passed** (25 after Task 6, plus the 7 written here).
+Expected: **33 passed** (26 after Task 6, plus the 7 written here).
 
 - [ ] **Step 5: Commit**
 
@@ -1807,7 +1808,7 @@ Add to `LoGeRCreator`, after `_forward`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
-Expected: **37 passed, 0 xfailed** (32 after Task 7, plus the 5 written here). Zero xfails and
+Expected: **38 passed, 0 xfailed** (33 after Task 7, plus the 5 written here). Zero xfails and
 zero stub scaffolding is the real completion signal for this task.
 
 - [ ] **Step 5: Commit**

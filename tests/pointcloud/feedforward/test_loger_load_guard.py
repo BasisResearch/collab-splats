@@ -21,7 +21,7 @@ def test_module_does_not_import_the_vendored_tree_at_module_level():
     #     imports `pi3` unqualified (all its imports are relative or `loger.`-prefixed),
     #     so asserting on that key can never fail and would pin nothing.
     #   * `loger` and `loger.*` DO appear — but test_target_size_matches_the_vendored_loader
-    #     (tests/pointcloud/test_loger_creator.py:117-121) imports the vendored loader for
+    #     (in tests/pointcloud/test_loger_creator.py) imports the vendored loader for
     #     real and drops only its sys.path entry, never the sys.modules keys. Measured: it
     #     leaks `loger`, `loger.utils`, `loger.utils.basic` for the rest of the session. So
     #     a sys.modules assertion passes or fails on collection order, and pytest-randomly

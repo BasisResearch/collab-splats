@@ -190,7 +190,7 @@ The four upstream functions total ~78 lines. Three cuts bring it to **two functi
 1. **`estimate_focal_lengths(shared=False)`** — the per-frame branch. We always want shared, and
    a parameter that is always its default should not exist.
 2. **The `max(W, H) * 1.2` fallback** on fit failure (the same heuristic as
-   `localization/localizer.py:24 seed_intrinsics`). We raise instead: a wrong-but-plausible K
+   `seed_intrinsics` in `collab_splats/localization/localizer.py`). We raise instead: a wrong-but-plausible K
    against real depth is precisely the `be24be2` mesh-intrinsics regression.
 3. **`_snap_square_pixels` entirely** (10 lines) — and the reason is stronger than an earlier
    draft claimed. That draft said no consumer observes it. In fact, **at model resolution it
@@ -349,10 +349,10 @@ recorded so the duplication is a known choice rather than an oversight.
 
 ### Pre-existing gaps, noted not fixed
 
-- `vggt_spark` is in `_REGISTRY` (`pointcloud/__init__.py:28`) but absent from
-  `_FEEDFORWARD_BACKENDS` (`reconstructor.py:43`) and `creator_map` (L189), so it is
-  unreachable from `Reconstructor`. `loger` is wired into both, since the requirement is that it
-  work like any other backend.
+- `vggt_spark` is in `_REGISTRY` (`collab_splats/pointcloud/__init__.py`) but absent from
+  `_FEEDFORWARD_BACKENDS` and `creator_map` (both in `collab_splats/wrapper/reconstructor.py`,
+  the latter inside `_run_feedforward`), so it is unreachable from `Reconstructor`. `loger` is
+  wired into both, since the requirement is that it work like any other backend.
 - Neither `vggt_omega` nor `vggt_spark` appears in `docs/source/api/pointcloud.rst`, which
   documents only `base`, `sfm`, `feedforward.base`, `vggtx`, and `mapanything`. Optional
   vendored backends have simply never been added. `loger` gets its stanza; back-filling the
@@ -360,9 +360,9 @@ recorded so the duplication is a known choice rather than an oversight.
 
 ## Data flow: the template methods
 
-`BaseFeedforwardCreator` declares **six** `@abstractmethod`s, not five: `_load_model` (915),
-`_preprocess` (918), `_forward` (921), `_postprocess` (924), `extract_intermediate_features`
-(927), and `_reproject` (1023). This matters twice over: LoGeR's `NotImplementedError` for
+`BaseFeedforwardCreator` (`collab_splats/pointcloud/feedforward/base.py`) declares **six**
+`@abstractmethod`s, not five: `_load_model`, `_preprocess`, `_forward`, `_postprocess`,
+`extract_intermediate_features`, and `_reproject`. This matters twice over: LoGeR's `NotImplementedError` for
 `extract_intermediate_features` is the ABC contract being satisfied, not a courtesy stub — the
 class will not instantiate without it; and the base class docstring's own "5-step pipeline /
 four abstract methods" wording is stale. Pre-existing, out of scope, noted so this spec does not
@@ -629,18 +629,21 @@ pointcloud:
 
 ### Per-backend kwargs passthrough
 
-`_run_feedforward` does not currently see `pc_cfg` — it takes seven explicit scalars
-(`reconstructor.py:143-151`) and the call site unpacks the config at `reconstructor.py:545-552`.
-So the change is two-part, not one line:
+**This section describes the codebase as it stood before implementation; the change below has
+since landed.** At the time of writing, `_run_feedforward`
+(`collab_splats/wrapper/reconstructor.py`) did not see `pc_cfg` — it took seven explicit
+scalars, and its call site inside `Reconstructor.build_pointcloud` unpacked the config itself. So the
+change was two-part, not one line:
 
 ```python
-# reconstructor.py:143 — new keyword-only parameter, defaulted so existing callers still work
+# _run_feedforward signature — new keyword-only parameter, defaulted so existing callers still work
 def _run_feedforward(..., max_points: int, creator_kwargs: dict | None = None):
     ...
-    # reconstructor.py:195 — max_points stays explicit; the block supplies the rest
+    # the creator_map lookup inside _run_feedforward — max_points stays explicit;
+    # the block supplies the rest
     creator = creator_map[backend](max_points=max_points, **(creator_kwargs or {}))
 
-# reconstructor.py:552 — call site reads the per-backend block
+# the _run_feedforward call site in Reconstructor.pointcloud — reads the per-backend block
     creator_kwargs=pc_cfg.get(pc_cfg["backend"], {}),
 ```
 

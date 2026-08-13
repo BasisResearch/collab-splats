@@ -317,7 +317,8 @@ def _loaded_creator(se3: bool = False, **kwargs) -> LoGeRCreator:
 def _synthetic_local_points(h: int, w: int, fx: float, fy: float, z: float = 2.0) -> np.ndarray:
     """Exact pinhole camera-frame pointmap, so a K fit over it must recover (fx, fy)."""
     # The principal point must match the one estimate_intrinsics_from_points assumes —
-    # cx=(W-1)/2, cy=(H-1)/2 (collab_splats/geometry/transforms.py:159-162), NOT w/2.
+    # cx=(W-1)/2, cy=(H-1)/2 — set by the centred-pixel-grid meshgrid inside
+    # estimate_intrinsics_from_points (collab_splats/geometry/transforms.py), NOT w/2.
     # Off-by-half-a-pixel here biases the recovered focal, and the assertions below would
     # then be pinning the bias rather than the fit.
     uu, vv = np.meshgrid(
@@ -371,7 +372,8 @@ class _FakeLoGeR(torch.nn.Module):
 
 # (h, w) = (56, 70) throughout: both (w-1)/2 and (h-1)/2 land on .5, so no pixel has
 # x == 0 or y == 0 and none is dropped by estimate_intrinsics_from_points' validity gate
-# `(|x| > 1e-6) & (|y| > 1e-6)` (collab_splats/geometry/transforms.py:166). Both are also
+# `(|x| > 1e-6) & (|y| > 1e-6)` — the `valid` mask in estimate_intrinsics_from_points
+# (collab_splats/geometry/transforms.py). Both are also
 # multiples of the patch size 14.
 
 

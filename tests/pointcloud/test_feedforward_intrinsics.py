@@ -188,7 +188,8 @@ def test_vggtx_crop_coords_cr_x_gt_target_size():
 def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
     """Run the real rescale over a single camera and return its original-res params.
 
-    _rescale_reconstruction_to_original_dimensions (base.py:748-840) is duck-typed
+    _rescale_reconstruction_to_original_dimensions
+    (collab_splats/pointcloud/feedforward/base.py) is duck-typed
     over pycolmap — it touches only .images/.cameras, .model.name, .params, .width,
     .height, .name, .camera_id (to look the camera up) and .points2D (iterated only
     when shift_point2d_to_original_res=True, which this helper leaves at its default
@@ -211,7 +212,8 @@ def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
     _rescale_reconstruction_to_original_dimensions(
         reconstruction,
         [Path("0.png")],
-        # Rows are [x0, y0, x1, y1, W, H]; the rescale reads only the last two (base.py:793).
+        # Rows are [x0, y0, x1, y1, W, H]; the rescale reads only the last two, as
+        # real_image_size in _rescale_reconstruction_to_original_dimensions.
         np.array([[0, 0, orig_w, orig_h, orig_w, orig_h]], dtype=np.float32),
         (model_w, model_h),
     )
@@ -223,12 +225,15 @@ def test_loger_pinhole_k_round_trips_to_original_resolution():
 
     _compute_target_size rounds each axis to a multiple of 14 independently, so a
     square-pixel physical camera genuinely produces fx != fy at model resolution.
-    PINHOLE carries both focals through (base.py:719-720) and the per-axis rescale
-    (base.py:803-805) recovers the true focal exactly on both axes.
+    PINHOLE carries both focals through build_pycolmap_reconstruction's camera-params
+    branch, and the per-axis rescale in _rescale_reconstruction_to_original_dimensions
+    recovers the true focal exactly on both axes (both in
+    collab_splats/pointcloud/feedforward/base.py).
     """
     orig_w, orig_h = 640, 480
-    # 255_000 is LoGeR's shipping pixel budget (LoGeRCreator.pixel_limit default,
-    # loger.py:196), inlined rather than imported so these tests stay independent of
+    # 255_000 is LoGeR's shipping pixel budget (the LoGeRCreator.pixel_limit field default
+    # in collab_splats/pointcloud/feedforward/loger.py), inlined rather than imported so
+    # these tests stay independent of
     # the creator — the camera model below is likewise passed as a literal.
     model_w, model_h = _compute_target_size(orig_w, orig_h, 255_000)
 
@@ -262,10 +267,12 @@ def test_loger_pinhole_k_round_trips_to_original_resolution():
 def test_simple_pinhole_would_lose_the_focal_loger_keeps():
     """Why LoGeRCreator.camera_model is PINHOLE: SIMPLE_PINHOLE costs 6.5 px here.
 
-    Two production stages compose.  build_colmap averages fx and fy into one param
-    for SIMPLE_PINHOLE (base.py:721-722), then the rescale multiplies that single
-    param by max(scale_x, scale_y) (base.py:801-802) rather than per axis
-    (base.py:803-805).  Neither stage is lossy alone; together they do not round-trip.
+    Two production stages compose.  build_pycolmap_reconstruction averages fx and fy
+    into one param on its SIMPLE_PINHOLE branch, then
+    _rescale_reconstruction_to_original_dimensions multiplies that single param by
+    max(scale_x, scale_y) on its SIMPLE_PINHOLE branch rather than per axis as it does
+    for PINHOLE (both in collab_splats/pointcloud/feedforward/base.py).  Neither stage
+    is lossy alone; together they do not round-trip.
     """
     orig_w, orig_h = 640, 480
     model_w, model_h = _compute_target_size(orig_w, orig_h, 255_000)

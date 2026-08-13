@@ -205,9 +205,13 @@ class LoGeRCreator(BaseFeedforwardCreator):
             )
 
         # `or {}` twice: an empty file parses to None, and `model:` with no body parses to
-        # None under the key. Both otherwise surface as an AttributeError or TypeError that
-        # does not name cfg_path, which is the one thing the operator needs.
+        # None under the key. Neither can be allowed through — an empty model_cfg builds Pi3
+        # on constructor defaults, which is a DIFFERENT architecture (ttt_inter_multi is 4 in
+        # both shipped configs and 2 in the constructor), so the run fails 278 state_dict keys
+        # later, after a 5 GB download, with an error that names none of this.
         model_cfg = dict((yaml.safe_load(cfg_path.read_text()) or {}).get("model") or {})
+        if not model_cfg:
+            raise ValueError(f"{cfg_path} has no 'model:' block; the config is empty or truncated")
 
         # se3 sits under model: but is not a Pi3.__init__ parameter — it is popped
         # inside forward (github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589).

@@ -10,7 +10,7 @@ from PIL import Image
 from collab_splats.pointcloud.feedforward import loger as loger_mod
 from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
 
-# LoGeRCreator subclasses an ABC (BasePointcloudCreator, collab_splats/pointcloud/base.py:4)
+# LoGeRCreator subclasses an ABC (BasePointcloudCreator, collab_splats/pointcloud/base.py:101)
 # and Tasks 6-8 own the five remaining abstract methods, so the class cannot be
 # instantiated yet. These tests are correct as written and are the reason the fields and
 # routing below are shaped the way they are — they run for real the moment Task 8 lands.
@@ -205,6 +205,20 @@ def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch, stub
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
 
     with pytest.raises(ValueError, match="some_future_forward_kwarg"):
+        LoGeRCreator()._load_model("cpu")
+
+
+@_NEEDS_FULL_CREATOR
+def test_load_model_rejects_an_empty_model_block(tmp_path, monkeypatch, stub_pi3):
+    # An empty model: block is not harmless. It builds Pi3 on constructor defaults, which is a
+    # different architecture from either shipped config, and the run then dies 278 state_dict
+    # keys later — after a 5 GB download, with an error naming neither the file nor the cause.
+    ckpt_dir = tmp_path / "ckpts" / "LoGeR_star"
+    ckpt_dir.mkdir(parents=True)
+    (ckpt_dir / "original_config.yaml").write_text("model:\n")
+    monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
+
+    with pytest.raises(ValueError, match="no 'model:' block"):
         LoGeRCreator()._load_model("cpu")
 
 

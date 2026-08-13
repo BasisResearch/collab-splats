@@ -70,11 +70,14 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     Textbook definition — sort by value, walk the cumulative weight, return the value
     at half the total mass.  Prior art for using one to reduce per-pixel focal
     estimates: github.com/PolyCam/LoGeR @ 5d7c1a7, ``run_loger.py:167``.  Returns
-    ``None`` for an empty input so the caller can raise rather than invent a value.
+    ``None`` for an empty input, or for weights carrying no positive mass, so the
+    caller can raise rather than invent a value.
 
-    Values must be finite. ``np.argsort`` sorts ``inf`` and ``NaN`` to the tail, so
-    non-finite entries would hold weight above the half-mass point and bias the result
-    upward rather than poison it visibly — callers filter them before calling.
+    Values must be finite, and callers filter them before calling.  A non-finite entry
+    does not poison the result visibly, it skews it: ``np.argsort`` sorts ``+inf`` and
+    ``NaN`` to the tail (biasing the result upward) and ``-inf`` to the head (biasing
+    it downward), so either way the return is a plausible finite number that a
+    downstream ``np.isfinite`` check waves through.
     """
     if len(values) == 0:
         return None

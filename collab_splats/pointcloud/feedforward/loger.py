@@ -26,7 +26,7 @@ Provides:
   LOGER_VARIANTS       — the two shipped variants
   LOGER_CONF_THRESHOLD — confidence floor for the K fit, measured not inherited
   _compute_target_size — patch-aligned resize matching the vendored loader
-  LoGeRCreator         — feedforward creator using LoGeR depth + pose (lands in Task 8)
+  LoGeRCreator         — feedforward creator using LoGeR depth + pose (not yet implemented)
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
     Unlike the rest of this module this one is not free to differ from upstream: the
     model is trained on images preprocessed this way, so a different rule would feed
     it out-of-distribution input.  The rule is therefore written to a *behavioural*
-    spec — area budget, both axes multiples of 14, shrink whichever axis sits furthest
-    above the target aspect until the budget is met — and that behaviour is pinned by
+    spec — area budget, both axes multiples of 14, shrink whichever axis overshoots
+    the target aspect until the budget is met — and that behaviour is pinned by
     a measured parity test against the vendored loader
     (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/utils/basic.py:55-61``, inside
     ``load_images_as_tensor``, whose signature is at ``basic.py:11``), not asserted.
@@ -83,12 +83,22 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
     because ``estimate_intrinsics_from_points`` fits fx and fy separately and
     ``LoGeRCreator.camera_model`` is ``"PINHOLE"``.  Cropping instead would discard
     field of view and reintroduce crop arithmetic in ``original_coords``.
+
+    ``pixel_limit`` is a budget, not a hard ceiling, and the difference only shows at
+    absurd aspect ratios: past roughly 1300:1 one axis rounds to zero patches, the
+    shrink loop never runs because ``0 > pixel_limit`` is false, and the ``max(1, ...)``
+    clamp resurrects that axis to a single patch — returning slightly more area than
+    asked for, up to 9x at 100000:1.  A ``pixel_limit`` under 196 likewise always
+    returns 14x14.  Both are upstream's behaviour and are kept deliberately; the
+    ``w * h <= pixel_limit`` assertion in the tests holds for every real image shape,
+    not for every input.
     """
     # Area-budget scale factor. Upstream guards this against zero area and falls through
-    # to a 14x14 image; we do not carry that over, because our only caller passes frame
-    # store dimensions, which are positive by construction. A zero here means the store
-    # is corrupt, and a ZeroDivisionError naming this line is a more useful failure than
-    # a silent 14x14 tensor that the model would happily consume.
+    # to a 14x14 image; we do not carry that over, because the caller this exists for
+    # (`_preprocess`, Task 6) passes frame store dimensions, which are positive by
+    # construction. A zero here means the store is corrupt, and a ZeroDivisionError
+    # naming this line is a more useful failure than a silent 14x14 tensor that the
+    # model would happily consume.
     scale = math.sqrt(pixel_limit / (orig_w * orig_h))
     w_target, h_target = orig_w * scale, orig_h * scale
 

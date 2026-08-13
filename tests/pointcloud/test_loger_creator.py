@@ -10,7 +10,7 @@ from collab_splats.pointcloud.feedforward.loger import _LOGER_ROOT, _compute_tar
 
 @pytest.mark.parametrize(
     "orig_w,orig_h",
-    [(1920, 1080), (1080, 1920), (640, 480), (1000, 1000), (3840, 2160)],
+    [(1920, 1080), (1080, 1920), (640, 480), (1000, 1000), (3840, 2160), (1920, 1200)],
 )
 def test_target_size_is_patch_aligned_and_within_budget(orig_w, orig_h):
     # Both invariants are load-bearing: a non-multiple of 14 crashes the ViT
@@ -45,8 +45,24 @@ def test_target_size_upscales_small_images_to_the_budget():
     assert w * h > 200_000
 
 
+def test_zero_area_raises_instead_of_silently_returning_a_tile():
+    # Deliberate divergence from upstream, which guards this and falls through to a
+    # 14x14 image the model would consume without complaint. Our caller passes frame
+    # store dimensions, positive by construction, so a zero here means the store is
+    # corrupt and a traceback naming the division is more useful than a silent tile.
+    # This is the only behaviour in this function that intentionally differs from the
+    # vendored loader, so it gets a test rather than a comment.
+    with pytest.raises(ZeroDivisionError):
+        _compute_target_size(0, 1080, pixel_limit=255_000)
+
+
+# 1920x1200 is here for a specific reason: it is the only case in either list that takes
+# the `patches_h -= 1` branch of the shrink loop. Without it that branch never executes,
+# and three separate mutations to _compute_target_size pass all the other cases —
+# dropping the tie-break entirely, inverting it to `patches_w > patches_h`, and swapping
+# round() for floor(). Do not remove it to trim runtime.
 @pytest.mark.skipif(not _LOGER_ROOT.exists(), reason="vendored tree absent (setup/loger.sh)")
-@pytest.mark.parametrize("orig_w,orig_h", [(1920, 1080), (1080, 1920), (640, 480), (1000, 1000)])
+@pytest.mark.parametrize("orig_w,orig_h", [(1920, 1080), (1080, 1920), (640, 480), (1000, 1000), (1920, 1200)])
 def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
     # This helper is reimplemented rather than copied, so parity with upstream is a
     # thing we MEASURE, not a thing we claim. The model trains on images preprocessed

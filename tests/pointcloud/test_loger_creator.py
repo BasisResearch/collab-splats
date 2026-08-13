@@ -11,7 +11,13 @@ from PIL import Image
 
 from collab_splats.pointcloud import feedforward as ff_mod
 from collab_splats.pointcloud.feedforward import loger as loger_mod
-from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
+from collab_splats.pointcloud.feedforward.base import _raw_to_world_points
+from collab_splats.pointcloud.feedforward.loger import (
+    LOGER_CONF_THRESHOLD,
+    LoGeRCreator,
+    _LOGER_ROOT,
+    _compute_target_size,
+)
 from collab_splats.wrapper import reconstructor as R
 from collab_splats.wrapper.reconstructor import _FEEDFORWARD_BACKENDS
 
@@ -501,7 +507,6 @@ def test_forward_runs_under_no_grad():
     # than left as an unexplained RuntimeError in whichever test happens to run first.
     n, h, w = 2, 56, 70
     raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
-    assert isinstance(raw["local_points"], np.ndarray)
     assert isinstance(raw["depth"], np.ndarray)
 
 
@@ -705,6 +710,82 @@ def test_extract_intermediate_features_refuses():
     # refusal must be explicit.
     with pytest.raises(NotImplementedError, match="loop closure"):
         LoGeRCreator().extract_intermediate_features(torch.rand(2, 3, 56, 70))
+
+
+@pytest.mark.slow
+def test_pinhole_residual_against_logers_native_pointcloud():
+    """Unproject depth with the fitted K and compare to LoGeR's own world points.
+
+    LoGeR's `xy` is a free per-pixel ray field, not constrained to any pinhole K, so
+    the native cloud can encode lens distortion and per-frame ray variation that
+    K-unprojection cannot reproduce. This measures how large that gap actually is.
+    """
+    if not _LOGER_ROOT.exists():
+        pytest.skip("third_party/LoGeR not vendored")
+
+    n, orig_h, orig_w = 8, 480, 640
+    creator = LoGeRCreator()
+    # Derive model resolution rather than hardcoding it — _compute_target_size rounds
+    # each axis to a multiple of 14 under creator.pixel_limit, and the reshape below
+    # raises on any mismatch.
+    w, h = _compute_target_size(orig_w, orig_h, creator.pixel_limit)
+    model = creator._load_model("cuda")
+
+    rng = np.random.default_rng(11)
+    frames = rng.integers(0, 256, size=(n, orig_h, orig_w, 3), dtype=np.uint8)
+    views, image_paths, original_coords = creator._preprocess(frames, list(range(n)))
+    creator.image_paths, creator.original_coords = image_paths, original_coords
+
+    raw = creator._forward(model, views)
+
+    # LoGeR's own world points, straight off the model. This DELIBERATELY re-runs the
+    # model rather than deriving native from `raw`: _forward obtains `extrinsic` by
+    # invert_poses(camera_poses), so a derived native would apply OUR inversion to both
+    # sides and cancel it — silently voiding this test's coverage of the pose inversion.
+    # Taking native from LoGeR's own preds["points"] keeps it independent. (TTT fast
+    # weights are per-call state, not module state, so the second pass is not
+    # contaminated by the first.)
+    with torch.no_grad():
+        native = model(
+            views.to("cuda")[None],
+            window_size=creator.window_size, overlap_size=creator.overlap_size,
+            reset_every=creator.reset_every, num_iterations=creator.num_iterations,
+            sim3=False, sim3_scale_mode="median", se3=creator._se3,
+            turn_off_ttt=False, turn_off_swa=False,
+        )["points"].squeeze(0).cpu().float().numpy()
+
+    # Ours, via the fitted K and the same reuse path production takes
+    ours, _ = _raw_to_world_points(raw, subsample=1)
+    ours = ours.reshape(n, h, w, 3)
+
+    # Confident pixels only — the residual is meaningless where the model is unsure.
+    # raw["depth_conf"] is ALREADY post-sigmoid and this head's measured band is
+    # [0.0140, 0.1172], so any fixed threshold near 0.5 selects nothing. Gate on
+    # LOGER_CONF_THRESHOLD, the same floor the K fit uses.
+    mask = raw["depth_conf"] > LOGER_CONF_THRESHOLD
+    # Fail loudly on an empty mask. Without this the medians below are nan, the assert
+    # reads as "LoGeR is non-pinhole", and you would record a fabricated finding from a
+    # measurement that never ran.
+    assert mask.sum() > 0, (
+        f"confidence mask selected 0 of {mask.size} pixels at "
+        f"threshold {LOGER_CONF_THRESHOLD}; conf range "
+        f"[{raw['depth_conf'].min():.4f}, {raw['depth_conf'].max():.4f}]"
+    )
+    err = np.linalg.norm(ours[mask] - native[mask], axis=-1)
+    scene_scale = float(np.percentile(np.linalg.norm(native[mask], axis=-1), 95))
+    median_rel = float(np.median(err)) / scene_scale
+
+    # LOG IT — this number is the deliverable, not the pass/fail
+    print(f"\nPINHOLE RESIDUAL: median {median_rel * 100:.3f}% of scene scale "
+          f"(abs {np.median(err):.4f}, scene scale {scene_scale:.3f}, "
+          f"p95 {np.percentile(err, 95) / scene_scale * 100:.3f}%)")
+
+    assert median_rel < 0.02, (
+        f"Fitted-K unprojection diverges from LoGeR's native cloud by "
+        f"{median_rel * 100:.2f}% of scene scale. The model is meaningfully "
+        f"non-pinhole; the shared-K fit is then also lossy for the mesh and BA "
+        f"paths, which outranks the world_points decision. See spec open item 3."
+    )
 
 
 ########################################

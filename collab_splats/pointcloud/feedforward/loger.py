@@ -416,7 +416,6 @@ class LoGeRCreator(BaseFeedforwardCreator):
             "intrinsics_downsampled": intrinsic,  # alias — _raw_to_world_points needs this key
             "depth": depth,
             "depth_conf": depth_conf,
-            "local_points": local_points,  # kept for the parity test only
         }
 
     def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:

@@ -817,9 +817,17 @@ until it passes.
 
 1. Torch 2.5.1 vs LoGeR's pinned 2.6.0 — smoke test gates the work.
 2. The `max_frames` ceiling for `loger` is unmeasured. Sweep, then document.
-3. **The pinhole residual is unmeasured.** The parity test must report it as a number. It
-   decides whether the fitted-K approximation is tight, and if it is not, the finding affects
-   the mesh and BA paths, not just `world_points`.
+3. **The pinhole residual is MEASURED (2026-08-13): median 0.355% of scene scale** — abs
+   0.0013 against a 95th-percentile scene scale of 0.360, p95 0.714%. Measured by
+   `test_pinhole_residual_against_logers_native_pointcloud`
+   (`tests/pointcloud/test_loger_creator.py`) on 8 frames of 480x640 random-noise input at the
+   574x434 model resolution, `LoGeR_star`, gating on `depth_conf > LOGER_CONF_THRESHOLD`. The
+   shared-K approximation is therefore tight: unprojecting depth with the fitted K reproduces
+   LoGeR's own `points` to well inside the 2% threshold, so the non-pinhole freedom in LoGeR's
+   `xy` ray field costs sub-percent geometry and the finding does NOT escalate to the mesh or
+   BA paths. Caveat: random-noise frames are a weak scene — the model has no real structure to
+   distort — so this is a lower bound; re-measure on a real sequence before relying on it for
+   a wide-FOV or distorted-lens capture.
 4. Loop closure calibration for the LoGeR backbone — separate work, refused until then.
 5. Multiview confidence calibration — owned by
    `2026-08-12-multiview-confidence-all-models-design.md`; `loger` should be added to its scope.

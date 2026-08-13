@@ -484,7 +484,10 @@ exponential and unbounded above, so its backends pass percentiles (`vggtx.py:193
 lands in `[0, 1]` and *both* branches are now reachable in a way they were not before — a raw
 threshold is meaningful for the first time.
 
-`LoGeRCreator.conf_threshold` is a **percentile**, default `50.0`, matching `vggt_omega`. The
+`LoGeRCreator.conf_threshold` is a **percentile**, default `50.0`, matching `vggt_omega`.
+(Upstream's own PLY export uses `--conf_percentile 20.0`, `run_loger.py:54` — a looser cut for a
+visualisation dump. Sibling consistency wins here; the parity task records what the residual
+looks like at both.) The
 percentile branch is scale-free, so it transfers across the confidence-distribution change
 without recalibration, whereas a raw value tuned on sigmoid confidence would be a new number with
 no evidence behind it. The class docstring says which convention the default uses, because
@@ -609,15 +612,24 @@ pointcloud:
   loger:            # per-backend creator kwargs; read only when backend matches
     variant: LoGeR_star
     window_size: 32
-    overlap_size: 8
+    overlap_size: 3
 ```
 
 ### Per-backend kwargs passthrough
 
-`reconstructor.py:195` becomes:
+`_run_feedforward` does not currently see `pc_cfg` — it takes seven explicit scalars
+(`reconstructor.py:143-151`) and the call site unpacks the config at `reconstructor.py:545-552`.
+So the change is two-part, not one line:
 
 ```python
-creator = creator_map[backend](max_points=max_points, **pc_cfg.get(backend, {}))
+# reconstructor.py:143 — new keyword-only parameter, defaulted so existing callers still work
+def _run_feedforward(..., max_points: int, creator_kwargs: dict | None = None):
+    ...
+    # reconstructor.py:195 — max_points stays explicit; the block supplies the rest
+    creator = creator_map[backend](max_points=max_points, **(creator_kwargs or {}))
+
+# reconstructor.py:552 — call site reads the per-backend block
+    creator_kwargs=pc_cfg.get(pc_cfg["backend"], {}),
 ```
 
 This is **generic, not LoGeR-specific** — every backend gains a config-file surface for its
@@ -641,11 +653,30 @@ rather than producing a duplicate-kwarg `TypeError`; and unknown keys surface as
 constructor's own `TypeError`, which is the correct failure.
 
 LoGeR's remaining knobs are `LoGeRCreator.__init__` parameters and therefore also settable from
-the block. Their defaults come from three different places, which the implementation must not
-conflate: `window_size` / `overlap_size` / `reset_every` / `num_iterations` from the vendored
-`original_config.yaml`'s `training_settings`; `pixel_limit = 255000` from `run_loger.py`'s
-function default; `use_multiview_confidence = False` is ours, matching VGGT-X and Omega, and
-appears in no LoGeR config at all.
+the block. **Their defaults do not come from the shipped yaml, and an earlier draft said they
+did.** Checked directly: both `ckpts/LoGeR/original_config.yaml` and
+`ckpts/LoGeR_star/original_config.yaml` contain **exactly one top-level key, `model:`**. There is
+no `training_settings` block and no `num_iterations` key in either file.
+
+That matters because `build_forward_kwargs` (`run_loger.py:149-164`) reads them as
+`training.get(...)` against `config.get("training_settings", {})` — an empty dict for both
+shipped checkpoints. So *every* fallback in that function is the value that actually runs, and
+the real defaults are:
+
+| Knob | Effective default | Where it truly comes from |
+|---|---|---|
+| `window_size` | `32` | `run_loger.py:47` argparse default (`args.window_size or ...` short-circuits before the yaml lookup) |
+| `overlap_size` | `3` | `run_loger.py:49` argparse default, same short-circuit |
+| `reset_every` | `0` (never reset) | `training.get("reset_every", 0)` fallback |
+| `num_iterations` | `1` | `config.get("num_iterations", 1)` fallback |
+| `pixel_limit` | `255000` | `run_loger.py:117` `load_images` function default |
+| `use_multiview_confidence` | `False` | **ours**, matching VGGT-X and Omega; in no LoGeR config |
+
+`LoGeRCreator` hard-codes these as dataclass field defaults with a comment citing the line above,
+rather than reading a `training_settings` block that does not exist. Reading the yaml is still
+required — but only for the `model:` block, which is genuinely per-variant.
+
+One consequence for the config example below: **`overlap_size` defaults to 3, not 8.**
 
 ### `preprocessing.max_frames`
 

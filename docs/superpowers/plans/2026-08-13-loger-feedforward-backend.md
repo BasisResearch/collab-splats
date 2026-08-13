@@ -2064,6 +2064,7 @@ def test_loop_closure_with_loger_is_refused(tmp_path):
             viz_enabled=False,
             viz_port=8080,
             max_points=1000,
+            use_multiview_confidence=False,
         )
 
 
@@ -2097,18 +2098,24 @@ def test_creator_kwargs_reach_the_constructor(tmp_path, monkeypatch):
             viz_enabled=False,
             viz_port=8080,
             max_points=1234,
+            use_multiview_confidence=False,
             creator_kwargs={"window_size": 64, "variant": "LoGeR"},
         )
 
-    assert seen == {"max_points": 1234, "window_size": 64, "variant": "LoGeR"}
+    # Non-empty first: a monkeypatch that missed its target would let a real creator be
+    # constructed, and that could raise for its own reasons that pytest.raises misreads.
+    assert seen, "LoGeRCreator was never constructed — the monkeypatch did not take"
+    assert seen["window_size"] == 64 and seen["variant"] == "LoGeR"
+    assert seen["max_points"] == 1234
 
 
-def test_creator_kwargs_may_not_redeclare_max_points(tmp_path):
-    # max_points is already passed explicitly; a duplicate would surface as an opaque
+@pytest.mark.parametrize("reserved", ["max_points", "use_multiview_confidence"])
+def test_creator_kwargs_may_not_redeclare_a_reserved_key(tmp_path, reserved):
+    # Both keys are already passed explicitly; a duplicate would surface as an opaque
     # TypeError from the constructor rather than naming the config key at fault.
     from collab_splats.wrapper.reconstructor import _run_feedforward
 
-    with pytest.raises(ValueError, match="max_points"):
+    with pytest.raises(ValueError, match=reserved):
         _run_feedforward(
             backend="loger",
             frames_zarr=tmp_path / "frames.zarr",
@@ -2117,9 +2124,18 @@ def test_creator_kwargs_may_not_redeclare_max_points(tmp_path):
             viz_enabled=False,
             viz_port=8080,
             max_points=1000,
-            creator_kwargs={"max_points": 5},
+            use_multiview_confidence=False,
+            creator_kwargs={reserved: 5},
         )
 ```
+
+> **`use_multiview_confidence=False` is mandatory in every call above.** It is a
+> **non-defaulted** parameter of `_run_feedforward` (`:158`) as of the concurrent session's
+> `63cd05f`. Omit it and every one of these tests dies on
+> `TypeError: _run_feedforward() missing 1 required positional argument` — *before* reaching the
+> refusal or the passthrough, so `pytest.raises(ValueError)` fails with a confusing message that
+> looks like the feature is broken. **Re-read the signature before writing the tests**; if more
+> required parameters have appeared, add those too.
 
 > **Plan correction (verified against the tree before dispatch).**
 >
@@ -2139,23 +2155,49 @@ def test_creator_kwargs_may_not_redeclare_max_points(tmp_path):
 > trusting `pytest.raises` alone, since a patch that missed would surface as a real construction
 > attempt and could plausibly raise something else that the test then mistakes for success.
 >
-> **2. Line numbers had drifted; these are re-verified.** `_FEEDFORWARD_BACKENDS` really is at
-> `reconstructor.py:43` and `FrameStore` really is imported at `:23`, but: the deferred
-> `from collab_splats.pointcloud.feedforward import (...)` block is at **:175-179**, not "around
-> 165"; the creator-selection block is **:195-202** (`creator_map = {` at :196,
-> `creator = creator_map[backend](max_points=max_points)` at :202), so "replace line 195" is both
-> off by one and mis-scoped; and the call-site `max_points=pc_cfg["max_points"]` is at **:559**,
-> not 552. **Re-verify all of these yourself before editing** — another session is active in this
-> working tree and they may drift again.
+> **2. Line numbers drift constantly — DO NOT trust any number written here.** A concurrent
+> session landed eight commits into `reconstructor.py` and `loger.py` while this plan was being
+> written, and every line number below moved within an hour of being corrected. **Locate each
+> edit site by searching for its text, never by line number.** As of the last check:
+> `_FEEDFORWARD_BACKENDS` at `:43`, `FrameStore` imported at `:23`, `def _run_feedforward` at
+> `:150`, the deferred `from collab_splats.pointcloud.feedforward import (...)` block at `:176`,
+> `creator_map = {` at `:197`, the creator construction at `:205`, and the call site at `:562`.
 >
-> **3. `pc_cfg.get(...)` is safe**, checked: `pc_cfg = self.config["pointcloud"]`
-> (`reconstructor.py:523`) is a plain dict merged from yaml by `mergedeep`, not a strict-access
-> wrapper, so `.get` exists and returns the default.
+> **3. `pc_cfg.get(...)` is safe**, checked: `pc_cfg = self.config["pointcloud"]` is a plain dict
+> merged from yaml by `mergedeep`, not a strict-access wrapper, so `.get` exists and defaults.
 >
-> **4. `_run_feedforward`'s signature ends at `max_points: int` (:143-151)**, so appending
-> `creator_kwargs: dict | None = None` is safe — no non-defaulted parameter follows it.
+> **4. CORRECTION TO A CORRECTION — `max_points` is NO LONGER the last parameter.** An earlier
+> revision of this plan stated that `_run_feedforward`'s signature ends at `max_points: int`, so a
+> defaulted `creator_kwargs` could be appended straight after it. **That is now false.** The
+> concurrent session's `63cd05f` inserted `use_multiview_confidence: bool` *after* `max_points`
+> (`:157-158`), so putting a defaulted parameter between them is a syntax error —
+> `SyntaxError: parameter without a default follows parameter with a default`. **Append
+> `creator_kwargs: dict | None = None` at the very end of the signature, after whatever
+> non-defaulted parameters exist when you get there**, and re-read the signature first.
 >
-> **5. Owed to Task 12, not here:** nothing writes a `pointcloud.loger:` block into `base.yaml`.
+> **5. The creator construction now passes two explicit kwargs, not one.** It reads
+> `creator_map[backend](max_points=max_points, use_multiview_confidence=use_multiview_confidence)`.
+> Both are therefore duplicate-collision hazards for `creator_kwargs`, not just `max_points`.
+> **Reject both**, with the same reasoning and one message naming whichever key collided:
+>
+> ```python
+> # Both of these are already passed explicitly; a duplicate in the per-backend block
+> # would surface as an opaque TypeError that names neither the key nor the config
+> # path. Unknown keys are left to the constructor's own TypeError, which names them.
+> extra = dict(creator_kwargs or {})
+> for reserved in ("max_points", "use_multiview_confidence"):
+>     if reserved in extra:
+>         raise ValueError(
+>             f"pointcloud.{backend}.{reserved} is not settable; use pointcloud.{reserved}"
+>         )
+> ```
+>
+> Update `test_creator_kwargs_may_not_redeclare_max_points` to cover **both** reserved keys —
+> parametrize rather than duplicating the test body. And when you assert on `seen` in the recorder
+> test, remember the expected dict now contains `use_multiview_confidence` too; **measure what the
+> recorder actually captures rather than predicting it.**
+>
+> **6. Owed to Task 12, not here:** nothing writes a `pointcloud.loger:` block into `base.yaml`.
 > Until it exists, `pc_cfg.get("loger", {})` returns `{}` and LoGeR runs at its dataclass
 > defaults. That is correct behaviour, not a bug — but the config surface is not real until
 > Task 12 adds the block.
@@ -2177,13 +2219,16 @@ In `collab_splats/wrapper/reconstructor.py`:
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 ```
 
-2. In `_run_feedforward`'s signature (line 143), add a keyword parameter after `max_points`:
+2. In `_run_feedforward`'s signature, add a defaulted parameter **at the very end**, after the
+   last non-defaulted parameter (currently `use_multiview_confidence: bool` — re-read it first,
+   it has moved once already):
 ```python
     max_points: int,
+    use_multiview_confidence: bool,
     creator_kwargs: dict | None = None,
 ```
 
-3. In the deferred import block (around line 165), add `LoGeRCreator`:
+3. In the deferred import block, add `LoGeRCreator`:
 ```python
     from collab_splats.pointcloud.feedforward import (
         LoGeRCreator,
@@ -2207,29 +2252,42 @@ _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
         )
 ```
 
-5. Replace line 195:
+5. Add `loger` to `creator_map` and route `creator_kwargs` into the construction. **Keep the two
+   existing explicit kwargs and the existing comment above them** — `use_multiview_confidence`
+   arrived in `63cd05f` and this task must not drop it:
 ```python
-    # max_points caps the confidence mask during inference — a memory guard, not a preference
+    # Select creator class by backend name
     creator_map = {
         "vggtx": VGGTXCreator,
         "mapanything": MapAnythingCreator,
         "vggt_omega": VGGTOmegaCreator,
         "loger": LoGeRCreator,
     }
-    # Reject max_points from the config block — it is already passed explicitly and a
-    # duplicate would surface as an opaque TypeError. Unknown keys are left to the
-    # constructor's own TypeError, which names them correctly.
+    # max_points caps the confidence mask during inference — a memory guard, not a preference.
+    # use_multiview_confidence is the only mv knob exposed: rel_thresh and min_views stay as
+    # calibrated creator field defaults so nobody hand-tunes bare floats in YAML.
+    # Both are passed explicitly, so a duplicate in the per-backend config block would surface
+    # as an opaque TypeError naming neither the key nor its config path. Reject those two by
+    # name; unknown keys are left to the constructor's own TypeError, which names them.
     extra = dict(creator_kwargs or {})
-    if "max_points" in extra:
-        raise ValueError(
-            f"pointcloud.{backend}.max_points is not settable; use pointcloud.max_points"
-        )
-    creator = creator_map[backend](max_points=max_points, **extra)
+    for reserved in ("max_points", "use_multiview_confidence"):
+        if reserved in extra:
+            raise ValueError(
+                f"pointcloud.{backend}.{reserved} is not settable; use pointcloud.{reserved}"
+            )
+    creator = creator_map[backend](
+        max_points=max_points,
+        use_multiview_confidence=use_multiview_confidence,
+        **extra,
+    )
 ```
 
-6. At the call site, line 552, add the passthrough:
+6. At the call site (find it by searching for `max_points=pc_cfg["max_points"]`, currently `:562`,
+   directly above `use_multiview_confidence=pc_cfg["use_multiview_confidence"]`), add the
+   passthrough as a third line — do not disturb the two that are already there:
 ```python
             max_points=pc_cfg["max_points"],
+            use_multiview_confidence=pc_cfg["use_multiview_confidence"],
             creator_kwargs=pc_cfg.get(pc_cfg["backend"], {}),
 ```
 

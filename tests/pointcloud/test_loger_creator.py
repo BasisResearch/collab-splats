@@ -22,9 +22,6 @@ def _creator(**kwargs) -> LoGeRCreator:
     # (collab_splats/pointcloud/feedforward/base.py:922, :925, :928, :1023) so a later task
     # implementing one against the real contract cannot silently disagree with its stub.
     class _PartialLoGeRCreator(LoGeRCreator):
-        def _forward(self, model, views, **kwargs):
-            raise NotImplementedError
-
         def _postprocess(self, raw_outputs, **kwargs):
             raise NotImplementedError
 
@@ -311,3 +308,165 @@ def test_preprocess_rejects_out_of_order_frames(frame_idxs):
     frames = _fake_frames(3, 480, 640)
     with pytest.raises(ValueError, match="ascending"):
         _creator()._preprocess(frames, frame_idxs)
+
+
+def _loaded_creator(se3: bool = False, **kwargs) -> LoGeRCreator:
+    """_creator with _se3 set to what _load_model would have read from the variant yaml."""
+    # Named parameter, not a hidden default: these tests stub the model, so _load_model never
+    # runs and _forward's se3 guard would otherwise fire on every one of them.
+    creator = _creator(**kwargs)
+    creator._se3 = se3
+    return creator
+
+
+def _synthetic_local_points(h: int, w: int, fx: float, fy: float, z: float = 2.0) -> np.ndarray:
+    """Exact pinhole camera-frame pointmap, so a K fit over it must recover (fx, fy)."""
+    # The principal point must match the one estimate_intrinsics_from_points assumes —
+    # cx=(W-1)/2, cy=(H-1)/2 (collab_splats/geometry/transforms.py:159-162), NOT w/2.
+    # Off-by-half-a-pixel here biases the recovered focal, and the assertions below would
+    # then be pinning the bias rather than the fit.
+    uu, vv = np.meshgrid(
+        np.arange(w, dtype=np.float32) - (w - 1) / 2.0,
+        np.arange(h, dtype=np.float32) - (h - 1) / 2.0,
+    )
+    # Forward pinhole: X = u_c * Z / fx, Y = v_c * Z / fy, channel 2 IS Z. Constant z is what
+    # lets the depth test assert a single number independently of the focals.
+    pts = np.stack([uu * z / fx, vv * z / fy, np.full_like(uu, z)], axis=-1)
+    return pts[None].astype(np.float32)  # (1,H,W,3)
+
+
+class _FakeLoGeR(torch.nn.Module):
+    """Minimal stand-in for Pi3 that returns a known pinhole scene.
+
+    Emits RAW conf logits deliberately outside [0, 1], so any path that forgets
+    torch.sigmoid produces an out-of-range depth_conf the assertions catch.
+    """
+
+    def __init__(self, n: int, h: int, w: int, fx: float, fy: float, conf_logit: float = 4.0):
+        super().__init__()
+        self.register_parameter("_p", torch.nn.Parameter(torch.zeros(1)))
+        pts = _synthetic_local_points(h, w, fx, fy)  # (1,H,W,3)
+        self.local_points = torch.from_numpy(np.repeat(pts, n, axis=0))[None]  # (1,N,H,W,3)
+        # conf_logit is a parameter, not a constant: the default 4.0 (sigmoid ~0.982) clears
+        # both 0.02 and the 0.1 library default, so it cannot tell the two apart. The
+        # threshold test below drives it down into LoGeR's real measured band.
+        self.conf = torch.full((1, n, h, w, 1), conf_logit)
+        # Distinct non-identity c2w poses: camera i sits at x = i along the world axis
+        poses = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+        poses[:, 0, 3] = np.arange(n, dtype=np.float32)
+        self.camera_poses = torch.from_numpy(poses)[None]  # (1,N,4,4)
+        self.seen_kwargs: dict = {}
+
+    def forward(self, images, **kwargs):
+        self.seen_kwargs = kwargs
+        return {
+            "local_points": self.local_points,
+            "conf": self.conf,
+            "camera_poses": self.camera_poses,
+            "points": self.local_points,
+        }
+
+
+# (h, w) = (56, 70) throughout: both (w-1)/2 and (h-1)/2 land on .5, so no pixel has
+# x == 0 or y == 0 and none is dropped by estimate_intrinsics_from_points' validity gate
+# `(|x| > 1e-6) & (|y| > 1e-6)` (collab_splats/geometry/transforms.py:166). Both are also
+# multiples of the patch size 14.
+
+
+def test_forward_refuses_to_run_before_load_model_sets_se3():
+    # _se3 is None until _load_model reads the variant yaml. Both real values are valid, so
+    # there is nothing safe to default to — guessing picks an alignment mode silently.
+    n, h, w = 2, 56, 70
+    with pytest.raises(RuntimeError, match="se3 unset"):
+        _creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+
+
+def test_forward_applies_sigmoid_to_raw_confidence_logits():
+    # LoGeR's conf_head is a bare LinearPts3d with no activation (Junyi42/LoGeR @
+    # 7685b7a, loger/models/pi3.py:172); upstream applies sigmoid at the call site
+    # (PolyCam/LoGeR @ 5d7c1a7, run_loger.py:481). The K fit's conf gate is a
+    # threshold on a probability, so this must run first.
+    n, h, w = 3, 56, 70
+    model = _FakeLoGeR(n, h, w, 80.0, 80.0)
+    views = torch.rand(n, 3, h, w)
+
+    raw = _loaded_creator()._forward(model, views)
+
+    assert raw["depth_conf"].shape == (n, h, w)
+    assert raw["depth_conf"].min() >= 0.0 and raw["depth_conf"].max() <= 1.0
+    assert raw["depth_conf"].max() == pytest.approx(1 / (1 + np.exp(-4.0)), rel=1e-4)
+
+
+def test_forward_inverts_camera_poses_to_world_to_camera():
+    # LoGeR returns camera-to-world; FeedforwardResult.extrinsics is world-to-camera.
+    # The single easiest thing to get backwards, and silent when wrong.
+    n, h, w = 3, 56, 70
+    model = _FakeLoGeR(n, h, w, 80.0, 80.0)
+
+    raw = _loaded_creator()._forward(model, torch.rand(n, 3, h, w))
+
+    assert raw["extrinsic"].shape == (n, 3, 4)
+    # c2w camera 2 sits at x=+2, so the w2c translation must be -2, not +2.
+    assert raw["extrinsic"][2, 0, 3] == pytest.approx(-2.0)
+
+
+def test_forward_fits_and_broadcasts_intrinsics():
+    n, h, w = 3, 56, 70
+    fx, fy = 88.0, 80.0
+    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, fx, fy), torch.rand(n, 3, h, w))
+
+    assert raw["intrinsics"].shape == (n, 3, 3)
+    assert raw["intrinsics"][0, 0, 0] == pytest.approx(fx, rel=1e-3)
+    assert raw["intrinsics"][0, 1, 1] == pytest.approx(fy, rel=1e-3)
+    # _raw_to_world_points hard-requires this key and returns (None, None) without it
+    # (collab_splats/pointcloud/feedforward/base.py:335).
+    np.testing.assert_allclose(raw["intrinsics_downsampled"], raw["intrinsics"])
+
+
+def test_forward_passes_the_measured_conf_threshold_not_the_library_default():
+    # Found by mutation: dropping the explicit LOGER_CONF_THRESHOLD passed every other
+    # test in this file, because they all run at conf logit 4.0 (sigmoid ~0.982) which
+    # clears both gates. LoGeR's conf head is uncalibrated — measured logits span
+    # -4.257..-2.019, i.e. a post-sigmoid band of [0.0140, 0.1172] — so
+    # estimate_intrinsics_from_points' 0.1 default sits at its 92nd percentile.
+    #
+    # logit -3.0 -> sigmoid 0.0474 is squarely inside that measured band: above
+    # LOGER_CONF_THRESHOLD (0.02) and below the 0.1 default. The fit must therefore
+    # SUCCEED here, and would raise on the inherited default.
+    n, h, w = 2, 56, 70
+    assert loger_mod.LOGER_CONF_THRESHOLD < 1 / (1 + np.exp(3.0)) < 0.1
+    model = _FakeLoGeR(n, h, w, 80.0, 80.0, conf_logit=-3.0)
+
+    raw = _loaded_creator()._forward(model, torch.rand(n, 3, h, w))
+
+    assert raw["intrinsics"][0, 0, 0] == pytest.approx(80.0, rel=1e-3)
+
+
+def test_forward_extracts_depth_from_the_third_channel():
+    # LoGeR builds local_points as cat([xy * z, z]), so channel 2 IS depth — no
+    # reprojection needed to recover it.
+    n, h, w = 2, 56, 70
+    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+    assert raw["depth"].shape == (n, h, w, 1)
+    np.testing.assert_allclose(raw["depth"], 2.0, rtol=1e-5)
+
+
+def test_forward_passes_window_knobs_and_se3():
+    n, h, w = 2, 56, 70
+    model = _FakeLoGeR(n, h, w, 80.0, 80.0)
+    creator = _loaded_creator(se3=True, window_size=16, overlap_size=4)
+
+    creator._forward(model, torch.rand(n, 3, h, w))
+
+    assert model.seen_kwargs["window_size"] == 16
+    assert model.seen_kwargs["overlap_size"] == 4
+    assert model.seen_kwargs["se3"] is True
+    assert model.seen_kwargs["sim3"] is False
+
+
+def test_forward_rejects_rgb_outside_unit_range():
+    # Guards the a157421 [0,255] bug class at the source.
+    n, h, w = 2, 56, 70
+    model = _FakeLoGeR(n, h, w, 80.0, 80.0)
+    with pytest.raises(AssertionError, match=r"\[0, 1\]"):
+        _loaded_creator()._forward(model, torch.rand(n, 3, h, w) * 255.0)

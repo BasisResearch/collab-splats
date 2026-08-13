@@ -45,6 +45,7 @@ import yaml
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
+from ...geometry.transforms import estimate_intrinsics_from_points, invert_poses
 from .base import BaseFeedforwardCreator
 
 logger = logging.getLogger(__name__)
@@ -321,3 +322,84 @@ class LoGeRCreator(BaseFeedforwardCreator):
         )
 
         return views, image_paths, original_coords
+
+    def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
+        """Run windowed LoGeR inference; return raw outputs plus a solved shared K."""
+        # _se3 is populated by _load_model from the variant's yaml. None means _forward was
+        # reached without it — refuse rather than pick a default, because both values are
+        # legitimate (LoGeR is False, LoGeR_star is True) and guessing runs the wrong
+        # alignment mode with no error anywhere downstream.
+        if self._se3 is None:
+            raise RuntimeError("LoGeRCreator._forward requires _load_model to have run (se3 unset)")
+
+        device = next(model.parameters()).device
+        images = views.to(device)
+
+        # Guards the a157421 [0,255] bug class at the source rather than at the mesh.
+        assert 0.0 <= float(images.min()) and float(images.max()) <= 1.0, (
+            f"LoGeR expects RGB in [0, 1]; got [{float(images.min())}, {float(images.max())}]"
+        )
+
+        # Pi3 takes (B, N, 3, H, W). Kwargs mirror build_forward_kwargs in
+        # github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164, so behaviour matches
+        # upstream exactly; each name is popped in Pi3.forward at
+        # github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:584-593. sim3 stays False
+        # unconditionally: it and se3 are mutually exclusive and raise together (same file,
+        # :595-596), so LoGeR_star's se3=True has no valid sim3 counterpart.
+        with torch.no_grad():
+            preds = model(
+                images[None],
+                window_size=self.window_size,
+                overlap_size=self.overlap_size,
+                reset_every=self.reset_every,
+                num_iterations=self.num_iterations,
+                sim3=False,
+                sim3_scale_mode="median",
+                se3=self._se3,
+                turn_off_ttt=False,
+                turn_off_swa=False,
+            )
+
+        local_points = preds["local_points"].squeeze(0).cpu().float().numpy()  # (N,H,W,3)
+
+        # conf_head is a bare LinearPts3d with NO output activation —
+        # github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:172 — so the model emits
+        # logits, and upstream activates at the call site (github.com/PolyCam/LoGeR @
+        # 5d7c1a7, run_loger.py:481). This must run before the K fit, whose conf gate is a
+        # threshold on a probability. Measured on the Task 1 run, the raw logits span
+        # -4.257..-2.019 — entirely negative — so skipping the sigmoid does not merely
+        # shift the gate, it admits ZERO pixels and the fit raises.
+        depth_conf = torch.sigmoid(preds["conf"]).squeeze(0).cpu().float().numpy()
+        if depth_conf.ndim == 4:
+            depth_conf = depth_conf.squeeze(-1)  # (N,H,W)
+
+        # LoGeR returns camera-to-world; FeedforwardResult.extrinsics is world-to-camera.
+        camera_poses = preds["camera_poses"].squeeze(0).cpu().float().numpy()  # (N,4,4) c2w
+        extrinsic = invert_poses(camera_poses)[:, :3, :].astype(np.float32)  # (N,3,4) w2c
+
+        # LoGeR predicts no intrinsics — solve one shared K and broadcast it per frame.
+        #
+        # The threshold is passed EXPLICITLY, not inherited. estimate_intrinsics_from_points
+        # defaults to 0.1, which is right for a calibrated head but wrong for this one:
+        # sigmoid over the measured logit range -4.257..-2.019 gives a confidence band of
+        # [0.0140, 0.1172], so 0.1 is its 92nd PERCENTILE. At the default only 7.9% of
+        # pixels survive (12,217/155,232 on the Task 1 run), and a slightly duller scene —
+        # all logits below -2.2, still inside the measured band — admits none at all and
+        # raises. LOGER_CONF_THRESHOLD sits near the bottom of the band so the gate rejects
+        # only what the model calls junk, and the weighted median does the rest of the work.
+        k = estimate_intrinsics_from_points(local_points, depth_conf, LOGER_CONF_THRESHOLD)
+        intrinsic = np.broadcast_to(k, (local_points.shape[0], 3, 3)).copy()
+
+        # Channel 2 IS depth: the model builds local_points as cat([xy * z, z]) at
+        # github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:772-775.
+        depth = local_points[..., 2:3]  # (N,H,W,1)
+
+        return {
+            "images": images,
+            "extrinsic": extrinsic,
+            "intrinsics": intrinsic,
+            "intrinsics_downsampled": intrinsic,  # alias — _raw_to_world_points needs this key
+            "depth": depth,
+            "depth_conf": depth_conf,
+            "local_points": local_points,  # kept for the parity test only
+        }

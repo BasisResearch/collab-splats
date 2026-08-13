@@ -638,7 +638,7 @@ def test_omega_use_multiview_confidence_calls_compute_fn(tmp_path):
         "intrinsics_downsampled": np.eye(3, dtype=np.float32)[np.newaxis].repeat(N, axis=0),
     }
 
-    creator = VGGTOmegaCreator(use_multiview_confidence=True, mv_conf_threshold=0.0)
+    creator = VGGTOmegaCreator(use_multiview_confidence=True, min_views=1)
     creator.image_paths = [tmp_path / f"{i:06d}.jpg" for i in range(N)]
     creator.original_coords = np.zeros((N, 6), dtype=np.float32)
     creator.views = None

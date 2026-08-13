@@ -2,6 +2,7 @@
 
 Import from here — submodule structure is an implementation detail.
 """
+
 from __future__ import annotations
 
 # ── Public types and utilities ────────────────────────────────────────────────
@@ -11,6 +12,7 @@ from .base import (
     MultiviewConfidence,
     build_pycolmap_reconstruction,
     compute_multiview_depth_confidence,
+    multiview_mask,
 )
 
 # ── Concrete creators ─────────────────────────────────────────────────────────
@@ -57,4 +59,5 @@ __all__ = [
     "unproject_and_filter_points",
     "MultiviewConfidence",
     "compute_multiview_depth_confidence",
+    "multiview_mask",
 ]

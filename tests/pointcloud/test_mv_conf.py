@@ -6,6 +6,7 @@ import pytest
 from collab_splats.pointcloud.feedforward.base import (
     MultiviewConfidence,
     compute_multiview_depth_confidence,
+    multiview_mask,
 )
 
 
@@ -336,3 +337,58 @@ def test_single_view_is_unjudged():
     assert out.judged.tolist() == [False]
     assert out.valid_count.max() == 0
     assert out.inlier_count.max() == 0
+
+
+def test_min_views_one_matches_ratio_gt_zero():
+    """K=1 is exactly today's threshold=0.0, so MapAnything's mask is unchanged."""
+    N, H, W = 4, 8, 8
+    rng = np.random.default_rng(3)
+    depth = (rng.random((N, H, W)).astype(np.float32) + 0.5) * 3.0
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    for i in range(N):
+        extr[i, 0, 3] = 0.2 * i
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.05, device="cpu"
+    )
+    judged_pixels = np.broadcast_to(out.judged[:, None, None], out.ratio.shape)
+    np.testing.assert_array_equal((out.ratio > 0.0)[judged_pixels], (out.inlier_count >= 1)[judged_pixels])
+
+
+def test_unjudged_view_keeps_pixels():
+    """A view with no overlapping partners keeps its valid depth, matching upstream."""
+    N, H, W = 2, 8, 8
+    depth = np.full((N, H, W), 2.0, dtype=np.float32)
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    extr[1, 0, 3] = 1000.0  # disjoint frusta: neither view is judged
+    out = compute_multiview_depth_confidence(depth, np.stack([K, K]), extr, pair_gate=True, device="cpu")
+    mask = multiview_mask(out, depth > 0, min_views=2)
+    assert np.all(mask), "unjudged views must keep their valid pixels, not be deleted"
+
+
+def test_multiview_mask_respects_min_views():
+    """Judged views threshold on inlier_count; min_views is a count, not a ratio."""
+    N, H, W = 3, 4, 4
+    depth = np.full((N, H, W), 5.0, dtype=np.float32)
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.1, device="cpu"
+    )
+    assert np.all(multiview_mask(out, depth > 0, min_views=2))
+    assert not np.any(multiview_mask(out, depth > 0, min_views=3))
+
+
+def test_multiview_mask_respects_valid_depth():
+    """Pixels outside valid_depth are never resurrected by the mask helper."""
+    N, H, W = 2, 4, 4
+    depth = np.full((N, H, W), 5.0, dtype=np.float32)
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K, K]), extr, abs_thresh=0.0, rel_thresh=0.1, device="cpu"
+    )
+    valid = np.ones((N, H, W), dtype=bool)
+    valid[0, 0, 0] = False
+    assert not multiview_mask(out, valid, min_views=1)[0, 0, 0]

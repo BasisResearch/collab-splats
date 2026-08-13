@@ -51,6 +51,7 @@ from .base import (
     FeedforwardResult,
     _raw_to_world_points,
     compute_multiview_depth_confidence,
+    multiview_mask,
 )
 from .vggtx import unproject_and_filter_points
 
@@ -190,7 +191,12 @@ class LoGeRCreator(BaseFeedforwardCreator):
     pixel_limit: int = 255_000
     conf_threshold: float = 50.0
     use_multiview_confidence: bool = False
-    mv_conf_threshold: float = 0.0
+    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0.
+    min_views: int = 1
+    # abs_thresh stays 0.0 — LoGeR depth is non-metric, so a fixed-unit tolerance is
+    # meaningless and would break the scale invariance the shared function relies on.
+    mv_conf_abs_thresh: float = 0.0
+    mv_conf_rel_thresh: float = 0.05
 
     # Resolved in _load_model from the variant's yaml. se3 is declared under model:
     # but is a forward kwarg, so it cannot ride along in the constructor kwargs. None
@@ -307,9 +313,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
         # load_images_as_tensor enumerates a directory with os.listdir
         # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:21), which patching
         # Image.open cannot reach.
-        resized = np.stack(
-            [np.asarray(Image.fromarray(f).resize((target_w, target_h), Image.LANCZOS)) for f in frames]
-        )
+        resized = np.stack([np.asarray(Image.fromarray(f).resize((target_w, target_h), Image.LANCZOS)) for f in frames])
         # div_ rather than `/ 255.0`: the out-of-place divide would hold two full float32
         # copies at once, and this is the backend built for long sequences — measured at
         # 300 frames of 1080p that second copy is 914 MB. Safe in place because `resized`
@@ -342,9 +346,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
         images = views.to(device)
 
         # Guards the a157421 [0,255] bug class at the source rather than at the mesh.
-        assert 0.0 <= float(images.min()) and float(images.max()) <= 1.0, (
-            f"LoGeR expects RGB in [0, 1]; got [{float(images.min())}, {float(images.max())}]"
-        )
+        assert (
+            0.0 <= float(images.min()) and float(images.max()) <= 1.0
+        ), f"LoGeR expects RGB in [0, 1]; got [{float(images.min())}, {float(images.max())}]"
 
         # Pi3 takes (B, N, 3, H, W). Kwargs mirror build_forward_kwargs in
         # github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164, so behaviour matches
@@ -418,10 +422,10 @@ class LoGeRCreator(BaseFeedforwardCreator):
                 depth_np,
                 intrinsic,
                 extrinsics_to_homogeneous(extrinsic),
-                abs_thresh=0.0,
-                rel_thresh=0.05,
+                abs_thresh=self.mv_conf_abs_thresh,
+                rel_thresh=self.mv_conf_rel_thresh,
             )
-            mv_mask = mv_conf.ratio > self.mv_conf_threshold
+            mv_mask = multiview_mask(mv_conf, depth_np > 0, min_views=self.min_views)
 
         # Unproject to filtered world-space points and per-point colors. conf_threshold > 1.0
         # is read as a percentile by this function (vggtx.py:132-136), which is why the
@@ -455,9 +459,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
         # model. The parity test measures the gap between the two clouds.
         world_pts_flat, _ = _raw_to_world_points(raw_outputs, subsample=1)
         world_points = (
-            world_pts_flat.reshape(world_pts_flat.shape[0], model_h, model_w, 3)
-            if world_pts_flat is not None
-            else None
+            world_pts_flat.reshape(world_pts_flat.shape[0], model_h, model_w, 3) if world_pts_flat is not None else None
         )
 
         # confidence is a torch.Tensor and depth an np.ndarray by declaration

@@ -31,6 +31,7 @@ from .base import (
     _raw_to_world_points,
     compute_multiview_depth_confidence,
     frames_as_pil_source,
+    multiview_mask,
 )
 from .vggtx import unproject_and_filter_points
 
@@ -149,7 +150,12 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     resize_mode: str = "balanced"  # mode= passed to load_and_preprocess_images
     conf_threshold: float = 50.0
     use_multiview_confidence: bool = False
-    mv_conf_threshold: float = 0.0
+    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0.
+    min_views: int = 1
+    # abs_thresh stays 0.0 — VGGT depth is non-metric, so a fixed-unit tolerance is
+    # meaningless and would break the scale invariance the shared function relies on.
+    mv_conf_abs_thresh: float = 0.0
+    mv_conf_rel_thresh: float = 0.05
     enable_text_alignment: bool = False  # VGGTOmega(enable_alignment=True); sets resolution=256 when None
 
     def __post_init__(self) -> None:
@@ -251,10 +257,10 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
                 depth_np,
                 intrinsic,
                 extr_4x4,
-                abs_thresh=0.0,
-                rel_thresh=0.05,
+                abs_thresh=self.mv_conf_abs_thresh,
+                rel_thresh=self.mv_conf_rel_thresh,
             )
-            mv_mask = mv_conf.ratio > self.mv_conf_threshold
+            mv_mask = multiview_mask(mv_conf, depth_np > 0, min_views=self.min_views)
 
         # Unproject depth maps to filtered world-space points and per-point colors
         pts3d, colors, pixel_indices = unproject_and_filter_points(

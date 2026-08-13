@@ -428,6 +428,28 @@ class MultiviewConfidence:
     judged: np.ndarray  # (N,) bool — False when the view had no overlapping partners
 
 
+def multiview_mask(mv: MultiviewConfidence, valid_depth: np.ndarray, min_views: int = 1) -> np.ndarray:
+    """Boolean keep-mask from multiview confidence: at least min_views other views agree.
+
+    A count, not a ratio or a percentile. The ratio is a quantized k/N with a large atom at
+    1.0, so percentile thresholds collapse, and a ratio moves with sequence length while
+    "2 views agree" does not.
+
+    Unjudged views — those with no overlapping partners — keep their valid pixels. Absence
+    of evidence is not evidence of absence.
+
+    Args:
+        mv:          Output of compute_multiview_depth_confidence.
+        valid_depth: (N, H, W) bool — pixels eligible before mv filtering.
+        min_views:   K in "at least K other views agree". K=1 is the old threshold=0.0.
+    """
+    return np.where(
+        mv.judged[:, None, None],
+        (mv.inlier_count >= min_views) & valid_depth,
+        valid_depth,
+    )
+
+
 def compute_multiview_depth_confidence(
     depth: np.ndarray,
     intrinsics: np.ndarray,

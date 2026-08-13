@@ -40,6 +40,7 @@ from .base import (
     compute_multiview_depth_confidence,
     console,
     frames_as_pil_source,
+    multiview_mask,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,15 +136,18 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                                   exactly 1.0. Percentile-based thresholding is
                                   designed for smooth learned-confidence
                                   distributions, not quantized inlier ratios.
-                                  We bypass it and apply the shared
-                                  ``compute_multiview_depth_confidence`` function
-                                  with ``mv_conf_threshold`` directly instead.
+                                  We bypass it and threshold the shared
+                                  ``compute_multiview_depth_confidence`` output on
+                                  an inlier *count* via ``min_views`` instead.
         mv_conf_abs_thresh:       Absolute depth tolerance (metres) passed to
                                   ``compute_multiview_depth_confidence`` when
                                   ``use_multiview_confidence=True``. Calibrated
                                   for MapAnything metric depth scale.
-        mv_conf_threshold:        Minimum inlier count to keep a pixel (default
-                                  0.0 = keep any pixel with ≥1 agreeing view).
+        mv_conf_rel_thresh:       Relative depth tolerance (fraction of expected
+                                  depth) passed to the same function.
+        min_views:                Minimum number of other views that must agree to
+                                  keep a pixel (default 1 = keep any pixel with ≥1
+                                  agreeing view, matching upstream).
         minibatch_size:           Number of images processed per inference step.
                                   Reduce if running out of GPU memory.
         resize_mode:              Image resize strategy for ``load_images``.
@@ -176,8 +180,11 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     model_name: str = "facebook/map-anything"
     confidence_percentile: float = 35.0
     use_multiview_confidence: bool = True
-    mv_conf_abs_thresh: float = 0.02  # metric depth (metres) — calibrated for MapAnything
-    mv_conf_threshold: float = 0.0  # keep any pixel with ≥1 inlier view
+    # MapAnything depth is metric, so a 2 cm absolute floor is meaningful here and only here.
+    mv_conf_abs_thresh: float = 0.02
+    mv_conf_rel_thresh: float = 0.02
+    # K=1 is exactly the old mv_conf_threshold=0.0 — this preserves shipping behaviour.
+    min_views: int = 1
     minibatch_size: int = 1
     resize_mode: str = "fixed"  # "fixed" (aspect-ratio lookup table), "longest_side", "square"
     resolution: int = 518  # resolution_set= for "fixed"; size= for "longest_side"/"square"
@@ -446,9 +453,9 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                 stacked_extr,
                 depth_masks=combined_mask,
                 abs_thresh=self.mv_conf_abs_thresh,
-                rel_thresh=0.02,
+                rel_thresh=self.mv_conf_rel_thresh,
             )
-            combined_mask = combined_mask & (mv_conf.ratio > self.mv_conf_threshold)
+            combined_mask = multiview_mask(mv_conf, combined_mask, min_views=self.min_views)
 
         # Apply cross-frame random subsampling — same as VGGTX randomly_limit_trues on conf_mask
         if int(combined_mask.sum()) > self.max_points:

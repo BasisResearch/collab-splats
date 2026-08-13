@@ -2591,14 +2591,32 @@ budget (sx = sy = 0.35), so it cannot exercise the fx != fy path at all." -- tes
 
 **`configs/base.yaml` is being edited concurrently** (a `preprocessing.frame_proportion` removal as of 2026-08-13). Read the file immediately before editing, match on content rather than the line numbers quoted here, and stage with an explicit pathspec at commit time so an unrelated concurrent edit is not swept in.
 
-Replace the `max_frames` and `backend` lines and add the block. `max_frames` becomes:
-
-```yaml
-  max_frames: 300             # cap — vggt_omega OOMs above ~300 on 44 GB GPU.
-                              # NOT a LoGeR limit: LoGeR is windowed and built for
-                              # longer sequences, but preproc runs first, so this
-                              # caps it too. See configs/README.md.
-```
+> **CORRECTION (verified against `configs/base.yaml` on 2026-08-13): do not make the `max_frames`
+> edit as drafted — it has gone stale and is now a regression.**
+>
+> The concurrent `fps-frame-sampling` work has already landed. The line now reads:
+>
+> ```yaml
+>   max_frames: 300             # frame budget; vggt_omega OOMs above ~300 on a 44 GB GPU
+> ```
+>
+> Two things follow. First, **the "stale cap at 200" note below is describing a state that no longer
+> exists** — that comment is already gone; there is nothing to correct. Second, and more important,
+> **the drafted replacement calls `max_frames` a "cap", which actively undoes a deliberate
+> terminology fix.** `max_frames` now has ONE meaning across all three samplers — the *frame
+> budget*: the target COUNT for `uniform`, a ceiling for `fps` and `optical_flow`. "Cap" is simply
+> wrong for `uniform`, where it is the target, not a limit.
+>
+> **Keep the existing wording and append the LoGeR clause to it**, rather than replacing the line:
+>
+> ```yaml
+>   max_frames: 300             # frame budget; vggt_omega OOMs above ~300 on a 44 GB GPU.
+>                               # NOT a LoGeR limit — LoGeR is windowed and built for longer
+>                               # sequences — but preproc runs first, so it binds LoGeR too.
+>                               # See configs/README.md.
+> ```
+>
+> The same correction applies to Step 2's README row; see the note there.
 
 The `backend` line and the new block become:
 
@@ -2609,22 +2627,54 @@ The `backend` line and the new block become:
   # pipeline-level guard above.
   loger:
     variant: LoGeR_star       # LoGeR | LoGeR_star (SE(3)); selects config AND weights
-    window_size: 32           # sliding-window length (PolyCam/LoGeR run_loger.py default)
+    window_size: 32           # sliding-window length; upstream default, see README
     overlap_size: 3           # frames shared between adjacent windows
     reset_every: 0            # hard-reset TTT fast weights every N frames; 0 = never
     conf_threshold: 50.0      # depth-confidence PERCENTILE (0-100), not a raw value
 ```
 
-Note the stale "cap at 200" comment beside a value of 300 is corrected as part of this.
+> **These five values were verified against the built class on 2026-08-13** by introspecting
+> `LoGeRCreator.__init__` — `variant='LoGeR_star'`, `window_size=32`, `overlap_size=3`,
+> `reset_every=0`, `conf_threshold=50.0`. The YAML therefore restates the dataclass defaults and
+> changes no behaviour on its own; its job is to make the knobs discoverable and to give the Task 10
+> passthrough something real to carry. **Re-introspect rather than trusting this list** — the
+> constructor has grown since: `num_iterations`, `pixel_limit`, and the four multiview-confidence
+> kwargs (`use_multiview_confidence`, `min_views`, `mv_conf_abs_thresh`, `mv_conf_rel_thresh`, added
+> by the concurrent session) also exist. Documenting a curated subset is the right call — the four
+> multiview kwargs belong to `2026-08-12-multiview-confidence-all-models-design.md` and should be
+> documented there, once, for all backends — but say in the commit that the subset is deliberate.
+>
+> **`window_size: 32` is a citation and Step 0 governs it.** Write it as
+> `github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:<line>` in `configs/README.md` (the YAML comment
+> stays short and points at the README), and **read the line before writing the number** — that file
+> is not in the vendored tree, so it must be checked against the PolyCam fork, not `third_party/`.
+> A bare `run_loger.py` here would be the exact defect Step 0 exists to sweep.
 
 - [ ] **Step 2: Update `configs/README.md`**
 
 Same concurrency caution as Step 1 — match on row content, not line numbers.
 
-The `preprocessing.max_frames` row becomes:
-```markdown
-| `preprocessing.max_frames` | int\|null | `300` | Cap on frames (vggt_omega OOMs above ~300; not a LoGeR limit — see below) |
-```
+> **CORRECTION (verified against `configs/README.md` on 2026-08-13): do not replace the
+> `preprocessing.max_frames` row.** The `fps-frame-sampling` work rewrote it and added three
+> siblings plus a whole "Choosing a frame sampler" section. It currently reads:
+>
+> ```markdown
+> | `preprocessing.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300) |
+> ```
+>
+> The drafted replacement drops the per-method distinction that row was just given, for the same
+> reason set out in Step 1. **Append the LoGeR clause instead of overwriting**, keeping the budget
+> wording intact:
+>
+> ```markdown
+> | `preprocessing.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
+> ```
+>
+> The "see below" needs somewhere to point. The existing **"`max_frames` still dominates on long
+> video"** paragraph in "Choosing a frame sampler" is the natural home: it already says the cap is a
+> measured GPU limit that `fps` cannot route around. Add one sentence there noting the limit is
+> `vggt_omega`'s rather than the pipeline's, and that `loger` is windowed and expected to run past
+> it — with the number Task 14 measures, or an explicit "not yet swept" if Task 14 has not run.
 
 The `pointcloud.backend` row becomes:
 ```markdown

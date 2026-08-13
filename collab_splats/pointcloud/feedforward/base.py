@@ -375,6 +375,20 @@ def _raw_to_world_points(raw: dict, subsample: int = 8) -> tuple[np.ndarray | No
     return all_pts, all_conf
 
 
+@dataclass
+class MultiviewConfidence:
+    """Per-pixel cross-view depth agreement, with the raw accumulators kept.
+
+    ``ratio`` is upstream-compatible (inlier / valid). The counts are free — both
+    accumulators already exist in the loop — and downstream filtering thresholds on them.
+    """
+
+    ratio: np.ndarray  # (N, H, W) float32 — inlier_count / valid_count, 0 where valid_count == 0
+    inlier_count: np.ndarray  # (N, H, W) int32
+    valid_count: np.ndarray  # (N, H, W) int32
+    judged: np.ndarray  # (N,) bool — False when the view had no overlapping partners
+
+
 def compute_multiview_depth_confidence(
     depth: np.ndarray,
     intrinsics: np.ndarray,
@@ -383,7 +397,7 @@ def compute_multiview_depth_confidence(
     abs_thresh: float = 0.0,
     rel_thresh: float = 0.05,
     device: str = "cuda",
-) -> np.ndarray:
+) -> MultiviewConfidence:
     """Geometric cross-view depth consistency confidence per pixel.
 
     For each source pixel, projects it into all other frames and checks whether
@@ -398,6 +412,9 @@ def compute_multiview_depth_confidence(
         abs_thresh:  Absolute depth tolerance (depth units). 0.0 for non-metric depth.
         rel_thresh:  Relative depth tolerance as fraction of expected depth.
         device:      Torch device for computation.
+
+    Returns:
+        MultiviewConfidence — ratio plus both accumulators and a per-view judged flag.
     """
     dev = torch.device(device if device != "cuda" or torch.cuda.is_available() else "cpu")
     N, H, W = depth.shape
@@ -483,13 +500,20 @@ def compute_multiview_depth_confidence(
             inlier_sum[i] += inlier.reshape(H, W).float()
             valid_sum[i] += valid_ij.reshape(H, W).float()
 
-    # Pixels with no overlapping views → confidence = 0
-    mv_conf = torch.where(
+    # ratio is 0 where no view overlapped; the judged flag distinguishes "no evidence"
+    # from "evidence against", which the mask helper needs and a bare ratio cannot express.
+    ratio = torch.where(
         valid_sum > 0,
         inlier_sum / valid_sum.clamp(min=1.0),
         torch.zeros_like(inlier_sum),
     )
-    return mv_conf.cpu().numpy().astype(np.float32)
+    judged = (valid_sum.reshape(N, -1).sum(dim=1) > 0).cpu().numpy()
+    return MultiviewConfidence(
+        ratio=ratio.cpu().numpy().astype(np.float32),
+        inlier_count=inlier_sum.cpu().numpy().astype(np.int32),
+        valid_count=valid_sum.cpu().numpy().astype(np.int32),
+        judged=judged,
+    )
 
 
 # ── COLMAP reconstruction builders ────────────────────────────────────────────

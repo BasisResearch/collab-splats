@@ -448,7 +448,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                 abs_thresh=self.mv_conf_abs_thresh,
                 rel_thresh=0.02,
             )
-            combined_mask = combined_mask & (mv_conf > self.mv_conf_threshold)
+            combined_mask = combined_mask & (mv_conf.ratio > self.mv_conf_threshold)
 
         # Apply cross-frame random subsampling — same as VGGTX randomly_limit_trues on conf_mask
         if int(combined_mask.sum()) > self.max_points:

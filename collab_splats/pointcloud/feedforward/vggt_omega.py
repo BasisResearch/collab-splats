@@ -254,7 +254,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
                 abs_thresh=0.0,
                 rel_thresh=0.05,
             )
-            mv_mask = mv_conf > self.mv_conf_threshold
+            mv_mask = mv_conf.ratio > self.mv_conf_threshold
 
         # Unproject depth maps to filtered world-space points and per-point colors
         pts3d, colors, pixel_indices = unproject_and_filter_points(

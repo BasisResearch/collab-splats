@@ -5,7 +5,13 @@ Import from here — submodule structure is an implementation detail.
 from __future__ import annotations
 
 # ── Public types and utilities ────────────────────────────────────────────────
-from .base import FeedforwardResult, BaseFeedforwardCreator, build_pycolmap_reconstruction, compute_multiview_depth_confidence
+from .base import (
+    FeedforwardResult,
+    BaseFeedforwardCreator,
+    MultiviewConfidence,
+    build_pycolmap_reconstruction,
+    compute_multiview_depth_confidence,
+)
 
 # ── Concrete creators ─────────────────────────────────────────────────────────
 from .vggtx import VGGTXCreator
@@ -17,6 +23,14 @@ from .vggt_spark_creator import VGGTSPARKCreator
 # vggt_omega.py itself; here we expose it only when the package is present.
 try:
     from .vggt_omega import VGGTOmegaCreator
+except ImportError:
+    pass
+
+# loger is an optional backend — the model tree is vendored by setup/loger.sh into
+# the gitignored third_party/. The vendored import is deferred to _load_model, so
+# this only guards against the module itself being absent.
+try:
+    from .loger import LoGeRCreator
 except ImportError:
     pass
 
@@ -40,5 +54,6 @@ __all__ = [
     "VGGTOmegaCreator",
     "VGGTSPARKCreator",
     "unproject_and_filter_points",
+    "MultiviewConfidence",
     "compute_multiview_depth_confidence",
 ]

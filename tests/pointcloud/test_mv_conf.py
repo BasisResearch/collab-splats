@@ -2,7 +2,10 @@
 import numpy as np
 import pytest
 
-from collab_splats.pointcloud.feedforward.base import compute_multiview_depth_confidence
+from collab_splats.pointcloud.feedforward.base import (
+    MultiviewConfidence,
+    compute_multiview_depth_confidence,
+)
 
 
 def _make_intrinsics(H: int, W: int) -> np.ndarray:
@@ -23,7 +26,7 @@ def test_compute_mv_conf_identical_cameras():
 
     mv_conf = compute_multiview_depth_confidence(
         depth, intrinsics, extrinsics, abs_thresh=0.0, rel_thresh=0.1, device="cpu"
-    )
+    ).ratio
 
     assert mv_conf.shape == (N, H, W)
     assert mv_conf.dtype == np.float32
@@ -43,7 +46,7 @@ def test_compute_mv_conf_depth_disagreement():
 
     mv_conf = compute_multiview_depth_confidence(
         depth, intrinsics, extrinsics, abs_thresh=0.0, rel_thresh=0.05, device="cpu"
-    )
+    ).ratio
 
     assert np.all(mv_conf == 0.0), f"Expected all 0.0; max={mv_conf.max():.4f}"
 
@@ -62,7 +65,7 @@ def test_compute_mv_conf_depth_masks_source():
     mv_conf = compute_multiview_depth_confidence(
         depth, intrinsics, extrinsics,
         depth_masks=depth_masks, abs_thresh=0.0, rel_thresh=0.1, device="cpu",
-    )
+    ).ratio
 
     assert np.all(mv_conf[0] == 0.0), f"Frame 0 should be 0; got {mv_conf[0]}"
     assert np.any(mv_conf[1] > 0.0), "Frame 1 should have some inliers"
@@ -78,5 +81,59 @@ def test_compute_mv_conf_output_shape():
         extrinsics = np.stack([np.eye(4, dtype=np.float32)] * N)
         out = compute_multiview_depth_confidence(
             depth, intrinsics, extrinsics, device="cpu"
-        )
+        ).ratio
         assert out.shape == (N, H, W), f"N={N}: expected {(N,H,W)}, got {out.shape}"
+
+
+def test_returns_multiview_confidence_dataclass():
+    """The function returns MultiviewConfidence with ratio, both counts, and judged."""
+    N, H, W = 2, 4, 4
+    depth = np.full((N, H, W), 5.0, dtype=np.float32)
+    K = _make_intrinsics(H, W)
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K, K]), np.stack([np.eye(4, dtype=np.float32)] * 2),
+        abs_thresh=0.0, rel_thresh=0.1, device="cpu",
+    )
+    assert isinstance(out, MultiviewConfidence)
+    assert out.ratio.shape == (N, H, W)
+    assert out.ratio.dtype == np.float32
+    assert out.inlier_count.shape == (N, H, W)
+    assert out.inlier_count.dtype == np.int32
+    assert out.valid_count.shape == (N, H, W)
+    assert out.valid_count.dtype == np.int32
+    assert out.judged.shape == (N,)
+    assert out.judged.dtype == np.bool_
+
+
+def test_counts_consistent_with_ratio():
+    """ratio == inlier_count / valid_count wherever valid_count > 0, else 0."""
+    N, H, W = 3, 6, 6
+    rng = np.random.default_rng(0)
+    depth = (rng.random((N, H, W)).astype(np.float32) + 1.0) * 2.0
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    for i in range(N):
+        extr[i, 0, 3] = 0.1 * i
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K] * N), extr, abs_thresh=0.0, rel_thresh=0.1, device="cpu"
+    )
+    expected = np.where(
+        out.valid_count > 0,
+        out.inlier_count / np.maximum(out.valid_count, 1),
+        0.0,
+    ).astype(np.float32)
+    np.testing.assert_allclose(out.ratio, expected, rtol=0, atol=0)
+    assert np.all(out.inlier_count <= out.valid_count)
+
+
+def test_single_view_is_unjudged():
+    """N=1 has no partners: judged is False and every count is zero."""
+    H, W = 4, 4
+    depth = np.full((1, H, W), 3.0, dtype=np.float32)
+    K = _make_intrinsics(H, W)
+    out = compute_multiview_depth_confidence(
+        depth, K[None], np.eye(4, dtype=np.float32)[None], device="cpu"
+    )
+    assert out.judged.tolist() == [False]
+    assert out.valid_count.max() == 0
+    assert out.inlier_count.max() == 0

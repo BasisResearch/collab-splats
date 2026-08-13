@@ -228,7 +228,14 @@ def test_vggtx_use_multiview_confidence_calls_compute_fn(tmp_path):
     creator.original_coords = np.zeros((N, 6), dtype=np.float32)
     creator.views = None
 
-    mv_conf_ones = np.ones((N, H, W), dtype=np.float32)
+    from collab_splats.pointcloud.feedforward.base import MultiviewConfidence
+
+    mv_conf_ones = MultiviewConfidence(
+        ratio=np.ones((N, H, W), dtype=np.float32),
+        inlier_count=np.ones((N, H, W), dtype=np.int32),
+        valid_count=np.ones((N, H, W), dtype=np.int32),
+        judged=np.ones(N, dtype=bool),
+    )
 
     with patch(
         "collab_splats.pointcloud.feedforward.vggtx.compute_multiview_depth_confidence",

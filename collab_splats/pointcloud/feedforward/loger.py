@@ -421,7 +421,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
                 abs_thresh=0.0,
                 rel_thresh=0.05,
             )
-            mv_mask = mv_conf > self.mv_conf_threshold
+            mv_mask = mv_conf.ratio > self.mv_conf_threshold
 
         # Unproject to filtered world-space points and per-point colors. conf_threshold > 1.0
         # is read as a percentile by this function (vggtx.py:132-136), which is why the

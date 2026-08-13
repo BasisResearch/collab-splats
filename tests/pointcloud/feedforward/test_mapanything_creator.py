@@ -11,7 +11,7 @@ from collab_splats.pointcloud.feedforward import (
     BaseFeedforwardCreator,
     MapAnythingCreator,
 )
-from collab_splats.pointcloud.feedforward.base import _raw_to_world_points
+from collab_splats.pointcloud.feedforward.base import MultiviewConfidence, _raw_to_world_points
 from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel
 
 
@@ -665,7 +665,12 @@ def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
             )
         return preds
 
-    mv_conf_return = np.ones((2, 4, 4), dtype=np.float32)
+    mv_conf_return = MultiviewConfidence(
+        ratio=np.ones((2, 4, 4), dtype=np.float32),
+        inlier_count=np.ones((2, 4, 4), dtype=np.int32),
+        valid_count=np.ones((2, 4, 4), dtype=np.int32),
+        judged=np.ones(2, dtype=bool),
+    )
 
     with (
         patch(

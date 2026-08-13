@@ -17,6 +17,8 @@ import numpy as np
 import pytest
 import torch
 
+from collab_splats.pointcloud.feedforward.base import MultiviewConfidence
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 N_FRAMES = 4
@@ -208,7 +210,12 @@ def test_mapanything_postprocess_pipeline(tmp_path):
         ),
         patch(
             "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
-            side_effect=lambda depth, *a, **kw: np.ones_like(depth),
+            side_effect=lambda depth, *a, **kw: MultiviewConfidence(
+                ratio=np.ones_like(depth, dtype=np.float32),
+                inlier_count=np.ones_like(depth, dtype=np.int32),
+                valid_count=np.ones_like(depth, dtype=np.int32),
+                judged=np.ones(depth.shape[0], dtype=bool),
+            ),
         ),
     ):
         result = creator._postprocess(synthetic_views)

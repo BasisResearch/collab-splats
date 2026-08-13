@@ -133,9 +133,10 @@ fit is shared across frames.
 `build_forward_kwargs` (L149) is **read for its behaviour, not ported** — the forward kwargs come
 from the vendored yaml directly.
 
-**The resize rule is cited to the vendored tree, not to PolyCam.** `run_loger.py:117
-load_images` implements it, but so does `loger/utils/basic.py:51-63` inside the package we
-actually ship (`load_images_as_tensor`), with identical arithmetic:
+**The resize rule is cited to the vendored tree, not to PolyCam.** github.com/PolyCam/LoGeR @
+5d7c1a7, `run_loger.py:117` (`load_images`) implements it, but so does
+github.com/Junyi42/LoGeR @ 7685b7a, `loger/utils/basic.py:55-61` inside the package we
+actually ship (`load_images_as_tensor`, signature at `basic.py:11`), with identical arithmetic:
 `scale = sqrt(PIXEL_LIMIT / (W*H))`, independent `round(·/14)` per axis, then the shrink loop.
 Porting ~10 lines out of a file we vendor is better provenance than copying the same lines from
 a fork we discard.
@@ -406,7 +407,8 @@ defaults, which are wrong for both variants (`ttt_inter_multi` is 4 in both conf
 ### `_preprocess(frames, frame_idxs) -> (views, image_paths, original_coords)`
 
 Synthetic `frame_{idx:06d}` labels, the VGGT-Omega convention — the frame store is the only IO
-path and there are no real filenames. Target size from LoGeR's own rule (`loger/utils/basic.py:51-63`):
+path and there are no real filenames. Target size from LoGeR's own rule
+(github.com/Junyi42/LoGeR @ 7685b7a, `loger/utils/basic.py:55-61`):
 `scale = sqrt(pixel_limit / (W * H))`, round each axis to a multiple of 14, shrink the longer
 axis until under budget. Then PIL LANCZOS per frame → `(N, 3, H, W)` float in `[0, 1]`. No
 monkeypatch — see the `frames_as_pil_source` note above.

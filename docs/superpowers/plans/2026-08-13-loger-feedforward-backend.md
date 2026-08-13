@@ -52,7 +52,7 @@ Write the long form in the code, not the short form. Every module-level helper d
 
 **1. Placement.** The spec put both new functions in `loger.py`. Two of the three now live in `collab_splats/geometry/transforms.py` instead — `estimate_intrinsics_from_points` (public) and its private helper `_compute_weighted_median`. The maths is model-agnostic: it takes a camera-frame pointmap and per-pixel confidence, which any pointmap backend without an intrinsics head produces. `transforms.py` already describes itself as "Pure-numpy camera geometry utilities shared across the pipeline" and already holds `extract_intrinsics`, and the repo's precedent for a function that *produces* a K is `seed_intrinsics` (`localization/localizer.py:24`) — verb + noun, no backend tag. Leaving them in `loger.py` would put a third intrinsics helper in a fourth location. Cost of the move, stated plainly: one caller today, and the `conf > 0.1` gate becomes a documented keyword default instead of a constant.
 
-**2. A third function.** The spec's "Genuinely new" section names **two**. This plan adds `_compute_target_size`, which does stay in `loger.py`. Justification, since the spec requires one for every addition: it is a ~10-line algorithm with a `while` loop that must stay behaviourally identical to the vendored loader (`loger/utils/basic.py:51-63`) or the model receives out-of-distribution input, it is the sole source of the resize anisotropy that three other decisions depend on, and it is the only part of `_preprocess` that can be tested without a model — including against the vendored loader directly. Inlining it would make the anisotropy untestable in isolation. This is a different case from the rejected `_loger_original_coords`, which would have wrapped `np.tile` of a constant row.
+**2. A third function.** The spec's "Genuinely new" section names **two**. This plan adds `_compute_target_size`, which does stay in `loger.py`. Justification, since the spec requires one for every addition: it is a ~10-line algorithm with a `while` loop that must stay behaviourally identical to the vendored loader (github.com/Junyi42/LoGeR @ 7685b7a, `loger/utils/basic.py:55-61`) or the model receives out-of-distribution input, it is the sole source of the resize anisotropy that three other decisions depend on, and it is the only part of `_preprocess` that can be tested without a model — including against the vendored loader directly. Inlining it would make the anisotropy untestable in isolation. This is a different case from the rejected `_loger_original_coords`, which would have wrapped `np.tile` of a constant row.
 
 ---
 
@@ -687,7 +687,12 @@ def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
             np.random.default_rng(i).integers(0, 255, (orig_h, orig_w, 3), dtype=np.uint8)
         ).save(tmp_path / f"{i:04d}.jpg")
 
-    upstream = load_images_as_tensor(str(tmp_path), pixel_limit=255_000)
+    # PIXEL_LIMIT is upstream's casing, not a typo on our side — the vendored signature
+    # is `load_images_as_tensor(path, interval, PIXEL_LIMIT, Target_W, Target_H)` at
+    # github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:11. Passing it explicitly
+    # rather than leaning on its default is what makes this a parity test of the SAME
+    # budget our own call uses; a silent default drift upstream would otherwise pass.
+    upstream = load_images_as_tensor(str(tmp_path), PIXEL_LIMIT=255_000)
     _, _, up_h, up_w = upstream.shape
 
     assert _compute_target_size(orig_w, orig_h, pixel_limit=255_000) == (up_w, up_h)
@@ -775,8 +780,10 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
     spec — area budget, both axes multiples of 14, shrink whichever axis sits furthest
     above the target aspect until the budget is met — and that behaviour is pinned by
     a measured parity test against the vendored loader
-    (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/utils/basic.py:51-63``, inside
-    ``load_images_as_tensor``), not asserted.  See
+    (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/utils/basic.py:55-61``, inside
+    ``load_images_as_tensor``, whose signature is at ``basic.py:11``), not asserted.
+    Lines 62-63 there are a Target_W/Target_H override we deliberately do not
+    reimplement — we always compute the size, never accept one.  See
     ``test_target_size_matches_the_vendored_loader``.
 
     The two axes round **independently**, so exact aspect ratio is not preserved —

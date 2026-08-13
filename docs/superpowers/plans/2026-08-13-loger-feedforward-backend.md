@@ -1883,38 +1883,66 @@ pass and then die deep inside the LC loop."
 - Modify: `tests/pointcloud/test_registry.py`
 - Create: `tests/pointcloud/feedforward/test_loger_load_guard.py`
 
+> **Plan correction (verified against the tree before dispatch).** The draft below contained a
+> self-contradiction and one vacuous test. Both are fixed here; the reasoning is recorded because
+> the same mistake is easy to re-introduce.
+>
+> **1. The `skipif` was backwards and is deleted.** The draft guarded `test_get_creator_loger` on
+> `_LOGER_ROOT.exists()` while the *other* new test asserts loger.py imports fine **without** the
+> vendored tree. Both cannot be right. The design is the second one: the vendored import is
+> deferred into `_load_model`, so `import collab_splats.pointcloud` populates `_REGISTRY["loger"]`
+> whether or not `third_party/LoGeR` is present. A `skipif` therefore skips the registry test in
+> exactly the environment that most needs it — a bare CI checkout — leaving the wiring unverified
+> where it is most likely to break. The draft commit message even claimed the guarded test "is the
+> only thing that proves the wiring", which is the argument *against* guarding it.
+>
+> **2. `test_module_imports_without_the_vendored_tree` was vacuous** and needs a real assertion.
+> `third_party/LoGeR` IS vendored in this dev environment, so "the import at the top of this file
+> IS the assertion" proves nothing about the bare-checkout case it names. Assert the observable
+> consequence instead: after importing `loger`, no vendored module may be in `sys.modules`.
+>
+> **3. Pre-existing wart, mirror it, do not fix it.** `__all__` in
+> `collab_splats/pointcloud/feedforward/__init__.py` already lists `VGGTOmegaCreator` even though
+> its import is guarded, so `import *` raises `AttributeError` when that backend is absent. Adding
+> `"LoGeRCreator"` alongside reproduces the wart. That is correct for this task — consistency beats
+> a one-backend fix — but do not describe it as safe.
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `tests/pointcloud/test_registry.py`:
 
 ```python
-_LOGER_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "LoGeR"
-
-
-@pytest.mark.skipif(not _LOGER_ROOT.exists(), reason="third_party/LoGeR not vendored")
 def test_get_creator_loger():
+    # NOT guarded on third_party/LoGeR being present: the vendored import is deferred
+    # into _load_model, so the registry entry exists in a bare checkout too. Guarding
+    # this would skip it in exactly the environment where the wiring can break.
     from collab_splats.pointcloud.feedforward import LoGeRCreator
 
     assert get_creator("loger") is LoGeRCreator
 ```
 
-Add `from pathlib import Path` to that file's imports.
+No new imports are needed in that file.
 
 Create `tests/pointcloud/feedforward/test_loger_load_guard.py`:
 
 ```python
 """LoGeR fails at _load_model time, not import time — the guard that keeps the
 registry importable in a bare checkout with no vendored tree."""
+import sys
+
 import pytest
 
 from collab_splats.pointcloud.feedforward.loger import _LOGER_ROOT, LoGeRCreator
 
 
-def test_module_imports_without_the_vendored_tree():
+def test_module_import_does_not_touch_the_vendored_tree():
     # loger.py must not import from third_party at module level. If it did, a bare
-    # checkout would break `import collab_splats.pointcloud` entirely rather than
-    # just omitting the backend. The import at the top of this file IS the assertion.
-    assert LoGeRCreator is not None
+    # checkout would break `import collab_splats.pointcloud` entirely rather than just
+    # omitting the backend. Asserting `LoGeRCreator is not None` would be vacuous here
+    # — the tree IS vendored in this environment — so assert the observable
+    # consequence: importing the module must not have pulled the vendored package in.
+    assert "pi3" not in sys.modules
+    assert not any(m.startswith("loger.") for m in sys.modules)
 
 
 def test_load_model_names_the_setup_script(tmp_path, monkeypatch):
@@ -1934,6 +1962,16 @@ def test_root_points_at_third_party():
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_registry.py tests/pointcloud/feedforward/test_loger_load_guard.py -v -p no:randomly`
 Expected: `test_get_creator_loger` fails with `ImportError: cannot import name 'LoGeRCreator'`
+
+> **Verify the module names in `test_module_import_does_not_touch_the_vendored_tree` rather than
+> trusting them.** `"pi3"` and `"loger.*"` are inferred from the vendored layout
+> (`loger/models/pi3.py` in `github.com/Junyi42/LoGeR @ 7685b7a`) and from how `_load_model`
+> inserts `_LOGER_ROOT` on `sys.path` — but which key actually lands in `sys.modules` depends on
+> the exact import statement `_load_model` uses. Read `_load_model`, then **prove the assertion
+> can fail**: import the vendored package by hand in a throwaway process, confirm the key you are
+> asserting on really appears, and only then keep the assertion. An assertion on a module name
+> that never appears under any circumstance passes forever and pins nothing — that failure mode
+> has already cost this task nine review findings.
 
 - [ ] **Step 3: Wire the exports**
 
@@ -1981,11 +2019,12 @@ git commit -m "feat(loger): register the loger backend
 
 Guarded export mirroring VGGTOmegaCreator. The vendored tree is imported inside
 _load_model behind a sys.path insert, so a bare checkout omits the backend
-rather than breaking `import collab_splats.pointcloud`.
+rather than breaking \`import collab_splats.pointcloud\`.
 
-The registry test is skipif-guarded on the tree being present, unlike
-vggt_omega and vggt_spark which are simply omitted — the guarded test is the
-only thing that proves the wiring."
+The registry test is deliberately NOT skipif-guarded on third_party/LoGeR being
+present. Because the vendored import is deferred, the registry entry exists in a
+bare checkout too, so guarding the test would skip it in exactly the environment
+where the wiring is most likely to break."
 ```
 
 ---

@@ -375,6 +375,45 @@ def _raw_to_world_points(raw: dict, subsample: int = 8) -> tuple[np.ndarray | No
     return all_pts, all_conf
 
 
+def _frustum_world_aabbs(depth_t: torch.Tensor, K: torch.Tensor, cam2world: torch.Tensor) -> torch.Tensor:
+    """World-space axis-aligned bounds of each view's depth frustum. (N, 2, 3) [min, max].
+
+    Deliberately conservative: an AABB over the 8 frustum corners is a superset of the
+    frustum, so a pair that truly overlaps can never be gated out. Over-inclusion costs
+    only compute.
+    """
+    N, H, W = depth_t.shape
+    dev = depth_t.device
+    # Four image corners as homogeneous pixel coords
+    corners = torch.tensor(
+        [[0.0, 0.0, 1.0], [W - 1.0, 0.0, 1.0], [0.0, H - 1.0, 1.0], [W - 1.0, H - 1.0, 1.0]],
+        dtype=torch.float32,
+        device=dev,
+    )  # (4, 3)
+    bounds = torch.zeros(N, 2, 3, dtype=torch.float32, device=dev)
+    for i in range(N):
+        d = depth_t[i]
+        pos = d[d > 0]
+        if pos.numel() == 0:
+            # No valid depth: an empty frustum that intersects nothing
+            bounds[i, 0] = float("inf")
+            bounds[i, 1] = float("-inf")
+            continue
+        near, far = pos.min(), pos.max()
+        rays = (torch.linalg.inv(K[i]) @ corners.T).T  # (4, 3)
+        pts_cam = torch.cat([rays * near, rays * far], dim=0)  # (8, 3)
+        pts_h = torch.cat([pts_cam, torch.ones(8, 1, dtype=torch.float32, device=dev)], dim=-1)
+        pts_world = (cam2world[i] @ pts_h.T).T[:, :3]  # (8, 3)
+        bounds[i, 0] = pts_world.min(dim=0).values
+        bounds[i, 1] = pts_world.max(dim=0).values
+    return bounds
+
+
+def _aabbs_overlap(a: torch.Tensor, b: torch.Tensor) -> bool:
+    """True when two (2, 3) [min, max] boxes intersect on every axis."""
+    return bool(torch.all(a[0] <= b[1]) and torch.all(b[0] <= a[1]))
+
+
 @dataclass
 class MultiviewConfidence:
     """Per-pixel cross-view depth agreement, with the raw accumulators kept.
@@ -396,6 +435,7 @@ def compute_multiview_depth_confidence(
     depth_masks: Optional[np.ndarray] = None,
     abs_thresh: float = 0.0,
     rel_thresh: float = 0.05,
+    pair_gate: bool = True,
     device: str = "cuda",
 ) -> MultiviewConfidence:
     """Geometric cross-view depth consistency confidence per pixel.
@@ -411,6 +451,8 @@ def compute_multiview_depth_confidence(
         depth_masks: (N, H, W) bool — source pixels to include; None = all valid depth.
         abs_thresh:  Absolute depth tolerance (depth units). 0.0 for non-metric depth.
         rel_thresh:  Relative depth tolerance as fraction of expected depth.
+        pair_gate:   Skip view pairs whose depth frusta cannot overlap. Cost optimisation
+                     only — the AABB test is conservative, so results are unchanged.
         device:      Torch device for computation.
 
     Returns:
@@ -423,6 +465,9 @@ def compute_multiview_depth_confidence(
     K = torch.from_numpy(intrinsics.astype(np.float32)).to(dev)
     E = torch.from_numpy(extrinsics.astype(np.float32)).to(dev)
     cam2world = torch.linalg.inv(E)
+
+    # Conservative frustum bounds so non-overlapping pairs never launch a GPU kernel
+    aabbs = _frustum_world_aabbs(depth_t, K, cam2world) if pair_gate else None
 
     # Build pixel grid [x, y, 1] for each pixel in (H, W)
     rows, cols = torch.meshgrid(
@@ -459,6 +504,8 @@ def compute_multiview_depth_confidence(
 
         for j in range(N):
             if i == j:
+                continue
+            if aabbs is not None and not _aabbs_overlap(aabbs[i], aabbs[j]):
                 continue
 
             # Project world points into frame j; compute expected depth and pixel coords

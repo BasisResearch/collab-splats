@@ -115,6 +115,37 @@ def test_nearest_sampling_no_fabricated_depth():
     )
 
 
+def test_pair_gate_does_not_change_output():
+    """The gate is a cost optimisation: gated and ungated results must be identical."""
+    N, H, W = 4, 8, 8
+    rng = np.random.default_rng(7)
+    depth = (rng.random((N, H, W)).astype(np.float32) + 1.0) * 3.0
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    for i in range(N):
+        extr[i, 0, 3] = 0.3 * i
+    kw = dict(abs_thresh=0.0, rel_thresh=0.05, device="cpu")
+    gated = compute_multiview_depth_confidence(depth, np.stack([K] * N), extr, pair_gate=True, **kw)
+    plain = compute_multiview_depth_confidence(depth, np.stack([K] * N), extr, pair_gate=False, **kw)
+    np.testing.assert_array_equal(gated.inlier_count, plain.inlier_count)
+    np.testing.assert_array_equal(gated.valid_count, plain.valid_count)
+    np.testing.assert_array_equal(gated.judged, plain.judged)
+
+
+def test_pair_gate_skips_disjoint_views():
+    """Two views looking at scenes 1000 units apart share no frustum volume."""
+    N, H, W = 2, 8, 8
+    depth = np.full((N, H, W), 2.0, dtype=np.float32)
+    K = _make_intrinsics(H, W)
+    extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(N)])
+    extr[1, 0, 3] = 1000.0
+    out = compute_multiview_depth_confidence(
+        depth, np.stack([K, K]), extr, pair_gate=True, device="cpu"
+    )
+    assert out.valid_count.max() == 0, "disjoint views should contribute nothing"
+    assert out.judged.tolist() == [False, False]
+
+
 def test_returns_multiview_confidence_dataclass():
     """The function returns MultiviewConfidence with ratio, both counts, and judged."""
     N, H, W = 2, 4, 4

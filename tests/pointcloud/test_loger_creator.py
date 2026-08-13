@@ -4,25 +4,37 @@ import types
 
 import numpy as np
 import pytest
+import torch
 import yaml
 from PIL import Image
 
 from collab_splats.pointcloud.feedforward import loger as loger_mod
 from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
 
-# LoGeRCreator subclasses an ABC (BasePointcloudCreator, collab_splats/pointcloud/base.py:101)
-# and Tasks 6-8 own the five remaining abstract methods, so the class cannot be
-# instantiated yet. These tests are correct as written and are the reason the fields and
-# routing below are shaped the way they are — they run for real the moment Task 8 lands.
-#
-# strict=True is the point: when the last abstract method arrives these turn XPASS, which
-# pytest reports as a FAILURE, forcing this marker to be deleted. A non-strict xfail would
-# quietly survive its own cause and hide whatever it was guarding.
-_NEEDS_FULL_CREATOR = pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason="LoGeRCreator's abstract methods land in Tasks 6-8; remove this marker there",
-)
+
+def _creator(**kwargs) -> LoGeRCreator:
+    """LoGeRCreator with only the not-yet-implemented abstract methods stubbed out."""
+    # BasePointcloudCreator is an abc.ABC (collab_splats/pointcloud/base.py:101). Stubbing
+    # ONLY the unwritten methods keeps every test below pointed at real code as it lands,
+    # rather than deferring all signal to the task that happens to close the ABC.
+    # Each task deletes the stub it just implemented. Task 8 deletes this helper entirely.
+    # Signatures are copied from the abstract declarations
+    # (collab_splats/pointcloud/feedforward/base.py:922, :925, :928, :1023) so a later task
+    # implementing one against the real contract cannot silently disagree with its stub.
+    class _PartialLoGeRCreator(LoGeRCreator):
+        def _forward(self, model, views, **kwargs):
+            raise NotImplementedError
+
+        def _postprocess(self, raw_outputs, **kwargs):
+            raise NotImplementedError
+
+        def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
+            raise NotImplementedError
+
+        def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
+            raise NotImplementedError
+
+    return _PartialLoGeRCreator(**kwargs)
 
 
 @pytest.fixture
@@ -150,13 +162,12 @@ def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
     assert _compute_target_size(orig_w, orig_h, pixel_limit=255_000) == (up_w, up_h)
 
 
-@_NEEDS_FULL_CREATOR
 def test_creator_defaults_match_upstream_effective_values():
     # These are NOT read from the shipped yaml — both original_config.yaml files hold
     # only a model: key, so build_forward_kwargs' fallbacks are what actually run
     # (github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164). window_size and
     # overlap_size are that file's argparse defaults at :47 and :49.
-    c = LoGeRCreator()
+    c = _creator()
     assert c.variant == "LoGeR_star"
     assert c.window_size == 32
     assert c.overlap_size == 3
@@ -166,25 +177,22 @@ def test_creator_defaults_match_upstream_effective_values():
     assert c.use_multiview_confidence is False
 
 
-@_NEEDS_FULL_CREATOR
 def test_creator_uses_pinhole_camera_model():
     # Weak by construction and kept deliberately: the base already defaults to PINHOLE
     # (base.py:793), so this passes even without loger.py's redeclaration. It guards the
     # contract, not the local line — vggtx overrides to SIMPLE_PINHOLE, which averages
     # (fx + fy) / 2 at COLMAP export and would silently destroy the anisotropy the
     # separate-focal fit exists to preserve.
-    assert LoGeRCreator().camera_model == "PINHOLE"
+    assert _creator().camera_model == "PINHOLE"
 
 
-@_NEEDS_FULL_CREATOR
 def test_unknown_variant_rejected_at_construction():
     # Fail at construction, not at _load_model — a typo'd variant should not survive
     # until after a multi-GB checkpoint download.
     with pytest.raises(ValueError, match="variant"):
-        LoGeRCreator(variant="LoGeR_turbo")
+        _creator(variant="LoGeR_turbo")
 
 
-@_NEEDS_FULL_CREATOR
 def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch, stub_pi3):
     # A forward-only key silently dropped is how LoGeR_star would degrade invisibly:
     # se3 is declared under model: but is popped inside forward
@@ -205,10 +213,9 @@ def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch, stub
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
 
     with pytest.raises(ValueError, match="some_future_forward_kwarg"):
-        LoGeRCreator()._load_model("cpu")
+        _creator()._load_model("cpu")
 
 
-@_NEEDS_FULL_CREATOR
 def test_load_model_rejects_an_empty_model_block(tmp_path, monkeypatch, stub_pi3):
     # An empty model: block is not harmless. It builds Pi3 on constructor defaults, which is a
     # different architecture from either shipped config, and the run then dies 278 state_dict
@@ -219,19 +226,17 @@ def test_load_model_rejects_an_empty_model_block(tmp_path, monkeypatch, stub_pi3
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
 
     with pytest.raises(ValueError, match="no 'model:' block"):
-        LoGeRCreator()._load_model("cpu")
+        _creator()._load_model("cpu")
 
 
-@_NEEDS_FULL_CREATOR
 def test_load_model_reports_missing_config(tmp_path, monkeypatch):
     # The vendored tree is gitignored, so "file not found" is the single most likely
     # first-run failure. The message must name the script that fixes it.
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
     with pytest.raises(FileNotFoundError, match="setup/loger.sh"):
-        LoGeRCreator()._load_model("cpu")
+        _creator()._load_model("cpu")
 
 
-@_NEEDS_FULL_CREATOR
 def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(tmp_path, monkeypatch, stub_pi3):
     # The point of the whole routing. Replacing the capture with a bare
     # `model_cfg.pop("se3", None)` passes every other test in this file while producing
@@ -250,6 +255,50 @@ def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(tmp_path, monk
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "original_config.yaml").write_text(yaml.safe_dump({"model": model_block}))
 
-        creator = LoGeRCreator(variant=variant)
+        creator = _creator(variant=variant)
         creator._load_model("cpu")
         assert creator._se3 is expected
+
+
+def _fake_frames(n: int, h: int, w: int) -> np.ndarray:
+    rng = np.random.default_rng(3)
+    return rng.integers(0, 256, size=(n, h, w, 3), dtype=np.uint8)
+
+
+def test_preprocess_returns_patch_aligned_unit_range_tensor():
+    frames = _fake_frames(4, 480, 640)
+    views, image_paths, original_coords = _creator()._preprocess(frames, [0, 5, 10, 15])
+
+    assert views.shape[0] == 4 and views.shape[1] == 3
+    assert views.shape[2] % 14 == 0 and views.shape[3] % 14 == 0
+    assert views.dtype == torch.float32
+    # unproject_and_filter_points reads these as colors; _forward asserts the range.
+    assert float(views.min()) >= 0.0 and float(views.max()) <= 1.0
+    assert [p.name for p in image_paths] == [
+        "frame_000000", "frame_000005", "frame_000010", "frame_000015"
+    ]
+
+
+def test_preprocess_original_coords_is_full_frame():
+    # LoGeR resizes and never crops, so every row is the whole image. This is what
+    # _rescale_reconstruction_to_original_dimensions consumes.
+    frames = _fake_frames(3, 480, 640)
+    _, _, original_coords = _creator()._preprocess(frames, [0, 1, 2])
+
+    assert original_coords.shape == (3, 6)
+    np.testing.assert_allclose(original_coords, np.tile([0, 0, 640, 480, 640, 480], (3, 1)))
+
+
+def test_preprocess_rejects_non_uniform_frame_sizes():
+    # LoGeR sizes from frame 0 alone; refuse rather than silently mis-resize the rest.
+    frames = [_fake_frames(1, 480, 640)[0], _fake_frames(1, 240, 320)[0]]
+    with pytest.raises(ValueError, match="uniform"):
+        _creator()._preprocess(frames, [0, 1])
+
+
+def test_preprocess_rejects_out_of_order_frames():
+    # Windows and overlap stitching assume temporal order; out-of-order input
+    # degrades quality with no error. No other backend cares, so this is LoGeR's.
+    frames = _fake_frames(3, 480, 640)
+    with pytest.raises(ValueError, match="ascending"):
+        _creator()._preprocess(frames, [0, 10, 5])

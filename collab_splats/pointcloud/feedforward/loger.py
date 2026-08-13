@@ -39,9 +39,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 import yaml
 from huggingface_hub import hf_hub_download
+from PIL import Image
 
 from .base import BaseFeedforwardCreator
 
@@ -262,3 +264,47 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
         logger.info("LoGeRCreator: loaded %s (se3=%s) on %s", self.variant, self._se3, device)
         return model.eval().to(device)
+
+    def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
+        """Resize decoded frames to LoGeR's patch-aligned budget; return (N,3,H,W) in [0,1]."""
+        # Windows and overlap stitching assume temporal order. frames.zarr is ordered
+        # by construction today, so this guards an assumption rather than a known bug.
+        if any(b <= a for a, b in zip(frame_idxs, frame_idxs[1:])):
+            raise ValueError(
+                f"LoGeR requires strictly ascending frame_idxs (sliding-window inference); got {frame_idxs}"
+            )
+
+        # LoGeR derives the target size from frame 0 alone
+        # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:53-54, inside
+        # load_images_as_tensor at basic.py:11). Rather than inherit that silent
+        # assumption, refuse mixed sizes.
+        shapes = {(int(f.shape[0]), int(f.shape[1])) for f in frames}
+        if len(shapes) != 1:
+            raise ValueError(f"LoGeR needs uniform frame sizes; got {sorted(shapes)}")
+
+        orig_h, orig_w = shapes.pop()
+        target_w, target_h = _compute_target_size(orig_w, orig_h, self.pixel_limit)
+        logger.debug("LoGeRCreator: %dx%d -> %dx%d", orig_w, orig_h, target_w, target_h)
+
+        # Resize in memory with PIL directly. No frames_as_pil_source
+        # (collab_splats/pointcloud/feedforward/base.py:679): that helper monkeypatches the
+        # process-global PIL.Image.open to drive path-based loaders, and LoGeR's
+        # load_images_as_tensor enumerates a directory with os.listdir
+        # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:21), which patching
+        # Image.open cannot reach.
+        resized = np.stack(
+            [np.asarray(Image.fromarray(f).resize((target_w, target_h), Image.LANCZOS)) for f in frames]
+        )
+        views = torch.from_numpy(resized).permute(0, 3, 1, 2).float() / 255.0
+
+        # Stable synthetic labels — the frame store is the sole IO path, no filenames exist
+        image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
+
+        # Pure resize, no crop, so every row is the full original frame. Layout is
+        # [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], consumed by
+        # _rescale_reconstruction_to_original_dimensions (base.py:580).
+        original_coords = np.tile(
+            np.array([0, 0, orig_w, orig_h, orig_w, orig_h], dtype=np.float32), (len(image_paths), 1)
+        )
+
+        return views, image_paths, original_coords

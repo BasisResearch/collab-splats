@@ -1174,30 +1174,36 @@ only a model: key, so the build_forward_kwargs fallbacks at PolyCam/LoGeR @
 >         def _forward(self, model, views, **kwargs):
 >             raise NotImplementedError
 >
->         def _postprocess(self, raw):
+>         def _postprocess(self, raw_outputs, **kwargs):
 >             raise NotImplementedError
 >
->         def _reproject(self, raw, extrinsics, intrinsics):
+>         def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
 >             raise NotImplementedError
 >
->         def extract_intermediate_features(self, images):
+>         def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
 >             raise NotImplementedError
 >
 >     return _PartialLoGeRCreator(**kwargs)
 > ```
 >
-> All **five** abstract methods are stubbed here, because Task 5 implemented none of them —
-> `_load_model` is a concrete method on `BaseFeedforwardCreator`, not one of the abstract five.
+> **These signatures were verified against `collab_splats/pointcloud/feedforward/base.py` during
+> Task 6** — `_preprocess:919`, `_forward:922`, `_postprocess:925`, `extract_intermediate_features:928`,
+> `_reproject:1023`. An earlier draft of this plan had three of the five wrong (`_postprocess`,
+> `_reproject`, and `extract_intermediate_features` all took different argument names, and two
+> take `**kwargs`). A stub whose signature disagrees with the abstract method **still satisfies
+> the ABC** — Python does not check signatures — so a mismatch is invisible until the real method
+> lands. Re-read the file rather than trusting this block.
+>
+> `LoGeRCreator` has **five** abstract methods outstanding after Task 5. Note the reason: an
+> earlier draft claimed `_load_model` is concrete on `BaseFeedforwardCreator`, which is **false** —
+> it is `@abstractmethod` at `base.py:915-916`. There are six abstract methods in total; Task 5
+> implemented `_load_model` on the subclass, leaving five. The stub list was right for the wrong
+> reason, so do not reason from the old explanation.
+>
 > **Each later task deletes the stub for the method it implements**, in the same step that
 > implements it, so the tests written that task hit real code rather than the stub. Task 6
 > deletes `_preprocess`, Task 7 deletes `_forward`, Task 8 deletes the remaining three along
 > with the whole helper.
->
-> **Read the real signatures off `collab_splats/pointcloud/base.py` before writing the stubs
-> — do not trust the argument names above.** A stub whose signature disagrees with the
-> abstract method still satisfies the ABC (Python does not check signatures), so a mismatch
-> would go unnoticed here and then fail for real in Task 8. If any signature differs from what
-> is written above, use the real one and say so in your report.
 >
 > Run `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -v -p no:randomly`
 > after Step 0 alone. Expected: **22 passed** — the 7 previously-xfailed tests now run for real.
@@ -2222,9 +2228,16 @@ upstream's _snap_square_pixels is deliberately not applied."
 >    of the wrong `:4` were already corrected in this plan and one in the test file — check
 >    nothing else carries it.
 >
-> **Verify, do not remember.** Wrong line ranges have been caught three separate times on this
-> task (`basic.py:51-63` → `:55-61`, `base.py:4` → `:101`, and a reviewer's own off-by-two on
-> that same line). Open each file and read the line before writing the citation.
+> 4. **Every `basic.py:NNN` reference must name its enclosing function.** `loger/utils/basic.py`
+>    contains **two near-identical loaders** — frame-0 sizing appears at both `:53-54` and
+>    `:289-290`, `os.listdir` at both `:21` and `:254`. A bare line number there is genuinely
+>    ambiguous between them. Ours all refer to `load_images_as_tensor` (signature at
+>    `basic.py:11`); say so at each site.
+>
+> **Verify, do not remember.** Wrong line ranges have been caught five separate times on this
+> task (`basic.py:51-63` → `:55-61`; `base.py:4` → `:101`, plus a reviewer's own off-by-two on
+> that same line; `basic.py:16` → `:21`; `basic.py:52-53` → `:53-54`). Open each file and read
+> the line before writing the citation.
 
 - [ ] **Step 1: Update `configs/base.yaml`**
 

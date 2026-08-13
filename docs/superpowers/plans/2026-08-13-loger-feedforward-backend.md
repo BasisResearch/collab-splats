@@ -2882,6 +2882,41 @@ to the test file's imports (several may already be there — check before adding
 > `'depth'`, `'extrinsic'`, `'intrinsics_downsampled'` (`feedforward/base.py:333,342-343`) — which
 > is what the `"intrinsics_downsampled"` alias in `_forward` exists to satisfy.
 
+> **Plan correction — third defect, plus one thing that looks like a defect and is not.**
+>
+> **(c) `raw["local_points"]` is dead payload, and the comment justifying it names a consumer
+> that does not exist.** `loger.py:419` returns `"local_points": local_points,  # kept for the
+> parity test only`. The parity test drafted above never reads it — it takes `native` from a
+> second forward and `ours` from `_raw_to_world_points(raw)`. Measured: the ONLY consumer in the
+> tree is `tests/pointcloud/test_loger_creator.py:504`, inside `test_forward_runs_under_no_grad`,
+> which is a no-grad/type contract test rather than a parity test — and the adjacent
+> `assert isinstance(raw["depth"], np.ndarray)` already covers that contract, since `depth` is a
+> numpy slice of the same array (`loger.py:410`). So the key carries an `(N,H,W,3)` float32 array
+> — ~3.0 MB/frame at the 574x434 model resolution — through every production `_forward` return to
+> satisfy nothing. **Do at Task 13:** delete the key and that one assertion, per the standing
+> "delete dead code the work obsoletes" constraint. If instead you find a real use, fix the
+> comment to name it — do not leave it pointing at this test.
+>
+> **NOT a defect: the second forward pass.** It is tempting to derive `native` from
+> `raw["local_points"]` and `raw["extrinsic"]` and skip the second 18 s / 6.77 GB run. Do not.
+> `_forward` obtains `extrinsic` by `invert_poses(camera_poses)` (`loger.py:400`), so a derived
+> `native` would apply OUR inversion to both sides, cancelling it — and the preamble's claim that
+> this one assertion covers the pose inversion would silently become false. Taking `native` from
+> LoGeR's own `preds["points"]` (a real key — `pi3.py:816`) keeps it independent. Checked and
+> cleared separately: TTT fast weights are per-call, not module state (`ttt_dict` is created at
+> `pi3.py:713` and consumed at `:721`, both inside one call), so the second pass is NOT
+> contaminated by the first. **Add a comment in the test saying why it re-runs**, or the next
+> reader will collapse it and delete the inversion coverage without noticing.
+>
+> **(d) Cosmetic.** Plan line 203 calls the 8-frame VRAM figure "the baseline for Task 13's
+> sweep"; the sweep is Task 14 (line 237 says so correctly). Task 13 has no sweep.
+>
+> **Also fix the commit message below:** it claims the test proves "the legitimacy of reusing
+> `unproject_and_filter_points`". That function exists (`vggtx.py:94`) but is NOT what this test
+> exercises — the test calls `_raw_to_world_points` (`feedforward/base.py:333`), which performs no
+> filtering whatsoever: it builds a dense `meshgrid` and returns all `(K, P, 3)` points
+> (`:369-391`). Name the function actually under test.
+
 - [ ] **Step 2: Run it**
 
 Run:

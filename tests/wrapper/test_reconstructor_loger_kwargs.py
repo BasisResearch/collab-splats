@@ -16,9 +16,15 @@ class _StopAtFeedforward(Exception):
 
 
 def _loger_block() -> dict:
-    """The shipping pointcloud.loger block, read straight off base.yaml."""
+    """The shipping pointcloud.loger block, read straight off base.yaml; {} if absent.
+
+    Deliberately total rather than strict. Both realistic regressions — the key deleted, or
+    `loger:` left present-but-empty (yaml yields None) — would otherwise raise KeyError or
+    AttributeError inside this helper, so the callers' named assertions would never run and
+    the guard would pin nothing. Returning {} routes both into a real AssertionError.
+    """
     cfg = yaml.safe_load((CONFIGS / "base.yaml").read_text())
-    return cfg["pointcloud"]["loger"]
+    return (cfg.get("pointcloud") or {}).get("loger") or {}
 
 
 def test_loger_block_reaches_run_feedforward_as_creator_kwargs(tmp_path):
@@ -58,9 +64,6 @@ def test_loger_block_reaches_run_feedforward_as_creator_kwargs(tmp_path):
     arrived = captured.get("creator_kwargs")
     assert arrived == expected, (
         f"creator_kwargs arrived as {arrived!r}; expected the base.yaml pointcloud.loger block {expected!r}"
-    )
-    assert arrived.get("window_size") == expected["window_size"], (
-        f"window_size arrived as {arrived.get('window_size')!r}, expected {expected['window_size']!r}"
     )
 
 

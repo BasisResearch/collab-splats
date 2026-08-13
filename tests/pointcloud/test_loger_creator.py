@@ -8,6 +8,20 @@ from PIL import Image
 
 from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
 
+# LoGeRCreator subclasses an ABC (BasePointcloudCreator, collab_splats/pointcloud/base.py:4)
+# and Tasks 6-8 own the four remaining abstract methods, so the class cannot be
+# instantiated yet. These tests are correct as written and are the reason the fields and
+# routing below are shaped the way they are — they run for real the moment Task 8 lands.
+#
+# strict=True is the point: when the last abstract method arrives these turn XPASS, which
+# pytest reports as a FAILURE, forcing this marker to be deleted. A non-strict xfail would
+# quietly survive its own cause and hide whatever it was guarding.
+_NEEDS_FULL_CREATOR = pytest.mark.xfail(
+    raises=TypeError,
+    strict=True,
+    reason="LoGeRCreator's abstract methods land in Tasks 6-8; remove this marker there",
+)
+
 
 @pytest.mark.parametrize(
     "orig_w,orig_h",
@@ -92,6 +106,7 @@ def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
     assert _compute_target_size(orig_w, orig_h, pixel_limit=255_000) == (up_w, up_h)
 
 
+@_NEEDS_FULL_CREATOR
 def test_creator_defaults_match_upstream_effective_values():
     # These are NOT read from the shipped yaml — both original_config.yaml files hold
     # only a model: key, so build_forward_kwargs' fallbacks are what actually run
@@ -107,6 +122,7 @@ def test_creator_defaults_match_upstream_effective_values():
     assert c.use_multiview_confidence is False
 
 
+@_NEEDS_FULL_CREATOR
 def test_creator_uses_pinhole_camera_model():
     # SIMPLE_PINHOLE averages (fx + fy) / 2 at COLMAP export, silently discarding the
     # anisotropy the separate-focal fit exists to preserve. vggtx sets SIMPLE_PINHOLE,
@@ -114,6 +130,7 @@ def test_creator_uses_pinhole_camera_model():
     assert LoGeRCreator().camera_model == "PINHOLE"
 
 
+@_NEEDS_FULL_CREATOR
 def test_unknown_variant_rejected_at_construction():
     # Fail at construction, not at _load_model — a typo'd variant should not survive
     # until after a multi-GB checkpoint download.
@@ -121,6 +138,7 @@ def test_unknown_variant_rejected_at_construction():
         LoGeRCreator(variant="LoGeR_turbo")
 
 
+@_NEEDS_FULL_CREATOR
 def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch):
     # A forward-only key silently dropped is how LoGeR_star would degrade invisibly:
     # se3 is declared under model: but is popped inside forward
@@ -141,6 +159,7 @@ def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch):
         LoGeRCreator()._load_model("cpu")
 
 
+@_NEEDS_FULL_CREATOR
 def test_load_model_reports_missing_config(tmp_path, monkeypatch):
     # The vendored tree is gitignored, so "file not found" is the single most likely
     # first-run failure. The message must name the script that fixes it.

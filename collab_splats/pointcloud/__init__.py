@@ -14,6 +14,12 @@ try:
     _SPARK_AVAILABLE = True
 except ImportError:
     _SPARK_AVAILABLE = False
+
+try:
+    from .feedforward import LoGeRCreator
+    _LOGER_AVAILABLE = True
+except ImportError:
+    _LOGER_AVAILABLE = False
 from .utils import compute_obb_from_points, get_points_in_mask
 
 _REGISTRY: dict[str, type[BasePointcloudCreator]] = {
@@ -26,6 +32,8 @@ if _OMEGA_AVAILABLE:
     _REGISTRY["vggt_omega"] = VGGTOmegaCreator
 if _SPARK_AVAILABLE:
     _REGISTRY["vggt_spark"] = VGGTSPARKCreator
+if _LOGER_AVAILABLE:
+    _REGISTRY["loger"] = LoGeRCreator
 
 
 def get_creator(name: str) -> type[BasePointcloudCreator]:

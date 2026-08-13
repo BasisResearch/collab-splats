@@ -1,4 +1,4 @@
-"""Feedforward pointcloud creators: VGGT-X, MapAnything, VGGT-Omega, and VGGT-SPARK backends.
+"""Feedforward pointcloud creators: VGGT-X, MapAnything, VGGT-Omega, VGGT-SPARK, and LoGeR backends.
 
 Import from here — submodule structure is an implementation detail.
 """
@@ -53,6 +53,7 @@ __all__ = [
     "MapAnythingCreator",
     "VGGTOmegaCreator",
     "VGGTSPARKCreator",
+    "LoGeRCreator",
     "unproject_and_filter_points",
     "MultiviewConfidence",
     "compute_multiview_depth_confidence",

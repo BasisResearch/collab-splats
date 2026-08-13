@@ -21,6 +21,15 @@ def test_get_creator_vggtx():
     assert get_creator("vggtx") is VGGTXCreator
 
 
+def test_get_creator_loger():
+    # NOT guarded on third_party/LoGeR being present: the vendored import is deferred
+    # into _load_model, so the registry entry exists in a bare checkout too. Guarding
+    # this would skip it in exactly the environment where the wiring can break.
+    from collab_splats.pointcloud.feedforward import LoGeRCreator
+
+    assert get_creator("loger") is LoGeRCreator
+
+
 def test_get_creator_unknown_raises():
     with pytest.raises(KeyError, match="unknown pointcloud backend"):
         get_creator("nonexistent")

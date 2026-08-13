@@ -354,42 +354,95 @@ def _progress_reporter(
     return (lambda _done: bar.update(1)), bar.close
 
 
+def _uniform_targets(total: int, n: int) -> list[int]:
+    """N evenly-spaced source indices spanning the whole video (endpoint-anchored)."""
+    if total <= 0 or n <= 0:
+        return []
+    # Cap at the source length, then dedup: rounding can collide when n approaches total
+    n = min(n, total)
+    return np.unique(np.linspace(0, total - 1, n).round().astype(int)).tolist()
+
+
+def _fps_targets(total: int, native_fps: float, fps: float) -> list[int]:
+    """Source indices at a constant wall-clock interval (stride-anchored).
+
+    Deliberately not stretched to hit the last frame: for fps the spacing is the
+    contract and the count falls out, the mirror of _uniform_targets.
+    """
+    if total <= 0 or fps <= 0:
+        return []
+    # Stride floors at 1 — a requested rate above the source rate cannot sample sub-frame
+    step = max(1, int(round((native_fps or 30.0) / fps)))
+    return list(range(0, total, step))
+
+
 def sample_frames(
     video_path: str,
     *,
-    method: str = "uniform",
-    max_frames: int | None = None,
+    method: str = "fps",
     fps: float | None = None,
+    min_frames: int | None = None,
+    max_frames: int | None = None,
     min_disparity: float = 50.0,
     blur_threshold: float = _DEFAULT_BLUR_THRESHOLD,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """Select frames from a video for reconstruction.
 
+    Each method has exactly one density knob; `max_frames` is the frame budget —
+    the target count for "uniform", a ceiling for the other two.
+
     Methods:
-        "uniform": one frame per evenly-spaced position, decoded in a single
-            ffmpeg pass (a `select` filter emits only the wanted frames) — returns
-            exactly max_frames frames (fewer only when the video is shorter).
-            Spacing comes from `fps` (samples/second), or from `max_frames` when
-            fps is None (falls back to 2.0 fps). Each position is validated
-            against the quality gate; a failing position substitutes the sharpest
-            usable neighbour, and best-effort keeps the sharpest frame when none
-            passes, so the count stays exact.
+        "fps": one frame every 1/`fps` seconds (stride-anchored), so the baseline
+            between consecutive frames is fixed regardless of video length and the
+            count floats. `min_frames`/`max_frames` bound that count: outside the
+            band the targets are re-spread evenly over the WHOLE video (never
+            truncated) and the effective fps is logged.
+        "uniform": exactly `max_frames` evenly-spaced frames spanning the video
+            (endpoint-anchored) — the count is the contract and spacing falls out.
         "optical_flow": motion (LK disparity + rotation) + coverage (histogram
-            diversity) scoring; frames scoring >= 0.5 are selected.
-            Uses min_disparity.
+            diversity) scoring; frames scoring >= 0.5 are selected. Uses
+            `min_disparity`; `max_frames` caps the result.
 
-    Both methods apply the quality gate (blur + exposure); `blur_threshold`
-    tunes it (0.0 disables the blur check).
+    Both target-list methods decode in a single ffmpeg `select` pass and validate
+    each position against the quality gate, substituting the sharpest usable
+    neighbour so the count stays exact. `blur_threshold` tunes the gate for all
+    three methods (0.0 disables the blur check).
 
-    Returns (frames, records): RGB arrays and one dict per selected frame with
-    at least frame_idx (SOURCE video index) and blur_score; optical_flow adds
+    Returns (frames, records): RGB arrays and one dict per selected frame with at
+    least frame_idx (SOURCE video index) and blur_score; optical_flow adds
     disparity, rotation, histogram_similarity, score, selected.
+
+    Raises:
+        ValueError: on an unknown method, or a knob that belongs to another method.
     """
-    if method == "uniform":
-        return _sample_uniform(
+    # Reject the wrong knob for the method rather than silently ignoring it — a
+    # method whose behaviour depends on which kwargs happen to be set is the defect
+    # this dispatch exists to remove. Validation runs before any IO.
+    if method != "fps" and fps is not None:
+        raise ValueError(f"method={method!r} takes no fps= — use method='fps' to sample at a rate")
+    if method != "fps" and min_frames is not None:
+        raise ValueError(
+            f"method={method!r} takes no min_frames= — the floor only applies to method='fps', "
+            "whose count floats with video length"
+        )
+
+    if method == "fps":
+        if fps is None:
+            raise ValueError("method='fps' requires fps= (samples per second)")
+        return _sample_fps(
             video_path,
             fps=fps,
+            min_frames=min_frames,
+            max_frames=max_frames,
+            blur_threshold=blur_threshold,
+            on_progress=on_progress,
+        )
+    if method == "uniform":
+        if max_frames is None:
+            raise ValueError("method='uniform' requires max_frames= (the frames to spread over the video)")
+        return _sample_uniform(
+            video_path,
             max_frames=max_frames,
             blur_threshold=blur_threshold,
             on_progress=on_progress,
@@ -402,7 +455,7 @@ def sample_frames(
             blur_threshold=blur_threshold,
             on_progress=on_progress,
         )
-    raise ValueError(f"Unknown method: {method!r} (expected 'uniform' or 'optical_flow')")
+    raise ValueError(f"Unknown method: {method!r} (expected 'fps', 'uniform' or 'optical_flow')")
 
 
 def _iter_selected_frames(video_path: str, indices: list[int], w: int, h: int) -> Iterator[np.ndarray]:
@@ -451,36 +504,24 @@ def _iter_selected_frames(video_path: str, indices: list[int], w: int, h: int) -
         proc.wait()
 
 
-def _sample_uniform(
+def _sample_positions(
     video_path: str,
+    targets: list[int],
     *,
-    fps: float | None,
-    max_frames: int | None,
+    total: int,
+    w: int,
+    h: int,
     blur_threshold: float,
     on_progress: Callable[[int, int], None] | None,
+    desc: str,
 ) -> tuple[list[np.ndarray], list[dict]]:
-    """Evenly-spaced sampling in one ffmpeg pass; validate each position against
-    the quality gate, substituting the sharpest usable neighbour (best-effort,
-    so the count is exact)."""
-    info = get_video_info(str(video_path))
-    total = info["total_frames"]
-    if total == 0:
-        return [], []
-    native_fps, w, h = info["fps"] or 30.0, info["width"], info["height"]
-    # Target positions: from fps (samples/second) if given, else spread
-    # max_frames evenly over the video; fall back to 2.0 fps when neither is set.
-    if fps is not None:
-        step = max(1, int(round(native_fps / fps)))
-        targets = list(range(0, total, step))
-    elif max_frames:
-        n = min(max_frames, total)
-        targets = np.unique(np.linspace(0, total - 1, n).round().astype(int)).tolist()
-    else:
-        step = max(1, int(round(native_fps / 2.0)))
-        targets = list(range(0, total, step))
-    # max_frames is a hard cap in every mode (e.g. fps + max_frames together)
-    if max_frames is not None:
-        targets = targets[:max_frames]
+    """Decode and quality-gate one frame per target position in a single ffmpeg pass.
+
+    Shared body of the target-list samplers (_sample_fps, _sample_uniform). Each
+    position gets a validation window of neighbouring frames; the sharpest
+    gate-passing frame in the window wins, falling back to the sharpest frame when
+    none passes, so the returned count stays exact.
+    """
     if not targets:
         return [], []
     # Validation window: radius half the target spacing, capped, and kept under
@@ -494,7 +535,7 @@ def _sample_uniform(
     # One ffmpeg pass → frames keyed by source index (in-C decode, ~len(wanted)
     # frames reach Python).
     frame_by_idx = dict(zip(wanted, _iter_selected_frames(video_path, wanted, w, h)))
-    report, close = _progress_reporter(len(targets), "Uniform sampling", on_progress)
+    report, close = _progress_reporter(len(targets), desc, on_progress)
     frames: list[np.ndarray] = []
     records: list[dict] = []
     try:
@@ -521,6 +562,81 @@ def _sample_uniform(
     finally:
         close()
     return frames, records
+
+
+def _sample_uniform(
+    video_path: str,
+    *,
+    max_frames: int,
+    blur_threshold: float,
+    on_progress: Callable[[int, int], None] | None,
+) -> tuple[list[np.ndarray], list[dict]]:
+    """Exactly max_frames evenly-spaced frames spanning the whole video."""
+    info = get_video_info(str(video_path))
+    total = info["total_frames"]
+    if total == 0:
+        return [], []
+    targets = _uniform_targets(total, max_frames)
+    return _sample_positions(
+        video_path,
+        targets,
+        total=total,
+        w=info["width"],
+        h=info["height"],
+        blur_threshold=blur_threshold,
+        on_progress=on_progress,
+        desc="Uniform sampling",
+    )
+
+
+def _sample_fps(
+    video_path: str,
+    *,
+    fps: float,
+    min_frames: int | None,
+    max_frames: int | None,
+    blur_threshold: float,
+    on_progress: Callable[[int, int], None] | None,
+) -> tuple[list[np.ndarray], list[dict]]:
+    """One frame every 1/fps seconds; re-spread if the count falls outside the band."""
+    info = get_video_info(str(video_path))
+    total = info["total_frames"]
+    if total == 0:
+        return [], []
+    native_fps = info["fps"] or 30.0
+    targets = _fps_targets(total, native_fps, fps)
+    # The requested rate yields a count that floats with video length, so clamp it into
+    # [min_frames, max_frames] by re-spreading over the WHOLE video — never by truncating,
+    # which would drop the tail of the scene and hand the reconstructor half a video.
+    requested = len(targets)
+    bounded = requested
+    if max_frames is not None:
+        bounded = min(bounded, max_frames)
+    if min_frames is not None:
+        bounded = max(bounded, min(min_frames, total))
+    if bounded != requested:
+        targets = _uniform_targets(total, bounded)
+        effective = native_fps * len(targets) / total
+        logger.warning(
+            "fps=%.3f wanted %d frames, outside [min_frames=%s, max_frames=%s]; re-spread to "
+            "%d frames over the whole video (effective %.3f fps)",
+            fps,
+            requested,
+            min_frames,
+            max_frames,
+            len(targets),
+            effective,
+        )
+    return _sample_positions(
+        video_path,
+        targets,
+        total=total,
+        w=info["width"],
+        h=info["height"],
+        blur_threshold=blur_threshold,
+        on_progress=on_progress,
+        desc="fps sampling",
+    )
 
 
 def _iter_scored_frames(

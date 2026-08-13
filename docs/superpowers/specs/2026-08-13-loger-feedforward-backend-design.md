@@ -54,7 +54,7 @@ the one algorithm inside it that we need (the focal estimator) and discard the r
 Vendored to `third_party/LoGeR/`. `third_party/*` is gitignored (`.gitignore:7`); only
 `third_party/README.md` is tracked, and the pinned commit is recorded there. `sys.path.insert`
 happens inside `_load_model` and is removed in a `finally`, following
-`vggt_spark_creator.py:34,126`.
+`VGGTSparkCreator._load_model` (`feedforward/vggt_spark_creator.py`).
 
 **Zero new pip dependencies.** Verified against `/opt/venv/reconstruction/bin/python`
 (torch 2.5.1+cu121, py 3.11.15): `huggingface_hub`, `natsort`, `plyfile`, `einops`,
@@ -72,7 +72,8 @@ This is the substantive difference and the main source of implementation risk.
 
 The failure modes are inverted, which matters for how we guard each:
 
-- A **regressed** K can be geometrically invalid. `vggt_omega.py:220` carries a comment naming
+- A **regressed** K can be geometrically invalid. `VGGTOmegaCreator._postprocess`
+  (`feedforward/vggt_omega.py`) carries a comment naming
   exactly this: it is the "root cause of `cx > model_W` in `result.intrinsics`". The network is
   free to emit a principal point outside the image.
 - A **fitted** K is centre-principal by construction, so `cx`/`cy` cannot land outside the
@@ -120,7 +121,8 @@ Source: PolyCam `LoGeR` @ `5d7c1a7`, `run_loger.py`, four functions collapsed in
 
 **Why it returns K and not `(fx, fy)`.** The principal point is not a separate decision the
 caller gets to make — it is *already inside the estimator*. The pixel grid is built centred,
-`u_centered = np.arange(W) - (W - 1) / 2.0` (`run_loger.py:209-210`), so every per-pixel focal
+`u_centered = np.arange(W, dtype=np.float32) - (W - 1) / 2.0` (github.com/PolyCam/LoGeR @
+5d7c1a7, `run_loger.py:228-229`), so every per-pixel focal
 `uu * Z / X` is conditioned on `cx = (W - 1) / 2`. Returning only the focals splits one
 calibration across two places and obliges the caller to independently rediscover that
 convention. A caller that reasonably writes `W / 2.0` instead introduces a half-pixel principal
@@ -164,8 +166,9 @@ Three behaviours to preserve, all in `_focal_from_frame`:
 
 **The sigmoid is the caller's job, and the estimator depends on it having run.** LoGeR's
 `conf_head` is a bare `LinearPts3d(patch_size=14, dec_embed_dim=1024, output_dim=1)`
-(`loger/models/pi3.py:172`) with **no output activation** — the model emits logits. Upstream
-applies the activation outside the model, at `run_loger.py:481`:
+(github.com/Junyi42/LoGeR @ 7685b7a, `loger/models/pi3.py:172`) with **no output activation** —
+the model emits logits. Upstream applies the activation outside the model, at
+github.com/PolyCam/LoGeR @ 5d7c1a7, `run_loger.py:481`:
 `preds["conf"] = torch.sigmoid(preds["conf"])`. So `_forward` must call `torch.sigmoid` on the
 raw head output before anything else touches it. Skipping it is not a scaling nuisance that
 washes out downstream: the `conf > 0.1` gate is calibrated against a probability, and on raw
@@ -280,20 +283,20 @@ re-implement one:
 
 | Function | Source | Note |
 |---|---|---|
-| `unproject_and_filter_points` | `feedforward/vggtx.py:92` | cross-backend import; `vggt_omega.py:34` already does exactly `from .vggtx import unproject_and_filter_points`, so this is established precedent, not a new coupling |
-| `_raw_to_world_points` | `feedforward/base.py:317` | called with `subsample=1`; the signature default is `8` |
-| `compute_multiview_depth_confidence` | `feedforward/base.py:378` | |
-| `build_pycolmap_reconstruction` | `feedforward/base.py:498` | invoked by the base template, not by us |
-| `_rescale_reconstruction_to_original_dimensions` | `feedforward/base.py:580` | |
-| `invert_poses` | `geometry/transforms.py:39` | |
+| `unproject_and_filter_points` | `feedforward/vggtx.py` | cross-backend import; `vggt_omega.py` already does exactly `from .vggtx import unproject_and_filter_points`, so this is established precedent, not a new coupling |
+| `_raw_to_world_points` | `feedforward/base.py` | called with `subsample=1`; the signature default is `8` |
+| `compute_multiview_depth_confidence` | `feedforward/base.py` | |
+| `build_pycolmap_reconstruction` | `feedforward/base.py` | invoked by the base template, not by us |
+| `_rescale_reconstruction_to_original_dimensions` | `feedforward/base.py` | |
+| `invert_poses` | `geometry/transforms.py` | |
 | `FeedforwardResult` + its zarr IO | `feedforward/base.py` | |
 
 **Not reused, deliberately — two:**
 
-- `_decode_verify_geometry` (`base.py:290`). VGGT-Omega imports it, so copying Omega's import
+- `_decode_verify_geometry` (in `feedforward/base.py`). VGGT-Omega imports it, so copying Omega's import
   block wholesale would pull it in — but it exists only to serve `_verify_loop_candidate`, and
   LoGeR refuses loop closure.
-- **`frames_as_pil_source` (`base.py:679`)**, which an earlier draft listed as reuse. It does not
+- **`frames_as_pil_source` (in `feedforward/base.py`)**, which an earlier draft listed as reuse. It does not
   fit, and the reason is worth stating so nobody re-adds it. That helper monkeypatches the
   process-global `PIL.Image.open` in order to drive a **path-based** upstream loader in memory —
   that is why VGGT-X, Omega, and MapAnything need it. LoGeR's loader,
@@ -315,7 +318,7 @@ re-implement one:
 
 `loger.py` follows the sibling modules' shape, which is a house style rather than an accident:
 a module docstring opening with a `Provides:` block that lists the public names (see
-`vggt_omega.py:1-9`), `########` section dividers between constants / inference utilities /
+`feedforward/vggt_omega.py`'s module docstring), `########` section dividers between constants / inference utilities /
 creator, module-level `_LOGER_*` constants for the repo id and defaults, and `logger =
 logging.getLogger(__name__)`.
 
@@ -367,7 +370,8 @@ inherit the error.
 
 ### `_load_model(device)`
 
-Follow VGGT-SPARK's `sys.path` idiom exactly (`vggt_spark_creator.py:33-35, 124-126`), not a
+Follow VGGT-SPARK's `sys.path` idiom exactly (the module-level root constant plus the
+try/finally in `VGGTSparkCreator._load_model`, `feedforward/vggt_spark_creator.py`), not a
 looser version of it:
 
 - module-level constant `_LOGER_ROOT = Path(__file__).resolve().parents[3] / "third_party" / "LoGeR"`
@@ -382,10 +386,12 @@ Read `ckpts/{variant}/original_config.yaml` from the vendored tree.
 
 **`se3` lives in the `model:` block but is a forward kwarg.** `LoGeR_star` sets `se3: true`
 under `model:`, yet `se3` is not a `Pi3.__init__` parameter — it is popped inside `forward`
-(`pi3.py:589`, mutually exclusive with `sim3`). A naive `inspect.signature(Pi3.__init__)` filter
-would silently discard it and run LoGeR* in the wrong alignment mode.
+(github.com/Junyi42/LoGeR @ 7685b7a, `pi3.py:589`, mutually exclusive with `sim3`). A naive
+`inspect.signature(Pi3.__init__)` filter would silently discard it and run LoGeR* in the wrong
+alignment mode.
 
-Verified against `run_loger.py`'s `build_forward_kwargs`, `se3` is the **only** such intruder —
+Verified against `build_forward_kwargs` in github.com/PolyCam/LoGeR @ 5d7c1a7, `run_loger.py`,
+`se3` is the **only** such intruder —
 the window knobs (`window_size`, `overlap_size`, `reset_every`, `num_iterations`) come from the
 yaml's `training_settings` block, not `model:`. So the rule is deliberately narrow rather than a
 maintained allowlist that would drift against upstream:
@@ -436,7 +442,7 @@ in:
 2. `_rescale_reconstruction_to_original_dimensions` scales with separate `scale_x` and `scale_y`,
    so the original-resolution K recovers the true aspect.
 3. **`LoGeRCreator.camera_model` must be `"PINHOLE"`.** This one is easy to miss and would be
-   silent. `build_pycolmap_reconstruction` (`base.py:551-554`) branches on it:
+   silent. `build_pycolmap_reconstruction` (in `feedforward/base.py`) branches on it:
 
    ```python
    if camera_model == "PINHOLE":
@@ -447,9 +453,10 @@ in:
 
    `SIMPLE_PINHOLE` averages `fx` and `fy` away on export — discarding exactly the anisotropy
    points 1 and 2 worked to preserve, with no error and no warning. And this is not a
-   hypothetical: `vggtx.py:190` sets `camera_model = "SIMPLE_PINHOLE"` today. Copying VGGT-X's
-   class body would inherit it. `base.py:793` defaults to `"PINHOLE"` and `vggt_omega.py:144`
-   sets it explicitly; LoGeR sets it explicitly too, with a comment pointing at this paragraph.
+   hypothetical: `VGGTXCreator` (`feedforward/vggtx.py`) sets `camera_model = "SIMPLE_PINHOLE"`
+   today. Copying VGGT-X's class body would inherit it. `BaseFeedforwardCreator`
+   (`feedforward/base.py`) defaults to `"PINHOLE"` and `VGGTOmegaCreator` sets it explicitly;
+   LoGeR sets it explicitly too, with a comment pointing at this paragraph.
 
 The model is also trained with this exact preprocessing, so the stretch is in-distribution.
 
@@ -464,14 +471,14 @@ Cropping to a multiple of 14 instead would be worse: it discards field of view, 
 | `conf` | (N,H,W,1) | `depth_conf` | **`torch.sigmoid` first** (head emits logits, `pi3.py:172`), then squeeze trailing axis |
 | `camera_poses` | (N,4,4) **c2w** | `extrinsic` | `invert_poses(...)[:, :3, :]` → w2c (N,3,4) |
 | — | — | `intrinsics` | `_estimate_shared_intrinsics(...)` → (3,3), broadcast to (N,3,3) |
-| — | — | `intrinsics_downsampled` | alias to the same K — `_raw_to_world_points` expects the key (`vggtx.py:304`) |
+| — | — | `intrinsics_downsampled` | alias to the same K — `_raw_to_world_points` expects the key (as `VGGTXCreator._postprocess` in `feedforward/vggtx.py` also supplies it) |
 
 Ordering is load-bearing: sigmoid runs **before** the K fit, because the fit's `conf > 0.1` gate
 is a threshold on a probability.
 
 #### `conf_threshold` means a percentile here, not a value
 
-`unproject_and_filter_points` overloads its threshold argument (`vggtx.py:132-138`):
+`unproject_and_filter_points` overloads its threshold argument (in `feedforward/vggtx.py`):
 
 ```python
 if conf_threshold > 1.0:
@@ -481,13 +488,15 @@ else:
 ```
 
 `> 1.0` is a **percentile**; `<= 1.0` is a **raw confidence value**. VGGT's confidence is
-exponential and unbounded above, so its backends pass percentiles (`vggtx.py:193` = 35.0,
-`vggt_omega.py:150` = 50.0) and never touch the raw branch. LoGeR's confidence is sigmoid, so it
+exponential and unbounded above, so its backends pass percentiles (`VGGTXCreator.conf_threshold`
+= 35.0, `VGGTOmegaCreator.conf_threshold` = 50.0) and never touch the raw branch. LoGeR's
+confidence is sigmoid, so it
 lands in `[0, 1]` and *both* branches are now reachable in a way they were not before — a raw
 threshold is meaningful for the first time.
 
 `LoGeRCreator.conf_threshold` is a **percentile**, default `50.0`, matching `vggt_omega`.
-(Upstream's own PLY export uses `--conf_percentile 20.0`, `run_loger.py:54` — a looser cut for a
+(Upstream's own PLY export uses `--conf_percentile 20.0`, github.com/PolyCam/LoGeR @ 5d7c1a7,
+`run_loger.py:54` — a looser cut for a
 visualisation dump. Sibling consistency wins here; the parity task records what the residual
 looks like at both.) The
 percentile branch is scale-free, so it transfers across the confidence-distribution change
@@ -529,9 +538,10 @@ trailing axis squeezed — to match the field contract.
 
 #### Which cloud lands in `world_points`
 
-All three wired backends populate the field: `vggtx.py:365` and `vggt_omega.py:278` derive it via
+All three wired backends populate the field: `VGGTXCreator._postprocess` and
+`VGGTOmegaCreator._postprocess` derive it via
 `_raw_to_world_points(raw_outputs, subsample=1)` inside a try/except that falls back to `None`;
-`mapanything.py:461` uses `stacked_pts3d`. LoGeR has a second candidate the others lack — its
+`MapAnythingCreator._postprocess` uses `stacked_pts3d`. LoGeR has a second candidate the others lack — its
 native `points`, free and already world-space.
 
 They are not the same thing. Per the ray-field analysis above, the native cloud can encode
@@ -553,7 +563,7 @@ The plan records the measured residual as a number rather than assuming which ca
 
 ### `_reproject(raw, extrinsics_3x4, intrinsics)`
 
-Byte-for-byte VGGT-Omega's implementation (`vggt_omega.py:310-324`, ~15 lines): delegate to
+Byte-for-byte VGGT-Omega's implementation (`VGGTOmegaCreator._reproject`, ~15 lines): delegate to
 `unproject_and_filter_points` with the refined extrinsics and intrinsics, returning
 `(pts3d, colors)` and dropping `pixel_indices`.
 
@@ -580,14 +590,14 @@ produce quietly worse trajectories. Refuse instead. Calibration is a separate pi
 its own sweep.
 
 **The refusal has to be at the `Reconstructor` level, and that is not arbitrary.**
-`_verify_loop_candidate` is **concrete on the base class** (`base.py:960`), not abstract, so
+`_verify_loop_candidate` is **concrete on the base class** (in `feedforward/base.py`), not abstract, so
 `LoGeRCreator` inherits a working one — and it calls `extract_intermediate_features`, which
 LoGeR raises from. Without the up-front `ValueError`, enabling LC on `loger` would not fail at
 the config boundary; it would run preprocessing and the full forward pass, then die with a bare
 `NotImplementedError` from inside the LC loop. Same outcome, far worse diagnostics, minutes of
 GPU time later. The guard converts that into an immediate, named refusal.
 
-LoGeR therefore also skips the LC `ClassVar` calibration block that `vggt_omega.py:140-142`
+LoGeR therefore also skips the LC `ClassVar` calibration block that `VGGTOmegaCreator`
 carries (`_lc_layer_index`, `default_verify_match_ratio`). Inventing values for a refused
 feature would be dead configuration.
 
@@ -660,10 +670,13 @@ did.** Checked directly: both `ckpts/LoGeR/original_config.yaml` and
 `ckpts/LoGeR_star/original_config.yaml` contain **exactly one top-level key, `model:`**. There is
 no `training_settings` block and no `num_iterations` key in either file.
 
-That matters because `build_forward_kwargs` (`run_loger.py:149-164`) reads them as
+That matters because `build_forward_kwargs` (github.com/PolyCam/LoGeR @ 5d7c1a7,
+`run_loger.py:149-164`) reads them as
 `training.get(...)` against `config.get("training_settings", {})` — an empty dict for both
 shipped checkpoints. So *every* fallback in that function is the value that actually runs, and
 the real defaults are:
+
+All `run_loger.py` line numbers below are github.com/PolyCam/LoGeR @ 5d7c1a7.
 
 | Knob | Effective default | Where it truly comes from |
 |---|---|---|

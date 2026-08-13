@@ -25,11 +25,23 @@ preprocessing:
                               # count-based knob cannot do.
   min_frames: null            # 'fps' only: floor on the resulting count. null = fps is
                               # honoured literally (a floor would make it a hint).
-  max_frames: 300             # frame budget; vggt_omega OOMs above ~300 on a 44 GB GPU
+  max_frames: 300             # frame budget; vggt_omega OOMs above ~300 on a 44 GB GPU.
+                              # NOT a LoGeR limit — LoGeR is windowed and built for longer
+                              # sequences — but preproc runs first, so it binds LoGeR too.
+                              # See configs/README.md.
 
 pointcloud:
   method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)
-  backend: vggt_omega         # vggt_omega | vggtx | mapanything  (feedforward only)
+  backend: vggt_omega         # vggt_omega | vggtx | mapanything | loger  (feedforward only)
+  # Per-backend creator kwargs. Only the block matching `backend` is read, so all
+  # four can be documented here at once. max_points is NOT settable here — it is a
+  # pipeline-level guard below.
+  loger:
+    variant: LoGeR_star       # LoGeR | LoGeR_star (SE(3)); selects config AND weights
+    window_size: 32           # sliding-window length; upstream default, see README
+    overlap_size: 3           # frames shared between adjacent windows
+    reset_every: 0            # hard-reset TTT fast weights every N frames; 0 = never
+    conf_threshold: 50.0      # depth-confidence PERCENTILE (0-100), not a raw value
   loop_closure: false
   # Inference-time memory guard: caps the confidence mask so a full-resolution cloud is
   # never materialised (BaseFeedforwardCreator.max_points). Lower it on small-GPU/RAM machines.

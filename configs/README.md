@@ -238,7 +238,10 @@ never truncated, which would hand the reconstructor a scene that stops halfway.
 **`max_frames` still dominates on long video.** At `fps: 1.0` the default
 `max_frames: 300` binds past ~5 minutes, and beyond that the spacing is whatever
 300 frames over the whole video gives you. The cap is a measured GPU limit, not a
-preference — `fps` cannot route around it.
+preference — `fps` cannot route around it. That limit is `vggt_omega`'s, though, not
+the pipeline's: `loger` is windowed and is expected to run well past 300 frames, but
+its own ceiling has **not yet been swept**, so the default stays where VGGT-Omega
+needs it.
 
 **Passing a knob that belongs to another method raises `ValueError`** (e.g. `fps=`
 with `frame_selection: uniform`). There is no silently-ignored knob.
@@ -254,9 +257,10 @@ with `frame_selection: uniform`). There is no silently-ignored knob.
 | `preprocessing.frame_selection` | str | `fps` | Frame sampling: `fps`, `uniform`, or `optical_flow` |
 | `preprocessing.fps` | float | `1.0` | `fps` method only: samples per second |
 | `preprocessing.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
-| `preprocessing.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300) |
+| `preprocessing.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `pointcloud.method` | str | `feedforward` | `feedforward`, `sfm`, or `nerfstudio` |
-| `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, or `mapanything` |
+| `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, `mapanything`, or `loger` |
+| `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud |
 | `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points |
@@ -269,6 +273,37 @@ with `frame_selection: uniform`). There is no silently-ignored knob.
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
 | `localization.extractor` | str | `loma` | Local matcher: `loma`, `loma-g`, `disk`, `xfeat` |
+
+### The `loger` backend
+
+LoGeR is a Pi3 backbone plus a TTT fast-weight memory, run with sliding-window
+inference. Requires `bash setup/loger.sh` once; weights download from HuggingFace on
+first use.
+
+**Choose it for:** sequences past the ~300-frame ceiling where VGGT-Omega OOMs, and long
+captures where drift accumulates — the TTT memory is designed to carry state across the
+sequence.
+
+**Avoid it for:** short sequences (<100 frames), where the set-based VGGT models see every
+frame jointly and the windowing buys nothing; anything needing loop closure, which
+`loger` refuses (thresholds are calibrated per backbone and none exists yet); captures
+where intrinsics genuinely vary, e.g. zoom, which the shared-K fit cannot represent; and
+unordered image collections — LoGeR's windows are sequential, whereas the VGGT family is
+set-based and has no ordering requirement.
+
+**Intrinsics differ from every other backend.** VGGT-family backends and MapAnything
+*predict* K. LoGeR does not: K is *solved* from its predicted pointmap by a
+confidence-weighted median pinhole fit, shared across all frames. The failure modes are
+inverted — a predicted K can be geometrically invalid (a principal point outside the
+image), whereas a fitted K is centre-principal by construction but can be
+plausibly-but-globally-wrong. There is no fallback focal; a degenerate fit raises.
+
+**`max_frames` is not tuned for LoGeR.** The default 300 is VGGT-Omega's GPU limit and
+lives in the preproc stage, which runs first. Raise it to use LoGeR's windowing. The real
+ceiling is `FeedforwardResult`, which holds dense per-frame images, world points, depth,
+and confidence — roughly 8 MB/frame at the default pixel budget — against a 46.6 GB
+container cap. That limit applies to every backend equally; LoGeR is merely the first one
+able to feed it enough frames to matter.
 
 ---
 

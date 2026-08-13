@@ -247,7 +247,8 @@ class LoGeRCreator(BaseFeedforwardCreator):
         # sys.path rather than a top-of-file import. The flag keeps the finally
         # idempotent: without it a nested load would pop a path its caller installed.
         # sys.path is released before the download/checkpoint load below, not held across
-        # them — the house pattern (vggt_spark_creator.py:124-132) closes it immediately
+        # them — the house pattern (the sys.path try/finally in VGGTSparkCreator._load_model,
+        # collab_splats/pointcloud/feedforward/vggt_spark_creator.py) closes it immediately
         # after the import + construction that actually need it.
         root = str(_LOGER_ROOT)
         _patched = root not in sys.path
@@ -317,12 +318,12 @@ class LoGeRCreator(BaseFeedforwardCreator):
         target_w, target_h = _compute_target_size(orig_w, orig_h, self.pixel_limit)
         logger.debug("LoGeRCreator: %dx%d -> %dx%d", orig_w, orig_h, target_w, target_h)
 
-        # Resize in memory with PIL directly. No frames_as_pil_source
-        # (collab_splats/pointcloud/feedforward/base.py:679): that helper monkeypatches the
+        # Resize in memory with PIL directly. No frames_as_pil_source (in
+        # collab_splats/pointcloud/feedforward/base.py): that helper monkeypatches the
         # process-global PIL.Image.open to drive path-based loaders, and LoGeR's
         # load_images_as_tensor enumerates a directory with os.listdir
-        # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:21), which patching
-        # Image.open cannot reach.
+        # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:21, inside
+        # load_images_as_tensor), which patching Image.open cannot reach.
         resized = np.stack([np.asarray(Image.fromarray(f).resize((target_w, target_h), Image.LANCZOS)) for f in frames])
         # div_ rather than `/ 255.0`: the out-of-place divide would hold two full float32
         # copies at once, and this is the backend built for long sequences — measured at
@@ -336,7 +337,8 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
         # Pure resize, no crop, so every row is the full original frame. Layout is
         # [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], consumed by
-        # _rescale_reconstruction_to_original_dimensions (base.py:580).
+        # _rescale_reconstruction_to_original_dimensions in
+        # collab_splats/pointcloud/feedforward/base.py.
         original_coords = np.tile(
             np.array([0, 0, orig_w, orig_h, orig_w, orig_h], dtype=np.float32), (len(image_paths), 1)
         )
@@ -439,8 +441,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
             mv_mask = multiview_mask(mv_conf, depth_np > 0, min_views=self.min_views)
 
         # Unproject to filtered world-space points and per-point colors. conf_threshold > 1.0
-        # is read as a percentile by this function (vggtx.py:132-136), which is why the
-        # default 50.0 is a percentile and not a probability.
+        # is read as a percentile by unproject_and_filter_points' threshold branch (in
+        # collab_splats/pointcloud/feedforward/vggtx.py), which is why the default 50.0 is a
+        # percentile and not a probability.
         pts3d, colors, pixel_indices = unproject_and_filter_points(
             depth=raw_outputs["depth"],
             depth_conf=raw_outputs["depth_conf"],
@@ -473,8 +476,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
             world_pts_flat.reshape(world_pts_flat.shape[0], model_h, model_w, 3) if world_pts_flat is not None else None
         )
 
-        # confidence is a torch.Tensor and depth an np.ndarray by declaration
-        # (base.py:72 vs :74); the asymmetry is the dataclass contract, not an oversight.
+        # confidence is a torch.Tensor and depth an np.ndarray by declaration on
+        # FeedforwardResult (collab_splats/pointcloud/feedforward/base.py); the asymmetry
+        # is the dataclass contract, not an oversight.
         return FeedforwardResult(
             points=pts3d,
             colors=colors,
@@ -516,9 +520,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
     ) -> dict[str, Any]:
         """Not supported — LoGeR carries its own windowed TTT memory across frames."""
         # Satisfying the ABC contract, not a courtesy stub: the class will not instantiate
-        # without it, and _verify_loop_candidate (concrete on the base class, base.py:960)
-        # calls it at base.py:991. Reaching here means the Reconstructor-level loop closure
-        # refusal was bypassed.
+        # without it, and _verify_loop_candidate (concrete on the base class in
+        # collab_splats/pointcloud/feedforward/base.py) calls it. Reaching here means the
+        # Reconstructor-level loop closure refusal was bypassed.
         raise NotImplementedError(
             "LoGeR does not support loop closure feature extraction. Its windowed TTT "
             "fast-weight memory already carries state across frames, and LC verification "

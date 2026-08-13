@@ -145,11 +145,12 @@ def test_creator_is_instantiable():
     # Tasks 6-7 needed a stub subclass to run at all; this asserts that crutch is genuinely
     # gone rather than merely deleted from the call sites. The ABC closed here is
     # BaseFeedforwardCreator, which declares SIX abstract methods — _load_model,
-    # _preprocess, _forward, _postprocess (collab_splats/pointcloud/feedforward/base.py:915,
-    # :918, :921, :924), extract_intermediate_features (:927) and _reproject (:1022).
-    # BasePointcloudCreator (collab_splats/pointcloud/base.py:101) is the ABC further up the
-    # chain and contributes only `reconstruct` (:102), which BaseFeedforwardCreator already
-    # implements concretely (base.py:805) — so it is not what a subclass must satisfy.
+    # _preprocess, _forward, _postprocess, extract_intermediate_features and _reproject
+    # (all in collab_splats/pointcloud/feedforward/base.py).
+    # BasePointcloudCreator (in collab_splats/pointcloud/base.py — a DIFFERENT file) is the
+    # ABC further up the chain and contributes only `reconstruct`, which
+    # BaseFeedforwardCreator already implements concretely — so it is not what a subclass
+    # must satisfy.
     assert isinstance(LoGeRCreator(), LoGeRCreator)
 
 
@@ -169,8 +170,8 @@ def test_creator_defaults_match_upstream_effective_values():
 
 
 def test_creator_uses_pinhole_camera_model():
-    # Weak by construction and kept deliberately: the base already defaults to PINHOLE
-    # (base.py:793), so this passes even without loger.py's redeclaration. It guards the
+    # Weak by construction and kept deliberately: BaseFeedforwardCreator.camera_model
+    # already defaults to PINHOLE, so this passes even without loger.py's redeclaration. It guards the
     # contract, not the local line — vggtx overrides to SIMPLE_PINHOLE, which averages
     # (fx + fy) / 2 at COLMAP export and would silently destroy the anisotropy the
     # separate-focal fit exists to preserve.
@@ -423,7 +424,7 @@ def test_forward_fits_and_broadcasts_intrinsics():
     # is what makes this N real matrices. Without it any downstream in-place write raises.
     assert raw["intrinsics"].flags["OWNDATA"]
     # _raw_to_world_points hard-requires this key and returns (None, None) without it
-    # (collab_splats/pointcloud/feedforward/base.py:335).
+    # (in collab_splats/pointcloud/feedforward/base.py).
     np.testing.assert_allclose(raw["intrinsics_downsampled"], raw["intrinsics"])
 
 
@@ -534,7 +535,8 @@ def _forward_and_postprocess(n=3, fx=88.0, fy=80.0, **creator_kwargs):
     creator_kwargs.setdefault("pixel_limit", 4_000)
     creator = _loaded_creator(**creator_kwargs)
     views, image_paths, original_coords = creator._preprocess(_fake_frames(n, 112, 140), list(range(n)))
-    # setup_inference sets these two on the real path (base.py:843); _postprocess reads them
+    # setup_inference sets these two on the real path (BaseFeedforwardCreator.setup_inference,
+    # collab_splats/pointcloud/feedforward/base.py); _postprocess reads them
     # off self, so a helper that skipped this would test a different object than production.
     creator.image_paths, creator.original_coords = image_paths, original_coords
     raw = creator._forward(_FakeLoGeR(n, views.shape[2], views.shape[3], fx, fy), views)
@@ -554,12 +556,14 @@ def test_postprocess_field_contract():
     assert result.colors.dtype == np.uint8
     assert result.points.shape[1] == 3 and len(result.points) == len(result.colors)
     # confidence is a torch.Tensor while depth is an np.ndarray — the asymmetry is the
-    # dataclass' declared contract (base.py:72 vs :74), not an oversight, and BA consumes
+    # dataclass' declared contract (FeedforwardResult's field declarations in
+    # collab_splats/pointcloud/feedforward/base.py), not an oversight, and BA consumes
     # it. Dropping it to None survived every other assertion here.
     assert isinstance(result.confidence, torch.Tensor)
     assert tuple(result.confidence.shape) == (n, result.model_height, result.model_width)
     # Forwarded from the creator, where setup_inference put them. build_colmap reads both
-    # off the result (base.py:887, :893-894), so losing them exports a COLMAP model with no
+    # off the result (build_colmap in collab_splats/pointcloud/feedforward/base.py), so
+    # losing them exports a COLMAP model with no
     # filenames and no rescale back to original resolution — silent, and not otherwise caught.
     assert [p.name for p in result.image_paths] == [f"frame_{i:06d}" for i in range(n)]
     assert result.original_coords.shape == (n, 6)
@@ -577,8 +581,9 @@ def test_postprocess_field_contract():
 
 def test_postprocess_preserves_anisotropic_focals():
     # camera_model PINHOLE keeps fx and fy; SIMPLE_PINHOLE would average them to
-    # (fx + fy) / 2 at COLMAP export (collab_splats/pointcloud/feedforward/base.py:551-554)
-    # and silently destroy the aspect correction the separate-focal fit exists to produce.
+    # (fx + fy) / 2 at COLMAP export (build_pycolmap_reconstruction's SIMPLE_PINHOLE branch
+    # in collab_splats/pointcloud/feedforward/base.py) and silently destroy the aspect
+    # correction the separate-focal fit exists to produce.
     creator, _, result = _forward_and_postprocess(fx=88.0, fy=80.0)
     assert creator.camera_model == "PINHOLE"
     assert result.intrinsics[0, 0, 0] != pytest.approx(result.intrinsics[0, 1, 1], rel=1e-3)
@@ -634,7 +639,8 @@ def test_reproject_uses_the_intrinsics_it_is_handed():
 
 
 def test_max_points_caps_the_returned_cloud():
-    # max_points defaults to 500_000 (base.py:794) against an 11,760-point scene, so the cap
+    # max_points defaults to 500_000 (BaseFeedforwardCreator.max_points,
+    # collab_splats/pointcloud/feedforward/base.py) against an 11,760-point scene, so the cap
     # never engages and a mutant changing it dies only by crashing on None, never because a
     # test noticed the cap. Construct below the scene size so it actually bites. Measured:
     # the cut is EXACT, not approximate, and the three arrays stay index-aligned through it.
@@ -649,7 +655,8 @@ def test_max_points_caps_the_reprojected_cloud():
     # The mirror of the cap test above on the BA path, which had only a crash pin: at the
     # 500_000 default the cap never engages against the 11,760-point scene, so a mutant
     # doubling _reproject's max_points survived the whole suite and only `None` died — as a
-    # TypeError inside randomly_limit_trues (vggtx.py:144), which says nothing about whether
+    # TypeError inside randomly_limit_trues (collab_splats/pointcloud/feedforward/vggtx.py),
+    # which says nothing about whether
     # the cap is applied. Construct below the scene size so it bites here too. The cut is
     # EXACT when it engages: randomly_limit_trues draws size=max_trues without replacement.
     creator, raw, _ = _forward_and_postprocess(max_points=100)
@@ -678,7 +685,9 @@ def test_multiview_confidence_mask_is_wired_and_off_by_default():
 def test_conf_threshold_field_reaches_the_point_filter():
     # Found by mutation: replacing self.conf_threshold with a literal survived everything
     # else. Values <= 1.0 are read as a RAW confidence and > 1.0 as a percentile
-    # (vggtx.py:132-136), so this also pins the duality the class docstring warns about —
+    # (unproject_and_filter_points' threshold branch, in
+    # collab_splats/pointcloud/feedforward/vggtx.py), so this also pins the duality the class
+    # docstring warns about —
     # the fake's confidence is sigmoid(4.0) ~= 0.982, which 0.5 admits and 0.999 rejects.
     _, _, kept = _forward_and_postprocess(conf_threshold=0.5)
     _, _, dropped = _forward_and_postprocess(conf_threshold=0.999)
@@ -690,7 +699,7 @@ def test_conf_threshold_field_reaches_the_point_filter():
 def test_extract_intermediate_features_refuses():
     # LC is out of scope for the first cut: thresholds are per-backbone and uncalibrated
     # here. _verify_loop_candidate is concrete on the base class
-    # (collab_splats/pointcloud/feedforward/base.py:960) and calls this at :991, so the
+    # (collab_splats/pointcloud/feedforward/base.py) and calls this, so the
     # refusal must be explicit.
     with pytest.raises(NotImplementedError, match="loop closure"):
         LoGeRCreator().extract_intermediate_features(torch.rand(2, 3, 56, 70))

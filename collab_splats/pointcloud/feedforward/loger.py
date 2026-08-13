@@ -45,8 +45,14 @@ import yaml
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
-from ...geometry.transforms import estimate_intrinsics_from_points, invert_poses
-from .base import BaseFeedforwardCreator
+from ...geometry.transforms import estimate_intrinsics_from_points, extrinsics_to_homogeneous, invert_poses
+from .base import (
+    BaseFeedforwardCreator,
+    FeedforwardResult,
+    _raw_to_world_points,
+    compute_multiview_depth_confidence,
+)
+from .vggtx import unproject_and_filter_points
 
 logger = logging.getLogger(__name__)
 
@@ -396,3 +402,107 @@ class LoGeRCreator(BaseFeedforwardCreator):
             "depth_conf": depth_conf,
             "local_points": local_points,  # kept for the parity test only
         }
+
+    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
+        """Unproject depth with the fitted K and build the FeedforwardResult."""
+        extrinsic = raw_outputs["extrinsic"]  # (N,3,4) at model resolution
+        intrinsic = raw_outputs["intrinsics"]  # (N,3,3) at model resolution
+
+        # Optional geometric cross-view depth consistency mask
+        mv_mask = None
+        if self.use_multiview_confidence:
+            depth_np = raw_outputs["depth"]
+            if depth_np.ndim == 4:
+                depth_np = depth_np.squeeze(-1)
+            mv_conf = compute_multiview_depth_confidence(
+                depth_np,
+                intrinsic,
+                extrinsics_to_homogeneous(extrinsic),
+                abs_thresh=0.0,
+                rel_thresh=0.05,
+            )
+            mv_mask = mv_conf > self.mv_conf_threshold
+
+        # Unproject to filtered world-space points and per-point colors. conf_threshold > 1.0
+        # is read as a percentile by this function (vggtx.py:132-136), which is why the
+        # default 50.0 is a percentile and not a probability.
+        pts3d, colors, pixel_indices = unproject_and_filter_points(
+            depth=raw_outputs["depth"],
+            depth_conf=raw_outputs["depth_conf"],
+            images=raw_outputs["images"],
+            extrinsic=extrinsic,
+            intrinsic=raw_outputs["intrinsics_downsampled"],
+            conf_threshold=self.conf_threshold,
+            max_points=self.max_points,
+            extra_mask=mv_mask,
+        )
+
+        # FeedforwardResult.depth is (N,H,W); _forward emits (N,H,W,1) from the pointmap's
+        # third channel, so the trailing axis is squeezed to match every other backend.
+        depth = raw_outputs["depth"]
+        if depth.ndim == 4:
+            depth = depth.squeeze(-1)  # (N,H,W)
+        model_h, model_w = int(depth.shape[1]), int(depth.shape[2])
+
+        # BA fields: dense world-point grid, matching vggtx and vggt_omega. LoGeR's own
+        # `points` is NOT used here — it can encode non-pinhole geometry that the fitted
+        # K cannot reproduce, so feeding it to BA alongside that K makes BA fight the
+        # model. The parity test measures the gap between the two clouds.
+        world_pts_flat, _ = _raw_to_world_points(raw_outputs, subsample=1)
+        world_points = (
+            world_pts_flat.reshape(world_pts_flat.shape[0], model_h, model_w, 3)
+            if world_pts_flat is not None
+            else None
+        )
+
+        # confidence is a torch.Tensor and depth an np.ndarray by declaration
+        # (base.py:72 vs :74); the asymmetry is the dataclass contract, not an oversight.
+        return FeedforwardResult(
+            points=pts3d,
+            colors=colors,
+            pixel_indices=pixel_indices,
+            features=None,
+            extrinsics=extrinsics_to_homogeneous(extrinsic),
+            intrinsics=intrinsic,
+            image_paths=self.image_paths,
+            original_coords=self.original_coords,
+            model_width=model_w,
+            model_height=model_h,
+            images=raw_outputs["images"],
+            confidence=torch.from_numpy(raw_outputs["depth_conf"]),
+            world_points=world_points,
+            depth=depth,
+        )
+
+    def _reproject(
+        self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Re-derive world-space points using bundle-adjusted camera poses."""
+        # The pose/K arguments, NOT raw_outputs' stored copies: BundleAdjustment calls this
+        # precisely because it has just refined them, so reading the raw dict would silently
+        # return the pre-BA cloud.
+        pts3d, colors, _pixel_indices = unproject_and_filter_points(
+            depth=raw_outputs["depth"],
+            depth_conf=raw_outputs["depth_conf"],
+            images=raw_outputs["images"],
+            extrinsic=extrinsics_3x4,
+            intrinsic=intrinsics,
+            conf_threshold=self.conf_threshold,
+            max_points=self.max_points,
+        )
+        return pts3d, colors  # pixel_indices unused; post-BA uses stored indices
+
+    def extract_intermediate_features(
+        self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Not supported — LoGeR carries its own windowed TTT memory across frames."""
+        # Satisfying the ABC contract, not a courtesy stub: the class will not instantiate
+        # without it, and _verify_loop_candidate (concrete on the base class, base.py:960)
+        # calls it at base.py:991. Reaching here means the Reconstructor-level loop closure
+        # refusal was bypassed.
+        raise NotImplementedError(
+            "LoGeR does not support loop closure feature extraction. Its windowed TTT "
+            "fast-weight memory already carries state across frames, and LC verification "
+            "thresholds are calibrated per backbone (see the spec). Use vggt_omega, vggtx, "
+            "or mapanything if loop closure is required."
+        )

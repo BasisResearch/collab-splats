@@ -12,28 +12,6 @@ from collab_splats.pointcloud.feedforward import loger as loger_mod
 from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
 
 
-def _creator(**kwargs) -> LoGeRCreator:
-    """LoGeRCreator with only the not-yet-implemented abstract methods stubbed out."""
-    # BasePointcloudCreator is an abc.ABC (collab_splats/pointcloud/base.py:101). Stubbing
-    # ONLY the unwritten methods keeps every test below pointed at real code as it lands,
-    # rather than deferring all signal to the task that happens to close the ABC.
-    # Each task deletes the stub it just implemented. Task 8 deletes this helper entirely.
-    # Signatures are copied from the abstract declarations
-    # (collab_splats/pointcloud/feedforward/base.py:922, :925, :928, :1023) so a later task
-    # implementing one against the real contract cannot silently disagree with its stub.
-    class _PartialLoGeRCreator(LoGeRCreator):
-        def _postprocess(self, raw_outputs, **kwargs):
-            raise NotImplementedError
-
-        def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
-            raise NotImplementedError
-
-        def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
-            raise NotImplementedError
-
-    return _PartialLoGeRCreator(**kwargs)
-
-
 @pytest.fixture
 def stub_pi3(monkeypatch):
     """Seed a fake loger.models.pi3 so _load_model runs without the vendored tree."""
@@ -159,12 +137,24 @@ def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
     assert _compute_target_size(orig_w, orig_h, pixel_limit=255_000) == (up_w, up_h)
 
 
+def test_creator_is_instantiable():
+    # Tasks 6-7 needed a stub subclass to run at all; this asserts that crutch is genuinely
+    # gone rather than merely deleted from the call sites. The ABC closed here is
+    # BaseFeedforwardCreator, which declares SIX abstract methods — _load_model,
+    # _preprocess, _forward, _postprocess (collab_splats/pointcloud/feedforward/base.py:915,
+    # :918, :921, :924), extract_intermediate_features (:927) and _reproject (:1022).
+    # BasePointcloudCreator (collab_splats/pointcloud/base.py:101) is the ABC further up the
+    # chain and contributes only `reconstruct` (:102), which BaseFeedforwardCreator already
+    # implements concretely (base.py:805) — so it is not what a subclass must satisfy.
+    assert isinstance(LoGeRCreator(), LoGeRCreator)
+
+
 def test_creator_defaults_match_upstream_effective_values():
     # These are NOT read from the shipped yaml — both original_config.yaml files hold
     # only a model: key, so build_forward_kwargs' fallbacks are what actually run
     # (github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164). window_size and
     # overlap_size are that file's argparse defaults at :47 and :49.
-    c = _creator()
+    c = LoGeRCreator()
     assert c.variant == "LoGeR_star"
     assert c.window_size == 32
     assert c.overlap_size == 3
@@ -180,14 +170,14 @@ def test_creator_uses_pinhole_camera_model():
     # contract, not the local line — vggtx overrides to SIMPLE_PINHOLE, which averages
     # (fx + fy) / 2 at COLMAP export and would silently destroy the anisotropy the
     # separate-focal fit exists to preserve.
-    assert _creator().camera_model == "PINHOLE"
+    assert LoGeRCreator().camera_model == "PINHOLE"
 
 
 def test_unknown_variant_rejected_at_construction():
     # Fail at construction, not at _load_model — a typo'd variant should not survive
     # until after a multi-GB checkpoint download.
     with pytest.raises(ValueError, match="variant"):
-        _creator(variant="LoGeR_turbo")
+        LoGeRCreator(variant="LoGeR_turbo")
 
 
 def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch, stub_pi3):
@@ -210,7 +200,7 @@ def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch, stub
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
 
     with pytest.raises(ValueError, match="some_future_forward_kwarg"):
-        _creator()._load_model("cpu")
+        LoGeRCreator()._load_model("cpu")
 
 
 def test_load_model_rejects_an_empty_model_block(tmp_path, monkeypatch, stub_pi3):
@@ -223,7 +213,7 @@ def test_load_model_rejects_an_empty_model_block(tmp_path, monkeypatch, stub_pi3
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
 
     with pytest.raises(ValueError, match="no 'model:' block"):
-        _creator()._load_model("cpu")
+        LoGeRCreator()._load_model("cpu")
 
 
 def test_load_model_reports_missing_config(tmp_path, monkeypatch):
@@ -231,7 +221,7 @@ def test_load_model_reports_missing_config(tmp_path, monkeypatch):
     # first-run failure. The message must name the script that fixes it.
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
     with pytest.raises(FileNotFoundError, match="setup/loger.sh"):
-        _creator()._load_model("cpu")
+        LoGeRCreator()._load_model("cpu")
 
 
 def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(tmp_path, monkeypatch, stub_pi3):
@@ -252,7 +242,7 @@ def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(tmp_path, monk
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "original_config.yaml").write_text(yaml.safe_dump({"model": model_block}))
 
-        creator = _creator(variant=variant)
+        creator = LoGeRCreator(variant=variant)
         creator._load_model("cpu")
         assert creator._se3 is expected
 
@@ -267,7 +257,7 @@ def test_preprocess_returns_patch_aligned_unit_range_tensor():
     # check: (H, W) both being multiples of 14 is also true of the transposed size, so
     # `% 14 == 0` alone cannot tell a correct resize from an axis swap, and a hardcoded
     # budget from the field being ignored altogether.
-    creator = _creator(pixel_limit=100_000)
+    creator = LoGeRCreator(pixel_limit=100_000)
     frames = _fake_frames(4, 480, 640)
     views, image_paths, original_coords = creator._preprocess(frames, [0, 5, 10, 15])
 
@@ -286,7 +276,7 @@ def test_preprocess_original_coords_is_full_frame():
     # LoGeR resizes and never crops, so every row is the whole image. This is what
     # _rescale_reconstruction_to_original_dimensions consumes.
     frames = _fake_frames(3, 480, 640)
-    _, _, original_coords = _creator()._preprocess(frames, [0, 1, 2])
+    _, _, original_coords = LoGeRCreator()._preprocess(frames, [0, 1, 2])
 
     assert original_coords.shape == (3, 6)
     np.testing.assert_allclose(original_coords, np.tile([0, 0, 640, 480, 640, 480], (3, 1)))
@@ -296,7 +286,7 @@ def test_preprocess_rejects_non_uniform_frame_sizes():
     # LoGeR sizes from frame 0 alone; refuse rather than silently mis-resize the rest.
     frames = [_fake_frames(1, 480, 640)[0], _fake_frames(1, 240, 320)[0]]
     with pytest.raises(ValueError, match="uniform"):
-        _creator()._preprocess(frames, [0, 1])
+        LoGeRCreator()._preprocess(frames, [0, 1])
 
 
 @pytest.mark.parametrize("frame_idxs", [[0, 10, 5], [0, 5, 5]])
@@ -307,14 +297,14 @@ def test_preprocess_rejects_out_of_order_frames(frame_idxs):
     # also collide in the frame_{idx:06d} labels — hence "strictly" ascending.
     frames = _fake_frames(3, 480, 640)
     with pytest.raises(ValueError, match="ascending"):
-        _creator()._preprocess(frames, frame_idxs)
+        LoGeRCreator()._preprocess(frames, frame_idxs)
 
 
 def _loaded_creator(se3: bool = False, **kwargs) -> LoGeRCreator:
-    """_creator with _se3 set to what _load_model would have read from the variant yaml."""
+    """LoGeRCreator with _se3 set to what _load_model would have read from the variant yaml."""
     # Named parameter, not a hidden default: these tests stub the model, so _load_model never
     # runs and _forward's se3 guard would otherwise fire on every one of them.
-    creator = _creator(**kwargs)
+    creator = LoGeRCreator(**kwargs)
     creator._se3 = se3
     return creator
 
@@ -385,7 +375,7 @@ def test_forward_refuses_to_run_before_load_model_sets_se3():
     # there is nothing safe to default to — guessing picks an alignment mode silently.
     n, h, w = 2, 56, 70
     with pytest.raises(RuntimeError, match="se3 unset"):
-        _creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+        LoGeRCreator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
 
 
 def test_forward_applies_sigmoid_to_raw_confidence_logits():
@@ -528,3 +518,122 @@ def test_forward_accepts_the_rgb_range_boundaries(fill):
     raw = _loaded_creator()._forward(model, fill(n, 3, h, w))
 
     assert raw["extrinsic"].shape == (n, 3, 4)
+
+
+def _forward_and_postprocess(n=3, fx=88.0, fy=80.0, **creator_kwargs):
+    """Drive the real _preprocess -> _forward -> _postprocess chain over the synthetic scene."""
+    # pixel_limit 4000 resizes the 112x140 input DOWN to the (56, 70) model resolution the
+    # rest of this file is written against — verified: _compute_target_size(140, 112, 4000)
+    # == (70, 56). The 255_000 default would UPSCALE it to 560x448 and push 750k points
+    # through unproject_and_filter_points, past max_points into random subsampling, for no
+    # added signal and a much slower test.
+    creator_kwargs.setdefault("pixel_limit", 4_000)
+    creator = _loaded_creator(**creator_kwargs)
+    views, image_paths, original_coords = creator._preprocess(_fake_frames(n, 112, 140), list(range(n)))
+    # setup_inference sets these two on the real path (base.py:843); _postprocess reads them
+    # off self, so a helper that skipped this would test a different object than production.
+    creator.image_paths, creator.original_coords = image_paths, original_coords
+    raw = creator._forward(_FakeLoGeR(n, views.shape[2], views.shape[3], fx, fy), views)
+    return creator, raw, creator._postprocess(raw)
+
+
+def test_postprocess_field_contract():
+    n = 3
+    _, raw, result = _forward_and_postprocess(n=n)
+
+    assert result.extrinsics.shape == (n, 4, 4)
+    assert result.intrinsics.shape == (n, 3, 3)
+    # depth is stored (N,H,W), trailing axis squeezed, matching every other backend
+    assert result.depth.ndim == 3 and result.depth.shape[0] == n
+    assert result.world_points is not None
+    assert result.world_points.shape == (n, result.model_height, result.model_width, 3)
+    assert result.colors.dtype == np.uint8
+    assert result.points.shape[1] == 3 and len(result.points) == len(result.colors)
+    # confidence is a torch.Tensor while depth is an np.ndarray — the asymmetry is the
+    # dataclass' declared contract (base.py:72 vs :74), not an oversight, and BA consumes
+    # it. Dropping it to None survived every other assertion here.
+    assert isinstance(result.confidence, torch.Tensor)
+    assert tuple(result.confidence.shape) == (n, result.model_height, result.model_width)
+    # Forwarded from the creator, where setup_inference put them. build_colmap reads both
+    # off the result (base.py:887, :893-894), so losing them exports a COLMAP model with no
+    # filenames and no rescale back to original resolution — silent, and not otherwise caught.
+    assert [p.name for p in result.image_paths] == [f"frame_{i:06d}" for i in range(n)]
+    assert result.original_coords.shape == (n, 6)
+    # world_points must be the K-consistent grid from _raw_to_world_points, not LoGeR's own
+    # `points`. The fake's cameras sit at world x = 0..n-1 with identity rotation and the
+    # scene is a constant z=2 plane, so every frame's grid is offset by exactly its index.
+    # A subsample != 1 changes the point count and a transposed reshape changes the shape,
+    # but only a value check catches world_points sourced from the wrong array entirely.
+    np.testing.assert_allclose(
+        result.world_points[2] - result.world_points[0],
+        np.tile(np.array([2.0, 0.0, 0.0], dtype=np.float32), (*result.world_points.shape[1:3], 1)),
+        atol=1e-4,
+    )
+
+
+def test_postprocess_preserves_anisotropic_focals():
+    # camera_model PINHOLE keeps fx and fy; SIMPLE_PINHOLE would average them to
+    # (fx + fy) / 2 at COLMAP export (collab_splats/pointcloud/feedforward/base.py:551-554)
+    # and silently destroy the aspect correction the separate-focal fit exists to produce.
+    creator, _, result = _forward_and_postprocess(fx=88.0, fy=80.0)
+    assert creator.camera_model == "PINHOLE"
+    assert result.intrinsics[0, 0, 0] != pytest.approx(result.intrinsics[0, 1, 1], rel=1e-3)
+
+
+def test_reproject_returns_points_and_colors_for_refined_poses():
+    creator, raw, _ = _forward_and_postprocess()
+    pts, colors = creator._reproject(raw, raw["extrinsic"], raw["intrinsics"])
+    assert pts.shape[1] == 3
+    assert len(pts) == len(colors)
+
+    # Shapes alone cannot tell a _reproject that USES its extrinsics_3x4 argument from one
+    # that quietly re-reads raw_outputs["extrinsic"] — and using the stale poses is exactly
+    # the bug this method exists to prevent, since BundleAdjustment calls it precisely
+    # because the stored poses are the ones it just refined. So hand it DIFFERENT poses.
+    # The fake's rotations are identity, so shifting the w2c translation by +d moves every
+    # reconstructed world point by -d (measured, not assumed).
+    offset = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    shifted = raw["extrinsic"].copy()
+    shifted[:, :, 3] += offset
+    moved_pts, moved_colors = creator._reproject(raw, shifted, raw["intrinsics"])
+
+    np.testing.assert_allclose(moved_pts, pts - offset, atol=1e-4)
+    # Colors come from the images, not the poses, so they must be untouched by the shift.
+    np.testing.assert_array_equal(moved_colors, colors)
+
+
+def test_multiview_confidence_mask_is_wired_and_off_by_default():
+    # Found by mutation: forcing this branch either way — permanently off, or permanently
+    # on — passed every other test in this file, so the flag was decorative. Both
+    # directions are pinned here.
+    n = 3
+    _, _, off = _forward_and_postprocess(n=n)
+    _, _, on = _forward_and_postprocess(n=n, use_multiview_confidence=True)
+
+    # The fake emits one constant confidence, so the percentile gate keeps every pixel.
+    # Fewer than that means a mask was applied when the flag said not to.
+    assert len(off.points) == n * off.model_height * off.model_width
+    # And with the flag on, the geometric cross-view mask must actually reach
+    # unproject_and_filter_points as extra_mask rather than being computed and discarded.
+    assert 0 < len(on.points) < len(off.points)
+
+
+def test_conf_threshold_field_reaches_the_point_filter():
+    # Found by mutation: replacing self.conf_threshold with a literal survived everything
+    # else. Values <= 1.0 are read as a RAW confidence and > 1.0 as a percentile
+    # (vggtx.py:132-136), so this also pins the duality the class docstring warns about —
+    # the fake's confidence is sigmoid(4.0) ~= 0.982, which 0.5 admits and 0.999 rejects.
+    _, _, kept = _forward_and_postprocess(conf_threshold=0.5)
+    _, _, dropped = _forward_and_postprocess(conf_threshold=0.999)
+
+    assert len(kept.points) > 0
+    assert len(dropped.points) == 0
+
+
+def test_extract_intermediate_features_refuses():
+    # LC is out of scope for the first cut: thresholds are per-backbone and uncalibrated
+    # here. _verify_loop_candidate is concrete on the base class
+    # (collab_splats/pointcloud/feedforward/base.py:960) and calls this at :991, so the
+    # refusal must be explicit.
+    with pytest.raises(NotImplementedError, match="loop closure"):
+        LoGeRCreator().extract_intermediate_features(torch.rand(2, 3, 56, 70))

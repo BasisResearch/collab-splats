@@ -26,13 +26,27 @@ Provides:
   LOGER_VARIANTS       — the two shipped variants
   LOGER_CONF_THRESHOLD — confidence floor for the K fit, measured not inherited
   _compute_target_size — patch-aligned resize matching the vendored loader
-  LoGeRCreator         — feedforward creator using LoGeR depth + pose (not yet implemented)
+  LoGeRCreator         — feedforward creator using LoGeR depth + pose
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
+import logging
 import math
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+import torch
+import yaml
+from huggingface_hub import hf_hub_download
+
+from .base import BaseFeedforwardCreator
+
+logger = logging.getLogger(__name__)
 
 ########################################################################
 ########## Constants ###################################################
@@ -112,3 +126,129 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
             patches_h -= 1
 
     return max(1, patches_w) * _PATCH, max(1, patches_h) * _PATCH
+
+
+########################################################################
+########## Creator #####################################################
+########################################################################
+
+
+@dataclass
+class LoGeRCreator(BaseFeedforwardCreator):
+    """Pointcloud via LoGeR: Pi3 backbone + TTT memory + sliding-window inference.
+
+    Built for long sequences — the window bounds model memory regardless of sequence
+    length, where the set-based VGGT family OOMs past a few hundred frames.
+
+    Unlike every other backend, LoGeR predicts no intrinsics; K is solved from its
+    camera-frame pointmap by ``estimate_intrinsics_from_points`` and shared across frames.
+
+    Attributes:
+        camera_model:   pycolmap camera model.  ``"PINHOLE"``, not ``"SIMPLE_PINHOLE"``,
+                        because the fit produces genuinely distinct fx and fy and
+                        SIMPLE_PINHOLE averages them away at COLMAP export.
+        variant:        ``"LoGeR"`` or ``"LoGeR_star"``.  Selects a config-plus-weights
+                        pair, not merely a weight file — the two ``original_config.yaml``
+                        differ (``ttt_pre_norm`` vs ``se3``).
+        model_path:     Local checkpoint override.  ``None`` downloads from HuggingFace.
+        window_size:    Sliding-window length.  Default from github.com/PolyCam/LoGeR @
+                        5d7c1a7, ``run_loger.py:47`` (argparse).
+        overlap_size:   Frames shared between adjacent windows.  Same file, ``:49``.
+        reset_every:    Hard-reset the TTT fast weights every N frames; ``0`` disables.
+        num_iterations: TTT inner-loop iterations per step.
+        pixel_limit:    Area budget for the resize.  Same file, ``:117``.
+        conf_threshold: Depth-confidence **percentile** cutoff (0-100), matching
+                        ``vggt_omega``.  ``unproject_and_filter_points`` reads a value
+                        > 1.0 as a percentile and <= 1.0 as a raw confidence, so
+                        lowering this to e.g. ``0.5`` switches semantics rather than
+                        tightening the cut.
+    """
+
+    camera_model: str = "PINHOLE"
+
+    variant: str = "LoGeR_star"
+    model_path: str | None = None
+    model_repo: str = LOGER_HF_REPO
+
+    # Window knobs. These do NOT come from the shipped yaml: both original_config.yaml
+    # files contain only a model: key, so build_forward_kwargs
+    # (github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164) always falls through
+    # to its own fallbacks, which are these values.
+    window_size: int = 32
+    overlap_size: int = 3
+    reset_every: int = 0
+    num_iterations: int = 1
+
+    pixel_limit: int = 255_000
+    conf_threshold: float = 50.0
+    use_multiview_confidence: bool = False
+    mv_conf_threshold: float = 0.0
+
+    # Resolved in _load_model from the variant's yaml. se3 is declared under model:
+    # but is a forward kwarg, so it cannot ride along in the constructor kwargs.
+    _se3: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Reject at construction rather than at _load_model, so a typo does not survive
+        # until after a multi-GB checkpoint download.
+        if self.variant not in LOGER_VARIANTS:
+            raise ValueError(f"variant must be one of {LOGER_VARIANTS}, got {self.variant!r}")
+
+    def _load_model(self, device: str) -> Any:
+        """Build Pi3 from the vendored per-variant yaml and load the HF checkpoint."""
+        cfg_path = _LOGER_ROOT / "ckpts" / self.variant / "original_config.yaml"
+        if not cfg_path.exists():
+            raise FileNotFoundError(
+                f"LoGeR config not found: {cfg_path}. Run `bash setup/loger.sh` to vendor the tree."
+            )
+
+        model_cfg = dict(yaml.safe_load(cfg_path.read_text()).get("model", {}))
+
+        # se3 sits under model: but is not a Pi3.__init__ parameter — it is popped
+        # inside forward (github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589).
+        # Route it out before validating the rest, or the check below would reject it.
+        self._se3 = bool(model_cfg.pop("se3", False))
+
+        # The vendored tree is not pip-installed, so the module has to be reached via
+        # sys.path rather than a top-of-file import. The flag keeps the finally
+        # idempotent: without it a nested load would pop a path its caller installed.
+        root = str(_LOGER_ROOT)
+        _patched = root not in sys.path
+        if _patched:
+            sys.path.insert(0, root)
+        try:
+            from loger.models.pi3 import Pi3
+
+            # Every remaining model: key must be a real constructor parameter. Raise
+            # rather than drop — a silent drop is how a future forward-only key would
+            # degrade the run invisibly, exactly as se3 would have.
+            unknown = sorted(set(model_cfg) - set(inspect.signature(Pi3.__init__).parameters))
+            if unknown:
+                raise ValueError(
+                    f"{cfg_path} 'model:' holds keys that are neither Pi3.__init__ "
+                    f"parameters nor the known forward kwarg 'se3': {unknown}. "
+                    "Upstream changed the config; route them explicitly rather than dropping them."
+                )
+
+            # Some checkpoints serialise list fields as strings, e.g. "[4,8]".
+            for key in ("ttt_insert_after", "attn_insert_after"):
+                if isinstance(model_cfg.get(key), str):
+                    model_cfg[key] = ast.literal_eval(model_cfg[key])
+
+            # The yaml overrides Pi3's own defaults, which are wrong for both shipped
+            # variants — ttt_inter_multi is 4 in each config and 2 in the constructor.
+            model = Pi3(**model_cfg)
+
+            ckpt = self.model_path or hf_hub_download(
+                repo_id=self.model_repo, filename=f"{self.variant}/latest.pt"
+            )
+            state = torch.load(str(ckpt), map_location="cpu")
+            state = state.get("model_state_dict", state)
+            state = {k.removeprefix("module."): v for k, v in state.items()}
+            model.load_state_dict(state, strict=True)
+        finally:
+            if _patched:
+                sys.path.remove(root)
+
+        logger.info("LoGeRCreator: loaded %s (se3=%s) on %s", self.variant, self._se3, device)
+        return model.eval().to(device)

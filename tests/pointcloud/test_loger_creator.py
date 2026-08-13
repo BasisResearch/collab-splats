@@ -3,9 +3,10 @@ import sys
 
 import numpy as np
 import pytest
+import yaml
 from PIL import Image
 
-from collab_splats.pointcloud.feedforward.loger import _LOGER_ROOT, _compute_target_size
+from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
 
 
 @pytest.mark.parametrize(
@@ -89,3 +90,62 @@ def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
     _, _, up_h, up_w = upstream.shape
 
     assert _compute_target_size(orig_w, orig_h, pixel_limit=255_000) == (up_w, up_h)
+
+
+def test_creator_defaults_match_upstream_effective_values():
+    # These are NOT read from the shipped yaml — both original_config.yaml files hold
+    # only a model: key, so build_forward_kwargs' fallbacks are what actually run
+    # (github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164). window_size and
+    # overlap_size are that file's argparse defaults at :47 and :49.
+    c = LoGeRCreator()
+    assert c.variant == "LoGeR_star"
+    assert c.window_size == 32
+    assert c.overlap_size == 3
+    assert c.reset_every == 0
+    assert c.num_iterations == 1
+    assert c.pixel_limit == 255_000
+    assert c.use_multiview_confidence is False
+
+
+def test_creator_uses_pinhole_camera_model():
+    # SIMPLE_PINHOLE averages (fx + fy) / 2 at COLMAP export, silently discarding the
+    # anisotropy the separate-focal fit exists to preserve. vggtx sets SIMPLE_PINHOLE,
+    # so inheriting or copying its class body would inherit that.
+    assert LoGeRCreator().camera_model == "PINHOLE"
+
+
+def test_unknown_variant_rejected_at_construction():
+    # Fail at construction, not at _load_model — a typo'd variant should not survive
+    # until after a multi-GB checkpoint download.
+    with pytest.raises(ValueError, match="variant"):
+        LoGeRCreator(variant="LoGeR_turbo")
+
+
+def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch):
+    # A forward-only key silently dropped is how LoGeR_star would degrade invisibly:
+    # se3 is declared under model: but is popped inside forward
+    # (github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589), so a naive
+    # "filter to constructor signature" would discard it and run the wrong alignment
+    # mode with no error. se3 is therefore routed explicitly, and anything else
+    # unrecognised must stop the run rather than be dropped.
+    from collab_splats.pointcloud.feedforward import loger as loger_mod
+
+    ckpt_dir = tmp_path / "ckpts" / "LoGeR_star"
+    ckpt_dir.mkdir(parents=True)
+    (ckpt_dir / "original_config.yaml").write_text(
+        yaml.safe_dump({"model": {"se3": True, "some_future_forward_kwarg": 3}})
+    )
+    monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
+
+    with pytest.raises(ValueError, match="some_future_forward_kwarg"):
+        LoGeRCreator()._load_model("cpu")
+
+
+def test_load_model_reports_missing_config(tmp_path, monkeypatch):
+    # The vendored tree is gitignored, so "file not found" is the single most likely
+    # first-run failure. The message must name the script that fixes it.
+    from collab_splats.pointcloud.feedforward import loger as loger_mod
+
+    monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
+    with pytest.raises(FileNotFoundError, match="setup/loger.sh"):
+        LoGeRCreator()._load_model("cpu")

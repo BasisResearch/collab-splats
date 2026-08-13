@@ -1,15 +1,17 @@
 """LoGeR feedforward backend: resize rule and creator contract."""
 import sys
+import types
 
 import numpy as np
 import pytest
 import yaml
 from PIL import Image
 
+from collab_splats.pointcloud.feedforward import loger as loger_mod
 from collab_splats.pointcloud.feedforward.loger import LoGeRCreator, _LOGER_ROOT, _compute_target_size
 
 # LoGeRCreator subclasses an ABC (BasePointcloudCreator, collab_splats/pointcloud/base.py:4)
-# and Tasks 6-8 own the four remaining abstract methods, so the class cannot be
+# and Tasks 6-8 own the five remaining abstract methods, so the class cannot be
 # instantiated yet. These tests are correct as written and are the reason the fields and
 # routing below are shaped the way they are — they run for real the moment Task 8 lands.
 #
@@ -21,6 +23,48 @@ _NEEDS_FULL_CREATOR = pytest.mark.xfail(
     strict=True,
     reason="LoGeRCreator's abstract methods land in Tasks 6-8; remove this marker there",
 )
+
+
+@pytest.fixture
+def stub_pi3(monkeypatch):
+    """Seed a fake loger.models.pi3 so _load_model runs without the vendored tree."""
+    # _load_model does `from loger.models.pi3 import Pi3` after patching sys.path. Seeding
+    # sys.modules short-circuits that import, so these tests neither require
+    # third_party/LoGeR nor depend on an earlier test having populated the module cache —
+    # the ordering dependency pytest-randomly would otherwise expose.
+
+    class _StubPi3:
+        # Mirrors the real Pi3.__init__ parameter names (github.com/Junyi42/LoGeR @ 7685b7a,
+        # loger/models/pi3.py:20-35), because _load_model validates config keys against this
+        # signature. A stub cannot notice an upstream signature change; that is covered by
+        # loading the real checkpoints, not here.
+        def __init__(
+            self, pos_type=None, decoder_size=None, ttt_insert_after=None, ttt_head_dim=None,
+            ttt_inter_multi=None, num_muon_update_steps=None, use_momentum=None,
+            ttt_update_steps=None, conf=None, attn_insert_after=None, ttt_pre_norm=None,
+            pi3x=None, pi3x_metric=None,
+        ):
+            self.init_kwargs = {k: v for k, v in locals().items() if k != "self"}
+
+        def load_state_dict(self, state, strict=True):
+            return None
+
+        def eval(self):
+            return self
+
+        def to(self, device):
+            return self
+
+    # Seed all three package levels: `from a.b.c import D` still walks the parent packages,
+    # so seeding only the leaf leaves the import resolving against a real (absent) `loger`.
+    for name in ("loger", "loger.models", "loger.models.pi3"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    sys.modules["loger.models.pi3"].Pi3 = _StubPi3
+
+    # Skip the network and the multi-GB checkpoint; neither is what these tests measure.
+    monkeypatch.setattr(loger_mod, "hf_hub_download", lambda **kwargs: "/nonexistent/latest.pt")
+    monkeypatch.setattr(loger_mod.torch, "load", lambda *args, **kwargs: {})
+    return _StubPi3
 
 
 @pytest.mark.parametrize(
@@ -124,9 +168,11 @@ def test_creator_defaults_match_upstream_effective_values():
 
 @_NEEDS_FULL_CREATOR
 def test_creator_uses_pinhole_camera_model():
-    # SIMPLE_PINHOLE averages (fx + fy) / 2 at COLMAP export, silently discarding the
-    # anisotropy the separate-focal fit exists to preserve. vggtx sets SIMPLE_PINHOLE,
-    # so inheriting or copying its class body would inherit that.
+    # Weak by construction and kept deliberately: the base already defaults to PINHOLE
+    # (base.py:793), so this passes even without loger.py's redeclaration. It guards the
+    # contract, not the local line — vggtx overrides to SIMPLE_PINHOLE, which averages
+    # (fx + fy) / 2 at COLMAP export and would silently destroy the anisotropy the
+    # separate-focal fit exists to preserve.
     assert LoGeRCreator().camera_model == "PINHOLE"
 
 
@@ -139,15 +185,18 @@ def test_unknown_variant_rejected_at_construction():
 
 
 @_NEEDS_FULL_CREATOR
-def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch):
+def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch, stub_pi3):
     # A forward-only key silently dropped is how LoGeR_star would degrade invisibly:
     # se3 is declared under model: but is popped inside forward
     # (github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589), so a naive
     # "filter to constructor signature" would discard it and run the wrong alignment
     # mode with no error. se3 is therefore routed explicitly, and anything else
     # unrecognised must stop the run rather than be dropped.
-    from collab_splats.pointcloud.feedforward import loger as loger_mod
-
+    #
+    # The stub_pi3 fixture is load-bearing here, not convenience: _LOGER_ROOT is
+    # redirected at a tmp dir with no loger/ package, so without it this raises
+    # ModuleNotFoundError before reaching the check it asserts — and passes only when an
+    # earlier test happened to leave `loger` in sys.modules.
     ckpt_dir = tmp_path / "ckpts" / "LoGeR_star"
     ckpt_dir.mkdir(parents=True)
     (ckpt_dir / "original_config.yaml").write_text(
@@ -163,8 +212,30 @@ def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch):
 def test_load_model_reports_missing_config(tmp_path, monkeypatch):
     # The vendored tree is gitignored, so "file not found" is the single most likely
     # first-run failure. The message must name the script that fixes it.
-    from collab_splats.pointcloud.feedforward import loger as loger_mod
-
     monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
     with pytest.raises(FileNotFoundError, match="setup/loger.sh"):
         LoGeRCreator()._load_model("cpu")
+
+
+@_NEEDS_FULL_CREATOR
+def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(tmp_path, monkeypatch, stub_pi3):
+    # The point of the whole routing. Replacing the capture with a bare
+    # `model_cfg.pop("se3", None)` passes every other test in this file while producing
+    # exactly the silent wrong-alignment-mode run the design exists to prevent, so the
+    # value has to be asserted per variant rather than inferred from "it loaded".
+    #
+    # Mirrors the real configs: LoGeR declares no se3, LoGeR_star sets it true
+    # (github.com/Junyi42/LoGeR @ 7685b7a, ckpts/*/original_config.yaml).
+    monkeypatch.setattr(loger_mod, "_LOGER_ROOT", tmp_path)
+
+    for variant, model_block, expected in (
+        ("LoGeR", {"decoder_size": "large"}, False),
+        ("LoGeR_star", {"decoder_size": "large", "se3": True}, True),
+    ):
+        cfg_dir = tmp_path / "ckpts" / variant
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "original_config.yaml").write_text(yaml.safe_dump({"model": model_block}))
+
+        creator = LoGeRCreator(variant=variant)
+        creator._load_model("cpu")
+        assert creator._se3 is expected

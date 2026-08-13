@@ -31,7 +31,6 @@ Provides:
 
 from __future__ import annotations
 
-import ast
 import inspect
 import logging
 import math
@@ -185,8 +184,11 @@ class LoGeRCreator(BaseFeedforwardCreator):
     mv_conf_threshold: float = 0.0
 
     # Resolved in _load_model from the variant's yaml. se3 is declared under model:
-    # but is a forward kwarg, so it cannot ride along in the constructor kwargs.
-    _se3: bool = field(default=False, init=False, repr=False)
+    # but is a forward kwarg, so it cannot ride along in the constructor kwargs. None
+    # means _load_model has not run yet; False is a valid post-load value, so reusing
+    # it as the unset sentinel would let an unset flag silently read as LoGeR mode.
+    # Task 7's _forward must treat None as a contract violation, not default it.
+    _se3: bool | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Reject at construction rather than at _load_model, so a typo does not survive
@@ -202,7 +204,10 @@ class LoGeRCreator(BaseFeedforwardCreator):
                 f"LoGeR config not found: {cfg_path}. Run `bash setup/loger.sh` to vendor the tree."
             )
 
-        model_cfg = dict(yaml.safe_load(cfg_path.read_text()).get("model", {}))
+        # `or {}` twice: an empty file parses to None, and `model:` with no body parses to
+        # None under the key. Both otherwise surface as an AttributeError or TypeError that
+        # does not name cfg_path, which is the one thing the operator needs.
+        model_cfg = dict((yaml.safe_load(cfg_path.read_text()) or {}).get("model") or {})
 
         # se3 sits under model: but is not a Pi3.__init__ parameter — it is popped
         # inside forward (github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589).
@@ -212,6 +217,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
         # The vendored tree is not pip-installed, so the module has to be reached via
         # sys.path rather than a top-of-file import. The flag keeps the finally
         # idempotent: without it a nested load would pop a path its caller installed.
+        # sys.path is released before the download/checkpoint load below, not held across
+        # them — the house pattern (vggt_spark_creator.py:124-132) closes it immediately
+        # after the import + construction that actually need it.
         root = str(_LOGER_ROOT)
         _patched = root not in sys.path
         if _patched:
@@ -230,25 +238,23 @@ class LoGeRCreator(BaseFeedforwardCreator):
                     "Upstream changed the config; route them explicitly rather than dropping them."
                 )
 
-            # Some checkpoints serialise list fields as strings, e.g. "[4,8]".
-            for key in ("ttt_insert_after", "attn_insert_after"):
-                if isinstance(model_cfg.get(key), str):
-                    model_cfg[key] = ast.literal_eval(model_cfg[key])
-
             # The yaml overrides Pi3's own defaults, which are wrong for both shipped
             # variants — ttt_inter_multi is 4 in each config and 2 in the constructor.
             model = Pi3(**model_cfg)
-
-            ckpt = self.model_path or hf_hub_download(
-                repo_id=self.model_repo, filename=f"{self.variant}/latest.pt"
-            )
-            state = torch.load(str(ckpt), map_location="cpu")
-            state = state.get("model_state_dict", state)
-            state = {k.removeprefix("module."): v for k, v in state.items()}
-            model.load_state_dict(state, strict=True)
         finally:
-            if _patched:
+            # Guarded so a ValueError raised above can never be chained over by a
+            # spurious error removing a path something else already popped.
+            if _patched and root in sys.path:
                 sys.path.remove(root)
+
+        ckpt = self.model_path or hf_hub_download(repo_id=self.model_repo, filename=f"{self.variant}/latest.pt")
+        # weights_only=True: torch 2.5.1 still defaults to False and warns. The
+        # checkpoint comes from a third-party HuggingFace repo, so restricting the
+        # unpickler is worth one kwarg. Verified against both real checkpoints.
+        state = torch.load(str(ckpt), map_location="cpu", weights_only=True)
+        state = state.get("model_state_dict", state)
+        state = {k.removeprefix("module."): v for k, v in state.items()}
+        model.load_state_dict(state, strict=True)
 
         logger.info("LoGeRCreator: loaded %s (se3=%s) on %s", self.variant, self._se3, device)
         return model.eval().to(device)

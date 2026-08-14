@@ -601,6 +601,12 @@ LoGeR therefore also skips the LC `ClassVar` calibration block that `VGGTOmegaCr
 carries (`_lc_layer_index`, `default_verify_match_ratio`). Inventing values for a refused
 feature would be dead configuration.
 
+**Decided 2026-08-14 (user): the refusal is the final state, not a first cut.** "we dont need
+loop closure for this". The LC calibration sweep is therefore **not owed** — it has been removed
+from the owed list, and the section title's "in the first cut" is retained only as the historical
+record of how the decision was reached. The `ValueError` guard and the missing `ClassVar` block
+stay exactly as shipped; no follow-up work is pending against them.
+
 ### Multiview confidence belongs to an existing design, not this one
 
 `use_multiview_confidence` is already a per-creator flag — MapAnything defaults `True`, VGGT-X
@@ -860,7 +866,35 @@ until it passes.
 
    The 0.4% assertion threshold is itself calibrated by mutation, not chosen: the 2% the
    design originally proposed was measured INERT — a +5% fx error passed it.
-4. Loop closure calibration for the LoGeR backbone — separate work, refused until then.
+
+   **Attribution measured 2026-08-14: the residual is LoGeR's, not ours.** The paragraph above
+   asserts the residual comes from LoGeR's `xy` field being non-pinhole; that attribution was
+   itself untested, so it was decomposed on the same fixture into (A) a genuinely non-affine ray
+   field, (B) error in our `estimate_intrinsics_from_points` fit, and (C) the cost of sharing one
+   K across frames. The decisive comparison is done entirely in the camera frame, with poses
+   excluded, so it cannot be confounded by the pose inversion:
+
+   | K used to rebuild `local_points` | median | p95 | p99 |
+   | --- | --- | --- | --- |
+   | our shared fitted K | 0.2148% | 0.5411% | 0.7434% |
+   | each frame's own least-squares optimal K | 0.2231% | 0.6397% | 0.9991% |
+
+   **Giving every frame its own optimal K does not reduce the residual** — it is marginally worse
+   than our single shared K. That rules out (B) and (C) as sources. What remains is (A), measured
+   directly: least-squares fitting `xy ~ [u, v, 1]` per frame leaves a non-affine residual of
+   median 2.388e-3 against a p95 ray spread of 0.3546, i.e. **0.674% of ray magnitude that no
+   pinhole K of any kind can represent**. The affine cross terms are ~1e-6, so the field has no
+   skew and our zero-skew K is structurally right. Supporting numbers: our K sits within 0.26%
+   (fx), 1.08% (fy), 0.70% (cx), 0.47% (cy) of the mean per-frame optimum; the per-frame optimal
+   fx varies only 2.383% across the eight frames, which is why sharing one K costs nothing. The
+   non-affine residual is anisotropic — vertical rms 5.42e-3 is ~2.6x horizontal 2.08e-3.
+
+   Consequence for the UNVERIFIED mesh/BA verdict above: the tail is not a fit artifact we could
+   tighten, so a better estimator would not remove it. If the tail turns out to matter downstream
+   the fix has to be a non-pinhole camera model, not a better K.
+4. ~~Loop closure calibration for the LoGeR backbone.~~ **Closed 2026-08-14 by user decision** —
+   "we dont need loop closure for this". The `Reconstructor`-level refusal is the final state;
+   no sweep is owed. See "Why no loop closure in the first cut".
 5. Multiview confidence calibration — owned by
    `2026-08-12-multiview-confidence-all-models-design.md`; `loger` should be added to its scope.
 6. Sparse `FeedforwardResult` for long sequences — rejected here for consistency; would need

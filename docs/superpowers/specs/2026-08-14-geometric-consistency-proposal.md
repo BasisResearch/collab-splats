@@ -222,6 +222,67 @@ the handoff's Workstream 1 has a recorded disposition.
   median alone), compare at matched retention, and mutate every new threshold once to prove
   it is not inert.
 
+## Review round 3 — pipeline fit, redundancy, gaps (2026-08-14)
+
+### Where this sits in the pipeline
+
+Pipeline: video → preproc → pointcloud creator (5-step template; LC inside creation, BA
+optional) → `build_colmap` → mesh / semantics / localize / splat. Triangulation consumes
+only frames + final poses + intrinsics, and produces only `points3D`, so it belongs **at or
+after `build_colmap` (Step 5), after LC and BA have finalized poses** — triangulating
+earlier would be invalidated when LC rewrites poses. That dependency shape also makes it a
+natural **leaf stage** under the stage-rerun contract (`LEAF_STAGES`): re-triangulating a
+processed scene from `environments-processed` needs no rebuild.
+
+### Redundant or additive?
+
+Not redundant — nothing in the pipeline verifies geometry against an external anchor today
+— but the value is concentrated, and honesty about what it does *not* touch:
+
+- **Improves:** splat/3DGS seeding (`points3D`/`sparse_pc.ply` becomes verified geometry);
+  enables backbone-agnostic BA (P4); provides the external depth audit (P3); and the
+  **per-frame track-survival map is a free pose-quality diagnostic** — where poses are
+  wrong, reprojection filtering kills tracks, so low yield localizes bad poses (complements
+  mv's bad-frame detection with an external signal).
+- **Does NOT improve by itself:** the mesh (TSDF fuses dense model depth, untouched until a
+  P3-derived depth correction exists), localization (samples zarr `world_points`), or ATE
+  (poses are fixed inputs; only P4 moves them).
+
+### Gaps found in this review
+
+1. **Stage placement was unstated** — fixed above: post-LC/BA, leaf-stage candidate.
+2. **Small-baseline yield risk (the biggest open risk).** Video keyframes are mostly
+   small-baseline — the same property that made BA a no-op on tiny-baseline scenes and got
+   round-trip reprojection ruled out of the mv pass. COLMAP's `min_angle=1.5°` and
+   `ignore_two_view_tracks=True` may starve exactly those scenes. The P2 first experiment
+   must therefore report **yield** (points count, track-length distribution, per-frame
+   survival) alongside accuracy; a cloud that is accurate but 100× sparser than the current
+   subsampled `world_points` may not seed splats well. fps sampling (`fps: 1.0`) helps
+   baselines vs dense sampling but does not guarantee them.
+3. **Resolution convention, stated positively:** localization keypoints are in
+   original-image pixel coordinates by contract, and the COLMAP export is original-res K on
+   purpose — so the triangulation path is consistent *by construction*, unlike the
+   model-res zarr. Keep the PINHOLE (not SIMPLE_PINHOLE) camera model. Add one guard:
+   keypoint bounds vs the DB camera width/height.
+4. **Existing COLMAP-DB usage overlooked:** `pointcloud/sfm.py` already drives
+   pycolmap end-to-end (SIFT + exhaustive + `incremental_mapping`). The new path is its
+   known-pose sibling — reuse its DB/path conventions rather than inventing parallel ones,
+   and note the relation in the design spec.
+5. **Config surface unstated:** follow the mv precedent — one boolean
+   (e.g. `pointcloud.triangulate_sparse`), extractor choice reuses the existing
+   localization extractor config; COLMAP thresholds stay at pycolmap defaults, not exposed.
+6. **Matching compute budget unstated:** at `max_frames: 300`, adjacency-window +
+   retrieval shortlisting bounds pairs to O(N·w), not O(N²); extraction reuses the
+   decode-once zarr cache. State the window default in the design spec; heavy runs in
+   tmux under the 46.6 GB cap.
+7. **Persistence contract:** `database.db` and the triangulated `points3D` live under the
+   existing `colmap/` output; `configs/README.md`'s processed-scene contract gets one line
+   when implemented. Decide then whether the DB is pushed to GCS or rebuilt on demand
+   (lean: rebuild — it is derivable from zarr cache + poses).
+8. **Measurement habit:** score vs GT *and* report the reference-free
+   triangulated-vs-model agreement stats (median/p90/p99), per the LoGeR lesson that the
+   GT column can be a noise floor.
+
 ## Implementation principles (repo standard)
 
 - Reuse: matchers, retrieval, zarr feature cache, `build_pycolmap_reconstruction`,

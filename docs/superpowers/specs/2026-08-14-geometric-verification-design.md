@@ -83,19 +83,16 @@ guard: keypoint bounds vs the DB camera width/height.
   (triangulating earlier is invalidated when LC rewrites poses). Registered as a leaf
   stage (`LEAF_STAGES`) so a processed scene can be re-verified from
   `environments-processed` without rebuilding.
-- **Config:** own top-level block, matching the pattern every other leaf stage
-  (`mesh`, `semantics`, `localization`) follows — not nested under `pointcloud`, which is
-  the mv-confidence precedent for code that runs *inside* creators:
-
-  ```yaml
-  verification:
-    enabled: false     # default off until the first experiment reports
-    extractor: xfeat   # any BaseLocalExtractor except xfeat-star
-    window: 10         # sequential pair window
-  ```
-
-  Stage name `verify` in `LEAF_STAGES`, so `--stages verify` re-runs it against a
-  processed scene. COLMAP thresholds stay at library defaults, not exposed.
+- **Config:** one boolean, `pointcloud.geometric_verification: false` (default off until
+  the first experiment reports) — verification is a pointcloud-refinement layer, and the
+  repo precedent for those (mv confidence) is a single boolean under `pointcloud` with
+  tuning knobs as module defaults, not config. The pair window (10) is a module default.
+  **The extractor is the one already configured for localization** — the zarr feature
+  cache is keyed by extractor, so sharing it means keypoints are extracted once and the
+  cache serves both localization and verification; a separate knob would double extraction
+  and drift. COLMAP thresholds stay at library defaults, not exposed.
+  Stage name `verify` in `LEAF_STAGES` regardless of config location — it needs only
+  frames + poses, so `--stages verify` re-runs it against a processed scene.
 - **Storage principle — raw model outputs are immutable; verified geometry is a derived
   layer.** `feedforward.zarr` is never rewritten. Outputs land in the existing
   `<backend>/colmap/` artifact:

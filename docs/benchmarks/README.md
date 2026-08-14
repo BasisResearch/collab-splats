@@ -14,6 +14,15 @@ result does *not* support.
 | --- | --- | --- | --- |
 | 2026-08-14 | [LoGeR vs VGGT-Omega](2026-08-14-loger-vs-omega-gopro.md) | GoPro walking, 251 frames @ 1 fps | LoGeR's 32-frame sliding window matches Omega's global attention on trajectory and beats it ~1.6× on rotation, at 5.6× the inference time. Translation is GPS-limited and unresolved. |
 
+## Tooling
+
+A report must be reproducible from tracked code. Where a comparison needed machinery the
+package did not have, that machinery was added under `evals/` rather than left in a
+scratchpad — `evals/gopro_telemetry.py` and `evals/rotation_alignment.py` are libraries,
+`evals/scripts/eval_gopro_reference.py` is the driver, and metrics stay in
+`evals/metrics.py`. One-off diagnostics that only exist to back a specific claim are archived
+in [`scripts/`](scripts/README.md) with the question each one answered.
+
 ## What makes a report trustworthy
 
 Reports in this directory are expected to state these explicitly, because each one has

@@ -116,10 +116,10 @@ exactly the expected physical signature.
 | metric | VGGT-Omega (all 251 joint) | LoGeR (32-frame window) | winner |
 | --- | --- | --- | --- |
 | invariant turn-angle diff, median | 0.288° | **0.172°** | LoGeR, 1.7× |
-| relative rotation error, median | 0.592° | **0.359°** | LoGeR, 1.6× |
-| relative rotation error, p95 | 1.957° | **1.305°** | LoGeR |
-| RPE d=1, rotation RMSE | 1.010° | **0.698°** | LoGeR, 1.4× |
-| RPE d=1, translation RMSE | 1.442 m | **1.429 m** | tie |
+| relative rotation error, median | 0.584° | **0.354°** | LoGeR, 1.6× |
+| relative rotation error, p95 | 2.010° | **1.320°** | LoGeR |
+| RPE d=1, rotation RMSE | 1.014° | **0.693°** | LoGeR, 1.5× |
+| RPE d=1, translation RMSE | 1.442 m | **1.430 m** | tie |
 | ATE Sim(3), RMSE vs GPS | **6.43 m** | 6.53 m | tie (see below) |
 | ATE Sim(3), median vs GPS | **5.90 m** | 6.15 m | tie (see below) |
 | inference wall-clock | **68.9 s** | 384.9 s | Omega, 5.6× |
@@ -132,7 +132,7 @@ max 3.66 m, i.e. **0.49 % of the 244 m sampled path**.
 ### In brief
 
 - **LoGeR is more accurate in rotation, by roughly 1.6×.** Median relative rotation error
-  0.359° against Omega's 0.592°. This is not an artifact of the pose-fitting step: LoGeR also
+  0.354° against Omega's 0.584°. This is not an artifact of the pose-fitting step: LoGeR also
   wins on the fit-free invariant (0.172° vs 0.288°), which involves no fitting whatsoever.
 - **Translation is a tie, and GPS cannot resolve it.** The 6.43 vs 6.53 m ATE gap looks like a
   result but is not one — the two reconstructions agree *with each other* to 1.21 m RMSE,
@@ -168,9 +168,26 @@ max 3.66 m, i.e. **0.49 % of the 244 m sampled path**.
 ## 6. Reproducing
 
 Both runs used `docs/examples/run_pipeline.py --stages preproc,pointcloud`, LoGeR with a
-single-key override (`pointcloud.backend: loger`) merged over `configs/base.yaml`. The
-telemetry→TUM conversion, the orientation-convention search, and the camera-offset fit are
-not part of the shipped package; metrics themselves come from `evals/metrics.py`
-(`compute_ate`, `compute_rpe`) unchanged.
+single-key override (`pointcloud.backend: loger`) merged over `configs/base.yaml`.
+
+Every number in §3 and §4 above is reproducible from tracked code. The telemetry→TUM
+conversion, the orientation-convention search, and the camera-offset fit are
+`evals/scripts/eval_gopro_reference.py`, which writes the `gt.tum` + `<method>.tum` files the
+existing phase-2 runner already consumes; the metrics themselves come from `evals/metrics.py`
+(`compute_ate`, `compute_rpe`, `compute_auc`) unchanged:
+
+```bash
+python evals/scripts/eval_gopro_reference.py \
+    --telemetry GH010230_telemetry.parquet \
+    --recon omega=data/outputs/gopro-compare/omega/GH010230/vggt_omega/colmap/sparse/0 \
+    --recon loger=data/outputs/gopro-compare/loger/GH010230/loger/colmap/sparse/0 \
+    --results-dir evals/results/gopro_GH010230
+python evals/scripts/eval_compare.py --results-dir evals/results/gopro_GH010230
+```
+
+The camera-frame offset, the invariant floor, and the raw-vs-GPS path lengths are written to
+`<method>_alignment.json` and carried into `metrics.json` verbatim, so each number travels
+with the fit that produced it. The one-off diagnostics that established the orientation
+convention and the transpose are archived under [`scripts/`](scripts/README.md).
 
 Outputs: `data/outputs/gopro-compare/{omega,loger}/GH010230/` (gitignored).

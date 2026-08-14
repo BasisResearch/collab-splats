@@ -892,6 +892,42 @@ until it passes.
    Consequence for the UNVERIFIED mesh/BA verdict above: the tail is not a fit artifact we could
    tighten, so a better estimator would not remove it. If the tail turns out to matter downstream
    the fix has to be a non-pinhole camera model, not a better K.
+
+   **Checked against upstream's own estimator (2026-08-14).** The claim "a better estimator would
+   not remove it" was tested against the only estimator with a real claim to authority — LoGeR's.
+   Upstream fits a focal **only in its eval scripts**, never on the demo/viser path, which
+   hardcodes a 60 degree FOV and comments that the missing intrinsics are "a limitation"
+   (`github.com/Junyi42/LoGeR @ 7685b7a` — `loger/utils/viser_utils.py:445-449`). The eval path is
+   dust3r's `estimate_focal_knowing_depth(pts3ds_self, pp, focal_mode="weiszfeld")` with
+   `pp = (W // 2, H // 2)` (`eval/relpose/launch.py:528-534`, likewise `:721-730` and
+   `eval/video_depth/launch.py:530-537`). Reimplemented from dust3r's published algorithm
+   (`github.com/naver/dust3r` — `dust3r/post_process.py`) and run on the same fixture:
+
+   | K estimator | median | p95 | p99 |
+   | --- | --- | --- | --- |
+   | ours — conf-weighted median, fx != fy, `pp=(W-1)/2` | 0.2148% | 0.5411% | 0.7434% |
+   | upstream dust3r Weiszfeld — one focal, `pp=(W//2, H//2)` | 0.2263% | 0.5541% | 0.8180% |
+   | upstream fallback when dust3r is absent, `f = max(H, W) = 574` | 2.7619% | 4.9562% | 6.8999% |
+
+   Two independent methods on independent implementations agree on the focal to **0.29%**
+   (upstream 708.44, ours 710.49), and ours is marginally the better fit. Ablations attribute the
+   gap to the two deliberate differences: `pp=(W-1)/2` rather than `W//2` is worth 0.0084pp of
+   median and **0.066pp of p99** — the half-pixel offset costs most in the tail, which is the part
+   that gates mesh and BA — and fitting fx and fy separately is worth 0.0038pp.
+
+   Note the third row: dust3r is **not** a LoGeR dependency, so upstream's own eval silently
+   degrades to a constant `max(H, W)` focal that is 13x worse than either real fit. Not our
+   problem, but it means published LoGeR eval numbers are not a reference for intrinsics quality.
+
+   Two model-level assumptions were verified against source at the same time, both correct:
+   `local_points = torch.cat([xy * z, z], dim=-1)` with `z = torch.exp(z)`, so channel 2 is z-depth
+   along the optical axis and not ray distance (`loger/models/pi3.py:772-775`, the `pi3x=False`
+   branch we take); and `points = einsum('bnij,bnhwj->bnhwi', camera_poses, homogenize(local_points))`
+   (`:807`). `xy` is two free channels off a single `nn.Linear` + `pixel_shuffle`
+   (`loger/models/layers/transformer_head.py:58-81`) with no distortion model anywhere in `loger/`,
+   which is the mechanism behind the 0.674%. `_preprocess` and `_forward_kwargs` were also compared
+   against `demo_viser.py` and the `LoGeR_star` yaml and match; ImageNet normalisation happens
+   inside the model (`loger/models/pi3.py:672`), so our `[0, 1]` input is correct.
 4. ~~Loop closure calibration for the LoGeR backbone.~~ **Closed 2026-08-14 by user decision** —
    "we dont need loop closure for this". The `Reconstructor`-level refusal is the final state;
    no sweep is owed. See "Why no loop closure in the first cut".

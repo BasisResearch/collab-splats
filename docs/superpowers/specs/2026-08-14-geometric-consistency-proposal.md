@@ -283,6 +283,41 @@ Not redundant — nothing in the pipeline verifies geometry against an external 
    triangulated-vs-model agreement stats (median/p90/p99), per the LoGeR lesson that the
    GT column can be a noise floor.
 
+## Round 4 — verification-layer framing (2026-08-14)
+
+User-stated goal: **geometrically verify the poses and points that feedforward inference
+produces.** This reframes P2 from "build a better sparse cloud" to "a backbone-agnostic
+verification layer" — same pattern as mv confidence (shared code on the result contract,
+one boolean, zero per-creator code), but with evidence *external* to every model: matches,
+epipolar geometry, triangulation. Three tiers, one shared DB:
+
+1. **Pair-level pose verification (no triangulation).** `pycolmap.verify_matches`
+   estimates two-view geometry per pair; comparing its estimated relative pose and epipolar
+   inlier ratio against the model's relative pose verifies poses directly, independent of
+   model depth. Free byproduct of filling `two_view_geometries`.
+2. **Point + contextual pose verification.** `triangulate_points` + `filter_all_points3D`:
+   surviving points are verified geometry; per-frame track survival and reprojection
+   residuals localize bad absolute poses.
+3. **Per-frame pose delta (optional).** Re-estimate each frame's pose from triangulated
+   points via `estimate_and_refine_absolute_pose` (already used by the localizer); the
+   delta vs the model pose quantifies pose error per frame and is the go/no-go evidence
+   for P4 (BA).
+
+**Replace vs refine `sparse_pc`.** The triangulated cloud is a *different point set*
+(matched keypoints, not the dense `world_points` subsample), so it is not an in-place
+refinement. Two modes off the same database:
+
+- **Independent mode (default, verification):** triangulate from scratch; model depth never
+  enters. The delta vs model points at the same pixels is the verification metric.
+- **Refinement mode:** seed `points3D` from model `world_points` sampled at track
+  observations, then point-only `pycolmap.bundle_adjustment` (poses/K constant) — a literal
+  reprojection-based refinement of model-derived points (what bae-BA does internally,
+  generalized).
+
+Whether the verified cloud replaces `sparse_pc.ply` is decided **after** the yield
+experiment (gap 2): if small baselines starve it, ship both — dense `sparse_pc` for
+seeding, verified cloud + verification stats as the audit artifact.
+
 ## Implementation principles (repo standard)
 
 - Reuse: matchers, retrieval, zarr feature cache, `build_pycolmap_reconstruction`,

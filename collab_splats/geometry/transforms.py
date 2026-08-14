@@ -123,6 +123,17 @@ def estimate_intrinsics_from_points(
     **not** do — it would merge fx and fy, and a caller that rescales the two axes
     separately then un-merges the average incorrectly.
 
+    The *vendored* fork recovers a focal too, by a different method, and is cited here so
+    the PolyCam reference above is not mistaken for the only upstream precedent:
+    github.com/Junyi42/LoGeR @ 7685b7a calls dust3r's ``estimate_focal_knowing_depth``
+    with ``focal_mode="weiszfeld"`` and ``pp = (W // 2, H // 2)``
+    (``eval/relpose/launch.py:528-534``) — one focal for both axes, unweighted IRLS rather
+    than a confidence-weighted median.  It appears in the eval scripts only; the demo path
+    fits nothing and hardcodes a 60 degree FOV (``loger/utils/viser_utils.py:445-449``).
+    Measured on the LoGeR parity fixture, that estimator lands within 0.29% of this one
+    and reproduces the model's own points slightly *worse* (see open item 3 of
+    ``docs/superpowers/specs/2026-08-13-loger-feedforward-backend-design.md``).
+
     Args:
         local_points: (N, H, W, 3) camera-frame points, channel 2 being depth.  Note
             that a pointmap head is free to emit a per-pixel ray field not constrained

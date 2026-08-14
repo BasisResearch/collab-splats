@@ -1,10 +1,20 @@
-"""Tests for evals/rotation_alignment.py — the fit-free invariant and the camera-offset fit."""
+"""Tests for rotation_alignment.py — the fit-free invariant and the camera-offset fit.
+
+Archived alongside the module under test; not collected by the default suite (`testpaths`
+is `./tests`). Run explicitly: `pytest docs/benchmarks/scripts/ -p no:randomly`.
+"""
+
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from evals.rotation_alignment import (
+# This archive is outside the package and outside `testpaths`, so the module under test is
+# not importable by name — put its directory on the path explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rotation_alignment import (
     fit_camera_offset,
     invariant_turn_angle_error_deg,
     relative_rotation_error_deg,

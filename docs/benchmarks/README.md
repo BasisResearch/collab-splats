@@ -16,12 +16,12 @@ result does *not* support.
 
 ## Tooling
 
-A report must be reproducible from tracked code. Where a comparison needed machinery the
-package did not have, that machinery was added under `evals/` rather than left in a
-scratchpad — `evals/gopro_telemetry.py` and `evals/rotation_alignment.py` are libraries,
-`evals/scripts/eval_gopro_reference.py` is the driver, and metrics stay in
-`evals/metrics.py`. One-off diagnostics that only exist to back a specific claim are archived
-in [`scripts/`](scripts/README.md) with the question each one answered.
+A report must be reproducible from tracked code, but measurement scaffolding is not package
+code. Everything a comparison needed and the package did not already have is archived in
+[`scripts/`](scripts/README.md) — libraries, driver, their tests, and the one-off diagnostics
+that back a specific claim — tracked and runnable, but imported by nothing and collected by no
+CI run. Metrics themselves are the exception: they come from `evals/metrics.py` via
+`evals/scripts/eval_compare.py`, unmodified, because that runner already existed.
 
 ## What makes a report trustworthy
 

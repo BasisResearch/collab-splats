@@ -6,9 +6,9 @@ reference relative-rotation ANGLES agree but the full relative rotations do not,
 are fine and the axis fit is at fault.  If the angles themselves disagree, the problem is
 upstream of any alignment -- in the poses or in the reference stream.
 
-ARCHIVED DIAGNOSTIC -- see docs/benchmarks/scripts/README.md.  Its conclusion is now carried
-by `evals/gopro_telemetry.py` (the ORIENTATION_MODES docstring) and re-measured on every run
-by `evals/scripts/eval_gopro_reference.py --orientation auto`.
+ARCHIVED DIAGNOSTIC -- see docs/benchmarks/scripts/README.md.  Its conclusion is carried by
+the sibling `gopro_telemetry.py` (the ORIENTATION_MODES docstring) and re-measured on every
+run by the sibling `eval_gopro_reference.py --orientation auto`.
 
 Run from the repo root:
     python docs/benchmarks/scripts/diag_rotation.py <telemetry.parquet> <colmap/sparse/0>
@@ -21,7 +21,7 @@ import numpy as np
 import pycolmap
 from scipy.spatial.transform import Rotation
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "evals"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gopro_telemetry import sample_reference_at_frames as reference_at_frames
 
 TEL, SPARSE = sys.argv[1], sys.argv[2]

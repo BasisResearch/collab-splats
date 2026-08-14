@@ -1,5 +1,8 @@
 """Compare reconstructed rotations against an external reference whose camera frame differs.
 
+Benchmark evidence, not package code — see `docs/benchmarks/scripts/README.md`.  Nothing in
+`collab_splats/` or `evals/` imports this module and nothing runs it in CI.
+
 An external attitude reference — GoPro CORI, a phone's ARKit stream, a robot's IMU — reports
 orientation in *its* body frame, not the reconstruction's camera frame.  Writing that
 relationship out, a reconstruction pose is

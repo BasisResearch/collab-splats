@@ -172,12 +172,13 @@ single-key override (`pointcloud.backend: loger`) merged over `configs/base.yaml
 
 Every number in §3 and §4 above is reproducible from tracked code. The telemetry→TUM
 conversion, the orientation-convention search, and the camera-offset fit are
-`evals/scripts/eval_gopro_reference.py`, which writes the `gt.tum` + `<method>.tum` files the
-existing phase-2 runner already consumes; the metrics themselves come from `evals/metrics.py`
-(`compute_ate`, `compute_rpe`, `compute_auc`) unchanged:
+`docs/benchmarks/scripts/eval_gopro_reference.py` — archived measurement scaffolding, not part
+of the package — which writes the `gt.tum` + `<method>.tum` files the existing phase-2 runner
+already consumes; the metrics themselves come from `evals/metrics.py` (`compute_ate`,
+`compute_rpe`, `compute_auc`) unchanged:
 
 ```bash
-python evals/scripts/eval_gopro_reference.py \
+python docs/benchmarks/scripts/eval_gopro_reference.py \
     --telemetry GH010230_telemetry.parquet \
     --recon omega=data/outputs/gopro-compare/omega/GH010230/vggt_omega/colmap/sparse/0 \
     --recon loger=data/outputs/gopro-compare/loger/GH010230/loger/colmap/sparse/0 \

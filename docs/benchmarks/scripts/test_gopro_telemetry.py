@@ -1,11 +1,21 @@
-"""Tests for evals/gopro_telemetry.py — GPMF stream loading and frame-aligned sampling."""
+"""Tests for gopro_telemetry.py — GPMF stream loading and frame-aligned sampling.
+
+Archived alongside the module under test; not collected by the default suite (`testpaths`
+is `./tests`). Run explicitly: `pytest docs/benchmarks/scripts/ -p no:randomly`.
+"""
+
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from scipy.spatial.transform import Rotation
 
-from evals.gopro_telemetry import (
+# This archive is outside the package and outside `testpaths`, so the module under test is
+# not importable by name — put its directory on the path explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gopro_telemetry import (
     GOPRO_FPS,
     ORIENTATION_MODES,
     load_gps_enu,

@@ -12,10 +12,10 @@ DIRECTLY against the residual, instead of via the axis proxy.  Direct optimisati
 immune to cause 1: a degenerate direction simply means many equally good minima, and any
 of them drives the residual down.
 
-ARCHIVED DIAGNOSTIC -- see docs/benchmarks/scripts/README.md.  Both conclusions now live in
-shipped code: the direct multi-start optimisation is `evals/rotation_alignment.py`
+ARCHIVED DIAGNOSTIC -- see docs/benchmarks/scripts/README.md.  Both conclusions are carried
+by siblings in this directory: the direct multi-start optimisation is `rotation_alignment.py`
 (`fit_camera_offset`, whose docstring records the rejected axis-Kabsch numbers), and the
-winning transpose is `evals/gopro_telemetry.py` (`reference_rotations_c2w`).
+winning transpose is `gopro_telemetry.py` (`reference_rotations_c2w`).
 
 Run from the repo root:
     python docs/benchmarks/scripts/diag_handeye.py <telemetry.parquet> <colmap/sparse/0>
@@ -29,7 +29,7 @@ import pycolmap
 from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "evals"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gopro_telemetry import sample_reference_at_frames as reference_at_frames
 
 rec = pycolmap.Reconstruction(sys.argv[2])

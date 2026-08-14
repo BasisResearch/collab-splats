@@ -1,5 +1,8 @@
 """Turn a GoPro's GPMF telemetry into a pose reference sampled at reconstructed frames.
 
+Benchmark evidence, not package code — see `docs/benchmarks/scripts/README.md`.  Nothing in
+`collab_splats/` or `evals/` imports this module and nothing runs it in CI.
+
 Rotation comes from the camera's orientation quaternion stream, translation from GPS
 projected onto a local ENU plane.  Nothing here computes a metric: the output feeds
 `evals/trajectory_io.write_tum` and from there the existing `evals/metrics.py` functions.
@@ -13,7 +16,7 @@ assumed away:
   compares a reconstruction to an orientation no frame actually shows.  On the 2026-08-14
   scene IORI reached 25.7 deg, median 4.6 deg.  Which composition of the two describes the
   stabilised image is undocumented, so all five candidates are exposed via `mode=` and the
-  caller picks one by measurement — see `evals/rotation_alignment.py` for the fit-free
+  caller picks one by measurement — see the sibling `rotation_alignment.py` for the fit-free
   quantity that makes that choice honest.
 * **GPS is consumer grade.**  Relative precision over a few hundred metres is fair; altitude
   is markedly worse than horizontal and absolute position is metre-scale.  Translation

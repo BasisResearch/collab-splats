@@ -1,10 +1,13 @@
 """Write a GoPro telemetry reference and per-backend trajectories for `eval_compare.py`.
 
+Benchmark evidence, not package code — see `docs/benchmarks/scripts/README.md`.  Nothing in
+`collab_splats/` or `evals/` imports this module and nothing runs it in CI.
+
 This script computes **no** trajectory metric.  It produces the files the existing phase-2
 runner already consumes — a shared `gt.tum` plus one `<backend>.tum` per reconstruction — so
 ATE, RPE and AUC come from `evals/metrics.py` unchanged:
 
-    python evals/scripts/eval_gopro_reference.py \\
+    python docs/benchmarks/scripts/eval_gopro_reference.py \\
         --telemetry GH010230_telemetry.parquet \\
         --recon omega=data/outputs/gopro-compare/omega/GH010230/vggt_omega/colmap/sparse/0 \\
         --recon loger=data/outputs/gopro-compare/loger/GH010230/loger/colmap/sparse/0 \\
@@ -14,7 +17,7 @@ ATE, RPE and AUC come from `evals/metrics.py` unchanged:
 What it does supply is the one piece of maths those functions cannot: the constant offset
 between each reconstruction's camera frame and the GoPro's, which does not cancel out of
 relative poses and would otherwise make RPE report a large rotation error for a perfect
-reconstruction.  See `evals/rotation_alignment.py` for why.
+reconstruction.  See the sibling `rotation_alignment.py` for why.
 
 Two decisions are made by measurement rather than assumption:
 
@@ -42,7 +45,10 @@ import numpy as np
 import pycolmap
 from scipy.spatial.transform import Rotation
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+# Siblings in this archive directory; on sys.path already when run as a script, but named
+# explicitly so the module also imports cleanly under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gopro_telemetry import (
     ORIENTATION_MODES,
     reference_rotations_c2w,
@@ -52,9 +58,12 @@ from rotation_alignment import (
     invariant_turn_angle_error_deg,
     relative_rotation_error_deg,
 )
+
+# Package code this script reuses rather than reimplements.
+sys.path.insert(0, str(_REPO_ROOT / "evals"))
 from trajectory_io import write_tum
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(_REPO_ROOT))
 from collab_splats.geometry.transforms import invert_poses
 
 logger = logging.getLogger(__name__)

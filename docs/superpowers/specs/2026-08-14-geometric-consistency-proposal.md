@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-14
 **Inputs:** `2026-08-14-accuracy-followups-handoff.md`, `2026-08-13-multiview-confidence-measured-report.md`, code audit of `pointcloud/feedforward/base.py`, `localization/`, `geometry/bundle_adjustment.py`, installed pycolmap 4.0.4.
-**Status:** proposal for evaluation. No item is approved; each is written so its worth can be judged independently.
+**Status:** superseded for implementation by `2026-08-14-geometric-verification-design.md` (distilled after four review rounds); kept as the decision record.
 
 ---
 

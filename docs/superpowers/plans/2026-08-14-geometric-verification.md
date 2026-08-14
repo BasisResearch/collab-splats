@@ -21,7 +21,8 @@ These were verified with a synthetic 3-view probe (60 points, 3 cameras, identit
 2. **DB ids must mirror the reconstruction exactly** — one camera per image, `camera_id == image_id`. A single shared DB camera against `build_pycolmap_reconstruction`'s per-image trivial rigs fails inside `triangulate_points` with `Check failed: existing_frame.RigId() == frame.RigId()`.
 3. `db.write_image(pycolmap.Image(name=..., camera_id=..., image_id=...), use_image_id=True)` — signature confirmed; `write_camera(cam, use_camera_id=True)`; `write_keypoints(image_id, float64 (N,2))`; `write_matches(id1, id2, uint32 (K,2))`.
 4. `pycolmap.verify_matches(db_path, pairs_path, options=opts)` needs `opts.compute_relative_pose = True` or every `TwoViewGeometry.cam2_from_cam1` is `None`. pairs file = lines of `"name1 name2"`.
-5. `db.read_two_view_geometries()` returns `(pair_ids: list[int], geoms: list[TwoViewGeometry])`. Decode: `id1, id2 = divmod(pair_id, 2147483647)`. There is **no** `pair_id_to_image_pair` helper in this build.
+5. `db.read_two_view_geometries()` returns `(pair_ids: list[int], geoms: list[TwoViewGeometry])`. Decode with `pycolmap.pair_id_to_image_pair(pair_id) -> (id1, id2)` — module-level, probe-verified (`2147483649 -> (1, 2)`). Never hand-roll the divmod.
+5b. Pair generation exists in pycolmap — do not write our own: `pycolmap.SequentialPairGenerator(options, db)` over a Database with images already written; `SequentialPairingOptions` has `overlap` (default 10), `quadratic_overlap` (default True — COLMAP's video pairing, adds power-of-two longer-baseline pairs), `loop_detection` (default False; needs a SIFT vocab tree, unusable with learned descriptors — loop pairs are a follow-on). `all_pairs()` returns the pair list; confirm the element type at implementation time (tuple-unpackable vs `.image_id1`/`.image_id2` attributes) with a one-line probe before relying on it.
 6. `pycolmap.triangulate_points(recon, db_path, image_dir, out_dir)` clears model points by default (`clear_points=True`), chains tracks internally, and applies mapper filtering at COLMAP defaults (`filter_max_reproj_error=4.0`, `filter_min_tri_angle=1.5` — confirmed on `IncrementalPipelineOptions().mapper`). **No `ObservationManager` / `filter_all_points3D` call is needed** — the pipeline already filters. `image_dir` may be an existing directory with no images (keypoints come from the DB).
 7. `Image.cam_from_world()` is a **method** (returns `Rigid3d`) in this build. `Rigid3d` has `inverse()`, `__mul__`, `.rotation.matrix()`, `.translation`. `Point2D.has_point3D()` and `.point3D_id` exist.
 
@@ -43,8 +44,9 @@ Commit docs with `git add -f` (docs/superpowers is gitignored). End commit messa
 
 - Modify: `collab_splats/localization/extractors.py` — `MatchResult` indices (Task 1)
 - Modify: `collab_splats/localization/localizer.py` — extract cache reader `load_reconstruction_features` (Task 2)
-- Create: `collab_splats/geometry/verification.py` — pair selection, DB export, Tier 1/2, `verify_reconstruction` (Tasks 3–5)
-- Create: `tests/geometry/test_verification.py` — synthetic-scene tests + negative control (Tasks 3–6)
+- Modify: `collab_splats/geometry/transforms.py` — public `rotation_angle_deg` (Task 3; scalar version of the trace formula already inlined at `loop_closure/eval.py:197` and `loop_closure/edge_trace.py:27`)
+- Create: `collab_splats/geometry/verification.py` — DB export, pycolmap pair generation, Tier 1/2, `verify_reconstruction` (Tasks 4–5)
+- Create: `tests/geometry/test_verification.py` — synthetic-scene tests + negative control (Tasks 4–6)
 - Modify: `collab_splats/wrapper/reconstructor.py`, `configs/base.yaml`, `collab_splats/remote/sources.py`, `configs/README.md` — wiring (Task 7)
 - Create: `tests/wrapper/test_verify_stage.py` (Task 7)
 - Create: `evals/scripts/eval_verification.py` — measurement script (Task 8)
@@ -323,147 +325,63 @@ git commit -m "refactor(localization): extract load_reconstruction_features cach
 
 ---
 
-### Task 3: `geometry/verification.py` — pair selection
+### Task 3: public `rotation_angle_deg` in `geometry/transforms.py`
+
+The scalar geodesic-angle trace formula is already inlined twice in the repo
+(`geometry/loop_closure/eval.py:197` vectorized, `geometry/loop_closure/edge_trace.py:27`
+scalar) but has no importable home. Verification needs the scalar version — extract it
+once into `transforms.py` (the pose-math module) instead of a third copy. Leave the two
+existing inline sites alone (eval.py's is vectorized over stacks; rewriting it is
+unrelated churn).
 
 **Files:**
-- Create: `collab_splats/geometry/verification.py`
-- Create: `tests/geometry/test_verification.py`
+- Modify: `collab_splats/geometry/transforms.py`
+- Test: `tests/geometry/test_transforms.py` (exists)
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing test**
 
-Create `tests/geometry/test_verification.py`:
+Append to `tests/geometry/test_transforms.py`:
 
 ```python
-"""Tests for geometric verification: pair selection, DB export, triangulation, negative control."""
+def test_rotation_angle_deg():
+    """Geodesic angle: identity -> 0, known z-rotation -> its angle, clip guards trace noise."""
+    from collab_splats.geometry.transforms import rotation_angle_deg
 
-import numpy as np
-import pytest
-
-from collab_splats.geometry.verification import (
-    select_loop_pairs,
-    select_sequential_pairs,
-)
-
-
-def test_sequential_pairs_window():
-    """All (i, j) with 0 < j - i <= window, no duplicates, no self-pairs."""
-    pairs = select_sequential_pairs(5, window=2)
-    assert pairs == [(0, 1), (0, 2), (1, 2), (1, 3), (2, 3), (2, 4), (3, 4)]
-
-
-def test_sequential_pairs_window_covers_all_when_large():
-    """window >= n-1 yields the complete pair set."""
-    pairs = select_sequential_pairs(4, window=10)
-    assert len(pairs) == 6  # C(4,2)
-
-
-def test_loop_pairs_finds_far_similar_frames():
-    """Loop pairs link similar frames outside the sequential window; near frames excluded."""
-    rng = np.random.default_rng(0)
-    descs = rng.standard_normal((30, 8)).astype(np.float32)
-    descs /= np.linalg.norm(descs, axis=1, keepdims=True)
-    descs[25] = descs[0]  # frame 25 revisits frame 0
-    pairs = select_loop_pairs(descs, window=5, top_k=1)
-    assert (0, 25) in pairs
-    assert all(j - i >= 10 for i, j in pairs)  # 2*window gap enforced
-    assert all(i < j for i, j in pairs)
+    assert rotation_angle_deg(np.eye(3)) == pytest.approx(0.0)
+    a = np.radians(30.0)
+    Rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
+    assert rotation_angle_deg(Rz) == pytest.approx(30.0, abs=1e-6)
+    # trace marginally above 3 from float error must not NaN through arccos
+    assert rotation_angle_deg(np.eye(3) * (1 + 1e-12)) == pytest.approx(0.0, abs=1e-3)
 ```
+
+(Match the file's existing import style for `np`/`pytest`.)
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py -p no:randomly -v`
-Expected: FAIL — `ModuleNotFoundError: collab_splats.geometry.verification`.
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_transforms.py -k rotation_angle -p no:randomly -v`
+Expected: FAIL — `ImportError: cannot import name 'rotation_angle_deg'`.
 
 - [ ] **Step 3: Implement**
 
-Create `collab_splats/geometry/verification.py`:
+Add to `collab_splats/geometry/transforms.py` (near the other rotation helpers):
 
 ```python
-"""Geometric verification of feedforward reconstructions via pycolmap.
-
-Layer on top of any backbone: takes the final COLMAP-frame reconstruction (pose/camera
-authority) plus the localization extractor's per-frame features, and produces
-  - Tier 1: per-pair epipolar inlier counts and estimated-vs-model relative-pose errors,
-  - Tier 2: a triangulated sparse cloud with real feature tracks, filtered at COLMAP's
-    defaults (4.0 px reprojection, 1.5 deg triangulation angle), with per-frame stats.
-Spec: docs/superpowers/specs/2026-08-14-geometric-verification-design.md.
-"""
-
-import json
-import logging
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
-
-import numpy as np
-import pycolmap
-
-from collab_splats.localization.extractors import BaseLocalExtractor, LocalFeatures, MatchResult
-
-logger = logging.getLogger(__name__)
-
-########################################
-# Constants
-########################################
-
-# COLMAP pair-id convention: pair_id = image_id1 * kMaxNumImages + image_id2.
-# This build of pycolmap (4.0.4) exposes no decoding helper, so we mirror the constant.
-_COLMAP_MAX_NUM_IMAGES = 2147483647
-
-# Sequential adjacency window (frames) and loop-retrieval candidates per frame.
-# Module defaults on purpose — repo precedent (mv confidence) keeps tuning knobs out of config.
-DEFAULT_WINDOW = 10
-DEFAULT_LOOP_TOP_K = 2
-
-
-########################################
-# Pair selection
-########################################
-
-
-def select_sequential_pairs(n_frames: int, window: int = DEFAULT_WINDOW) -> list[tuple[int, int]]:
-    """All frame-index pairs (i, j) with 0 < j - i <= window. O(N * window), never O(N^2)."""
-    return [
-        (i, j)
-        for i in range(n_frames)
-        for j in range(i + 1, min(i + window + 1, n_frames))
-    ]
-
-
-def select_loop_pairs(
-    descriptors: np.ndarray,
-    window: int = DEFAULT_WINDOW,
-    top_k: int = DEFAULT_LOOP_TOP_K,
-) -> list[tuple[int, int]]:
-    """Loop-candidate pairs from (N, D) L2-normalized global descriptors.
-
-    For each frame, its top_k most-similar frames at least 2*window away — far enough
-    that the sequential window cannot already cover the pair.
-    """
-    sim = descriptors @ descriptors.T
-    n = len(sim)
-    pairs: set[tuple[int, int]] = set()
-    for i in range(n):
-        far = np.abs(np.arange(n) - i) >= 2 * window
-        if not far.any():
-            continue
-        # Rank only the far frames; -inf keeps near frames out of the top_k
-        ranked = np.argsort(np.where(far, sim[i], -np.inf))[::-1][:top_k]
-        for j in ranked:
-            if far[j]:
-                pairs.add((min(i, int(j)), max(i, int(j))))
-    return sorted(pairs)
+def rotation_angle_deg(R: np.ndarray) -> float:
+    """Geodesic angle of a single 3x3 rotation matrix in degrees (trace formula)."""
+    return float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py -p no:randomly -v`
-Expected: 3 PASS.
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_transforms.py -p no:randomly -v`
+Expected: all PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/geometry/verification.py tests/geometry/test_verification.py
-git commit -m "feat(geometry): verification pair selection (sequential window + loop retrieval)"
+git add collab_splats/geometry/transforms.py tests/geometry/test_transforms.py
+git commit -m "refactor(geometry): public rotation_angle_deg helper"
 ```
 
 ---
@@ -471,17 +389,23 @@ git commit -m "feat(geometry): verification pair selection (sequential window + 
 ### Task 4: COLMAP database export + Tier 1 epipolar verification
 
 **Files:**
-- Modify: `collab_splats/geometry/verification.py`
-- Test: `tests/geometry/test_verification.py`
+- Create: `collab_splats/geometry/verification.py`
+- Create: `tests/geometry/test_verification.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/geometry/test_verification.py`. The synthetic scene and stub matcher are shared by Tasks 4–6 — define them once here:
+Create `tests/geometry/test_verification.py`. The synthetic scene and stub matcher are shared by Tasks 4–6 — define them once here:
 
 ```python
+"""Tests for geometric verification: DB export, Tier 1/2, negative control."""
+
+import json
+
+import numpy as np
+import pytest
 import torch
 
-from collab_splats.localization.extractors import LocalFeatures, MatchResult
+from collab_splats.localization.extractors import BaseLocalExtractor, LocalFeatures, MatchResult
 from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
 
 W, H = 640, 480
@@ -569,7 +493,7 @@ def test_tier1_pair_stats_on_clean_scene(tmp_path):
         matcher=_IdentityMatcher(),
         output_dir=tmp_path,
     )
-    assert len(result.pair_stats) == 3  # window covers all pairs of 3 frames
+    assert len(result.pair_stats) == 3  # overlap=10 window covers all pairs of 3 frames
     for p in result.pair_stats:
         assert p.num_inliers >= 55
         assert p.rot_error_deg < 0.1
@@ -608,13 +532,47 @@ def test_keypoint_bounds_guard(tmp_path):
 - [ ] **Step 2: Run to verify failure**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py -k "tier1 or rejected or bounds" -p no:randomly -v`
-Expected: FAIL — `ImportError: cannot import name 'verify_reconstruction'`.
+Expected: FAIL — `ModuleNotFoundError: No module named 'collab_splats.geometry.verification'`.
 
 - [ ] **Step 3: Implement DB export + Tier 1 (and the `verify_reconstruction` shell)**
 
-Append to `collab_splats/geometry/verification.py`. Task 5 extends `verify_reconstruction` with triangulation — write it here already structured for that (the triangulation lines land in the marked spot):
+Create `collab_splats/geometry/verification.py`. Task 5 extends `verify_reconstruction` with triangulation — write it here already structured for that (the triangulation lines land in the marked spot):
 
 ```python
+"""Geometric verification of feedforward reconstructions via pycolmap.
+
+Layer on top of any backbone: takes the final COLMAP-frame reconstruction (pose/camera
+authority) plus the localization extractor's per-frame features, and produces
+  - Tier 1: per-pair epipolar inlier counts and estimated-vs-model relative-pose errors,
+  - Tier 2: a triangulated sparse cloud with real feature tracks, filtered at COLMAP's
+    defaults (4.0 px reprojection, 1.5 deg triangulation angle), with per-frame stats.
+Same import-features -> verify_matches -> triangulate_points flow as hloc's
+triangulation module — the validated reference for this pattern.
+Spec: docs/superpowers/specs/2026-08-14-geometric-verification-design.md.
+"""
+
+import json
+import logging
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+import numpy as np
+import pycolmap
+
+from collab_splats.geometry.transforms import rotation_angle_deg
+from collab_splats.localization.extractors import BaseLocalExtractor, LocalFeatures
+
+logger = logging.getLogger(__name__)
+
+########################################
+# Constants
+########################################
+
+# Sequential pairing window, forwarded to pycolmap's SequentialPairingOptions.overlap.
+# Module default on purpose — repo precedent (mv confidence) keeps tuning knobs out of config.
+DEFAULT_OVERLAP = 10
+
+
 ########################################
 # Results
 ########################################
@@ -643,13 +601,8 @@ class VerificationResult:
 
 
 ########################################
-# Pose-error helpers
+# Pose-error helper
 ########################################
-
-
-def _rotation_angle_deg(R: np.ndarray) -> float:
-    """Geodesic angle of a rotation matrix, degrees."""
-    return float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
 
 
 def _pair_pose_errors(estimated: pycolmap.Rigid3d, model_rel: pycolmap.Rigid3d) -> tuple[float, float]:
@@ -657,8 +610,11 @@ def _pair_pose_errors(estimated: pycolmap.Rigid3d, model_rel: pycolmap.Rigid3d) 
 
     The epipolar estimate fixes translation only up to scale, so the direction angle is
     the honest comparison; a near-zero baseline on either side makes it undefined (nan).
+    The sign of the direction is kept (verify_matches resolves it by cheirality), unlike
+    the AUC protocol's arccos(|cos|) in loop_closure/eval.py — a flipped translation IS
+    a pose error here.
     """
-    rot_err = _rotation_angle_deg(estimated.rotation.matrix() @ model_rel.rotation.matrix().T)
+    rot_err = rotation_angle_deg(estimated.rotation.matrix() @ model_rel.rotation.matrix().T)
     t_est, t_mod = estimated.translation, model_rel.translation
     n_est, n_mod = np.linalg.norm(t_est), np.linalg.norm(t_mod)
     if n_est < 1e-9 or n_mod < 1e-9:
@@ -672,23 +628,17 @@ def _pair_pose_errors(estimated: pycolmap.Rigid3d, model_rel: pycolmap.Rigid3d) 
 ########################################
 
 
-def _write_database(
-    recon: pycolmap.Reconstruction,
-    features: list[LocalFeatures],
-    matches: dict[tuple[int, int], np.ndarray],
-    db_path: Path,
+def _write_frames(
+    db: pycolmap.Database, recon: pycolmap.Reconstruction, features: list[LocalFeatures]
 ) -> None:
-    """Write cameras/images/keypoints/matches into a fresh COLMAP database.
+    """Write cameras/images/keypoints into an open COLMAP database.
 
     Ids mirror `recon` exactly (one camera per image, camera_id == image_id) —
     triangulate_points joins DB rows to reconstruction frames by id, and a shared DB
-    camera against per-image trivial rigs fails COLMAP's RigId check.
+    camera against per-image trivial rigs fails COLMAP's RigId check. Matches are
+    written later by the caller (pair generation needs the images in the DB first).
     """
-    if db_path.exists():
-        db_path.unlink()  # stale DBs accumulate duplicate rows; always start fresh
-    db = pycolmap.Database.open(str(db_path))
-    image_ids = sorted(recon.images)
-    for image_id, feats in zip(image_ids, features):
+    for image_id, feats in zip(sorted(recon.images), features):
         image = recon.images[image_id]
         camera = recon.cameras[image.camera_id]
         kpts = feats.keypoints.numpy().astype(np.float64)
@@ -710,9 +660,6 @@ def _write_database(
         image_row.image_id = image_id
         db.write_image(image_row, use_image_id=True)
         db.write_keypoints(image_id, kpts)
-    for (id1, id2), m in matches.items():
-        db.write_matches(id1, id2, m)
-    db.close()
 
 
 ########################################
@@ -725,9 +672,7 @@ def verify_reconstruction(
     features: list[LocalFeatures],
     matcher: BaseLocalExtractor,
     output_dir: str | Path,
-    window: int = DEFAULT_WINDOW,
-    loop_descriptors: np.ndarray | None = None,
-    loop_top_k: int = DEFAULT_LOOP_TOP_K,
+    overlap: int = DEFAULT_OVERLAP,
 ) -> VerificationResult:
     """Triangulate and epipolar-verify a reconstruction's poses with independent features.
 
@@ -736,9 +681,7 @@ def verify_reconstruction(
         features: per-image LocalFeatures, aligned with sorted(recon.images) order.
         matcher: a BaseLocalExtractor whose match() exposes keypoint indices.
         output_dir: writes database.db, verified/ (COLMAP model), verification.json.
-        window: sequential pair adjacency window (frames).
-        loop_descriptors: optional (N, D) global descriptors adding loop pairs.
-        loop_top_k: loop candidates per frame when loop_descriptors given.
+        overlap: sequential pairing window (pycolmap SequentialPairingOptions.overlap).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -749,17 +692,28 @@ def verify_reconstruction(
             "the cache and the reconstruction describe different runs."
         )
 
-    # ── Pair selection: adjacency window + optional retrieval loop pairs ──
-    pairs = select_sequential_pairs(len(image_ids), window)
-    if loop_descriptors is not None:
-        pairs = sorted(set(pairs) | set(select_loop_pairs(loop_descriptors, window, loop_top_k)))
+    # ── Fresh DB with frames written first: pair generation reads images off the DB ──
+    db_path = output_dir / "database.db"
+    if db_path.exists():
+        db_path.unlink()  # stale DBs accumulate duplicate rows; always start fresh
+    db = pycolmap.Database.open(str(db_path))
+    _write_frames(db, recon, features)
 
-    # ── Match every pair; index pairs are COLMAP's match format ──
+    # ── Sequential pairs from pycolmap's own generator (COLMAP's video pairing;
+    # quadratic_overlap adds power-of-two longer-baseline pairs). loop_detection stays
+    # off: it needs a SIFT vocab tree, unusable with learned descriptors — retrieval-
+    # based loop pairs are a follow-on when a caller needs them. ──
+    pairing = pycolmap.SequentialPairingOptions()
+    pairing.overlap = overlap
+    pairs = pycolmap.SequentialPairGenerator(pairing, db).all_pairs()
+
+    # ── Match every pair with our extractor; index pairs are COLMAP's match format ──
     cam0 = recon.cameras[recon.images[image_ids[0]].camera_id]
     hw = (cam0.height, cam0.width)
+    id_to_pos = {iid: k for k, iid in enumerate(image_ids)}
     matches: dict[tuple[int, int], np.ndarray] = {}
-    for i, j in pairs:
-        m = matcher.match(features[i], features[j], hw)
+    for id1, id2 in pairs:
+        m = matcher.match(features[id_to_pos[id1]], features[id_to_pos[id2]], hw)
         if m.idx_q is None or m.idx_db is None:
             raise ValueError(
                 f"{type(matcher).__name__} does not expose keypoint indices "
@@ -767,12 +721,12 @@ def verify_reconstruction(
             )
         if len(m) == 0:
             continue
-        matches[(image_ids[i], image_ids[j])] = np.stack([m.idx_q, m.idx_db], axis=1).astype(np.uint32)
+        matches[(id1, id2)] = np.stack([m.idx_q, m.idx_db], axis=1).astype(np.uint32)
+        db.write_matches(id1, id2, matches[(id1, id2)])
+    db.close()
     logger.info("Verification: %d/%d pairs matched", len(matches), len(pairs))
 
-    # ── COLMAP database + epipolar verification (Tier 1) ──
-    db_path = output_dir / "database.db"
-    _write_database(recon, features, matches, db_path)
+    # ── Epipolar verification (Tier 1) over the matched pairs ──
     pairs_path = output_dir / "pairs.txt"
     pairs_path.write_text(
         "\n".join(f"{recon.images[a].name} {recon.images[b].name}" for a, b in matches)
@@ -786,7 +740,10 @@ def verify_reconstruction(
     db.close()
     pair_stats = []
     for pid, g in zip(pair_ids, geoms):
-        id1, id2 = divmod(int(pid), _COLMAP_MAX_NUM_IMAGES)
+        id1, id2 = pycolmap.pair_id_to_image_pair(int(pid))
+        # pair ids are stored canonically (id1 < id2); our matches dict is keyed by the
+        # generator's order, which may be swapped
+        key = (id1, id2) if (id1, id2) in matches else (id2, id1)
         im1, im2 = recon.images[id1], recon.images[id2]
         model_rel = im2.cam_from_world() * im1.cam_from_world().inverse()
         if g.cam2_from_cam1 is not None:
@@ -797,7 +754,7 @@ def verify_reconstruction(
             PairStats(
                 name1=im1.name,
                 name2=im2.name,
-                num_matches=int(matches[(id1, id2)].shape[0]),
+                num_matches=int(matches[key].shape[0]),
                 num_inliers=len(g.inlier_matches),
                 rot_error_deg=rot_err,
                 t_direction_error_deg=tdir_err,
@@ -1213,11 +1170,10 @@ _STAGE_DEPS: dict[str, list[str]] = {
                 "rebuild the localization DB (overwrite=True)."
             )
         matcher = BaseLocalExtractor.get(extractor_name)()
-        # v1 wiring uses sequential pairs only (loop_descriptors=None): the verify stage
-        # must run against a processed scene where only colmap/ + feedforward.zarr are
-        # guaranteed, and global retrieval descriptors are not cached anywhere. The loop
-        # path exists and is tested (select_loop_pairs); callers with descriptors (eval,
-        # future LC-aware wiring) pass them explicitly.
+        # Sequential pairs only in v1 (pycolmap SequentialPairGenerator inside).
+        # Loop pairs are a follow-on: COLMAP's own loop_detection needs a SIFT vocab
+        # tree (unusable with learned descriptors) and retrieval descriptors are not
+        # cached anywhere a processed scene guarantees.
         verify_reconstruction(
             recon=recon,
             features=features,
@@ -1413,7 +1369,7 @@ def main() -> None:
     ap.add_argument("--backend_dir", type=Path, required=True, help="e.g. .../<scene>/vggt_omega")
     ap.add_argument("--gt_dir", type=Path, default=None, help="7-Scenes seq dir (poses + depth)")
     ap.add_argument("--extractor", default="xfeat", help="localization extractor registry key")
-    ap.add_argument("--window", type=int, default=10)
+    ap.add_argument("--overlap", type=int, default=10, help="sequential pairing window")
     ap.add_argument("--perturb_deg", type=float, default=0.0, help="negative control rotation")
     ap.add_argument("--out", type=Path, required=True, help="results JSON path")
     args = ap.parse_args()
@@ -1435,12 +1391,12 @@ def main() -> None:
     work_dir = args.out.parent / (args.out.stem + "_work")
     matcher = BaseLocalExtractor.get(args.extractor)()
     result = verify_reconstruction(
-        recon=recon, features=features, matcher=matcher, output_dir=work_dir, window=args.window
+        recon=recon, features=features, matcher=matcher, output_dir=work_dir, overlap=args.overlap
     )
     report: dict = {
         "backend_dir": str(args.backend_dir),
         "extractor": args.extractor,
-        "window": args.window,
+        "overlap": args.overlap,
         "perturb_deg": args.perturb_deg,
         "perturbed_frames": perturbed_names,
         "summary": result.summary,

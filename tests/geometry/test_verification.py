@@ -1,9 +1,10 @@
-"""Tests for geometric verification: DB export, Tier 1/2, negative control."""
+"""Tests for geometric verification: COLMAP DB export + Tier 1 epipolar pose verification."""
 
 import numpy as np
 import pytest
 import torch
 
+from collab_splats.geometry.verification import verify_reconstruction
 from collab_splats.localization.extractors import (
     BaseLocalExtractor,
     LocalFeatures,
@@ -84,8 +85,6 @@ class _NoIndexMatcher(_IdentityMatcher):
 
 def test_tier1_pair_stats_on_clean_scene(tmp_path):
     """verify_matches recovers each pair's relative pose to within a fraction of a degree."""
-    from collab_splats.geometry.verification import verify_reconstruction
-
     _, extrinsics, kps = _synthetic_scene()
     result = verify_reconstruction(
         recon=_make_recon(extrinsics),
@@ -102,8 +101,6 @@ def test_tier1_pair_stats_on_clean_scene(tmp_path):
 
 def test_no_index_matcher_rejected(tmp_path):
     """A matcher without keypoint indices (XFeatStar) is rejected with a clear error."""
-    from collab_splats.geometry.verification import verify_reconstruction
-
     _, extrinsics, kps = _synthetic_scene()
     with pytest.raises(ValueError, match="indices"):
         verify_reconstruction(
@@ -116,8 +113,6 @@ def test_no_index_matcher_rejected(tmp_path):
 
 def test_keypoint_bounds_guard(tmp_path):
     """Keypoints outside the camera grid abort the export (resolution-mismatch class)."""
-    from collab_splats.geometry.verification import verify_reconstruction
-
     _, extrinsics, kps = _synthetic_scene()
     kps[1][0] = [W * 2.0, H * 2.0]  # simulate a cache built at a different resolution
     with pytest.raises(ValueError, match="bounds"):

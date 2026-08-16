@@ -149,33 +149,37 @@ def verify_reconstruction(
     if db_path.exists():
         db_path.unlink()  # stale DBs accumulate duplicate rows; always start fresh
     db = pycolmap.Database.open(str(db_path))
-    _write_frames(db, recon, features)
+    try:
+        _write_frames(db, recon, features)
 
-    # ── Sequential pairs from pycolmap's own generator (COLMAP's video pairing;
-    # quadratic_overlap adds power-of-two longer-baseline pairs). loop_detection stays
-    # off: it needs a SIFT vocab tree, unusable with learned descriptors — retrieval-
-    # based loop pairs are a follow-on when a caller needs them. ──
-    pairing = pycolmap.SequentialPairingOptions()
-    pairing.overlap = overlap
-    pairs = pycolmap.SequentialPairGenerator(pairing, db).all_pairs()
+        # ── Sequential pairs from pycolmap's own generator (COLMAP's video pairing;
+        # quadratic_overlap adds power-of-two longer-baseline pairs). loop_detection stays
+        # off: it needs a SIFT vocab tree, unusable with learned descriptors — retrieval-
+        # based loop pairs are a follow-on when a caller needs them. ──
+        pairing = pycolmap.SequentialPairingOptions()
+        pairing.overlap = overlap
+        pairs = pycolmap.SequentialPairGenerator(pairing, db).all_pairs()
 
-    # ── Match every pair with our extractor; index pairs are COLMAP's match format ──
-    cam0 = recon.cameras[recon.images[image_ids[0]].camera_id]
-    hw = (cam0.height, cam0.width)
-    id_to_pos = {iid: k for k, iid in enumerate(image_ids)}
-    matches: dict[tuple[int, int], np.ndarray] = {}
-    for id1, id2 in pairs:
-        m = matcher.match(features[id_to_pos[id1]], features[id_to_pos[id2]], hw)
-        if m.idx_q is None or m.idx_db is None:
-            raise ValueError(
-                f"{type(matcher).__name__} does not expose keypoint indices "
-                "(per-pair refined matchers cannot feed COLMAP tracks) — use disk/xfeat/loma."
-            )
-        if len(m) == 0:
-            continue
-        matches[(id1, id2)] = np.stack([m.idx_q, m.idx_db], axis=1).astype(np.uint32)
-        db.write_matches(id1, id2, matches[(id1, id2)])
-    db.close()
+        # ── Match every pair with our extractor; index pairs are COLMAP's match format ──
+        cam0 = recon.cameras[recon.images[image_ids[0]].camera_id]
+        # Feedforward output is uniform-resolution across all frames, so camera 0's (H, W)
+        # is reused for every pair below — no per-pair guard needed.
+        hw = (cam0.height, cam0.width)
+        id_to_pos = {iid: k for k, iid in enumerate(image_ids)}
+        matches: dict[tuple[int, int], np.ndarray] = {}
+        for id1, id2 in pairs:
+            m = matcher.match(features[id_to_pos[id1]], features[id_to_pos[id2]], hw)
+            if m.idx_q is None or m.idx_db is None:
+                raise ValueError(
+                    f"{type(matcher).__name__} does not expose keypoint indices "
+                    "(per-pair refined matchers cannot feed COLMAP tracks) — use disk/xfeat/loma."
+                )
+            if len(m) == 0:
+                continue
+            matches[(id1, id2)] = np.stack([m.idx_q, m.idx_db], axis=1).astype(np.uint32)
+            db.write_matches(id1, id2, matches[(id1, id2)])
+    finally:
+        db.close()
     logger.info("Verification: %d/%d pairs matched", len(matches), len(pairs))
 
     # ── Epipolar verification (Tier 1) over the matched pairs ──
@@ -186,13 +190,17 @@ def verify_reconstruction(
     pycolmap.verify_matches(str(db_path), str(pairs_path), options=tvg_options)
 
     db = pycolmap.Database.open(str(db_path))
-    pair_ids, geoms = db.read_two_view_geometries()
-    db.close()
+    try:
+        pair_ids, geoms = db.read_two_view_geometries()
+    finally:
+        db.close()
     pair_stats = []
     for pid, g in zip(pair_ids, geoms):
         id1, id2 = pycolmap.pair_id_to_image_pair(int(pid))
         # pair ids are stored canonically (id1 < id2); our matches dict is keyed by the
-        # generator's order, which may be swapped
+        # generator's order, which may be swapped. The key is always present: verify_matches
+        # was run against pairs.txt, which we wrote only from `matches`, so every geometry
+        # read back here corresponds to a pair we ourselves fed it.
         key = (id1, id2) if (id1, id2) in matches else (id2, id1)
         im1, im2 = recon.images[id1], recon.images[id2]
         model_rel = im2.cam_from_world() * im1.cam_from_world().inverse()

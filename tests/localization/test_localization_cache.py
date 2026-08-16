@@ -504,3 +504,45 @@ def test_load_index_after_clear_has_only_reconstruction(tmp_path):
     )
     assert len(loaded._frame_features) == 3
     assert all(s == "reconstruction" for s in loaded._frame_sources)
+
+
+# ── Task 2 (localization module) tests: shared cache reader ──────────────────
+
+
+def test_load_reconstruction_features_roundtrip(tmp_path):
+    """Module-level cache reader returns exactly what save_index wrote."""
+    from collab_splats.localization.localizer import load_reconstruction_features
+
+    pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=2)
+    image_paths = _make_image_files(tmp_path / "imgs", n=2)
+    feats = [_make_features(n_kpts=5), _make_features(n_kpts=8)]
+
+    mock_ext = MagicMock()
+    mock_ext.extract.side_effect = feats
+    images = [np.asarray(open_image(p).convert("RGB")) for p in image_paths]
+    ids = [Path(p).name for p in image_paths]
+    localizer = CameraLocalizer(
+        world_points=world_points,
+        extrinsics=extrinsics,
+        images=images,
+        ids=ids,
+        extractor=mock_ext,
+    )
+
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "xfeat")
+
+    out_feats, out_ids, hw = load_reconstruction_features(zarr_path, "xfeat")
+    assert out_ids == ids and hw == (64, 64)
+    assert [len(f.keypoints) for f in out_feats] == [5, 8]
+    np.testing.assert_allclose(out_feats[1].keypoints.numpy(), feats[1].keypoints.numpy())
+    np.testing.assert_allclose(out_feats[0].descriptors.numpy(), feats[0].descriptors.numpy())
+
+
+def test_load_reconstruction_features_missing_raises(tmp_path):
+    """Missing cache raises KeyError naming the extractor."""
+    from collab_splats.localization.localizer import load_reconstruction_features
+
+    zarr_path = _empty_zarr(tmp_path)
+    with pytest.raises(KeyError, match="disk"):
+        load_reconstruction_features(zarr_path, "disk")

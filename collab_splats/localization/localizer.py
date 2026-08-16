@@ -107,6 +107,61 @@ class LocalizationResult:
         return [int(i) for i in order if counts[i] > 0]
 
 
+def load_reconstruction_features(
+    zarr_path: "str | Path", extractor_name: str
+) -> tuple[list[LocalFeatures], list[str], tuple[int, int]]:
+    """Read the per-frame reconstruction feature cache for one extractor.
+
+    Returns (per-frame LocalFeatures, image ids, (H, W)). Raises KeyError when the
+    cache is missing. This is the read half of CameraLocalizer.save_index; load_index
+    builds a localizer on top of it, geometry/verification.py consumes it directly.
+    """
+    zarr_path = pathlib.Path(zarr_path)
+    store = zarr.open(str(zarr_path), mode="r")
+
+    rec_key = f"local_features/{extractor_name}/reconstruction"
+    if rec_key not in store:
+        raise KeyError(
+            f"No feature cache for extractor '{extractor_name}' in {zarr_path}. "
+            "Rebuild via CameraLocalizer.from_feedforward()."
+        )
+
+    # ── Load reconstruction group ────────────────────────────────────────
+    rec_group = store[rec_key]
+    rec_image_paths = [str(p) for p in rec_group.attrs["image_paths"]]
+    hw = tuple(int(x) for x in rec_group.attrs["hw"])
+    offsets = rec_group["frame_offsets"][:]
+    # Bulk decode is the first slow phase of a cache-hit load (descriptors can be GBs
+    # for dense extractors) — log around it so long loads are attributable.
+    logger.info("CameraLocalizer: reading feature DB (%d frames) from zarr", len(offsets) - 1)
+    t0 = time.perf_counter()
+    all_kpts = (
+        rec_group["keypoints"][:] if rec_group["keypoints"].shape[0] > 0 else np.zeros((0, 2), dtype=np.float32)
+    )
+    all_descs = (
+        rec_group["descriptors"][:] if rec_group["descriptors"].shape[0] > 0 else np.zeros((0, 1), dtype=np.float32)
+    )
+    all_scores = rec_group["scores"][:] if "scores" in rec_group else None
+    all_scales = rec_group["scales"][:] if "scales" in rec_group else None
+    logger.info(
+        "CameraLocalizer: read %s keypoints / %.0f MB descriptors in %.1fs",
+        f"{len(all_kpts):,}",
+        all_descs.nbytes / 1e6,
+        time.perf_counter() - t0,
+    )
+
+    rec_features: list[LocalFeatures] = []
+    for i in range(len(offsets) - 1):
+        s, e = int(offsets[i]), int(offsets[i + 1])
+        f_kpts = torch.from_numpy(all_kpts[s:e])
+        f_descs = torch.from_numpy(all_descs[s:e])
+        f_scores = torch.from_numpy(all_scores[s:e]) if all_scores is not None else None
+        f_scales = torch.from_numpy(all_scales[s:e]) if all_scales is not None else None
+        rec_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores, scales=f_scales))
+
+    return rec_features, rec_image_paths, hw
+
+
 class CameraLocalizer:
     """Locates a query camera within a known 3D scene.
 
@@ -315,47 +370,11 @@ class CameraLocalizer:
         Raises KeyError if extractor_name reconstruction cache not found.
         """
         zarr_path = pathlib.Path(zarr_path)
+        rec_features, rec_image_paths, hw = load_reconstruction_features(zarr_path, extractor_name)
+
+        # load_index also needs the localized/ group, which load_reconstruction_features
+        # doesn't touch — keep a store handle open for that.
         store = zarr.open(str(zarr_path), mode="r")
-
-        rec_key = f"local_features/{extractor_name}/reconstruction"
-        if rec_key not in store:
-            raise KeyError(
-                f"No feature cache for extractor '{extractor_name}' in {zarr_path}. "
-                "Rebuild via CameraLocalizer.from_feedforward()."
-            )
-
-        # ── Load reconstruction group ────────────────────────────────────────
-        rec_group = store[rec_key]
-        rec_image_paths = [str(p) for p in rec_group.attrs["image_paths"]]
-        hw = tuple(int(x) for x in rec_group.attrs["hw"])
-        offsets = rec_group["frame_offsets"][:]
-        # Bulk decode is the first slow phase of a cache-hit load (descriptors can be GBs
-        # for dense extractors) — log around it so long loads are attributable.
-        logger.info("CameraLocalizer: reading feature DB (%d frames) from zarr", len(offsets) - 1)
-        t0 = time.perf_counter()
-        all_kpts = (
-            rec_group["keypoints"][:] if rec_group["keypoints"].shape[0] > 0 else np.zeros((0, 2), dtype=np.float32)
-        )
-        all_descs = (
-            rec_group["descriptors"][:] if rec_group["descriptors"].shape[0] > 0 else np.zeros((0, 1), dtype=np.float32)
-        )
-        all_scores = rec_group["scores"][:] if "scores" in rec_group else None
-        all_scales = rec_group["scales"][:] if "scales" in rec_group else None
-        logger.info(
-            "CameraLocalizer: read %s keypoints / %.0f MB descriptors in %.1fs",
-            f"{len(all_kpts):,}",
-            all_descs.nbytes / 1e6,
-            time.perf_counter() - t0,
-        )
-
-        rec_features: list[LocalFeatures] = []
-        for i in range(len(offsets) - 1):
-            s, e = int(offsets[i]), int(offsets[i + 1])
-            f_kpts = torch.from_numpy(all_kpts[s:e])
-            f_descs = torch.from_numpy(all_descs[s:e])
-            f_scores = torch.from_numpy(all_scores[s:e]) if all_scores is not None else None
-            f_scales = torch.from_numpy(all_scales[s:e]) if all_scales is not None else None
-            rec_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores, scales=f_scales))
 
         # ── Load localized group (optional) ──────────────────────────────────
         loc_key = f"local_features/{extractor_name}/localized"

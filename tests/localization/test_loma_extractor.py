@@ -10,6 +10,16 @@ from collab_splats.localization import (
 from collab_splats.localization.extractors import MatchResult
 
 
+@pytest.fixture(scope="module")
+def image_pair():
+    """Two 128x128 random-dot images; second is the first shifted 4 px right."""
+    rng = np.random.default_rng(0)
+    img0 = (rng.random((128, 128, 1)) > 0.95).astype(np.uint8) * 255
+    img0 = np.repeat(img0, 3, axis=2)
+    img1 = np.roll(img0, 4, axis=1)
+    return img0, img1
+
+
 def test_loma_registry():
     assert BaseLocalExtractor.get("loma") is LomaExtractor
     assert BaseLocalExtractor.get("loma-g") is LomaGExtractor
@@ -55,6 +65,18 @@ def test_loma_match_returns_pixel_pairs(loma_extractor):
     if len(matches) > 0:
         diag = (matches.query_px == matches.ref_px).all(axis=1).sum()
         assert diag > 0
+
+
+@pytest.mark.slow
+def test_loma_match_returns_indices(image_pair):
+    """LoMa filter_matches indices survive into MatchResult."""
+    img0, img1 = image_pair
+    ex = LomaExtractor()
+    f0, f1 = ex.extract(img0), ex.extract(img1)
+    m = ex.match(f0, f1, img0.shape[:2])
+    assert m.idx_q is not None and m.idx_db is not None
+    np.testing.assert_allclose(m.query_px, f0.keypoints.numpy()[m.idx_q])
+    np.testing.assert_allclose(m.ref_px, f1.keypoints.numpy()[m.idx_db])
 
 
 def test_loma_exported_from_localization_package():

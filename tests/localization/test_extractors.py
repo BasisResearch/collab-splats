@@ -8,6 +8,7 @@ from collab_splats.localization.extractors import (
     DiskExtractor,
     MatchResult,
     XFeatExtractor,
+    XFeatStarExtractor,
     _empty_match,
 )
 
@@ -73,3 +74,42 @@ def test_empty_match_helper():
     assert len(m) == 0
     assert m.query_px.shape == (0, 2) and m.ref_px.shape == (0, 2)
     assert m.query_px.dtype == np.float32
+
+
+def test_match_returns_indices_disk(image_pair):
+    """idx_q/idx_db index the keypoint tables the pixel pairs came from."""
+    img0, img1 = image_pair
+    ex = DiskExtractor(top_k=256)
+    f0, f1 = ex.extract(img0), ex.extract(img1)
+    m = ex.match(f0, f1, img0.shape[:2])
+    assert m.idx_q is not None and m.idx_q.dtype == np.int64
+    assert m.idx_db is not None and m.idx_db.dtype == np.int64
+    np.testing.assert_allclose(m.query_px, f0.keypoints.numpy()[m.idx_q])
+    np.testing.assert_allclose(m.ref_px, f1.keypoints.numpy()[m.idx_db])
+
+
+def test_match_returns_indices_xfeat(image_pair):
+    """XFeat's LighterGlue index pairs survive into MatchResult."""
+    img0, img1 = image_pair
+    ex = XFeatExtractor()
+    f0, f1 = ex.extract(img0), ex.extract(img1)
+    m = ex.match(f0, f1, img0.shape[:2])
+    assert m.idx_q is not None and m.idx_db is not None
+    np.testing.assert_allclose(m.query_px, f0.keypoints.numpy()[m.idx_q])
+    np.testing.assert_allclose(m.ref_px, f1.keypoints.numpy()[m.idx_db])
+
+
+def test_xfeat_star_has_no_indices(image_pair):
+    """XFeatStar refines pixels per pair — no stable keypoint-table indices exist."""
+    img0, img1 = image_pair
+    ex = XFeatStarExtractor()
+    f0, f1 = ex.extract(img0), ex.extract(img1)
+    m = ex.match(f0, f1, img0.shape[:2])
+    assert m.idx_q is None and m.idx_db is None
+
+
+def test_empty_match_has_empty_indices():
+    """_empty_match carries zero-length int64 index arrays, not None."""
+    m = _empty_match()
+    assert m.idx_q.shape == (0,) and m.idx_q.dtype == np.int64
+    assert m.idx_db.shape == (0,) and m.idx_db.dtype == np.int64

@@ -48,19 +48,28 @@ class LocalFeatures:
 
 @dataclass
 class MatchResult:
-    """Matched pixel coordinates between a query and one reference image."""
+    """Matched pixel coordinates between a query and one reference image.
+
+    idx_q/idx_db are the keypoint-table indices behind the pixel pairs — COLMAP's match
+    format, consumed by geometry/verification.py. None when the matcher cannot provide
+    stable indices (XFeatStar's per-pair subpixel refinement moves the same keypoint to
+    different coordinates in different pairs, so no single table row describes it).
+    """
 
     query_px: np.ndarray  # (K, 2) float32 xy in query image
     ref_px: np.ndarray  # (K, 2) float32 xy in reference image
+    idx_q: np.ndarray | None = None  # (K,) int64 into the query keypoint table
+    idx_db: np.ndarray | None = None  # (K,) int64 into the reference keypoint table
 
     def __len__(self) -> int:
         return len(self.query_px)
 
 
 def _empty_match() -> MatchResult:
-    """Zero-length MatchResult."""
+    """Zero-length MatchResult (with empty index arrays — a zero match is indexable)."""
     z = np.zeros((0, 2), dtype=np.float32)
-    return MatchResult(query_px=z, ref_px=z)
+    zi = np.zeros(0, dtype=np.int64)
+    return MatchResult(query_px=z, ref_px=z, idx_q=zi, idx_db=zi)
 
 
 class BaseLocalExtractor(RegistryMixin, ABC):
@@ -171,6 +180,8 @@ class DiskExtractor(BaseLocalExtractor):
         return MatchResult(
             query_px=query.keypoints[idx_q].numpy().astype(np.float32),
             ref_px=db.keypoints[idx_db].numpy().astype(np.float32),
+            idx_q=idx_q.numpy().astype(np.int64),
+            idx_db=idx_db.numpy().astype(np.int64),
         )
 
 
@@ -264,6 +275,8 @@ class XFeatExtractor(BaseLocalExtractor):
         return MatchResult(
             query_px=query.keypoints[idx_q].numpy().astype(np.float32),
             ref_px=db.keypoints[idx_db].numpy().astype(np.float32),
+            idx_q=idx_q.numpy().astype(np.int64),
+            idx_db=idx_db.numpy().astype(np.int64),
         )
 
 
@@ -463,6 +476,8 @@ class LomaExtractor(BaseLocalExtractor):
         return MatchResult(
             query_px=query.keypoints[idx_q].numpy().astype(np.float32),
             ref_px=db.keypoints[idx_db].numpy().astype(np.float32),
+            idx_q=idx_q.numpy().astype(np.int64),
+            idx_db=idx_db.numpy().astype(np.int64),
         )
 
 

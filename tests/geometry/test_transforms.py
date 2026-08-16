@@ -286,6 +286,18 @@ def test_conf_threshold_gates_below_the_floor():
     assert k[0, 0] == pytest.approx(80.0, rel=1e-3)
 
 
+def test_rotation_angle_deg():
+    """Geodesic angle: identity -> 0, known z-rotation -> its angle, clip guards trace noise."""
+    from collab_splats.geometry.transforms import rotation_angle_deg
+
+    assert rotation_angle_deg(np.eye(3)) == pytest.approx(0.0)
+    a = np.radians(30.0)
+    Rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
+    assert rotation_angle_deg(Rz) == pytest.approx(30.0, abs=1e-6)
+    # trace marginally above 3 from float error must not NaN through arccos
+    assert rotation_angle_deg(np.eye(3) * (1 + 1e-12)) == pytest.approx(0.0, abs=1e-3)
+
+
 def test_focal_bounds_reject_both_infinities():
     # Non-finite focals pass the validity mask — `z > 1e-3` and `|x| > 1e-6` constrain
     # the point, not the quotient — so ONLY the FOV bounds stop them. Both bounds are

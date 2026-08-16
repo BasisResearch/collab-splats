@@ -9,6 +9,7 @@ from .transforms import (
     extrinsics_to_homogeneous,
     invert_poses,
     rotation_align_vectors,
+    rotation_angle_deg,
 )
 
 
@@ -45,5 +46,6 @@ __all__ = [
     "extrinsics_to_homogeneous",
     "invert_poses",
     "rotation_align_vectors",
+    "rotation_angle_deg",
     "run_global_alignment",
 ]

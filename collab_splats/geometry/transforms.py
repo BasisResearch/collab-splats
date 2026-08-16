@@ -223,6 +223,11 @@ def estimate_intrinsics_from_points(
     )
 
 
+def rotation_angle_deg(R: np.ndarray) -> float:
+    """Geodesic angle of a single 3x3 rotation matrix in degrees (trace formula)."""
+    return float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
+
+
 def rotation_align_vectors(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
     """Return 3x3 rotation matrix R such that R @ src ≈ dst.
 

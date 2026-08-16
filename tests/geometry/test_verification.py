@@ -1,0 +1,129 @@
+"""Tests for geometric verification: DB export, Tier 1/2, negative control."""
+
+import numpy as np
+import pytest
+import torch
+
+from collab_splats.localization.extractors import (
+    BaseLocalExtractor,
+    LocalFeatures,
+    MatchResult,
+)
+from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
+
+W, H = 640, 480
+_K = np.array([[500.0, 0, 320.0], [0, 500.0, 240.0], [0, 0, 1.0]], dtype=np.float32)
+
+
+def _synthetic_scene(n_cams: int = 3, n_pts: int = 60, seed: int = 0):
+    """World points + lateral camera array + exact projections.
+
+    Returns (pts_w (P,3), extrinsics (N,3,4) w2c, per-frame keypoints list of (P,2))."""
+    rng = np.random.default_rng(seed)
+    pts_w = np.stack(
+        [rng.uniform(-1, 1, n_pts), rng.uniform(-0.8, 0.8, n_pts), rng.uniform(3.0, 5.0, n_pts)],
+        axis=1,
+    ).astype(np.float32)
+    extrinsics = []
+    for i in range(n_cams):
+        E = np.eye(4, dtype=np.float32)
+        E[0, 3] = -0.3 * i  # camera at x = +0.3*i; w2c translation is the negative
+        extrinsics.append(E[:3])
+    extrinsics = np.stack(extrinsics)
+    kps = []
+    for E in extrinsics:
+        pc = (E[:3, :3] @ pts_w.T + E[:3, 3:4]).T
+        uv = (_K @ (pc / pc[:, 2:3]).T).T[:, :2]
+        kps.append(uv.astype(np.float32))
+    return pts_w, extrinsics, kps
+
+
+def _make_recon(extrinsics):
+    """Poses-only pycolmap reconstruction over the synthetic cameras."""
+    n = len(extrinsics)
+    return build_pycolmap_reconstruction(
+        pts3d=np.zeros((0, 3), dtype=np.float32),
+        colors=np.zeros((0, 3), dtype=np.uint8),
+        extrinsics=extrinsics,
+        intrinsics=np.stack([_K] * n),
+        image_width=W,
+        image_height=H,
+        image_names=[f"frame_{i:05d}" for i in range(n)],
+    )
+
+
+def _features_from_keypoints(kps):
+    """Wrap projected keypoints as LocalFeatures (descriptors unused by the stub matcher)."""
+    return [LocalFeatures(keypoints=torch.from_numpy(k), descriptors=torch.zeros(len(k), 4)) for k in kps]
+
+
+class _IdentityMatcher(BaseLocalExtractor):
+    """Stub matcher: keypoint i in every frame observes world point i (ground-truth tracks)."""
+
+    def extract(self, image):  # pragma: no cover - never called in these tests
+        raise NotImplementedError
+
+    def match(self, query, db, image_hw):
+        n = min(len(query.keypoints), len(db.keypoints))
+        idx = np.arange(n, dtype=np.int64)
+        return MatchResult(
+            query_px=query.keypoints.numpy()[:n],
+            ref_px=db.keypoints.numpy()[:n],
+            idx_q=idx,
+            idx_db=idx.copy(),
+        )
+
+
+class _NoIndexMatcher(_IdentityMatcher):
+    """Stub matcher mimicking XFeatStar: pixels only, no table indices."""
+
+    def match(self, query, db, image_hw):
+        m = super().match(query, db, image_hw)
+        return MatchResult(query_px=m.query_px, ref_px=m.ref_px)
+
+
+def test_tier1_pair_stats_on_clean_scene(tmp_path):
+    """verify_matches recovers each pair's relative pose to within a fraction of a degree."""
+    from collab_splats.geometry.verification import verify_reconstruction
+
+    _, extrinsics, kps = _synthetic_scene()
+    result = verify_reconstruction(
+        recon=_make_recon(extrinsics),
+        features=_features_from_keypoints(kps),
+        matcher=_IdentityMatcher(),
+        output_dir=tmp_path,
+    )
+    assert len(result.pair_stats) == 3  # overlap=10 window covers all pairs of 3 frames
+    for p in result.pair_stats:
+        assert p.num_inliers >= 55
+        assert p.rot_error_deg < 0.1
+        assert p.t_direction_error_deg < 1.0
+
+
+def test_no_index_matcher_rejected(tmp_path):
+    """A matcher without keypoint indices (XFeatStar) is rejected with a clear error."""
+    from collab_splats.geometry.verification import verify_reconstruction
+
+    _, extrinsics, kps = _synthetic_scene()
+    with pytest.raises(ValueError, match="indices"):
+        verify_reconstruction(
+            recon=_make_recon(extrinsics),
+            features=_features_from_keypoints(kps),
+            matcher=_NoIndexMatcher(),
+            output_dir=tmp_path,
+        )
+
+
+def test_keypoint_bounds_guard(tmp_path):
+    """Keypoints outside the camera grid abort the export (resolution-mismatch class)."""
+    from collab_splats.geometry.verification import verify_reconstruction
+
+    _, extrinsics, kps = _synthetic_scene()
+    kps[1][0] = [W * 2.0, H * 2.0]  # simulate a cache built at a different resolution
+    with pytest.raises(ValueError, match="bounds"):
+        verify_reconstruction(
+            recon=_make_recon(extrinsics),
+            features=_features_from_keypoints(kps),
+            matcher=_IdentityMatcher(),
+            output_dir=tmp_path,
+        )

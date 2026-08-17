@@ -2,7 +2,7 @@
 
 Reports (all distributions median/p90/p99 + out10 where applicable):
   Tier 1: per-pair rotation / translation-direction errors — estimated-vs-model,
-          and (with --gt_dir) estimated-vs-GT and model-vs-GT for the same pairs.
+          and (with --gt_dir) model-vs-GT for the same pairs.
   Tier 2: triangulated-vs-model relative depth agreement at track pixels (scale-free,
           reference-free control), triangulated-vs-GT and model-vs-GT after one global
           median scale, and out10 for each.

@@ -129,13 +129,17 @@ def test_keypoint_bounds_guard(tmp_path):
 def test_triangulation_recovers_scene(tmp_path):
     """Tier 2 triangulates the synthetic scene: full yield, full tracks, ~zero error."""
     pts_w, extrinsics, kps = _synthetic_scene()
+    recon_in = _make_recon(extrinsics)
     result = verify_reconstruction(
-        recon=_make_recon(extrinsics),
+        recon=recon_in,
         features=_features_from_keypoints(kps),
         matcher=_IdentityMatcher(),
         output_dir=tmp_path,
     )
     verified = result.reconstruction
+    # The caller's model is never mutated: triangulation runs on an internal copy
+    assert verified is not recon_in
+    assert recon_in.num_points3D() == 0
     assert verified.num_points3D() >= 55  # of 60; COLMAP may drop boundary cases
     # Every surviving point carries a real (non-empty) track and lies on a GT point
     for p in verified.points3D.values():

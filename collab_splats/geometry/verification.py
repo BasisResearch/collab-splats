@@ -189,6 +189,7 @@ def verify_reconstruction(
     tvg_options = pycolmap.TwoViewGeometryOptions()
     tvg_options.compute_relative_pose = True  # cam2_from_cam1 stays None without this
     pycolmap.verify_matches(str(db_path), str(pairs_path), options=tvg_options)
+    pairs_path.unlink()  # scratch input to verify_matches only — keep colmap/ at its documented contract
 
     db = pycolmap.Database.open(str(db_path))
     try:
@@ -264,6 +265,9 @@ def _triangulate_and_summarize(
     """
     verified_dir = output_dir / "verified"
     verified_dir.mkdir(parents=True, exist_ok=True)
+    # triangulate_points mutates its reconstruction argument in place and returns the same
+    # object — copy first so the caller's model (its points included) stays untouched
+    recon = pycolmap.Reconstruction(recon)
     # image dir is unused (keypoints live in the DB) but must exist
     verified = pycolmap.triangulate_points(recon, str(db_path), str(output_dir), str(verified_dir))
     logger.info("Verification: triangulated %d points", verified.num_points3D())

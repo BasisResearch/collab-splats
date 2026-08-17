@@ -8,19 +8,22 @@ the flat curated layout, solves the trim offset from audio, and writes the metad
 as static tags plus a retimed ``gpmd`` track inside the mp4, and as a full-rate Parquet
 sidecar next to it.
 
-Source layout, where the parent folder name is not stable across dates (``GoproSplat``,
-``Goprosplat``, ``splats``, ``Phone pics and splat videos``)::
+The source tree may nest to any depth, and neither folder names nor their meaning are stable
+across drops (``GoproSplat``, ``Goprosplat``, ``splats``, ``Phone pics and splat videos``,
+and a deployment window over a site over ``splat_videos``)::
 
-    <source-root>/<YYYY-MM-DD>/<parent>/<stem>.mp4       <- Resolve export (the edit)
-                                       /src/<stem>.MP4   <- camera original
+    <source-root>/<...any nesting...>/<stem>.mp4       <- Resolve export (the edit)
+                                     /src/<stem>.MP4   <- camera original
 
 A video is an *edit* if and only if ``<parent>/src/<stem>.*`` exists, matched on stem only,
-case-insensitively, across any video extension. Only pairs are processed; an original with
-no export is skipped and logged, and enters scope automatically once it is edited.
+case-insensitively, across any video extension. That is the only structural assumption made
+about the tree, so a new capture drop at any depth is curated with no code change. Only pairs
+are processed; an original with no export is skipped and logged, and enters scope
+automatically once it is edited.
 
-Output layout — one flat folder per pair::
+Output layout — one flat folder per pair, named by joining the video's directory components::
 
-    <output-root>/<YYYY_MM_DD>-<parent>-<stem>/
+    <output-root>/<component>-<component>-...-<stem>/
         <stem>.mp4                  edit + static tags + retimed gpmd track
         <stem>_metadata.json        static tags, provenance, alignment scores
         <stem>_telemetry.parquet    ~200 Hz IMU and GPS samples (only when IMU exists)
@@ -69,7 +72,10 @@ DEFAULT_OUTPUT_ROOT = _REPO_ROOT.parent / "environments-curated"
 PUSH_SCRIPT = _REPO_ROOT / "scripts" / "push_curated.sh"
 
 _VIDEO_EXTS = {".mp4", ".mov", ".avi"}
-_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+# The directory holding camera originals. Matched case-sensitively so the walk's pruning and
+# find_source's lookup agree; both capture trees are lowercase throughout.
+SRC_DIR_NAME = "src"
 
 # exiftool's -G3 group names: "Doc7" is one 1 Hz GPMF chunk, "Doc7-3" a GPS fix inside it
 _DOC_GROUP_RE = re.compile(r"Doc(\d+)(?:-(\d+))?")
@@ -102,19 +108,32 @@ def sanitize(name):
 
 
 def find_videos(folder):
-    """Return videos sitting directly inside `folder`, sorted; never recurses."""
-    return sorted(f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in _VIDEO_EXTS)
+    """Return videos sitting directly inside `folder`, sorted; never recurses.
+
+    Dotfiles are excluded. macOS writes an AppleDouble sidecar "._X.MP4" beside "X.MP4" on
+    filesystems with no resource fork — the FAT32 and exFAT of camera SD cards — holding a few
+    KB of Finder metadata under a name that passes a suffix-only filter. Left in, a folder
+    carrying both "._X.MP4" and "src/._X.MP4" pairs two metadata blobs and hands them to
+    ffmpeg as footage. The same condition drops .DS_Store.
+    """
+    return sorted(
+        f for f in folder.iterdir() if f.is_file() and not f.name.startswith(".") and f.suffix.lower() in _VIDEO_EXTS
+    )
 
 
-def flat_dir_name(date, parent, video):
-    """Build the flat folder name YYYY_MM_DD-PARENT-VIDEO for one video.
+def flat_dir_name(video, source_root):
+    """Build the flat folder name for one video from its path below `source_root`.
+
+    Every directory component is sanitized and joined with hyphens, so the tree may nest to
+    any depth: 2026-07-22/splats/GH010234.mp4 gives 2026_07_22-splats-GH010234, and the
+    audiomoth shape gives audiomoth_only_deployments-20260817_20260824-<site>-splat_videos-<stem>.
 
     The video stem is carried over verbatim so the folder is traceable back to the original
-    filename (e.g. PXL_20260630_002106958.TS keeps its dot). Only the parent folder is
-    sanitized. The stem is last, so any hyphens it contains stay unambiguous when splitting
-    the name on the first two hyphens.
+    filename (e.g. PXL_20260630_002106958.TS keeps its dot), and placed last, so any hyphens
+    it contains stay unambiguous when splitting the name on the leading components.
     """
-    return f"{date.replace('-', '_')}-{sanitize(parent)}-{video.stem}"
+    parts = [sanitize(part) for part in video.parent.relative_to(source_root).parts]
+    return "-".join(parts + [video.stem])
 
 
 ########
@@ -136,7 +155,7 @@ def find_source(video):
     Matches on stem only: the real tree differs by case (GH010234.mp4 vs src/GH010234.MP4)
     and by extension (IMG_4085.mp4 vs src/IMG_4085.MOV), so neither can be compared directly.
     """
-    src_dir = video.parent / "src"
+    src_dir = video.parent / SRC_DIR_NAME
     if not src_dir.is_dir():
         return None
     stem = video.stem.lower()
@@ -146,31 +165,39 @@ def find_source(video):
     return None
 
 
+def walk_folders(root):
+    """Yield `root` and every directory beneath it that may hold edits, depth-first.
+
+    Prunes src/ so a camera original is never mistaken for an edit at any depth, and dotted
+    directories so macOS bookkeeping is never descended into.
+    """
+    yield root
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        if child.name == SRC_DIR_NAME or child.name.startswith("."):
+            continue
+        yield from walk_folders(child)
+
+
 def plan_pairs(source_root):
     """Walk the capture tree and return every (edit, source) pair, sorted by flat name.
 
-    A video is an edit iff <parent>/src/<stem>.* exists. Videos with no counterpart are
-    camera originals that have not been edited yet; they are skipped and logged, and enter
-    scope automatically once exported. Raises ValueError on a flat-name collision, which
-    would otherwise silently overwrite one capture with another.
+    A video is an edit iff <parent>/src/<stem>.* exists. That rule is the only structural
+    assumption made about the tree: the walk is depth-agnostic, so a new capture drop nesting
+    at any depth is curated with no code change. Videos with no counterpart are camera
+    originals that have not been edited yet; they are skipped and logged, and enter scope
+    automatically once exported. Raises ValueError on a flat-name collision, which would
+    otherwise silently overwrite one capture with another.
     """
     pairs = []
     skipped = 0
-    for date_dir in sorted(p for p in source_root.iterdir() if p.is_dir()):
-        if not _DATE_RE.fullmatch(date_dir.name):
-            logger.info("skip %s: not a YYYY-MM-DD directory", date_dir.name)
-            continue
-        # Videos may sit directly in the date folder or one level down in a named parent.
-        # The old plan_copies only looked one level down, so the former were invisible.
-        folders = [date_dir] + sorted(p for p in date_dir.iterdir() if p.is_dir() and p.name != "src")
-        for folder in folders:
-            for video in find_videos(folder):
-                source = find_source(video)
-                if source is None:
-                    logger.info("skip %s: no src/ counterpart (unedited original)", video.name)
-                    skipped += 1
-                    continue
-                pairs.append(Pair(video, source, flat_dir_name(date_dir.name, folder.name, video)))
+    for folder in walk_folders(source_root):
+        for video in find_videos(folder):
+            source = find_source(video)
+            if source is None:
+                logger.info("skip %s: no src/ counterpart (unedited original)", video.name)
+                skipped += 1
+                continue
+            pairs.append(Pair(video, source, flat_dir_name(video, source_root)))
 
     seen = {}
     for pair in pairs:
@@ -383,8 +410,19 @@ def solve_offset(edit, source, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
 def decode_audio(path, rate=AUDIO_RATE):
     """Decode `path` to a mono float32 array at `rate` Hz via ffmpeg."""
     command = [
-        "ffmpeg", "-v", "error", "-i", str(path),
-        "-vn", "-ac", "1", "-ar", str(rate), "-f", "f32le", "-",
+        "ffmpeg",
+        "-v",
+        "error",
+        "-i",
+        str(path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(rate),
+        "-f",
+        "f32le",
+        "-",
     ]
     result = subprocess.run(command, capture_output=True, check=True)
     return np.frombuffer(result.stdout, dtype=np.float32)
@@ -481,8 +519,14 @@ def exif_dump(path):
 def probe_duration(path):
     """Return the container duration of `path` in seconds."""
     command = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=nw=1:nk=1", str(path),
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=nw=1:nk=1",
+        str(path),
     ]
     return float(subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip())
 
@@ -494,8 +538,16 @@ def find_gpmd_index(path):
     different tags, so matching on the tag is what keeps injection GoPro-only for now.
     """
     command = [
-        "ffprobe", "-v", "error", "-select_streams", "d",
-        "-show_entries", "stream=index,codec_tag_string", "-of", "json", str(path),
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "d",
+        "-show_entries",
+        "stream=index,codec_tag_string",
+        "-of",
+        "json",
+        str(path),
     ]
     streams = json.loads(subprocess.run(command, capture_output=True, text=True, check=True).stdout)
     for stream in streams.get("streams", []):
@@ -512,9 +564,18 @@ def static_tags(dump):
     dump-wide search answers a whole-file question with one sample's value.
     """
     wanted = (
-        "Make", "Model", "SerialNumber", "FirmwareVersion", "CreateDate", "MediaCreateDate",
-        "FieldOfView", "LensProjection", "ProjectionType", "ElectronicImageStabilization",
-        "GPSCoordinates", "GPSAltitude",
+        "Make",
+        "Model",
+        "SerialNumber",
+        "FirmwareVersion",
+        "CreateDate",
+        "MediaCreateDate",
+        "FieldOfView",
+        "LensProjection",
+        "ProjectionType",
+        "ElectronicImageStabilization",
+        "GPSCoordinates",
+        "GPSAltitude",
     )
     main, _ = iter_documents(dump)
     return {key: main[key] for key in wanted if key in main}
@@ -672,7 +733,7 @@ def expand_gpmf(dump, key, components):
         step = float(chunk.tags.get("SampleDuration", 1.0)) / count
         for i in range(count):
             times.append(start + i * step)
-            values.append(tuple(numbers[i * components:(i + 1) * components]))
+            values.append(tuple(numbers[i * components : (i + 1) * components]))
     return times, values
 
 
@@ -775,8 +836,16 @@ PROVENANCE_TAG = "preprocess_gdrive_videos"
 # mp4; the two rejected ones stay in static_tags so the JSON sidecar keeps carrying them.
 _WRITABLE_TAGS = frozenset(
     {
-        "Make", "Model", "SerialNumber", "FirmwareVersion", "CreateDate", "MediaCreateDate",
-        "FieldOfView", "ProjectionType", "GPSCoordinates", "GPSAltitude",
+        "Make",
+        "Model",
+        "SerialNumber",
+        "FirmwareVersion",
+        "CreateDate",
+        "MediaCreateDate",
+        "FieldOfView",
+        "ProjectionType",
+        "GPSCoordinates",
+        "GPSAltitude",
     }
 )
 
@@ -797,11 +866,27 @@ def gpmd_command(curated, source, offset_s, duration_s, gpmd_index, out):
     still regenerates a `tmcd` track from container metadata on its own, so nothing is lost.
     """
     return [
-        "ffmpeg", "-v", "error", "-y",
-        "-i", str(curated),
-        "-ss", f"{offset_s}", "-t", f"{duration_s}", "-i", str(source),
-        "-map", "0", "-map", "-0:d", "-map", f"1:{gpmd_index}",
-        "-c", "copy", "-copy_unknown",
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(curated),
+        "-ss",
+        f"{offset_s}",
+        "-t",
+        f"{duration_s}",
+        "-i",
+        str(source),
+        "-map",
+        "0",
+        "-map",
+        "-0:d",
+        "-map",
+        f"1:{gpmd_index}",
+        "-c",
+        "copy",
+        "-copy_unknown",
         str(out),
     ]
 

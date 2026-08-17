@@ -45,33 +45,79 @@ def test_sanitize(raw, expected):
 ########
 
 
+_ROOT = Path("/gdrive-src")
+
+
 def test_flat_dir_name_uses_underscore_date_and_hyphen_delimiter():
-    video = Path("/x/2026-07-15/Goprosplat/GH010228.mp4")
-    assert preproc.flat_dir_name("2026-07-15", "Goprosplat", video) == "2026_07_15-Goprosplat-GH010228"
+    video = _ROOT / "2026-07-15" / "Goprosplat" / "GH010228.mp4"
+    assert preproc.flat_dir_name(video, _ROOT) == "2026_07_15-Goprosplat-GH010228"
 
 
 def test_flat_dir_name_preserves_parent_case():
-    video = Path("/x/GH010228.mp4")
-    lower = preproc.flat_dir_name("2026-07-15", "Goprosplat", video)
-    upper = preproc.flat_dir_name("2026-07-15", "GoproSplat", video)
+    lower = preproc.flat_dir_name(_ROOT / "2026-07-15" / "Goprosplat" / "GH010228.mp4", _ROOT)
+    upper = preproc.flat_dir_name(_ROOT / "2026-07-15" / "GoproSplat" / "GH010228.mp4", _ROOT)
     assert lower != upper
 
 
 def test_flat_dir_name_keeps_video_stem_verbatim():
-    # Dots in the video name survive; only the parent folder is sanitized
-    video = Path("/x/PXL_20260630_002106958.TS.mp4")
-    assert (
-        preproc.flat_dir_name("2026-06-29", "Phone pics and splat videos", video)
-        == "2026_06_29-Phone_pics_and_splat_videos-PXL_20260630_002106958.TS"
-    )
+    # Dots in the video name survive; only the directory components are sanitized
+    video = _ROOT / "2026-06-29" / "Phone pics and splat videos" / "PXL_20260630_002106958.TS.mp4"
+    assert preproc.flat_dir_name(video, _ROOT) == "2026_06_29-Phone_pics_and_splat_videos-PXL_20260630_002106958.TS"
 
 
 def test_flat_dir_name_keeps_hyphens_in_video_stem():
     # The stem is last, so its hyphens stay parseable via split("-", 2)
-    video = Path("/x/clip-take-2.mp4")
-    name = preproc.flat_dir_name("2026-07-15", "splats", video)
+    name = preproc.flat_dir_name(_ROOT / "2026-07-15" / "splats" / "clip-take-2.mp4", _ROOT)
     assert name == "2026_07_15-splats-clip-take-2"
     assert name.split("-", 2) == ["2026_07_15", "splats", "clip-take-2"]
+
+
+def test_flat_dir_name_joins_every_path_component():
+    # The audiomoth shape: four directory levels below the source root
+    video = (
+        _ROOT
+        / "audiomoth-only-deployments"
+        / "20260817-20260824"
+        / "boston-charlesgateeast-riverbank"
+        / "splat_videos"
+        / "GH010259.mp4"
+    )
+    assert preproc.flat_dir_name(video, _ROOT) == (
+        "audiomoth_only_deployments-20260817_20260824-" "boston_charlesgateeast_riverbank-splat_videos-GH010259"
+    )
+
+
+def test_flat_dir_name_for_a_video_directly_in_the_source_root():
+    assert preproc.flat_dir_name(_ROOT / "GH010218.mp4", _ROOT) == "GH010218"
+
+
+@pytest.mark.parametrize(
+    "relative,expected",
+    [
+        ("2026-07-22/splats/GH010234.mp4", "2026_07_22-splats-GH010234"),
+        ("2024-07-13/GPM_SPLAT/GH010198.mp4", "2024_07_13-GPM_SPLAT-GH010198"),
+        (
+            "2026-06-29/Phone pics and splat videos/PXL_20260629_225753909.TS.mp4",
+            "2026_06_29-Phone_pics_and_splat_videos-PXL_20260629_225753909.TS",
+        ),
+        (
+            "2026-04-03/videos_for_splats/IMG_0005.mp4",
+            "2026_04_03-videos_for_splats-IMG_0005",
+        ),
+        (
+            "2025-07-17/GOPROC_Splat_plus/GH010209.mp4",
+            "2025_07_17-GOPROC_Splat_plus-GH010209",
+        ),
+    ],
+)
+def test_flat_dir_name_reproduces_names_already_in_the_bucket(relative, expected):
+    """Pin real paths to the curated folder names already pushed to GCS.
+
+    These directories exist in the environments-curated bucket, and push_curated.sh runs
+    rclone copy rather than sync, so a rename uploads a duplicate and orphans the original.
+    A change to sanitize or to the join must fail here rather than silently at 12 GB.
+    """
+    assert preproc.flat_dir_name(_ROOT / relative, _ROOT) == expected
 
 
 ########
@@ -83,6 +129,15 @@ def _touch(path):
     """Create an empty file, making parent dirs as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"")
+
+
+def test_find_videos_skips_dotfiles(tmp_path):
+    # "._C0104.MP4" is an AppleDouble sidecar of Finder metadata, not video, and it passes a
+    # suffix-only filter. ".DS_Store" is caught by the same condition.
+    _touch(tmp_path / "C0104.MP4")
+    _touch(tmp_path / "._C0104.MP4")
+    _touch(tmp_path / ".DS_Store")
+    assert [v.name for v in preproc.find_videos(tmp_path)] == ["C0104.MP4"]
 
 
 @pytest.fixture
@@ -101,10 +156,13 @@ def tree(tmp_path):
     _touch(root / "2026-06-29" / "Phone pics and splat videos" / "src" / "IMG_4085.MOV")
     # Videos directly in a date folder with no src/ anywhere: camera originals, skipped
     _touch(root / "2026-06-03" / "GH010218.MP4")
+    # An undated top-level folder: walked like any other, because the pairing rule is the
+    # only structural assumption made about the tree
+    _touch(root / "scratch" / "whatever.mp4")
+    _touch(root / "scratch" / "src" / "whatever.MP4")
     # Noise that must never be picked up
     _touch(root / "2026-07-15" / "Goprosplat" / ".DS_Store")
     _touch(root / "notes.txt")
-    _touch(root / "scratch" / "whatever.mp4")
     return root
 
 
@@ -113,6 +171,7 @@ def test_plan_pairs_returns_only_videos_with_a_src_counterpart(tree):
     assert names == [
         "2026_06_29-Phone_pics_and_splat_videos-IMG_4085",
         "2026_07_15-Goprosplat-GH010228",
+        "scratch-whatever",
     ]
 
 
@@ -128,8 +187,9 @@ def test_plan_pairs_matches_across_extension(tree):
     assert pair.source.suffix == ".MOV"
 
 
-def test_plan_pairs_ignores_undated_top_level_dirs(tree):
-    assert all("scratch" not in p.edit.parts for p in preproc.plan_pairs(tree))
+def test_plan_pairs_walks_undated_top_level_dirs(tree):
+    # No date gate: a folder pairs on the src/ rule alone, whatever it is called
+    assert "scratch-whatever" in [p.name for p in preproc.plan_pairs(tree)]
 
 
 def test_plan_pairs_walks_videos_directly_in_a_date_folder(tmp_path):
@@ -137,13 +197,41 @@ def test_plan_pairs_walks_videos_directly_in_a_date_folder(tmp_path):
     root = tmp_path / "gdrive-src"
     _touch(root / "2026-06-03" / "GH010218.mp4")
     _touch(root / "2026-06-03" / "src" / "GH010218.MP4")
-    assert [p.name for p in preproc.plan_pairs(root)] == ["2026_06_03-2026_06_03-GH010218"]
+    assert [p.name for p in preproc.plan_pairs(root)] == ["2026_06_03-GH010218"]
+
+
+def test_plan_pairs_walks_arbitrarily_deep_trees(tmp_path):
+    # The audiomoth-only-deployments shape: four levels, and a .mov edit on a .MP4 original
+    root = tmp_path / "gdrive-src"
+    deep = root / "audiomoth-only-deployments" / "20260810-20260831" / "boston-ringerpark-west" / "splat_videos"
+    _touch(deep / "GH010247.mov")
+    _touch(deep / "src" / "GH010247.MP4")
+    expected = "audiomoth_only_deployments-20260810_20260831-boston_ringerpark_west-splat_videos-GH010247"
+    assert [p.name for p in preproc.plan_pairs(root)] == [expected]
 
 
 def test_plan_pairs_never_treats_a_src_video_as_an_edit(tmp_path):
     # A video inside src/ is a camera original even if src/src/ somehow existed
     root = tmp_path / "gdrive-src"
     _touch(root / "2026-07-15" / "Goprosplat" / "src" / "GH010228.MP4")
+    assert preproc.plan_pairs(root) == []
+
+
+def test_plan_pairs_prunes_src_at_any_depth(tmp_path):
+    # GH010252 sits in a src/ four levels down with no edit above it: never a candidate
+    root = tmp_path / "gdrive-src"
+    deep = root / "audiomoth-only-deployments" / "20260817-20260824" / "site" / "splat_videos"
+    _touch(deep / "src" / "GH010252.MP4")
+    assert preproc.plan_pairs(root) == []
+
+
+def test_plan_pairs_never_pairs_two_appledouble_files(tmp_path):
+    # macOS writes ._X.MP4 beside X.MP4 on SD cards. Both halves present, stems match, and
+    # without the dotfile filter two 4 KB metadata blobs are handed to ffmpeg as footage.
+    root = tmp_path / "gdrive-src"
+    folder = root / "2024-07-09" / "SplatsSD"
+    _touch(folder / "._C0104.MP4")
+    _touch(folder / "src" / "._C0104.MP4")
     assert preproc.plan_pairs(root) == []
 
 
@@ -1174,11 +1262,27 @@ def _synth_video(path, duration=1, extra_args=()):
     """Render a one-second mp4 with colour bars and a tone via ffmpeg's lavfi sources."""
     subprocess.run(
         [
-            "ffmpeg", "-v", "error", "-y",
-            "-f", "lavfi", "-i", f"testsrc=size=320x240:rate=30:duration={duration}",
-            "-f", "lavfi", "-i", f"sine=frequency=440:duration={duration}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
-            *extra_args, str(path),
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc=size=320x240:rate=30:duration={duration}",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:duration={duration}",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            *extra_args,
+            str(path),
         ],
         check=True,
         capture_output=True,
@@ -1230,9 +1334,7 @@ def test_inject_really_grafts_a_gpmd_track_onto_the_curated_video(tmp_path):
     before = curated.stat().st_size
     assert "gpmd" not in _stream_tags(curated)
 
-    injected = preproc.inject(
-        curated, source, preproc.Alignment(0.0, 0.99, True), 1.0, {"Model": "GoPro Max"}
-    )
+    injected = preproc.inject(curated, source, preproc.Alignment(0.0, 0.99, True), 1.0, {"Model": "GoPro Max"})
 
     assert injected is True
     assert "gpmd" in _stream_tags(curated)
@@ -1407,14 +1509,18 @@ def test_main_warns_about_every_unaligned_clip(tree, tmp_path, monkeypatch, capl
         preproc,
         "process_pair",
         lambda pair, out, min_r, force: {
-            "name": pair.name, "status": "processed",
-            "aligned": False, "r": 0.2, "imu": True, "injected": False,
+            "name": pair.name,
+            "status": "processed",
+            "aligned": False,
+            "r": 0.2,
+            "imu": True,
+            "injected": False,
         },
     )
     with caplog.at_level("WARNING"):
         preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out")])
 
-    assert caplog.text.count("alignment rejected") == 2
+    assert caplog.text.count("alignment rejected") == 3
 
 
 def test_main_survives_a_clip_that_raises(tree, tmp_path, monkeypatch, caplog):
@@ -1434,7 +1540,7 @@ def test_main_survives_a_clip_that_raises(tree, tmp_path, monkeypatch, caplog):
 
     # The run finished: the index was still written and the survivor still counted
     assert (out / "index.csv").is_file()
-    assert "1 processed, 0 skipped, 1 failed" in caplog.text
+    assert "2 processed, 0 skipped, 1 failed" in caplog.text
     # And the casualty is named individually, not buried in a count
     assert "processing failed, nothing curated: 2026_07_15-Goprosplat-GH010228" in caplog.text
 

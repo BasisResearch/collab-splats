@@ -155,10 +155,10 @@ The rule above was run over `gdrive-src` before being written down.
 
 | Quantity | Result |
 |---|---|
-| Pairs derived | 49, up from 40 |
+| Pairs derived | 51, up from 40 |
 | Existing names reproduced byte-identically | 38 of 40 |
 | Existing names changed | 2 |
-| New names | 9, all audiomoth |
+| New names | 11 — 9 audiomoth, 2 Sony |
 
 Representative derivations:
 
@@ -171,6 +171,23 @@ Representative derivations:
 | `audiomoth-only-deployments/20260817-20260824/boston-charlesgateeast-riverbank/splat_videos/GH010259.mp4` | `audiomoth_only_deployments-20260817_20260824-boston_charlesgateeast_riverbank-splat_videos-GH010259` |
 
 The longest new name is 101 characters, well inside the 255-byte filename limit.
+
+### A Sony pair appeared mid-implementation
+
+`gdrive-src` is a live Google Drive mount, and `2024-02-06/SplatsSD/` synced into it between
+the design probe and the implementation, carrying `C0043.MP4` and `C0044.MP4` with a `src/`
+sibling. Both had to be folded into the figures above, which is why they read 51 and 11 rather
+than the 49 and 9 measured earlier the same day.
+
+These are the first Sony pairs in the tree. The 2026-08-11 spec deferred `rtmd` extraction on
+the grounds that no Sony clip had been edited, so there was nothing to test it against; that
+premise no longer holds, but the deferral does. Each half is 704.2 MB and both carry `rtmd`,
+so the parent-level file is a copy rather than a Resolve export — the same situation as the
+ten phone clips already recorded. They align at offset 0, take static tags, and produce no
+telemetry sidecar, which is the existing no-IMU path and needs no code.
+
+The lesson for the numbers in this document: they are a snapshot of a mount that moves. The
+rule is what is fixed.
 
 ### The two renames
 
@@ -215,12 +232,14 @@ No change to `gpmd_command`, `tag_command` or `inject`.
 
 - **38 clips skip.** The idempotency gate compares `source.size_bytes` and `mtime` against the
   sidecar, so untouched captures cost a stat each.
-- **9 clips process fully** — copy, align, extract, inject, telemetry. 7.3 GB of edits.
+- **11 clips process fully** — copy, align, extract, inject, telemetry. 7.3 GB of audiomoth
+  edits plus 1.4 GB of Sony.
 - **2 clips reprocess** under their new names, because no sidecar exists at the new path.
   1.8 GB.
-- **`index.csv` regenerates** to 49 rows from the sidecars, as it does on every run.
+- **`index.csv` regenerates** to 51 rows from the sidecars, as it does on every run.
 
-A subsequent `--push` transfers roughly 9 GB: the 9 new clips and the 2 renamed ones.
+A subsequent `--push` transfers roughly 10.5 GB: the 11 new clips and the 2 renamed ones. The
+full curated tree is 23.1 GB, the rest of which rclone skips on size and modtime.
 
 ### Manual cleanup
 
@@ -274,7 +293,7 @@ never see a path shape.
 ## Verification
 
 ```bash
-# 1. Plan only — expect 49 pairs and the 9 audiomoth names
+# 1. Plan only — expect 51 pairs and the 9 audiomoth names
 python scripts/preprocess_gdrive_videos.py --dry-run
 
 # 2. The 38 unchanged names must appear exactly as they do on disk today
@@ -302,9 +321,9 @@ python scripts/preprocess_gdrive_videos.py --push
 
 ## Consequences to expect
 
-- The curated tree goes from 40 folders to 49.
+- The curated tree goes from 40 folders to 51.
 - Two folders change name; four stale folders need manual removal, two of them in GCS.
-- Roughly 9 GB is uploaded once on the next push.
+- Roughly 10.5 GB is uploaded once on the next push.
 - A future capture drop at any nesting depth is curated with no code change, provided it keeps
   the `src/` convention. That convention is now the only structural assumption the script makes
   about the tree.

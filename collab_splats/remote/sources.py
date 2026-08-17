@@ -63,6 +63,9 @@ PUSH_EXCLUDES = (
     "*.[Mm][Pp]4",
     "*.[Mm][Oo][Vv]",
     "*.[Aa][Vv][Ii]",
+    # COLMAP match database is a local build artifact, rebuildable from the zarr feature
+    # cache + poses (geometry/verification.py). Anchored at <backend>/colmap depth.
+    "/*/colmap/database.db",
 )
 
 ########

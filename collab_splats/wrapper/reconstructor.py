@@ -43,13 +43,16 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
-_STAGE_ORDER = ["preproc", "pointcloud", "semantics", "mesh", "localize"]
+_STAGE_ORDER = ["preproc", "pointcloud", "semantics", "mesh", "localize", "verify"]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preproc": [],
     "pointcloud": ["preproc"],
     "semantics": ["pointcloud"],
     "mesh": ["pointcloud"],
     "localize": ["pointcloud"],
+    # verify reuses the localize feature cache but builds it itself when absent, so its
+    # only hard dependency is the reconstruction
+    "verify": ["pointcloud"],
 }
 # A stage is re-runnable on its own iff nothing depends on it → {semantics, mesh, localize}.
 # Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
@@ -940,6 +943,58 @@ class Reconstructor:
 
         return _build_localization_db(feedforward_zarr, extractor_name, self.frames_zarr)
 
+    def verify(self, overwrite: bool = False) -> Path:
+        """Geometrically verify poses/points: pycolmap triangulation over feature tracks.
+
+        Reuses the localization extractor's zarr feature cache (building it if absent) and
+        writes colmap/{verified/, verification.json, database.db}. Reports only — nothing
+        upstream is mutated.
+        """
+        out_json = self.backend_dir / "colmap" / "verification.json"
+        if not overwrite and self._stage_output_exists("verify"):
+            logger.info("Verification exists at %s, skipping", out_json)
+            return out_json
+
+        result = self._resolve_result()
+        if result is None:
+            raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
+
+        # One extractor serves localization and verification by design — the cache is
+        # keyed by extractor, so sharing it means one extraction pass, zero drift.
+        self.build_localization_db()
+        extractor_name = self.config["localization"]["extractor"]
+
+        # Heavy deps kept inline so the module imports without GPU/model libs
+        from collab_splats.geometry.verification import verify_reconstruction
+        from collab_splats.localization.extractors import BaseLocalExtractor
+        from collab_splats.localization.localizer import load_reconstruction_features
+
+        features, ids, _ = load_reconstruction_features(
+            self.backend_dir / "feedforward.zarr", extractor_name
+        )
+        # The cache ids are frame_XXXXXX.jpg, the reconstruction registers frame_XXXXXX
+        # (no extension) — compare stems so a reordered/rebuilt cache cannot slip through.
+        recon = result.reconstruction
+        recon_names = [recon.images[i].name for i in sorted(recon.images)]
+        if [Path(n).stem for n in ids] != [Path(n).stem for n in recon_names]:
+            raise ValueError(
+                "Feature cache and reconstruction disagree on frame order/naming — "
+                "rebuild the localization DB (overwrite=True)."
+            )
+        matcher = BaseLocalExtractor.get(extractor_name)()
+        # Sequential pairs only in v1 (pycolmap SequentialPairGenerator inside).
+        # Loop pairs are a follow-on: COLMAP's own loop_detection needs a SIFT vocab
+        # tree (unusable with learned descriptors) and retrieval descriptors are not
+        # cached anywhere a processed scene guarantees.
+        verify_reconstruction(
+            recon=recon,
+            features=features,
+            matcher=matcher,
+            output_dir=self.backend_dir / "colmap",
+        )
+        logger.info("Verification written to %s", out_json)
+        return out_json
+
     def _stage_output_exists(self, stage: str) -> bool:
         """True if `stage`'s on-disk output is already present (lets deps be reused across runs)."""
         if stage == "preproc":
@@ -961,6 +1016,8 @@ class Reconstructor:
             return feedforward_zarr.exists() and _localization_db_exists(
                 feedforward_zarr, self.config["localization"]["extractor"]
             )
+        if stage == "verify":
+            return (self.backend_dir / "colmap" / "verification.json").exists()
         return False
 
     def _resolve_result(self) -> "PointcloudResult | None":
@@ -979,7 +1036,7 @@ class Reconstructor:
         """Run named stages in dependency order.
 
         Args:
-            stages: Subset of ["preproc", "pointcloud", "semantics", "mesh", "localize"].
+            stages: Subset of ["preproc", "pointcloud", "semantics", "mesh", "localize", "verify"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
 
@@ -999,6 +1056,8 @@ class Reconstructor:
                 stages.append("mesh")
             if self.config["localization"]["enabled"]:
                 stages.append("localize")
+            if self.config["pointcloud"]["geometric_verification"]:
+                stages.append("verify")
 
         # Validate stage dependencies before starting any work. A dependency is
         # satisfied when it's in this run's stages OR its output already exists on
@@ -1035,6 +1094,8 @@ class Reconstructor:
                 self.mesh(result=result, overwrite=overwrite)
             elif stage == "localize":
                 self.build_localization_db(overwrite=overwrite)
+            elif stage == "verify":
+                self.verify(overwrite=overwrite)
 
     def launch_dashboard(self) -> None:
         """Launch interactive dashboard for current reconstruction state."""

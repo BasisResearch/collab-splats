@@ -25,7 +25,12 @@ from .extractors import (
     XFeatExtractor,
     XFeatStarExtractor,
 )
-from .localizer import CameraLocalizer, LocalizationResult, sample_world_points
+from .localizer import (
+    CameraLocalizer,
+    LocalizationResult,
+    load_reconstruction_features,
+    sample_world_points,
+)
 from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtractor
 from .viz import correspondences_for_ref, plot_correspondences, plot_inlier_distribution
 
@@ -44,6 +49,7 @@ __all__ = [
     "XFeatExtractor",
     "XFeatStarExtractor",
     "correspondences_for_ref",
+    "load_reconstruction_features",
     "plot_correspondences",
     "plot_inlier_distribution",
     "sample_world_points",

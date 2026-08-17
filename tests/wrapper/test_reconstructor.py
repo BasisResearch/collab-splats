@@ -1193,7 +1193,7 @@ def test_leaf_stages_derived_from_dep_graph():
     expected = {s for s in R._STAGE_ORDER if not any(s in deps for deps in R._STAGE_DEPS.values())}
     assert R.LEAF_STAGES == expected
     # Today's graph, spelled out so a failure above reads as a real change rather than a typo.
-    assert expected == {"semantics", "mesh", "localize"}
+    assert expected == {"semantics", "mesh", "localize", "verify"}
 
 
 def _seed_disk_reconstruction(rec, frame_idxs, image_names):

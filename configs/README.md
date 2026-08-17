@@ -175,6 +175,13 @@ for every stage that is *not* re-running is preserved verbatim.
 Nothing here deletes a remote object. The push is still `rclone copy`, so a re-run overwrites
 the artifacts it produced and leaves everything else in place.
 
+`verify` is a leaf stage: `--stages verify` re-runs geometric verification against a
+processed scene (needs `colmap/` + `feedforward.zarr` locally). Outputs under
+`<backend>/colmap/`: `verified/` (COLMAP model whose points carry real feature tracks;
+poses/cameras identical to `sparse/0`), `verification.json` (per-pair epipolar +
+relative-pose stats, per-frame track survival and reprojection error), and `database.db`
+(local build artifact, excluded from pushes). `sparse/0` is never modified.
+
 ---
 
 ## Reproducing an exact run

@@ -1,11 +1,18 @@
 """Unit tests for LocalMatcher — vismatch mocked throughout; no model downloads."""
 
+import sys
+
 import numpy as np
 import pytest
 import torch
 from unittest.mock import MagicMock, patch
 
-from collab_splats.localization.extractors import LocalFeatures, LocalMatcher, MatchResult
+from collab_splats.localization.extractors import (
+    BaseLocalExtractor,
+    LocalFeatures,
+    LocalMatcher,
+    MatchResult,
+)
 
 
 def _fake_vismatch_matcher(n_kpts=8, d=64, stable_indices=True):
@@ -87,11 +94,13 @@ def test_extract_passes_chw_unit_range_tensor(mock_get):
 
 
 def test_blocked_models_raise_without_importing_vismatch():
-    # Blocklist check happens before the vismatch import — no mock needed.
-    with pytest.raises(ValueError, match="dependency"):
-        LocalMatcher("ufm", device="cpu", probe=False)
-    with pytest.raises(ValueError, match="license"):
-        LocalMatcher("superglue", device="cpu", probe=False)
+    # Blocklist check happens before the vismatch import — a None sys.modules entry
+    # would make any import attempt raise ImportError, so ValueError proves the order.
+    with patch.dict(sys.modules, {"vismatch": None}):
+        with pytest.raises(ValueError, match="dependency"):
+            LocalMatcher("ufm", device="cpu", probe=False)
+        with pytest.raises(ValueError, match="license"):
+            LocalMatcher("superglue", device="cpu", probe=False)
 
 
 @patch("vismatch.get_matcher")
@@ -106,6 +115,39 @@ def test_descriptor_level_match_unsupported(mock_get):
 @patch("vismatch.get_matcher")
 def test_not_registered_under_legacy_names(mock_get):
     # LocalMatcher must not shadow legacy registry entries; resolve-by-name comes later.
-    from collab_splats.localization.extractors import BaseLocalExtractor
-
     assert LocalMatcher not in BaseLocalExtractor._registry.values()
+
+
+@patch("vismatch.get_matcher")
+def test_match_images_pre_ransac_with_indices(mock_get):
+    mock_get.return_value = _fake_vismatch_matcher(stable_indices=True)
+    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
+    lm.has_stable_indices = True
+    q = np.zeros((100, 100, 3), dtype=np.uint8)
+    m = lm.match_images(q, q)
+    assert isinstance(m, MatchResult)
+    assert len(m) == 4  # pre-RANSAC matched_kpts, NOT the 3 homography inliers
+    assert m.idx_q is not None and m.idx_db is not None
+    # idx must point at the exact rows of the extract()-visible keypoint table
+    fake = mock_get.return_value(q, q)
+    np.testing.assert_array_equal(fake["all_kpts0"][m.idx_q], m.query_px)
+    np.testing.assert_array_equal(fake["all_kpts1"][m.idx_db], m.ref_px)
+
+
+@patch("vismatch.get_matcher")
+def test_match_images_no_indices_when_unstable(mock_get):
+    mock_get.return_value = _fake_vismatch_matcher(stable_indices=False)
+    lm = LocalMatcher("roma", device="cpu", probe=False)
+    lm.has_stable_indices = False
+    m = lm.match_images(np.zeros((100, 100, 3), np.uint8), np.zeros((100, 100, 3), np.uint8))
+    assert len(m) == 4 and m.idx_q is None and m.idx_db is None
+
+
+@patch("vismatch.get_matcher")
+def test_probe_sets_stability_flag(mock_get):
+    mock_get.return_value = _fake_vismatch_matcher(stable_indices=True)
+    lm = LocalMatcher("disk-lightglue", device="cpu")  # probe=True default
+    assert lm.has_stable_indices is True
+    mock_get.return_value = _fake_vismatch_matcher(stable_indices=False)
+    lm2 = LocalMatcher("roma", device="cpu")
+    assert lm2.has_stable_indices is False

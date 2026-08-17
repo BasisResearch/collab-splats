@@ -486,3 +486,104 @@ class LomaGExtractor(LomaExtractor):
     """LoMa-G variant: larger matcher (embed_dim=1024), best accuracy, ~1.4 GB weights."""
 
     _cfg_factory = LoMaG
+
+
+########################################
+# VisMatch-backed matcher
+########################################
+
+# Models whose base deps we override away — vismatch would crash at model load.
+_VISMATCH_DEP_BLOCKLIST = {
+    "ufm": "requires uniception==0.1.1; this project pins 0.1.7 for MapAnything",
+    "edm": "requires lightning==2.3.3; this project resolves lightning>=2.6",
+}
+
+# Upstream model licenses that forbid commercial use. Seeded from upstream LICENSE
+# files (verified in a follow-up task); vismatch's own wrapper is BSD-3 but does not
+# relicense the models it wraps.
+_VISMATCH_LICENSE_BLOCKLIST = {
+    "superglue": "Magic Leap research-only license",
+    "superpoint-lightglue": "SuperPoint weights: Magic Leap research-only license",
+    "superpoint-sphereglue": "SuperPoint weights: Magic Leap research-only license",
+    "minima-superpoint-lightglue": "SuperPoint weights: Magic Leap research-only license",
+    "duster": "DUSt3R: CC BY-NC-SA 4.0 (non-commercial)",
+    "master": "MASt3R: CC BY-NC-SA 4.0 (non-commercial)",
+    "gim-lightglue": "GIM: academic-use-only license",
+    "gim-dkm": "GIM: academic-use-only license",
+}
+
+
+def _to_numpy(x) -> np.ndarray:
+    """torch.Tensor (any device) or array-like -> float32 numpy array."""
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy().astype(np.float32)
+    return np.asarray(x, dtype=np.float32)
+
+
+class LocalMatcher(BaseLocalExtractor):
+    """Stage-2 local matcher backed by the vismatch model zoo.
+
+    One class for every vismatch model; the model name is data, not a subclass.
+    extract() fills the zarr feature cache; match_images() (added in a follow-up
+    task) is the pairwise path. The features-based match() inherited from
+    BaseLocalExtractor is unsupported and raises.
+    """
+
+    def __init__(self, model_name: str, device: str | None = None, probe: bool = True):
+        # Refuse blocked models before touching vismatch (dep conflicts / licenses).
+        for blocklist, kind in ((_VISMATCH_DEP_BLOCKLIST, "dependency"), (_VISMATCH_LICENSE_BLOCKLIST, "license")):
+            if model_name in blocklist:
+                raise ValueError(f"vismatch model '{model_name}' blocked ({kind}): {blocklist[model_name]}")
+        # Heavy optional dep: vismatch pulls the full model zoo machinery.
+        import vismatch
+
+        self._model_name = model_name
+        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._matcher = vismatch.get_matcher(model_name, device=self._device)
+        # Set by _probe_index_stability() (follow-up task); None until probed.
+        self.has_stable_indices: bool | None = None
+        if probe:
+            self._probe_index_stability()
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def _to_tensor(self, image: np.ndarray) -> torch.Tensor:
+        """HxWx3 uint8 RGB -> (3,H,W) float [0,1] on device (vismatch input contract)."""
+        t = torch.from_numpy(np.ascontiguousarray(image)).permute(2, 0, 1).float()
+        if t.max() > 1.5:  # uint8-scale input
+            t = t / 255.0
+        return t.to(self._device)
+
+    @staticmethod
+    def _check_pixel_frame(kpts: np.ndarray, hw: tuple[int, int], what: str) -> None:
+        """Guard the 92f2e4a bug class: keypoints must be in the INPUT image's pixel frame."""
+        if len(kpts) and (kpts.min() < -0.5 or kpts[:, 0].max() > hw[1] - 0.5 or kpts[:, 1].max() > hw[0] - 0.5):
+            raise ValueError(
+                f"vismatch '{what}' keypoints outside input pixel frame {hw}: "
+                f"x range [{kpts[:, 0].min():.1f}, {kpts[:, 0].max():.1f}], "
+                f"y range [{kpts[:, 1].min():.1f}, {kpts[:, 1].max():.1f}] — "
+                "model likely returns coords at its internal resolution"
+            )
+
+    def extract(self, image: np.ndarray) -> LocalFeatures:
+        """Extract keypoints+descriptors (vismatch runs a self-pair forward internally)."""
+        hw = image.shape[:2]
+        with torch.inference_mode():
+            out = self._matcher.extract(self._to_tensor(image))
+        # vismatch may hand back numpy or on-device tensors depending on the model.
+        kpts = _to_numpy(out["all_kpts0"])
+        descs = _to_numpy(out["all_desc0"])
+        self._check_pixel_frame(kpts, hw, self._model_name)
+        return LocalFeatures(keypoints=torch.from_numpy(kpts), descriptors=torch.from_numpy(descs))
+
+    def match(self, query: LocalFeatures, db: LocalFeatures, image_hw: tuple[int, int]) -> MatchResult:
+        raise NotImplementedError(
+            f"LocalMatcher('{self._model_name}') has no descriptor-level matching — "
+            "vismatch matches image pairs only. Use match_images()."
+        )
+
+    def _probe_index_stability(self) -> None:
+        """Placeholder until the match_images task lands — probe requires pair matching."""
+        raise NotImplementedError("index probe lands with match_images")

@@ -272,7 +272,13 @@ class SceneSource:
             if not entries:
                 logger.info("%s listed empty — no curated scenes to process", CURATED_BUCKET)
                 return []
-            return sorted(e["Name"] for e in entries if e.get("IsDir") and SCENE_ID_RE.match(e["Name"]))
+            dirs = [e["Name"] for e in entries if e.get("IsDir")]
+            # A present-but-unmatched dir is exactly how a naming-convention drift looks; name it,
+            # or the next batch of curated scenes silently vanishes from --all like audiomoth did.
+            skipped = sorted(d for d in dirs if not SCENE_ID_RE.match(d))
+            if skipped:
+                logger.warning("skipping non-scene dirs in %s: %s", CURATED_BUCKET, ", ".join(skipped))
+            return sorted(d for d in dirs if SCENE_ID_RE.match(d))
 
         return self._cached(("list_scenes",), _produce)
 

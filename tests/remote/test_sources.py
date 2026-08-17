@@ -272,6 +272,18 @@ def test_list_scenes_logs_when_the_curated_bucket_is_empty(monkeypatch, caplog):
     assert caplog.records, "an empty curated bucket must be logged"
 
 
+def test_list_scenes_warns_about_skipped_non_scene_dirs(monkeypatch, caplog):
+    """A dir that fails SCENE_ID_RE must be named in the log — the audiomoth folders sat
+    undiscoverable for weeks because the filter dropped them silently."""
+    _fake_run(
+        monkeypatch,
+        listings={f"collab-data:{CURATED_BUCKET}": _dirs("2026_07_20-birds-C0043", ".cache")},
+    )
+    with caplog.at_level(logging.WARNING, logger="collab_splats.remote.sources"):
+        assert SceneSource(_FakeClient()).list_scenes() == ["2026_07_20-birds-C0043"]
+    assert any(".cache" in r.getMessage() for r in caplog.records), "skipped dir must be logged"
+
+
 def test_list_processed_scenes_reads_processed_bucket(monkeypatch):
     # Same two negative fixtures as list_scenes: a non-scene dir and a scene-named file must both
     # be dropped, so neither the IsDir check nor SCENE_ID_RE can be removed unnoticed.

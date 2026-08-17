@@ -1,5 +1,7 @@
 """Tests for geometric verification: COLMAP DB export + Tier 1 epipolar pose verification."""
 
+import json
+
 import numpy as np
 import pytest
 import torch
@@ -122,3 +124,34 @@ def test_keypoint_bounds_guard(tmp_path):
             matcher=_IdentityMatcher(),
             output_dir=tmp_path,
         )
+
+
+def test_triangulation_recovers_scene(tmp_path):
+    """Tier 2 triangulates the synthetic scene: full yield, full tracks, ~zero error."""
+    pts_w, extrinsics, kps = _synthetic_scene()
+    result = verify_reconstruction(
+        recon=_make_recon(extrinsics),
+        features=_features_from_keypoints(kps),
+        matcher=_IdentityMatcher(),
+        output_dir=tmp_path,
+    )
+    verified = result.reconstruction
+    assert verified.num_points3D() >= 55  # of 60; COLMAP may drop boundary cases
+    # Every surviving point carries a real (non-empty) track and lies on a GT point
+    for p in verified.points3D.values():
+        assert p.track.length() == 3
+        assert np.linalg.norm(pts_w - p.xyz, axis=1).min() < 1e-3
+    # Per-frame stats populated for all frames; reprojection error is sub-pixel
+    assert set(result.frame_stats) == {f"frame_{i:05d}" for i in range(3)}
+    for s in result.frame_stats.values():
+        assert s["n_tracks"] >= 55
+        assert s["mean_reproj_error_px"] < 0.5
+    # Summary distributions present (median/p90/p99 — never median alone)
+    assert result.summary["n_points"] >= 55
+    assert set(result.summary["track_length"]) == {"median", "p90", "p99"}
+    # Report written and loadable
+    report = json.loads((tmp_path / "verification.json").read_text())
+    assert report["summary"]["n_points"] == result.summary["n_points"]
+    assert len(report["pair_stats"]) == 3
+    # COLMAP model on disk for downstream tooling
+    assert (tmp_path / "verified" / "points3D.bin").exists()

@@ -10,8 +10,9 @@ triangulation module — the validated reference for this pattern.
 Spec: docs/superpowers/specs/2026-08-14-geometric-verification-design.md.
 """
 
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -228,11 +229,96 @@ def verify_reconstruction(
     return result
 
 
-def _triangulate_and_summarize(recon, db_path, output_dir, pair_stats, features):
-    """Placeholder until Task 5: no triangulation, empty stats."""
-    return recon, {}, {}
+########################################
+# Tier 2: triangulation + summaries
+########################################
 
 
-def _write_report(result, path):
-    """Placeholder until Task 5."""
-    path.write_text("{}")
+def _distribution(values) -> dict | None:
+    """median/p90/p99 of a value list — never median alone. None when empty/all-nan."""
+    v = np.asarray(list(values), dtype=np.float64)
+    v = v[~np.isnan(v)]
+    if v.size == 0:
+        return None
+    return {
+        "median": float(np.median(v)),
+        "p90": float(np.percentile(v, 90)),
+        "p99": float(np.percentile(v, 99)),
+    }
+
+
+def _triangulate_and_summarize(
+    recon: pycolmap.Reconstruction,
+    db_path: Path,
+    output_dir: Path,
+    pair_stats: list[PairStats],
+    features: list[LocalFeatures],
+) -> tuple[pycolmap.Reconstruction, dict, dict]:
+    """Run known-pose triangulation and derive per-frame and scene-level statistics.
+
+    triangulate_points clears the model's points (clear_points=True, the default), chains
+    tracks from the DB matches, and filters at COLMAP defaults (4.0 px reprojection, 1.5 deg
+    angle) inside its own pipeline — no extra filter call belongs here. It always rewrites
+    the full binary model (cameras/images/points3D.bin) at output_path, so a stale dir from
+    a prior run leaves no dangling state; mkdir(exist_ok=True) above is sufficient.
+    """
+    verified_dir = output_dir / "verified"
+    verified_dir.mkdir(parents=True, exist_ok=True)
+    # image dir is unused (keypoints live in the DB) but must exist
+    verified = pycolmap.triangulate_points(recon, str(db_path), str(output_dir), str(verified_dir))
+    logger.info("Verification: triangulated %d points", verified.num_points3D())
+
+    # Per-frame survival + reprojection error via each frame's track observations
+    frame_stats: dict[str, dict] = {}
+    id_to_pos = {iid: k for k, iid in enumerate(sorted(verified.images))}
+    for image_id in sorted(verified.images):
+        image = verified.images[image_id]
+        errors = [
+            verified.points3D[p2d.point3D_id].error
+            for p2d in image.points2D
+            if p2d.has_point3D()
+        ]
+        n_kpts = len(features[id_to_pos[image_id]].keypoints)
+        frame_stats[image.name] = {
+            "n_keypoints": int(n_kpts),
+            "n_tracks": len(errors),
+            "track_survival": (len(errors) / n_kpts) if n_kpts else 0.0,
+            "mean_reproj_error_px": float(np.mean(errors)) if errors else None,
+        }
+
+    track_lengths = [p.track.length() for p in verified.points3D.values()]
+    reproj_errors = [p.error for p in verified.points3D.values()]
+    inlier_ratios = [p.num_inliers / p.num_matches for p in pair_stats if p.num_matches]
+    summary = {
+        "n_points": int(verified.num_points3D()),
+        "n_pairs": len(pair_stats),
+        "track_length": _distribution(track_lengths),
+        "reproj_error_px": _distribution(reproj_errors),
+        "pair_inlier_ratio": _distribution(inlier_ratios),
+        "pair_rot_error_deg": _distribution(p.rot_error_deg for p in pair_stats),
+        "pair_t_direction_error_deg": _distribution(p.t_direction_error_deg for p in pair_stats),
+    }
+    return verified, frame_stats, summary
+
+
+def _write_report(result: VerificationResult, path: Path) -> None:
+    """Serialize pair/frame/summary stats to verification.json (nan -> null)."""
+
+    def _clean(obj):
+        if isinstance(obj, float) and np.isnan(obj):
+            return None
+        if isinstance(obj, dict):
+            return {k: _clean(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_clean(v) for v in obj]
+        return obj
+
+    payload = _clean(
+        {
+            "pair_stats": [asdict(p) for p in result.pair_stats],
+            "frame_stats": result.frame_stats,
+            "summary": result.summary,
+        }
+    )
+    path.write_text(json.dumps(payload, indent=2))
+    logger.info("Verification report written to %s", path)

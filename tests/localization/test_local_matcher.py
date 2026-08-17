@@ -15,6 +15,7 @@ from collab_splats.localization.extractors import (
     MatchResult,
     resolve_matcher,
 )
+from collab_splats.localization.localizer import CameraLocalizer
 
 
 def _fake_vismatch_matcher(n_kpts=8, d=64, stable_indices=True):
@@ -180,3 +181,62 @@ def test_resolve_matcher(mock_get):
     mock_get.return_value = _fake_vismatch_matcher()
     m = resolve_matcher("disk-lightglue", probe=False)
     assert isinstance(m, LocalMatcher) and m.model_name == "disk-lightglue"
+
+
+def _make_pairwise_localizer(n_frames=3, hw=(64, 64)):
+    """CameraLocalizer with a mocked LocalMatcher and synthetic world_points."""
+    lm = MagicMock(spec=LocalMatcher)
+    lm.has_stable_indices = False
+    q_px = np.array([[10.0, 10.0], [20.0, 20.0], [30.0, 30.0], [40.0, 40.0]], np.float32)
+    lm.match_images.return_value = MatchResult(query_px=q_px, ref_px=q_px.copy())
+    lm.extract.return_value = LocalFeatures(
+        keypoints=torch.zeros((4, 2)), descriptors=torch.zeros((4, 8))
+    )
+    # world_points: tilted plane so sampled 3D points are valid and non-degenerate
+    yy, xx = np.mgrid[0 : hw[0], 0 : hw[1]].astype(np.float32)
+    wp = np.stack([xx, yy, 0.01 * xx + 0.02 * yy + 1.0], axis=-1)
+    # Assemble instance without running __init__'s extraction loop
+    loc = CameraLocalizer.__new__(CameraLocalizer)
+    loc.config = {}
+    loc._extractor = lm
+    loc._world_points = np.stack([wp] * n_frames)
+    loc._extrinsics = np.stack([np.eye(4, dtype=np.float32)] * n_frames)
+    loc._frame_features = [lm.extract.return_value] * n_frames
+    loc._frame_sources = ["reconstruction"] * n_frames
+    loc._image_paths = [f"frame_{i}" for i in range(n_frames)]
+    loc._localized_extrinsics = []
+    # Full-res grid DIFFERENT from the model grid — a rescale bug would show in pts3d
+    loc._image_hw = (128, 128)
+    loc._ref_images = [np.zeros((*hw, 3), np.uint8)] * n_frames
+    loc._ref_global_desc = np.eye(n_frames, 8, dtype=np.float32)  # frame i ~ basis vector i
+    loc._retrieval = MagicMock()
+    loc._retrieval.forward.return_value = torch.from_numpy(np.eye(1, 8, dtype=np.float32))
+    loc._top_k = 2
+    return loc, lm
+
+
+def test_pairwise_localize_matches_topk_only():
+    loc, lm = _make_pairwise_localizer(n_frames=3)
+    query = np.zeros((64, 64, 3), np.uint8)
+    result = loc.localize(query)
+    # top_k=2 -> exactly 2 pairwise calls, not 3 (all-refs would be 3)
+    assert lm.match_images.call_count == 2
+    # 4 matches x 2 frames of correspondences fed to PnP
+    assert result.n_correspondences == 8
+    assert result.ref_hw == (64, 64)  # model-res grid, not full-res _image_hw
+    # No rescale: pts3d sampled at ref_px directly on the model grid, so with the
+    # identity-like plane the sampled x/y equal the ref pixel coords exactly.
+    q_px = np.array([[10.0, 10.0], [20.0, 20.0], [30.0, 30.0], [40.0, 40.0]], np.float32)
+    np.testing.assert_allclose(result.pts3d_matched[:4, :2], q_px, atol=1e-4)
+
+
+def test_pairwise_skips_localized_frames_and_clamps_topk():
+    loc, lm = _make_pairwise_localizer(n_frames=3)
+    # Append a localized frame: never a match target, even with top_k > n_recon
+    loc._frame_sources = ["reconstruction"] * 3 + ["localized"]
+    loc._frame_features = loc._frame_features + [lm.extract.return_value]
+    loc._image_paths = loc._image_paths + ["query_prev"]
+    loc._top_k = 10
+    loc.localize(np.zeros((64, 64, 3), np.uint8))
+    # Clamped to the 3 reconstruction frames; localized frame (index 3) never matched
+    assert lm.match_images.call_count == 3

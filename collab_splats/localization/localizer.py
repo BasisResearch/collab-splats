@@ -14,9 +14,11 @@ import pycolmap
 import torch
 import torch.nn.functional as F
 import zarr
+from PIL import Image
 from zarr.codecs import BloscCodec
 
-from .extractors import BaseLocalExtractor, DiskExtractor, LocalFeatures
+from .extractors import BaseLocalExtractor, DiskExtractor, LocalFeatures, LocalMatcher
+from .retrieval import BaseRetrievalExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +211,14 @@ class CameraLocalizer:
 
         self._extractor = extractor if extractor is not None else DiskExtractor()
 
+        # Pairwise-matcher state (LocalMatcher only): model-res reference images +
+        # DinoSalad retrieval gate, attached by from_feedforward. None on the
+        # descriptor path, where localize() matches descriptors against all frames.
+        self._ref_images: list[np.ndarray] | None = None
+        self._ref_global_desc: np.ndarray | None = None
+        self._retrieval = None
+        self._top_k: int = 8
+
         # Store image paths and provenance for duplicate guard and dashboard display.
         # _extrinsics stays reconstruction-only (world_points indexing depends on that); poses
         # for appended localized frames accumulate here and are joined by the extrinsics property.
@@ -363,11 +373,17 @@ class CameraLocalizer:
         extrinsics: np.ndarray,
         config: "dict | None" = None,
         extractor=None,
+        pairwise_refs=None,
     ) -> "CameraLocalizer":
         """Load feature index from zarr; attach current scene geometry (world_points, extrinsics).
 
         Loads reconstruction/ and localized/ (if present) groups and merges them.
         Raises KeyError if extractor_name reconstruction cache not found.
+
+        pairwise_refs: (ref_images, ref_global_desc, retrieval) tuple for pairwise
+        matchers (LocalMatcher), built by from_feedforward from ff.images — the zarr
+        feature cache holds no reference pixels, so a pairwise extractor without this
+        cannot localize and raises.
         """
         zarr_path = pathlib.Path(zarr_path)
         rec_features, rec_image_paths, hw = load_reconstruction_features(zarr_path, extractor_name)
@@ -415,6 +431,20 @@ class CameraLocalizer:
         obj._image_paths = rec_image_paths + loc_image_paths
         # Keep the localized poses so extrinsics stays aligned with image_paths/frame_sources
         obj._localized_extrinsics = list(loc_extrinsics_list)
+
+        # Pairwise-matcher state: attach ref images + retrieval gate when supplied;
+        # a pairwise extractor without reference images can never localize — fail now.
+        obj._ref_images = None
+        obj._ref_global_desc = None
+        obj._retrieval = None
+        obj._top_k = 8
+        if pairwise_refs is not None:
+            obj._ref_images, obj._ref_global_desc, obj._retrieval = pairwise_refs
+        if isinstance(obj._extractor, LocalMatcher) and obj._ref_images is None:
+            raise RuntimeError(
+                "Pairwise matcher needs reference images: build via from_feedforward "
+                "(feedforward.zarr images array), not load_index alone."
+            )
 
         logger.info(
             "CameraLocalizer.load_index: loaded %d rec + %d loc frames from %s [%s]",
@@ -676,6 +706,26 @@ class CameraLocalizer:
                 extractor_name,
             )
 
+    @staticmethod
+    def _build_pairwise_refs(ff_images):
+        """Model-res reference images + DinoSalad descriptors for the pairwise retrieval gate.
+
+        Returns (ref_images uint8 HWC list, ref_global_desc (N, D) float32, retrieval).
+        """
+        # ff.images is (N, 3, H, W) — convert to HWC uint8 RGB arrays
+        imgs = ff_images.detach().cpu().numpy() if torch.is_tensor(ff_images) else np.asarray(ff_images)
+        if imgs.ndim == 4 and imgs.shape[1] == 3 and imgs.shape[-1] != 3:
+            imgs = imgs.transpose(0, 2, 3, 1)
+        if imgs.max() <= 1.5:  # MapAnything stores [0, 1]; VGGT stores [0, 255]
+            imgs = imgs * 255.0
+        ref_images = [im.astype(np.uint8) for im in np.round(imgs)]
+
+        # DinoSalad retrieval gate: one L2-normalized global descriptor per ref frame
+        retrieval = BaseRetrievalExtractor.get("dino-salad")()
+        desc = retrieval.forward([Image.fromarray(im) for im in ref_images])
+        ref_global_desc = F.normalize(torch.as_tensor(desc), dim=-1).cpu().numpy()
+        return ref_images, ref_global_desc, retrieval
+
     @classmethod
     def from_feedforward(
         cls,
@@ -686,6 +736,7 @@ class CameraLocalizer:
         progress_callback=None,
         zarr_path=None,
         extractor_name=None,
+        top_k: int = 8,
         **kwargs,
     ) -> "CameraLocalizer":
         """Construct from a FeedforwardResult. Loads from zarr cache if available.
@@ -702,6 +753,8 @@ class CameraLocalizer:
             progress_callback: Called as (frame_idx, total) during index build.
             zarr_path:         Override zarr cache path; falls back to result._zarr_path.
             extractor_name:    Override extractor registry key; auto-detected if None.
+            top_k:             Pairwise matchers (LocalMatcher) only — number of
+                               retrieval-ranked reference frames localize() matches.
             **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. config).
 
         Returns:
@@ -724,6 +777,19 @@ class CameraLocalizer:
         if zarr_path is None:
             zarr_path = getattr(result, "_zarr_path", None)
 
+        # Pairwise matchers (LocalMatcher) match query IMAGE vs ref IMAGE — retain the
+        # model-res ff.images (index-aligned with world_points; same grid, so matched
+        # ref pixels sample world_points with no rescale) plus a DinoSalad retrieval
+        # gate so localize() matches top-K refs, not all N.
+        pairwise_refs = None
+        if isinstance(extractor_inst, LocalMatcher):
+            if getattr(result, "images", None) is None:
+                raise ValueError(
+                    "Pairwise matcher needs result.images (model-res reference frames) — "
+                    "reload the FeedforwardResult with load_images=True"
+                )
+            pairwise_refs = cls._build_pairwise_refs(result.images)
+
         # Try cache first
         if zarr_path is not None:
             try:
@@ -736,14 +802,17 @@ class CameraLocalizer:
                     if cached_paths != expected:
                         logger.warning("CameraLocalizer: cached image_paths differ from expected — cache may be stale")
                     logger.info("CameraLocalizer: cache hit for '%s', loading from zarr", extractor_name)
-                    return cls.load_index(
+                    localizer = cls.load_index(
                         zarr_path=zarr_path,
                         extractor_name=extractor_name,
                         world_points=result.world_points,
                         extrinsics=result.extrinsics,
                         extractor=extractor_inst,
+                        pairwise_refs=pairwise_refs,
                         **{k: v for k, v in kwargs.items() if k in ("config",)},
                     )
+                    localizer._top_k = top_k
+                    return localizer
             except KeyError:
                 logger.debug("CameraLocalizer: cache miss for '%s', building index", extractor_name)
             except Exception as exc:
@@ -761,6 +830,11 @@ class CameraLocalizer:
             progress_callback=progress_callback,
             **kwargs,
         )
+
+        # Attach pairwise retention (ref images + retrieval gate) on the build path too
+        if pairwise_refs is not None:
+            localizer._ref_images, localizer._ref_global_desc, localizer._retrieval = pairwise_refs
+        localizer._top_k = top_k
 
         # Save for next session
         if zarr_path is not None:
@@ -803,6 +877,11 @@ class CameraLocalizer:
 
         logger.debug("CameraLocalizer.localize: query has %d keypoints", len(query_feats.keypoints))
 
+        # Pairwise matchers have no descriptor-level match() — take the image-vs-image
+        # path: retrieval-ranked top-K reference images, matched one pair at a time.
+        if isinstance(self._extractor, LocalMatcher):
+            return self._localize_pairwise(query_image, query_feats, query_intrinsics)
+
         # Match against each reference frame; 3D via depth lookup at the matched ref pixel.
         # _world_points holds exactly the reconstruction frames (index-aligned with the
         # leading "reconstruction" entries of _frame_features); localized frames are only
@@ -838,6 +917,74 @@ class CameraLocalizer:
             all_ref.append(m.ref_px[valid])
             all_frame.append(np.full(int(valid.sum()), i, dtype=np.int32))
 
+        return self._solve_pnp(
+            all_q,
+            all_3d,
+            all_ref,
+            all_frame,
+            query_image,
+            query_feats,
+            query_intrinsics,
+            ref_hw=tuple(self._image_hw),
+        )
+
+    def _localize_pairwise(self, query_image, query_feats, query_intrinsics):
+        """Pairwise path: match query image vs top-K retrieved model-res ref images."""
+        if self._ref_images is None:
+            raise RuntimeError(
+                "Pairwise matcher needs reference images: build via from_feedforward "
+                "(feedforward.zarr images array), not load_index alone."
+            )
+
+        # Rank reconstruction frames by retrieval cosine similarity (descriptors are
+        # L2-normalized, so the dot product is cosine similarity). Localized frames
+        # carry no world_points/ref image — only reconstruction frames are candidates.
+        desc = self._retrieval.forward([Image.fromarray(np.asarray(query_image, dtype=np.uint8))])
+        q_desc = F.normalize(torch.as_tensor(desc), dim=-1)[0].cpu().numpy()
+        recon_idx = [i for i, s in enumerate(self._frame_sources) if s == "reconstruction"]
+        sims = self._ref_global_desc[recon_idx] @ q_desc
+        top = [recon_idx[j] for j in np.argsort(-sims)[: self._top_k]]
+
+        # Match query IMAGE vs each top-K reference IMAGE. Matched ref pixels already
+        # live in the world_points grid (both model-res) — sample with NO rescale.
+        all_q, all_3d, all_ref, all_frame = [], [], [], []
+        for i in top:
+            m = self._extractor.match_images(query_image, self._ref_images[i])
+            if len(m) == 0:
+                continue
+            pts3d, valid = sample_world_points(self._world_points[i], m.ref_px)
+            if not valid.any():
+                continue
+            all_q.append(m.query_px[valid])
+            all_3d.append(pts3d[valid])
+            all_ref.append(m.ref_px[valid])
+            all_frame.append(np.full(int(valid.sum()), i, dtype=np.int32))
+
+        # ref_hw is the model-res grid of the reference images (viz display rescale)
+        model_hw = tuple(int(x) for x in self._ref_images[0].shape[:2])
+        return self._solve_pnp(
+            all_q,
+            all_3d,
+            all_ref,
+            all_frame,
+            query_image,
+            query_feats,
+            query_intrinsics,
+            ref_hw=model_hw,
+        )
+
+    def _solve_pnp(
+        self,
+        all_q,
+        all_3d,
+        all_ref,
+        all_frame,
+        query_image,
+        query_feats,
+        query_intrinsics,
+        ref_hw,
+    ):
+        """LO-RANSAC + Ceres PnP over accumulated correspondences (both matching paths)."""
         n_corr = sum(len(a) for a in all_q)
 
         if n_corr < 4:
@@ -856,7 +1003,7 @@ class CameraLocalizer:
                 ref_frame_indices=None,
                 query_features=query_feats,
                 query_intrinsics=query_intrinsics,
-                ref_hw=tuple(self._image_hw),
+                ref_hw=ref_hw,
             )
 
         # Assemble correspondence arrays for PnP
@@ -915,7 +1062,7 @@ class CameraLocalizer:
                 ref_frame_indices=ref_frame_indices,
                 query_features=query_feats,
                 query_intrinsics=query_intrinsics,
-                ref_hw=tuple(self._image_hw),
+                ref_hw=ref_hw,
             )
 
         logger.info(
@@ -941,5 +1088,5 @@ class CameraLocalizer:
             ref_frame_indices=ref_frame_indices,
             query_features=query_feats,
             query_intrinsics=query_intrinsics,
-            ref_hw=tuple(self._image_hw),
+            ref_hw=ref_hw,
         )

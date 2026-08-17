@@ -18,8 +18,8 @@ from collab_splats.localization.extractors import (
 def _fake_vismatch_matcher(n_kpts=8, d=64, stable_indices=True):
     """Mock of a vismatch BaseMatcher: forward(img0, img1) -> result dict."""
     rng = np.random.default_rng(0)
-    all_kpts0 = rng.uniform(0, 100, (n_kpts, 2)).astype(np.float32)
-    all_kpts1 = rng.uniform(0, 100, (n_kpts, 2)).astype(np.float32)
+    all_kpts0 = rng.uniform(0, 99, (n_kpts, 2)).astype(np.float32)
+    all_kpts1 = rng.uniform(0, 99, (n_kpts, 2)).astype(np.float32)
     if stable_indices:
         matched0, matched1 = all_kpts0[:4], all_kpts1[:4]  # exact rows
     else:
@@ -141,6 +141,21 @@ def test_match_images_no_indices_when_unstable(mock_get):
     lm.has_stable_indices = False
     m = lm.match_images(np.zeros((100, 100, 3), np.uint8), np.zeros((100, 100, 3), np.uint8))
     assert len(m) == 4 and m.idx_q is None and m.idx_db is None
+
+
+@patch("vismatch.get_matcher")
+def test_match_images_downgrades_on_recovery_failure(mock_get, caplog):
+    # Probe said stable, but this pair's coords are refined off the table: both index
+    # arrays must be nulled together (never one side indexed, the other not) + warning.
+    mock_get.return_value = _fake_vismatch_matcher(stable_indices=False)
+    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
+    lm.has_stable_indices = True
+    q = np.zeros((100, 100, 3), dtype=np.uint8)
+    with caplog.at_level("WARNING", logger="collab_splats.localization.extractors"):
+        m = lm.match_images(q, q)
+    assert len(m) == 4
+    assert m.idx_q is None and m.idx_db is None
+    assert any("index recovery failed" in r.message for r in caplog.records)
 
 
 @patch("vismatch.get_matcher")

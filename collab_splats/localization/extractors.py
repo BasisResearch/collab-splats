@@ -590,6 +590,8 @@ class LocalMatcher(BaseLocalExtractor):
 
         Exact float equality on purpose: a coordinate a matcher refined off its table
         row (XFeatStar behaviour) must fail here, not silently map to the nearest row.
+        Duplicate table rows: argmax picks the FIRST matching row, so two matches at
+        the same coordinate map to the same index.
         """
         if len(table) == 0:
             return None
@@ -609,8 +611,8 @@ class LocalMatcher(BaseLocalExtractor):
         q_hw, r_hw = query_image.shape[:2], ref_image.shape[:2]
         with torch.inference_mode():
             out = self._matcher(self._to_tensor(query_image), self._to_tensor(ref_image))
-        q_px = _to_numpy(out["matched_kpts0"]).astype(np.float32)
-        r_px = _to_numpy(out["matched_kpts1"]).astype(np.float32)
+        q_px = _to_numpy(out["matched_kpts0"])
+        r_px = _to_numpy(out["matched_kpts1"])
         if len(q_px) == 0:
             return _empty_match()
         self._check_pixel_frame(q_px, q_hw, self._model_name)
@@ -619,8 +621,8 @@ class LocalMatcher(BaseLocalExtractor):
         # Recover COLMAP keypoint-table row indices when the probe proved stability
         idx_q = idx_db = None
         if self.has_stable_indices:
-            idx_q = self._recover_indices(q_px, _to_numpy(out["all_kpts0"]).astype(np.float32))
-            idx_db = self._recover_indices(r_px, _to_numpy(out["all_kpts1"]).astype(np.float32))
+            idx_q = self._recover_indices(q_px, _to_numpy(out["all_kpts0"]))
+            idx_db = self._recover_indices(r_px, _to_numpy(out["all_kpts1"]))
             if idx_q is None or idx_db is None:
                 logger.warning(
                     "LocalMatcher(%s): index recovery failed on a pair despite passing the "
@@ -647,21 +649,12 @@ class LocalMatcher(BaseLocalExtractor):
         # (a) within-call index recovery on both sides
         within = (
             len(out["matched_kpts0"]) > 0
-            and self._recover_indices(
-                _to_numpy(out["matched_kpts0"]).astype(np.float32),
-                _to_numpy(out["all_kpts0"]).astype(np.float32),
-            )
-            is not None
-            and self._recover_indices(
-                _to_numpy(out["matched_kpts1"]).astype(np.float32),
-                _to_numpy(out["all_kpts1"]).astype(np.float32),
-            )
-            is not None
+            and self._recover_indices(_to_numpy(out["matched_kpts0"]), _to_numpy(out["all_kpts0"])) is not None
+            and self._recover_indices(_to_numpy(out["matched_kpts1"]), _to_numpy(out["all_kpts1"])) is not None
         )
         # (b) cross-call detection determinism: extract table must equal pair-call table
-        pair_table = _to_numpy(out["all_kpts0"]).astype(np.float32)
-        ext_table = _to_numpy(ext["all_kpts0"]).astype(np.float32)
-        cross = pair_table.shape == ext_table.shape and np.array_equal(pair_table, ext_table)
+        # (np.array_equal covers the shape mismatch case)
+        cross = np.array_equal(_to_numpy(out["all_kpts0"]), _to_numpy(ext["all_kpts0"]))
         self.has_stable_indices = bool(within and cross)
         logger.info(
             "LocalMatcher(%s): index probe — within-call %s, cross-call %s -> stable_indices=%s",

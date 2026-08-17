@@ -1,6 +1,7 @@
 """Tests for geometric verification: COLMAP DB export + Tier 1 epipolar pose verification."""
 
 import json
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -10,6 +11,7 @@ from collab_splats.geometry.verification import verify_reconstruction
 from collab_splats.localization.extractors import (
     BaseLocalExtractor,
     LocalFeatures,
+    LocalMatcher,
     MatchResult,
 )
 from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
@@ -83,6 +85,30 @@ class _NoIndexMatcher(_IdentityMatcher):
     def match(self, query, db, image_hw):
         m = super().match(query, db, image_hw)
         return MatchResult(query_px=m.query_px, ref_px=m.ref_px)
+
+
+def _index_coded_images(n):
+    """Frames whose constant pixel value encodes the frame position (pair-identity probe)."""
+    return [np.full((H, W, 3), i, dtype=np.uint8) for i in range(n)]
+
+
+def _pairwise_matcher(kps, skip=frozenset()):
+    """MagicMock LocalMatcher: identity matches per pair; pairs in `skip` lose idx recovery."""
+    matcher = MagicMock(spec=LocalMatcher)
+    matcher.has_stable_indices = True
+    matcher.model_name = "stub-pairwise"
+
+    def _match(query_image, ref_image):
+        a, b = int(query_image[0, 0, 0]), int(ref_image[0, 0, 0])
+        n = min(len(kps[a]), len(kps[b]))
+        if tuple(sorted((a, b))) in skip:
+            # match_images downgrade contract: pixels survive, indices go None
+            return MatchResult(query_px=kps[a][:n], ref_px=kps[b][:n])
+        idx = np.arange(n, dtype=np.int64)
+        return MatchResult(query_px=kps[a][:n], ref_px=kps[b][:n], idx_q=idx, idx_db=idx.copy())
+
+    matcher.match_images.side_effect = _match
+    return matcher
 
 
 def test_tier1_pair_stats_on_clean_scene(tmp_path):
@@ -159,6 +185,82 @@ def test_triangulation_recovers_scene(tmp_path):
     assert len(report["pair_stats"]) == 3
     # COLMAP model on disk for downstream tooling
     assert (tmp_path / "verified" / "points3D.bin").exists()
+
+
+def test_verify_pairwise_matcher_uses_images_and_recovered_indices(tmp_path):
+    """A LocalMatcher-style matcher exports matches via match_images + idx recovery."""
+    _, extrinsics, kps = _synthetic_scene()
+    matcher = _pairwise_matcher(kps)
+    result = verify_reconstruction(
+        recon=_make_recon(extrinsics),
+        features=_features_from_keypoints(kps),
+        matcher=matcher,
+        output_dir=tmp_path,
+        images=_index_coded_images(len(kps)),
+    )
+    # One image-pair call per sequential pair; the descriptor path is never touched
+    assert matcher.match_images.call_count == 3
+    matcher.match.assert_not_called()
+    # Recovered indices reached the DB match table: Tier 1/2 ran to completion on them
+    assert len(result.pair_stats) == 3
+    assert all(p.num_matches == 60 for p in result.pair_stats)
+    assert result.summary["n_points"] >= 55
+
+
+def test_verify_pairwise_skips_pair_on_index_recovery_failure(tmp_path):
+    """A pair whose idx recovery downgraded to None mid-run is skipped, not fatal."""
+    _, extrinsics, kps = _synthetic_scene()
+    matcher = _pairwise_matcher(kps, skip={(0, 1)})
+    result = verify_reconstruction(
+        recon=_make_recon(extrinsics),
+        features=_features_from_keypoints(kps),
+        matcher=matcher,
+        output_dir=tmp_path,
+        images=_index_coded_images(len(kps)),
+    )
+    # The degenerate pair is absent from the report; the other two pairs verify normally
+    assert len(result.pair_stats) == 2
+    names = {(p.name1, p.name2) for p in result.pair_stats}
+    assert ("frame_00000", "frame_00001") not in names
+
+
+def test_verify_refuses_index_incapable_pairwise_matcher(tmp_path):
+    """An index-unstable pairwise matcher is refused up front, before any matching."""
+    _, extrinsics, kps = _synthetic_scene()
+    matcher = MagicMock(spec=LocalMatcher)
+    matcher.has_stable_indices = False
+    matcher.model_name = "stub-unstable"
+    with pytest.raises(ValueError, match="stable keypoint indices"):
+        verify_reconstruction(
+            recon=_make_recon(extrinsics),
+            features=_features_from_keypoints(kps),
+            matcher=matcher,
+            output_dir=tmp_path,
+        )
+    matcher.match_images.assert_not_called()
+
+
+def test_verify_pairwise_requires_aligned_images(tmp_path):
+    """A stable pairwise matcher is refused without images, or with a misaligned count."""
+    _, extrinsics, kps = _synthetic_scene()
+    matcher = MagicMock(spec=LocalMatcher)
+    matcher.has_stable_indices = True
+    matcher.model_name = "stub-stable"
+    with pytest.raises(ValueError, match="images"):
+        verify_reconstruction(
+            recon=_make_recon(extrinsics),
+            features=_features_from_keypoints(kps),
+            matcher=matcher,
+            output_dir=tmp_path,
+        )
+    with pytest.raises(ValueError, match="images"):
+        verify_reconstruction(
+            recon=_make_recon(extrinsics),
+            features=_features_from_keypoints(kps),
+            matcher=matcher,
+            output_dir=tmp_path,
+            images=_index_coded_images(len(kps) - 1),
+        )
 
 
 def _rot_x(deg: float) -> np.ndarray:

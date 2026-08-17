@@ -1,10 +1,14 @@
-"""Verify-stage wiring: leaf-stage registration + config default."""
+"""Verify-stage wiring: leaf-stage registration + config default + matcher/image plumbing."""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import numpy as np
 import yaml
 
-from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES
+from collab_splats.localization.extractors import LocalMatcher
+from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES, Reconstructor
 
 CONFIG_DIR = Path(__file__).parents[2] / "configs"
 
@@ -27,3 +31,58 @@ def test_database_db_not_pushed():
     from collab_splats.remote.sources import PUSH_EXCLUDES
 
     assert "/*/colmap/database.db" in PUSH_EXCLUDES
+
+
+def _stub_verify_call(tmp_path, monkeypatch, matcher):
+    """Run Reconstructor.verify() with all heavy collaborators stubbed; return captured kwargs."""
+    # 2-frame reconstruction stub — verify() only reads .images[id].name for the stem check
+    recon = SimpleNamespace(
+        images={1: SimpleNamespace(name="frame_000003"), 2: SimpleNamespace(name="frame_000007")}
+    )
+    r = Reconstructor.__new__(Reconstructor)
+    # backend_dir / frames_zarr are config-derived properties — stub via config
+    r.config = {
+        "output_path": str(tmp_path),
+        "pointcloud": {"backend": "vggtx"},
+        "localization": {"extractor": "stub"},
+    }
+    r._stage_output_exists = lambda stage: False
+    r._resolve_result = lambda: SimpleNamespace(reconstruction=recon)
+    r.build_localization_db = lambda: None
+
+    # Collaborators: feature cache read, matcher resolution, frame store, verification entry
+    monkeypatch.setattr(
+        "collab_splats.localization.localizer.load_reconstruction_features",
+        lambda path, name: (["f0", "f1"], ["frame_000003.jpg", "frame_000007.jpg"], (4, 4)),
+    )
+    monkeypatch.setattr("collab_splats.localization.extractors.resolve_matcher", lambda name: matcher)
+    store = SimpleNamespace(
+        frame_indices=lambda: [3, 7],
+        image_by_frame_idx=lambda fi: np.full((4, 4, 3), fi, dtype=np.uint8),
+    )
+    monkeypatch.setattr("collab_splats.preproc.frame_store.FrameStore.open", lambda path: store)
+    captured = {}
+    monkeypatch.setattr(
+        "collab_splats.geometry.verification.verify_reconstruction",
+        lambda **kw: captured.update(kw),
+    )
+    r.verify()
+    return captured
+
+
+def test_verify_passes_frame_store_images_to_pairwise_matcher(tmp_path, monkeypatch):
+    """For a LocalMatcher, verify() loads the cache-extraction frames and passes images=."""
+    matcher = MagicMock(spec=LocalMatcher)
+    matcher.has_stable_indices = True
+    captured = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    assert captured["matcher"] is matcher
+    # Images come from FrameStore in frame_indices() order (the cache-build order)
+    assert [int(im[0, 0, 0]) for im in captured["images"]] == [3, 7]
+
+
+def test_verify_passes_no_images_for_descriptor_matcher(tmp_path, monkeypatch):
+    """Legacy descriptor matchers keep the cache-only path: images stays None."""
+    matcher = SimpleNamespace()  # not a LocalMatcher
+    captured = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    assert captured["matcher"] is matcher
+    assert captured["images"] is None

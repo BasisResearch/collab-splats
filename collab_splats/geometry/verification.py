@@ -19,7 +19,7 @@ import numpy as np
 import pycolmap
 
 from collab_splats.geometry.transforms import rotation_angle_deg
-from collab_splats.localization.extractors import BaseLocalExtractor, LocalFeatures
+from collab_splats.localization.extractors import BaseLocalExtractor, LocalFeatures, LocalMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -126,15 +126,21 @@ def verify_reconstruction(
     matcher: BaseLocalExtractor,
     output_dir: str | Path,
     overlap: int = DEFAULT_OVERLAP,
+    images: list[np.ndarray] | None = None,
 ) -> VerificationResult:
     """Triangulate and epipolar-verify a reconstruction's poses with independent features.
 
     Args:
         recon: pose/camera authority (original-resolution K); its points are ignored.
         features: per-image LocalFeatures, aligned with sorted(recon.images) order.
-        matcher: a BaseLocalExtractor whose match() exposes keypoint indices.
+        matcher: a BaseLocalExtractor whose match() exposes keypoint indices, or an
+            index-stable LocalMatcher (matched pairwise over `images`).
         output_dir: writes database.db, verified/ (COLMAP model), verification.json.
         overlap: sequential pairing window (pycolmap SequentialPairingOptions.overlap).
+        images: pairwise matchers (LocalMatcher) only — the exact RGB frames `features`
+            was extracted from, aligned with sorted(recon.images) like `features`
+            (index recovery lands on the extract-time keypoint tables only for
+            identical inputs).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +150,21 @@ def verify_reconstruction(
             f"{len(features)} feature frames vs {len(image_ids)} reconstruction images — "
             "the cache and the reconstruction describe different runs."
         )
+
+    # Pairwise matchers must prove index stability up front — a silent skip here would
+    # surface later as a missing verification.json with no explanation.
+    if isinstance(matcher, LocalMatcher):
+        if not matcher.has_stable_indices:
+            raise ValueError(
+                f"matcher '{matcher.model_name}' cannot provide stable keypoint indices "
+                "(failed the index-stability probe) — geometric verification requires them. "
+                "Choose a sparse index-stable model or disable pointcloud.geometric_verification."
+            )
+        if images is None or len(images) != len(image_ids):
+            raise ValueError(
+                f"pairwise matcher requires `images` aligned with recon frames "
+                f"(got {'none' if images is None else len(images)} for {len(image_ids)} frames)"
+            )
 
     # ── Fresh DB with frames written first: pair generation reads images off the DB ──
     db_path = output_dir / "database.db"
@@ -169,12 +190,23 @@ def verify_reconstruction(
         id_to_pos = {iid: k for k, iid in enumerate(image_ids)}
         matches: dict[tuple[int, int], np.ndarray] = {}
         for id1, id2 in pairs:
-            m = matcher.match(features[id_to_pos[id1]], features[id_to_pos[id2]], hw)
-            if m.idx_q is None or m.idx_db is None:
-                raise ValueError(
-                    f"{type(matcher).__name__} does not expose keypoint indices "
-                    "(per-pair refined matchers cannot feed COLMAP tracks) — use disk/xfeat/loma."
-                )
+            if isinstance(matcher, LocalMatcher):
+                # Pairwise path: match the raw images; idx_q/idx_db are recovered rows of
+                # the extract-time keypoint tables — the very tables _write_frames just
+                # exported. Recovery can still fail per pair despite the passed probe
+                # (match_images downgrades idx to None): skip that pair with a warning
+                # rather than aborting the whole report for one degenerate pair.
+                m = matcher.match_images(images[id_to_pos[id1]], images[id_to_pos[id2]])
+                if m.idx_q is None or m.idx_db is None:
+                    logger.warning("Verification: pair (%d, %d) lost index recovery — skipping", id1, id2)
+                    continue
+            else:
+                m = matcher.match(features[id_to_pos[id1]], features[id_to_pos[id2]], hw)
+                if m.idx_q is None or m.idx_db is None:
+                    raise ValueError(
+                        f"{type(matcher).__name__} does not expose keypoint indices "
+                        "(per-pair refined matchers cannot feed COLMAP tracks) — use disk/xfeat/loma."
+                    )
             if len(m) == 0:
                 continue
             matches[(id1, id2)] = np.stack([m.idx_q, m.idx_db], axis=1).astype(np.uint32)

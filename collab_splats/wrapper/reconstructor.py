@@ -966,8 +966,9 @@ class Reconstructor:
 
         # Heavy deps kept inline so the module imports without GPU/model libs
         from collab_splats.geometry.verification import verify_reconstruction
-        from collab_splats.localization.extractors import BaseLocalExtractor
+        from collab_splats.localization.extractors import LocalMatcher, resolve_matcher
         from collab_splats.localization.localizer import load_reconstruction_features
+        from collab_splats.preproc.frame_store import FrameStore
 
         features, ids, _ = load_reconstruction_features(
             self.backend_dir / "feedforward.zarr", extractor_name
@@ -981,7 +982,18 @@ class Reconstructor:
                 "Feature cache and reconstruction disagree on frame order/naming — "
                 "rebuild the localization DB (overwrite=True)."
             )
-        matcher = BaseLocalExtractor.get(extractor_name)()
+        matcher = resolve_matcher(extractor_name)
+        # Pairwise matchers re-match images, not cached descriptors. The images MUST be
+        # the exact frames the cache was extracted from — _build_localization_db feeds
+        # FrameStore frames to extract() — because match-time index recovery lands on the
+        # extract-time keypoint tables (the probe's cross-call condition holds for
+        # identical inputs only), and those tables are what verification exports to the
+        # COLMAP DB. Model-res ff.images would index a different table entirely.
+        # verify_reconstruction itself hard-refuses index-incapable pairwise matchers.
+        images = None
+        if isinstance(matcher, LocalMatcher):
+            store = FrameStore.open(self.frames_zarr)
+            images = [store.image_by_frame_idx(fi) for fi in store.frame_indices()]
         # Sequential pairs only in v1 (pycolmap SequentialPairGenerator inside).
         # Loop pairs are a follow-on: COLMAP's own loop_detection needs a SIFT vocab
         # tree (unusable with learned descriptors) and retrieval descriptors are not
@@ -991,6 +1003,7 @@ class Reconstructor:
             features=features,
             matcher=matcher,
             output_dir=self.backend_dir / "colmap",
+            images=images,
         )
         logger.info("Verification written to %s", out_json)
         return out_json

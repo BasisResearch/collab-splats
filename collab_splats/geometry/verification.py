@@ -260,7 +260,7 @@ def _triangulate_and_summarize(
     tracks from the DB matches, and filters at COLMAP defaults (4.0 px reprojection, 1.5 deg
     angle) inside its own pipeline — no extra filter call belongs here. It always rewrites
     the full binary model (cameras/images/points3D.bin) at output_path, so a stale dir from
-    a prior run leaves no dangling state; mkdir(exist_ok=True) above is sufficient.
+    a prior run leaves no dangling state; mkdir(exist_ok=True) below is sufficient.
     """
     verified_dir = output_dir / "verified"
     verified_dir.mkdir(parents=True, exist_ok=True)
@@ -270,7 +270,9 @@ def _triangulate_and_summarize(
 
     # Per-frame survival + reprojection error via each frame's track observations
     frame_stats: dict[str, dict] = {}
-    id_to_pos = {iid: k for k, iid in enumerate(sorted(verified.images))}
+    # features is aligned with sorted(recon.images) by contract — map from recon, not
+    # verified, so a frame dropped by triangulation could never shift the alignment
+    id_to_pos = {iid: k for k, iid in enumerate(sorted(recon.images))}
     for image_id in sorted(verified.images):
         image = verified.images[image_id]
         errors = [

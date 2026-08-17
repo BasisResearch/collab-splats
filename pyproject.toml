@@ -64,6 +64,7 @@ dependencies = [
     # LoMa sparse matcher (ECCV 2026) — localization extractor alternative to DISK/XFeat.
     # Declares torchvision>=0.23; neutralized by the torchvision override below.
     "lomatch>=1.0.0",
+    "vismatch==1.3.1",
     "open-clip-torch",
     "mobile_sam",
     # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
@@ -233,6 +234,13 @@ override-dependencies = [
     "numpy>=2,<2.2",
     # lomatch declares the py3.6 `dataclasses` backport unconditionally; never install it.
     "dataclasses>=0.8; python_version < '3.7'",
+    # vismatch hard-pins uniception==0.1.1 (its ufm model) and lightning==2.3.3 (its edm
+    # model). We need uniception 0.1.7 (MapAnything imports 15 symbols absent in 0.1.1)
+    # and lightning>=2.6. Overrides replace vismatch's constraints during resolution;
+    # ufm/edm are blocklisted in LocalMatcher. Measured 2026-08-17 (see spec
+    # docs/superpowers/specs/2026-08-17-vismatch-local-matcher-design.md).
+    "uniception==0.1.7",
+    "lightning>=2.6",
 ]
 # bae + gsplat-rade import torch at build time → must build without isolation.
 no-build-isolation-package = ["bae", "gsplat"]

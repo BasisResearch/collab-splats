@@ -42,6 +42,15 @@ echo "=== install collab-data (private) ==="
 /root/.local/bin/uv pip install --python "$PYTHON" "git+https://github.com/BasisResearch/collab-data.git" \
     || echo "WARN: collab-data not installed (no git auth in this environment) — re-run setup.sh at deploy."
 
+# Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
+# Best-effort like collab-data: a build stage without network/system libs skips it and
+# the weights download lazily on first use instead.
+"$PYTHON" - <<'EOF' || echo "WARN: vismatch weights pre-fetch failed — weights will download on first use."
+import vismatch
+for name in ("disk-lightglue",):  # extend when configs reference more models
+    vismatch.get_matcher(name, device="cpu")
+    print(f"vismatch weights cached: {name}")
+EOF
 
 # Smoke test — mandatory: torch + the extensions this script compiled (bae, gsplat).
 # The full creator chain pulls cv2/open3d, which need GUI/X11 system libs absent in a Docker

@@ -98,6 +98,13 @@ python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs --a
 python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs --all --keep-local
 ```
 
+Scenes that already exist in `environments-processed` are skipped (a `SKIPPED` row in the
+summary) unless `--overwrite` is passed, so an `--all` run only processes what is new and a
+batch with nothing to rebuild exits 0. The check is directory presence, so a partially-pushed
+scene counts as processed — `--overwrite` (with the scene named) is the way to redo it.
+Leaf-stage re-runs are exempt: their work list comes from the processed bucket by definition,
+and the per-stage refusal below governs overwrite there.
+
 Per scene: pull the video, reconstruct, push to `environments-processed/<scene>/`, verify
 the push with `rclone check --one-way`, then delete the local copy. The curated video
 stays in the bucket, so a deleted scene is always re-fetchable.
@@ -282,7 +289,32 @@ with `frame_selection: uniform`). There is no silently-ignored knob.
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
-| `localization.extractor` | str | `loma` | Local matcher: `loma`, `loma-g`, `disk`, `xfeat` |
+| `localization.extractor` | str | `loma` | Legacy registry key (`loma`, `loma-g`, `disk`, `xfeat`, `xfeat-star`) or any vismatch model name |
+| `localization.top_k` | int | `8` | Pairwise (vismatch) path only: reference frames matched per query |
+
+### Localization matchers
+
+`localization.extractor` accepts two name spaces, resolved by
+`resolve_matcher` (`collab_splats/localization/extractors.py`):
+
+- **Legacy registry keys** — `disk`, `xfeat`, `xfeat-star`, `loma`, `loma-g` — the
+  original in-repo matcher classes. These match a query descriptor-to-descriptor
+  against the whole reconstruction cache; `top_k` is ignored.
+- **vismatch model names** — e.g. `disk-lightglue`, `aliked-lightglue`,
+  `xfeat-steerers` — any model vismatch ships. vismatch exposes no descriptor-level
+  match API, so queries are matched **pairwise**: the retrieval stage ranks reference
+  frames and the query is matched against the top `localization.top_k` of them.
+
+Two blocklists in `collab_splats/localization/extractors.py` gate vismatch names:
+`_VISMATCH_LICENSE_BLOCKLIST` (non-commercial licenses) and
+`_VISMATCH_DEP_BLOCKLIST` (models whose deps are broken in this environment).
+Blocked names raise `ValueError` at resolve time with the reason.
+
+With `pointcloud.geometric_verification: true` the same extractor's feature cache
+feeds pycolmap, which requires index-stable sparse models (keypoint table indices
+that survive re-extraction). Index-incapable matchers (e.g. `xfeat-star`, dense/
+semi-dense vismatch models) hard-error at verification time rather than silently
+degrading — pick an index-stable matcher or disable verification.
 
 ### The `loger` backend
 

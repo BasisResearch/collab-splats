@@ -451,11 +451,14 @@ def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool
         return False
 
 
-def _build_localization_db(feedforward_zarr: Path, extractor_name: str, frames_zarr: Path) -> Path:
+def _build_localization_db(
+    feedforward_zarr: Path, extractor_name: str, frames_zarr: Path, top_k: int = 8
+) -> Path:
     """Build the per-frame local-feature localization cache into feedforward.zarr.
 
     Loads the FeedforwardResult, runs the local matcher over every DB frame, and persists
-    keypoints/descriptors to group local_features/{extractor_name}/reconstruction.
+    keypoints/descriptors to group local_features/{extractor_name}/reconstruction. top_k
+    is the pairwise (vismatch) matching fan-out; the descriptor path ignores it.
     """
     # Heavy deps kept inline so the module imports without GPU/model libs
     from collab_splats.localization.extractors import resolve_matcher
@@ -479,6 +482,7 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, frames_z
         extractor=extractor,
         extractor_name=extractor_name,
         zarr_path=feedforward_zarr,
+        top_k=top_k,
     )
     logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
     return feedforward_zarr
@@ -959,7 +963,9 @@ class Reconstructor:
             )
             return feedforward_zarr
 
-        return _build_localization_db(feedforward_zarr, extractor_name, self.frames_zarr)
+        return _build_localization_db(
+            feedforward_zarr, extractor_name, self.frames_zarr, top_k=loc_cfg["top_k"]
+        )
 
     def verify(self, overwrite: bool = False) -> Path:
         """Geometrically verify poses/points: pycolmap triangulation over feature tracks.

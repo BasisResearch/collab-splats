@@ -101,7 +101,12 @@ mesh:
 
 localization:
   enabled: false
-  extractor: loma          # local matcher registry key (dinosalad was invalid — it is a RETRIEVAL extractor)
+  # Legacy registry keys (disk|xfeat|xfeat-star|loma|loma-g) or any vismatch model
+  # name (e.g. disk-lightglue, aliked-lightglue, xfeat-steerers). vismatch names are
+  # matched pairwise against the retrieval top-K; some are blocked (license/deps) —
+  # see _VISMATCH_LICENSE_BLOCKLIST / _VISMATCH_DEP_BLOCKLIST in localization/extractors.py.
+  extractor: loma
+  top_k: 8  # pairwise (vismatch) path only: refs matched per query
 
 # Used only when pointcloud.method: nerfstudio (ns-process-data + ns-train subprocesses)
 nerfstudio:

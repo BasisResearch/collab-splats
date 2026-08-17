@@ -54,7 +54,7 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # only hard dependency is the reconstruction
     "verify": ["pointcloud"],
 }
-# A stage is re-runnable on its own iff nothing depends on it → {semantics, mesh, localize}.
+# A stage is re-runnable on its own iff nothing depends on it → {semantics, mesh, localize, verify}.
 # Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
 # mesh from this set automatically, so callers gating on it can never disagree with _STAGE_DEPS.
 LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in _STAGE_DEPS.values()))

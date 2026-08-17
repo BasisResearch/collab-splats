@@ -8,6 +8,8 @@ import logging
 import shutil
 import subprocess
 import warnings
+from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -480,6 +482,22 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, frames_z
     )
     logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
     return feedforward_zarr
+
+
+class _LazyFrames(Sequence):
+    """Lazy len/indexable view over FrameStore frames — never materializes the whole video."""
+
+    def __init__(self, store: FrameStore, frame_indices):
+        self._frame_indices = list(frame_indices)
+        # Sequential pairing touches each frame ~2x overlap times with strong locality —
+        # a small LRU keeps peak memory at a handful of frames, not N full-res images.
+        self._get = lru_cache(maxsize=32)(store.image_by_frame_idx)
+
+    def __len__(self) -> int:
+        return len(self._frame_indices)
+
+    def __getitem__(self, i: int) -> np.ndarray:
+        return self._get(self._frame_indices[i])
 
 
 ########################################
@@ -968,7 +986,6 @@ class Reconstructor:
         from collab_splats.geometry.verification import verify_reconstruction
         from collab_splats.localization.extractors import LocalMatcher, resolve_matcher
         from collab_splats.localization.localizer import load_reconstruction_features
-        from collab_splats.preproc.frame_store import FrameStore
 
         features, ids, _ = load_reconstruction_features(
             self.backend_dir / "feedforward.zarr", extractor_name
@@ -990,10 +1007,12 @@ class Reconstructor:
         # identical inputs only), and those tables are what verification exports to the
         # COLMAP DB. Model-res ff.images would index a different table entirely.
         # verify_reconstruction itself hard-refuses index-incapable pairwise matchers.
+        # Handed over lazily (_LazyFrames): frames decode on access under a small LRU,
+        # so peak memory stays bounded instead of N full-res frames at once.
         images = None
         if isinstance(matcher, LocalMatcher):
             store = FrameStore.open(self.frames_zarr)
-            images = [store.image_by_frame_idx(fi) for fi in store.frame_indices()]
+            images = _LazyFrames(store, store.frame_indices())
         # Sequential pairs only in v1 (pycolmap SequentialPairGenerator inside).
         # Loop pairs are a follow-on: COLMAP's own loop_detection needs a SIFT vocab
         # tree (unusable with learned descriptors) and retrieval descriptors are not

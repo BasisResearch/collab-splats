@@ -12,6 +12,7 @@ Spec: docs/superpowers/specs/2026-08-14-geometric-verification-design.md.
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -126,7 +127,7 @@ def verify_reconstruction(
     matcher: BaseLocalExtractor,
     output_dir: str | Path,
     overlap: int = DEFAULT_OVERLAP,
-    images: list[np.ndarray] | None = None,
+    images: Sequence[np.ndarray] | None = None,
 ) -> VerificationResult:
     """Triangulate and epipolar-verify a reconstruction's poses with independent features.
 
@@ -157,7 +158,7 @@ def verify_reconstruction(
         if not matcher.has_stable_indices:
             raise ValueError(
                 f"matcher '{matcher.model_name}' cannot provide stable keypoint indices "
-                "(failed the index-stability probe) — geometric verification requires them. "
+                "(failed or never ran the index-stability probe) — geometric verification requires them. "
                 "Choose a sparse index-stable model or disable pointcloud.geometric_verification."
             )
         if images is None or len(images) != len(image_ids):

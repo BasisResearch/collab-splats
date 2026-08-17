@@ -56,10 +56,13 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher):
         lambda path, name: (["f0", "f1"], ["frame_000003.jpg", "frame_000007.jpg"], (4, 4)),
     )
     monkeypatch.setattr("collab_splats.localization.extractors.resolve_matcher", lambda name: matcher)
-    store = SimpleNamespace(
-        frame_indices=lambda: [3, 7],
-        image_by_frame_idx=lambda fi: np.full((4, 4, 3), fi, dtype=np.uint8),
-    )
+    accesses = []
+
+    def _image_by_frame_idx(fi):
+        accesses.append(fi)
+        return np.full((4, 4, 3), fi, dtype=np.uint8)
+
+    store = SimpleNamespace(frame_indices=lambda: [3, 7], image_by_frame_idx=_image_by_frame_idx)
     monkeypatch.setattr("collab_splats.preproc.frame_store.FrameStore.open", lambda path: store)
     captured = {}
     monkeypatch.setattr(
@@ -67,22 +70,27 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher):
         lambda **kw: captured.update(kw),
     )
     r.verify()
-    return captured
+    return captured, accesses
 
 
 def test_verify_passes_frame_store_images_to_pairwise_matcher(tmp_path, monkeypatch):
-    """For a LocalMatcher, verify() loads the cache-extraction frames and passes images=."""
+    """For a LocalMatcher, verify() hands over lazy cache-extraction frames as images=."""
     matcher = MagicMock(spec=LocalMatcher)
     matcher.has_stable_indices = True
-    captured = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    captured, accesses = _stub_verify_call(tmp_path, monkeypatch, matcher)
     assert captured["matcher"] is matcher
-    # Images come from FrameStore in frame_indices() order (the cache-build order)
-    assert [int(im[0, 0, 0]) for im in captured["images"]] == [3, 7]
+    # Lazy handoff: nothing was decoded yet at the verify_reconstruction call boundary
+    assert accesses == []
+    # Frames resolve on access, in frame_indices() order (the cache-build order)
+    images = captured["images"]
+    assert len(images) == 2
+    assert [int(images[i][0, 0, 0]) for i in range(2)] == [3, 7]
 
 
 def test_verify_passes_no_images_for_descriptor_matcher(tmp_path, monkeypatch):
     """Legacy descriptor matchers keep the cache-only path: images stays None."""
     matcher = SimpleNamespace()  # not a LocalMatcher
-    captured = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    captured, accesses = _stub_verify_call(tmp_path, monkeypatch, matcher)
     assert captured["matcher"] is matcher
     assert captured["images"] is None
+    assert accesses == []  # FrameStore never touched on the descriptor path

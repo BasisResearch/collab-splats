@@ -17,6 +17,7 @@ from collab_splats.remote.sources import (
     PROCESSED_BUCKET,
     PULL_EXCLUDES,
     PUSH_EXCLUDES,
+    SCENE_ID_RE,
     SceneSource,
     parse_rclone_percent,
 )
@@ -155,16 +156,41 @@ def test_buckets_are_the_environments_pair():
 
 
 def test_list_scenes_returns_dirs_at_bucket_root(monkeypatch):
-    # Negative fixtures isolate each filter: "tmp" is a dir that fails SCENE_ID_RE, and the
-    # scene-named .mp4 matches SCENE_ID_RE but is not a dir. Unsorted input pins the sort.
+    # Negative fixtures isolate each filter: ".cache" is a dir that fails SCENE_ID_RE (leading
+    # dot), and the scene-named .mp4 matches SCENE_ID_RE but is not a dir. Unsorted input pins
+    # the sort.
     _fake_run(
         monkeypatch,
         listings={
-            f"collab-data:{CURATED_BUCKET}": _dirs("2026_07_21-rats-C0100", "tmp", "2026_07_20-birds-C0043")
+            f"collab-data:{CURATED_BUCKET}": _dirs("2026_07_21-rats-C0100", ".cache", "2026_07_20-birds-C0043")
             + _files("notes.txt", "2026_05_07-birds-clip_03.mp4")
         },
     )
     assert SceneSource(_FakeClient()).list_scenes() == ["2026_07_20-birds-C0043", "2026_07_21-rats-C0100"]
+
+
+def test_scene_id_re_is_path_safety_not_date_shape():
+    """The regex guards the output-path join; the YYYY_MM_DD shape is convention, not contract."""
+    accepted = [
+        # legacy convention
+        "2026_07_20-birds-C0043",
+        # all nine live audiomoth curated dirs (verified against the bucket 2026-08-17)
+        "audiomoth_only_deployments-20260810_20260831-boston_frontageroad_tracks-splat_videos-GH010250",
+        "audiomoth_only_deployments-20260810_20260831-boston_frontageroad_tracks-splat_videos-GH010251",
+        "audiomoth_only_deployments-20260810_20260831-boston_ringerpark_east-splat_videos-GH010248",
+        "audiomoth_only_deployments-20260810_20260831-boston_ringerpark_west-splat_videos-GH010247",
+        "audiomoth_only_deployments-20260810_20260831-boston_ringerpark_west-splat_videos-GH010249",
+        "audiomoth_only_deployments-20260817_20260824-boston_alley443_trees-splat_videos-GH010258",
+        "audiomoth_only_deployments-20260817_20260824-boston_charlesgateeast_riverbank-splat_videos-GH010259",
+        "audiomoth_only_deployments-20260817_20260824-boston_publicgarden_maintenance-splat_videos-GH010255",
+        "audiomoth_only_deployments-20260817_20260824-boston_publicgarden_maintenance-splat_videos-GH010257",
+    ]
+    for name in accepted:
+        assert SCENE_ID_RE.match(name), name
+    # One path segment, no leading dot (kills "..", ".", hidden dirs), no leading "-" (argv-safe)
+    rejected = ["../x", "..", ".", ".hidden", "a/b", "", "-flag"]
+    for name in rejected:
+        assert not SCENE_ID_RE.match(name), name
 
 
 def test_scene_video_picks_the_single_video(monkeypatch):
@@ -252,7 +278,7 @@ def test_list_processed_scenes_reads_processed_bucket(monkeypatch):
     _fake_run(
         monkeypatch,
         listings={
-            f"collab-data:{PROCESSED_BUCKET}": _dirs("2026_07_21-rats-C0100", "tmp", "2026_07_20-birds-C0043")
+            f"collab-data:{PROCESSED_BUCKET}": _dirs("2026_07_21-rats-C0100", ".cache", "2026_07_20-birds-C0043")
             + _files("2026_05_07-birds-clip_03.mp4")
         },
     )

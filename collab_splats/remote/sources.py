@@ -26,11 +26,13 @@ PROCESSED_BUCKET = "environments-processed"
 # wrapper.batch.VIDEO_EXTS: that one scans a local filesystem, this one filters a bucket listing.
 _VIDEO_EXTS = (".mp4", ".mov", ".avi")
 
-# Curated dir names look like YYYY_MM_DD-PARENTFOLDER-VIDEONAME and ARE the scene id:
-# flat, one video each, no reconstruction/ prefix. Public because a scene id is also joined
-# onto a local output path by the remote driver, which must accept exactly the ids discovery
-# yields — two regexes would let --all surface an id an explicit re-run then rejects.
-SCENE_ID_RE = re.compile(r"^\d{4}_\d{2}_\d{2}-.+$")
+# The scene id IS the curated dir name and is joined onto a local output path by the remote
+# driver, so this regex enforces PATH SAFETY, not a naming shape: one path segment (no "/"),
+# no leading "." (kills "..", ".", hidden dirs), no leading "-" (argv-safe). The historical
+# YYYY_MM_DD-PARENTFOLDER-VIDEONAME shape is a convention some dirs follow, not the contract —
+# audiomoth deployments ship names like audiomoth_only_deployments-<range>-<site>-...-<video>.
+# Public because discovery and the driver's explicit-id check must accept exactly the same ids.
+SCENE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 # Dense per-frame arrays a viewer does not need — pulled on demand instead.
 PULL_EXCLUDES = (

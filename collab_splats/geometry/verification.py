@@ -20,7 +20,7 @@ import numpy as np
 import pycolmap
 
 from collab_splats.geometry.transforms import rotation_angle_deg
-from collab_splats.localization.extractors import BaseLocalExtractor, LocalFeatures, LocalMatcher
+from collab_splats.localization.extractors import LocalFeatures, LocalMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def _write_frames(db: pycolmap.Database, recon: pycolmap.Reconstruction, feature
 def verify_reconstruction(
     recon: pycolmap.Reconstruction,
     features: list[LocalFeatures],
-    matcher: BaseLocalExtractor,
+    matcher: LocalMatcher,
     output_dir: str | Path,
     overlap: int = DEFAULT_OVERLAP,
     images: Sequence[np.ndarray] | None = None,
@@ -134,8 +134,10 @@ def verify_reconstruction(
     Args:
         recon: pose/camera authority (original-resolution K); its points are ignored.
         features: per-image LocalFeatures, aligned with sorted(recon.images) order.
-        matcher: a BaseLocalExtractor whose match() exposes keypoint indices, or an
-            index-stable LocalMatcher (matched pairwise over `images`).
+        matcher: an index-stable LocalMatcher (matched pairwise over `images`). The
+            else-branch below also accepts any duck-typed extractor whose match()
+            exposes keypoint indices — kept for the follow-on descriptor-level
+            matching path (match_extracted).
         output_dir: writes database.db, verified/ (COLMAP model), verification.json.
         overlap: sequential pairing window (pycolmap SequentialPairingOptions.overlap).
         images: pairwise matchers (LocalMatcher) only — the exact RGB frames `features`
@@ -206,7 +208,7 @@ def verify_reconstruction(
                 if m.idx_q is None or m.idx_db is None:
                     raise ValueError(
                         f"{type(matcher).__name__} does not expose keypoint indices "
-                        "(per-pair refined matchers cannot feed COLMAP tracks) — use disk/xfeat/loma."
+                        "(per-pair refined matchers cannot feed COLMAP tracks) — use an index-stable matcher."
                     )
             if len(m) == 0:
                 continue

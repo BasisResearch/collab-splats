@@ -5,9 +5,9 @@ Three-stage pipeline:
   Stage 1 — Global retrieval: top-K visually similar reference frames via compact
              global descriptors (DINOv2-SALAD). Current use: loop closure detection.
 
-  Stage 2 — Local feature extraction + matching: DISK+LightGlue (default),
-             XFeat+MNN, XFeat* semi-dense, or LoMa/LoMa-G. Each extractor owns
-             its detect→match logic and returns MatchResult pixel pairs.
+  Stage 2 — Local feature matching: vismatch-backed LocalMatcher (any
+             vismatch model name, e.g. "loma", "xfeat", "disk-lightglue").
+             Pairwise image-vs-image matching returning MatchResult pixel pairs.
 
   Stage 3 — Pose estimation: 2D→3D depth lookup — bilinear-sample each
              reference frame's dense world_points at matched ref pixels
@@ -15,16 +15,7 @@ Three-stage pipeline:
              LO-RANSAC + Ceres refinement (pycolmap).
 """
 
-from .extractors import (
-    BaseLocalExtractor,
-    DiskExtractor,
-    LocalFeatures,
-    LomaExtractor,
-    LomaGExtractor,
-    MatchResult,
-    XFeatExtractor,
-    XFeatStarExtractor,
-)
+from .extractors import LocalFeatures, LocalMatcher, MatchResult
 from .localizer import (
     CameraLocalizer,
     LocalizationResult,
@@ -35,19 +26,14 @@ from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtract
 from .viz import correspondences_for_ref, plot_correspondences, plot_inlier_distribution
 
 __all__ = [
-    "BaseLocalExtractor",
     "BaseRetrievalExtractor",
     "CameraLocalizer",
     "DinoSaladExtractor",
-    "DiskExtractor",
     "LocalFeatures",
+    "LocalMatcher",
     "LocalizationResult",
-    "LomaExtractor",
-    "LomaGExtractor",
     "MatchResult",
     "PECLIPExtractor",
-    "XFeatExtractor",
-    "XFeatStarExtractor",
     "correspondences_for_ref",
     "load_reconstruction_features",
     "plot_correspondences",

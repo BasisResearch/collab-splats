@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Constants + pure helpers (unit-tested)
 ########
 
-_METHODS = ["disk", "xfeat", "loma", "loma-g"]
+_METHODS = ["disk-lightglue", "aliked-lightglue", "xfeat", "loma"]  # vismatch model names
 _DEFAULT_METHOD = "loma"
 _SUBSAMPLE_ABOVE = 60  # plot every 3rd camera beyond this many reconstruction frames
 _PREVIEW_DEBOUNCE_S = 0.3  # slider settles this long before a frame decode fires
@@ -581,7 +581,7 @@ class LocalizePage(param.Parameterized):
     # ---- run -----------------------------------------------------------
 
     def _current_config(self) -> LocalizationConfig:
-        return LocalizationConfig(extractor=self.method.value, append_to_db=self.append_db.value)
+        return LocalizationConfig(matcher=self.method.value, append_to_db=self.append_db.value)
 
     def _on_run(self, event) -> None:
         scene = self.scene.value

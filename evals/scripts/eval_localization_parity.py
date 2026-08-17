@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""Localization parity benchmark: legacy local matchers vs vismatch LocalMatcher.
+"""Localization benchmark across vismatch LocalMatcher models.
+
+(Historical: originally compared the legacy in-repo extractors against their
+vismatch counterparts; the legacy extractors were retired 2026-08-17 after the
+parity gate passed. Every spec now constructs a vismatch LocalMatcher.)
 
 For each matcher, builds a CameraLocalizer index over one reconstructed scene and
 localizes N held-out reconstruction frames (leave-one-out: the query frame is
@@ -14,7 +18,7 @@ matcher (median-only hides tails), prints a compact table, writes JSON.
 Usage (tmux, never a notebook — GPU compute):
   /opt/venv/reconstruction/bin/python evals/scripts/eval_localization_parity.py \
       --scene data/outputs/<scene>/vggt_omega \
-      --matchers disk,disk-lightglue,xfeat,vismatch:xfeat,loma,vismatch:loma
+      --matchers disk-lightglue,xfeat,loma
 """
 
 import argparse
@@ -27,7 +31,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from collab_splats.localization.extractors import LocalMatcher, resolve_matcher
+from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.localizer import CameraLocalizer
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.utils.torch_utils import pytorch_gc
@@ -39,42 +43,38 @@ logger = logging.getLogger(__name__)
 # Matcher specs
 ########################################
 
-# 'vismatch:<name>' forces the vismatch path for names that ALSO exist as legacy
-# registry keys — resolve_matcher prefers the registry, so bare 'xfeat'/'loma'
-# always resolve legacy. Real collisions in vismatch.available_models: xfeat,
-# xfeat-star, loma. 'disk-lightglue' has no legacy collision, no prefix needed.
+# 'vismatch:<name>' now only controls cache-key NAMESPACING: prefixed specs cache
+# under 'vismatch-<name>', bare specs under '<name>'. Both construct the same
+# LocalMatcher — the prefix exists so old parity-era caches keep resolving and new
+# runs can be isolated from a pre-retirement cache of the same bare name.
 _VISMATCH_PREFIX = "vismatch:"
 
-# Legacy/vismatch pairs: disk vs disk-lightglue (same DISK+LightGlue stack),
-# legacy xfeat vs vismatch xfeat, legacy loma vs vismatch loma.
-_DEFAULT_MATCHERS = "disk,disk-lightglue,xfeat,vismatch:xfeat,loma,vismatch:loma"
+# Default sweep: the three shipping vismatch models.
+_DEFAULT_MATCHERS = "disk-lightglue,xfeat,loma"
 
-# 2026-07-22 reference-scene measurements (correspondences/inliers) — sanity
-# anchors for the legacy matchers, not exact targets (scene-dependent).
+# 2026-07-22 reference-scene measurements (correspondences/inliers) — historical
+# sanity anchors from the retired legacy matchers, not exact targets (scene-dependent).
 _ANCHORS = "Sanity anchors (2026-07-22, reference scene): disk 3314/2099, xfeat 2603/1211 (corr/inliers)"
 
 _EPILOG = f"""\
-Default --matchers pairs each legacy extractor with its vismatch counterpart:
-  disk  (legacy DISK+LightGlue)   vs  disk-lightglue  (vismatch)
-  xfeat (legacy)                  vs  vismatch:xfeat
-  loma  (legacy LoMa-B)           vs  vismatch:loma
-'vismatch:' prefix is required only where the name collides with a legacy
-registry key (xfeat, xfeat-star, loma); other vismatch names resolve directly.
+Every spec is a vismatch model name, constructed as LocalMatcher(name).
+An optional 'vismatch:' prefix only changes the zarr feature-cache key
+('vismatch-<name>' instead of '<name>') — useful to keep a run's cache
+separate from an older cache written under the bare name.
 {_ANCHORS}
 """
 
 
 def _build_matcher(spec: str):
-    """Matcher spec -> (extractor instance, zarr feature-cache key).
+    """Matcher spec -> (LocalMatcher instance, zarr feature-cache key).
 
-    Legacy specs cache under their registry key (shared with production);
-    vismatch-prefixed specs cache under 'vismatch-<name>' so their features
-    never collide with a legacy cache of the same name.
+    Both arms construct a vismatch LocalMatcher; the 'vismatch:' prefix only
+    namespaces the cache key ('vismatch-<name>' vs bare '<name>').
     """
     if spec.startswith(_VISMATCH_PREFIX):
         model = spec[len(_VISMATCH_PREFIX) :]
         return LocalMatcher(model), f"vismatch-{model}"
-    return resolve_matcher(spec), spec
+    return LocalMatcher(spec), spec
 
 
 ########################################

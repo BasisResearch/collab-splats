@@ -175,6 +175,7 @@ def test_load_index_round_trip(tmp_path):
         extractor_name="disk",
         world_points=world_points,
         extrinsics=extrinsics,
+        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
     )
 
     assert len(loaded._frame_features) == 3
@@ -206,6 +207,7 @@ def test_load_index_round_trips_scales(tmp_path):
         extractor_name="xfeat-star",
         world_points=world_points,
         extrinsics=extrinsics,
+        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
     )
 
     for orig, rt in zip(localizer._frame_features, loaded._frame_features):
@@ -435,6 +437,7 @@ def test_load_index_includes_localized_frames(tmp_path):
         extractor_name="disk",
         world_points=world_points,
         extrinsics=extrinsics,
+        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
     )
 
     assert len(loaded._frame_features) == 4
@@ -501,6 +504,7 @@ def test_load_index_after_clear_has_only_reconstruction(tmp_path):
         extractor_name="disk",
         world_points=world_points,
         extrinsics=extrinsics,
+        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
     )
     assert len(loaded._frame_features) == 3
     assert all(s == "reconstruction" for s in loaded._frame_sources)

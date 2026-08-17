@@ -448,7 +448,7 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
         ref_extrinsics=np.eye(4, dtype=np.float32)[None],
         frame_sources=[],
     )
-    figs = page._build_result_figures(out, LocalizationConfig(extractor="disk"))
+    figs = page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"))
     assert set(figs) == {"dist_fig", "match_figs", "stats_html"}
     assert figs["match_figs"] == []  # no ref indices -> no correspondence figures
 
@@ -505,7 +505,7 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
         ref_extrinsics=np.eye(4, dtype=np.float32)[None],
         frame_sources=["reconstruction", "localized"],
     )
-    figs = page._build_result_figures(out, LocalizationConfig(extractor="disk"), frames_zarr=tmp_path / "frames.zarr")
+    figs = page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"), frames_zarr=tmp_path / "frames.zarr")
 
     # Both ranked refs produced a figure with per-frame pre-sliced correspondence arrays
     assert len(figs["match_figs"]) == 2

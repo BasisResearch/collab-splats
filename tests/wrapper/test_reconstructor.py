@@ -35,7 +35,7 @@ def test_config_load_base_defaults(tmp_path):
         "pointcloud": {"method": "feedforward", "backend": "vggtx", "bundle_adjustment": False, "loop_closure": False},
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 1024},
         "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
-        "localization": {"enabled": False, "extractor": "dinosalad"},
+        "localization": {"enabled": False, "matcher": "loma"},
         "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
     }
     (tmp_path / "base.yaml").write_text(yaml.dump(base))
@@ -892,7 +892,7 @@ def test_localize_in_stage_order_and_deps():
 
 
 def test_run_pipeline_auto_includes_localize_when_enabled(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
     called = []
     with (
@@ -925,7 +925,7 @@ def test_localize_without_pointcloud_raises(tmp_path):
 
 
 def test_build_localization_db_missing_zarr_raises(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
     with pytest.raises(FileNotFoundError, match="feedforward.zarr"):
         rec.build_localization_db()
@@ -934,7 +934,7 @@ def test_build_localization_db_missing_zarr_raises(tmp_path):
 def test_build_localization_db_skips_when_exists(tmp_path):
     from collab_splats.wrapper import reconstructor as R
 
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
     ff = rec.backend_dir / "feedforward.zarr"
     ff.mkdir(parents=True)
@@ -1167,7 +1167,7 @@ def test_run_feedforward_no_loop_closure_no_viewer(tmp_path):
 def test_build_localization_db_runs_when_missing(tmp_path):
     from collab_splats.wrapper import reconstructor as R
 
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
     ff = rec.backend_dir / "feedforward.zarr"
     ff.mkdir(parents=True)
@@ -1275,7 +1275,7 @@ def test_stage_output_exists_semantics_is_per_extractor(tmp_path):
 def test_stage_output_exists_localize(tmp_path):
     from collab_splats.wrapper import reconstructor as R
 
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "extractor": "loma"}})
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
     # No zarr at all: absent, and _localization_db_exists must not even be consulted.
     assert rec._stage_output_exists("localize") is False

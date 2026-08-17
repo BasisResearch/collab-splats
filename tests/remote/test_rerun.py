@@ -164,7 +164,7 @@ def test_override_config_wins_over_pulled(tmp_path):
 
 def test_localize_drops_the_localization_section(tmp_path):
     """Stage name and config section differ only for localize."""
-    source = _FakeSource(run_config={**PULLED_CONFIG, "localization": {"enabled": True, "extractor": "disk"}})
+    source = _FakeSource(run_config={**PULLED_CONFIG, "localization": {"enabled": True, "matcher": "disk-lightglue"}})
     _, config = prepare_scene(source, SCENE, tmp_path / SCENE, ["localize"], None)
     assert "localization" not in config
     assert config["mesh"]["voxel_size"] == 0.02  # untouched stage keeps its provenance

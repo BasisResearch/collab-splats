@@ -29,7 +29,7 @@ from collab_splats.geometry.verification import (
     _pair_pose_errors,
     verify_reconstruction,
 )
-from collab_splats.localization.extractors import BaseLocalExtractor
+from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.localizer import load_reconstruction_features
 from collab_splats.pointcloud.feedforward.base import (
     FeedforwardResult,
@@ -126,7 +126,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--backend_dir", type=Path, required=True, help="e.g. .../<scene>/vggt_omega")
     ap.add_argument("--gt_dir", type=Path, default=None, help="7-Scenes seq dir (poses + depth)")
-    ap.add_argument("--extractor", default="xfeat", help="localization extractor registry key")
+    ap.add_argument("--extractor", default="xfeat", help="vismatch model name (LocalMatcher)")
     ap.add_argument("--overlap", type=int, default=10, help="sequential pairing window")
     ap.add_argument("--perturb_deg", type=float, default=0.0, help="negative control rotation")
     ap.add_argument("--out", type=Path, required=True, help="results JSON path")
@@ -147,7 +147,7 @@ def main() -> None:
 
     # ── Run verification into a results-local dir (never into the scene's colmap/) ──
     work_dir = args.out.parent / (args.out.stem + "_work")
-    matcher = BaseLocalExtractor.get(args.extractor)()
+    matcher = LocalMatcher(args.extractor)
     result = verify_reconstruction(
         recon=recon, features=features, matcher=matcher, output_dir=work_dir, overlap=args.overlap
     )

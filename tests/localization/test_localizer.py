@@ -5,13 +5,10 @@ import pytest
 import torch
 
 from collab_splats.localization import (
-    BaseLocalExtractor,
     BaseRetrievalExtractor,
     DinoSaladExtractor,
-    DiskExtractor,
     LocalFeatures,
     LocalizationResult,
-    XFeatExtractor,
 )
 from collab_splats.localization.extractors import MatchResult
 from collab_splats.localization.localizer import CameraLocalizer, sample_world_points
@@ -33,43 +30,6 @@ def test_registry_get_dino_salad():
 def test_registry_unknown_raises():
     with pytest.raises(ValueError, match="Unknown"):
         BaseRetrievalExtractor.get("nonexistent-model")
-
-
-def test_base_local_extractor_registry():
-    assert BaseLocalExtractor.get("disk") is DiskExtractor
-    assert BaseLocalExtractor.get("xfeat") is XFeatExtractor
-
-
-@pytest.mark.slow
-def test_disk_extractor_returns_keypoints_and_descriptors():
-    """Requires network access to download DISK weights (~4 MB)."""
-    from collab_splats.localization import DiskExtractor
-
-    extractor = DiskExtractor()
-    image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    feats = extractor.extract(image)
-    assert isinstance(feats, LocalFeatures)
-    assert feats.keypoints.ndim == 2 and feats.keypoints.shape[1] == 2
-    assert feats.descriptors.ndim == 2 and feats.descriptors.shape[1] == 128
-    assert len(feats.keypoints) == len(feats.descriptors)
-    assert len(feats.keypoints) > 0
-    assert feats.scores is None
-
-
-@pytest.mark.slow
-def test_xfeat_extractor_returns_keypoints_and_descriptors():
-    from collab_splats.localization import XFeatExtractor
-
-    extractor = XFeatExtractor()
-    image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    feats = extractor.extract(image)
-    assert isinstance(feats, LocalFeatures)
-    assert feats.keypoints.ndim == 2 and feats.keypoints.shape[1] == 2
-    assert feats.descriptors.ndim == 2 and feats.descriptors.shape[1] == 64
-    assert len(feats.keypoints) == len(feats.descriptors)
-    assert len(feats.keypoints) > 0
-    assert feats.scores is not None
-    assert feats.scores.ndim == 1 and len(feats.scores) == len(feats.keypoints)
 
 
 def _make_synthetic_scene(n_pts: int = 30, n_frames: int = 4, H: int = 480, W: int = 640):
@@ -271,7 +231,10 @@ def test_localize_via_depth_lookup():
         np.float32
     )
 
-    class StubExtractor(BaseLocalExtractor):
+    # Plain duck-typed stub — deliberately NOT a LocalMatcher subclass, so localize()
+    # takes the preserved descriptor branch (isinstance dispatch routes LocalMatcher
+    # instances to the pairwise path).
+    class StubExtractor:
         def extract(self, image):
             # 4x3 grid — collinear keypoints would make planar PnP degenerate
             k = torch.tensor([[8.0 + 14 * (i % 4), 8.0 + 18 * (i // 4)] for i in range(12)])
@@ -314,7 +277,8 @@ def test_localize_fullres_images_modelres_world_points():
         [(px_full_x - Wf / 2) / f * z, (px_full_y - Hf / 2) / f * z, np.full(ms_x.shape, z, dtype=np.float64)], -1
     ).astype(np.float32)
 
-    class StubExtractor(BaseLocalExtractor):
+    # Plain duck-typed stub (descriptor branch) — see comment in the previous test.
+    class StubExtractor:
         def extract(self, image):
             # 4x3 grid in FULL-RES pixel space — collinear keypoints degenerate for planar PnP
             k = torch.tensor([[16.0 + 28 * (i % 4), 16.0 + 36 * (i // 4)] for i in range(12)])

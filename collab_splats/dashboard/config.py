@@ -66,7 +66,7 @@ class LocalizationConfig:
     """Knobs for one localization run. UI/call state only — provenance for persisted
     localized frames lives in zarr attrs, so this is never written to run_config.yaml."""
 
-    extractor: str = "loma-g"  # feature-DB / matcher registry key
+    matcher: str = "loma"  # vismatch model name (LocalMatcher)
     top_k_viz: int = 3  # match-pair figures shown, best-first
     append_to_db: bool = True  # persist successful poses to localized/
     calibration_path: str | None = None  # per-camera K yaml override; None → proportions seed

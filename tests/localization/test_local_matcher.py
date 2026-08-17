@@ -7,14 +7,7 @@ import pytest
 import torch
 from unittest.mock import MagicMock, patch
 
-from collab_splats.localization.extractors import (
-    BaseLocalExtractor,
-    DiskExtractor,
-    LocalFeatures,
-    LocalMatcher,
-    MatchResult,
-    resolve_matcher,
-)
+from collab_splats.localization.extractors import LocalFeatures, LocalMatcher, MatchResult
 from collab_splats.localization.localizer import CameraLocalizer
 
 
@@ -116,12 +109,6 @@ def test_descriptor_level_match_unsupported(mock_get):
 
 
 @patch("vismatch.get_matcher")
-def test_not_registered_under_legacy_names(mock_get):
-    # LocalMatcher must not shadow legacy registry entries; resolve-by-name comes later.
-    assert LocalMatcher not in BaseLocalExtractor._registry.values()
-
-
-@patch("vismatch.get_matcher")
 def test_match_images_pre_ransac_with_indices(mock_get):
     mock_get.return_value = _fake_vismatch_matcher(stable_indices=True)
     lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
@@ -169,18 +156,6 @@ def test_probe_sets_stability_flag(mock_get):
     mock_get.return_value = _fake_vismatch_matcher(stable_indices=False)
     lm2 = LocalMatcher("roma", device="cpu")
     assert lm2.has_stable_indices is False
-
-
-@patch("vismatch.get_matcher")
-def test_resolve_matcher(mock_get):
-    # Legacy registry key -> legacy class untouched
-    with patch.object(DiskExtractor, "__init__", return_value=None) as init:
-        m = resolve_matcher("disk")
-        assert isinstance(m, DiskExtractor) and init.called
-    # Unknown key -> vismatch model
-    mock_get.return_value = _fake_vismatch_matcher()
-    m = resolve_matcher("disk-lightglue", probe=False)
-    assert isinstance(m, LocalMatcher) and m.model_name == "disk-lightglue"
 
 
 def _make_pairwise_localizer(n_frames=3, hw=(64, 64)):

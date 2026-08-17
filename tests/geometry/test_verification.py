@@ -8,12 +8,7 @@ import pytest
 import torch
 
 from collab_splats.geometry.verification import verify_reconstruction
-from collab_splats.localization.extractors import (
-    BaseLocalExtractor,
-    LocalFeatures,
-    LocalMatcher,
-    MatchResult,
-)
+from collab_splats.localization.extractors import LocalFeatures, LocalMatcher, MatchResult
 from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
 
 W, H = 640, 480
@@ -62,8 +57,11 @@ def _features_from_keypoints(kps):
     return [LocalFeatures(keypoints=torch.from_numpy(k), descriptors=torch.zeros(len(k), 4)) for k in kps]
 
 
-class _IdentityMatcher(BaseLocalExtractor):
-    """Stub matcher: keypoint i in every frame observes world point i (ground-truth tracks)."""
+class _IdentityMatcher:
+    """Stub matcher: keypoint i in every frame observes world point i (ground-truth tracks).
+
+    Plain duck-typed class (deliberately not a LocalMatcher) — exercises the preserved
+    descriptor-path branch in verify_reconstruction."""
 
     def extract(self, image):  # pragma: no cover - never called in these tests
         raise NotImplementedError

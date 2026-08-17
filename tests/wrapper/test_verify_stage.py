@@ -44,7 +44,7 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher):
     r.config = {
         "output_path": str(tmp_path),
         "pointcloud": {"backend": "vggtx"},
-        "localization": {"extractor": "stub"},
+        "localization": {"matcher": "stub"},
     }
     r._stage_output_exists = lambda stage: False
     r._resolve_result = lambda: SimpleNamespace(reconstruction=recon)
@@ -55,7 +55,9 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher):
         "collab_splats.localization.localizer.load_reconstruction_features",
         lambda path, name: (["f0", "f1"], ["frame_000003.jpg", "frame_000007.jpg"], (4, 4)),
     )
-    monkeypatch.setattr("collab_splats.localization.extractors.resolve_matcher", lambda name: matcher)
+    # verify() imports LocalMatcher from the extractors module inline — patch it with a
+    # factory returning the stub (no isinstance dispatch remains in verify()).
+    monkeypatch.setattr("collab_splats.localization.extractors.LocalMatcher", lambda name: matcher)
     accesses = []
 
     def _image_by_frame_idx(fi):
@@ -87,10 +89,13 @@ def test_verify_passes_frame_store_images_to_pairwise_matcher(tmp_path, monkeypa
     assert [int(images[i][0, 0, 0]) for i in range(2)] == [3, 7]
 
 
-def test_verify_passes_no_images_for_descriptor_matcher(tmp_path, monkeypatch):
-    """Legacy descriptor matchers keep the cache-only path: images stays None."""
-    matcher = SimpleNamespace()  # not a LocalMatcher
+def test_verify_hands_images_lazily_for_any_matcher(tmp_path, monkeypatch):
+    """images= is always the lazy FrameStore view now — nothing decodes at handoff.
+
+    (Pre-retirement, descriptor matchers got images=None; verify_reconstruction's
+    descriptor branch ignores `images`, so the unconditional lazy handoff is free.)"""
+    matcher = SimpleNamespace()  # duck-typed descriptor stub, not a LocalMatcher
     captured, accesses = _stub_verify_call(tmp_path, monkeypatch, matcher)
     assert captured["matcher"] is matcher
-    assert captured["images"] is None
-    assert accesses == []  # FrameStore never touched on the descriptor path
+    assert captured["images"] is not None and len(captured["images"]) == 2
+    assert accesses == []  # still zero decodes at the call boundary

@@ -17,7 +17,7 @@ import zarr
 from PIL import Image
 from zarr.codecs import BloscCodec
 
-from .extractors import BaseLocalExtractor, DiskExtractor, LocalFeatures, LocalMatcher
+from .extractors import LocalFeatures, LocalMatcher
 from .retrieval import BaseRetrievalExtractor
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,7 @@ class CameraLocalizer:
             images:       iterable of (H, W, 3) uint8 RGB arrays, one per reference frame.
                           Pixel fetching is the caller's responsibility — this class does no image IO.
             ids:          length-N list of stable per-frame string labels, index-aligned with images.
-            extractor:    local feature extractor; defaults to DiskExtractor().
+            extractor:    local feature matcher; defaults to LocalMatcher("loma").
             config:       solver options dict. Keys:
                             "estimation" → pycolmap estimation_options
                               (default: {"ransac": {"max_error": 50}})
@@ -209,7 +209,7 @@ class CameraLocalizer:
         self._world_points = world_points
         self._extrinsics = extrinsics
 
-        self._extractor = extractor if extractor is not None else DiskExtractor()
+        self._extractor = extractor if extractor is not None else LocalMatcher("loma")
 
         # Pairwise-matcher state (LocalMatcher only): model-res reference images +
         # DinoSalad retrieval gate, attached by from_feedforward. None on the
@@ -335,7 +335,7 @@ class CameraLocalizer:
             "descriptors", data=all_descs, chunks=(max(all_descs.shape[0], 1), d_dim), compressors=lz4
         )
 
-        # scores: XFeat only — skip if all None
+        # scores: optional per-keypoint saliency — skip if all None
         has_scores = any(f.scores is not None for f in self._frame_features)
         if has_scores:
             all_scores = np.concatenate(
@@ -346,7 +346,7 @@ class CameraLocalizer:
             ).astype(np.float32)
             rec_group.create_array("scores", data=all_scores, chunks=(max(all_scores.shape[0], 1),), compressors=lz4)
 
-        # scales: dense XFeat* only — skip if all None
+        # scales: optional per-keypoint extraction scale — skip if all None
         has_scales = any(f.scales is not None for f in self._frame_features)
         if has_scales:
             all_scales = np.concatenate(
@@ -424,7 +424,7 @@ class CameraLocalizer:
         obj.config = config or {}
         obj._world_points = world_points
         obj._extrinsics = extrinsics
-        obj._extractor = extractor if extractor is not None else DiskExtractor()
+        obj._extractor = extractor if extractor is not None else LocalMatcher("loma")
         obj._image_hw = hw
         obj._frame_features = rec_features + loc_features
         obj._frame_sources = ["reconstruction"] * len(rec_features) + ["localized"] * len(loc_features)
@@ -749,10 +749,10 @@ class CameraLocalizer:
                                ignored on a cache hit (index loads from zarr).
             ids:               Caller-built string labels aligned to images, used ONLY on a
                                cache miss. Both images and ids are required to build.
-            extractor:         Local feature extractor; defaults to DiskExtractor().
+            extractor:         Local feature matcher; defaults to LocalMatcher("loma").
             progress_callback: Called as (frame_idx, total) during index build.
             zarr_path:         Override zarr cache path; falls back to result._zarr_path.
-            extractor_name:    Override extractor registry key; auto-detected if None.
+            extractor_name:    Override the zarr feature-cache key; auto-detected if None.
             top_k:             Pairwise matchers (LocalMatcher) only — number of
                                retrieval-ranked reference frames localize() matches.
             **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. config).
@@ -764,13 +764,15 @@ class CameraLocalizer:
         if getattr(result, "world_points", None) is None:
             raise ValueError("FeedforwardResult has no world_points — re-save zarr or load with load_world_points=True")
 
-        extractor_inst = extractor if extractor is not None else DiskExtractor()
+        extractor_inst = extractor if extractor is not None else LocalMatcher("loma")
 
-        # Determine extractor_name via registry reverse-lookup
+        # Cache key: vismatch model name for LocalMatcher; class name for duck-typed
+        # descriptor-path extractors (test stubs, follow-on match_extracted models).
         if extractor_name is None:
-            extractor_name = next(
-                (k for k, v in BaseLocalExtractor._registry.items() if v is type(extractor_inst)),
-                type(extractor_inst).__name__.lower().replace("extractor", ""),
+            extractor_name = (
+                extractor_inst.model_name
+                if isinstance(extractor_inst, LocalMatcher)
+                else type(extractor_inst).__name__.lower()
             )
 
         # Resolve zarr_path: explicit arg > result._zarr_path

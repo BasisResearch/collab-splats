@@ -289,38 +289,34 @@ with `frame_selection: uniform`). There is no silently-ignored knob.
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
-| `localization.extractor` | str | `loma` | Legacy registry key (`loma`, `loma-g`, `disk`, `xfeat`, `xfeat-star`) or any vismatch model name |
-| `localization.top_k` | int | `8` | Pairwise (vismatch) path only: reference frames matched per query |
+| `localization.matcher` | str | `loma` | vismatch model name (`loma`, `xfeat`, `disk-lightglue`, `aliked-lightglue`, …) |
+| `localization.top_k` | int | `8` | Reference frames matched per query |
 
 ### Localization matchers
 
-`localization.extractor` accepts two name spaces, resolved by
-`resolve_matcher` (`collab_splats/localization/extractors.py`):
+`localization.matcher` is a vismatch model name, constructed as
+`LocalMatcher(name)` (`collab_splats/localization/extractors.py`) — e.g. `loma`,
+`xfeat`, `disk-lightglue`, `aliked-lightglue`, `xfeat-steerers-perm`. vismatch
+exposes no descriptor-level match API, so queries are matched **pairwise**: the
+retrieval stage ranks reference frames and the query is matched against the top
+`localization.top_k` of them.
 
-- **Legacy registry keys** — `disk`, `xfeat`, `xfeat-star`, `loma`, `loma-g` — the
-  original in-repo matcher classes. These match a query descriptor-to-descriptor
-  against the whole reconstruction cache; `top_k` is ignored.
-- **vismatch model names** — e.g. `disk-lightglue`, `aliked-lightglue`,
-  `xfeat-steerers` — any model vismatch ships. vismatch exposes no descriptor-level
-  match API, so queries are matched **pairwise**: the retrieval stage ranks reference
-  frames and the query is matched against the top `localization.top_k` of them.
-
-Registry keys take precedence: for names that exist in both spaces (`xfeat`,
-`xfeat-star`, `loma`), the config always resolves to the legacy class — those three
-vismatch variants are unreachable from config until the legacy registry is retired.
-(`evals/scripts/eval_localization_parity.py` uses a script-local `vismatch:` prefix
-to force the vismatch side for exactly this comparison.)
+(Historical: until 2026-08-17 this key was `localization.extractor` and also
+accepted legacy in-repo registry keys — `disk`, `xfeat`, `xfeat-star`, `loma`,
+`loma-g` — which took precedence over colliding vismatch names. The legacy
+extractors were retired after the vismatch loma parity gate passed.)
 
 Two blocklists in `collab_splats/localization/extractors.py` gate vismatch names:
 `_VISMATCH_LICENSE_BLOCKLIST` (non-commercial licenses) and
 `_VISMATCH_DEP_BLOCKLIST` (models whose deps are broken in this environment).
-Blocked names raise `ValueError` at resolve time with the reason.
+Blocked names raise `ValueError` at construction time with the reason.
 
-With `pointcloud.geometric_verification: true` the same extractor's feature cache
+With `pointcloud.geometric_verification: true` the same matcher's feature cache
 feeds pycolmap, which requires index-stable sparse models (keypoint table indices
-that survive re-extraction). Index-incapable matchers (e.g. `xfeat-star`, dense/
-semi-dense vismatch models) hard-error at verification time rather than silently
-degrading — pick an index-stable matcher or disable verification.
+that survive re-extraction). Index-incapable matchers (dense/semi-dense vismatch
+models, per-pair-refined variants like `xfeat-star`) hard-error at verification
+time rather than silently degrading — pick an index-stable matcher or disable
+verification.
 
 ### The `loger` backend
 

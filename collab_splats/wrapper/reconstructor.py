@@ -461,13 +461,13 @@ def _build_localization_db(
     is the pairwise (vismatch) matching fan-out; the descriptor path ignores it.
     """
     # Heavy deps kept inline so the module imports without GPU/model libs
-    from collab_splats.localization.extractors import resolve_matcher
+    from collab_splats.localization.extractors import LocalMatcher
     from collab_splats.localization.localizer import CameraLocalizer
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.preproc.frame_store import FrameStore
 
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True, load_world_points=True)
-    extractor = resolve_matcher(extractor_name)
+    extractor = LocalMatcher(extractor_name)
 
     # Boundary adapter: canonical store → (images, ids) core objects. Lazy genexpr → zero
     # reads on a cache hit; one partial-read per frame on a miss.
@@ -945,7 +945,7 @@ class Reconstructor:
     def build_localization_db(self, overwrite: bool = False) -> Path:
         """Build/refresh the per-frame local-feature localization cache in feedforward.zarr."""
         loc_cfg = self.config["localization"]
-        extractor_name = loc_cfg["extractor"]
+        extractor_name = loc_cfg["matcher"]
 
         feedforward_zarr = self.backend_dir / "feedforward.zarr"
         if not feedforward_zarr.exists():
@@ -986,11 +986,11 @@ class Reconstructor:
         # One extractor serves localization and verification by design — the cache is
         # keyed by extractor, so sharing it means one extraction pass, zero drift.
         self.build_localization_db()
-        extractor_name = self.config["localization"]["extractor"]
+        extractor_name = self.config["localization"]["matcher"]
 
         # Heavy deps kept inline so the module imports without GPU/model libs
         from collab_splats.geometry.verification import verify_reconstruction
-        from collab_splats.localization.extractors import LocalMatcher, resolve_matcher
+        from collab_splats.localization.extractors import LocalMatcher
         from collab_splats.localization.localizer import load_reconstruction_features
 
         features, ids, _ = load_reconstruction_features(
@@ -1005,7 +1005,7 @@ class Reconstructor:
                 "Feature cache and reconstruction disagree on frame order/naming — "
                 "rebuild the localization DB (overwrite=True)."
             )
-        matcher = resolve_matcher(extractor_name)
+        matcher = LocalMatcher(extractor_name)
         # Pairwise matchers re-match images, not cached descriptors. The images MUST be
         # the exact frames the cache was extracted from — _build_localization_db feeds
         # FrameStore frames to extract() — because match-time index recovery lands on the
@@ -1014,11 +1014,11 @@ class Reconstructor:
         # COLMAP DB. Model-res ff.images would index a different table entirely.
         # verify_reconstruction itself hard-refuses index-incapable pairwise matchers.
         # Handed over lazily (_LazyFrames): frames decode on access under a small LRU,
-        # so peak memory stays bounded instead of N full-res frames at once.
-        images = None
-        if isinstance(matcher, LocalMatcher):
-            store = FrameStore.open(self.frames_zarr)
-            images = _LazyFrames(store, store.frame_indices())
+        # so peak memory stays bounded instead of N full-res frames at once. (The
+        # descriptor branch in verify_reconstruction ignores `images` — passing them
+        # unconditionally is free until a frame is actually accessed.)
+        store = FrameStore.open(self.frames_zarr)
+        images = _LazyFrames(store, store.frame_indices())
         # Sequential pairs only in v1 (pycolmap SequentialPairGenerator inside).
         # Loop pairs are a follow-on: COLMAP's own loop_detection needs a SIFT vocab
         # tree (unusable with learned descriptors) and retrieval descriptors are not
@@ -1052,7 +1052,7 @@ class Reconstructor:
         if stage == "localize":
             feedforward_zarr = self.backend_dir / "feedforward.zarr"
             return feedforward_zarr.exists() and _localization_db_exists(
-                feedforward_zarr, self.config["localization"]["extractor"]
+                feedforward_zarr, self.config["localization"]["matcher"]
             )
         if stage == "verify":
             return (self.backend_dir / "colmap" / "verification.json").exists()

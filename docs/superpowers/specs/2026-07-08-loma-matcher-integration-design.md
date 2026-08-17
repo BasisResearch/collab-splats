@@ -2,6 +2,7 @@
 
 **Date:** 2026-07-08
 **Status:** Approved
+**Superseded by** docs/superpowers/specs/2026-08-17-vismatch-local-matcher-design.md — vismatch loma reached parity (2026-08-17 benchmark: rot 0.172° vs 0.136° median at n=10, within noise; trans better); the legacy LomaExtractor this spec introduced has been retired.
 **Scope decision:** Integrate LoMa only. RoMaV2 deferred (see "RoMaV2 deferral" below).
 
 ## Goal

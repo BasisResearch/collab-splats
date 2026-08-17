@@ -29,7 +29,7 @@ def _write_configs(tmp_path):
         "output_path": None,
         "pointcloud": {"method": "feedforward", "backend": "vggt_omega"},
         "semantics": {"enabled": False},
-        "localization": {"enabled": False, "extractor": "loma"},
+        "localization": {"enabled": False, "matcher": "loma"},
     }
     (cfg_dir / "base.yaml").write_text(yaml.dump(base))
     return cfg_dir

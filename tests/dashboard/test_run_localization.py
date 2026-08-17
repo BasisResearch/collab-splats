@@ -104,7 +104,11 @@ def wired(monkeypatch, tmp_path):
         intrinsics = np.tile(np.eye(3, dtype=np.float32), (2, 1, 1))
         image_paths = [Path("/orig/00000.jpg"), Path("/orig/00001.jpg")]
 
-    monkeypatch.setattr(pipeline, "_load_feedforward_result", lambda out_dir, load_world_points=False: _FakeResult())
+    monkeypatch.setattr(
+        pipeline,
+        "_load_feedforward_result",
+        lambda out_dir, load_world_points=False, load_images=False: _FakeResult(),
+    )
     # MagicMock (not a lambda) so tests can assert on call_args — in particular that
     # frames_zarr is threaded through to the real from_feedforward call site.
     build_localizer_mock = MagicMock(return_value=fake_localizer)

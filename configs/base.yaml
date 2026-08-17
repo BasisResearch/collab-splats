@@ -101,13 +101,11 @@ mesh:
 
 localization:
   enabled: false
-  # Legacy registry keys (disk|xfeat|xfeat-star|loma|loma-g) or a vismatch model
-  # name (e.g. disk-lightglue, aliked-lightglue, xfeat-steerers). Registry keys win
-  # on collisions (xfeat, xfeat-star, loma resolve to the legacy class). vismatch
-  # names are matched pairwise against the retrieval top-K; some are blocked
+  # vismatch model name (e.g. loma, xfeat, disk-lightglue, aliked-lightglue) —
+  # matched pairwise against the retrieval top-K. Some models are blocked
   # (license/deps) — see _VISMATCH_*_BLOCKLIST in localization/extractors.py.
-  extractor: loma
-  top_k: 8  # pairwise (vismatch) path only: refs matched per query
+  matcher: loma
+  top_k: 8  # refs matched per query
 
 # Used only when pointcloud.method: nerfstudio (ns-process-data + ns-train subprocesses)
 nerfstudio:

@@ -526,17 +526,19 @@ class LocalizationRunOutput:
     frame_sources: list  # per-frame 'reconstruction' | 'localized'
 
 
-def _load_feedforward_result(out_dir: Path, load_world_points: bool = False):
+def _load_feedforward_result(out_dir: Path, load_world_points: bool = False, load_images: bool = False):
     """Load the reconstruction result from the local zarr (lazy heavy import)."""
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     # Localization reads only the required member set (remote pulls already exclude the
-    # dense arrays); skip decoding them for locally-generated scenes too. world_points is
-    # opted in by the localizer path — CameraLocalizer.from_feedforward requires it.
+    # dense arrays); skip decoding them for locally-generated scenes too. world_points and
+    # images are opted in by the localizer path — CameraLocalizer.from_feedforward requires
+    # world_points, and the pairwise LocalMatcher additionally needs model-res ref images.
     return FeedforwardResult.load_zarr(
         out_dir / "feedforward.zarr",
         load_depth=False,
         load_world_points=load_world_points,
+        load_images=load_images,
         load_confidence=False,
         load_features=False,
         load_pixel_indices=False,
@@ -577,14 +579,14 @@ def _build_localizer(
     """Load (or build, with progress) the feature DB; keep the localizer warm in the
     SceneCache so consecutive runs skip index reload and extractor model load."""
     from collab_splats.localization import CameraLocalizer
-    from collab_splats.localization.extractors import BaseLocalExtractor
+    from collab_splats.localization.extractors import LocalMatcher
 
     if cache is not None and scene_key is not None:
-        cached = cache.get(scene_key, f"localizer:{config.extractor}")
+        cached = cache.get(scene_key, f"localizer:{config.matcher}")
         if cached is not None:
             return cached
 
-    extractor = BaseLocalExtractor.get(config.extractor)()
+    extractor = LocalMatcher(config.matcher)
 
     def on_progress(done: int, total: int) -> None:
         # Only fires on a cache miss (DB build); scale into the 25→55% band
@@ -611,12 +613,12 @@ def _build_localizer(
         images=images,
         ids=ids,
         extractor=extractor,
-        extractor_name=config.extractor,
+        extractor_name=config.matcher,
         zarr_path=zarr_path,
         progress_callback=on_progress,
     )
     if cache is not None and scene_key is not None:
-        cache.put(scene_key, f"localizer:{config.extractor}", localizer)
+        cache.put(scene_key, f"localizer:{config.matcher}", localizer)
     return localizer
 
 
@@ -711,11 +713,11 @@ def run_localization(
                 source.pull_processed(scene, out_dir, excludes=PULL_EXCLUDES)
             op_log.update_progress(15, "localize: loading reconstruction")
             with op_log.step("localize: loading reconstruction"):
-                result = _load_feedforward_result(out_dir, load_world_points=True)
+                result = _load_feedforward_result(out_dir, load_world_points=True, load_images=True)
 
             # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
-            op_log.update_progress(25, f"localize: loading DB ({config.extractor})")
-            with op_log.step(f"localize: DB ({config.extractor})"):
+            op_log.update_progress(25, f"localize: loading DB ({config.matcher})")
+            with op_log.step(f"localize: DB ({config.matcher})"):
                 # frames.zarr is the sole persistent frame store and is now pulled for processed
                 # scenes too; guard defensively so any legacy scene without it falls back to image_paths.
                 frames_zarr = out_dir / "frames.zarr"
@@ -728,7 +730,7 @@ def run_localization(
                     scene_key=scene,
                     frames_zarr=frames_zarr if frames_zarr.exists() else None,
                 )
-            _stamp_db_provenance(out_dir / "feedforward.zarr", config.extractor, out_dir)
+            _stamp_db_provenance(out_dir / "feedforward.zarr", config.matcher, out_dir)
 
             # Query frame + intrinsics
             op_log.update_progress(55, f"localize: extracting frame {frame_idx}")
@@ -761,7 +763,7 @@ def run_localization(
                     K,
                     loc.query_features,
                     zarr_path=out_dir / "feedforward.zarr",
-                    extractor_name=config.extractor,
+                    extractor_name=config.matcher,
                     provenance=provenance,
                 )
                 op_log.update_progress(92, "localize: pushing to environments-processed (background)")

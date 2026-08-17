@@ -155,3 +155,41 @@ def test_triangulation_recovers_scene(tmp_path):
     assert len(report["pair_stats"]) == 3
     # COLMAP model on disk for downstream tooling
     assert (tmp_path / "verified" / "points3D.bin").exists()
+
+
+def _rot_x(deg: float) -> np.ndarray:
+    """Rotation about x, degrees."""
+    a = np.radians(deg)
+    return np.array(
+        [[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]], dtype=np.float32
+    )
+
+
+def test_negative_control_perturbed_pose_flagged(tmp_path):
+    """+2 deg rotation on one camera shows up in exactly that camera's pair errors and survival."""
+    _, extrinsics, kps = _synthetic_scene(n_cams=5)
+    bad = 2
+    perturbed = extrinsics.copy()
+    perturbed[bad, :3, :3] = _rot_x(2.0) @ perturbed[bad, :3, :3]
+
+    # Features come from the TRUE geometry; only the model's pose for frame `bad` lies.
+    result = verify_reconstruction(
+        recon=_make_recon(perturbed),
+        features=_features_from_keypoints(kps),
+        matcher=_IdentityMatcher(),
+        output_dir=tmp_path,
+    )
+    bad_name = f"frame_{bad:05d}"
+    for p in result.pair_stats:
+        involved = bad_name in (p.name1, p.name2)
+        if involved:
+            # The epipolar estimate follows the matches (truth), so it disagrees with the
+            # model's perturbed relative pose by ~the injected 2 degrees.
+            assert p.rot_error_deg > 1.0, f"{p.name1}-{p.name2} not flagged: {p.rot_error_deg}"
+        else:
+            assert p.rot_error_deg < 0.2, f"clean pair {p.name1}-{p.name2}: {p.rot_error_deg}"
+    # Tier 2: reprojection through the wrong pose kills that frame's observations
+    clean_survival = [
+        s["track_survival"] for n, s in result.frame_stats.items() if n != bad_name
+    ]
+    assert result.frame_stats[bad_name]["track_survival"] < min(clean_survival)

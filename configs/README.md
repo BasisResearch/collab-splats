@@ -305,6 +305,12 @@ with `frame_selection: uniform`). There is no silently-ignored knob.
   match API, so queries are matched **pairwise**: the retrieval stage ranks reference
   frames and the query is matched against the top `localization.top_k` of them.
 
+Registry keys take precedence: for names that exist in both spaces (`xfeat`,
+`xfeat-star`, `loma`), the config always resolves to the legacy class — those three
+vismatch variants are unreachable from config until the legacy registry is retired.
+(`evals/scripts/eval_localization_parity.py` uses a script-local `vismatch:` prefix
+to force the vismatch side for exactly this comparison.)
+
 Two blocklists in `collab_splats/localization/extractors.py` gate vismatch names:
 `_VISMATCH_LICENSE_BLOCKLIST` (non-commercial licenses) and
 `_VISMATCH_DEP_BLOCKLIST` (models whose deps are broken in this environment).

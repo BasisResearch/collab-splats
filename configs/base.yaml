@@ -101,10 +101,11 @@ mesh:
 
 localization:
   enabled: false
-  # Legacy registry keys (disk|xfeat|xfeat-star|loma|loma-g) or any vismatch model
-  # name (e.g. disk-lightglue, aliked-lightglue, xfeat-steerers). vismatch names are
-  # matched pairwise against the retrieval top-K; some are blocked (license/deps) —
-  # see _VISMATCH_LICENSE_BLOCKLIST / _VISMATCH_DEP_BLOCKLIST in localization/extractors.py.
+  # Legacy registry keys (disk|xfeat|xfeat-star|loma|loma-g) or a vismatch model
+  # name (e.g. disk-lightglue, aliked-lightglue, xfeat-steerers). Registry keys win
+  # on collisions (xfeat, xfeat-star, loma resolve to the legacy class). vismatch
+  # names are matched pairwise against the retrieval top-K; some are blocked
+  # (license/deps) — see _VISMATCH_*_BLOCKLIST in localization/extractors.py.
   extractor: loma
   top_k: 8  # pairwise (vismatch) path only: refs matched per query
 

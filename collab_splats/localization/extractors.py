@@ -498,18 +498,28 @@ _VISMATCH_DEP_BLOCKLIST = {
     "edm": "requires lightning==2.3.3; this project resolves lightning>=2.6",
 }
 
-# Upstream model licenses that forbid commercial use. Seeded from upstream LICENSE
-# files (verified in a follow-up task); vismatch's own wrapper is BSD-3 but does not
-# relicense the models it wraps.
+# Upstream model licenses that forbid commercial use. Verified 2026-08-17 against
+# upstream LICENSE files / READMEs (GitHub); vismatch's own wrapper is BSD-3 but does
+# not relicense the models it wraps. Names match vismatch.available_models exactly.
 _VISMATCH_LICENSE_BLOCKLIST = {
-    "superglue": "Magic Leap research-only license",
+    "superglue": "Magic Leap academic/non-profit research-only license",
     "superpoint-lightglue": "SuperPoint weights: Magic Leap research-only license",
+    "superpoint-lightglue-subpx": "SuperPoint weights: Magic Leap research-only license",
     "superpoint-sphereglue": "SuperPoint weights: Magic Leap research-only license",
     "minima-superpoint-lightglue": "SuperPoint weights: Magic Leap research-only license",
+    "lisrd": "default detector is SuperPoint (Magic Leap research-only weights)",
+    "lisrd-superpoint": "SuperPoint weights: Magic Leap research-only license",
     "duster": "DUSt3R: CC BY-NC-SA 4.0 (non-commercial)",
     "master": "MASt3R: CC BY-NC-SA 4.0 (non-commercial)",
-    "gim-lightglue": "GIM: academic-use-only license",
-    "gim-dkm": "GIM: academic-use-only license",
+    "gim-lightglue": "GIM: repo MIT but README restricts model/content to research use only",
+    "gim-dkm": "GIM: repo MIT but README restricts model/content to research use only",
+    "r2d2": "R2D2: CC BY-NC-SA 3.0 (non-commercial)",
+    "aspanformer": "ASpanFormer: Apple license, non-commercial purposes only",
+    "ripe": "RIPE: Fraunhofer Software Copyright License for Academic Use",
+    "silk": "SiLK: GPL-3.0 (copyleft) — legal review before commercial use",
+    "liftfeat": "LiftFeat: no license published (all rights reserved)",
+    "matchanything-eloftr": "MatchAnything: license unverified — audit before commercial use",
+    "matchanything-roma": "MatchAnything: license unverified — audit before commercial use",
 }
 
 

@@ -81,7 +81,10 @@ Shared flags: `--output-root` (required), `--config` (override YAML merged over
 
 ### Remote scenes
 
-Scene ids are the curated directory names: `YYYY_MM_DD-PARENTFOLDER-VIDEONAME`.
+Scene ids are the curated directory names. `YYYY_MM_DD-PARENTFOLDER-VIDEONAME` is the common
+convention, but any flat path-safe name is a valid scene (e.g. the
+`audiomoth_only_deployments-...` deployments); dirs that fail the safety filter are named in
+the driver's log.
 
 ```bash
 # Named scenes

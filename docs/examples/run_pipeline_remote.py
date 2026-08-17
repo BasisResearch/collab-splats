@@ -6,7 +6,8 @@ outputs to environments-processed/<scene>/, verify the push with `rclone check
 --one-way`, then delete the local copy. The curated video stays in the bucket, so a
 deleted scene is always re-fetchable.
 
-Scene ids are the curated directory names: YYYY_MM_DD-PARENTFOLDER-VIDEONAME.
+Scene ids are the curated directory names (e.g. YYYY_MM_DD-PARENTFOLDER-VIDEONAME by
+convention; any flat path-safe name works).
 
 Usage:
     # Named scenes
@@ -251,7 +252,7 @@ def main():
     # shared regex, or discovery could yield an id an explicit re-run of the same scene then refuses.
     bad = [s for s in args.scenes if not SCENE_ID_RE.match(s)]
     if bad:
-        parser.error(f"not curated scene ids (expected YYYY_MM_DD-PARENT-VIDEO): {', '.join(bad)}")
+        parser.error(f"not safe scene ids (one path segment, no leading '.' or '-'): {', '.join(bad)}")
 
     override_config = None
     if args.config:

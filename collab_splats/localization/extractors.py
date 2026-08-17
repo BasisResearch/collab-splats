@@ -663,3 +663,14 @@ class LocalMatcher(BaseLocalExtractor):
             cross,
             self.has_stable_indices,
         )
+
+
+def resolve_matcher(name: str, **kwargs) -> BaseLocalExtractor:
+    """Registry key -> legacy extractor; anything else -> LocalMatcher(vismatch name).
+
+    Transition-period seam: goes away with the registry once the parity gate
+    retires the legacy extractors (see spec, Migration step 3).
+    """
+    if name in BaseLocalExtractor._registry:
+        return BaseLocalExtractor.get(name)()
+    return LocalMatcher(name, **kwargs)

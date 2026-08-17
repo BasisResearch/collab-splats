@@ -9,9 +9,11 @@ from unittest.mock import MagicMock, patch
 
 from collab_splats.localization.extractors import (
     BaseLocalExtractor,
+    DiskExtractor,
     LocalFeatures,
     LocalMatcher,
     MatchResult,
+    resolve_matcher,
 )
 
 
@@ -166,3 +168,15 @@ def test_probe_sets_stability_flag(mock_get):
     mock_get.return_value = _fake_vismatch_matcher(stable_indices=False)
     lm2 = LocalMatcher("roma", device="cpu")
     assert lm2.has_stable_indices is False
+
+
+@patch("vismatch.get_matcher")
+def test_resolve_matcher(mock_get):
+    # Legacy registry key -> legacy class untouched
+    with patch.object(DiskExtractor, "__init__", return_value=None) as init:
+        m = resolve_matcher("disk")
+        assert isinstance(m, DiskExtractor) and init.called
+    # Unknown key -> vismatch model
+    mock_get.return_value = _fake_vismatch_matcher()
+    m = resolve_matcher("disk-lightglue", probe=False)
+    assert isinstance(m, LocalMatcher) and m.model_name == "disk-lightglue"

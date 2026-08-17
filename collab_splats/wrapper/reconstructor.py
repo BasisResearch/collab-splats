@@ -456,13 +456,13 @@ def _build_localization_db(feedforward_zarr: Path, extractor_name: str, frames_z
     keypoints/descriptors to group local_features/{extractor_name}/reconstruction.
     """
     # Heavy deps kept inline so the module imports without GPU/model libs
-    from collab_splats.localization.extractors import BaseLocalExtractor
+    from collab_splats.localization.extractors import resolve_matcher
     from collab_splats.localization.localizer import CameraLocalizer
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.preproc.frame_store import FrameStore
 
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True, load_world_points=True)
-    extractor = BaseLocalExtractor.get(extractor_name)()
+    extractor = resolve_matcher(extractor_name)
 
     # Boundary adapter: canonical store → (images, ids) core objects. Lazy genexpr → zero
     # reads on a cache hit; one partial-read per frame on a miss.

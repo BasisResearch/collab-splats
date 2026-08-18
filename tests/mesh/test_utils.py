@@ -148,7 +148,7 @@ def test_persist_mesh_vertex_features(tmp_path):
 ########
 
 
-def _holed_sphere_with_strays(path, radius=1.0, resolution=20):
+def _holed_sphere_with_strays(path, radius=1.0, resolution=20, color=None):
     """Sphere missing a cap, plus one stray blob inside its bbox and one far outside."""
     import open3d as o3d
 
@@ -162,7 +162,10 @@ def _holed_sphere_with_strays(path, radius=1.0, resolution=20):
     outside = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=6)
     outside.translate((radius * 9, 0.0, 0.0))
 
-    o3d.io.write_triangle_mesh(str(path), sphere + inside + outside)
+    combined = sphere + inside + outside
+    if color is not None:  # colored variant for the color-preservation test
+        combined.paint_uniform_color(color)
+    o3d.io.write_triangle_mesh(str(path), combined)
     return path
 
 
@@ -218,3 +221,19 @@ def test_clean_repair_mesh_use_largest_keeps_only_the_main_component(tmp_path):
     after = o3d.io.read_triangle_mesh(str(mesh_path))
     assert len(after.cluster_connected_triangles()[2]) == 1  # the in-bbox blob went too
     assert after.is_watertight()
+
+
+def test_clean_repair_mesh_preserves_vertex_colors(tmp_path):
+    """Vertex colors survive the rewrite — the meshlib file round-trip used to strip them."""
+    import open3d as o3d
+
+    from collab_splats.mesh.utils import clean_repair_mesh
+
+    mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply", color=(0.2, 0.6, 0.9))
+    clean_repair_mesh(mesh_path, max_hole_size=3.0)
+
+    after = o3d.io.read_triangle_mesh(str(mesh_path))
+    assert after.has_vertex_colors()
+    # Every vertex — original and hole-patch alike — carries the painted color
+    # (atol covers the uint8 PLY quantisation).
+    assert np.allclose(np.asarray(after.vertex_colors), (0.2, 0.6, 0.9), atol=0.02)

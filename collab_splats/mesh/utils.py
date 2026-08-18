@@ -18,6 +18,7 @@ from collab_splats.mesh.base import MeshResult
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
 try:
+    import meshlib.mrmeshnumpy as mn
     import meshlib.mrmeshpy as mm
 
     _MM_AVAILABLE = True
@@ -220,17 +221,23 @@ def persist_mesh_vertex_features(
 def clean_repair_mesh(
     mesh_path: str | Path,
     max_hole_size: float = 3.0,
-    max_edge_splits: int = 10000,
+    max_edge_splits: int = 1_000_000,
     use_largest: bool = False,  # if True, selects only the largest
 ) -> Path:
     """Drop stray components and fill small holes in a mesh on disk, rewriting it in place.
+
+    Memory-flat by construction: components come from open3d's native clustering (one int
+    per face) and holes are filled in a single batched meshlib call — never one bitset or
+    temp mesh per component/hole. The previous meshlib getAllComponents path allocated a
+    dense per-component FaceBitSet (240k components x 7.1M faces ≈ 214 GB on a TSDF scene)
+    and was OOM-killed.
 
     Args:
         mesh_path: Mesh to clean. Overwritten with the result.
         max_hole_size: Fill holes whose perimeter is below this; larger ones are real openings
             (an unscanned wall, the open side of a room) and get left alone.
-        max_edge_splits: Subdivision ceiling for each patch, so one huge hole cannot explode
-            the triangle count.
+        max_edge_splits: Global subdivision budget shared by all hole patches, so patch
+            refinement cannot explode the triangle count.
         use_largest: Keep only the biggest component. Off by default — that also throws away
             legitimate detached geometry (furniture, objects) that sits inside the scene.
     Returns:
@@ -240,70 +247,99 @@ def clean_repair_mesh(
         raise ImportError("meshlib is required for clean_repair_mesh. Install it with: pip install meshlib")
 
     mesh_path = Path(mesh_path)
-    mesh = mm.loadMesh(str(mesh_path))
+    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+    has_colors = mesh.has_vertex_colors()
 
-    # Split into connected components and seed the output with the biggest one — for a TSDF
-    # scene that is the room itself; everything else is either scene content or noise.
-    components = mm.getAllComponents(mesh)
-    sizes = [mask.count() for mask in components]
-    largest_idx = max(range(len(sizes)), key=lambda i: sizes[i])
+    # Connected components via native clustering: one component id per triangle. For a TSDF
+    # scene the largest component is the room itself; everything else is scene content or noise.
+    cluster_ids, cluster_sizes, _ = mesh.cluster_connected_triangles()
+    cluster_ids = np.asarray(cluster_ids)
+    cluster_sizes = np.asarray(cluster_sizes)
+    n_comp = len(cluster_sizes)
+    largest = int(cluster_sizes.argmax())
 
-    combined = mm.Mesh()
-    combined.addMeshPart(mm.MeshPart(mesh, components[largest_idx]))
+    if use_largest:
+        keep = np.zeros(n_comp, dtype=bool)
+    else:
+        # Per-component AABBs in one vectorized pass, then the cheap separator between scene
+        # content and the floating specks TSDF leaves outside the room from stray depth:
+        # keep every component whose bounding box sits inside the main one.
+        tri_pts = np.asarray(mesh.vertices)[np.asarray(mesh.triangles)]
+        comp_min = np.full((n_comp, 3), np.inf)
+        comp_max = np.full((n_comp, 3), -np.inf)
+        np.minimum.at(comp_min, cluster_ids, tri_pts.min(axis=1))
+        np.maximum.at(comp_max, cluster_ids, tri_pts.max(axis=1))
+        keep = np.all(comp_min >= comp_min[largest], axis=1) & np.all(
+            comp_max <= comp_max[largest], axis=1
+        )
+    keep[largest] = True
+    mesh.remove_triangles_by_mask(~keep[cluster_ids])
+    mesh.remove_unreferenced_vertices()
+    logger.info(
+        "Kept %d of %d components (removed %d)", int(keep.sum()), n_comp, n_comp - int(keep.sum())
+    )
 
-    n_removed = 0
-    if not use_largest:
-        # Keep every other component whose bounding box sits inside the main one, drop the rest.
-        # That is the cheap separator between scene content and the floating specks TSDF leaves
-        # outside the room from stray depth.
-        idxs = [i for i in range(len(sizes)) if i != largest_idx]
-        combined_bounds = combined.getBoundingBox()
-
-        for idx in tqdm(idxs, desc="Finding components within bounds"):
-            _temp = mm.Mesh()
-            _temp.addMeshPart(mm.MeshPart(mesh, components[idx]))
-
-            if combined_bounds.contains(_temp.getBoundingBox()):
-                combined.addMeshPart(mm.MeshPart(mesh, components[idx]))
-            else:
-                n_removed += 1
-
-    logger.info("Kept %d of %d components (removed %d)", len(sizes) - n_removed, len(sizes), n_removed)
-    mesh = combined
+    # Hand off to meshlib for hole filling — via arrays, not disk: meshlib's PLY round-trip
+    # drops vertex colors, so colors stay behind in numpy and are reattached after.
+    faces = np.asarray(mesh.triangles).astype(np.int32)
+    verts = np.asarray(mesh.vertices).astype(np.float32)
+    colors = np.asarray(mesh.vertex_colors) if has_colors else None
+    mmesh = mn.meshFromFacesVerts(faces, verts)
 
     # Patch size follows the mesh's own resolution, so a fill matches the surface around it.
-    # Native call, not a Python loop over edges: ~94s of pybind round-trips on a 4.7M-triangle
-    # scene versus sub-millisecond, same value to 1e-8.
-    avg_edge_length = mesh.averageEdgeLength()
+    avg_edge_length = mmesh.averageEdgeLength()
 
-    # Fill each small hole, then subdivide + smooth the new faces so the patch is not a flat cap.
-    hole_ids = mesh.topology.findHoleRepresentiveEdges()
+    # Perimeter gate in Python (cheap: ~2 s for 176k holes), then ONE native batch fill —
+    # a per-hole fill/subdivide/smooth loop does not finish at TSDF hole counts.
+    hole_ids = mmesh.topology.findHoleRepresentiveEdges()
+    small = mm.std_vector_Id_EdgeTag()
+    for he in tqdm(hole_ids, desc=f"Measuring holes ({len(hole_ids)})"):
+        if mmesh.holePerimeter(he) < max_hole_size:
+            small.append(he)
+
+    new_faces = mm.FaceBitSet()
     fill_params = mm.FillHoleParams()
-    n_filled = 0
+    fill_params.outNewFaces = new_faces
+    mm.fillHoles(mmesh, small, fill_params)
 
-    for he in tqdm(hole_ids, desc=f"Filling holes ({len(hole_ids)})"):
-        perimeter = mesh.holePerimeter(he)
-        if perimeter >= max_hole_size:
-            logger.debug("Skipping hole %s of perimeter %s", he, perimeter)
-            continue
+    # One subdivide + smooth over every patch at once, so fills are not flat caps.
+    new_verts = mm.VertBitSet()
+    subdiv_settings = mm.SubdivideSettings()
+    subdiv_settings.maxEdgeLen = avg_edge_length
+    subdiv_settings.maxEdgeSplits = max_edge_splits
+    subdiv_settings.region = new_faces
+    subdiv_settings.newVerts = new_verts
+    mm.subdivideMesh(mmesh, subdiv_settings)
+    mm.positionVertsSmoothly(mmesh, new_verts)
+    logger.info("Filled %d of %d holes (max_hole_size=%s)", len(small), len(hole_ids), max_hole_size)
 
-        new_faces = mm.FaceBitSet()
-        fill_params.outNewFaces = new_faces
-        mm.fillHole(mesh, he, fill_params)
+    # Back to numpy. Original vertices keep their indices through fill/subdivide/pack, so
+    # colors copy straight through and only patch vertices need a nearest-neighbour lookup;
+    # if meshlib ever reorders, fall back to a full NN transfer.
+    mmesh.pack()
+    out_verts = mn.getNumpyVerts(mmesh).astype(np.float64)
+    out_faces = mn.getNumpyFaces(mmesh.topology)
 
-        new_verts = mm.VertBitSet()
-        subdiv_settings = mm.SubdivideSettings()
-        subdiv_settings.maxEdgeLen = avg_edge_length
-        subdiv_settings.maxEdgeSplits = max_edge_splits
-        subdiv_settings.region = new_faces
-        subdiv_settings.newVerts = new_verts
-        mm.subdivideMesh(mesh, subdiv_settings)
-        mm.positionVertsSmoothly(mesh, new_verts)
-        n_filled += 1
+    out = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(out_verts), o3d.utility.Vector3iVector(out_faces)
+    )
+    if has_colors:
+        out_colors = np.empty((len(out_verts), 3))
+        n_orig = len(verts)
+        prefix_stable = len(out_verts) >= n_orig and np.allclose(
+            out_verts[:n_orig], verts, atol=1e-5
+        )
+        if prefix_stable:
+            out_colors[:n_orig] = colors
+            new_idx = np.arange(n_orig, len(out_verts))
+        else:
+            new_idx = np.arange(len(out_verts))
+        if len(new_idx):
+            _, nn = cKDTree(verts).query(out_verts[new_idx], k=1)
+            out_colors[new_idx] = colors[nn]
+        out.vertex_colors = o3d.utility.Vector3dVector(out_colors)
 
-    logger.info("Filled %d of %d holes (max_hole_size=%s)", n_filled, len(hole_ids), max_hole_size)
-
-    mm.saveMesh(mesh, str(mesh_path))
+    o3d.io.write_triangle_mesh(str(mesh_path), out)
     return mesh_path
 
 

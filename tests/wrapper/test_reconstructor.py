@@ -1392,3 +1392,10 @@ def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
 
     rec.run_pipeline()  # must not raise
     assert calls == ["preproc", "pointcloud", "mesh"]
+
+
+def test_base_yaml_mesh_has_fidelity_keys():
+    """New mesh keys exist and default OFF — shipping output stays byte-identical."""
+    cfg = yaml.safe_load((Path(__file__).parents[2] / "configs" / "base.yaml").read_text())
+    assert cfg["mesh"]["conf_percentile"] is None
+    assert cfg["mesh"]["native_resolution"] is False

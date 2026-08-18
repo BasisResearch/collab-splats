@@ -98,6 +98,8 @@ mesh:
   sdf_trunc: 0.02
   depth_trunc: 1.0          # drop depth samples beyond this range (metres)
   clean_repair: false       # drop out-of-bounds components + fill small holes, rewriting mesh.ply
+  conf_percentile: null    # mask depth below this per-frame confidence percentile (null = off)
+  native_resolution: false # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
 
 localization:
   enabled: false

@@ -402,13 +402,19 @@ def _run_tsdf_mesh(
     sdf_trunc: float,
     depth_trunc: float,
     clean_repair: bool = False,
+    conf_percentile: float | None = None,
+    native_resolution: bool = False,
+    frames_zarr: Path | None = None,
 ) -> Path:
     """Fuse depth + RGB from feedforward.zarr into a TSDF mesh, using COLMAP poses."""
     from collab_splats.mesh.utils import pointcloud_to_mesh
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
-    # world_points is the largest array in the store and the mesh path no longer reads it
-    ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True, load_world_points=False)
+    # world_points is the largest array in the store and the mesh path no longer reads it.
+    # native_resolution skips the zarr's model-res RGB too — it comes from frames.zarr instead.
+    ff = FeedforwardResult.load_zarr(
+        feedforward_zarr, load_images=not native_resolution, load_world_points=False
+    )
 
     # COLMAP is the pose authority — BA and loop-closure corrections land in the reconstruction,
     # not back in the zarr. Intrinsics stay the zarr's: build_colmap rescaled COLMAP's camera to
@@ -423,6 +429,17 @@ def _run_tsdf_mesh(
         )
     ff.extrinsics = result.extrinsics
 
+    # Native path: original-res RGB from frames.zarr, COLMAP's original-res K as intrinsics
+    frame_store = None
+    native_intrinsics = None
+    if native_resolution:
+        if frames_zarr is None or not frames_zarr.exists():
+            raise FileNotFoundError(
+                f"native_resolution requires frames.zarr (looked at {frames_zarr})"
+            )
+        frame_store = FrameStore.open(frames_zarr)
+        native_intrinsics = result.intrinsics  # original-res by contract (build_colmap)
+
     output_dir.mkdir(parents=True, exist_ok=True)
     mesh_result = pointcloud_to_mesh(
         ff,
@@ -432,6 +449,9 @@ def _run_tsdf_mesh(
         sdf_trunc=sdf_trunc,
         depth_trunc=depth_trunc,
         clean_repair=clean_repair,
+        conf_percentile=conf_percentile,
+        frame_store=frame_store,
+        native_intrinsics=native_intrinsics,
     )
     return mesh_result.mesh_path
 
@@ -938,6 +958,9 @@ class Reconstructor:
             sdf_trunc=mesh_cfg["sdf_trunc"],
             depth_trunc=mesh_cfg["depth_trunc"],
             clean_repair=mesh_cfg["clean_repair"],
+            conf_percentile=mesh_cfg["conf_percentile"],
+            native_resolution=mesh_cfg["native_resolution"],
+            frames_zarr=self.frames_zarr,
         )
         logger.info("Mesh saved to %s", out)
         return out

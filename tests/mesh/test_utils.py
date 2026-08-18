@@ -400,3 +400,21 @@ def test_tsdf_inputs_native_resolution_frame_count_mismatch_raises():
     ff = _tiny_ff_result()
     with pytest.raises(ValueError, match="[Ff]rame"):
         _feedforward_to_tsdf_inputs(ff, frame_store=ShortStore(), native_intrinsics=ff.intrinsics)
+
+
+def test_tsdf_inputs_native_resolution_wrong_store_resolution_raises():
+    """Same frame count but different resolution than original_coords → loud failure."""
+    from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
+
+    class WrongResStore:
+        def __len__(self):
+            return 2
+
+        def images(self):
+            return np.zeros((2, 32, 32, 3), dtype=np.uint8)  # original_coords say 16x16
+
+    ff = _tiny_ff_result()
+    with pytest.raises(ValueError, match="resolution"):
+        _feedforward_to_tsdf_inputs(
+            ff, frame_store=WrongResStore(), native_intrinsics=ff.intrinsics
+        )

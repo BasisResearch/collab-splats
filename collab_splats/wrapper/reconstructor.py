@@ -417,8 +417,9 @@ def _run_tsdf_mesh(
     )
 
     # COLMAP is the pose authority — BA and loop-closure corrections land in the reconstruction,
-    # not back in the zarr. Intrinsics stay the zarr's: build_colmap rescaled COLMAP's camera to
-    # original resolution, while the zarr's depth and RGB are at model resolution.
+    # not back in the zarr. On the model-res path intrinsics stay the zarr's (build_colmap
+    # rescaled COLMAP's camera to original resolution, while the zarr's depth and RGB are at
+    # model resolution); the native path swaps in COLMAP's original-res K below.
     if ff.depth is None:
         raise ValueError(f"{feedforward_zarr} has no depth — cannot mesh.")
     if result.extrinsics.shape[0] != ff.depth.shape[0]:

@@ -545,7 +545,7 @@ def _feedforward_to_tsdf_inputs(
             "or load the zarr with load_depth=True."
         )
 
-    depths = np.ascontiguousarray(result.depth, dtype=np.float32).copy()  # (N, H, W)
+    depths = np.ascontiguousarray(result.depth, dtype=np.float32)  # (N, H, W)
 
     # Confidence gate BEFORE any upsampling — never amplify pixels about to be deleted.
     # Same global-percentile rule as the pointcloud path (shared confidence_mask helper),
@@ -559,11 +559,13 @@ def _feedforward_to_tsdf_inputs(
         conf = result.confidence
         if hasattr(conf, "numpy"):
             conf = conf.detach().cpu().numpy()
-        depths[~confidence_mask(conf, conf_percentile)] = 0.0
+        dropped = ~confidence_mask(conf, conf_percentile)
+        depths = depths.copy()  # copy only when mutating — the default path fuses read-only
+        depths[dropped] = 0.0
         logger.info(
             "Confidence mask (p%.0f): %.1f%% of depth pixels dropped",
             conf_percentile,
-            100.0 * float((depths == 0).mean()),
+            100.0 * float(dropped.mean()),
         )
 
     c2w = invert_poses(result.extrinsics).astype(np.float32)
@@ -579,7 +581,15 @@ def _feedforward_to_tsdf_inputs(
                 f"reconstruction has {n} — they are from different runs."
             )
         rgbs = np.ascontiguousarray(frame_store.images())  # (N, H, W, 3) uint8
-        out_hw = rgbs.shape[1:3]
+        out_hw = tuple(rgbs.shape[1:3])
+        # frames.zarr must be the resolution the crop boxes were computed against — a
+        # same-count store at a different res would silently misplace every crop.
+        expected_hw = (int(result.original_coords[0, 5]), int(result.original_coords[0, 4]))
+        if out_hw != expected_hw:
+            raise ValueError(
+                f"frames.zarr resolution {out_hw} != reconstruction original resolution "
+                f"{expected_hw} (original_coords) — they are from different preprocessing runs."
+            )
         native_depths = np.zeros((n, *out_hw), dtype=np.float32)
         for i in tqdm(range(n), desc="Upsampling depth to native resolution"):
             native_depths[i] = guided_upsample_depth(

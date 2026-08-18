@@ -30,7 +30,7 @@ feedforward→TSDF adapter layer; `Open3DTSDFFusion.create` stays a dumb fuser.
 ### 1. Confidence masking (floaters)
 
 New adapter step in `_feedforward_to_tsdf_inputs`: pixels whose learned confidence falls below
-a per-frame percentile get depth set to 0 (0 = "no observation" to Open3D's RGBD integration —
+a global percentile get depth set to 0 (0 = "no observation" to Open3D's RGBD integration —
 same convention `depth_trunc` already relies on).
 
 - Source: `FeedforwardResult.confidence` (N, H, W) — already persisted in feedforward.zarr and
@@ -92,7 +92,7 @@ not a new interface.
 
 ```yaml
 mesh:
-  conf_percentile: null    # mask depth below this per-frame confidence percentile (null = off)
+  conf_percentile: null    # mask depth below this global confidence percentile (null = off)
   native_resolution: false # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
 ```
 

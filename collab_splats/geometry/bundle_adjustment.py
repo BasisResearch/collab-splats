@@ -7,6 +7,7 @@ Public API:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -393,6 +394,13 @@ class BundleAdjustment:
                 strategy=strategy,
                 solver=_get_default_solver(device=device),
                 reject=10,
+            )
+            # bae LM.step calls self.model(input) with no target, but pypose>=0.7
+            # RobustModel.forward requires target positionally — bind target=None on the
+            # instance (residuals then fall back to squared model output, the intended
+            # objective). Without this every LM step raises TypeError.
+            optimizer.model.forward = functools.partial(
+                type(optimizer.model).forward, optimizer.model, target=None
             )
 
             if cfg.capture_loss_history:

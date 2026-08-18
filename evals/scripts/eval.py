@@ -198,7 +198,13 @@ def _write_tum(path: Path, poses_w2c: np.ndarray) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-_BACKBONE_PREFIX = {"vggt_omega": "omega", "vggtx": "vggtx", "mapanything": "mapanything", "vggt_spark": "spark"}
+_BACKBONE_PREFIX = {
+    "vggt_omega": "omega",
+    "vggtx": "vggtx",
+    "mapanything": "mapanything",
+    "vggt_spark": "spark",
+    "loger": "loger",
+}
 
 
 def _make_creator(
@@ -410,9 +416,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--backbone",
-        choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark"],
+        choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark", "loger"],
         default="vggt_omega",
-        help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, mapanything→mapanything_*, vggt_spark→spark_*",
+        help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, mapanything→mapanything_*, vggt_spark→spark_*, loger→loger_*",
     )
     parser.add_argument(
         "--conditions",

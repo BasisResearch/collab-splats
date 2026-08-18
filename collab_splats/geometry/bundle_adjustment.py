@@ -97,6 +97,12 @@ class BundleAdjustment:
         cfg = self.config
 
         def _extract() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            logger.info(
+                "Extracting VGGSfM tracks: %d frames, max_query_pts=%d, query_frame_num=%d (slow step)",
+                len(result.images),
+                cfg.max_query_pts,
+                cfg.query_frame_num,
+            )
             return _extract_tracks_vggsfm(
                 result.images,
                 result.confidence,
@@ -117,7 +123,7 @@ class BundleAdjustment:
             try:
                 store = zarr.open(str(cache_path), mode="r")
                 if store.attrs.get("cache_key") == expected_key:
-                    logger.debug("Track cache hit: %s", cache_path)
+                    logger.info("Track cache hit (skipping VGGSfM extraction): %s", cache_path)
                     return (
                         store["tracks"][:],
                         store["vis_scores"][:],
@@ -199,9 +205,17 @@ class BundleAdjustment:
         after to re-extract points from refined poses.
         """
         self._last_loss_history = []
+        logger.info(
+            "BA refine start: %d frames (increment_size=%d, lm_steps=%d, max_reproj_error=%s)",
+            len(result.images),
+            self.config.increment_size,
+            self.config.lm_steps,
+            self.config.max_reproj_error,
+        )
 
         # Load cached tracks or extract via VGGSfM (one extraction shared across all k-steps)
         tracks, vis_scores, pts3d_tracks = self._load_or_extract_tracks(result)
+        logger.info("Tracks ready: %d points across %d frames", tracks.shape[1], tracks.shape[0])
 
         # Bring intrinsics to model space if needed — VGGSfM tracks are model-res; creators
         # already store model-res K (the guard makes this a no-op), legacy original-res K is scaled
@@ -214,6 +228,7 @@ class BundleAdjustment:
         N = len(result.images)
         increment_size = self.config.increment_size
         if increment_size == 0 or increment_size >= N:
+            logger.info("All-at-once BA over %d frames", N)
             refined_extrinsics, refined_intrinsics_model = self._refine_allonce(
                 result,
                 tracks,
@@ -239,6 +254,11 @@ class BundleAdjustment:
         refined_intrinsics[:, 1, 2] = refined_intrinsics_model[:, 1, 2] / sy + tl_y
 
         refined_extrinsics_4x4 = extrinsics_to_homogeneous(refined_extrinsics)
+        # Report final loss when a curve was captured — the single number a console watcher needs
+        if self._last_loss_history and self._last_loss_history[-1]:
+            logger.info("BA refine done: final loss %.6e", self._last_loss_history[-1][-1])
+        else:
+            logger.info("BA refine done")
         return replace(result, extrinsics=refined_extrinsics_4x4, intrinsics=refined_intrinsics)
 
     def _optimize(
@@ -293,6 +313,11 @@ class BundleAdjustment:
         active_pts = np.where(vis.any(0))[0]  # (L,)
 
         if len(active_frames) < 2 or len(active_pts) < 2:
+            logger.warning(
+                "BA skipped: too few active frames/points after filtering (%d frames, %d points)",
+                len(active_frames),
+                len(active_pts),
+            )
             return refined_pts3d, refined_extrinsics, refined_intrinsics
 
         # bae LM optimizer is CUDA-only (CuSparse spgemm); reject CPU with a clear message.
@@ -306,6 +331,15 @@ class BundleAdjustment:
             )
 
         frame_idx, pt_idx = np.where(vis[np.ix_(active_frames, active_pts)])
+        logger.info(
+            "LM optimize: %d/%d frames, %d/%d points, %d observations, up to %d steps",
+            len(active_frames),
+            vis.shape[0],
+            len(active_pts),
+            vis.shape[1],
+            len(frame_idx),
+            n_steps,
+        )
         global_frame_idx = active_frames[frame_idx]
         global_pt_idx = active_pts[pt_idx]
         obs_2d = tracks[global_frame_idx, global_pt_idx].astype(np.float64)  # (M, 2)
@@ -366,12 +400,15 @@ class BundleAdjustment:
                 # StopOnPlateau patience / early-stop is intentionally skipped here —
                 # running all n_steps gives a complete loss curve for visualisation.
                 loss_hist: list[float] = []
-                for _ in range(n_steps):
+                for i in range(n_steps):
                     step_loss = optimizer.step(input=input_dict)
                     loss_hist.append(float(step_loss))
+                    logger.info("LM step %d/%d: loss=%.6e", i + 1, n_steps, float(step_loss))
                 self._last_loss_history.append(loss_hist)
             else:
-                # Default path: StopOnPlateau with patience-based early stopping
+                # Default path: StopOnPlateau with patience-based early stopping.
+                # Manual continual/step loop (equivalent to scheduler.optimize) so each
+                # LM iteration's loss is logged — progress is visible on long runs.
                 scheduler = pp.optim.scheduler.StopOnPlateau(
                     optimizer,
                     steps=n_steps,
@@ -379,7 +416,12 @@ class BundleAdjustment:
                     decreasing=1e-3,
                     verbose=False,
                 )
-                scheduler.optimize(input=input_dict)
+                step = 0
+                while scheduler.continual():
+                    step_loss = optimizer.step(input=input_dict)
+                    scheduler.step(step_loss)
+                    step += 1
+                    logger.info("LM step %d/%d: loss=%.6e", step, n_steps, float(step_loss))
 
         # Recover (3, 4) extrinsics from optimised SE3 quaternion representation
         opt_cam = model.pose.data.detach().cpu().numpy()  # (K, 7) or (K, 8)

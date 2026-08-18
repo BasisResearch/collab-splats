@@ -887,6 +887,96 @@ class Reconstructor:
             image_paths=image_paths,
         )
 
+    def refine_poses(self, overwrite: bool = False) -> "PointcloudResult":
+        """Refine camera poses via LM bundle adjustment; rewrite pose-derived artifacts.
+
+        One implementation for both triggers: runs inline after the pointcloud stage when
+        pointcloud.bundle_adjustment is enabled, and from disk via --stages refine against
+        a processed scene. Loads everything from feedforward.zarr — no live creator needed.
+        """
+        # Heavy deps imported lazily, matching the other stage methods
+        from vggt.utils.geometry import unproject_depth_map_to_point_map
+
+        from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+        from collab_splats.pointcloud.feedforward.base import (
+            FeedforwardResult,
+            _rescale_reconstruction_to_original_dimensions,
+            build_pycolmap_reconstruction,
+        )
+
+        # Skip when already refined — run_pipeline refuses NAMED re-runs generically, so this
+        # mirrors the other stage methods' silent skip for config-driven repeat runs.
+        marker = self.backend_dir / "colmap" / "refine.json"
+        if marker.exists() and not overwrite:
+            logger.info("Poses already refined (%s), skipping refine", marker)
+            return self._resolve_result()
+
+        # Load the full FeedforwardResult from zarr: images/confidence/world_points feed track
+        # extraction, depth+pixel_indices feed the deterministic creator-free reproject.
+        zarr_path = self.backend_dir / "feedforward.zarr"
+        if not zarr_path.exists():
+            raise FileNotFoundError(f"refine requires {zarr_path}; run the pointcloud stage first.")
+        ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
+
+        # Refine poses with LM BA, then re-derive the point set under the new cameras
+        cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir, capture_loss_history=True)
+        ba = BundleAdjustment(cfg)
+        ff = ba.refine(ff).reproject()
+
+        # Rewrite COLMAP through the creators' exact write path: build at model res from the
+        # refined result, then rescale K + image dims back to original resolution.
+        recon = build_pycolmap_reconstruction(
+            ff.points,
+            ff.colors,
+            ff.extrinsics,
+            ff.intrinsics,
+            ff.model_width,
+            ff.model_height,
+            [p.name for p in ff.image_paths],
+        )
+        recon = _rescale_reconstruction_to_original_dimensions(
+            recon, ff.image_paths, ff.original_coords, (ff.model_width, ff.model_height)
+        )
+        sparse_dir = self.backend_dir / "colmap" / "sparse" / "0"
+        sparse_dir.mkdir(parents=True, exist_ok=True)
+        recon.write_binary(str(sparse_dir))
+
+        # Write pose-derived arrays back to feedforward.zarr so zarr and COLMAP never disagree
+        # (localization samples world_points; a later --stages refine re-reads these poses).
+        store = zarr.open(str(zarr_path), mode="r+")
+        store["extrinsics"][:] = ff.extrinsics
+        store["intrinsics"][:] = ff.intrinsics
+        store["points"][:] = ff.points
+        if "world_points" in store and ff.depth is not None:
+            wp = unproject_depth_map_to_point_map(
+                ff.depth[..., None], ff.extrinsics[:, :3, :], ff.intrinsics
+            ).astype(np.float32)
+            store["world_points"][:] = wp
+
+        # Refresh the remaining derived artifacts through the standard writers
+        result = self._load_pointcloud_from_disk()
+        self._export_pointcloud_ply(result)
+        self._write_transforms_json(result)
+
+        # Marker + provenance in one file: BA config and per-step LM loss history
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "config": {
+                        k: str(v) if isinstance(v, Path) else v
+                        for k, v in dataclasses.asdict(cfg).items()
+                    },
+                    "loss_history": ba._last_loss_history,
+                    "n_frames": len(ff.image_paths),
+                },
+                indent=2,
+            )
+        )
+
+        self.pointcloud = result
+        return result
+
     def extract_semantics(
         self,
         result: "PointcloudResult | None" = None,

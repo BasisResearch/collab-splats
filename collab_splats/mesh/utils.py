@@ -636,6 +636,9 @@ def optimize_color_map(
         iterations:  rigid optimizer iteration count (upstream default is 300).
         depth_trunc: visibility cutoff — must match the fusion's depth_trunc; the option's
                      2.5 default assumes metric depth and ours is non-metric.
+
+    Holds a full-resolution RGBD copy of every frame plus the optimizer's internal gradient
+    images (~15-20 GB at 300 frames of 1080p) — do not co-schedule with other heavy stages.
     """
     # Float [0,1] RGB (model-res path) -> uint8 at the boundary; native path is already uint8
     if rgbs.dtype != np.uint8:
@@ -644,11 +647,12 @@ def optimize_color_map(
     # RGBD list + camera trajectory from the same arrays the fusion consumed — resolution
     # consistency with the mesh is guaranteed by construction
     height, width = depths.shape[1:3]
+    w2c = invert_poses(c2w)  # optimizer wants world-to-camera
     rgbd_images = []
     cam_params = []
     for i in range(depths.shape[0]):
         color = o3d.geometry.Image(np.ascontiguousarray(rgbs[i]))
-        depth = o3d.geometry.Image(np.ascontiguousarray(depths[i].astype(np.float32)))
+        depth = o3d.geometry.Image(np.ascontiguousarray(depths[i], dtype=np.float32))
         rgbd_images.append(
             o3d.geometry.RGBDImage.create_from_color_and_depth(
                 color,
@@ -663,13 +667,15 @@ def optimize_color_map(
         cam.intrinsic = o3d.camera.PinholeCameraIntrinsic(
             width, height, float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
         )
-        cam.extrinsic = np.linalg.inv(c2w[i])  # optimizer wants world-to-camera
+        cam.extrinsic = w2c[i]
         cam_params.append(cam)
     trajectory = o3d.camera.PinholeCameraTrajectory()
     trajectory.parameters = cam_params
 
     # Run the rigid optimizer and overwrite the mesh; the refined trajectory is discarded
     mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+    if not mesh.has_vertices():
+        raise ValueError(f"{mesh_path} is missing or empty — nothing to optimize.")
     option = o3d.pipelines.color_map.RigidOptimizerOption(
         maximum_iteration=int(iterations),
         maximum_allowable_depth=float(depth_trunc),

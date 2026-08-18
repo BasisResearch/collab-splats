@@ -432,12 +432,13 @@ def test_tsdf_inputs_native_resolution_wrong_store_resolution_raises():
 def test_optimize_color_map_runs_and_recolors(tmp_path):
     """Rigid optimizer runs on a tiny synthetic scene and leaves a valid colored mesh in place."""
     # Constant-depth plane seen by 3 slightly-translated cameras; left half bright so the
-    # optimizer has an image gradient to work with
-    n, h, w = 3, 32, 32
+    # optimizer has an image gradient to work with. 48px min: Open3D's default
+    # image_boundary_margin=10 marks every vertex invisible on a 32px frame (all-black mesh).
+    n, h, w = 3, 48, 48
     depths = np.full((n, h, w), 1.0, np.float32)
     rgbs = np.zeros((n, h, w, 3), np.uint8)
     rgbs[:, :, : w // 2] = 200
-    K = np.array([[32.0, 0.0, 16.0], [0.0, 32.0, 16.0], [0.0, 0.0, 1.0]], np.float32)
+    K = np.array([[48.0, 0.0, 24.0], [0.0, 48.0, 24.0], [0.0, 0.0, 1.0]], np.float32)
     intrinsics = np.tile(K, (n, 1, 1))
     c2w = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
     c2w[:, 0, 3] = np.linspace(-0.02, 0.02, n)
@@ -454,3 +455,30 @@ def test_optimize_color_map_runs_and_recolors(tmp_path):
     mesh = o3d.io.read_triangle_mesh(str(result.mesh_path))
     assert len(mesh.vertices) > 0
     assert len(mesh.vertex_colors) == len(mesh.vertices)
+    colors = np.asarray(mesh.vertex_colors)
+    assert colors.max() > 0.0  # optimizer reassigned real colors, not a zeroed mesh
+
+
+def test_optimize_color_map_float_rgb_and_empty_mesh_guard(tmp_path):
+    """Float [0,1] RGB converts at the boundary; a missing mesh fails loudly."""
+    n, h, w = 2, 16, 16
+    depths = np.full((n, h, w), 1.0, np.float32)
+    rgbs = np.full((n, h, w, 3), 0.5, np.float32)  # float path
+    K = np.array([[16.0, 0.0, 8.0], [0.0, 16.0, 8.0], [0.0, 0.0, 1.0]], np.float32)
+    intrinsics = np.tile(K, (n, 1, 1))
+    c2w = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    c2w[:, 0, 3] = np.linspace(-0.01, 0.01, n)
+
+    fusion = Open3DTSDFFusion(
+        output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=5.0
+    )
+    result = fusion.create(depths, rgbs, c2w, intrinsics)
+    optimize_color_map(
+        result.mesh_path, depths, rgbs, c2w, intrinsics, iterations=2, depth_trunc=5.0
+    )
+    assert o3d.io.read_triangle_mesh(str(result.mesh_path)).has_vertices()
+
+    with pytest.raises(ValueError, match="missing or empty"):
+        optimize_color_map(
+            tmp_path / "nope.ply", depths, rgbs, c2w, intrinsics, iterations=2, depth_trunc=5.0
+        )

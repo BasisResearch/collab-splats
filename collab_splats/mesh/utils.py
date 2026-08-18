@@ -17,6 +17,7 @@ from tqdm.auto import tqdm
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.mesh.base import MeshResult
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.utils import confidence_mask
 
 try:
     import meshlib.mrmeshnumpy as mn
@@ -391,6 +392,8 @@ def guided_upsample_depth(
     """
     tl_x, tl_y, cr_x, cr_y = (int(round(v)) for v in crop_box)
     cw, ch = cr_x - tl_x, cr_y - tl_y
+    if cw <= 0 or ch <= 0:
+        raise ValueError(f"Degenerate crop box {crop_box} — original_coords are corrupt")
 
     # Nearest resize of depth and validity to crop size — blocky but never invents values
     depth_nn = cv2.resize(depth, (cw, ch), interpolation=cv2.INTER_NEAREST)
@@ -408,6 +411,8 @@ def guided_upsample_depth(
 
     # The guide must never resurrect deleted depth
     filtered[valid_nn == 0] = 0.0
+    # Guided filter can undershoot slightly; depth must stay non-negative
+    np.maximum(filtered, 0.0, out=filtered)
 
     canvas = np.zeros(out_hw, dtype=np.float32)
     canvas[tl_y:cr_y, tl_x:cr_x] = filtered
@@ -516,37 +521,82 @@ def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_r
 
 def _feedforward_to_tsdf_inputs(
     result: FeedforwardResult,
+    conf_percentile: float | None = None,
+    frame_store=None,
+    native_intrinsics: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Unpack a FeedforwardResult into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
 
-    Everything returned is at model resolution and mutually pixel-aligned: depth, images and
-    intrinsics all come off the same forward pass. Nothing is re-derived or re-read from disk.
+    Default: everything at model resolution, mutually pixel-aligned, straight off the forward
+    pass. `conf_percentile` zeroes depth below that confidence percentile (0 = no
+    observation to Open3D). `frame_store` + `native_intrinsics` switch to native resolution:
+    original-res uint8 RGB from frames.zarr, depth guided-upsampled into the model crop region
+    (see guided_upsample_depth), and the caller's original-res K (the COLMAP camera).
 
     Raises:
-        ValueError: if result.depth or result.images is None.
+        ValueError: depth/images missing; conf_percentile set but confidence absent;
+                    frame_store length != frame count; frame_store without native_intrinsics.
     """
-    # depth and images are the model's own outputs — all three backends populate both, so a
-    # fallback derivation here would be dead code (and was measurably worse: see the design doc)
+    # depth is the model's own output — all three backends populate it, so a fallback
+    # derivation here would be dead code (and was measurably worse: see the design doc)
     if result.depth is None:
         raise ValueError(
             "result.depth is None — cannot mesh. Access creator.outputs after reconstruct(), "
             "or load the zarr with load_depth=True."
         )
+
+    depths = np.ascontiguousarray(result.depth, dtype=np.float32).copy()  # (N, H, W)
+
+    # Confidence gate BEFORE any upsampling — never amplify pixels about to be deleted.
+    # Same global-percentile rule as the pointcloud path (shared confidence_mask helper),
+    # so the mesh inherits exactly the filter that makes the sparse cloud look clean.
+    if conf_percentile is not None:
+        if result.confidence is None:
+            raise ValueError(
+                "conf_percentile is set but this result has no confidence — re-run the "
+                "pointcloud stage, or unset mesh.conf_percentile."
+            )
+        conf = result.confidence
+        if hasattr(conf, "numpy"):
+            conf = conf.detach().cpu().numpy()
+        depths[~confidence_mask(conf, conf_percentile)] = 0.0
+        logger.info(
+            "Confidence mask (p%.0f): %.1f%% of depth pixels dropped",
+            conf_percentile,
+            100.0 * float((depths == 0).mean()),
+        )
+
+    c2w = invert_poses(result.extrinsics).astype(np.float32)
+
+    # Native-resolution path: original-res RGB + guided-upsampled depth + caller's K
+    if frame_store is not None:
+        if native_intrinsics is None:
+            raise ValueError("frame_store requires native_intrinsics (the original-res COLMAP K)")
+        n = depths.shape[0]
+        if len(frame_store) != n:
+            raise ValueError(
+                f"Frame-count mismatch: frames.zarr has {len(frame_store)} frames but the "
+                f"reconstruction has {n} — they are from different runs."
+            )
+        rgbs = np.ascontiguousarray(frame_store.images())  # (N, H, W, 3) uint8
+        out_hw = rgbs.shape[1:3]
+        native_depths = np.zeros((n, *out_hw), dtype=np.float32)
+        for i in tqdm(range(n), desc="Upsampling depth to native resolution"):
+            native_depths[i] = guided_upsample_depth(
+                depths[i], rgbs[i], crop_box=tuple(result.original_coords[i, :4]), out_hw=out_hw
+            )
+        return native_depths, rgbs, c2w, native_intrinsics.copy()
+
+    # Model-resolution path (default): images is (N, 3, H, W) in [0, 1]
     if result.images is None:
         raise ValueError(
             "result.images is None — cannot mesh. Access creator.outputs after reconstruct(), "
             "or load the zarr with load_images=True."
         )
-
-    depths = np.ascontiguousarray(result.depth, dtype=np.float32)  # (N, H, W)
-
-    # images is (N, 3, H, W) in [0, 1] — torch from a live creator, numpy from load_zarr
     imgs = result.images
     if hasattr(imgs, "numpy"):
         imgs = imgs.detach().cpu().numpy()
     rgbs = np.ascontiguousarray(imgs.transpose(0, 2, 3, 1), dtype=np.float32)  # (N, H, W, 3)
-
-    c2w = invert_poses(result.extrinsics).astype(np.float32)
 
     return depths, rgbs, c2w, result.intrinsics.copy()
 
@@ -555,6 +605,9 @@ def pointcloud_to_mesh(
     result: FeedforwardResult,
     output_dir: Path,
     method: str = "open3d_tsdf",
+    conf_percentile: float | None = None,
+    frame_store=None,
+    native_intrinsics: np.ndarray | None = None,
     **mesher_kwargs,
 ) -> MeshResult:
     """Mesh directly from a FeedforwardResult using any registered mesh method.
@@ -564,11 +617,17 @@ def pointcloud_to_mesh(
     from their subclass.
 
     Args:
-        result:          FeedforwardResult with populated depth + images. Access creator.outputs
-                         after reconstruct(), or load_zarr(path, load_images=True).
-        output_dir:      Directory to write mesh output.
-        method:          Registry key — "open3d_tsdf", "depth_normal_poisson", "gaussians_poisson".
-        **mesher_kwargs: Forwarded to the mesh creator constructor (voxel_size, sdf_trunc, etc.).
+        result:            FeedforwardResult with populated depth + images. Access creator.outputs
+                           after reconstruct(), or load_zarr(path, load_images=True).
+        output_dir:        Directory to write mesh output.
+        method:            Registry key — "open3d_tsdf", "depth_normal_poisson", "gaussians_poisson".
+        conf_percentile:   Forwarded to _feedforward_to_tsdf_inputs — zero out depth below this
+                           confidence percentile before fusion.
+        frame_store:       Forwarded to _feedforward_to_tsdf_inputs — switches to native-resolution
+                           fusion using this FrameStore's RGB.
+        native_intrinsics: Forwarded to _feedforward_to_tsdf_inputs — original-res K required
+                           alongside frame_store.
+        **mesher_kwargs:   Forwarded to the mesh creator constructor (voxel_size, sdf_trunc, etc.).
 
     Returns:
         MeshResult with mesh_path pointing to the output PLY.
@@ -578,6 +637,11 @@ def pointcloud_to_mesh(
     """
     from collab_splats.mesh import get_mesh_creator
 
-    depths, rgbs, c2w, intrinsics = _feedforward_to_tsdf_inputs(result)
+    depths, rgbs, c2w, intrinsics = _feedforward_to_tsdf_inputs(
+        result,
+        conf_percentile=conf_percentile,
+        frame_store=frame_store,
+        native_intrinsics=native_intrinsics,
+    )
     mesher = get_mesh_creator(method, Path(output_dir), **mesher_kwargs)
     return mesher.create(depths, rgbs, c2w, intrinsics)

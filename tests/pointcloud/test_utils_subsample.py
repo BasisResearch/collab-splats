@@ -55,3 +55,29 @@ def test_colors_none():
     out_pts, out_cols = subsample_points(pts, None, max_points=50)
     assert out_pts.shape == (50, 3)
     assert out_cols is None
+
+
+def test_confidence_mask_global_percentile_strict():
+    """Keep = strictly above the global cutoff — the subsample_points rule, shape-agnostic."""
+    from collab_splats.pointcloud.utils import confidence_mask
+
+    conf = np.array([[0.0, 0.0], [1.0, 1.0]])  # p50 cutoff = 0.5
+    keep = confidence_mask(conf, 50.0)
+    np.testing.assert_array_equal(keep, [[False, False], [True, True]])
+
+
+def test_confidence_mask_uniform_confidence_keeps_all():
+    """Uniform conf: nothing is strictly above the cutoff → keep everything, never delete-all."""
+    from collab_splats.pointcloud.utils import confidence_mask
+
+    keep = confidence_mask(np.full((3, 4), 0.7), 50.0)
+    assert keep.all() and keep.shape == (3, 4)
+
+
+def test_subsample_points_conf_filter_unchanged():
+    """The refactor onto confidence_mask keeps subsample_points' output identical."""
+    rng = np.random.default_rng(0)
+    pts = rng.random((100, 3))
+    conf = np.concatenate([np.zeros(50), np.ones(50)])
+    out, _ = subsample_points(pts, None, conf, max_points=1000, conf_percentile=50.0)
+    np.testing.assert_array_equal(out, pts[50:])  # strict >: only the conf==1 half survives

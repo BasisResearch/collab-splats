@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -301,3 +303,100 @@ def test_guided_upsample_depth_step_edge_stays_sharp():
     interior = out[:, np.r_[0 : W // 2 - 8, W // 2 + 8 : W]]  # away from the edge band
     fabricated = (interior > 1.1) & (interior < 1.9)
     assert fabricated.mean() < 0.01
+
+
+########
+# _feedforward_to_tsdf_inputs — confidence masking + native-resolution adapter
+########
+
+
+def _tiny_ff_result(with_confidence=True):
+    """Minimal FeedforwardResult for adapter tests: 2 frames, 8x8 model res, 16x16 original."""
+    import torch
+
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+    n, h, w = 2, 8, 8
+    rng = np.random.default_rng(0)
+    depth = rng.uniform(1.0, 2.0, (n, h, w)).astype(np.float32)
+    conf = np.zeros((n, h, w), dtype=np.float32)
+    conf[:, :, : w // 2] = 1.0  # right half low-confidence
+    ext = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    K = np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], np.float32), (n, 1, 1))
+    return FeedforwardResult(
+        points=np.zeros((1, 3), np.float32),
+        colors=np.zeros((1, 3), np.uint8),
+        extrinsics=ext,
+        intrinsics=K,
+        image_paths=[Path(f"f{i}.jpg") for i in range(n)],
+        original_coords=np.tile(np.array([0, 0, 16, 16, 16, 16], np.float32), (n, 1)),
+        model_width=w,
+        model_height=h,
+        images=torch.rand(n, 3, h, w),
+        confidence=torch.from_numpy(conf) if with_confidence else None,
+        depth=depth,
+    )
+
+
+def test_tsdf_inputs_conf_percentile_zeroes_low_confidence_depth():
+    from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
+
+    ff = _tiny_ff_result()
+    depths, _, _, _ = _feedforward_to_tsdf_inputs(ff, conf_percentile=50.0)
+    assert np.all(depths[:, :, 4:] == 0)  # low-confidence half masked
+    assert np.all(depths[:, :, :4] > 0)  # high-confidence half untouched
+
+
+def test_tsdf_inputs_conf_percentile_without_confidence_raises():
+    from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
+
+    ff = _tiny_ff_result(with_confidence=False)
+    with pytest.raises(ValueError, match="confidence"):
+        _feedforward_to_tsdf_inputs(ff, conf_percentile=50.0)
+
+
+def test_tsdf_inputs_defaults_unchanged():
+    """Options off → byte-identical to the pre-change adapter output."""
+    from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
+
+    ff = _tiny_ff_result()
+    depths, rgbs, c2w, K = _feedforward_to_tsdf_inputs(ff)
+    np.testing.assert_array_equal(depths, ff.depth)
+    assert rgbs.shape == (2, 8, 8, 3) and rgbs.dtype == np.float32
+    np.testing.assert_array_equal(K, ff.intrinsics)
+
+
+def test_tsdf_inputs_native_resolution_uses_store_rgb_and_upsampled_depth():
+    from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
+
+    class FakeStore:  # FrameStore duck-type: len + images()
+        def __len__(self):
+            return 2
+
+        def images(self):
+            return np.full((2, 16, 16, 3), 128, dtype=np.uint8)
+
+    ff = _tiny_ff_result()
+    native_K = ff.intrinsics * np.array([[2, 1, 2], [1, 2, 2], [1, 1, 1]], np.float32)
+    depths, rgbs, _, K = _feedforward_to_tsdf_inputs(
+        ff, frame_store=FakeStore(), native_intrinsics=native_K
+    )
+    assert depths.shape == (2, 16, 16)
+    assert rgbs.dtype == np.uint8 and rgbs.shape == (2, 16, 16, 3)
+    np.testing.assert_array_equal(K, native_K)
+    assert (depths > 0).all()  # full-frame crop, no masking → fully populated
+
+
+def test_tsdf_inputs_native_resolution_frame_count_mismatch_raises():
+    from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
+
+    class ShortStore:
+        def __len__(self):
+            return 1
+
+        def images(self):
+            return np.zeros((1, 16, 16, 3), dtype=np.uint8)
+
+    ff = _tiny_ff_result()
+    with pytest.raises(ValueError, match="[Ff]rame"):
+        _feedforward_to_tsdf_inputs(ff, frame_store=ShortStore(), native_intrinsics=ff.intrinsics)

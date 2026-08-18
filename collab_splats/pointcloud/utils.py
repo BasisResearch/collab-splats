@@ -296,6 +296,18 @@ def voxel_downsample(
     return downsampled, index_mapping
 
 
+def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
+    """Boolean keep-mask: conf strictly above the global percentile cutoff; all-True if none is.
+
+    Strict > so a cutoff equal to the minimum still filters, while uniform conf (nothing
+    above the cutoff) keeps everything rather than deleting everything. Shape-agnostic —
+    the pointcloud path calls it on (P,) point confidences, the mesh path on (N, H, W) maps.
+    """
+    cutoff = np.percentile(conf, percentile)
+    above = conf > cutoff
+    return above if above.any() else np.ones(conf.shape, dtype=bool)
+
+
 def subsample_points(
     points: np.ndarray,
     colors: Optional[np.ndarray] = None,
@@ -309,14 +321,11 @@ def subsample_points(
     extent), this guarantees an exact point budget — needed for scenes balanced
     across submaps. Returns (points, colors) index-aligned; colors may be None.
     """
-    # Drop points at/below the conf cutoff; strict > so a cutoff equal to the
-    # minimum still filters, while uniform conf (nothing above cutoff) keeps all.
+    # Drop points at/below the conf cutoff (see confidence_mask for the edge-case semantics)
     if conf is not None and len(conf) > 0:
-        cutoff = np.percentile(conf, conf_percentile)
-        above = conf > cutoff
-        if above.any():
-            points = points[above]
-            colors = colors[above] if colors is not None else None
+        above = confidence_mask(conf, conf_percentile)
+        points = points[above]
+        colors = colors[above] if colors is not None else None
 
     # Random cap to the budget; seeded rng keeps results reproducible
     if len(points) > max_points:

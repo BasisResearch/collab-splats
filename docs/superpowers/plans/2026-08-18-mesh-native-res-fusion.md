@@ -27,7 +27,7 @@
 
 **Files:** Modify `collab_splats/mesh/utils.py`, Test `tests/mesh/test_utils.py`
 
-- [ ] **Step 1: Write the failing tests** (append to tests/mesh/test_utils.py under a new `######## guided_upsample_depth` divider)
+- [x] **Step 1: Write the failing tests** (append to tests/mesh/test_utils.py under a new `######## guided_upsample_depth` divider)
 
 ```python
 def _step_scene(factor=4):
@@ -89,12 +89,12 @@ def test_guided_upsample_depth_step_edge_stays_sharp():
     assert fabricated.mean() < 0.01
 ```
 
-- [ ] **Step 2: Run tests, verify they fail**
+- [x] **Step 2: Run tests, verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py -q -k guided_upsample`
 Expected: 3 FAIL with `ImportError: cannot import name 'guided_upsample_depth'`
 
-- [ ] **Step 3: Implement** (in `collab_splats/mesh/utils.py`, new section after the clean_repair section; `import cv2` at top of file — cv2 is already an installed dep of the venv)
+- [x] **Step 3: Implement** (in `collab_splats/mesh/utils.py`, new section after the clean_repair section; `import cv2` at top of file — cv2 is already an installed dep of the venv)
 
 ```python
 ########
@@ -164,12 +164,12 @@ def guided_upsample_depth(
     return canvas
 ```
 
-- [ ] **Step 4: Run tests, verify they pass**
+- [x] **Step 4: Run tests, verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py -q -k guided_upsample`
 Expected: 3 passed. If the step-edge assertion fails marginally, tune `eps` down (sharper) — do not loosen the assertion past 0.02.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add collab_splats/mesh/utils.py tests/mesh/test_utils.py
@@ -182,7 +182,7 @@ git commit -m "feat(mesh): guided depth upsampling for native-resolution fusion"
 
 **Files:** Modify `collab_splats/pointcloud/utils.py` (extract `confidence_mask`), `collab_splats/mesh/utils.py` (`_feedforward_to_tsdf_inputs`, `pointcloud_to_mesh`), Test `tests/pointcloud/test_utils.py`, `tests/mesh/test_utils.py`
 
-- [ ] **Step 0: Write the failing helper tests** (append to tests/pointcloud/test_utils.py, flat functions)
+- [x] **Step 0: Write the failing helper tests** (append to tests/pointcloud/test_utils.py, flat functions)
 
 ```python
 def test_confidence_mask_global_percentile_strict():
@@ -239,7 +239,7 @@ def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_utils.py -q`
 Expected: new tests pass, existing tests untouched (behavior-preserving refactor).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def _tiny_ff_result(with_confidence=True):
@@ -336,12 +336,12 @@ def test_tsdf_inputs_native_resolution_frame_count_mismatch_raises():
 
 (`from pathlib import Path` joins the imports at top of the test file if not already there.)
 
-- [ ] **Step 2: Run tests, verify they fail**
+- [x] **Step 2: Run tests, verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py -q -k tsdf_inputs`
 Expected: FAIL — `_feedforward_to_tsdf_inputs() got an unexpected keyword argument`
 
-- [ ] **Step 3: Implement.** Add `from collab_splats.pointcloud.utils import confidence_mask` to the imports at the top of `mesh/utils.py` (`pointcloud/utils.py` does not import from `mesh/` — no cycle). Replace `_feedforward_to_tsdf_inputs` body (keep the two existing None-guards verbatim at the top) and thread the options through `pointcloud_to_mesh`:
+- [x] **Step 3: Implement.** Add `from collab_splats.pointcloud.utils import confidence_mask` to the imports at the top of `mesh/utils.py` (`pointcloud/utils.py` does not import from `mesh/` — no cycle). Replace `_feedforward_to_tsdf_inputs` body (keep the two existing None-guards verbatim at the top) and thread the options through `pointcloud_to_mesh`:
 
 ```python
 def _feedforward_to_tsdf_inputs(
@@ -438,12 +438,12 @@ def pointcloud_to_mesh(
 
 (Docstring gains the three args; body otherwise unchanged.)
 
-- [ ] **Step 4: Run the full mesh test file**
+- [x] **Step 4: Run the full mesh test file**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py -q`
 Expected: all pass (new + pre-existing — defaults path byte-identical).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add collab_splats/pointcloud/utils.py collab_splats/mesh/utils.py tests/pointcloud/test_utils.py tests/mesh/test_utils.py
@@ -459,7 +459,7 @@ confidence_mask helper extracted from subsample_points."
 
 **Files:** Modify `collab_splats/mesh/tsdf.py`, Test `tests/mesh/test_tsdf.py`
 
-- [ ] **Step 1: Write the failing tests** (append to tests/mesh/test_tsdf.py; reuse that file's existing synthetic-scene helpers for depths/c2w/K — if none fit, build a 2-frame flat-plane scene inline as below)
+- [x] **Step 1: Write the failing tests** (append to tests/mesh/test_tsdf.py; reuse that file's existing synthetic-scene helpers for depths/c2w/K — if none fit, build a 2-frame flat-plane scene inline as below)
 
 ```python
 def _flat_scene(h=32, w=32):
@@ -501,12 +501,12 @@ def test_create_principal_point_outside_grid_raises(tmp_path):
         )
 ```
 
-- [ ] **Step 2: Run tests, verify they fail**
+- [x] **Step 2: Run tests, verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_tsdf.py -q`
 Expected: uint8 test FAIL inside the `rgbs > 1.5` guard (`ValueError: rgbs must be in [0, 1]`); guard test FAIL with `DID NOT RAISE`.
 
-- [ ] **Step 3: Implement in `create()`**. Replace the `[0, 1]` guard block with:
+- [x] **Step 3: Implement in `create()`**. Replace the `[0, 1]` guard block with:
 
 ```python
         # uint8 passes through untouched; float must be [0, 1] — [0, 255] float would wrap
@@ -545,12 +545,12 @@ In the integration loop, the conversion line becomes:
             )
 ```
 
-- [ ] **Step 4: Run tests, verify they pass**
+- [x] **Step 4: Run tests, verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_tsdf.py -q`
 Expected: all pass (existing 6 + new 2).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add collab_splats/mesh/tsdf.py tests/mesh/test_tsdf.py
@@ -563,7 +563,7 @@ git commit -m "feat(mesh): uint8 RGB passthrough + principal-point guard in TSDF
 
 **Files:** Modify `collab_splats/wrapper/reconstructor.py:397-437` and `mesh()` (~line 909), `configs/base.yaml:83-88`, Test `tests/wrapper/test_reconstructor.py`
 
-- [ ] **Step 1: Write the failing test** (append to tests/wrapper/test_reconstructor.py, matching that file's existing style for config-default tests)
+- [x] **Step 1: Write the failing test** (append to tests/wrapper/test_reconstructor.py, matching that file's existing style for config-default tests)
 
 ```python
 def test_base_yaml_mesh_has_fidelity_keys():
@@ -575,12 +575,12 @@ def test_base_yaml_mesh_has_fidelity_keys():
     assert cfg["mesh"]["native_resolution"] is False
 ```
 
-- [ ] **Step 2: Run test, verify it fails**
+- [x] **Step 2: Run test, verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/test_reconstructor.py -q -k fidelity_keys`
 Expected: FAIL with `KeyError: 'conf_percentile'`
 
-- [ ] **Step 3: Add config keys** to `configs/base.yaml` mesh block:
+- [x] **Step 3: Add config keys** to `configs/base.yaml` mesh block:
 
 ```yaml
 mesh:
@@ -593,7 +593,7 @@ mesh:
   native_resolution: false # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
 ```
 
-- [ ] **Step 4: Wire `_run_tsdf_mesh`.** New signature and body changes:
+- [x] **Step 4: Wire `_run_tsdf_mesh`.** New signature and body changes:
 
 ```python
 def _run_tsdf_mesh(
@@ -654,7 +654,7 @@ and pass through:
     )
 ```
 
-- [ ] **Step 5: Wire `mesh()`.** The `_run_tsdf_mesh` call gains:
+- [x] **Step 5: Wire `mesh()`.** The `_run_tsdf_mesh` call gains:
 
 ```python
             conf_percentile=mesh_cfg["conf_percentile"],
@@ -662,7 +662,7 @@ and pass through:
             frames_zarr=self.frames_zarr,
 ```
 
-- [ ] **Step 6: Run wrapper + mesh suites**
+- [x] **Step 6: Run wrapper + mesh suites**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/ tests/mesh/ -q`
 Expected: all pass except the pre-existing `test_init_fills_defaults_from_base_yaml`
@@ -670,7 +670,7 @@ Expected: all pass except the pre-existing `test_init_fills_defaults_from_base_y
 asserts the mesh block verbatim, update its expected dict for the two new keys — that change
 IS in scope.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add collab_splats/wrapper/reconstructor.py configs/base.yaml tests/wrapper/test_reconstructor.py
@@ -685,10 +685,18 @@ git commit -m "feat(mesh): wire conf_percentile + native_resolution through the 
 
 Scene: `/workspace/outputs/2026_07_15-Goprosplat-GH010229/vggt_omega` (the clean_repair reference — 7.1M-face mesh territory). Run each in background/tmux, never in parallel (46.6 GB cap). Drive via a scratchpad script that calls `pointcloud_to_mesh` directly with `clean_repair=False` so component counts are measured pre-cleanup.
 
-- [ ] **Step 1: Regression — defaults off.** Re-fuse with `conf_percentile=None, native_resolution=False` into a scratch dir; compare against a same-code re-run from the pre-change commit (or the existing verify_mesh.ply baseline). Expected: byte-identical mesh.ply.
-- [ ] **Step 2: Masking A/B.** `conf_percentile ∈ {20, 40}`: record component count (`cluster_connected_triangles`), vertex count, wall-clock, peak RSS. Success: component count drops well below the 240k baseline at moderate vertex loss.
-- [ ] **Step 3: Native-res run.** `native_resolution=True` (model-res baseline params otherwise): record wall-clock, peak RSS (cap 46.6 GB), vertex count; save side-by-side renders of a texture-rich crop (scratchpad, user eyeballs).
-- [ ] **Step 4: Update this plan's checkboxes with measured numbers; commit plan + memory update.**
+- [x] **Step 1: Regression — defaults off.** Re-fuse with `conf_percentile=None, native_resolution=False` into a scratch dir; compare against a same-code re-run from the pre-change commit (or the existing verify_mesh.ply baseline). Expected: byte-identical mesh.ply.
+  **MEASURED 2026-08-18:** HEAD (7ca6ffa) vs pre-change (c3390d5, imported via PYTHONPATH worktree, provenance line in log): **byte-identical** (222,585,778 bytes). Both: 4,814,993 verts / 7,121,592 faces / 240,371 components; fuse 127 s (HEAD) vs 114 s (pre), peak RSS 12.5 GB. Params: voxel 0.0025, sdf_trunc 0.01, depth_trunc 1.5, clean_repair=False.
+- [x] **Step 2: Masking A/B.** `conf_percentile ∈ {20, 40}`: record component count (`cluster_connected_triangles`), vertex count, wall-clock, peak RSS. Success: component count drops well below the 240k baseline at moderate vertex loss.
+  **MEASURED 2026-08-18** (baseline p=null: 240,371 components / 4,814,993 verts / 127 s / 12.5 GB):
+  | conf_percentile | components | verts | fuse s | peak RSS GB |
+  |---|---|---|---|---|
+  | 20 | 36,732 (−85%) | 1,822,336 (−62%) | 48.2 | 6.5 |
+  | 40 | 5,918 (−97.5%) | 659,852 (−86%) | 30.7 | 5.4 |
+  Renders: p40 removes floater speckle and closes ground holes; loss concentrates in low-confidence distant/peripheral content, main surfaces intact. Success criterion met.
+- [x] **Step 3: Native-res run.** `native_resolution=True` (model-res baseline params otherwise): record wall-clock, peak RSS (cap 46.6 GB), vertex count; save side-by-side renders of a texture-rich crop (scratchpad, user eyeballs).
+  **MEASURED 2026-08-18:** native alone: fuse 195 s, peak RSS 16.8 GB (under 46.6 GB cap), 4,938,494 verts / 428,853 components — denser rays integrate *more* low-conf speckle, so masking is the intended companion. Combined native + p40: fuse 99.5 s, 7.5 GB, 663,481 verts / **5,768 components** — cleanest run of the set. Renders (scratchpad `render_run_*.png`, camera-0 pose): native+p40 has visibly crisper grass/bark/curb texture vs model-res p40; awaiting user eyeball.
+- [x] **Step 4: Update this plan's checkboxes with measured numbers; commit plan + memory update.**
 
 ---
 

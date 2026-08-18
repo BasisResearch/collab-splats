@@ -45,10 +45,15 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
-_STAGE_ORDER = ["preproc", "pointcloud", "semantics", "mesh", "localize", "verify"]
+_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify"]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preproc": [],
     "pointcloud": ["preproc"],
+    # refine rewrites pointcloud outputs in place; deliberately NOT a dependency of the
+    # stages below — that would demote them from LEAF_STAGES and break their disk re-run.
+    # Staleness contract: after --stages refine, re-run dependents with overwrite
+    # (configs/README.md). Inline runs are ordered refine-before-dependents, so never stale.
+    "refine": ["pointcloud"],
     "semantics": ["pointcloud"],
     "mesh": ["pointcloud"],
     "localize": ["pointcloud"],
@@ -56,7 +61,7 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # only hard dependency is the reconstruction
     "verify": ["pointcloud"],
 }
-# A stage is re-runnable on its own iff nothing depends on it → {semantics, mesh, localize, verify}.
+# A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, mesh, localize, verify}.
 # Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
 # mesh from this set automatically, so callers gating on it can never disagree with _STAGE_DEPS.
 LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in _STAGE_DEPS.values()))
@@ -1161,6 +1166,8 @@ class Reconstructor:
             colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
             zarr_done = (self.backend_dir / "feedforward.zarr").exists()
             return colmap_done and zarr_done
+        if stage == "refine":
+            return (self.backend_dir / "colmap" / "refine.json").exists()
         # Leaf-stage markers. Only preproc/pointcloud are ever depended on, but run_pipeline also
         # needs these to refuse a named stage whose output already exists — and each leaf stage's
         # own skip-check reads them, so they live here once instead of three times.
@@ -1194,7 +1201,7 @@ class Reconstructor:
         """Run named stages in dependency order.
 
         Args:
-            stages: Subset of ["preproc", "pointcloud", "semantics", "mesh", "localize", "verify"].
+            stages: Subset of ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
 
@@ -1208,6 +1215,8 @@ class Reconstructor:
         if stages is None:
             # Build from config enabled flags; preproc + pointcloud always included
             stages = ["preproc", "pointcloud"]
+            if self.config["pointcloud"]["bundle_adjustment"]:
+                stages.append("refine")
             if self.config["semantics"]["enabled"]:
                 stages.append("semantics")
             if self.config["mesh"]["enabled"]:
@@ -1246,6 +1255,8 @@ class Reconstructor:
                 self.preprocess(overwrite=overwrite)
             elif stage == "pointcloud":
                 result = self.build_pointcloud(overwrite=overwrite)
+            elif stage == "refine":
+                result = self.refine_poses(overwrite=overwrite)
             elif stage == "semantics":
                 self.extract_semantics(result=result, overwrite=overwrite)
             elif stage == "mesh":

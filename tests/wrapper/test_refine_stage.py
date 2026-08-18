@@ -135,3 +135,41 @@ def test_refine_poses_refines_and_persists(tmp_path):
     marker = json.loads((r.backend_dir / "colmap" / "refine.json").read_text())
     assert "config" in marker and "loss_history" in marker
     assert out is fake_result
+
+
+# ---------------------------------------------------------------------------
+# Tests for stage registration + triggers
+# ---------------------------------------------------------------------------
+
+def test_refine_is_a_leaf_stage():
+    """refine must be re-runnable on its own from environments-processed."""
+    assert "refine" in _STAGE_ORDER
+    assert _STAGE_DEPS["refine"] == ["pointcloud"]
+    assert "refine" in LEAF_STAGES
+
+
+def test_run_pipeline_config_driven_appends_refine(tmp_path):
+    """bundle_adjustment: true → refine runs right after pointcloud, before dependents."""
+    r = _reconstructor(tmp_path)
+    calls = []
+    with patch.object(Reconstructor, "preprocess", side_effect=lambda **k: calls.append("preproc")), \
+         patch.object(Reconstructor, "build_pointcloud", side_effect=lambda **k: calls.append("pointcloud")), \
+         patch.object(Reconstructor, "refine_poses", side_effect=lambda **k: calls.append("refine")), \
+         patch.object(Reconstructor, "extract_semantics", side_effect=lambda **k: calls.append("semantics")), \
+         patch.object(Reconstructor, "mesh", side_effect=lambda **k: calls.append("mesh")), \
+         patch.object(Reconstructor, "build_localization_db", side_effect=lambda **k: calls.append("localize")):
+        r.run_pipeline()
+    assert "refine" in calls
+    assert calls.index("refine") == calls.index("pointcloud") + 1
+
+
+def test_run_pipeline_named_refine_refuses_existing_output(tmp_path):
+    """Named refine with existing refine.json and no overwrite → refusal (generic leaf rule)."""
+    r = _reconstructor(tmp_path)
+    # Satisfy the pointcloud dependency and the refine marker on disk
+    (r.backend_dir / "colmap" / "sparse" / "0").mkdir(parents=True)
+    (r.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").touch()
+    (r.backend_dir / "feedforward.zarr").mkdir()
+    (r.backend_dir / "colmap" / "refine.json").write_text("{}")
+    with pytest.raises(ValueError, match="already exists"):
+        r.run_pipeline(stages=["refine"])

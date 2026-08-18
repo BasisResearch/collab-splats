@@ -69,8 +69,12 @@ pointcloud:
   viz:
     enabled: false          # instantiate the viser Viewer during loop closure
     port: 8080              # viser server port
-  # ── NOT YET IMPLEMENTED (raises NotImplementedError if enabled) ──
-  bundle_adjustment: false    # BA at Reconstructor level not wired; pass to creator config directly
+  # LM bundle adjustment pose refinement (leaf stage `refine`; runs inline after the
+  # pointcloud stage when enabled here, or standalone via --stages refine). Rewrites
+  # COLMAP/transforms.json/sparse_pc.ply/feedforward.zarr poses in place. Mutually
+  # exclusive with loop_closure. Knobs stay on BundleAdjustmentConfig defaults
+  # (global BA; tracks cached in <backend>/).
+  bundle_adjustment: false
   clean:
     enabled: true
     outlier_removal: true

@@ -137,7 +137,7 @@ the environment or passed on the command line.
 
 ### Re-running one stage against a processed scene
 
-`--stages` naming only *leaf* stages — `mesh`, `semantics`, `localize` — pulls the scene back
+`--stages` naming only *leaf* stages — `refine`, `mesh`, `semantics`, `localize` — pulls the scene back
 out of `environments-processed` instead of rebuilding it from its curated video:
 
 ```bash
@@ -191,6 +191,13 @@ processed scene (needs `colmap/` + `feedforward.zarr` locally). Outputs under
 poses/cameras identical to `sparse/0`), `verification.json` (per-pair epipolar +
 relative-pose stats, per-frame track survival and reprojection error), and `database.db`
 (local build artifact, excluded from pushes). `sparse/0` is never modified.
+
+`refine` (LM bundle adjustment) rewrites the reconstruction's poses in place —
+COLMAP, `transforms.json`, `sparse_pc.ply`, and the pose-derived arrays in
+`feedforward.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the
+localization DB built under the old poses: after `--stages refine`, re-run those
+stages with `overwrite` if pose-sensitive outputs matter. Provenance for the last
+refine run (BA config + LM loss history) is in `<backend>/colmap/refine.json`.
 
 ---
 

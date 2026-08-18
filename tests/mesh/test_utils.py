@@ -237,3 +237,67 @@ def test_clean_repair_mesh_preserves_vertex_colors(tmp_path):
     # Every vertex — original and hole-patch alike — carries the painted color
     # (atol covers the uint8 PLY quantisation).
     assert np.allclose(np.asarray(after.vertex_colors), (0.2, 0.6, 0.9), atol=0.02)
+
+
+########
+# guided_upsample_depth
+########
+
+
+def _step_scene(factor=4):
+    """Model-res depth with a vertical step edge + RGB guide whose edge aligns with it."""
+    h, w = 32, 32
+    depth = np.full((h, w), 1.0, dtype=np.float32)
+    depth[:, w // 2 :] = 2.0
+    H, W = h * factor, w * factor
+    rgb = np.full((H, W, 3), 40, dtype=np.uint8)
+    rgb[:, W // 2 :] = 200
+    return depth, rgb
+
+
+def test_guided_upsample_depth_places_crop():
+    """Output canvas is zero outside the crop box and populated inside it."""
+    from collab_splats.mesh.utils import guided_upsample_depth
+
+    depth, rgb = _step_scene(factor=2)
+    canvas_hw = (100, 120)  # bigger than the 64x64 crop
+    full_rgb = np.zeros((*canvas_hw, 3), dtype=np.uint8)
+    full_rgb[10:74, 20:84] = rgb
+    out = guided_upsample_depth(depth, full_rgb, crop_box=(20, 10, 84, 74), out_hw=canvas_hw)
+
+    assert out.shape == canvas_hw
+    assert out.dtype == np.float32
+    assert np.all(out[:10] == 0) and np.all(out[74:] == 0)
+    assert np.all(out[:, :20] == 0) and np.all(out[:, 84:] == 0)
+    assert (out[10:74, 20:84] > 0).mean() > 0.99
+
+
+def test_guided_upsample_depth_masked_pixels_stay_zero():
+    """Depth==0 (masked / no observation) must never be resurrected by the filter."""
+    from collab_splats.mesh.utils import guided_upsample_depth
+
+    depth, rgb = _step_scene(factor=4)
+    depth[8:16, 8:16] = 0.0  # masked block
+    H, W = rgb.shape[:2]
+    out = guided_upsample_depth(depth, rgb, crop_box=(0, 0, W, H), out_hw=(H, W))
+
+    assert np.all(out[32:64, 32:64] == 0)  # the masked block, upsampled 4x
+    valid = out[out > 0]
+    assert valid.min() >= 1.0 - 1e-3 and valid.max() <= 2.0 + 1e-3  # no overshoot
+
+
+def test_guided_upsample_depth_step_edge_stays_sharp():
+    """The anti-bilinear property: an aligned guide edge keeps the depth step sharp.
+
+    Bilinear at 4x smears intermediates across the whole kernel; the guided filter with a
+    matching guide edge confines them to a thin transition band.
+    """
+    from collab_splats.mesh.utils import guided_upsample_depth
+
+    depth, rgb = _step_scene(factor=4)
+    H, W = rgb.shape[:2]
+    out = guided_upsample_depth(depth, rgb, crop_box=(0, 0, W, H), out_hw=(H, W))
+
+    interior = out[:, np.r_[0 : W // 2 - 8, W // 2 + 8 : W]]  # away from the edge band
+    fabricated = (interior > 1.1) & (interior < 1.9)
+    assert fabricated.mean() < 0.01

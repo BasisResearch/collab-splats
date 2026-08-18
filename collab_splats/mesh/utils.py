@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Union
 
+import cv2
 import numpy as np
 import open3d as o3d
 import torch
@@ -344,6 +345,73 @@ def clean_repair_mesh(
 
     o3d.io.write_triangle_mesh(str(mesh_path), out)
     return mesh_path
+
+
+########
+# Guided depth upsampling — native-resolution TSDF fusion
+########
+
+
+def _box(x: np.ndarray, radius: int) -> np.ndarray:
+    """Normalized box filter, the O(1) primitive of the guided filter."""
+    k = 2 * radius + 1
+    return cv2.boxFilter(x, -1, (k, k), normalize=True, borderType=cv2.BORDER_REFLECT)
+
+
+def _guided_filter(guide: np.ndarray, src: np.ndarray, radius: int, eps: float) -> np.ndarray:
+    """He et al. gray-guide guided filter: edge-preserving smoothing of src steered by guide."""
+    mean_g = _box(guide, radius)
+    mean_s = _box(src, radius)
+    var_g = _box(guide * guide, radius) - mean_g * mean_g
+    cov_gs = _box(guide * src, radius) - mean_g * mean_s
+    a = cov_gs / (var_g + eps)
+    b = mean_s - a * mean_g
+    return _box(a, radius) * guide + _box(b, radius)
+
+
+def guided_upsample_depth(
+    depth: np.ndarray,
+    rgb_full: np.ndarray,
+    crop_box: tuple[int, int, int, int],
+    out_hw: tuple[int, int],
+    radius: int | None = None,
+    eps: float = 1e-3,
+) -> np.ndarray:
+    """Upsample a model-res depth map into its crop region of an original-res canvas.
+
+    Nearest-neighbour resize (never fabricates depth), then a validity-weighted guided filter
+    with the original-res RGB as guide snaps depth edges to image edges. Pixels that were 0
+    (masked / no observation) in the source stay exactly 0. Canvas outside the crop box is 0.
+
+    Args:
+        depth:    (h, w) float32 model-res depth, 0 = no observation
+        rgb_full: (H, W, 3) uint8 original-res frame (the guide)
+        crop_box: (tl_x, tl_y, cr_x, cr_y) model crop in original pixels (original_coords[:4])
+        out_hw:   (H, W) output canvas size (original_coords[4:6] reversed)
+    """
+    tl_x, tl_y, cr_x, cr_y = (int(round(v)) for v in crop_box)
+    cw, ch = cr_x - tl_x, cr_y - tl_y
+
+    # Nearest resize of depth and validity to crop size — blocky but never invents values
+    depth_nn = cv2.resize(depth, (cw, ch), interpolation=cv2.INTER_NEAREST)
+    valid_nn = (depth_nn > 0).astype(np.float32)
+
+    # Gray guide in [0, 1] from the original-res crop; radius spans ~2x the upsample factor
+    guide = cv2.cvtColor(rgb_full[tl_y:cr_y, tl_x:cr_x], cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    if radius is None:
+        radius = max(1, int(np.ceil(2 * cw / depth.shape[1])))
+
+    # Validity-weighted filtering: masked pixels contribute nothing to their neighbours
+    num = _guided_filter(guide, depth_nn * valid_nn, radius, eps)
+    den = _guided_filter(guide, valid_nn, radius, eps)
+    filtered = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
+
+    # The guide must never resurrect deleted depth
+    filtered[valid_nn == 0] = 0.0
+
+    canvas = np.zeros(out_hw, dtype=np.float32)
+    canvas[tl_y:cr_y, tl_x:cr_x] = filtered
+    return canvas
 
 
 def align_geometry_floor(

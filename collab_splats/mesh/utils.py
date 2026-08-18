@@ -294,8 +294,11 @@ def clean_repair_mesh(
     hole_ids = mmesh.topology.findHoleRepresentiveEdges()
     small = mm.std_vector_Id_EdgeTag()
     for he in tqdm(hole_ids, desc=f"Measuring holes ({len(hole_ids)})"):
-        if mmesh.holePerimeter(he) < max_hole_size:
+        perimeter = mmesh.holePerimeter(he)
+        if perimeter < max_hole_size:
             small.append(he)
+        else:
+            logger.debug("Skipping hole %s of perimeter %s", he, perimeter)
 
     new_faces = mm.FaceBitSet()
     fill_params = mm.FillHoleParams()

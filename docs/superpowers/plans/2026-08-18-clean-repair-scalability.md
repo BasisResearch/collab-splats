@@ -18,7 +18,7 @@
 **Files:**
 - Modify: `tests/mesh/test_utils.py` (fixture `_holed_sphere_with_strays` + one new test)
 
-- [ ] **Step 1: Extend the fixture with an optional paint color**
+- [x] **Step 1: Extend the fixture with an optional paint color**
 
 In `tests/mesh/test_utils.py`, change `_holed_sphere_with_strays` to:
 
@@ -44,7 +44,7 @@ def _holed_sphere_with_strays(path, radius=1.0, resolution=20, color=None):
     return path
 ```
 
-- [ ] **Step 2: Add the failing test at the end of the clean_repair section**
+- [x] **Step 2: Add the failing test at the end of the clean_repair section**
 
 ```python
 def test_clean_repair_mesh_preserves_vertex_colors(tmp_path):
@@ -63,12 +63,12 @@ def test_clean_repair_mesh_preserves_vertex_colors(tmp_path):
     assert np.allclose(np.asarray(after.vertex_colors), (0.2, 0.6, 0.9), atol=0.02)
 ```
 
-- [ ] **Step 3: Run the new test, verify it FAILS on color loss**
+- [x] **Step 3: Run the new test, verify it FAILS on color loss**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py::test_clean_repair_mesh_preserves_vertex_colors -v`
 Expected: FAIL at `assert after.has_vertex_colors()` (current meshlib save strips colors).
 
-- [ ] **Step 4: Verify the existing three clean_repair tests still pass (baseline)**
+- [x] **Step 4: Verify the existing three clean_repair tests still pass (baseline)**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py -v -k clean_repair`
 Expected: 3 pass, 1 fail (the new one).
@@ -81,7 +81,7 @@ Expected: 3 pass, 1 fail (the new one).
 - Modify: `collab_splats/mesh/utils.py` (import block ~line 21, and the whole `clean_repair_mesh` body)
 - Test: `tests/mesh/test_utils.py`
 
-- [ ] **Step 1: Add `mrmeshnumpy` to the guarded meshlib import**
+- [x] **Step 1: Add `mrmeshnumpy` to the guarded meshlib import**
 
 ```python
 try:
@@ -93,7 +93,7 @@ except ImportError:
     _MM_AVAILABLE = False
 ```
 
-- [ ] **Step 2: Replace the entire body of `clean_repair_mesh`**
+- [x] **Step 2: Replace the entire body of `clean_repair_mesh`**
 
 ```python
 def clean_repair_mesh(
@@ -221,17 +221,17 @@ def clean_repair_mesh(
     return mesh_path
 ```
 
-- [ ] **Step 3: Run all four clean_repair tests, verify PASS**
+- [x] **Step 3: Run all four clean_repair tests, verify PASS**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py -v -k clean_repair`
 Expected: 4 pass (3 contract tests + the new color test).
 
-- [ ] **Step 4: Run the whole mesh test package**
+- [x] **Step 4: Run the whole mesh test package**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/ -v`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add collab_splats/mesh/utils.py tests/mesh/test_utils.py
@@ -255,7 +255,7 @@ Measured on the failing mesh: 66 s / 4.5 GB peak."
 - Modify: `collab_splats/mesh/tsdf.py:35` (`clean_max_edge_splits` field)
 - Test: `tests/mesh/test_tsdf.py`
 
-- [ ] **Step 1: Update the field default and its meaning**
+- [x] **Step 1: Update the field default and its meaning**
 
 In `Open3DTSDFFusion`, change:
 
@@ -269,12 +269,12 @@ to:
     clean_max_edge_splits: int = 1_000_000  # global subdivision budget across all hole patches
 ```
 
-- [ ] **Step 2: Run the tsdf tests**
+- [x] **Step 2: Run the tsdf tests**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_tsdf.py -v`
 Expected: all pass (no test pins the old default).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add collab_splats/mesh/tsdf.py
@@ -291,7 +291,7 @@ now caps total patch refinement. maxEdgeLen remains the real control."
 **Files:**
 - No repo changes — verification only, on a scratch copy.
 
-- [ ] **Step 1: Run the shipped function against a copy of the killed-run mesh**
+- [x] **Step 1: Run the shipped function against a copy of the killed-run mesh**
 
 ```bash
 SCRATCH=/tmp/claude-0/-workspace-collab-splats/a5e0ab39-0895-4524-9574-6fbd037e8da0/scratchpad
@@ -310,7 +310,7 @@ EOF
 
 Expected: completes, `time` ≈ 60–120 s, `peak-rss` < 6 GB.
 
-- [ ] **Step 2: Confirm the rewritten PLY still carries colors**
+- [x] **Step 2: Confirm the rewritten PLY still carries colors**
 
 ```bash
 head -c 400 "$SCRATCH/verify_mesh.ply" | strings | grep -E "element|property uchar"
@@ -318,4 +318,4 @@ head -c 400 "$SCRATCH/verify_mesh.ply" | strings | grep -E "element|property uch
 
 Expected: `property uchar red/green/blue` present; vertex/face counts ≈ 4.9 M / 8.9 M.
 
-- [ ] **Step 3: Report the measured numbers in the final summary** (no commit — verification only).
+- [x] **Step 3: Report the measured numbers in the final summary** (no commit — verification only).

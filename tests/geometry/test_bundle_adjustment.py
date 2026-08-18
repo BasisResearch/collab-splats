@@ -863,3 +863,44 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
         f"expected 3 inner lists for 3 steps; got {len(ba._last_loss_history)}"
     )
     assert all(isinstance(entry, list) for entry in ba._last_loss_history)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _scale_intrinsics_to_model K-space guard
+# ---------------------------------------------------------------------------
+
+def _guard_intrinsics(cx, cy, f=10.0, N=2):
+    """(N, 3, 3) K with the given principal point."""
+    K = np.array([[f, 0.0, cx], [0.0, f, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
+    return np.tile(K, (N, 1, 1))
+
+
+def test_scale_intrinsics_model_res_k_is_identity():
+    """K already at model res (cx≈W_model/2) must pass through unscaled — all creators
+    decode pose at model resolution now; scaling would double-apply the crop transform."""
+    from collab_splats.geometry.bundle_adjustment import _scale_intrinsics_to_model
+
+    images = torch.zeros(2, 3, 8, 8)  # model res 8x8
+    # original image 64x64, no crop: [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
+    original_coords = np.tile(np.array([0.0, 0.0, 64.0, 64.0, 64.0, 64.0], dtype=np.float32), (2, 1))
+    intr = _guard_intrinsics(cx=4.0, cy=4.0)  # model-res principal point
+
+    out, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(intr, images, original_coords)
+
+    np.testing.assert_array_equal(out, intr)
+    assert (sx, sy, tl_x, tl_y) == (1.0, 1.0, 0.0, 0.0)
+
+
+def test_scale_intrinsics_original_res_k_still_scaled():
+    """Legacy original-res K (cx≈orig_w/2) keeps the crop-aware scaling (regression)."""
+    from collab_splats.geometry.bundle_adjustment import _scale_intrinsics_to_model
+
+    images = torch.zeros(2, 3, 8, 8)
+    original_coords = np.tile(np.array([0.0, 0.0, 64.0, 64.0, 64.0, 64.0], dtype=np.float32), (2, 1))
+    intr = _guard_intrinsics(cx=32.0, cy=32.0)  # original-res principal point
+
+    out, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(intr, images, original_coords)
+
+    assert sx == pytest.approx(8.0 / 64.0)
+    assert sy == pytest.approx(8.0 / 64.0)
+    assert out[0, 0, 2] == pytest.approx(32.0 * sx)

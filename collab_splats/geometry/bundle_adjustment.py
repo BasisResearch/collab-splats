@@ -203,7 +203,8 @@ class BundleAdjustment:
         # Load cached tracks or extract via VGGSfM (one extraction shared across all k-steps)
         tracks, vis_scores, pts3d_tracks = self._load_or_extract_tracks(result)
 
-        # Scale intrinsics once — VGGSfM tracks in model-res, intrinsics stored at original-res
+        # Bring intrinsics to model space if needed — VGGSfM tracks are model-res; creators
+        # already store model-res K (the guard makes this a no-op), legacy original-res K is scaled
         intrinsics_model, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(
             result.intrinsics,
             result.images,
@@ -433,8 +434,18 @@ def _scale_intrinsics_to_model(
         # The cropped region was resized to (W_model, H_model).
         tl_x = float(original_coords[0, 0])
         tl_y = float(original_coords[0, 1])
-        crop_w = float(original_coords[0, 2]) - tl_x
-        crop_h = float(original_coords[0, 3]) - tl_y
+        cr_x = float(original_coords[0, 2])
+        cr_y = float(original_coords[0, 3])
+        # All current creators decode K at model resolution (original-res decode removed —
+        # see vggtx._forward). Detect which space K lives in by comparing the principal
+        # point against the two candidate optical centres: model-res K has 2·cx ≈ W_model,
+        # original-res K has 2·cx ≈ tl_x + cr_x (crop centre in original pixels). Scaling
+        # a model-res K would double-apply the crop transform and corrupt reprojection.
+        cx2 = 2.0 * float(intrinsics[0, 0, 2])
+        if abs(cx2 - W_model) <= abs(cx2 - (tl_x + cr_x)):
+            return intrinsics, 1.0, 1.0, 0.0, 0.0
+        crop_w = cr_x - tl_x
+        crop_h = cr_y - tl_y
         sx = W_model / crop_w
         sy = H_model / crop_h
     else:

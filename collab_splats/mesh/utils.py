@@ -727,7 +727,7 @@ def pointcloud_to_mesh(
 
     # Loud failure before any work — only the TSDF path has the depth_trunc + mesh.ply
     # contract the optimizer needs
-    if color_map_iterations and method != "open3d_tsdf":
+    if color_map_iterations > 0 and method != "open3d_tsdf":
         raise ValueError(
             f"color_map_iterations requires method='open3d_tsdf', got {method!r}"
         )
@@ -743,7 +743,7 @@ def pointcloud_to_mesh(
 
     # Color-map optimization AFTER create(): fusion and clean_repair both run inside it, so
     # the optimizer colors the final geometry instead of speckle about to be deleted
-    if color_map_iterations:
+    if color_map_iterations > 0:
         optimize_color_map(
             mesh_result.mesh_path,
             depths,

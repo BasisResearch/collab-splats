@@ -348,6 +348,12 @@ class BundleAdjustment:
         # Build SE3 camera tensor from (K, 3, 4) extrinsics; pad to (K, 4, 4) for mat2SE3
         ext_sub = extrinsics[active_frames].astype(np.float64)
         ext_4x4 = extrinsics_to_homogeneous(ext_sub)
+        # Project rotations to the nearest orthogonal matrix (SVD, det>0 enforced) — some
+        # backends (LoGeR se3 refinement) emit float32 rotations that fail pypose's
+        # mat2SE3 orthogonality check; already-orthogonal rotations pass through unchanged.
+        U, _, Vt = np.linalg.svd(ext_4x4[:, :3, :3])
+        U[np.linalg.det(U @ Vt) < 0, :, -1] *= -1
+        ext_4x4[:, :3, :3] = U @ Vt
         cameras_se3 = pp.mat2SE3(torch.tensor(ext_4x4, dtype=torch.float64, device=device))
 
         # SIMPLE_PINHOLE: average fx/fy as single focal length per camera

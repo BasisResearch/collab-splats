@@ -32,7 +32,7 @@ class Open3DTSDFFusion(BaseMeshCreator):
     # it is the value that works, not the one that raises.
     clean_repair: bool = False
     clean_max_hole_size: float = 3.0
-    clean_max_edge_splits: int = 10000
+    clean_max_edge_splits: int = 1_000_000  # global subdivision budget across all hole patches
     clean_use_largest: bool = False
 
     def create(

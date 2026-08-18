@@ -579,6 +579,16 @@ class Reconstructor:
         if method == "sfm" and backend not in _SFM_BACKENDS:
             raise ValueError(f"pointcloud.backend must be one of {_SFM_BACKENDS} " f"for method='sfm', got '{backend}'")
 
+        # BA over LC submaps is unsupported: submaps don't carry the per-frame model tensors
+        # track extraction needs. Fail loud at construction instead of silently skipping one.
+        lc = pc.get("loop_closure")
+        lc_enabled = lc.get("enabled") is not False if isinstance(lc, dict) else bool(lc)
+        if pc.get("bundle_adjustment") and lc_enabled:
+            raise ValueError(
+                "pointcloud.bundle_adjustment and pointcloud.loop_closure are mutually "
+                "exclusive — BA needs per-frame model tensors that LC submaps do not carry."
+            )
+
         return config
 
     ########################################
@@ -638,13 +648,6 @@ class Reconstructor:
         """Run pointcloud stage. Sets self.pointcloud, returns PointcloudResult."""
         pc_cfg = self.config["pointcloud"]
         method = pc_cfg["method"]
-
-        # BA at the Reconstructor level is not wired — fail loud instead of silently no-op'ing
-        if pc_cfg["bundle_adjustment"]:
-            raise NotImplementedError(
-                "pointcloud.bundle_adjustment is not wired at the Reconstructor level. "
-                "Pass bundle_adjustment to the creator config directly for now."
-            )
 
         # Skip if COLMAP + feedforward.zarr both exist and overwrite not requested.
         # Require feedforward.zarr too — if a previous run was partial (zarr missing),

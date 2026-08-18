@@ -369,20 +369,6 @@ def test_build_pointcloud_skips_if_colmap_and_zarr_exist(tmp_path):
     mock_ff.assert_not_called()
 
 
-def test_reconstructor_bundle_adjustment_raises(tmp_path):
-    """bundle_adjustment=True at the Reconstructor level raises NotImplementedError (was a silent no-op)."""
-    config = {
-        "input_path": str(tmp_path / "v.mp4"),
-        "output_path": str(tmp_path / "out"),
-        "pointcloud": {"backend": "vggtx", "bundle_adjustment": True},
-    }
-    rec = Reconstructor(config)
-    with patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff:
-        mock_ff.return_value = _make_mock_pointcloud_result(tmp_path)
-        with pytest.raises(NotImplementedError, match="bundle_adjustment"):
-            rec.build_pointcloud(overwrite=True)
-
-
 def test_build_pointcloud_feedforward_vggtx(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)

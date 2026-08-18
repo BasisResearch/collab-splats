@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Union
 
@@ -672,7 +673,9 @@ def optimize_color_map(
     trajectory = o3d.camera.PinholeCameraTrajectory()
     trajectory.parameters = cam_params
 
-    # Run the rigid optimizer and overwrite the mesh; the refined trajectory is discarded
+    # Run the rigid optimizer and overwrite the mesh; the refined trajectory is discarded.
+    # Debug verbosity makes Open3D print its per-iteration residual so long runs are
+    # observable (the optimizer is one opaque C++ call — this is the only progress signal).
     mesh = o3d.io.read_triangle_mesh(str(mesh_path))
     if not mesh.has_vertices():
         raise ValueError(f"{mesh_path} is missing or empty — nothing to optimize.")
@@ -681,8 +684,13 @@ def optimize_color_map(
         maximum_allowable_depth=float(depth_trunc),
     )
     logger.info("Color map optimization: %d frames, %d iterations", depths.shape[0], iterations)
-    mesh, _ = o3d.pipelines.color_map.run_rigid_optimizer(mesh, rgbd_images, trajectory, option)
+    start = time.perf_counter()
+    with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug):
+        mesh, _ = o3d.pipelines.color_map.run_rigid_optimizer(
+            mesh, rgbd_images, trajectory, option
+        )
     o3d.io.write_triangle_mesh(str(mesh_path), mesh)
+    logger.info("Color map optimization done in %.1fs", time.perf_counter() - start)
 
 
 def pointcloud_to_mesh(

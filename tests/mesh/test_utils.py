@@ -5,7 +5,7 @@ import open3d as o3d
 import pytest
 
 from collab_splats.mesh.tsdf import Open3DTSDFFusion
-from collab_splats.mesh.utils import optimize_color_map
+from collab_splats.mesh.utils import optimize_color_map, pointcloud_to_mesh
 
 
 def test_find_depth_edges_shape():
@@ -482,3 +482,59 @@ def test_optimize_color_map_float_rgb_and_empty_mesh_guard(tmp_path):
         optimize_color_map(
             tmp_path / "nope.ply", depths, rgbs, c2w, intrinsics, iterations=2, depth_trunc=5.0
         )
+
+
+########
+# pointcloud_to_mesh — color_map_iterations hook
+########
+
+
+def test_pointcloud_to_mesh_default_skips_color_map(tmp_path, monkeypatch):
+    """color_map_iterations=0 (default) never touches the optimizer — shipping path unchanged."""
+    called = []
+    monkeypatch.setattr(
+        "collab_splats.mesh.utils.optimize_color_map",
+        lambda *a, **k: called.append(1),
+    )
+    result = _tiny_ff_result()
+    pointcloud_to_mesh(
+        result, tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=10.0
+    )
+    assert called == []
+
+
+def test_pointcloud_to_mesh_color_map_requires_tsdf(tmp_path):
+    """A non-TSDF method with color_map_iterations>0 fails loudly before any work."""
+    result = _tiny_ff_result()
+    with pytest.raises(ValueError, match="color_map_iterations"):
+        pointcloud_to_mesh(
+            result, tmp_path, method="depth_normal_poisson", color_map_iterations=10
+        )
+
+
+def test_pointcloud_to_mesh_color_map_called_with_fusion_arrays(tmp_path, monkeypatch):
+    """color_map_iterations>0 calls the optimizer with the mesh path and the fusion's arrays."""
+    calls = {}
+
+    def fake_optimize(mesh_path, depths, rgbs, c2w, intrinsics, iterations, depth_trunc):
+        calls.update(
+            mesh_path=mesh_path,
+            n_frames=depths.shape[0],
+            iterations=iterations,
+            depth_trunc=depth_trunc,
+        )
+
+    monkeypatch.setattr("collab_splats.mesh.utils.optimize_color_map", fake_optimize)
+    result = _tiny_ff_result()
+    mesh_result = pointcloud_to_mesh(
+        result,
+        tmp_path,
+        voxel_size=0.05,
+        sdf_trunc=0.15,
+        depth_trunc=10.0,
+        color_map_iterations=7,
+    )
+    assert calls["mesh_path"] == mesh_result.mesh_path
+    assert calls["n_frames"] == result.depth.shape[0]
+    assert calls["iterations"] == 7
+    assert calls["depth_trunc"] == 10.0

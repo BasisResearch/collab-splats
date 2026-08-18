@@ -692,6 +692,7 @@ def pointcloud_to_mesh(
     conf_percentile: float | None = None,
     frame_store=None,
     native_intrinsics: np.ndarray | None = None,
+    color_map_iterations: int = 0,
     **mesher_kwargs,
 ) -> MeshResult:
     """Mesh directly from a FeedforwardResult using any registered mesh method.
@@ -711,15 +712,25 @@ def pointcloud_to_mesh(
                            fusion using this FrameStore's RGB.
         native_intrinsics: Forwarded to _feedforward_to_tsdf_inputs — original-res K required
                            alongside frame_store.
+        color_map_iterations: Rigid color-map optimization iterations run on mesh.ply after
+                           fusion + clean_repair (0 = off). Only "open3d_tsdf" supports it.
         **mesher_kwargs:   Forwarded to the mesh creator constructor (voxel_size, sdf_trunc, etc.).
 
     Returns:
         MeshResult with mesh_path pointing to the output PLY.
 
     Raises:
-        ValueError: if result.depth/result.images are None or method is not in the registry.
+        ValueError: if result.depth/result.images are None, method is not in the registry,
+                    or color_map_iterations > 0 with a non-TSDF method.
     """
     from collab_splats.mesh import get_mesh_creator
+
+    # Loud failure before any work — only the TSDF path has the depth_trunc + mesh.ply
+    # contract the optimizer needs
+    if color_map_iterations and method != "open3d_tsdf":
+        raise ValueError(
+            f"color_map_iterations requires method='open3d_tsdf', got {method!r}"
+        )
 
     depths, rgbs, c2w, intrinsics = _feedforward_to_tsdf_inputs(
         result,
@@ -728,4 +739,18 @@ def pointcloud_to_mesh(
         native_intrinsics=native_intrinsics,
     )
     mesher = get_mesh_creator(method, Path(output_dir), **mesher_kwargs)
-    return mesher.create(depths, rgbs, c2w, intrinsics)
+    mesh_result = mesher.create(depths, rgbs, c2w, intrinsics)
+
+    # Color-map optimization AFTER create(): fusion and clean_repair both run inside it, so
+    # the optimizer colors the final geometry instead of speckle about to be deleted
+    if color_map_iterations:
+        optimize_color_map(
+            mesh_result.mesh_path,
+            depths,
+            rgbs,
+            c2w,
+            intrinsics,
+            iterations=color_map_iterations,
+            depth_trunc=mesher.depth_trunc,
+        )
+    return mesh_result

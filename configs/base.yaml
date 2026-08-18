@@ -100,6 +100,7 @@ mesh:
   clean_repair: false       # drop out-of-bounds components + fill small holes, rewriting mesh.ply
   conf_percentile: null    # mask depth below this global confidence percentile (null = off)
   native_resolution: false # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
+  color_map_iterations: 0  # rigid color-map optimization iterations after fusion (0 = off)
 
 localization:
   enabled: false

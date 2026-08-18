@@ -404,6 +404,7 @@ def _run_tsdf_mesh(
     clean_repair: bool = False,
     conf_percentile: float | None = None,
     native_resolution: bool = False,
+    color_map_iterations: int = 0,
     frames_zarr: Path | None = None,
 ) -> Path:
     """Fuse depth + RGB from feedforward.zarr into a TSDF mesh, using COLMAP poses."""
@@ -453,6 +454,7 @@ def _run_tsdf_mesh(
         conf_percentile=conf_percentile,
         frame_store=frame_store,
         native_intrinsics=native_intrinsics,
+        color_map_iterations=color_map_iterations,
     )
     return mesh_result.mesh_path
 
@@ -961,6 +963,7 @@ class Reconstructor:
             clean_repair=mesh_cfg["clean_repair"],
             conf_percentile=mesh_cfg["conf_percentile"],
             native_resolution=mesh_cfg["native_resolution"],
+            color_map_iterations=mesh_cfg["color_map_iterations"],
             frames_zarr=self.frames_zarr,
         )
         logger.info("Mesh saved to %s", out)

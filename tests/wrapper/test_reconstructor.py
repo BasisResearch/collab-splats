@@ -1399,3 +1399,4 @@ def test_base_yaml_mesh_has_fidelity_keys():
     cfg = yaml.safe_load((Path(__file__).parents[2] / "configs" / "base.yaml").read_text())
     assert cfg["mesh"]["conf_percentile"] is None
     assert cfg["mesh"]["native_resolution"] is False
+    assert cfg["mesh"]["color_map_iterations"] == 0

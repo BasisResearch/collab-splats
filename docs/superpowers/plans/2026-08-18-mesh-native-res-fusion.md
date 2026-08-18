@@ -15,6 +15,7 @@
 ## File Map
 
 - Modify: `collab_splats/mesh/utils.py` — new `guided_upsample_depth` + `_guided_filter`; extend `_feedforward_to_tsdf_inputs` and `pointcloud_to_mesh`
+- Modify: `collab_splats/pointcloud/utils.py` — extract `confidence_mask` from `subsample_points`; both it and the mesh adapter use it (same filter rule as the pointcloud)
 - Modify: `collab_splats/mesh/tsdf.py` — uint8 passthrough + principal-point guard in `create`
 - Modify: `collab_splats/wrapper/reconstructor.py` — `_run_tsdf_mesh` + `mesh()` wiring
 - Modify: `configs/base.yaml` — `mesh.conf_percentile`, `mesh.native_resolution`
@@ -179,7 +180,64 @@ git commit -m "feat(mesh): guided depth upsampling for native-resolution fusion"
 
 ### Task 2: Confidence masking + native-res adapter
 
-**Files:** Modify `collab_splats/mesh/utils.py` (`_feedforward_to_tsdf_inputs`, `pointcloud_to_mesh`), Test `tests/mesh/test_utils.py`
+**Files:** Modify `collab_splats/pointcloud/utils.py` (extract `confidence_mask`), `collab_splats/mesh/utils.py` (`_feedforward_to_tsdf_inputs`, `pointcloud_to_mesh`), Test `tests/pointcloud/test_utils.py`, `tests/mesh/test_utils.py`
+
+- [ ] **Step 0: Write the failing helper tests** (append to tests/pointcloud/test_utils.py, flat functions)
+
+```python
+def test_confidence_mask_global_percentile_strict():
+    """Keep = strictly above the global cutoff — the subsample_points rule, shape-agnostic."""
+    from collab_splats.pointcloud.utils import confidence_mask
+
+    conf = np.array([[0.0, 0.0], [1.0, 1.0]])  # p50 cutoff = 0.5
+    keep = confidence_mask(conf, 50.0)
+    np.testing.assert_array_equal(keep, [[False, False], [True, True]])
+
+
+def test_confidence_mask_uniform_confidence_keeps_all():
+    """Uniform conf: nothing is strictly above the cutoff → keep everything, never delete-all."""
+    from collab_splats.pointcloud.utils import confidence_mask
+
+    keep = confidence_mask(np.full((3, 4), 0.7), 50.0)
+    assert keep.all() and keep.shape == (3, 4)
+
+
+def test_subsample_points_conf_filter_unchanged():
+    """The refactor onto confidence_mask keeps subsample_points' output identical."""
+    from collab_splats.pointcloud.utils import subsample_points
+
+    rng = np.random.default_rng(0)
+    pts = rng.random((100, 3))
+    conf = np.concatenate([np.zeros(50), np.ones(50)])
+    out, _ = subsample_points(pts, None, conf, max_points=1000, conf_percentile=50.0)
+    np.testing.assert_array_equal(out, pts[50:])  # strict >: only the conf==1 half survives
+```
+
+Then implement in `collab_splats/pointcloud/utils.py` (new function above `subsample_points`), and refactor `subsample_points`' filter block to use it:
+
+```python
+def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
+    """Boolean keep-mask: conf strictly above the global percentile cutoff; all-True if none is.
+
+    Strict > so a cutoff equal to the minimum still filters, while uniform conf (nothing
+    above the cutoff) keeps everything rather than deleting everything. Shape-agnostic —
+    the pointcloud path calls it on (P,) point confidences, the mesh path on (N, H, W) maps.
+    """
+    cutoff = np.percentile(conf, percentile)
+    above = conf > cutoff
+    return above if above.any() else np.ones(conf.shape, dtype=bool)
+```
+
+```python
+    # Drop points at/below the conf cutoff (see confidence_mask for the edge-case semantics)
+    if conf is not None and len(conf) > 0:
+        above = confidence_mask(conf, conf_percentile)
+        points = points[above]
+        colors = colors[above] if colors is not None else None
+```
+
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_utils.py -q`
+Expected: new tests pass, existing tests untouched (behavior-preserving refactor).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -283,7 +341,7 @@ def test_tsdf_inputs_native_resolution_frame_count_mismatch_raises():
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_utils.py -q -k tsdf_inputs`
 Expected: FAIL — `_feedforward_to_tsdf_inputs() got an unexpected keyword argument`
 
-- [ ] **Step 3: Implement.** Replace `_feedforward_to_tsdf_inputs` body (keep the two existing None-guards verbatim at the top) and thread the options through `pointcloud_to_mesh`:
+- [ ] **Step 3: Implement.** Add `from collab_splats.pointcloud.utils import confidence_mask` to the imports at the top of `mesh/utils.py` (`pointcloud/utils.py` does not import from `mesh/` — no cycle). Replace `_feedforward_to_tsdf_inputs` body (keep the two existing None-guards verbatim at the top) and thread the options through `pointcloud_to_mesh`:
 
 ```python
 def _feedforward_to_tsdf_inputs(
@@ -308,7 +366,9 @@ def _feedforward_to_tsdf_inputs(
 
     depths = np.ascontiguousarray(result.depth, dtype=np.float32).copy()  # (N, H, W)
 
-    # Confidence gate BEFORE any upsampling — never amplify pixels about to be deleted
+    # Confidence gate BEFORE any upsampling — never amplify pixels about to be deleted.
+    # Same global-percentile rule as the pointcloud path (shared confidence_mask helper),
+    # so the mesh inherits exactly the filter that makes the sparse cloud look clean.
     if conf_percentile is not None:
         if result.confidence is None:
             raise ValueError(
@@ -318,8 +378,7 @@ def _feedforward_to_tsdf_inputs(
         conf = result.confidence
         if hasattr(conf, "numpy"):
             conf = conf.detach().cpu().numpy()
-        thresh = np.percentile(conf.reshape(conf.shape[0], -1), conf_percentile, axis=1)
-        depths[conf < thresh[:, None, None]] = 0.0
+        depths[~confidence_mask(conf, conf_percentile)] = 0.0
         logger.info(
             "Confidence mask (p%.0f): %.1f%% of depth pixels dropped",
             conf_percentile,
@@ -387,8 +446,11 @@ Expected: all pass (new + pre-existing — defaults path byte-identical).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/mesh/utils.py tests/mesh/test_utils.py
-git commit -m "feat(mesh): confidence masking + native-resolution TSDF adapter path"
+git add collab_splats/pointcloud/utils.py collab_splats/mesh/utils.py tests/pointcloud/test_utils.py tests/mesh/test_utils.py
+git commit -m "feat(mesh): confidence masking + native-resolution TSDF adapter path
+
+Masking reuses the pointcloud path's own filter rule via a shared
+confidence_mask helper extracted from subsample_points."
 ```
 
 ---

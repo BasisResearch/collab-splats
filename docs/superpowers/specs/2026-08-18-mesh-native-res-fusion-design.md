@@ -35,8 +35,13 @@ same convention `depth_trunc` already relies on).
 
 - Source: `FeedforwardResult.confidence` (N, H, W) — already persisted in feedforward.zarr and
   loaded by default (`load_confidence=True`); `_run_tsdf_mesh` gets it for free.
-- Threshold: per-frame percentile, mirroring how the pointcloud path thresholds. Config
-  `mesh.conf_percentile: float | null`, default `null` (off — shipping output byte-identical).
+- Threshold: the **same rule the pointcloud path uses** — `subsample_points`' global
+  percentile cutoff (strict `>`, keep-all when confidence is uniform), extracted into a shared
+  `confidence_mask(conf, percentile)` helper in `pointcloud/utils.py` that both callers use.
+  No mask is persisted: raw confidence already lives in feedforward.zarr, the mask is a
+  3-line derivation, and keeping the percentile a mesh-time knob means sweeping it never
+  re-runs the feedforward pass. Config `mesh.conf_percentile: float | null`, default `null`
+  (off — shipping output byte-identical).
 - If `confidence is None` (old zarr) and `conf_percentile` is set → hard error, not silent
   skip. A user who asked for masking must know it did not run.
 - Masking happens **before** upsampling — never amplify pixels you are about to delete.

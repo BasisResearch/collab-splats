@@ -90,3 +90,73 @@ def test_open3d_tsdf_rejects_rgb_in_0_255_range(tmp_path):
     depths, rgbs, c2w, intrinsics = _synthetic_frames()
     with pytest.raises(ValueError, match=r"\[0, 1\]"):
         creator.create(depths, rgbs * 255.0, c2w, intrinsics)
+
+
+########
+# uint8 RGB passthrough + principal-point guard (native-resolution TSDF fusion)
+########
+
+
+def _flat_scene(h=32, w=32):
+    """Two identity-pose frames looking at a flat plane at depth 1."""
+    depths = np.ones((2, h, w), dtype=np.float32)
+    c2w = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+    K = np.tile(
+        np.array([[w, 0, w / 2], [0, w, h / 2], [0, 0, 1]], dtype=np.float32), (2, 1, 1)
+    )
+    return depths, c2w, K
+
+
+def test_create_uint8_rgb_matches_float(tmp_path):
+    """uint8 RGB fuses to the same mesh as the equivalent [0,1] float RGB."""
+    from collab_splats.mesh.tsdf import Open3DTSDFFusion
+
+    depths, c2w, K = _flat_scene()
+    rgb_u8 = np.full((2, 32, 32, 3), 200, dtype=np.uint8)
+    rgb_f = rgb_u8.astype(np.float32) / 255.0
+
+    m1 = Open3DTSDFFusion(output_dir=tmp_path / "a", voxel_size=0.05, sdf_trunc=0.2)
+    m2 = Open3DTSDFFusion(output_dir=tmp_path / "b", voxel_size=0.05, sdf_trunc=0.2)
+    p1 = m1.create(depths, rgb_u8, c2w, K).mesh_path
+    p2 = m2.create(depths, rgb_f, c2w, K).mesh_path
+    assert p1.read_bytes() == p2.read_bytes()
+
+
+def test_create_principal_point_outside_grid_raises(tmp_path):
+    """Original-res K paired with model-res depth must fail loudly, not fuse a collapsed mesh."""
+    from collab_splats.mesh.tsdf import Open3DTSDFFusion
+
+    depths, c2w, K = _flat_scene()
+    K = K.copy()
+    K[:, 0, 2] = 500.0  # cx far outside the 32-px grid
+    rgbs = np.zeros((2, 32, 32, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="[Pp]rincipal point"):
+        Open3DTSDFFusion(output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.2).create(
+            depths, rgbs, c2w, K
+        )
+
+
+def test_create_fuses_adapter_native_output(tmp_path):
+    """The native-res adapter's uint8 output fuses without the float-range guard firing."""
+    from collab_splats.mesh.tsdf import Open3DTSDFFusion
+    from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
+    from tests.mesh.test_utils import _tiny_ff_result
+
+    class FakeStore:
+        def __len__(self):
+            return 2
+
+        def images(self):
+            return np.full((2, 16, 16, 3), 128, dtype=np.uint8)
+
+    ff = _tiny_ff_result()
+    native_K = np.tile(
+        np.array([[16, 0, 8], [0, 16, 8], [0, 0, 1]], dtype=np.float32), (2, 1, 1)
+    )
+    depths, rgbs, c2w, K = _feedforward_to_tsdf_inputs(
+        ff, frame_store=FakeStore(), native_intrinsics=native_K
+    )
+    result = Open3DTSDFFusion(output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.2).create(
+        depths, rgbs, c2w, K
+    )
+    assert result.mesh_path.exists()

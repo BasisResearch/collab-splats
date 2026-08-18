@@ -47,21 +47,34 @@ class Open3DTSDFFusion(BaseMeshCreator):
 
         Args:
             depths:     (N, H, W) float32, metres
-            rgbs:       (N, H, W, 3) float32, [0, 1]
+            rgbs:       (N, H, W, 3) uint8, or float32 in [0, 1]
             c2w:        (N, 4, 4) float32, cam-to-world OpenCV
             intrinsics: (N, 3, 3) float32
         """
-        # rgbs is scaled to uint8 below; [0, 255] input would wrap to a black mesh instead of
-        # failing, which is how the Reconstructor path shipped black meshes unnoticed
-        if rgbs.size and float(np.nanmax(rgbs)) > 1.5:
+        # uint8 passes through untouched; float must be [0, 1] — [0, 255] float would wrap
+        # to a black mesh instead of failing, which is how the Reconstructor path shipped
+        # black meshes unnoticed
+        is_uint8 = rgbs.dtype == np.uint8
+        if not is_uint8 and rgbs.size and float(np.nanmax(rgbs)) > 1.5:
             raise ValueError(
-                f"rgbs must be in [0, 1], got max {float(np.nanmax(rgbs)):.3f}. "
+                f"rgbs must be uint8 or float in [0, 1], got float max {float(np.nanmax(rgbs)):.3f}. "
                 "Pass FeedforwardResult.images directly — it is already normalised."
             )
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         N, H, W = depths.shape
+
+        # The principal point must land inside the depth grid — the mismatched-resolution
+        # pairing (original-res K with model-res depth, or vice versa) fuses a collapsed
+        # mesh silently otherwise (the 2026-08-11 regression class)
+        cx, cy = intrinsics[:, 0, 2], intrinsics[:, 1, 2]
+        if not (np.all(cx > 0) and np.all(cx < W) and np.all(cy > 0) and np.all(cy < H)):
+            raise ValueError(
+                f"Principal point outside the {W}x{H} depth grid "
+                f"(cx range [{cx.min():.0f}, {cx.max():.0f}], cy range [{cy.min():.0f}, {cy.max():.0f}]) "
+                "— intrinsics and depth are at different resolutions."
+            )
 
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
             voxel_length=self.voxel_size,
@@ -72,7 +85,11 @@ class Open3DTSDFFusion(BaseMeshCreator):
         w2c = invert_poses(c2w)  # (N, 4, 4) — precompute all at once
 
         for i in tqdm(range(N), desc="TSDF integration"):
-            rgb_u8 = (np.ascontiguousarray(rgbs[i]) * 255).astype(np.uint8)
+            rgb_u8 = (
+                np.ascontiguousarray(rgbs[i])
+                if is_uint8
+                else (np.ascontiguousarray(rgbs[i]) * 255).astype(np.uint8)
+            )
             depth_f32 = np.ascontiguousarray(depths[i]).astype(np.float32)
 
             rgb_o3d = o3d.geometry.Image(rgb_u8)

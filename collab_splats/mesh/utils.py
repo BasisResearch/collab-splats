@@ -611,6 +611,74 @@ def _feedforward_to_tsdf_inputs(
     return depths, rgbs, c2w, result.intrinsics.copy()
 
 
+def optimize_color_map(
+    mesh_path: Path,
+    depths: np.ndarray,
+    rgbs: np.ndarray,
+    c2w: np.ndarray,
+    intrinsics: np.ndarray,
+    iterations: int,
+    depth_trunc: float,
+) -> None:
+    """Rigid Zhou-Koltun color map optimization — recolors mesh_path in place.
+
+    Refines a private copy of the camera poses for photo-consistency and reassigns vertex
+    colors from the refined poses. Poses are report-only: nothing is written back to COLMAP
+    or the zarr — the overwritten mesh file is the only output.
+
+    Args:
+        mesh_path:   PLY to load, recolor, and overwrite (same in-place contract as
+                     clean_repair_mesh).
+        depths:      (N, H, W) float32 — the SAME array the TSDF fusion consumed.
+        rgbs:        (N, H, W, 3) uint8, or float32 in [0, 1] (converted at this boundary).
+        c2w:         (N, 4, 4) float32 cam-to-world OpenCV.
+        intrinsics:  (N, 3, 3) float32.
+        iterations:  rigid optimizer iteration count (upstream default is 300).
+        depth_trunc: visibility cutoff — must match the fusion's depth_trunc; the option's
+                     2.5 default assumes metric depth and ours is non-metric.
+    """
+    # Float [0,1] RGB (model-res path) -> uint8 at the boundary; native path is already uint8
+    if rgbs.dtype != np.uint8:
+        rgbs = (np.clip(rgbs, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+    # RGBD list + camera trajectory from the same arrays the fusion consumed — resolution
+    # consistency with the mesh is guaranteed by construction
+    height, width = depths.shape[1:3]
+    rgbd_images = []
+    cam_params = []
+    for i in range(depths.shape[0]):
+        color = o3d.geometry.Image(np.ascontiguousarray(rgbs[i]))
+        depth = o3d.geometry.Image(np.ascontiguousarray(depths[i].astype(np.float32)))
+        rgbd_images.append(
+            o3d.geometry.RGBDImage.create_from_color_and_depth(
+                color,
+                depth,
+                depth_scale=1.0,
+                depth_trunc=depth_trunc,
+                convert_rgb_to_intensity=False,
+            )
+        )
+        K = intrinsics[i]
+        cam = o3d.camera.PinholeCameraParameters()
+        cam.intrinsic = o3d.camera.PinholeCameraIntrinsic(
+            width, height, float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
+        )
+        cam.extrinsic = np.linalg.inv(c2w[i])  # optimizer wants world-to-camera
+        cam_params.append(cam)
+    trajectory = o3d.camera.PinholeCameraTrajectory()
+    trajectory.parameters = cam_params
+
+    # Run the rigid optimizer and overwrite the mesh; the refined trajectory is discarded
+    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+    option = o3d.pipelines.color_map.RigidOptimizerOption(
+        maximum_iteration=int(iterations),
+        maximum_allowable_depth=float(depth_trunc),
+    )
+    logger.info("Color map optimization: %d frames, %d iterations", depths.shape[0], iterations)
+    mesh, _ = o3d.pipelines.color_map.run_rigid_optimizer(mesh, rgbd_images, trajectory, option)
+    o3d.io.write_triangle_mesh(str(mesh_path), mesh)
+
+
 def pointcloud_to_mesh(
     result: FeedforwardResult,
     output_dir: Path,

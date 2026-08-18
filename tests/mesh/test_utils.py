@@ -1,7 +1,11 @@
 from pathlib import Path
 
 import numpy as np
+import open3d as o3d
 import pytest
+
+from collab_splats.mesh.tsdf import Open3DTSDFFusion
+from collab_splats.mesh.utils import optimize_color_map
 
 
 def test_find_depth_edges_shape():
@@ -418,3 +422,35 @@ def test_tsdf_inputs_native_resolution_wrong_store_resolution_raises():
         _feedforward_to_tsdf_inputs(
             ff, frame_store=WrongResStore(), native_intrinsics=ff.intrinsics
         )
+
+
+########
+# optimize_color_map — rigid Zhou-Koltun color map optimization
+########
+
+
+def test_optimize_color_map_runs_and_recolors(tmp_path):
+    """Rigid optimizer runs on a tiny synthetic scene and leaves a valid colored mesh in place."""
+    # Constant-depth plane seen by 3 slightly-translated cameras; left half bright so the
+    # optimizer has an image gradient to work with
+    n, h, w = 3, 32, 32
+    depths = np.full((n, h, w), 1.0, np.float32)
+    rgbs = np.zeros((n, h, w, 3), np.uint8)
+    rgbs[:, :, : w // 2] = 200
+    K = np.array([[32.0, 0.0, 16.0], [0.0, 32.0, 16.0], [0.0, 0.0, 1.0]], np.float32)
+    intrinsics = np.tile(K, (n, 1, 1))
+    c2w = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    c2w[:, 0, 3] = np.linspace(-0.02, 0.02, n)
+
+    fusion = Open3DTSDFFusion(
+        output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=5.0
+    )
+    result = fusion.create(depths, rgbs, c2w, intrinsics)
+
+    optimize_color_map(
+        result.mesh_path, depths, rgbs, c2w, intrinsics, iterations=5, depth_trunc=5.0
+    )
+
+    mesh = o3d.io.read_triangle_mesh(str(result.mesh_path))
+    assert len(mesh.vertices) > 0
+    assert len(mesh.vertex_colors) == len(mesh.vertices)

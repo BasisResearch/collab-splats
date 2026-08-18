@@ -1,5 +1,14 @@
 # Known Test Failures
 
+## 2026-08-18 — RESOLVED: 3 BA `test_optimize_*` xfails (bae/pypose target bug)
+
+The deferred bae/pypose integration bug (bae `LM.step` calls `self.model(input)` without
+`target`, pypose>=0.7 `RobustModel.forward` requires it — entries of 2026-06 below) is fixed
+at `6e8ab15`: `_optimize` binds `target=None` on the wrapped model instance via
+`functools.partial` right after constructing the LM optimizer. The three xfail markers are
+removed; `tests/geometry/test_bundle_adjustment.py` is fully green (25 passed) on CUDA+bae.
+Suite-count references below that say "3 xfailed" predate this.
+
 ## 2026-07-22 — LC resident RAM scales with frame count (KNOWN LIMIT, follow-up owed)
 
 P7.3 lean-RAM check (chess seq-01, **1000 frames**, vggt_omega, submap_size 16, lc): completed

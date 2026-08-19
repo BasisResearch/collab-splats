@@ -56,11 +56,12 @@ from collab_splats.geometry.loop_closure.eval import ate_translation, rpe, auc_a
 from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
-_FIXED_CONDITIONS = {"baseline", "ba", "ba_percam", "lc"}
+_FIXED_CONDITIONS = {"baseline", "ba", "ba_coarse", "ba_percam", "lc"}
 _COLORS = {
     "gt": "black",
     "baseline": "tab:red",
     "ba": "tab:blue",
+    "ba_coarse": "tab:olive",
     "ba_percam": "tab:purple",
     "lc": "tab:green",
     "vggt_slam": "tab:orange",
@@ -221,6 +222,7 @@ def _make_creator(
     lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
     loop_edge_timing: str = "deferred",
+    tracks_cache_dir: Path | None = None,
 ):
     """Build a (creator, ba_config) pair for the given condition.
 
@@ -233,6 +235,17 @@ def _make_creator(
     _lc_extra = {"loop_edge_timing": loop_edge_timing}
     if max_loops_per_submap is not None:
         _lc_extra["max_loops_per_submap"] = max_loops_per_submap
+
+    # Every BA config below shares one track cache dir. Extraction dominates BA runtime,
+    # so a warm cache is the main lever when re-running conditions on the same scene.
+    # Nested per backbone because tracks are seeded from the backbone's own world_points
+    # but _compute_tracks_cache_key only hashes image paths + extraction knobs — one flat
+    # dir would hand one backbone's tracks to another under a matching key.
+    _ba_cache = None if tracks_cache_dir is None else Path(tracks_cache_dir) / backbone
+
+    def _ba(**kw) -> BundleAdjustmentConfig:
+        return BundleAdjustmentConfig(tracks_cache_dir=_ba_cache, **kw)
+
     base = get_creator(backbone)()
     if condition == "lc":
         lc_cfg = LoopClosureConfig(
@@ -242,7 +255,7 @@ def _make_creator(
     m = re.fullmatch(r"ba_track-density-(\d+)", condition)
     if m:
         n = int(m.group(1))
-        cfg = BundleAdjustmentConfig(
+        cfg = _ba(
             max_query_pts=n,
             query_frame_num=max(5, n // 512),
         )
@@ -254,7 +267,7 @@ def _make_creator(
     m2 = re.fullmatch(r"incremental_ba-(\d+)", condition)
     if m2:
         increment_size = int(m2.group(1))
-        cfg = BundleAdjustmentConfig(increment_size=increment_size)
+        cfg = _ba(increment_size=increment_size)
         if submap_size is not None:
             _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0, **_lc_extra)
             windowed = LoopClosure(base, config=_no_lc_cfg)
@@ -265,16 +278,21 @@ def _make_creator(
         _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0, **_lc_extra)
         windowed = LoopClosure(base, config=_no_lc_cfg)
         if condition == "ba":
-            return windowed, BundleAdjustmentConfig()
+            return windowed, _ba()
         # ba_percam: shared-camera ablation — one focal per frame instead of one per scene
         if condition == "ba_percam":
-            return windowed, BundleAdjustmentConfig(shared_camera=False)
+            return windowed, _ba(shared_camera=False)
+        # ba_coarse: track-quality ablation — skip the VGGSfM fine refinement stage
+        if condition == "ba_coarse":
+            return windowed, _ba(fine_tracking=False)
         return windowed, None  # baseline
     # Default: single-pass (short sequences that fit in GPU memory)
     if condition == "ba":
-        return base, BundleAdjustmentConfig()
+        return base, _ba()
     if condition == "ba_percam":
-        return base, BundleAdjustmentConfig(shared_camera=False)
+        return base, _ba(shared_camera=False)
+    if condition == "ba_coarse":
+        return base, _ba(fine_tracking=False)
     return base, None  # baseline
 
 
@@ -287,6 +305,7 @@ def _run_condition(
     lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
     loop_edge_timing: str = "deferred",
+    tracks_cache_dir: Path | None = None,
 ) -> tuple[np.ndarray, Any]:
     """Run condition, return (extrinsics (N,4,4), creator)."""
     creator, ba_cfg = _make_creator(
@@ -296,6 +315,7 @@ def _run_condition(
         lc_scale_method=lc_scale_method,
         max_loops_per_submap=max_loops_per_submap,
         loop_edge_timing=loop_edge_timing,
+        tracks_cache_dir=tracks_cache_dir,
     )
     if ba_cfg is None:
         creator.reconstruct(image_dir, output_dir)
@@ -427,6 +447,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "baseline→windowed VGGT-X, ba→windowed+BA, lc→full LC pipeline.",
     )
     parser.add_argument(
+        "--tracks_cache_dir",
+        type=Path,
+        default=None,
+        help="Reuse extracted VGGSfM tracks across BA conditions (extraction dominates BA "
+        "runtime). Nested per backbone automatically. Single-slot per backbone: conditions "
+        "that differ in extraction settings (ba vs ba_coarse differ in fine_tracking) evict "
+        "each other — give those separate dirs.",
+    )
+    parser.add_argument(
         "--backbone",
         choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark", "loger"],
         default="vggt_omega",
@@ -511,6 +540,7 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
         lc_scale_method=getattr(args, "lc_scale_method", "rotation_only"),
         max_loops_per_submap=getattr(args, "max_loops_per_submap", None),
         loop_edge_timing=getattr(args, "loop_edge_timing", "deferred"),
+        tracks_cache_dir=getattr(args, "tracks_cache_dir", None),
     )
     elapsed = time.perf_counter() - t0
 
@@ -694,6 +724,10 @@ def main() -> None:
             ]
             if args.submap_size is not None:
                 cmd += ["--submap_size", str(args.submap_size)]
+            # The leaf subprocess is what actually builds the BA config, so the cache dir
+            # has to cross the process boundary or every condition re-extracts tracks.
+            if getattr(args, "tracks_cache_dir", None) is not None:
+                cmd += ["--tracks_cache_dir", str(args.tracks_cache_dir)]
             # Always forward scale_method so the leaf never falls back to a
             # drifting default (default = rotation_only = parity method).
             cmd += ["--lc_scale_method", getattr(args, "lc_scale_method", "rotation_only")]

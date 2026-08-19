@@ -278,3 +278,89 @@ def test_save_outputs_persists_all_auc_thresholds(tmp_path):
     saved = json.loads((tmp_path / "metrics.json").read_text())["baseline"]
     assert saved["auc"] == {"auc_5": 10.0, "auc_15": 50.0, "auc_30": 80.0}
     assert saved["rpe"]["rot_rmse_deg"] == 1.5
+
+
+def test_make_creator_threads_tracks_cache_dir(monkeypatch, tmp_path):
+    """tracks_cache_dir reaches the BA config for every BA condition."""
+    from unittest.mock import MagicMock
+
+    import eval as eval_gt
+
+    monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
+    for cond in ("ba", "ba_percam", "ba_coarse", "ba_track-density-4096", "incremental_ba-5"):
+        _, ba_cfg = eval_gt._make_creator(cond, backbone="vggtx", tracks_cache_dir=tmp_path)
+        assert ba_cfg.tracks_cache_dir == tmp_path / "vggtx", f"{cond} dropped tracks_cache_dir"
+
+
+def test_make_creator_threads_tracks_cache_dir_windowed(monkeypatch, tmp_path):
+    """The windowed (--submap_size) branch threads tracks_cache_dir too."""
+    from unittest.mock import MagicMock
+
+    import eval as eval_gt
+
+    monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
+    for cond in ("ba", "ba_percam", "ba_coarse"):
+        _, ba_cfg = eval_gt._make_creator(cond, submap_size=50, backbone="vggtx", tracks_cache_dir=tmp_path)
+        assert ba_cfg.tracks_cache_dir == tmp_path / "vggtx", f"windowed {cond} dropped tracks_cache_dir"
+
+
+def test_make_creator_tracks_cache_dir_is_per_backbone(monkeypatch, tmp_path):
+    """Two backbones never share a track cache slot.
+
+    Tracks are seeded from the backbone's own world_points, but the cache key hashes
+    only image paths + extraction knobs — a flat dir would serve one backbone's tracks
+    to another under a matching key.
+    """
+    from unittest.mock import MagicMock
+
+    import eval as eval_gt
+
+    monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
+    _, a = eval_gt._make_creator("ba", backbone="vggtx", tracks_cache_dir=tmp_path)
+    _, b = eval_gt._make_creator("ba", backbone="mapanything", tracks_cache_dir=tmp_path)
+    assert a.tracks_cache_dir != b.tracks_cache_dir
+
+
+def test_make_creator_tracks_cache_dir_defaults_to_none(monkeypatch):
+    """Unset --tracks_cache_dir leaves the config default (always extract)."""
+    from unittest.mock import MagicMock
+
+    import eval as eval_gt
+
+    monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
+    _, ba_cfg = eval_gt._make_creator("ba")
+    assert ba_cfg.tracks_cache_dir is None
+
+
+def test_tracks_cache_dir_arg_parses_path():
+    """--tracks_cache_dir parses to a Path and defaults to None."""
+    from pathlib import Path
+
+    import eval as eval_gt
+
+    parser = eval_gt._build_parser()
+    assert parser.parse_args(["--dataset", "7scenes"]).tracks_cache_dir is None
+    parsed = parser.parse_args(["--dataset", "7scenes", "--tracks_cache_dir", "/tmp/tc"])
+    assert parsed.tracks_cache_dir == Path("/tmp/tc")
+
+
+def test_make_creator_ba_coarse(monkeypatch):
+    """ba_coarse → BA with fine_tracking=False (coarse-track ablation)."""
+    from unittest.mock import MagicMock
+
+    import eval as eval_gt
+    from collab_splats.geometry import BundleAdjustmentConfig
+
+    monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
+    creator, ba_cfg = eval_gt._make_creator("ba_coarse")
+    assert isinstance(ba_cfg, BundleAdjustmentConfig)
+    assert ba_cfg.fine_tracking is False
+    assert ba_cfg.shared_camera is True  # only fine_tracking differs from `ba`
+
+
+def test_ba_coarse_is_a_validated_condition():
+    """ba_coarse validates and has its own plot colour."""
+    import eval as eval_gt
+
+    eval_gt._validate_condition("ba_coarse")  # must not raise
+    assert "ba_coarse" in eval_gt._COLORS

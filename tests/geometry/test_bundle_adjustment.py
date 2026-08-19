@@ -667,21 +667,19 @@ def test_bundle_adjustment_default_config():
     assert isinstance(ba.config, BundleAdjustmentConfig)
     assert ba.config.device is None
     assert ba.config.lm_steps == 40
-    # capture_loss_history defaults to False; _last_loss_history always starts empty
-    assert ba.config.capture_loss_history is False
     assert ba._last_loss_history == []
 
 
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
-def test_optimize_captures_loss_history_when_flag_set():
-    """_optimize appends one inner list to _last_loss_history when capture_loss_history=True."""
+def test_optimize_captures_loss_history_unconditionally():
+    """_optimize always records one inner list of per-step losses (no flag gates it)."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
     n_steps = 5
-    cfg = BundleAdjustmentConfig(capture_loss_history=True, lm_steps=n_steps, min_inliers_per_frame=10)
+    cfg = BundleAdjustmentConfig(lm_steps=n_steps, min_inliers_per_frame=10)
     ba = BundleAdjustment(config=cfg)
     assert ba._last_loss_history == []
 
@@ -690,22 +688,22 @@ def test_optimize_captures_loss_history_when_flag_set():
     hist = ba._last_loss_history
     assert isinstance(hist, list)
     assert len(hist) == 1, f"one _optimize call → one inner list; got {len(hist)}"
-    assert len(hist[0]) == n_steps
+    assert len(hist[0]) == n_steps, (
+        f"expected all {n_steps} LM steps; got {len(hist[0])}. A short history means the "
+        "StopOnPlateau reject_count abort is back."
+    )
     assert all(isinstance(v, float) for v in hist[0])
     assert all(v >= 0 for v in hist[0])
 
 
-@pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
-def test_optimize_no_loss_history_by_default():
-    """Without capture_loss_history, _last_loss_history stays empty after _optimize."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+def test_ba_config_has_no_capture_loss_history_field():
+    """capture_loss_history is deleted: history is always captured, so the flag is dead."""
+    import dataclasses
 
-    N, P, H, W = 4, 60, 128, 128
-    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig
 
-    ba = BundleAdjustment(config=BundleAdjustmentConfig(min_inliers_per_frame=10))
-    ba._optimize(pts3d, extrinsics, intrinsics, tracks, vis_mask.astype(np.float32), max_reproj_error=None)
-    assert ba._last_loss_history == []
+    names = {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
+    assert "capture_loss_history" not in names
 
 
 def test_tracks_cache_save_load(tmp_path):
@@ -917,7 +915,7 @@ def test_incremental_ba_warm_start_updates_registered_frames():
 
 
 def test_incremental_ba_loss_history_has_one_entry_per_step():
-    """_last_loss_history contains one inner list per k-step when capture_loss_history=True."""
+    """_last_loss_history contains one inner list per incremental k-step."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, H, W = 6, 8, 8
@@ -930,8 +928,7 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
 
     def mock_optimize_with_hist(self_ba, pts3d, extrinsics, intrinsics, tracks, vis_scores, **kwargs):
         k = len(tracks)
-        if self_ba.config.capture_loss_history:
-            self_ba._last_loss_history.append([float(k) * 0.1])
+        self_ba._last_loss_history.append([float(k) * 0.1])
         return (fake_pts3d, extrinsics.copy(), intrinsics.copy())
 
     with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
@@ -939,7 +936,7 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
          patch.object(BundleAdjustment, "_optimize",
                       lambda self_ba, *a, **kw: mock_optimize_with_hist(self_ba, *a, **kw)):
 
-        ba = BundleAdjustment(BundleAdjustmentConfig(increment_size=2, capture_loss_history=True))
+        ba = BundleAdjustment(BundleAdjustmentConfig(increment_size=2))
         ba.refine(result)
 
     # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls → 3 inner lists

@@ -924,7 +924,7 @@ class Reconstructor:
         ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
 
         # Refine poses with LM BA, then re-derive the point set under the new cameras
-        cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir, capture_loss_history=True)
+        cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir)
         ba = BundleAdjustment(cfg)
         ff = ba.refine(ff).reproject()
 

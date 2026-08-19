@@ -72,7 +72,6 @@ class BundleAdjustmentConfig:
     max_query_pts: int = 4096  # track extraction: max query points (upstream demo default)
     query_frame_num: int = 8  # track extraction: number of query frames (upstream demo default)
     device: str | None = None  # CUDA device (e.g. "cuda", "cuda:1"); None = auto. CPU unsupported (bae LM is CUDA-only)
-    capture_loss_history: bool = False  # record per-step LM loss; read via BundleAdjustment._last_loss_history
     increment_size: int = 0  # frames added per step; 0 = disabled (global BA); 1..N-1 = incremental
     # Sweep results (chess seq-01): increment_size ≈ N//10 is Pareto-optimal (N=50→3, N=200→20).
     # increment_size=1 diverges. Default 0 = global BA; set explicitly to opt into incremental.
@@ -93,7 +92,7 @@ class BundleAdjustment:
 
     def __init__(self, config: BundleAdjustmentConfig | None = None) -> None:
         self.config = config or BundleAdjustmentConfig()
-        # Populated per _optimize() call when capture_loss_history=True; stays empty otherwise
+        # Populated per _optimize() call with that call's per-step LM losses
         self._last_loss_history: list[list[float]] = []
 
     def _load_or_extract_tracks(self, result: "FeedforwardResult") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -407,33 +406,18 @@ class BundleAdjustment:
                 type(optimizer.model).forward, optimizer.model, target=None
             )
 
-            if cfg.capture_loss_history:
-                # Manual step loop: collect scalar loss at each iteration.
-                # StopOnPlateau patience / early-stop is intentionally skipped here —
-                # running all n_steps gives a complete loss curve for visualisation.
-                loss_hist: list[float] = []
-                for i in range(n_steps):
-                    step_loss = optimizer.step(input=input_dict)
-                    loss_hist.append(float(step_loss))
-                    logger.info("LM step %d/%d: loss=%.6e", i + 1, n_steps, float(step_loss))
-                self._last_loss_history.append(loss_hist)
-            else:
-                # Default path: StopOnPlateau with patience-based early stopping.
-                # Manual continual/step loop (equivalent to scheduler.optimize) so each
-                # LM iteration's loss is logged — progress is visible on long runs.
-                scheduler = pp.optim.scheduler.StopOnPlateau(
-                    optimizer,
-                    steps=n_steps,
-                    patience=3,
-                    decreasing=1e-3,
-                    verbose=False,
-                )
-                step = 0
-                while scheduler.continual():
-                    step_loss = optimizer.step(input=input_dict)
-                    scheduler.step(step_loss)
-                    step += 1
-                    logger.info("LM step %d/%d: loss=%.6e", step, n_steps, float(step_loss))
+            # Manual LM loop, running all n_steps. pypose's StopOnPlateau is unusable here:
+            # it aborts the whole optimization as soon as bae's LM needs a single
+            # trust-region damping retry (scheduler.py:153-155 stops on reject_count > 0,
+            # which optimizer.py increments on any rejected trial step), and its plateau
+            # test is an absolute difference against 1e-3 that never fires at our loss
+            # scale (~1e5-1e6). It terminated after 1-2 of 40 steps in practice.
+            loss_hist: list[float] = []
+            for i in range(n_steps):
+                step_loss = optimizer.step(input=input_dict)
+                loss_hist.append(float(step_loss))
+                logger.info("LM step %d/%d: loss=%.6e", i + 1, n_steps, float(step_loss))
+            self._last_loss_history.append(loss_hist)
 
         # Recover (3, 4) extrinsics from optimised SE3 quaternion representation
         opt_cam = model.pose.data.detach().cpu().numpy()  # (K, 7) or (K, 8)

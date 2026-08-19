@@ -649,6 +649,17 @@ def test_ba_config_new_fields_default():
     assert cfg.tracks_cache_dir is None
 
 
+def test_ba_config_track_quality_defaults():
+    """Track-quality parity defaults: vis gate, fine tracking, shared camera, upstream density."""
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig
+    cfg = BundleAdjustmentConfig()
+    assert cfg.vis_thresh == 0.2
+    assert cfg.fine_tracking is True
+    assert cfg.shared_camera is True
+    assert cfg.max_query_pts == 4096
+    assert cfg.query_frame_num == 8
+
+
 def test_bundle_adjustment_default_config():
     """BundleAdjustment() with no args uses default BundleAdjustmentConfig."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig

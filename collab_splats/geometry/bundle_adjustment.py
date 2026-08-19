@@ -64,10 +64,12 @@ class BundleAdjustmentConfig:
 
     max_reproj_error: float = 4.0
     lm_steps: int = 40
-    shared_camera: bool = False
+    shared_camera: bool = True  # one physical camera per scene; per-frame K spread is model noise
+    vis_thresh: float = 0.2  # min VGGSfM visibility score for an observation to enter BA
+    fine_tracking: bool = True  # VGGSfM fine refinement stage (upstream always on; coarse-only ~1-2px error)
     min_inliers_per_frame: int = 64
-    max_query_pts: int = 2048  # track extraction: max query points
-    query_frame_num: int = 5  # track extraction: number of query frames
+    max_query_pts: int = 4096  # track extraction: max query points (upstream demo default)
+    query_frame_num: int = 8  # track extraction: number of query frames (upstream demo default)
     device: str | None = None  # CUDA device (e.g. "cuda", "cuda:1"); None = auto. CPU unsupported (bae LM is CUDA-only)
     capture_loss_history: bool = False  # record per-step LM loss; read via BundleAdjustment._last_loss_history
     increment_size: int = 0  # frames added per step; 0 = disabled (global BA); 1..N-1 = incremental

@@ -375,7 +375,9 @@ git commit -m "fix(ba): visibility gate + upstream filter order via _filter_obse
 
 ---
 
-### Task 4: `ba_percam` eval condition (shared-camera ablation)
+### Task 4 (CONDITIONAL — skip unless Task 6's gate demands it): `ba_percam` eval condition
+
+**Execute ONLY if the Task 6 measurement is ambiguous** — mapanything regresses, or vggtx improves but stays above baseline — and knob attribution is needed. If the parity run wins cleanly, this task is never built (YAGNI).
 
 **Files:**
 - Modify: `evals/scripts/eval.py` (`_FIXED_CONDITIONS` line 59, `_COLORS` line 60, `_make_creator` single-pass + windowed `ba` branches ~lines 256-266)
@@ -463,7 +465,7 @@ Expected: clean. If not: run black on ONLY these files (never repo-wide — venv
 - Results: `evals/results/ba_parity_chess/<backbone>/` (gitignored)
 - Modify after measurement: `docs/superpowers/specs/2026-08-19-ba-track-quality-parity-design.md` (§Validation), `CLAUDE.md` (BA verdict line), `docs/superpowers/handoffs/` if handing off
 
-- [ ] **Step 1: Confirm with the user before launching** — three serial GPU runs, ~cgroup-capped machine. Do not run alongside other heavy jobs.
+- [ ] **Step 1: Confirm with the user before launching** — two serial GPU runs (third only if the gate demands attribution), ~cgroup-capped machine. Do not run alongside other heavy jobs.
 
 - [ ] **Step 2: Run vggtx (worst regression) — new defaults**
 
@@ -483,18 +485,14 @@ Reference numbers to beat (2026-08-19 sweep, old code): vggtx baseline ATE 0.007
 
 Same command with `--backbone mapanything`, output dir `.../mapanything`. Guard: ba ATE must stay ≤ its baseline (0.0133) and ideally ≤ the old measured ba (0.0120).
 
-- [ ] **Step 4: Run vggtx `ba_percam` ablation — isolates shared-camera contribution**
+- [ ] **Step 4: Decision gate (from spec)**
 
-Same command as Step 2 but `--conditions ba_percam` and output dir `.../vggtx_percam`. Cheap: track cache in the backend dir is reused (`shared_camera`/`vis_thresh` not in the cache key) — extraction, the slow step, is skipped.
+- vggtx `ba` ATE ≤ baseline AND mapanything holds its gain → parity restored; proceed to Step 5. Task 4 stays unbuilt.
+- Improved but still > baseline → build Task 4, run `--conditions ba_percam` (output dir `.../vggtx_percam`; cheap — track cache reused, `shared_camera` not in the cache key) to attribute, then next effort is option B (1024/original-res track extraction). Record numbers first.
+- No improvement → same attribution run, then option C (focal freeze / pose-only BA). Record numbers first.
+- mapanything regressed → build Task 4 and ablate which new knob costs it before landing anything.
 
-- [ ] **Step 5: Decision gate (from spec)**
-
-- vggtx `ba` ATE ≤ baseline → parity restored; proceed to Step 6.
-- Improved but still > baseline → stop; next effort is option B (1024/original-res track extraction). Record numbers first.
-- No improvement → stop; next effort is option C (focal freeze / pose-only BA). Record numbers first.
-- mapanything regressed → ablate which new knob costs it before landing anything.
-
-- [ ] **Step 6: Document measured results**
+- [ ] **Step 5: Document measured results**
 
 Append the measured table (baseline / ba / ba_percam × ATE, RPE-t, RPE-rot, AUC@5) to the spec's §Validation, update the CLAUDE.md "Recently completed" BA verdict if it changes, and commit:
 

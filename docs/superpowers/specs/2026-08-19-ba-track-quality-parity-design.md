@@ -70,8 +70,12 @@ Runs, serial in tmux:
 
 1. `vggtx` (worst regression) — baseline vs ba, full new defaults.
 2. `mapanything` (the one BA helped) — regression guard in the other direction.
-3. `vggtx` ablation — new defaults but `shared_camera=False`, isolating the shared-camera
-   contribution (track cache makes this cheap; extraction dominates runtime).
+
+Conditional third run — built only if the gate below demands attribution (YAGNI: no
+committed ablation surface unless the combined result is ambiguous): `vggtx` with
+`shared_camera=False` via an eval condition `ba_percam` added at that point, isolating
+the shared-camera contribution (cheap — track cache reused, `shared_camera` not in the
+cache key).
 
 Decision gate:
 

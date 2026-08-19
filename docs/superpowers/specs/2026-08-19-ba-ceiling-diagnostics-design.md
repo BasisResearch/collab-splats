@@ -25,12 +25,12 @@ enough baseline to improve on the model's poses are the long ones, and the long 
 the ones most likely to have drifted. The information you need and the information you can
 trust are disjoint.
 
-Supporting arithmetic, from measured geometry (not assumed):
+Supporting arithmetic, from measured geometry (D5, full population — not assumed):
 
-- camera-centre extent **0.304 m**, median landmark depth **1.03** (recon units)
+- camera-centre extent **0.3075 m**, median landmark depth **1.31** (recon units)
 - σ_Z ≈ Z²·σ_px / (f·B), with f ≈ 550 px, σ_px ≈ 0.5
-  - full extent B = 0.304 m → σ_Z ≈ **3 mm**
-  - median triangulation angle 4.24° → B ≈ 76 mm → σ_Z ≈ **13 mm**
+  - best case, full extent B = 0.3075 m → σ_Z ≈ **5 mm**
+  - typical, median triangulation angle 3.98° → B ≈ 91 mm → σ_Z ≈ **17 mm**
 - baseline ATE = **7.98 mm**
 
 Structure uncertainty straddles the pose error BA is meant to remove. Under plain least
@@ -121,6 +121,33 @@ including COLMAP's own thresholds for reference (`filter_min_tri_angle=1.5°`,
 pycolmap 4.0.4).
 
 Sizes the prospective fix before anyone writes it.
+
+**Measured 2026-08-19** — 37257 landmarks with ≥2 observations at vis>0.2, 1,966,262
+observations, `pred_ba` camera centres:
+
+percentiles (deg): p1 0.12, p5 0.23, p25 1.07, **p50 3.98**, p75 7.01, p95 10.23, p99 11.26
+
+| gate | points dropped | obs dropped | points kept |
+|------|----------------|-------------|-------------|
+| 0.5° | 6761 (18.1%) | 153952 (7.8%) | 30496 |
+| 1.0° | 9043 (24.3%) | 234181 (11.9%) | 28214 |
+| **1.5°** (COLMAP filter) | **10684 (28.7%)** | **291384 (14.8%)** | **26573** |
+| 2.0° | 11915 (32.0%) | 335602 (17.1%) | 25342 |
+| 3.0° | 15035 (40.4%) | 460702 (23.4%) | 22222 |
+| 6.0° (COLMAP local BA) | 25626 (68.8%) | 997632 (50.7%) | 11631 |
+| 16.0° (COLMAP init) | 37257 (100%) | 1966262 (100%) | **0** |
+
+Three readings:
+
+1. **The whole population tops out near 11°** (p99 = 11.26). No landmark in the scene
+   reaches COLMAP's 16° initialization bar — COLMAP would refuse to seed a reconstruction
+   here at all. Its answer to this sequence is to decline it, not to solve it better.
+2. **A 1.5° gate is asymmetric in our favour**: 28.7% of the points but only 14.8% of the
+   observations. Degenerate landmarks are seen in fewer, closer frames, so removing them
+   costs less residual mass than their count suggests.
+3. **No frame starvation at any candidate gate.** Minimum surviving observations per frame
+   is 10816 at 1.5° and 7142 at 6.0°, against `min_inliers_per_frame=64`. The gate cannot
+   drop a frame, so it cannot change which poses BA solves for.
 
 ## Findings that shape the design
 

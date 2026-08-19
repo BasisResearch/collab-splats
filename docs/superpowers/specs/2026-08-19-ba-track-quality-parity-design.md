@@ -85,6 +85,70 @@ Decision gate:
 - mapanything must not regress below its measured BA gain (ATE 0.0120); if it does, ablate
   which new knob costs it.
 
+### Measured results (chess/seq-01, 100 frames, 2026-08-19)
+
+Baselines reproduced the 2026-08-19 sweep exactly on both backbones — a valid control.
+
+**vggtx** (worst prior regression):
+
+| metric | baseline | ba (parity) | ba (old code) |
+|---|---|---|---|
+| ATE rmse | 0.008185 | 0.008836 | 0.0141 |
+| ATE median | 0.007134 | 0.007844 | — |
+| ATE max | 0.018124 | 0.019880 | — |
+| RPE-t | 0.008521 | 0.008548 | 0.0087 |
+| RPE-rot | 0.1858° | 0.2012° | 0.198° |
+| AUC@5/15/30 | 20.37 / 64.48 / 80.54 | 8.85 / 58.73 / 77.67 | 13.1 / — / — |
+| time | 133.3 s | 836.6 s | 129 s |
+
+**mapanything** (the one BA already helped):
+
+| metric | baseline | ba (parity) | ba (old code) |
+|---|---|---|---|
+| ATE rmse | 0.013267 | 0.008926 | 0.0120 |
+| ATE median | 0.010740 | 0.007255 | — |
+| ATE max | 0.044837 | 0.017234 | — |
+| RPE-t | 0.018773 | 0.013850 | 0.0141 |
+| RPE-rot | 0.2130° | 0.2201° | 0.201° |
+| AUC@5/15/30 | 8.33 / 54.22 / 73.83 | 11.53 / 57.06 / 76.02 | 19.2 / — / — |
+| time | 162.6 s | 637.4 s | 189 s |
+
+Gate outcome:
+
+- **mapanything passes outright.** ATE −32.7% vs baseline (was −9.8% under the old code) and below
+  the old BA result of 0.0120. ATE max more than halves (44.8 mm → 17.2 mm) — the parity filters
+  are killing worst-case frames, exactly what the visibility gate was meant to do.
+- **vggtx improved but stays marginally above baseline** (+7.96%, was +72%). Per the gate this
+  triggers the shared-camera attribution run (`ba_percam`), then option B (1024/original-res track
+  extraction).
+- Net: the parity fix removed ~89% of the vggtx regression and turned mapanything's modest gain
+  into a large one. BA is no longer harmful on a sub-cm baseline — but it is not free, at 5–6×
+  runtime.
+
+Two observations the design did not predict:
+
+1. **Rotation regresses slightly on both backbones while translation improves** (vggtx RPE-rot
+   0.186°→0.201°; mapanything 0.213°→0.220° even as its ATE drops a third). `shared_camera=True`
+   removes per-frame focal as a free parameter, and the pose solve appears to absorb some of that
+   in rotation. This is what the `ba_percam` ablation isolates.
+2. **AUC@5 is a poor instrument on this sequence.** Consecutive chess/seq-01 frames sit ~10–20 mm
+   apart, so `auc_at_threshold`'s translation term — a *bearing* angle between normalized relative
+   translations — is ill-conditioned: a sub-millimetre perpendicular shift on a 15 mm baseline
+   swings the bearing past the 1° bins. Hence AUC@5 falling while AUC@30 barely moves and ATE
+   improves. Prefer ATE/RPE on short-baseline indoor sequences.
+
+Track extraction is effectively deterministic: `predict_tracks` selects query points by ALIKED
+top-K (`max_num_keypoints=max_query_pts`) *before* the unseeded `torch.randperm` at
+`track_predict.py:173`, which shuffles order (hence batch grouping) only. Run-to-run variation is
+float-level, so these single-run numbers are not sampling noise.
+
+**Upstream parity note (verified 2026-08-19):** BA runs *once* — a single `LM` +
+`StopOnPlateau(steps=40, patience=3, decreasing=1e-3)` optimization — matching upstream
+`demo_colmap.py` exactly, including `reject=10`, `TrustRegion(up=2.0, down=0.5**4)` and `PCG()`.
+Upstream carries its own `# TODO: add iterative BA`: observations are filtered once, up front,
+against the *initial* poses, so tracks that only become outliers after the poses move are never
+dropped. Iterative BA (BA → refilter → BA) is a follow-on option, ranked alongside option B.
+
 ### Testing
 
 - `tests/geometry/test_bundle_adjustment.py` (25 green) adapts: new-field defaults, vis

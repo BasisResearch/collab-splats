@@ -231,6 +231,8 @@ git commit -m "fix(ba): thread fine_tracking into VGGSfM extraction + track cach
 - Modify: `collab_splats/geometry/bundle_adjustment.py:288-310` (`_optimize` filtering block → helper call), new module-level helper in the Helpers section (after `_scale_intrinsics_to_model`)
 - Test: `tests/geometry/test_bundle_adjustment.py`
 
+**Scope guard:** `_filter_observations` is a RELOCATION of the existing filtering block out of `_optimize`, not new abstraction — net code size unchanged, and it makes the filter logic testable without CUDA or mocked-LM machinery. Do not generalize it further (no config object param, no class, single call site is fine).
+
 - [ ] **Step 1: Write the failing tests**
 
 Add near the other CPU-runnable `_optimize` tests (direct-import style):
@@ -278,24 +280,9 @@ def test_filter_observations_no_single_obs_landmark_after_frame_drop():
     assert not vis[:, 2].any()
     # Invariant: every surviving landmark has >=2 observations
     assert (vis.sum(0)[vis.any(0)] >= 2).all()
-
-
-def test_filter_observations_bool_mask_input():
-    """Bool visibility masks (used throughout existing tests) still work through the gate."""
-    from collab_splats.geometry.bundle_adjustment import _filter_observations
-
-    vis_scores = np.ones((2, 3), dtype=bool)
-    tracks = np.zeros((2, 3, 2), dtype=np.float32)
-    pts3d = np.zeros((3, 3), dtype=np.float64)
-    ext = np.zeros((2, 3, 4), dtype=np.float32)
-    intr = np.zeros((2, 3, 3), dtype=np.float32)
-
-    vis = _filter_observations(
-        vis_scores, tracks, pts3d, ext, intr,
-        vis_thresh=0.2, max_reproj=None, min_inliers_per_frame=1,
-    )
-    assert vis.all()
 ```
+
+(No separate bool-mask test — existing `_optimize` tests pass bool `vis_mask` arrays through the full path and would catch a bool/float regression; `bool > float` comparison is valid numpy.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -347,7 +334,7 @@ def _filter_observations(
 - [ ] **Step 4: Run tests to verify pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_bundle_adjustment.py -k "filter_observations" -v`
-Expected: PASS all 3.
+Expected: PASS both.
 
 - [ ] **Step 5: Integrate into `_optimize`**
 

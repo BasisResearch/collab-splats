@@ -92,6 +92,35 @@ All four (vggtx, mapanything, omega, loger). BA is method-agnostic over `Feedfor
 
 ATE on 7-Scenes chess/seq-01, all 4 backends, baseline vs `bundle_adjustment: true`, via existing `evals/scripts/eval.py` conditions. Reference-free control run alongside (ATE-vs-GT noise-floor lesson from LoGeR bench). Expected outcomes documented, including the known BA no-op on tiny-baseline scenes (C0043). Numbers append to this spec.
 
+### Measured results (2026-08-18/19, chess/seq-01, 100 frames, single-pass, `--conditions baseline ba`)
+
+Single-pass only — the windowed (`--submap_size`) BA path stays broken by the known LC
+`_assemble_result` images gap and was not run. Results dir:
+`evals/results/ba_wiring_chess/` (gitignored); logs per backbone alongside.
+
+| backbone | ATE base | ATE ba | RPE-t base→ba | RPE-rot base→ba | AUC@5 base→ba | time base→ba |
+|---|---|---|---|---|---|---|
+| vggtx | 0.0082 | **0.0141** | 0.0085→0.0087 | 0.186→0.198° | 20.4→13.1 | 143s→129s |
+| vggt_omega | 0.0080 | **0.0109** | 0.0087→0.0086 | 0.183→0.189° | 55.2→9.4 | 93s→128s |
+| mapanything | 0.0133 | **0.0120** | 0.0188→0.0141 | 0.213→0.201° | 8.3→19.2 | 167s→189s |
+| loger | 0.0073 | **0.0094** | 0.0095→0.0095 | 1.082→0.553° | 23.7→13.7 | 220s→264s |
+
+Read: BA **helps only the weakest baseline** (mapanything: every metric improves — ATE −10%,
+RPE-t −25%, AUC@5 +11pt) and **hurts the three sub-cm baselines** (vggtx/omega/loger ATE +28–72%,
+AUC@5 drops; omega worst, 55.2→9.4). One genuine bright spot elsewhere: BA halves loger's
+rotational drift (RPE-rot 1.08°→0.55°) even while ATE worsens. Consistent with the C0043
+tiny-baseline no-op and the CO3Dv2 findings (BA helped there, where baselines were far worse):
+at ~8mm ATE the feedforward poses sit near the 7-Scenes GT noise floor and the shipped BA
+knobs (SIMPLE_PINHOLE shared-per-frame focal, VGGSfM tracks at model res, max_reproj 4.0)
+inject more track noise than they remove. **Default stays `bundle_adjustment: false`**; BA is
+the right tool when the baseline is visibly bad, not a free upgrade on good scenes.
+
+The run also flushed out and fixed two latent production bugs (first live BA since the
+bae/pypose env upgrade): bae 0.2.4 `LM.step` vs pypose 0.7.5 `RobustModel.forward(target)`
+TypeError — BA optimize was dead in production, the 3 test xfails tracked it (fix `6e8ab15`,
+xfails removed); and LoGeR's float32 se3-refined rotations failing `mat2SE3`'s orthogonality
+check — fixed by SVD projection to the nearest proper rotation before conversion.
+
 ## Out of scope
 
 - BA over LC submaps (images gap; separate effort if ever).

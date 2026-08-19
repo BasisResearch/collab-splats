@@ -724,7 +724,7 @@ def test_tracks_cache_save_load(tmp_path):
 
     extract_calls = []
 
-    def fake_extract(images, confidence, world_points, max_query_pts, query_frame_num, device=None):
+    def fake_extract(images, confidence, world_points, max_query_pts, query_frame_num, fine_tracking=True, device=None):
         extract_calls.append(1)
         return fake_tracks, fake_vis, fake_pts3d
 
@@ -766,6 +766,82 @@ def test_tracks_cache_invalidates_on_config_change(tmp_path):
         t2, _, _ = ba2._load_or_extract_tracks(result)
 
     np.testing.assert_array_equal(t2, fake_b[0])
+
+
+def test_tracks_cache_invalidates_on_fine_tracking_change(tmp_path):
+    """fine_tracking is part of the cache key — flipping it must re-extract."""
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 3, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    fake_a = (np.ones((N, 5, 2), dtype=np.float32),
+              np.ones((N, 5), dtype=np.float32),
+              np.ones((5, 3), dtype=np.float32))
+    fake_b = (np.zeros((N, 5, 2), dtype=np.float32),
+              np.zeros((N, 5), dtype=np.float32),
+              np.zeros((5, 3), dtype=np.float32))
+    extractions = [fake_a, fake_b]
+
+    def fake_extract(*args, **kwargs):
+        return extractions.pop(0)
+
+    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        ba1 = BundleAdjustment(config=BundleAdjustmentConfig(fine_tracking=True, tracks_cache_dir=tmp_path))
+        ba1._load_or_extract_tracks(result)
+
+        # Flip fine_tracking — different key → cache miss, re-extract
+        ba2 = BundleAdjustment(config=BundleAdjustmentConfig(fine_tracking=False, tracks_cache_dir=tmp_path))
+        t2, _, _ = ba2._load_or_extract_tracks(result)
+
+    np.testing.assert_array_equal(t2, fake_b[0])
+
+
+def test_tracks_cache_hit_on_vis_thresh_change(tmp_path):
+    """vis_thresh is applied post-extraction — changing it must reuse the cache."""
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 3, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    fake_tracks = np.ones((N, 5, 2), dtype=np.float32)
+    fake_vis = np.ones((N, 5), dtype=np.float32) * 0.9
+    fake_pts3d = np.ones((5, 3), dtype=np.float32) * 2.0
+
+    extract_calls = []
+
+    def fake_extract(*args, **kwargs):
+        extract_calls.append(1)
+        return fake_tracks, fake_vis, fake_pts3d
+
+    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        ba1 = BundleAdjustment(config=BundleAdjustmentConfig(vis_thresh=0.2, tracks_cache_dir=tmp_path))
+        ba1._load_or_extract_tracks(result)
+        ba2 = BundleAdjustment(config=BundleAdjustmentConfig(vis_thresh=0.5, tracks_cache_dir=tmp_path))
+        ba2._load_or_extract_tracks(result)
+
+    assert len(extract_calls) == 1, "vis_thresh change must NOT invalidate the track cache"
+
+
+def test_extract_receives_fine_tracking_kwarg(tmp_path):
+    """_load_or_extract_tracks passes cfg.fine_tracking through to _extract_tracks_vggsfm."""
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+
+    N, H, W = 3, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+    seen_kwargs = {}
+
+    def fake_extract(*args, **kwargs):
+        seen_kwargs.update(kwargs)
+        return (np.ones((N, 5, 2), dtype=np.float32),
+                np.ones((N, 5), dtype=np.float32),
+                np.ones((5, 3), dtype=np.float32))
+
+    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        ba = BundleAdjustment(config=BundleAdjustmentConfig(fine_tracking=False))
+        ba._load_or_extract_tracks(result)
+
+    assert seen_kwargs.get("fine_tracking") is False
 
 
 def test_incremental_ba_increment_size_n_matches_allonce():

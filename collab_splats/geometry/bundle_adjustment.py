@@ -49,6 +49,7 @@ def _compute_tracks_cache_key(result: "FeedforwardResult", cfg: "BundleAdjustmen
         "image_paths": sorted(str(p) for p in (result.image_paths or [])),
         "max_query_pts": cfg.max_query_pts,
         "query_frame_num": cfg.query_frame_num,
+        "fine_tracking": cfg.fine_tracking,
     }
     return hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()
 
@@ -101,10 +102,11 @@ class BundleAdjustment:
 
         def _extract() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
             logger.info(
-                "Extracting VGGSfM tracks: %d frames, max_query_pts=%d, query_frame_num=%d (slow step)",
+                "Extracting VGGSfM tracks: %d frames, max_query_pts=%d, query_frame_num=%d, fine_tracking=%s (slow step)",
                 len(result.images),
                 cfg.max_query_pts,
                 cfg.query_frame_num,
+                cfg.fine_tracking,
             )
             return _extract_tracks_vggsfm(
                 result.images,
@@ -112,6 +114,7 @@ class BundleAdjustment:
                 result.world_points,
                 max_query_pts=cfg.max_query_pts,
                 query_frame_num=cfg.query_frame_num,
+                fine_tracking=cfg.fine_tracking,
                 device=cfg.device,
             )
 
@@ -545,7 +548,7 @@ def _extract_tracks_vggsfm(
     *,
     max_query_pts: int = 2048,
     query_frame_num: int = 5,
-    fine_tracking: bool = False,
+    fine_tracking: bool = True,
     device: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Predict cross-frame 2D tracks via VGGSfM (ALIKED+SP keypoints).

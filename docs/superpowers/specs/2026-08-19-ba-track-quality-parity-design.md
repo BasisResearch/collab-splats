@@ -74,8 +74,14 @@ Runs, serial in tmux:
 Conditional third run — built only if the gate below demands attribution (YAGNI: no
 committed ablation surface unless the combined result is ambiguous): `vggtx` with
 `shared_camera=False` via an eval condition `ba_percam` added at that point, isolating
-the shared-camera contribution (cheap — track cache reused, `shared_camera` not in the
-cache key).
+the shared-camera contribution.
+
+**Correction (measured 2026-08-19):** this run is *not* cheap, contrary to the original claim
+that it would reuse the track cache. `tracks_cache_dir` defaults to `None` (= always extract) and
+`eval.py` constructs `BundleAdjustmentConfig()` bare, so **the eval path never uses the track
+cache at all** — every eval BA condition re-extracts. Excluding `shared_camera` from the cache key
+is still correct design (it is a post-extraction knob), but it buys nothing here. Budget a full
+run, ~14 min, not ~3.
 
 Decision gate:
 

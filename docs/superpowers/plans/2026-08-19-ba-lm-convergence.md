@@ -12,6 +12,14 @@
 
 **Branch:** work directly on `refactor/cu121-uv-migration`. Do **not** create a worktree — repo convention.
 
+**Status (2026-08-19):** Tasks 1–7 implemented and committed (`f7e394f`, `b27a411`, `2cecdac`, `674e3b2`). Task 8 is the human-gated validation sweep and has **not** run — every BA number currently on record still comes from the 1–2 step solver. Deviations from the plan as written, each deliberate:
+
+- Task 1's `test_transforms_does_not_import_gtsam` asserted something already false — `collab_splats/geometry/__init__.py` imports gtsam on any submodule import, independent of this move. Replaced with an AST test of the real invariant: `bundle_adjustment.py` must not import from its sibling `loop_closure`.
+- Tasks 3 and 4 landed in one commit. Splitting a helper from its only caller would have left a commit containing dead code.
+- Task 4's two `inspect.getsource` text-assertion guardrails were replaced with one real behavioural CUDA test (`test_optimize_carries_dropped_frame_and_shares_focal`), since CUDA is available on this box. It forces a drop via `vis[0]=0.0` and independently recomputes the active-set Sim(3), rather than pattern-matching source text.
+- Tasks 5 and 6 landed in one commit; the `_ba()` factory and its `ba_coarse` consumer were interleaved by then.
+- Task 5 gained two things the plan did not specify, both correctness fixes found while wiring it: the cache dir is nested **per backbone** (tracks are seeded from the backbone's own `world_points`, but `_compute_tracks_cache_key` hashes only image paths + extraction knobs, so a flat dir would serve one backbone's tracks to another under a matching key), and `--tracks_cache_dir` is forwarded to the **leaf subprocess**, which is what actually builds the BA config.
+
 **Staging discipline:** a concurrent session keeps `configs/base.yaml`, `collab_splats/remote/rerun.py`, `docs/examples/run_pipeline_remote.py`, `pyproject.toml`, `data/tutorial/README.md`, `tests/examples/test_run_pipeline_remote.py` dirty. **Never `git add -A`.** Stage only the files each task names. **Never run repo-wide `black .`** — the venv's black is newer than the repo's formatting and fails at the base commit too.
 
 ---

@@ -126,6 +126,18 @@ def test_make_creator_ba_track_density_2048(monkeypatch):
     assert ba_cfg.query_frame_num == 5
 
 
+def test_make_creator_ba_percam(monkeypatch):
+    """ba_percam → BA with shared_camera=False (per-frame focal ablation)."""
+    import eval as eval_gt
+    from collab_splats.geometry import BundleAdjustmentConfig
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
+    creator, ba_cfg = eval_gt._make_creator("ba_percam")
+    assert isinstance(ba_cfg, BundleAdjustmentConfig)
+    assert ba_cfg.shared_camera is False
+
+
 def test_validate_condition_accepts_known():
     from eval import _validate_condition
 

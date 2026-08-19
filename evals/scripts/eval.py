@@ -56,8 +56,15 @@ from collab_splats.geometry.loop_closure.eval import ate_translation, rpe, auc_a
 from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
-_FIXED_CONDITIONS = {"baseline", "ba", "lc"}
-_COLORS = {"gt": "black", "baseline": "tab:red", "ba": "tab:blue", "lc": "tab:green", "vggt_slam": "tab:orange"}
+_FIXED_CONDITIONS = {"baseline", "ba", "ba_percam", "lc"}
+_COLORS = {
+    "gt": "black",
+    "baseline": "tab:red",
+    "ba": "tab:blue",
+    "ba_percam": "tab:purple",
+    "lc": "tab:green",
+    "vggt_slam": "tab:orange",
+}
 
 
 ########################################################################
@@ -259,10 +266,15 @@ def _make_creator(
         windowed = LoopClosure(base, config=_no_lc_cfg)
         if condition == "ba":
             return windowed, BundleAdjustmentConfig()
+        # ba_percam: shared-camera ablation — one focal per frame instead of one per scene
+        if condition == "ba_percam":
+            return windowed, BundleAdjustmentConfig(shared_camera=False)
         return windowed, None  # baseline
     # Default: single-pass (short sequences that fit in GPU memory)
     if condition == "ba":
         return base, BundleAdjustmentConfig()
+    if condition == "ba_percam":
+        return base, BundleAdjustmentConfig(shared_camera=False)
     return base, None  # baseline
 
 

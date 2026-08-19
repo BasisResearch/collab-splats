@@ -1,7 +1,8 @@
 # BA Ceiling Diagnostics — Design
 
 **Date:** 2026-08-19
-**Status:** design, awaiting review
+**Status:** measured — **ceiling confirmed**. Results:
+[ba-ceiling-measured-report](2026-08-19-ba-ceiling-measured-report.md)
 **Predecessors:** [ba-track-quality-parity](2026-08-19-ba-track-quality-parity-design.md), [ba-lm-convergence](2026-08-19-ba-lm-convergence-design.md)
 **Handoff:** `docs/superpowers/handoffs/2026-08-19-ba-omega-no-improvement-handoff.md`
 
@@ -18,6 +19,16 @@ Track-quality parity (2026-08-19) already moved `mapanything` from −9.8% to **
 on the same scene while `vggtx` went **+8.0%**. Whatever remains is specific to sequences
 whose baseline poses are already sub-centimetre.
 
+## Question
+
+Only one: **is BA's objective minimised at the true poses?** Everything else is attribution
+and can wait for the answer.
+
+- If the truth scores *worse* than BA's solution, BA is converging correctly to the wrong
+  answer. The objective is wrong and the optimizer is exonerated.
+- If the truth scores *better*, BA failed to reach a reachable optimum and this becomes an
+  optimizer problem.
+
 ## Verdict under test
 
 **BA has hit a structure-conditioning ceiling on this sequence.** The tracks that carry
@@ -25,102 +36,68 @@ enough baseline to improve on the model's poses are the long ones, and the long 
 the ones most likely to have drifted. The information you need and the information you can
 trust are disjoint.
 
-Supporting arithmetic, from measured geometry (D5, full population — not assumed):
+Supporting arithmetic, from measured geometry (see the census below — measured, not assumed).
+**Units matter here: the measured Sim(3) scale to metres is 0.385156, so 1 reconstruction
+unit = 2.596 m.** Everything below is stated in recon units and then converted.
 
-- camera-centre extent **0.3075 m**, median landmark depth **1.31** (recon units)
-- σ_Z ≈ Z²·σ_px / (f·B), with f ≈ 550 px, σ_px ≈ 0.5
-  - best case, full extent B = 0.3075 m → σ_Z ≈ **5 mm**
-  - typical, median triangulation angle 3.98° → B ≈ 91 mm → σ_Z ≈ **17 mm**
+- camera-centre extent **0.3075** (0.798 m), median landmark depth **1.31** (3.40 m)
+- σ_Z ≈ Z²·σ_px / (f·B), with f ≈ 548 px, σ_px ≈ 0.5
+  - best case, full extent B = 0.3075 → σ_Z ≈ 0.0051 units = **13 mm**
+  - typical, median triangulation angle 3.98° → B ≈ 0.091 units → σ_Z ≈ 0.0172 = **45 mm**
 - baseline ATE = **7.98 mm**
 
 Structure uncertainty straddles the pose error BA is meant to remove. Under plain least
 squares that structure noise is transferred into the poses.
 
-**Falsifier:** point-only BA with poses frozen at ground truth. If the converged loss lands
-near `4.083486e+05`, the tracks are consistent with the *correct* poses and the ceiling
-verdict fails — the fault would be in the optimizer or the parameterization instead.
+## Method — one experiment
 
-## Scope
+`evals/scripts/ba_start_at_gt.py`. Run the package's own `BundleAdjustment` **twice** on one
+reconstruction, changing nothing but the starting poses:
 
-Diagnose only. **No behaviour change to `collab_splats/geometry/bundle_adjustment.py`.**
-One standalone script owning its own BA re-runs. `vggt_omega` only.
+- **A — model start.** Reproduces the shipping `ba` condition.
+- **B — GT start.** Ground-truth poses mapped into the reconstruction frame by
+  `umeyama_sim3` on camera centres. Reprojection is invariant to a global similarity, so
+  this changes only the frame, never how well the tracks are explained.
 
-Out of scope, recorded as follow-ons:
+Readouts per run: starting ATE, converged ATE, LM loss curve, mean camera-centre movement.
 
-- min-triangulation-angle gate in `_filter_observations` (a fix)
-- `ba_percam` rotation-vs-translation attribution (owed from track-quality parity)
-- multiview-confidence-on ablation for BA landmark quality
-- robust kernel / observation weighting via `_BAModel.forward` (bae's `LM.step` ignores
-  both `kernel=` and `weight=` on the step direction — see Findings)
+The falsifier is B's ATE trajectory. B starts at ATE ≈ 0 by construction. If it *rises*
+while the loss falls, BA is walking away from the truth to satisfy its objective — ceiling
+confirmed, and the distance it walks is the size of the ceiling. If B stays near 0 and its
+converged loss sits well below A's, the truth is the better optimum and A merely failed to
+find it — ceiling refuted, and this becomes an optimizer spec.
 
-## Diagnostics
+**No behaviour change to `collab_splats/geometry/bundle_adjustment.py`.** Both runs are
+plain `ba.refine` on a `replace(result, extrinsics=...)`.
 
-| id | question | BA run? | cost |
-|----|----------|---------|------|
-| D1 | are the tracks consistent with the *true* poses? | yes, points-only | ~15 min GPU |
-| D2 | what does the converged residual field look like? | no, re-uses D1 state | seconds |
-| D3 | does BA recover poses from *clean* tracks? | yes, synthetic | ~15 min GPU |
-| D4 | does incremental frame inclusion help? | yes, 20 + 50 frame windows | ~10 min GPU |
-| D5 | how degenerate is the structure geometrically? | no | seconds |
+### Known asymmetry — closed by a second measurement
 
-### D1 — point-only BA at frozen ground-truth poses
+`pts3d_tracks` are seeded from `result.world_points` — the model's frame — and are shared
+between both runs through the track cache. Run B therefore starts from GT poses with a
+model-frame landmark initialisation, so its starting loss is "truth with mismatched
+structure", not "loss at truth".
 
-Freeze extrinsics at 7-Scenes GT (Sim(3)-aligned into the recon frame), optimize landmarks
-only, same filter settings, same LM schedule. Report converged loss against
-`4.083486e+05`.
+`evals/scripts/refit_at_fixed_poses.py` closes this: poses held fixed, every landmark
+re-solved at each pose set independently, then the losses compared. **Measured: model poses
+8.891822e+06 (2.1265 px RMS) vs GT poses 2.490652e+07 (3.5591 px RMS).** The truth stays 2.8×
+worse with the structure fitted to it, so the verdict does not rest on the seeding.
 
-- loss **≪** baseline → tracks are fine, poses were the problem → verdict fails, look at
-  the optimizer
-- loss **≈ or >** baseline → tracks cannot be reconciled with the true poses → ceiling
-  confirmed, and its magnitude is quantified
+Its own correctness gate: the loss it computes at the seeded structure is byte-identical to
+the package's `_reproject_shared` (3.609295e+07 vs 3.609296e+07).
 
-The single decisive measurement. Everything else is attribution.
+### Cache finding
 
-### D2 — converged residual field
+`evals/scripts/eval.py:180 _prepare_image_dir` symlinks into `tempfile.mkdtemp()`, and
+`_compute_tracks_cache_key` hashes `image_paths`. **A `--tracks_cache_dir` can therefore
+only be hit within a single eval invocation — never across runs.** The existing
+`evals/results/ba_convergence_chess/cache/vggt_omega/tracks.zarr` is unreachable from any
+new process. This script uses a stable image dir so its two BA runs share one extraction.
 
-At the converged state, with no further optimization:
+## Supporting census (already measured)
 
-- reprojection-residual histogram, per-observation, plus p50/p90/p99
-- cheirality violations (landmarks behind a camera that observes them)
-- **re-filter flip count**: how many observations `_filter_observations` would drop if
-  re-applied at `max_reproj_error` ∈ {4, 2, 1} px
-
-The flip count directly tests whether one-shot filtering costs us — it is what COLMAP's
-`ba_global_max_refinements=5` loop would keep removing.
-
-### D3 — synthetic negative control
-
-Generate perfect tracks by projecting GT-posed landmarks into GT poses, then add isotropic
-pixel noise at σ ∈ {0, 0.5, 1, 2} px. Same track topology (length distribution, visibility
-pattern) as the real cache, so only correspondence quality changes.
-
-- σ=0 must recover GT poses to numerical precision. If it does not, the bug is ours and
-  every other diagnostic is void — **this is the harness's own self-test**.
-- the σ at which ATE degradation matches the observed +6.3% is a calibrated estimate of our
-  effective track noise.
-
-### D4 — window sweep
-
-BA on frames [0,20) and [0,50), ATE scored on the same window. Tests the incremental-frame-
-inclusion hypothesis at ~5% of the cost of implementing it.
-
-`BundleAdjustmentConfig.increment_size` / `_refine_incremental` already exist but **discard
-refined points every increment**, so they are a pose-only warm-start chain, not incremental
-BA. Their sweep numbers in the config comment are stale on two counts (measured with the
-point-discard behaviour *and* under the pre-`b27a411` truncated solver). Do not cite them.
-
-### D5 — triangulation-angle census
-
-For each landmark, the max pairwise angle between viewing rays from the cameras that observe
-it (vis > `vis_thresh`). Pure geometry — camera centres and existing landmark positions. No
-triangulation is performed and no BA is run.
-
-Report the distribution and the fraction of points *and* observations below candidate gates,
-including COLMAP's own thresholds for reference (`filter_min_tri_angle=1.5°`,
-`ba_local_min_tri_angle=6.0°`, `init_min_tri_angle=16.0°`; verified on installed
-pycolmap 4.0.4).
-
-Sizes the prospective fix before anyone writes it.
+Per-landmark max pairwise angle between viewing rays from the cameras that observe it
+(vis > `vis_thresh`). Pure geometry — camera centres and existing landmark positions. No
+triangulation is performed and no BA is run. `evals/scripts/tri_angle_census.py`.
 
 **Measured 2026-08-19** — 37257 landmarks with ≥2 observations at vis>0.2, 1,966,262
 observations, `pred_ba` camera centres:
@@ -137,6 +114,9 @@ percentiles (deg): p1 0.12, p5 0.23, p25 1.07, **p50 3.98**, p75 7.01, p95 10.23
 | 6.0° (COLMAP local BA) | 25626 (68.8%) | 997632 (50.7%) | 11631 |
 | 16.0° (COLMAP init) | 37257 (100%) | 1966262 (100%) | **0** |
 
+(COLMAP thresholds verified on installed pycolmap 4.0.4: `filter_min_tri_angle=1.5`,
+`ba_local_min_tri_angle=6.0`, `init_min_tri_angle=16.0`.)
+
 Three readings:
 
 1. **The whole population tops out near 11°** (p99 = 11.26). No landmark in the scene
@@ -151,7 +131,7 @@ Three readings:
 
 ## Findings that shape the design
 
-Established before this spec; recorded so the diagnostics do not re-litigate them.
+Established before this spec; recorded so the experiment does not re-litigate them.
 
 - **Zero-pad hypothesis is dead.** Model res ≈ 672×504 padded to 672². Track `y_max =
   494.31 < 504`, so nothing lands in the pad band. `min ‖pts3d‖ = 0.773`, zero landmarks
@@ -171,41 +151,37 @@ Established before this spec; recorded so the diagnostics do not re-litigate the
 - **Tracks are long.** After the vis>0.2 gate: mean length 51.9/100 frames, median 45,
   41.4% of tracks in >50 frames, p95 = 100. Visibility is bimodal (p25 0.0, p50 0.293,
   p75 0.996), so the 0.2 gate cuts inside the low mode.
+- **`ba/colmap/sparse/0` carries no observations.** `num_observations = 0`, so the written
+  model cannot be used to measure BA's own reprojection residuals; the loss curve is the
+  only record of them.
+- **`_last_loss_history[0]` is the loss *after* LM step 1, not the initial loss.** Measured
+  initial losses are 3.609296e+07 (model poses) and 5.349418e+08 (GT poses); the first LM
+  step alone pulls 4.28 px RMS down to ~1 px. Do not read history[0] as a starting point.
+- **Track coordinates exceed the model grid only in the low-visibility mode.** Ungated,
+  tracks span x −25.4…678.8 against a 592×448 model grid; after the vis > 0.2 gate they span
+  −4.9…593.7 by −5.3…455.7. There is no track/intrinsics resolution mismatch — an earlier
+  ungated extent measurement suggested one.
 
-## Structure
+## Out of scope
 
-One script, `evals/scripts/diagnose_ba_ceiling.py`, with a subcommand per diagnostic so any
-one can run alone:
+Recorded as follow-ons, not measured here:
 
-```
-diagnose_ba_ceiling.py {angles,frozen-gt,residuals,synthetic,windows} [--out DIR]
-```
-
-- reads the warm track cache at
-  `evals/results/ba_convergence_chess/cache/vggt_omega/tracks.zarr` (the only fine-tracking
-  cache on disk) — never re-extracts
-- reads GT + BA poses from `evals/results/ba_convergence_chess/vggt_omega/trajectories.npz`
-  (keys `gt`, `pred_ba`, `ate_per_frame_ba`)
-- imports `BundleAdjustment` read-only; each BA variant is set up in the script via config
-  overrides and local pose freezing, never by editing the module
-- writes one JSON per subcommand plus a combined report to `--out`
-  (default `evals/results/ba_ceiling_diag/`, gitignored)
-
-Baseline (pre-BA) poses are not in `trajectories.npz`. `angles` uses `pred_ba` centres as a
-proxy; the two trajectories differ by <1 mm ATE against a 0.304 m extent, so the angle
-distribution is insensitive to the choice. Stated in the output, not assumed silently.
-
-## Error handling
-
-- refuse to run if the track cache is missing, rather than triggering a 25 GB re-extraction
-- assert `tracks`/`vis_scores`/`pts3d_tracks` frame counts agree with the pose arrays
-- `synthetic` σ=0 asserts GT recovery and aborts the whole run if it fails
+- min-triangulation-angle gate in `_filter_observations` (a fix, and only if the ceiling
+  verdict holds)
+- `ba_percam` rotation-vs-translation attribution (owed from track-quality parity)
+- multiview-confidence-on ablation for BA landmark quality
+- robust kernel / observation weighting via `_BAModel.forward`
+- incremental-frame inclusion. `BundleAdjustmentConfig.increment_size` /
+  `_refine_incremental` already exist but **discard refined points every increment**, so
+  they are a pose-only warm-start chain, not incremental BA. Their sweep numbers in the
+  config comment are stale on two counts (measured with the point-discard behaviour *and*
+  under the pre-`b27a411` truncated solver). Do not cite them.
 
 ## Testing
 
-No unit tests. This is a one-off measurement script and its correctness gate is D3 σ=0 — a
-self-test with more teeth than any fixture, since it exercises the full BA path and demands
-an exactly-known answer.
+No unit tests. One-off measurement script. Its correctness gate is internal: GT mapped into
+the recon frame must score ATE ≈ 0 against GT before either BA run starts, which catches a
+wrong Sim(3) or pose convention immediately.
 
 ## Deliverable
 
@@ -215,7 +191,7 @@ A measured report at `docs/superpowers/specs/2026-08-19-ba-ceiling-measured-repo
 - **ceiling confirmed** — record the quantified limit, close the "make BA help everywhere"
   line of work, keep `bundle_adjustment: false` as default, and promote the min-tri-angle
   gate to the next spec
-- **ceiling refuted** — D1 names what to fix instead, and this becomes an optimizer spec
+- **ceiling refuted** — the run names what to fix instead, and this becomes an optimizer spec
 
 ## Environment
 

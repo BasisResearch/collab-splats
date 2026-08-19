@@ -29,7 +29,7 @@ from vggt.dependency.projection import project_3D_points_np
 from vggt.dependency.track_predict import predict_tracks
 from zarr.codecs import BloscCodec
 
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous
+from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses, umeyama_sim3
 
 if TYPE_CHECKING:
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
@@ -428,11 +428,37 @@ class BundleAdjustment:
         refined_extrinsics[active_frames] = opt_extrinsics_3x4.astype(np.float32)
         refined_pts3d[active_pts] = opt_pts.astype(np.float64)
 
-        # Write optimised focal lengths back to intrinsics matrix
+        # Frames the inlier gate dropped keep their pre-BA pose, which sits in the pre-BA
+        # gauge — BA fixes no frame and no scale, so the refined set can drift as a whole.
+        # Carry them by the Sim(3) the active set underwent so they stay consistent.
+        n_dropped = vis.shape[0] - len(active_frames)
+        if n_dropped:
+            inactive = np.setdiff1d(np.arange(vis.shape[0]), active_frames)
+            refined_extrinsics, gauge_scale = _carry_dropped_frames(
+                refined_extrinsics, extrinsics, active_frames
+            )
+            if gauge_scale is None:
+                logger.warning(
+                    "BA: %d/%d frames dropped (min_inliers_per_frame=%d, indices %s) and left "
+                    "in the pre-BA gauge — fewer than 3 active frames, cannot estimate it",
+                    n_dropped, vis.shape[0], cfg.min_inliers_per_frame, inactive.tolist(),
+                )
+            else:
+                logger.warning(
+                    "BA: %d/%d frames dropped (min_inliers_per_frame=%d, indices %s); carried "
+                    "by the active-set Sim(3) (scale %.6f) but not refined",
+                    n_dropped, vis.shape[0], cfg.min_inliers_per_frame, inactive.tolist(),
+                    gauge_scale,
+                )
+
+        # Write optimised focal lengths back to intrinsics matrix. The shared focal goes to
+        # every frame, including dropped ones: a stale per-frame focal surviving in an
+        # otherwise single-camera reconstruction is the mixed-K state shared_camera removes.
+        # The per-frame branch keeps active_frames — there is no scene-wide value to assign.
         if cfg.shared_camera and model.shared_intr is not None:
             focal_val = float(model.shared_intr.data.detach().cpu().numpy().mean())
-            refined_intrinsics[active_frames, 0, 0] = focal_val
-            refined_intrinsics[active_frames, 1, 1] = focal_val
+            refined_intrinsics[:, 0, 0] = focal_val
+            refined_intrinsics[:, 1, 1] = focal_val
         elif not cfg.shared_camera:
             opt_focal = opt_cam[:, 7]
             refined_intrinsics[active_frames, 0, 0] = opt_focal
@@ -555,6 +581,46 @@ def _get_default_solver(device: str | None = None) -> Any:
         except (ImportError, RuntimeError):
             pass
     return PCG()
+
+
+def _carry_dropped_frames(
+    refined_extrinsics: np.ndarray,
+    extrinsics: np.ndarray,
+    active_frames: np.ndarray,
+) -> tuple[np.ndarray, float | None]:
+    """Transform frames outside active_frames by the Sim(3) the active set underwent.
+
+    BA fixes no frame and no scale, so the refined set can drift as a whole. A frame the
+    inlier gate dropped keeps its pre-BA pose and would otherwise sit in the pre-BA gauge,
+    inconsistent with every refined frame around it.
+
+    Args:
+        refined_extrinsics: (N, 3, 4) poses with active rows already refined.
+        extrinsics: (N, 3, 4) original pre-BA poses.
+        active_frames: (K,) indices refined by the solve.
+
+    Returns:
+        (extrinsics, scale): a copy with dropped frames carried, and the Sim(3) scale.
+        scale is None when nothing was dropped or the gauge could not be estimated.
+    """
+    inactive = np.setdiff1d(np.arange(refined_extrinsics.shape[0]), active_frames)
+    if len(inactive) == 0 or len(active_frames) < 3:
+        return refined_extrinsics, None
+
+    # Estimate the world-gauge Sim(3) from how the active cameras' centres moved
+    src_c = invert_poses(extrinsics_to_homogeneous(extrinsics[active_frames].astype(np.float64)))[:, :3, 3]
+    dst_c = invert_poses(extrinsics_to_homogeneous(refined_extrinsics[active_frames].astype(np.float64)))[:, :3, 3]
+    s, R_g, t_g = umeyama_sim3(src_c, dst_c)
+
+    # World gauge X' = s R_g X + t_g maps a world-to-cam [R|t] to [R R_g^T | s t - R R_g^T t_g],
+    # which puts the dropped camera's centre at s R_g C + t_g — the same map the points took.
+    out = refined_extrinsics.copy()
+    R_in = refined_extrinsics[inactive, :, :3].astype(np.float64)
+    t_in = refined_extrinsics[inactive, :, 3].astype(np.float64)
+    R_new = R_in @ R_g.T.astype(np.float64)
+    out[inactive, :, :3] = R_new.astype(np.float32)
+    out[inactive, :, 3] = (s * t_in - np.einsum("nij,j->ni", R_new, t_g.astype(np.float64))).astype(np.float32)
+    return out, float(s)
 
 
 def _extract_tracks_vggsfm(

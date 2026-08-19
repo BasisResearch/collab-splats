@@ -1033,3 +1033,117 @@ def test_filter_observations_no_single_obs_landmark_after_frame_drop():
     assert not vis[:, 2].any()
     # Invariant: every surviving landmark has >=2 observations
     assert (vis.sum(0)[vis.any(0)] >= 2).all()
+
+
+# ---------------------------------------------------------------------------
+# Tests for _carry_dropped_frames (dropped-frame gauge carry)
+# ---------------------------------------------------------------------------
+
+def _w2c_from_rt(R, t):
+    """Stack (N,3,3) rotations and (N,3) translations into (N,3,4) world-to-cam extrinsics."""
+    return np.concatenate([R, t[..., None]], axis=-1).astype(np.float32)
+
+
+def test_carry_dropped_frames_applies_active_set_sim3():
+    """A dropped frame's camera centre lands at s*R_g@C + t_g, the same map the points took."""
+    from collab_splats.geometry.bundle_adjustment import _carry_dropped_frames
+    from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+
+    rng = np.random.default_rng(7)
+    N = 5
+    # Random-but-valid original poses (orthogonalize a random matrix per frame)
+    R0 = np.stack([np.linalg.qr(rng.normal(size=(3, 3)))[0] for _ in range(N)])
+    R0[np.linalg.det(R0) < 0] *= -1.0
+    t0 = rng.normal(size=(N, 3))
+    original = _w2c_from_rt(R0, t0)
+
+    # Known world-gauge Sim(3): 90 deg about z, scale 1.5, translation (0.3, -0.7, 2.0)
+    R_g = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    s_g, t_g = 1.5, np.array([0.3, -0.7, 2.0])
+    # Apply it to every frame to build the "refined" set, then revert frame 3 to its original
+    R_ref = R0 @ R_g.T
+    t_ref = s_g * t0 - np.einsum("nij,j->ni", R_ref, t_g)
+    refined = _w2c_from_rt(R_ref, t_ref)
+    refined[3] = original[3]
+    active = np.array([0, 1, 2, 4])
+
+    out, scale = _carry_dropped_frames(refined, original, active)
+
+    centers_orig = invert_poses(extrinsics_to_homogeneous(original.astype(np.float64)))[:, :3, 3]
+    centers_out = invert_poses(extrinsics_to_homogeneous(out.astype(np.float64)))[:, :3, 3]
+    expected = s_g * (R_g @ centers_orig[3]) + t_g
+    assert np.allclose(centers_out[3], expected, atol=1e-4), (
+        f"dropped frame centre {centers_out[3]} != gauge-mapped {expected}"
+    )
+    assert np.isclose(scale, s_g, atol=1e-4)
+    # Active frames are untouched
+    assert np.allclose(out[active], refined[active], atol=1e-6)
+
+
+def test_carry_dropped_frames_noop_when_all_active():
+    """No dropped frames -> array returned unchanged and scale is None."""
+    from collab_splats.geometry.bundle_adjustment import _carry_dropped_frames
+
+    refined = np.tile(np.eye(4, dtype=np.float32)[:3], (4, 1, 1))
+    out, scale = _carry_dropped_frames(refined, refined.copy(), np.arange(4))
+    assert scale is None
+    assert np.allclose(out, refined)
+
+
+def test_carry_dropped_frames_needs_three_active_frames():
+    """Fewer than 3 active frames cannot fix a Sim(3): dropped frames are left alone."""
+    from collab_splats.geometry.bundle_adjustment import _carry_dropped_frames
+
+    refined = np.tile(np.eye(4, dtype=np.float32)[:3], (4, 1, 1))
+    original = refined.copy()
+    refined[:2, :, 3] += 5.0  # move only the active pair
+    out, scale = _carry_dropped_frames(refined, original, np.array([0, 1]))
+    assert scale is None
+    assert np.allclose(out, refined)
+
+
+@pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
+def test_optimize_carries_dropped_frame_and_shares_focal():
+    """A frame dropped by the inlier gate ends up in the solved gauge with the shared focal.
+
+    Frame 0 gets no admissible observations, so _filter_observations drops it. Before the
+    fix it kept both its pre-BA pose (pre-BA gauge) and its own focal, silently mixing
+    refined and unrefined cameras in one reconstruction.
+    """
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.transforms import (
+        extrinsics_to_homogeneous,
+        invert_poses,
+        umeyama_sim3,
+    )
+
+    N, P, H, W = 5, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+
+    vis = vis_mask.astype(np.float32)
+    vis[0] = 0.0  # frame 0 has no admissible observations -> dropped by the inlier gate
+    intrinsics = intrinsics.copy()
+    intrinsics[0, 0, 0] = intrinsics[0, 1, 1] = 50.0  # distinct focal on the dropped frame
+
+    cfg = BundleAdjustmentConfig(lm_steps=3, min_inliers_per_frame=10, shared_camera=True)
+    ba = BundleAdjustment(config=cfg)
+    _, ref_ext, ref_K = ba._optimize(
+        pts3d, extrinsics, intrinsics, tracks, vis, max_reproj_error=None
+    )
+
+    # shared_camera=True: the solved focal reaches the dropped frame too
+    assert ref_K[0, 0, 0] == pytest.approx(ref_K[1, 0, 0], rel=1e-6), (
+        f"dropped frame kept focal {ref_K[0, 0, 0]} while active frames use {ref_K[1, 0, 0]}"
+    )
+    assert ref_K[0, 0, 0] != pytest.approx(50.0, rel=1e-6), "dropped frame kept its stale focal"
+
+    # The dropped frame's centre sits where the active set's Sim(3) puts it
+    active = np.arange(1, N)
+    src = invert_poses(extrinsics_to_homogeneous(extrinsics[active].astype(np.float64)))[:, :3, 3]
+    dst = invert_poses(extrinsics_to_homogeneous(ref_ext[active].astype(np.float64)))[:, :3, 3]
+    s, R_g, t_g = umeyama_sim3(src, dst)
+    c_in = invert_poses(extrinsics_to_homogeneous(extrinsics[:1].astype(np.float64)))[0, :3, 3]
+    c_out = invert_poses(extrinsics_to_homogeneous(ref_ext[:1].astype(np.float64)))[0, :3, 3]
+    assert np.allclose(c_out, s * (R_g @ c_in) + t_g, atol=1e-4), (
+        f"dropped frame centre {c_out} is not the gauge-mapped {s * (R_g @ c_in) + t_g}"
+    )

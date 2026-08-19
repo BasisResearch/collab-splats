@@ -290,29 +290,22 @@ class BundleAdjustment:
         max_reproj = cfg.max_reproj_error if max_reproj_error is _UNSET else max_reproj_error
         n_steps = lm_steps if lm_steps is not None else cfg.lm_steps
 
-        # Work on copies; convert vis_scores (float) to bool visibility mask
-        vis = vis_scores.astype(bool).copy()
+        # Work on copies
         refined_extrinsics = extrinsics.astype(np.float32).copy()
         refined_intrinsics = intrinsics.astype(np.float32).copy()
         refined_pts3d = pts3d.astype(np.float64).copy()
 
-        # Remove observations with high reprojection error under the current poses
-        if max_reproj is not None:
-            proj2d, proj_cam = project_3D_points_np(pts3d, extrinsics, intrinsics)
-            # Behind-camera points get large sentinel projection so they fail the threshold
-            behind = proj_cam[:, 2, :] <= 0
-            proj2d = proj2d.copy()
-            proj2d[behind] = 1e6
-            reproj_err = np.linalg.norm(proj2d - tracks, axis=-1)
-            vis[reproj_err > max_reproj] = False
-
-        # Drop points seen from fewer than 2 frames and points outside valid world range
-        seen_enough = vis.sum(0) >= 2
-        in_range = (np.abs(pts3d) < 3000).all(axis=-1)
-        vis[:, ~(seen_enough & in_range)] = False
-
-        # Drop under-constrained frames (too few inliers for reliable pose update)
-        vis[vis.sum(1) < cfg.min_inliers_per_frame] = False
+        # Visibility gate + reprojection filter + frame/landmark drops (upstream order)
+        vis = _filter_observations(
+            vis_scores,
+            tracks,
+            pts3d,
+            extrinsics,
+            intrinsics,
+            vis_thresh=cfg.vis_thresh,
+            max_reproj=max_reproj,
+            min_inliers_per_frame=cfg.min_inliers_per_frame,
+        )
 
         # Build flat index arrays for active keyframes and landmarks
         active_frames = np.where(vis.any(1))[0]  # (K,)
@@ -521,6 +514,45 @@ def _scale_intrinsics_to_model(
     intr[:, 0, 2] = (intrinsics[:, 0, 2] - tl_x) * sx
     intr[:, 1, 2] = (intrinsics[:, 1, 2] - tl_y) * sy
     return intr, sx, sy, tl_x, tl_y
+
+
+def _filter_observations(
+    vis_scores: np.ndarray,
+    tracks: np.ndarray,
+    pts3d: np.ndarray,
+    extrinsics: np.ndarray,
+    intrinsics: np.ndarray,
+    *,
+    vis_thresh: float,
+    max_reproj: float | None,
+    min_inliers_per_frame: int,
+) -> np.ndarray:
+    """Return bool (N, P) observation mask: visibility gate, reprojection filter,
+    frame min-inlier drop, then landmark >=2-obs/in-range drop (upstream demo_colmap order)."""
+    # Visibility gate: keep observations the tracker is confident about
+    vis = vis_scores > vis_thresh
+
+    # Remove observations with high reprojection error under the current poses
+    if max_reproj is not None:
+        proj2d, proj_cam = project_3D_points_np(pts3d, extrinsics, intrinsics)
+        # Behind-camera points get large sentinel projection so they fail the threshold
+        behind = proj_cam[:, 2, :] <= 0
+        proj2d = proj2d.copy()
+        proj2d[behind] = 1e6
+        reproj_err = np.linalg.norm(proj2d - tracks, axis=-1)
+        vis[reproj_err > max_reproj] = False
+
+    # Drop under-constrained frames (too few inliers for reliable pose update) BEFORE the
+    # landmark check below, so a landmark's observation count reflects only surviving
+    # frames — otherwise single-observation landmarks (depth-unconstrained) can slip through
+    vis[vis.sum(1) < min_inliers_per_frame] = False
+
+    # Drop points seen from fewer than 2 (surviving) frames and points outside valid world range
+    seen_enough = vis.sum(0) >= 2
+    in_range = (np.abs(pts3d) < 3000).all(axis=-1)
+    vis[:, ~(seen_enough & in_range)] = False
+
+    return vis
 
 
 def _get_default_solver(device: str | None = None) -> Any:

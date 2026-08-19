@@ -988,3 +988,51 @@ def test_scale_intrinsics_original_res_k_still_scaled():
     assert sx == pytest.approx(8.0 / 64.0)
     assert sy == pytest.approx(8.0 / 64.0)
     assert out[0, 0, 2] == pytest.approx(32.0 * sx)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _filter_observations — vis-threshold gate + upstream filter order
+# ---------------------------------------------------------------------------
+
+def test_filter_observations_vis_threshold():
+    """Observations under vis_thresh are dropped; landmarks left with <2 obs die with them."""
+    from collab_splats.geometry.bundle_adjustment import _filter_observations
+
+    vis_scores = np.array([[0.9, 0.1], [0.9, 0.9]], dtype=np.float32)
+    tracks = np.zeros((2, 2, 2), dtype=np.float32)
+    pts3d = np.zeros((2, 3), dtype=np.float64)
+    ext = np.zeros((2, 3, 4), dtype=np.float32)
+    intr = np.zeros((2, 3, 3), dtype=np.float32)
+
+    vis = _filter_observations(
+        vis_scores, tracks, pts3d, ext, intr,
+        vis_thresh=0.2, max_reproj=None, min_inliers_per_frame=1,
+    )
+    # (0,1) fails the 0.2 gate; landmark 1 then has a single obs -> dropped everywhere
+    assert not vis[0, 1] and not vis[1, 1]
+    assert vis[0, 0] and vis[1, 0]
+
+
+def test_filter_observations_no_single_obs_landmark_after_frame_drop():
+    """Upstream order: frames drop BEFORE the >=2-obs landmark check, so no landmark
+    can survive on observations from dropped frames (old code kept single-obs landmarks)."""
+    from collab_splats.geometry.bundle_adjustment import _filter_observations
+
+    vis_scores = np.array([
+        [0.9, 0.9, 0.9],   # frame 0: 3 obs
+        [0.0, 0.0, 0.9],   # frame 1: 1 obs -> under min_inliers=2, whole frame drops
+        [0.9, 0.9, 0.0],   # frame 2: 2 obs
+    ], dtype=np.float32)
+    tracks = np.zeros((3, 3, 2), dtype=np.float32)
+    pts3d = np.zeros((3, 3), dtype=np.float64)
+    ext = np.zeros((3, 3, 4), dtype=np.float32)
+    intr = np.zeros((3, 3, 3), dtype=np.float32)
+
+    vis = _filter_observations(
+        vis_scores, tracks, pts3d, ext, intr,
+        vis_thresh=0.2, max_reproj=None, min_inliers_per_frame=2,
+    )
+    # Landmark 2 was seen only by frames 0 and (dropped) 1 -> single obs -> fully dropped
+    assert not vis[:, 2].any()
+    # Invariant: every surviving landmark has >=2 observations
+    assert (vis.sum(0)[vis.any(0)] >= 2).all()

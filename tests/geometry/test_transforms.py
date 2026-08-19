@@ -326,3 +326,74 @@ def test_focal_bounds_reject_both_infinities():
     assert k[0, 0] == pytest.approx(400.0, rel=1e-2)
     assert k[1, 1] == pytest.approx(400.0, rel=1e-2)
 
+
+
+########################################################################
+########## Point-set alignment #########################################
+########################################################################
+
+
+def test_umeyama_sim3_recovers_known_similarity():
+    """umeyama_sim3 recovers the (s, R, t) that generated the target points."""
+    from collab_splats.geometry.transforms import umeyama_sim3
+
+    rng = np.random.default_rng(0)
+    src = rng.normal(size=(12, 3))
+    # Known 90 deg rotation about z, scale 2.5, translation (1, -2, 3)
+    R_true = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    s_true, t_true = 2.5, np.array([1.0, -2.0, 3.0])
+    dst = s_true * (R_true @ src.T).T + t_true
+
+    s, R, t = umeyama_sim3(src, dst)
+    assert np.isclose(s, s_true, atol=1e-5)
+    assert np.allclose(R, R_true, atol=1e-5)
+    assert np.allclose(t, t_true, atol=1e-4)
+
+
+def test_umeyama_sim3_too_few_points_returns_identity():
+    """Fewer than 3 correspondences cannot fix a Sim(3): identity is returned."""
+    from collab_splats.geometry.transforms import umeyama_sim3
+
+    s, R, t = umeyama_sim3(np.zeros((2, 3)), np.ones((2, 3)))
+    assert s == 1.0
+    assert np.allclose(R, np.eye(3))
+    assert np.allclose(t, np.zeros(3))
+
+
+def test_umeyama_se3_recovers_known_rigid_transform():
+    """umeyama_se3 recovers a rigid transform as a (4,4) homogeneous matrix."""
+    from collab_splats.geometry.transforms import umeyama_se3
+
+    rng = np.random.default_rng(1)
+    src = rng.normal(size=(10, 3))
+    R_true = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]])
+    t_true = np.array([0.5, 0.25, -1.0])
+    dst = (R_true @ src.T).T + t_true
+
+    T = umeyama_se3(src, dst)
+    assert T.shape == (4, 4)
+    assert np.allclose(T[:3, :3], R_true, atol=1e-5)
+    assert np.allclose(T[:3, 3], t_true, atol=1e-5)
+
+
+def test_bundle_adjustment_does_not_import_loop_closure():
+    """BA and loop closure are siblings: BA must not depend on LC.
+
+    umeyama_sim3 used to live in loop_closure/graph.py. Importing it from there would
+    invert the layering and tie BA to that module's gtsam dependency, so it lives in
+    transforms.py instead.
+    """
+    import ast
+    import pathlib
+
+    import collab_splats.geometry.bundle_adjustment as ba_mod
+
+    tree = ast.parse(pathlib.Path(ba_mod.__file__).read_text())
+    imported = [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    ] + [
+        alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
+    ]
+    assert not any("loop_closure" in m for m in imported), f"BA imports loop closure: {imported}"

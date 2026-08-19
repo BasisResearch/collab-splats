@@ -59,7 +59,7 @@ def test_bundle_adjustment_config_defaults():
     cfg = BundleAdjustmentConfig()
     assert cfg.max_reproj_error == 4.0
     assert cfg.lm_steps == 40
-    assert cfg.shared_camera is False
+    assert cfg.shared_camera is True  # track-quality parity default (2026-08-19)
     assert cfg.min_inliers_per_frame == 64
 
 

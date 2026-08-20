@@ -55,8 +55,8 @@ matching fix alone; ~8–12 min expected once the residual's biggest term is add
    onnxruntime, `has_cuda=False`). Source builds default `ONNX_ENABLED=ON` with a CUDA execution
    provider (`onnx_utils.cc:77`), so a Docker rebuild unlocks it later.
 4. **Learned matchers are the value of loma-class models.** Generic descriptor matching may only
-   serve models whose own match stage *is* descriptor-NN, proven equivalent by probe — never
-   silently substitute for a learned matcher.
+   serve models whose own match stage *is* descriptor-NN, proven equivalent by a suite parity
+   test — never silently substitute for a learned matcher.
 
 ## Design
 
@@ -72,63 +72,69 @@ consumer.
 
 - Applies to any vismatch model whose `extract()` returns non-empty descriptors (~the sparse
   half of the 36 model files; the 18 detector-free models never qualify).
-- `match()`: GPU mutual-NN over the given descriptors (cosine, `min_cossim=-1` — mirrors
-  xfeat sparse's own match stage). Match rows ARE keypoint-table indices — no recovery.
+- `match()`: **`kornia.feature.match_mnn`** (kornia 0.8.2 already in the env) over
+  L2-normalized descriptors — on unit vectors L2-mutual-NN ≡ cosine-mutual-NN, matching
+  xfeat sparse's own `min_cossim=-1` stage. No hand-rolled NN math. Match rows ARE
+  keypoint-table indices — no recovery.
 - **No extraction and no cache on this path in verify()**: the features come in precomputed
   from the zarr cache the pipeline already builds. Localizer likewise holds zarr features.
-- Dispatch in `verification.py`: prefer the `match()` path when the probe proved the model
-  descriptor-NN-equivalent (a capability flag on `LocalMatcher`); otherwise the existing
-  pairwise `match_images` path, unchanged.
-- **Enabled per model only when the construction-time probe proves it equivalent** to that
-  model's own pair forward (below). NN-native models (xfeat sparse, handcrafted) pass;
-  learned-matcher models fail and keep the pairwise path — correct, never silently degraded.
+- Dispatch in `verification.py`: prefer the `match()` path when
+  `matcher.supports_descriptor_matching`; otherwise the existing pairwise `match_images`
+  path, unchanged.
+- Gating is a **static allowlist** (`_DESCRIPTOR_NN_MODELS = {"xfeat"}`), not a runtime
+  probe: membership is licensed by a GPU parity test in the suite proving `match()` equals
+  that model's own pair forward exactly. The env is pinned, so test-time enforcement is
+  sound; a vismatch bump gets caught by the test. Learned-matcher models stay off the list —
+  never silently degraded.
 
 ### 2. Per-image encode cache — learned-matcher adapters only
 
-For models whose match stage is learned (probe-fails the general path), the win is caching
-the per-image encode inside `match_images`:
+For models whose match stage is learned, the win is caching the per-image encode inside
+`match_images`:
 
-- Keyed by **array identity**: `id(image)` lookup, then an `is` check against the stored array
-  reference (exact, no hashing). Both consumers hold their images in stable in-memory lists for
-  the duration of the loop (`verification.py:227`; localizer query/refs). An array that fails
-  the `is` check (id reuse after GC) is a miss, never a wrong hit.
-- Capped dict, evict oldest (default 512 entries). Sparse payloads are ~2–4 MB/image → worst
-  case ~1–2 GB against the 46.6 GB container cap. No byte accounting.
+- A plain dict keyed by **array identity**: `id(image)` lookup, then an `is` check against
+  the stored array reference (exact, no hashing; id reuse after GC is a miss, never a wrong
+  hit). Both consumers hold their images in stable in-memory lists for the duration of the
+  loop (`verification.py:227`; localizer query/refs).
+- Clear-at-cap (512 entries) instead of LRU bookkeeping — sparse payloads are ~2–4 MB/image,
+  a single scene holds ~300, worst case ~1–2 GB against the 46.6 GB container cap.
 
 **Specialization — loma adapter (byte-identical, learned matcher kept).**
-Loma is the shipping default (`localization.matcher: loma`) and its learned match stage fails
-the general path by design, so it gets the one model-specific adapter:
+Loma is the shipping default (`localization.matcher: loma`) and its learned match stage
+cannot take the general path by design, so it gets the one model-specific adapter:
 - Encode: `matcher.preprocess(img)` + `matcher.matcher.detect_and_describe(img,
-  max_num_keypoints)`, wrapped in `sandboxed_method(fn, type(self._matcher).__module__)` —
+  max_num_keypoints)`, run inside `ImportSandbox.get(type(self._matcher).__module__)` —
   vismatch's sandbox only wraps `__init__`/`_forward` (`base_matcher.py:27`), so reach-in calls
   must enter it themselves. Payload is **pre-pixel-coords**: normalized kpts, desc, original
   shape, resized H×W.
 - Match: replay the wrapper's own match stage (`vismatch/im_models/loma.py:78-102`) on two
   cached payloads — learned matcher, `filter_matches`, `to_pixel_coords`, `rescale_coords`,
   the −0.5 COLMAP-convention offset. Byte-identical to `_forward` by construction, enforced by
-  the probe. Native indices (`torch.where(valid)[0]`, `m0[0][valid]`) — `_recover_indices`
-  skipped. Covers all five LoMa archs (one wrapper class).
+  the GPU parity test. Native indices (`torch.where(valid)[0]`, `m0[0][valid]`) —
+  `_recover_indices` skipped. Covers all five LoMa archs (one wrapper class).
+- Activated statically for the `LoMaMatcher` wrapper class — no runtime probe.
 - Why not the zarr features: they store pixel-frame keypoints; the learned matcher consumes
   pre-transform normalized coordinates. Inverting the affine chain is float-inexact and would
   break byte-parity — the in-memory cache stores the pre-transform payload instead.
 - Further learned-matcher models (LightGlue family, sphereglue) get the same treatment later
-  only if measurement shows demand; the probe keeps them correct meanwhile.
+  only if measurement shows demand; until then they simply run the pairwise path.
 
-**Fallback.** Existing `match_images` pair forward, untouched, byte-identical — any model the
-probe rejects, and all detector-free models.
+**Fallback.** Existing `match_images` pair forward, untouched, byte-identical — every model
+without an adapter or allowlist entry, and all detector-free models. The pre-existing
+`_probe_index_stability` (construction-time, unchanged by this work) keeps deciding whether
+fallback models can serve verification at all.
 
-### 3. Construction-time equivalence probe
+### 3. Equivalence enforcement — test-time, not runtime
 
-Extends `_probe_index_stability` (same synthetic shifted-copy fixture, one extra pair of
-forwards at init):
+Fast paths are enabled statically (allowlist + adapter registry) and proven by two
+GPU parity tests in the suite, on real models:
 
-- Run the selected fast path and the plain pair forward on the synthetic pair; compare
-  `MatchResult` exactly (coordinates and indices).
-- Mismatch → one `logger.warning`, permanent fallback for this instance. Probe failure costs
-  speed, never correctness.
-- The existing index-stability outcome is kept for fallback models; fast paths return native
-  indices, bypassing `has_stable_indices` (retained — `verification.py` still consumes it for
-  fallback models).
+- loma: adapter `match_images` output byte-identical to the plain pair forward
+  (coordinates and indices).
+- xfeat: `match(extract(a), extract(b))` equal to `match_images(a, b)` exactly.
+
+The env pins vismatch, so an every-construction probe buys nothing over the suite; extending
+either list requires a new passing parity test. No runtime demotion machinery.
 
 ## Residual attribution (the sub-15-minute work)
 
@@ -148,14 +154,16 @@ The ~658 s residual has never been measured directly (handoff §7.3). As part of
 
 Flat test functions in `tests/localization/test_extractors.py`:
 
-1. **Parity fixture** (load-bearing): real loma on the synthetic pair — cached-path
-   `MatchResult` byte-identical to plain-path. For xfeat sparse: `match(extract(a),
-   extract(b))` equals `match_images(a, b)` exactly (the general path). GPU/slow-marked
-   per repo convention.
-2. Probe demotion: stub matcher whose fast path diverges → fallback + warning, results correct.
-3. Cache semantics: hit on same array object, miss on equal-content copy, eviction at capacity.
-4. Empty-match / empty-descriptor paths fall back cleanly.
-5. Existing extractor tests pass unchanged (fallback is the old code).
+1. **Parity fixtures** (load-bearing, GPU/slow-marked): real loma on the synthetic pair —
+   adapter-path `MatchResult` byte-identical to plain-path (`lm._pair_adapter = None`).
+   Real xfeat: `match(extract(a), extract(b))` equals `match_images(a, b)` exactly.
+   These tests are what license the static allowlists — extending either list requires a
+   new passing parity test.
+2. Cache semantics: hit on same array object, miss on equal-content copy, clear at capacity.
+3. `match()` on a non-allowlisted model raises NotImplementedError (existing test survives);
+   empty-descriptor inputs return `_empty_match()`.
+4. Existing extractor and verification tests pass unchanged (pairwise path is the old code);
+   `MagicMock(spec=LocalMatcher)` sites gain explicit `supports_descriptor_matching = False`.
 
 ## Evidence plan (measured, not assumed)
 
@@ -167,8 +175,9 @@ Flat test functions in `tests/localization/test_extractors.py`:
 
 ## Implementation principles
 
-- Reuse: `_probe_index_stability` fixture and shape; vismatch's `sandboxed_method`; existing
-  `MatchResult`/`LocalFeatures` dataclasses. No new module — `extractors.py` only (plus timing
+- Reuse: `kornia.feature.match_mnn` for mutual-NN (no hand-rolled matcher); vismatch's
+  `ImportSandbox.get` for the loma reach-in; existing `MatchResult`/`LocalFeatures`
+  dataclasses. No new module, no new classes — `extractors.py` only (plus timing
   instrumentation in `verification.py`).
 - Retire: `_recover_indices` becomes fallback-only; delete outright once no configured model
   needs it.

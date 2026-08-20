@@ -27,16 +27,19 @@ Every row below was verified against the repo or measured, not assumed.
 | Removed | Replaced by | Verified reason |
 |---|---|---|
 | `PARALLAX_FLOOR_DEG` | `disparity_px = deg2rad(parallax)·focal < 1.0` | the floor is *derivable*: below one pixel of disparity the two views' rays differ by less than a pixel, so the pair cannot see depth at all. Per-scene, from the focal. The guard and the value became the same expression. |
-| `REL_EDGES` range (`±0.5`) + clipping | bounded axis `u = r/(1+\|r\|)`, edges `linspace(-1,1)` | **measured**: on 200k residuals plus ±12 and ±40 outliers, **zero values dropped**, and recovered quantiles match `np.quantile` to 5 decimals through p99.9. Deletes the chosen range, the clip, and the saturating end bins. What remains is a bin *count* — resolution, not taste. |
+| `REL_EDGES` range (`±0.5`) + clipping | bounded axis `u = r/(1+\|r\|)`, edges `linspace(-1,1)` | **measured**: on 200k residuals plus ±12 and ±40 outliers, **zero values dropped**, and recovered quantiles match `np.quantile` to 5 decimals through p99.9. Deletes the chosen range, the clip, and the saturating end bins. What remained after that was a bin *count* — killed in turn by the row below. |
+| `RESIDUAL_BIN_EDGES` (the last constant) | `residual_bin_edges(n_samples)` — Rice's rule, `k = 2·n^(1/3)` | the bounded axis fixed the range, so only resolution was left, and resolution is a function of how many samples there are. **Measured** on a 3M-sample heavy-tailed population shaped like the real baseline: median recovery error 5.1% at 512 bins, 1.7% at 1024, **0.66% at 1560 (Rice, 60 frames)**, **0.08% at 4584 (Rice, 300 frames)**. Rice moves the right way — more pixels justify finer bins — and the caller that knows `N`, `H` and `W` computes it before the loop starts. `metrics.py` now has **zero constants** — and none moved into the tests either: `tests/geometry/test_metrics.py` derives its sample counts with `_n_samples(frames, side)`, production's own `n_pairs·H·W`, so the only literals on that side are the scene shapes a fixture has to name and the measured bin counts an assertion has to state. |
 | `QUANTILE_GRID` | inline at its one remaining use | once every per-pair column ships raw, its quantiles are convenience a reader can compute. Only the histogram needs them, because raw is unavailable there. |
 | `MIN_SAMPLES`, `PHOTOMETRIC_MAX_SEPARATION` | keyword args with defaults | tuning values belong at the call they tune. (`min_samples` still earns its existence: **measured**, `np.corrcoef` on 2 points returns exactly ±1.0 whatever the values.) |
 | `rank_correlation()` | `stats.spearmanr(a, b, nan_policy="omit").statistic` | scipy's `nan_policy` was the whole wrapper body, and `verification._clean` (`verification.py:346`) already converts nan→null recursively at write time. **Measured**: `json.dumps` emits a bare `NaN`, which is invalid JSON — so the conversion is load-bearing, but it already exists. |
 | `_index_from_name()` | `{iid: k for k, iid in enumerate(sorted(recon.images))}` | **the parser was a bad assumption and the repo already had the answer.** `sorted(recon.images)` order is the documented alignment contract (`verification.py:99, 136, 144, 150`) and this exact dict already exists twice (`:193`, `:314`). Digit parsing breaks on `IMG_2039.jpg`, on names with two number groups, and on any scene whose names do not sort in capture order. |
 | `_verification_rows()` | `idx1`/`idx2` written by verify itself | `asdict(p)` at `verification.py:359` serialises whatever fields `PairStats` has, and Task 2 already edits `PairStats`. Put the shape at the source and the "merge" becomes `json.loads` plus one division. |
-| `_photometric_original_res()` | shape mismatch handled inside `calculate_photometric_ncc` | two functions for one measurement, split only by which grid it happened to run on. |
+| `_photometric_original_res()` | shape mismatch handled inside `compute_photometric_ncc` | two functions for one measurement, split only by which grid it happened to run on. |
 | `_cumulative()`, `_crop_coverage()`, `describe()`, `_by_depth()`, `_distribution` use, `SCHEMA_VERSION`, `normalized_residual()` | inline / scipy / numpy | a cumsum, three lines of arithmetic, `np.quantile`, a column correlation, a second quantile path, a version nothing reads, and a hand-rolled Pearson (**measured** identical to `sqrt(2−2·NCC)` to 8 dp). |
 
-**Net surface of `metrics.py`: 5 public/private functions, 1 constant.** Previous revision: 12 symbols. The one before that: 4 files and 3 classes.
+**Net surface of `metrics.py`: 8 functions, no constants.** Previous revision: 12 symbols and 5 constants. The one before that: 4 files and 3 classes.
+
+**Naming is checked against the repo, not chosen.** Measured: `compute_` prefixes 8 functions in `collab_splats/`, `calculate_` prefixes **zero** — so the measurement functions are `compute_depth_error` / `compute_photometric_ncc`. The `_px` unit suffix on `focal_px` follows `mean_reproj_error_px` (`verification.py:326`). Loop locals reuse the mv loop's own names (`cam2world`, `pts_world`, `pts_cam_j`, `proj_j`, `in_front`, `expected_d`, `has_depth`, `counted`) so the two loops read alike. `n_pixels` follows the `n_keypoints` / `n_tracks` family in `frame_stats`; `PairStats`' own `num_matches` / `num_inliers` are pre-existing and left alone. The pass also caught a real bug rather than only cosmetics: `FrameStore` was imported from `preproc.sampling` (it lives in `preproc.frame_store`), called through a `read()` that does not exist, and indexed with `frame_indices()`, which holds **source-video** positions — pairing depth row `k` with whatever video frame happened to sit at that number. Corrected to `store.images()[:n]`.
 
 **Judgment call kept, flagged for pushback:** `bounded_residual` is one expression (`r/(1+|r|)`) but lives in `metrics.py` and is called from `base.py`, so inlining it would put the forward transform in one file and its inverse in another, where they can drift apart.
 
@@ -48,6 +51,8 @@ Every row below was verified against the repo or measured, not assumed.
 | Quantiles from accumulated per-pixel counts | `scipy.stats.rv_histogram((counts, edges)).ppf(q)` |
 | Fraction below arbitrary X | the same object's `.cdf(x)` |
 | Incremental accumulation over N² pairs | `counts += np.histogram(bounded_residual(v), bins=edges)[0]` |
+| Bin count for a sample size | Rice's rule, `2·n^(1/3)` — numpy implements it as `np.histogram_bin_edges(a, bins="rice")`, but that needs the array in memory, which is the exact thing there is too much of. One line reimplements the rule; the private `np.lib.histograms._hist_bin_rice` is not public API. |
+| Folding a signed histogram to \|r\| | `counts[k//2:] + counts[:k//2][::-1]` — symmetric edges, so bin `j` and bin `k−1−j` share \|u\| |
 | Normalised patch agreement | `np.corrcoef(a, b)[0, 1]` — this IS the photometric measure |
 | Any monotone correlation, nans dropped | `scipy.stats.spearmanr(a, b, nan_policy="omit").statistic` |
 | Rank of each frame | `scipy.stats.rankdata(v)` |
@@ -55,11 +60,11 @@ Every row below was verified against the repo or measured, not assumed.
 | Frame index for a COLMAP image | `enumerate(sorted(recon.images))` — the existing alignment contract |
 | Running accumulation | `np.cumsum` |
 | Per-pair error row | `verification.PairStats` (`verification.py:41`) |
-| Crop-to-original rescale of depth | `mesh.utils.guided_upsample_depth` (`mesh/utils.py:391`) |
+| Crop-to-original rescale of depth | `mesh.utils.guided_upsample_depth` (`mesh/utils.py:374`) |
 
-**Why one histogram survives:** per-pair per-pixel residuals are `N²·H·W` floats — 2.4e10 at 300 frames — so the depth residual must accumulate into fixed bins in place. Every other quantity reduces to one scalar per pair (a few thousand floats), so it ships as a raw column that a reader can bin at any resolution they choose.
+**Why one histogram survives, and why its bins are still not a constant:** per-pair per-pixel residuals are `N²·H·W` floats — 2.4e10 at 300 frames — so the depth residual must accumulate into bins fixed *before* the loop starts. That is the whole reason binning happens at all, and it rules out deriving the bins from the data itself: a first pass to find the range would double the most expensive stage in the report. But the bins need two things, a range and a resolution, and both are recoverable without looking at a single residual. The bounded axis fixes the range at `(−1, 1)` by construction. The resolution follows from the sample count, which the caller knows before the loop as `n_pairs · H · W`. So `residual_bin_edges(n_samples)` computes the edges up front, ships them in the collect dict beside the counts, and no constant survives. Every other quantity reduces to one scalar per pair (a few thousand floats) and ships as a raw column a reader can bin at any resolution they choose.
 
-**Why not zarr, and why not parallel (Task 8 measures both).** The report's own output is per-pair scalars — a few thousand rows, kilobytes — plus a 2000-element int64 histogram. Streaming that to zarr adds IO and a storage concept to save nothing. The compute that *is* worth saving is different and real: `build_report` runs a **second** dense multiview pass, and when `pointcloud.use_multiview_confidence` is on the creator already ran that exact loop. Reuse is worth more than parallelism, and Task 6 Step 5 scopes it. Parallelising the photometric loop is deferred until Task 8 reports its share of wall clock — it is O(N·2) numpy pairs against an O(N²) GPU pass.
+**Why not zarr, and why not parallel (Task 8 measures both).** The report's own output is per-pair scalars — a few thousand rows, kilobytes — plus a few-thousand-element int64 histogram. Streaming that to zarr adds IO and a storage concept to save nothing. The compute that *is* worth saving is different and real: `build_report` runs a **second** dense multiview pass, and when `pointcloud.use_multiview_confidence` is on the creator already ran that exact loop. Reuse is worth more than parallelism, and Task 6 Step 5 scopes it. Parallelising the photometric loop is deferred until Task 8 reports its share of wall clock — it is O(N·2) numpy pairs against an O(N²) GPU pass.
 
 ## File Structure
 
@@ -181,9 +186,9 @@ import pytest
 from scipy import stats
 
 from collab_splats.geometry.metrics import (
-    RESIDUAL_BIN_EDGES,
     bounded_residual,
     depth_error_in_pixels,
+    residual_bin_edges,
 )
 from collab_splats.geometry.verification import PairStats
 
@@ -252,22 +257,62 @@ def test_ratio_against_a_measured_pixel_error_needs_no_second_function():
     assert 5.0 * equiv / equiv == pytest.approx(5.0)
 
 
+# Scene shapes as (frames, side), and the bin count Rice's rule gives each — measured, which
+# is what a test asserts. The sample count is production's own expression, n_pairs * H * W, so
+# no literal is copied out of metrics.py. Round-trip accuracy is a property of the BIN COUNT,
+# not of array size, so the tests ask for a real scene's bin count and feed it a small array.
+RICE_BINS = {(5, 518): 278, (60, 518): 1560, (300, 518): 4584}
+
+
+def _n_samples(frames: int, side: int) -> int:
+    return frames * (frames - 1) // 2 * side * side
+
+
 def test_bounded_residual_is_monotone_and_never_leaves_the_bin_range():
     """No value can fall outside the histogram, so nothing is clipped and nothing is dropped."""
+    edges = residual_bin_edges(_n_samples(60, 518))
     r = np.array([-1e6, -40.0, -0.3, 0.0, 0.3, 40.0, 1e6])
     u = bounded_residual(r)
     assert np.all(np.diff(u) > 0)
-    assert u.min() > RESIDUAL_BIN_EDGES[0] and u.max() < RESIDUAL_BIN_EDGES[-1]
+    assert u.min() > edges[0] and u.max() < edges[-1]
 
 
 def test_bounded_residual_preserves_quantiles_through_the_histogram():
     """A monotone map commutes with quantiles — that is what makes the fixed range safe."""
     rng = np.random.default_rng(0)
     r = np.concatenate([rng.normal(0, 0.03, 200_000), [12.0, -40.0]])
-    counts, _ = np.histogram(bounded_residual(r), bins=RESIDUAL_BIN_EDGES)
+    edges = residual_bin_edges(_n_samples(60, 518))
+    counts, _ = np.histogram(bounded_residual(r), bins=edges)
     assert counts.sum() == r.size  # nothing dropped, unlike a clipped fixed range
-    u = stats.rv_histogram((counts, RESIDUAL_BIN_EDGES)).ppf(0.99)
+    u = stats.rv_histogram((counts, edges)).ppf(0.99)
     assert u / (1.0 - abs(u)) == pytest.approx(np.quantile(r, 0.99), abs=1e-4)
+
+
+def test_bin_edges_are_derived_from_the_sample_count_not_declared():
+    """Resolution is the only thing the bounded axis left undetermined, and n determines it."""
+    assert len(residual_bin_edges(10**9)) > len(residual_bin_edges(10**6))
+    # Rice's rule, k = 2 * n**(1/3), across the scene sizes the report runs at.
+    for (frames, side), k in RICE_BINS.items():
+        assert len(residual_bin_edges(_n_samples(frames, side))) - 1 == k
+
+
+def test_bin_edges_always_span_the_whole_bounded_axis():
+    """Whatever n is, the range is (-1, 1) by construction — only resolution moves."""
+    for n in (1, 10**3, 10**11):
+        e = residual_bin_edges(n)
+        assert e[0] == -1.0 and e[-1] == 1.0 and len(e) % 2 == 1  # even bin count, so it folds
+
+
+def test_folding_a_signed_histogram_recovers_absolute_quantiles():
+    """The prior depth_disagreement.py numbers are |rel| — a signed histogram must fold first."""
+    rng = np.random.default_rng(1)
+    r = rng.standard_t(df=1.6, size=300_000) * 0.0055
+    edges = residual_bin_edges(_n_samples(60, 518))
+    counts, _ = np.histogram(bounded_residual(r), bins=edges)
+    half = (len(edges) - 1) // 2
+    folded, fedges = counts[half:] + counts[:half][::-1], edges[half:]
+    u = float(stats.rv_histogram((folded, fedges)).ppf(0.9))
+    assert u / (1.0 - abs(u)) == pytest.approx(np.quantile(np.abs(r), 0.9), rel=0.02)
 
 
 def test_scipy_supplies_the_correlation_directly():
@@ -370,12 +415,31 @@ logger = logging.getLogger(__name__)
 # The residual histogram's axis
 ########################################
 
-# Per-pixel depth residuals are N^2*H*W values (2.4e10 at 300 frames), far too many to hold,
-# so they must accumulate into fixed bins as the loop runs. Fixed bins normally mean picking a
-# range and clipping whatever falls outside — so instead the residual is mapped onto a bounded
-# axis first (see bounded_residual) and the bins cover that axis completely. 2000 is therefore
-# a RESOLUTION, not a range: no residual can miss it, however large.
-RESIDUAL_BIN_EDGES = np.linspace(-1.0, 1.0, 2001)
+def residual_bin_edges(n_samples: int) -> np.ndarray:
+    """Histogram edges for n_samples residuals. Nothing here is declared; both halves derive.
+
+    Per-pixel depth residuals are N^2*H*W values (2.4e10 at 300 frames), far too many to hold,
+    so they must accumulate into bins fixed BEFORE the loop starts. That rules out reading the
+    bins off the data — a pre-pass to find the range would double the most expensive stage in
+    the report. Bins need a range and a resolution, and both come from elsewhere:
+
+      range       (-1, 1) by construction, because bounded_residual maps every possible
+                  residual into it. No value can fall outside, so nothing is ever clipped.
+      resolution  Rice's rule, k = 2 * n**(1/3) — the standard bin count for a sample of size
+                  n. numpy implements it as np.histogram_bin_edges(a, bins="rice"), but that
+                  wants the array in memory, which is the one thing there is too much of.
+
+    Rice couples the two quantities the right way round: more pixels justify finer bins.
+    Measured on a heavy-tailed population shaped like the real baseline, median recovery error
+    is 5.1% at 512 bins, 1.7% at 1024, 0.66% at 1560 (a 60-frame scene) and 0.08% at 4584 (300
+    frames). Below roughly 20 frames the bins do go coarse — 278 bins and 17% median error on
+    a 5-frame scene — but only the PIXEL-level distribution loses resolution there. Per-pair
+    medians ship as raw columns and are unaffected.
+
+    The bin count is always even, so the histogram folds to |r| by adding the two halves.
+    """
+    k = 2 * max(1, int(round(max(int(n_samples), 1) ** (1.0 / 3.0))))
+    return np.linspace(-1.0, 1.0, k + 1)
 
 
 def bounded_residual(rel):
@@ -493,6 +557,9 @@ quantiles match np.quantile to 5 decimals through p99.9."
 Append to `tests/pointcloud/test_mv_conf.py`:
 
 ```python
+from collab_splats.geometry.metrics import residual_bin_edges
+
+
 def _two_view(scale_j: float = 1.0):
     """Two cameras with a 0.2-unit sideways baseline viewing a constant-depth plane.
 
@@ -530,6 +597,10 @@ def test_collect_fills_index_keyed_rows_and_the_one_histogram():
     assert out["rel_counts"].sum() > 0
     assert (out["pairs"][0].idx1, out["pairs"][0].idx2) == (0, 1)
     assert out["pairs"][0].name1 is None  # index is the key; no filenames invented
+    # Edges travel with the counts: they are sized from this scene, so counts alone are unreadable.
+    assert len(out["rel_edges"]) == len(out["rel_counts"]) + 1
+    n, h, w = depth.shape
+    assert np.array_equal(out["rel_edges"], residual_bin_edges(n * (n - 1) // 2 * h * w))
 
 
 def test_signed_residual_recovers_an_injected_depth_scale():
@@ -599,7 +670,7 @@ Expected: FAIL — `TypeError: ... unexpected keyword argument 'collect'`
 In `collab_splats/pointcloud/feedforward/base.py`, add to the imports:
 
 ```python
-from collab_splats.geometry.metrics import RESIDUAL_BIN_EDGES, bounded_residual
+from collab_splats.geometry.metrics import bounded_residual, residual_bin_edges
 from collab_splats.geometry.verification import PairStats
 ```
 
@@ -616,10 +687,11 @@ Docstring Args addition:
 ```
         collect: Optional dict, filled IN PLACE with the signed residual and parallax angle
                  this loop already computes and would otherwise discard. Keys: "pairs"
-                 (list[PairStats], keyed on frame index) and "rel_counts" (np.int64 counts
-                 against metrics.RESIDUAL_BIN_EDGES — the residual is the one per-pixel
-                 quantity, so it is the one that has to bin rather than ship raw). The return
-                 value is the same either way, so the four production creators are unaffected.
+                 (list[PairStats], keyed on frame index), "rel_counts" (np.int64 counts) and
+                 "rel_edges" (the edges those counts are against, sized from this scene's own
+                 sample count). The residual is the one per-pixel quantity, so it is the one
+                 that has to bin rather than ship raw. The return value is the same either
+                 way, so the four production creators are unaffected.
 ```
 
 Before the `for i in range(N)` loop:
@@ -629,8 +701,13 @@ Before the `for i in range(N)` loop:
     # below; only the plumbing is new. The return contract does not move, because four
     # production creators depend on it.
     if collect is not None:
+        # Bin resolution comes from how many residuals there will be, which is exact and known
+        # here: every pair contributes at most one per pixel. Nothing is hardcoded, and nothing
+        # needs a pre-pass over the data — the pre-pass is the cost the histogram exists to avoid.
+        edges = residual_bin_edges(N * (N - 1) // 2 * H * W)
         collect["pairs"] = []
-        collect["rel_counts"] = np.zeros(len(RESIDUAL_BIN_EDGES) - 1, dtype=np.int64)
+        collect["rel_edges"] = edges
+        collect["rel_counts"] = np.zeros(len(edges) - 1, dtype=np.int64)
         cam_centers = cam2world[:, :3, 3]  # (N, 3) world-space camera positions
 ```
 
@@ -661,7 +738,7 @@ Inside the `for j in range(N)` loop, immediately **after** `valid_sum[i] += coun
             # here. bounded_residual puts them on a finite axis first, so nothing is clipped
             # and nothing is dropped however large the residual.
             v = rel.detach().cpu().numpy()
-            collect["rel_counts"] += np.histogram(bounded_residual(v), bins=RESIDUAL_BIN_EDGES)[0]
+            collect["rel_counts"] += np.histogram(bounded_residual(v), bins=edges)[0]
 
             # Everything else is one number per pair, so it ships as a raw column instead.
             q = torch.quantile(rel, torch.tensor([0.25, 0.5, 0.75], device=rel.device))
@@ -708,7 +785,7 @@ Expected: same counts as before the change. If any fail, the default-off contrac
 /opt/venv/reconstruction/bin/python -c "import collab_splats.pointcloud.feedforward.base; import collab_splats.geometry.metrics; print('imports clean')"
 ```
 
-Expected: `imports clean`. **If it cycles**, move `RESIDUAL_BIN_EDGES` and `bounded_residual` into `base.py` and import them *from* `metrics.py` — neither has dependencies, so the edge always points one way.
+Expected: `imports clean`. **If it cycles**, move `residual_bin_edges` and `bounded_residual` into `base.py` and import them *from* `metrics.py` — neither has dependencies, so the edge always points one way.
 
 - [ ] **Step 7: Commit**
 
@@ -735,7 +812,7 @@ as raw columns a reader can bin however they like."
 
 ---
 
-### Task 4: `calculate_depth_error`
+### Task 4: `compute_depth_error`
 
 **Files:**
 - Modify: `collab_splats/geometry/metrics.py`
@@ -746,7 +823,7 @@ as raw columns a reader can bin however they like."
 Append to `tests/geometry/test_metrics.py`:
 
 ```python
-from collab_splats.geometry.metrics import calculate_depth_error
+from collab_splats.geometry.metrics import compute_depth_error
 
 
 def _pair(i, j, rel, par, n=100, iqr=0.01, depth=4.0):
@@ -755,42 +832,48 @@ def _pair(i, j, rel, par, n=100, iqr=0.01, depth=4.0):
 
 
 def _collected(pairs):
-    """The collect-dict shape compute_multiview_depth_confidence fills."""
-    counts = np.zeros(len(RESIDUAL_BIN_EDGES) - 1, dtype=np.int64)
+    """The collect-dict shape compute_multiview_depth_confidence fills.
+
+    Edges are sized for a real 60-frame scene, not for these few hundred fixture pixels:
+    quantile recovery is a property of the bin count, so a fixture that derived its own
+    coarse bins would be testing a resolution nothing ships at.
+    """
+    edges = residual_bin_edges(_n_samples(60, 518))
+    counts = np.zeros(len(edges) - 1, dtype=np.int64)
     for p in pairs:
         counts += np.histogram(
-            bounded_residual(np.full(p.n_pixels, p.median_rel)), bins=RESIDUAL_BIN_EDGES
+            bounded_residual(np.full(p.n_pixels, p.median_rel)), bins=edges
         )[0]
-    return {"pairs": pairs, "rel_counts": counts}
+    return {"pairs": pairs, "rel_counts": counts, "rel_edges": edges}
 
 
 def test_depth_error_reports_grid_and_resolution():
     """Every block stamps its grid — model-res depth with original-res K is a known bug class."""
-    m = calculate_depth_error(_collected([_pair(0, 1, 0.0, 3.0)]), 500.0, "518x518")
+    m = compute_depth_error(_collected([_pair(0, 1, 0.0, 3.0)]), 500.0, "518x518")
     assert m["grid"] == "model" and m["resolution"] == "518x518"
 
 
 def test_pair_rows_carry_separation():
     """1->4 and 2->5 both land at 3, so distance-vs-error is a column not a special case."""
-    m = calculate_depth_error(_collected([_pair(1, 4, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
+    m = compute_depth_error(_collected([_pair(1, 4, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
     assert [r["separation"] for r in m["pairs"]] == [3, 3]
 
 
 def test_scale_bias_keeps_its_sign_on_the_row():
     """A pure scale error has a large median and a small spread; the sign must survive."""
-    m = calculate_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]), 500.0, "x")
+    m = compute_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]), 500.0, "x")
     assert m["pairs"][0]["median_rel"] == pytest.approx(-0.08)
     assert m["pairs"][0]["iqr_rel"] == pytest.approx(0.005)
 
 
 def test_pixel_equivalent_lands_on_each_pair_row():
-    m = calculate_depth_error(_collected([_pair(0, 1, 0.1, 2.0)]), 500.0, "x")
+    m = compute_depth_error(_collected([_pair(0, 1, 0.1, 2.0)]), 500.0, "x")
     assert m["pairs"][0]["error_in_pixels"] == pytest.approx(depth_error_in_pixels(0.1, 2.0, 500.0))
 
 
 def test_pairs_under_one_pixel_of_disparity_report_null_not_zero():
     tiny = np.rad2deg(0.5 / 500.0)  # half a pixel of disparity
-    m = calculate_depth_error(_collected([_pair(0, 1, 0.1, tiny)]), 500.0, "x")
+    m = compute_depth_error(_collected([_pair(0, 1, 0.1, tiny)]), 500.0, "x")
     assert m["pairs"][0]["error_in_pixels"] is None
     assert m["pairs_under_one_pixel_disparity"] == 1
 
@@ -798,23 +881,31 @@ def test_pairs_under_one_pixel_of_disparity_report_null_not_zero():
 def test_per_pair_columns_ship_raw():
     """Raw, so any binning or threshold query is something the reader does."""
     pairs = [_pair(k, k + 1, 0.01 * k, 3.0) for k in range(1, 30)]
-    m = calculate_depth_error(_collected(pairs), 500.0, "x")
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
     assert len(m["pairs"]) == 29
     assert {"median_rel", "iqr_rel", "median_parallax_deg", "median_depth"} <= set(m["pairs"][0])
 
 
 def test_per_pixel_residual_ships_as_counts_and_edges():
     """The one quantity too large to hold — so any threshold query stays exact."""
-    m = calculate_depth_error(_collected([_pair(0, 1, 0.1, 3.0)]), 500.0, "x")
+    m = compute_depth_error(_collected([_pair(0, 1, 0.1, 3.0)]), 500.0, "x")
     h = m["residual_histogram"]
     assert len(h["bin_edges"]) == len(h["counts"]) + 1 and h["total"] > 0
     assert h["quantiles"]["0.5"] == pytest.approx(0.1, abs=0.01)  # inverted back to a residual
 
 
+def test_signed_and_folded_quantiles_both_ship():
+    """Every prior |rel| number in this repo is absolute, so the signed axis alone is not
+    comparable — a negative bias reads as a negative quantile until the histogram is folded."""
+    h = compute_depth_error(_collected([_pair(0, 1, -0.1, 3.0)]), 500.0, "x")["residual_histogram"]
+    assert h["quantiles"]["0.5"] == pytest.approx(-0.1, abs=0.01)  # sign kept: scale bias
+    assert h["abs_quantiles"]["0.5"] == pytest.approx(0.1, abs=0.01)  # folded: magnitude
+
+
 def test_rising_residual_with_depth_shows_as_a_positive_correlation():
     """One number replaces the depth-strata routine — the raw columns are in the JSON."""
     pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
-    m = calculate_depth_error(_collected(pairs), 500.0, "x")
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
     assert m["correlations"]["error_vs_depth"] > 0.9
     assert "verdict" not in m
 
@@ -822,17 +913,17 @@ def test_rising_residual_with_depth_shows_as_a_positive_correlation():
 def test_constant_depth_gives_nan_which_the_json_writer_turns_into_null():
     """scipy's answer, unwrapped — verification._clean does the nan -> null pass."""
     pairs = [_pair(k, k + 1, 0.01, 3.0, depth=4.0) for k in range(10)]
-    assert np.isnan(calculate_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"])
+    assert np.isnan(compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"])
 
 
 def test_error_vs_separation_is_reported():
     """Does disagreement grow with how far apart the two frames are?"""
     pairs = [_pair(0, k, 0.005 * k, 3.0) for k in range(1, 20)]
-    assert calculate_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_separation"] > 0.9
+    assert compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_separation"] > 0.9
 
 
 def test_depth_error_is_unavailable_not_a_crash_when_empty():
-    m = calculate_depth_error(_collected([]), 500.0, "x")
+    m = compute_depth_error(_collected([]), 500.0, "x")
     assert m["available"] is False and "reason" in m
 ```
 
@@ -842,7 +933,7 @@ def test_depth_error_is_unavailable_not_a_crash_when_empty():
 /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_metrics.py -v -k "depth_error or scale_bias or pixel_equiv or disparity or per_pair or per_pixel or rising or separation"
 ```
 
-Expected: FAIL — `ImportError: cannot import name 'calculate_depth_error'`
+Expected: FAIL — `ImportError: cannot import name 'compute_depth_error'`
 
 - [ ] **Step 3: Write the implementation**
 
@@ -854,7 +945,7 @@ Append to `collab_splats/geometry/metrics.py`:
 ########################################
 
 
-def calculate_depth_error(collected: dict, focal_px: float, resolution: str) -> dict:
+def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> dict:
     """How much the views disagree about depth: scale bias, geometric noise, parallax.
 
     Evaluated at MODEL resolution on purpose. Depth values are identical under nearest
@@ -901,11 +992,24 @@ def calculate_depth_error(collected: dict, focal_px: float, resolution: str) -> 
 
     # Invert the bounded axis to read quantiles back as real residuals. Monotone, so the qth
     # quantile of the transformed values is the transform of the qth quantile.
-    rv = stats.rv_histogram((collected["rel_counts"], RESIDUAL_BIN_EDGES))
+    counts, edges = collected["rel_counts"], collected["rel_edges"]
+    grid = (0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 0.999)
+    rv = stats.rv_histogram((counts, edges))
     quantiles = {}
-    for q in (0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 0.999):
+    for q in grid:
         u = float(rv.ppf(q))
         quantiles[str(q)] = u / (1.0 - abs(u))
+
+    # Same histogram folded to |r|. The edges are symmetric about zero and the bin count is
+    # always even, so bin j and bin k-1-j share |u| and the fold is exact rather than a
+    # re-binning. Signed quantiles answer "is there scale bias"; folded ones are the quantity
+    # every prior |rel| measurement in this repo reports, so they are the comparable column.
+    half = (len(edges) - 1) // 2
+    rv_abs = stats.rv_histogram((counts[half:] + counts[:half][::-1], edges[half:]))
+    abs_quantiles = {}
+    for q in grid:
+        u = float(rv_abs.ppf(q))
+        abs_quantiles[str(q)] = u / (1.0 - abs(u))
 
     return {
         "available": True,
@@ -917,10 +1021,11 @@ def calculate_depth_error(collected: dict, focal_px: float, resolution: str) -> 
         # edges keeps threshold queries exact: rv_histogram(...).cdf(bounded_residual(x))
         # answers "what fraction of pixels fall below x" at any x.
         "residual_histogram": {
-            "counts": collected["rel_counts"].tolist(),
-            "bin_edges": RESIDUAL_BIN_EDGES.tolist(),
-            "total": int(collected["rel_counts"].sum()),
+            "counts": counts.tolist(),
+            "bin_edges": edges.tolist(),
+            "total": int(counts.sum()),
             "quantiles": quantiles,
+            "abs_quantiles": abs_quantiles,
             "axis": "bins are over r/(1+|r|); invert with u/(1-|u|)",
         },
         "pairs_under_one_pixel_disparity": under_1px,
@@ -951,7 +1056,7 @@ Expected: 24 passed.
 
 ```bash
 git add collab_splats/geometry/metrics.py tests/geometry/test_metrics.py
-git commit -m "feat(geometry): calculate_depth_error with scale/noise separation
+git commit -m "feat(geometry): compute_depth_error with scale/noise separation
 
 Signed median is the scale bias, spread with the bias removed is geometric
 noise — a pure scale error has a large median and small spread, a pose error the
@@ -975,7 +1080,7 @@ map, reporting less disagreement than the model produced."
 
 ---
 
-### Task 5: `calculate_photometric_ncc`
+### Task 5: `compute_photometric_ncc`
 
 The only measurement depending on appearance. **Zero-mean normalised cross-correlation** — verified to be exactly what the previous draft's hand-rolled `normalized_residual` computed (`residual == sqrt(2 − 2·NCC)` to 8 dp), so `np.corrcoef` replaces it. NCC absorbs both the `[0,255]` (VGGT) vs `[0,1]` (MapAnything) split and any exposure change; a raw difference would flag exposure as error.
 
@@ -990,7 +1095,7 @@ The only measurement depending on appearance. **Zero-mean normalised cross-corre
 Append to `tests/geometry/test_metrics.py`:
 
 ```python
-from collab_splats.geometry.metrics import calculate_photometric_ncc
+from collab_splats.geometry.metrics import compute_photometric_ncc
 
 
 def _plane(n=2, hw=32, seed=0):
@@ -1007,15 +1112,15 @@ def _plane(n=2, hw=32, seed=0):
 
 def test_identical_poses_and_depth_warp_to_ncc_one():
     img, d, K, e = _plane()
-    m = calculate_photometric_ncc(img, d, K, e, "32x32", max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, "32x32", max_separation=1)
     assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
 
 
 def test_ncc_is_invariant_to_image_scale_convention():
     """[0,255] VGGT vs [0,1] MapAnything must not change the number."""
     img, d, K, e = _plane()
-    a = calculate_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
-    b = calculate_photometric_ncc(img / 255.0, d, K, e, "x", max_separation=1)["pairs"][0]
+    a = compute_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
+    b = compute_photometric_ncc(img / 255.0, d, K, e, "x", max_separation=1)["pairs"][0]
     assert a["photometric_ncc"] == pytest.approx(b["photometric_ncc"], abs=1e-4)
 
 
@@ -1024,7 +1129,7 @@ def test_ncc_is_invariant_to_exposure_shift():
     img, d, K, e = _plane()
     shifted = img.copy()
     shifted[1] = shifted[1] * 1.4 + 20.0
-    m = calculate_photometric_ncc(shifted, d, K, e, "x", max_separation=1)
+    m = compute_photometric_ncc(shifted, d, K, e, "x", max_separation=1)
     assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
 
 
@@ -1033,33 +1138,33 @@ def test_ncc_drops_with_genuine_disagreement():
     img, d, K, e = _plane()
     noisy = img.copy()
     noisy[1] = noisy[1] + rng.normal(0, 90, noisy[1].shape)
-    clean = calculate_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
-    dirty = calculate_photometric_ncc(noisy, d, K, e, "x", max_separation=1)["pairs"][0]
+    clean = compute_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
+    dirty = compute_photometric_ncc(noisy, d, K, e, "x", max_separation=1)["pairs"][0]
     assert dirty["photometric_ncc"] < clean["photometric_ncc"]
 
 
 def test_flat_patch_is_skipped_not_a_divide_by_zero():
     img, d, K, e = _plane()
-    m = calculate_photometric_ncc(np.full_like(img, 128.0), d, K, e, "x", max_separation=1)
+    m = compute_photometric_ncc(np.full_like(img, 128.0), d, K, e, "x", max_separation=1)
     assert m["available"] is False
 
 
 def test_two_overlapping_pixels_do_not_count_as_a_correlation():
     """np.corrcoef on 2 points returns exactly +-1 whatever the values — hence min_samples."""
     img, d, K, e = _plane()
-    m = calculate_photometric_ncc(img, d, K, e, "x", max_separation=1, min_samples=10**9)
+    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=1, min_samples=10**9)
     assert m["available"] is False
 
 
 def test_photometric_respects_max_separation():
     img, d, K, e = _plane(n=4, hw=16)
-    m = calculate_photometric_ncc(img, d, K, e, "16x16", max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)
     assert all(r["separation"] <= 1 for r in m["pairs"])
 
 
 def test_photometric_is_unavailable_for_a_single_frame():
     img, d, K, e = _plane(n=1, hw=16)
-    assert calculate_photometric_ncc(img, d, K, e, "16x16", max_separation=1)["available"] is False
+    assert compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)["available"] is False
 
 
 def test_photometric_upsamples_model_res_depth_to_the_image_grid():
@@ -1067,14 +1172,14 @@ def test_photometric_upsamples_model_res_depth_to_the_image_grid():
     img, d, K, e = _plane(hw=64)
     small = d[:, ::2, ::2]  # 32x32 depth against 64x64 images
     coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1))
-    m = calculate_photometric_ncc(img, small, K, e, "64x64", max_separation=1,
+    m = compute_photometric_ncc(img, small, K, e, "64x64", max_separation=1,
                                   original_coords=coords)
     assert m["available"] is True and m["grid"] == "original"
 
 
 def test_photometric_grid_says_which_one_it_ran_on():
     img, d, K, e = _plane()
-    m = calculate_photometric_ncc(img, d, K, e, "1920x1080", max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, "1920x1080", max_separation=1)
     assert m["grid"] == "original" and m["resolution"] == "1920x1080"
 ```
 
@@ -1084,7 +1189,7 @@ def test_photometric_grid_says_which_one_it_ran_on():
 /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_metrics.py -v -k "ncc or photometric or flat_patch or two_overlapping"
 ```
 
-Expected: FAIL — `ImportError: cannot import name 'calculate_photometric_ncc'`
+Expected: FAIL — `ImportError: cannot import name 'compute_photometric_ncc'`
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1096,7 +1201,7 @@ Append to `collab_splats/geometry/metrics.py`:
 ########################################
 
 
-def calculate_photometric_ncc(
+def compute_photometric_ncc(
     images: np.ndarray,
     depth: np.ndarray,
     intrinsics: np.ndarray,
@@ -1154,6 +1259,8 @@ def calculate_photometric_ncc(
         lifted_d, lifted_K = [], []
         for k in range(N):
             tlx, tly, crx, cry = original_coords[k][:4]
+            # rgb_full is the original-res canvas the crop came from — images[k] already is
+            # that, so no re-read. crop_box is original_coords[:4], out_hw the canvas size.
             lifted_d.append(
                 guided_upsample_depth(depth[k], images[k],
                                       (int(tlx), int(tly), int(crx), int(cry)), (ih, iw))
@@ -1175,20 +1282,23 @@ def calculate_photometric_ncc(
 
     rows = []
     for i in range(N):
-        # Unproject frame i's pixels to world through its own K and pose
-        pts_cam = (np.linalg.inv(intrinsics[i]) @ pix.T).T * depth[i].reshape(-1, 1)
-        pts_world = (cam2world[i] @ np.concatenate([pts_cam, ones], axis=-1).T).T[:, :3]
+        # Unproject frame i's pixels to world through its own K and pose. Local names follow
+        # the multiview loop in pointcloud/feedforward/base.py (cam2world, pts_world,
+        # pts_cam_j, proj_j, in_front) so the two warps read as the same operation.
+        pts_cam_i = (np.linalg.inv(intrinsics[i]) @ pix.T).T * depth[i].reshape(-1, 1)
+        pts_world = (cam2world[i] @ np.concatenate([pts_cam_i, ones], axis=-1).T).T[:, :3]
 
         for j in range(i + 1, min(N, i + max_separation + 1)):
             # Project them into frame j and look up the colour that landed there
-            pts_j = (extrinsics[j] @ np.concatenate([pts_world, ones], axis=-1).T).T[:, :3]
-            proj = (intrinsics[j] @ pts_j.T).T
-            z = np.clip(proj[:, 2], 1e-6, None)
+            pts_cam_j = (extrinsics[j] @ np.concatenate([pts_world, ones], axis=-1).T).T[:, :3]
+            proj_j = (intrinsics[j] @ pts_cam_j.T).T
+            z = np.clip(proj_j[:, 2], 1e-6, None)
             # Nearest sampling, matching the depth pass: bilinear across a depth discontinuity
             # blends two surfaces into a colour present on neither.
-            ui = np.round(proj[:, 0] / z).astype(np.int64)
-            vi = np.round(proj[:, 1] / z).astype(np.int64)
-            ok = (pts_j[:, 2] > 0) & (depth[i].ravel() > 0)
+            ui = np.round(proj_j[:, 0] / z).astype(np.int64)
+            vi = np.round(proj_j[:, 1] / z).astype(np.int64)
+            in_front = pts_cam_j[:, 2] > 0
+            ok = in_front & (depth[i].ravel() > 0)
             ok &= (ui >= 0) & (ui < W) & (vi >= 0) & (vi < H)
             if ok.sum() < min_samples:
                 continue
@@ -1238,7 +1348,7 @@ Expected: 34 passed.
 
 ```bash
 git add collab_splats/geometry/metrics.py tests/geometry/test_metrics.py
-git commit -m "feat(geometry): calculate_photometric_ncc via np.corrcoef, one grid-agnostic function
+git commit -m "feat(geometry): compute_photometric_ncc via np.corrcoef, one grid-agnostic function
 
 The previous draft hand-rolled an RMS-of-z-scored-difference and called it
 normalized_residual. Measured, that value equals sqrt(2 - 2*NCC) to 8 decimals:
@@ -1372,7 +1482,7 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     compute_multiview_depth_confidence(
         r.depth, r.intrinsics, r.extrinsics, abs_thresh=0.0, rel_thresh=0.05, collect=collected
     )
-    depth_m = calculate_depth_error(collected, focal_px, model_res)
+    depth_m = compute_depth_error(collected, focal_px, model_res)
     epipolar_m = _load_epipolar(verification_json, image_width=int(r.original_coords[0][4]))
     photometric_m = _run_photometric(r, frames_zarr, n)
 
@@ -1470,6 +1580,9 @@ def _load_epipolar(verification_json: Path, image_width: int) -> dict:
 
     rows = []
     for s in data.get("pair_stats", []):
+        # Same expression verify already aggregates over at verification.py:332
+        # (`p.num_inliers / p.num_matches ... if p.num_matches`) — per row here rather than
+        # collapsed to a distribution, so it can be joined against the depth rows.
         n_m, n_i = s.get("num_matches") or 0, s.get("num_inliers") or 0
         rows.append({**s, "separation": abs(s["idx1"] - s["idx2"]),
                      "inlier_ratio": (n_i / n_m) if n_m else None})
@@ -1492,13 +1605,15 @@ def _run_photometric(r, frames_zarr: Path, n: int) -> dict:
     if not Path(frames_zarr).exists():
         return {"available": False, "reason": f"frames.zarr not found at {frames_zarr}", "grid": "original"}
     try:
-        from collab_splats.preproc.sampling import FrameStore
+        from collab_splats.preproc.frame_store import FrameStore
 
+        # images() returns the selected frames in row order, which is the order the
+        # reconstruction indexes by. frame_indices() is NOT that — it holds source-video
+        # positions, so using it to index would silently mispair depth with RGB.
         store = FrameStore.open(Path(frames_zarr))
-        rgbs = np.stack([np.asarray(store.read(fi), dtype=np.float32)
-                         for fi in store.frame_indices()[:n]])
+        rgbs = store.images()[:n].astype(np.float32)
         m = len(rgbs)
-        return calculate_photometric_ncc(
+        return compute_photometric_ncc(
             rgbs, r.depth[:m], r.intrinsics[:m], r.extrinsics[:m],
             resolution=f"{rgbs.shape[2]}x{rgbs.shape[1]}",
             original_coords=r.original_coords[:m],
@@ -1508,14 +1623,14 @@ def _run_photometric(r, frames_zarr: Path, n: int) -> dict:
         return {"available": False, "reason": f"{type(exc).__name__}: {exc}", "grid": "original"}
 ```
 
-**Two API names to confirm before running**, written from memory rather than a fresh grep:
+**Both APIs were checked against the source, not written from memory** — `FrameStore` lives in `collab_splats/preproc/frame_store.py:25` (not `sampling.py`), exposes `open` / `__len__` / `image(i)` / `images(idxs=None)` / `records()` / `frame_indices()`, and has **no** `read()`. Re-confirm before running:
 
 ```bash
-grep -n "def read\|def frame_indices\|def open" collab_splats/preproc/sampling.py
+grep -n "def images\|def image\|def open\|def frame_indices" collab_splats/preproc/frame_store.py
 grep -n "def guided_upsample_depth" collab_splats/mesh/utils.py
 ```
 
-If `FrameStore`'s accessor is named differently, match the `_LazyFrames` usage at `reconstructor.py:1141`. If `guided_upsample_depth` has a different signature, match the call at `mesh/utils.py:597`.
+Expected: `frame_store.py` shows `images` and no `read`; `guided_upsample_depth` at `mesh/utils.py:374` with signature `(depth, rgb_full, crop_box, out_hw, radius=None, eps=1e-3)`.
 
 - [ ] **Step 4: Register the stage**
 
@@ -1849,7 +1964,19 @@ Read the per-measurement split out of the INFO log timestamps — the multiview 
 
 Measured baseline on this store: **median |rel| 0.37%, p90 2.27%, p99 25.67%**, tightening to p90 0.92% at conf>p20.
 
-Compare the printed quantiles. They should agree closely — it is the same quantity `depth_disagreement.py` measured, now read back off the bounded axis. **If they differ materially, explain the difference before proceeding.** Check first: residual population (`counted & has_depth` here) and signed-vs-absolute. A discrepancy at p99 specifically would implicate the transform inversion, so re-run the round-trip check from Task 2 Step 1 on the real counts.
+Those are **absolute** residuals, so the comparable column is `abs_quantiles`, not `quantiles` — the signed median cancels bias against spread and would read far lower for reasons that have nothing to do with agreement. Compare `abs_quantiles`, which is the same histogram folded at zero, hence the same quantity `depth_disagreement.py` measured, read back off the bounded axis.
+
+```bash
+/opt/venv/reconstruction/bin/python -c "
+import json, pathlib
+h = json.loads(pathlib.Path('evals/results/mv_vggt_omega/report.json').read_text())
+h = h['measurements']['depth']['residual_histogram']
+for q in ('0.5', '0.9', '0.99'):
+    print(q, 'abs %.4f%%' % (100 * h['abs_quantiles'][q]), '| signed %.4f%%' % (100 * h['quantiles'][q]))
+"
+```
+
+Expected: abs ≈ 0.37 / 2.27 / 25.67 %. **If they differ materially, explain the difference before proceeding.** Check first: residual population (`counted & has_depth` here, which the prior script may not have matched). A discrepancy at p99 specifically would implicate the transform inversion, so re-run the round-trip check from Task 2 Step 1 on the real counts.
 
 - [ ] **Step 3: Check the pair-table size**
 
@@ -1870,9 +1997,8 @@ for name in ('mapanything', 'vggt_omega'):
         print(name, 'MISSING'); continue
     d = json.loads(p.read_text())['measurements']['depth']
     rel = [abs(r['median_rel']) for r in d['pairs']]
-    print(name, 'hist p50', d['residual_histogram']['quantiles']['0.5'],
-          'p99', d['residual_histogram']['quantiles']['0.99'],
-          'pair p50', float(np.median(rel)))
+    h = d['residual_histogram']['abs_quantiles']  # abs, to match the abs pair medians below
+    print(name, 'hist p50', h['0.5'], 'p99', h['0.99'], 'pair p50', float(np.median(rel)))
 "
 ```
 
@@ -1892,11 +2018,13 @@ Append to `docs/superpowers/specs/2026-08-20-scene-error-report-measured.md`:
 - Pairs: <n> | report.json: <MB> MB  (filter applied: <yes/no>)
 
 ### Sanity target (depth residual)
-| quantile | measured | prior (depth_disagreement.py) |
-|---|---|---|
-| median abs | <x>% | 0.37% |
-| p90 | <x>% | 2.27% |
-| p99 | <x>% | 25.67% |
+| quantile | measured (`abs_quantiles`) | signed (`quantiles`) | prior (depth_disagreement.py) |
+|---|---|---|---|
+| median | <x>% | <x>% | 0.37% |
+| p90 | <x>% | <x>% | 2.27% |
+| p99 | <x>% | <x>% | 25.67% |
+
+Bin count for this scene (Rice, from `n_pairs·H·W`): <k>.
 
 <Agreement, or the explained difference.>
 
@@ -2035,21 +2163,21 @@ drift apart."
 - **Binned views** of error-vs-depth and error-vs-confidence are replaced by one rank correlation each. The raw columns are in `report.json`, so the binned shape is recoverable at any resolution the reader picks — but this plan does not compute it.
 - **Parallelism, zarr streaming, and reusing the creator's multiview pass** are deferred to a Task 8 measurement rather than designed in. Stated with the reasoning above, not omitted.
 
-**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `calculate_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly two keys, `pairs` and `rel_counts`, written in Task 3 and read unchanged in Task 4. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. `RESIDUAL_BIN_EDGES` and `bounded_residual` have exactly one definition, with Task 3 Step 6 guarding the import direction. Correlations are raw `float` (possibly nan) at every site, converted to null once by `_clean` at write time.
+**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `compute_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly three keys, `pairs`, `rel_counts` and `rel_edges`, written in Task 3 and read unchanged in Task 4 — the edges travel with the counts because they are now scene-dependent, and counts without their edges are unreadable. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. `residual_bin_edges` and `bounded_residual` have exactly one definition, with Task 3 Step 6 guarding the import direction. The sample-count expression `n_pairs * H * W` also has one definition per side: production computes it in Task 3, and `tests/geometry/test_metrics.py` computes it with `_n_samples(frames, side)` rather than copying a literal. Correlations are raw `float` (possibly nan) at every site, converted to null once by `_clean` at write time.
 
-**Placeholder scan:** no TBD/TODO. Four named unknowns with stated resolution paths, not hidden ones: Task 1 Step 3's `Reconstructor` construction (depends on the chosen scene), Task 6 Step 3's `FrameStore.read` / `guided_upsample_depth` signatures (grep commands and fallbacks supplied inline), Task 2 Step 5's `test_verification.py` breakage (expected, with the fix stated), and Task 8 Step 3's JSON size (measured, with the fallback stated).
+**Placeholder scan:** no TBD/TODO. Three named unknowns with stated resolution paths, not hidden ones: Task 1 Step 3's `Reconstructor` construction (depends on the chosen scene), Task 2 Step 5's `test_verification.py` breakage (expected, with the fix stated), and Task 8 Step 3's JSON size (measured, with the fallback stated). The fourth is now closed: `FrameStore` and `guided_upsample_depth` were read from source rather than memory, which caught a wrong module (`preproc.sampling` → `preproc.frame_store`), a method that does not exist (`read`), and source-video indices being used as row positions.
 
 **Overengineering audit — the complete surface of `metrics.py`:**
 
 | Symbol | Call sites | Kept because |
 |---|---|---|
-| `RESIDUAL_BIN_EDGES` | 3 | a resolution, not a range — the only surviving constant |
+| `residual_bin_edges` | 3, 4, tests | range is fixed by `bounded_residual`, resolution by the sample count — no constant left to declare |
 | `bounded_residual` | 2, across 2 files | inlining would split the forward transform from its inverse |
 | `depth_error_in_pixels` | 3 + controls | non-obvious math, independently tested, floor derived not declared |
-| `calculate_depth_error` | 1 | a measurement |
-| `calculate_photometric_ncc` | 1 | a measurement; both grids |
+| `compute_depth_error` | 1 | a measurement |
+| `compute_photometric_ncc` | 1 | a measurement; both grids |
 | `build_report` | 1 | the stage entry point |
 | `_load_epipolar` | 1 | file IO plus one derived column |
 | `_run_photometric` | 1 | frames.zarr IO and the never-fatal guard |
 
-Nothing else exists. No histogram class, no `Report` class, no residual/stats dataclasses, no `MultiviewConfidence` change, and no hand-rolled Spearman, Pearson, rank, quantile, distribution, filename parser, cumulative sum, coverage routine, stratification routine, confidence-binning routine, JSON coercion, or schema stamp.
+Eight functions and **no module-level constants**: the parallax floor derives from the focal, the quantile grid is a local tuple, and the bin edges derive from the sample count. Nothing else exists. No histogram class, no `Report` class, no residual/stats dataclasses, no `MultiviewConfidence` change, and no hand-rolled Spearman, Pearson, rank, quantile, distribution, filename parser, cumulative sum, coverage routine, stratification routine, confidence-binning routine, JSON coercion, or schema stamp.

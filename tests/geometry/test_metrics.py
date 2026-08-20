@@ -1,5 +1,7 @@
 """Unit tests for reference-free scene error metrics."""
 
+import math
+
 import numpy as np
 import pytest
 from scipy import stats
@@ -72,8 +74,12 @@ def test_depth_error_in_pixels_uses_magnitude_not_sign():
 
 def test_ratio_against_a_measured_pixel_error_needs_no_second_function():
     """rho is a division at the call site, not an API — measured / equivalent."""
-    equiv = depth_error_in_pixels(0.1, 2.0, 500.0)
-    assert 5.0 * equiv / equiv == pytest.approx(5.0)
+    rel_residual, parallax_deg, focal_px = -0.1, 2.0, 500.0
+    # Independent of depth_error_in_pixels: deg2rad(2.0) * 500 * |-0.1|, via math not numpy.
+    expected_equiv = math.radians(parallax_deg) * focal_px * abs(rel_residual)
+    measured_px = 8.0
+    rho = measured_px / depth_error_in_pixels(rel_residual, parallax_deg, focal_px)
+    assert rho == pytest.approx(measured_px / expected_equiv)
 
 
 # Scene shapes as (frames, side), and the bin count Rice's rule gives each — measured, which
@@ -122,6 +128,14 @@ def test_bin_edges_always_span_the_whole_bounded_axis():
         assert e[0] == -1.0 and e[-1] == 1.0 and len(e) % 2 == 1  # even bin count, so it folds
 
 
+def test_bin_edges_clamp_zero_and_negative_sample_counts_to_the_two_bin_floor():
+    """max(int(n_samples), 1) means an empty or malformed count still yields a valid axis."""
+    for n in (0, -5, -10**6):
+        e = residual_bin_edges(n)
+        assert len(e) == 3  # k = 2 * max(1, round(1 ** (1/3))) = 2 -> 3 edges
+        assert e[0] == -1.0 and e[-1] == 1.0
+
+
 def test_folding_a_signed_histogram_recovers_absolute_quantiles():
     """The prior depth_disagreement.py numbers are |rel| — a signed histogram must fold first."""
     rng = np.random.default_rng(1)
@@ -135,7 +149,7 @@ def test_folding_a_signed_histogram_recovers_absolute_quantiles():
 
 
 def test_scipy_supplies_the_correlation_directly():
-    """No wrapper: nan_policy drops pairs and verification._clean turns nan into null."""
+    """No wrapper: nan_policy drops pairs and verification.clean_for_json turns nan into null."""
     x = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])
     y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     assert stats.spearmanr(x, y, nan_policy="omit").statistic == pytest.approx(1.0)

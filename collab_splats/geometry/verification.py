@@ -373,20 +373,20 @@ def _triangulate_and_summarize(
     return verified, frame_stats, summary
 
 
-def _clean(obj):
+def clean_for_json(obj):
     """Recursively replace nan floats with None so the payload is valid JSON."""
     if isinstance(obj, float) and np.isnan(obj):
         return None
     if isinstance(obj, dict):
-        return {k: _clean(v) for k, v in obj.items()}
+        return {k: clean_for_json(v) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [_clean(v) for v in obj]
+        return [clean_for_json(v) for v in obj]
     return obj
 
 
 def _write_report(result: VerificationResult, path: Path) -> None:
     """Serialize pair/frame/summary stats to verification.json (nan -> null)."""
-    payload = _clean(
+    payload = clean_for_json(
         {
             "pair_stats": [asdict(p) for p in result.pair_stats],
             "frame_stats": result.frame_stats,

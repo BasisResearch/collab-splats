@@ -7,14 +7,9 @@ Every statistic comes from scipy or numpy. What lives here is the measurement th
 are computed over, not a reimplementation of them.
 """
 
-import json
 import logging
-from pathlib import Path
 
 import numpy as np
-from scipy import stats
-
-from collab_splats.geometry.verification import _clean
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +90,12 @@ def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: fl
     Returns None when the pair carries under one pixel of disparity, because then it cannot
     see depth at all. That floor is derived from the focal, not chosen: it is the same
     quantity the return value is built from.
+
+    Returns:
+        A non-finite rel_residual (nan or inf) propagates through as nan, not None. None
+        means "this pair has no parallax to see depth with"; nan means "no data" — a
+        different condition. Callers must filter the two separately, e.g. with
+        ``result is not None and not np.isnan(result)``.
     """
     disparity_px = np.deg2rad(parallax_deg) * focal_px
     if disparity_px < 1.0:

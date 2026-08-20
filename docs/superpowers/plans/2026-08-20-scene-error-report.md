@@ -1540,16 +1540,20 @@ def compute_photometric_ncc(
         from collab_splats.mesh.utils import guided_upsample_depth
 
         model_h, model_w = depth.shape[1:]
+        # The guide is documented uint8 and guided_upsample_depth divides it by 255 internally.
+        # FeedforwardResult.images is [0, 255] on VGGT-X but [0, 1] on MapAnything, so an
+        # uncoerced guide is ~255x too flat on one backbone (measured: 0.398 max depth shift)
+        # and float64 raises in OpenCV outright. That [0, 255] vs [0, 1] split is a property of
+        # the BACKBONE, not of a frame, so the scale is decided ONCE off the whole array and
+        # only applied per frame. Deciding it per frame lets a nearly-black frame in a [0, 255]
+        # scene — a dark room, a tunnel, a lens-capped shot, every pixel under 1.0 — read as
+        # [0, 1] and get amplified 255x: measured 117.78/255 mean absolute guide error on such
+        # a frame, black turned near-white, with guided_upsample_depth guided by it.
+        rgb_scale = 255.0 if images.max() <= 1.0 else 1.0
         lifted_d, lifted_K = [], []
         for k in range(N):
             tlx, tly, crx, cry = (float(v) for v in original_coords[k][:4])
-            # The guide is documented uint8 and guided_upsample_depth divides it by 255
-            # internally. FeedforwardResult.images is [0, 255] on VGGT-X but [0, 1] on
-            # MapAnything, so an uncoerced guide is ~255x too flat on one backbone (measured:
-            # 0.398 max depth shift) and float64 raises in OpenCV outright.
-            guide = np.asarray(images[k])
-            guide = guide * 255.0 if guide.max() <= 1.0 else guide
-            guide = np.clip(guide, 0, 255).astype(np.uint8)
+            guide = np.clip(np.asarray(images[k]) * rgb_scale, 0, 255).astype(np.uint8)
             # rgb_full is the original-res canvas the crop came from — images[k] already is
             # that, so no re-read. crop_box is original_coords[:4], out_hw the canvas size.
             lifted_d.append(
@@ -1557,8 +1561,10 @@ def compute_photometric_ncc(
                                       (int(tlx), int(tly), int(crx), int(cry)), (ih, iw))
             )
             # The CROP was resized to the model grid, so the scale is model/crop, not
-            # model/canvas, and the crop origin comes back onto the principal point. Both are
-            # _scale_intrinsics_to_model's own inverse rather than a second copy of it.
+            # model/canvas, and the crop origin comes back onto the principal point.
+            # The K arithmetic that undoes both is the forward's inverse, shared via
+            # _scale_intrinsics_to_original; the scale itself is re-derived here because the
+            # forward's principal-point guard returns sx = 1.0 on the model-res K we pass.
             sx, sy = model_w / (crx - tlx), model_h / (cry - tly)
             lifted_K.append(_scale_intrinsics_to_original(intrinsics[k], sx, sy, tlx, tly))
         depth, intrinsics = np.stack(lifted_d), np.stack(lifted_K)

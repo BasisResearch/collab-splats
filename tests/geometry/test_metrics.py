@@ -171,7 +171,7 @@ def test_folding_a_signed_histogram_recovers_absolute_quantiles():
 
 
 def test_scipy_supplies_the_correlation_directly():
-    """No wrapper: nan_policy drops pairs and verification.clean_for_json turns nan into null."""
+    """The statistic is scipy's; _spearman adds only an under-3-rows floor, never its own math."""
     x = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])
     y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     assert stats.spearmanr(x, y, nan_policy="omit").statistic == pytest.approx(1.0)
@@ -325,11 +325,11 @@ def test_the_correlation_reads_residual_MAGNITUDE_not_signed_residual():
 
 
 def test_too_few_usable_rows_gives_nan_rather_than_raising():
-    """scipy's nan_policy="omit" RAISES under 3 surviving pairs; the block must survive a stub scene.
+    """Two rows cannot support a rho; scipy answers 0.9999999999999999, the block must answer nan.
 
-    Both halves matter: a nan in one column with only 2 rows is the raising case, and 2 clean
-    rows is the "cannot be computed" case that must also read nan rather than a spurious rho
-    of 1.0 off two points.
+    Both halves are the same case reached two ways — a stub scene with 2 pairs, and a scene
+    whose second pair carries a nan. Neither raises in scipy; both would ship a spurious
+    perfect correlation into the report without the floor.
     """
     with_nan = compute_depth_error(
         _collected([_pair(0, 1, 0.01, 3.0), _pair(1, 2, 0.02, 3.0, depth=float("nan"))]), 500.0, "x"
@@ -341,14 +341,14 @@ def test_too_few_usable_rows_gives_nan_rather_than_raising():
     assert np.isnan(two_clean["correlations"]["error_vs_depth"])
 
 
-def test_the_finite_mask_is_PAIRWISE_so_a_nan_drops_the_whole_row():
-    """Masking each column by its own np.isfinite desyncs the rows and returns a wrong rho.
+def test_a_nan_row_makes_the_rho_nan_rather_than_correlating_a_SUBSET():
+    """No silent row dropping: a missing value nans the whole rho, it does not shrink the sample.
 
-    Nothing else pins this. Every other correlation fixture is nan-free, so the two masks
-    coincide; the one nan fixture above has 2 rows and short-circuits before the mask matters.
-    Here the nans sit on DIFFERENT rows and in different columns, so independent masks still
-    hand scipy two equal-length arrays — no crash, just a rho over rows that were never
-    measured together (-0.1 instead of -0.2 on this fixture).
+    The producers guarantee finite columns, so this is unreachable today — it pins that if one
+    ever regresses, the report says "cannot compute" instead of quietly reporting a rho over
+    whichever rows happened to survive. Dropping rows here would answer -0.2 off the four
+    co-finite rows; both nans sit on DIFFERENT rows, so a per-column drop would also desync
+    the pairing and answer -0.1 off rows never measured together.
     """
     pairs = [
         _pair(0, 1, float("nan"), 3.0, depth=1.0),  # residual missing
@@ -359,15 +359,11 @@ def test_the_finite_mask_is_PAIRWISE_so_a_nan_drops_the_whole_row():
         _pair(5, 11, 0.09, 3.0, depth=6.0),
     ]
     m = compute_depth_error(_collected(pairs), 500.0, "x")
-    # The four rows where BOTH columns are finite, magnitudes as compute_depth_error takes them.
-    co_finite = stats.spearmanr([2.0, 3.0, 5.0, 6.0], [0.10, 0.01, 0.02, 0.09]).statistic
-    assert m["correlations"]["error_vs_depth"] == pytest.approx(co_finite)
-    assert co_finite == pytest.approx(-0.2)  # anchor: the fixture is not accidentally symmetric
-    # Same rule on the other correlation: frame_separation is never nan, so the residual's nan
-    # alone decides which rows survive.
-    assert m["correlations"]["error_vs_frame_separation"] == pytest.approx(
-        stats.spearmanr([2.0, 3.0, 4.0, 5.0, 6.0], [0.10, 0.01, 0.07, 0.02, 0.09]).statistic
-    )
+    assert np.isnan(m["correlations"]["error_vs_depth"])
+    # Anchors: the two row-dropping answers this rejects are both finite and both wrong.
+    assert stats.spearmanr([2.0, 3.0, 5.0, 6.0], [0.10, 0.01, 0.02, 0.09]).statistic == pytest.approx(-0.2)
+    # frame_separation is never nan, so only the residual's nan reaches this column — still nan.
+    assert np.isnan(m["correlations"]["error_vs_frame_separation"])
 
 
 def test_nothing_in_the_output_grades_the_scene():

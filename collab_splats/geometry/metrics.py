@@ -110,17 +110,16 @@ def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: fl
 
 
 def _spearman(x: np.ndarray, y: np.ndarray) -> float:
-    """Spearman rho over the finite rows of x and y; nan when fewer than 3 rows survive.
+    """scipy's Spearman rho, floored to nan under 3 rows where scipy reports a spurious +-1.0.
 
-    The drop happens here rather than via scipy's nan_policy="omit" because that path RAISES
-    ValueError("The input must have at least 3 entries!") once the drop leaves under three
-    pairs — a crash on a short or partly-empty column. nan is the answer instead, which is
-    also what scipy returns for a constant column, and what clean_for_json writes as null.
+    Measured on scipy 1.17.1: n=2 returns 0.9999999999999999 and n=1 returns nan, so this
+    guards a misleading number, not a crash. No nan masking: both callers already drop
+    non-finite rows at the producer (base.py sel.any(), compute_photometric_ncc isfinite),
+    and scipy propagates any that slip through as nan, which clean_for_json writes as null.
     """
-    keep = np.isfinite(x) & np.isfinite(y)
-    if int(keep.sum()) < 3:
+    if len(x) < 3:
         return float("nan")
-    return float(stats.spearmanr(x[keep], y[keep]).statistic)
+    return float(stats.spearmanr(x, y).statistic)
 
 
 def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> dict:

@@ -56,7 +56,7 @@ Every row below was verified against the repo or measured, not assumed.
 | Bin count for a sample size | Rice's rule, `2·n^(1/3)` — numpy implements it as `np.histogram_bin_edges(a, bins="rice")`, but that needs the array in memory, which is the exact thing there is too much of. One line reimplements the rule; the private `np.lib.histograms._hist_bin_rice` is not public API. |
 | Folding a signed histogram to \|r\| | `counts[k//2:] + counts[:k//2][::-1]` — symmetric edges, so bin `j` and bin `k−1−j` share \|u\| |
 | Normalised patch agreement | `np.corrcoef(a, b)[0, 1]` — this IS the photometric measure |
-| Any monotone correlation, nans dropped | `scipy.stats.spearmanr(a, b, nan_policy="omit").statistic` |
+| Any monotone correlation | `scipy.stats.spearmanr(a, b).statistic`, via the `_spearman` helper. **Measured correction (Task 5):** the helper is scipy plus one floor — under 3 rows it answers nan, because scipy returns `0.9999999999999999` off two rows and a short scene ships that as a perfect correlation. `nan_policy="omit"` is NOT used and is not needed: both producers already drop non-finite rows (`base.py` `sel.any()`, `compute_photometric_ncc`'s `isfinite`), and scipy propagates anything that slips through as nan. Contrary to earlier text in this plan, plain `spearmanr` never raises at small n — n=1 returns nan, n=2 returns ~1.0; only `nan_policy="omit"` raises, and only when the drop leaves ONE row. |
 | Rank of each frame | `scipy.stats.rankdata(v)` |
 | nan → null so the JSON is valid | `verification.clean_for_json` (`verification.py:346`). **Measured correction (Task 2):** this audit read the name at its definition line and assumed module scope — it was in fact a private closure named `_clean`, **nested inside `_write_report`**, so importing it raised `ImportError` and every Task 2 test failed at collection. Task 2 promoted it to module level; the closure captured nothing but `np` and its own params, so the promotion is behaviour-preserving. Task 2's review then made it public — a leading-underscore name imported across module boundaries is the convention's own signal that it should not be private — so it is now **`clean_for_json`**, still in `verification.py` because that module owns the write. Every `import clean_for_json` in this plan works as written. |
 | Frame index for a COLMAP image | `enumerate(sorted(recon.images))` — the existing alignment contract |
@@ -338,7 +338,7 @@ def test_folding_a_signed_histogram_recovers_absolute_quantiles():
 
 
 def test_scipy_supplies_the_correlation_directly():
-    """No wrapper: nan_policy drops pairs and verification.clean_for_json turns nan into null."""
+    """The statistic is scipy's; _spearman adds only an under-3-rows floor, never its own math."""
     x = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])
     y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     assert stats.spearmanr(x, y, nan_policy="omit").statistic == pytest.approx(1.0)
@@ -964,11 +964,20 @@ def test_the_correlation_reads_residual_MAGNITUDE_not_signed_residual():
 
 
 def test_too_few_usable_rows_gives_nan_rather_than_raising():
-    """scipy's nan_policy="omit" RAISES under 3 surviving pairs; the block must survive a stub scene."""
+    """Two rows cannot support a rho; scipy answers 0.9999999999999999, the block must answer nan.
+
+    Both halves are the same case reached two ways — a stub scene with 2 pairs, and a scene
+    whose second pair carries a nan. Neither raises in scipy; both would ship a spurious
+    perfect correlation into the report without the floor.
+    """
     with_nan = compute_depth_error(
         _collected([_pair(0, 1, 0.01, 3.0), _pair(1, 2, 0.02, 3.0, depth=float("nan"))]), 500.0, "x"
     )
     assert np.isnan(with_nan["correlations"]["error_vs_depth"])
+    two_clean = compute_depth_error(
+        _collected([_pair(0, 1, 0.01, 3.0, depth=1.0), _pair(1, 2, 0.02, 3.0, depth=2.0)]), 500.0, "x"
+    )
+    assert np.isnan(two_clean["correlations"]["error_vs_depth"])
 
 
 def test_nothing_in_the_output_grades_the_scene():
@@ -1148,8 +1157,9 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         # they read ship in "pair_directions", so a reader can plot the shape behind the rho.
         # error_vs_depth has the null_hypothesis below to read against; positive rho is
         # expected, and near 0 or near 1 are the interesting outcomes.
-        # _spearman, NOT stats.spearmanr(nan_policy="omit"): scipy RAISES ValueError once the
-        # nan drop leaves under 3 pairs, so the drop and the nan answer live in the helper.
+        # _spearman, NOT stats.spearmanr directly: measured on scipy 1.17.1, two rows return
+        # 0.9999999999999999 — a spurious perfect correlation a short or heavily skipped scene
+        # reaches easily. The helper is scipy plus that one floor; the statistic is untouched.
         "correlations": {
             "error_vs_depth": _spearman(depths, abs_rel_depth_error),
             "error_vs_frame_separation": _spearman(frame_seps, abs_rel_depth_error),
@@ -1166,6 +1176,8 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
 ```
 
 Expected: 34 passed — 18 already in the file from Tasks 2 and 3, plus this task's 16.
+**Measured: 35.** Task 4's review added one more test than this plan text lists (nothing
+pinned the success-path key set, so six mutations survived). Treat the count as a floor.
 
 - [ ] **Step 5: Commit**
 
@@ -1180,9 +1192,10 @@ zero would read as 'no error' when it means 'cannot tell'.
 
 'Does error grow with depth' and 'does error grow with frame separation' are one
 stats.spearmanr call each over columns the pair rows already carry, replacing a
-depth-stratification routine and a fixed bin count. nan_policy handles the nan
-drop and verification.clean_for_json turns the constant-column nan into null, so there
-is no wrapper. Raw columns ship too, so a reader who wants the binned shape can
+depth-stratification routine and a fixed bin count. The producers already ship finite
+columns, and verification.clean_for_json turns the constant-column nan into null, so the
+only wrapper is _spearman's under-3-rows floor — see the audit table at the top of this
+plan. Raw columns ship too, so a reader who wants the binned shape can
 build it at any resolution.
 
 The residual histogram is the only pre-binned output, because it is the only
@@ -1282,14 +1295,23 @@ def test_photometric_is_unavailable_for_a_single_frame():
     assert compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)["available"] is False
 
 
-def test_photometric_upsamples_model_res_depth_to_the_image_grid():
-    """One function, both grids: depth is model-res, images are original-res."""
-    img, d, K, e = _plane(hw=64)
-    small = d[:, ::2, ::2]  # 32x32 depth against 64x64 images
-    coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1))
-    m = compute_photometric_ncc(img, small, K, e, "64x64", max_separation=1,
-                                  original_coords=coords)
+def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
+    """One function, both grids — and the K must ride the SAME transform as the depth.
+
+    The crop is a strict sub-region (32x32 taken from a 64x64 canvas at (16, 8)), so the model
+    -> original scale is crop_w / model_w = 2 and NOT canvas_w / model_w = 4. Using the canvas
+    width doubles the focal, the warp lands 8 px out instead of 4, and NCC collapses — the
+    2026-08-11 mesh-collapse bug class, caught here rather than in a mesh.
+    """
+    img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
+    # Model-res depth and K describing the crop only: 16x16 grid over a 32x32 crop.
+    model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
+    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
+    m = compute_photometric_ncc(img, model_d, model_K, e, "64x64", original_coords=coords,
+                                max_separation=1)
     assert m["available"] is True and m["grid"] == "original"
+    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
 
 
 def test_photometric_grid_says_which_one_it_ran_on():
@@ -1370,22 +1392,25 @@ def compute_photometric_ncc(
             )
         from collab_splats.mesh.utils import guided_upsample_depth
 
-        model_w = depth.shape[2]
+        model_h, model_w = depth.shape[1:]
         lifted_d, lifted_K = [], []
         for k in range(N):
-            tlx, tly, crx, cry = original_coords[k][:4]
+            tlx, tly, crx, cry = (float(v) for v in original_coords[k][:4])
             # rgb_full is the original-res canvas the crop came from — images[k] already is
             # that, so no re-read. crop_box is original_coords[:4], out_hw the canvas size.
             lifted_d.append(
                 guided_upsample_depth(depth[k], images[k],
                                       (int(tlx), int(tly), int(crx), int(cry)), (ih, iw))
             )
-            s = iw / model_w
+            # Inverse of _scale_intrinsics_to_model (bundle_adjustment.py): the CROP was
+            # resized to the model grid, so the scale is crop/model, not canvas/model, and the
+            # crop origin comes back onto the principal point.
+            sx, sy = (crx - tlx) / model_w, (cry - tly) / model_h
             K = np.array(intrinsics[k], dtype=np.float64).copy()
-            K[0, 0] *= s
-            K[1, 1] *= s
-            K[0, 2] = K[0, 2] * s + tlx
-            K[1, 2] = K[1, 2] * s + tly
+            K[0, 0] *= sx
+            K[1, 1] *= sy
+            K[0, 2] = K[0, 2] * sx + tlx
+            K[1, 2] = K[1, 2] * sy + tly
             lifted_K.append(K)
         depth, intrinsics = np.stack(lifted_d), np.stack(lifted_K)
 
@@ -1459,7 +1484,10 @@ def compute_photometric_ncc(
 /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_metrics.py -v
 ```
 
-Expected: 38 passed.
+Expected: 38 passed. **Measured: 51** — Task 4 ended at 35, not the 34 this plan predicted,
+and Task 5 shipped 16 tests rather than the 10 listed here (the extra 6 pin behaviours this
+task's own implementation body specifies but left untested — notably that the warp moves
+pixels at all, since every one of the 10 tests below uses identity poses).
 
 - [ ] **Step 5: Commit**
 
@@ -1687,14 +1715,16 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     # Does the model know when it is wrong? Confidence is an INPUT being validated, not an
     # error source, so it gets one correlation rather than a measurement of its own. Absent on
     # older zarr stores, which are never backfilled.
+    # _spearman, not scipy directly, so all three correlations in this module share one
+    # small-sample convention. It already floors under 3 rows, which is the guard this
+    # block would otherwise spell out itself.
     conf_rho = None
-    if r.confidence is not None and len(per_frame) > 2:
+    if r.confidence is not None:
         conf = np.asarray(r.confidence)
-        conf_rho = float(stats.spearmanr(
-            [float(np.median(conf[k])) for k in per_frame],
-            list(per_frame.values()),
-            nan_policy="omit",
-        ).statistic)
+        conf_rho = _spearman(
+            np.array([float(np.median(conf[k])) for k in per_frame], dtype=np.float64),
+            np.array(list(per_frame.values()), dtype=np.float64),
+        )
 
     # Where each frame sits in this scene's own distribution, 0..1. A NUMBER, never a label.
     # Within-scene ranks need no absolute threshold, which sidesteps the fact that pixel and
@@ -2068,7 +2098,7 @@ def test_control_separation_axis_has_teeth():
     p = _pairs(depth, K, extr, rel_thresh=0.9)
     frame_seps = np.array([abs(i - j) for (i, j) in p], dtype=np.float64)
     errs = np.array([abs(v.median_rel_depth_error) for v in p.values()])
-    assert stats.spearmanr(frame_seps, errs, nan_policy="omit").statistic > 0.8
+    assert stats.spearmanr(frame_seps, errs).statistic > 0.8
 ```
 
 - [ ] **Step 2: Run them**
@@ -2371,6 +2401,6 @@ drift apart."
 | `_load_epipolar` | 1 | file IO plus one derived column |
 | `_run_photometric` | 1 | frames.zarr IO and the never-fatal guard |
 | `_running_error` | 2 (depth, epipolar) + tests | the ordered/unordered grouping is the one place the two channels' row semantics meet; inline it and the depth curve silently doubles |
-| `_spearman` | 2 (both correlations) | scipy's `nan_policy="omit"` RAISES once the drop leaves under 3 pairs; the guard has to exist somewhere and duplicating it at both call sites is worse |
+| `_spearman` | 3 (both depth correlations, plus photometric) | scipy answers `0.9999999999999999` off two rows; the floor that turns that into nan has to exist somewhere and duplicating it at three call sites is worse. Nothing else — the statistic is scipy's, and no nan masking, since both producers already ship finite columns |
 
 Ten functions and **no module-level constants**: the parallax floor derives from the focal, the quantile grid is a local tuple, and the bin edges derive from the sample count. Nothing else exists. No histogram class, no `Report` class, no residual/stats dataclasses, no `MultiviewConfidence` change, and no hand-rolled Spearman, Pearson, rank, quantile, distribution, filename parser, cumulative sum, coverage routine, stratification routine, confidence-binning routine, JSON coercion, or schema stamp — `_spearman` drops non-finite rows and hands the rest to `stats.spearmanr`, it does not compute a rank correlation.

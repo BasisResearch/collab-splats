@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from collab_splats.geometry.metrics import residual_bin_edges
 from collab_splats.pointcloud.feedforward.base import (
     MultiviewConfidence,
     compute_multiview_depth_confidence,
@@ -417,3 +418,113 @@ def test_multiview_mask_respects_valid_depth():
     valid = np.ones((N, H, W), dtype=bool)
     valid[0, 0, 0] = False
     assert not multiview_mask(out, valid, min_views=1)[0, 0, 0]
+
+
+########################################
+# The opt-in collection out-param
+########################################
+
+
+def _two_view(scale_j: float = 1.0):
+    """Two cameras with a 0.2-unit sideways baseline viewing a constant-depth plane.
+
+    scale_j multiplies frame 1's depth, injecting a known relative residual.
+    """
+    H = W = 16
+    K = np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], dtype=np.float32)
+    depth = np.stack([np.full((H, W), 4.0, np.float32), np.full((H, W), 4.0 * scale_j, np.float32)])
+    extr = np.stack([np.eye(4, dtype=np.float32), np.eye(4, dtype=np.float32)])
+    extr[1, 0, 3] = -0.2  # world-to-cam translation => camera 1 sits at x=+0.2
+    return depth, np.stack([K, K]), extr
+
+
+def _collect(depth, K, extr, **kw):
+    """Collect over the fixture with the frustum gate off.
+
+    A constant-depth plane has near == far, so its world AABB is degenerate in z. Two planes
+    at 4.0 and 4.4 therefore have DISJOINT boxes and _aabbs_overlap gates the pair out before
+    any residual exists — the gate is correct (real depth has range), the fixture is the
+    artificial one. pair_gate is a cost optimisation and changes no result, so turning it off
+    here isolates what these tests are actually about.
+    """
+    out = {}
+    compute_multiview_depth_confidence(depth, K, extr, device="cpu", collect=out, pair_gate=False, **kw)
+    return out
+
+
+def test_collect_defaults_to_none_and_output_is_unchanged():
+    """The four production creators must see byte-identical output."""
+    depth, K, extr = _two_view()
+    base = compute_multiview_depth_confidence(depth, K, extr, device="cpu")
+    out = {}
+    withc = compute_multiview_depth_confidence(depth, K, extr, device="cpu", collect=out)
+    assert np.array_equal(base.ratio, withc.ratio)
+    assert np.array_equal(base.inlier_count, withc.inlier_count)
+    assert np.array_equal(base.valid_count, withc.valid_count)
+    assert np.array_equal(base.judged, withc.judged)
+
+
+def test_collect_fills_index_keyed_rows_and_the_one_histogram():
+    depth, K, extr = _two_view()
+    out = _collect(depth, K, extr)
+    assert out["rel_depth_error_counts"].sum() > 0
+    assert (out["pairs"][0].idx1, out["pairs"][0].idx2) == (0, 1)
+    assert out["pairs"][0].name1 is None  # index is the key; no filenames invented
+    # Edges travel with the counts: they are sized from this scene, so counts alone are unreadable.
+    assert len(out["rel_depth_error_edges"]) == len(out["rel_depth_error_counts"]) + 1
+    n, h, w = depth.shape
+    assert np.array_equal(out["rel_depth_error_edges"], residual_bin_edges(n * (n - 1) // 2 * h * w))
+
+
+def test_signed_residual_recovers_an_injected_depth_scale():
+    """Frame 1 depth x1.1 => median relative residual ~ +0.1 on the 0->1 pair."""
+    depth, K, extr = _two_view(scale_j=1.1)
+    out = _collect(depth, K, extr, rel_thresh=0.5)
+    row = next(r for r in out["pairs"] if (r.idx1, r.idx2) == (0, 1))
+    assert row.median_rel_depth_error == pytest.approx(0.1, abs=0.02)
+
+
+def test_signed_residual_is_zero_on_a_consistent_pair():
+    depth, K, extr = _two_view()
+    assert _collect(depth, K, extr)["pairs"][0].median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
+
+
+def test_parallax_angle_matches_geometry():
+    """0.2 baseline at depth 4 => atan(0.2/4) ~ 2.86 deg at the principal ray."""
+    depth, K, extr = _two_view()
+    assert _collect(depth, K, extr)["pairs"][0].median_parallax_deg == pytest.approx(
+        np.degrees(np.arctan(0.2 / 4.0)), abs=0.5
+    )
+
+
+def test_median_depth_lands_on_the_row():
+    """The 'worse further away?' axis is a column, not a binning routine."""
+    depth, K, extr = _two_view()
+    assert _collect(depth, K, extr)["pairs"][0].median_depth == pytest.approx(4.0, abs=0.2)
+
+
+def test_occluded_pixels_are_excluded_from_the_residual():
+    """Occlusion is absent evidence, not disagreement — it must not pollute the scale bias."""
+    depth, K, extr = _two_view()
+    depth[1, :, :8] = 0.5  # a near occluder covering half of frame 1
+    row = next(r for r in _collect(depth, K, extr)["pairs"] if r.idx1 == 0)
+    assert row.median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
+
+
+def test_residual_is_scale_invariant():
+    """Multiplying depth and translation by s must leave the relative residual unchanged."""
+    depth, K, extr = _two_view(scale_j=1.1)
+    a = _collect(depth, K, extr, rel_thresh=0.5)["pairs"][0]
+    s = 7.0
+    extr_s = extr.copy()
+    extr_s[:, :3, 3] *= s
+    b = _collect(depth * s, K, extr_s, rel_thresh=0.5)["pairs"][0]
+    assert a.median_rel_depth_error == pytest.approx(b.median_rel_depth_error, abs=1e-4)
+    assert a.median_parallax_deg == pytest.approx(b.median_parallax_deg, abs=1e-3)
+
+
+def test_a_huge_residual_still_lands_in_the_histogram():
+    """The bounded axis means no residual can miss the bins, however large."""
+    depth, K, extr = _two_view(scale_j=60.0)
+    out = _collect(depth, K, extr, rel_thresh=1e9)
+    assert out["rel_depth_error_counts"].sum() > 0

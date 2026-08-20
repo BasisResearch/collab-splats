@@ -11,7 +11,7 @@ from collab_splats.geometry.metrics import (
     depth_error_in_pixels,
     residual_bin_edges,
 )
-from collab_splats.geometry.verification import PairStats
+from collab_splats.geometry.verification import PairStats, _distribution
 
 
 def test_pair_stats_is_keyed_on_frame_index():
@@ -32,6 +32,24 @@ def test_pair_stats_carries_epipolar_and_depth_together():
     p = PairStats(0, 1, name1="f0.png", name2="f1.png", num_matches=500, num_inliers=450,
                   rot_error_deg=0.15, t_direction_error_deg=0.9, median_rel_depth_error=0.02)
     assert p.num_inliers == 450 and p.median_rel_depth_error == pytest.approx(0.02)
+
+
+def test_distribution_skips_rows_that_did_not_fill_the_column():
+    """The depth pass writes rows with the epipolar fields None; _distribution must survive them.
+
+    _triangulate_and_summarize feeds p.rot_error_deg straight into np.asarray(..., float64),
+    which coerces None to nan, and _distribution strips nan. That degradation is load-bearing
+    now that a second pass emits rows leaving those columns empty — so it gets a test.
+    """
+    rows = [
+        PairStats(0, 1, name1="f0.png", name2="f1.png", rot_error_deg=0.4),
+        PairStats(1, 2, median_rel_depth_error=0.02, median_parallax_deg=3.0),  # depth-only
+    ]
+    d = _distribution([p.rot_error_deg for p in rows])
+    assert d is not None and d["median"] == pytest.approx(0.4)
+    assert d["p90"] == pytest.approx(0.4) and d["p99"] == pytest.approx(0.4)
+    # A column no pass filled is absent, not a row of nan.
+    assert _distribution([p.photometric_ncc for p in rows]) is None
 
 
 def test_depth_error_in_pixels_is_r_times_disparity():

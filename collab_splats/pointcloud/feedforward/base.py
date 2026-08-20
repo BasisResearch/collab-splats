@@ -33,7 +33,9 @@ from rich.console import Console
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from zarr.codecs import BloscCodec
 
+from collab_splats.geometry.metrics import bounded_residual, residual_bin_edges
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+from collab_splats.geometry.verification import PairStats
 from collab_splats.preproc.frame_store import FrameStore
 
 from ..base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
@@ -493,6 +495,7 @@ def compute_multiview_depth_confidence(
     abs_thresh: float = 0.0,
     rel_thresh: float = 0.05,
     pair_gate: bool = True,
+    collect: dict | None = None,
     device: str = "cuda",
 ) -> MultiviewConfidence:
     """Geometric cross-view depth consistency confidence per pixel.
@@ -521,6 +524,13 @@ def compute_multiview_depth_confidence(
         rel_thresh:  Relative depth tolerance as fraction of expected depth.
         pair_gate:   Skip view pairs whose depth frusta cannot overlap. Cost optimisation
                      only — the AABB test is conservative, so results are unchanged.
+        collect: Optional dict, filled IN PLACE with the signed residual and parallax angle
+                 this loop already computes and would otherwise discard. Keys: "pairs"
+                 (list[PairStats], keyed on frame index), "rel_depth_error_counts" (np.int64 counts) and
+                 "rel_depth_error_edges" (the edges those counts are against, sized from this scene's own
+                 sample count). The residual is the one per-pixel quantity, so it is the one
+                 that has to bin rather than ship raw. The return value is the same either
+                 way, so the four production creators are unaffected.
         device:      Torch device for computation.
 
     Returns:
@@ -574,6 +584,19 @@ def compute_multiview_depth_confidence(
         depth_masks_t = torch.from_numpy(depth_masks.astype(bool)).to(dev)  # (N, H, W)
     else:
         depth_masks_t = None
+
+    # Collection is opt-in and fills the caller's dict. The loop already holds everything
+    # below; only the plumbing is new. The return contract does not move, because four
+    # production creators depend on it.
+    if collect is not None:
+        # Bin resolution comes from how many residuals there will be, which is exact and known
+        # here: every pair contributes at most one per pixel. Nothing is hardcoded, and nothing
+        # needs a pre-pass over the data — the pre-pass is the cost the histogram exists to avoid.
+        edges = residual_bin_edges(N * (N - 1) // 2 * H * W)
+        collect["pairs"] = []
+        collect["rel_depth_error_edges"] = edges
+        collect["rel_depth_error_counts"] = np.zeros(len(edges) - 1, dtype=np.int64)
+        cam_centers = cam2world[:, :3, 3]  # (N, 3) world-space camera positions
 
     for i in range(N):
         # Unproject source pixels to world space via cam-i intrinsics and pose
@@ -644,6 +667,46 @@ def compute_multiview_depth_confidence(
 
             inlier_sum[i] += inlier.reshape(H, W).float()
             valid_sum[i] += counted.reshape(H, W).float()
+
+            if collect is None:
+                continue
+
+            # Signed relative residual. The sign carries scale bias, the spread carries
+            # geometric noise. Same pixels the ratio counts: occluded pixels are absent
+            # evidence, and letting them in would drag the bias negative.
+            sel = counted & has_depth
+            if not bool(sel.any()):
+                continue
+            rel = (sampled_d_flat[sel] - expected_d[sel]) / expected_d[sel].clamp(min=1e-6)
+
+            # Parallax from the two ray directions, not from f*B/Z. The pinhole form needs a
+            # focal length, and focal is exactly what is not comparable across backbones
+            # (11% fx spread on omega alone). Ray directions are scale-free.
+            pw = pts_world[sel]
+            v_i = pw - cam_centers[i]
+            v_j = pw - cam_centers[j]
+            cos_a = (v_i * v_j).sum(-1) / (v_i.norm(dim=-1) * v_j.norm(dim=-1)).clamp(min=1e-12)
+            par = torch.rad2deg(torch.arccos(cos_a.clamp(-1.0, 1.0)))
+
+            # The one histogram: too many per-pixel residuals to hold, so they accumulate
+            # here. bounded_residual puts them on a finite axis first, so nothing is clipped
+            # and nothing is dropped however large the residual.
+            v = rel.detach().cpu().numpy()
+            collect["rel_depth_error_counts"] += np.histogram(bounded_residual(v), bins=edges)[0]
+
+            # Everything else is one number per pair, so it ships as a raw column instead.
+            q = torch.quantile(rel, torch.tensor([0.25, 0.5, 0.75], device=rel.device))
+            collect["pairs"].append(
+                PairStats(
+                    idx1=i,
+                    idx2=j,
+                    n_pixels=int(sel.sum()),
+                    median_rel_depth_error=float(q[1]),
+                    iqr_rel_depth_error=float(q[2] - q[0]),
+                    median_parallax_deg=float(par.median()),
+                    median_depth=float(expected_d[sel].median()),
+                )
+            )
 
     # ratio is 0 where no view overlapped; the judged flag distinguishes "no evidence"
     # from "evidence against", which the mask helper needs and a bare ratio cannot express.

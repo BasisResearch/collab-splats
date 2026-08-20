@@ -416,7 +416,19 @@ Nothing else changes: `asdict(p)` at line 359 picks the new fields up, so `verif
 
 - [ ] **Step 4: Write the bridge**
 
-Create `collab_splats/geometry/metrics.py`. **Measured correction (Task 2 review):** an earlier draft of this header imported `json`, `Path`, `stats` and the JSON cleaner up front, for the tasks that use them later. `ruff check` reported four F401s, and `scripts/lint.sh` — which `.github/workflows/lint.yml` runs on every push — therefore failed on the commit, four tasks before those imports were used. **Every task adds its own imports in the commit that first uses them**: Task 4 adds `from scipy import stats`, Task 5 needs nothing new, Task 6 adds `import json`, `from pathlib import Path` and `from collab_splats.geometry.verification import clean_for_json`. Header as it stands:
+Create `collab_splats/geometry/metrics.py`. **Measured correction (Task 2 review):** an earlier draft of this header imported `json`, `Path`, `stats` and the JSON cleaner up front, for the tasks that use them later. `ruff check` reported four F401s on the file, four tasks before those imports were used. **Every task adds its own imports in the commit that first uses them**: Task 4 adds `from scipy import stats`, Task 5 needs nothing new, Task 6 adds `import json`, `from pathlib import Path` and `from collab_splats.geometry.verification import clean_for_json`.
+
+**The lint gate is `ruff check <the files this task touched>`, NOT `bash scripts/lint.sh`** — measured at HEAD on 2026-08-20, the repo-wide script cannot pass and never could during this branch:
+
+| stage | state at HEAD |
+|---|---|
+| `mypy -p collab_splats --follow-imports=skip` | 97 errors in 26 files — and `lint.sh` is `set -e`, so it aborts here and ruff never runs |
+| `ruff check tests/ collab_splats/` | 129 errors, all pre-existing |
+| `ruff format --diff tests/ collab_splats/` | 203 files would be reformatted — `pyproject.toml` has **no `[tool.ruff]` section**, so ruff assumes line-length 88 while the repo is black-formatted at 120 |
+
+`.github/workflows/lint.yml` runs `make lint` only on push/PR to **`main`**, so nothing on `refactor/cu121-uv-migration` is gated by it today. Scoped `ruff check` on your own files is still required — the F401 above was a real defect and this branch does eventually reach `main` — but do not attempt to make the repo-wide script pass, and never run repo-wide `black`/`ruff format`: it would reformat 203 files, burying this feature's diff and colliding with the concurrent session.
+
+Header as it stands:
 
 ```python
 """Reference-free scene error metrics: depth cross-view, photometric, and verify's epipolar rows.
@@ -967,7 +979,7 @@ Expected: FAIL — `ImportError: cannot import name 'compute_depth_error'`
 
 - [ ] **Step 3: Write the implementation**
 
-First add this task's import to the top of `collab_splats/geometry/metrics.py` — imports land in the commit that first uses them, because `scripts/lint.sh` runs `ruff check` on every push and an import written ahead of its use is an F401 failure:
+First add this task's import to the top of `collab_splats/geometry/metrics.py` — imports land in the commit that first uses them, because an import written ahead of its use is an F401 under `ruff check` (see the gate note in Task 2 Step 4: check your own files, not `scripts/lint.sh`, which cannot pass at HEAD):
 
 ```python
 from scipy import stats
@@ -1524,7 +1536,7 @@ Expected: FAIL at collection — `ImportError: cannot import name '_running_erro
 
 - [ ] **Step 3: Write the stage entry point**
 
-First add this task's imports to the top of `collab_splats/geometry/metrics.py` — imports land in the commit that first uses them, because `scripts/lint.sh` runs `ruff check` on every push and an import written ahead of its use is an F401 failure:
+First add this task's imports to the top of `collab_splats/geometry/metrics.py` — imports land in the commit that first uses them, because an import written ahead of its use is an F401 under `ruff check` (see the gate note in Task 2 Step 4: check your own files, not `scripts/lint.sh`, which cannot pass at HEAD):
 
 ```python
 import json

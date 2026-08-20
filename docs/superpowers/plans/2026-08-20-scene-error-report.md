@@ -2491,13 +2491,16 @@ In `configs/README.md`, beside the existing `colmap/verification.json` entry:
   confidence-vs-error. Written by the always-on `report` leaf stage; re-runnable
   with `--stages report --overwrite`.
 
-  The stage runs no model and no matcher, and it never triggers verify. The
-  epipolar channel is therefore present only when `colmap/verification.json`
-  already exists — set `pointcloud.geometric_verification: true` or run
-  `--stages verify` to get it. With the shipping default (`false`) the epipolar
-  block records `{"available": false, "reason": ...}` and the depth and
-  photometric channels still emit, so `report` never reaches around an explicit
-  opt-out to charge a default run for verify.
+  The stage runs no model and no matcher. It loads `colmap/verification.json`
+  when it exists; in a full pipeline run verify is ordered ahead of `report`, so
+  report reads verify's output rather than triggering it. With the shipping
+  default (`geometric_verification: false`) no such file is produced, the
+  epipolar block records `{"available": false, "reason": ...}`, and the depth and
+  photometric channels still emit — `report` never reaches around an explicit
+  opt-out to charge a default run for verify. To get the epipolar channel, set
+  `pointcloud.geometric_verification: true` or run `--stages verify`. Note that
+  `--stages report` on its own, with the flag on and no `verification.json`
+  present, *will* run verify first and pay its cost.
 
   **Report-only: nothing here feeds back into the reconstruction.** No verdict,
   no grade, no cause — distributions and cumulative error only. Every block

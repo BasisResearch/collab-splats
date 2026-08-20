@@ -1279,8 +1279,9 @@ class Reconstructor:
             # Always on, no config boolean. Every other diagnostic ships behind a
             # default-false flag, and the one boolean this would have had is the boolean that
             # keeps it off. Affordable because it runs no model and no matcher — it reads the
-            # zarr the reconstruction just wrote — and because it never triggers verify: the
-            # epipolar channel appears only when geometric_verification was already paid for.
+            # zarr the reconstruction just wrote — and because verify, when enabled, is appended
+            # just above and has already run by then: report loads its output rather than
+            # triggering it. A direct report() call can still run verify; see its docstring.
             stages.append("report")
 
         # Validate stage dependencies before starting any work. A dependency is

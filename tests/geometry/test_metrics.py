@@ -340,6 +340,35 @@ def test_too_few_usable_rows_gives_nan_rather_than_raising():
     assert np.isnan(two_clean["correlations"]["error_vs_depth"])
 
 
+def test_the_finite_mask_is_PAIRWISE_so_a_nan_drops_the_whole_row():
+    """Masking each column by its own np.isfinite desyncs the rows and returns a wrong rho.
+
+    Nothing else pins this. Every other correlation fixture is nan-free, so the two masks
+    coincide; the one nan fixture above has 2 rows and short-circuits before the mask matters.
+    Here the nans sit on DIFFERENT rows and in different columns, so independent masks still
+    hand scipy two equal-length arrays — no crash, just a rho over rows that were never
+    measured together (-0.1 instead of -0.2 on this fixture).
+    """
+    pairs = [
+        _pair(0, 1, float("nan"), 3.0, depth=1.0),  # residual missing
+        _pair(1, 3, -0.10, 3.0, depth=2.0),
+        _pair(2, 5, 0.01, 3.0, depth=3.0),
+        _pair(3, 7, 0.07, 3.0, depth=float("nan")),  # depth missing, a DIFFERENT row
+        _pair(4, 9, 0.02, 3.0, depth=5.0),
+        _pair(5, 11, 0.09, 3.0, depth=6.0),
+    ]
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
+    # The four rows where BOTH columns are finite, magnitudes as compute_depth_error takes them.
+    co_finite = stats.spearmanr([2.0, 3.0, 5.0, 6.0], [0.10, 0.01, 0.02, 0.09]).statistic
+    assert m["correlations"]["error_vs_depth"] == pytest.approx(co_finite)
+    assert co_finite == pytest.approx(-0.2)  # anchor: the fixture is not accidentally symmetric
+    # Same rule on the other correlation: frame_separation is never nan, so the residual's nan
+    # alone decides which rows survive.
+    assert m["correlations"]["error_vs_frame_separation"] == pytest.approx(
+        stats.spearmanr([2.0, 3.0, 4.0, 5.0, 6.0], [0.10, 0.01, 0.07, 0.02, 0.09]).statistic
+    )
+
+
 def test_nothing_in_the_output_grades_the_scene():
     """Report-only: distributions and how they vary, never a verdict for the reader to inherit."""
     pairs = [_pair(k, k + 1, 0.5 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]  # awful scene

@@ -40,14 +40,39 @@ DEFAULT_OVERLAP = 10
 
 @dataclass
 class PairStats:
-    """Epipolar verification of one image pair against the model's relative pose."""
+    """Measured error for one image pair. Fields are optional per measurement.
 
-    name1: str
-    name2: str
-    num_matches: int
-    num_inliers: int
-    rot_error_deg: float  # estimated-vs-model relative rotation, degrees
-    t_direction_error_deg: float  # translation-direction angle, degrees (nan if degenerate)
+    Keyed on FRAME INDEX rather than name. The depth cross-view pass has integer indices and
+    no filenames, verify has COLMAP filenames, and the report joins the two — so both need a
+    key both can produce. Names stay as metadata for the epipolar half.
+
+    Frame separation (how far apart the two frames are) is abs(idx1 - idx2). It is a
+    subtraction, not a field.
+    """
+
+    idx1: int
+    idx2: int
+    # Filled by verify_reconstruction (poses only — never reads depth)
+    name1: str | None = None
+    name2: str | None = None
+    num_matches: int | None = None
+    num_inliers: int | None = None
+    rot_error_deg: float | None = None  # estimated-vs-model relative rotation, degrees
+    t_direction_error_deg: float | None = None  # nan if degenerate
+    # Filled by the depth cross-view pass
+    n_pixels: int | None = None
+    # Both are statistics of ONE quantity: the signed relative depth error
+    # (d_sampled - d_expected) / d_expected, frame j's depth read against frame i's.
+    # The median is the SCALE reading: a uniform scale factor s between the two frames'
+    # depth appears here as exactly s - 1, so 0.02 means frame j is 2% deeper. The IQR is
+    # the same population with that bias removed, i.e. the geometric noise. Scale is not a
+    # separate column because it is this column: s = 1 + median_rel_depth_error.
+    median_rel_depth_error: float | None = None  # signed; s - 1, the pairwise depth scale offset
+    iqr_rel_depth_error: float | None = None  # spread with the bias removed — geometric noise
+    median_parallax_deg: float | None = None  # how well this pair can see depth at all
+    median_depth: float | None = None  # the "worse further away?" axis, as a column
+    # Filled by the photometric pass
+    photometric_ncc: float | None = None
 
 
 @dataclass
@@ -232,6 +257,10 @@ def verify_reconstruction(
     finally:
         db.close()
     pair_stats = []
+    # Frame index = position in sorted image-id order. That ordering is this module's
+    # alignment contract already (features and images are zipped against it above), so the
+    # report joins on it instead of parsing digits out of a filename.
+    id_to_idx = {iid: k for k, iid in enumerate(sorted(recon.images))}
     for pid, g in zip(pair_ids, geoms):
         id1, id2 = pycolmap.pair_id_to_image_pair(int(pid))
         # pair ids are stored canonically (id1 < id2); our matches dict is keyed by the
@@ -247,6 +276,8 @@ def verify_reconstruction(
             rot_err = tdir_err = float("nan")  # too few inliers for a pose estimate
         pair_stats.append(
             PairStats(
+                idx1=id_to_idx[id1],
+                idx2=id_to_idx[id2],
                 name1=im1.name,
                 name2=im2.name,
                 num_matches=int(matches[key].shape[0]),
@@ -342,18 +373,19 @@ def _triangulate_and_summarize(
     return verified, frame_stats, summary
 
 
+def _clean(obj):
+    """Recursively replace nan floats with None so the payload is valid JSON."""
+    if isinstance(obj, float) and np.isnan(obj):
+        return None
+    if isinstance(obj, dict):
+        return {k: _clean(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean(v) for v in obj]
+    return obj
+
+
 def _write_report(result: VerificationResult, path: Path) -> None:
     """Serialize pair/frame/summary stats to verification.json (nan -> null)."""
-
-    def _clean(obj):
-        if isinstance(obj, float) and np.isnan(obj):
-            return None
-        if isinstance(obj, dict):
-            return {k: _clean(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [_clean(v) for v in obj]
-        return obj
-
     payload = _clean(
         {
             "pair_stats": [asdict(p) for p in result.pair_stats],

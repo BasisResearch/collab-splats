@@ -987,6 +987,36 @@ def test_scale_intrinsics_original_res_k_still_scaled():
     assert out[0, 0, 2] == pytest.approx(32.0 * sx)
 
 
+def test_scale_intrinsics_round_trips_through_its_own_inverse():
+    """model -> original -> model returns the original K, crop origin included.
+
+    The crop is OFF-CENTRE and NON-SQUARE ((11, 7) to (59, 47) of a 96x72 canvas) on purpose.
+    On a centred crop the + tl_x / + tl_y terms cancel algebraically, so dropping them is
+    invisible — measured, deleting both left the whole photometric suite passing, because
+    every fixture there was a fronto-parallel plane with identical K in both frames.
+    """
+    from collab_splats.geometry.bundle_adjustment import (
+        _scale_intrinsics_to_model,
+        _scale_intrinsics_to_original,
+    )
+
+    images = torch.zeros(2, 3, 8, 12)  # model res 8 rows x 12 cols
+    original_coords = np.tile(
+        np.array([11.0, 7.0, 59.0, 47.0, 96.0, 72.0], dtype=np.float32), (2, 1)
+    )
+    # Original-res K: cx is the crop centre (11 + 59) / 2, so the forward's K-space guard
+    # classifies it as original-res and actually scales it.
+    intr = _guard_intrinsics(cx=35.0, cy=27.0, f=57.0).astype(np.float64)
+
+    model_K, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(intr, images, original_coords)
+    assert (tl_x, tl_y) == (11.0, 7.0) and sx != sy  # non-square crop: the two scales differ
+    back = _scale_intrinsics_to_original(model_K, sx, sy, tl_x, tl_y)
+
+    np.testing.assert_allclose(back, intr, rtol=0, atol=1e-9)
+    # Anchor: the round trip is not the identity map — the model-res K really did move.
+    assert not np.allclose(model_K, intr)
+
+
 # ---------------------------------------------------------------------------
 # Tests for _filter_observations — vis-threshold gate + upstream filter order
 # ---------------------------------------------------------------------------

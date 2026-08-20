@@ -1,6 +1,7 @@
 """Unit tests for reference-free scene error metrics."""
 
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -170,13 +171,6 @@ def test_folding_a_signed_histogram_recovers_absolute_quantiles():
     assert u / (1.0 - abs(u)) == pytest.approx(np.quantile(np.abs(r), 0.9), rel=0.02)
 
 
-def test_scipy_supplies_the_correlation_directly():
-    """The statistic is scipy's; _spearman adds only an under-3-rows floor, never its own math."""
-    x = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])
-    y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    assert stats.spearmanr(x, y, nan_policy="omit").statistic == pytest.approx(1.0)
-
-
 ########################################
 # compute_depth_error
 ########################################
@@ -324,21 +318,41 @@ def test_the_correlation_reads_residual_MAGNITUDE_not_signed_residual():
     assert all(r["median_rel_depth_error"] < 0 for r in m["pair_directions"])
 
 
-def test_too_few_usable_rows_gives_nan_rather_than_raising():
-    """Two rows cannot support a rho; scipy answers 0.9999999999999999, the block must answer nan.
+def test_scipy_supplies_the_correlation_directly():
+    """The statistic IS scipy's, off the same columns that ship — no wrapper, no rewrite.
 
-    Both halves are the same case reached two ways — a stub scene with 2 pairs, and a scene
-    whose second pair carries a nan. Neither raises in scipy; both would ship a spurious
-    perfect correlation into the report without the floor.
+    The fixture is deliberately NOT monotone. A rho of exactly 1.0 is also what Pearson,
+    Kendall and a hand-rolled rank difference all return, so a monotone fixture cannot tell
+    which statistic actually ran; this one separates Spearman (0.83) from Pearson (0.89).
     """
-    with_nan = compute_depth_error(
-        _collected([_pair(0, 1, 0.01, 3.0), _pair(1, 2, 0.02, 3.0, depth=float("nan"))]), 500.0, "x"
-    )
-    assert np.isnan(with_nan["correlations"]["error_vs_depth"])
-    two_clean = compute_depth_error(
+    rels = [0.01, 0.05, 0.02, 0.08, 0.03, 0.09]
+    depths = [2.0, 3.0, 1.0, 9.0, 4.0, 7.0]
+    pairs = [_pair(k, k + 1, r, 3.0, depth=z) for k, (r, z) in enumerate(zip(rels, depths))]
+    rho = compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"]
+    assert rho == stats.spearmanr(depths, [abs(r) for r in rels]).statistic
+    # Anchors: a real intermediate rho, and one Pearson does NOT also produce.
+    assert 0.0 < rho < 1.0
+    assert rho != pytest.approx(float(np.corrcoef(depths, rels)[0, 1]))
+
+
+def test_a_tiny_sample_ships_scipys_answer_NEXT_TO_the_count_that_qualifies_it():
+    """Two rows cannot support a rho, and the block publishes scipy's answer anyway.
+
+    Report-only means no verdicts, and "this sample is too small to correlate" is a verdict.
+    scipy answers 0.9999999999999999 off two rows by construction and never raises (measured
+    on 1.17.1); what makes that safe to publish is that the sample size ships in the same dict
+    and the raw rows ship below it, so the reader discounts it rather than inheriting a
+    judgement. The value and the count are ONE contract, so both are asserted here.
+    """
+    m = compute_depth_error(
         _collected([_pair(0, 1, 0.01, 3.0, depth=1.0), _pair(1, 2, 0.02, 3.0, depth=2.0)]), 500.0, "x"
     )
-    assert np.isnan(two_clean["correlations"]["error_vs_depth"])
+    assert m["correlations"]["error_vs_depth"] == stats.spearmanr([1.0, 2.0], [0.01, 0.02]).statistic
+    assert m["correlations"]["error_vs_depth"] == pytest.approx(1.0)  # the spurious perfect fit
+    assert m["n_pair_directions"] == 2 == len(m["pair_directions"])  # what makes it readable
+    # One row is the same case at the other end: scipy returns nan, still without raising.
+    one = compute_depth_error(_collected([_pair(0, 1, 0.01, 3.0, depth=1.0)]), 500.0, "x")
+    assert np.isnan(one["correlations"]["error_vs_depth"]) and one["n_pair_directions"] == 1
 
 
 def test_a_nan_row_makes_the_rho_nan_rather_than_correlating_a_SUBSET():
@@ -401,13 +415,19 @@ def test_depth_error_is_unavailable_not_a_crash_when_empty():
 
 
 def _plane(n=2, hw=32, seed=0):
-    """n identical views of a fronto-parallel white-noise plane at depth 4, identity poses."""
+    """n identical views of a fronto-parallel white-noise plane at depth 4, identity poses.
+
+    hw is a side length, or an (H, W) pair. A square frame cannot see an H/W swap in the
+    bounds check — measured, `(ui < H) & (vi < W)` passed the whole square suite — so the
+    non-square case is not decoration.
+    """
+    h, w = (hw, hw) if isinstance(hw, int) else hw
     rng = np.random.default_rng(seed)
-    tex = rng.uniform(0, 255, size=(hw, hw, 3)).astype(np.float32)
-    K = np.array([[40.0, 0, hw / 2], [0, 40.0, hw / 2], [0, 0, 1.0]], dtype=np.float32)
+    tex = rng.uniform(0, 255, size=(h, w, 3)).astype(np.float32)
+    K = np.array([[40.0, 0, w / 2], [0, 40.0, h / 2], [0, 0, 1.0]], dtype=np.float32)
     return (
         np.stack([tex] * n),
-        np.stack([np.full((hw, hw), 4.0, np.float32)] * n),
+        np.stack([np.full((h, w), 4.0, np.float32)] * n),
         np.stack([K] * n),
         np.stack([np.eye(4, dtype=np.float32)] * n),
     )
@@ -437,7 +457,7 @@ def _translated_pair(shift_px=4, hw=32, f=40.0, depth=4.0, seed=5):
 
 def test_identical_poses_and_depth_warp_to_ncc_one():
     img, d, K, e = _plane()
-    m = compute_photometric_ncc(img, d, K, e, "32x32", max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
     assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
 
 
@@ -448,8 +468,42 @@ def test_the_warp_actually_moves_pixels_through_pose_and_depth():
     noise a correct warp reads 1.0 and a warp through the wrong pose reads ~0.
     """
     img, d, K, e = _translated_pair()
-    m = compute_photometric_ncc(img, d, K, e, "32x32", max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
     assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+
+
+def test_bounds_are_checked_against_the_right_axis_on_a_NON_SQUARE_frame():
+    """W bounds u and H bounds v — on a square frame swapping them changes nothing.
+
+    Measured: `(ui < H) & (vi < W)` passed all 51 tests, because every photometric fixture was
+    square. On a 1920x1080 frame it IndexErrors at images[j][vi[ok], ui[ok]]. Here the frame is
+    24 rows by 32 columns and the poses are identical, so EVERY pixel warps onto itself and
+    lands in bounds — the swap silently drops the 8 rightmost columns instead of raising, so
+    the pixel count is what discriminates, not availability.
+    """
+    img, d, K, e = _plane(hw=(24, 32))
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    assert m["pairs"][0]["n_pixels"] == 24 * 32
+    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_zero_depth_pixels_are_dropped_rather_than_warped_from_the_camera_centre():
+    """depth == 0 means "no observation", not a surface at zero range.
+
+    Unprojecting it puts the pixel at frame i's OWN camera centre, which projects to a real
+    location in frame j and contributes a colour that pixel never saw. Identity poses hide
+    this — the centre lands at z = 0 and `in_front` already drops it, which is why replacing
+    the term with `in_front.copy()` passed the whole square-and-identity suite. Frame 1 is
+    therefore pulled back along z, so frame 0's centre sits 2 units IN FRONT of it and the
+    masked pixels would otherwise all pile onto its principal point.
+    """
+    img, d, K, e = _plane(n=2, hw=32)
+    d = d.copy()
+    d[0, :8, :] = 0.0  # 8 rows of frame 0 carry no observation
+    e = e.copy()
+    e[1, 2, 3] = 2.0  # camera 1 sits at world z = -2, looking the same way
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    assert m["pairs"][0]["n_pixels"] == 32 * 32 - 8 * 32
 
 
 def test_ncc_is_invariant_to_image_scale_convention():
@@ -462,8 +516,8 @@ def test_ncc_is_invariant_to_image_scale_convention():
     rng = np.random.default_rng(11)
     img, d, K, e = _plane()
     img[1] = img[1] + rng.normal(0, 120, img[1].shape)
-    a = compute_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
-    b = compute_photometric_ncc(img / 255.0, d, K, e, "x", max_separation=1)["pairs"][0]
+    a = compute_photometric_ncc(img, d, K, e, max_separation=1)["pairs"][0]
+    b = compute_photometric_ncc(img / 255.0, d, K, e, max_separation=1)["pairs"][0]
     assert a["photometric_ncc"] == pytest.approx(b["photometric_ncc"], abs=1e-4)
     assert 0.2 < a["photometric_ncc"] < 0.9  # anchor: not the trivial 1.0 case
 
@@ -478,7 +532,7 @@ def test_ncc_is_invariant_to_exposure_shift():
     img, d, K, e = _plane()
     shifted = img.copy()
     shifted[1] = shifted[1] * 0.15 + 210.0
-    m = compute_photometric_ncc(shifted, d, K, e, "x", max_separation=1)
+    m = compute_photometric_ncc(shifted, d, K, e, max_separation=1)
     assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
 
 
@@ -487,14 +541,24 @@ def test_ncc_drops_with_genuine_disagreement():
     img, d, K, e = _plane()
     noisy = img.copy()
     noisy[1] = noisy[1] + rng.normal(0, 90, noisy[1].shape)
-    clean = compute_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
-    dirty = compute_photometric_ncc(noisy, d, K, e, "x", max_separation=1)["pairs"][0]
+    clean = compute_photometric_ncc(img, d, K, e, max_separation=1)["pairs"][0]
+    dirty = compute_photometric_ncc(noisy, d, K, e, max_separation=1)["pairs"][0]
     assert dirty["photometric_ncc"] < clean["photometric_ncc"]
 
 
 def test_flat_patch_is_skipped_not_a_divide_by_zero():
+    """Every value equal means zero variance, and corrcoef would divide by it.
+
+    `available is False` alone does NOT discriminate — measured, deleting the std guard leaves
+    all 51 tests passing, because the isfinite check below it drops the same rows. What the
+    guard buys is that corrcoef is never CALLED on a zero-variance patch: on a real scene with
+    sky or a blank wall that is one RuntimeWarning per pair. simplefilter("error") is the
+    assertion that pins it.
+    """
     img, d, K, e = _plane()
-    m = compute_photometric_ncc(np.full_like(img, 128.0), d, K, e, "x", max_separation=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        m = compute_photometric_ncc(np.full_like(img, 128.0), d, K, e, max_separation=1)
     assert m["available"] is False
 
 
@@ -502,19 +566,33 @@ def test_two_overlapping_pixels_do_not_count_as_a_correlation():
     """np.corrcoef on 2 points returns exactly +-1 whatever the values — hence min_samples."""
     assert abs(np.corrcoef([0.0, 1.0], [5.0, -3.0])[0, 1]) == pytest.approx(1.0)
     img, d, K, e = _plane()
-    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=1, min_samples=10**9)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1, min_samples=10**9)
     assert m["available"] is False
+
+
+def test_min_samples_counts_pixels_not_the_ravelled_rgb_values():
+    """The floor and the shipped `n_pixels` column are the same quantity, 3x smaller than the
+    value count corrcoef sees — so a floor stated in values would gate at a third of the pixels.
+
+    A 32x32 identity pair overlaps in exactly 1024 pixels and 3072 ravelled values. The floor
+    admits it at 1024 and rejects it at 1025, which no value-count reading can produce.
+    """
+    img, d, K, e = _plane()
+    assert compute_photometric_ncc(img, d, K, e, max_separation=1,
+                                   min_samples=1024)["pairs"][0]["n_pixels"] == 1024
+    assert compute_photometric_ncc(img, d, K, e, max_separation=1,
+                                   min_samples=1025)["available"] is False
 
 
 def test_photometric_respects_max_separation():
     img, d, K, e = _plane(n=4, hw=16)
-    m = compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
     assert all(r["frame_separation"] <= 1 for r in m["pairs"])
 
 
 def test_photometric_is_unavailable_for_a_single_frame():
     img, d, K, e = _plane(n=1, hw=16)
-    m = compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
     assert m["available"] is False and "reason" in m
 
 
@@ -531,41 +609,108 @@ def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
     model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
     model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
-    m = compute_photometric_ncc(img, model_d, model_K, e, "64x64", original_coords=coords,
+    m = compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords,
                                 max_separation=1)
     assert m["available"] is True and m["grid"] == "original"
     assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+
+
+def test_the_upsample_guide_is_normalised_whatever_the_backbones_image_scale(monkeypatch):
+    """guided_upsample_depth documents a uint8 guide and divides it by 255 internally.
+
+    FeedforwardResult.images is [0, 255] on VGGT-X and [0, 1] on MapAnything, so an uncoerced
+    guide is ~255x too flat on one backbone — measured by the reviewer at 0.398 max / 0.013
+    mean depth shift on depths of 1-5 — and a float64 guide raises in OpenCV outright. The two
+    scales must therefore lift the SAME depth.
+
+    The fixture depth carries an EDGE, not the constant plane every other upsample test uses:
+    the guided filter only consults the guide where depth varies, so a constant map returns the
+    same answer under any guide at all and could not see this.
+    """
+    from collab_splats.mesh import utils as mesh_utils
+
+    real = mesh_utils.guided_upsample_depth
+    lifted = []
+
+    def spy(depth, rgb_full, *args, **kwargs):
+        out = real(depth, rgb_full, *args, **kwargs)
+        lifted.append(out)
+        return out
+
+    monkeypatch.setattr(mesh_utils, "guided_upsample_depth", spy)
+    img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
+    model_d = np.stack([np.concatenate(
+        [np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)], axis=1)] * 2)
+    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
+
+    compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords, max_separation=1)
+    compute_photometric_ncc(img / 255.0, model_d, model_K, e, original_coords=coords,
+                            max_separation=1)
+    assert len(lifted) == 4
+    np.testing.assert_array_equal(lifted[0], lifted[2])
+    np.testing.assert_array_equal(lifted[1], lifted[3])
+    # Anchor: the guide really is load-bearing on this fixture, so the equality above is not
+    # two runs of a filter that ignores its guide.
+    flat_guide = real(model_d[0], np.zeros((64, 64, 3), np.uint8), (16, 8, 48, 40), (64, 64))
+    assert not np.array_equal(lifted[0], flat_guide)
 
 
 def test_upsampling_without_crop_rows_is_a_refusal_not_a_guess():
     """Depth and K move together or neither does; guessing the crop is how they desync."""
     img, d, K, e = _plane(hw=64)
     with pytest.raises(ValueError, match="original_coords"):
-        compute_photometric_ncc(img, d[:, ::2, ::2], K, e, "64x64", max_separation=1)
+        compute_photometric_ncc(img, d[:, ::2, ::2], K, e, max_separation=1)
 
 
-def test_photometric_grid_says_which_one_it_ran_on():
-    img, d, K, e = _plane()
-    m = compute_photometric_ncc(img, d, K, e, "1920x1080", max_separation=1)
-    assert m["grid"] == "original" and m["resolution"] == "1920x1080"
+def test_images_that_are_not_the_canvas_the_crops_were_cut_from_are_a_refusal():
+    """The crop boxes are in ORIGINAL pixels, so a different-resolution image set misplaces
+    every one of them. Same check and same refusal as the native-resolution mesh path.
+
+    Without it the frames.zarr-vs-reconstruction mismatch is silent: the crop still indexes
+    (it is in range on the smaller canvas) and simply cuts the wrong region of every frame.
+    """
+    img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
+    model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
+    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    # original_coords claim a 128x128 canvas; the images are 64x64.
+    coords = np.tile(np.array([16, 8, 48, 40, 128, 128], dtype=np.float32), (2, 1))
+    with pytest.raises(ValueError, match="original_coords"):
+        compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords,
+                                max_separation=1)
 
 
-def test_the_correlation_is_nan_not_a_spurious_rho_off_two_pairs():
-    """scipy hands back +-1.0 off two points; two pairs is not a trend, so it must read nan.
+def test_photometric_resolution_is_derived_from_the_images_not_declared():
+    """It used to be a caller-supplied string, and a 32x32 fixture round-tripped "1920x1080".
+
+    Non-square on purpose: "32x24" also pins the ORDER, which a square frame cannot see.
+    """
+    img, d, K, e = _plane(hw=(24, 32))
+    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    assert m["grid"] == "original" and m["resolution"] == "32x24"
+
+
+def test_a_two_pair_rho_ships_NEXT_TO_the_n_pairs_that_qualifies_it():
+    """scipy hands back +-1.0 off two points, and the block publishes it beside the count.
 
     Frame 1 is flat, which skips every pair touching it and leaves exactly two rows with
     DIFFERENT separations and DIFFERENT correlations — so neither column is constant and the
-    nan can only come from the row count.
+    +-1.0 is purely an artefact of the row count. That is precisely the case `n_pairs` exists
+    for the reader to spot; withholding the value instead would be this module grading its own
+    sample, which the report does not do.
     """
     rng = np.random.default_rng(7)
     img, d, K, e = _plane(n=4)
     img[1] = 128.0
     img[3] = img[3] + rng.normal(0, 90, img[3].shape)
-    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=2)
-    assert m["n_pairs"] == 2
+    m = compute_photometric_ncc(img, d, K, e, max_separation=2)
+    assert m["n_pairs"] == 2 == len(m["pairs"])  # the count that makes the rho readable
     assert [r["frame_separation"] for r in m["pairs"]] == [2, 1]
     assert m["pairs"][0]["photometric_ncc"] != pytest.approx(m["pairs"][1]["photometric_ncc"])
-    assert np.isnan(m["correlations"]["ncc_vs_frame_separation"])
+    assert m["correlations"]["ncc_vs_frame_separation"] == stats.spearmanr(
+        [r["frame_separation"] for r in m["pairs"]], [r["photometric_ncc"] for r in m["pairs"]]
+    ).statistic
+    assert abs(m["correlations"]["ncc_vs_frame_separation"]) == pytest.approx(1.0)
 
 
 def test_the_correlation_reads_the_shipped_pair_columns():
@@ -578,7 +723,7 @@ def test_the_correlation_reads_the_shipped_pair_columns():
     rng = np.random.default_rng(9)
     img, d, K, e = _plane(n=4)
     img = img + np.cumsum(rng.normal(0, 70, img.shape), axis=0)
-    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=3)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=3)
     rho = stats.spearmanr(
         [r["frame_separation"] for r in m["pairs"]], [r["photometric_ncc"] for r in m["pairs"]]
     ).statistic
@@ -595,11 +740,11 @@ def test_photometric_output_keys_are_the_contract_task_6_reads():
     they are: a reader comparing them would otherwise see a phantom 2x.
     """
     img, d, K, e = _plane(n=4)
-    m = compute_photometric_ncc(img, d, K, e, "64x48", max_separation=3)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=3)
     assert set(m) == {
         "available", "grid", "resolution", "units", "n_pairs", "correlations", "pairs",
     }
-    assert m["available"] is True and m["grid"] == "original" and m["resolution"] == "64x48"
+    assert m["available"] is True and m["grid"] == "original" and m["resolution"] == "32x32"
     assert set(m["correlations"]) == {"ncc_vs_frame_separation"}
     # C(4, 2) = 6 unordered pairs. An ordered loop over the same frames would ship 12.
     assert m["n_pairs"] == len(m["pairs"]) == 6
@@ -616,7 +761,7 @@ def test_nothing_in_the_photometric_output_grades_the_scene():
     rng = np.random.default_rng(13)
     img, d, K, e = _plane(n=4)
     img[1:] = img[1:] + rng.normal(0, 200, img[1:].shape)  # an awful scene
-    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=3)
+    m = compute_photometric_ncc(img, d, K, e, max_separation=3)
     banned = {"verdict", "status", "grade", "quality", "pass", "passed", "failed", "ok", "healthy"}
     assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pairs"][0]))
     strings = " ".join(v for v in m.values() if isinstance(v, str))

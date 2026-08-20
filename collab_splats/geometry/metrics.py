@@ -109,19 +109,6 @@ def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: fl
 ########################################
 
 
-def _spearman(x: np.ndarray, y: np.ndarray) -> float:
-    """scipy's Spearman rho, floored to nan under 3 rows where scipy reports a spurious +-1.0.
-
-    Measured on scipy 1.17.1: n=2 returns 0.9999999999999999 and n=1 returns nan, so this
-    guards a misleading number, not a crash. No nan masking: both callers already drop
-    non-finite rows at the producer (base.py sel.any(), compute_photometric_ncc isfinite),
-    and scipy propagates any that slip through as nan, which clean_for_json writes as null.
-    """
-    if len(x) < 3:
-        return float("nan")
-    return float(stats.spearmanr(x, y).statistic)
-
-
 def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> dict:
     """How much the views disagree about depth: scale bias, geometric noise, parallax.
 
@@ -194,6 +181,23 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
     quantiles = read_quantiles(counts, edges)
     abs_quantiles = read_quantiles(counts[half:] + counts[:half][::-1], edges[half:])
 
+    # Two questions, one number each, straight from scipy — whatever it returns, unfiltered.
+    # A small sample makes rho meaningless (measured on scipy 1.17.1: n=2 gives
+    # 0.9999999999999999, n=1 gives nan, neither raises), but this report makes no verdicts:
+    # "n_pair_directions" ships right beside these numbers and the raw columns ship below
+    # them, so a reader sees rho ~ 1.0 next to a count of 2 and discounts it. Nulling it here
+    # would be this module deciding on the reader's behalf. scipy's own nan (a constant column,
+    # or a non-finite row that slipped the producer) passes through the same way;
+    # clean_for_json writes it as null. No nan_policy: the producers already drop non-finite
+    # rows, and only nan_policy="omit" can raise.
+    # error_vs_depth has null_hypothesis below to read against; positive rho is expected, and
+    # near 0 or near 1 are the interesting outcomes.
+    correlations = {
+        "error_vs_depth": float(stats.spearmanr(depths, abs_rel_depth_error).statistic),
+        "error_vs_frame_separation": float(stats.spearmanr(frame_seps, abs_rel_depth_error).statistic),
+        "null_hypothesis": "sigma_Z ~ Z^2/(f*B) => relative residual rises ~linearly in Z",
+    }
+
     return {
         "available": True,
         "grid": "model",
@@ -217,16 +221,10 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
             "axis": "bins are over r/(1+|r|); invert with u/(1-|u|)",
         },
         "pair_directions_under_one_pixel_disparity": under_1px,
-        # Two questions, one number each. nan means "cannot be computed" — a constant column,
-        # or under three usable rows — and becomes null when the report is written. The columns
-        # they read ship in "pair_directions", so a reader can plot the shape behind the rho.
-        # error_vs_depth has the null_hypothesis below to read against; positive rho is
-        # expected, and near 0 or near 1 are the interesting outcomes.
-        "correlations": {
-            "error_vs_depth": _spearman(depths, abs_rel_depth_error),
-            "error_vs_frame_separation": _spearman(frame_seps, abs_rel_depth_error),
-            "null_hypothesis": "sigma_Z ~ Z^2/(f*B) => relative residual rises ~linearly in Z",
-        },
+        # Unconditional, and only publishable because "n_pair_directions" above and the raw
+        # columns in "pair_directions" below ship with them: a reader can size the sample and
+        # plot the shape behind each rho rather than taking it on trust.
+        "correlations": correlations,
         "pair_directions": rows,
     }
 
@@ -241,7 +239,6 @@ def compute_photometric_ncc(
     depth: np.ndarray,
     intrinsics: np.ndarray,
     extrinsics: np.ndarray,
-    resolution: str,
     original_coords: np.ndarray | None = None,
     max_separation: int = 2,
     min_samples: int = 32,
@@ -266,18 +263,22 @@ def compute_photometric_ncc(
     Rows are UNORDERED pairs, one per (i, j) with i < j, matching verification.py's epipolar
     block — hence "n_pairs"/"pairs" rather than the depth block's "pair_directions".
 
+    The reported "resolution" is derived from `images` rather than passed in: a free-text
+    argument can disagree with the grid the numbers were actually measured on.
+
     Args:
         images:          (N, H, W, 3) RGB, original resolution.
         depth:           (N, h, w) Z-depth on the model grid, or on the image grid already.
         intrinsics:      (N, 3, 3) K matching `depth`'s grid; rescaled here if depth is.
         extrinsics:      (N, 4, 4) world-to-cam.
-        resolution:      "WxH" of the image grid, stamped into the output.
         original_coords: (N, 6) crop rows, required only when depth needs upsampling.
         max_separation:  pairs per frame. Appearance agreement between distant frames is
                          dominated by lighting and viewpoint change, not by the error measured
                          here, so this stays O(N*max_separation) rather than O(N^2).
-        min_samples:     floor on overlapping pixels. np.corrcoef on 2 points returns exactly
-                         +-1 whatever the values, so a minimum is not optional.
+        min_samples:     floor on overlapping PIXELS, which is the quantity `n_pixels` ships.
+                         RGB is ravelled before correlating, so np.corrcoef actually sees
+                         3x this many values. A floor is needed either way — corrcoef on two
+                         values returns exactly +-1 whatever they are.
     """
     N = len(depth)
     ih, iw = images.shape[1:3]
@@ -291,34 +292,49 @@ def compute_photometric_ncc(
                 f"depth is {depth.shape[1:]} but images are {(ih, iw)}; "
                 "original_coords is required to upsample"
             )
+        # The crop boxes are in ORIGINAL pixels, so `images` has to be the canvas they were
+        # computed against; a same-count set at another resolution misplaces every crop.
+        # Same check, same refusal, as the native-resolution mesh path (mesh/utils.py).
+        expected_hw = (int(original_coords[0, 5]), int(original_coords[0, 4]))
+        if (ih, iw) != expected_hw:
+            raise ValueError(
+                f"images are {(ih, iw)} but original_coords say the original resolution is "
+                f"{expected_hw} — they are from different preprocessing runs."
+            )
         # Imported here, not at module top: mesh.utils imports pointcloud.feedforward.base,
         # which imports this module for bounded_residual/residual_bin_edges. A top-level
-        # import would close that cycle and fail at load time.
+        # import would close that cycle and fail at load time. bundle_adjustment joins it
+        # because it pulls in bae/vggt/pypose, which the depth path must not pay for.
+        from collab_splats.geometry.bundle_adjustment import _scale_intrinsics_to_original
         from collab_splats.mesh.utils import guided_upsample_depth
 
         model_h, model_w = depth.shape[1:]
         lifted_d, lifted_K = [], []
         for k in range(N):
             tlx, tly, crx, cry = (float(v) for v in original_coords[k][:4])
+            # The guide is documented uint8 and guided_upsample_depth divides it by 255
+            # internally. FeedforwardResult.images is [0, 255] on VGGT-X but [0, 1] on
+            # MapAnything, so an uncoerced guide is ~255x too flat on one backbone (measured:
+            # 0.398 max depth shift) and float64 raises in OpenCV outright.
+            guide = np.asarray(images[k])
+            guide = guide * 255.0 if guide.max() <= 1.0 else guide
+            guide = np.clip(guide, 0, 255).astype(np.uint8)
             # rgb_full is the original-res canvas the crop came from — images[k] already is
             # that, so no re-read. crop_box is original_coords[:4], out_hw the canvas size.
             lifted_d.append(
-                guided_upsample_depth(depth[k], images[k],
+                guided_upsample_depth(depth[k], guide,
                                       (int(tlx), int(tly), int(crx), int(cry)), (ih, iw))
             )
-            # Inverse of _scale_intrinsics_to_model (bundle_adjustment.py): the CROP was
-            # resized to the model grid, so the scale is crop/model, not canvas/model, and the
-            # crop origin comes back onto the principal point.
-            sx, sy = (crx - tlx) / model_w, (cry - tly) / model_h
-            K = np.array(intrinsics[k], dtype=np.float64).copy()
-            K[0, 0] *= sx
-            K[1, 1] *= sy
-            K[0, 2] = K[0, 2] * sx + tlx
-            K[1, 2] = K[1, 2] * sy + tly
-            lifted_K.append(K)
+            # The CROP was resized to the model grid, so the scale is model/crop, not
+            # model/canvas, and the crop origin comes back onto the principal point. Both are
+            # _scale_intrinsics_to_model's own inverse rather than a second copy of it.
+            sx, sy = model_w / (crx - tlx), model_h / (cry - tly)
+            lifted_K.append(_scale_intrinsics_to_original(intrinsics[k], sx, sy, tlx, tly))
         depth, intrinsics = np.stack(lifted_d), np.stack(lifted_K)
 
     H, W = depth.shape[1:]
+    # Derived, never declared: the grid the numbers below are actually measured on.
+    resolution = f"{iw}x{ih}"
     cam2world = np.linalg.inv(extrinsics)
     yy, xx = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
     pix = np.stack([xx.ravel(), yy.ravel(), np.ones(H * W)], axis=-1)
@@ -331,10 +347,15 @@ def compute_photometric_ncc(
         # pts_cam_j, proj_j, in_front) so the two warps read as the same operation.
         pts_cam_i = (np.linalg.inv(intrinsics[i]) @ pix.T).T * depth[i].reshape(-1, 1)
         pts_world = (cam2world[i] @ np.concatenate([pts_cam_i, ones], axis=-1).T).T[:, :3]
+        # Homogeneous once per i: the j loop re-projects the SAME world points.
+        pts_world_h = np.concatenate([pts_world, ones], axis=-1)
 
         for j in range(i + 1, min(N, i + max_separation + 1)):
-            # Project them into frame j and look up the colour that landed there
-            pts_cam_j = (extrinsics[j] @ np.concatenate([pts_world, ones], axis=-1).T).T[:, :3]
+            # Project them into frame j and look up the colour that landed there. No occlusion
+            # test, unlike the depth loop in pointcloud/feedforward/base.py: that one has
+            # frame j's own depth map to compare against, and here there is nothing to test a
+            # hidden pixel against. Occluded pixels stay in and read as disagreement.
+            pts_cam_j = (extrinsics[j] @ pts_world_h.T).T[:, :3]
             proj_j = (intrinsics[j] @ pts_cam_j.T).T
             z = np.clip(proj_j[:, 2], 1e-6, None)
             # Nearest sampling, matching the depth pass: bilinear across a depth discontinuity
@@ -342,6 +363,10 @@ def compute_photometric_ncc(
             ui = np.round(proj_j[:, 0] / z).astype(np.int64)
             vi = np.round(proj_j[:, 1] / z).astype(np.int64)
             in_front = pts_cam_j[:, 2] > 0
+            # depth == 0 is "no observation", not a surface 0 away: unprojecting it puts the
+            # pixel at frame i's own camera centre, which can land somewhere real in frame j
+            # and contribute a colour that pixel never saw. in_front does not cover it —
+            # the centre is only behind frame j for some poses.
             ok = in_front & (depth[i].ravel() > 0)
             ok &= (ui >= 0) & (ui < W) & (vi >= 0) & (vi < H)
             if ok.sum() < min_samples:
@@ -349,7 +374,9 @@ def compute_photometric_ncc(
             a = images[i].reshape(-1, 3)[ok].ravel().astype(np.float64)
             b = images[j][vi[ok], ui[ok]].ravel().astype(np.float64)
             # A flat patch has no variance to correlate; corrcoef returns nan, which is
-            # dropped rather than counted as agreement.
+            # dropped rather than counted as agreement. The isfinite check below catches the
+            # same rows, but only AFTER corrcoef has divided by zero — on a real scene with
+            # sky or a blank wall that is one RuntimeWarning per pair.
             if a.std() < 1e-8 or b.std() < 1e-8:
                 continue
             ncc = float(np.corrcoef(a, b)[0, 1])
@@ -369,16 +396,23 @@ def compute_photometric_ncc(
     # Read the correlation columns back OFF the rows, so nothing can drift from what ships.
     ncc = np.array([r["photometric_ncc"] for r in rows], dtype=np.float64)
     frame_seps = np.array([r["frame_separation"] for r in rows], dtype=np.float64)
+
+    # Straight from scipy, unfiltered, exactly as the depth block does it. A short scene or a
+    # heavily skipped one reaches two rows easily and scipy answers +-1.0 there by
+    # construction — which is safe to publish only because "n_pairs" below sits next to the
+    # number and the raw rows sit under it. Suppressing it would be a verdict, and this report
+    # does not make verdicts.
+    correlations = {"ncc_vs_frame_separation": float(stats.spearmanr(frame_seps, ncc).statistic)}
+
     return {
         "available": True,
         "grid": "original",
         "resolution": resolution,
         "units": "zero-mean normalised cross-correlation; 1.0 = perfect agreement",
-        # UNORDERED, like verify's epipolar block: one row per pair, not per direction.
+        # UNORDERED, like verify's epipolar block: one row per pair, not per direction. Also
+        # the sample size for the rho below — it is not decoration, it is what makes the rho
+        # readable.
         "n_pairs": len(rows),
-        # _spearman, not scipy directly: scipy returns +-1.0 off two points, and a short scene
-        # or a heavily skipped one reaches that easily. nan is the answer there, and
-        # clean_for_json writes it as null.
-        "correlations": {"ncc_vs_frame_separation": _spearman(frame_seps, ncc)},
+        "correlations": correlations,
         "pairs": rows,
     }

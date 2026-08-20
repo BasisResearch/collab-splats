@@ -526,6 +526,33 @@ def _scale_intrinsics_to_model(
     return intr, sx, sy, tl_x, tl_y
 
 
+def _scale_intrinsics_to_original(
+    intrinsics: np.ndarray,
+    sx: float,
+    sy: float,
+    tl_x: float,
+    tl_y: float,
+) -> np.ndarray:
+    """Invert _scale_intrinsics_to_model: model-resolution K back to original-image space.
+
+    It takes the (sx, sy, tl_x, tl_y) the forward returns, so the pair stays ONE transform
+    rather than two open-coded copies that can drift. The crop origin is added back AFTER the
+    scale is undone, mirroring the forward subtracting it BEFORE applying the scale — an origin
+    term that cancels algebraically on a centred crop and is wrong on every other one.
+
+    Args:
+        intrinsics: (..., 3, 3) K on the model grid.
+        sx, sy:     the forward's model/crop scale factors, divided out here.
+        tl_x, tl_y: the crop's top-left corner in original pixels.
+    """
+    intr = np.array(intrinsics, dtype=np.float64)
+    intr[..., 0, 0] = intr[..., 0, 0] / sx
+    intr[..., 1, 1] = intr[..., 1, 1] / sy
+    intr[..., 0, 2] = intr[..., 0, 2] / sx + tl_x
+    intr[..., 1, 2] = intr[..., 1, 2] / sy + tl_y
+    return intr
+
+
 def _filter_observations(
     vis_scores: np.ndarray,
     tracks: np.ndarray,

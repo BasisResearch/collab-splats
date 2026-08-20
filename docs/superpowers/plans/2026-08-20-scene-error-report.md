@@ -1978,7 +1978,8 @@ def _load_epipolar(verification_json: Path, image_width: int) -> dict:
     """
     p = Path(verification_json)
     if not p.exists():
-        return {"available": False, "reason": f"no verification.json at {p} — run the verify stage",
+        return {"available": False, "reason": f"no verification.json at {p} — set "
+                "pointcloud.geometric_verification: true or run --stages verify",
                 "grid": "original"}
     data = json.loads(p.read_text())
 
@@ -2048,8 +2049,8 @@ _STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "mesh", "localiz
 In `_STAGE_DEPS`, after `"verify"`:
 
 ```python
-    # report reads verification.json when present and runs verify itself when absent, so like
-    # verify its only hard dependency is the reconstruction
+    # report loads verification.json when verify has produced it and reports the epipolar
+    # channel unavailable when it has not, so its only hard dependency is the reconstruction
     "report": ["pointcloud"],
 ```
 
@@ -2065,7 +2066,9 @@ In `run_pipeline`'s default stage list, after the `geometric_verification` branc
 ```python
             # Always on, no config boolean. Every other diagnostic ships behind a
             # default-false flag, and the one boolean this would have had is the boolean that
-            # keeps it off. The measured cost is bounded.
+            # keeps it off. Affordable because it runs no model and no matcher — it reads the
+            # zarr the reconstruction just wrote — and because it never triggers verify: the
+            # epipolar channel appears only when geometric_verification was already paid for.
             stages.append("report")
 ```
 
@@ -2092,10 +2095,13 @@ And after the `verify` method (ends line 1159):
         if self._resolve_result() is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        # The epipolar rows are the only ones that never touch depth, which is what makes
-        # attribution possible — worth building when absent rather than skipped.
+        # The epipolar rows are loaded when verify has produced them, and reported unavailable
+        # when it has not. Building them here regardless would reach around an explicit
+        # `geometric_verification: false` and charge every default run verify's cost (measured
+        # 47.6 min and +6.29 GB RSS at 300 frames) for a stage that is always on. Degrading to
+        # {"available": false, "reason": ...} is the report-only outcome, not a failure.
         verification_json = self.backend_dir / "colmap" / "verification.json"
-        if not verification_json.exists():
+        if self.config["pointcloud"]["geometric_verification"] and not verification_json.exists():
             try:
                 self.verify()
             except Exception:  # noqa: BLE001 — a report must never fail a reconstruction
@@ -2484,6 +2490,14 @@ In `configs/README.md`, beside the existing `colmap/verification.json` entry:
   correlations for error-vs-depth, error-vs-separation and
   confidence-vs-error. Written by the always-on `report` leaf stage; re-runnable
   with `--stages report --overwrite`.
+
+  The stage runs no model and no matcher, and it never triggers verify. The
+  epipolar channel is therefore present only when `colmap/verification.json`
+  already exists — set `pointcloud.geometric_verification: true` or run
+  `--stages verify` to get it. With the shipping default (`false`) the epipolar
+  block records `{"available": false, "reason": ...}` and the depth and
+  photometric channels still emit, so `report` never reaches around an explicit
+  opt-out to charge a default run for verify.
 
   **Report-only: nothing here feeds back into the reconstruction.** No verdict,
   no grade, no cause — distributions and cumulative error only. Every block

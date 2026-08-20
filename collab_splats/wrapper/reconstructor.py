@@ -60,8 +60,8 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # verify reuses the localize feature cache but builds it itself when absent, so its
     # only hard dependency is the reconstruction
     "verify": ["pointcloud"],
-    # report reads verification.json when present and runs verify itself when absent, so like
-    # verify its only hard dependency is the reconstruction
+    # report loads verification.json when verify has produced it and reports the epipolar
+    # channel unavailable when it has not, so its only hard dependency is the reconstruction
     "report": ["pointcloud"],
 }
 # A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, mesh,
@@ -1163,10 +1163,16 @@ class Reconstructor:
         return out_json
 
     def report(self, overwrite: bool = False) -> Path:
-        """Reference-free error report: three measurements, one report.json. Reports only.
+        """Reference-free error report: three measurements, one report.json.
 
         Never fails a reconstruction — a measurement that cannot run records
         {"available": false, "reason": ...} and the rest still emit.
+
+        Not side-effect free. With `pointcloud.geometric_verification` true and no
+        verification.json on disk, this runs the verify stage, which writes
+        colmap/verification.json, colmap/verified/, colmap/database.db and populates
+        local_features in the zarr. With the flag false — the default — nothing outside
+        report.json is written and the call is cheap: no model, no matcher, one zarr read.
         """
         out_json = self.backend_dir / "report.json"
         if not overwrite and self._stage_output_exists("report"):
@@ -1175,10 +1181,13 @@ class Reconstructor:
         if self._resolve_result() is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        # The epipolar rows are the only ones that never touch depth, which is what makes
-        # attribution possible — worth building when absent rather than skipped.
+        # The epipolar rows are loaded when verify has produced them, and reported unavailable
+        # when it has not. Building them here regardless would reach around an explicit
+        # `geometric_verification: false` and charge every default run verify's cost (measured
+        # 47.6 min and +6.29 GB RSS at 300 frames) for a stage that is always on. Degrading to
+        # {"available": false, "reason": ...} is the report-only outcome, not a failure.
         verification_json = self.backend_dir / "colmap" / "verification.json"
-        if not verification_json.exists():
+        if self.config["pointcloud"]["geometric_verification"] and not verification_json.exists():
             try:
                 self.verify()
             except Exception:  # noqa: BLE001 — a report must never fail a reconstruction
@@ -1269,7 +1278,9 @@ class Reconstructor:
                 stages.append("verify")
             # Always on, no config boolean. Every other diagnostic ships behind a
             # default-false flag, and the one boolean this would have had is the boolean that
-            # keeps it off. The measured cost is bounded.
+            # keeps it off. Affordable because it runs no model and no matcher — it reads the
+            # zarr the reconstruction just wrote — and because it never triggers verify: the
+            # epipolar channel appears only when geometric_verification was already paid for.
             stages.append("report")
 
         # Validate stage dependencies before starting any work. A dependency is

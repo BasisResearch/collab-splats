@@ -1071,12 +1071,16 @@ def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_pa
     # so the guard rejects by shape and is not just disabling the map wholesale. The prefixed
     # name is why the stem is matched WHOLE: a substring match would accept anything ending in
     # the right shape, which is the same guess this guard exists to refuse.
-    report = _build(tmp_path, ["IMG_1234.jpg", "00019.jpg", "x_frame_000007.jpg", "frame_000007.jpg"])
-    assert report["source_frame_indices"] == [None, None, None, 7]
+    # frame_1000000 is ON contract and must parse: 06d pads to six digits, it does not cap at
+    # six, so a video past a million frames still names its keyframes by this rule. A guard
+    # written as exactly-six would silently null every frame of such a scene.
+    report = _build(tmp_path, ["IMG_1234.jpg", "00019.jpg", "x_frame_000007.jpg",
+                               "frame_000007.jpg", "frame_1000000.jpg"])
+    assert report["source_frame_indices"] == [None, None, None, 7, 1000000]
     # null, not the string "None" and not a dropped entry: one slot per reconstruction row.
     written = json.loads((tmp_path / "report.json").read_text())
-    assert written["source_frame_indices"] == [None, None, None, 7]
-    assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 4
+    assert written["source_frame_indices"] == [None, None, None, 7, 1000000]
+    assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 5
 
 
 def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):

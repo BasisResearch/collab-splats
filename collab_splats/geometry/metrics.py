@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # reads IMG_1234 as 1234 and 00019 as 19 — a confidently wrong index, which is worse here than a
 # missing one, because a downstream join silently pairs real frames with the wrong rows. Six or
 # more digits, so the contract does not break at a million frames.
-_FRAME_STEM_RE = re.compile(r"frame_(\d{6,})$")
+_FRAME_STEM_RE = re.compile(r"frame_\d{6,}$")
 
 ########################################
 # The residual histogram's axis
@@ -512,17 +512,12 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
 
     # Does the model know when it is wrong? Confidence is an INPUT being validated, not an
     # error source, so it gets one correlation rather than a measurement of its own. Absent on
-    # older zarr stores, which are never backfilled.
-    # scipy directly, unguarded, exactly like the two correlations above: no wrapper and no
+    # older zarr stores, which are never backfilled. scipy unguarded, like the two above: no
     # small-sample floor, because withholding a rho is a verdict and this report makes none.
-    # Publishing an unguarded rho is only defensible because the count that qualifies it ships
-    # beside it, the way `n_pair_directions` and `n_pairs` qualify the other two — so
-    # `n_frames` is nested WITH the rho and cannot be read apart from it.
-    # It is NOT recoverable from `frame_percentile_ranks`: `ranks` is {} when len(ks) <= 1
-    # while this rho's sample is len(per_frame), so the two diverge at exactly the small
-    # sample size where the reader needs the count most.
-    # Both stay None when there is no confidence array: the rho was never computed, so there
-    # is no sample to report — distinct from a computed rho over a tiny sample.
+    # That is only defensible with the count nested WITH the rho, unreadable apart from it —
+    # and `frame_percentile_ranks` cannot supply it, being {} at len(ks) <= 1 while this
+    # sample is len(per_frame). Both stay None with no confidence array: never computed is
+    # not the same as computed over a tiny sample.
     conf_rho, conf_n = None, None
     if r.confidence is not None:
         conf = np.asarray(r.confidence)
@@ -616,7 +611,8 @@ def _load_epipolar(verification_json: Path, image_width: int) -> dict:
     """
     p = Path(verification_json)
     if not p.exists():
-        return {"available": False, "reason": f"no verification.json at {p} — run the verify stage",
+        return {"available": False, "reason": f"no verification.json at {p} — set "
+                "pointcloud.geometric_verification: true or run --stages verify",
                 "grid": "original"}
     data = json.loads(p.read_text())
 

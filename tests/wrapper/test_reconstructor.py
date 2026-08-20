@@ -1447,6 +1447,57 @@ def test_report_output_marker_is_report_json_in_the_backend_dir(tmp_path):
         rec.run_pipeline(stages=["report"])
 
 
+@pytest.mark.parametrize(
+    "flag,verification_exists,expect_verify",
+    [
+        # The flag is what the user pays verify's cost with, so it is what gates the call.
+        (True, False, True),
+        # Regression test: report is always on, and reaching around an explicit opt-out would
+        # charge every default run verify's measured 47.6 min and +6.29 GB RSS at 300 frames.
+        (False, False, False),
+        # Already on disk: loaded, never rebuilt, whatever the flag says.
+        (True, True, False),
+    ],
+)
+def test_report_runs_verify_only_when_the_flag_allows_it(tmp_path, flag, verification_exists, expect_verify):
+    """An always-on stage must not override an explicit `geometric_verification: false`."""
+    config = _make_config(tmp_path, {"pointcloud": {"geometric_verification": flag}})
+    rec = Reconstructor(config)
+    rec._resolve_result = lambda: object()
+    verification_json = rec.backend_dir / "colmap" / "verification.json"
+    if verification_exists:
+        verification_json.parent.mkdir(parents=True, exist_ok=True)
+        verification_json.write_text("{}")
+
+    with patch.object(rec, "verify") as verify, \
+            patch("collab_splats.geometry.metrics.build_report") as build:
+        rec.report()
+
+    assert verify.called is expect_verify
+    # The measurement is attempted either way — a missing verification.json disables the
+    # epipolar channel inside build_report, it does not skip the report.
+    build.assert_called_once()
+
+
+def test_report_is_still_written_when_verify_raises(tmp_path):
+    """"Never fails a reconstruction" has to hold for the one thing report calls that can."""
+    config = _make_config(tmp_path, {"pointcloud": {"geometric_verification": True}})
+    rec = Reconstructor(config)
+    rec._resolve_result = lambda: object()
+
+    def _write(**kwargs):
+        Path(kwargs["output_path"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(kwargs["output_path"]).write_text('{"measurements": {}}')
+
+    with patch.object(rec, "verify", side_effect=RuntimeError("pycolmap exploded")), \
+            patch("collab_splats.geometry.metrics.build_report", side_effect=_write):
+        out = rec.report()
+
+    # The exception did not propagate and did not cost the other two measurements.
+    assert out.exists()
+    assert out.read_text() == '{"measurements": {}}'
+
+
 def test_report_skips_without_overwrite_and_never_touches_the_reconstruction(tmp_path):
     """Skip is checked BEFORE the result is resolved, so a re-run costs nothing."""
     config = _make_config(tmp_path)

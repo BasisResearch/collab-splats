@@ -2870,31 +2870,113 @@ Shipped as `e567b24`. The quality-review rewrite above is a **second commit on t
 > attribution is unaffected; the caveat is about how the parallax column alone is read.
 > Pinned by `test_control_depth_scale_moves_parallax_only_on_the_source_side`.
 
-- [ ] **Step 1: Run it in tmux, timing each measurement**
+> **Two scenes, because no single store on this machine carries all three measurements.**
+> Surveyed before dispatch. `evals/results/mv_vggt_omega` — the store this task originally
+> named throughout — holds `feedforward.zarr` and `images_staged/` and nothing else, and
+> there is **no `frames.zarr` and no `verification.json` anywhere under `evals/results`**.
+> Pointed at it, `_run_photometric` returns `available: false` at `metrics.py:643-644` and
+> `_load_epipolar` does the same, so the run measures depth alone: no split to read, and the
+> deferred compute questions in Step 5 stay undecided. That is not a reason to skip the task
+> and not a reason to fabricate a store; it is a reason to run each scene for what it holds.
+>
+> | store | frames | model res | original | conf | frames.zarr | carries |
+> |---|---|---|---|---|---|---|
+> | `data/outputs/` | 30 | 688x384 | 1080x1920 | yes | **yes** `(30,1920,1080,3)` | depth + photometric (+ epipolar if 1c runs) |
+> | `evals/results/mv_vggt_omega` | 60 | 448x592 | 640x480 | yes | no | depth — **sanity target** |
+> | `evals/results/mv_mapanything` | 60 | 392x518 | 640x480 | yes | no | depth — rank control |
+> | `evals/results/mv_vggtx` | 60 | 392x518 | 640x480 | yes | no | depth — rank control |
+>
+> The three `mv_*` stores are the same scene, same 60 frames, same 640x480, so the rank
+> control in Step 4 is **3-way, not the 2-way this task assumed**. Their model resolutions
+> differ (448x592 against 392x518), so their histogram bin counts differ by construction —
+> compare quantiles, which are resolution-independent readouts, never raw `counts`.
+
+- [ ] **Step 1a: Scene A — the timing split, in tmux**
+
+`data/outputs/` is the only store with `feedforward.zarr` and `frames.zarr` co-located, so it
+is the only one that can time the photometric loop. 30 frames, portrait 1080x1920.
+
+`backend` is a provenance label on the report, not a code path — read the configured default
+out of `configs/base.yaml` rather than guessing it from the directory name.
 
 ```bash
 tmux new-session -d -s scene_report \
   '/opt/venv/reconstruction/bin/python -c "
 import logging, time, pathlib, json
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format=\"%(asctime)s %(levelname)s %(name)s %(message)s\")
 from collab_splats.geometry.metrics import build_report
-root = pathlib.Path(\"evals/results/mv_vggt_omega\")
+root = pathlib.Path(\"data/outputs\")
 t0 = time.time()
 rep = build_report(root / \"feedforward.zarr\", root / \"colmap\" / \"verification.json\",
-                   root / \"frames.zarr\", root / \"report.json\", \"vggt_omega\")
+                   root / \"frames.zarr\", root / \"report.json\", \"<backend from base.yaml>\")
 print(f\"REPORT_SECONDS={time.time()-t0:.1f}\")
 print(\"available:\", rep[\"measurements_available\"])
 print(\"depth pair directions:\", rep[\"measurements\"][\"depth\"][\"n_pair_directions\"])
-print(\"photometric pairs:\", rep[\"measurements\"][\"photometric\"][\"n_pairs\"])
+ph = rep[\"measurements\"][\"photometric\"]
+print(\"photometric:\", ph.get(\"n_pairs\"), ph.get(\"grid\"), ph.get(\"resolution\"), ph.get(\"reason\", \"\"))
 print(\"json MB:\", round((root / \"report.json\").stat().st_size / 1e6, 2))
 print(json.dumps(rep[\"measurements\"][\"depth\"][\"residual_histogram\"][\"quantiles\"], indent=2))
 print(\"correlations:\", rep[\"measurements\"][\"depth\"][\"correlations\"])
 " 2>&1 | tee /tmp/claude-0/-workspace-collab-splats/ee7cc0e1-beee-4d06-908d-0a6838558f0b/scratchpad/scene_report.log'
 ```
 
-Watch: `tmux attach -t scene_report`. Memory: `grep '^rss ' /sys/fs/cgroup/memory/memory.stat`.
+Watch: `tmux attach -t scene_report`. Memory: `grep '^rss ' /sys/fs/cgroup/memory/memory.stat`
+(that key, **not** `memory.usage_in_bytes`). Expect ~750 MB transient for the RGB alone —
+`_run_photometric` casts `(30,1920,1080,3)` uint8 to float32 at `metrics.py:650`.
 
-Read the per-measurement split out of the INFO log timestamps — the multiview pass, the photometric loop and the JSON write are separately visible. **That split decides the parallelism question**, which is why it is measured here and not designed for in advance.
+The `%(asctime)s` format is not decoration: the split is read off the INFO timestamps, and the
+default format has no clock. The multiview pass, the photometric loop and the JSON write are
+separately visible. **That split decides the parallelism question**, which is why it is
+measured here and not designed for in advance.
+
+- [ ] **Step 1b: Scene B — the depth-only stores**
+
+Run the same call against each `mv_*` store. `verification.json` and `frames.zarr` are passed
+as paths that do not exist, which is the supported degradation, not an error: both channels
+must record `available: false` with a `reason`, and depth must still emit. **Confirm that in
+the output** — it is the never-fails contract from Task 6 being exercised on a real store for
+the first time, and it is the cheapest real test of it available.
+
+```bash
+/opt/venv/reconstruction/bin/python -c "
+import pathlib, time, json
+from collab_splats.geometry.metrics import build_report
+for name, backend in ((\"mv_vggt_omega\", \"vggt_omega\"), (\"mv_mapanything\", \"mapanything\"), (\"mv_vggtx\", \"vggtx\")):
+    root = pathlib.Path(\"evals/results\") / name
+    t0 = time.time()
+    rep = build_report(root / \"feedforward.zarr\", root / \"colmap\" / \"verification.json\",
+                       root / \"frames.zarr\", root / \"report.json\", backend)
+    print(name, f\"{time.time()-t0:.1f}s\", rep[\"measurements_available\"],
+          \"MB=\", round((root / \"report.json\").stat().st_size / 1e6, 2))
+    for ch in (\"epipolar\", \"photometric\"):
+        m = rep[\"measurements\"][ch]
+        print(\"   \", ch, m.get(\"available\"), m.get(\"reason\", \"\")[:70])
+"
+```
+
+- [ ] **Step 1c: Epipolar, best-effort**
+
+No `verification.json` exists anywhere in the repo, so the epipolar channel is unmeasured
+until `verify` runs once. `data/outputs/` at 30 frames is the affordable place: verify was
+measured in Task 1 at 47.6 min and +6.29 GB RSS for 300 frames, and it walks sequential pairs.
+
+Run it in tmux, serially — never alongside Step 1a, since one A40 serialises kernels and
+would corrupt both wall clocks:
+
+```bash
+tmux new-session -d -s scene_verify \
+  '/opt/venv/reconstruction/bin/python docs/examples/run_pipeline.py \
+     --config configs/base.yaml --stages verify --overwrite 2>&1 \
+   | tee /tmp/claude-0/-workspace-collab-splats/ee7cc0e1-beee-4d06-908d-0a6838558f0b/scratchpad/scene_verify.log'
+```
+
+Then re-run Step 1a so `_load_epipolar` finds the file, and report both runs.
+
+**If verify fails or costs more than ~20 minutes, stop and record the epipolar channel as
+unmeasured.** That is a legitimate Task 8 outcome, and it is the one this stage is designed
+for — the report emits its other channels and says why the third is missing. Do not spend the
+task's budget forcing a third channel; the sanity target and the rank control are both
+depth-only and neither depends on this step.
 
 - [ ] **Step 2: Check the sanity target**
 
@@ -2922,23 +3004,39 @@ The report ships every gated pair as a raw row so a reader can re-bin any column
 
 - [ ] **Step 4: Rank control**
 
-Run Step 1 against a `mapanything` store and a `vggt_omega` store of the same scene — they differ 1.6× in ATE on chess/seq-01.
+Step 1b already wrote all three reports. **Three backbones, not two** — `mv_vggtx` is the same
+scene and frame count as the other two, so it costs nothing to include and makes the control an
+ordering rather than a single comparison.
+
+The directory names are `mv_`-prefixed. An earlier revision of this step globbed
+`evals/results/{name}` for a bare `mapanything`, which matches nothing and prints `MISSING`
+for every row — a green-looking null result that is really a typo.
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "
 import json, pathlib, numpy as np
-for name in ('mapanything', 'vggt_omega'):
-    p = pathlib.Path(f'evals/results/{name}/report.json')
+for name in ('mv_mapanything', 'mv_vggt_omega', 'mv_vggtx'):
+    p = pathlib.Path('evals/results') / name / 'report.json'
     if not p.exists():
         print(name, 'MISSING'); continue
     d = json.loads(p.read_text())['measurements']['depth']
     rel = [abs(r['median_rel_depth_error']) for r in d['pairs']]
     h = d['residual_histogram']['abs_quantiles']  # abs, to match the abs pair medians below
-    print(name, 'hist p50', h['0.5'], 'p99', h['0.99'], 'pair p50', float(np.median(rel)))
+    print(f\"{name:16s} hist p50 {h['0.5']:.5f}  p99 {h['0.99']:.5f}  pair p50 {float(np.median(rel)):.5f}\")
 "
 ```
 
-**If the report cannot order those two, it will not separate anything.** Record the outcome either way — a null result here is the most important number in the task.
+**Establish the reference ordering before reading the result, and take it from a measurement
+rather than from memory.** `evals/results/mv_sweep_mapanything.json`, `mv_sweep_vggt_omega.json`
+and `mv_sweep_vggtx.json` are the sweep outputs for these exact stores; if they carry a pose
+error column, that is the ordering to rank against. If they do not, say the reference ordering
+is unestablished and report the three report.json numbers without a verdict — an unranked
+result honestly labelled beats a rank against a half-remembered ATE from a different frame
+count. The 1.6× figure quoted in earlier revisions came from a 100-frame BA sweep, **not** from
+these 60-frame stores.
+
+**If the report cannot order them, it will not separate anything.** Record the outcome either
+way — a null result here is the most important number in the task.
 
 - [ ] **Step 5: Append the measurements**
 
@@ -2947,11 +3045,24 @@ Append to `docs/superpowers/specs/2026-08-20-scene-error-report-measured.md`:
 ```markdown
 ## Task 8: report stage, measured
 
-- Scene: evals/results/mv_vggt_omega (60 frames, vggt_omega)
-- Wall clock: <REPORT_SECONDS> s | Peak rss: <GB> / 46.6 GB
+Two scenes, because no store on this machine carries all three measurements. Which store
+carries which, and why, is recorded in the task itself.
+
+### Scene A — data/outputs (30 frames, 688x384 model / 1080x1920 original)
+Carries depth + photometric; epipolar only if Step 1c ran.
+
+- Backend: <from base.yaml> | Wall clock: <REPORT_SECONDS> s | Peak rss: <GB> / 46.6 GB
 - Split: multiview <s> | photometric <s> | json write <s>
 - Measurements available: <list>
 - Pairs: <n> | report.json: <MB> MB  (filter applied: <yes/no>)
+- Epipolar: <measured after Step 1c | unmeasured, reason>
+
+### Scene B — evals/results/mv_* (60 frames each, 640x480 original)
+Depth only. `frames.zarr` and `verification.json` are absent, so photometric and epipolar
+record `available: false` — the never-fails contract, exercised on a real store.
+
+- Degraded cleanly on all three: <yes/no> | reason strings: <quoted>
+- Wall clock: <s each> | report.json: <MB each>
 
 ### Sanity target (depth residual)
 | quantile | measured (`abs_quantiles`) | signed (`quantiles`) | prior (depth_disagreement.py) |
@@ -2964,11 +3075,18 @@ Bin count for this scene (Rice, from `n_pairs·H·W`): <k>.
 
 <Agreement, or the explained difference.>
 
-### Rank control (mapanything vs vggt_omega, 1.6x apart in ATE)
+### Rank control (three backbones, same 60-frame scene)
+Model resolutions differ (448x592 vs 392x518), so bin counts differ by construction —
+these are quantiles, never raw counts.
+
 | backbone | hist p50 | p99 | pair-median |
 |---|---|---|---|
+| mv_mapanything | | | |
+| mv_vggt_omega | | | |
+| mv_vggtx | | | |
 
-Ordered correctly: <yes/no>. <If no: what that means for the design.>
+Reference ordering, and its source: <mv_sweep_*.json column | UNESTABLISHED>
+Ordered correctly: <yes/no/unrankable>. <If no: what that means for the design.>
 
 ### Correlations
 - error_vs_depth: <rho> over <n_pair_directions> pair directions  (null: sigma_Z ~ Z^2/(f*B) => expect positive, ~linear)
@@ -3037,13 +3155,17 @@ In `configs/README.md`, beside the existing `colmap/verification.json` entry:
 
 `evals/scripts/depth_disagreement.py` measured the signed residual as a one-off. That residual now lives in the refactored function, and two implementations of one quantity drift apart.
 
+**The file is untracked** — `git ls-files --error-unmatch` reports "did not match any file(s) known to git". So `git rm` fails outright; use plain `rm`. The consequence carries into Step 9: this deletion **cannot appear in the commit**, because the file was never in one. Say that in the commit message rather than implying a tracked removal.
+
 ```bash
-git rm evals/scripts/depth_disagreement.py
+rm evals/scripts/depth_disagreement.py
 grep -rn "depth_disagreement" --include=*.py --include=*.md --include=*.ipynb . \
   | grep -v '\.git' | grep -v baseck | grep -v '\.worktrees'
 ```
 
 Expected: only `docs/superpowers/` prose. If code references it, update the reference rather than keeping the file.
+
+Copy its header into the measured report before deleting: `STORE`, `SDF_TRUNC`, `VOXEL`, `CONF_PCT` and their `configs/base.yaml` provenance comments are the only record of what the 0.37 / 2.27 / 25.67% baseline was measured against, and an untracked file leaves no history to recover them from.
 
 - [ ] **Step 8: Full suite**
 
@@ -3052,7 +3174,9 @@ Expected: only `docs/superpowers/` prose. If code references it, update the refe
 /opt/venv/reconstruction/bin/python -m collab_splats.dashboard --smoke
 ```
 
-Expected: the 5 pre-existing `tests/wrapper/` failures and the pre-existing `test_view_transform_scales_to_target_radius` failure, **and nothing new**. Then `SMOKE PASS`.
+Expected: the 5 pre-existing `tests/wrapper/` failures (the concurrent session's dirty `configs/base.yaml`, which deletes the `loger:` block) **and nothing else**. Then `SMOKE PASS`.
+
+`test_view_transform_scales_to_target_radius` was listed here as a sixth pre-existing failure. It is fixed as of `6f14f277` and must now pass — it was never flaky. It measured the percentile radius about `_bbox_center(out)` while the transform scales about the *inlier* bbox midpoint (`viz_utils.py:100`), so it compared against a different centre and the gap moved with the random draw. Measured about the origin the identity is exact, so the tolerance went `1e-3` → `1e-6`. If it fails again, that is a regression, not the weather.
 
 - [ ] **Step 9: Commit**
 
@@ -3061,17 +3185,25 @@ git add configs/README.md
 git add -f docs/superpowers/specs/2026-08-20-scene-error-report-measured.md
 git commit -m "docs(configs): report.json contract + measured scene error report
 
-Records the first end-to-end run: wall clock with a per-measurement split, pair
-count and JSON size, the depth-residual sanity target against the prior
-depth_disagreement.py numbers, the mapanything-vs-vggt_omega rank control, the
-four rank correlations, disparity-floor coverage, and the running-error curve.
+Records the first end-to-end run across two scenes, because no store here holds
+all three channels: data/outputs carries depth + photometric and so carries the
+timing split, while the three 60-frame mv_* stores are depth-only and carry the
+sanity target and the rank control. Both are labelled with what they measured
+and what they could not.
+
+Covers wall clock with a per-measurement split, pair count and JSON size, the
+depth-residual sanity target against the prior depth_disagreement.py numbers,
+the three-backbone rank control, the four rank correlations, disparity-floor
+coverage, and the running-error curve.
 
 The split decides the deferred compute questions — duplicated multiview pass,
 photometric parallelism, zarr streaming — with numbers rather than in advance.
 
 Retires evals/scripts/depth_disagreement.py — its signed residual now lives in
 compute_multiview_depth_confidence, and two implementations of one quantity
-drift apart."
+drift apart. The file was never tracked, so this commit cannot carry its
+deletion; its constants are transcribed into the measured report, which is the
+only remaining record of what the prior baseline was measured against."
 ```
 
 ---

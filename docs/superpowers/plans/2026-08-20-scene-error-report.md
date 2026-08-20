@@ -896,8 +896,14 @@ def test_depth_error_reports_grid_and_resolution():
 
 
 def test_pair_rows_carry_separation():
-    """1->4 and 2->5 both land at 3, so distance-vs-error is a column not a special case."""
-    m = compute_depth_error(_collected([_pair(1, 4, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
+    """4->1 and 2->5 both land at 3, so distance-vs-error is a column not a special case.
+
+    One fixture is REVERSED on purpose. The producer's loop is ordered (base.py sets
+    idx1=i, idx2=j for both directions), so rows with idx1 > idx2 genuinely ship. With two
+    same-direction fixtures, idx2 - idx1 would also give [3, 3] — and that expression sends
+    every reversed row negative, sign-flipping error_vs_frame_separation.
+    """
+    m = compute_depth_error(_collected([_pair(4, 1, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
     assert [r["frame_separation"] for r in m["pairs"]] == [3, 3]
 
 
@@ -929,19 +935,28 @@ def test_per_pair_columns_ship_raw():
 
 
 def test_per_pixel_residual_ships_as_counts_and_edges():
-    """The one quantity too large to hold — so any threshold query stays exact."""
-    m = compute_depth_error(_collected([_pair(0, 1, 0.1, 3.0)]), 500.0, "x")
+    """The one quantity too large to hold — so any threshold query stays exact.
+
+    0.3, not 0.1: the bounded axis and the residual axis only diverge far from zero. At 0.1
+    the un-inverted bin value is 0.0904, inside abs=0.01 of 0.1, so the assertion could not
+    see whether the inversion ran at all. At 0.3 it reads 0.2301 un-inverted against 0.2989
+    inverted — a 7x margin. Do not lower it back.
+    """
+    m = compute_depth_error(_collected([_pair(0, 1, 0.3, 3.0)]), 500.0, "x")
     h = m["residual_histogram"]
     assert len(h["bin_edges"]) == len(h["counts"]) + 1 and h["total"] > 0
-    assert h["quantiles"]["0.5"] == pytest.approx(0.1, abs=0.01)  # inverted back to a residual
+    assert h["quantiles"]["0.5"] == pytest.approx(0.3, abs=0.01)  # inverted back to a residual
 
 
 def test_signed_and_folded_quantiles_both_ship():
     """Every prior |rel| number in this repo is absolute, so the signed axis alone is not
-    comparable — a negative bias reads as a negative quantile until the histogram is folded."""
-    h = compute_depth_error(_collected([_pair(0, 1, -0.1, 3.0)]), 500.0, "x")["residual_histogram"]
-    assert h["quantiles"]["0.5"] == pytest.approx(-0.1, abs=0.01)  # sign kept: scale bias
-    assert h["abs_quantiles"]["0.5"] == pytest.approx(0.1, abs=0.01)  # folded: magnitude
+    comparable — a negative bias reads as a negative quantile until the histogram is folded.
+
+    -0.3 for the same reason as the test above: at -0.1 the un-inverted bin value passes.
+    """
+    h = compute_depth_error(_collected([_pair(0, 1, -0.3, 3.0)]), 500.0, "x")["residual_histogram"]
+    assert h["quantiles"]["0.5"] == pytest.approx(-0.3, abs=0.01)  # sign kept: scale bias
+    assert h["abs_quantiles"]["0.5"] == pytest.approx(0.3, abs=0.01)  # folded: magnitude
 
 
 def test_rising_residual_with_depth_shows_as_a_positive_correlation():
@@ -1108,7 +1123,7 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
 /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_metrics.py -v
 ```
 
-Expected: 24 passed.
+Expected: 30 passed — 18 already in the file from Tasks 2 and 3, plus this task's 12.
 
 - [ ] **Step 5: Commit**
 

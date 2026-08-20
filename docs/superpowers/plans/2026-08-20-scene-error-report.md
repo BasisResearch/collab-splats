@@ -1171,9 +1171,6 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
             "axis": "bins are over r/(1+|r|); invert with u/(1-|u|)",
         },
         "pair_directions_under_one_pixel_disparity": under_1px,
-        # Unconditional, and only publishable because "n_pair_directions" above and the raw
-        # columns in "pair_directions" below ship with them: a reader can size the sample and
-        # plot the shape behind each rho rather than taking it on trust.
         "correlations": correlations,
         "pair_directions": rows,
     }
@@ -1185,15 +1182,10 @@ guard:
 ```python
     # Two questions, one number each, straight from scipy — whatever it returns, unfiltered.
     # A small sample makes rho meaningless (measured on scipy 1.17.1: n=2 gives
-    # 0.9999999999999999, n=1 gives nan, neither raises), but this report makes no verdicts:
-    # "n_pair_directions" ships right beside these numbers and the raw columns ship below
-    # them, so a reader sees rho ~ 1.0 next to a count of 2 and discounts it. Nulling it here
-    # would be this module deciding on the reader's behalf. scipy's own nan (a constant column,
-    # or a non-finite row that slipped the producer) passes through the same way;
-    # clean_for_json writes it as null. No nan_policy: the producers already drop non-finite
-    # rows, and only nan_policy="omit" can raise.
-    # error_vs_depth has null_hypothesis below to read against; positive rho is expected, and
-    # near 0 or near 1 are the interesting outcomes.
+    # 0.9999999999999999, n=1 gives nan, neither raises), which is publishable only because
+    # "n_pair_directions" ships right beside these numbers: a reader sees rho ~ 1.0 next to a
+    # count of 2 and discounts it. error_vs_depth has null_hypothesis below to read against;
+    # positive rho is expected, and near 0 or near 1 are the interesting outcomes.
     correlations = {
         "error_vs_depth": float(stats.spearmanr(depths, abs_rel_depth_error).statistic),
         "error_vs_frame_separation": float(stats.spearmanr(frame_seps, abs_rel_depth_error).statistic),
@@ -1648,9 +1640,7 @@ def compute_photometric_ncc(
         "grid": "original",
         "resolution": resolution,
         "units": "zero-mean normalised cross-correlation; 1.0 = perfect agreement",
-        # UNORDERED, like verify's epipolar block: one row per pair, not per direction. Also
-        # the sample size for the rho below — it is not decoration, it is what makes the rho
-        # readable.
+        # UNORDERED, like verify's epipolar block: one row per pair, and the rho's sample size.
         "n_pairs": len(rows),
         "correlations": correlations,
         "pairs": rows,

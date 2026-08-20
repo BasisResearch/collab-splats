@@ -31,7 +31,7 @@ Every row below was verified against the repo or measured, not assumed.
 | `RESIDUAL_BIN_EDGES` (the last constant) | `residual_bin_edges(n_samples)` — Rice's rule, `k = 2·n^(1/3)` | the bounded axis fixed the range, so only resolution was left, and resolution is a function of how many samples there are. **Measured** on a 3M-sample heavy-tailed population shaped like the real baseline: median recovery error 5.1% at 512 bins, 1.7% at 1024, **0.66% at 1560 (Rice, 60 frames)**, **0.08% at 4584 (Rice, 300 frames)**. Rice moves the right way — more pixels justify finer bins — and the caller that knows `N`, `H` and `W` computes it before the loop starts. `metrics.py` now has **zero constants** — and none moved into the tests either: `tests/geometry/test_metrics.py` derives its sample counts with `_n_samples(frames, side)`, production's own `n_pairs·H·W`, so the only literals on that side are the scene shapes a fixture has to name and the measured bin counts an assertion has to state. |
 | `QUANTILE_GRID` | inline at its one remaining use | once every per-pair column ships raw, its quantiles are convenience a reader can compute. Only the histogram needs them, because raw is unavailable there. |
 | `MIN_SAMPLES`, `PHOTOMETRIC_MAX_SEPARATION` | keyword args with defaults | tuning values belong at the call they tune. (`min_samples` still earns its existence: **measured**, `np.corrcoef` on 2 points returns exactly ±1.0 whatever the values.) |
-| `rank_correlation()` | `stats.spearmanr(a, b, nan_policy="omit").statistic` | scipy's `nan_policy` was the whole wrapper body, and `verification._clean` (`verification.py:346`) already converts nan→null recursively at write time. **Measured**: `json.dumps` emits a bare `NaN`, which is invalid JSON — so the conversion is load-bearing, but it already exists. |
+| `rank_correlation()` | `stats.spearmanr(a, b, nan_policy="omit").statistic` | scipy's `nan_policy` was the whole wrapper body, and `verification.clean_for_json` (`verification.py:346`) already converts nan→null recursively at write time. **Measured**: `json.dumps` emits a bare `NaN`, which is invalid JSON — so the conversion is load-bearing, but it already exists. |
 | `_index_from_name()` | `{iid: k for k, iid in enumerate(sorted(recon.images))}` | **the parser was a bad assumption and the repo already had the answer.** `sorted(recon.images)` order is the documented alignment contract (`verification.py:99, 136, 144, 150`) and this exact dict already exists twice (`:193`, `:314`). Digit parsing breaks on `IMG_2039.jpg`, on names with two number groups, and on any scene whose names do not sort in capture order. |
 | `_verification_rows()` | `idx1`/`idx2` written by verify itself | `asdict(p)` at `verification.py:359` serialises whatever fields `PairStats` has, and Task 2 already edits `PairStats`. Put the shape at the source and the "merge" becomes `json.loads` plus one division. |
 | `_photometric_original_res()` | shape mismatch handled inside `compute_photometric_ncc` | two functions for one measurement, split only by which grid it happened to run on. |
@@ -58,7 +58,7 @@ Every row below was verified against the repo or measured, not assumed.
 | Normalised patch agreement | `np.corrcoef(a, b)[0, 1]` — this IS the photometric measure |
 | Any monotone correlation, nans dropped | `scipy.stats.spearmanr(a, b, nan_policy="omit").statistic` |
 | Rank of each frame | `scipy.stats.rankdata(v)` |
-| nan → null so the JSON is valid | `verification._clean` (`verification.py:346`) |
+| nan → null so the JSON is valid | `verification.clean_for_json` (`verification.py:346`). **Measured correction (Task 2):** this audit read the name at its definition line and assumed module scope — it was in fact a private closure named `_clean`, **nested inside `_write_report`**, so importing it raised `ImportError` and every Task 2 test failed at collection. Task 2 promoted it to module level; the closure captured nothing but `np` and its own params, so the promotion is behaviour-preserving. Task 2's review then made it public — a leading-underscore name imported across module boundaries is the convention's own signal that it should not be private — so it is now **`clean_for_json`**, still in `verification.py` because that module owns the write. Every `import clean_for_json` in this plan works as written. |
 | Frame index for a COLMAP image | `enumerate(sorted(recon.images))` — the existing alignment contract |
 | Running accumulation | `np.cumsum` |
 | Per-pair error row | `verification.PairStats` (`verification.py:41`) |
@@ -158,7 +158,7 @@ Write `docs/superpowers/specs/2026-08-20-scene-error-report-measured.md`:
 - Peak rss: <GB> / 46.6 GB
 - Pairs generated: <n from verification.json>
 - Per-pair: <ms>
-- Extrapolated to 300 frames (~5,400 pairs at window=10): <min>
+- Extrapolated to 300 frames: <min>. **Measured correction to this line:** pairs are NOT a sliding window. `pycolmap.SequentialPairingOptions` defaults to `quadratic_overlap=True` with `overlap=10` and `verification.py` never overrides it, so gaps are powers of two — measured on 300 frames: 1→299, 2→298, 4→296, 8→289, 16→267, 32→225, 64→107, 128→56, 256→28, **1,865 pairs total**, of which 191 span 64+ frames. Per-frame aggregation in Task 6 must decide explicitly whether a gap-256 pair is evidence about either endpoint's local pose.
 - Image names in pair_stats look like: <paste two>
 - Do those names sort in capture order? <yes/no — see Task 2 Step 3>
 
@@ -336,7 +336,7 @@ def test_folding_a_signed_histogram_recovers_absolute_quantiles():
 
 
 def test_scipy_supplies_the_correlation_directly():
-    """No wrapper: nan_policy drops pairs and verification._clean turns nan into null."""
+    """No wrapper: nan_policy drops pairs and verification.clean_for_json turns nan into null."""
     x = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])
     y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     assert stats.spearmanr(x, y, nan_policy="omit").statistic == pytest.approx(1.0)
@@ -414,7 +414,7 @@ Nothing else changes: `asdict(p)` at line 359 picks the new fields up, so `verif
 
 - [ ] **Step 4: Write the bridge**
 
-Create `collab_splats/geometry/metrics.py`:
+Create `collab_splats/geometry/metrics.py`. **Measured correction (Task 2 review):** an earlier draft of this header imported `json`, `Path`, `stats` and the JSON cleaner up front, for the tasks that use them later. `ruff check` reported four F401s, and `scripts/lint.sh` — which `.github/workflows/lint.yml` runs on every push — therefore failed on the commit, four tasks before those imports were used. **Every task adds its own imports in the commit that first uses them**: Task 4 adds `from scipy import stats`, Task 5 needs nothing new, Task 6 adds `import json`, `from pathlib import Path` and `from collab_splats.geometry.verification import clean_for_json`. Header as it stands:
 
 ```python
 """Reference-free scene error metrics: depth cross-view, photometric, and verify's epipolar rows.
@@ -426,14 +426,9 @@ Every statistic comes from scipy or numpy. What lives here is the measurement th
 are computed over, not a reimplementation of them.
 """
 
-import json
 import logging
-from pathlib import Path
 
 import numpy as np
-from scipy import stats
-
-from collab_splats.geometry.verification import _clean
 
 logger = logging.getLogger(__name__)
 
@@ -937,7 +932,7 @@ def test_rising_residual_with_depth_shows_as_a_positive_correlation():
 
 
 def test_constant_depth_gives_nan_which_the_json_writer_turns_into_null():
-    """scipy's answer, unwrapped — verification._clean does the nan -> null pass."""
+    """scipy's answer, unwrapped — verification.clean_for_json does the nan -> null pass."""
     pairs = [_pair(k, k + 1, 0.01, 3.0, depth=4.0) for k in range(10)]
     assert np.isnan(compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"])
 
@@ -963,7 +958,13 @@ Expected: FAIL — `ImportError: cannot import name 'compute_depth_error'`
 
 - [ ] **Step 3: Write the implementation**
 
-Append to `collab_splats/geometry/metrics.py`:
+First add this task's import to the top of `collab_splats/geometry/metrics.py` — imports land in the commit that first uses them, because `scripts/lint.sh` runs `ruff check` on every push and an import written ahead of its use is an F401 failure:
+
+```python
+from scipy import stats
+```
+
+Then append:
 
 ```python
 ########################################
@@ -1097,7 +1098,7 @@ zero would read as 'no error' when it means 'cannot tell'.
 'Does error grow with depth' and 'does error grow with frame separation' are one
 stats.spearmanr call each over columns the pair rows already carry, replacing a
 depth-stratification routine and a fixed bin count. nan_policy handles the nan
-drop and verification._clean turns the constant-column nan into null, so there
+drop and verification.clean_for_json turns the constant-column nan into null, so there
 is no wrapper. Raw columns ship too, so a reader who wants the binned shape can
 build it at any resolution.
 
@@ -1458,9 +1459,9 @@ def test_running_error_is_sequential_pairs_and_absolute_steps():
 
 
 def test_report_json_is_valid_json_with_no_bare_nan():
-    """json.dumps writes a bare NaN, which no strict parser accepts — _clean prevents it."""
-    from collab_splats.geometry.verification import _clean
-    text = json.dumps(_clean({"rho": float("nan"), "nested": [float("nan"), 1.0]}))
+    """json.dumps writes a bare NaN, which no strict parser accepts — clean_for_json prevents it."""
+    from collab_splats.geometry.verification import clean_for_json
+    text = json.dumps(clean_for_json({"rho": float("nan"), "nested": [float("nan"), 1.0]}))
     assert "NaN" not in text
     assert json.loads(text)["rho"] is None
 ```
@@ -1475,7 +1476,16 @@ Expected: FAIL — `ImportError: cannot import name 'build_report'` and `KeyErro
 
 - [ ] **Step 3: Write the stage entry point**
 
-Append to `collab_splats/geometry/metrics.py`:
+First add this task's imports to the top of `collab_splats/geometry/metrics.py` — imports land in the commit that first uses them, because `scripts/lint.sh` runs `ruff check` on every push and an import written ahead of its use is an F401 failure:
+
+```python
+import json
+from pathlib import Path
+
+from collab_splats.geometry.verification import clean_for_json
+```
+
+Then append:
 
 ```python
 ########################################
@@ -1590,10 +1600,10 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
             "attribution": "measurements differ in what they depend on; read them against each other",
         },
     }
-    # _clean turns every nan into null. json.dumps otherwise writes a bare NaN, which no
+    # clean_for_json turns every nan into null. json.dumps otherwise writes a bare NaN, which no
     # strict JSON parser accepts; default= handles numpy scalars.
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(_clean(report), indent=2, default=lambda o: o.item()))
+    output_path.write_text(json.dumps(clean_for_json(report), indent=2, default=lambda o: o.item()))
     logger.info("Wrote %s (%d measurements available)", output_path, len(report["measurements_available"]))
     return report
 
@@ -1787,7 +1797,7 @@ revisit, not a step), absolute values (signed steps cancel and hide the
 accumulation), and crop coverage is invisible at model resolution because the
 model grid IS the crop.
 
-_clean from verification.py does the nan -> null pass. json.dumps otherwise
+clean_for_json from verification.py does the nan -> null pass. json.dumps otherwise
 writes a bare NaN, which no strict parser accepts.
 
 _STAGE_DEPS['report'] == ['pointcloud'], so --stages report re-runs against a
@@ -2196,7 +2206,7 @@ drift apart."
 - **Binned views** of error-vs-depth and error-vs-confidence are replaced by one rank correlation each. The raw columns are in `report.json`, so the binned shape is recoverable at any resolution the reader picks — but this plan does not compute it.
 - **Parallelism, zarr streaming, and reusing the creator's multiview pass** are deferred to a Task 8 measurement rather than designed in. Stated with the reasoning above, not omitted.
 
-**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `compute_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly three keys, `pairs`, `rel_depth_error_counts` and `rel_depth_error_edges`, written in Task 3 and read unchanged in Task 4 — the edges travel with the counts because they are now scene-dependent, and counts without their edges are unreadable. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. `residual_bin_edges` and `bounded_residual` have exactly one definition, with Task 3 Step 6 guarding the import direction. The sample-count expression `n_pairs * H * W` also has one definition per side: production computes it in Task 3, and `tests/geometry/test_metrics.py` computes it with `_n_samples(frames, side)` rather than copying a literal. Correlations are raw `float` (possibly nan) at every site, converted to null once by `_clean` at write time. The critique-5 renames were applied to definitions and uses together and re-grepped: `median_rel_depth_error` / `iqr_rel_depth_error` are read in Task 4's pair rows, in Task 5's ranking, and in the Task 7 tests; `depth_error_px` and `frame_separation` are written in Task 4 and read in Task 5 and the Task 8 readout; `error_vs_frame_separation` and `ncc_vs_frame_separation` are each written at exactly one production site, asserted in Task 4's tests, and quoted in the Task 8 readout template under the same spelling. No old spelling survives anywhere in the plan.
+**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `compute_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly three keys, `pairs`, `rel_depth_error_counts` and `rel_depth_error_edges`, written in Task 3 and read unchanged in Task 4 — the edges travel with the counts because they are now scene-dependent, and counts without their edges are unreadable. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. `residual_bin_edges` and `bounded_residual` have exactly one definition, with Task 3 Step 6 guarding the import direction. The sample-count expression `n_pairs * H * W` also has one definition per side: production computes it in Task 3, and `tests/geometry/test_metrics.py` computes it with `_n_samples(frames, side)` rather than copying a literal. Correlations are raw `float` (possibly nan) at every site, converted to null once by `clean_for_json` at write time. The critique-5 renames were applied to definitions and uses together and re-grepped: `median_rel_depth_error` / `iqr_rel_depth_error` are read in Task 4's pair rows, in Task 5's ranking, and in the Task 7 tests; `depth_error_px` and `frame_separation` are written in Task 4 and read in Task 5 and the Task 8 readout; `error_vs_frame_separation` and `ncc_vs_frame_separation` are each written at exactly one production site, asserted in Task 4's tests, and quoted in the Task 8 readout template under the same spelling. No old spelling survives anywhere in the plan.
 
 **Placeholder scan:** no TBD/TODO. Three named unknowns with stated resolution paths, not hidden ones: Task 1 Step 3's `Reconstructor` construction (depends on the chosen scene), Task 2 Step 5's `test_verification.py` breakage (expected, with the fix stated), and Task 8 Step 3's JSON size (measured, with the fallback stated). The fourth is now closed: `FrameStore` and `guided_upsample_depth` were read from source rather than memory, which caught a wrong module (`preproc.sampling` → `preproc.frame_store`), a method that does not exist (`read`), and source-video indices being used as row positions.
 

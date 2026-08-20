@@ -250,8 +250,7 @@ def test_the_controls_must_run_above_the_production_rel_thresh():
     fault erases its own pairs. Anyone "restoring the default" here gets a red test rather than
     a quieter one.
     """
-    depth, K, extr = _scene()
-    depth[2] *= DEPTH_FAULT
+    depth, K, extr = _faulted_scene()
     assert len(_pairs(depth, K, extr, rel_thresh=CONTROL_REL_THRESH)) == 12
 
     at_default = _pairs(depth, K, extr)  # production default, rel_thresh=0.05
@@ -283,8 +282,10 @@ def test_control_depth_scale_moves_the_depth_measurement_on_both_sides_of_frame_
     clean = [v.median_rel_depth_error for (i, j), v in p.items() if 2 not in (i, j)]
     assert len(into_2) == 3 and len(from_2) == 3 and len(clean) == 6
 
-    # Tolerances from the measurement, not from what passes: worst element deviates 0.0023 on
-    # the into side and 0.0049 on the from side, against the abs=0.01 asserted here.
+    # Tolerances from the measurement, not from what passes. Both assertions are on the MEDIAN,
+    # so the median is the deviation that sets the tolerance: 0.0014 into, 0.0012 from, against
+    # the abs=0.01 asserted here — roughly 7x headroom. The worst single element runs wider
+    # (0.0023 into, 0.0049 from), which is why the band is not tightened to the median figure.
     assert np.median(into_2) == pytest.approx(DEPTH_FAULT - 1.0, abs=0.01)
     assert np.median(from_2) == pytest.approx(1.0 / DEPTH_FAULT - 1.0, abs=0.01)
     assert np.max(np.abs(clean)) < 0.01  # measured 0.001593, pure resampling noise

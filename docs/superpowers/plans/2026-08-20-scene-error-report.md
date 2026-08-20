@@ -2506,8 +2506,7 @@ def test_the_controls_must_run_above_the_production_rel_thresh():
     fault erases its own pairs. Anyone "restoring the default" here gets a red test rather than
     a quieter one.
     """
-    depth, K, extr = _scene()
-    depth[2] *= DEPTH_FAULT
+    depth, K, extr = _faulted_scene()
     assert len(_pairs(depth, K, extr, rel_thresh=CONTROL_REL_THRESH)) == 12
 
     at_default = _pairs(depth, K, extr)  # production default, rel_thresh=0.05
@@ -2539,8 +2538,10 @@ def test_control_depth_scale_moves_the_depth_measurement_on_both_sides_of_frame_
     clean = [v.median_rel_depth_error for (i, j), v in p.items() if 2 not in (i, j)]
     assert len(into_2) == 3 and len(from_2) == 3 and len(clean) == 6
 
-    # Tolerances from the measurement, not from what passes: worst element deviates 0.0023 on
-    # the into side and 0.0049 on the from side, against the abs=0.01 asserted here.
+    # Tolerances from the measurement, not from what passes. Both assertions are on the MEDIAN,
+    # so the median is the deviation that sets the tolerance: 0.0014 into, 0.0012 from, against
+    # the abs=0.01 asserted here — roughly 7x headroom. The worst single element runs wider
+    # (0.0023 into, 0.0049 from), which is why the band is not tightened to the median figure.
     assert np.median(into_2) == pytest.approx(DEPTH_FAULT - 1.0, abs=0.01)
     assert np.median(from_2) == pytest.approx(1.0 / DEPTH_FAULT - 1.0, abs=0.01)
     assert np.max(np.abs(clean)) < 0.01  # measured 0.001593, pure resampling noise
@@ -2808,7 +2809,7 @@ Every test was proved observable by breaking the thing it claims to detect and c
 
 Two changes to the "correct survivor" story from the previous round, both consequences of the review and both recorded rather than smoothed over:
 
-- **The pose-fault control no longer survives M3.** Pinning ρ (MINOR 9) makes it a ratio of two measurements, so forcing `rel → 0` drives `equiv → 0` and `rho → inf`, failing the approx. Under the old `shift_px > 10.0 * equiv` it passed. That is honest — the test now reads a ratio, so it depends on both terms — but it means the file no longer contains a test that is *provably* blind to the depth channel. The structural claim is instead carried by M8/appearance-structural and by the exact-zero arms of parallax-source-side.
+- **The pose-fault control no longer survives M3.** Pinning ρ (MINOR 9) makes it a ratio of two measurements, so forcing `rel → 0` drives `equiv → 0` and `rho → inf`, failing the approx. Under the old `shift_px > 10.0 * equiv` it passed. **What that costs is smaller than it first reads, and an earlier revision of this line overstated it.** No test stays *green* under M3 — but the depth-blind assertions themselves survive, as the two *absolute* asserts inside the same pose-fault test (`abs(median_rel_depth_error) < 0.01` and `equiv < 0.05`), both verified still passing under M3. So the file has not lost the property, only a test that demonstrated it by staying green. Three reasons that trade is right: the old `shift_px > 10.0 * equiv` was arithmetically implied by its two preceding asserts, so what was lost was a vacuous pass; M3 is a real bug — a dead depth channel — and red is the correct response to it; and `ρ = inf` is the unbounded limit of the `ρ ≫ 1` pose signature, which the pin rejects precisely because pinning exists to separate `634` from "any large number". Restoring green with a second test would be a wrapper that adds nothing. The structural claim is additionally carried by M8/appearance-structural and by the exact-zero arms of parallax-source-side.
 - **M7 now kills two tests, not one.** `POSE_FAULT_DY` is named once (MINOR 10) and shared by the pose-fault and photometric controls, so zeroing it removes the fault from both.
 
 One mutation was anticipated and pre-empted rather than reported as a survivor: the closed-form test's ratio assertion is invariant to the bridge's functional form (a bridge that ignored `rel_residual` entirely would still divide to 1.0), so the explicit `predicted == 0.1 * deg2rad(alpha) * FOCAL` line was added *before* M5 was run — M5 then killed it.

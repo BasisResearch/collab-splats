@@ -244,3 +244,115 @@ here, but no second scene has been run.
 The scene was restored after the experiment: `colmap/{verification.json, database.db, verified/}`
 put back from the loma backup, and the `local_features/{xfeat, disk-lightglue}` groups this
 experiment added to `feedforward.zarr` removed, leaving only `local_features/loma` as found.
+
+## Is loma's `verify` cost our wrapper, or loma itself?
+
+Same scene / frames / poses. 30 pairs stratified over the same quadratic gaps 1…256, 3 warm-up
+pairs, `torch.cuda.synchronize()` around every timed region, A40. Script:
+`<scratchpad>/bench_loma.py`, results `<scratchpad>/bench_loma.json`. No production code changed;
+nothing on disk touched (`find -newermt` over the scene after the run: empty, `local_features/`
+still holds only `loma`).
+
+### The path hypothesis is false — every matcher takes the pairwise path
+
+`has_stable_indices` re-probed directly: **`loma` True, `disk-lightglue` True, `xfeat` True.**
+The flag does *not* route matchers to different call paths. The deciding line is
+`verification.py:221` — `if isinstance(matcher, LocalMatcher):` — and every vismatch model is a
+`LocalMatcher`, so **all three go through `match_images()`, one forward pass per pair**. The
+`else` branch (`matcher.match(...)`, the cached-descriptor path) is unreachable for vismatch:
+`LocalMatcher.match()` raises `NotImplementedError` by construction. `has_stable_indices` gates
+only index *recovery inside* `match_images` and eligibility for `verify` at all
+(`verification.py:184`).
+
+So loma is not penalised by a path disk-lightglue escapes. Both pay per-pair re-extraction.
+
+### Wrapper vs direct loma (30 pairs)
+
+(a) = `LocalMatcher.match_images()`, exactly what `verify` calls.
+(b) = the third-party call stripped to the minimum that still yields correspondences —
+`preprocess` + `LoMa.detect_and_describe` ×2 + `LoMa.__call__` + `filter_matches` +
+`to_pixel_coords` + one D2H of the matched coords. Both start from the same numpy frames.
+
+| path | median ms | p90 ms |
+| --- | ---: | ---: |
+| (a) our wrapper `match_images` | **993.8** | 1089.6 |
+| (b) direct loma, incl. numpy→device | 898.4 | 933.2 |
+| (b′) direct loma, inputs already on device | 877.9 | 911.3 |
+
+**Overhead (a) − (b) = 95.4 ms = 9.6% of (a).** Nearly all of it is one line: `_recover_indices`
+(90.6 ms), the O(matches × keypoints) exact-equality broadcast that maps matched coordinates back
+to COLMAP keypoint-table rows — 446 matches × 2048 rows × 2 sides. This is the same effect that
+made the earlier microbenchmark underestimate `xfeat` by 37.5%. It is *needed* work under the
+current design, but it is `O(K·N)` where a sort/hash would be `O(K log N)`.
+
+### Where a loma pair actually goes (one representative gap-16 pair)
+
+| stage | ms | % |
+| --- | ---: | ---: |
+| image load from `frames.zarr` (2×) | 86.0 | 7.9 |
+| numpy→device `_to_tensor` (2×) | 13.6 | 1.3 |
+| `resize_to_divisible` | 1.0 | 0.1 |
+| **`detect_and_describe` img0** | **423.5** | **39.1** |
+| **`detect_and_describe` img1** | **424.1** | **39.2** |
+| LoMa match transformer | 38.2 | 3.5 |
+| `filter_matches` + `to_pixel_coords` | 1.3 | 0.1 |
+| `rescale_coords` | 0.3 | 0.0 |
+| device→numpy (kpts + descs) | 1.8 | 0.2 |
+| out-of-bounds filter (vismatch) | 0.2 | 0.0 |
+| `cv2.findHomography` MAGSAC (vismatch, result discarded) | 2.5 | 0.2 |
+| our `_check_pixel_frame` (2×) | 0.1 | 0.0 |
+| our `_recover_indices` (2×) | 90.6 | 8.4 |
+| **total** | **1083.1** | 100 |
+
+**Dominant stage: `detect_and_describe`, 847.6 ms = 78.3% of the pair** — loma's DINOv2 backbone,
+run on both images of every pair. The whole matching stage that actually *uses* the pair is 38.2 ms.
+
+### Counterfactual: what loma would cost with per-image caching
+
+Measured inputs: `detect_and_describe` = **493.2 ms/image** (median, 12 images);
+match-only from cached kpts/descs = **38.6 ms/pair** (median, same 30 pairs);
+matcher-independent remainder of `verify` = **~170 s** (from the prior section).
+
+| architecture | arithmetic | `verify` (s) |
+| --- | --- | ---: |
+| measured (pairwise) | 2189 × 993.8 ms + 170 s | **2511.6** (measured) |
+| cached, features already on disk | 2189 × 38.6 ms + 170 s | **~255** |
+| cached, counting a cold extraction pass | + 300 × 493.2 ms = 148 s | **~403** |
+
+**~255 s vs the measured 2511.6 s — a 9.9× reduction, and faster than `disk-lightglue`'s
+measured 690.4 s while keeping loma's 0.76°/5.41° accuracy.** 2189 pairs re-extract features
+**4,378 times** for 300 distinct images: a 14.6× redundancy factor.
+
+**Is the loma↔disk gap architectural?** Not *between* them — they share the identical pairwise
+path, so the 4.05× per-pair gap (993.8 vs 245.4 ms) is loma's DINOv2 detector being that much
+more expensive than DISK's CNN. What *is* architectural is that both pay it twice per pair
+instead of once per image, which multiplies the model-cost gap by ~14.6 instead of amortising it.
+Under caching, loma's *matching* (38.6 ms) would be in the same class as LightGlue's, and the
+residual loma premium collapses to a one-off ~118 s of extra extraction (148 s vs ~30 s), not a
+recurring 1,821 s.
+
+### Bonus: `extract()` is the one place a direct call genuinely wins
+
+`LocalMatcher.extract()` measures **913.4 ms/image** but a single `detect_and_describe` is
+**493.2 ms** — because vismatch implements `BaseMatcher.extract()` as `forward(img, img)`, which
+detects on the same image twice and runs a full self-match. Calling the feature stage directly
+would roughly halve `build_localization_db` (345.7 s → ~190 s). That is a real, ~1.85× wrapper
+inefficiency — on the extraction path, not on the pairwise path.
+
+### Answer
+
+**No — calling loma more directly does not meaningfully speed up `verify`: ~9.6% (95 ms/pair,
+2511.6 s → ~2300 s), and 91 ms of that 95 is `_recover_indices`, which is required work.** The
+10× win is architectural (cache per-image features and match from the cache), which is exactly
+the already-designed but unimplemented `match_extracted` shim
+(`docs/superpowers/specs/2026-08-17-descriptor-matching-shim-design.md`) — where loma is listed
+**Deferred**, because its matcher wants normalized resized-resolution coordinates while
+`extract()` caches original-resolution pixels −0.5. That coordinate conversion, not the model, is
+what stands between `verify` and a ~10× loma speed-up.
+
+Assumptions: 2,189 attempted pairs and the ~170 s matcher-independent remainder are carried over
+from the sections above, not re-measured; the counterfactual assumes cached matching keeps
+loma's match set (the match-only path was run on the same cached tensors the pairwise path
+produces, so this is arithmetic, not extrapolation, but it was not verified match-for-match).
+Image IO (86 ms/pair here) is charged in full to a cold pair; `verify` reads through a 32-frame
+LRU, so it pays less in the sequential-pair loop.

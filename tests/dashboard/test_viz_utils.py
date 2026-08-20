@@ -62,9 +62,14 @@ def test_view_transform_scales_to_target_radius():
     pts = (np.random.rand(500, 3).astype(np.float32) - 0.5) * 100.0
     T = compute_view_transform(pts, extrinsics=None, target_radius=0.7, percentile=95.0)
     out = _apply(T, pts)
-    center = _bbox_center(out)
-    r = np.percentile(np.linalg.norm(out - center, axis=1), 95.0)
-    assert abs(r - 0.7) < 1e-3
+    # Radii are measured about the origin, because T maps its center onto it. Measuring about
+    # _bbox_center(out) instead compares against a DIFFERENT center: the transform scales the
+    # percentile radius about the inlier bbox midpoint (viz_utils.py:100), while the bbox of
+    # `out` includes the clipped flyers. The gap between the two moves with the random draw,
+    # which made this assertion fail for ~25% of unseeded clouds at atol 1e-3. Against the
+    # right center the identity is exact, so the tolerance can be float-precision tight.
+    r = np.percentile(np.linalg.norm(out, axis=1), 95.0)
+    assert abs(r - 0.7) < 1e-6
 
 
 def test_view_transform_aligns_mean_camera_up_to_plus_z():

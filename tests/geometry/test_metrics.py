@@ -9,6 +9,7 @@ from scipy import stats
 from collab_splats.geometry.metrics import (
     bounded_residual,
     compute_depth_error,
+    compute_photometric_ncc,
     depth_error_in_pixels,
     residual_bin_edges,
 )
@@ -396,3 +397,231 @@ def test_error_vs_frame_separation_is_reported():
 def test_depth_error_is_unavailable_not_a_crash_when_empty():
     m = compute_depth_error(_collected([]), 500.0, "x")
     assert m["available"] is False and "reason" in m
+
+
+########################################
+# compute_photometric_ncc
+########################################
+
+
+def _plane(n=2, hw=32, seed=0):
+    """n identical views of a fronto-parallel white-noise plane at depth 4, identity poses."""
+    rng = np.random.default_rng(seed)
+    tex = rng.uniform(0, 255, size=(hw, hw, 3)).astype(np.float32)
+    K = np.array([[40.0, 0, hw / 2], [0, 40.0, hw / 2], [0, 0, 1.0]], dtype=np.float32)
+    return (
+        np.stack([tex] * n),
+        np.stack([np.full((hw, hw), 4.0, np.float32)] * n),
+        np.stack([K] * n),
+        np.stack([np.eye(4, dtype=np.float32)] * n),
+    )
+
+
+def _translated_pair(shift_px=4, hw=32, f=40.0, depth=4.0, seed=5):
+    """Two views of a plane, the second placed so the warp is EXACTLY shift_px to the left.
+
+    Both frames are cut from one wider noise field, so the overlap is an exact pixel
+    correspondence: no wrap-around and no resampling. A correct warp therefore scores 1.0 and
+    any other offset scores ~0 on white noise, which is the margin the fixture exists for.
+    """
+    rng = np.random.default_rng(seed)
+    big = rng.uniform(0, 255, size=(hw, hw + shift_px, 3)).astype(np.float32)
+    images = np.stack([big[:, :hw], big[:, shift_px:]])
+    K = np.stack([np.array([[f, 0, hw / 2], [0, f, hw / 2], [0, 0, 1.0]], dtype=np.float32)] * 2)
+    # Camera 1 sits at world x = shift_px * Z / f, so u' = u - shift_px for every plane pixel.
+    e1 = np.eye(4, dtype=np.float32)
+    e1[0, 3] = -shift_px * depth / f
+    return (
+        images,
+        np.stack([np.full((hw, hw), depth, np.float32)] * 2),
+        K,
+        np.stack([np.eye(4, dtype=np.float32), e1]),
+    )
+
+
+def test_identical_poses_and_depth_warp_to_ncc_one():
+    img, d, K, e = _plane()
+    m = compute_photometric_ncc(img, d, K, e, "32x32", max_separation=1)
+    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_the_warp_actually_moves_pixels_through_pose_and_depth():
+    """Identity poses score 1.0 even with no warp at all, so correctness needs a moving camera.
+
+    Frame 1 is frame 0 displaced by exactly the 4 px this pose and depth predict. On white
+    noise a correct warp reads 1.0 and a warp through the wrong pose reads ~0.
+    """
+    img, d, K, e = _translated_pair()
+    m = compute_photometric_ncc(img, d, K, e, "32x32", max_separation=1)
+    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+
+
+def test_ncc_is_invariant_to_image_scale_convention():
+    """[0,255] VGGT vs [0,1] MapAnything must not change the number.
+
+    Frame 1 is noised so the correlation sits near 0.5 rather than at 1.0. At 1.0 both an
+    un-normalised covariance and a raw difference read the same under either scaling — the
+    invariance would be asserted against a case that cannot distinguish them.
+    """
+    rng = np.random.default_rng(11)
+    img, d, K, e = _plane()
+    img[1] = img[1] + rng.normal(0, 120, img[1].shape)
+    a = compute_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
+    b = compute_photometric_ncc(img / 255.0, d, K, e, "x", max_separation=1)["pairs"][0]
+    assert a["photometric_ncc"] == pytest.approx(b["photometric_ncc"], abs=1e-4)
+    assert 0.2 < a["photometric_ncc"] < 0.9  # anchor: not the trivial 1.0 case
+
+
+def test_ncc_is_invariant_to_exposure_shift():
+    """Otherwise a brightness change swamps the geometry this measurement exists for.
+
+    The change is offset-DOMINATED (gain 0.15, offset 210) on purpose. A gain-only fixture is
+    also invariant under plain cosine similarity, so it could not show whether the mean is
+    being removed; this one reads ~0.88 without the zero-mean step.
+    """
+    img, d, K, e = _plane()
+    shifted = img.copy()
+    shifted[1] = shifted[1] * 0.15 + 210.0
+    m = compute_photometric_ncc(shifted, d, K, e, "x", max_separation=1)
+    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_ncc_drops_with_genuine_disagreement():
+    rng = np.random.default_rng(3)
+    img, d, K, e = _plane()
+    noisy = img.copy()
+    noisy[1] = noisy[1] + rng.normal(0, 90, noisy[1].shape)
+    clean = compute_photometric_ncc(img, d, K, e, "x", max_separation=1)["pairs"][0]
+    dirty = compute_photometric_ncc(noisy, d, K, e, "x", max_separation=1)["pairs"][0]
+    assert dirty["photometric_ncc"] < clean["photometric_ncc"]
+
+
+def test_flat_patch_is_skipped_not_a_divide_by_zero():
+    img, d, K, e = _plane()
+    m = compute_photometric_ncc(np.full_like(img, 128.0), d, K, e, "x", max_separation=1)
+    assert m["available"] is False
+
+
+def test_two_overlapping_pixels_do_not_count_as_a_correlation():
+    """np.corrcoef on 2 points returns exactly +-1 whatever the values — hence min_samples."""
+    assert abs(np.corrcoef([0.0, 1.0], [5.0, -3.0])[0, 1]) == pytest.approx(1.0)
+    img, d, K, e = _plane()
+    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=1, min_samples=10**9)
+    assert m["available"] is False
+
+
+def test_photometric_respects_max_separation():
+    img, d, K, e = _plane(n=4, hw=16)
+    m = compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)
+    assert all(r["frame_separation"] <= 1 for r in m["pairs"])
+
+
+def test_photometric_is_unavailable_for_a_single_frame():
+    img, d, K, e = _plane(n=1, hw=16)
+    m = compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)
+    assert m["available"] is False and "reason" in m
+
+
+def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
+    """One function, both grids — and the K must ride the SAME transform as the depth.
+
+    The crop is a strict sub-region (32x32 taken from a 64x64 canvas at (16, 8)), so the model
+    -> original scale is crop_w / model_w = 2 and NOT canvas_w / model_w = 4. Using the canvas
+    width doubles the focal, the warp lands 8 px out instead of 4, and NCC collapses — the
+    2026-08-11 mesh-collapse bug class, caught here rather than in a mesh.
+    """
+    img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
+    # Model-res depth and K describing the crop only: 16x16 grid over a 32x32 crop.
+    model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
+    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
+    m = compute_photometric_ncc(img, model_d, model_K, e, "64x64", original_coords=coords,
+                                max_separation=1)
+    assert m["available"] is True and m["grid"] == "original"
+    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+
+
+def test_upsampling_without_crop_rows_is_a_refusal_not_a_guess():
+    """Depth and K move together or neither does; guessing the crop is how they desync."""
+    img, d, K, e = _plane(hw=64)
+    with pytest.raises(ValueError, match="original_coords"):
+        compute_photometric_ncc(img, d[:, ::2, ::2], K, e, "64x64", max_separation=1)
+
+
+def test_photometric_grid_says_which_one_it_ran_on():
+    img, d, K, e = _plane()
+    m = compute_photometric_ncc(img, d, K, e, "1920x1080", max_separation=1)
+    assert m["grid"] == "original" and m["resolution"] == "1920x1080"
+
+
+def test_the_correlation_is_nan_not_a_spurious_rho_off_two_pairs():
+    """scipy hands back +-1.0 off two points; two pairs is not a trend, so it must read nan.
+
+    Frame 1 is flat, which skips every pair touching it and leaves exactly two rows with
+    DIFFERENT separations and DIFFERENT correlations — so neither column is constant and the
+    nan can only come from the row count.
+    """
+    rng = np.random.default_rng(7)
+    img, d, K, e = _plane(n=4)
+    img[1] = 128.0
+    img[3] = img[3] + rng.normal(0, 90, img[3].shape)
+    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=2)
+    assert m["n_pairs"] == 2
+    assert [r["frame_separation"] for r in m["pairs"]] == [2, 1]
+    assert m["pairs"][0]["photometric_ncc"] != pytest.approx(m["pairs"][1]["photometric_ncc"])
+    assert np.isnan(m["correlations"]["ncc_vs_frame_separation"])
+
+
+def test_the_correlation_reads_the_shipped_pair_columns():
+    """With enough rows it is computed, and off the same columns the reader can plot.
+
+    Appearance drifts as a random WALK, not as independent per-frame noise: independent noise
+    decorrelates every pair by the same amount whatever their separation (measured rho -0.12
+    on that fixture), so it cannot anchor a falls-off-with-separation claim.
+    """
+    rng = np.random.default_rng(9)
+    img, d, K, e = _plane(n=4)
+    img = img + np.cumsum(rng.normal(0, 70, img.shape), axis=0)
+    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=3)
+    rho = stats.spearmanr(
+        [r["frame_separation"] for r in m["pairs"]], [r["photometric_ncc"] for r in m["pairs"]]
+    ).statistic
+    assert m["correlations"]["ncc_vs_frame_separation"] == pytest.approx(rho)
+    assert rho < -0.5  # anchor: the fixture really does fall off with separation
+
+
+def test_photometric_output_keys_are_the_contract_task_6_reads():
+    """UNORDERED pairs, matching verification.py's epipolar block — n_pairs, not directions.
+
+    The depth block ships "pair_directions" because its producer loop is ordered and emits
+    both (i, j) and (j, i) with different values. This loop is `for j in range(i + 1, ...)`,
+    one row per pair, so the two counts are not comparable and the key names must not suggest
+    they are: a reader comparing them would otherwise see a phantom 2x.
+    """
+    img, d, K, e = _plane(n=4)
+    m = compute_photometric_ncc(img, d, K, e, "64x48", max_separation=3)
+    assert set(m) == {
+        "available", "grid", "resolution", "units", "n_pairs", "correlations", "pairs",
+    }
+    assert m["available"] is True and m["grid"] == "original" and m["resolution"] == "64x48"
+    assert set(m["correlations"]) == {"ncc_vs_frame_separation"}
+    # C(4, 2) = 6 unordered pairs. An ordered loop over the same frames would ship 12.
+    assert m["n_pairs"] == len(m["pairs"]) == 6
+    assert [(r["idx1"], r["idx2"]) for r in m["pairs"]] == [
+        (0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3),
+    ]
+    assert set(m["pairs"][0]) == {
+        "idx1", "idx2", "frame_separation", "photometric_ncc", "n_pixels",
+    }
+
+
+def test_nothing_in_the_photometric_output_grades_the_scene():
+    """Report-only, the same contract as the depth block: a number and its units, no verdict."""
+    rng = np.random.default_rng(13)
+    img, d, K, e = _plane(n=4)
+    img[1:] = img[1:] + rng.normal(0, 200, img[1:].shape)  # an awful scene
+    m = compute_photometric_ncc(img, d, K, e, "x", max_separation=3)
+    banned = {"verdict", "status", "grade", "quality", "pass", "passed", "failed", "ok", "healthy"}
+    assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pairs"][0]))
+    strings = " ".join(v for v in m.values() if isinstance(v, str))
+    assert not any(w in strings.lower() for w in ("good", "bad", "poor", "acceptable", "fail"))

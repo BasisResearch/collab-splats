@@ -24,8 +24,17 @@ cheap.
 
 ### Time budget after this work
 
-Caching alone: 300 extractions × ~424 ms ≈ 127 s, learned matcher 1,865 × 38 ms ≈ 71 s,
-H2D ≈ 25 s, `_recover_indices` eliminated → **matching term ~1853 s → ~250 s**.
+`verify()` already holds the extraction result before matching starts: it calls
+`build_localization_db()` unconditionally (`reconstructor.py:1113`), loads the zarr-cached
+features, and passes them into `verify_reconstruction` as `features` — the very keypoint
+tables `_write_frames` exports to the COLMAP DB. So:
+
+- **General-path models (descriptor-NN): extraction inside verify = 0.** Matching is
+  mutual-NN over precomputed descriptors — seconds, and match rows ARE table indices
+  (no `_recover_indices` round-trip).
+- **Loma (learned matcher, shipping default):** in-memory cache — 300 extractions
+  × ~424 ms ≈ 127 s, learned matcher 1,865 × 38 ms ≈ 71 s, H2D ≈ 25 s →
+  **matching term ~1853 s → ~250 s**.
 
 The residual is NOT treated as immovable (earlier drafts did; wrong). pycolmap's own pairing
 log completed 300/300 within ~2 min, so the C++ phases are unlikely to dominate it — the prime
@@ -51,33 +60,40 @@ matching fix alone; ~8–12 min expected once the residual's biggest term is add
 
 ## Design
 
-Everything lives in `collab_splats/localization/extractors.py`. **Zero call-site changes**:
-the cache sits inside `LocalMatcher.match_images`, so `geometry/verification.py` and
-`localization/localizer.py` benefit without edits.
+Everything lives in `collab_splats/localization/extractors.py`, plus one dispatch tweak and
+timing instrumentation in `geometry/verification.py`. Both consumer seams **already exist**:
+`LocalMatcher.match(query, db, hw)` is the reserved NotImplementedError seam
+(`extractors.py:154`), and `verify_reconstruction`'s else-branch already calls
+`matcher.match(features[i], features[j], hw)` on precomputed features (`verification.py:232`)
+— kept for exactly this follow-on. The localizer's descriptor path is the same seam's second
+consumer.
 
-### 1. Per-image encode cache
+### 1. General path first — implement `match()` (the zoo-wide mechanism)
+
+- Applies to any vismatch model whose `extract()` returns non-empty descriptors (~the sparse
+  half of the 36 model files; the 18 detector-free models never qualify).
+- `match()`: GPU mutual-NN over the given descriptors (cosine, `min_cossim=-1` — mirrors
+  xfeat sparse's own match stage). Match rows ARE keypoint-table indices — no recovery.
+- **No extraction and no cache on this path in verify()**: the features come in precomputed
+  from the zarr cache the pipeline already builds. Localizer likewise holds zarr features.
+- Dispatch in `verification.py`: prefer the `match()` path when the probe proved the model
+  descriptor-NN-equivalent (a capability flag on `LocalMatcher`); otherwise the existing
+  pairwise `match_images` path, unchanged.
+- **Enabled per model only when the construction-time probe proves it equivalent** to that
+  model's own pair forward (below). NN-native models (xfeat sparse, handcrafted) pass;
+  learned-matcher models fail and keep the pairwise path — correct, never silently degraded.
+
+### 2. Per-image encode cache — learned-matcher adapters only
+
+For models whose match stage is learned (probe-fails the general path), the win is caching
+the per-image encode inside `match_images`:
 
 - Keyed by **array identity**: `id(image)` lookup, then an `is` check against the stored array
   reference (exact, no hashing). Both consumers hold their images in stable in-memory lists for
   the duration of the loop (`verification.py:227`; localizer query/refs). An array that fails
   the `is` check (id reuse after GC) is a miss, never a wrong hit.
 - Capped dict, evict oldest (default 512 entries). Sparse payloads are ~2–4 MB/image → worst
-  case ~1–2 GB against the 46.6 GB container cap. No byte accounting — no dense-payload adapter
-  exists in this pass to need it.
-
-### 2. Dispatch in `match_images` — general path first
-
-**General path — cached extract + descriptor matching (the zoo-wide mechanism).**
-- Applies to any vismatch model whose `extract()` returns non-empty descriptors (~the sparse
-  half of the 36 model files; the 18 detector-free models never qualify).
-- Encode: `BaseMatcher.extract()` — public API, runs inside vismatch's ImportSandbox naturally,
-  no reach-in. One self-pair forward per image, cached (amortizes the 913.4 ms/image cost
-  12.4× across the pair loop).
-- Match: GPU mutual-NN over cached descriptors (cosine, `min_cossim=-1` — mirrors xfeat
-  sparse's own match stage). Keypoint-table indices are match rows by construction.
-- **Enabled per model only when the construction-time probe proves it equivalent** to that
-  model's own pair forward (below). NN-native models (xfeat sparse, handcrafted) pass;
-  learned-matcher models fail and keep the fallback — correct, never silently degraded.
+  case ~1–2 GB against the 46.6 GB container cap. No byte accounting.
 
 **Specialization — loma adapter (byte-identical, learned matcher kept).**
 Loma is the shipping default (`localization.matcher: loma`) and its learned match stage fails
@@ -92,6 +108,9 @@ the general path by design, so it gets the one model-specific adapter:
   the −0.5 COLMAP-convention offset. Byte-identical to `_forward` by construction, enforced by
   the probe. Native indices (`torch.where(valid)[0]`, `m0[0][valid]`) — `_recover_indices`
   skipped. Covers all five LoMa archs (one wrapper class).
+- Why not the zarr features: they store pixel-frame keypoints; the learned matcher consumes
+  pre-transform normalized coordinates. Inverting the affine chain is float-inexact and would
+  break byte-parity — the in-memory cache stores the pre-transform payload instead.
 - Further learned-matcher models (LightGlue family, sphereglue) get the same treatment later
   only if measurement shows demand; the probe keeps them correct meanwhile.
 
@@ -130,8 +149,9 @@ The ~658 s residual has never been measured directly (handoff §7.3). As part of
 Flat test functions in `tests/localization/test_extractors.py`:
 
 1. **Parity fixture** (load-bearing): real loma on the synthetic pair — cached-path
-   `MatchResult` byte-identical to plain-path. Same for xfeat sparse via the general path.
-   GPU/slow-marked per repo convention.
+   `MatchResult` byte-identical to plain-path. For xfeat sparse: `match(extract(a),
+   extract(b))` equals `match_images(a, b)` exactly (the general path). GPU/slow-marked
+   per repo convention.
 2. Probe demotion: stub matcher whose fast path diverges → fallback + warning, results correct.
 3. Cache semantics: hit on same array object, miss on equal-content copy, eviction at capacity.
 4. Empty-match / empty-descriptor paths fall back cleanly.
@@ -156,11 +176,28 @@ Flat test functions in `tests/localization/test_extractors.py`:
   extraction across runs), no byte-budget accounting, no detector-free reach-in, no vismatch
   fork.
 
+## Further headroom (recorded, not in scope — implement only if measurement demands)
+
+Stacked realistic floor of this architecture is **~4–6 min**, residual-dominated. The levers,
+in payoff order:
+
+1. **Batched pair matching** (loma): the learned matcher broadcasts over the batch dim
+   (`einsum`/SDPA/`filter_matches`, handoff §2) — ~71 s → ~25 s. Was 3.5% of baseline;
+   becomes ~30% of the post-cache loma matching term.
+2. **Pair-count knob**: 1,865 pairs ≈ 6.2/frame is `overlap` config. Halving it halves the
+   matcher, `verify_matches`, and match-write terms linearly. Quality trade-off, zero code.
+3. **Residual floor**: after cold-start amortization + DB-export vectorization (in scope
+   above), what remains is C++ `verify_matches` + `triangulate_points` — that floor belongs
+   to the pycolmap-native migration.
+
+Below ~4–6 min the answer is the Exit strategy (pycolmap-native ONNX+CUDA: extraction tens
+of ms/image, LightGlue ms/pair → ~2–4 min territory) or fewer frames/pairs.
+
 ## Non-goals
 
 - **Disk persistence** of the cache: staleness keys (model/weights/`max_num_keypoints`) are a
   separate decision; single-run redundancy is the measured pain.
-- **Batched pair matching**: touches only the ~3.5% learned-matcher term.
+- **Batched pair matching**: deferred to Further headroom above.
 - **Detector-free adapters** (RoMa separable encoder, LoFTR backbone): large payloads,
   vendored-code surgery, unmeasured payoff (handoff §7.5–7.7).
 - **Upstream vismatch PR** (`extract_features`/`match_extracted` on `BaseMatcher`): right

@@ -74,7 +74,7 @@ compute_exposure(gray) -> dict      # mean, median, std, clipped_low_frac, clipp
 compute_frame_quality(bgr) -> dict  # merges both, from one BGR frame
 
 # per pair
-match_frames(gray_a, gray_b, *, n_features=1000) -> tuple[np.ndarray, np.ndarray]
+match_orb(gray_a, gray_b, *, n_features=1000) -> tuple[np.ndarray, np.ndarray]
 compute_translation(pts_a, pts_b) -> float
 compute_parallax(pts_a, pts_b) -> float
 
@@ -83,9 +83,9 @@ compute_video_quality(video_path, *, output_path=None, motion_stride=None, n_fea
 ```
 
 Every tuning value is a keyword argument with a default. `qa.py` declares **no module-level constants** —
-the same discipline the scene error report's plan landed on for `geometry/metrics.py`. It also adds no
-constants elsewhere: it reuses `sampling.py`'s `_ANALYSIS_WIDTH`, `_LK_PARAMS`-era conventions, and
-`_analysis_gray` exactly as they stand.
+the same discipline the scene error report's plan landed on for `geometry/metrics.py`. It adds, moves,
+and deletes no constant elsewhere either: `sampling.py`'s four stay as they are, and `_analysis_gray` is
+reused unchanged.
 
 ### Channel 1 — photometric, every frame
 
@@ -114,10 +114,16 @@ downscaled gray.
 
 Photometric metrics say nothing about whether the camera moved usefully. Two frames `k` apart:
 
-- `match_frames` — ORB (`n_features=1000`) + `BFMatcher(NORM_HAMMING, crossCheck=True)`, returning two
-  `(N, 2)` pixel arrays. Shape deliberately matches `localization.extractors.MatchResult`, so
-  `LomaMatcher.match_pair` (`extractors.py:179`) can be substituted from a notebook without touching
-  this module.
+- `match_orb` — ORB (`n_features=1000`) + `BFMatcher(NORM_HAMMING, crossCheck=True)`, returning two
+  `(N, 2)` pixel arrays. Named for its method, not its role, because the choice of matcher is the
+  contested decision here and the reader should not have to open it to learn which one this is.
+  **The seam is the point-pair interface, not this function**: `compute_translation` and
+  `compute_parallax` take arrays, so `LomaMatcher.match_pair` (`extractors.py:179`) substitutes from a
+  notebook with no change to this module. Shape matches `MatchResult` for exactly that reason.
+
+  It stays in `qa.py` rather than moving to `localization/`: that package imports `torch` and `vismatch`
+  at module scope, `preproc/` imports neither, and QA is the pre-reconstruction path that must run
+  without a GPU. Nor does it earn a shared home — one caller does not justify inventing a module.
 - `compute_translation` — median displacement from `cv2.estimateAffinePartial2D`, in pixels.
 - `compute_parallax` — `1 − (homography inliers ÷ fundamental inliers)`, both fit with `USAC_MAGSAC`.
   A homography explains pure rotation and planar scenes exactly; a translating camera viewing 3D

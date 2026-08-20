@@ -1,20 +1,27 @@
 """Unit tests for reference-free scene error metrics."""
 
+import json
 import math
 import warnings
+from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy import stats
 
 from collab_splats.geometry.metrics import (
+    _running_error,
     bounded_residual,
+    build_report,
     compute_depth_error,
     compute_photometric_ncc,
     depth_error_in_pixels,
     residual_bin_edges,
 )
-from collab_splats.geometry.verification import PairStats, _distribution
+from collab_splats.geometry.verification import PairStats, _distribution, clean_for_json
+from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.wrapper.reconstructor import LEAF_STAGES, _STAGE_DEPS, _STAGE_ORDER
 
 
 def test_pair_stats_is_keyed_on_frame_index():
@@ -873,3 +880,215 @@ def test_nothing_in_the_photometric_output_grades_the_scene():
     assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pairs"][0]))
     strings = " ".join(v for v in m.values() if isinstance(v, str))
     assert not any(w in strings.lower() for w in ("good", "bad", "poor", "acceptable", "fail"))
+
+
+########################################
+# The stage and the running-error accumulator
+########################################
+
+
+def test_verify_writes_the_index_keys_so_no_merge_code_is_needed():
+    """asdict() serialises whatever fields PairStats has — the shape lives at the source."""
+    row = asdict(PairStats(3, 11, name1="a.png", name2="b.png", num_matches=500, num_inliers=450))
+    assert row["idx1"] == 3 and row["idx2"] == 11
+    assert abs(row["idx1"] - row["idx2"]) == 8
+    assert row["num_inliers"] / row["num_matches"] == pytest.approx(0.9)
+
+
+def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
+    assert "report" in LEAF_STAGES
+    assert _STAGE_DEPS["report"] == ["pointcloud"]
+    assert _STAGE_ORDER.index("report") > _STAGE_ORDER.index("pointcloud")
+
+
+def test_report_does_not_demote_any_existing_leaf():
+    """A new dependency edge would silently break another stage's disk re-run."""
+    for s in ("refine", "semantics", "mesh", "localize", "verify"):
+        assert s in LEAF_STAGES
+
+
+def test_running_error_is_sequential_pairs_and_absolute_steps():
+    """Signed steps cancel and hide accumulation; a separation-5 pair is a revisit not a step."""
+    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "median_rel_depth_error": 0.1},
+            {"idx1": 1, "idx2": 2, "frame_separation": 1, "median_rel_depth_error": -0.1},
+            {"idx1": 0, "idx2": 5, "frame_separation": 5, "median_rel_depth_error": 9.9}]
+    out = _running_error(rows, "median_rel_depth_error")
+    assert out["frame_index"] == [1, 2]  # separation-5 revisit excluded
+    assert out["cumulative"] == pytest.approx([0.1, 0.2])  # |-0.1| added, not cancelled
+
+
+def test_running_error_counts_an_ordered_pair_once():
+    """The depth pass emits (i,j) AND (j,i); summing raw rows would double every step."""
+    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "median_rel_depth_error": 0.10},
+            {"idx1": 1, "idx2": 0, "frame_separation": 1, "median_rel_depth_error": -0.20},
+            {"idx1": 1, "idx2": 2, "frame_separation": 1, "median_rel_depth_error": 0.30},
+            {"idx1": 2, "idx2": 1, "frame_separation": 1, "median_rel_depth_error": 0.30}]
+    out = _running_error(rows, "median_rel_depth_error")
+    # Two steps, not four, and each frame index appears once.
+    assert out["frame_index"] == [1, 2]
+    # Step 0->1 is mean(|0.10|, |-0.20|) = 0.15, NOT the signed mean (-0.05) and not the sum.
+    assert out["cumulative"] == pytest.approx([0.15, 0.45])
+
+
+def test_running_error_on_unordered_rows_is_the_identity():
+    """Epipolar rows are one per unordered pair, so grouping must not alter them."""
+    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "rot_error_deg": 0.4},
+            {"idx1": 1, "idx2": 2, "frame_separation": 1, "rot_error_deg": 0.6}]
+    out = _running_error(rows, "rot_error_deg")
+    assert out["frame_index"] == [1, 2]
+    assert out["cumulative"] == pytest.approx([0.4, 1.0])
+
+
+def test_running_error_drops_non_finite_and_missing_values():
+    """A dead measurement leaves None or nan in the column; neither may enter the cumsum."""
+    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "rot_error_deg": 0.4},
+            {"idx1": 1, "idx2": 2, "frame_separation": 1, "rot_error_deg": None},
+            {"idx1": 2, "idx2": 3, "frame_separation": 1, "rot_error_deg": float("nan")},
+            {"idx1": 3, "idx2": 4, "frame_separation": 1, "rot_error_deg": 0.6}]
+    out = _running_error(rows, "rot_error_deg")
+    assert out["frame_index"] == [1, 4]
+    assert out["cumulative"] == pytest.approx([0.4, 1.0])
+
+
+def test_report_json_is_valid_json_with_no_bare_nan():
+    """json.dumps writes a bare NaN, which no strict parser accepts — clean_for_json prevents it."""
+    text = json.dumps(clean_for_json({"rho": float("nan"), "nested": [float("nan"), 1.0]}))
+    assert "NaN" not in text
+    assert json.loads(text)["rho"] is None
+
+
+########################################
+# build_report end to end
+########################################
+
+
+def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
+    """A minimal feedforward.zarr that build_report can actually run on. Returns its path.
+
+    Depth is a SLANTED plane, never a constant one: a constant-depth scene has a degenerate
+    frustum AABB, compute_multiview_depth_confidence's pair gate then skips every pair, and
+    the depth measurement would come back unavailable — a fixture that can observe nothing.
+    Each frame carries a slightly different depth scale so the pairwise residuals are
+    non-zero and the per-frame medians actually differ.
+
+    The crop rows are OFF-CENTRE on a NON-SQUARE canvas so crop coverage is observable: an
+    implementation that ignores the top-left origin reads 0.469 instead of 1/3, and a centred
+    crop would hide exactly that.
+    """
+    # Heavy dep (pulls the vggt tree); imported here so the rest of this module stays light.
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+    n, hw = len(image_names), 16
+    rows = np.arange(hw, dtype=np.float32)[:, None]
+    base = np.broadcast_to(3.0 + 0.1 * rows, (hw, hw)).astype(np.float32)
+    depth = np.stack([base * (1.0 + 0.01 * k) for k in range(n)])
+    K = np.array([[50.0, 0, hw / 2], [0, 50.0, hw / 2], [0, 0, 1.0]], dtype=np.float32)
+    extrinsics = np.stack([np.eye(4, dtype=np.float32) for _ in range(n)])
+    for k in range(n):
+        extrinsics[k][0, 3] = -0.15 * k  # camera centre slides along +x, so pairs have parallax
+    rng = np.random.default_rng(4)
+    coords = np.tile(np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1))
+    result = FeedforwardResult(
+        points=np.zeros((1, 3), np.float32),
+        colors=np.zeros((1, 3), np.uint8),
+        extrinsics=extrinsics,
+        intrinsics=np.stack([K] * n),
+        image_paths=[Path(p) for p in image_names],
+        original_coords=coords,
+        model_width=hw,
+        model_height=hw,
+        depth=depth,
+        confidence=rng.uniform(0.5, 1.0, size=(n, hw, hw)).astype(np.float32) if with_confidence else None,
+    )
+    zarr_path = tmp_path / "feedforward.zarr"
+    result.save_zarr(zarr_path)
+    return zarr_path
+
+
+def _build(tmp_path, image_names, with_confidence=True):
+    """build_report over _write_tiny_scene with no verification.json and no frames.zarr."""
+    return build_report(
+        zarr_path=_write_tiny_scene(tmp_path, image_names, with_confidence),
+        verification_json=tmp_path / "absent" / "verification.json",
+        frames_zarr=tmp_path / "absent" / "frames.zarr",
+        output_path=tmp_path / "report.json",
+        backend="vggtx",
+    )
+
+
+def test_the_source_index_join_rests_on_the_frame_stem_naming_contract():
+    """build_report derives its index map with this parser; a naming change must break loudly.
+
+    frame_{idx:06d} is what FrameStore.export writes and what a reconstruction's image_paths
+    carry. If that convention ever moves, every row of this report silently mispairs with
+    every row of anything joined to it by source frame index — so the contract is pinned here
+    rather than left to be discovered downstream.
+    """
+    assert FrameStore.frame_idx_from_path(Path("frame_000000.jpg")) == 0
+    assert FrameStore.frame_idx_from_path(Path("/a/b/frame_002388.png")) == 2388
+    # Zero padding is presentation only: the join key is the integer, not the string.
+    assert FrameStore.frame_idx_from_path(Path("frame_000019.jpg")) == 19
+
+
+def test_build_report_maps_recon_index_to_SOURCE_frame_index(tmp_path):
+    """Every other per-frame block is keyed 0..N-1, which is NOT the source video index.
+
+    The fixture's source indices are NON-CONTIGUOUS on purpose: sampling skips frames, so a
+    map built as list(range(n)) or enumerate() would be wrong in production and completely
+    invisible against 0, 1, 2. Without this key nothing keyed on the source video — a
+    video-quality report, the frame store — can be joined to this one at all.
+    """
+    names = ["frame_000000.jpg", "frame_000007.jpg", "frame_000019.jpg"]
+    report = _build(tmp_path, names)
+    assert report["source_frame_indices"] == [0, 7, 19]
+    # It is derived through the same parser, not re-implemented alongside it.
+    assert report["source_frame_indices"] == [FrameStore.frame_idx_from_path(Path(p)) for p in names]
+    # The join happens against the FILE, so the map has to survive serialisation.
+    written = json.loads((tmp_path / "report.json").read_text())
+    assert written["source_frame_indices"] == [0, 7, 19]
+    # One entry per reconstruction row, in reconstruction order.
+    assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 3
+
+
+def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):
+    """No verification.json and no frames.zarr: depth still ships, the other two say why not."""
+    report = _build(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
+    assert report["measurements_available"] == ["depth"]
+    assert report["measurements"]["depth"]["available"] is True
+    for dead in ("epipolar", "photometric"):
+        assert report["measurements"][dead]["available"] is False
+        assert report["measurements"][dead]["reason"]
+    # A bare NaN is what json.dumps emits for a nan and no strict parser accepts it.
+    assert "NaN" not in (tmp_path / "report.json").read_text()
+
+
+def test_confidence_rho_ships_nested_with_the_n_frames_that_qualifies_it(tmp_path):
+    """An unguarded rho is only publishable because its sample size cannot be read apart from it.
+
+    n_frames is NOT recoverable from frame_percentile_ranks — ranks is {} at one frame while
+    this rho's sample is len(per_frame) — so the count lives inside the same object.
+    """
+    report = _build(tmp_path, ["frame_000000.jpg", "frame_000007.jpg", "frame_000019.jpg"])
+    block = report["confidence_vs_error"]
+    assert set(block) == {"spearman", "n_frames"}
+    assert block["n_frames"] == 3
+    assert isinstance(block["spearman"], float)
+
+
+def test_confidence_rho_and_its_count_are_both_none_without_a_confidence_array(tmp_path):
+    """No array means the rho was never computed — distinct from a rho over a tiny sample."""
+    report = _build(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"], with_confidence=False)
+    assert report["confidence_vs_error"] == {"spearman": None, "n_frames": None}
+
+
+def test_crop_coverage_is_measured_against_the_ORIGINAL_canvas_not_the_model_grid(tmp_path):
+    """The model grid IS the crop, so coverage is structurally invisible at model resolution.
+
+    The fixture crops 16x16 out of a 32x24 canvas from an off-centre origin: 1/3 covered.
+    Dropping the top-left origin gives 0.469 and using the model grid gives 1.0, so both
+    mistakes are separated from the right answer.
+    """
+    report = _build(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"])
+    fractions = [c["covered_fraction"] for c in report["crop_coverage"]]
+    assert fractions == pytest.approx([1.0 / 3.0, 1.0 / 3.0])
+    assert [c["index"] for c in report["crop_coverage"]] == [0, 1]

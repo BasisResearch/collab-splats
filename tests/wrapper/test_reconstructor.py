@@ -837,6 +837,8 @@ def test_run_pipeline_default_uses_config_enabled(tmp_path):
     rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
+    # report is always on and has no config flag, so a config-derived run always includes it
+    rec.report = lambda overwrite=False: calls.append("report") or tmp_path
 
     rec.run_pipeline()  # no stages arg — uses config
     assert "semantics" in calls
@@ -885,6 +887,7 @@ def test_run_pipeline_auto_includes_localize_when_enabled(tmp_path):
         patch.object(rec, "preprocess"),
         patch.object(rec, "build_pointcloud", return_value=None),
         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")),
+        patch.object(rec, "report"),  # always on, and it would resolve a real reconstruction
     ):
         rec.run_pipeline()
     assert called == ["localize"]
@@ -898,6 +901,7 @@ def test_run_pipeline_omits_localize_when_disabled(tmp_path):
         patch.object(rec, "preprocess"),
         patch.object(rec, "build_pointcloud", return_value=None),
         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")),
+        patch.object(rec, "report"),  # always on, and it would resolve a real reconstruction
     ):
         rec.run_pipeline()
     assert called == []
@@ -1180,7 +1184,7 @@ def test_leaf_stages_derived_from_dep_graph():
     expected = {s for s in R._STAGE_ORDER if not any(s in deps for deps in R._STAGE_DEPS.values())}
     assert R.LEAF_STAGES == expected
     # Today's graph, spelled out so a failure above reads as a real change rather than a typo.
-    assert expected == {"refine", "semantics", "mesh", "localize", "verify"}
+    assert expected == {"refine", "semantics", "mesh", "localize", "verify", "report"}
 
 
 def _seed_disk_reconstruction(rec, frame_idxs, image_names):
@@ -1375,9 +1379,10 @@ def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
     rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
     rec.mesh = lambda result=None, overwrite=False: calls.append("mesh")
+    rec.report = lambda overwrite=False: calls.append("report")
 
     rec.run_pipeline()  # must not raise
-    assert calls == ["preproc", "pointcloud", "mesh"]
+    assert calls == ["preproc", "pointcloud", "mesh", "report"]
 
 
 def test_base_yaml_mesh_has_fidelity_keys():
@@ -1386,3 +1391,73 @@ def test_base_yaml_mesh_has_fidelity_keys():
     assert cfg["mesh"]["conf_percentile"] is None
     assert cfg["mesh"]["native_resolution"] is False
     assert cfg["mesh"]["color_map_iterations"] == 0
+
+
+########################################
+# Report stage
+########################################
+
+
+def test_report_is_appended_with_no_config_boolean_to_turn_it_off(tmp_path):
+    """Always on, deliberately against repo precedent, so nothing may gate it.
+
+    Every other diagnostic ships behind a default-false flag, and the one boolean this stage
+    would have had is the boolean that keeps it off. The config here disables everything that
+    HAS a flag — semantics, mesh, localize, BA, verify — so an appended report is the only
+    thing that can follow pointcloud.
+    """
+    config = _make_config(
+        tmp_path,
+        {
+            "semantics": {"enabled": False},
+            "mesh": {"enabled": False},
+            "localization": {"enabled": False},
+            "pointcloud": {"bundle_adjustment": False, "geometric_verification": False},
+        },
+    )
+    rec = Reconstructor(config)
+    calls = []
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
+    rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
+    rec.report = lambda overwrite=False: calls.append("report")
+
+    rec.run_pipeline()  # stages=None: the config-derived list
+    assert calls == ["preproc", "pointcloud", "report"]
+
+
+def test_report_stage_dispatches_to_the_report_method_and_forwards_overwrite(tmp_path):
+    """A stage in _STAGE_ORDER with no dispatch branch is a silent no-op."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    _seed_pointcloud_markers(rec)
+    with patch.object(rec, "report") as report:
+        rec.run_pipeline(stages=["report"], overwrite=True)
+    report.assert_called_once_with(overwrite=True)
+
+
+def test_report_output_marker_is_report_json_in_the_backend_dir(tmp_path):
+    """The marker is what makes --stages report refuse an existing report without overwrite."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    _seed_pointcloud_markers(rec)
+    assert rec._stage_output_exists("report") is False
+    (rec.backend_dir / "report.json").write_text("{}")
+    assert rec._stage_output_exists("report") is True
+    with pytest.raises(ValueError, match="already exists"):
+        rec.run_pipeline(stages=["report"])
+
+
+def test_report_skips_without_overwrite_and_never_touches_the_reconstruction(tmp_path):
+    """Skip is checked BEFORE the result is resolved, so a re-run costs nothing."""
+    config = _make_config(tmp_path)
+    rec = Reconstructor(config)
+    out = rec.backend_dir / "report.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("{}")
+
+    def _explode():
+        raise AssertionError("_resolve_result must not run when the report already exists")
+
+    rec._resolve_result = _explode
+    assert rec.report() == out
+    assert out.read_text() == "{}"

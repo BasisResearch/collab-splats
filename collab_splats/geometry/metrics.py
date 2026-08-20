@@ -7,8 +7,17 @@ Every statistic comes from scipy or numpy. What lives here is the measurement th
 are computed over, not a reimplementation of them.
 """
 
+import json
+import logging
+from pathlib import Path
+
 import numpy as np
 from scipy import stats
+
+from collab_splats.geometry.verification import clean_for_json
+from collab_splats.preproc.frame_store import FrameStore
+
+logger = logging.getLogger(__name__)
 
 ########################################
 # The residual histogram's axis
@@ -412,3 +421,235 @@ def compute_photometric_ncc(
         "correlations": correlations,
         "pairs": rows,
     }
+
+
+########################################
+# Stage entry point
+########################################
+
+
+def _running_error(rows: list[dict], key: str) -> dict:
+    """Cumulative |step| along the trajectory, one step per consecutive-frame pair.
+
+    Sequential pairs only: a separation-5 pair is a revisit, not a step, and summing it would
+    count the same ground twice. Absolute values, because signed steps cancel and would hide
+    the accumulation this exists to show.
+
+    Rows are grouped by UNORDERED pair before summing. The depth pass is an ordered loop, so
+    it emits both (k, k+1) and (k+1, k) — separation 1 in both directions, with genuinely
+    different values, because occlusion is asymmetric. Summing the raw rows would add every
+    trajectory step twice and repeat every frame_index. Epipolar rows are already one per
+    unordered pair, so their groups hold a single member and the mean is the identity: one
+    expression serves both channels with no per-channel branch.
+
+    The mean is over |value|, never over the signed value. +0.10 and -0.09 average to +0.005,
+    which reads as agreement when the two directions in fact disagree.
+    """
+    grouped: dict[tuple[int, int], list[float]] = {}
+    for x in rows:
+        if x.get("frame_separation") != 1 or x.get(key) is None or not np.isfinite(x[key]):
+            continue
+        lo, hi = int(x["idx1"]), int(x["idx2"])
+        grouped.setdefault((lo, hi), []).append(abs(float(x[key])))
+
+    steps = sorted(grouped.items())
+    return {
+        "frame_index": [hi for (_, hi), _ in steps],
+        "cumulative": np.cumsum([float(np.mean(v)) for _, v in steps]).tolist(),
+    }
+
+
+def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
+                 output_path: Path, backend: str) -> dict:
+    """Run every measurement that can run and write report.json. Never raises on a dead one.
+
+    Measurements are attempted independently: a missing confidence array, an absent
+    verification.json or an unreadable frames.zarr each disable exactly one of them.
+
+    Nothing here grades the scene, names a cause or flags a frame. Absolute thresholds that
+    would justify a verdict are exactly what this stage exists to inform, so inventing them
+    now would be a guess dressed as a finding.
+
+    A function, not a class: the report is built once and written once. Nothing mutates it,
+    queries it in memory or subclasses it, so a class would add a constructor, attributes and
+    a serialiser with no behaviour behind them.
+    """
+    from collab_splats.pointcloud.feedforward.base import (
+        FeedforwardResult,
+        compute_multiview_depth_confidence,
+    )
+
+    r = FeedforwardResult.load_zarr(zarr_path)
+    n = len(r.depth)
+    model_res = f"{r.model_width}x{r.model_height}"
+    focal_px = float(r.intrinsics[:, 0, 0].mean() + r.intrinsics[:, 1, 1].mean()) / 2.0
+
+    # One dense pass yields the depth residual, the scale split, the parallax angles and the
+    # per-pair depth. abs_thresh stays 0.0: scale invariance holds only there, and that is
+    # what lets one function serve backbones whose depth scales differ completely.
+    collected: dict = {}
+    compute_multiview_depth_confidence(
+        r.depth, r.intrinsics, r.extrinsics, abs_thresh=0.0, rel_thresh=0.05, collect=collected
+    )
+    depth_m = compute_depth_error(collected, focal_px, model_res)
+    epipolar_m = _load_epipolar(verification_json, image_width=int(r.original_coords[0][4]))
+    photometric_m = _run_photometric(r, frames_zarr, n)
+
+    # Per-frame median |residual| — the column both the confidence check and the ranks read.
+    per_frame = {}
+    for k in range(n):
+        v = [abs(p.median_rel_depth_error) for p in collected["pairs"] if k in (p.idx1, p.idx2)]
+        if v:
+            per_frame[k] = float(np.median(v))
+
+    # Does the model know when it is wrong? Confidence is an INPUT being validated, not an
+    # error source, so it gets one correlation rather than a measurement of its own. Absent on
+    # older zarr stores, which are never backfilled.
+    # scipy directly, unguarded, exactly like the two correlations above: no wrapper and no
+    # small-sample floor, because withholding a rho is a verdict and this report makes none.
+    # Publishing an unguarded rho is only defensible because the count that qualifies it ships
+    # beside it, the way `n_pair_directions` and `n_pairs` qualify the other two — so
+    # `n_frames` is nested WITH the rho and cannot be read apart from it.
+    # It is NOT recoverable from `frame_percentile_ranks`: `ranks` is {} when len(ks) <= 1
+    # while this rho's sample is len(per_frame), so the two diverge at exactly the small
+    # sample size where the reader needs the count most.
+    # Both stay None when there is no confidence array: the rho was never computed, so there
+    # is no sample to report — distinct from a computed rho over a tiny sample.
+    conf_rho, conf_n = None, None
+    if r.confidence is not None:
+        conf = np.asarray(r.confidence)
+        conf_n = len(per_frame)
+        conf_rho = float(
+            stats.spearmanr(
+                np.array([float(np.median(conf[k])) for k in per_frame], dtype=np.float64),
+                np.array(list(per_frame.values()), dtype=np.float64),
+            ).statistic
+        )
+
+    # Where each frame sits in this scene's own distribution, 0..1. A NUMBER, never a label.
+    # Within-scene ranks need no absolute threshold, which sidesteps the fact that pixel and
+    # depth units are not comparable across backbones.
+    ks = list(per_frame)
+    ranks = {}
+    if len(ks) > 1:
+        rk = (stats.rankdata([per_frame[k] for k in ks]) - 1) / (len(ks) - 1)
+        ranks = {int(k): float(x) for k, x in zip(ks, rk)}
+
+    # Does disagreement build along the trajectory?
+    # The row key differs by measurement: depth ships ORDERED directions under
+    # "pair_directions", epipolar ships unordered pairs under "pairs". _running_error groups by
+    # unordered key either way, so only the lookup name changes.
+    running = {
+        name: _running_error(m.get(rows_key, []), key)
+        for name, rows_key, key, m in (
+            ("depth", "pair_directions", "median_rel_depth_error", depth_m),
+            ("epipolar", "pairs", "rot_error_deg", epipolar_m),
+        )
+    }
+
+    # Reconstruction index -> SOURCE video frame index. Every per-frame block above is keyed
+    # 0..N-1, which is not the source index once sampling skips frames, so without this map
+    # nothing keyed on the source video can be joined to this report at all. Derived from
+    # image_paths rather than FrameStore.frame_indices() because image_paths is always on the
+    # result while frames.zarr is optional here. A name carrying no index yields None rather
+    # than killing the report — the join degrades per frame instead of disappearing.
+    source_frame_indices: list[int | None] = []
+    for p in r.image_paths:
+        try:
+            source_frame_indices.append(int(FrameStore.frame_idx_from_path(p)))
+        except (ValueError, TypeError):
+            source_frame_indices.append(None)
+
+    report = {
+        "scene": {"backend": backend, "n_frames": n, "model_resolution": model_res,
+                  "zarr": str(zarr_path)},
+        "measurements_available": sorted(
+            k for k, m in (("epipolar", epipolar_m), ("depth", depth_m), ("photometric", photometric_m))
+            if m.get("available")
+        ),
+        "measurements": {"epipolar": epipolar_m, "depth": depth_m, "photometric": photometric_m},
+        "confidence_vs_error": {"spearman": conf_rho, "n_frames": conf_n},
+        # Read running_error against error_vs_frame_separation before calling it drift: frame index
+        # is a confounded axis, since scene content, motion speed and exposure all track it.
+        "running_error": running,
+        "frame_percentile_ranks": ranks,
+        "source_frame_indices": source_frame_indices,
+        # Fraction of each ORIGINAL frame the model crop actually reconstructed. VGGTX resizes
+        # width to 518 and centre-crops height to 518, so a 16:9 source loses a band with no
+        # depth at all — and model-resolution evaluation is structurally blind to it, because
+        # the model grid IS the crop.
+        "crop_coverage": [
+            {"index": k, "covered_fraction": float(
+                max(c[2] - c[0], 0) * max(c[3] - c[1], 0) / max(c[4] * c[5], 1e-9))}
+            for k, c in enumerate(np.asarray(r.original_coords, dtype=np.float64))
+        ],
+        "notes": {
+            "verdicts": "none by design — this describes distributions, it does not grade",
+            "units": "scale-free or normalised throughout; 1 recon unit is NOT 1 metre",
+            "attribution": "measurements differ in what they depend on; read them against each other",
+            "source_frame_indices": "position = reconstruction index, value = source video frame index",
+        },
+    }
+    # clean_for_json turns every nan into null. json.dumps otherwise writes a bare NaN, which no
+    # strict JSON parser accepts; default= handles numpy scalars.
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(clean_for_json(report), indent=2, default=lambda o: o.item()))
+    logger.info("Wrote %s (%d measurements available)", output_path, len(report["measurements_available"]))
+    return report
+
+
+def _load_epipolar(verification_json: Path, image_width: int) -> dict:
+    """Load verify's tables. Not a measurement — verify made it; the matcher is never re-run.
+
+    These rows are the only ones that never touch depth, which is why attribution works at
+    all: something that moves here but not in the depth rows is a pose error. They are already
+    original-resolution, since verify estimates from original-resolution keypoints.
+    """
+    p = Path(verification_json)
+    if not p.exists():
+        return {"available": False, "reason": f"no verification.json at {p} — run the verify stage",
+                "grid": "original"}
+    data = json.loads(p.read_text())
+
+    rows = []
+    for s in data.get("pair_stats", []):
+        # Same expression verify already aggregates over at verification.py:363
+        # (`p.num_inliers / p.num_matches ... if p.num_matches`) — per row here rather than
+        # collapsed to a distribution, so it can be joined against the depth rows.
+        n_m, n_i = s.get("num_matches") or 0, s.get("num_inliers") or 0
+        rows.append({**s, "frame_separation": abs(s["idx1"] - s["idx2"]),
+                     "inlier_ratio": (n_i / n_m) if n_m else None})
+
+    frames = []
+    for name, fs in sorted(data.get("frame_stats", {}).items()):
+        px = fs.get("mean_reproj_error_px")
+        # A bare pixel count is not comparable across backbones (a 518 crop against 448x592),
+        # so the fraction ships alongside it.
+        frames.append({**fs, "name": name,
+                       "mean_reproj_error_frac_width": None if px is None else px / image_width})
+
+    return {"available": True, "grid": "original", "resolution": f"width={image_width}",
+            "units": "degrees; reprojection in px and as a fraction of image width",
+            "source": str(p), "n_pairs": len(rows), "pairs": rows, "frames": frames}
+
+
+def _run_photometric(r, frames_zarr: Path, n: int) -> dict:
+    """Read original-resolution RGB out of frames.zarr and correlate. Never fatal."""
+    if not Path(frames_zarr).exists():
+        return {"available": False, "reason": f"frames.zarr not found at {frames_zarr}", "grid": "original"}
+    try:
+        # images() returns the selected frames in row order, which is the order the
+        # reconstruction indexes by. frame_indices() is NOT that — it holds source-video
+        # positions, so using it to index would silently mispair depth with RGB.
+        store = FrameStore.open(Path(frames_zarr))
+        rgbs = store.images()[:n].astype(np.float32)
+        m = len(rgbs)
+        # No resolution argument: the function derives it from `rgbs` itself, so the stamped
+        # grid cannot disagree with the grid the numbers were measured on.
+        return compute_photometric_ncc(
+            rgbs, r.depth[:m], r.intrinsics[:m], r.extrinsics[:m],
+            original_coords=r.original_coords[:m],
+        )
+    except Exception as exc:  # noqa: BLE001 — a report must never fail a reconstruction
+        logger.warning("photometric measurement failed: %s", exc, exc_info=True)
+        return {"available": False, "reason": f"{type(exc).__name__}: {exc}", "grid": "original"}

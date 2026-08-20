@@ -356,3 +356,52 @@ loma's match set (the match-only path was run on the same cached tensors the pai
 produces, so this is arithmetic, not extrapolation, but it was not verified match-for-match).
 Image IO (86 ms/pair here) is charged in full to a cold pair; `verify` reads through a 32-frame
 LRU, so it pays less in the sequential-pair loop.
+
+---
+
+## Task 6 Step 5: can the creators hand their multiview pass down to `build_report`?
+
+`build_report` runs a dense multiview pass. When `pointcloud.use_multiview_confidence` is on, a
+creator already ran that loop during reconstruction, so the report doubles it. Scoped here, **not
+implemented** — Task 8 measures whether the duplication costs anything worth the plumbing.
+
+### How many creators have a `collect` dict to hand down: zero
+
+```bash
+grep -rn "compute_multiview_depth_confidence" --include=*.py collab_splats/ | grep -v "def compute"
+```
+
+Four creators call it — `vggtx.py:354`, `vggt_omega.py:265`, `mapanything.py:446`,
+`loger.py:440` — and **none of them passes `collect`**. `grep -rn "collect=" --include=*.py
+collab_splats/` returns exactly one call site: `metrics.py:492`, inside `build_report`. So today
+there is no dict to hand down; each creator would first have to opt in.
+
+### Can the reconstruction path pass one through? Structurally yes, usefully no
+
+Three findings, in increasing order of how much they cost:
+
+1. **In the shipping configuration there is no second pass at all.** `use_multiview_confidence`
+   is `false` on `configs/base.yaml:47`, so no creator runs the loop and the report's pass is the
+   only one. The saving is zero by default and only appears on an opted-in scene.
+2. **The dict is not persisted.** `collect` fills `pairs` / `rel_depth_error_counts` /
+   `rel_depth_error_edges` in memory; nothing writes them to `feedforward.zarr`. A hand-down
+   therefore helps only the inline `run_pipeline` path. `report` is a leaf stage
+   (`_STAGE_DEPS["report"] == ["pointcloud"]`), so the `--stages report` disk re-run against a
+   scene pulled from `environments-processed` could never see it and would run the pass anyway.
+3. **The creators' pass does not measure the same thing, so reuse would change the numbers.**
+   Tolerances are per-backend: `abs=0.0, rel=0.01` on vggtx/vggt_omega/loger and
+   `abs=0.02, rel=0.02` on mapanything, against `build_report`'s fixed `abs_thresh=0.0,
+   rel_thresh=0.05`. Those are not cosmetic. In `base.py`, `tol = abs_thresh + rel_thresh *
+   expected_d.abs()` decides `occluded`, `counted = valid_ij & ~occluded`, and the collected rows
+   are computed over `sel = counted & has_depth & (expected_d > 1e-6)` — so the tolerance selects
+   the pixel population every per-pair median, IQR, parallax and depth is taken over, and the
+   population the residual histogram accumulates. MapAnything additionally passes
+   `depth_masks=combined_mask`, narrowing it further. Reusing the creator's dict would make the
+   report's depth block a function of each backbone's own calibration, which is exactly the
+   cross-backbone comparability that `abs_thresh=0.0` exists to guarantee.
+
+**Reading:** the hand-down is not free reuse of an identical computation — it is a different
+measurement that happens to share a loop. If Task 8 finds the duplicated pass expensive enough to
+be worth removing, the honest version is for the creator to run the *report's* tolerances into a
+second `collect` (or for the report to accept a backend-tolerance stamp in its output), not to
+silently adopt whatever the creator happened to use.

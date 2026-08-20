@@ -45,7 +45,7 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
-_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify"]
+_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify", "report"]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preproc": [],
     "pointcloud": ["preproc"],
@@ -60,8 +60,12 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # verify reuses the localize feature cache but builds it itself when absent, so its
     # only hard dependency is the reconstruction
     "verify": ["pointcloud"],
+    # report reads verification.json when present and runs verify itself when absent, so like
+    # verify its only hard dependency is the reconstruction
+    "report": ["pointcloud"],
 }
-# A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, mesh, localize, verify}.
+# A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, mesh,
+# localize, verify, report}.
 # Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
 # mesh from this set automatically, so callers gating on it can never disagree with _STAGE_DEPS.
 LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in _STAGE_DEPS.values()))
@@ -1158,6 +1162,41 @@ class Reconstructor:
         logger.info("Verification written to %s", out_json)
         return out_json
 
+    def report(self, overwrite: bool = False) -> Path:
+        """Reference-free error report: three measurements, one report.json. Reports only.
+
+        Never fails a reconstruction — a measurement that cannot run records
+        {"available": false, "reason": ...} and the rest still emit.
+        """
+        out_json = self.backend_dir / "report.json"
+        if not overwrite and self._stage_output_exists("report"):
+            logger.info("Report exists at %s, skipping", out_json)
+            return out_json
+        if self._resolve_result() is None:
+            raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
+
+        # The epipolar rows are the only ones that never touch depth, which is what makes
+        # attribution possible — worth building when absent rather than skipped.
+        verification_json = self.backend_dir / "colmap" / "verification.json"
+        if not verification_json.exists():
+            try:
+                self.verify()
+            except Exception:  # noqa: BLE001 — a report must never fail a reconstruction
+                logger.warning("verify failed; epipolar rows will be unavailable", exc_info=True)
+
+        # Heavy deps inline so the module imports without GPU/model libs
+        from collab_splats.geometry.metrics import build_report
+
+        build_report(
+            zarr_path=self.backend_dir / "feedforward.zarr",
+            verification_json=verification_json,
+            frames_zarr=self.frames_zarr,
+            output_path=out_json,
+            backend=self.config["pointcloud"]["backend"],
+        )
+        logger.info("Report written to %s", out_json)
+        return out_json
+
     def _stage_output_exists(self, stage: str) -> bool:
         """True if `stage`'s on-disk output is already present (lets deps be reused across runs)."""
         if stage == "preproc":
@@ -1183,6 +1222,8 @@ class Reconstructor:
             )
         if stage == "verify":
             return (self.backend_dir / "colmap" / "verification.json").exists()
+        if stage == "report":
+            return (self.backend_dir / "report.json").exists()
         return False
 
     def _resolve_result(self) -> "PointcloudResult | None":
@@ -1201,7 +1242,8 @@ class Reconstructor:
         """Run named stages in dependency order.
 
         Args:
-            stages: Subset of ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify"].
+            stages: Subset of ["preproc", "pointcloud", "refine", "semantics", "mesh",
+                    "localize", "verify", "report"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
 
@@ -1225,6 +1267,10 @@ class Reconstructor:
                 stages.append("localize")
             if self.config["pointcloud"]["geometric_verification"]:
                 stages.append("verify")
+            # Always on, no config boolean. Every other diagnostic ships behind a
+            # default-false flag, and the one boolean this would have had is the boolean that
+            # keeps it off. The measured cost is bounded.
+            stages.append("report")
 
         # Validate stage dependencies before starting any work. A dependency is
         # satisfied when it's in this run's stages OR its output already exists on
@@ -1265,6 +1311,8 @@ class Reconstructor:
                 self.build_localization_db(overwrite=overwrite)
             elif stage == "verify":
                 self.verify(overwrite=overwrite)
+            elif stage == "report":
+                self.report(overwrite=overwrite)
 
     def launch_dashboard(self) -> None:
         """Launch interactive dashboard for current reconstruction state."""

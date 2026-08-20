@@ -8,6 +8,7 @@ from scipy import stats
 
 from collab_splats.geometry.metrics import (
     bounded_residual,
+    compute_depth_error,
     depth_error_in_pixels,
     residual_bin_edges,
 )
@@ -173,3 +174,109 @@ def test_scipy_supplies_the_correlation_directly():
     x = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])
     y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     assert stats.spearmanr(x, y, nan_policy="omit").statistic == pytest.approx(1.0)
+
+
+########################################
+# compute_depth_error
+########################################
+
+
+def _pair(i, j, rel, par, n=100, iqr=0.01, depth=4.0):
+    return PairStats(i, j, n_pixels=n, median_rel_depth_error=rel, iqr_rel_depth_error=iqr,
+                     median_parallax_deg=par, median_depth=depth)
+
+
+def _collected(pairs):
+    """The collect-dict shape compute_multiview_depth_confidence fills.
+
+    Edges are sized for a real 60-frame scene, not for these few hundred fixture pixels:
+    quantile recovery is a property of the bin count, so a fixture that derived its own
+    coarse bins would be testing a resolution nothing ships at.
+    """
+    edges = residual_bin_edges(_n_samples(60, 518))
+    counts = np.zeros(len(edges) - 1, dtype=np.int64)
+    for p in pairs:
+        counts += np.histogram(
+            bounded_residual(np.full(p.n_pixels, p.median_rel_depth_error)), bins=edges
+        )[0]
+    return {"pairs": pairs, "rel_depth_error_counts": counts, "rel_depth_error_edges": edges}
+
+
+def test_depth_error_reports_grid_and_resolution():
+    """Every block stamps its grid — model-res depth with original-res K is a known bug class."""
+    m = compute_depth_error(_collected([_pair(0, 1, 0.0, 3.0)]), 500.0, "518x518")
+    assert m["grid"] == "model" and m["resolution"] == "518x518"
+
+
+def test_pair_rows_carry_separation():
+    """1->4 and 2->5 both land at 3, so distance-vs-error is a column not a special case."""
+    m = compute_depth_error(_collected([_pair(1, 4, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
+    assert [r["frame_separation"] for r in m["pairs"]] == [3, 3]
+
+
+def test_scale_bias_keeps_its_sign_on_the_row():
+    """A pure scale error has a large median and a small spread; the sign must survive."""
+    m = compute_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]), 500.0, "x")
+    assert m["pairs"][0]["median_rel_depth_error"] == pytest.approx(-0.08)
+    assert m["pairs"][0]["iqr_rel_depth_error"] == pytest.approx(0.005)
+
+
+def test_pixel_equivalent_lands_on_each_pair_row():
+    m = compute_depth_error(_collected([_pair(0, 1, 0.1, 2.0)]), 500.0, "x")
+    assert m["pairs"][0]["depth_error_px"] == pytest.approx(depth_error_in_pixels(0.1, 2.0, 500.0))
+
+
+def test_pairs_under_one_pixel_of_disparity_report_null_not_zero():
+    tiny = np.rad2deg(0.5 / 500.0)  # half a pixel of disparity
+    m = compute_depth_error(_collected([_pair(0, 1, 0.1, tiny)]), 500.0, "x")
+    assert m["pairs"][0]["depth_error_px"] is None
+    assert m["pairs_under_one_pixel_disparity"] == 1
+
+
+def test_per_pair_columns_ship_raw():
+    """Raw, so any binning or threshold query is something the reader does."""
+    pairs = [_pair(k, k + 1, 0.01 * k, 3.0) for k in range(1, 30)]
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
+    assert len(m["pairs"]) == 29
+    assert {"median_rel_depth_error", "iqr_rel_depth_error", "median_parallax_deg", "median_depth"} <= set(m["pairs"][0])
+
+
+def test_per_pixel_residual_ships_as_counts_and_edges():
+    """The one quantity too large to hold — so any threshold query stays exact."""
+    m = compute_depth_error(_collected([_pair(0, 1, 0.1, 3.0)]), 500.0, "x")
+    h = m["residual_histogram"]
+    assert len(h["bin_edges"]) == len(h["counts"]) + 1 and h["total"] > 0
+    assert h["quantiles"]["0.5"] == pytest.approx(0.1, abs=0.01)  # inverted back to a residual
+
+
+def test_signed_and_folded_quantiles_both_ship():
+    """Every prior |rel| number in this repo is absolute, so the signed axis alone is not
+    comparable — a negative bias reads as a negative quantile until the histogram is folded."""
+    h = compute_depth_error(_collected([_pair(0, 1, -0.1, 3.0)]), 500.0, "x")["residual_histogram"]
+    assert h["quantiles"]["0.5"] == pytest.approx(-0.1, abs=0.01)  # sign kept: scale bias
+    assert h["abs_quantiles"]["0.5"] == pytest.approx(0.1, abs=0.01)  # folded: magnitude
+
+
+def test_rising_residual_with_depth_shows_as_a_positive_correlation():
+    """One number replaces the depth-strata routine — the raw columns are in the JSON."""
+    pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
+    assert m["correlations"]["error_vs_depth"] > 0.9
+    assert "verdict" not in m
+
+
+def test_constant_depth_gives_nan_which_the_json_writer_turns_into_null():
+    """scipy's answer, unwrapped — verification.clean_for_json does the nan -> null pass."""
+    pairs = [_pair(k, k + 1, 0.01, 3.0, depth=4.0) for k in range(10)]
+    assert np.isnan(compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"])
+
+
+def test_error_vs_frame_separation_is_reported():
+    """Does disagreement grow with how far apart the two frames are?"""
+    pairs = [_pair(0, k, 0.005 * k, 3.0) for k in range(1, 20)]
+    assert compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_frame_separation"] > 0.9
+
+
+def test_depth_error_is_unavailable_not_a_crash_when_empty():
+    m = compute_depth_error(_collected([]), 500.0, "x")
+    assert m["available"] is False and "reason" in m

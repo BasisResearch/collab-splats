@@ -10,6 +10,7 @@ are computed over, not a reimplementation of them.
 import logging
 
 import numpy as np
+from scipy import stats
 
 logger = logging.getLogger(__name__)
 
@@ -101,3 +102,115 @@ def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: fl
     if disparity_px < 1.0:
         return None
     return abs(rel_residual) * disparity_px
+
+
+########################################
+# Depth cross-view error
+########################################
+
+
+def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> dict:
+    """How much the views disagree about depth: scale bias, geometric noise, parallax.
+
+    Evaluated at MODEL resolution on purpose. Depth values are identical under nearest
+    upsampling, so evaluating at original resolution returns the same number — but it would
+    sample a guided-FILTERED depth map, reporting less disagreement than the model produced.
+    That improvement belongs to the smoother, not the model.
+
+    Args:
+        collected:  the dict compute_multiview_depth_confidence(collect=...) filled.
+        focal_px:   mean focal in pixels, used only to state the residual in pixel units.
+        resolution: "WxH" of the grid, stamped into the output for the reader.
+    """
+    pairs = collected["pairs"]
+    if not pairs:
+        return {
+            "available": False,
+            "reason": "no overlapping view pairs produced depth residuals",
+            "grid": "model",
+            "resolution": resolution,
+        }
+
+    # One row per pair. Every column is raw, so the reader bins, thresholds and plots.
+    rows = [
+        {
+            "idx1": p.idx1,
+            "idx2": p.idx2,
+            "frame_separation": abs(p.idx1 - p.idx2),  # how far apart the two frames are
+            "n_pixels": p.n_pixels,
+            # Signed, so scale reads straight off it: s = 1 + median_rel_depth_error.
+            "median_rel_depth_error": p.median_rel_depth_error,
+            "iqr_rel_depth_error": p.iqr_rel_depth_error,  # bias removed: geometric noise
+            "median_parallax_deg": p.median_parallax_deg,
+            "median_depth": p.median_depth,
+            # None, not 0.0 — under a pixel of disparity a zero would read as "no error"
+            # when it means "cannot tell".
+            "depth_error_px": depth_error_in_pixels(p.median_rel_depth_error, p.median_parallax_deg, focal_px),
+        }
+        for p in pairs
+    ]
+
+    abs_rel_depth_error = np.array([abs(p.median_rel_depth_error) for p in pairs])
+    depths = np.array([p.median_depth for p in pairs], dtype=np.float64)
+    frame_seps = np.array([abs(p.idx1 - p.idx2) for p in pairs], dtype=np.float64)
+    under_1px = sum(1 for r in rows if r["depth_error_px"] is None)
+
+    # Invert the bounded axis to read quantiles back as real residuals. Monotone, so the qth
+    # quantile of the transformed values is the transform of the qth quantile.
+    counts, edges = collected["rel_depth_error_counts"], collected["rel_depth_error_edges"]
+    grid = (0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 0.999)
+    rv = stats.rv_histogram((counts, edges))
+    quantiles = {}
+    for q in grid:
+        u = float(rv.ppf(q))
+        quantiles[str(q)] = u / (1.0 - abs(u))
+
+    # Same histogram folded to |r|. The edges are symmetric about zero and the bin count is
+    # always even, so bin j and bin k-1-j share |u| and the fold is exact rather than a
+    # re-binning. Signed quantiles answer "is there scale bias"; folded ones are the quantity
+    # every prior |rel| measurement in this repo reports, so they are the comparable column.
+    half = (len(edges) - 1) // 2
+    rv_abs = stats.rv_histogram((counts[half:] + counts[:half][::-1], edges[half:]))
+    abs_quantiles = {}
+    for q in grid:
+        u = float(rv_abs.ppf(q))
+        abs_quantiles[str(q)] = u / (1.0 - abs(u))
+
+    return {
+        "available": True,
+        "grid": "model",
+        "resolution": resolution,
+        "units": "relative (dimensionless); parallax in degrees; pixel equivalent in px",
+        # DIRECTIONS, not pairs. The mv loop is ordered: (i,j) and (j,i) are separate rows with
+        # genuinely different values, because occlusion is asymmetric — a pixel hidden looking
+        # one way is visible looking the other. The name says so, because the photometric block
+        # below and verify's epipolar block both count UNORDERED pairs under the key "n_pairs",
+        # and a reader comparing the three numbers would otherwise see a phantom 2x.
+        "n_pair_directions": len(pairs),
+        # The one pre-binned output, because it is the one per-pixel quantity. Counts plus
+        # edges keeps threshold queries exact: rv_histogram(...).cdf(bounded_residual(x))
+        # answers "what fraction of pixels fall below x" at any x.
+        "residual_histogram": {
+            "counts": counts.tolist(),
+            "bin_edges": edges.tolist(),
+            "total": int(counts.sum()),
+            "quantiles": quantiles,
+            "abs_quantiles": abs_quantiles,
+            "axis": "bins are over r/(1+|r|); invert with u/(1-|u|)",
+        },
+        "pairs_under_one_pixel_disparity": under_1px,
+        # Two questions, one number each, straight from scipy. nan means "cannot be computed"
+        # (a constant column, too few pairs) and becomes null when the report is written.
+        # The columns they read are in "pairs", so a reader can plot the binned shape.
+        # error_vs_depth has a null to read against: triangulation uncertainty goes as
+        # sigma_Z ~ Z^2/(f*B), so a relative residual should already rise roughly linearly in
+        # Z. Positive rho is expected. Near 0 or near 1 are the interesting outcomes.
+        "correlations": {
+            "error_vs_depth": float(stats.spearmanr(depths, abs_rel_depth_error, nan_policy="omit").statistic),
+            "error_vs_frame_separation": float(
+                stats.spearmanr(frame_seps, abs_rel_depth_error, nan_policy="omit").statistic
+            ),
+            "null_hypothesis": "sigma_Z ~ Z^2/(f*B) => relative residual rises ~linearly in Z",
+        },
+        "pairs": rows,
+    }

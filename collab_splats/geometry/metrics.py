@@ -92,10 +92,10 @@ def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: fl
     quantity the return value is built from.
 
     Returns:
-        A non-finite rel_residual (nan or inf) propagates through as nan, not None. None
-        means "this pair has no parallax to see depth with"; nan means "no data" — a
-        different condition. Callers must filter the two separately, e.g. with
-        ``result is not None and not np.isnan(result)``.
+        A non-finite rel_residual propagates rather than becoming None: nan returns nan and
+        inf returns inf. None means "this pair has no parallax to see depth with"; a
+        non-finite value means "no data" — a different condition. Callers must filter the
+        two separately, e.g. with ``result is not None and np.isfinite(result)``.
     """
     disparity_px = np.deg2rad(parallax_deg) * focal_px
     if disparity_px < 1.0:

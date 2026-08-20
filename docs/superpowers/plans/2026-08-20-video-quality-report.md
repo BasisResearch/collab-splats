@@ -2,85 +2,425 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Measure per-frame photometric quality and per-pair camera motion across a source video, and write the raw per-frame and per-pair rows to `video_quality_report.json` — a report, not a verdict.
+**Goal:** Measure per-frame photometric quality and per-pair camera motion across a source video, write the raw rows to `video_quality_report.json` — a report, not a verdict — and split `preproc/` so each module has one responsibility.
 
-**Architecture:** One new module, `collab_splats/preproc/qa.py`, holding seven free functions in three layers: per-frame (`compute_blur`, `compute_exposure`, `compute_frame_quality`), per-pair (`match_orb`, `compute_translation`, `compute_parallax`), and whole-video (`compute_video_quality`). The whole-video function decodes once through the existing ffmpeg pipe and emits a columnar JSON payload. `collab_splats/preproc/sampling.py` is **not modified** — `qa.py` imports `_iter_frames`, `_analysis_gray`, `get_video_info`, and `compute_blur_score` from it and adds nothing to the frame-selection path.
+**Architecture:** `preproc/sampling.py` currently holds four jobs; its own section dividers admit it ("Video metadata / decoding", "Frame quality", "Optical-flow selector", "Sampling", "Frame I/O"). Tasks 1–2 split it into three modules that import strictly downward, then Tasks 3–8 build the new measurements on top:
 
-**Tech Stack:** OpenCV 4.13.0 (ORB, BFMatcher, USAC_MAGSAC), scikit-image 0.26.0 (`blur_effect`, Crete-Roffet), SciPy 1.17.1 (`spearmanr`), NumPy. No new dependencies. Python: `/opt/venv/reconstruction/bin/python`.
+```
+preproc/video.py     decode + probe          imports nothing from preproc
+preproc/qa.py        measure a frame/pair    imports video
+preproc/sampling.py  select frames           imports video + qa
+```
+
+**Tech Stack:** OpenCV 4.13.0 (ORB, BFMatcher, USAC_MAGSAC), scikit-image 0.26.0 (`blur_effect`, Crete-Roffet), NumPy. No new dependencies, and **no SciPy** — see "Correlations dropped" below. Python: `/opt/venv/reconstruction/bin/python`.
 
 ---
 
-## Three corrections to the spec, all measured
+## Decisions that changed after the spec was written
 
-The spec (`docs/superpowers/specs/2026-08-20-video-quality-report-design.md`) was written before exact code existed. Writing it surfaced three defects. **This plan is authoritative where they disagree**; Task 7 amends the spec.
+The spec (`docs/superpowers/specs/2026-08-20-video-quality-report-design.md`) predates exact code. **This plan is authoritative where they disagree**; Task 9 amends the spec.
 
-**1. `compute_blur_score` stays; `check_frame_quality` is not thinned.** The spec had `check_frame_quality` call `compute_frame_quality` so the measurement existed once. Measured at the gate's own resolution (480×270):
+**1. `sampling.py` is split, not merely reused.** The spec had `qa.py` import `_analysis_gray`, `compute_blur_score`, `_iter_frames`, and `get_video_info` from `sampling.py`. That leaves quality measurement living inside a frame-selection module and points the dependency the wrong way — selection uses measurement, not the reverse. Tasks 1–2 move each symbol to the layer that owns it. Blast radius is small: every production caller imports from the `collab_splats.preproc` package, not from `preproc.sampling`, so as long as `__init__.py` re-exports the same names, **no production file changes**. Only `tests/preproc/test_sampling.py` and `tests/pointcloud/test_loger_creator.py` import by module path.
 
-```
-laplacian:    1.27 ms/frame
-blur_effect: 13.76 ms/frame
-```
-
-Routing the gate through `compute_frame_quality` makes every gated frame pay `blur_effect` — 11× the gate's current cost, on `_iter_scored_frames`, which runs on *every* frame of the video. `qa.compute_blur` calls `compute_blur_score` instead, so the Laplacian still has exactly one implementation and the gate is byte-identical. **`sampling.py`, `preproc/__init__.py`, and `tests/preproc/test_sampling.py` are all untouched by this plan.**
-
-**2. `qa.py` is NOT re-exported from `preproc/__init__.py`.** Measured cold import cost:
+**2. Correlations are dropped, and with them `_spearman` and SciPy.** The spec shipped `rho(blur, laplacian)` and `rho(translation_px, blur)`. Both inputs ship raw and in full, so both rho values are one line for a reader to compute — which is exactly the rule that killed `QUANTILE_GRID` ("once every column ships raw, its quantiles are convenience a reader can compute"). Keeping them also meant a `_spearman` wrapper, the kind of `describe()`/`_distribution` helper this design already refused. Dropping them removes `scipy.stats`, which costs **1160 ms** to import against `collab_splats.preproc`'s **1287 ms** — decisive once `sampling.py` imports `qa.py`, because that cost would land on the dashboard fast-bind path. Reference values from the planning run, for the measured report only:
 
 ```
-collab_splats.preproc: 1287 ms
-scipy.stats:           1160 ms
-skimage.measure:         12 ms
+rho(blur, laplacian)      -0.615   n=2388
+rho(translation_px, blur) +0.366   n=2364
 ```
 
-Re-exporting would put `scipy.stats` in the `collab_splats.preproc` import chain and roughly double it — and `collab_splats.remote` / the dashboard fast-bind path depend on `preproc` staying light. `preproc/viz.py` is already excluded from `__init__.py` for the same reason (matplotlib). Callers use `from collab_splats.preproc.qa import compute_video_quality`.
+**3. `compute_blur_score` is kept, not absorbed.** Measured at the gate's own resolution (480×270): `laplacian` 1.27 ms/frame, `blur_effect` 13.76 ms/frame. `check_frame_quality` runs on every frame via `_iter_scored_frames`, so routing it through `compute_frame_quality` would cost 11×. `compute_blur` calls `compute_blur_score`, keeping one implementation of the Laplacian and leaving the gate's cost unchanged.
 
-**3. No `clean_for_json` import from `collab_splats.geometry.verification`.** That module imports `pycolmap` at module scope, which would drag pycolmap into `preproc`. The payload here is flat columnar lists, so a four-line local `_json_safe` replaces the recursive walker — and it preserves `int` columns (`n_matches`), which `clean_for_json` would not have been asked to do.
+**4. No `clean_for_json`, and no helper at all.** `clean_for_json` (`geometry/verification.py:376`) is a recursive nan → None walker; `json.dumps` writes a bare `NaN` that no strict parser accepts, which is why it exists. Two reasons not to reuse it: `verification.py` does `import pycolmap` at module scope (line 20), and it tests `np.isnan`, so an inf would slip through. `np.nan_to_num` is not a substitute either — it fills with `0.0`, and for `translation_px` that reads as "the camera held perfectly still", the opposite of "the pair failed to match". Only two columns can be non-finite, so the conversion is inlined at those two sites and no helper exists.
+
+**5. `n_features` is off `compute_video_quality`.** It was a pass-through that is always default in real use; the only test that varies it varies it on `match_orb`, where it is a genuine knob. Signature is now `compute_video_quality(video_path, *, output_path=None, motion_stride=None)`.
+
+**6. JSON stays; Parquet was measured and rejected.** On the real 2388-frame report: JSON 632,651 B, gzipped JSON 150,930 B, Parquet+zstd 172,387 B across **two** files. Parquet loses to gzipped JSON at this row count, splits `frames` and `pairs` into separate files, has nowhere natural for the `video`/`params` metadata, is not greppable, and adds `pyarrow` as a hard dependency plus a third serialization format beside JSON and zarr. It becomes the right answer only for cross-video queries over a corpus, which is a follow-on.
 
 ## New trap, not in the spec
 
 **A planar scene shot while translating reads `parallax == 0.0` — identical to pure rotation.** Measured:
 
 ```
-3D scene + translation   parallax=0.807  translation=51.8 px
-3D scene + 5° rotation   parallax=0.000  translation=45.1 px
-planar scene + translation parallax=0.000 translation=50.0 px
+3D scene + translation      parallax=0.807  translation=51.8 px
+3D scene + 5° rotation      parallax=0.000  translation=45.1 px
+planar scene + translation  parallax=0.000  translation=50.0 px
 ```
 
-A homography explains a planar scene exactly regardless of camera motion. `translation_px` is what disambiguates: high translation + zero parallax = flat scene or a pan; low translation + zero parallax = the camera did not move. Neither column means anything alone. Task 5's test asserts all three cases so a future simplification pass cannot delete one and keep the illusion that `parallax` is self-sufficient.
+A homography explains a plane exactly regardless of camera motion. `translation_px` disambiguates: high translation with zero parallax means a flat scene or a pan; low translation with zero parallax means the camera did not move. Neither column means anything alone. Task 7 asserts all three cases so a future pass cannot delete one and keep the illusion that `parallax` is self-sufficient.
 
-**MAGSAC is randomized.** Repeated runs on identical input gave `parallax` 0.793 and 0.807. Every parallax assertion in this plan is an inequality with a wide margin, never an equality.
+**MAGSAC is randomized.** Identical input gave `parallax` 0.793 and 0.807 on consecutive runs. Every parallax assertion here is a wide inequality, never an equality.
 
 ---
 
 ## File Structure
 
-- **Create `collab_splats/preproc/qa.py`** — the whole feature. Seven public functions, two private helpers, zero module constants. Tuning values are keyword arguments with defaults.
-- **Create `tests/preproc/test_qa.py`** — all tests. `tests/preproc/` has no `conftest.py`, so this file carries its own fixtures (the `tiny_video` fixture in `test_sampling.py` is module-scoped and not importable across files).
-- **Create `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`** — the measured companion, mirroring `2026-08-20-scene-error-report-measured.md`.
-- **Modify `docs/superpowers/specs/2026-08-20-video-quality-report-design.md`** — amend for the three corrections and the planar trap.
-- **Modify `CLAUDE.md`** — in-flight entry.
+**Create `collab_splats/preproc/video.py`** — decode and probe. Nothing in it measures or selects anything. Receives, unchanged, from `sampling.py`:
 
-**Before Task 1, check `git status` for an untracked `collab_splats/preproc/qa.py`.** Planning ran a scratch copy of the module in place to measure the numbers quoted throughout this plan, then deleted it. If it reappears, delete it so Task 1 starts from nothing — a pre-existing file makes Step 2's "verify it fails" pass silently.
+| Symbol | Current line |
+|---|---|
+| `_require_ffmpeg` | 62 |
+| `_rotation_degrees` | 68 |
+| `get_video_info` | 83 |
+| `_probe_dims` | 120 |
+| `_iter_frames` | 155 |
+| `_iter_selected_frames` | 461 |
+| `_seek_frame` | 752 |
+| `extract_frame` | 799 |
+
+**Create `collab_splats/preproc/qa.py`** — measure one frame, one pair, or one video. Receives, unchanged, from `sampling.py`:
+
+| Symbol | Current line |
+|---|---|
+| `_ANALYSIS_WIDTH` | 30 |
+| `_DEFAULT_BLUR_THRESHOLD` | 34 |
+| `_EXPOSURE_MEAN_RANGE` | 36 |
+| `_EXPOSURE_MIN_STD` | 37 |
+| `compute_blur_score` | 185 |
+| `check_frame_quality` | 190 |
+| `_analysis_gray` | 335 |
+
+Then gains the seven new functions: `compute_blur`, `compute_exposure`, `compute_frame_quality`, `match_orb`, `compute_translation`, `compute_parallax`, `compute_video_quality`. The new functions declare **zero constants** — tuning values are keyword arguments with defaults. The four constants above are pre-existing gate values and keep their names and values exactly.
+
+**Modify `collab_splats/preproc/sampling.py`** — selection only, ~813 → ~430 LOC. Keeps `_VALID_PROBE_MAX`, `_SELECT_THRESHOLD`, `_ROTATION_THRESHOLD_DEG`, `_LK_PARAMS`, `_FEATURE_PARAMS`, `_combine_scores`, `OpticalFlowFrameSelector`, `_progress_reporter`, `_uniform_targets`, `_fps_targets`, `sample_frames`, `_sample_positions`, `_sample_uniform`, `_sample_fps`, `_iter_scored_frames`, `_sample_optical_flow`, `score_frames`.
+
+**Modify `collab_splats/preproc/__init__.py`** — same seven exported names, sourced from their new modules. This is what keeps production untouched.
+
+**Modify `tests/preproc/test_sampling.py`** — move the decode tests to `test_video.py` and the gate tests to `test_qa.py`; fix the remaining import paths.
+**Create `tests/preproc/test_video.py`**, **create `tests/preproc/test_qa.py`**.
+**Modify `tests/pointcloud/test_loger_creator.py:22`** — the one non-preproc test importing by module path.
+**Create `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`**, **modify** the design spec and `CLAUDE.md`.
+
+**Before Task 1, run `git status`.** Planning ran a scratch `collab_splats/preproc/qa.py` in place to measure the numbers quoted throughout this plan, then deleted it. If it reappears, delete it — a pre-existing file makes every "verify it fails" step pass silently.
 
 ---
 
-### Task 1: `compute_blur`
+### Task 1: Extract `preproc/video.py`
+
+A pure move. No line of moved code changes. The proof is that the existing suite passes with only import paths edited.
 
 **Files:**
-- Create: `collab_splats/preproc/qa.py`
-- Test: `tests/preproc/test_qa.py`
+- Create: `collab_splats/preproc/video.py`
+- Modify: `collab_splats/preproc/sampling.py`, `collab_splats/preproc/__init__.py`
+- Create: `tests/preproc/test_video.py`
+- Modify: `tests/preproc/test_sampling.py`, `tests/pointcloud/test_loger_creator.py`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Record the baseline**
 
-Create `tests/preproc/test_qa.py`:
+```bash
+/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q 2>&1 | tail -3
+```
+
+Write down the pass count. Every later step in this task must reproduce it exactly.
+
+- [ ] **Step 2: Create `collab_splats/preproc/video.py`**
+
+Move lines 57–177 (the `Video metadata / decoding` divider, `_require_ffmpeg`, `_rotation_degrees`, `get_video_info`, `_probe_dims`, `_iter_frames`), 461–505 (`_iter_selected_frames`), and 747–813 (the `Frame I/O` divider, `_seek_frame`, `extract_frame`) out of `sampling.py` and into a new file with this header. **Cut, do not copy** — the originals must be gone from `sampling.py`.
 
 ```python
-import json
+"""Video decode and probe: the only module that shells out to ffmpeg/ffprobe.
 
+Holds no measurement and no selection logic, so both preproc.qa and
+preproc.sampling can depend on it without a cycle.
+"""
+
+import json
+import logging
+import shutil
+import subprocess
+from collections.abc import Iterator
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+logger = logging.getLogger(__name__)
+```
+
+Keep the two `########` section dividers that already wrap this code ("Video metadata / decoding (ffmpeg + ffprobe only)" and "Frame I/O").
+
+- [ ] **Step 3: Point `sampling.py` at the new module**
+
+Add to `sampling.py`'s import block:
+
+```python
+from collab_splats.preproc.video import (
+    _iter_frames,
+    _iter_selected_frames,
+    _probe_dims,
+    _require_ffmpeg,
+    _seek_frame,
+    get_video_info,
+)
+```
+
+Then delete any now-unused imports from `sampling.py` (`json`, `shutil`, `subprocess`, and `Iterator` if nothing left uses them — let `isort`/manual inspection decide, and confirm with the run in Step 6).
+
+- [ ] **Step 4: Keep `preproc/__init__.py` exporting the same names**
+
+```python
+"""Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
+
+Plots live in collab_splats.preproc.viz and are deliberately not re-exported
+(keeps matplotlib out of pipeline imports).
+"""
+
+from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc.sampling import (
+    check_frame_quality,
+    compute_blur_score,
+    sample_frames,
+    score_frames,
+)
+from collab_splats.preproc.video import extract_frame, get_video_info
+
+__all__ = [
+    "FrameStore",
+    "sample_frames",
+    "score_frames",
+    "get_video_info",
+    "extract_frame",
+    "compute_blur_score",
+    "check_frame_quality",
+]
+```
+
+`check_frame_quality` and `compute_blur_score` still come from `sampling.py` at this point; Task 2 moves them.
+
+- [ ] **Step 5: Move the decode tests and fix the two direct importers**
+
+`tests/preproc/test_sampling.py` places its imports **mid-file, under each section divider** (lines 7, 79, 135, 182) rather than all at the top. Each section is therefore a clean cut-block including its own import line — keep that layout in the new files rather than normalizing it.
+
+Create `tests/preproc/test_video.py` by moving lines 37–73 from `tests/preproc/test_sampling.py` — `test_get_video_info_keys` (37), `test_get_video_info_values` (42), `test_get_video_info_missing_file` (50), `test_probe_dims_matches_full_info` (55), `test_require_ffmpeg_raises_without_binary` (61), `test_iter_frames_yields_all_frames_bgr` (68) — and **copying** the `tiny_video` fixture (17–34). Copy, not move: `test_sampling.py`'s own tests take `tiny_video` as an argument, and `tests/preproc/` has no `conftest.py` to share it from. Header:
+
+```python
 import cv2
 import numpy as np
 import pytest
 
-from collab_splats.preproc.qa import compute_blur
+from collab_splats.preproc.video import (
+    _iter_frames,
+    _probe_dims,
+    _require_ffmpeg,
+    get_video_info,
+)
+```
+
+The monkeypatch target inside `test_require_ffmpeg_raises_without_binary` must change:
+
+```python
+    monkeypatch.setattr("collab_splats.preproc.video.shutil.which", lambda _: None)
+```
+
+`tests/preproc/test_sampling.py`'s top import (lines 7–14) drops `_iter_frames`, `_probe_dims`, and `_require_ffmpeg`, leaving:
+
+```python
+from collab_splats.preproc.sampling import _fps_targets, _uniform_targets
+from collab_splats.preproc.video import get_video_info
+```
+
+In `tests/pointcloud/test_loger_creator.py:22`, change:
+
+```python
+from collab_splats.preproc.video import _seek_frame, get_video_info
+```
+
+- [ ] **Step 6: Run the tests**
+
+```bash
+/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q 2>&1 | tail -3
+```
+
+Expected: the same pass count as Step 1, redistributed across `test_video.py` and `test_sampling.py`.
+
+- [ ] **Step 7: Prove frame selection is byte-identical**
+
+```bash
+/opt/venv/reconstruction/bin/python -c "
+from collab_splats.preproc import sample_frames
+import hashlib, numpy as np
+frames, idx = sample_frames('data/tutorial/tutorial_example-video.mp4', max_frames=20, method='uniform')
+print('indices:', list(idx))
+print('digest:', hashlib.sha256(np.asarray(frames).tobytes()).hexdigest()[:16])"
+```
+
+Run this on `main` (via `git stash`) and again with the change applied. Both digests and both index lists must match. Save the output — Task 10 records it.
+
+- [ ] **Step 8: Commit**
+
+```bash
+/opt/venv/reconstruction/bin/python -m black collab_splats/preproc/ tests/preproc/
+/opt/venv/reconstruction/bin/python -m isort collab_splats/preproc/ tests/preproc/
+git add collab_splats/preproc/ tests/preproc/ tests/pointcloud/test_loger_creator.py
+git commit -m "refactor(preproc): extract video.py — decode and probe leave the sampler"
+```
+
+Do **not** run `black .`; the venv's black is newer than the repo's formatting and would reformat unrelated files.
+
+---
+
+### Task 2: Extract `preproc/qa.py`
+
+Also a pure move. After this task `sampling.py` contains selection and nothing else.
+
+**Files:**
+- Create: `collab_splats/preproc/qa.py`
+- Modify: `collab_splats/preproc/sampling.py`, `collab_splats/preproc/__init__.py`
+- Create: `tests/preproc/test_qa.py`
+- Modify: `tests/preproc/test_sampling.py`
+
+- [ ] **Step 1: Create `collab_splats/preproc/qa.py`**
+
+Cut from `sampling.py`: `_ANALYSIS_WIDTH` (line 30, with its comment), `_DEFAULT_BLUR_THRESHOLD` (34), `_EXPOSURE_MEAN_RANGE` (36), `_EXPOSURE_MIN_STD` (37), `compute_blur_score` (185), `check_frame_quality` (190), and `_analysis_gray` (335). Bodies unchanged. Header:
+
+```python
+"""Video capture quality: how good is the source footage, per frame and per pair.
+
+Measurement only — nothing here selects, rejects, or ranks frames on its own.
+check_frame_quality is the one exception, and it is a gate the sampler calls,
+not a decision this module makes.
+"""
+
+import logging
+
+import cv2
+import numpy as np
+from skimage.measure import blur_effect
+
+logger = logging.getLogger(__name__)
+
+
+########################################################################
+# Constants — pre-existing gate values, unchanged
+########################################################################
+
+# Analysis frames are downscaled to this width before scoring — bounds LK flow
+# and Laplacian cost regardless of source resolution.
+_ANALYSIS_WIDTH = 480
+
+# Quality gate: Laplacian variance below this = blurred. Sharp indoor video
+# sits well above 100; heavy motion blur drops below 50.
+_DEFAULT_BLUR_THRESHOLD = 50.0
+# Exposure bounds: mean outside this range = blown out; std below = no contrast.
+_EXPOSURE_MEAN_RANGE = (20.0, 235.0)
+_EXPOSURE_MIN_STD = 10.0
+```
+
+`blur_effect` is imported now but unused until Task 3; add it in Task 3 instead if a linter objects.
+
+- [ ] **Step 2: Point `sampling.py` at `qa.py`**
+
+Add to `sampling.py`'s imports:
+
+```python
+from collab_splats.preproc.qa import _analysis_gray, _DEFAULT_BLUR_THRESHOLD, check_frame_quality, compute_blur_score
+```
+
+`_DEFAULT_BLUR_THRESHOLD` is imported because two public signatures default to it — `sample_frames` (line 387) and `score_frames` (line 712). It stays private and stays in `qa.py`: it is a property of the quality gate, not of the sampler. Confirm both call sites still resolve:
+
+```bash
+grep -n '_DEFAULT_BLUR_THRESHOLD\|_ANALYSIS_WIDTH\|_EXPOSURE_' collab_splats/preproc/sampling.py
+```
+
+Expected: only the two signature defaults and the import line — every `_EXPOSURE_*` and `_ANALYSIS_WIDTH` reference must have left with `check_frame_quality` and `_analysis_gray`.
+
+- [ ] **Step 3: Update `preproc/__init__.py`**
+
+```python
+"""Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
+
+Plots live in collab_splats.preproc.viz and are deliberately not re-exported
+(keeps matplotlib out of pipeline imports).
+"""
+
+from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc.qa import check_frame_quality, compute_blur_score
+from collab_splats.preproc.sampling import sample_frames, score_frames
+from collab_splats.preproc.video import extract_frame, get_video_info
+
+__all__ = [
+    "FrameStore",
+    "sample_frames",
+    "score_frames",
+    "get_video_info",
+    "extract_frame",
+    "compute_blur_score",
+    "check_frame_quality",
+]
+```
+
+- [ ] **Step 4: Move the gate tests**
+
+Create `tests/preproc/test_qa.py` by moving the whole `Quality gate` block from `tests/preproc/test_sampling.py` — lines 75–128, i.e. the divider, the import at 79, the `_sharp_gray()` helper (82), `test_compute_blur_score_sharp_exceeds_blurred` (88), `test_check_frame_quality_accepts_sharp_frame` (94), `test_check_frame_quality_rejects_blurred_frame` (100), `test_check_frame_quality_rejects_bad_exposure` (111), `test_check_frame_quality_metrics_fields` (120), `test_check_frame_quality_uses_precomputed_blur_score` (125). Header:
+
+```python
+import cv2
+import numpy as np
+import pytest
+
+from collab_splats.preproc.qa import check_frame_quality, compute_blur_score
+```
+
+`tests/preproc/test_sampling.py` drops its `check_frame_quality, compute_blur_score` import (line 79) and the whole moved block.
+
+- [ ] **Step 5: Run the tests**
+
+```bash
+/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q 2>&1 | tail -3
+```
+
+Expected: the same pass count as Task 1 Step 1.
+
+- [ ] **Step 6: Prove the layering holds and nothing got heavier**
+
+```bash
+/opt/venv/reconstruction/bin/python -c "
+import time, importlib, sys
+t = time.perf_counter(); importlib.import_module('collab_splats.preproc')
+print(f'preproc import: {(time.perf_counter()-t)*1000:.0f} ms')
+print('scipy.stats loaded:', 'scipy.stats' in sys.modules)
+import collab_splats.preproc.video as v
+print('video imports qa:', 'collab_splats.preproc.qa' in [m for m in sys.modules if m in getattr(v, '__dict__', {})] or hasattr(v, 'qa'))"
+grep -n 'from collab_splats' collab_splats/preproc/video.py
+```
+
+Expected: around 1300 ms, `scipy.stats loaded: False`, and the `grep` printing **nothing** — `video.py` must import no sibling. Any sibling import there is a cycle waiting to happen.
+
+- [ ] **Step 7: Re-run the selection parity check from Task 1 Step 7**
+
+Expected: identical indices and digest again.
+
+- [ ] **Step 8: Commit**
+
+```bash
+/opt/venv/reconstruction/bin/python -m black collab_splats/preproc/ tests/preproc/
+/opt/venv/reconstruction/bin/python -m isort collab_splats/preproc/ tests/preproc/
+git add collab_splats/preproc/ tests/preproc/
+git commit -m "refactor(preproc): extract qa.py — sampling.py is now selection only"
+```
+
+---
+
+### Task 3: `compute_blur`
+
+**Files:**
+- Modify: `collab_splats/preproc/qa.py`
+- Modify: `tests/preproc/test_qa.py`
+
+- [ ] **Step 1: Write the failing test**
+
+Change the import at the top of `tests/preproc/test_qa.py` to:
+
+```python
+from collab_splats.preproc.qa import check_frame_quality, compute_blur, compute_blur_score
+```
+
+Append to `tests/preproc/test_qa.py`:
+
+```python
+########################################################################
+# Per frame
+########################################################################
 
 
 @pytest.fixture(scope="module")
@@ -88,11 +428,6 @@ def noise_gray():
     """240x320 uniform noise — maximum high-frequency content, the sharp end of the ladder."""
     rng = np.random.default_rng(0)
     return (rng.random((240, 320)) * 255).astype(np.uint8)
-
-
-########################################################################
-# Per frame
-########################################################################
 
 
 def test_compute_blur_keys(noise_gray):
@@ -111,13 +446,18 @@ def test_compute_blur_moves_in_opposite_directions(noise_gray):
 
 def test_compute_blur_measured_values(noise_gray):
     # Pinned to measured values so a library swap that silently rescales either
-    # metric fails loudly rather than shifting every report on disk.
+    # metric fails loudly rather than shifting every report already on disk.
     sharp = compute_blur(noise_gray)
     blurred = compute_blur(cv2.GaussianBlur(noise_gray, (0, 0), 3))
     assert sharp["blur"] == pytest.approx(0.1202, abs=0.01)
     assert sharp["laplacian"] == pytest.approx(108108.3, rel=0.05)
     assert blurred["blur"] == pytest.approx(0.4798, abs=0.01)
     assert blurred["laplacian"] == pytest.approx(3.6, rel=0.2)
+
+
+def test_compute_blur_reuses_the_gate_metric(noise_gray):
+    # One implementation of the Laplacian in the repo, not two
+    assert compute_blur(noise_gray)["laplacian"] == compute_blur_score(noise_gray)
 
 
 def test_compute_blur_is_bounded(noise_gray):
@@ -127,25 +467,13 @@ def test_compute_blur_is_bounded(noise_gray):
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: collection error, `ModuleNotFoundError: No module named 'collab_splats.preproc.qa'`
+Expected: collection error, `ImportError: cannot import name 'compute_blur'`
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Create `collab_splats/preproc/qa.py`:
+Append to `collab_splats/preproc/qa.py`, under a new `# Per frame` divider:
 
 ```python
-"""Per-frame and per-pair video capture quality measurements — report only."""
-
-import logging
-
-import numpy as np
-from skimage.measure import blur_effect
-
-from collab_splats.preproc.sampling import compute_blur_score
-
-logger = logging.getLogger(__name__)
-
-
 ########################################################################
 # Per frame
 ########################################################################
@@ -158,13 +486,19 @@ def compute_blur(gray: np.ndarray) -> dict:
     means sharper. They run in opposite directions on purpose — where the two
     disagree, the frame is textureless rather than blurred.
     """
-    return {"blur": float(blur_effect(gray)), "laplacian": compute_blur_score(gray)}
+    # Crete-Roffet re-blurs the image and measures how little changes. A frame
+    # that is already blurred barely moves, so its score rises toward 1.
+    perceptual = float(blur_effect(gray))
+
+    # Laplacian variance reuses the frame-selection gate's own metric verbatim,
+    # so sharpness has exactly one implementation in the repo.
+    return {"blur": perceptual, "laplacian": compute_blur_score(gray)}
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: 4 passed
+Expected: 5 new tests pass alongside the gate tests moved in Task 2
 
 - [ ] **Step 5: Commit**
 
@@ -175,21 +509,15 @@ git commit -m "feat(preproc): add compute_blur — perceptual blur alongside Lap
 
 ---
 
-### Task 2: `compute_exposure`
+### Task 4: `compute_exposure`
 
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
-- Test: `tests/preproc/test_qa.py`
+- Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Change the import line at the top of `tests/preproc/test_qa.py` to:
-
-```python
-from collab_splats.preproc.qa import compute_blur, compute_exposure
-```
-
-Append to `tests/preproc/test_qa.py`:
+Add `compute_exposure` to the `from collab_splats.preproc.qa import ...` line. Append to `tests/preproc/test_qa.py`:
 
 ```python
 def test_compute_exposure_keys():
@@ -235,7 +563,7 @@ def test_compute_exposure_clipping_rises_only_at_saturation():
 
 
 def test_compute_exposure_median_separates_from_mean():
-    # A dark scene with a bright window: the mean is dragged up, the median is not.
+    # A dark scene with a bright window: the mean is dragged up, the median is not
     gray = np.full((100, 100), 30, np.uint8)
     gray[:10, :] = 250
     result = compute_exposure(gray)
@@ -250,15 +578,20 @@ Expected: collection error, `ImportError: cannot import name 'compute_exposure'`
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Append to the "Per frame" section of `collab_splats/preproc/qa.py`:
+Append to the `# Per frame` section of `collab_splats/preproc/qa.py`:
 
 ```python
 def compute_exposure(gray: np.ndarray) -> dict:
     """Brightness distribution plus the fraction of pixels pinned at either end."""
     return {
+        # Mean and median together: they separate when a small bright region
+        # (a window, a lamp) drags the mean while most of the scene stays dark.
         "exposure_mean": float(gray.mean()),
         "exposure_median": float(np.median(gray)),
+        # Contrast. A low std is a flat, textureless frame regardless of brightness.
         "exposure_std": float(gray.std()),
+        # Clipped pixels are destroyed data, not merely dark or bright data:
+        # 0 and 255 are the two values where the sensor recorded nothing recoverable.
         "clipped_low_frac": float((gray == 0).mean()),
         "clipped_high_frac": float((gray == 255).mean()),
     }
@@ -267,7 +600,7 @@ def compute_exposure(gray: np.ndarray) -> dict:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: 9 passed
+Expected: 5 more tests pass
 
 - [ ] **Step 5: Commit**
 
@@ -278,29 +611,17 @@ git commit -m "feat(preproc): add compute_exposure — brightness distribution a
 
 ---
 
-### Task 3: `compute_frame_quality`
+### Task 5: `compute_frame_quality`
 
-The merge of Tasks 1 and 2, and the one place a resolution decision is made: **exposure reads native-resolution grayscale, blur reads the 480 px analysis grayscale.** This is not a stylistic split. Downscaling averages scattered saturated pixels out of existence, so clipping fractions measured on a resized frame are wrong — measured, 300 scattered white pixels in a 480×640 frame give `clipped_high_frac` 0.000977 natively and **exactly 0.0** after `_analysis_gray`. Blur goes the other way: `blur_effect` costs 62 ms at 1024 px and 13.8 ms at 480 px while the score barely moves (0.1659 → 0.1671 across that range).
+The one place a resolution decision is made, and it goes two different ways on purpose. Downscaling averages scattered saturated pixels out of existence — measured, 300 scattered white pixels in a 480×640 frame give `clipped_high_frac` 0.000977 natively and **exactly 0.0** after `_analysis_gray`. Blur goes the other way: `blur_effect` costs 62 ms at 1024 px against 13.8 ms at 480 px while the score barely moves (0.1659 → 0.1671).
 
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
-- Test: `tests/preproc/test_qa.py`
+- Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Change the import line at the top of `tests/preproc/test_qa.py` to:
-
-```python
-from collab_splats.preproc.qa import compute_blur, compute_exposure, compute_frame_quality
-```
-
-and add below it:
-
-```python
-from collab_splats.preproc.sampling import _analysis_gray
-```
-
-Append to `tests/preproc/test_qa.py`:
+Add `compute_frame_quality` and `_analysis_gray` to the `from collab_splats.preproc.qa import ...` line. Append to `tests/preproc/test_qa.py`:
 
 ```python
 @pytest.fixture(scope="module")
@@ -318,9 +639,8 @@ def clipped_bgr():
 
 
 def test_compute_frame_quality_merges_both_measurements(clipped_bgr):
-    assert set(compute_frame_quality(clipped_bgr)) == set(compute_blur(np.zeros((8, 8), np.uint8))) | set(
-        compute_exposure(np.zeros((8, 8), np.uint8))
-    )
+    blank = np.zeros((8, 8), np.uint8)
+    assert set(compute_frame_quality(clipped_bgr)) == set(compute_blur(blank)) | set(compute_exposure(blank))
 
 
 def test_compute_frame_quality_reads_exposure_at_native_resolution(clipped_bgr):
@@ -333,8 +653,9 @@ def test_compute_frame_quality_reads_exposure_at_native_resolution(clipped_bgr):
 
 
 def test_compute_frame_quality_reads_blur_at_analysis_resolution(clipped_bgr):
-    # Blur must go through _analysis_gray; assert by equality with the explicit path.
-    assert compute_frame_quality(clipped_bgr)["blur"] == pytest.approx(compute_blur(_analysis_gray(clipped_bgr))["blur"])
+    # Blur must go through _analysis_gray; assert by equality with the explicit path
+    expected = compute_blur(_analysis_gray(clipped_bgr))["blur"]
+    assert compute_frame_quality(clipped_bgr)["blur"] == pytest.approx(expected)
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -344,34 +665,29 @@ Expected: collection error, `ImportError: cannot import name 'compute_frame_qual
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Add `cv2` to the imports at the top of `collab_splats/preproc/qa.py` and extend the `sampling` import so the block reads:
-
-```python
-import cv2
-import numpy as np
-from skimage.measure import blur_effect
-
-from collab_splats.preproc.sampling import _analysis_gray, compute_blur_score
-```
-
-Append to the "Per frame" section:
+Append to the `# Per frame` section of `collab_splats/preproc/qa.py`:
 
 ```python
 def compute_frame_quality(bgr: np.ndarray) -> dict:
-    """Photometric measurements for one BGR frame.
+    """Photometric measurements for one BGR frame: blur and exposure together."""
+    # Exposure reads the NATIVE-resolution gray. Downscaling averages scattered
+    # saturated pixels out of existence, so clipping fractions taken from a
+    # resized frame read 0.0 no matter how blown out the capture actually was.
+    native_gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    exposure = compute_exposure(native_gray)
 
-    Exposure reads native-resolution grayscale because downscaling averages
-    saturated pixels away entirely; blur reads the downscaled analysis
-    grayscale because blur_effect costs ~14 ms there and its score is
-    near-invariant to the downscale.
-    """
-    return {**compute_blur(_analysis_gray(bgr)), **compute_exposure(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))}
+    # Blur reads the 480 px analysis gray. blur_effect costs 62 ms at 1024 px
+    # against 13.8 ms at 480 px, and the score barely moves across that range
+    # (0.1659 -> 0.1671), so the downscale is close to free.
+    blur = compute_blur(_analysis_gray(bgr))
+
+    return {**blur, **exposure}
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: 12 passed
+Expected: 3 more tests pass
 
 - [ ] **Step 5: Commit**
 
@@ -382,27 +698,15 @@ git commit -m "feat(preproc): add compute_frame_quality — native exposure, ana
 
 ---
 
-### Task 4: `match_orb` and `compute_translation`
+### Task 6: `match_orb` and `compute_translation`
 
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
-- Test: `tests/preproc/test_qa.py`
+- Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Change the import line at the top of `tests/preproc/test_qa.py` to:
-
-```python
-from collab_splats.preproc.qa import (
-    compute_blur,
-    compute_exposure,
-    compute_frame_quality,
-    compute_translation,
-    match_orb,
-)
-```
-
-Append to `tests/preproc/test_qa.py`:
+Add `match_orb` and `compute_translation` to the `from collab_splats.preproc.qa import ...` line. Append to `tests/preproc/test_qa.py`:
 
 ```python
 ########################################################################
@@ -425,7 +729,7 @@ def test_match_orb_respects_n_features(noise_gray):
 
 
 def test_match_orb_on_featureless_frames_returns_empty():
-    # A flat image has no corners: ORB returns no descriptors at all
+    # A flat image has no corners, so ORB returns no descriptors at all
     flat = np.zeros((50, 50), np.uint8)
     pts_a, pts_b = match_orb(flat, flat)
     assert len(pts_a) == 0 and len(pts_b) == 0
@@ -446,7 +750,7 @@ def test_compute_translation_is_nan_without_matches():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: collection error, `ImportError: cannot import name 'compute_translation'`
+Expected: collection error, `ImportError: cannot import name 'match_orb'`
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -460,16 +764,25 @@ Append to `collab_splats/preproc/qa.py`:
 
 def match_orb(gray_a: np.ndarray, gray_b: np.ndarray, *, n_features: int = 1000) -> tuple[np.ndarray, np.ndarray]:
     """ORB keypoints matched mutually between two grayscale frames as Nx2 float32 arrays."""
+    # Detect and describe each frame independently — no shared state, so the
+    # measurement never depends on which frames were selected before this pair.
     orb = cv2.ORB_create(nfeatures=n_features)
     kp_a, desc_a = orb.detectAndCompute(gray_a, None)
     kp_b, desc_b = orb.detectAndCompute(gray_b, None)
+
+    # A featureless frame yields no descriptors at all. Return empty rather than
+    # raise: zero matches is a fact about the video, not an error.
     empty = (np.empty((0, 2), np.float32), np.empty((0, 2), np.float32))
     if desc_a is None or desc_b is None:
         return empty
-    # crossCheck keeps only mutual best matches, which removes the need for a ratio test
+
+    # ORB descriptors are binary, hence Hamming distance. crossCheck keeps only
+    # mutual best matches, which removes the need for a Lowe ratio test.
     matches = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(desc_a, desc_b)
     if not matches:
         return empty
+
+    # Pull the pixel coordinates behind each match into two aligned Nx2 arrays
     pts_a = np.array([kp_a[m.queryIdx].pt for m in matches], np.float32).reshape(-1, 2)
     pts_b = np.array([kp_b[m.trainIdx].pt for m in matches], np.float32).reshape(-1, 2)
     return pts_a, pts_b
@@ -477,15 +790,20 @@ def match_orb(gray_a: np.ndarray, gray_b: np.ndarray, *, n_features: int = 1000)
 
 def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     """Median match displacement in pixels — how far image content moved between the pair."""
+    # nan, not 0.0: with no matches the displacement is unknown, and 0.0 would
+    # read as "the camera held perfectly still", the opposite conclusion.
     if len(pts_a) == 0:
         return float("nan")
+
+    # Median over per-match displacement, so a handful of bad matches cannot
+    # drag the number the way a mean would.
     return float(np.median(np.linalg.norm(pts_b - pts_a, axis=1)))
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: 17 passed
+Expected: 5 more tests pass
 
 - [ ] **Step 5: Commit**
 
@@ -496,19 +814,17 @@ git commit -m "feat(preproc): add match_orb and compute_translation for per-pair
 
 ---
 
-### Task 5: `compute_parallax`
+### Task 7: `compute_parallax`
 
-The three-case test below is the whole point of this task. Delete any one case and the remaining two make `parallax` look like a self-sufficient "is there depth here" number, which it is not.
+The three-case test below is the whole task. Delete any one case and the remaining two make `parallax` look like a self-sufficient "is there depth here" number, which it is not.
 
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
-- Test: `tests/preproc/test_qa.py`
+- Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Add `compute_parallax` to the `from collab_splats.preproc.qa import (...)` list at the top of `tests/preproc/test_qa.py`.
-
-Append to `tests/preproc/test_qa.py`:
+Add `compute_parallax` to the `from collab_splats.preproc.qa import ...` line. Append to `tests/preproc/test_qa.py`:
 
 ```python
 def _project(points_3d):
@@ -542,8 +858,8 @@ def test_compute_parallax_zero_for_rotation_only(synthetic_scenes):
     rot = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
     pts_a, pts_b = _project(volume), _project(volume @ rot.T)
     assert compute_parallax(pts_a, pts_b) < 0.1
-    # ...and the camera really did move the image content, so translation alone
-    # cannot tell this case apart from the planar one below.
+    # ...and the image content really did move, so translation alone cannot tell
+    # this case apart from the planar one below.
     assert compute_translation(pts_a, pts_b) > 10.0
 
 
@@ -559,7 +875,7 @@ def test_compute_parallax_zero_for_translating_over_a_plane(synthetic_scenes):
 
 def test_compute_parallax_is_nan_below_eight_matches():
     # Eight is the fundamental matrix minimum; fewer is not a small sample, it is undefined
-    pts = np.random.default_rng(0).random((7, 2)).astype(np.float32) * 100
+    pts = (np.random.default_rng(0).random((7, 2)) * 100).astype(np.float32)
     assert np.isnan(compute_parallax(pts, pts + 1.0))
 
 
@@ -576,7 +892,7 @@ Expected: collection error, `ImportError: cannot import name 'compute_parallax'`
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Append to the "Per pair" section of `collab_splats/preproc/qa.py`:
+Append to the `# Per pair` section of `collab_splats/preproc/qa.py`:
 
 ```python
 def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
@@ -589,19 +905,28 @@ def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     """
     if len(pts_a) < 8:
         return float("nan")
+
+    # Fit both models to the same correspondences. H can only explain a plane or
+    # a pure rotation; F can additionally explain translation through depth, so
+    # the gap between their inlier counts IS the depth information in the pair.
     _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, 3.0)
     _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, 3.0)
     n_h = int(h_inliers.sum()) if h_inliers is not None else 0
     n_f = int(f_inliers.sum()) if f_inliers is not None else 0
+
+    # No F inliers means the pair is unexplained by any two-view geometry
     if n_f == 0:
         return float("nan")
+
+    # min() guards the case where H outfits F on a degenerate pair, which would
+    # otherwise push the complement negative.
     return float(1.0 - min(1.0, n_h / n_f))
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: 22 passed
+Expected: 5 more tests pass
 
 Then run the parallax tests three more times — MAGSAC is randomized and the margins must hold across draws (`pytest-repeat` is not installed, so loop in the shell):
 
@@ -620,21 +945,19 @@ git commit -m "feat(preproc): add compute_parallax — H/F inlier ratio as a dep
 
 ---
 
-### Task 6: `compute_video_quality`
+### Task 8: `compute_video_quality`
 
-Decodes the video once, measures every frame, and matches each frame against its partner `motion_stride` frames back. `motion_stride` defaults to `round(fps)` — one second, the pair spacing a reconstruction actually sees under the shipping `fps: 1.0` sampling rate.
+Decodes once and matches each frame against its partner `motion_stride` frames back. `motion_stride` defaults to `round(fps)` — one second, the pair spacing a reconstruction actually sees under the shipping `fps: 1.0` sampling rate.
 
-The payload is **columnar** (a dict of lists), not a list of row dicts. Measured on the 2388-frame tutorial video: 632,651 bytes, 264 bytes/frame, so a 13k-frame video lands near 3.4 MB where row-of-dicts would be roughly 3× that.
+The payload is **columnar** (a dict of lists), not a list of row dicts. Measured on the 2388-frame tutorial video: 632,651 bytes, 264 bytes/frame.
 
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
-- Test: `tests/preproc/test_qa.py`
+- Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Add `compute_video_quality` to the `from collab_splats.preproc.qa import (...)` list at the top of `tests/preproc/test_qa.py`.
-
-Append to `tests/preproc/test_qa.py`:
+Add `compute_video_quality` to the `from collab_splats.preproc.qa import ...` line and add `import json` at the top of the file. Append to `tests/preproc/test_qa.py`:
 
 ```python
 ########################################################################
@@ -661,7 +984,7 @@ def tiny_video(tmp_path_factory):
 
 def test_compute_video_quality_top_level_keys(tiny_video):
     report = compute_video_quality(tiny_video)
-    assert set(report) == {"available", "video", "params", "frames", "pairs", "correlations"}
+    assert set(report) == {"available", "video", "params", "frames", "pairs"}
     assert report["available"] is True
 
 
@@ -685,6 +1008,7 @@ def test_compute_video_quality_frame_columns_are_equal_length(tiny_video):
         "clipped_high_frac",
     }
     assert {len(v) for v in frames.values()} == {60}
+    # frame_idx is the source video index, not a row position
     assert frames["frame_idx"] == list(range(60))
 
 
@@ -693,7 +1017,7 @@ def test_compute_video_quality_pairs_use_the_default_stride(tiny_video):
     pairs = report["pairs"]
     assert set(pairs) == {"frame_idx_a", "frame_idx_b", "translation_px", "parallax", "n_matches"}
     # 30 fps rounds to a stride of 30, leaving 60 - 30 = 30 pairs
-    assert report["params"]["motion_stride"] == 30
+    assert report["params"] == {"motion_stride": 30}
     assert {len(v) for v in pairs.values()} == {30}
     assert pairs["frame_idx_a"][:3] == [0, 1, 2]
     assert pairs["frame_idx_b"][:3] == [30, 31, 32]
@@ -712,23 +1036,10 @@ def test_compute_video_quality_keeps_n_matches_integral(tiny_video):
     assert min(n_matches) > 0
 
 
-def test_compute_video_quality_correlations_shape(tiny_video):
-    correlations = compute_video_quality(tiny_video)["correlations"]
-    assert set(correlations) == {"blur_vs_laplacian", "translation_vs_blur"}
-    for entry in correlations.values():
-        assert set(entry) == {"rho", "n"}
-        assert entry["rho"] is None or -1.0 <= entry["rho"] <= 1.0
-    # Every frame contributes to the photometric correlation
-    assert correlations["blur_vs_laplacian"]["n"] == 60
-
-
-def test_compute_video_quality_writes_json_with_no_nan(tiny_video, tmp_path):
-    # Bare nan is not valid JSON; every non-finite value must serialise as null
+def test_compute_video_quality_writes_json(tiny_video, tmp_path):
     out = tmp_path / "nested" / "video_quality_report.json"
     report = compute_video_quality(tiny_video, motion_stride=5, output_path=out)
-    text = out.read_text()
-    assert "NaN" not in text and "Infinity" not in text
-    assert json.loads(text) == report
+    assert json.loads(out.read_text()) == report
 
 
 def test_compute_video_quality_serialises_unmatched_pairs_as_null(tmp_path):
@@ -746,9 +1057,8 @@ def test_compute_video_quality_serialises_unmatched_pairs_as_null(tmp_path):
     assert report["pairs"]["n_matches"] == [0] * 15
     assert report["pairs"]["translation_px"] == [None] * 15
     assert report["pairs"]["parallax"] == [None] * 15
-    # A frame of pure black is fully clipped low, and rho is undefined on constant columns
+    # A frame of pure black is fully clipped low
     assert report["frames"]["clipped_low_frac"][0] == 1.0
-    assert report["correlations"]["translation_vs_blur"] == {"rho": None, "n": 0}
     assert "NaN" not in out.read_text()
     assert json.loads(out.read_text()) == report
 
@@ -768,28 +1078,18 @@ Expected: collection error, `ImportError: cannot import name 'compute_video_qual
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Extend the imports at the top of `collab_splats/preproc/qa.py` so the block reads:
+Extend `qa.py`'s imports — this is where `qa.py` first depends on `video.py`:
 
 ```python
-"""Per-frame and per-pair video capture quality measurements — report only."""
-
 import json
 import logging
 from pathlib import Path
 
 import cv2
 import numpy as np
-from scipy import stats
 from skimage.measure import blur_effect
 
-from collab_splats.preproc.sampling import (
-    _analysis_gray,
-    _iter_frames,
-    compute_blur_score,
-    get_video_info,
-)
-
-logger = logging.getLogger(__name__)
+from collab_splats.preproc.video import _iter_frames, get_video_info
 ```
 
 Append to `collab_splats/preproc/qa.py`:
@@ -800,32 +1100,24 @@ Append to `collab_splats/preproc/qa.py`:
 ########################################################################
 
 
-def _json_safe(values: list) -> list:
-    """Replace nan with None so a numeric column round-trips through JSON."""
-    return [None if isinstance(v, float) and not np.isfinite(v) else v for v in values]
-
-
-def _spearman(x: list, y: list) -> dict:
-    """Spearman rho over the entries where both columns are finite."""
-    xa, ya = np.asarray(x, float), np.asarray(y, float)
-    keep = np.isfinite(xa) & np.isfinite(ya)
-    if keep.sum() < 2:
-        return {"rho": None, "n": int(keep.sum())}
-    rho = stats.spearmanr(xa[keep], ya[keep]).statistic
-    return {"rho": None if not np.isfinite(rho) else float(rho), "n": int(keep.sum())}
-
-
 def compute_video_quality(
     video_path: str | Path,
     *,
     output_path: str | Path | None = None,
     motion_stride: int | None = None,
-    n_features: int = 1000,
 ) -> dict:
-    """Measure per-frame photometry and per-pair motion across a whole video."""
+    """Measure per-frame photometry and per-pair motion across a whole video.
+
+    Args:
+        video_path: source video to decode; every frame is measured.
+        output_path: where to write video_quality_report.json. None returns the
+            report without touching disk.
+        motion_stride: frames between the two members of each measured pair.
+            None means round(fps) — one second of video, the pair spacing a
+            reconstruction sees under the shipping fps: 1.0 sampling rate.
+    """
     video_path = Path(video_path)
     info = get_video_info(str(video_path))
-    # Default the pair spacing to one second, matching the shipping fps: 1.0 sampling rate
     stride = int(motion_stride) if motion_stride else max(1, round(info["fps"] or 1))
 
     frames = {
@@ -841,52 +1133,52 @@ def compute_video_quality(
             "clipped_high_frac",
         )
     }
-    pairs = {k: [] for k in ("frame_idx_a", "frame_idx_b", "translation_px", "parallax", "n_matches")}
-    # Hold only the grays still owed a partner: stride + 1 frames at a time
+    frame_idx_a, frame_idx_b, translation_px, parallax, n_matches = [], [], [], [], []
+
+    # Hold only the grays still owed a partner: stride + 1 frames at a time,
+    # so memory does not track video length.
     pending: dict[int, np.ndarray] = {}
 
     for idx, bgr in enumerate(_iter_frames(str(video_path))):
+        # Photometry for every frame, no stride
         frames["frame_idx"].append(idx)
         for key, value in compute_frame_quality(bgr).items():
             frames[key].append(value)
+
+        # Motion against the frame one stride back, once one exists
         pending[idx] = _analysis_gray(bgr)
         partner = idx - stride
         if partner in pending:
-            pts_a, pts_b = match_orb(pending[partner], pending[idx], n_features=n_features)
-            pairs["frame_idx_a"].append(partner)
-            pairs["frame_idx_b"].append(idx)
-            pairs["n_matches"].append(int(len(pts_a)))
-            pairs["translation_px"].append(compute_translation(pts_a, pts_b))
-            pairs["parallax"].append(compute_parallax(pts_a, pts_b))
+            pts_a, pts_b = match_orb(pending[partner], pending[idx])
+            frame_idx_a.append(partner)
+            frame_idx_b.append(idx)
+            n_matches.append(int(len(pts_a)))
+            translation_px.append(compute_translation(pts_a, pts_b))
+            parallax.append(compute_parallax(pts_a, pts_b))
             del pending[partner]
 
     if not frames["frame_idx"]:
-        return _write_report({"available": False, "reason": f"no frames decoded from {video_path}"}, output_path)
+        report = {"available": False, "reason": f"no frames decoded from {video_path}"}
+    else:
+        report = {
+            "available": True,
+            "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
+            "params": {"motion_stride": stride},
+            "frames": frames,
+            "pairs": {
+                "frame_idx_a": frame_idx_a,
+                "frame_idx_b": frame_idx_b,
+                "n_matches": n_matches,
+                # nan -> null on the only two columns that can be non-finite.
+                # json.dumps writes a bare NaN that no strict parser accepts, and
+                # np.nan_to_num is not the fix: its 0.0 fill would read as "no
+                # motion", the opposite of "this pair failed to match".
+                "translation_px": [None if np.isnan(v) else v for v in translation_px],
+                "parallax": [None if np.isnan(v) else v for v in parallax],
+            },
+        }
+        logger.info("video quality: %d frames, %d pairs, stride %d", len(frames["frame_idx"]), len(frame_idx_a), stride)
 
-    # Join each pair back to the blur of its first frame for the motion/blur correlation
-    blur_by_idx = dict(zip(frames["frame_idx"], frames["blur"]))
-    report = {
-        "available": True,
-        "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
-        "params": {"motion_stride": stride, "n_features": int(n_features)},
-        "frames": {k: _json_safe(v) for k, v in frames.items()},
-        "pairs": {k: _json_safe(v) for k, v in pairs.items()},
-        "correlations": {
-            "blur_vs_laplacian": _spearman(frames["blur"], frames["laplacian"]),
-            "translation_vs_blur": _spearman(pairs["translation_px"], [blur_by_idx[i] for i in pairs["frame_idx_a"]]),
-        },
-    }
-    logger.info(
-        "video quality: %d frames, %d pairs, stride %d",
-        len(frames["frame_idx"]),
-        len(pairs["frame_idx_a"]),
-        stride,
-    )
-    return _write_report(report, output_path)
-
-
-def _write_report(report: dict, output_path: str | Path | None) -> dict:
-    """Write the report to disk when a path was given, and return it either way."""
     if output_path is not None:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -897,80 +1189,74 @@ def _write_report(report: dict, output_path: str | Path | None) -> dict:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: 32 passed. `scipy` emits `ConstantInputWarning` on the synthetic clip — the static noise texture makes `translation_px` constant, so `translation_vs_blur` correctly yields `rho: None`. The warning is expected and `pyproject.toml` sets no `filterwarnings = error`.
+Expected: 9 more tests pass
 
-- [ ] **Step 5: Run the whole preproc suite to confirm nothing else moved**
+- [ ] **Step 5: Run the whole preproc suite**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q`
-Expected: all pass, with the pre-existing `test_sampling.py` count unchanged
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q`
+Expected: the Task 1 Step 1 baseline plus the new `test_qa.py` tests
 
-- [ ] **Step 6: Format**
+- [ ] **Step 6: Confirm the layering still holds**
+
+```bash
+/opt/venv/reconstruction/bin/python -c "
+import sys, collab_splats.preproc
+print('scipy.stats loaded:', 'scipy.stats' in sys.modules)"
+grep -n 'from collab_splats' collab_splats/preproc/video.py
+```
+
+Expected: `False`, and `grep` printing nothing.
+
+- [ ] **Step 7: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black collab_splats/preproc/qa.py tests/preproc/test_qa.py
 /opt/venv/reconstruction/bin/python -m isort collab_splats/preproc/qa.py tests/preproc/test_qa.py
-```
-
-Do **not** run `black .` — the venv's black is newer than the repo's formatting and would reformat unrelated files.
-
-- [ ] **Step 7: Commit**
-
-```bash
 git add collab_splats/preproc/qa.py tests/preproc/test_qa.py
 git commit -m "feat(preproc): add compute_video_quality — columnar per-frame and per-pair report"
 ```
 
 ---
 
-### Task 7: Confirm the frame-selection path is untouched, and amend the spec
-
-No production behaviour may change. This task proves it and records why the spec's original plan was dropped.
+### Task 9: Amend the spec
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-08-20-video-quality-report-design.md`
 
-- [ ] **Step 1: Prove `sampling.py` and the exports did not move**
+- [ ] **Step 1: Rewrite the reuse section for the three-module split**
 
-```bash
-git diff --stat main -- collab_splats/preproc/sampling.py collab_splats/preproc/__init__.py
+Replace the "What is reused vs new" table's premise. It currently describes `qa.py` importing four names from `sampling.py`. The truth is now a split: `video.py` (decode), `qa.py` (measure), `sampling.py` (select), importing strictly downward. State the two facts that make it safe: production imports the `collab_splats.preproc` package rather than the module, and `video.py` imports no sibling.
+
+- [ ] **Step 2: Delete the "Correlations — the only derived numbers that ship" section**
+
+Replace it with a short paragraph under "Why raw, not binned": correlations are derivable from the shipped columns, which is the same rule that removed `QUANTILE_GRID`, so they do not ship. Note that this is what keeps SciPy out of `preproc` — 1160 ms against the package's 1287 ms, on the dashboard fast-bind path. Record the measured values for reference:
+
+```markdown
+Measured on the tutorial video, for reference only — these do not ship:
+rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=2364).
 ```
 
-Expected: **empty output**. If either file appears, revert it — `qa.py` reads from `sampling.py` and writes nothing back.
+- [ ] **Step 3: Correct the reuse rows**
 
-- [ ] **Step 2: Prove `collab_splats.preproc` did not get heavier to import**
+1. `compute_blur_score`: **kept**, not deleted — `compute_blur` calls it, and the gate must not pay `blur_effect` (1.27 ms vs 13.76 ms per frame at 480×270, on a path that runs on every frame).
+2. `check_frame_quality`: unchanged in behaviour and signature; it moves file, nothing more.
+3. `clean_for_json`: not used. `verification.py` imports `pycolmap` at module scope, and it guards on `np.isnan` so an inf would pass. Two inline comprehensions replace it. `np.nan_to_num` is not an alternative — a `0.0` fill on `translation_px` asserts the camera held still.
+4. `n_features` is not a `compute_video_quality` parameter; it lives on `match_orb`.
 
-```bash
-/opt/venv/reconstruction/bin/python -c "
-import time, importlib
-t = time.perf_counter(); importlib.import_module('collab_splats.preproc')
-print(f'preproc import: {(time.perf_counter()-t)*1000:.0f} ms')
-import sys; print('scipy.stats loaded:', 'scipy.stats' in sys.modules)"
+- [ ] **Step 4: Record the format decision**
+
+Add under "Report shape":
+
+```markdown
+JSON, not Parquet. Measured on the 2388-frame tutorial report: JSON 632,651 B,
+gzipped JSON 150,930 B, Parquet+zstd 172,387 B across two files. Parquet loses
+to gzipped JSON at this row count, splits frames and pairs into separate files,
+has nowhere natural for the video/params metadata, is not greppable, and adds
+pyarrow plus a third serialization format beside JSON and zarr. It becomes the
+right answer only for cross-video queries over a corpus.
 ```
 
-Expected: around 1300 ms and `scipy.stats loaded: False`. A `True` here means someone re-exported `qa` from `preproc/__init__.py`; remove it.
-
-- [ ] **Step 3: Prove frame selection is byte-identical**
-
-```bash
-/opt/venv/reconstruction/bin/python -c "
-from collab_splats.preproc.sampling import sample_frames
-import hashlib, numpy as np
-frames, idx = sample_frames('data/tutorial/tutorial_example-video.mp4', max_frames=20, method='uniform')
-print('indices:', list(idx))
-print('digest:', hashlib.sha256(np.asarray(frames).tobytes()).hexdigest()[:16])"
-```
-
-Run this once on `main` (`git stash`) and once with the branch applied. Expected: identical indices and identical digest. Record both in the measured report in Task 8.
-
-- [ ] **Step 4: Amend the spec**
-
-Edit `docs/superpowers/specs/2026-08-20-video-quality-report-design.md`:
-
-1. In the reuse table, change the `compute_blur_score` row from "deleted, absorbed into `compute_blur`" to "**kept** — `compute_blur` calls it; the gate must not pay `blur_effect` (1.27 ms vs 13.76 ms per frame at 480×270, on a path that runs on every frame)".
-2. In the same section, replace any statement that `check_frame_quality` is thinned with: "`sampling.py` is not modified at all."
-3. Add a line stating `qa.py` is **not** re-exported from `preproc/__init__.py`, with the measured reason: `scipy.stats` costs 1160 ms to import and `collab_splats.preproc` currently costs 1287 ms; `preproc/viz.py` is excluded for the same reason.
-4. Replace the `clean_for_json` reuse row with a local `_json_safe`, noting that `geometry/verification.py` imports `pycolmap` at module scope.
-5. Add to the Traps section:
+- [ ] **Step 5: Add the two new traps**
 
 ```markdown
 **A planar scene under real translation reads `parallax == 0.0`, exactly like a
@@ -985,16 +1271,16 @@ translation → 0.807; 3D scene + 5° rotation → 0.000; planar scene + transla
 consecutive runs. Never assert an exact parallax value.
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -f docs/superpowers/specs/2026-08-20-video-quality-report-design.md
-git commit -m "docs(specs): kept compute_blur_score and the light preproc import; planar parallax trap"
+git commit -m "docs(specs): three-module preproc split; correlations and clean_for_json dropped"
 ```
 
 ---
 
-### Task 8: Measured run on real footage, measured report, CLAUDE.md entry
+### Task 10: Measured run, measured report, CLAUDE.md entry
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`
@@ -1020,17 +1306,16 @@ print('exposure   p05/p50/p95', np.percentile(r['frames']['exposure_mean'], [5, 
 print('clip hi/lo max', max(r['frames']['clipped_high_frac']), max(r['frames']['clipped_low_frac']))
 print('translation p05/p50/p95', np.percentile(tr, [5, 50, 95]).round(1))
 print('parallax    p05/p50/p95', np.percentile(px, [5, 50, 95]).round(3))
-print('n_matches   p05/p50', np.percentile(r['pairs']['n_matches'], [5, 50]).round(0))
-print('correlations', r['correlations'])"
+print('n_matches   p05/p50', np.percentile(r['pairs']['n_matches'], [5, 50]).round(0))"
 ls -l /tmp/tutorial_vqr.json
 ```
 
-Run it in tmux, not inline — it took **304.2 s** during planning. These are the reference values that run produced; the implementation is wrong if the shape does not match (exact floats will differ slightly, since MAGSAC is randomized):
+Run it in tmux, not inline — it took **304.2 s** during planning. Those reference values, which the implementation should reproduce in shape (exact floats drift, MAGSAC is randomized):
 
 ```
 ELAPSED 304.2s  frames 2388  127 ms/frame  pairs 2364
 video   1080x1920, fps 23.976, duration_s 99.60, total_frames 2388
-params  motion_stride 24, n_features 1000
+params  motion_stride 24
 blur          p05/p50/p95   0.1998   0.2155   0.2626
 laplacian     p05/p50/p95   1927.4   4680.6   6097.8
 exposure_mean p05/p50/p95     73.6     82.2     94.2
@@ -1038,38 +1323,39 @@ clipped_high_frac max 0.0563   clipped_low_frac max 0.0043
 translation   p05/p50/p95     48.6    118.3    196.1
 parallax      p05/p50/p95    0.221    0.676    0.842
 n_matches     p05/p50           272      310
-correlations  blur_vs_laplacian   rho -0.615  n 2388
-              translation_vs_blur rho +0.366  n 2364
 json 632,651 bytes = 264 bytes/frame
 ```
 
-Two things to note when writing the report in Step 2, both descriptive and neither a verdict: `blur` and `laplacian` anti-correlate at only −0.615 across 2388 frames, so they are not redundant measurements of one quantity; and `translation_vs_blur` at +0.366 is the expected physical coupling — frames captured while the camera moves faster are blurrier.
-
 - [ ] **Step 2: Write the measured report**
 
-Create `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`, mirroring the structure of `docs/superpowers/specs/2026-08-20-scene-error-report-measured.md`. It must contain, as literal numbers from Step 1:
+Create `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`, mirroring the structure of `docs/superpowers/specs/2026-08-20-scene-error-report-measured.md`. It must contain, as literal numbers:
 
 - The command, the video, its frame count, fps, and resolution.
-- Wall-clock total and ms/frame, plus the JSON size in bytes and bytes/frame.
-- The p05/p50/p95 table for every one of the eight frame columns and every one of the three pair value columns.
-- Both correlation entries with their `rho` and `n`.
-- The frame-selection parity digests from Task 7 Step 3, both sides, stated as identical.
-- One paragraph of **description without verdict**: what the distributions look like, no threshold, no advice, no pass/fail. If a column is degenerate on this clip (for example every `clipped_low_frac` is 0.0), say so as an observation about this video, not as a property of the metric.
+- Wall-clock total and ms/frame, plus JSON size in bytes and bytes/frame.
+- The p05/p50/p95 table for all eight frame columns and all three pair value columns.
+- The frame-selection parity digests from Task 1 Step 7 and Task 2 Step 7, both sides, stated as identical — this is the evidence that a 380-line refactor of `sampling.py` changed no output.
+- The `preproc` import timing before and after the split, and `scipy.stats loaded: False`.
+- One paragraph of **description without verdict**: what the distributions look like, no threshold, no advice, no pass/fail. If a column is degenerate on this clip, say so as an observation about this video, not as a property of the metric.
 
 - [ ] **Step 3: Add the CLAUDE.md in-flight entry**
 
 Add to the `## In-Flight Work` list in `CLAUDE.md`:
 
 ```markdown
-- **video-quality-report** — per-frame photometric + per-pair motion survey of source video ([spec](docs/superpowers/specs/2026-08-20-video-quality-report-design.md) · [plan](docs/superpowers/plans/2026-08-20-video-quality-report.md) · [measured](docs/superpowers/specs/2026-08-20-video-quality-report-measured.md))
+- **video-quality-report** — per-frame photometric + per-pair motion survey of source video, plus the preproc split into video/qa/sampling ([spec](docs/superpowers/specs/2026-08-20-video-quality-report-design.md) · [plan](docs/superpowers/plans/2026-08-20-video-quality-report.md) · [measured](docs/superpowers/specs/2026-08-20-video-quality-report-measured.md))
 ```
 
 - [ ] **Step 4: Run the full test suite**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/ -q`
-Expected: no new failures against the baseline in `docs/known-test-failures.md`
+Expected: no new failures against the baseline in `docs/known-test-failures.md`. The split touched `preproc`, which most of the pipeline imports, so this run is the real gate — do not skip it.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Run the dashboard smoke gate**
+
+Run: `/opt/venv/reconstruction/bin/python -m collab_splats.dashboard --smoke`
+Expected: `SMOKE PASS`. The dashboard's fast-bind path depends on `collab_splats.preproc` staying light, which this plan changed the import graph of.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -f docs/superpowers/specs/2026-08-20-video-quality-report-measured.md
@@ -1081,8 +1367,9 @@ git commit -m "docs(specs): measured video quality report on the tutorial video"
 
 ## Deferred, deliberately
 
-- **Visualization.** The user asked for a plotting rework as a separate spec. Nothing in this plan draws anything; the raw columns exist so that spec has something to plot.
+- **Visualization.** A plotting rework is its own spec. Nothing here draws anything; the raw columns exist so that spec has something to plot.
 - **Pipeline wiring.** No stage, no config key, no `Reconstructor` change. `compute_video_quality` is called directly.
-- **A second video.** One measured video establishes the shape; the distributions across a corpus are a follow-on.
+- **A second video.** One measured video establishes the shape; distributions across a corpus are a follow-on — and that corpus is where Parquet becomes the right format.
 - **Loop pairs.** Only sequential `(i, i - stride)` pairs are measured.
-- **Switching the gate's metric to `blur`.** The spec lists this as a follow-on, and it needs a threshold calibrated from measured footage. It is also the one change here that *would* invalidate every `frames.zarr` on disk — which is exactly why it is not in this plan.
+- **`OpticalFlowFrameSelector` is still a class** in a codebase that prefers functions. It is selection logic and stays in `sampling.py`; converting it is unrelated to this work.
+- **Switching the gate's metric to `blur`.** Needs a threshold calibrated from measured footage, and it is the one change here that *would* invalidate every `frames.zarr` on disk.

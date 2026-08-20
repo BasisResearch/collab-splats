@@ -1896,13 +1896,18 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     # older zarr stores, which are never backfilled.
     # scipy directly, unguarded, exactly like the two correlations in metrics.py: no wrapper
     # and no small-sample floor, because withholding a rho is a verdict and this report makes
-    # none. The sample here is one row per frame in `per_frame`, which is exactly the key set
-    # of `frame_percentile_ranks` below — so the count that qualifies this number is
-    # `len(report["frame_percentile_ranks"])`, recoverable from the same report the way
-    # `n_pair_directions` and `n_pairs` qualify the other two.
-    conf_rho = None
+    # none. Publishing an unguarded rho is only defensible because the count that qualifies it
+    # ships beside it, the way `n_pair_directions` and `n_pairs` qualify the other two — so
+    # `n_frames` is nested WITH the rho and cannot be read apart from it.
+    # It is NOT recoverable from `frame_percentile_ranks`: `ranks` is {} when len(ks) <= 1
+    # while this rho's sample is len(per_frame), so the two diverge at exactly the small
+    # sample size where the reader needs the count most.
+    # Both stay None when there is no confidence array: the rho was never computed, so there
+    # is no sample to report — distinct from a computed rho over a tiny sample.
+    conf_rho, conf_n = None, None
     if r.confidence is not None:
         conf = np.asarray(r.confidence)
+        conf_n = len(per_frame)
         conf_rho = float(
             stats.spearmanr(
                 np.array([float(np.median(conf[k])) for k in per_frame], dtype=np.float64),
@@ -1939,7 +1944,7 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
             if m.get("available")
         ),
         "measurements": {"epipolar": epipolar_m, "depth": depth_m, "photometric": photometric_m},
-        "confidence_vs_error_spearman": conf_rho,
+        "confidence_vs_error": {"spearman": conf_rho, "n_frames": conf_n},
         # Read running_error against error_vs_frame_separation before calling it drift: frame index
         # is a confounded axis, since scene content, motion speed and exposure all track it.
         "running_error": running,
@@ -2441,7 +2446,8 @@ Ordered correctly: <yes/no>. <If no: what that means for the design.>
 ### Correlations
 - error_vs_depth: <rho>  (null: sigma_Z ~ Z^2/(f*B) => expect positive, ~linear)
 - error_vs_frame_separation: <rho>
-- confidence_vs_error: <rho or null — absent on stores with no confidence array>
+- confidence_vs_error: <`spearman` rho over `n_frames` frames; both null on stores with no
+  confidence array. Read the rho against its own n — nothing here filters a small sample.>
 - ncc_vs_frame_separation: <rho>
 
 ### Disparity floor (derived, = 1 px)
@@ -2542,7 +2548,7 @@ drift apart."
 | Epipolar + reprojection | 1, 6 |
 | Depth cross-view + scale | 3, 4 |
 | Photometric | 5, 6 |
-| Confidence validation | 6 (`confidence_vs_error_spearman`) |
+| Confidence validation | 6 (`confidence_vs_error.spearman` + its `n_frames`) |
 | Resolution contract (per-measurement, grid stamped) | 4, 5, 6 |
 | Units (scale-free / normalised) | 4, 5, 6 |
 | Signed residual: scale vs noise | 3, 4 |

@@ -656,6 +656,61 @@ def test_the_upsample_guide_is_normalised_whatever_the_backbones_image_scale(mon
     assert not np.array_equal(lifted[0], flat_guide)
 
 
+def _scene_with_a_dark_frame(dark_factor=0.0035, near=2.0, far=8.0):
+    """Three views cut from one noise field, the middle one scaled to near-black.
+
+    Frame 1's every pixel sits under 1.0 while the array as a whole peaks near 255 — a dark
+    room, a tunnel, a lens-capped or blown frame in an otherwise [0, 255] scene. That is the
+    only configuration in which a PER-FRAME scale decision disagrees with a per-ARRAY one.
+
+    The model depth carries an EDGE (near/far half and half): the guided filter only consults
+    its guide where depth varies, so the constant plane the other upsample fixtures use would
+    return the same lift under any guide at all and could not see this. The cameras translate
+    along x, so each frame's own lifted depth steers its warp and reaches the reported ncc.
+    """
+    rng = np.random.default_rng(3)
+    big = rng.uniform(0, 255, size=(64, 64 + 8, 3)).astype(np.float32)
+    images = np.stack([big[:, 0:64], big[:, 4:68] * dark_factor, big[:, 8:72]])
+    model_d = np.stack([np.concatenate(
+        [np.full((16, 8), near, np.float32), np.full((16, 8), far, np.float32)], axis=1)] * 3)
+    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 3)
+    ext = []
+    for k in range(3):
+        e = np.eye(4, dtype=np.float32)
+        e[0, 3] = -k * 4 * 4.0 / 40.0
+        ext.append(e)
+    coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (3, 1))
+    return images, model_d, model_K, np.stack(ext), coords
+
+
+def test_ncc_is_invariant_to_image_scale_convention_even_with_a_DARK_frame():
+    """The report must not depend on which RGB convention the backbone happens to use.
+
+    The scale split is [0, 255] (VGGT-X) vs [0, 1] (MapAnything) — a property of the BACKBONE,
+    so one array must yield one interpretation. Deciding it per frame off `images[k].max()`
+    breaks that: measured on this fixture, frame 1 (raw max 0.892) is read as [0, 1], amplified
+    255x to a guide max of 228 in the [0, 255] run and clipped to a guide max of 0 in the
+    [0, 1] run — black turned near-white in one run and left black in the other, with
+    guided_upsample_depth steered by it. The two runs' ncc then diverge by 2.2e-2 on pair
+    (1, 2), against 1.4e-9 when the scale is decided once for the whole array.
+
+    Asserted on the shipped `ncc` rather than on the guide, because the contract is about the
+    report, not about how the lift is spelled.
+    """
+    img, d, K, e, coords = _scene_with_a_dark_frame()
+    # The fixture only has teeth if the dark frame really does trip a per-frame max() test
+    # while the array does not. Without this the property below is vacuously true.
+    assert img[1].max() < 1.0 < img.max()
+    a = compute_photometric_ncc(img, d, K, e, original_coords=coords, max_separation=1)
+    b = compute_photometric_ncc(img / 255.0, d, K, e, original_coords=coords, max_separation=1)
+    assert [r["idx1"] for r in a["pairs"]] == [r["idx1"] for r in b["pairs"]] == [0, 1]
+    for ra, rb in zip(a["pairs"], b["pairs"]):
+        assert ra["photometric_ncc"] == pytest.approx(rb["photometric_ncc"], abs=1e-6)
+    # Anchor: the depth edge really does reach the ncc, so the equality above is not two runs
+    # of a warp that ignores the lifted depth. A perfect 1.0 would read the same either way.
+    assert all(0.01 < r["photometric_ncc"] < 0.5 for r in a["pairs"])
+
+
 def test_upsampling_without_crop_rows_is_a_refusal_not_a_guess():
     """Depth and K move together or neither does; guessing the crop is how they desync."""
     img, d, K, e = _plane(hw=64)

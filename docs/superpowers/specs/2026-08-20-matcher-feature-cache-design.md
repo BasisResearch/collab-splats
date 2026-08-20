@@ -32,9 +32,12 @@ tables `_write_frames` exports to the COLMAP DB. So:
 - **General-path models (descriptor-NN): extraction inside verify = 0.** Matching is
   mutual-NN over precomputed descriptors — seconds, and match rows ARE table indices
   (no `_recover_indices` round-trip).
-- **Loma (learned matcher, shipping default):** in-memory cache — 300 extractions
-  × ~424 ms ≈ 127 s, learned matcher 1,865 × 38 ms ≈ 71 s, H2D ≈ 25 s →
-  **matching term ~1853 s → ~250 s**.
+- **Loma (learned matcher, shipping default): extraction inside verify = 0 too.** The
+  zarr cache grows the pre-transform payload (`keypoints_normalized`), so loma matches
+  from stored features exactly like the NN path — learned matcher 1,865 × 38 ms ≈ 71 s +
+  H2D ≈ 25 s → **matching term ~1853 s → ~100 s** on payload-bearing caches. Old caches
+  without the payload fall back to pairwise matching with an in-memory per-image encode
+  cache (~250 s) until rebuilt.
 
 The residual is NOT treated as immovable (earlier drafts did; wrong). pycolmap's own pairing
 log completed 300/300 within ~2 min, so the C++ phases are unlikely to dominate it — the prime
@@ -61,7 +64,8 @@ matching fix alone; ~8–12 min expected once the residual's biggest term is add
 ## Design
 
 Everything lives in `collab_splats/localization/extractors.py`, plus one dispatch tweak and
-timing instrumentation in `geometry/verification.py`. Both consumer seams **already exist**:
+timing instrumentation in `geometry/verification.py` and one persisted array in
+`localization/localizer.py`'s existing save/load pair. Both consumer seams **already exist**:
 `LocalMatcher.match(query, db, hw)` is the reserved NotImplementedError seam
 (`extractors.py:154`), and `verify_reconstruction`'s else-branch already calls
 `matcher.match(features[i], features[j], hw)` on precomputed features (`verification.py:232`)
@@ -87,50 +91,71 @@ consumer.
   sound; a vismatch bump gets caught by the test. Learned-matcher models stay off the list —
   never silently degraded.
 
-### 2. Per-image encode cache — learned-matcher adapters only
+### 2. Loma split — feature-level matching for the learned matcher (byte-identical)
 
-For models whose match stage is learned, the win is caching the per-image encode inside
-`match_images`:
-
-- A plain dict keyed by **array identity**: `id(image)` lookup, then an `is` check against
-  the stored array reference (exact, no hashing; id reuse after GC is a miss, never a wrong
-  hit). Both consumers hold their images in stable in-memory lists for the duration of the
-  loop (`verification.py:227`; localizer query/refs).
-- Clear-at-cap (512 entries) instead of LRU bookkeeping — sparse payloads are ~2–4 MB/image,
-  a single scene holds ~300, worst case ~1–2 GB against the 46.6 GB container cap.
-
-**Specialization — loma adapter (byte-identical, learned matcher kept).**
 Loma is the shipping default (`localization.matcher: loma`) and its learned match stage
-cannot take the general path by design, so it gets the one model-specific adapter:
-- Encode: `matcher.preprocess(img)` + `matcher.matcher.detect_and_describe(img,
-  max_num_keypoints)`, run inside `ImportSandbox.get(type(self._matcher).__module__)` —
-  vismatch's sandbox only wraps `__init__`/`_forward` (`base_matcher.py:27`), so reach-in calls
-  must enter it themselves. Payload is **pre-pixel-coords**: normalized kpts, desc, original
-  shape, resized H×W.
-- Match: replay the wrapper's own match stage (`vismatch/im_models/loma.py:78-102`) on two
-  cached payloads — learned matcher, `filter_matches`, `to_pixel_coords`, `rescale_coords`,
-  the −0.5 COLMAP-convention offset. Byte-identical to `_forward` by construction, enforced by
-  the GPU parity test. Native indices (`torch.where(valid)[0]`, `m0[0][valid]`) —
+cannot take the NN path by design. Instead its pair forward is split into per-image and
+per-pair halves, so features extract once and match many times — the same
+extract-once/match-from-store shape as a COLMAP database. Activated statically for the
+`LoMaMatcher` wrapper class (`self._split_loma_forward`, one boolean — no registry).
+
+- **`LocalFeatures` gains ONE optional field: `keypoints_normalized`** (default None) — the
+  pre-transform coordinates the learned matcher consumes (positional encoding runs on
+  these; the pixel-frame `keypoints` cannot serve it, and inverting the affine chain is
+  float-inexact). Descriptors are shared with the existing field. No shape metadata needed:
+  matched pixel coords come from indexing the already-chained `keypoints` table — indexing
+  before vs after an elementwise affine chain is byte-identical.
+- **`_loma_detect_and_describe(image) -> LocalFeatures`** — per-image half:
+  `matcher.preprocess` + `matcher.matcher.detect_and_describe(img, max_num_keypoints)`,
+  then the wrapper's own coordinate chain (`to_pixel_coords`, `rescale_coords`, −0.5) over
+  the full table. Run inside `ImportSandbox.get(type(self._matcher).__module__)` +
+  `torch.inference_mode()` — vismatch's sandbox only wraps `__init__`/`_forward`
+  (`base_matcher.py:27`), so reach-in calls must enter it themselves.
+- **`_loma_match_features(f0, f1) -> MatchResult`** — per-pair half: replay the wrapper's
+  match stage (`vismatch/im_models/loma.py:78-102`) — learned matcher on
+  `keypoints_normalized` + descriptors, `filter_matches`, native indices
+  (`torch.where(valid)[0]`, `m0[0][valid]`), pixel coords by indexing `keypoints`.
+  Byte-identical to `_forward` by construction, enforced by the GPU parity tests.
   `_recover_indices` skipped. Covers all five LoMa archs (one wrapper class).
-- Activated statically for the `LoMaMatcher` wrapper class — no runtime probe.
-- Why not the zarr features: they store pixel-frame keypoints; the learned matcher consumes
-  pre-transform normalized coordinates. Inverting the affine chain is float-inexact and would
-  break byte-parity — the in-memory cache stores the pre-transform payload instead.
-- Further learned-matcher models (LightGlue family, sphereglue) get the same treatment later
-  only if measurement shows demand; until then they simply run the pairwise path.
+- **Routing** (all inside `LocalMatcher`): `extract()` routes to
+  `_loma_detect_and_describe` (also faster — skips the self-pair match stage);
+  `match()` serves loma when both feature sets carry `keypoints_normalized`;
+  `match_images()` composes the two halves through the cache. A `can_match_features(f)`
+  method is the single dispatch predicate: allowlisted NN model, or loma with
+  payload-bearing features.
+- **Persistence — the zarr feature cache grows one array.** `save_index` writes
+  `keypoints_normalized` (CSR-aligned float32, same layout as `keypoints`) when present;
+  `load_reconstruction_features` restores it. float32 → zarr → float32 is lossless, so the
+  parity gate covers the roundtrip. `build_localization_db` already runs
+  `detect_and_describe` on every image — this persists what is currently computed and
+  thrown away. **Old caches without the array are not backfilled**: `can_match_features`
+  returns False and loma falls back to pairwise `match_images` with the in-memory cache —
+  still ~7× better than today, and a cache rebuild upgrades them.
+- **In-memory cache** (`match_images` path only — localization query images, old caches):
+  a plain dict keyed by array identity — `id(image)` lookup + `is` check against the stored
+  reference (exact, no hashing; id reuse after GC is a miss, never a wrong hit). Cleared
+  wholesale at 512 entries instead of LRU bookkeeping (~2–4 MB/image payloads, ~300/scene,
+  worst case ~1–2 GB against the 46.6 GB cap).
+- Further learned-matcher models (LightGlue family, sphereglue) get the same treatment
+  later only if measurement shows demand; until then they simply run the pairwise path.
+  Each vismatch wrapper's `_forward` is different code, so splits are inherently
+  per-wrapper — the genuinely general fix is vismatch exposing encode/match halves
+  upstream (see Exit strategy).
 
 **Fallback.** Existing `match_images` pair forward, untouched, byte-identical — every model
-without an adapter or allowlist entry, and all detector-free models. The pre-existing
+without a split or allowlist entry, and all detector-free models. The pre-existing
 `_probe_index_stability` (construction-time, unchanged by this work) keeps deciding whether
 fallback models can serve verification at all.
 
 ### 3. Equivalence enforcement — test-time, not runtime
 
-Fast paths are enabled statically (allowlist + adapter registry) and proven by two
-GPU parity tests in the suite, on real models:
+Fast paths are enabled statically (allowlist + the loma boolean) and proven by GPU parity
+tests in the suite, on real models:
 
-- loma: adapter `match_images` output byte-identical to the plain pair forward
-  (coordinates and indices).
+- loma extract: split `extract()` byte-identical to the self-pair extract it replaces.
+- loma match: `match(extract(a), extract(b))` and the `match_images` composed path both
+  byte-identical to the plain pair forward (coordinates and indices), including after a
+  zarr save/load roundtrip.
 - xfeat: `match(extract(a), extract(b))` equal to `match_images(a, b)` exactly.
 
 The env pins vismatch, so an every-construction probe buys nothing over the suite; extending
@@ -155,15 +180,20 @@ The ~658 s residual has never been measured directly (handoff §7.3). As part of
 Flat test functions in `tests/localization/test_extractors.py`:
 
 1. **Parity fixtures** (load-bearing, GPU/slow-marked): real loma on the synthetic pair —
-   adapter-path `MatchResult` byte-identical to plain-path (`lm._pair_adapter = None`).
-   Real xfeat: `match(extract(a), extract(b))` equals `match_images(a, b)` exactly.
-   These tests are what license the static allowlists — extending either list requires a
-   new passing parity test.
-2. Cache semantics: hit on same array object, miss on equal-content copy, clear at capacity.
-3. `match()` on a non-allowlisted model raises NotImplementedError (existing test survives);
-   empty-descriptor inputs return `_empty_match()`.
-4. Existing extractor and verification tests pass unchanged (pairwise path is the old code);
-   `MagicMock(spec=LocalMatcher)` sites gain explicit `supports_descriptor_matching = False`.
+   split `extract()` vs self-pair extract, and `match()`/`match_images` vs the plain pair
+   forward (flip `_split_loma_forward` for the reference), including a zarr save/load
+   roundtrip. Real xfeat: `match(extract(a), extract(b))` equals `match_images(a, b)`
+   exactly. These tests are what license the static fast paths — extending either requires
+   a new passing parity test.
+2. In-memory cache semantics: hit on same array object, miss on equal-content copy, clear
+   at capacity.
+3. `match()` on a model with no fast path raises NotImplementedError (existing test
+   survives); empty-descriptor inputs return `_empty_match()`; loma features without
+   `keypoints_normalized` fail `can_match_features` and keep the pairwise path.
+4. `save_index`/`load_reconstruction_features` roundtrip `keypoints_normalized` and omit
+   it cleanly when absent (mv_* precedent: absent, never zeros).
+5. Existing extractor and verification tests pass unchanged (pairwise path is the old
+   code); `MagicMock(spec=LocalMatcher)` sites pin `can_match_features.return_value = False`.
 
 ## Evidence plan (measured, not assumed)
 
@@ -181,9 +211,9 @@ Flat test functions in `tests/localization/test_extractors.py`:
   instrumentation in `verification.py`).
 - Retire: `_recover_indices` becomes fallback-only; delete outright once no configured model
   needs it.
-- Minimal: no disk persistence, no batching, no `extract()` rerouting (zarr already caches
-  extraction across runs), no byte-budget accounting, no detector-free reach-in, no vismatch
-  fork.
+- Minimal: persistence rides the existing zarr feature cache (one added array — no new
+  cache layer, no staleness machinery beyond what save_index already has), no batching,
+  no byte-budget accounting, no detector-free reach-in, no vismatch fork.
 
 ## Further headroom (recorded, not in scope — implement only if measurement demands)
 
@@ -204,14 +234,13 @@ of ms/image, LightGlue ms/pair → ~2–4 min territory) or fewer frames/pairs.
 
 ## Non-goals
 
-- **Disk persistence** of the cache: staleness keys (model/weights/`max_num_keypoints`) are a
-  separate decision; single-run redundancy is the measured pain.
 - **Batched pair matching**: deferred to Further headroom above.
 - **Detector-free adapters** (RoMa separable encoder, LoFTR backbone): large payloads,
   vendored-code surgery, unmeasured payoff (handoff §7.5–7.7).
-- **Upstream vismatch PR** (`extract_features`/`match_extracted` on `BaseMatcher`): right
-  long-term home, not our merge timeline. Proven paths here become its reference
-  implementations.
+- **Upstream vismatch PR** (per-model `encode(image)`/`match(enc0, enc1)` halves on
+  `BaseMatcher`): the genuinely general fix — every wrapper-specific split here dies the
+  day vismatch exposes it. Right long-term home, not our merge timeline; proven paths here
+  become its reference implementations.
 
 ## Exit strategy
 

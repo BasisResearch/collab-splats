@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from collab_splats.geometry.metrics import residual_bin_edges
+from collab_splats.geometry.metrics import bounded_residual, residual_bin_edges
 from collab_splats.pointcloud.feedforward.base import (
     MultiviewConfidence,
     compute_multiview_depth_confidence,
@@ -473,7 +473,9 @@ def test_collect_fills_index_keyed_rows_and_the_one_histogram():
     # Edges travel with the counts: they are sized from this scene, so counts alone are unreadable.
     assert len(out["rel_depth_error_edges"]) == len(out["rel_depth_error_counts"]) + 1
     n, h, w = depth.shape
-    assert np.array_equal(out["rel_depth_error_edges"], residual_bin_edges(n * (n - 1) // 2 * h * w))
+    # ORDERED pair count: the loop runs both (i, j) and (j, i) and both feed this one
+    # histogram, so it sees n*(n-1)*h*w residuals — NOT the unordered n*(n-1)//2.
+    assert np.array_equal(out["rel_depth_error_edges"], residual_bin_edges(n * (n - 1) * h * w))
 
 
 def test_signed_residual_recovers_an_injected_depth_scale():
@@ -528,3 +530,88 @@ def test_a_huge_residual_still_lands_in_the_histogram():
     depth, K, extr = _two_view(scale_j=60.0)
     out = _collect(depth, K, extr, rel_thresh=1e9)
     assert out["rel_depth_error_counts"].sum() > 0
+
+
+def _row_01(out):
+    """The ordered (0, 1) row — the pair whose residual population is hand-derivable below."""
+    return next(r for r in out["pairs"] if (r.idx1, r.idx2) == (0, 1))
+
+
+def _bin_of(out, rel_value):
+    """Index of the histogram bin that a residual of rel_value would land in."""
+    return int(np.searchsorted(out["rel_depth_error_edges"], bounded_residual(rel_value), side="right") - 1)
+
+
+def test_iqr_reports_the_spread_not_the_lower_half():
+    """A two-level residual population pins q75-q25, which median-vs-q25 cannot reproduce.
+
+    Geometry is _two_view's: focal 20, source depth 4.0, 0.2 sideways baseline. Expected depth
+    in frame 1 is exactly 4.0 for every pixel (the baseline is along x, so Z is untouched) and
+    the reprojection is an exact 1-pixel shift in x, so source pixel (r, c) samples frame-1
+    depth at (r, c-1). Column 0 lands off the left edge, leaving c = 1..15: 15 columns x 16
+    rows = 240 residuals, and the row index is preserved by the shift.
+
+    Frame 1 is split by row: the top 8 rows hold 4.0 (residual 0.0), the bottom 8 hold 4.8
+    (residual +0.2). Both levels are >= expected, so neither is read as occlusion and both
+    survive. That gives 120 samples at 0.0 and 120 at 0.2, hence (linear interpolation on 240
+    sorted values) q25 = 0.0, median = 0.1 and q75 = 0.2 — an IQR of exactly 0.2. The
+    q[1] - q[0] mistake would report 0.1.
+    """
+    H = W = 16
+    K = np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], dtype=np.float32)
+    d1 = np.full((H, W), 4.0, np.float32)
+    d1[8:, :] = 4.8
+    depth = np.stack([np.full((H, W), 4.0, np.float32), d1])
+    extr = np.stack([np.eye(4, dtype=np.float32), np.eye(4, dtype=np.float32)])
+    extr[1, 0, 3] = -0.2
+
+    row = _row_01(_collect(depth, np.stack([K, K]), extr))
+    assert row.n_pixels == 240
+    assert row.median_rel_depth_error == pytest.approx(0.1, abs=1e-3)
+    assert row.iqr_rel_depth_error == pytest.approx(0.2, abs=1e-3)
+
+
+def test_invalid_sampled_depth_is_excluded_not_counted_as_minus_one():
+    """A zero sampled depth means "no measurement", not "100% too shallow".
+
+    Without the has_depth gate those pixels divide through as (0 - expected)/expected = -1
+    exactly, a systematic negative bias. Real feedforward depth has invalid regions (sky,
+    masked, low-confidence), so this is a production path, not a fixture curiosity.
+    """
+    depth, K, extr = _two_view()
+    control = _row_01(_collect(depth, K, extr))
+    assert control.n_pixels == 240  # 15 in-bounds columns x 16 rows, per the 1-pixel shift
+
+    # Zero frame-1 columns 0..4, which are what source columns 1..5 sample: 5 x 16 = 80 pixels.
+    depth[1, :, :5] = 0.0
+    out = _collect(depth, K, extr)
+    row = _row_01(out)
+    assert row.n_pixels == control.n_pixels - 80
+
+    # And no mass appears where a fabricated rel = -1 would land.
+    assert out["rel_depth_error_counts"][_bin_of(out, -1.0)] == 0
+
+
+def test_near_zero_expected_depth_is_excluded_not_divided_through():
+    """A pixel that reprojects onto camera j's centre has no measurable residual or parallax.
+
+    Cameras are co-located here on purpose: with a sideways baseline a near-zero-depth point
+    projects thousands of pixels off-frame and the in_bounds test hides the case. Co-located,
+    it projects in bounds and reaches the residual, which is exactly the pathology — dividing
+    by ~1e-7 fabricates a residual of ~1e7 that is indistinguishable in the histogram from a
+    real disagreement.
+    """
+    H = W = 16
+    K = np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], dtype=np.float32)
+    depth = np.stack([np.full((H, W), 4.0, np.float32), np.full((H, W), 4.0, np.float32)])
+    extr = np.stack([np.eye(4, dtype=np.float32), np.eye(4, dtype=np.float32)])
+    control = _row_01(_collect(depth, np.stack([K, K]), extr))
+    assert control.n_pixels == H * W  # co-located: every pixel projects onto itself
+
+    depth[0, 0, 0] = 1e-7  # positive, so the in_front guard passes and only the clamp bit
+    out = _collect(depth, np.stack([K, K]), extr)
+    row = _row_01(out)
+    assert row.n_pixels == control.n_pixels - 1
+    # The huge quotient the old clamp produced would have landed in the top bin.
+    assert out["rel_depth_error_counts"][_bin_of(out, 4.0 / 1e-6)] == 0
+    assert row.median_rel_depth_error == pytest.approx(0.0, abs=1e-3)

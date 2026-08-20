@@ -592,7 +592,10 @@ def compute_multiview_depth_confidence(
         # Bin resolution comes from how many residuals there will be, which is exact and known
         # here: every pair contributes at most one per pixel. Nothing is hardcoded, and nothing
         # needs a pre-pass over the data — the pre-pass is the cost the histogram exists to avoid.
-        edges = residual_bin_edges(N * (N - 1) // 2 * H * W)
+        # The pair loop below is ORDERED (both (i, j) and (j, i) run and both feed this one
+        # histogram), so the sample count is N*(N-1)*H*W, not the unordered N*(N-1)//2*H*W.
+        # Rice's rule takes a cube root, so halving n here would cost ~1.26x in bin count.
+        edges = residual_bin_edges(N * (N - 1) * H * W)
         collect["pairs"] = []
         collect["rel_depth_error_edges"] = edges
         collect["rel_depth_error_counts"] = np.zeros(len(edges) - 1, dtype=np.int64)
@@ -674,10 +677,15 @@ def compute_multiview_depth_confidence(
             # Signed relative residual. The sign carries scale bias, the spread carries
             # geometric noise. Same pixels the ratio counts: occluded pixels are absent
             # evidence, and letting them in would drag the bias negative.
-            sel = counted & has_depth
+            # Near-zero expected depth is dropped for the same reason rather than divided
+            # through: the quotient there is arbitrarily large and lands in the histogram
+            # indistinguishably from a real disagreement. It also fixes the parallax, since
+            # ||v_j|| >= expected_d — as expected_d -> 0 the ray direction degenerates and
+            # arccos drifts to ~90 deg, fabricating parallax that median_parallax_deg reports.
+            sel = counted & has_depth & (expected_d > 1e-6)
             if not bool(sel.any()):
                 continue
-            rel = (sampled_d_flat[sel] - expected_d[sel]) / expected_d[sel].clamp(min=1e-6)
+            rel = (sampled_d_flat[sel] - expected_d[sel]) / expected_d[sel]
 
             # Parallax from the two ray directions, not from f*B/Z. The pinhole form needs a
             # focal length, and focal is exactly what is not comparable across backbones

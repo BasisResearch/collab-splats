@@ -7,12 +7,8 @@ Every statistic comes from scipy or numpy. What lives here is the measurement th
 are computed over, not a reimplementation of them.
 """
 
-import logging
-
 import numpy as np
 from scipy import stats
-
-logger = logging.getLogger(__name__)
 
 ########################################
 # The residual histogram's axis
@@ -67,7 +63,11 @@ def bounded_residual(rel):
 
 
 def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: float) -> float | None:
-    """Express a relative depth residual in pixels, using this pair's own parallax.
+    """How many pixels this pair's depth disagreement is EQUIVALENT to, at its own parallax.
+
+    A derived quantity, not a measurement: nothing is tracked or matched in the image here.
+    It converts a depth residual into the pixel units a photometric or epipolar measurement
+    already reports, so the two can be divided. A measured pixel error is a different number.
 
     For a pair with perpendicular baseline B, disparity is d = f*B/Z, and a depth error dZ at
     depth Z moves the point in the image by f*B*dZ/Z^2. Substituting r = dZ/Z:
@@ -107,6 +107,20 @@ def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: fl
 ########################################
 # Depth cross-view error
 ########################################
+
+
+def _spearman(x: np.ndarray, y: np.ndarray) -> float:
+    """Spearman rho over the finite rows of x and y; nan when fewer than 3 rows survive.
+
+    The drop happens here rather than via scipy's nan_policy="omit" because that path RAISES
+    ValueError("The input must have at least 3 entries!") once the drop leaves under three
+    pairs — a crash on a short or partly-empty column. nan is the answer instead, which is
+    also what scipy returns for a constant column, and what clean_for_json writes as null.
+    """
+    keep = np.isfinite(x) & np.isfinite(y)
+    if int(keep.sum()) < 3:
+        return float("nan")
+    return float(stats.spearmanr(x[keep], y[keep]).statistic)
 
 
 def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> dict:
@@ -150,42 +164,47 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         for p in pairs
     ]
 
-    abs_rel_depth_error = np.array([abs(p.median_rel_depth_error) for p in pairs])
-    depths = np.array([p.median_depth for p in pairs], dtype=np.float64)
-    frame_seps = np.array([abs(p.idx1 - p.idx2) for p in pairs], dtype=np.float64)
+    # Read the correlation columns back OFF the rows, never off `pairs` a second time: a
+    # second copy of `abs(p.idx1 - p.idx2)` is a copy that no row assertion can reach, and
+    # sign-flipping it there silently reverses the reversed-row separations.
+    abs_rel_depth_error = np.array([abs(r["median_rel_depth_error"]) for r in rows], dtype=np.float64)
+    depths = np.array([r["median_depth"] for r in rows], dtype=np.float64)
+    frame_seps = np.array([r["frame_separation"] for r in rows], dtype=np.float64)
     under_1px = sum(1 for r in rows if r["depth_error_px"] is None)
 
-    # Invert the bounded axis to read quantiles back as real residuals. Monotone, so the qth
-    # quantile of the transformed values is the transform of the qth quantile.
+    # Quantiles off a histogram of the BOUNDED residual, inverted back to real residuals.
+    # bounded_residual is monotone, so the qth quantile of the transformed values is the
+    # transform of the qth quantile — the inversion is exact, not an approximation.
     counts, edges = collected["rel_depth_error_counts"], collected["rel_depth_error_edges"]
-    grid = (0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 0.999)
-    rv = stats.rv_histogram((counts, edges))
-    quantiles = {}
-    for q in grid:
-        u = float(rv.ppf(q))
-        quantiles[str(q)] = u / (1.0 - abs(u))
+    grid = (0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999)
 
-    # Same histogram folded to |r|. The edges are symmetric about zero and the bin count is
-    # always even, so bin j and bin k-1-j share |u| and the fold is exact rather than a
-    # re-binning. Signed quantiles answer "is there scale bias"; folded ones are the quantity
-    # every prior |rel| measurement in this repo reports, so they are the comparable column.
+    def read_quantiles(hist_counts, hist_edges) -> dict:
+        """The grid, read off one histogram and inverted with the inverse of bounded_residual."""
+        rv = stats.rv_histogram((hist_counts, hist_edges))
+        out = {}
+        for q in grid:
+            u = float(rv.ppf(q))
+            out[str(q)] = u / (1.0 - abs(u))
+        return out
+
+    # Signed, then the same histogram folded to |r|. The edges are symmetric about zero and
+    # the bin count is always even, so bin j and bin k-1-j share |u| and the fold is exact
+    # rather than a re-binning. Signed quantiles answer "is there scale bias"; folded ones are
+    # the quantity every prior |rel| measurement in this repo reports, so they compare.
     half = (len(edges) - 1) // 2
-    rv_abs = stats.rv_histogram((counts[half:] + counts[:half][::-1], edges[half:]))
-    abs_quantiles = {}
-    for q in grid:
-        u = float(rv_abs.ppf(q))
-        abs_quantiles[str(q)] = u / (1.0 - abs(u))
+    quantiles = read_quantiles(counts, edges)
+    abs_quantiles = read_quantiles(counts[half:] + counts[:half][::-1], edges[half:])
 
     return {
         "available": True,
         "grid": "model",
         "resolution": resolution,
         "units": "relative (dimensionless); parallax in degrees; pixel equivalent in px",
-        # DIRECTIONS, not pairs. The mv loop is ordered: (i,j) and (j,i) are separate rows with
-        # genuinely different values, because occlusion is asymmetric — a pixel hidden looking
-        # one way is visible looking the other. The name says so, because the photometric block
-        # below and verify's epipolar block both count UNORDERED pairs under the key "n_pairs",
-        # and a reader comparing the three numbers would otherwise see a phantom 2x.
+        # DIRECTIONS, not pairs — which is why every key here says so. The mv loop is ordered:
+        # (i,j) and (j,i) are separate rows with genuinely different values, because occlusion
+        # is asymmetric — a pixel hidden looking one way is visible looking the other. The
+        # photometric measurement and verify's epipolar block both count UNORDERED pairs under
+        # the key "n_pairs", and a reader comparing the three would otherwise see a phantom 2x.
         "n_pair_directions": len(pairs),
         # The one pre-binned output, because it is the one per-pixel quantity. Counts plus
         # edges keeps threshold queries exact: rv_histogram(...).cdf(bounded_residual(x))
@@ -198,19 +217,16 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
             "abs_quantiles": abs_quantiles,
             "axis": "bins are over r/(1+|r|); invert with u/(1-|u|)",
         },
-        "pairs_under_one_pixel_disparity": under_1px,
-        # Two questions, one number each, straight from scipy. nan means "cannot be computed"
-        # (a constant column, too few pairs) and becomes null when the report is written.
-        # The columns they read are in "pairs", so a reader can plot the binned shape.
-        # error_vs_depth has a null to read against: triangulation uncertainty goes as
-        # sigma_Z ~ Z^2/(f*B), so a relative residual should already rise roughly linearly in
-        # Z. Positive rho is expected. Near 0 or near 1 are the interesting outcomes.
+        "pair_directions_under_one_pixel_disparity": under_1px,
+        # Two questions, one number each. nan means "cannot be computed" — a constant column,
+        # or under three usable rows — and becomes null when the report is written. The columns
+        # they read ship in "pair_directions", so a reader can plot the shape behind the rho.
+        # error_vs_depth has the null_hypothesis below to read against; positive rho is
+        # expected, and near 0 or near 1 are the interesting outcomes.
         "correlations": {
-            "error_vs_depth": float(stats.spearmanr(depths, abs_rel_depth_error, nan_policy="omit").statistic),
-            "error_vs_frame_separation": float(
-                stats.spearmanr(frame_seps, abs_rel_depth_error, nan_policy="omit").statistic
-            ),
+            "error_vs_depth": _spearman(depths, abs_rel_depth_error),
+            "error_vs_frame_separation": _spearman(frame_seps, abs_rel_depth_error),
             "null_hypothesis": "sigma_Z ~ Z^2/(f*B) => relative residual rises ~linearly in Z",
         },
-        "pairs": rows,
+        "pair_directions": rows,
     }

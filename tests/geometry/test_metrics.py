@@ -217,34 +217,64 @@ def test_pair_rows_carry_separation():
     every reversed row negative, sign-flipping error_vs_frame_separation.
     """
     m = compute_depth_error(_collected([_pair(4, 1, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
-    assert [r["frame_separation"] for r in m["pairs"]] == [3, 3]
+    assert [r["frame_separation"] for r in m["pair_directions"]] == [3, 3]
 
 
 def test_scale_bias_keeps_its_sign_on_the_row():
     """A pure scale error has a large median and a small spread; the sign must survive."""
     m = compute_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]), 500.0, "x")
-    assert m["pairs"][0]["median_rel_depth_error"] == pytest.approx(-0.08)
-    assert m["pairs"][0]["iqr_rel_depth_error"] == pytest.approx(0.005)
+    assert m["pair_directions"][0]["median_rel_depth_error"] == pytest.approx(-0.08)
+    assert m["pair_directions"][0]["iqr_rel_depth_error"] == pytest.approx(0.005)
 
 
 def test_pixel_equivalent_lands_on_each_pair_row():
     m = compute_depth_error(_collected([_pair(0, 1, 0.1, 2.0)]), 500.0, "x")
-    assert m["pairs"][0]["depth_error_px"] == pytest.approx(depth_error_in_pixels(0.1, 2.0, 500.0))
+    assert m["pair_directions"][0]["depth_error_px"] == pytest.approx(
+        depth_error_in_pixels(0.1, 2.0, 500.0)
+    )
 
 
 def test_pairs_under_one_pixel_of_disparity_report_null_not_zero():
     tiny = np.rad2deg(0.5 / 500.0)  # half a pixel of disparity
     m = compute_depth_error(_collected([_pair(0, 1, 0.1, tiny)]), 500.0, "x")
-    assert m["pairs"][0]["depth_error_px"] is None
-    assert m["pairs_under_one_pixel_disparity"] == 1
+    assert m["pair_directions"][0]["depth_error_px"] is None
+    assert m["pair_directions_under_one_pixel_disparity"] == 1
 
 
 def test_per_pair_columns_ship_raw():
-    """Raw, so any binning or threshold query is something the reader does."""
-    pairs = [_pair(k, k + 1, 0.01 * k, 3.0) for k in range(1, 30)]
-    m = compute_depth_error(_collected(pairs), 500.0, "x")
-    assert len(m["pairs"]) == 29
-    assert {"median_rel_depth_error", "iqr_rel_depth_error", "median_parallax_deg", "median_depth"} <= set(m["pairs"][0])
+    """Raw: an exact value round-trips onto the row, so no rounding or binning happened here.
+
+    Key presence alone does not test "raw" — round(x, 2) on every column survives it. The
+    fixture value has more digits than any plausible rounding would keep.
+    """
+    m = compute_depth_error(_collected([_pair(0, 1, 0.0123456789, 3.0, iqr=0.0098765432)]), 500.0, "x")
+    row = m["pair_directions"][0]
+    assert row["median_rel_depth_error"] == 0.0123456789  # exact, not approx
+    assert row["iqr_rel_depth_error"] == 0.0098765432
+    assert row["median_parallax_deg"] == 3.0 and row["median_depth"] == 4.0
+
+
+def test_output_keys_are_the_contract_task_6_reads():
+    """The report writer indexes these by name — a renamed or dropped key breaks it silently."""
+    pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0) for k in range(4)]
+    m = compute_depth_error(_collected(pairs), 500.0, "518x518")
+    assert set(m) == {
+        "available", "grid", "resolution", "units", "n_pair_directions",
+        "residual_histogram", "pair_directions_under_one_pixel_disparity",
+        "correlations", "pair_directions",
+    }
+    assert m["available"] is True
+    # Ordered directions, so this is len(pairs) and NOT the unordered pair count.
+    assert m["n_pair_directions"] == len(pairs) == len(m["pair_directions"])
+    assert set(m["correlations"]) == {"error_vs_depth", "error_vs_frame_separation", "null_hypothesis"}
+    h = m["residual_histogram"]
+    assert set(h) == {"counts", "bin_edges", "total", "quantiles", "abs_quantiles", "axis"}
+    # total is the histogram's own mass, not a row count: 4 pairs x 100 pixels each.
+    assert h["total"] == int(np.asarray(h["counts"]).sum()) == sum(p.n_pixels for p in pairs)
+    assert set(m["pair_directions"][0]) == {
+        "idx1", "idx2", "frame_separation", "n_pixels", "median_rel_depth_error",
+        "iqr_rel_depth_error", "median_parallax_deg", "median_depth", "depth_error_px",
+    }
 
 
 def test_per_pixel_residual_ships_as_counts_and_edges():
@@ -277,7 +307,49 @@ def test_rising_residual_with_depth_shows_as_a_positive_correlation():
     pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
     m = compute_depth_error(_collected(pairs), 500.0, "x")
     assert m["correlations"]["error_vs_depth"] > 0.9
-    assert "verdict" not in m
+
+
+def test_the_correlation_reads_residual_MAGNITUDE_not_signed_residual():
+    """A growing NEGATIVE bias is growing disagreement — dropping abs() would call it shrinking.
+
+    The signed column is deliberately kept on the row (scale bias reads off its sign), so the
+    correlation must take the magnitude itself. Every other correlation fixture uses positive
+    rel, where signed and absolute agree and the abs() is invisible.
+    """
+    pairs = [_pair(k, k + 1, -0.01 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
+    assert m["correlations"]["error_vs_depth"] > 0.9  # magnitude rises with depth
+    # The rows themselves stay signed, so the sign is recoverable and only the rho folds.
+    assert all(r["median_rel_depth_error"] < 0 for r in m["pair_directions"])
+
+
+def test_too_few_usable_rows_gives_nan_rather_than_raising():
+    """scipy's nan_policy="omit" RAISES under 3 surviving pairs; the block must survive a stub scene.
+
+    Both halves matter: a nan in one column with only 2 rows is the raising case, and 2 clean
+    rows is the "cannot be computed" case that must also read nan rather than a spurious rho
+    of 1.0 off two points.
+    """
+    with_nan = compute_depth_error(
+        _collected([_pair(0, 1, 0.01, 3.0), _pair(1, 2, 0.02, 3.0, depth=float("nan"))]), 500.0, "x"
+    )
+    assert np.isnan(with_nan["correlations"]["error_vs_depth"])
+    two_clean = compute_depth_error(
+        _collected([_pair(0, 1, 0.01, 3.0, depth=1.0), _pair(1, 2, 0.02, 3.0, depth=2.0)]), 500.0, "x"
+    )
+    assert np.isnan(two_clean["correlations"]["error_vs_depth"])
+
+
+def test_nothing_in_the_output_grades_the_scene():
+    """Report-only: distributions and how they vary, never a verdict for the reader to inherit."""
+    pairs = [_pair(k, k + 1, 0.5 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]  # awful scene
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
+    banned = {"verdict", "status", "grade", "quality", "pass", "passed", "failed", "ok", "healthy"}
+    assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pair_directions"][0]))
+    # The shipped strings describe units and hypotheses; none of them announce an outcome.
+    strings = " ".join(v for v in m.values() if isinstance(v, str))
+    strings += " " + m["correlations"]["null_hypothesis"] + " " + m["residual_histogram"]["axis"]
+    assert not any(w in strings.lower() for w in ("good", "bad", "poor", "acceptable", "fail"))
 
 
 def test_constant_depth_gives_nan_which_the_json_writer_turns_into_null():

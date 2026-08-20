@@ -904,34 +904,79 @@ def test_pair_rows_carry_separation():
     every reversed row negative, sign-flipping error_vs_frame_separation.
     """
     m = compute_depth_error(_collected([_pair(4, 1, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
-    assert [r["frame_separation"] for r in m["pairs"]] == [3, 3]
+    assert [r["frame_separation"] for r in m["pair_directions"]] == [3, 3]
 
 
 def test_scale_bias_keeps_its_sign_on_the_row():
     """A pure scale error has a large median and a small spread; the sign must survive."""
     m = compute_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]), 500.0, "x")
-    assert m["pairs"][0]["median_rel_depth_error"] == pytest.approx(-0.08)
-    assert m["pairs"][0]["iqr_rel_depth_error"] == pytest.approx(0.005)
+    assert m["pair_directions"][0]["median_rel_depth_error"] == pytest.approx(-0.08)
+    assert m["pair_directions"][0]["iqr_rel_depth_error"] == pytest.approx(0.005)
 
 
 def test_pixel_equivalent_lands_on_each_pair_row():
     m = compute_depth_error(_collected([_pair(0, 1, 0.1, 2.0)]), 500.0, "x")
-    assert m["pairs"][0]["depth_error_px"] == pytest.approx(depth_error_in_pixels(0.1, 2.0, 500.0))
+    assert m["pair_directions"][0]["depth_error_px"] == pytest.approx(
+        depth_error_in_pixels(0.1, 2.0, 500.0)
+    )
 
 
 def test_pairs_under_one_pixel_of_disparity_report_null_not_zero():
     tiny = np.rad2deg(0.5 / 500.0)  # half a pixel of disparity
     m = compute_depth_error(_collected([_pair(0, 1, 0.1, tiny)]), 500.0, "x")
-    assert m["pairs"][0]["depth_error_px"] is None
-    assert m["pairs_under_one_pixel_disparity"] == 1
+    assert m["pair_directions"][0]["depth_error_px"] is None
+    assert m["pair_directions_under_one_pixel_disparity"] == 1
 
 
 def test_per_pair_columns_ship_raw():
-    """Raw, so any binning or threshold query is something the reader does."""
-    pairs = [_pair(k, k + 1, 0.01 * k, 3.0) for k in range(1, 30)]
+    """Raw: an exact value round-trips onto the row, so no rounding or binning happened here.
+
+    Key presence alone does not test "raw" — round(x, 2) on every column survives it.
+    """
+    m = compute_depth_error(_collected([_pair(0, 1, 0.0123456789, 3.0, iqr=0.0098765432)]), 500.0, "x")
+    row = m["pair_directions"][0]
+    assert row["median_rel_depth_error"] == 0.0123456789  # exact, not approx
+    assert row["iqr_rel_depth_error"] == 0.0098765432
+    assert row["median_parallax_deg"] == 3.0 and row["median_depth"] == 4.0
+
+
+def test_output_keys_are_the_contract_task_6_reads():
+    """The report writer indexes these by name — a renamed or dropped key breaks it silently."""
+    pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0) for k in range(4)]
+    m = compute_depth_error(_collected(pairs), 500.0, "518x518")
+    assert set(m) == {
+        "available", "grid", "resolution", "units", "n_pair_directions",
+        "residual_histogram", "pair_directions_under_one_pixel_disparity",
+        "correlations", "pair_directions",
+    }
+    assert m["available"] is True
+    assert m["n_pair_directions"] == len(pairs) == len(m["pair_directions"])
+    h = m["residual_histogram"]
+    assert h["total"] == int(np.asarray(h["counts"]).sum()) == sum(p.n_pixels for p in pairs)
+
+
+def test_the_correlation_reads_residual_MAGNITUDE_not_signed_residual():
+    """A growing NEGATIVE bias is growing disagreement — dropping abs() would call it shrinking."""
+    pairs = [_pair(k, k + 1, -0.01 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
     m = compute_depth_error(_collected(pairs), 500.0, "x")
-    assert len(m["pairs"]) == 29
-    assert {"median_rel_depth_error", "iqr_rel_depth_error", "median_parallax_deg", "median_depth"} <= set(m["pairs"][0])
+    assert m["correlations"]["error_vs_depth"] > 0.9
+    assert all(r["median_rel_depth_error"] < 0 for r in m["pair_directions"])
+
+
+def test_too_few_usable_rows_gives_nan_rather_than_raising():
+    """scipy's nan_policy="omit" RAISES under 3 surviving pairs; the block must survive a stub scene."""
+    with_nan = compute_depth_error(
+        _collected([_pair(0, 1, 0.01, 3.0), _pair(1, 2, 0.02, 3.0, depth=float("nan"))]), 500.0, "x"
+    )
+    assert np.isnan(with_nan["correlations"]["error_vs_depth"])
+
+
+def test_nothing_in_the_output_grades_the_scene():
+    """Report-only: distributions and how they vary, never a verdict for the reader to inherit."""
+    pairs = [_pair(k, k + 1, 0.5 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
+    m = compute_depth_error(_collected(pairs), 500.0, "x")
+    banned = {"verdict", "status", "grade", "quality", "pass", "passed", "failed", "ok", "healthy"}
+    assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pair_directions"][0]))
 
 
 def test_per_pixel_residual_ships_as_counts_and_edges():
@@ -1080,11 +1125,11 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         "grid": "model",
         "resolution": resolution,
         "units": "relative (dimensionless); parallax in degrees; pixel equivalent in px",
-        # DIRECTIONS, not pairs. The mv loop is ordered: (i,j) and (j,i) are separate rows with
-        # genuinely different values, because occlusion is asymmetric — a pixel hidden looking
-        # one way is visible looking the other. The name says so, because the photometric block
-        # below and verify's epipolar block both count UNORDERED pairs under the key "n_pairs",
-        # and a reader comparing the three numbers would otherwise see a phantom 2x.
+        # DIRECTIONS, not pairs — which is why every key here says so. The mv loop is ordered:
+        # (i,j) and (j,i) are separate rows with genuinely different values, because occlusion
+        # is asymmetric — a pixel hidden looking one way is visible looking the other. The
+        # photometric measurement and verify's epipolar block both count UNORDERED pairs under
+        # the key "n_pairs", and a reader comparing the three would otherwise see a phantom 2x.
         "n_pair_directions": len(pairs),
         # The one pre-binned output, because it is the one per-pixel quantity. Counts plus
         # edges keeps threshold queries exact: rv_histogram(...).cdf(bounded_residual(x))
@@ -1097,23 +1142,20 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
             "abs_quantiles": abs_quantiles,
             "axis": "bins are over r/(1+|r|); invert with u/(1-|u|)",
         },
-        "pairs_under_one_pixel_disparity": under_1px,
-        # Two questions, one number each, straight from scipy. nan means "cannot be computed"
-        # (a constant column, too few pairs) and becomes null when the report is written.
-        # The columns they read are in "pairs", so a reader can plot the binned shape.
-        # error_vs_depth has a null to read against: triangulation uncertainty goes as
-        # sigma_Z ~ Z^2/(f*B), so a relative residual should already rise roughly linearly in
-        # Z. Positive rho is expected. Near 0 or near 1 are the interesting outcomes.
+        "pair_directions_under_one_pixel_disparity": under_1px,
+        # Two questions, one number each. nan means "cannot be computed" — a constant column,
+        # or under three usable rows — and becomes null when the report is written. The columns
+        # they read ship in "pair_directions", so a reader can plot the shape behind the rho.
+        # error_vs_depth has the null_hypothesis below to read against; positive rho is
+        # expected, and near 0 or near 1 are the interesting outcomes.
+        # _spearman, NOT stats.spearmanr(nan_policy="omit"): scipy RAISES ValueError once the
+        # nan drop leaves under 3 pairs, so the drop and the nan answer live in the helper.
         "correlations": {
-            "error_vs_depth": float(
-                stats.spearmanr(depths, abs_rel_depth_error, nan_policy="omit").statistic
-            ),
-            "error_vs_frame_separation": float(
-                stats.spearmanr(frame_seps, abs_rel_depth_error, nan_policy="omit").statistic
-            ),
+            "error_vs_depth": _spearman(depths, abs_rel_depth_error),
+            "error_vs_frame_separation": _spearman(frame_seps, abs_rel_depth_error),
             "null_hypothesis": "sigma_Z ~ Z^2/(f*B) => relative residual rises ~linearly in Z",
         },
-        "pairs": rows,
+        "pair_directions": rows,
     }
 ```
 
@@ -1123,7 +1165,7 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
 /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_metrics.py -v
 ```
 
-Expected: 30 passed — 18 already in the file from Tasks 2 and 3, plus this task's 12.
+Expected: 34 passed — 18 already in the file from Tasks 2 and 3, plus this task's 16.
 
 - [ ] **Step 5: Commit**
 
@@ -1417,7 +1459,7 @@ def compute_photometric_ncc(
 /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_metrics.py -v
 ```
 
-Expected: 34 passed.
+Expected: 38 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1664,11 +1706,14 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
         ranks = {int(k): float(x) for k, x in zip(ks, rk)}
 
     # Does disagreement build along the trajectory?
+    # The row key differs by measurement: depth ships ORDERED directions under
+    # "pair_directions", epipolar ships unordered pairs under "pairs". _running_error groups by
+    # unordered key either way, so only the lookup name changes.
     running = {
-        name: _running_error(m.get("pairs", []), key)
-        for name, key, m in (
-            ("depth", "median_rel_depth_error", depth_m),
-            ("epipolar", "rot_error_deg", epipolar_m),
+        name: _running_error(m.get(rows_key, []), key)
+        for name, rows_key, key, m in (
+            ("depth", "pair_directions", "median_rel_depth_error", depth_m),
+            ("epipolar", "pairs", "rot_error_deg", epipolar_m),
         )
     }
 
@@ -2307,7 +2352,7 @@ drift apart."
 - **Binned views** of error-vs-depth and error-vs-confidence are replaced by one rank correlation each. The raw columns are in `report.json`, so the binned shape is recoverable at any resolution the reader picks — but this plan does not compute it.
 - **Parallelism, zarr streaming, and reusing the creator's multiview pass** are deferred to a Task 8 measurement rather than designed in. Stated with the reasoning above, not omitted.
 
-**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `compute_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly three keys, `pairs`, `rel_depth_error_counts` and `rel_depth_error_edges`, written in Task 3 and read unchanged in Task 4 — the edges travel with the counts because they are now scene-dependent, and counts without their edges are unreadable. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. **Pair ordering is not uniform across the three channels, and each key says which it is.** The depth pass inherits the mv loop's `for i: for j: if i == j: continue`, so it emits `N*(N-1)` **ordered** rows — both `(i,j)` and `(j,i)`, carrying genuinely different values because occlusion is asymmetric (measured on the two-view fixture: `+0.1000` one way, `−0.0909` the other). `verification.py` canonicalises `id1 < id2` and emits one row per **unordered** pair; Task 5's photometric loop runs `for j in range(i+1, ...)` and is likewise unordered. Three consequences, each handled at its own site rather than by forcing the channels to agree: Task 3's histogram is sized `N*(N-1)*H*W`, not the unordered half, because every direction's pixels land in it; Task 4 reports the count under `n_pair_directions` while Tasks 5 and 6 use `n_pairs`, so no reader compares the two and sees a phantom 2×; and `_running_error` groups by unordered key before summing, since `frame_separation` is `abs(idx1 - idx2)` and would otherwise match both directions and double every trajectory step. Task 6 never merges depth and epipolar rows into a single row — they stay in separate `measurements` blocks — so the 2:1 ratio needs no join logic anywhere.
+**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `compute_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly three keys, `pairs`, `rel_depth_error_counts` and `rel_depth_error_edges`, written in Task 3 and read unchanged in Task 4 — the edges travel with the counts because they are now scene-dependent, and counts without their edges are unreadable. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. **Pair ordering is not uniform across the three channels, and each key says which it is.** The depth pass inherits the mv loop's `for i: for j: if i == j: continue`, so it emits `N*(N-1)` **ordered** rows — both `(i,j)` and `(j,i)`, carrying genuinely different values because occlusion is asymmetric (measured on the two-view fixture: `+0.1000` one way, `−0.0909` the other). `verification.py` canonicalises `id1 < id2` and emits one row per **unordered** pair; Task 5's photometric loop runs `for j in range(i+1, ...)` and is likewise unordered. Three consequences, each handled at its own site rather than by forcing the channels to agree: Task 3's histogram is sized `N*(N-1)*H*W`, not the unordered half, because every direction's pixels land in it; Task 4 names every one of its keys for directions — `n_pair_directions`, `pair_directions` and `pair_directions_under_one_pixel_disparity` — while Tasks 5 and 6 use `n_pairs`/`pairs`, so no reader compares the two and sees a phantom 2× (Task 6's `running` block therefore looks the row list up by a per-measurement key name); and `_running_error` groups by unordered key before summing, since `frame_separation` is `abs(idx1 - idx2)` and would otherwise match both directions and double every trajectory step. Task 6 never merges depth and epipolar rows into a single row — they stay in separate `measurements` blocks — so the 2:1 ratio needs no join logic anywhere.
 
 `residual_bin_edges` and `bounded_residual` have exactly one definition, with Task 3 Step 6 guarding the import direction. The sample count has one definition per side and they are deliberately **not** the same expression: production computes the ordered `N*(N-1)*H*W` in Task 3, while `tests/geometry/test_metrics.py`'s `_n_samples(frames, side)` uses the unordered count as a realistic lower bound for exercising bin magnitudes — its comment says so, so the mismatch cannot be read as a bug and "fixed". Correlations are raw `float` (possibly nan) at every site, converted to null once by `clean_for_json` at write time. The critique-5 renames were applied to definitions and uses together and re-grepped: `median_rel_depth_error` / `iqr_rel_depth_error` are read in Task 4's pair rows, in Task 5's ranking, and in the Task 7 tests; `depth_error_px` and `frame_separation` are written in Task 4 and read in Task 5 and the Task 8 readout; `error_vs_frame_separation` and `ncc_vs_frame_separation` are each written at exactly one production site, asserted in Task 4's tests, and quoted in the Task 8 readout template under the same spelling. No old spelling survives anywhere in the plan.
 
@@ -2326,5 +2371,6 @@ drift apart."
 | `_load_epipolar` | 1 | file IO plus one derived column |
 | `_run_photometric` | 1 | frames.zarr IO and the never-fatal guard |
 | `_running_error` | 2 (depth, epipolar) + tests | the ordered/unordered grouping is the one place the two channels' row semantics meet; inline it and the depth curve silently doubles |
+| `_spearman` | 2 (both correlations) | scipy's `nan_policy="omit"` RAISES once the drop leaves under 3 pairs; the guard has to exist somewhere and duplicating it at both call sites is worse |
 
-Nine functions and **no module-level constants**: the parallax floor derives from the focal, the quantile grid is a local tuple, and the bin edges derive from the sample count. Nothing else exists. No histogram class, no `Report` class, no residual/stats dataclasses, no `MultiviewConfidence` change, and no hand-rolled Spearman, Pearson, rank, quantile, distribution, filename parser, cumulative sum, coverage routine, stratification routine, confidence-binning routine, JSON coercion, or schema stamp.
+Ten functions and **no module-level constants**: the parallax floor derives from the focal, the quantile grid is a local tuple, and the bin edges derive from the sample count. Nothing else exists. No histogram class, no `Report` class, no residual/stats dataclasses, no `MultiviewConfidence` change, and no hand-rolled Spearman, Pearson, rank, quantile, distribution, filename parser, cumulative sum, coverage routine, stratification routine, confidence-binning routine, JSON coercion, or schema stamp — `_spearman` drops non-finite rows and hands the rest to `stats.spearmanr`, it does not compute a rank correlation.

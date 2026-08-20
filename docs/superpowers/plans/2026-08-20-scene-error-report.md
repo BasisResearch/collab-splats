@@ -97,6 +97,7 @@ Recovering `in_front` means unprojecting and transforming the points anyway, at 
 - `collab_splats/geometry/verification.py:41-50, ~234-251` — `PairStats` re-keyed on frame index; the one construction site updated.
 - `collab_splats/pointcloud/feedforward/base.py` — `compute_multiview_depth_confidence` gains a `collect` out-param. **No new class, return type unchanged**: it has four production callers (`vggtx.py:354`, `vggt_omega.py:265`, `mapanything.py:446`, `loger.py:440`).
 - `collab_splats/wrapper/reconstructor.py:48,49-66,1161-1185,1218-1266` — register the `report` stage.
+- `tests/wrapper/test_reconstructor.py`, `tests/wrapper/test_refine_stage.py` — six tests there mock the stage methods and pin the config-derived stage list, which an always-on `report` necessarily changes (Task 6). Four further tests added for the wiring the stage-graph test cannot see.
 - `configs/README.md`, `tests/pointcloud/test_mv_conf.py`.
 
 **Delete (Task 8):** `evals/scripts/depth_disagreement.py`.
@@ -1983,7 +1984,7 @@ def _load_epipolar(verification_json: Path, image_width: int) -> dict:
 
     rows = []
     for s in data.get("pair_stats", []):
-        # Same expression verify already aggregates over at verification.py:332
+        # Same expression verify already aggregates over at verification.py:363
         # (`p.num_inliers / p.num_matches ... if p.num_matches`) — per row here rather than
         # collapsed to a distribution, so it can be joined against the depth rows.
         n_m, n_i = s.get("num_matches") or 0, s.get("num_inliers") or 0
@@ -2114,6 +2115,10 @@ And after the `verify` method (ends line 1159):
         return out_json
 ```
 
+**Also ship `source_frame_indices` at the top level of the report** (added after this plan was written; recorded here so a re-read does not drop it). Every per-frame block is keyed by reconstruction index 0..N-1, which is not the source video index once sampling skips frames, so without this map nothing keyed on the source video — a video-quality report, the frame store — can join to this one at all. Derive it from `r.image_paths`, not `FrameStore.frame_indices()`: `image_paths` is always on the result while `frames.zarr` is optional in this stage.
+
+Check the stem against the documented `frame_{idx:06d}` shape **before** parsing it, and yield `None` when it does not match. `FrameStore.frame_idx_from_path` is `int(stem.split("_")[-1])`, which raises only on a non-numeric tail — it reads `IMG_1234` as `1234` and `00019` as `19`. A guessed index is worse than a missing one here, because a downstream join then pairs real frames with the wrong rows and nothing looks broken. Match the stem WHOLE, or a prefixed name slips through the same way. Do not change `frame_idx_from_path` itself — other callers depend on its behaviour. Keep `None` rather than raising; the report must never fail a reconstruction.
+
 - [ ] **Step 5: Scope the duplicated multiview pass**
 
 `build_report` runs a dense multiview pass. When `pointcloud.use_multiview_confidence` is on, the creator ran that same loop during reconstruction — so the report doubles it. This is the one real compute saving available, and it is worth more than parallelism.
@@ -2132,7 +2137,13 @@ Record in the measured report: how many of the four creators would have a `colle
 /opt/venv/reconstruction/bin/python -m collab_splats.dashboard --smoke
 ```
 
-Expected: `tests/geometry/` all pass; `tests/wrapper/` shows the **same 5 pre-existing failures and no new ones**; then `SMOKE PASS`.
+Expected: `tests/geometry/` all pass; then `SMOKE PASS`.
+
+`tests/wrapper/` will NOT come back untouched, and expecting it to is a defect in an earlier draft of this step. An always-on stage necessarily changes the config-derived stage list, and six tests pin that list while mocking the stage methods — the real `self.report()` then runs against a scene the mocks never wrote to disk and raises `ValueError: No PointcloudResult available`. Update those six (add `report` to the expected stage list, or patch it alongside the other stages); do NOT weaken the raise to route around them. The raise is unreachable in production: the inline path runs `pointcloud` immediately before, and a genuinely failed `pointcloud` raises in `run_pipeline` first.
+
+After that, `tests/wrapper/` shows the **5 pre-existing failures** from the concurrent session's dirty `configs/base.yaml` (`test_init_fills_defaults_from_base_yaml`, `test_mesh_clean_repair_defaults_off`, `test_base_yaml_mesh_has_fidelity_keys`, `test_loger_block_reaches_run_feedforward_as_creator_kwargs`, `test_base_yaml_declares_the_loger_block`) **and no new ones**.
+
+The stage-graph test only reads `_STAGE_ORDER` and `_STAGE_DEPS`, so it cannot see the append, the dispatch branch or the `report.json` marker — deleting any of the three leaves it green. Pin all three separately.
 
 - [ ] **Step 7: Commit**
 

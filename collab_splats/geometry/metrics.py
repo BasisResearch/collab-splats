@@ -9,6 +9,7 @@ are computed over, not a reimplementation of them.
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,13 @@ from collab_splats.geometry.verification import clean_for_json
 from collab_splats.preproc.frame_store import FrameStore
 
 logger = logging.getLogger(__name__)
+
+# FrameStore writes keyframes as frame_{idx:06d}. Matching that shape is the whole guard on the
+# source-frame join: FrameStore.frame_idx_from_path is int(stem.split("_")[-1]), which happily
+# reads IMG_1234 as 1234 and 00019 as 19 — a confidently wrong index, which is worse here than a
+# missing one, because a downstream join silently pairs real frames with the wrong rows. Six or
+# more digits, so the contract does not break at a million frames.
+_FRAME_STEM_RE = re.compile(r"frame_(\d{6,})$")
 
 ########################################
 # The residual histogram's axis
@@ -449,7 +457,7 @@ def _running_error(rows: list[dict], key: str) -> dict:
     for x in rows:
         if x.get("frame_separation") != 1 or x.get(key) is None or not np.isfinite(x[key]):
             continue
-        lo, hi = int(x["idx1"]), int(x["idx2"])
+        lo, hi = sorted((int(x["idx1"]), int(x["idx2"])))
         grouped.setdefault((lo, hi), []).append(abs(float(x[key])))
 
     steps = sorted(grouped.items())
@@ -551,14 +559,14 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     # 0..N-1, which is not the source index once sampling skips frames, so without this map
     # nothing keyed on the source video can be joined to this report at all. Derived from
     # image_paths rather than FrameStore.frame_indices() because image_paths is always on the
-    # result while frames.zarr is optional here. A name carrying no index yields None rather
-    # than killing the report — the join degrades per frame instead of disappearing.
+    # result while frames.zarr is optional here. The stem must match the documented contract
+    # BEFORE it is parsed — FrameStore.frame_idx_from_path guesses on any numeric tail, and a
+    # guessed index is worse than no index. A name off-contract yields None rather than killing
+    # the report: the join degrades per frame instead of disappearing.
     source_frame_indices: list[int | None] = []
     for p in r.image_paths:
-        try:
-            source_frame_indices.append(int(FrameStore.frame_idx_from_path(p)))
-        except (ValueError, TypeError):
-            source_frame_indices.append(None)
+        m = _FRAME_STEM_RE.fullmatch(Path(str(p)).stem)
+        source_frame_indices.append(FrameStore.frame_idx_from_path(p) if m else None)
 
     report = {
         "scene": {"backend": backend, "n_frames": n, "model_resolution": model_res,
@@ -587,7 +595,8 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
             "verdicts": "none by design — this describes distributions, it does not grade",
             "units": "scale-free or normalised throughout; 1 recon unit is NOT 1 metre",
             "attribution": "measurements differ in what they depend on; read them against each other",
-            "source_frame_indices": "position = reconstruction index, value = source video frame index",
+            "source_frame_indices": "position = reconstruction index, value = source video frame index; "
+                "null where the filename is not frame_{idx:06d}",
         },
     }
     # clean_for_json turns every nan into null. json.dumps otherwise writes a bare NaN, which no

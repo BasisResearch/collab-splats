@@ -1050,6 +1050,35 @@ def test_build_report_maps_recon_index_to_SOURCE_frame_index(tmp_path):
     assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 3
 
 
+def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_path):
+    """A guessed source index is worse than a missing one, so the contract is checked first.
+
+    FrameStore.frame_idx_from_path is int(stem.split("_")[-1]): it raises only on a non-numeric
+    tail, so IMG_1234 reads as 1234 and 00019 as 19 — plausible integers that are simply wrong.
+    Those are the cases the map exists to prevent, because a downstream join then pairs real
+    frames with the wrong rows and nothing looks broken. A null is visibly absent instead.
+
+    The parser itself is deliberately NOT changed — other callers depend on its behaviour, and
+    the two asserts below pin that it still guesses, so this guard is what stands between the
+    guess and the report.
+    """
+    # The parser on its own would hand back a confident, wrong answer for all three of these.
+    assert FrameStore.frame_idx_from_path(Path("IMG_1234.jpg")) == 1234
+    assert FrameStore.frame_idx_from_path(Path("00019.jpg")) == 19
+    assert FrameStore.frame_idx_from_path(Path("x_frame_000007.jpg")) == 7
+
+    # Through build_report, all three come back null; the one on-contract name still resolves,
+    # so the guard rejects by shape and is not just disabling the map wholesale. The prefixed
+    # name is why the stem is matched WHOLE: a substring match would accept anything ending in
+    # the right shape, which is the same guess this guard exists to refuse.
+    report = _build(tmp_path, ["IMG_1234.jpg", "00019.jpg", "x_frame_000007.jpg", "frame_000007.jpg"])
+    assert report["source_frame_indices"] == [None, None, None, 7]
+    # null, not the string "None" and not a dropped entry: one slot per reconstruction row.
+    written = json.loads((tmp_path / "report.json").read_text())
+    assert written["source_frame_indices"] == [None, None, None, 7]
+    assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 4
+
+
 def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):
     """No verification.json and no frames.zarr: depth still ships, the other two say why not."""
     report = _build(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])

@@ -101,8 +101,10 @@ def test_ratio_against_a_measured_pixel_error_needs_no_second_function():
 
 
 # Scene shapes as (frames, side), and the bin count Rice's rule gives each — measured, which
-# is what a test asserts. The sample count is production's own expression, n_pairs * H * W, so
-# no literal is copied out of metrics.py. Round-trip accuracy is a property of the BIN COUNT,
+# is what a test asserts. The sample count here is the UNORDERED pair count, deliberately NOT
+# production's expression: the mv loop is ordered and feeds the histogram N*(N-1)*H*W residuals.
+# These numbers exist to put the bin count at a realistic magnitude, not to mirror production,
+# so the difference is not a bug to "fix". Round-trip accuracy is a property of the BIN COUNT,
 # not of array size, so the tests ask for a real scene's bin count and feed it a small array.
 RICE_BINS = {(5, 518): 278, (60, 518): 1560, (300, 518): 4584}
 

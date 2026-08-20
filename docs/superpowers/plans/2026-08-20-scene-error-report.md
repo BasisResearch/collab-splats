@@ -2444,11 +2444,11 @@ Bin count for this scene (Rice, from `n_pairs·H·W`): <k>.
 Ordered correctly: <yes/no>. <If no: what that means for the design.>
 
 ### Correlations
-- error_vs_depth: <rho>  (null: sigma_Z ~ Z^2/(f*B) => expect positive, ~linear)
-- error_vs_frame_separation: <rho>
+- error_vs_depth: <rho> over <n_pair_directions> pair directions  (null: sigma_Z ~ Z^2/(f*B) => expect positive, ~linear)
+- error_vs_frame_separation: <rho> over <n_pair_directions> pair directions
 - confidence_vs_error: <`spearman` rho over `n_frames` frames; both null on stores with no
   confidence array. Read the rho against its own n — nothing here filters a small sample.>
-- ncc_vs_frame_separation: <rho>
+- ncc_vs_frame_separation: <rho> over <n_pairs> pairs
 
 ### Disparity floor (derived, = 1 px)
 - Focal used: <f> px => floor <deg> deg

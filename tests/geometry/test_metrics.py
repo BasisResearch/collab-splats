@@ -615,6 +615,58 @@ def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
     assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
 
 
+def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION():
+    """sy and tl_y only become load-bearing on a non-square crop with y AND z motion.
+
+    Every other upsample fixture crops 32x32 onto a 16x16 grid, so sx == sy, and translates the
+    camera along x alone. The y half of the lift is then unobservable IN PRINCIPLE rather than
+    merely unobserved: with one shared K and no z motion the warp is
+    v' = fy*(y_cam + t_y)/Z + cy = v + fy*t_y/Z, so t_y = 0 leaves v' = v for ANY fy and cy.
+    Measured on the pre-existing suite: forcing sy onto the x axis, and dropping tl_y, each
+    passed all 57 tests in this file.
+
+    y motion alone still would not do it. cy has no term in v + fy*t_y/Z whatever the depth map
+    holds, so it stays invisible until t_z != 0 turns the warp into a zoom about the principal
+    point. Hence y AND z here.
+
+    The crop is 32 wide by 16 tall onto a 16x16 grid, so sx = 0.5 and sy = 1.0 and the model K
+    is anisotropic (fx 20, fy 40) exactly as a stretched crop must be; it lifts to fx = fy = 40,
+    cx = 32, cy = 16. Frame 1 sits at t = (0, +0.2, -2), which halves the depth and so doubles
+    the scale: u' = 2u - 32 and v' = 2v - 12, an exact integer map. Frame 0's crop is therefore
+    a strided view of frame 1 and a correct warp scores exactly 1.0 on white noise. sy on the x
+    axis lifts to fy = 80, cy = 24 and lands the warp 4 px out; tl_y = 0 lifts to cy = 8 and
+    lands it 8 px out. Either collapses the NCC.
+
+    The depth is a constant plane, unlike the two guide fixtures below. What is asserted here is
+    the K arithmetic, and a constant depth is what keeps the warp an exact integer map and the
+    1.0-vs-0 margin clean; a depth edge would zoom each half by a different factor and force
+    resampling for no gain. The guided filter's use of its guide is pinned separately, by
+    test_the_upsample_guide_is_normalised... and _scene_with_a_dark_frame, both of which do
+    carry an edge because there the guide IS the subject.
+    """
+    rng = np.random.default_rng(7)
+    img1 = rng.uniform(0, 255, size=(64, 64, 3)).astype(np.float32)
+    # Only the crop carries depth, so only the crop carries content. Frame 0's crop is exactly
+    # where every other pixel of frame 1 lands under the correct warp, so nothing resamples.
+    img0 = np.zeros((64, 64, 3), np.float32)
+    img0[8:24, 16:48] = img1[4:36:2, 0:64:2]
+    # 16x16 model grid over a 32-wide, 16-tall crop at (16, 8) of a 64x64 canvas.
+    model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
+    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 40.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    coords = np.tile(np.array([16, 8, 48, 24, 64, 64], dtype=np.float32), (2, 1))
+    # z makes cy (hence tl_y) observable at all; y makes fy (hence sy) observable.
+    e1 = np.eye(4, dtype=np.float32)
+    e1[1, 3], e1[2, 3] = 0.2, -2.0
+    e = np.stack([np.eye(4, dtype=np.float32), e1])
+
+    m = compute_photometric_ncc(np.stack([img0, img1]), model_d, model_K, e,
+                                original_coords=coords, max_separation=1)
+    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+    # Anchor: the whole crop warped in bounds, so that 1.0 is the full overlap rather than a
+    # few surviving pixels that happened to agree.
+    assert m["pairs"][0]["n_pixels"] == 16 * 32
+
+
 def test_the_upsample_guide_is_normalised_whatever_the_backbones_image_scale(monkeypatch):
     """guided_upsample_depth documents a uint8 guide and divides it by 255 internally.
 

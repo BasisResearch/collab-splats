@@ -41,6 +41,8 @@ Every row below was verified against the repo or measured, not assumed.
 
 **Naming is checked against the repo, not chosen.** Measured: `compute_` prefixes 8 functions in `collab_splats/`, `calculate_` prefixes **zero** — so the measurement functions are `compute_depth_error` / `compute_photometric_ncc`. The `_px` unit suffix on `focal_px` follows `mean_reproj_error_px` (`verification.py:326`). Loop locals reuse the mv loop's own names (`cam2world`, `pts_world`, `pts_cam_j`, `proj_j`, `in_front`, `expected_d`, `has_depth`, `counted`) so the two loops read alike. `n_pixels` follows the `n_keypoints` / `n_tracks` family in `frame_stats`; `PairStats`' own `num_matches` / `num_inliers` are pre-existing and left alone. The pass also caught a real bug rather than only cosmetics: `FrameStore` was imported from `preproc.sampling` (it lives in `preproc.frame_store`), called through a `read()` that does not exist, and indexed with `frame_indices()`, which holds **source-video** positions — pairing depth row `k` with whatever video frame happened to sit at that number. Corrected to `store.images()[:n]`.
 
+**A name states the quantity, not its shape.** `median_rel` said "a median of something relative" and left the reader to work out what. It is renamed `median_rel_depth_error`, and its partner `iqr_rel_depth_error`, because both are statistics of one named quantity — the signed relative depth error `(d_sampled - d_expected) / d_expected`. That rename also answers the scale question directly: a uniform scale factor `s` between two frames' depth shows up in that quantity as exactly `s - 1`, so **the median IS the pairwise scale reading** and `s = 1 + median_rel_depth_error`. Scale does not get its own column — a derived column that restates a shipped one is the redundancy critique 1 point 4 already removed once. The identity is written into the `PairStats` field comments so the reader finds it where the field is. Same pass, same rule: the JSON keys `error_in_pixels` → `depth_error_px` (says which error, and its unit), `separation` → `frame_separation` (separation of what), `error_vs_separation` → `error_vs_frame_separation` and `ncc_vs_separation` → `ncc_vs_frame_separation`, the collect-dict keys `rel_edges` / `rel_counts` → `rel_depth_error_edges` / `rel_depth_error_counts`, and the locals `abs_rel` → `abs_rel_depth_error`, `seps` → `frame_seps`.
+
 **Judgment call kept, flagged for pushback:** `bounded_residual` is one expression (`r/(1+|r|)`) but lives in `metrics.py` and is called from `base.py`, so inlining it would put the forward transform in one file and its inverse in another, where they can drift apart.
 
 ## Reuse Audit — what is NOT written here, and what supplies it
@@ -61,6 +63,24 @@ Every row below was verified against the repo or measured, not assumed.
 | Running accumulation | `np.cumsum` |
 | Per-pair error row | `verification.PairStats` (`verification.py:41`) |
 | Crop-to-original rescale of depth | `mesh.utils.guided_upsample_depth` (`mesh/utils.py:374`) |
+| Epipolar inliers, relative pose, triangulated reprojection error | `pycolmap` via the existing `verify` stage — the report never re-derives them |
+
+### Library sweep — what the installed stack does and does not supply
+
+Probed in `/opt/venv/reconstruction`: **kornia 0.8.2, open3d 0.19.0, scikit-image 0.26.0, opencv 4.13.0, torchmetrics 1.9.0, scipy 1.17.1, pycolmap 4.0.4**. Two questions: is the photometric measure already implemented, and is the depth warp?
+
+**Photometric agreement — nothing to adopt, and nothing hand-rolled either.** No NCC exists in `skimage.metrics`, `kornia.metrics`, or `torchmetrics.functional` (searched for `ncc` / `cross_corr` / `zncc`: zero hits). OpenCV has only `TM_CCOEFF_NORMED`, which is *sliding-window template matching* over an image, not a statistic on two paired vectors — the warp has already put the pixels in correspondence, so there is no window to slide. What the neighbouring libraries do offer is a different measurement: `skimage.metrics.structural_similarity`, `kornia.metrics.ssim`/`psnr`, `normalized_root_mse`. All of them need a **dense image**, and the warp yields a masked scatter of valid pixels, not a rectangle. The measure that fits paired scattered samples is ZNCC, and **ZNCC is `np.corrcoef`** — verified again here to 1e-16 (`mean(z_a·z_b) = 0.5791866664420522` vs `np.corrcoef = 0.5791866664420521`). So the line `np.corrcoef(a, b)[0, 1]` *is* the library implementation; there is no hand-rolled statistic left to replace.
+
+**Depth warp — kornia can do it, and it was rejected on measurement, not taste.** `kornia.geometry.depth.warp_frame_depth` takes ONE `camera_matrix` for both frames, so it cannot express per-frame focals (11% fx spread on omega alone) — unusable. `DepthWarper(pinhole_dst, H, W, mode="nearest")` *can*: separate `PinholeCamera` per view, and `mode="nearest"` is accepted, which matters because bilinear across a depth discontinuity blends two surfaces into a colour present on neither. It fails on the mask:
+
+- **Out-of-frame pixels come back as exact 0, with no mask returned.** Measured: warping a uniform grey image (`0.5` everywhere) through a baseline that pushes every pixel out of frame returns `fraction of output exactly 0 = 1.0`. Correlating that against the source reports disagreement where there is simply no overlap.
+- **Behind-camera points are not rejected.** `project_points` divides by `z` with no sign test, so a point at `(-1, -0.5, -2)` and its mirror at `(1, 0.5, 2)` both land on pixel `(30.5, 23.0)` — measured identical. The warp grid cannot supply `in_front`; only the 3D points in frame j can.
+
+Recovering `in_front` means unprojecting and transforming the points anyway, at which point projecting them is two more lines — so the kornia route is **strictly more code** (4×4 intrinsic padding, two `PinholeCamera` objects and a `DepthWarper` constructed per pair inside an O(N·separation) loop, plus torch↔numpy round-trips at original resolution) for the same result. Ten numpy lines stay.
+
+**No batched angle-between-rays utility exists either** (`kornia.geometry`'s `angle` symbols are all rotation conversions; `scipy.spatial.distance.cosine` is 1-D, so it would need a Python loop over millions of pixels). The two-line vectorised `arccos` stands.
+
+**Known duplication, accepted and stated:** `compute_multiview_depth_confidence` already unprojects, transforms, projects, samples nearest and builds `in_front`, and the photometric loop does the same geometry over colour instead of depth. It is not shared, because one runs in torch at model resolution and the other in numpy at original resolution, and unifying them means editing a hot production function with four callers for the benefit of a report. If a third consumer appears, extract then.
 
 **Why one histogram survives, and why its bins are still not a constant:** per-pair per-pixel residuals are `N²·H·W` floats — 2.4e10 at 300 frames — so the depth residual must accumulate into bins fixed *before* the loop starts. That is the whole reason binning happens at all, and it rules out deriving the bins from the data itself: a first pass to find the range would double the most expensive stage in the report. But the bins need two things, a range and a resolution, and both are recoverable without looking at a single residual. The bounded axis fixes the range at `(−1, 1)` by construction. The resolution follows from the sample count, which the caller knows before the loop as `n_pairs · H · W`. So `residual_bin_edges(n_samples)` computes the edges up front, ships them in the collect dict beside the counts, and no constant survives. Every other quantity reduces to one scalar per pair (a few thousand floats) and ships as a raw column a reader can bin at any resolution they choose.
 
@@ -197,7 +217,7 @@ def test_pair_stats_is_keyed_on_frame_index():
     """Depth path has indices and no filenames; verify has filenames. Index is the join key."""
     p = PairStats(idx1=0, idx2=4)
     assert (p.idx1, p.idx2) == (0, 4)
-    assert p.name1 is None and p.median_rel is None
+    assert p.name1 is None and p.median_rel_depth_error is None
 
 
 def test_separation_is_a_subtraction_not_a_field():
@@ -209,8 +229,8 @@ def test_separation_is_a_subtraction_not_a_field():
 def test_pair_stats_carries_epipolar_and_depth_together():
     """One row per pair. Two measurements fill different columns of it."""
     p = PairStats(0, 1, name1="f0.png", name2="f1.png", num_matches=500, num_inliers=450,
-                  rot_error_deg=0.15, t_direction_error_deg=0.9, median_rel=0.02)
-    assert p.num_inliers == 450 and p.median_rel == pytest.approx(0.02)
+                  rot_error_deg=0.15, t_direction_error_deg=0.9, median_rel_depth_error=0.02)
+    assert p.num_inliers == 450 and p.median_rel_depth_error == pytest.approx(0.02)
 
 
 def test_depth_error_in_pixels_is_r_times_disparity():
@@ -357,8 +377,14 @@ class PairStats:
     t_direction_error_deg: float | None = None  # nan if degenerate
     # Filled by the depth cross-view pass
     n_pixels: int | None = None
-    median_rel: float | None = None  # signed, so this is the SCALE BIAS between the views
-    iqr_rel: float | None = None  # spread with the bias removed — GEOMETRIC NOISE
+    # Both are statistics of ONE quantity: the signed relative depth error
+    # (d_sampled - d_expected) / d_expected, frame j's depth read against frame i's.
+    # The median is the SCALE reading: a uniform scale factor s between the two frames'
+    # depth appears here as exactly s - 1, so 0.02 means frame j is 2% deeper. The IQR is
+    # the same population with that bias removed, i.e. the geometric noise. Scale is not a
+    # separate column because it is this column: s = 1 + median_rel_depth_error.
+    median_rel_depth_error: float | None = None  # signed; s - 1, the pairwise depth scale offset
+    iqr_rel_depth_error: float | None = None  # spread with the bias removed — geometric noise
     median_parallax_deg: float | None = None  # how well this pair can see depth at all
     median_depth: float | None = None  # the "worse further away?" axis, as a column
     # Filled by the photometric pass
@@ -594,13 +620,13 @@ def test_collect_defaults_to_none_and_output_is_unchanged():
 def test_collect_fills_index_keyed_rows_and_the_one_histogram():
     depth, K, extr = _two_view()
     out = _collect(depth, K, extr)
-    assert out["rel_counts"].sum() > 0
+    assert out["rel_depth_error_counts"].sum() > 0
     assert (out["pairs"][0].idx1, out["pairs"][0].idx2) == (0, 1)
     assert out["pairs"][0].name1 is None  # index is the key; no filenames invented
     # Edges travel with the counts: they are sized from this scene, so counts alone are unreadable.
-    assert len(out["rel_edges"]) == len(out["rel_counts"]) + 1
+    assert len(out["rel_depth_error_edges"]) == len(out["rel_depth_error_counts"]) + 1
     n, h, w = depth.shape
-    assert np.array_equal(out["rel_edges"], residual_bin_edges(n * (n - 1) // 2 * h * w))
+    assert np.array_equal(out["rel_depth_error_edges"], residual_bin_edges(n * (n - 1) // 2 * h * w))
 
 
 def test_signed_residual_recovers_an_injected_depth_scale():
@@ -608,12 +634,12 @@ def test_signed_residual_recovers_an_injected_depth_scale():
     depth, K, extr = _two_view(scale_j=1.1)
     out = _collect(depth, K, extr, rel_thresh=0.5)
     row = next(r for r in out["pairs"] if (r.idx1, r.idx2) == (0, 1))
-    assert row.median_rel == pytest.approx(0.1, abs=0.02)
+    assert row.median_rel_depth_error == pytest.approx(0.1, abs=0.02)
 
 
 def test_signed_residual_is_zero_on_a_consistent_pair():
     depth, K, extr = _two_view()
-    assert _collect(depth, K, extr)["pairs"][0].median_rel == pytest.approx(0.0, abs=1e-3)
+    assert _collect(depth, K, extr)["pairs"][0].median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
 
 
 def test_parallax_angle_matches_geometry():
@@ -635,7 +661,7 @@ def test_occluded_pixels_are_excluded_from_the_residual():
     depth, K, extr = _two_view()
     depth[1, :, :8] = 0.5  # a near occluder covering half of frame 1
     row = next(r for r in _collect(depth, K, extr)["pairs"] if r.idx1 == 0)
-    assert row.median_rel == pytest.approx(0.0, abs=1e-3)
+    assert row.median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
 
 
 def test_residual_is_scale_invariant():
@@ -646,7 +672,7 @@ def test_residual_is_scale_invariant():
     extr_s = extr.copy()
     extr_s[:, :3, 3] *= s
     b = _collect(depth * s, K, extr_s, rel_thresh=0.5)["pairs"][0]
-    assert a.median_rel == pytest.approx(b.median_rel, abs=1e-4)
+    assert a.median_rel_depth_error == pytest.approx(b.median_rel_depth_error, abs=1e-4)
     assert a.median_parallax_deg == pytest.approx(b.median_parallax_deg, abs=1e-3)
 
 
@@ -654,7 +680,7 @@ def test_a_huge_residual_still_lands_in_the_histogram():
     """The bounded axis means no residual can miss the bins, however large."""
     depth, K, extr = _two_view(scale_j=60.0)
     out = _collect(depth, K, extr, rel_thresh=1e9)
-    assert out["rel_counts"].sum() > 0
+    assert out["rel_depth_error_counts"].sum() > 0
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -687,8 +713,8 @@ Docstring Args addition:
 ```
         collect: Optional dict, filled IN PLACE with the signed residual and parallax angle
                  this loop already computes and would otherwise discard. Keys: "pairs"
-                 (list[PairStats], keyed on frame index), "rel_counts" (np.int64 counts) and
-                 "rel_edges" (the edges those counts are against, sized from this scene's own
+                 (list[PairStats], keyed on frame index), "rel_depth_error_counts" (np.int64 counts) and
+                 "rel_depth_error_edges" (the edges those counts are against, sized from this scene's own
                  sample count). The residual is the one per-pixel quantity, so it is the one
                  that has to bin rather than ship raw. The return value is the same either
                  way, so the four production creators are unaffected.
@@ -706,8 +732,8 @@ Before the `for i in range(N)` loop:
         # needs a pre-pass over the data — the pre-pass is the cost the histogram exists to avoid.
         edges = residual_bin_edges(N * (N - 1) // 2 * H * W)
         collect["pairs"] = []
-        collect["rel_edges"] = edges
-        collect["rel_counts"] = np.zeros(len(edges) - 1, dtype=np.int64)
+        collect["rel_depth_error_edges"] = edges
+        collect["rel_depth_error_counts"] = np.zeros(len(edges) - 1, dtype=np.int64)
         cam_centers = cam2world[:, :3, 3]  # (N, 3) world-space camera positions
 ```
 
@@ -738,7 +764,7 @@ Inside the `for j in range(N)` loop, immediately **after** `valid_sum[i] += coun
             # here. bounded_residual puts them on a finite axis first, so nothing is clipped
             # and nothing is dropped however large the residual.
             v = rel.detach().cpu().numpy()
-            collect["rel_counts"] += np.histogram(bounded_residual(v), bins=edges)[0]
+            collect["rel_depth_error_counts"] += np.histogram(bounded_residual(v), bins=edges)[0]
 
             # Everything else is one number per pair, so it ships as a raw column instead.
             q = torch.quantile(rel, torch.tensor([0.25, 0.5, 0.75], device=rel.device))
@@ -747,8 +773,8 @@ Inside the `for j in range(N)` loop, immediately **after** `valid_sum[i] += coun
                     idx1=i,
                     idx2=j,
                     n_pixels=int(sel.sum()),
-                    median_rel=float(q[1]),
-                    iqr_rel=float(q[2] - q[0]),
+                    median_rel_depth_error=float(q[1]),
+                    iqr_rel_depth_error=float(q[2] - q[0]),
                     median_parallax_deg=float(par.median()),
                     median_depth=float(expected_d[sel].median()),
                 )
@@ -827,7 +853,7 @@ from collab_splats.geometry.metrics import compute_depth_error
 
 
 def _pair(i, j, rel, par, n=100, iqr=0.01, depth=4.0):
-    return PairStats(i, j, n_pixels=n, median_rel=rel, iqr_rel=iqr,
+    return PairStats(i, j, n_pixels=n, median_rel_depth_error=rel, iqr_rel_depth_error=iqr,
                      median_parallax_deg=par, median_depth=depth)
 
 
@@ -842,9 +868,9 @@ def _collected(pairs):
     counts = np.zeros(len(edges) - 1, dtype=np.int64)
     for p in pairs:
         counts += np.histogram(
-            bounded_residual(np.full(p.n_pixels, p.median_rel)), bins=edges
+            bounded_residual(np.full(p.n_pixels, p.median_rel_depth_error)), bins=edges
         )[0]
-    return {"pairs": pairs, "rel_counts": counts, "rel_edges": edges}
+    return {"pairs": pairs, "rel_depth_error_counts": counts, "rel_depth_error_edges": edges}
 
 
 def test_depth_error_reports_grid_and_resolution():
@@ -856,25 +882,25 @@ def test_depth_error_reports_grid_and_resolution():
 def test_pair_rows_carry_separation():
     """1->4 and 2->5 both land at 3, so distance-vs-error is a column not a special case."""
     m = compute_depth_error(_collected([_pair(1, 4, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
-    assert [r["separation"] for r in m["pairs"]] == [3, 3]
+    assert [r["frame_separation"] for r in m["pairs"]] == [3, 3]
 
 
 def test_scale_bias_keeps_its_sign_on_the_row():
     """A pure scale error has a large median and a small spread; the sign must survive."""
     m = compute_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]), 500.0, "x")
-    assert m["pairs"][0]["median_rel"] == pytest.approx(-0.08)
-    assert m["pairs"][0]["iqr_rel"] == pytest.approx(0.005)
+    assert m["pairs"][0]["median_rel_depth_error"] == pytest.approx(-0.08)
+    assert m["pairs"][0]["iqr_rel_depth_error"] == pytest.approx(0.005)
 
 
 def test_pixel_equivalent_lands_on_each_pair_row():
     m = compute_depth_error(_collected([_pair(0, 1, 0.1, 2.0)]), 500.0, "x")
-    assert m["pairs"][0]["error_in_pixels"] == pytest.approx(depth_error_in_pixels(0.1, 2.0, 500.0))
+    assert m["pairs"][0]["depth_error_px"] == pytest.approx(depth_error_in_pixels(0.1, 2.0, 500.0))
 
 
 def test_pairs_under_one_pixel_of_disparity_report_null_not_zero():
     tiny = np.rad2deg(0.5 / 500.0)  # half a pixel of disparity
     m = compute_depth_error(_collected([_pair(0, 1, 0.1, tiny)]), 500.0, "x")
-    assert m["pairs"][0]["error_in_pixels"] is None
+    assert m["pairs"][0]["depth_error_px"] is None
     assert m["pairs_under_one_pixel_disparity"] == 1
 
 
@@ -883,7 +909,7 @@ def test_per_pair_columns_ship_raw():
     pairs = [_pair(k, k + 1, 0.01 * k, 3.0) for k in range(1, 30)]
     m = compute_depth_error(_collected(pairs), 500.0, "x")
     assert len(m["pairs"]) == 29
-    assert {"median_rel", "iqr_rel", "median_parallax_deg", "median_depth"} <= set(m["pairs"][0])
+    assert {"median_rel_depth_error", "iqr_rel_depth_error", "median_parallax_deg", "median_depth"} <= set(m["pairs"][0])
 
 
 def test_per_pixel_residual_ships_as_counts_and_edges():
@@ -916,10 +942,10 @@ def test_constant_depth_gives_nan_which_the_json_writer_turns_into_null():
     assert np.isnan(compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"])
 
 
-def test_error_vs_separation_is_reported():
+def test_error_vs_frame_separation_is_reported():
     """Does disagreement grow with how far apart the two frames are?"""
     pairs = [_pair(0, k, 0.005 * k, 3.0) for k in range(1, 20)]
-    assert compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_separation"] > 0.9
+    assert compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_frame_separation"] > 0.9
 
 
 def test_depth_error_is_unavailable_not_a_crash_when_empty():
@@ -972,27 +998,28 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         {
             "idx1": p.idx1,
             "idx2": p.idx2,
-            "separation": abs(p.idx1 - p.idx2),  # how far apart the two frames are
+            "frame_separation": abs(p.idx1 - p.idx2),  # how far apart the two frames are
             "n_pixels": p.n_pixels,
-            "median_rel": p.median_rel,  # signed: this is the scale bias
-            "iqr_rel": p.iqr_rel,  # bias removed: this is the noise
+            # Signed, so scale reads straight off it: s = 1 + median_rel_depth_error.
+            "median_rel_depth_error": p.median_rel_depth_error,
+            "iqr_rel_depth_error": p.iqr_rel_depth_error,  # bias removed: geometric noise
             "median_parallax_deg": p.median_parallax_deg,
             "median_depth": p.median_depth,
             # None, not 0.0 — under a pixel of disparity a zero would read as "no error"
             # when it means "cannot tell".
-            "error_in_pixels": depth_error_in_pixels(p.median_rel, p.median_parallax_deg, focal_px),
+            "depth_error_px": depth_error_in_pixels(p.median_rel_depth_error, p.median_parallax_deg, focal_px),
         }
         for p in pairs
     ]
 
-    abs_rel = np.array([abs(p.median_rel) for p in pairs])
+    abs_rel_depth_error = np.array([abs(p.median_rel_depth_error) for p in pairs])
     depths = np.array([p.median_depth for p in pairs], dtype=np.float64)
-    seps = np.array([abs(p.idx1 - p.idx2) for p in pairs], dtype=np.float64)
-    under_1px = sum(1 for r in rows if r["error_in_pixels"] is None)
+    frame_seps = np.array([abs(p.idx1 - p.idx2) for p in pairs], dtype=np.float64)
+    under_1px = sum(1 for r in rows if r["depth_error_px"] is None)
 
     # Invert the bounded axis to read quantiles back as real residuals. Monotone, so the qth
     # quantile of the transformed values is the transform of the qth quantile.
-    counts, edges = collected["rel_counts"], collected["rel_edges"]
+    counts, edges = collected["rel_depth_error_counts"], collected["rel_depth_error_edges"]
     grid = (0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 0.999)
     rv = stats.rv_histogram((counts, edges))
     quantiles = {}
@@ -1036,8 +1063,12 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         # sigma_Z ~ Z^2/(f*B), so a relative residual should already rise roughly linearly in
         # Z. Positive rho is expected. Near 0 or near 1 are the interesting outcomes.
         "correlations": {
-            "error_vs_depth": float(stats.spearmanr(depths, abs_rel, nan_policy="omit").statistic),
-            "error_vs_separation": float(stats.spearmanr(seps, abs_rel, nan_policy="omit").statistic),
+            "error_vs_depth": float(
+                stats.spearmanr(depths, abs_rel_depth_error, nan_policy="omit").statistic
+            ),
+            "error_vs_frame_separation": float(
+                stats.spearmanr(frame_seps, abs_rel_depth_error, nan_policy="omit").statistic
+            ),
             "null_hypothesis": "sigma_Z ~ Z^2/(f*B) => relative residual rises ~linearly in Z",
         },
         "pairs": rows,
@@ -1159,7 +1190,7 @@ def test_two_overlapping_pixels_do_not_count_as_a_correlation():
 def test_photometric_respects_max_separation():
     img, d, K, e = _plane(n=4, hw=16)
     m = compute_photometric_ncc(img, d, K, e, "16x16", max_separation=1)
-    assert all(r["separation"] <= 1 for r in m["pairs"])
+    assert all(r["frame_separation"] <= 1 for r in m["pairs"])
 
 
 def test_photometric_is_unavailable_for_a_single_frame():
@@ -1311,7 +1342,7 @@ def compute_photometric_ncc(
             ncc = float(np.corrcoef(a, b)[0, 1])
             if not np.isfinite(ncc):
                 continue
-            rows.append({"idx1": i, "idx2": j, "separation": j - i,
+            rows.append({"idx1": i, "idx2": j, "frame_separation": j - i,
                          "photometric_ncc": ncc, "n_pixels": int(ok.sum())})
 
     if not rows:
@@ -1322,7 +1353,7 @@ def compute_photometric_ncc(
             "resolution": resolution,
         }
     ncc = np.array([r["photometric_ncc"] for r in rows])
-    seps = np.array([r["separation"] for r in rows], dtype=np.float64)
+    frame_seps = np.array([r["frame_separation"] for r in rows], dtype=np.float64)
     return {
         "available": True,
         "grid": "original",
@@ -1330,7 +1361,9 @@ def compute_photometric_ncc(
         "units": "zero-mean normalised cross-correlation; 1.0 = perfect agreement",
         "n_pairs": len(rows),
         "correlations": {
-            "ncc_vs_separation": float(stats.spearmanr(seps, ncc, nan_policy="omit").statistic)
+            "ncc_vs_frame_separation": float(
+                stats.spearmanr(frame_seps, ncc, nan_policy="omit").statistic
+            )
         },
         "pairs": rows,
     }
@@ -1417,11 +1450,11 @@ def test_report_does_not_demote_any_existing_leaf():
 
 def test_running_error_is_sequential_pairs_and_absolute_steps():
     """Signed steps cancel and hide accumulation; a separation-5 pair is a revisit not a step."""
-    rows = [{"idx1": 0, "idx2": 1, "separation": 1, "median_rel": 0.1},
-            {"idx1": 1, "idx2": 2, "separation": 1, "median_rel": -0.1},
-            {"idx1": 0, "idx2": 5, "separation": 5, "median_rel": 9.9}]
-    steps = sorted((r for r in rows if r["separation"] == 1), key=lambda r: r["idx1"])
-    assert np.cumsum([abs(r["median_rel"]) for r in steps]).tolist() == pytest.approx([0.1, 0.2])
+    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "median_rel_depth_error": 0.1},
+            {"idx1": 1, "idx2": 2, "frame_separation": 1, "median_rel_depth_error": -0.1},
+            {"idx1": 0, "idx2": 5, "frame_separation": 5, "median_rel_depth_error": 9.9}]
+    steps = sorted((r for r in rows if r["frame_separation"] == 1), key=lambda r: r["idx1"])
+    assert np.cumsum([abs(r["median_rel_depth_error"]) for r in steps]).tolist() == pytest.approx([0.1, 0.2])
 
 
 def test_report_json_is_valid_json_with_no_bare_nan():
@@ -1489,7 +1522,7 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     # Per-frame median |residual| — the column both the confidence check and the ranks read.
     per_frame = {}
     for k in range(n):
-        v = [abs(p.median_rel) for p in collected["pairs"] if k in (p.idx1, p.idx2)]
+        v = [abs(p.median_rel_depth_error) for p in collected["pairs"] if k in (p.idx1, p.idx2)]
         if v:
             per_frame[k] = float(np.median(v))
 
@@ -1518,10 +1551,10 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     # pair is a revisit, not a step, and summing it would double-count. Absolute values,
     # because signed steps cancel and would hide the accumulation this exists to show.
     running = {}
-    for name, key, m in (("depth", "median_rel", depth_m), ("epipolar", "rot_error_deg", epipolar_m)):
+    for name, key, m in (("depth", "median_rel_depth_error", depth_m), ("epipolar", "rot_error_deg", epipolar_m)):
         steps = sorted(
             (x for x in m.get("pairs", [])
-             if x.get("separation") == 1 and x.get(key) is not None and np.isfinite(x[key])),
+             if x.get("frame_separation") == 1 and x.get(key) is not None and np.isfinite(x[key])),
             key=lambda x: min(x["idx1"], x["idx2"]),
         )
         running[name] = {
@@ -1538,7 +1571,7 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
         ),
         "measurements": {"epipolar": epipolar_m, "depth": depth_m, "photometric": photometric_m},
         "confidence_vs_error_spearman": conf_rho,
-        # Read running_error against error_vs_separation before calling it drift: frame index
+        # Read running_error against error_vs_frame_separation before calling it drift: frame index
         # is a confounded axis, since scene content, motion speed and exposure all track it.
         "running_error": running,
         "frame_percentile_ranks": ranks,
@@ -1584,7 +1617,7 @@ def _load_epipolar(verification_json: Path, image_width: int) -> dict:
         # (`p.num_inliers / p.num_matches ... if p.num_matches`) — per row here rather than
         # collapsed to a distribution, so it can be joined against the depth rows.
         n_m, n_i = s.get("num_matches") or 0, s.get("num_inliers") or 0
-        rows.append({**s, "separation": abs(s["idx1"] - s["idx2"]),
+        rows.append({**s, "frame_separation": abs(s["idx1"] - s["idx2"]),
                      "inlier_ratio": (n_i / n_m) if n_m else None})
 
     frames = []
@@ -1803,12 +1836,12 @@ def _pairs(depth, K, extr, **kw):
 
 
 def test_control_depth_scale_moves_the_depth_measurement_by_the_injected_amount():
-    """x1.1 on frame 2's depth => median_rel ~ +0.1 on pairs INTO frame 2, and only those."""
+    """x1.1 on frame 2's depth => median_rel_depth_error ~ +0.1 on pairs INTO frame 2, and only those."""
     depth, K, extr = _scene()
     depth[2] *= 1.1
     p = _pairs(depth, K, extr, rel_thresh=0.5)
-    into_2 = [v.median_rel for (i, j), v in p.items() if j == 2]
-    clean = [v.median_rel for (i, j), v in p.items() if 2 not in (i, j)]
+    into_2 = [v.median_rel_depth_error for (i, j), v in p.items() if j == 2]
+    clean = [v.median_rel_depth_error for (i, j), v in p.items() if 2 not in (i, j)]
     assert np.median(into_2) == pytest.approx(0.1, abs=0.03)
     assert np.max(np.abs(clean)) < 0.01
 
@@ -1831,7 +1864,7 @@ def test_control_injected_scale_has_a_closed_form_prediction():
     depth[2] *= 1.1
     p = _pairs(depth, K, extr, rel_thresh=0.5)[(1, 2)]
     predicted = depth_error_in_pixels(0.1, p.median_parallax_deg, FOCAL)
-    measured = depth_error_in_pixels(p.median_rel, p.median_parallax_deg, FOCAL)
+    measured = depth_error_in_pixels(p.median_rel_depth_error, p.median_parallax_deg, FOCAL)
     assert measured == pytest.approx(predicted, rel=0.3)
     # A pure depth fault: the pixel motion IS the depth motion, so the ratio sits at 1.
     assert measured / predicted == pytest.approx(1.0, abs=0.3)
@@ -1850,7 +1883,7 @@ def test_control_exposure_shift_is_invisible_to_the_depth_measurement():
     depth, K, extr = _scene()
     before, after = _pairs(depth, K, extr), _pairs(depth, K, extr)
     for key in before:
-        assert after[key].median_rel == pytest.approx(before[key].median_rel, abs=1e-9)
+        assert after[key].median_rel_depth_error == pytest.approx(before[key].median_rel_depth_error, abs=1e-9)
 
 
 def test_control_exposure_shift_is_invisible_to_photometric_too():
@@ -1878,9 +1911,9 @@ def test_control_separation_axis_has_teeth():
     for k in range(6):
         depth[k] *= 1.0 + 0.02 * k  # drift: each frame slightly more scaled than the last
     p = _pairs(depth, K, extr, rel_thresh=0.9)
-    seps = np.array([abs(i - j) for (i, j) in p], dtype=np.float64)
-    errs = np.array([abs(v.median_rel) for v in p.values()])
-    assert stats.spearmanr(seps, errs, nan_policy="omit").statistic > 0.8
+    frame_seps = np.array([abs(i - j) for (i, j) in p], dtype=np.float64)
+    errs = np.array([abs(v.median_rel_depth_error) for v in p.values()])
+    assert stats.spearmanr(frame_seps, errs, nan_policy="omit").statistic > 0.8
 ```
 
 - [ ] **Step 2: Run them**
@@ -1915,7 +1948,7 @@ measurement gets a fault whose magnitude and location are known, and must stay
 still under the others'.
 
 The depth-scale control is load-bearing: x1.1 on one frame's depth must move
-median_rel to ~0.1 on pairs into that frame ONLY, leaving parallax alone. The
+median_rel_depth_error to ~0.1 on pairs into that frame ONLY, leaving parallax alone. The
 bridge makes it quantitative — r=0.1 predicts delta_d = 0.1*d in closed form
 with ratio ~1, while a pose fault drives the ratio >>1. Opposite signatures from
 one formula.
@@ -1982,7 +2015,7 @@ Expected: abs ≈ 0.37 / 2.27 / 25.67 %. **If they differ materially, explain th
 
 The report ships every gated pair as a raw row so a reader can re-bin any column. At 300 frames the mv loop's pair count is O(N²) before gating, so record `pairs` and `json MB` from Step 1.
 
-**If `report.json` exceeds ~20 MB**, the fix is to keep the histogram and emit raw rows only for sequential pairs plus the worst 500 by `median_rel` — one filter, no new concepts. Record the decision either way; do not add the filter pre-emptively.
+**If `report.json` exceeds ~20 MB**, the fix is to keep the histogram and emit raw rows only for sequential pairs plus the worst 500 by `median_rel_depth_error` — one filter, no new concepts. Record the decision either way; do not add the filter pre-emptively.
 
 - [ ] **Step 4: Rank control**
 
@@ -1996,7 +2029,7 @@ for name in ('mapanything', 'vggt_omega'):
     if not p.exists():
         print(name, 'MISSING'); continue
     d = json.loads(p.read_text())['measurements']['depth']
-    rel = [abs(r['median_rel']) for r in d['pairs']]
+    rel = [abs(r['median_rel_depth_error']) for r in d['pairs']]
     h = d['residual_histogram']['abs_quantiles']  # abs, to match the abs pair medians below
     print(name, 'hist p50', h['0.5'], 'p99', h['0.99'], 'pair p50', float(np.median(rel)))
 "
@@ -2036,9 +2069,9 @@ Ordered correctly: <yes/no>. <If no: what that means for the design.>
 
 ### Correlations
 - error_vs_depth: <rho>  (null: sigma_Z ~ Z^2/(f*B) => expect positive, ~linear)
-- error_vs_separation: <rho>
+- error_vs_frame_separation: <rho>
 - confidence_vs_error: <rho or null — absent on stores with no confidence array>
-- ncc_vs_separation: <rho>
+- ncc_vs_frame_separation: <rho>
 
 ### Disparity floor (derived, = 1 px)
 - Focal used: <f> px => floor <deg> deg
@@ -2047,7 +2080,7 @@ Ordered correctly: <yes/no>. <If no: what that means for the design.>
 
 ### Running error
 <Does the sequential-pair curve rise faster than linearly? Read against
-error_vs_separation before calling it accumulation.>
+error_vs_frame_separation before calling it accumulation.>
 
 ### Compute follow-ups (decided by the split above, not in advance)
 - Duplicated multiview pass: <s> of the total. Worth handing the creator's
@@ -2163,7 +2196,7 @@ drift apart."
 - **Binned views** of error-vs-depth and error-vs-confidence are replaced by one rank correlation each. The raw columns are in `report.json`, so the binned shape is recoverable at any resolution the reader picks — but this plan does not compute it.
 - **Parallelism, zarr streaming, and reusing the creator's multiview pass** are deferred to a Task 8 measurement rather than designed in. Stated with the reasoning above, not omitted.
 
-**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `compute_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly three keys, `pairs`, `rel_counts` and `rel_edges`, written in Task 3 and read unchanged in Task 4 — the edges travel with the counts because they are now scene-dependent, and counts without their edges are unreadable. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. `residual_bin_edges` and `bounded_residual` have exactly one definition, with Task 3 Step 6 guarding the import direction. The sample-count expression `n_pairs * H * W` also has one definition per side: production computes it in Task 3, and `tests/geometry/test_metrics.py` computes it with `_n_samples(frames, side)` rather than copying a literal. Correlations are raw `float` (possibly nan) at every site, converted to null once by `_clean` at write time.
+**Type consistency:** `PairStats` is the single per-pair row type, keyed `(idx1, idx2)` across `verification.py`, the mv loop and `compute_depth_error`; every measurement-specific field defaults to `None`. The `collect` dict has exactly three keys, `pairs`, `rel_depth_error_counts` and `rel_depth_error_edges`, written in Task 3 and read unchanged in Task 4 — the edges travel with the counts because they are now scene-dependent, and counts without their edges are unreadable. Frame index means one thing everywhere: position in `sorted(recon.images)` for verify, loop index `i` for the depth pass, and those two coincide by the alignment contract at `verification.py:99/136/144/150`. `residual_bin_edges` and `bounded_residual` have exactly one definition, with Task 3 Step 6 guarding the import direction. The sample-count expression `n_pairs * H * W` also has one definition per side: production computes it in Task 3, and `tests/geometry/test_metrics.py` computes it with `_n_samples(frames, side)` rather than copying a literal. Correlations are raw `float` (possibly nan) at every site, converted to null once by `_clean` at write time. The critique-5 renames were applied to definitions and uses together and re-grepped: `median_rel_depth_error` / `iqr_rel_depth_error` are read in Task 4's pair rows, in Task 5's ranking, and in the Task 7 tests; `depth_error_px` and `frame_separation` are written in Task 4 and read in Task 5 and the Task 8 readout; `error_vs_frame_separation` and `ncc_vs_frame_separation` are each written at exactly one production site, asserted in Task 4's tests, and quoted in the Task 8 readout template under the same spelling. No old spelling survives anywhere in the plan.
 
 **Placeholder scan:** no TBD/TODO. Three named unknowns with stated resolution paths, not hidden ones: Task 1 Step 3's `Reconstructor` construction (depends on the chosen scene), Task 2 Step 5's `test_verification.py` breakage (expected, with the fix stated), and Task 8 Step 3's JSON size (measured, with the fallback stated). The fourth is now closed: `FrameStore` and `guided_upsample_depth` were read from source rather than memory, which caught a wrong module (`preproc.sampling` → `preproc.frame_store`), a method that does not exist (`read`), and source-video indices being used as row positions.
 

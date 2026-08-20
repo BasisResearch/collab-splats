@@ -161,9 +161,64 @@ triangulation uncertainty σ_Z ∝ Z²/(f·B), so a *relative* residual should g
 linearly in Z. Growing faster indicates something beyond geometry (far-field extrapolation,
 confidence miscalibration); flat indicates depth normalised in a way that hides error.
 
-Honest caveat to carry in the doc: far pixels have less parallax, so they disagree **less**
-in pixel terms while disagreeing **more** in depth terms. The two channels must be read on
-their own axes, never differenced.
+### The parallax bridge — putting pixel and depth channels on one axis
+
+Far pixels have less parallax, so they disagree **less** in pixel terms while disagreeing
+**more** in depth terms. This looks like the two channels contradicting each other. They do
+not: the relation between them is exact to first order and computable per pixel.
+
+For a pair with perpendicular baseline `B`, a point at depth `Z` has disparity
+`d = f·B/Z`. A depth error `δZ` moves it in the image by `δd = f·B·δZ/Z²`. Substituting the
+relative residual `r = δZ/Z` the focal and baseline collapse out:
+
+```
+δd = r · d
+```
+
+**Pixel disagreement = relative depth disagreement × disparity.** The `1/Z` inside `d` is
+the whole apparent contradiction. Two derived quantities follow, both already computable
+from arrays the projection loop holds.
+
+**1. Equivalent pixel error** — `δd_equiv = r · d`. The depth residual expressed in pixel
+units *through the pair's actual parallax*. This is the legitimate way to difference the
+channels: convert first, then compare. It also converts to the interpretable question "how
+many pixels of matching error would produce the depth disagreement we measured", which is
+the natural unit for judging whether a residual is large.
+
+**2. Explained fraction** — `ρ = measured_pixel_residual / δd_equiv`.
+
+| ρ | reading |
+|---|---|
+| ≈ 1 | pixel disagreement fully accounted for by the depth disagreement — one underlying error, seen twice |
+| ≫ 1 | pixel error exceeds what any depth error explains → the excess is **pose** (pose error moves pixels while leaving depths mutually consistent) or appearance |
+| ≪ 1 | depth disagrees more than pixels do → the depth error lies along the ray, where this pair's baseline cannot see it — a low-observability configuration, not necessarily a bad depth |
+
+ρ is unitless and parallax-normalised, so **it is comparable across depth bins**, which the
+raw channels are not. That makes it the metric that actually answers the question: plot
+ρ against depth quantile. **Flat means the depth trend is pure geometry** — the channels
+were never in conflict. **Rising means a genuine far-field problem** beyond what parallax
+explains. Same plot against `|i − j|` and against spatial distance gives the second-order
+version.
+
+A third, cheaper readout: the theory predicts `corr(r, δd)` should have **slope `d`**.
+Measured slope against predicted slope is a direct check on the bridge itself, and a
+per-depth-bin noise floor `r_floor = 1/d` states the relative depth precision a 1-px
+matching error implies — measured `r` below `r_floor` means the depth channel is reading
+matching noise, not model error.
+
+**Compute the parallax angle directly from the two ray directions, not from `f·B/Z`.** The
+small-angle pinhole form needs a focal length, and focal is exactly what is *not* comparable
+across backbones (measured 11% fx spread on omega alone, which is why `shared_camera=True`
+landed in BA). The angular form is scale-free, so report ρ in angular terms as the
+backbone-comparable number and the pixel form alongside it for interpretability.
+
+**Degenerate case, and it is not hypothetical.** `B` is the baseline component *perpendicular
+to the viewing ray*, not `‖C_i − C_j‖`. Forward camera motion drives it to ~zero near the
+epipole, so `d → 0` and ρ blows up. This is the same root cause as the recorded AUC@5
+ill-conditioning on 10–20 mm indoor baselines (trap 10). ρ is therefore **undefined below a
+parallax-angle floor**, and the report emits the *fraction of pixels in that regime* rather
+than an infinity — a scene that is mostly below the floor has no usable ρ, and saying so is
+the finding.
 
 ### The pair table — the second-order engine
 
@@ -175,7 +230,10 @@ Every pair contributes one row:
 | `temporal_separation` | `|i − j|` |
 | `spatial_distance` | `‖C_i − C_j‖ / camera_extent` |
 | `frustum_overlap` | did the AABB gate pass |
+| `parallax_angle_deg` | median triangulation angle — the pair's depth **observability** |
+| `below_parallax_floor_frac` | fraction of pixels where ρ is undefined |
 | per-channel residuals | epipolar (when the pair is in the epipolar set), depth `median(r)` and spread, photometric |
+| `equivalent_pixel_error`, `explained_fraction` | the parallax bridge, per pair |
 
 Every second-order question is then a groupby on this table rather than a separate metric:
 
@@ -219,30 +277,27 @@ running accumulation along the trajectory and the empirical CDF — because both
 both are defensible readings of the request. If only one was meant, the other costs nothing
 to ignore.
 
-### Plot-ready by construction
+### Histograms — arbitrary-threshold queries must be exact
 
-The artifact is designed so an interactive dashboard is a **reader**, not a re-computation.
-Concretely, queries of the form *"what percentage of frames / pairs / pixels fall within X
-error"* must be answerable from the file alone:
+Queries of the form *"what percentage of frames / pairs / pixels fall within X error"* are
+answerable from the file alone, at any X the reader picks:
 
-- **Frame- and pair-level queries are exact.** Both tables are row-per-entity, so
-  "% of frames under X" is a count, not an estimate, at any X the reader picks.
+- **Frame- and pair-level queries are already exact.** Both tables are row-per-entity, so
+  "% of frames under X" is a count, not an estimate.
 - **Pixel-level queries need a histogram, not just quantiles.** A quantile grid gives the
-  CDF at fixed *probabilities*; inverting it to "fraction below arbitrary X" requires
-  interpolating between quantiles, and the interpolation error is worst in the tail — the
-  part that matters. So every pixel-level channel emits a **fixed-bin histogram with
-  explicit bin edges** alongside its quantile grid. Counts per bin make arbitrary-X queries
-  exact and let the reader re-bin, plot a PDF, or plot a CDF without the raw pixels.
-  `evals/scripts/depth_disagreement.py` already does exactly this (2000 bins over
-  [-0.5, 0.5]) — reuse its binning rather than inventing one.
+  CDF at fixed *probabilities*; inverting it to "fraction below arbitrary X" means
+  interpolating between quantiles, and that interpolation is worst in the tail — the part
+  that matters. So every pixel-level channel emits a **fixed-bin histogram with explicit bin
+  edges** alongside its quantile grid. Per-bin counts make arbitrary-X queries exact and let
+  a reader re-bin, or plot a PDF or CDF, without the raw pixels.
+  `evals/scripts/depth_disagreement.py` already does this (2000 bins over [-0.5, 0.5]) —
+  reuse its binning rather than inventing one.
 - **Bin edges are stored, never assumed.** They differ per channel and per units convention.
 - **`schema_version`** is stamped at the top level so a reader can handle older files
   instead of crashing on them.
 
-Everything a dashboard would plot — distributions, cumulative curves, per-frame ranks,
-groupbys over the pair table's separation/distance/depth-bin axes — is then a read plus an
-aggregation. **A dashboard tab is a deferred follow-on, not v1**; the obligation here is
-only that the schema does not block it.
+Histograms are also what make ρ tractable: it is a per-pixel ratio with a long tail and an
+undefined regime, so a quantile grid alone would hide both.
 
 ### Per-frame ranks, not calls
 
@@ -297,7 +352,10 @@ Added to the processed-scene output contract in `configs/README.md`.
 `_frustum_world_aabbs` / `_aabbs_overlap`, `SequentialPairingOptions.quadratic_overlap`.
 
 **New, and only this:**
-1. Signed-residual return from a refactored `compute_multiview_depth_confidence`.
+1. Signed-residual **and parallax-angle** return from a refactored
+   `compute_multiview_depth_confidence`. Both are already implicit in that loop — it
+   unprojects the rays and computes `expected_d`, then keeps only a boolean. The bridge
+   (`δd_equiv`, ρ) is arithmetic on those two arrays, not a new pass.
 2. Normalised photometric warp, sharing that projection loop.
 3. The `report.json` aggregator and its schema.
 
@@ -345,6 +403,14 @@ whose magnitude and location are known:
 
 The depth-scale control is the load-bearing one: it is the test that proves attribution
 actually *separates* rather than three channels moving together.
+
+**The bridge gets a quantitative control, not just a directional one.** `r = 0.1` predicts
+`δd_equiv = 0.1 · d` in closed form, so the injected-scale test asserts a *number* — the
+measured equivalent pixel error must match `0.1·d` per depth bin, and ρ must stay ≈1
+(the pixel disagreement is fully explained by the injected depth error). The +2° pose
+injection is the complement: ρ must go **≫ 1** there, since pixels move while depths stay
+mutually consistent. Two injections, opposite ρ signatures, from one formula — that is what
+makes ρ a measurement rather than a plausible-looking ratio.
 
 **Rank control:** run on mapanything and vggt_omega on chess/seq-01, which differ 1.6× in
 ATE. If the report cannot order those two, it will not separate anything.

@@ -4,22 +4,24 @@
 
 **Goal:** Kill the 12.4× per-image extraction redundancy in `verify()`'s pair-matching loop: descriptor-NN models match precomputed zarr features directly (extraction inside verify → 0), loma-class learned matchers get an identity-keyed per-image encode cache with a byte-identical pair replay (~1853 s → ~250 s), plus phase-timing instrumentation to attribute the ~658 s residual.
 
-**Architecture:** Everything lands in `collab_splats/localization/extractors.py` (LocalMatcher: `match()` mutual-NN, two construction-time equivalence probes, encode cache + loma adapter) plus a capability-flag dispatch and phase timings in `collab_splats/geometry/verification.py`. Both consumer seams already exist: `LocalMatcher.match()` is a reserved NotImplementedError seam, and `verify_reconstruction`'s else-branch already calls `matcher.match(features…)`. Fallback for everything else is the current pairwise path, untouched.
+**Architecture:** Everything lands in `collab_splats/localization/extractors.py` (LocalMatcher: `match()` over kornia mutual-NN gated by a static model allowlist, plain-dict encode cache, statically-activated loma pair adapter) plus a capability dispatch and phase timings in `collab_splats/geometry/verification.py`. No runtime probes for the new paths — equivalence is enforced by GPU parity tests in the suite (env is pinned); the pre-existing `_probe_index_stability` is untouched. Both consumer seams already exist: `LocalMatcher.match()` is a reserved NotImplementedError seam, and `verify_reconstruction`'s else-branch already calls `matcher.match(features…)`. Fallback for everything else is the current pairwise path, untouched.
 
-**Tech Stack:** vismatch model zoo (ImportSandbox reach-in for loma), torch mutual-NN, pycolmap DB export. Spec: `docs/superpowers/specs/2026-08-20-matcher-feature-cache-design.md`.
+**Tech Stack:** vismatch model zoo (ImportSandbox reach-in for loma), `kornia.feature.match_mnn` (kornia 0.8.2 in env), pycolmap DB export. Spec: `docs/superpowers/specs/2026-08-20-matcher-feature-cache-design.md`.
 
 **Repo rules that bind every task:** stage named files only (never `git add -A`/`.`); commit with `git commit --only <files>`; `docs/superpowers/` needs `git add -f`; python is `/opt/venv/reconstruction/bin/python`; never repo-wide `black .`; lint gate is `ruff check <touched files>` only; GPU runs serial in tmux (single A40).
 
 ---
 
-### Task 1: `_mutual_nn` + implement the reserved `match()` seam
+### Task 1: Implement the reserved `match()` seam — kornia mutual-NN behind a static allowlist
 
-The general path: GPU mutual-NN over precomputed descriptors, gated by a capability flag
-(`supports_descriptor_matching`, set by the Task 2 probe; default False so nothing changes
-until proven).
+The general path: mutual-NN over precomputed descriptors via `kornia.feature.match_mnn`
+(L2 on unit vectors orders identically to cosine, and match_mnn admits every mutual pair —
+the min_cossim=-1 semantics). Gated by `supports_descriptor_matching`, a property over a
+static allowlist `_DESCRIPTOR_NN_MODELS = {"xfeat"}`; membership is licensed by the Task 4
+GPU parity test, not a runtime probe.
 
 **Files:**
-- Modify: `collab_splats/localization/extractors.py` (`match()` at ~line 153; `__init__` at ~line 104)
+- Modify: `collab_splats/localization/extractors.py` (`match()` at ~line 153; `__init__` at ~line 104; imports)
 - Test: `tests/localization/test_local_matcher.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -27,7 +29,7 @@ until proven).
 Append to `tests/localization/test_local_matcher.py`:
 
 ```python
-def _one_hot_features(rows, d=8, scale=100.0):
+def _one_hot_features(rows, d=8):
     """LocalFeatures whose descriptors are one-hot rows — mutual-NN is exactly identity."""
     kpts = np.stack([np.arange(len(rows)), np.arange(len(rows))], axis=1).astype(np.float32) * 10
     desc = np.eye(d, dtype=np.float32)[rows]
@@ -35,18 +37,19 @@ def _one_hot_features(rows, d=8, scale=100.0):
 
 
 @patch("vismatch.get_matcher")
-def test_match_mutual_nn_when_supported(mock_get):
+def test_match_mutual_nn_for_allowlisted_model(mock_get):
     mock_get.return_value = _fake_vismatch_matcher()
-    lm = LocalMatcher("xfeat", device="cpu", probe=False)
-    lm.supports_descriptor_matching = True
+    lm = LocalMatcher("xfeat", device="cpu", probe=False)  # "xfeat" is in _DESCRIPTOR_NN_MODELS
+    assert lm.supports_descriptor_matching is True
     q = _one_hot_features([0, 1, 2, 3])
     db = _one_hot_features([3, 2, 1, 0])  # same one-hot basis, permuted rows
     m = lm.match(q, db, image_hw=(100, 100))
     assert isinstance(m, MatchResult)
     assert len(m) == 4
-    # mutual NN of a permuted one-hot basis is that permutation, with native indices
-    np.testing.assert_array_equal(m.idx_q, [0, 1, 2, 3])
-    np.testing.assert_array_equal(m.idx_db, [3, 2, 1, 0])
+    # mutual NN of a permuted one-hot basis is that permutation, with native table indices
+    order = np.argsort(m.idx_q)
+    np.testing.assert_array_equal(m.idx_q[order], [0, 1, 2, 3])
+    np.testing.assert_array_equal(m.idx_db[order], [3, 2, 1, 0])
     # pixel coords are the table rows the indices point at
     np.testing.assert_array_equal(m.query_px, q.keypoints.numpy()[m.idx_q])
     np.testing.assert_array_equal(m.ref_px, db.keypoints.numpy()[m.idx_db])
@@ -56,15 +59,14 @@ def test_match_mutual_nn_when_supported(mock_get):
 def test_match_empty_descriptors_returns_empty(mock_get):
     mock_get.return_value = _fake_vismatch_matcher()
     lm = LocalMatcher("xfeat", device="cpu", probe=False)
-    lm.supports_descriptor_matching = True
     empty = LocalFeatures(keypoints=torch.zeros((0, 2)), descriptors=torch.zeros((0, 8)))
     m = lm.match(empty, _one_hot_features([0, 1]), image_hw=(100, 100))
     assert len(m) == 0 and m.idx_q is not None  # empty but indexable
 
 
 @patch("vismatch.get_matcher")
-def test_match_still_raises_when_unsupported(mock_get):
-    # The flag defaults False; the NotImplementedError contract survives for unproven models.
+def test_match_still_raises_for_non_allowlisted_model(mock_get):
+    # Not in _DESCRIPTOR_NN_MODELS — the NotImplementedError contract survives.
     mock_get.return_value = _fake_vismatch_matcher()
     lm = LocalMatcher("roma", device="cpu", probe=False)
     q = _one_hot_features([0, 1])
@@ -72,8 +74,8 @@ def test_match_still_raises_when_unsupported(mock_get):
         lm.match(q, q, image_hw=(100, 100))
 ```
 
-Note: `test_descriptor_level_match_unsupported` (existing, ~line 103) keeps passing as-is —
-the flag defaults False.
+Note: `test_descriptor_level_match_unsupported` (existing, ~line 103) uses
+"disk-lightglue" — not in the allowlist, keeps passing as-is.
 
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
@@ -82,45 +84,56 @@ Expected: 3 new FAIL (`AttributeError: supports_descriptor_matching` / NotImplem
 
 - [ ] **Step 3: Implement**
 
-In `extractors.py`, add to `__init__` (right after `self.has_stable_indices: bool | None = None`):
+In `extractors.py`, add to the top-of-file imports (imports-at-top rule):
 
 ```python
-        # Set by _probe_descriptor_equivalence(); False until a probe proves the model's
-        # own match stage is descriptor-NN (never silently substitute for a learned matcher).
-        self.supports_descriptor_matching: bool = False
+from kornia.feature import match_mnn
 ```
 
-Replace the `match()` body (keep its docstring position; the NotImplementedError message must
-keep the substring `match_images` for the existing test):
+Add a module-level constant under the existing `# VisMatch-backed matcher` divider (near the
+blocklists):
+
+```python
+# Models whose own match stage IS descriptor mutual-NN — match() may serve them from
+# precomputed features. Membership is licensed by a GPU parity test in the suite
+# (test_real_xfeat_general_path_matches_pairwise); extending this set requires a new
+# passing parity test. Never silently substitute NN for a learned matcher.
+_DESCRIPTOR_NN_MODELS = {"xfeat"}
+```
+
+Add the property (near `has_stable_indices` usage, after `__init__`):
+
+```python
+    @property
+    def supports_descriptor_matching(self) -> bool:
+        """Whether match() can serve this model — static allowlist, parity-tested in the suite."""
+        return self._model_name in _DESCRIPTOR_NN_MODELS
+```
+
+Replace the `match()` body (the NotImplementedError message must keep the substring
+`match_images` for the existing test):
 
 ```python
     def match(self, query: LocalFeatures, db: LocalFeatures, image_hw: tuple[int, int]) -> MatchResult:
-        """Descriptor-level mutual-NN match over precomputed features (probe-gated)."""
-        if not self.supports_descriptor_matching:
-            raise NotImplementedError(
-                f"LocalMatcher('{self._model_name}') has no descriptor-level matching — "
-                "its match stage is not descriptor-NN (probe unproven). Use match_images()."
-            )
-        return self._mutual_nn(query, db)
-
-    def _mutual_nn(self, query: LocalFeatures, db: LocalFeatures) -> MatchResult:
-        """GPU cosine mutual-NN (min_cossim=-1 semantics: every mutual pair is admitted).
+        """Descriptor-level mutual-NN match over precomputed features (allowlisted models only).
 
         Match rows ARE keypoint-table indices by construction — no _recover_indices.
         """
+        if not self.supports_descriptor_matching:
+            raise NotImplementedError(
+                f"LocalMatcher('{self._model_name}') has no descriptor-level matching — "
+                "its match stage is not descriptor-NN. Use match_images()."
+            )
         if len(query.descriptors) == 0 or len(db.descriptors) == 0:
             return _empty_match()
+        # L2 mutual-NN on unit vectors == cosine mutual-NN; match_mnn admits every mutual pair
         d0 = torch.nn.functional.normalize(query.descriptors.to(self._device), dim=1)
         d1 = torch.nn.functional.normalize(db.descriptors.to(self._device), dim=1)
-        sim = d0 @ d1.T
-        nn01 = sim.argmax(dim=1)  # best db row per query row
-        nn10 = sim.argmax(dim=0)  # best query row per db row
-        rows = torch.arange(len(d0), device=sim.device)
-        mutual = nn10[nn01] == rows
-        idx_q = rows[mutual].cpu().numpy().astype(np.int64)
-        idx_db = nn01[mutual].cpu().numpy().astype(np.int64)
-        if len(idx_q) == 0:
+        _, idxs = match_mnn(d0, d1)
+        if len(idxs) == 0:
             return _empty_match()
+        idx_q = idxs[:, 0].cpu().numpy().astype(np.int64)
+        idx_db = idxs[:, 1].cpu().numpy().astype(np.int64)
         return MatchResult(
             query_px=query.keypoints.numpy()[idx_q],
             ref_px=db.keypoints.numpy()[idx_db],
@@ -139,170 +152,22 @@ Expected: all PASS.
 ```bash
 ruff check collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
 git add collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
-git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): mutual-NN descriptor matching behind supports_descriptor_matching flag"
+git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): descriptor mutual-NN match() via kornia behind static allowlist"
 ```
 
 ---
 
-### Task 2: Descriptor-equivalence probe (+ shared probe fixture)
-
-Construction-time proof that a model's own pair forward equals mutual-NN over its own
-`extract()` tables. Passes for NN-native models (xfeat sparse), fails for learned matchers
-(loma) — which is correct and routes them to Task 4's adapter instead.
-
-**Files:**
-- Modify: `collab_splats/localization/extractors.py` (`__init__`, `_probe_index_stability` ~line 210)
-- Test: `tests/localization/test_local_matcher.py`
-
-- [ ] **Step 1: Write the failing tests**
-
-Append to `tests/localization/test_local_matcher.py`:
-
-```python
-def _nn_native_matcher(n_kpts=6, d=8):
-    """Fake whose pair forward IS mutual-NN of its own one-hot tables: probe must pass.
-
-    Same tables both calls (deterministic extract), matched rows = identity mapping.
-    """
-    rng = np.random.default_rng(1)
-    kpts0 = rng.uniform(0, 99, (n_kpts, 2)).astype(np.float32)
-    kpts1 = rng.uniform(0, 99, (n_kpts, 2)).astype(np.float32)
-    desc = np.eye(d, dtype=np.float32)[:n_kpts]
-    result = {
-        "num_inliers": n_kpts, "H": np.eye(3),
-        "all_kpts0": kpts0, "all_kpts1": kpts1,
-        "all_desc0": desc, "all_desc1": desc,
-        "matched_kpts0": kpts0, "matched_kpts1": kpts1,  # identity mapping = its mutual NN
-        "inlier_kpts0": kpts0, "inlier_kpts1": kpts1,
-        "matched_confidences": np.ones(n_kpts, dtype=np.float32),
-    }
-    m = MagicMock()
-    m.side_effect = lambda i0, i1: dict(result)
-    # extract() call order during construction is a probe-order contract:
-    # index probe extracts img once (kpts0), then the descriptor probe extracts
-    # img (kpts0) and img2 (kpts1). Same desc both sides -> mutual NN is identity.
-    tables = iter([kpts0, kpts0] + [kpts1] * 8)
-    m.extract.side_effect = lambda img: {"all_kpts0": next(tables), "all_desc0": desc}
-    return m
-
-
-@patch("vismatch.get_matcher")
-def test_descriptor_probe_passes_nn_native_model(mock_get):
-    mock_get.return_value = _nn_native_matcher()
-    lm = LocalMatcher("xfeat", device="cpu")  # probe=True default
-    assert lm.supports_descriptor_matching is True
-
-
-@patch("vismatch.get_matcher")
-def test_descriptor_probe_fails_learned_matcher(mock_get):
-    # _fake_vismatch_matcher's matched pairs are NOT the mutual NN of its random
-    # descriptors — models a learned match stage; the probe must refuse.
-    mock_get.return_value = _fake_vismatch_matcher()
-    lm = LocalMatcher("loma", device="cpu")
-    assert lm.supports_descriptor_matching is False
-```
-
-Note: `_nn_native_matcher.extract` returns kpts0 tables for BOTH probe images — the probe
-extracts each image separately, and mutual-NN of identical one-hot tables is the identity
-mapping, exactly the fake forward's matched rows. `test_probe_sets_stability_flag` (existing)
-must keep passing — `_fake_vismatch_matcher` supports both probes running.
-
-- [ ] **Step 2: Run tests to verify the new ones fail**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_local_matcher.py -v -p no:randomly`
-Expected: 2 new FAIL (`supports_descriptor_matching` stays False / attribute default), existing PASS.
-
-- [ ] **Step 3: Implement**
-
-In `extractors.py`:
-
-Factor the synthetic pair out of `_probe_index_stability` into a module-level helper (above
-the class, under the existing `# VisMatch-backed matcher` divider):
-
-```python
-def _probe_fixture() -> tuple[np.ndarray, np.ndarray]:
-    """Deterministic synthetic image pair shared by all construction-time probes."""
-    rng = np.random.default_rng(7)
-    img = rng.uniform(0, 255, (256, 320, 3)).astype(np.uint8)
-    return img, np.roll(img, 8, axis=1)  # shifted copy — guarantees matches for most models
-```
-
-In `_probe_index_stability`, replace the three fixture lines (`rng = ...`, `img = ...`,
-`img2 = ...`) with `img, img2 = _probe_fixture()`.
-
-In `__init__`, extend the probe block:
-
-```python
-        if probe:
-            self._probe_index_stability()
-            self._probe_descriptor_equivalence()
-```
-
-Add the probe method after `_probe_index_stability`:
-
-```python
-    def _probe_descriptor_equivalence(self) -> None:
-        """Is this model's own match stage exactly mutual-NN over its extract() tables?
-
-        Compares the pair forward's matches against _mutual_nn on separately-extracted
-        features (same synthetic pair as the index probe). Exact equality required —
-        learned matchers fail here by design and keep the pairwise path.
-        """
-        img, img2 = _probe_fixture()
-        f0, f1 = self.extract(img), self.extract(img2)
-        if len(f0.descriptors) == 0 or len(f1.descriptors) == 0:
-            logger.info("LocalMatcher(%s): descriptor probe — no descriptors, general path off", self._model_name)
-            return
-        ref = self.match_images(img, img2)
-        fast = self._mutual_nn(f0, f1)
-        # Compare as (idx_q, idx_db) pair sets with their pixel coords; order-insensitive
-        # (the model may emit matches in a different order than ascending query row).
-        ok = (
-            ref.idx_q is not None
-            and len(ref) == len(fast)
-            and len(fast) > 0
-            and np.array_equal(np.sort(ref.idx_q), np.sort(fast.idx_q))
-        )
-        if ok:
-            order_ref, order_fast = np.argsort(ref.idx_q), np.argsort(fast.idx_q)
-            ok = (
-                np.array_equal(ref.idx_db[order_ref], fast.idx_db[order_fast])
-                and np.array_equal(ref.query_px[order_ref], fast.query_px[order_fast])
-                and np.array_equal(ref.ref_px[order_ref], fast.ref_px[order_fast])
-            )
-        self.supports_descriptor_matching = bool(ok)
-        logger.info(
-            "LocalMatcher(%s): descriptor probe — NN-equivalent=%s (%d ref vs %d NN matches)",
-            self._model_name, self.supports_descriptor_matching, len(ref), len(fast),
-        )
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_local_matcher.py -v -p no:randomly`
-Expected: all PASS.
-
-- [ ] **Step 5: Lint + commit**
-
-```bash
-ruff check collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
-git add collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
-git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): construction-time descriptor-NN equivalence probe"
-```
-
----
-
-### Task 3: verification.py dispatch — descriptor path for probe-passing LocalMatchers
+### Task 2: verification.py dispatch — descriptor path for allowlisted LocalMatchers
 
 `verify_reconstruction` currently forces every `LocalMatcher` down the pairwise path
-(`verification.py:184`/`:221`). Route probe-passing models to the existing descriptor
+(`verification.py:184`/`:221`). Route allowlisted models to the existing descriptor
 else-branch instead: no images touched, no extraction, match rows are table indices.
 
 **Files:**
 - Modify: `collab_splats/geometry/verification.py:182-237`
 - Test: `tests/geometry/test_verification.py`
 
-- [ ] **Step 1: Update the fixture + write the failing test**
+- [ ] **Step 1: Update the fixtures + write the failing test**
 
 In `tests/geometry/test_verification.py`, EVERY `MagicMock(spec=LocalMatcher)` construction
 (three sites: `_pairwise_matcher` ~line 95, and the inline mocks ~lines 228 and 244) gets one
@@ -320,7 +185,7 @@ Append the new test (uses the existing `_synthetic_scene`/`_make_recon`/
 
 ```python
 def test_descriptor_capable_localmatcher_skips_images(tmp_path):
-    """A probe-passing LocalMatcher takes the descriptor branch: match() on features,
+    """An allowlisted LocalMatcher takes the descriptor branch: match() on features,
     match_images and `images` untouched, no stable-indices requirement."""
     _, extrinsics, kps = _synthetic_scene()
     matcher = MagicMock(spec=LocalMatcher)
@@ -361,7 +226,7 @@ In `verification.py`, replace the guard block (starting `if isinstance(matcher, 
 ~line 184) with:
 
 ```python
-    # Probe-passing LocalMatchers match precomputed descriptors directly (no images, no
+    # Allowlisted LocalMatchers match precomputed descriptors directly (no images, no
     # extraction — the features came from the zarr cache the pipeline already built).
     # Everything else pairwise: those must prove index stability up front — a silent skip
     # here would surface later as a missing verification.json with no explanation.
@@ -393,16 +258,18 @@ Expected: all PASS.
 ```bash
 ruff check collab_splats/geometry/verification.py tests/geometry/test_verification.py
 git add collab_splats/geometry/verification.py tests/geometry/test_verification.py
-git commit --only collab_splats/geometry/verification.py --only tests/geometry/test_verification.py -m "feat(geometry): descriptor-path dispatch for probe-passing matchers in verification"
+git commit --only collab_splats/geometry/verification.py --only tests/geometry/test_verification.py -m "feat(geometry): descriptor-path dispatch for allowlisted matchers in verification"
 ```
 
 ---
 
-### Task 4: Encode cache + loma pair adapter (byte-identical replay)
+### Task 3: Per-image encode cache + loma pair adapter (byte-identical replay)
 
 For learned-matcher models the win is caching the per-image encode inside `match_images`.
-Identity-keyed capped cache + one registered adapter (loma) that replays the wrapper's own
-`_forward` in two halves, proven byte-identical by a construction-time parity probe.
+Plain identity-keyed dict (cleared wholesale at capacity) + one statically-registered adapter
+(loma) that replays the wrapper's own `_forward` in two halves. No probe, no rename: the
+adapter branch is an early return at the top of `match_images`; the parity tests in Task 4
+compare against the plain path by setting `lm._pair_adapter = None`.
 
 **Files:**
 - Modify: `collab_splats/localization/extractors.py`
@@ -413,25 +280,29 @@ Identity-keyed capped cache + one registered adapter (loma) that replays the wra
 Append to `tests/localization/test_local_matcher.py`:
 
 ```python
-from collab_splats.localization.extractors import _EncodeCache
-
-
-def test_encode_cache_identity_keying_and_eviction():
-    cache = _EncodeCache(cap=2)
+@patch("vismatch.get_matcher")
+def test_encode_cache_identity_keyed_and_cleared_at_cap(mock_get):
+    mock_get.return_value = _fake_vismatch_matcher()
+    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
+    calls = []
+    encode = lambda img: calls.append(img) or f"payload_{len(calls)}"
     a = np.zeros((4, 4, 3), np.uint8)
     b = np.zeros((4, 4, 3), np.uint8)  # equal content, different object
-    cache.put(a, "payload_a")
-    assert cache.get(a) == "payload_a"  # hit: same object
-    assert cache.get(b) is None  # miss: identity, not content
-    cache.put(b, "payload_b")
+    assert lm._cached_encode(a, encode) == "payload_1"
+    assert lm._cached_encode(a, encode) == "payload_1"  # hit: same object, no re-encode
+    assert lm._cached_encode(b, encode) == "payload_2"  # miss: identity, not content
+    assert len(calls) == 2
+    # fill to capacity: next insert clears wholesale, then re-encodes
+    for i in range(510):
+        lm._cached_encode(np.full((1, 1, 3), i % 255, np.uint8), encode)
     c = np.ones((4, 4, 3), np.uint8)
-    cache.put(c, "payload_c")  # cap=2: evicts oldest (a)
-    assert cache.get(a) is None
-    assert cache.get(b) == "payload_b" and cache.get(c) == "payload_c"
+    lm._cached_encode(c, encode)  # 513th distinct image -> clear happened before insert
+    assert len(lm._encode_cache) < 512
+    assert lm._cached_encode(c, encode) == lm._cached_encode(c, encode)  # still a hit after clear
 
 
 @patch("vismatch.get_matcher")
-def test_pair_adapter_off_by_default_and_for_unknown_wrappers(mock_get):
+def test_pair_adapter_off_for_unknown_wrappers(mock_get):
     # _fake_vismatch_matcher is a MagicMock — its class name is not in _PAIR_ADAPTERS,
     # so match_images must run the plain path untouched.
     mock_get.return_value = _fake_vismatch_matcher(stable_indices=True)
@@ -446,106 +317,81 @@ def test_pair_adapter_off_by_default_and_for_unknown_wrappers(mock_get):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_local_matcher.py -v -p no:randomly`
-Expected: FAIL (`ImportError: _EncodeCache` / `AttributeError: _pair_adapter`).
+Expected: 2 FAIL (`AttributeError: _cached_encode` / `_pair_adapter`).
 
-- [ ] **Step 3: Implement cache, adapter, dispatch, parity probe**
+- [ ] **Step 3: Implement cache, adapter, dispatch**
 
 In `extractors.py`:
 
-Top of file — extend imports (imports-at-top rule; vismatch stays lazy inside `__init__` as
-today, but `sys` is stdlib):
+Top of file — extend the stdlib imports:
 
 ```python
 import sys
 ```
 
-Below `_to_numpy`, add:
+Module-level, next to `_DESCRIPTOR_NN_MODELS`:
 
 ```python
-class _EncodeCache:
-    """Identity-keyed capped cache: id(array) -> (array ref, payload).
-
-    The `is` check makes id() reuse after GC a miss, never a wrong hit. Both consumers
-    (verification's frame list, localizer's query/refs) hold their arrays alive for the
-    duration of the loop, so identity keying is exact and free — no hashing.
-    """
-
-    def __init__(self, cap: int = 512):
-        self._cap = cap
-        self._store: dict[int, tuple[np.ndarray, object]] = {}
-
-    def get(self, image: np.ndarray):
-        entry = self._store.get(id(image))
-        if entry is not None and entry[0] is image:
-            return entry[1]
-        return None
-
-    def put(self, image: np.ndarray, payload) -> None:
-        if id(image) not in self._store and len(self._store) >= self._cap:
-            self._store.pop(next(iter(self._store)))  # dicts are insertion-ordered: oldest
-        self._store[id(image)] = (image, payload)
-
-
 # Wrapper-class-name -> (encode method, match method) on LocalMatcher. An adapter replays
 # its wrapper's _forward in two halves (per-image encode, per-pair match) so the encode
-# half can be cached across the pair loop; the construction-time parity probe must prove
-# the replay byte-identical before it is ever used.
+# half can be cached across the pair loop. Byte-parity with the plain forward is enforced
+# by a GPU parity test in the suite (test_real_loma_adapter_matches_plain_path); extending
+# this dict requires a new passing parity test.
 _PAIR_ADAPTERS: dict[str, tuple[str, str]] = {"LoMaMatcher": ("_loma_encode", "_loma_match")}
+
+# Encode-cache capacity: covers a 300-frame verify() loop with headroom; cleared wholesale
+# at the cap (identity keys are worthless once the caller drops its arrays anyway).
+_ENCODE_CACHE_CAP = 512
 ```
 
-In `__init__`, after the `supports_descriptor_matching` line:
+In `__init__` (right after `self.has_stable_indices: bool | None = None`):
 
 ```python
-        # Set by _probe_pair_adapter(); None = plain pairwise path.
-        self._pair_adapter: tuple[str, str] | None = None
-        self._encode_cache = _EncodeCache()
+        # Statically-activated pair adapter (wrapper-class keyed); None = plain pairwise path.
+        self._pair_adapter = _PAIR_ADAPTERS.get(type(self._matcher).__name__)
+        self._encode_cache: dict[int, tuple[np.ndarray, object]] = {}
 ```
 
-and extend the probe block:
+At the TOP of the existing `match_images` body (before the current code, which stays
+byte-identical as the fallback):
 
 ```python
-        if probe:
-            self._probe_index_stability()
-            self._probe_descriptor_equivalence()
-            self._probe_pair_adapter()
-```
-
-Rename the current `match_images` body to `_match_images_plain` (docstring and body move
-verbatim — this is the fallback and must stay byte-identical), then add the dispatching
-`match_images`:
-
-```python
-    def match_images(self, query_image: np.ndarray, ref_image: np.ndarray) -> MatchResult:
-        """Pairwise match two HxWx3 uint8 RGB images. Pre-RANSAC matches.
-
-        Probe-proven wrapper adapters split the model's own forward into a cached
-        per-image encode and a per-pair match (byte-identical by construction);
-        everything else runs the plain pair forward.
-        """
+        # Adapter path: cached per-image encode + per-pair match replay of the wrapper's
+        # own forward (byte-parity enforced by the suite's GPU parity test).
         if self._pair_adapter is not None:
-            encode, match = (getattr(self, n) for n in self._pair_adapter)
-            payloads = []
-            for image in (query_image, ref_image):
-                p = self._encode_cache.get(image)
-                if p is None:
-                    p = encode(image)
-                    self._encode_cache.put(image, p)
-                payloads.append(p)
-            m = match(payloads[0], payloads[1])
+            encode, pair_match = (getattr(self, n) for n in self._pair_adapter)
+            p0 = self._cached_encode(query_image, encode)
+            p1 = self._cached_encode(ref_image, encode)
+            m = pair_match(p0, p1)
             if len(m):
                 self._check_pixel_frame(m.query_px, query_image.shape[:2], self._model_name)
                 self._check_pixel_frame(m.ref_px, ref_image.shape[:2], self._model_name)
             return m
-        return self._match_images_plain(query_image, ref_image)
 ```
 
-Add the loma adapter methods (new `######## Learned-matcher pair adapters` section at the
-end of the class). The match half mirrors
-`vismatch/im_models/loma.py:68-102` (vismatch in `/opt/venv/reconstruction`, LoMaMatcher._forward)
-line-for-line; the sandbox must be entered explicitly because vismatch only wraps
-`__init__`/`_forward` (`vismatch/base_matcher.py:19-30`):
+Add the cache helper and the loma adapter methods (new `######## Learned-matcher pair
+adapters` section at the end of the class). The match half mirrors
+`vismatch/im_models/loma.py:68-102` (vismatch in `/opt/venv/reconstruction`,
+`LoMaMatcher._forward`) line-for-line; the sandbox must be entered explicitly because
+vismatch only wraps `__init__`/`_forward` (`vismatch/base_matcher.py:19-30`):
 
 ```python
+    def _cached_encode(self, image: np.ndarray, encode):
+        """Identity-keyed per-image encode cache; cleared wholesale at capacity.
+
+        The `is` check makes id() reuse after GC a miss, never a wrong hit. Both consumers
+        (verification's frame list, localizer's query/refs) hold their arrays alive for
+        the duration of the loop, so identity keying is exact and free — no hashing.
+        """
+        entry = self._encode_cache.get(id(image))
+        if entry is not None and entry[0] is image:
+            return entry[1]
+        if len(self._encode_cache) >= _ENCODE_CACHE_CAP:
+            self._encode_cache.clear()
+        payload = encode(image)
+        self._encode_cache[id(image)] = (image, payload)
+        return payload
+
     def _loma_encode(self, image: np.ndarray) -> dict:
         """Per-image half of LoMaMatcher._forward: preprocess + detect_and_describe.
 
@@ -592,60 +438,34 @@ line-for-line; the sandbox must be entered explicitly because vismatch only wrap
             idx_q=idx_q.cpu().numpy().astype(np.int64),
             idx_db=idx_db.cpu().numpy().astype(np.int64),
         )
-
-    def _probe_pair_adapter(self) -> None:
-        """Prove the registered adapter byte-identical to the plain pair forward.
-
-        Mismatch -> one warning, permanent plain path for this instance. Probe failure
-        costs speed, never correctness.
-        """
-        methods = _PAIR_ADAPTERS.get(type(self._matcher).__name__)
-        if methods is None:
-            return
-        encode, match = (getattr(self, n) for n in methods)
-        img, img2 = _probe_fixture()
-        ref = self._match_images_plain(img, img2)
-        fast = match(encode(img), encode(img2))
-        ok = (
-            len(ref) == len(fast)
-            and len(fast) > 0
-            and np.array_equal(ref.query_px, fast.query_px)
-            and np.array_equal(ref.ref_px, fast.ref_px)
-        )
-        # Plain-path indices are recovered rows; adapter indices are native. When the
-        # plain path has them, they must agree row-for-row.
-        if ok and ref.idx_q is not None:
-            ok = np.array_equal(ref.idx_q, fast.idx_q) and np.array_equal(ref.idx_db, fast.idx_db)
-        if ok:
-            self._pair_adapter = methods
-        else:
-            logger.warning(
-                "LocalMatcher(%s): pair adapter failed the parity probe (%d ref vs %d adapter "
-                "matches) — keeping the plain pairwise path",
-                self._model_name, len(ref), len(fast),
-            )
 ```
+
+The `from vismatch.import_sandbox import ImportSandbox` imports stay inside the methods —
+this is the documented optional-heavy-dep exception (vismatch is already lazy in `__init__`
+today).
 
 - [ ] **Step 4: Run the full localization + geometry suites**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/ tests/geometry/ -v -p no:randomly`
-Expected: all PASS (plain path untouched; adapter never activates under mocks).
+Expected: all PASS (plain path untouched; adapter never activates under mocks — MagicMock's
+class name is not in `_PAIR_ADAPTERS`).
 
 - [ ] **Step 5: Lint + commit**
 
 ```bash
 ruff check collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
 git add collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
-git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): per-image encode cache + byte-identical loma pair adapter"
+git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): per-image encode cache + loma pair adapter (static activation)"
 ```
 
 ---
 
-### Task 5: GPU parity tests (real models — the load-bearing evidence the mocks can't give)
+### Task 4: GPU parity tests (real models — the load-bearing gates that license the allowlists)
 
-The construction-time probes ARE the parity mechanism; these tests pin that they actually
-pass on the real shipping models (loma adapter activates, xfeat general path activates) and
-that cached-path results equal plain-path results on real images.
+With no runtime probes, THESE tests are the equivalence mechanism: the loma adapter must be
+byte-identical to the plain forward, and xfeat's `match()` must equal its own
+`match_images`. Extending `_DESCRIPTOR_NN_MODELS` or `_PAIR_ADAPTERS` requires adding a new
+passing test here.
 
 **Files:**
 - Test: `tests/localization/test_local_matcher.py` (append; CUDA-gated)
@@ -657,31 +477,36 @@ requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="real-m
 
 
 @requires_cuda
-def test_real_loma_adapter_activates_and_matches_plain_path():
-    lm = LocalMatcher("loma")  # probes run at construction against the real model
-    assert lm._pair_adapter is not None, "loma parity probe regressed — adapter refused"
+def test_real_loma_adapter_matches_plain_path():
+    """Byte-parity gate for _PAIR_ADAPTERS['LoMaMatcher'] — adapter path == plain forward."""
+    lm = LocalMatcher("loma")
+    assert lm._pair_adapter is not None, "LoMaMatcher wrapper class no longer registered"
     rng = np.random.default_rng(3)
     a = rng.uniform(0, 255, (240, 320, 3)).astype(np.uint8)
     b = np.roll(a, 12, axis=1)
     fast = lm.match_images(a, b)  # adapter + cache path
-    ref = lm._match_images_plain(a, b)
+    adapter, lm._pair_adapter = lm._pair_adapter, None
+    try:
+        ref = lm.match_images(a, b)  # plain wrapper forward
+    finally:
+        lm._pair_adapter = adapter
     assert len(fast) == len(ref) and len(fast) > 0
     np.testing.assert_array_equal(fast.query_px, ref.query_px)
     np.testing.assert_array_equal(fast.ref_px, ref.ref_px)
-    if ref.idx_q is not None:
+    if ref.idx_q is not None:  # plain-path indices are recovered rows; adapter's are native
         np.testing.assert_array_equal(fast.idx_q, ref.idx_q)
         np.testing.assert_array_equal(fast.idx_db, ref.idx_db)
 
 
 @requires_cuda
-def test_real_xfeat_general_path_activates():
+def test_real_xfeat_general_path_matches_pairwise():
+    """Parity gate for _DESCRIPTOR_NN_MODELS entry 'xfeat' — match() == match_images()."""
     lm = LocalMatcher("xfeat")
-    assert lm.supports_descriptor_matching is True, "xfeat descriptor-NN probe regressed"
+    assert lm.supports_descriptor_matching is True
     rng = np.random.default_rng(4)
     a = rng.uniform(0, 255, (240, 320, 3)).astype(np.uint8)
     b = np.roll(a, 12, axis=1)
-    f0, f1 = lm.extract(a), lm.extract(b)
-    m = lm.match(f0, f1, image_hw=a.shape[:2])
+    m = lm.match(lm.extract(a), lm.extract(b), image_hw=a.shape[:2])
     ref = lm.match_images(a, b)
     assert len(m) == len(ref) and len(m) > 0
     order_m, order_ref = np.argsort(m.idx_q), np.argsort(ref.idx_q)
@@ -692,21 +517,23 @@ def test_real_xfeat_general_path_activates():
 - [ ] **Step 2: Run on the A40 (serial — no concurrent GPU jobs)**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_local_matcher.py -v -p no:randomly -k "real_"`
-Expected: 2 PASS. **If the loma probe refuses the adapter here, STOP and investigate the
-byte-diff before proceeding — this is the spec's load-bearing gate.** (Non-determinism in
-`detect_and_describe` under bf16 autocast is the known suspect; the probe's cross-call
-condition should already have caught it.)
+Expected: 2 PASS. **If either fails, STOP — do not weaken the assertions.** For loma: diff
+the two paths tensor-by-tensor (encode halves first — non-determinism in
+`detect_and_describe` under autocast is the known suspect). For xfeat: read the vismatch
+xfeat wrapper's match stage — if it thresholds cossim or is not plain mutual-NN, remove
+"xfeat" from `_DESCRIPTOR_NN_MODELS` (Task 1's non-allowlisted tests then cover it) and
+record why in the spec.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add tests/localization/test_local_matcher.py
-git commit --only tests/localization/test_local_matcher.py -m "test(localization): real-model GPU parity gates for loma adapter + xfeat general path"
+git commit --only tests/localization/test_local_matcher.py -m "test(localization): GPU parity gates licensing the loma adapter + xfeat allowlist"
 ```
 
 ---
 
-### Task 6: Phase-timing instrumentation (the residual-attribution work)
+### Task 5: Phase-timing instrumentation (the residual-attribution work)
 
 The ~658 s residual has never been measured directly. Instrument `verify_reconstruction`'s
 phases into `summary["phase_seconds"]` (lands in verification.json automatically) and log
@@ -782,8 +609,8 @@ object and the log line carry the real value. Note this in a comment.)
 `reconstructor.py` `verify()`: add `import time` to the stdlib import block if it is not
 already there. Wrap the three cold-start phases with
 `logger.info("verify(): %s took %.1f s", name, dt)` lines: `build_localization_db()`,
-`load_reconstruction_features(...)`, `LocalMatcher(extractor_name)` construction (this one
-includes model load + all three probes — the cold start the residual analysis needs).
+`load_reconstruction_features(...)`, `LocalMatcher(extractor_name)` construction (model load
++ index-stability probe — the cold start the residual analysis needs).
 
 - [ ] **Step 4: Run tests**
 
@@ -800,7 +627,7 @@ git commit --only collab_splats/geometry/verification.py --only collab_splats/wr
 
 ---
 
-### Task 7: CLAUDE.md stale architecture line
+### Task 6: CLAUDE.md stale architecture line
 
 **Files:**
 - Modify: `CLAUDE.md` (architecture tree, `localization/` block)
@@ -813,7 +640,7 @@ Replace:
 ```
 with:
 ```
-    extractors.py          # Stage 2: LocalMatcher over the vismatch model zoo (probe-gated fast paths)
+    extractors.py          # Stage 2: LocalMatcher over the vismatch model zoo (allowlist-gated fast paths)
 ```
 
 - [ ] **Step 2: Commit**
@@ -825,10 +652,11 @@ git commit --only CLAUDE.md -m "docs: fix stale extractors.py line — legacy ma
 
 ---
 
-### Task 8: Evidence runs (tmux, serial, human-gated compute)
+### Task 7: Evidence runs (tmux, serial, human-gated compute)
 
-Measured, not assumed. Two runs against the spec's baselines: per-pair 993.8 ms and full
-verify() 2511.6 s on `/workspace/outputs/2026_07_15-Goprosplat-GH010229` (vggt_omega + loma).
+Measured, not assumed. Full verify() against the spec's baselines: per-pair 993.8 ms and
+full verify() 2511.6 s on `/workspace/outputs/2026_07_15-Goprosplat-GH010229`
+(vggt_omega + loma).
 
 **Files:**
 - Create: `/tmp/claude-0/-workspace-collab-splats/86f2bc5a-dfc8-49fc-931d-c9ace1e3ce72/scratchpad/verify_bench.py`

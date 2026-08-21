@@ -348,7 +348,9 @@ _EXPOSURE_MEAN_RANGE = (20.0, 235.0)
 _EXPOSURE_MIN_STD = 10.0
 ```
 
-`blur_effect` is imported now but unused until Task 3; add it in Task 3 instead if a linter objects. **It objects** — `flake8` is configured in `pyproject.toml` and `F401` is not in `extend-ignore`, so Task 2 shipped `qa.py` without the `skimage` import and **Task 3 must add `from skimage.measure import blur_effect` itself**.
+`blur_effect` is imported now but unused until Task 3; add it in Task 3 instead if a linter objects. **It objects** — `F401 imported but unused` is on by flake8's default select, so Task 2 shipped `qa.py` without the `skimage` import and **Task 3 must add `from skimage.measure import blur_effect` itself**.
+
+Not because of `pyproject.toml`. Measured: `[tool.flake8]` there is **inert** — flake8 7.3.0 does not read `pyproject.toml` without the `flake8_pyproject` plugin, which is not installed, and the repo has no `.flake8`, `setup.cfg`, or `tox.ini`. Proof: `E501` fires at **79** characters on these files despite `max-line-length = 120` and `extend-ignore = ["E203", "E501"]`. Pre-existing repo issue, out of scope here; the `F401` conclusion holds regardless because it is a default, not a configured rule.
 
 - [x] **Step 2: Point `sampling.py` at `qa.py`**
 
@@ -411,9 +413,9 @@ The block runs from the `Quality gate` divider to the line before the next `####
 
 **`_sharp_gray` is copied, not moved.** `test_selector_first_frame_scores_one` and `test_selector_identical_frame_scores_low` in the **Selector** section also call it, so moving it leaves two `F821 undefined name` failures behind. Same resolution as Task 1's `tiny_video`: copy the four-line helper into `test_qa.py` and leave it in `test_sampling.py`, now under the Selector divider where its remaining callers live. It is deterministic (`default_rng(1)`), so the two copies cannot drift in behaviour.
 
-**The `# isort: split` barrier stays in `test_sampling.py`.** It is not a guard on the one import beneath it — `isort` treats it as a whole-file split, so that single barrier is what stops *every* below-top section import (Selector, Samplers) from being hoisted. Removing it with the gate block would have let `isort` collapse three section imports into the top block. Move the divider label, keep the barrier: after the cut, `# isort: split` sits directly above the Selector section's import. `test_qa.py` needs no barrier — its one import is already in the top block.
+**The `# isort: split` barrier stays in `test_sampling.py`.** It is not a guard on the one import beneath it — `isort` treats it as a whole-file split. Measured by piping the file through `isort` with and without it: removing the barrier hoists the **Selector** section's import into the top block. The Samplers imports are *not* hoisted — real code between them and the top block already blocks it. So the barrier protects one import, not three, but it is still load-bearing and must stay. Move the divider label, keep the barrier: after the cut, `# isort: split` sits directly above the Selector section's import. `test_qa.py` needs no barrier — its one import is already in the top block.
 
-**`pytest` is not in `test_qa.py`'s header** — no moved test uses it, and flake8 flags the unused import.
+**`pytest` is not in `test_qa.py`'s header** — no moved test uses it, and flake8's default `F401` flags the unused import. Task 3 adds it.
 
 ```python
 import cv2

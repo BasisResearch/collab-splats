@@ -1436,11 +1436,11 @@ git commit --only collab_splats/preproc/qa.py collab_splats/preproc/__init__.py 
 
 The two sites that carry stale measurements are the **Runtime** section (the `blur_effect` cost table and the near-invariance paragraph beneath it) and **Traps**. Grep for `0.1659` and `near-invariant` rather than trusting line numbers.
 
-- [ ] **Step 1: Rewrite the reuse section for the three-module split**
+- [x] **Step 1: Rewrite the reuse section for the three-module split**
 
 Replace the "What is reused vs new" table's premise. It currently describes `qa.py` importing four names from `sampling.py`. The truth is now a split: `video.py` (decode), `qa.py` (measure), `sampling.py` (select), importing strictly downward. State the two facts that make it safe: production imports the `collab_splats.preproc` package rather than the module, and `video.py` imports no sibling.
 
-- [ ] **Step 2: Delete the "Correlations — the only derived numbers that ship" section**
+- [x] **Step 2: Delete the "Correlations — the only derived numbers that ship" section**
 
 Replace it with a short paragraph under "Why raw, not binned": correlations are derivable from the shipped columns, which is the same rule that removed `QUANTILE_GRID`, so they do not ship. Note that this is what keeps SciPy out of `preproc` — 1160 ms against the package's 1287 ms, on the dashboard fast-bind path. Record the measured values for reference:
 
@@ -1449,7 +1449,7 @@ Measured on the tutorial video, for reference only — these do not ship:
 rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=2364).
 ```
 
-- [ ] **Step 3: Correct the reuse rows**
+- [x] **Step 3: Correct the reuse rows**
 
 1. `compute_blur_score`: **kept**, not deleted — `compute_blur` calls it, and the gate must not pay `blur_effect` (1.27 ms vs 13.76 ms per frame at 480×270, on a path that runs on every frame).
 2. `check_frame_quality`: unchanged in behaviour and signature; it moves file, nothing more.
@@ -1469,7 +1469,7 @@ rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=23
 7. **`compute_blur` raises on a colour frame.** `blur_effect` defaults to `channel_axis=None` and returns `nan` on a 3-channel array while `cv2.Laplacian` returns a plausible number — a half-valid row indistinguishable from a real failed capture. The spec's `blur_effect(gray, h_size=11)` contract line should note the 2-D requirement.
 8. **`compute_video_quality` is the only new name exported from `collab_splats/preproc/__init__.py`** (surface goes 7 → 8). The six primitives stay at `collab_splats.preproc.qa.*`, where Sphinx's `qa` automodule block still documents them. The report is the deliverable; re-exporting its building blocks would grow the package surface 86% for callers who only want the report.
 
-9. **`parallax` has two nan causes, and the spec names only one.** The spec (grep `too few matches`) says nan means too few matches and that `n_matches` explains it. `compute_parallax` also returns nan when the fundamental fit keeps zero inliers, which is reachable with a full match set — hit 39 times in a 5,977-trial sweep, on pairs carrying duplicated keypoint locations. A 300-match pair reporting nan would read as a contradiction in `report.json`. State both causes.
+9. **`parallax` has three nan causes, and the spec names only one.** The spec (grep `too few matches`) says nan means too few matches and that `n_matches` explains it. `compute_parallax` also returns nan when the fundamental fit keeps zero inliers, which is reachable with a full match set — hit 39 times in a 5,977-trial sweep, on pairs carrying duplicated keypoint locations. A 300-match pair reporting nan would read as a contradiction in `report.json`. State all three: `len(pts_a) < 8`, the `cv2.error` of item 11, and `n_f == 0`. (Corrected during Task 9 — this item originally said "two" and "state both causes", counting item 11's cause as the same one.)
 10. **`compute_parallax` gained `ransac_thresh_px` (default 3.0).** The spec's contract line still shows a bare `(pts_a, pts_b)`. It is a first-order lever, not a detail: over 99 tutorial pairs at stride 24, 1.0 against 3.0 moves parallax 0.19 on average (max 0.49) and *reorders* the pairs, Spearman **0.708** — where 3.0 against 5.0 is 0.053 and 0.945. MAGSAC re-run spread at a fixed threshold is 0.0000, so all of that movement is the threshold. It carries a unit, analysis-grid pixels, the same grid as `translation_px`.
 
 11. **`compute_parallax` returns nan when OpenCV cannot fit, and this is a production crash the spec must record.** USAC asserts rather than returning an empty model on configurations it cannot estimate, at *any* correspondence count — not only below the 8-point floor. Measured on `tiny_video` frames 40/41: 720 matches, 97.5% zero-displacement, `findHomography` fine, `findFundamentalMat` raises at `estimator.cpp:353`. Unhandled it discarded all 60 frames of photometry and the other 57 pairs. Any tripod or paused segment reaches it. The nan is the measurement, same rationale as `compute_translation`'s.
@@ -1477,7 +1477,7 @@ rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=23
 13. **The plan's "`get_video_info` never raises" pre-verification is wrong.** With ffmpeg off `PATH`, `_require_ffmpeg` raises `RuntimeError` and it propagates out of `compute_video_quality`. That is the right behaviour — a broken environment is not an unavailable video — but the note as written is false.
 14. **`available: False` names the actual condition.** A missing path reported "no frames decoded", sending a reader after a codec problem instead of a typo. Now "file does not exist: <path>".
 
-- [ ] **Step 4: Record the format decision**
+- [x] **Step 4: Record the format decision**
 
 Add under "Report shape":
 
@@ -1490,7 +1490,7 @@ pyarrow plus a third serialization format beside JSON and zarr. It becomes the
 right answer only for cross-video queries over a corpus.
 ```
 
-- [ ] **Step 5: Add the two new traps**
+- [x] **Step 5: Add the two new traps**
 
 ```markdown
 **A planar scene under real translation reads `parallax == 0.0`, exactly like a
@@ -1525,7 +1525,7 @@ It is not in the shipped schema. Adding it is a follow-on, not a fix — it wide
 `compute_parallax` both consume — but the limitation is real and belongs here.
 ```
 
-- [ ] **Step 6: Record the progress-logging contract**
+- [x] **Step 6: Record the progress-logging contract**
 
 Add under "Report shape":
 

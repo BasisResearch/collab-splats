@@ -105,13 +105,20 @@ A pure move. No line of moved code changes. The proof is that the existing suite
 - Create: `tests/preproc/test_video.py`
 - Modify: `tests/preproc/test_sampling.py`, `tests/pointcloud/test_loger_creator.py`
 
-- [ ] **Step 1: Record the baseline**
+- [ ] **Step 1: The baseline, already measured**
 
-```bash
-/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q 2>&1 | tail -3
+Measured on `da73454d`, before any change in this plan:
+
+```
+tests/preproc/                        71 passed   (248 s)
+tests/pointcloud/test_loger_creator.py 65 passed
 ```
 
-Write down the pass count. Every later step in this task must reproduce it exactly.
+Every later step must reproduce **71** for `tests/preproc/` plus whatever new tests that step adds. Run the two suites **separately** — running them in one process OOM-killed the container (exit 137) even though the tests themselves passed, because the loger test loads a model on top of the preproc fixtures.
+
+```bash
+/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
+```
 
 - [ ] **Step 2: Create `collab_splats/preproc/video.py`**
 
@@ -228,7 +235,8 @@ from collab_splats.preproc.video import _seek_frame, get_video_info
 - [ ] **Step 6: Run the tests**
 
 ```bash
-/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q 2>&1 | tail -3
+/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
+/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -q -p no:randomly 2>&1 | tail -3
 ```
 
 Expected: the same pass count as Step 1, redistributed across `test_video.py` and `test_sampling.py`.
@@ -244,7 +252,16 @@ print('indices:', list(idx))
 print('digest:', hashlib.sha256(np.asarray(frames).tobytes()).hexdigest()[:16])"
 ```
 
-Run this on `main` (via `git stash`) and again with the change applied. Both digests and both index lists must match. Save the output — Task 10 records it.
+The pre-change values, measured on `da73454d`, are already recorded — **do not `git stash` to re-derive them**, the working tree carries unrelated changes from concurrent sessions:
+
+```
+n_frames: 20
+indices:  [0, 129, 250, 379, 500, 631, 752, 878, 1002, 1134,
+           1259, 1383, 1511, 1636, 1762, 1883, 2013, 2139, 2264, 2387]
+digest:   b8d8bc70f766c466
+```
+
+Both the index list and the digest must come back identical after the move. A digest mismatch means the refactor changed decoded pixels; an index mismatch means it changed selection. Either one fails the task.
 
 - [ ] **Step 8: Commit**
 
@@ -366,7 +383,8 @@ from collab_splats.preproc.qa import check_frame_quality, compute_blur_score
 - [ ] **Step 5: Run the tests**
 
 ```bash
-/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q 2>&1 | tail -3
+/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
+/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -q -p no:randomly 2>&1 | tail -3
 ```
 
 Expected: the same pass count as Task 1 Step 1.
@@ -1193,7 +1211,8 @@ Expected: 9 more tests pass
 
 - [ ] **Step 5: Run the whole preproc suite**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/pointcloud/test_loger_creator.py -q`
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
+/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -q -p no:randomly 2>&1 | tail -3`
 Expected: the Task 1 Step 1 baseline plus the new `test_qa.py` tests
 
 - [ ] **Step 6: Confirm the layering still holds**

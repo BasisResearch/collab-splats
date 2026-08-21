@@ -395,7 +395,15 @@ __all__ = [
 
 - [ ] **Step 4: Move the gate tests**
 
-Create `tests/preproc/test_qa.py` by moving the whole `Quality gate` block from `tests/preproc/test_sampling.py` — lines 75–128, i.e. the divider, the import at 79, the `_sharp_gray()` helper (82), `test_compute_blur_score_sharp_exceeds_blurred` (88), `test_check_frame_quality_accepts_sharp_frame` (94), `test_check_frame_quality_rejects_blurred_frame` (100), `test_check_frame_quality_rejects_bad_exposure` (111), `test_check_frame_quality_metrics_fields` (120), `test_check_frame_quality_uses_precomputed_blur_score` (125). Header:
+Create `tests/preproc/test_qa.py` by moving the whole `Quality gate` block out of `tests/preproc/test_sampling.py`: the `#### Quality gate ####` divider, its `# isort: split` barrier and the `check_frame_quality, compute_blur_score` import beneath it, the `_sharp_gray()` helper, and six tests — `test_compute_blur_score_sharp_exceeds_blurred`, `test_check_frame_quality_accepts_sharp_frame`, `test_check_frame_quality_rejects_blurred_frame`, `test_check_frame_quality_rejects_bad_exposure`, `test_check_frame_quality_metrics_fields`, `test_check_frame_quality_uses_precomputed_blur_score`.
+
+**Locate the block by grep, not by line number** — `62a0352c` moved the `tiny_video` fixture to `conftest.py` and added the `# isort: split` barrier, shifting everything:
+
+```bash
+grep -n '^####\|^# isort: split\|^def _sharp_gray\|^def test_' tests/preproc/test_sampling.py
+```
+
+The block runs from the `Quality gate` divider to the line before the next `####` divider. Header for the new file:
 
 ```python
 import cv2
@@ -423,9 +431,7 @@ Expected: the same pass count as Task 1 Step 1.
 import time, importlib, sys
 t = time.perf_counter(); importlib.import_module('collab_splats.preproc')
 print(f'preproc import: {(time.perf_counter()-t)*1000:.0f} ms')
-print('scipy.stats loaded:', 'scipy.stats' in sys.modules)
-import collab_splats.preproc.video as v
-print('video imports qa:', 'collab_splats.preproc.qa' in [m for m in sys.modules if m in getattr(v, '__dict__', {})] or hasattr(v, 'qa'))"
+print('scipy.stats loaded:', 'scipy.stats' in sys.modules)"
 grep -n 'from collab_splats' collab_splats/preproc/video.py
 ```
 

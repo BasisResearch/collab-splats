@@ -1565,7 +1565,7 @@ git commit --only docs/superpowers/specs/2026-08-20-video-quality-report-design.
 - Create: `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Run the report against the committed tutorial video**
+- [x] **Step 1: Run the report against the committed tutorial video**
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "
@@ -1608,7 +1608,7 @@ n_matches     p05/p50           272      310
 json 632,651 bytes = 264 bytes/frame
 ```
 
-- [ ] **Step 2: Write the measured report**
+- [x] **Step 2: Write the measured report**
 
 Create `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`, mirroring the structure of `docs/superpowers/specs/2026-08-20-scene-error-report-measured.md`. It must contain, as literal numbers:
 
@@ -1619,7 +1619,7 @@ Create `docs/superpowers/specs/2026-08-20-video-quality-report-measured.md`, mir
 - The `preproc` import timing before and after the split, and `scipy.stats loaded: False`.
 - One paragraph of **description without verdict**: what the distributions look like, no threshold, no advice, no pass/fail. If a column is degenerate on this clip, say so as an observation about this video, not as a property of the metric.
 
-- [ ] **Step 3: Add the CLAUDE.md in-flight entry**
+- [x] **Step 3: Add the CLAUDE.md in-flight entry**
 
 Add to the `## In-Flight Work` list in `CLAUDE.md`:
 
@@ -1627,17 +1627,17 @@ Add to the `## In-Flight Work` list in `CLAUDE.md`:
 - **video-quality-report** — per-frame photometric + per-pair motion survey of source video, plus the preproc split into video/qa/sampling ([spec](docs/superpowers/specs/2026-08-20-video-quality-report-design.md) · [plan](docs/superpowers/plans/2026-08-20-video-quality-report.md) · [measured](docs/superpowers/specs/2026-08-20-video-quality-report-measured.md))
 ```
 
-- [ ] **Step 4: Run the full test suite**
+- [x] **Step 4: Run the full test suite**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/ -q`
 Expected: no new failures against the baseline in `docs/known-test-failures.md`. The split touched `preproc`, which most of the pipeline imports, so this run is the real gate — do not skip it.
 
-- [ ] **Step 5: Run the dashboard smoke gate**
+- [x] **Step 5: Run the dashboard smoke gate**
 
 Run: `/opt/venv/reconstruction/bin/python -m collab_splats.dashboard --smoke`
 Expected: `SMOKE PASS`. The dashboard's fast-bind path depends on `collab_splats.preproc` staying light, which this plan changed the import graph of.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -f docs/superpowers/specs/2026-08-20-video-quality-report-measured.md

@@ -737,7 +737,15 @@ git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
 
 The one place a resolution decision is made, and it goes two different ways on purpose. Downscaling averages scattered saturated pixels out of existence — measured, 300 scattered white pixels in a 480×640 frame give `clipped_high_frac` 0.000977 natively and **exactly 0.0** after `_analysis_gray`. Blur goes the other way: `blur_effect` costs 62 ms at 1024 px against 13.8 ms at 480 px while the score barely moves (0.1659 → 0.1671).
 
-**Trap this creates: `blur` is not comparable across videos of different widths.** `_analysis_gray` scales by `min(1.0, 480 / W)`, so a 1080p source is measured at 480 px while a 320 px source is measured natively at 320. Measured on the noise fixture, width 320 / 640 / 1280 gives `blur` 0.1202 / 0.1844 / 0.3002 — 2.5x across the range. The spec's "score barely moves (0.1659 -> 0.1671)" is real footage; uniform noise is the worst case, and real footage sits between them. Every video wider than 480 px is mutually comparable; anything narrower is not. Record it, do not fix it — normalising would mean inventing a resolution the report was built to observe.
+**Trap this creates: `blur` is not comparable across videos of different widths.** `_analysis_gray` scales by `min(1.0, 480 / W)`, so a 1080p source is measured at 480 px while a 320 px source is measured natively at 320. Measured by downscaling `data/tutorial/tutorial_example-video.mp4` (1080 wide, 5 frames) to each width:
+
+| width | 320 | 480 | 640 | 1024 | 1080 (native) |
+|---|---|---|---|---|---|
+| `blur` | 0.2042 | 0.2128 | 0.2272 | 0.2772 | 0.2719 |
+
+480 → 1024 is **+30.3%** on identical frames. Wider sources are downscaled further and read *sharper*, so the bias grows with source width. Every video wider than 480 px is mutually comparable; anything narrower is measured natively and is not. `laplacian` and every exposure column are unaffected, being native-resolution. Record it, do not fix it — normalising would mean inventing a resolution the report was built to observe.
+
+**The spec's "score barely moves (0.1659 → 0.1671)" is wrong and Task 9 must correct it.** Do not try to reproduce the effect by *upscaling* a small fixture instead: interpolating a 320 px noise image up to 1280 invents smooth content and the ladder comes out non-monotonic and interpolation-dependent (two independent runs got 0.1844/0.3002 and 0.1651/0.1560 at 640/1280). Downscaling real footage is the only valid direction, because it is the operation `_analysis_gray` actually performs.
 
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
@@ -818,6 +826,23 @@ Expected: 3 more tests pass
 ```bash
 git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
   -m "feat(preproc): add compute_frame_quality — native exposure, analysis-res blur"
+```
+
+- [x] **Step 6: Apply the code review findings**
+
+**The blur comment claimed the opposite of the trap above** — "the score barely moves across that range (0.1659 → 0.1671), so the downscale is close to free". Not reproducible; see the measured table. Rewritten to say what the downscale actually buys (7.6x throughput) and what it costs (cross-width comparability), with the trap lifted into the docstring, since the code is where a future reader looks rather than this plan.
+
+**Both section dividers above `_analysis_gray` had gone false.** The review caught that "Frame quality gate — legacy policy, **not part of the report**" now covers a function the report calls. It also covers `compute_blur_score`, which `compute_blur` returns as its `laplacian` column — so the divider was wrong twice, not once. `_ANALYSIS_WIDTH`, `compute_blur_score` and `_analysis_gray` move into a new `# Shared by the gate and the report` section above the gate. Pure move, no logic change; it also makes the "Constants — gate-only" claim true again now that only the gate thresholds sit under it.
+
+**`test_compute_frame_quality_merges_both_measurements` could not detect a key collision.** A set union is identical whether or not `{**blur, **exposure}` overwrites a key, so `assert len(merged) == 7` joins it. No collision exists today.
+
+Also verified, no action: the resolution split is not vacuously tested — a deliberately swapped implementation fails both assertions (exposure `0.0` vs `0.0009765625`; blur `0.120520` vs `0.125305` against `pytest.approx`'s 1e-6 default). All seven values are Python `float`, not numpy scalars, so the Task 8 JSON payload is sound. `blur` can only go `nan` at 1-2 px frame dimensions, unreachable from any decoder.
+
+`tests/preproc`: **86 passed**.
+
+```bash
+git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
+  -m "fix(preproc): correct the blur resolution claim and the section dividers"
 ```
 
 ---
@@ -1427,7 +1452,7 @@ rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=23
 3. `clean_for_json`: not used. `verification.py` imports `pycolmap` at module scope, and it guards on `np.isnan` so an inf would pass. Two inline comprehensions replace it. `np.nan_to_num` is not an alternative — a `0.0` fill on `translation_px` asserts the camera held still.
 4. `n_features` is not a `compute_video_quality` parameter; it lives on `match_orb`.
 5. **`blur` saturates at 1.0 on sparse detail, not only on blur.** A flat field, a smooth gradient and a single perfectly sharp edge all measure exactly 1.0 (laplacian 0.00 / 0.41 / 406.41). Reading `blur` alone as softness inverts on any low-texture frame. Belongs in Traps beside Trap 1.
-6. **`blur` is width-dependent: 0.1202 / 0.1844 / 0.3002 at 320 / 640 / 1280 px** on high-frequency content. `_analysis_gray` caps at 480 px, so videos wider than 480 are mutually comparable and narrower ones are not. Belongs in Traps.
+6. **`blur` is width-dependent, and the spec's current "barely moves (0.1659 → 0.1671)" claim is false.** Measured by downscaling the tutorial video: 0.2042 / 0.2128 / 0.2272 / 0.2772 at 320 / 480 / 640 / 1024 px — **+30.3%** across 480 → 1024. `_analysis_gray` caps at 480, so videos wider than 480 are mutually comparable and narrower ones are not. Replace the claim and add the trap. The downscale still earns its place on time alone: 300.4 ms native (1920x1080) against 39.4 ms at 853x480, 7.6x, or 12 minutes against 94 seconds over the tutorial video's 2388 frames.
 7. **`compute_blur` raises on a colour frame.** `blur_effect` defaults to `channel_axis=None` and returns `nan` on a 3-channel array while `cv2.Laplacian` returns a plausible number — a half-valid row indistinguishable from a real failed capture. The spec's `blur_effect(gray, h_size=11)` contract line should note the 2-D requirement.
 8. **`compute_video_quality` is the only new name exported from `collab_splats/preproc/__init__.py`** (surface goes 7 → 8). The six primitives stay at `collab_splats.preproc.qa.*`, where Sphinx's `qa` automodule block still documents them. The report is the deliverable; re-exporting its building blocks would grow the package surface 86% for callers who only want the report.
 

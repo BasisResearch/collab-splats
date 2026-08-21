@@ -901,7 +901,7 @@ def test_compute_translation_is_nan_without_matches():
 - [x] **Step 2: Run the test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: collection error, `ImportError: cannot import name 'match_orb'`
+Expected: collection error, `ImportError: cannot import name 'compute_translation'` — the import block is alphabetical, so `compute_translation` resolves before `match_orb` and raises first. Right failure, different symbol.
 
 - [x] **Step 3: Write the minimal implementation**
 
@@ -1432,6 +1432,8 @@ git commit --only collab_splats/preproc/qa.py collab_splats/preproc/__init__.py 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-08-20-video-quality-report-design.md`
 
+The two sites that carry stale measurements are the **Runtime** section (the `blur_effect` cost table and the near-invariance paragraph beneath it) and **Traps**. Grep for `0.1659` and `near-invariant` rather than trusting line numbers.
+
 - [ ] **Step 1: Rewrite the reuse section for the three-module split**
 
 Replace the "What is reused vs new" table's premise. It currently describes `qa.py` importing four names from `sampling.py`. The truth is now a split: `video.py` (decode), `qa.py` (measure), `sampling.py` (select), importing strictly downward. State the two facts that make it safe: production imports the `collab_splats.preproc` package rather than the module, and `video.py` imports no sibling.
@@ -1452,7 +1454,16 @@ rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=23
 3. `clean_for_json`: not used. `verification.py` imports `pycolmap` at module scope, and it guards on `np.isnan` so an inf would pass. Two inline comprehensions replace it. `np.nan_to_num` is not an alternative — a `0.0` fill on `translation_px` asserts the camera held still.
 4. `n_features` is not a `compute_video_quality` parameter; it lives on `match_orb`.
 5. **`blur` saturates at 1.0 on sparse detail, not only on blur.** A flat field, a smooth gradient and a single perfectly sharp edge all measure exactly 1.0 (laplacian 0.00 / 0.41 / 406.41). Reading `blur` alone as softness inverts on any low-texture frame. Belongs in Traps beside Trap 1.
-6. **`blur` is width-dependent, and the spec's current "barely moves (0.1659 → 0.1671)" claim is false.** Measured by downscaling the tutorial video: 0.2042 / 0.2128 / 0.2272 / 0.2772 at 320 / 480 / 640 / 1024 px — **+30.3%** across 480 → 1024. `_analysis_gray` caps at 480, so videos wider than 480 are mutually comparable and narrower ones are not. Replace the claim and add the trap. The downscale still earns its place on time alone: 300.4 ms native (1920x1080) against 39.4 ms at 853x480, 7.6x, or 12 minutes against 94 seconds over the tutorial video's 2388 frames.
+6. **`blur` is width-dependent, and the spec's current "barely moves (0.1659 → 0.1671)" claim is false — the spec predicted this itself.** Its Runtime section already warns the figure is "weak evidence from one synthetic input" and calls re-measuring on real footage "a plan task, not a settled fact". The re-measurement is done and the answer is no.
+
+   **Root cause, measured — the synthetic input was the problem, not the sample size.** Uniform noise has a *flat* power spectrum, so every downscale still carries maximum high-frequency content relative to its own Nyquist and Crete-Roffet barely moves. Real footage is roughly 1/f, so downscaling discards exactly the fine detail the metric reads. Same 1024 → 768 → 512 → 384 ladder, two inputs:
+
+   | input | 1024 | 768 | 512 | 384 | spread |
+   |---|---|---|---|---|---|
+   | uniform noise | 0.1200 | 0.1250 | 0.1204 | 0.1207 | **4.2%** |
+   | real footage | 0.2524 | 0.2322 | 0.2106 | 0.1990 | **26.8%** |
+
+   The noise row reproduces the spec's near-invariance; the footage row is monotonic and 6x wider. Rewrite the Runtime paragraph around this, do not merely swap the numbers — the reason a synthetic probe cannot answer this question is the durable part. Measured by downscaling the tutorial video: 0.2042 / 0.2128 / 0.2272 / 0.2772 at 320 / 480 / 640 / 1024 px — **+30.3%** across 480 → 1024. `_analysis_gray` caps at 480, so videos wider than 480 are mutually comparable and narrower ones are not. Replace the claim and add the trap. The downscale still earns its place on time alone: 300.4 ms native (1920x1080) against 39.4 ms at 853x480, 7.6x, or 12 minutes against 94 seconds over the tutorial video's 2388 frames.
 7. **`compute_blur` raises on a colour frame.** `blur_effect` defaults to `channel_axis=None` and returns `nan` on a 3-channel array while `cv2.Laplacian` returns a plausible number — a half-valid row indistinguishable from a real failed capture. The spec's `blur_effect(gray, h_size=11)` contract line should note the 2-D requirement.
 8. **`compute_video_quality` is the only new name exported from `collab_splats/preproc/__init__.py`** (surface goes 7 → 8). The six primitives stay at `collab_splats.preproc.qa.*`, where Sphinx's `qa` automodule block still documents them. The report is the deliverable; re-exporting its building blocks would grow the package surface 86% for callers who only want the report.
 

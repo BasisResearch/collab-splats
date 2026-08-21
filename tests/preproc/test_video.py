@@ -1,4 +1,7 @@
-import cv2
+########################################################################
+# Video metadata and streamed decode
+########################################################################
+
 import numpy as np
 import pytest
 
@@ -8,26 +11,6 @@ from collab_splats.preproc.video import (
     _require_ffmpeg,
     get_video_info,
 )
-
-
-@pytest.fixture(scope="module")
-def tiny_video(tmp_path_factory):
-    """Synthesize a 60-frame 320x240 mp4: static noise texture + moving square.
-
-    Noise gives LK flow corners to track; the moving square creates motion.
-    """
-    path = tmp_path_factory.mktemp("vid") / "tiny.mp4"
-    w, h = 320, 240
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (w, h))
-    rng = np.random.default_rng(0)
-    noise = (rng.random((h, w, 3)) * 255).astype(np.uint8)
-    for i in range(60):
-        frame = noise.copy()
-        x = 10 + i * 4
-        cv2.rectangle(frame, (x, 60), (x + 60, 140), (0, 255, 0), -1)
-        writer.write(frame)
-    writer.release()
-    return str(path)
 
 
 def test_get_video_info_keys(tiny_video):
@@ -66,3 +49,98 @@ def test_iter_frames_yields_all_frames_bgr(tiny_video):
     assert len(frames) == 60
     assert frames[0].shape == (240, 320, 3)
     assert frames[0].dtype == np.uint8
+
+
+########################################################################
+# extract_frame: input-seek single-frame decode for previews
+########################################################################
+
+import shutil
+import subprocess
+
+from collab_splats.preproc import extract_frame
+
+# These four exercise the real ffmpeg seek path (and its rotate handling), so
+# they are skipped rather than failed when the binary is absent.
+requires_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+
+
+@pytest.fixture(scope="module")
+def synth_video(tmp_path_factory):
+    # 2s of 30fps testsrc — 60 frames, constant frame rate
+    path = tmp_path_factory.mktemp("vid") / "synth.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=2:size=320x240:rate=30",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        check=True,
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def rotated_video(synth_video, tmp_path_factory):
+    """synth_video re-muxed with a rotate=90 tag — display dims swap to (240, 320)."""
+    path = tmp_path_factory.mktemp("vid_rot") / "rotated.mp4"
+    # Stream copy + rotate tag: same pixels, ffmpeg autorotates on decode
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(synth_video),
+            "-c",
+            "copy",
+            "-metadata:s:v:0",
+            "rotate=90",
+            str(path),
+        ],
+        check=True,
+    )
+    return path
+
+
+@requires_ffmpeg
+def test_extract_frame_shape_and_dtype(synth_video):
+    frame = extract_frame(synth_video, 30)
+    assert frame.shape == (240, 320, 3)
+    assert frame.dtype == np.uint8
+
+
+@requires_ffmpeg
+def test_extract_frame_lands_near_target_index(synth_video):
+    # testsrc's content changes every frame; a correctly-seeked decode must differ
+    # less from its immediate neighbour than from a distant frame (catches gross
+    # seek errors, e.g. landing many frames off target).
+    frame_30 = extract_frame(synth_video, 30)
+    frame_31 = extract_frame(synth_video, 31)
+    frame_0 = extract_frame(synth_video, 0)
+    d_adjacent = np.abs(frame_30.astype(int) - frame_31.astype(int)).mean()
+    d_far = np.abs(frame_30.astype(int) - frame_0.astype(int)).mean()
+    assert d_adjacent < d_far
+
+
+@requires_ffmpeg
+def test_extract_frame_rotated_video_matches_display_dims(rotated_video):
+    # ffmpeg autorotates on decode: extract_frame's dims must match get_video_info's
+    # display dims (which already account for the rotate tag), consistent with the
+    # streamed decode this function replaced.
+    info = get_video_info(str(rotated_video))
+    frame = extract_frame(rotated_video, 0)
+    assert frame.shape[:2] == (info["height"], info["width"])
+
+
+@requires_ffmpeg
+def test_extract_frame_out_of_range_raises(synth_video):
+    with pytest.raises(ValueError, match="out of range"):
+        extract_frame(synth_video, 10_000)

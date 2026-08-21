@@ -126,6 +126,7 @@ def test_import_all_modules():
         "collab_splats.utils",
         "collab_splats.utils.torch_utils",
         "collab_splats.preproc",
+        "collab_splats.preproc.video",
         "collab_splats.preproc.sampling",
         "collab_splats.nerfstudio.utils.camera_utils",
         "collab_splats.wrapper.splatter",
@@ -186,21 +187,21 @@ def test_gsplat_not_overwritten():
 
 def test_gtsam_sl4_manifold():
     """gtsam-develop 4.3a1 provides SL4 manifold; PyPI gtsam 4.2.1 does not."""
-    from gtsam import SL4, PriorFactorSL4, BetweenFactorSL4  # noqa: F401
+    from gtsam import SL4, BetweenFactorSL4, PriorFactorSL4  # noqa: F401
 
 
 def test_bae_use_cudss():
     """bae key symbols importable: TrackingTensor, PCG solver, LM optimiser."""
     import pypose  # must import before bae
     from bae.autograd.function import TrackingTensor, map_transform  # noqa: F401
-    from bae.utils.pysolvers import PCG  # noqa: F401
     from bae.optim import LM  # noqa: F401
+    from bae.utils.pysolvers import PCG  # noqa: F401
 
 
 def test_bae_cuda_backend():
     """bae active with CUDA 12.1 / torch 2.5."""
-    import pypose  # noqa: F401
     import bae  # noqa: F401
+    import pypose  # noqa: F401
     import torch
 
     assert torch.__version__.startswith("2.5"), f"Wrong torch: {torch.__version__}"
@@ -237,13 +238,15 @@ def test_nerfstudio_installed_local():
 
 def test_mapanything_compat_patch_safe():
     """_patch_mapanything_torch_compat must not raise RuntimeError at import time."""
-    from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator  # noqa: F401
+    from collab_splats.pointcloud.feedforward.mapanything import (  # noqa: F401
+        MapAnythingCreator,
+    )
 
 
 def test_pycolmap_api_surface():
     """pycolmap 4.0.4 API: all constructors and new 4.x methods present and callable."""
-    import pycolmap
     import numpy as np
+    import pycolmap
 
     recon = pycolmap.Reconstruction()
     track = pycolmap.Track()
@@ -271,9 +274,10 @@ def test_pycolmap_api_surface():
 
 def test_nerfstudio_method_configs():
     """rade-gs and rade-features appear in nerfstudio's method registry."""
-    import collab_splats.nerfstudio.method_configs.rade_gs  # noqa: F401
-    import collab_splats.nerfstudio.method_configs.rade_features  # noqa: F401
     from nerfstudio.configs.method_configs import all_methods
+
+    import collab_splats.nerfstudio.method_configs.rade_features  # noqa: F401
+    import collab_splats.nerfstudio.method_configs.rade_gs  # noqa: F401
 
     assert "rade-gs" in all_methods, f"rade-gs missing from nerfstudio registry. Keys: {sorted(all_methods)}"
     assert (
@@ -310,8 +314,8 @@ def test_splatfacto_uses_gsplat_rade():
 def test_bae_cudss_importable():
     """bae built with USE_CUDSS=1: CuDirectSparseSolver must import and instantiate."""
     import pypose  # noqa: F401 — must precede bae imports
-    from bae.sparse.solve import CuDirectSparseSolver
     import torch
+    from bae.sparse.solve import CuDirectSparseSolver
 
     assert torch.cuda.is_available(), "CUDA not available — CuDSS build meaningless"
     solver = CuDirectSparseSolver()

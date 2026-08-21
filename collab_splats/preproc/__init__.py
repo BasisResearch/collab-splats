@@ -1,4 +1,4 @@
-"""Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
+"""Video preprocessing: decode/metadata (video), quality gating and frame selection (sampling).
 
 Plots live in collab_splats.preproc.viz and are deliberately not re-exported
 (keeps matplotlib out of pipeline imports).

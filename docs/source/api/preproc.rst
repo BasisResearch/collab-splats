@@ -1,10 +1,14 @@
 Preprocessing
 =============
 
-Video preprocessing: decode-once frame extraction, quality gating, and the
-canonical keyframe store.
+Video preprocessing: the canonical keyframe store, ffmpeg decode and video
+metadata (``video``), and quality gating plus keyframe selection (``sampling``).
 
 .. automodule:: collab_splats.preproc.frame_store
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.preproc.video
    :members:
    :show-inheritance:
 

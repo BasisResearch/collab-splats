@@ -1,8 +1,8 @@
-"""Video preprocessing: metadata, frame decoding, quality gating, keyframe sampling.
+"""Keyframe selection: per-frame quality scoring, the quality gate, and sampling.
 
-All decoding goes through ffmpeg/ffprobe — the only supported backend. cv2 is
-used for in-memory image operations only (grayscale, resize, Laplacian, LK
-flow, JPEG write), never for decode.
+Sampling methods are fps, uniform, and optical_flow. Decoding and video
+metadata live in collab_splats.preproc.video; cv2 is used here for in-memory
+image operations only (grayscale, resize, Laplacian, LK flow).
 """
 
 from __future__ import annotations
@@ -17,9 +17,6 @@ from tqdm.auto import tqdm
 from collab_splats.preproc.video import (
     _iter_frames,
     _iter_selected_frames,
-    _probe_dims,
-    _require_ffmpeg,
-    _seek_frame,
     get_video_info,
 )
 

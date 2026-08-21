@@ -17,6 +17,7 @@ from collab_splats.preproc.qa import (
     compute_video_quality,
     match_orb,
 )
+from collab_splats.preproc.video import _iter_frames
 
 ########################################################################
 # Quality gate
@@ -308,6 +309,17 @@ def test_compute_parallax_zero_for_translating_over_a_plane(synthetic_scenes):
     assert compute_translation(pts_a, pts_b) > 10.0
 
 
+def test_compute_parallax_is_nan_when_opencv_cannot_fit(tiny_video):
+    # USAC asserts instead of returning an empty model on configurations it
+    # cannot estimate, and it does so at any size — not only below the 8-point
+    # floor. Frames 40 and 41 of tiny_video are such a pair: 720 matches, 97.5%
+    # of them zero-displacement, findHomography fine, findFundamentalMat raises
+    # at estimator.cpp:353. Unhandled, one such pair discards every other
+    # measurement in a multi-minute run.
+    grays = [_analysis_gray(bgr) for bgr in _iter_frames(tiny_video)]
+    assert np.isnan(compute_parallax(*match_orb(grays[40], grays[41])))
+
+
 def test_compute_parallax_is_nan_below_eight_matches():
     # Eight is the fundamental matrix minimum; fewer is not a small sample, it is undefined
     pts = (np.random.default_rng(0).random((7, 2)) * 100).astype(np.float32)
@@ -432,3 +444,32 @@ def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, capl
     messages = [r.getMessage() for r in caplog.records]
     assert any("60 frames @" in m for m in messages), "no line logged before the decode"
     assert any("frames/s" in m for m in messages), "no elapsed/throughput line logged after"
+
+
+def test_compute_video_quality_survives_a_pair_opencv_cannot_fit(tiny_video):
+    # The end-to-end half of the same failure: at stride 1 the run meets two
+    # unfittable pairs. Before the guard this raised cv2.error and lost all 60
+    # frames of photometry along with the other 57 pairs.
+    report = compute_video_quality(tiny_video, motion_stride=1)
+    assert len(report["frames"]["frame_idx"]) == 60
+    parallax = report["pairs"]["parallax"]
+    assert len(parallax) == 59
+    # The unfittable pairs survive as null, and everything else still measured
+    assert parallax.count(None) == 2
+    assert sum(v is not None for v in parallax) == 57
+
+
+def test_compute_video_quality_rejects_a_stride_below_one(tiny_video):
+    # 0 is an explicit value, not "unset": under a truthiness check it silently
+    # became round(fps). A negative stride is worse — the partner index runs
+    # forward, so nothing is ever retired from the pending dict and it grows
+    # with the video instead of staying at stride + 1 frames.
+    for bad in (0, -1, -5):
+        with pytest.raises(ValueError, match="must be >= 1"):
+            compute_video_quality(tiny_video, motion_stride=bad)
+
+
+def test_compute_video_quality_names_a_missing_file_as_missing(tmp_path):
+    report = compute_video_quality(tmp_path / "nope.mp4")
+    assert report["available"] is False
+    assert "file does not exist" in report["reason"]

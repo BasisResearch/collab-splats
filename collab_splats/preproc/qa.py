@@ -155,7 +155,7 @@ def compute_frame_quality(bgr: np.ndarray) -> dict:
     exposure = compute_exposure(native_gray)
 
     # Blur reads the 480 px analysis gray, which buys throughput and pays for it
-    # in the comparability noted above. Measured on one 1920x1080 tutorial frame,
+    # in the comparability noted above. Measured on one 1080x1920 tutorial frame,
     # blur_effect runs 300.4 ms natively against 39.4 ms at 853x480 — 7.6x, or
     # 12 minutes against 94 seconds over that video's 2388 frames. Cheap in time,
     # not free in value.
@@ -213,10 +213,10 @@ def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     _analysis_gray output, so the shipped column is _ANALYSIS_WIDTH pixels, and
     **it does not convert to source pixels by scaling**: ORB detects different
     keypoints at different resolutions, so the ratio is not the resize factor.
-    Measured on data/tutorial (1920x1080, factor 2.25), native-over-analysis is
-    2.37 on one pair and 3.28 on another. Comparable within a report, not
-    across videos of differing width — the same caveat compute_frame_quality
-    carries for blur, for the same reason.
+    Measured on data/tutorial (1080x1920 portrait, factor 2.25),
+    native-over-analysis is 2.37 on one pair and 3.28 on another. Comparable
+    within a report, not across videos of differing width — the same caveat
+    compute_frame_quality carries for blur, for the same reason.
     """
     # nan, not 0.0: with no matches the displacement is unknown, and 0.0 would
     # read as "the camera held perfectly still", the opposite conclusion.
@@ -246,10 +246,14 @@ def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray, *, ransac_thresh_px: 
             barely does (0.053, 0.945). Loosening it lets a homography explain
             more, so parallax falls monotonically.
 
-    Returns nan below 8 correspondences. Eight is the linear 8-point algorithm's
-    minimum: MAGSAC's 7-point solver does return an F at exactly 7, and OpenCV
-    raises cv2.error at 6 or fewer, so the guard sets the floor and heads off
-    that crash in one step.
+    Returns nan below 8 correspondences — the linear 8-point algorithm's minimum.
+    (MAGSAC's 7-point solver does return an F at exactly 7, and OpenCV raises
+    below that, but 8 is the floor this reports against.) Also returns nan when
+    either fit raises: USAC asserts on configurations it cannot estimate rather
+    than returning an empty model, and it does so at any size — measured on a
+    real 720-correspondence pair whose matches were 97.5% zero-displacement.
+    That is a fact about the pair, so it is a nan, not an exception that throws
+    away every other frame in a multi-minute run.
     """
     if len(pts_a) < 8:
         return float("nan")
@@ -257,8 +261,11 @@ def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray, *, ransac_thresh_px: 
     # Fit both models to the same correspondences. H can only explain a plane or
     # a pure rotation; F can additionally explain translation through depth, so
     # the gap between their inlier counts IS the depth information in the pair.
-    _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
-    _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
+    try:
+        _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
+        _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
+    except cv2.error:
+        return float("nan")
     n_h = int(h_inliers.sum()) if h_inliers is not None else 0
     n_f = int(f_inliers.sum()) if f_inliers is not None else 0
 
@@ -291,10 +298,18 @@ def compute_video_quality(
         motion_stride: frames between the two members of each measured pair.
             None means round(fps) — one second of video, the pair spacing a
             reconstruction sees under the shipping fps: 1.0 sampling rate.
+            Must be >= 1.
     """
+    # `is not None`, not truthiness: 0 is an explicit value, and letting it fall
+    # through to the fps default silently measures a stride of 30 instead. A
+    # negative stride is worse than wrong — the partner index runs forward, so
+    # no entry is ever retired from `pending` and it grows with the video.
+    if motion_stride is not None and motion_stride < 1:
+        raise ValueError(f"motion_stride must be >= 1, got {motion_stride}")
+
     video_path = Path(video_path)
     info = get_video_info(str(video_path))
-    stride = int(motion_stride) if motion_stride else max(1, round(info["fps"] or 1))
+    stride = int(motion_stride) if motion_stride is not None else max(1, round(info["fps"] or 1))
 
     frames = {
         k: []
@@ -355,7 +370,10 @@ def compute_video_quality(
             del pending[partner]
 
     if not frames["frame_idx"]:
-        report = {"available": False, "reason": f"no frames decoded from {video_path}"}
+        # Name the actual condition. "no frames decoded" against a path that is
+        # not there sends a reader hunting a codec problem instead of a typo.
+        missing = "file does not exist" if not video_path.exists() else "no frames decoded"
+        report = {"available": False, "reason": f"{missing}: {video_path}"}
     else:
         report = {
             "available": True,

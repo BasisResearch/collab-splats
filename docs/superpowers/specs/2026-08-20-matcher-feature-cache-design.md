@@ -73,9 +73,10 @@ timing instrumentation in `geometry/verification.py` and one persisted array in
 `local_features/<extractor>/reconstruction` group *is* the localization DB (pycolmap
 Database shape — per-image keypoint/descriptor tables + CSR offsets), and the old name
 reads as if it loaded reconstruction geometry. Both consumer seams **already exist**:
-`LocalMatcher.match(query, db, hw)` is the reserved NotImplementedError seam
-(`extractors.py:154`), and `verify_reconstruction`'s else-branch already calls
-`matcher.match(features[i], features[j], hw)` on precomputed features (`verification.py:232`)
+`LocalMatcher.match(query, db)` is the reserved NotImplementedError seam
+(`extractors.py:154` — the old `image_hw` parameter is dropped: neither branch uses it,
+pixel coords come from the stored keypoint tables), and `verify_reconstruction`'s
+else-branch already calls `matcher.match(...)` on precomputed features (`verification.py:232`)
 — kept for exactly this follow-on. The localizer's descriptor path is the same seam's second
 consumer.
 
@@ -173,7 +174,7 @@ the list requires a new passing parity test. No runtime demotion machinery.
 The ~658 s residual has never been measured directly (handoff §7.3). As part of this pass:
 
 1. Instrument `verify()` with per-phase timings: matcher/model cold start, DB export
-   (`_write_frames` + match writes), `verify_matches`, `triangulate_points`, report writing.
+   (`_write_frames` + match writes), `verify_matches`, `triangulate_points`.
    One tmux run attributes it.
 2. Attack the single biggest attributable term if it is ours — expected suspects:
    Python-loop DB export (vectorize or batch the pycolmap Database writes) and cold start

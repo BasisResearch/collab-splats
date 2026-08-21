@@ -22,6 +22,11 @@ the min_cossim=-1 semantics). Gated by membership in ONE exported list,
 `FEATURE_MATCH_MODELS = {"xfeat"}` for now; Task 2 adds `"loma"` together with its branch.
 Membership is licensed by the Task 6 GPU parity test, not a runtime probe.
 
+The reserved signature's `image_hw` parameter is DROPPED (`match(query, db)`): neither
+branch uses it — pixel coords come from the stored keypoint tables. The only existing
+caller is the `NotImplementedError` test; `verification.py`'s else-branch call sheds the
+argument in Task 5.
+
 **Files:**
 - Modify: `collab_splats/localization/extractors.py` (`match()` at ~line 153; imports)
 - Test: `tests/localization/test_local_matcher.py`
@@ -46,7 +51,7 @@ def test_match_mutual_nn_for_allowlisted_model(mock_get):
     lm = LocalMatcher("xfeat", device="cpu", probe=False)
     q = _one_hot_features([0, 1, 2, 3])
     db = _one_hot_features([3, 2, 1, 0])  # same one-hot basis, permuted rows
-    m = lm.match(q, db, image_hw=(100, 100))
+    m = lm.match(q, db)
     assert isinstance(m, MatchResult)
     assert len(m) == 4
     # mutual NN of a permuted one-hot basis is that permutation, with native table indices
@@ -63,7 +68,7 @@ def test_match_empty_descriptors_returns_empty(mock_get):
     mock_get.return_value = _fake_vismatch_matcher()
     lm = LocalMatcher("xfeat", device="cpu", probe=False)
     empty = LocalFeatures(keypoints=torch.zeros((0, 2)), descriptors=torch.zeros((0, 8)))
-    m = lm.match(empty, _one_hot_features([0, 1]), image_hw=(100, 100))
+    m = lm.match(empty, _one_hot_features([0, 1]))
     assert len(m) == 0 and m.idx_q is not None  # empty but indexable
 
 
@@ -74,11 +79,12 @@ def test_match_still_raises_for_non_listed_model(mock_get):
     lm = LocalMatcher("roma", device="cpu", probe=False)
     q = _one_hot_features([0, 1])
     with pytest.raises(NotImplementedError, match="match_images"):
-        lm.match(q, q, image_hw=(100, 100))
+        lm.match(q, q)
 ```
 
-Note: `test_descriptor_level_match_unsupported` (existing, ~line 103) uses
-"disk-lightglue" — not in the list, keeps passing as-is.
+Also edit `test_descriptor_level_match_unsupported` (existing, ~line 103): its call drops
+the `image_hw=(100, 100)` argument (otherwise the removed parameter raises TypeError before
+the NotImplementedError). It uses "disk-lightglue" — not in the list, contract survives.
 
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
@@ -110,7 +116,7 @@ Replace the `match()` body (the NotImplementedError message must keep the substr
 `match_images` for the existing test):
 
 ```python
-    def match(self, query: LocalFeatures, db: LocalFeatures, image_hw: tuple[int, int]) -> MatchResult:
+    def match(self, query: LocalFeatures, db: LocalFeatures) -> MatchResult:
         """Feature-level match over precomputed features (FEATURE_MATCH_MODELS only).
 
         Match rows ARE keypoint-table indices by construction — no _recover_indices.
@@ -195,7 +201,7 @@ def test_loma_match_without_payload_names_the_rebuild(mock_get):
     lm._split_loma_forward = True  # real activation needs the real wrapper; forced here
     bare = LocalFeatures(keypoints=torch.ones((2, 2)), descriptors=torch.ones((2, 8)))
     with pytest.raises(ValueError, match="rebuild"):
-        lm.match(bare, bare, image_hw=(100, 100))
+        lm.match(bare, bare)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -501,7 +507,7 @@ def test_feature_capable_localmatcher_skips_images(tmp_path):
     matcher.model_name = "xfeat"  # in FEATURE_MATCH_MODELS -> feature-level dispatch
     matcher.has_stable_indices = False  # irrelevant on the feature-level path
 
-    def _match(query, db, image_hw):
+    def _match(query, db):
         n = min(len(query.keypoints), len(db.keypoints))
         idx = np.arange(n, dtype=np.int64)
         return MatchResult(
@@ -600,7 +606,9 @@ In `verification.py`, add `FEATURE_MATCH_MODELS` to the existing
 ```
 
 In the pair loop (~line 221), change the branch condition from
-`if isinstance(matcher, LocalMatcher):` to `if pairwise:` (both branch bodies stay as they are).
+`if isinstance(matcher, LocalMatcher):` to `if pairwise:`, and the else-branch call sheds
+its third argument: `matcher.match(features[i], features[j])` (the `image_hw` parameter is
+gone — Task 1). Branch bodies otherwise stay as they are.
 
 - [ ] **Step 4: Implement rebuild-once in `reconstructor.py` `verify()`**
 
@@ -701,7 +709,7 @@ def test_real_loma_split_match_parity_after_zarr_roundtrip(tmp_path):
     loc.save_index(tmp_path / "ff.zarr", "loma")
     loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
     assert all(f.keypoints_normalized is not None for f in loaded)
-    m = lm.match(loaded[0], loaded[1], image_hw=a.shape[:2])
+    m = lm.match(loaded[0], loaded[1])
     np.testing.assert_array_equal(m.query_px, ref.query_px)
     np.testing.assert_array_equal(m.ref_px, ref.ref_px)
     np.testing.assert_array_equal(m.idx_q, ref.idx_q)  # native == recovered (probe-exact)
@@ -713,7 +721,7 @@ def test_real_xfeat_general_path_matches_pairwise():
     """Parity gate for the FEATURE_MATCH_MODELS entry 'xfeat' — match() == match_images()."""
     lm = LocalMatcher("xfeat")
     a, b = _real_pair(seed=5)
-    m = lm.match(lm.extract(a), lm.extract(b), image_hw=a.shape[:2])
+    m = lm.match(lm.extract(a), lm.extract(b))
     ref = lm.match_images(a, b)
     assert len(m) == len(ref) and len(m) > 0
     order_m, order_ref = np.argsort(m.idx_q), np.argsort(ref.idx_q)
@@ -769,7 +777,7 @@ def test_summary_carries_phase_seconds(tmp_path):
         output_dir=tmp_path,
     )
     phases = result.summary["phase_seconds"]
-    assert set(phases) == {"db_export", "pair_matching", "db_match_writes", "verify_matches", "triangulate", "report"}
+    assert set(phases) == {"db_export", "pair_matching", "db_match_writes", "verify_matches", "triangulate"}
     assert all(isinstance(v, float) and v >= 0.0 for v in phases.values())
     # and it round-trips through the JSON report
     on_disk = json.loads((tmp_path / "verification.json").read_text())
@@ -799,23 +807,21 @@ right after `output_dir.mkdir(...)`. Then:
   `timings["pair_matching"] = t_match`, `timings["db_match_writes"] = t_write`.
 - Around `pycolmap.verify_matches(...)`: `timings["verify_matches"] = ...`.
 - Around `_triangulate_and_summarize(...)`: `timings["triangulate"] = ...`.
-- Around `_write_report(...)`: measure into `timings["report"]` — set
-  `summary["phase_seconds"]` BEFORE calling `_write_report` with the report value included:
+- Set `summary["phase_seconds"]` BEFORE calling `_write_report` so it lands in the JSON:
 
 ```python
-    t = time.perf_counter()
-    summary["phase_seconds"] = {k: round(v, 2) for k, v in timings.items()} | {"report": 0.0}
+    summary["phase_seconds"] = {k: round(v, 2) for k, v in timings.items()}
     result = VerificationResult(
         reconstruction=verified, pair_stats=pair_stats, frame_stats=frame_stats, summary=summary
     )
     _write_report(result, output_dir / "verification.json")
-    summary["phase_seconds"]["report"] = round(time.perf_counter() - t, 2)
     logger.info("Verification phase seconds: %s", summary["phase_seconds"])
     return result
 ```
 
-(The on-disk report's `report` entry reads 0.0 — it cannot time its own write; the returned
-object and the log line carry the real value. Note this in a comment.)
+(No `report` key: report writing is sub-second JSON serialization — not a residual
+candidate, and timing your own report write needs a self-referential trick that buys
+nothing. Five phases cover the measured residual.)
 
 `reconstructor.py` `verify()`: add `import time` to the stdlib import block if it is not
 already there. Wrap the cold-start phases with
@@ -905,7 +911,7 @@ feats = {i: lm.extract(img) for i, img in frames.items()}  # warm extraction, of
 torch.cuda.synchronize()
 t0 = time.perf_counter()
 for i, j in pairs:
-    lm.match(feats[i], feats[j], image_hw=frames[i].shape[:2])
+    lm.match(feats[i], feats[j])
 torch.cuda.synchronize()
 split_ms = 1000 * (time.perf_counter() - t0) / len(pairs)
 

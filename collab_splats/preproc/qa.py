@@ -9,6 +9,7 @@ import logging
 
 import cv2
 import numpy as np
+from skimage.measure import blur_effect
 
 logger = logging.getLogger(__name__)
 
@@ -74,3 +75,24 @@ def _analysis_gray(frame_bgr: np.ndarray) -> np.ndarray:
     scale = min(1.0, _ANALYSIS_WIDTH / frame_bgr.shape[1])
     small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame_bgr
     return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+
+########################################################################
+# Per frame
+########################################################################
+
+
+def compute_blur(gray: np.ndarray) -> dict:
+    """Blur measured two ways: Crete-Roffet perceptual blur and Laplacian variance.
+
+    blur is [0, 1] and higher means blurrier; laplacian is unbounded and higher
+    means sharper. They run in opposite directions on purpose — where the two
+    disagree, the frame is textureless rather than blurred.
+    """
+    # Crete-Roffet re-blurs the image and measures how little changes. A frame
+    # that is already blurred barely moves, so its score rises toward 1.
+    perceptual = float(blur_effect(gray))
+
+    # Laplacian variance reuses the frame-selection gate's own metric verbatim,
+    # so sharpness has exactly one implementation in the repo.
+    return {"blur": perceptual, "laplacian": compute_blur_score(gray)}

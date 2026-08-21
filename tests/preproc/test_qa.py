@@ -1,7 +1,12 @@
 import cv2
 import numpy as np
+import pytest
 
-from collab_splats.preproc.qa import check_frame_quality, compute_blur_score
+from collab_splats.preproc.qa import (
+    check_frame_quality,
+    compute_blur,
+    compute_blur_score,
+)
 
 ########################################################################
 # Quality gate
@@ -49,3 +54,42 @@ def test_check_frame_quality_uses_precomputed_blur_score(noise_gray):
     # Passing blur_score short-circuits the Laplacian recompute
     ok, metrics = check_frame_quality(noise_gray, blur_threshold=100.0, blur_score=50.0)
     assert ok is False and metrics["blur_score"] == 50.0
+
+
+########################################################################
+# Per frame
+########################################################################
+
+
+def test_compute_blur_keys(noise_gray):
+    assert set(compute_blur(noise_gray)) == {"blur", "laplacian"}
+
+
+def test_compute_blur_moves_in_opposite_directions(noise_gray):
+    # blur is Crete-Roffet (high = blurrier); laplacian is variance (high = sharper).
+    # Progressive Gaussian blur must raise one and lower the other, monotonically.
+    ladder = [compute_blur(cv2.GaussianBlur(noise_gray, (0, 0), s) if s else noise_gray) for s in (0, 1, 3, 6)]
+    blur = [r["blur"] for r in ladder]
+    laplacian = [r["laplacian"] for r in ladder]
+    assert blur == sorted(blur), blur
+    assert laplacian == sorted(laplacian, reverse=True), laplacian
+
+
+def test_compute_blur_measured_values(noise_gray):
+    # Pinned to measured values so a library swap that silently rescales either
+    # metric fails loudly rather than shifting every report already on disk.
+    sharp = compute_blur(noise_gray)
+    blurred = compute_blur(cv2.GaussianBlur(noise_gray, (0, 0), 3))
+    assert sharp["blur"] == pytest.approx(0.1202, abs=0.01)
+    assert sharp["laplacian"] == pytest.approx(108108.3, rel=0.05)
+    assert blurred["blur"] == pytest.approx(0.4798, abs=0.01)
+    assert blurred["laplacian"] == pytest.approx(3.6, rel=0.2)
+
+
+def test_compute_blur_reuses_the_gate_metric(noise_gray):
+    # One implementation of the Laplacian in the repo, not two
+    assert compute_blur(noise_gray)["laplacian"] == compute_blur_score(noise_gray)
+
+
+def test_compute_blur_is_bounded(noise_gray):
+    assert 0.0 <= compute_blur(noise_gray)["blur"] <= 1.0

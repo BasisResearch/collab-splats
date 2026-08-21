@@ -497,7 +497,7 @@ git commit -m "docs(preproc): document qa.py and fold _sharp_gray into a shared 
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Change the imports at the top of `tests/preproc/test_qa.py` to:
 
@@ -553,12 +553,12 @@ def test_compute_blur_is_bounded(noise_gray):
     assert 0.0 <= compute_blur(noise_gray)["blur"] <= 1.0
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: collection error, `ImportError: cannot import name 'compute_blur'`
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 **First add the import.** Task 2 deliberately shipped `qa.py` *without* `from skimage.measure import blur_effect` — `F401 imported but unused` is on by flake8's default select, so an unused import fails the lint. This step is where it becomes used, so add it now:
 
@@ -590,12 +590,12 @@ def compute_blur(gray: np.ndarray) -> dict:
     return {"blur": perceptual, "laplacian": compute_blur_score(gray)}
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: 5 new tests pass alongside the gate tests moved in Task 2
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add collab_splats/preproc/qa.py tests/preproc/test_qa.py

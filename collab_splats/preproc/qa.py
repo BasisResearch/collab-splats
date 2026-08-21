@@ -222,13 +222,28 @@ def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     return float(np.median(np.linalg.norm(pts_b - pts_a, axis=1)))
 
 
-def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
+def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray, *, ransac_thresh_px: float = 3.0) -> float:
     """One minus the homography/fundamental inlier ratio — how far the pair departs from a plane.
 
     A homography explains rotation-only motion and planar scenes exactly, so a
     ratio near 1 (parallax near 0) means the pair carries no depth information.
     Read it alongside translation: a flat scene under real translation also
-    reads 0. nan below 8 matches, the fundamental matrix minimum.
+    reads 0.
+
+    Args:
+        pts_a, pts_b: corresponding Nx2 points, as match_orb returns them.
+        ransac_thresh_px: RANSAC inlier threshold, in whatever grid the points
+            came from — the analysis grid for the report, same as
+            translation_px. A first-order lever, not a detail: measured over 99
+            tutorial pairs, 1.0 against 3.0 moves parallax by 0.19 on average
+            and reorders the pairs (Spearman 0.708), while 3.0 against 5.0
+            barely does (0.053, 0.945). Loosening it lets a homography explain
+            more, so parallax falls monotonically.
+
+    Returns nan below 8 correspondences. Eight is the linear 8-point algorithm's
+    minimum: MAGSAC's 7-point solver does return an F at exactly 7, and OpenCV
+    raises cv2.error at 6 or fewer, so the guard sets the floor and heads off
+    that crash in one step.
     """
     if len(pts_a) < 8:
         return float("nan")
@@ -236,8 +251,8 @@ def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     # Fit both models to the same correspondences. H can only explain a plane or
     # a pure rotation; F can additionally explain translation through depth, so
     # the gap between their inlier counts IS the depth information in the pair.
-    _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, 3.0)
-    _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, 3.0)
+    _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
+    _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
     n_h = int(h_inliers.sum()) if h_inliers is not None else 0
     n_f = int(f_inliers.sum()) if f_inliers is not None else 0
 

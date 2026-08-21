@@ -310,7 +310,17 @@ def test_compute_parallax_is_nan_below_eight_matches():
     assert np.isnan(compute_parallax(pts, pts + 1.0))
 
 
-def test_compute_parallax_is_bounded(synthetic_scenes):
+def test_compute_parallax_falls_as_the_ransac_threshold_loosens(synthetic_scenes):
+    # Bounds are not worth asserting — 1 - min(1, n_h/n_f) is in [0, 1] by
+    # construction, and this fixture's >0.5 case already pins it harder. What is
+    # worth pinning is that ransac_thresh_px reaches both fits and moves the
+    # number the way the docstring says: a looser inlier test lets a homography
+    # explain more of the pair, so parallax falls. Measured 0.93 / 0.8067 /
+    # 0.7033 / 0.0333 at 1 / 3 / 5 / 50 px, with zero spread across MAGSAC draws.
     volume, _ = synthetic_scenes
-    value = compute_parallax(_project(volume), _project(volume - np.array([0.8, 0.0, 0.0])))
-    assert 0.0 <= value <= 1.0
+    pts_a, pts_b = _project(volume), _project(volume - np.array([0.8, 0.0, 0.0]))
+    ladder = [compute_parallax(pts_a, pts_b, ransac_thresh_px=t) for t in (1.0, 3.0, 5.0, 50.0)]
+    assert ladder == sorted(ladder, reverse=True), ladder
+    assert ladder[0] > 0.9 and ladder[-1] < 0.1
+    # The default is 3.0, so the keyword-free call sits on the second rung
+    assert compute_parallax(pts_a, pts_b) == pytest.approx(ladder[1])

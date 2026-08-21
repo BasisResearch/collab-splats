@@ -983,7 +983,7 @@ The Step 4 three-times loop is still worth running — MAGSAC *is* randomized, a
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `compute_parallax` **inside the parentheses** of the `from collab_splats.preproc.qa import (...)` block, keeping the trailing comma and alphabetical order. Append to `tests/preproc/test_qa.py`:
 
@@ -1046,12 +1046,12 @@ def test_compute_parallax_is_bounded(synthetic_scenes):
     assert 0.0 <= value <= 1.0
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: collection error, `ImportError: cannot import name 'compute_parallax'`
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 Append to the `# Per pair` section of `collab_splats/preproc/qa.py`:
 
@@ -1084,7 +1084,7 @@ def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     return float(1.0 - min(1.0, n_h / n_f))
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: 5 more tests pass
@@ -1097,7 +1097,7 @@ for i in 1 2 3; do /opt/venv/reconstruction/bin/python -m pytest tests/preproc/t
 
 Expected: 5 passed on every iteration
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
@@ -1466,6 +1466,9 @@ rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=23
    The noise row reproduces the spec's near-invariance; the footage row is monotonic and 6x wider. Rewrite the Runtime paragraph around this, do not merely swap the numbers — the reason a synthetic probe cannot answer this question is the durable part. Measured by downscaling the tutorial video: 0.2042 / 0.2128 / 0.2272 / 0.2772 at 320 / 480 / 640 / 1024 px — **+30.3%** across 480 → 1024. `_analysis_gray` caps at 480, so videos wider than 480 are mutually comparable and narrower ones are not. Replace the claim and add the trap. The downscale still earns its place on time alone: 300.4 ms native (1920x1080) against 39.4 ms at 853x480, 7.6x, or 12 minutes against 94 seconds over the tutorial video's 2388 frames.
 7. **`compute_blur` raises on a colour frame.** `blur_effect` defaults to `channel_axis=None` and returns `nan` on a 3-channel array while `cv2.Laplacian` returns a plausible number — a half-valid row indistinguishable from a real failed capture. The spec's `blur_effect(gray, h_size=11)` contract line should note the 2-D requirement.
 8. **`compute_video_quality` is the only new name exported from `collab_splats/preproc/__init__.py`** (surface goes 7 → 8). The six primitives stay at `collab_splats.preproc.qa.*`, where Sphinx's `qa` automodule block still documents them. The report is the deliverable; re-exporting its building blocks would grow the package surface 86% for callers who only want the report.
+
+9. **`parallax` has two nan causes, and the spec names only one.** The spec (grep `too few matches`) says nan means too few matches and that `n_matches` explains it. `compute_parallax` also returns nan when the fundamental fit keeps zero inliers, which is reachable with a full match set — hit 39 times in a 5,977-trial sweep, on pairs carrying duplicated keypoint locations. A 300-match pair reporting nan would read as a contradiction in `report.json`. State both causes.
+10. **`compute_parallax` gained `ransac_thresh_px` (default 3.0).** The spec's contract line still shows a bare `(pts_a, pts_b)`. It is a first-order lever, not a detail: over 99 tutorial pairs at stride 24, 1.0 against 3.0 moves parallax 0.19 on average (max 0.49) and *reorders* the pairs, Spearman **0.708** — where 3.0 against 5.0 is 0.053 and 0.945. MAGSAC re-run spread at a fixed threshold is 0.0000, so all of that movement is the threshold. It carries a unit, analysis-grid pixels, the same grid as `translation_px`.
 
 - [ ] **Step 4: Record the format decision**
 

@@ -276,6 +276,8 @@ digest:   b8d8bc70f766c466
 
 Both the index list and the digest must come back identical after the move. A digest mismatch means the refactor changed decoded pixels; an index mismatch means it changed selection. Either one fails the task.
 
+Note the snippet's second return value is `records`, not bare indices — `list(idx)` prints twenty `{"frame_idx": ..., "blur_score": ...}` dicts. Compare the `frame_idx` fields against the list above; the `blur_score` values ride along and are not part of the contract.
+
 - [x] **Step 8: Commit**
 
 ```bash
@@ -299,7 +301,7 @@ Also a pure move. After this task `sampling.py` contains selection and nothing e
 - Create: `tests/preproc/test_qa.py`
 - Modify: `tests/preproc/test_sampling.py`
 
-- [ ] **Step 1: Create `collab_splats/preproc/qa.py`**
+- [x] **Step 1: Create `collab_splats/preproc/qa.py`**
 
 Cut these seven symbols from `sampling.py`, bodies unchanged: `_ANALYSIS_WIDTH` (with its comment), `_DEFAULT_BLUR_THRESHOLD`, `_EXPOSURE_MEAN_RANGE`, `_EXPOSURE_MIN_STD`, `compute_blur_score`, `check_frame_quality`, `_analysis_gray`.
 
@@ -346,9 +348,9 @@ _EXPOSURE_MEAN_RANGE = (20.0, 235.0)
 _EXPOSURE_MIN_STD = 10.0
 ```
 
-`blur_effect` is imported now but unused until Task 3; add it in Task 3 instead if a linter objects.
+`blur_effect` is imported now but unused until Task 3; add it in Task 3 instead if a linter objects. **It objects** — `flake8` is configured in `pyproject.toml` and `F401` is not in `extend-ignore`, so Task 2 shipped `qa.py` without the `skimage` import and **Task 3 must add `from skimage.measure import blur_effect` itself**.
 
-- [ ] **Step 2: Point `sampling.py` at `qa.py`**
+- [x] **Step 2: Point `sampling.py` at `qa.py`**
 
 Add to `sampling.py`'s imports:
 
@@ -368,7 +370,7 @@ grep -n '_DEFAULT_BLUR_THRESHOLD\|_ANALYSIS_WIDTH\|_EXPOSURE_' collab_splats/pre
 
 Expected: only the two signature defaults and the import line — every `_EXPOSURE_*` and `_ANALYSIS_WIDTH` reference must have left with `check_frame_quality` and `_analysis_gray`.
 
-- [ ] **Step 3: Update `preproc/__init__.py`**
+- [x] **Step 3: Update `preproc/__init__.py`**
 
 ```python
 """Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
@@ -393,7 +395,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 4: Move the gate tests**
+- [x] **Step 4: Move the gate tests**
 
 Create `tests/preproc/test_qa.py` by moving the whole `Quality gate` block out of `tests/preproc/test_sampling.py`: the `#### Quality gate ####` divider, its `# isort: split` barrier and the `check_frame_quality, compute_blur_score` import beneath it, the `_sharp_gray()` helper, and six tests — `test_compute_blur_score_sharp_exceeds_blurred`, `test_check_frame_quality_accepts_sharp_frame`, `test_check_frame_quality_rejects_blurred_frame`, `test_check_frame_quality_rejects_bad_exposure`, `test_check_frame_quality_metrics_fields`, `test_check_frame_quality_uses_precomputed_blur_score`.
 
@@ -405,17 +407,24 @@ grep -n '^####\|^# isort: split\|^def _sharp_gray\|^def test_' tests/preproc/tes
 
 The block runs from the `Quality gate` divider to the line before the next `####` divider. Header for the new file:
 
+**Two corrections found while executing this step:**
+
+**`_sharp_gray` is copied, not moved.** `test_selector_first_frame_scores_one` and `test_selector_identical_frame_scores_low` in the **Selector** section also call it, so moving it leaves two `F821 undefined name` failures behind. Same resolution as Task 1's `tiny_video`: copy the four-line helper into `test_qa.py` and leave it in `test_sampling.py`, now under the Selector divider where its remaining callers live. It is deterministic (`default_rng(1)`), so the two copies cannot drift in behaviour.
+
+**The `# isort: split` barrier stays in `test_sampling.py`.** It is not a guard on the one import beneath it — `isort` treats it as a whole-file split, so that single barrier is what stops *every* below-top section import (Selector, Samplers) from being hoisted. Removing it with the gate block would have let `isort` collapse three section imports into the top block. Move the divider label, keep the barrier: after the cut, `# isort: split` sits directly above the Selector section's import. `test_qa.py` needs no barrier — its one import is already in the top block.
+
+**`pytest` is not in `test_qa.py`'s header** — no moved test uses it, and flake8 flags the unused import.
+
 ```python
 import cv2
 import numpy as np
-import pytest
 
 from collab_splats.preproc.qa import check_frame_quality, compute_blur_score
 ```
 
 `tests/preproc/test_sampling.py` drops its `check_frame_quality, compute_blur_score` import (line 79) and the whole moved block.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
@@ -424,7 +433,7 @@ from collab_splats.preproc.qa import check_frame_quality, compute_blur_score
 
 Expected: the same pass count as Task 1 Step 1.
 
-- [ ] **Step 6: Prove the layering holds and nothing got heavier**
+- [x] **Step 6: Prove the layering holds and nothing got heavier**
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "
@@ -437,11 +446,11 @@ grep -n 'from collab_splats' collab_splats/preproc/video.py
 
 Expected: around 1300 ms, `scipy.stats loaded: False`, and the `grep` printing **nothing** — `video.py` must import no sibling. Any sibling import there is a cycle waiting to happen.
 
-- [ ] **Step 7: Re-run the selection parity check from Task 1 Step 7**
+- [x] **Step 7: Re-run the selection parity check from Task 1 Step 7**
 
 Expected: identical indices and digest again.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black collab_splats/preproc/ tests/preproc/

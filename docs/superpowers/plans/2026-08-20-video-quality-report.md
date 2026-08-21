@@ -105,7 +105,7 @@ A pure move. No line of moved code changes. The proof is that the existing suite
 - Create: `tests/preproc/test_video.py`
 - Modify: `tests/preproc/test_sampling.py`, `tests/pointcloud/test_loger_creator.py`
 
-- [ ] **Step 1: The baseline, already measured**
+- [x] **Step 1: The baseline, already measured**
 
 Measured on `da73454d`, before any change in this plan:
 
@@ -120,7 +120,7 @@ Every later step must reproduce **71** for `tests/preproc/` plus whatever new te
 /opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
 ```
 
-- [ ] **Step 2: Create `collab_splats/preproc/video.py`**
+- [x] **Step 2: Create `collab_splats/preproc/video.py`**
 
 Move lines 57–177 (the `Video metadata / decoding` divider, `_require_ffmpeg`, `_rotation_degrees`, `get_video_info`, `_probe_dims`, `_iter_frames`), 461–505 (`_iter_selected_frames`), and 747–813 (the `Frame I/O` divider, `_seek_frame`, `extract_frame`) out of `sampling.py` and into a new file with this header. **Cut, do not copy** — the originals must be gone from `sampling.py`.
 
@@ -144,9 +144,9 @@ import numpy as np
 logger = logging.getLogger(__name__)
 ```
 
-Keep the two `########` section dividers that already wrap this code ("Video metadata / decoding (ffmpeg + ffprobe only)" and "Frame I/O").
+Keep the two `########` section dividers that already wrap this code ("Video metadata / decoding (ffmpeg + ffprobe only)" and "Frame I/O"). **Measured: no moved function uses `cv2`, so drop that import** — the other eight header lines are all live.
 
-- [ ] **Step 3: Point `sampling.py` at the new module**
+- [x] **Step 3: Point `sampling.py` at the new module**
 
 Add to `sampling.py`'s import block:
 
@@ -163,7 +163,7 @@ from collab_splats.preproc.video import (
 
 Then delete any now-unused imports from `sampling.py` (`json`, `shutil`, `subprocess`, and `Iterator` if nothing left uses them — let `isort`/manual inspection decide, and confirm with the run in Step 6).
 
-- [ ] **Step 4: Keep `preproc/__init__.py` exporting the same names**
+- [x] **Step 4: Keep `preproc/__init__.py` exporting the same names**
 
 ```python
 """Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
@@ -194,7 +194,7 @@ __all__ = [
 
 `check_frame_quality` and `compute_blur_score` still come from `sampling.py` at this point; Task 2 moves them.
 
-- [ ] **Step 5: Move the decode tests and fix the two direct importers**
+- [x] **Step 5: Move the decode tests and fix the two direct importers**
 
 `tests/preproc/test_sampling.py` places its imports **mid-file, under each section divider** (lines 7, 79, 135, 182) rather than all at the top. Each section is therefore a clean cut-block including its own import line — keep that layout in the new files rather than normalizing it.
 
@@ -226,13 +226,20 @@ from collab_splats.preproc.sampling import _fps_targets, _uniform_targets
 from collab_splats.preproc.video import get_video_info
 ```
 
+`_iter_frames` does not disappear from `test_sampling.py` entirely: `test_fps_frames_are_rgb`, which stays, calls it directly. Add it to the **Samplers** section's own mid-file import block rather than the top one, matching the file's per-section convention:
+
+```python
+from collab_splats.preproc.sampling import sample_frames, score_frames
+from collab_splats.preproc.video import _iter_frames
+```
+
 In `tests/pointcloud/test_loger_creator.py:22`, change:
 
 ```python
 from collab_splats.preproc.video import _seek_frame, get_video_info
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
@@ -241,7 +248,7 @@ from collab_splats.preproc.video import _seek_frame, get_video_info
 
 Expected: the same pass count as Step 1, redistributed across `test_video.py` and `test_sampling.py`.
 
-- [ ] **Step 7: Prove frame selection is byte-identical**
+- [x] **Step 7: Prove frame selection is byte-identical**
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "
@@ -263,7 +270,7 @@ digest:   b8d8bc70f766c466
 
 Both the index list and the digest must come back identical after the move. A digest mismatch means the refactor changed decoded pixels; an index mismatch means it changed selection. Either one fails the task.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black collab_splats/preproc/ tests/preproc/
@@ -288,7 +295,17 @@ Also a pure move. After this task `sampling.py` contains selection and nothing e
 
 - [ ] **Step 1: Create `collab_splats/preproc/qa.py`**
 
-Cut from `sampling.py`: `_ANALYSIS_WIDTH` (line 30, with its comment), `_DEFAULT_BLUR_THRESHOLD` (34), `_EXPOSURE_MEAN_RANGE` (36), `_EXPOSURE_MIN_STD` (37), `compute_blur_score` (185), `check_frame_quality` (190), and `_analysis_gray` (335). Bodies unchanged. Header:
+Cut these seven symbols from `sampling.py`, bodies unchanged: `_ANALYSIS_WIDTH` (with its comment), `_DEFAULT_BLUR_THRESHOLD`, `_EXPOSURE_MEAN_RANGE`, `_EXPOSURE_MIN_STD`, `compute_blur_score`, `check_frame_quality`, `_analysis_gray`.
+
+**Locate them by grep, not by the line numbers in this plan** — Task 1's cleanup commit shifted every number below its import block:
+
+```bash
+grep -n '^_ANALYSIS_WIDTH\|^_DEFAULT_BLUR_THRESHOLD\|^_EXPOSURE_\|^def compute_blur_score\|^def check_frame_quality\|^def _analysis_gray' collab_splats/preproc/sampling.py
+```
+
+**Leave `_LK_PARAMS` and `_FEATURE_PARAMS` behind.** They sit interleaved with the gate constants in the same `Constants` block, but they are optical-flow *selection* parameters — they belong to `OpticalFlowFrameSelector`, which stays. So `sampling.py` keeps its `Constants` divider holding just those two, and `qa.py` gets its own.
+
+Header:
 
 ```python
 """Video capture quality: how good is the source footage, per frame and per pair.
@@ -333,7 +350,11 @@ Add to `sampling.py`'s imports:
 from collab_splats.preproc.qa import _analysis_gray, _DEFAULT_BLUR_THRESHOLD, check_frame_quality, compute_blur_score
 ```
 
-`_DEFAULT_BLUR_THRESHOLD` is imported because two public signatures default to it — `sample_frames` (line 387) and `score_frames` (line 712). It stays private and stays in `qa.py`: it is a property of the quality gate, not of the sampler. Confirm both call sites still resolve:
+`_DEFAULT_BLUR_THRESHOLD` is imported because two public signatures default to it — `sample_frames` and `score_frames` (grep for them; Task 1's cleanup shifted the numbers). It stays private and stays in `qa.py`: it is a property of the quality gate, not of the sampler.
+
+A reviewer proposed promoting it to a public `DEFAULT_BLUR_THRESHOLD` on the grounds that `sampling` importing a private name from a sibling is a smell. **Rejected:** a leading underscore marks a name package-internal, not module-internal, and Sphinx renders a default as its *value* (`50.0`), so nothing private leaks into the public signature. Promoting it would grow the documented API surface for no caller.
+
+Confirm both call sites still resolve:
 
 ```bash
 grep -n '_DEFAULT_BLUR_THRESHOLD\|_ANALYSIS_WIDTH\|_EXPOSURE_' collab_splats/preproc/sampling.py
@@ -1392,3 +1413,4 @@ git commit -m "docs(specs): measured video quality report on the tutorial video"
 - **Loop pairs.** Only sequential `(i, i - stride)` pairs are measured.
 - **`OpticalFlowFrameSelector` is still a class** in a codebase that prefers functions. It is selection logic and stays in `sampling.py`; converting it is unrelated to this work.
 - **Switching the gate's metric to `blur`.** Needs a threshold calibrated from measured footage, and it is the one change here that *would* invalidate every `frames.zarr` on disk.
+- **Promoting `_seek_frame` to public `seek_frame`.** Raised in Task 1's code review: it is the only batched-seek entry point (`extract_frame` re-probes per call) and it is imported from outside the package. Measured: that one outside importer is `tests/pointcloud/test_loger_creator.py:22`, a test-local performance trick — **zero production callers**. Promoting it would add an eighth name to a public surface the split was meant to keep at seven. Revisit if a production caller ever needs batched seeking.

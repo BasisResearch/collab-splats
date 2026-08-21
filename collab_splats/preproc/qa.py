@@ -15,12 +15,31 @@ logger = logging.getLogger(__name__)
 
 
 ########################################################################
-# Constants — gate-only. Report functions take tuning as keyword args.
+# Shared by the gate and the report
 ########################################################################
 
 # Analysis frames are downscaled to this width before scoring — bounds LK flow
 # and Laplacian cost regardless of source resolution.
 _ANALYSIS_WIDTH = 480
+
+
+def compute_blur_score(gray: np.ndarray) -> float:
+    """Sharpness as Laplacian variance — higher is sharper."""
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+def _analysis_gray(frame_bgr: np.ndarray) -> np.ndarray:
+    """Grayscale copy downscaled to _ANALYSIS_WIDTH for scoring."""
+    scale = min(1.0, _ANALYSIS_WIDTH / frame_bgr.shape[1])
+    small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame_bgr
+    return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+
+########################################################################
+# Frame quality gate — legacy policy, not part of the report.
+# Its thresholds stay module constants; report functions take tuning as
+# keyword arguments instead.
+########################################################################
 
 # Quality gate: Laplacian variance below this = blurred. Sharp indoor video
 # sits well above 100; heavy motion blur drops below 50.
@@ -28,16 +47,6 @@ _DEFAULT_BLUR_THRESHOLD = 50.0
 # Exposure bounds: mean outside this range = blown out; std below = no contrast.
 _EXPOSURE_MEAN_RANGE = (20.0, 235.0)
 _EXPOSURE_MIN_STD = 10.0
-
-
-########################################################################
-# Frame quality gate — legacy policy, not part of the report
-########################################################################
-
-
-def compute_blur_score(gray: np.ndarray) -> float:
-    """Sharpness as Laplacian variance — higher is sharper."""
-    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
 def check_frame_quality(
@@ -68,13 +77,6 @@ def check_frame_quality(
         "reject_reason": reason,
     }
     return reason is None, metrics
-
-
-def _analysis_gray(frame_bgr: np.ndarray) -> np.ndarray:
-    """Grayscale copy downscaled to _ANALYSIS_WIDTH for scoring."""
-    scale = min(1.0, _ANALYSIS_WIDTH / frame_bgr.shape[1])
-    small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame_bgr
-    return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
 
 ########################################################################
@@ -129,16 +131,28 @@ def compute_exposure(gray: np.ndarray) -> dict:
 
 
 def compute_frame_quality(bgr: np.ndarray) -> dict:
-    """Photometric measurements for one BGR frame: blur and exposure together."""
+    """Photometric measurements for one BGR frame: blur and exposure together.
+
+    The two halves read the frame at different resolutions on purpose, and one
+    of them costs something: blur is measured at _ANALYSIS_WIDTH, so **the blur
+    column is not comparable across videos whose source width straddles it**.
+    Wider sources are downscaled further and read sharper — measured on
+    data/tutorial (1080 wide), blur is 0.2128 at 480 px against 0.2772 at
+    1024 px, a 30% spread on identical frames. Videos wider than 480 px are
+    mutually comparable; anything narrower is measured natively and is not.
+    laplacian and every exposure column are unaffected, being native-resolution.
+    """
     # Exposure reads the NATIVE-resolution gray. Downscaling averages scattered
     # saturated pixels out of existence, so clipping fractions taken from a
     # resized frame read 0.0 no matter how blown out the capture actually was.
     native_gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     exposure = compute_exposure(native_gray)
 
-    # Blur reads the 480 px analysis gray. blur_effect costs 62 ms at 1024 px
-    # against 13.8 ms at 480 px, and the score barely moves across that range
-    # (0.1659 -> 0.1671), so the downscale is close to free.
+    # Blur reads the 480 px analysis gray, which buys throughput and pays for it
+    # in the comparability noted above. Measured on one 1920x1080 tutorial frame,
+    # blur_effect runs 300.4 ms natively against 39.4 ms at 853x480 — 7.6x, or
+    # 12 minutes against 94 seconds over that video's 2388 frames. Cheap in time,
+    # not free in value.
     blur = compute_blur(_analysis_gray(bgr))
 
     return {**blur, **exposure}

@@ -183,6 +183,7 @@ def clipped_bgr():
 
     Scattered, not a block: a saturated block survives downscaling because the
     interpolation window is entirely white, so it would not exercise the bug.
+    Shared across the module, so treat it as read-only.
     """
     rng = np.random.default_rng(0)
     bgr = rng.integers(64, 192, (480, 640, 3)).astype(np.uint8)
@@ -193,7 +194,12 @@ def clipped_bgr():
 
 def test_compute_frame_quality_merges_both_measurements(clipped_bgr):
     blank = np.zeros((8, 8), np.uint8)
-    assert set(compute_frame_quality(clipped_bgr)) == set(compute_blur(blank)) | set(compute_exposure(blank))
+    merged = compute_frame_quality(clipped_bgr)
+    assert set(merged) == set(compute_blur(blank)) | set(compute_exposure(blank))
+    # Count as well as membership: a set union is identical under a key
+    # collision, so without this a renamed key silently overwritten by the
+    # {**blur, **exposure} merge would still pass.
+    assert len(merged) == 7
 
 
 def test_compute_frame_quality_reads_exposure_at_native_resolution(clipped_bgr):

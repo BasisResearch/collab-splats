@@ -504,8 +504,14 @@ Change the imports at the top of `tests/preproc/test_qa.py` to:
 ```python
 import pytest
 
-from collab_splats.preproc.qa import check_frame_quality, compute_blur, compute_blur_score
+from collab_splats.preproc.qa import (
+    check_frame_quality,
+    compute_blur,
+    compute_blur_score,
+)
 ```
+
+**Write the import parenthesized — isort's line limit here is 88, not 120.** `[tool.isort]` sets `profile = "black"` with no `line_length` override, and that profile carries black's *default* 88; the repo's `[tool.black] line-length = 120` does not reach isort. Measured: `Config(settings_file="pyproject.toml").line_length == 88`, and the one-line form (89 chars) gets split. Black then keeps the split because of the magic trailing comma. **Tasks 4-8 each add another name to this same line — keep it parenthesized and the problem never recurs.**
 
 `import pytest` is added here, not inherited: Task 2 shipped `test_qa.py` without it because none of the six moved gate tests used it, and flake8 flags unused imports (`F401` is on by flake8's default select — note `pyproject.toml`'s `[tool.flake8]` block is inert, see Task 2's notes). This step is the first to need `@pytest.fixture` and `pytest.approx`. `cv2` and `numpy` are already in the file's header from Task 2.
 
@@ -598,8 +604,8 @@ Expected: 5 new tests pass alongside the gate tests moved in Task 2
 - [x] **Step 5: Commit**
 
 ```bash
-git add collab_splats/preproc/qa.py tests/preproc/test_qa.py
-git commit -m "feat(preproc): add compute_blur — perceptual blur alongside Laplacian variance"
+git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
+  -m "feat(preproc): add compute_blur — perceptual blur alongside Laplacian variance"
 ```
 
 ---
@@ -700,8 +706,8 @@ Expected: 5 more tests pass
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/preproc/qa.py tests/preproc/test_qa.py
-git commit -m "feat(preproc): add compute_exposure — brightness distribution and clipping fractions"
+git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
+  -m "feat(preproc): add compute_exposure — brightness distribution and clipping fractions"
 ```
 
 ---
@@ -787,8 +793,8 @@ Expected: 3 more tests pass
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/preproc/qa.py tests/preproc/test_qa.py
-git commit -m "feat(preproc): add compute_frame_quality — native exposure, analysis-res blur"
+git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
+  -m "feat(preproc): add compute_frame_quality — native exposure, analysis-res blur"
 ```
 
 ---
@@ -903,8 +909,8 @@ Expected: 5 more tests pass
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/preproc/qa.py tests/preproc/test_qa.py
-git commit -m "feat(preproc): add match_orb and compute_translation for per-pair motion"
+git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
+  -m "feat(preproc): add match_orb and compute_translation for per-pair motion"
 ```
 
 ---
@@ -1034,8 +1040,8 @@ Expected: 5 passed on every iteration
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/preproc/qa.py tests/preproc/test_qa.py
-git commit -m "feat(preproc): add compute_parallax — H/F inlier ratio as a depth-information probe"
+git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
+  -m "feat(preproc): add compute_parallax — H/F inlier ratio as a depth-information probe"
 ```
 
 ---
@@ -1332,14 +1338,26 @@ grep -n 'from collab_splats' collab_splats/preproc/video.py
 
 Expected: `False`, and `grep` printing nothing.
 
-- [ ] **Step 7: Format and commit**
+- [ ] **Step 7: Export `compute_video_quality`, and only it**
+
+The report is the deliverable; the six primitives exist to build it. Add one name to `collab_splats/preproc/__init__.py` — the import line and `__all__` — taking the package surface from seven to eight:
+
+```python
+from collab_splats.preproc.qa import check_frame_quality, compute_blur_score, compute_video_quality
+```
+
+**`compute_blur`, `compute_exposure`, `compute_frame_quality`, `match_orb`, `compute_translation` and `compute_parallax` stay unexported.** They remain importable as `collab_splats.preproc.qa.compute_blur` and Sphinx renders them all from the `qa` automodule block, so nothing is hidden — but re-exporting six building blocks would grow the package surface by 86% for callers who only ever want the report. `compute_blur_score` and `check_frame_quality` keep their exports because they already had them; that is legacy, not a precedent to extend.
+
+- [ ] **Step 8: Format and commit**
 
 ```bash
-/opt/venv/reconstruction/bin/python -m black collab_splats/preproc/qa.py tests/preproc/test_qa.py
-/opt/venv/reconstruction/bin/python -m isort collab_splats/preproc/qa.py tests/preproc/test_qa.py
-git add collab_splats/preproc/qa.py tests/preproc/test_qa.py
-git commit -m "feat(preproc): add compute_video_quality — columnar per-frame and per-pair report"
+/opt/venv/reconstruction/bin/python -m black collab_splats/preproc/ tests/preproc/
+/opt/venv/reconstruction/bin/python -m isort collab_splats/preproc/ tests/preproc/
+git commit --only collab_splats/preproc/qa.py collab_splats/preproc/__init__.py tests/preproc/test_qa.py \
+  -m "feat(preproc): add compute_video_quality — columnar per-frame and per-pair report"
 ```
+
+**`git commit --only`, never `git add` + `git commit`.** The git index is shared across concurrent sessions in this worktree — a plain commit sweeps up whatever another session has staged. Measured once already: `91a4f6df` swallowed a subagent's staged `git rm`.
 
 ---
 
@@ -1367,6 +1385,7 @@ rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=23
 2. `check_frame_quality`: unchanged in behaviour and signature; it moves file, nothing more.
 3. `clean_for_json`: not used. `verification.py` imports `pycolmap` at module scope, and it guards on `np.isnan` so an inf would pass. Two inline comprehensions replace it. `np.nan_to_num` is not an alternative — a `0.0` fill on `translation_px` asserts the camera held still.
 4. `n_features` is not a `compute_video_quality` parameter; it lives on `match_orb`.
+5. **`compute_video_quality` is the only new name exported from `collab_splats/preproc/__init__.py`** (surface goes 7 → 8). The six primitives stay at `collab_splats.preproc.qa.*`, where Sphinx's `qa` automodule block still documents them. The report is the deliverable; re-exporting its building blocks would grow the package surface 86% for callers who only want the report.
 
 - [ ] **Step 4: Record the format decision**
 
@@ -1420,8 +1439,12 @@ reaches the console only once a handler exists; a script caller needs
 - [ ] **Step 7: Commit**
 
 ```bash
+# docs/superpowers/ is gitignored, so force-add first; --only can only name a
+# path git already knows. Then --only, so a concurrent session's staged work
+# does not ride along.
 git add -f docs/superpowers/specs/2026-08-20-video-quality-report-design.md
-git commit -m "docs(specs): three-module preproc split; correlations and clean_for_json dropped"
+git commit --only docs/superpowers/specs/2026-08-20-video-quality-report-design.md \
+  -m "docs(specs): three-module preproc split; correlations and clean_for_json dropped"
 ```
 
 ---
@@ -1508,8 +1531,8 @@ Expected: `SMOKE PASS`. The dashboard's fast-bind path depends on `collab_splats
 
 ```bash
 git add -f docs/superpowers/specs/2026-08-20-video-quality-report-measured.md
-git add CLAUDE.md
-git commit -m "docs(specs): measured video quality report on the tutorial video"
+git commit --only docs/superpowers/specs/2026-08-20-video-quality-report-measured.md CLAUDE.md \
+  -m "docs(specs): measured video quality report on the tutorial video"
 ```
 
 ---

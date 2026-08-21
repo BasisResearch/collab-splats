@@ -469,11 +469,15 @@ git commit -m "refactor(preproc): extract qa.py — sampling.py is now selection
 
 - [ ] **Step 1: Write the failing test**
 
-Change the import at the top of `tests/preproc/test_qa.py` to:
+Change the imports at the top of `tests/preproc/test_qa.py` to:
 
 ```python
+import pytest
+
 from collab_splats.preproc.qa import check_frame_quality, compute_blur, compute_blur_score
 ```
+
+`import pytest` is added here, not inherited: Task 2 shipped `test_qa.py` without it because none of the six moved gate tests used it, and flake8 flags unused imports (`F401` is not in `pyproject.toml`'s `extend-ignore`). This step is the first to need `@pytest.fixture` and `pytest.approx`. `cv2` and `numpy` are already in the file's header from Task 2.
 
 Append to `tests/preproc/test_qa.py`:
 
@@ -531,7 +535,13 @@ Expected: collection error, `ImportError: cannot import name 'compute_blur'`
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Append to `collab_splats/preproc/qa.py`, under a new `# Per frame` divider:
+**First add the import.** Task 2 deliberately shipped `qa.py` *without* `from skimage.measure import blur_effect` — flake8 is configured in `pyproject.toml` with `F401` not in `extend-ignore`, so an unused import fails the lint. This step is where it becomes used, so add it now:
+
+```python
+from skimage.measure import blur_effect
+```
+
+Then append to `collab_splats/preproc/qa.py`, under a new `# Per frame` divider:
 
 ```python
 ########################################################################

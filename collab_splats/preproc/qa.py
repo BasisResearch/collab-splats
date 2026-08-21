@@ -126,3 +126,19 @@ def compute_exposure(gray: np.ndarray) -> dict:
         "clipped_low_frac": float((gray == 0).mean()),
         "clipped_high_frac": float((gray == 255).mean()),
     }
+
+
+def compute_frame_quality(bgr: np.ndarray) -> dict:
+    """Photometric measurements for one BGR frame: blur and exposure together."""
+    # Exposure reads the NATIVE-resolution gray. Downscaling averages scattered
+    # saturated pixels out of existence, so clipping fractions taken from a
+    # resized frame read 0.0 no matter how blown out the capture actually was.
+    native_gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    exposure = compute_exposure(native_gray)
+
+    # Blur reads the 480 px analysis gray. blur_effect costs 62 ms at 1024 px
+    # against 13.8 ms at 480 px, and the score barely moves across that range
+    # (0.1659 -> 0.1671), so the downscale is close to free.
+    blur = compute_blur(_analysis_gray(bgr))
+
+    return {**blur, **exposure}

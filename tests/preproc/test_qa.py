@@ -3,10 +3,12 @@ import numpy as np
 import pytest
 
 from collab_splats.preproc.qa import (
+    _analysis_gray,
     check_frame_quality,
     compute_blur,
     compute_blur_score,
     compute_exposure,
+    compute_frame_quality,
 )
 
 ########################################################################
@@ -173,3 +175,37 @@ def test_compute_exposure_median_separates_from_mean():
     result = compute_exposure(gray)
     assert result["exposure_median"] == pytest.approx(30.0)
     assert result["exposure_mean"] > 50.0
+
+
+@pytest.fixture(scope="module")
+def clipped_bgr():
+    """640x480 mid-grey BGR with 300 scattered saturated pixels.
+
+    Scattered, not a block: a saturated block survives downscaling because the
+    interpolation window is entirely white, so it would not exercise the bug.
+    """
+    rng = np.random.default_rng(0)
+    bgr = rng.integers(64, 192, (480, 640, 3)).astype(np.uint8)
+    ys, xs = rng.integers(0, 480, 300), rng.integers(0, 640, 300)
+    bgr[ys, xs] = 255
+    return bgr
+
+
+def test_compute_frame_quality_merges_both_measurements(clipped_bgr):
+    blank = np.zeros((8, 8), np.uint8)
+    assert set(compute_frame_quality(clipped_bgr)) == set(compute_blur(blank)) | set(compute_exposure(blank))
+
+
+def test_compute_frame_quality_reads_exposure_at_native_resolution(clipped_bgr):
+    # The contract that keeps clipping measurable: exposure must NOT go through
+    # _analysis_gray, which erases scattered saturated pixels completely.
+    native = compute_frame_quality(clipped_bgr)
+    downscaled = compute_exposure(_analysis_gray(clipped_bgr))
+    assert native["clipped_high_frac"] == pytest.approx(300 / (480 * 640), rel=0.05)
+    assert downscaled["clipped_high_frac"] == 0.0
+
+
+def test_compute_frame_quality_reads_blur_at_analysis_resolution(clipped_bgr):
+    # Blur must go through _analysis_gray; assert by equality with the explicit path
+    expected = compute_blur(_analysis_gray(clipped_bgr))["blur"]
+    assert compute_frame_quality(clipped_bgr)["blur"] == pytest.approx(expected)

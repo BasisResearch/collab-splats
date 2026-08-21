@@ -5,11 +5,17 @@ check_frame_quality is the one exception, and it is a gate the sampler calls,
 not a decision this module makes.
 """
 
+import json
 import logging
+import time
+from pathlib import Path
 
 import cv2
 import numpy as np
 from skimage.measure import blur_effect
+from tqdm.auto import tqdm
+
+from collab_splats.preproc.video import _iter_frames, get_video_info
 
 logger = logging.getLogger(__name__)
 
@@ -263,3 +269,126 @@ def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray, *, ransac_thresh_px: 
     # min() guards the case where H outfits F on a degenerate pair, which would
     # otherwise push the complement negative.
     return float(1.0 - min(1.0, n_h / n_f))
+
+
+########################################################################
+# Whole video
+########################################################################
+
+
+def compute_video_quality(
+    video_path: str | Path,
+    *,
+    output_path: str | Path | None = None,
+    motion_stride: int | None = None,
+) -> dict:
+    """Measure per-frame photometry and per-pair motion across a whole video.
+
+    Args:
+        video_path: source video to decode; every frame is measured.
+        output_path: where to write video_quality_report.json. None returns the
+            report without touching disk.
+        motion_stride: frames between the two members of each measured pair.
+            None means round(fps) — one second of video, the pair spacing a
+            reconstruction sees under the shipping fps: 1.0 sampling rate.
+    """
+    video_path = Path(video_path)
+    info = get_video_info(str(video_path))
+    stride = int(motion_stride) if motion_stride else max(1, round(info["fps"] or 1))
+
+    frames = {
+        k: []
+        for k in (
+            "frame_idx",
+            "blur",
+            "laplacian",
+            "exposure_mean",
+            "exposure_median",
+            "exposure_std",
+            "clipped_low_frac",
+            "clipped_high_frac",
+        )
+    }
+    frame_idx_a, frame_idx_b, translation_px, parallax, n_matches = [], [], [], [], []
+
+    # Hold only the grays still owed a partner: stride + 1 frames at a time,
+    # so memory does not track video length.
+    pending: dict[int, np.ndarray] = {}
+
+    # Announce the work before the first decode — a multi-minute silent run is
+    # indistinguishable from a hung one. %s on the ints so a probe that came
+    # back with None does not crash the log line itself.
+    logger.info(
+        "video quality: %s — %s frames @ %.2f fps, %sx%s, stride %d",
+        video_path.name,
+        info["total_frames"],
+        info["fps"] or 0.0,
+        info["width"],
+        info["height"],
+        stride,
+    )
+    started = time.perf_counter()
+
+    for idx, bgr in enumerate(
+        tqdm(
+            _iter_frames(str(video_path)),
+            total=info["total_frames"],
+            desc="measuring frames",
+            unit="frame",
+        )
+    ):
+        # Photometry for every frame, no stride
+        frames["frame_idx"].append(idx)
+        for key, value in compute_frame_quality(bgr).items():
+            frames[key].append(value)
+
+        # Motion against the frame one stride back, once one exists
+        pending[idx] = _analysis_gray(bgr)
+        partner = idx - stride
+        if partner in pending:
+            pts_a, pts_b = match_orb(pending[partner], pending[idx])
+            frame_idx_a.append(partner)
+            frame_idx_b.append(idx)
+            n_matches.append(int(len(pts_a)))
+            translation_px.append(compute_translation(pts_a, pts_b))
+            parallax.append(compute_parallax(pts_a, pts_b))
+            del pending[partner]
+
+    if not frames["frame_idx"]:
+        report = {"available": False, "reason": f"no frames decoded from {video_path}"}
+    else:
+        report = {
+            "available": True,
+            "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
+            "params": {"motion_stride": stride},
+            "frames": frames,
+            "pairs": {
+                "frame_idx_a": frame_idx_a,
+                "frame_idx_b": frame_idx_b,
+                "n_matches": n_matches,
+                # nan -> null on the only two columns that can be non-finite.
+                # json.dumps writes a bare NaN that no strict parser accepts, and
+                # np.nan_to_num is not the fix: its 0.0 fill would read as "no
+                # motion", the opposite of "this pair failed to match".
+                "translation_px": [None if np.isnan(v) else v for v in translation_px],
+                "parallax": [None if np.isnan(v) else v for v in parallax],
+            },
+        }
+        # Throughput, not just a count: it is the number that tells a reader
+        # whether a long run is progressing or degrading.
+        elapsed = max(time.perf_counter() - started, 1e-9)
+        logger.info(
+            "video quality: %d frames, %d pairs, stride %d — %.1fs (%.1f frames/s)",
+            len(frames["frame_idx"]),
+            len(frame_idx_a),
+            stride,
+            elapsed,
+            len(frames["frame_idx"]) / elapsed,
+        )
+
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, indent=2))
+        logger.info("video quality: wrote %s (%.1f kB)", output_path, output_path.stat().st_size / 1000)
+    return report

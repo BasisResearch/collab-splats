@@ -1,3 +1,6 @@
+import json
+import logging
+
 import cv2
 import numpy as np
 import pytest
@@ -11,6 +14,7 @@ from collab_splats.preproc.qa import (
     compute_frame_quality,
     compute_parallax,
     compute_translation,
+    compute_video_quality,
     match_orb,
 )
 
@@ -324,3 +328,107 @@ def test_compute_parallax_falls_as_the_ransac_threshold_loosens(synthetic_scenes
     assert ladder[0] > 0.9 and ladder[-1] < 0.1
     # The default is 3.0, so the keyword-free call sits on the second rung
     assert compute_parallax(pts_a, pts_b) == pytest.approx(ladder[1])
+
+
+########################################################################
+# Whole video
+########################################################################
+
+
+def test_compute_video_quality_top_level_keys(tiny_video):
+    report = compute_video_quality(tiny_video)
+    assert set(report) == {"available", "video", "params", "frames", "pairs"}
+    assert report["available"] is True
+
+
+def test_compute_video_quality_video_block(tiny_video):
+    video = compute_video_quality(tiny_video)["video"]
+    assert set(video) == {"path", "mtime", "total_frames", "fps", "duration_s", "width", "height"}
+    assert video["total_frames"] == 60
+    assert (video["width"], video["height"]) == (320, 240)
+
+
+def test_compute_video_quality_frame_columns_are_equal_length(tiny_video):
+    frames = compute_video_quality(tiny_video)["frames"]
+    assert set(frames) == {
+        "frame_idx",
+        "blur",
+        "laplacian",
+        "exposure_mean",
+        "exposure_median",
+        "exposure_std",
+        "clipped_low_frac",
+        "clipped_high_frac",
+    }
+    assert {len(v) for v in frames.values()} == {60}
+    # frame_idx is the source video index, not a row position
+    assert frames["frame_idx"] == list(range(60))
+
+
+def test_compute_video_quality_pairs_use_the_default_stride(tiny_video):
+    report = compute_video_quality(tiny_video)
+    pairs = report["pairs"]
+    assert set(pairs) == {"frame_idx_a", "frame_idx_b", "translation_px", "parallax", "n_matches"}
+    # 30 fps rounds to a stride of 30, leaving 60 - 30 = 30 pairs
+    assert report["params"] == {"motion_stride": 30}
+    assert {len(v) for v in pairs.values()} == {30}
+    assert pairs["frame_idx_a"][:3] == [0, 1, 2]
+    assert pairs["frame_idx_b"][:3] == [30, 31, 32]
+
+
+def test_compute_video_quality_honours_motion_stride(tiny_video):
+    report = compute_video_quality(tiny_video, motion_stride=5)
+    assert report["params"]["motion_stride"] == 5
+    assert len(report["pairs"]["frame_idx_a"]) == 55
+    assert report["pairs"]["frame_idx_b"][0] - report["pairs"]["frame_idx_a"][0] == 5
+
+
+def test_compute_video_quality_keeps_n_matches_integral(tiny_video):
+    n_matches = compute_video_quality(tiny_video, motion_stride=5)["pairs"]["n_matches"]
+    assert all(isinstance(v, int) for v in n_matches)
+    assert min(n_matches) > 0
+
+
+def test_compute_video_quality_writes_json(tiny_video, tmp_path):
+    out = tmp_path / "nested" / "video_quality_report.json"
+    report = compute_video_quality(tiny_video, motion_stride=5, output_path=out)
+    assert json.loads(out.read_text()) == report
+
+
+def test_compute_video_quality_serialises_unmatched_pairs_as_null(tmp_path):
+    # A featureless video is the case that produces nan: ORB finds no corners,
+    # so every pair has 0 matches and nan translation/parallax. nan is not valid
+    # JSON, and it is also the interesting measurement — it must survive as null.
+    path = tmp_path / "flat.mp4"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (320, 240))
+    for _ in range(20):
+        writer.write(np.zeros((240, 320, 3), np.uint8))
+    writer.release()
+
+    out = tmp_path / "flat.json"
+    report = compute_video_quality(path, motion_stride=5, output_path=out)
+    assert report["pairs"]["n_matches"] == [0] * 15
+    assert report["pairs"]["translation_px"] == [None] * 15
+    assert report["pairs"]["parallax"] == [None] * 15
+    # A frame of pure black is fully clipped low
+    assert report["frames"]["clipped_low_frac"][0] == 1.0
+    assert "NaN" not in out.read_text()
+    assert json.loads(out.read_text()) == report
+
+
+def test_compute_video_quality_reports_unavailable_for_an_undecodable_file(tmp_path):
+    broken = tmp_path / "broken.mp4"
+    broken.write_bytes(b"")
+    report = compute_video_quality(broken)
+    assert report["available"] is False
+    assert "broken.mp4" in report["reason"]
+
+
+def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, caplog):
+    # A silent multi-minute run is indistinguishable from a hung one, so the
+    # announce-then-summarise pair is a contract, not a nicety.
+    with caplog.at_level(logging.INFO, logger="collab_splats.preproc.qa"):
+        compute_video_quality(tiny_video, motion_stride=5)
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("60 frames @" in m for m in messages), "no line logged before the decode"
+    assert any("frames/s" in m for m in messages), "no elapsed/throughput line logged after"

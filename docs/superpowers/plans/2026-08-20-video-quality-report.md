@@ -1122,7 +1122,7 @@ The payload is **columnar** (a dict of lists), not a list of row dicts. Measured
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `compute_video_quality` **inside the parentheses** of the `from collab_splats.preproc.qa import (...)` block, keeping the trailing comma and alphabetical order, and add `import json` and `import logging` to the test file's own imports. Append to `tests/preproc/test_qa.py`:
 
@@ -1233,12 +1233,12 @@ def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, capl
     assert any("frames/s" in m for m in messages), "no elapsed/throughput line logged after"
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: collection error, `ImportError: cannot import name 'compute_video_quality'`
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 Extend `qa.py`'s imports — this is where `qa.py` first depends on `video.py`:
 
@@ -1382,18 +1382,18 @@ def compute_video_quality(
     return report
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: 10 more tests pass
 
-- [ ] **Step 5: Run the whole preproc suite**
+- [x] **Step 5: Run the whole preproc suite**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -q -p no:randomly 2>&1 | tail -3
 /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_loger_creator.py -q -p no:randomly 2>&1 | tail -3`
 Expected: the Task 1 Step 1 baseline plus the new `test_qa.py` tests
 
-- [ ] **Step 6: Confirm the layering still holds**
+- [x] **Step 6: Confirm the layering still holds**
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "
@@ -1404,7 +1404,7 @@ grep -n 'from collab_splats' collab_splats/preproc/video.py
 
 Expected: `False`, and `grep` printing nothing.
 
-- [ ] **Step 7: Export `compute_video_quality`, and only it**
+- [x] **Step 7: Export `compute_video_quality`, and only it**
 
 The report is the deliverable; the six primitives exist to build it. Add one name to `collab_splats/preproc/__init__.py` — the import line and `__all__` — taking the package surface from seven to eight:
 
@@ -1414,7 +1414,9 @@ from collab_splats.preproc.qa import check_frame_quality, compute_blur_score, co
 
 **`compute_blur`, `compute_exposure`, `compute_frame_quality`, `match_orb`, `compute_translation` and `compute_parallax` stay unexported.** They remain importable as `collab_splats.preproc.qa.compute_blur` and Sphinx renders them all from the `qa` automodule block, so nothing is hidden — but re-exporting six building blocks would grow the package surface by 86% for callers who only ever want the report. `compute_blur_score` and `check_frame_quality` keep their exports because they already had them; that is legacy, not a precedent to extend.
 
-- [ ] **Step 8: Format and commit**
+**This also breaks `tests/preproc/test_sampling.py::test_public_api_surface`, which the plan missed.** It pins `__all__` to the exact 7-name set and fails the moment the export lands. Update it to 8 and add the other half of the decision while you are there — assert the six primitives are *not* attributes of the package, so the surface choice is pinned rather than merely counted. Also note `isort` reflows the new `from collab_splats.preproc.qa import ...` line: three names cross the 88-char effective limit, so it becomes a parenthesized block.
+
+- [x] **Step 8: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black collab_splats/preproc/ tests/preproc/

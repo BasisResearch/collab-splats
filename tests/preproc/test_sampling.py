@@ -366,7 +366,7 @@ def test_unknown_method_raises(tiny_video):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 7 public names — viz is opt-in and must NOT be re-exported
+    # Exactly the 8 public names — viz is opt-in and must NOT be re-exported
     assert set(preproc.__all__) == {
         "FrameStore",
         "sample_frames",
@@ -375,8 +375,23 @@ def test_public_api_surface():
         "extract_frame",
         "compute_blur_score",
         "check_frame_quality",
+        "compute_video_quality",
     }
     assert not hasattr(preproc, "plot_frame_scores")
+    # The report is the deliverable; the primitives that build it stay behind
+    # collab_splats.preproc.qa. Re-exporting all six would grow this surface by
+    # 86% for callers who only ever want the report. compute_blur_score and
+    # check_frame_quality keep their exports because they already had them —
+    # legacy, not a precedent to extend.
+    for primitive in (
+        "compute_blur",
+        "compute_exposure",
+        "compute_frame_quality",
+        "match_orb",
+        "compute_translation",
+        "compute_parallax",
+    ):
+        assert not hasattr(preproc, primitive), primitive
 
 
 def test_importing_preproc_does_not_import_matplotlib():

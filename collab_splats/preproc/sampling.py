@@ -1,8 +1,9 @@
-"""Keyframe selection: per-frame quality scoring, the quality gate, and sampling.
+"""Keyframe selection: which frames to keep, and the sampling methods that pick them.
 
-Sampling methods are fps, uniform, and optical_flow. Decoding and video
-metadata live in collab_splats.preproc.video; cv2 is used here for in-memory
-image operations only (grayscale, resize, Laplacian, LK flow).
+Sampling methods are fps, uniform, and optical_flow. Capture-quality
+measurement and the quality gate live in collab_splats.preproc.qa; decoding and
+video metadata live in collab_splats.preproc.video; cv2 is used here for
+in-memory image operations only (grayscale, resize, LK flow).
 """
 
 from __future__ import annotations
@@ -14,6 +15,12 @@ import cv2
 import numpy as np
 from tqdm.auto import tqdm
 
+from collab_splats.preproc.qa import (
+    _DEFAULT_BLUR_THRESHOLD,
+    _analysis_gray,
+    check_frame_quality,
+    compute_blur_score,
+)
 from collab_splats.preproc.video import (
     _iter_frames,
     _iter_selected_frames,
@@ -27,16 +34,6 @@ logger = logging.getLogger(__name__)
 # Constants
 ########################################################################
 
-# Analysis frames are downscaled to this width before scoring — bounds LK flow
-# and Laplacian cost regardless of source resolution.
-_ANALYSIS_WIDTH = 480
-
-# Quality gate: Laplacian variance below this = blurred. Sharp indoor video
-# sits well above 100; heavy motion blur drops below 50.
-_DEFAULT_BLUR_THRESHOLD = 50.0
-# Exposure bounds: mean outside this range = blown out; std below = no contrast.
-_EXPOSURE_MEAN_RANGE = (20.0, 235.0)
-_EXPOSURE_MIN_STD = 10.0
 # Uniform sampling: when a target position fails the quality gate, consider at
 # most this many frames outward (each side) as a usable substitute.
 _VALID_PROBE_MAX = 3
@@ -54,46 +51,6 @@ _LK_PARAMS = dict(
 )
 # Shi-Tomasi corner detection parameters for flow seed points.
 _FEATURE_PARAMS = dict(maxCorners=1000, qualityLevel=0.01, minDistance=8, blockSize=7)
-
-
-########################################################################
-# Frame quality
-########################################################################
-
-
-def compute_blur_score(gray: np.ndarray) -> float:
-    """Sharpness as Laplacian variance — higher is sharper."""
-    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
-
-def check_frame_quality(
-    gray: np.ndarray,
-    blur_threshold: float = _DEFAULT_BLUR_THRESHOLD,
-    blur_score: float | None = None,
-) -> tuple[bool, dict]:
-    """Quality gate: is the frame sharp enough and reasonably exposed?
-
-    Returns (ok, metrics) where metrics holds blur_score, exposure_mean,
-    exposure_std, and reject_reason (None | "blur" | "exposure").
-    blur_score: pass a precomputed value to skip the Laplacian recompute.
-    """
-    if blur_score is None:
-        blur_score = compute_blur_score(gray)
-    mean, std = float(gray.mean()), float(gray.std())
-    lo, hi = _EXPOSURE_MEAN_RANGE
-    # Blur checked first — the first failing check names the reason
-    reason = None
-    if blur_score < blur_threshold:
-        reason = "blur"
-    elif not (lo <= mean <= hi) or std < _EXPOSURE_MIN_STD:
-        reason = "exposure"
-    metrics = {
-        "blur_score": blur_score,
-        "exposure_mean": mean,
-        "exposure_std": std,
-        "reject_reason": reason,
-    }
-    return reason is None, metrics
 
 
 ########################################################################
@@ -209,13 +166,6 @@ class OpticalFlowFrameSelector:
 ########################################################################
 # Sampling
 ########################################################################
-
-
-def _analysis_gray(frame_bgr: np.ndarray) -> np.ndarray:
-    """Grayscale copy downscaled to _ANALYSIS_WIDTH for scoring."""
-    scale = min(1.0, _ANALYSIS_WIDTH / frame_bgr.shape[1])
-    small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame_bgr
-    return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
 
 def _progress_reporter(

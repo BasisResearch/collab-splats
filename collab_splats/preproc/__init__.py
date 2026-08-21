@@ -1,16 +1,12 @@
-"""Video preprocessing: decode/metadata (video), quality gating and frame selection (sampling).
+"""Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
 
 Plots live in collab_splats.preproc.viz and are deliberately not re-exported
 (keeps matplotlib out of pipeline imports).
 """
 
 from collab_splats.preproc.frame_store import FrameStore
-from collab_splats.preproc.sampling import (
-    check_frame_quality,
-    compute_blur_score,
-    sample_frames,
-    score_frames,
-)
+from collab_splats.preproc.qa import check_frame_quality, compute_blur_score
+from collab_splats.preproc.sampling import sample_frames, score_frames
 from collab_splats.preproc.video import extract_frame, get_video_info
 
 __all__ = [

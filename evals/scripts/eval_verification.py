@@ -30,7 +30,7 @@ from collab_splats.geometry.verification import (
     verify_reconstruction,
 )
 from collab_splats.localization.extractors import LocalMatcher
-from collab_splats.localization.localizer import load_reconstruction_features
+from collab_splats.localization.localizer import load_localization_db
 from collab_splats.pointcloud.feedforward.base import (
     FeedforwardResult,
     build_pycolmap_reconstruction,
@@ -135,7 +135,7 @@ def main() -> None:
     # ── Load reconstruction (pose authority) + feature cache + model depth ──
     recon = pycolmap.Reconstruction()
     recon.read(str(args.backend_dir / "colmap" / "sparse" / "0"))
-    features, ids, _ = load_reconstruction_features(
+    features, ids, _ = load_localization_db(
         args.backend_dir / "feedforward.zarr", args.extractor
     )
     ff = FeedforwardResult.load_zarr(args.backend_dir / "feedforward.zarr")

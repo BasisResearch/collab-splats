@@ -66,7 +66,7 @@ class _IdentityMatcher:
     def extract(self, image):  # pragma: no cover - never called in these tests
         raise NotImplementedError
 
-    def match(self, query, db, image_hw):
+    def match(self, query, db):
         n = min(len(query.keypoints), len(db.keypoints))
         idx = np.arange(n, dtype=np.int64)
         return MatchResult(
@@ -80,8 +80,8 @@ class _IdentityMatcher:
 class _NoIndexMatcher(_IdentityMatcher):
     """Stub matcher mimicking XFeatStar: pixels only, no table indices."""
 
-    def match(self, query, db, image_hw):
-        m = super().match(query, db, image_hw)
+    def match(self, query, db):
+        m = super().match(query, db)
         return MatchResult(query_px=m.query_px, ref_px=m.ref_px)
 
 
@@ -261,6 +261,37 @@ def test_verify_pairwise_requires_aligned_images(tmp_path):
         )
 
 
+def test_feature_capable_localmatcher_skips_images(tmp_path):
+    """A FEATURE_MATCH_MODELS matcher takes the feature-level branch: match() on features,
+    match_images and `images` untouched, no stable-indices requirement."""
+    _, extrinsics, kps = _synthetic_scene()
+    matcher = MagicMock(spec=LocalMatcher)
+    matcher.model_name = "xfeat"  # in FEATURE_MATCH_MODELS -> feature-level dispatch
+    matcher.has_stable_indices = False  # irrelevant on the feature-level path
+
+    def _match(query, db):
+        n = min(len(query.keypoints), len(db.keypoints))
+        idx = np.arange(n, dtype=np.int64)
+        return MatchResult(
+            query_px=query.keypoints.numpy()[:n],
+            ref_px=db.keypoints.numpy()[:n],
+            idx_q=idx,
+            idx_db=idx.copy(),
+        )
+
+    matcher.match.side_effect = _match
+    result = verify_reconstruction(
+        recon=_make_recon(extrinsics),
+        features=_features_from_keypoints(kps),
+        matcher=matcher,
+        output_dir=tmp_path,
+        # no `images` passed — the feature-level path must not require them
+    )
+    matcher.match_images.assert_not_called()
+    assert matcher.match.call_count == 3  # 3 sequential pairs for 3 frames
+    assert result.summary["n_points"] > 0
+
+
 def _rot_x(deg: float) -> np.ndarray:
     """Rotation about x, degrees."""
     a = np.radians(deg)
@@ -297,3 +328,20 @@ def test_negative_control_perturbed_pose_flagged(tmp_path):
         s["track_survival"] for n, s in result.frame_stats.items() if n != bad_name
     ]
     assert result.frame_stats[bad_name]["track_survival"] < min(clean_survival)
+
+
+def test_summary_carries_phase_seconds(tmp_path):
+    """Per-phase wall-clock timings land in the summary and the JSON report."""
+    _, extrinsics, kps = _synthetic_scene()
+    result = verify_reconstruction(
+        recon=_make_recon(extrinsics),
+        features=_features_from_keypoints(kps),
+        matcher=_IdentityMatcher(),
+        output_dir=tmp_path,
+    )
+    phases = result.summary["phase_seconds"]
+    assert set(phases) == {"db_export", "pair_matching", "db_match_writes", "verify_matches", "triangulate"}
+    assert all(isinstance(v, float) and v >= 0.0 for v in phases.values())
+    # and it round-trips through the JSON report
+    on_disk = json.loads((tmp_path / "verification.json").read_text())
+    assert "phase_seconds" in on_disk["summary"]

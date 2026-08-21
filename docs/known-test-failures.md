@@ -1,5 +1,38 @@
 # Known Test Failures
 
+## 2026-08-21 — RESOLVED: xfeat GPU parity test failed under TF32 import pollution
+
+`tests/localization/test_local_matcher.py::test_real_xfeat_general_path_matches_pairwise`
+(CUDA-gated; licenses `xfeat`'s membership in `FEATURE_MATCH_MODELS`) failed in any pytest
+process that ALSO collected a module importing `collab_splats.pointcloud.feedforward.base`
+(e.g. `tests/geometry/test_verification.py`): **mapanything sets
+`torch.backends.cuda.matmul.allow_tf32 = True` and float32 matmul precision `high` at
+module import**, and under TF32 the batched vs pairwise match paths flip near-threshold
+matches (measured 969 vs 967), breaking the byte-equal parity assertion. Deterministic:
+`pytest tests/localization/test_local_matcher.py tests/geometry/test_verification.py`
+reproduced it 3/3 on an idle GPU; the file alone passed 20/20 and the single test passed
+5/5 (serial and under a synthetic matmul load) — an earlier same-day diagnosis blaming
+concurrent CUDA processes was wrong; both original failures had a polluting module in the
+same process.
+
+**Fixed** (same day): `strict_fp32` fixture in `test_local_matcher.py` pins
+`allow_tf32=False` + precision `"highest"` (save/restore) on the three parity gates. The
+combo repro passes 2/2 post-fix. Production is unaffected by design — it always runs with
+feedforward imported (TF32 on), where a ±2 near-threshold match difference is not a
+correctness issue; parity is asserted at full precision, where the paths are byte-equal.
+
+## 2026-08-21 — transient: 6 reconstructor/base.yaml failures from a concurrent session's working tree
+
+`tests/wrapper/test_reconstructor.py` (`test_init_fills_defaults_from_base_yaml`,
+`test_mesh_clean_repair_defaults_off`, `test_build_localization_db_runs_when_missing`,
+`test_base_yaml_mesh_has_fidelity_keys`) and `tests/wrapper/test_reconstructor_loger_kwargs.py`
+(both tests) failed in the 2026-08-21 full-suite run because a **concurrent session's
+uncommitted `configs/base.yaml` edit** deleted the `pointcloud.loger` block and changed the
+mesh defaults (`voxel_size`, `sdf_trunc`, `clean_repair: true`, `conf_percentile: 20`,
+`native_resolution: true`, `color_map_iterations: 300`) that these tests assert. Working-tree
+state, not repo state: at HEAD the tests' targets exist. Resolves when that session commits
+(with test updates) or reverts. Do not "fix" the tests or the yaml from another session.
+
 ## 2026-08-18 — RESOLVED: 3 BA `test_optimize_*` xfails (bae/pypose target bug)
 
 The deferred bae/pypose integration bug (bae `LM.step` calls `self.model(input)` without

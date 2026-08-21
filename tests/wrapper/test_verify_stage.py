@@ -33,7 +33,7 @@ def test_database_db_not_pushed():
     assert "/*/colmap/database.db" in PUSH_EXCLUDES
 
 
-def _stub_verify_call(tmp_path, monkeypatch, matcher):
+def _stub_verify_call(tmp_path, monkeypatch, matcher, load_fn=None):
     """Run Reconstructor.verify() with all heavy collaborators stubbed; return captured kwargs."""
     # 2-frame reconstruction stub — verify() only reads .images[id].name for the stem check
     recon = SimpleNamespace(
@@ -48,13 +48,17 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher):
     }
     r._stage_output_exists = lambda stage: False
     r._resolve_result = lambda: SimpleNamespace(reconstruction=recon)
-    r.build_localization_db = lambda: None
+    rebuilds = []
+    r.build_localization_db = lambda **kw: rebuilds.append(kw)
 
     # Collaborators: feature cache read, matcher resolution, frame store, verification entry
-    monkeypatch.setattr(
-        "collab_splats.localization.localizer.load_reconstruction_features",
-        lambda path, name: (["f0", "f1"], ["frame_000003.jpg", "frame_000007.jpg"], (4, 4)),
-    )
+    if load_fn is None:
+        load_fn = lambda path, name: (  # noqa: E731
+            ["f0", "f1"],
+            ["frame_000003.jpg", "frame_000007.jpg"],
+            (4, 4),
+        )
+    monkeypatch.setattr("collab_splats.localization.localizer.load_localization_db", load_fn)
     # verify() imports LocalMatcher from the extractors module inline — patch it with a
     # factory returning the stub (no isinstance dispatch remains in verify()).
     monkeypatch.setattr("collab_splats.localization.extractors.LocalMatcher", lambda name: matcher)
@@ -72,14 +76,14 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher):
         lambda **kw: captured.update(kw),
     )
     r.verify()
-    return captured, accesses
+    return captured, accesses, rebuilds
 
 
 def test_verify_passes_frame_store_images_to_pairwise_matcher(tmp_path, monkeypatch):
     """For a LocalMatcher, verify() hands over lazy cache-extraction frames as images=."""
     matcher = MagicMock(spec=LocalMatcher)
     matcher.has_stable_indices = True
-    captured, accesses = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    captured, accesses, _ = _stub_verify_call(tmp_path, monkeypatch, matcher)
     assert captured["matcher"] is matcher
     # Lazy handoff: nothing was decoded yet at the verify_reconstruction call boundary
     assert accesses == []
@@ -95,7 +99,27 @@ def test_verify_hands_images_lazily_for_any_matcher(tmp_path, monkeypatch):
     (Pre-retirement, descriptor matchers got images=None; verify_reconstruction's
     descriptor branch ignores `images`, so the unconditional lazy handoff is free.)"""
     matcher = SimpleNamespace()  # duck-typed descriptor stub, not a LocalMatcher
-    captured, accesses = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    captured, accesses, _ = _stub_verify_call(tmp_path, monkeypatch, matcher)
     assert captured["matcher"] is matcher
     assert captured["images"] is not None and len(captured["images"]) == 2
     assert accesses == []  # still zero decodes at the call boundary
+
+
+def test_verify_rebuilds_db_when_loma_payload_missing(tmp_path, monkeypatch):
+    """Split-capable matcher + payload-less cache: one rebuild + reload before verification."""
+    matcher = MagicMock(spec=LocalMatcher)
+    matcher.has_stable_indices = True
+    matcher._split_loma_forward = True  # assignment is allowed on spec mocks; get-after-set works
+    stale = SimpleNamespace(keypoints_normalized=None)
+    fresh = SimpleNamespace(keypoints_normalized=np.zeros((1, 2), np.float32))
+    loads = []
+
+    def _load(path, name):
+        loads.append(name)
+        feats = [stale, stale] if len(loads) == 1 else [fresh, fresh]
+        return feats, ["frame_000003.jpg", "frame_000007.jpg"], (4, 4)
+
+    captured, _, rebuilds = _stub_verify_call(tmp_path, monkeypatch, matcher, load_fn=_load)
+    assert rebuilds == [{}, {"overwrite": True}]  # up-front build, then the payload rebuild
+    assert len(loads) == 2  # reloaded after the rebuild
+    assert captured["features"] == [fresh, fresh]

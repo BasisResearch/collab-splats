@@ -12,6 +12,7 @@ Spec: docs/superpowers/specs/2026-08-14-geometric-verification-design.md.
 
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -20,7 +21,7 @@ import numpy as np
 import pycolmap
 
 from collab_splats.geometry.transforms import rotation_angle_deg
-from collab_splats.localization.extractors import LocalFeatures, LocalMatcher
+from collab_splats.localization.extractors import FEATURE_MATCH_MODELS, LocalFeatures, LocalMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +160,10 @@ def verify_reconstruction(
     Args:
         recon: pose/camera authority (original-resolution K); its points are ignored.
         features: per-image LocalFeatures, aligned with sorted(recon.images) order.
-        matcher: an index-stable LocalMatcher (matched pairwise over `images`). The
-            else-branch below also accepts any duck-typed extractor whose match()
-            exposes keypoint indices — kept for the follow-on descriptor-level
-            matching path (match_extracted).
+        matcher: a LocalMatcher. FEATURE_MATCH_MODELS members match the precomputed
+            `features` directly (no images, no extraction); other models are matched
+            pairwise over `images` and must be index-stable. The feature-level branch
+            also accepts any duck-typed extractor whose match() exposes keypoint indices.
         output_dir: writes database.db, verified/ (COLMAP model), verification.json.
         overlap: sequential pairing window (pycolmap SequentialPairingOptions.overlap).
         images: pairwise matchers (LocalMatcher) only — the exact RGB frames `features`
@@ -172,6 +173,8 @@ def verify_reconstruction(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Per-phase wall-clock timings — residual attribution for the benchmark report
+    timings: dict[str, float] = {}
     image_ids = sorted(recon.images)
     if len(features) != len(image_ids):
         raise ValueError(
@@ -179,9 +182,12 @@ def verify_reconstruction(
             "the cache and the reconstruction describe different runs."
         )
 
-    # Pairwise matchers must prove index stability up front — a silent skip here would
-    # surface later as a missing verification.json with no explanation.
-    if isinstance(matcher, LocalMatcher):
+    # FEATURE_MATCH_MODELS members (NN-parity models + the loma split) match precomputed
+    # features directly — no images, no extraction. Everything else pairwise: those must
+    # prove index stability up front — a silent skip here would surface later as a missing
+    # verification.json with no explanation.
+    pairwise = isinstance(matcher, LocalMatcher) and matcher.model_name not in FEATURE_MATCH_MODELS
+    if pairwise:
         if not matcher.has_stable_indices:
             raise ValueError(
                 f"matcher '{matcher.model_name}' cannot provide stable keypoint indices "
@@ -200,6 +206,7 @@ def verify_reconstruction(
         db_path.unlink()  # stale DBs accumulate duplicate rows; always start fresh
     db = pycolmap.Database.open(str(db_path))
     try:
+        t = time.perf_counter()
         _write_frames(db, recon, features)
 
         # ── Sequential pairs from pycolmap's own generator (COLMAP's video pairing;
@@ -209,27 +216,29 @@ def verify_reconstruction(
         pairing = pycolmap.SequentialPairingOptions()
         pairing.overlap = overlap
         pairs = pycolmap.SequentialPairGenerator(pairing, db).all_pairs()
+        timings["db_export"] = time.perf_counter() - t
 
         # ── Match every pair with our extractor; index pairs are COLMAP's match format ──
-        cam0 = recon.cameras[recon.images[image_ids[0]].camera_id]
-        # Feedforward output is uniform-resolution across all frames, so camera 0's (H, W)
-        # is reused for every pair below — no per-pair guard needed.
-        hw = (cam0.height, cam0.width)
         id_to_pos = {iid: k for k, iid in enumerate(image_ids)}
         matches: dict[tuple[int, int], np.ndarray] = {}
+        t_match = t_write = 0.0
         for id1, id2 in pairs:
-            if isinstance(matcher, LocalMatcher):
+            if pairwise:
                 # Pairwise path: match the raw images; idx_q/idx_db are recovered rows of
                 # the extract-time keypoint tables — the very tables _write_frames just
                 # exported. Recovery can still fail per pair despite the passed probe
                 # (match_images downgrades idx to None): skip that pair with a warning
                 # rather than aborting the whole report for one degenerate pair.
+                t = time.perf_counter()
                 m = matcher.match_images(images[id_to_pos[id1]], images[id_to_pos[id2]])
+                t_match += time.perf_counter() - t
                 if m.idx_q is None or m.idx_db is None:
                     logger.warning("Verification: pair (%d, %d) lost index recovery — skipping", id1, id2)
                     continue
             else:
-                m = matcher.match(features[id_to_pos[id1]], features[id_to_pos[id2]], hw)
+                t = time.perf_counter()
+                m = matcher.match(features[id_to_pos[id1]], features[id_to_pos[id2]])
+                t_match += time.perf_counter() - t
                 if m.idx_q is None or m.idx_db is None:
                     raise ValueError(
                         f"{type(matcher).__name__} does not expose keypoint indices "
@@ -238,9 +247,13 @@ def verify_reconstruction(
             if len(m) == 0:
                 continue
             matches[(id1, id2)] = np.stack([m.idx_q, m.idx_db], axis=1).astype(np.uint32)
+            t = time.perf_counter()
             db.write_matches(id1, id2, matches[(id1, id2)])
+            t_write += time.perf_counter() - t
     finally:
         db.close()
+    timings["pair_matching"] = t_match
+    timings["db_match_writes"] = t_write
     logger.info("Verification: %d/%d pairs matched", len(matches), len(pairs))
 
     # ── Epipolar verification (Tier 1) over the matched pairs ──
@@ -248,7 +261,9 @@ def verify_reconstruction(
     pairs_path.write_text("\n".join(f"{recon.images[a].name} {recon.images[b].name}" for a, b in matches))
     tvg_options = pycolmap.TwoViewGeometryOptions()
     tvg_options.compute_relative_pose = True  # cam2_from_cam1 stays None without this
+    t = time.perf_counter()
     pycolmap.verify_matches(str(db_path), str(pairs_path), options=tvg_options)
+    timings["verify_matches"] = time.perf_counter() - t
     pairs_path.unlink()  # scratch input to verify_matches only — keep colmap/ at its documented contract
 
     db = pycolmap.Database.open(str(db_path))
@@ -288,11 +303,17 @@ def verify_reconstruction(
         )
 
     # ── Tier 2: known-pose triangulation (Task 5 fills in from here) ──
+    t = time.perf_counter()
     verified, frame_stats, summary = _triangulate_and_summarize(recon, db_path, output_dir, pair_stats, features)
+    timings["triangulate"] = time.perf_counter() - t
+    # Phase timings go into the summary before the report write so they land in the JSON.
+    # Deliberately no "report" key: report writing is sub-second JSON serialization.
+    summary["phase_seconds"] = {k: round(v, 2) for k, v in timings.items()}
     result = VerificationResult(
         reconstruction=verified, pair_stats=pair_stats, frame_stats=frame_stats, summary=summary
     )
     _write_report(result, output_dir / "verification.json")
+    logger.info("Verification phase seconds: %s", summary["phase_seconds"])
     return result
 
 

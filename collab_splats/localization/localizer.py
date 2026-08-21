@@ -109,13 +109,15 @@ class LocalizationResult:
         return [int(i) for i in order if counts[i] > 0]
 
 
-def load_reconstruction_features(
+def load_localization_db(
     zarr_path: "str | Path", extractor_name: str
 ) -> tuple[list[LocalFeatures], list[str], tuple[int, int]]:
-    """Read the per-frame reconstruction feature cache for one extractor.
+    """Read the localization DB (per-frame feature cache) for one extractor.
 
-    Returns (per-frame LocalFeatures, image ids, (H, W)). Raises KeyError when the
-    cache is missing. This is the read half of CameraLocalizer.save_index; load_index
+    The `local_features/<extractor>/reconstruction` group is a pycolmap-Database-shaped
+    store (per-image keypoint/descriptor tables + CSR offsets), not reconstruction
+    geometry. Returns (per-frame LocalFeatures, image ids, (H, W)). Raises KeyError when
+    the cache is missing. This is the read half of CameraLocalizer.save_index; load_index
     builds a localizer on top of it, geometry/verification.py consumes it directly.
     """
     zarr_path = pathlib.Path(zarr_path)
@@ -145,6 +147,7 @@ def load_reconstruction_features(
     )
     all_scores = rec_group["scores"][:] if "scores" in rec_group else None
     all_scales = rec_group["scales"][:] if "scales" in rec_group else None
+    all_norm = rec_group["keypoints_normalized"][:] if "keypoints_normalized" in rec_group else None
     logger.info(
         "CameraLocalizer: read %s keypoints / %.0f MB descriptors in %.1fs",
         f"{len(all_kpts):,}",
@@ -159,7 +162,16 @@ def load_reconstruction_features(
         f_descs = torch.from_numpy(all_descs[s:e])
         f_scores = torch.from_numpy(all_scores[s:e]) if all_scores is not None else None
         f_scales = torch.from_numpy(all_scales[s:e]) if all_scales is not None else None
-        rec_features.append(LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores, scales=f_scales))
+        f_norm = torch.from_numpy(all_norm[s:e]) if all_norm is not None else None
+        rec_features.append(
+            LocalFeatures(
+                keypoints=f_kpts,
+                descriptors=f_descs,
+                scores=f_scores,
+                scales=f_scales,
+                keypoints_normalized=f_norm,
+            )
+        )
 
     return rec_features, rec_image_paths, hw
 
@@ -357,6 +369,23 @@ class CameraLocalizer:
             ).astype(np.float32)
             rec_group.create_array("scales", data=all_scales, chunks=(max(all_scales.shape[0], 1),), compressors=lz4)
 
+        # keypoints_normalized: loma-split pre-transform coords the learned matcher consumes.
+        # Written only when EVERY frame carries them — a zero-filled normalized table would be
+        # wrong data, unlike scores/scales (absent, never zeros — mv_* precedent).
+        has_norm = bool(self._frame_features) and all(
+            f.keypoints_normalized is not None for f in self._frame_features
+        )
+        if has_norm and offsets[-1] > 0:
+            all_norm = np.concatenate(
+                [f.keypoints_normalized.numpy() for f in self._frame_features], axis=0
+            ).astype(np.float32)
+            rec_group.create_array(
+                "keypoints_normalized",
+                data=all_norm,
+                chunks=(max(all_norm.shape[0], 1), 2),
+                compressors=lz4,
+            )
+
         logger.info(
             "CameraLocalizer.save_index: saved %d frames to %s [%s]",
             len(self._frame_features),
@@ -386,9 +415,9 @@ class CameraLocalizer:
         cannot localize and raises.
         """
         zarr_path = pathlib.Path(zarr_path)
-        rec_features, rec_image_paths, hw = load_reconstruction_features(zarr_path, extractor_name)
+        rec_features, rec_image_paths, hw = load_localization_db(zarr_path, extractor_name)
 
-        # load_index also needs the localized/ group, which load_reconstruction_features
+        # load_index also needs the localized/ group, which load_localization_db
         # doesn't touch — keep a store handle open for that.
         store = zarr.open(str(zarr_path), mode="r")
 
@@ -894,7 +923,7 @@ class CameraLocalizer:
                 continue  # localized frames carry no world_points
             if len(db_feats.keypoints) == 0:
                 continue
-            m = self._extractor.match(query_feats, db_feats, self._image_hw)
+            m = self._extractor.match(query_feats, db_feats)
             if len(m) == 0:
                 continue
             # Matched ref pixels live in the reference-image grid (_image_hw), which may be

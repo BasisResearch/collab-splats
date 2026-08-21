@@ -23,9 +23,11 @@ the min_cossim=-1 semantics). Gated by membership in ONE exported list,
 Membership is licensed by the Task 6 GPU parity test, not a runtime probe.
 
 The reserved signature's `image_hw` parameter is DROPPED (`match(query, db)`): neither
-branch uses it — pixel coords come from the stored keypoint tables. The only existing
-caller is the `NotImplementedError` test; `verification.py`'s else-branch call sheds the
-argument in Task 5.
+branch uses it — pixel coords come from the stored keypoint tables. Remaining 3-arg
+callers shed the argument in Task 5: `verification.py:232` (else branch),
+`localizer.py:897` (descriptor localize path), and the `_IdentityMatcher` fixture in
+`tests/geometry/test_verification.py`. The `NotImplementedError` test drops its kwarg
+in this task.
 
 **Files:**
 - Modify: `collab_splats/localization/extractors.py` (`match()` at ~line 153; imports)

@@ -19,7 +19,7 @@ from .extractors import LocalFeatures, LocalMatcher, MatchResult
 from .localizer import (
     CameraLocalizer,
     LocalizationResult,
-    load_reconstruction_features,
+    load_localization_db,
     sample_world_points,
 )
 from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtractor
@@ -35,7 +35,7 @@ __all__ = [
     "MatchResult",
     "PECLIPExtractor",
     "correspondences_for_ref",
-    "load_reconstruction_features",
+    "load_localization_db",
     "plot_correspondences",
     "plot_inlier_distribution",
     "sample_world_points",

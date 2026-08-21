@@ -722,3 +722,83 @@ Recorded so the next reader does not repeat them.
    ("Task 4 names every one of its keys for directions"). The block raises `KeyError: 'pairs'`
    rather than printing wrong numbers, so it fails loudly; the rank-control table above was
    produced with `d['pair_directions']` substituted and is otherwise the block as written.
+
+## Matcher feature-cache fast paths — measured (2026-08-21, plan `2026-08-20-matcher-feature-cache.md` Task 9)
+
+Same scene, frames, backbone, matcher as the baseline of record above
+(`/workspace/outputs/2026_07_15-Goprosplat-GH010229`, 300 frames, `vggt_omega` + `loma`,
+single A40). Everything below is post-implementation of the loma forward split
+(`_split_loma_forward`, `keypoints_normalized` zarr payload) and the feature-level `verify`
+dispatch (`FEATURE_MATCH_MODELS`).
+
+### Pair microbenchmark (`<scratchpad>/pair_bench.py`, 45 stratified pairs, warm)
+
+| path | ms / pair |
+|---|---|
+| plain pairwise `match_pair` (control, this run) | 1033.5 |
+| baseline of record (Task 0) | 993.8 |
+| **split feature-level `match` from stored tables** | **44.1** |
+
+**23× per pair.** The control re-run within 4% of the baseline confirms the machine state is
+comparable; the split number is the same images through the same LoMa weights with the
+detector half amortised into the DB build.
+
+### Full `verify()` (`<scratchpad>/verify_bench.py`)
+
+| | this run | baseline of record |
+|---|---|---|
+| `verify()` wall clock | **546.7 s** | 2511.6 s |
+| speedup | **4.6×** | 1.00× |
+
+The 546.7 s includes a **one-time 196.0 s localization-DB rebuild** (the pre-existing feature
+cache predates the `keypoints_normalized` payload; `verify()`'s rebuild-once branch detected it
+and rebuilt). Steady state — payload already on disk — is ≈ **350 s**, ~7.2× the baseline.
+
+Cold-start lines (reconstructor `logger.info`, verbatim):
+
+```
+verify(): build_localization_db took 0.0 s
+verify(): LocalMatcher construction took 22.8 s
+verify(): load_localization_db took 2.2 s
+verify(): feature cache lacks keypoints_normalized — rebuilding localization DB
+verify(): build_localization_db(overwrite=True) took 196.0 s
+verify(): load_localization_db (rebuilt) took 1.2 s
+```
+
+### Phase attribution (`summary["phase_seconds"]`, persisted in `verification.json`)
+
+| phase | s | share of 323.4 s sum |
+|---|---|---|
+| `db_export` | 10.32 | 3.2% |
+| `pair_matching` | 124.25 | 38.4% |
+| `db_match_writes` | 20.29 | 6.3% |
+| `verify_matches` (pycolmap C++) | 139.28 | 43.1% |
+| `triangulate` (pycolmap C++) | 29.27 | 9.1% |
+
+`n_pairs` = 1,862 → warm production matching is **66.7 ms/pair** (124.25 s / 1862; higher than
+the 44.1 ms microbenchmark because the production loop includes per-pair feature-table slicing
+and match bookkeeping).
+
+**Step 4 verdict (plan): stop.** pycolmap's C++ (`verify_matches` + `triangulate` = 168.6 s,
+52% of the phase sum) now dominates the non-matching residual; our own IO
+(`db_export` + `db_match_writes` = 30.6 s) is under 10%. Per the plan, that floor belongs to
+the pycolmap-native migration — no further optimization in this pass.
+
+### Production bug found and fixed by the first evidence run
+
+The first `verify_bench` run crashed: the rebuild-once branch fired, logged
+"Localization DB built" after 71.6 s, yet the reloaded cache still lacked
+`keypoints_normalized` and the pair loop raised
+`ValueError: loma feature-level match needs keypoints_normalized …`.
+
+Root cause: `build_localization_db(overwrite=True)` was a **silent no-op** — module-level
+`_build_localization_db` had no `overwrite` parameter, and
+`CameraLocalizer.from_feedforward` always cache-hits on an existing
+`local_features/<extractor>/reconstruction` group (its `save_index` only runs on cache miss).
+Any pre-existing cache was reloaded untouched, payload-less.
+
+Fix (3b3f1e20): `_build_localization_db(..., overwrite: bool = False)` deletes the stale
+reconstruction group from the zarr store before calling `from_feedforward`, so the cache check
+misses and the index is re-extracted and re-saved. Regression tests in
+`tests/wrapper/test_localization_db_overwrite.py`. The post-fix rebuild took 196.0 s (real
+re-extraction) and `verify()` completed.

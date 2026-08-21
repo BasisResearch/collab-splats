@@ -1,4 +1,5 @@
 import logging
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -9,9 +10,10 @@ from collab_splats.localization import (
     DinoSaladExtractor,
     LocalFeatures,
     LocalizationResult,
+    LocalMatcher,
 )
 from collab_splats.localization.extractors import MatchResult
-from collab_splats.localization.localizer import CameraLocalizer, sample_world_points
+from collab_splats.localization.localizer import CameraLocalizer, load_localization_db, sample_world_points
 
 
 def test_submodules_have_logger():
@@ -88,7 +90,7 @@ class _MockExtractor:
         descs = self._descs[visible]
         return LocalFeatures(keypoints=kpts, descriptors=descs)
 
-    def match(self, query: LocalFeatures, db: LocalFeatures, image_hw=None):
+    def match(self, query: LocalFeatures, db: LocalFeatures):
         sim = query.descriptors @ db.descriptors.T  # (N, M)
         best = sim.argmax(dim=1)
         valid = sim.max(dim=1).values > 0.5
@@ -102,8 +104,6 @@ class _MockExtractor:
 
 def test_camera_localizer_from_feedforward_classmethod():
     """from_feedforward classmethod constructs CameraLocalizer correctly."""
-    from unittest.mock import MagicMock
-
     pts3d, world_points, extrinsics, K = _make_synthetic_scene()
     result = MagicMock()
     result.world_points = world_points
@@ -240,7 +240,7 @@ def test_localize_via_depth_lookup():
             k = torch.tensor([[8.0 + 14 * (i % 4), 8.0 + 18 * (i // 4)] for i in range(12)])
             return LocalFeatures(keypoints=k, descriptors=torch.zeros(12, 4))
 
-        def match(self, query, db, image_hw):
+        def match(self, query, db):
             px = query.keypoints.numpy().astype(np.float32)
             return MatchResult(query_px=px, ref_px=px.copy())  # identity matches
 
@@ -284,7 +284,7 @@ def test_localize_fullres_images_modelres_world_points():
             k = torch.tensor([[16.0 + 28 * (i % 4), 16.0 + 36 * (i // 4)] for i in range(12)])
             return LocalFeatures(keypoints=k, descriptors=torch.zeros(12, 4))
 
-        def match(self, query, db, image_hw):
+        def match(self, query, db):
             px = query.keypoints.numpy().astype(np.float32)
             return MatchResult(query_px=px, ref_px=px.copy())  # identity matches
 
@@ -302,3 +302,43 @@ def test_localize_fullres_images_modelres_world_points():
     # pts2d_ref stays in the reference-image (full-res) space
     assert res.ref_hw == (Hf, Wf)
     assert res.pts2d_ref.max() > Wm  # not clipped into the model grid
+
+
+def _norm_feats(n=5, d=8, with_norm=True):
+    return LocalFeatures(
+        keypoints=torch.rand(n, 2) * 50,
+        descriptors=torch.rand(n, d),
+        keypoints_normalized=torch.rand(n, 2) * 2 - 1 if with_norm else None,
+    )
+
+
+def _localizer_replaying(feats):
+    """CameraLocalizer whose mock extractor replays the given per-frame features."""
+    n = len(feats)
+    extractor = MagicMock(spec=LocalMatcher)
+    extractor.extract.side_effect = list(feats)
+    return CameraLocalizer(
+        world_points=np.zeros((n, 8, 8, 3), dtype=np.float32),
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
+        images=[np.zeros((8, 8, 3), dtype=np.uint8)] * n,
+        ids=[f"f{i}" for i in range(n)],
+        extractor=extractor,
+    )
+
+
+def test_save_load_roundtrips_keypoints_normalized(tmp_path):
+    feats = [_norm_feats() for _ in range(3)]
+    _localizer_replaying(feats).save_index(tmp_path / "ff.zarr", "loma")
+    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
+    for orig, got in zip(feats, loaded):
+        assert got.keypoints_normalized is not None
+        np.testing.assert_array_equal(got.keypoints_normalized.numpy(), orig.keypoints_normalized.numpy())
+
+
+def test_save_omits_keypoints_normalized_when_any_frame_lacks_it(tmp_path):
+    # Unlike scores/scales, a zero-filled normalized table would be WRONG DATA — the array
+    # is written only when every frame carries it; otherwise absent, never zeros.
+    feats = [_norm_feats(), _norm_feats(with_norm=False), _norm_feats()]
+    _localizer_replaying(feats).save_index(tmp_path / "ff.zarr", "loma")
+    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
+    assert all(f.keypoints_normalized is None for f in loaded)

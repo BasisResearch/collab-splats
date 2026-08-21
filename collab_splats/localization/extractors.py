@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 
 import numpy as np
 import torch
+from kornia.feature import match_mnn
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ class LocalFeatures:
     descriptors: torch.Tensor  # (N, D) float32
     scores: torch.Tensor | None = None  # (N,) float32 — optional saliency
     scales: torch.Tensor | None = None  # (N,) — optional extraction scale
+    keypoints_normalized: torch.Tensor | None = None  # (N, 2) pre-transform coords for the loma split
 
 
 @dataclass
@@ -55,6 +58,12 @@ def _empty_match() -> MatchResult:
 ########################################
 # VisMatch-backed matcher
 ########################################
+
+# Models match() can serve from precomputed features. "xfeat": its own match stage IS
+# descriptor mutual-NN. "loma" (added with its split): pair forward split into per-image /
+# per-pair halves. Membership is licensed by GPU parity tests in the suite — extending this
+# set requires a new passing parity test. Never silently substitute NN for a learned matcher.
+FEATURE_MATCH_MODELS = {"xfeat", "loma"}
 
 # Models whose base deps we override away — vismatch would crash at model load.
 _VISMATCH_DEP_BLOCKLIST = {
@@ -112,6 +121,9 @@ class LocalMatcher:
         self._model_name = model_name
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._matcher = vismatch.get_matcher(model_name, device=self._device)
+        # Loma split: extract-once/match-from-features fast path (spec §2). One wrapper
+        # class, one boolean — byte-parity with the plain forward is enforced by GPU suite tests.
+        self._split_loma_forward = type(self._matcher).__name__ == "LoMaMatcher"
         # Set by _probe_index_stability(); None until probed.
         self.has_stable_indices: bool | None = None
         if probe:
@@ -142,6 +154,30 @@ class LocalMatcher:
     def extract(self, image: np.ndarray) -> LocalFeatures:
         """Extract keypoints+descriptors (vismatch runs a self-pair forward internally)."""
         hw = image.shape[:2]
+        # Loma split: per-image half of LoMaMatcher._forward — detect_and_describe once,
+        # replay the wrapper's coord chain (to_pixel_coords -> rescale_coords -> the -0.5
+        # COLMAP offset) over the FULL table, and keep the pre-transform coords the learned
+        # matcher consumes. Indexing a chained table equals chaining an indexed table
+        # (elementwise ops), so match-time pixel coords stay byte-identical. Also skips the
+        # wrapper's self-pair match stage. Sandbox entered explicitly — vismatch only wraps
+        # __init__/_forward.
+        if self._split_loma_forward:
+            from vismatch.import_sandbox import ImportSandbox
+
+            m = self._matcher
+            mod = sys.modules[type(m).__module__]  # wrapper module: to_pixel_coords
+            with ImportSandbox.get(type(m).__module__), torch.inference_mode():
+                img, orig_shape = m.preprocess(self._to_tensor(image))
+                H, W = img.shape[-2:]
+                kpts, desc, _, _ = m.matcher.detect_and_describe(img, m.max_num_keypoints)
+                px = m.rescale_coords(mod.to_pixel_coords(kpts[0], H, W), *orig_shape, H, W) - 0.5
+            feats = LocalFeatures(
+                keypoints=torch.from_numpy(_to_numpy(px)),
+                descriptors=torch.from_numpy(_to_numpy(desc[0])),
+                keypoints_normalized=torch.from_numpy(_to_numpy(kpts[0])),
+            )
+            self._check_pixel_frame(feats.keypoints.numpy(), hw, self._model_name)
+            return feats
         with torch.inference_mode():
             out = self._matcher.extract(self._to_tensor(image))
         # vismatch may hand back numpy or on-device tensors depending on the model.
@@ -150,13 +186,68 @@ class LocalMatcher:
         self._check_pixel_frame(kpts, hw, self._model_name)
         return LocalFeatures(keypoints=torch.from_numpy(kpts), descriptors=torch.from_numpy(descs))
 
-    def match(self, query: LocalFeatures, db: LocalFeatures, image_hw: tuple[int, int]) -> MatchResult:
-        # Follow-on will add descriptor-level matching (match_extracted) for vismatch
-        # models whose internal matcher accepts precomputed features; the descriptor
-        # localize path in CameraLocalizer is the machinery it will light up.
-        raise NotImplementedError(
-            f"LocalMatcher('{self._model_name}') has no descriptor-level matching — "
-            "vismatch matches image pairs only. Use match_images()."
+    def match(self, query: LocalFeatures, db: LocalFeatures) -> MatchResult:
+        """Feature-level match over precomputed features (FEATURE_MATCH_MODELS only).
+
+        Match rows ARE keypoint-table indices by construction — no _recover_indices.
+        """
+        if self._model_name not in FEATURE_MATCH_MODELS:
+            raise NotImplementedError(
+                f"LocalMatcher('{self._model_name}') has no feature-level matching "
+                "(not in FEATURE_MATCH_MODELS — its match stage is not parity-proven "
+                "on precomputed features). Use match_images()."
+            )
+        if len(query.descriptors) == 0 or len(db.descriptors) == 0:
+            return _empty_match()
+        if self._split_loma_forward:
+            # Per-pair half of LoMaMatcher._forward: learned matcher on the stored
+            # pre-transform coords + descriptors, wrapper's filter, native indices.
+            # float32 in is fine — the matcher's autocast recasts at op boundaries
+            # either way (parity-gated).
+            if query.keypoints_normalized is None or db.keypoints_normalized is None:
+                raise ValueError(
+                    "loma feature-level match needs keypoints_normalized. If this cache "
+                    "predates the payload, rebuild the localization DB "
+                    "(build_localization_db(overwrite=True)); if a rebuild already ran, "
+                    "the payload was not persisted — check save_index's all-or-none "
+                    "keypoints_normalized write."
+                )
+            from vismatch.import_sandbox import ImportSandbox
+
+            m = self._matcher
+            mod = sys.modules[type(m).__module__]  # wrapper module: filter_matches
+            k0 = query.keypoints_normalized.to(self._device).unsqueeze(0)
+            k1 = db.keypoints_normalized.to(self._device).unsqueeze(0)
+            d0 = query.descriptors.to(self._device).unsqueeze(0)
+            d1 = db.descriptors.to(self._device).unsqueeze(0)
+            with ImportSandbox.get(type(m).__module__), torch.inference_mode():
+                scores = m.matcher(k0, k1, d0, d1)["scores"]
+                m0, _, _, _ = mod.filter_matches(scores, m.matcher.cfg.filter_threshold)
+                valid = m0[0] > -1
+                if not bool(valid.any()):
+                    return _empty_match()
+                idx_q = torch.where(valid)[0].cpu().numpy().astype(np.int64)
+                idx_db = m0[0][valid].cpu().numpy().astype(np.int64)
+            return MatchResult(
+                query_px=query.keypoints.numpy()[idx_q],
+                ref_px=db.keypoints.numpy()[idx_db],
+                idx_q=idx_q,
+                idx_db=idx_db,
+            )
+        # L2 mutual-NN on unit vectors == cosine mutual-NN; match_mnn admits every mutual pair
+        d0 = torch.nn.functional.normalize(query.descriptors.to(self._device), dim=1)
+        d1 = torch.nn.functional.normalize(db.descriptors.to(self._device), dim=1)
+        _, idxs = match_mnn(d0, d1)
+        if len(idxs) == 0:
+            return _empty_match()
+        # idxs[:, 0] indexes query (desc1), idxs[:, 1] indexes db (desc2) — kornia match_mnn contract
+        idx_q = idxs[:, 0].cpu().numpy().astype(np.int64)
+        idx_db = idxs[:, 1].cpu().numpy().astype(np.int64)
+        return MatchResult(
+            query_px=query.keypoints.numpy()[idx_q],
+            ref_px=db.keypoints.numpy()[idx_db],
+            idx_q=idx_q,
+            idx_db=idx_db,
         )
 
     @staticmethod

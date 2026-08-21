@@ -7,6 +7,7 @@ import json
 import logging
 import shutil
 import subprocess
+import time
 import warnings
 from collections.abc import Sequence
 from functools import lru_cache
@@ -484,7 +485,11 @@ def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool
 
 
 def _build_localization_db(
-    feedforward_zarr: Path, extractor_name: str, frames_zarr: Path, top_k: int = 8
+    feedforward_zarr: Path,
+    extractor_name: str,
+    frames_zarr: Path,
+    top_k: int = 8,
+    overwrite: bool = False,
 ) -> Path:
     """Build the per-frame local-feature localization cache into feedforward.zarr.
 
@@ -497,6 +502,15 @@ def _build_localization_db(
     from collab_splats.localization.localizer import CameraLocalizer
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.preproc.frame_store import FrameStore
+
+    # overwrite: drop the stale reconstruction group so from_feedforward's cache check
+    # misses and the index is re-extracted + re-saved (from_feedforward has no
+    # overwrite notion of its own — an existing group always cache-hits).
+    if overwrite:
+        store = zarr.open_group(str(feedforward_zarr), mode="a")
+        rec_key = f"local_features/{extractor_name}/reconstruction"
+        if rec_key in store:
+            del store[rec_key]
 
     ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True, load_world_points=True)
     extractor = LocalMatcher(extractor_name)
@@ -1093,7 +1107,11 @@ class Reconstructor:
             return feedforward_zarr
 
         return _build_localization_db(
-            feedforward_zarr, extractor_name, self.frames_zarr, top_k=loc_cfg["top_k"]
+            feedforward_zarr,
+            extractor_name,
+            self.frames_zarr,
+            top_k=loc_cfg["top_k"],
+            overwrite=overwrite,
         )
 
     def verify(self, overwrite: bool = False) -> Path:
@@ -1114,17 +1132,39 @@ class Reconstructor:
 
         # One extractor serves localization and verification by design — the cache is
         # keyed by extractor, so sharing it means one extraction pass, zero drift.
+        t = time.perf_counter()
         self.build_localization_db()
+        logger.info("verify(): build_localization_db took %.1f s", time.perf_counter() - t)
         extractor_name = self.config["localization"]["matcher"]
 
         # Heavy deps kept inline so the module imports without GPU/model libs
         from collab_splats.geometry.verification import verify_reconstruction
         from collab_splats.localization.extractors import LocalMatcher
-        from collab_splats.localization.localizer import load_reconstruction_features
+        from collab_splats.localization.localizer import load_localization_db
 
-        features, ids, _ = load_reconstruction_features(
+        t = time.perf_counter()
+        matcher = LocalMatcher(extractor_name)
+        logger.info("verify(): LocalMatcher construction took %.1f s", time.perf_counter() - t)
+        t = time.perf_counter()
+        features, ids, _ = load_localization_db(
             self.backend_dir / "feedforward.zarr", extractor_name
         )
+        logger.info("verify(): load_localization_db took %.1f s", time.perf_counter() - t)
+        # Loma matches from stored features (keypoints_normalized). A cache from before
+        # that array existed gets rebuilt once (~1 min) — no degraded fallback path.
+        # getattr: duck-typed test stubs and non-split matchers lack the attribute.
+        if getattr(matcher, "_split_loma_forward", False) and any(
+            f.keypoints_normalized is None for f in features
+        ):
+            logger.info("verify(): feature cache lacks keypoints_normalized — rebuilding localization DB")
+            t = time.perf_counter()
+            self.build_localization_db(overwrite=True)
+            logger.info("verify(): build_localization_db(overwrite=True) took %.1f s", time.perf_counter() - t)
+            t = time.perf_counter()
+            features, ids, _ = load_localization_db(
+                self.backend_dir / "feedforward.zarr", extractor_name
+            )
+            logger.info("verify(): load_localization_db (rebuilt) took %.1f s", time.perf_counter() - t)
         # The cache ids are frame_XXXXXX.jpg, the reconstruction registers frame_XXXXXX
         # (no extension) — compare stems so a reordered/rebuilt cache cannot slip through.
         recon = result.reconstruction
@@ -1134,7 +1174,6 @@ class Reconstructor:
                 "Feature cache and reconstruction disagree on frame order/naming — "
                 "rebuild the localization DB (overwrite=True)."
             )
-        matcher = LocalMatcher(extractor_name)
         # Pairwise matchers re-match images, not cached descriptors. The images MUST be
         # the exact frames the cache was extracted from — _build_localization_db feeds
         # FrameStore frames to extract() — because match-time index recovery lands on the

@@ -92,8 +92,36 @@ def test_compute_blur_reuses_the_gate_metric(noise_gray):
     assert compute_blur(noise_gray)["laplacian"] == compute_blur_score(noise_gray)
 
 
-def test_compute_blur_is_bounded(noise_gray):
-    assert 0.0 <= compute_blur(noise_gray)["blur"] <= 1.0
+def test_compute_blur_saturates_on_sparse_detail(noise_gray):
+    # blur cannot fail a bounds check — |M1 - M2| / M1 with 0 <= M2 <= M1 is
+    # bounded by construction. What is worth pinning is the top of that range:
+    # blur hits exactly 1.0 whenever there is little high-frequency content to
+    # destroy, and a single perfectly sharp edge qualifies. Only laplacian
+    # separates that from a genuinely soft frame.
+    flat = np.full((240, 320), 128, np.uint8)
+    edge = np.zeros((240, 320), np.uint8)
+    edge[:, 160:] = 255
+    assert compute_blur(flat) == {"blur": 1.0, "laplacian": 0.0}
+    assert compute_blur(edge)["blur"] == 1.0
+    assert compute_blur(edge)["laplacian"] > 100.0
+
+
+def test_compute_blur_rejects_colour_input(noise_gray):
+    # skimage returns nan on a 3-channel array while cv2.Laplacian returns a
+    # plausible number, so the row would be half-valid and read as a real
+    # failed measurement rather than a bad call. Refuse instead.
+    with pytest.raises(ValueError, match="2-D single-channel"):
+        compute_blur(cv2.cvtColor(noise_gray, cv2.COLOR_GRAY2BGR))
+
+
+def test_compute_blur_h_size_is_tunable(noise_gray):
+    # h_size is the metric's only tuning value; the default matches skimage's.
+    assert compute_blur(noise_gray, h_size=11) == compute_blur(noise_gray)
+    wide = compute_blur(noise_gray, h_size=21)["blur"]
+    narrow = compute_blur(noise_gray, h_size=3)["blur"]
+    assert narrow > wide
+    # laplacian does not depend on h_size at all
+    assert compute_blur(noise_gray, h_size=3)["laplacian"] == compute_blur(noise_gray)["laplacian"]
 
 
 def test_compute_exposure_keys():

@@ -608,6 +608,27 @@ git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
   -m "feat(preproc): add compute_blur — perceptual blur alongside Laplacian variance"
 ```
 
+- [x] **Step 6: Apply the code review findings**
+
+Four changes to the signature, the docstring and the tests. None change what `compute_blur` measures on the path Task 5 feeds it.
+
+**`compute_blur` refuses a colour frame.** `blur_effect` has `channel_axis=None` by default, so a 3-channel array has its channel axis read as *spatial*: the slice loop is empty, `M1 == 0`, and every axis divides by zero. Measured on the noise fixture: `blur_effect(bgr)` → `nan` while `cv2.Laplacian(bgr).var()` → `108108.29`, bit-identical to the gray value. The row is then half-valid, and per the spec's Trap 5 (`nan` *is* a measurement) it reads as a genuinely failed capture rather than a bad call. numpy warns once and the default `once` filter silences the next 2387 frames. So: `if gray.ndim != 2: raise ValueError(...)`.
+
+**`h_size` becomes a keyword-only argument, default 11.** It is this metric's only tuning value — the implementation principle is that tuning values are keyword arguments, and the deferred resolution-sensitivity study has no lever without it. 11 is skimage's own default, so behaviour is unchanged. Measured range on the noise fixture: `h_size=3` → 0.4132, `11` → 0.1202, `21` → 0.0651.
+
+**The docstring was wrong, not merely thin.** It said that where `blur` and `laplacian` disagree "the frame is textureless rather than blurred". Measured: flat field `blur=1.0 laplacian=0.00`, smooth gradient `blur=1.0 laplacian=0.41`, and a single perfectly sharp edge `blur=1.0 laplacian=406.41`. Crete-Roffet saturates whenever there is little high-frequency content to *destroy*, sharp or not — a maximally sharp edge scores maximally blurry. Corrected to: a high `blur` beside a high `laplacian` means detail is **sparse**, which is exactly why `laplacian` ships next to it rather than instead of it.
+
+**`test_compute_blur_is_bounded` cannot fail, and was replaced.** `blur_effect` returns `|M1 - M2| / M1` with `0 <= M2 <= M1` by construction, and the `0.1202` pin already covers the value. Replaced by `test_compute_blur_saturates_on_sparse_detail`, which pins the top of the range and the sharp-edge case the corrected docstring now claims. Two more tests added: `test_compute_blur_rejects_colour_input` and `test_compute_blur_h_size_is_tunable`.
+
+**Not changed: the tolerances.** `rel=0.2` on `laplacian=3.6` looks loose and is not — it admits only sigma 2.80-3.25, and the band has to exist because uint8 quantization makes the Laplacian locally non-monotonic there (`sigma 2.9` → 3.53, `3.0` → 3.62, `3.1` → 3.35).
+
+`tests/preproc/test_qa.py`: 16 → 18 passed (one test removed, three added).
+
+```bash
+git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
+  -m "fix(preproc): compute_blur refuses colour input and exposes h_size"
+```
+
 ---
 
 ### Task 4: `compute_exposure`
@@ -716,13 +737,15 @@ git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
 
 The one place a resolution decision is made, and it goes two different ways on purpose. Downscaling averages scattered saturated pixels out of existence — measured, 300 scattered white pixels in a 480×640 frame give `clipped_high_frac` 0.000977 natively and **exactly 0.0** after `_analysis_gray`. Blur goes the other way: `blur_effect` costs 62 ms at 1024 px against 13.8 ms at 480 px while the score barely moves (0.1659 → 0.1671).
 
+**Trap this creates: `blur` is not comparable across videos of different widths.** `_analysis_gray` scales by `min(1.0, 480 / W)`, so a 1080p source is measured at 480 px while a 320 px source is measured natively at 320. Measured on the noise fixture, width 320 / 640 / 1280 gives `blur` 0.1202 / 0.1844 / 0.3002 — 2.5x across the range. The spec's "score barely moves (0.1659 -> 0.1671)" is real footage; uniform noise is the worst case, and real footage sits between them. Every video wider than 480 px is mutually comparable; anything narrower is not. Record it, do not fix it — normalising would mean inventing a resolution the report was built to observe.
+
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Add `compute_frame_quality` and `_analysis_gray` to the `from collab_splats.preproc.qa import ...` line. Append to `tests/preproc/test_qa.py`:
+Add `compute_frame_quality` and `_analysis_gray` **inside the parentheses** of the `from collab_splats.preproc.qa import (...)` block, keeping the trailing comma. It has been a multi-line block since Task 3 — isort's limit here is 88 (see Task 3 Step 1), so it will never go back to one line. Append to `tests/preproc/test_qa.py`:
 
 ```python
 @pytest.fixture(scope="module")
@@ -1385,7 +1408,10 @@ rho(blur, laplacian) = -0.615 (n=2388), rho(translation_px, blur) = +0.366 (n=23
 2. `check_frame_quality`: unchanged in behaviour and signature; it moves file, nothing more.
 3. `clean_for_json`: not used. `verification.py` imports `pycolmap` at module scope, and it guards on `np.isnan` so an inf would pass. Two inline comprehensions replace it. `np.nan_to_num` is not an alternative — a `0.0` fill on `translation_px` asserts the camera held still.
 4. `n_features` is not a `compute_video_quality` parameter; it lives on `match_orb`.
-5. **`compute_video_quality` is the only new name exported from `collab_splats/preproc/__init__.py`** (surface goes 7 → 8). The six primitives stay at `collab_splats.preproc.qa.*`, where Sphinx's `qa` automodule block still documents them. The report is the deliverable; re-exporting its building blocks would grow the package surface 86% for callers who only want the report.
+5. **`blur` saturates at 1.0 on sparse detail, not only on blur.** A flat field, a smooth gradient and a single perfectly sharp edge all measure exactly 1.0 (laplacian 0.00 / 0.41 / 406.41). Reading `blur` alone as softness inverts on any low-texture frame. Belongs in Traps beside Trap 1.
+6. **`blur` is width-dependent: 0.1202 / 0.1844 / 0.3002 at 320 / 640 / 1280 px** on high-frequency content. `_analysis_gray` caps at 480 px, so videos wider than 480 are mutually comparable and narrower ones are not. Belongs in Traps.
+7. **`compute_blur` raises on a colour frame.** `blur_effect` defaults to `channel_axis=None` and returns `nan` on a 3-channel array while `cv2.Laplacian` returns a plausible number — a half-valid row indistinguishable from a real failed capture. The spec's `blur_effect(gray, h_size=11)` contract line should note the 2-D requirement.
+8. **`compute_video_quality` is the only new name exported from `collab_splats/preproc/__init__.py`** (surface goes 7 → 8). The six primitives stay at `collab_splats.preproc.qa.*`, where Sphinx's `qa` automodule block still documents them. The report is the deliverable; re-exporting its building blocks would grow the package surface 86% for callers who only want the report.
 
 - [ ] **Step 4: Record the format decision**
 

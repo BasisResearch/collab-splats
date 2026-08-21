@@ -31,7 +31,7 @@ _EXPOSURE_MIN_STD = 10.0
 
 
 ########################################################################
-# Frame quality
+# Frame quality gate — legacy policy, not part of the report
 ########################################################################
 
 
@@ -82,16 +82,30 @@ def _analysis_gray(frame_bgr: np.ndarray) -> np.ndarray:
 ########################################################################
 
 
-def compute_blur(gray: np.ndarray) -> dict:
+def compute_blur(gray: np.ndarray, *, h_size: int = 11) -> dict:
     """Blur measured two ways: Crete-Roffet perceptual blur and Laplacian variance.
 
     blur is [0, 1] and higher means blurrier; laplacian is unbounded and higher
-    means sharper. They run in opposite directions on purpose — where the two
-    disagree, the frame is textureless rather than blurred.
+    means sharper. They run in opposite directions on purpose. blur saturates at
+    1.0 on any frame with little high-frequency content to destroy — a flat
+    field, a smooth gradient and a single perfectly sharp edge all score exactly
+    1.0 — so a high blur beside a high laplacian means detail is sparse, not
+    that the frame is soft. That is why laplacian ships next to it, not instead.
+
+    Args:
+        gray: single-channel frame.
+        h_size: width of the re-blur kernel Crete-Roffet compares against.
+            Larger values report less blur; 11 is skimage's own default.
     """
+    # A colour frame is a caller mistake, not a measurement: skimage reads the
+    # channel axis as spatial and returns nan while cv2.Laplacian returns a
+    # perfectly plausible number, so the row would read as a failed capture.
+    if gray.ndim != 2:
+        raise ValueError(f"compute_blur expects a 2-D single-channel frame, got shape {gray.shape}")
+
     # Crete-Roffet re-blurs the image and measures how little changes. A frame
     # that is already blurred barely moves, so its score rises toward 1.
-    perceptual = float(blur_effect(gray))
+    perceptual = float(blur_effect(gray, h_size=h_size))
 
     # Laplacian variance reuses the frame-selection gate's own metric verbatim,
     # so sharpness has exactly one implementation in the repo.

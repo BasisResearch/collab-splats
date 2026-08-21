@@ -405,3 +405,320 @@ measurement that happens to share a loop. If Task 8 finds the duplicated pass ex
 be worth removing, the honest version is for the creator to run the *report's* tolerances into a
 second `collect` (or for the report to accept a backend-tolerance stamp in its output), not to
 silently adopt whatever the creator happened to use.
+
+---
+
+## Task 8: report stage, measured
+
+Two scenes, because no store on this machine carries all three measurements. Which store
+carries which, and why, is recorded in the task itself.
+
+All numbers below are readouts of `report.json` files written by `build_report` on this
+machine. Nothing here grades a scene or names a cause; where a channel could not be measured,
+that is stated as an outcome rather than filled in.
+
+### Scene A — `data/outputs` (30 frames, model grid `384x688`, original 1080x1920)
+
+Carries depth + photometric. Epipolar did not run — see below.
+
+- Backend: `vggt_omega` (read from `configs/base.yaml` `pointcloud.backend`, a provenance
+  label on the report, not a code path)
+- Wall clock: **64.4 s** end-to-end in tmux (`REPORT_SECONDS`), of which ~23 s is interpreter
+  start and imports. In-process `build_report` on a warm interpreter: **41.56 s**
+- Peak rss: **6.40 GB** / 46.6 GB, sampled from `/sys/fs/cgroup/memory/memory.stat` `rss`
+  across the whole process. The `(30, 1920, 1080, 3)` float32 RGB cast alone is 0.75 GB
+- Measurements available: `['depth', 'photometric']`
+- Pairs: 870 depth **directions** (`30·29`) + 57 photometric **pairs**; `report.json`
+  **0.41 MB** (filter applied: **no**)
+- Epipolar: **unmeasured** — see "Epipolar channel" below
+
+**Timing split** (the two heavy calls wrapped at their import sites with `mock.patch`, so the
+real `build_report` was timed; no production code changed):
+
+| stage | seconds | share |
+|---|---|---|
+| multiview pass (`compute_multiview_depth_confidence`) | 3.63 | 8.7% |
+| depth assemble (`compute_depth_error`) | 0.01 | 0.0% |
+| photometric (`_run_photometric`) | **37.30** | **89.8%** |
+| JSON serialise | 0.02 | 0.0% |
+| JSON write | 0.02 | 0.0% |
+| other (`load_zarr`, per-frame medians, ranks) | 0.59 | 1.4% |
+
+Photometric split further, measured separately: `frames.zarr` open + `images()` +
+`astype(float32)` is **0.53 s**, i.e. **0.8%** of the photometric cost. The remaining 99.2% is
+the pair loop. `compute_photometric_ncc` defaults to `max_separation=2`, so it walks
+`(i, i+1)` and `(i, i+2)` — 29 + 28 = **57 pairs at N=30**, `O(N·max_separation)`, not `O(N²)`.
+
+One caveat on that second run: called standalone the pair loop measured **66.02 s**
+(1.158 s/pair) against **37.30 s** (0.654 s/pair) inside `build_report`. The difference is
+that `build_report` runs the multiview pass first and absorbs CUDA/warp context warm-up, which
+the standalone loop pays itself. Both are recorded; the IO share (0.8%) is the robust part and
+is what the parallelism question turns on.
+
+**Depth, Scene A.** 61,818,426 residual samples of a possible `870·688·384 = 229,847,040`
+(**26.9% retained** after the occlusion gate and the frustum/valid-depth checks); 1226 bins.
+
+| quantile | `abs_quantiles` | `quantiles` (signed) |
+|---|---|---|
+| p50 | 1.1723% | +0.2908% |
+| p90 | 41.9689% | +41.9689% |
+| p99 | 217.7436% | +217.7436% |
+| p999 | 421.7463% | +421.7463% |
+
+Parallax p10/p50/p90: **7.1382 / 24.8407 / 49.1603 deg**. `depth_error_px` p50 **4.61 px**,
+p90 **70.05 px**. Photometric `photometric_ncc` p10/p50/p90: **0.4361 / 0.6271 / 0.7875**.
+`crop_coverage` is 1.0 on all 30 frames.
+
+### Scene B — `evals/results/mv_*` (60 frames each, 640x480 original)
+
+Depth only. `frames.zarr` and `verification.json` are absent, so photometric and epipolar
+record `available: false` — the never-fails contract from Task 6, exercised on a real store for
+the first time.
+
+- Degraded cleanly on all three: **yes**. `measurements_available == ['depth']` on each, and
+  both dead channels carry a `reason`:
+  - `"no verification.json at evals/results/<store>/colmap/verification.json — set
+    pointcloud.geometric_verification: true or run --stages verify"`
+  - `"frames.zarr not found at evals/results/<store>/frames.zarr"`
+- Wall clock: `mv_vggt_omega` **19.4 s**, `mv_mapanything` **10.6 s**, `mv_vggtx` **14.3 s**
+  (one process, three stores in sequence). Peak rss over the whole run: **4.52 GB** / 46.6 GB
+- `report.json`: **1.48 / 1.47 / 1.47 MB**
+
+Model resolutions differ (`592x448` on vggt_omega, `518x392` on the other two), so the bin
+counts differ by construction — 1958 against 1792. `mv_mapanything` also stamps
+`crop_coverage` 0.6610 on every frame, against 1.0 on the other two.
+
+### Sanity target (depth residual, `evals/results/mv_vggt_omega`)
+
+| quantile | measured (`abs_quantiles`) | signed (`quantiles`) | prior (`depth_disagreement.py`) |
+|---|---|---|---|
+| median | **0.3667%** | +0.0217% | 0.37% |
+| p90 | **1.5365%** | +0.9631% | 2.27% |
+| p99 | **13.6333%** | +13.6333% | 25.67% |
+
+Bin count for this scene (Rice, from `n_pair_directions·H·W = 3540·448·592 = 938,864,640`):
+`2·n^(1/3) = 1958.4` → **1958**, which is the bin count in the file. Samples retained:
+819,592,625 / 938,864,640 = **87.3%**.
+
+**The median agrees to three significant figures. The two tail quantiles differ, and the
+difference is by construction, not a discrepancy to fix.** The two numbers are taken over
+different pixel populations:
+
+- `depth_disagreement.py` gates on `src_valid & (expected_d > 0) & in-frustum & (sampled > 0)`
+  and has **no occlusion gate at all** — its docstring says it "records the signed residual
+  instead of thresholding it".
+- `build_report:500` passes `rel_thresh=0.05`, so in `base.py` `tol = 0.05·|expected_d|`,
+  `occluded = sampled_d < expected_d − tol`, and the collected population is
+  `sel = counted & has_depth & (expected_d > 1e-6)` with `counted = valid_ij & ~occluded`.
+  Pixels whose residual is more negative than −5% are classified occluded and leave the
+  population entirely. Positive residuals (free-space violations) are kept at any magnitude.
+
+That predicts exactly the observed signature — a one-sided truncation that cannot touch a
+median sitting at 0.37%, but removes the negative half of the `abs` fold's tail. Measured on
+the real counts:
+
+- mass below `rel = −0.05`: **0.030%**; below `−0.10`: **0.000%**; below `−0.20`: **0.000%**.
+  The negative tail stops at the gate, and the small residue is bin-edge granularity.
+- mass above `rel = +0.05`: **2.66%**, retained. This is why signed p99 equals abs p99 — the
+  top 1% of the folded distribution is entirely positive.
+
+**The transform inversion is not implicated.** Re-running the Task 2 Step 1 round-trip against
+the real bin edges: `bounded_residual(x)` then `u/(1−|u|)` over
+`x ∈ {−1e6, −25.67, −0.2567, −0.05, 0, 0.0037, 0.1363, 25.67, 1e6}` returns a maximum relative
+error of **5.0e-11**, and the shipped edges are finite, strictly monotone and span exactly
+`[−1.0, 1.0]`.
+
+Two smaller differences also separate the two numbers, both pushing the prior estimate the
+other way and neither large enough to matter here: the prior script clamps residuals to
+`[−0.5, +0.5]` before `torch.histc`, so any mass past ±50% piles into its edge bins and its own
+p99 is a floor; and it reads bin **centres** off a 2000-bin uniform grid, against the bounded
+non-uniform axis used here.
+
+### Rank control (three backbones, same 60-frame scene, `data/7scenes/chess/seq-01`)
+
+Model resolutions differ (`592x448` vs `518x392`), so bin counts differ by construction —
+these are quantiles, never raw counts.
+
+| backbone | hist p50 | p99 | pair-median |
+|---|---|---|---|
+| mv_mapanything | 0.00324 | 0.02003 | 0.00084 |
+| mv_vggt_omega | 0.00367 | 0.13633 | 0.00096 |
+| mv_vggtx | 0.00273 | 0.09588 | 0.00062 |
+
+**Reference ordering, and its source: pose error is UNESTABLISHED.**
+`evals/results/mv_sweep_{mapanything,vggt_omega,vggtx}.json` are the sweep outputs for these
+exact stores, and their row columns are
+`variant, rel_thresh, min_views, median_rel_err, p90, p95, frac_over_10pct, retention`.
+**There is no pose-error column.** The 1.6× figure quoted in earlier revisions came from a
+100-frame BA sweep, not from these 60-frame stores, so it is not a reference for them.
+
+Ordered correctly: **unrankable against pose error.** No pose-error reference exists for these
+stores, so the three numbers above are reported without a verdict.
+
+One adjacent measurement does exist in the same files and is recorded separately, because it is
+a *different quantity*: the sweeps' `unfiltered` rows carry `median_rel_err`, depth accuracy
+against 7-Scenes ground-truth depth, where the report's depth channel measures cross-view
+self-consistency with no ground truth at all.
+
+| backbone | sweep `unfiltered` `median_rel_err` (vs GT depth) | p90 | frac > 10% |
+|---|---|---|---|
+| mv_mapanything | 0.01841 | 0.10891 | 0.10623 |
+| mv_vggtx | 0.02200 | 0.21483 | 0.16219 |
+| mv_vggt_omega | 0.02240 | 0.22015 | 0.15688 |
+
+Against that ordering the report's **p99 column** is in the same order
+(mapanything < vggtx < vggt_omega) and its **p50 columns** are not
+(vggtx < mapanything < vggt_omega). Both facts are recorded; neither establishes the pose-error
+ordering this control was designed to test, and a GT-depth ordering is not a substitute for it.
+
+### Correlations
+
+Per store, read against its own sample count.
+
+| store | `error_vs_depth` | `error_vs_frame_separation` | `confidence_vs_error` (n_frames) | `ncc_vs_frame_separation` |
+|---|---|---|---|---|
+| Scene A `data/outputs` | **0.7842** | **0.6137** | **−0.7246** (30) | **−0.4394** (57 pairs) |
+| mv_mapanything | −0.1003 | 0.0725 | −0.4622 (60) | null (channel absent) |
+| mv_vggt_omega | 0.0700 | 0.7144 | 0.2370 (60) | null (channel absent) |
+| mv_vggtx | −0.1424 | 0.0187 | 0.1946 (60) | null (channel absent) |
+
+`error_vs_depth` and `error_vs_frame_separation` are over `n_pair_directions` = 870 (Scene A)
+and 3540 (each mv store). The null the report ships beside `error_vs_depth` is
+`sigma_Z ~ Z²/(f·B) => relative residual rises ~linearly in Z`, i.e. positive rho expected.
+Scene A is 0.78 against that null; the three mv stores sit between −0.14 and +0.07. All four
+`confidence_vs_error` rho are computed — every store carries a `confidence` array — and each
+ships with its own `n_frames`, which is the only reason a raw scipy rho is publishable here.
+
+### Disparity floor (derived, = 1 px)
+
+Floor parallax is `rad2deg(1/focal_px)`; `depth_error_in_pixels` returns `None` below it.
+Recomputing the count from the shipped `median_parallax_deg` column reproduces the shipped
+count exactly in all four cases.
+
+| store | focal (px) | floor (deg) | directions under 1 px | parallax p10 / p50 / p90 (deg) |
+|---|---|---|---|---|
+| Scene A `data/outputs` | 553.78 | 0.1035 | **0 / 870 (0.0%)** | 7.1382 / 24.8407 / 49.1603 |
+| mv_mapanything | 427.70 | 0.1340 | 334 / 3540 (9.4%) | 0.1413 / 0.6994 / 1.6428 |
+| mv_vggt_omega | 543.30 | 0.1055 | 313 / 3540 (8.8%) | 0.1267 / 0.8629 / 2.1563 |
+| mv_vggtx | 449.61 | 0.1274 | 361 / 3540 (10.2%) | 0.1251 / 0.9097 / 2.3046 |
+
+The two scenes sit two orders of magnitude apart on this axis: Scene A's median pair carries
+~25 deg of parallax and no direction falls under the floor, while the chess sequence's median
+pair carries ~0.7–0.9 deg and roughly one direction in ten cannot see depth at all.
+
+**Do not read the parallax column alone as pose geometry.** Measured in Task 7 and pinned by
+`test_control_depth_scale_moves_parallax_only_on_the_source_side`: world points are unprojected
+through the *source* frame's depth, so a depth fault in frame *i* moves the parallax of every
+pair `(i, ·)` — −9.05 to −9.15% for a ×1.1 depth scale, matching `1/1.1 − 1` — while pairs
+`(·, i)` and pairs touching neither move by exactly zero. ρ still separates the two faults by
+three orders (0.98 depth vs 634 pose), so attribution is unaffected.
+
+### Running error
+
+`running_error.depth` is the sequential-pair curve. Fitted as `cum ~ steps^p`, where `p = 1` is
+linear accumulation, alongside the ratio of the observed endpoint to a linear extrapolation of
+the first step.
+
+| store | steps | first | last | obs/linear at end | log-log slope `p` | `error_vs_frame_separation` |
+|---|---|---|---|---|---|---|
+| Scene A `data/outputs` | 29 | 0.000838 | 0.123752 | **5.090** | **1.523** | 0.6137 |
+| mv_mapanything | 59 | 0.001220 | 0.040274 | 0.560 | 0.975 | 0.0725 |
+| mv_vggt_omega | 59 | 0.000816 | 0.015707 | 0.326 | 0.847 | 0.7144 |
+| mv_vggtx | 59 | 0.000699 | 0.040153 | 0.973 | 0.942 | 0.0187 |
+
+Scene A's curve rises faster than linearly (`p = 1.52`); the three mv stores do not
+(`p = 0.85–0.98`). Read against `error_vs_frame_separation` before calling any of this
+accumulation, per the note the report ships on `running_error`: frame index is a confounded
+axis, and on Scene A both the running curve and the separation rho move together, while
+`mv_vggt_omega` shows the highest separation rho (0.714) of the four on a curve that is
+*sub*-linear. The report states both columns and makes no call between them.
+
+### Epipolar channel — UNMEASURED
+
+Recorded as an outcome, inside the ~20-minute time box the task sets for it.
+
+Step 1c's command as written is `run_pipeline.py --config configs/base.yaml --stages verify
+--overwrite`, which exits on `error: the following arguments are required: VIDEO|DIR,
+--output-root`. Supplying those would not have helped: **`data/outputs/` contains no `colmap/`
+directory at any depth** (`feedforward.zarr`, `frames.zarr`, `gopro-compare/`,
+`tutorial_cache/` and nothing else), so `verify` has no reconstruction to load, and the store
+is not in the `<scene>/<backend>/` layout the leaf-stage re-run path expects. Producing one
+means a full pointcloud run from video, which exceeds the time box and would overwrite the
+store every other number here was measured on. `run_pipeline.py` also writes to
+`<output-root>/<video-stem>/`, so it could not have populated `data/outputs/colmap/` in any
+case.
+
+Consequence: no `verification.json` exists anywhere in this repo, the epipolar channel is
+unmeasured on both scenes, and the three-way attribution (`ρ = measured_px / δd_equiv`) is
+exercised only by the Task 7 controls, not by a real scene. The report emitted its other
+channels and recorded the reason, which is the behaviour this stage was built for.
+
+### Pair-table size
+
+Measured, no filter applied. The 20 MB threshold in the task is not reached by either scene.
+
+| store | total | `pair_directions` | rows | bytes/row | histogram | photometric rows |
+|---|---|---|---|---|---|---|
+| Scene A | 0.407 MB | 0.276 MB | 870 | 318 | 0.042 MB | 0.008 MB |
+| mv_vggt_omega | 1.477 MB | 1.144 MB | 3540 | 323 | 0.065 MB | — |
+
+The pair table is ~70–77% of the file and scales as `N·(N−1)`, while the histogram is
+essentially fixed (Rice on the sample count, so `n^(1/3)`). **Extrapolated** from the measured
+~320 bytes/row, a 300-frame scene would carry 89,700 directions ≈ **29 MB** of pair table,
+which does cross the threshold. That is arithmetic on a measured row size, not a measurement;
+the filter stays unbuilt until a 300-frame store is actually run.
+
+### Compute follow-ups (decided by the split above, not in advance)
+
+- **Duplicated multiview pass: 3.63 s of 41.56 s, 8.7%.** Worth handing the creator's
+  `collect` dict down to `build_report`? **No.** The ceiling is 8.7% on the one scene that
+  could be split, and the three objections already recorded in this document stand
+  independently of cost: the pass does not run at all under the shipping
+  `use_multiview_confidence: false`; the dict is never persisted, so the `--stages report`
+  disk re-run could not see it; and the creators' per-backend tolerances select a different
+  pixel population from `build_report`'s fixed `abs_thresh=0.0, rel_thresh=0.05`, so reuse
+  would change the numbers. An 8.7% saving does not buy that.
+- **Photometric share: 37.30 s, 89.8%.** Worth parallelising across pairs? **It is the only
+  lever the split identifies** — everything else in the report is under 2% and would be noise.
+  The cost is in the pair loop, not IO: `frames.zarr` read plus float32 cast is 0.53 s, 0.8% of
+  the channel, and the loop is `O(N·max_separation)` (57 pairs at N=30, 597 at N=300), so the
+  work is embarrassingly parallel across independent pairs. Whether to spend that complexity is
+  a separate decision and is not taken here; what the measurement settles is that no other
+  target is worth touching.
+- **Anything large enough to justify streaming to zarr instead of JSON? No.** Serialise 0.02 s
+  and write 0.02 s, 0.1% of the run combined, on files of 0.41–1.48 MB. Even the 29 MB
+  extrapolation above is a size question about the pair table, not a throughput question about
+  the writer.
+
+### Prior baseline provenance (transcribed from `evals/scripts/depth_disagreement.py` before deletion)
+
+The file was never tracked by git, so this is the only surviving record of what the
+0.37 / 2.27 / 25.67% baseline was measured against.
+
+```python
+STORE = "evals/results/mv_vggt_omega/feedforward.zarr"
+SDF_TRUNC = 0.01   # configs/base.yaml mesh.sdf_trunc
+VOXEL = 0.0025     # configs/base.yaml mesh.voxel_size
+CONF_PCT = 20.0    # configs/base.yaml mesh.conf_percentile
+NB, LO, HI = 2000, -0.5, 0.5   # uniform histogram, residuals CLAMPED to [LO, HI]
+```
+
+Module docstring: *"Inter-view depth disagreement in depth units — the TSDF blur budget.
+Mirrors compute_multiview_depth_confidence's projection exactly, but records the signed
+residual (sampled_d - expected_d) instead of thresholding it."* It reported two masks,
+`"all valid depth"` and `"conf > p20"` (via `confidence_mask(conf, CONF_PCT)`); the
+0.37 / 2.27 / 25.67% row is the **`all valid depth`** row, and the `conf > p20` row is the one
+that tightened p90 to 0.92%. Its `abs` fold sorted bin centres by absolute value and took a
+weighted CDF, which is the same operation as `abs_quantiles`.
+
+### Two corrections to the task's own command blocks, found by running them
+
+Recorded so the next reader does not repeat them.
+
+1. **Step 1c** is missing `VIDEO|DIR` and `--output-root`, and its target store has no
+   `colmap/` reconstruction. Covered above.
+2. **Step 4's readout reads `d['pairs']` from the depth block, which does not exist** — the
+   depth block ships `pair_directions`, exactly as this plan's own Self-Review says it does
+   ("Task 4 names every one of its keys for directions"). The block raises `KeyError: 'pairs'`
+   rather than printing wrong numbers, so it fails loudly; the rank-control table above was
+   produced with `d['pair_directions']` substituted and is otherwise the block as written.

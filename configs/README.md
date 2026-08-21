@@ -192,6 +192,40 @@ poses/cameras identical to `sparse/0`), `verification.json` (per-pair epipolar +
 relative-pose stats, per-frame track survival and reprojection error), and `database.db`
 (local build artifact, excluded from pushes). `sparse/0` is never modified.
 
+- `<backend>/report.json` — reference-free scene error report. One per-pair table
+  (keyed on frame index, so epipolar and depth columns join), a per-frame table,
+  per-frame percentile ranks, running-error curves along the trajectory, and rank
+  correlations for error-vs-depth, error-vs-separation and
+  confidence-vs-error. Written by the always-on `report` leaf stage; re-runnable
+  with `--stages report --overwrite`.
+
+  The stage runs no model and no matcher. It loads `colmap/verification.json`
+  when it exists; in a full pipeline run verify is ordered ahead of `report`, so
+  report reads verify's output rather than triggering it. With the shipping
+  default (`geometric_verification: false`) no such file is produced, the
+  epipolar block records `{"available": false, "reason": ...}`, and the depth and
+  photometric channels still emit — `report` never reaches around an explicit
+  opt-out to charge a default run for verify. To get the epipolar channel, set
+  `pointcloud.geometric_verification: true` or run `--stages verify`. Note that
+  `--stages report` on its own, with the flag on and no `verification.json`
+  present, *will* run verify first and pay its cost.
+
+  **Report-only: nothing here feeds back into the reconstruction.** No verdict,
+  no grade, no cause — distributions and cumulative error only. Every block
+  stamps its `grid` (`model` or `original`) and `resolution`; units are
+  scale-free or normalised throughout, because 1 recon unit is not 1 metre and
+  the factor differs per scene and per backbone. Pixel counts are not comparable
+  across backbones, so reprojection is reported in px *and* as a fraction of
+  image width.
+
+  Per-pair columns ship as raw values, so any binning or threshold query is
+  something the reader does. The one exception is the per-pixel depth residual,
+  which is too large to hold (N²·H·W) and ships as `counts` + `bin_edges`. Those
+  bins are over `u = r/(1+|r|)`, a monotone map onto (−1, 1): no residual can
+  fall outside them however large, so nothing is clipped and nothing is dropped.
+  Invert a bin edge or quantile with `u/(1−|u|)`, and query any threshold with
+  `rv_histogram((counts, bin_edges)).cdf(x/(1+abs(x)))`.
+
 `refine` (LM bundle adjustment) rewrites the reconstruction's poses in place —
 COLMAP, `transforms.json`, `sparse_pc.ply`, and the pose-derived arrays in
 `feedforward.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the

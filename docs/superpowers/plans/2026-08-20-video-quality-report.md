@@ -1493,6 +1493,26 @@ translation → 0.807; 3D scene + 5° rotation → 0.000; planar scene + transla
 
 **MAGSAC is randomized.** The same input gave `parallax` 0.793 and 0.807 on
 consecutive runs. Never assert an exact parallax value.
+
+**`translation_px` is in analysis-grid pixels and does not rescale to source
+pixels.** `match_orb` reports in whatever grid it was handed, and the report
+hands it `_analysis_gray` output, so the column is `_ANALYSIS_WIDTH` pixels.
+Multiplying by the resize factor does not recover the native number, because ORB
+detects a different keypoint set at each resolution: measured on the tutorial
+video (1920x1080, factor 2.25), native-over-analysis is 2.37 on one pair and
+3.28 on another. Comparable within a report, not across videos of differing
+width — the same shape of caveat as Trap 1's blur.
+
+**A scene cut reads as large confident motion, not as a failure.** `crossCheck`
+makes the match sets mutually injective, which is what RANSAC wants, but it
+bounds nothing about whether the two frames show the same scene. Two independent
+noise images yield 373 mutual matches at a median displacement of 92 px, against
+539 at 17 px for a true 17 px shift — so neither `n_matches` nor a `nan` flags
+it, and `parallax` comes back high and stable across MAGSAC draws. The column
+that would separate them is descriptor distance: median Hamming 80 against 32.
+It is not in the shipped schema. Adding it is a follow-on, not a fix — it widens
+`match_orb`'s return past the 2-tuple that `compute_translation` and
+`compute_parallax` both consume — but the limitation is real and belongs here.
 ```
 
 - [ ] **Step 6: Record the progress-logging contract**

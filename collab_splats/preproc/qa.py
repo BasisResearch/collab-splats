@@ -164,7 +164,18 @@ def compute_frame_quality(bgr: np.ndarray) -> dict:
 
 
 def match_orb(gray_a: np.ndarray, gray_b: np.ndarray, *, n_features: int = 1000) -> tuple[np.ndarray, np.ndarray]:
-    """ORB keypoints matched mutually between two grayscale frames as Nx2 float32 arrays."""
+    """ORB keypoints matched mutually between two grayscale frames as Nx2 float32 arrays.
+
+    crossCheck makes both sides injective, which is what the downstream RANSAC
+    wants, but it bounds nothing about whether the two frames show the same
+    scene: mutual-best still returns a full set of matches on unrelated frames.
+    Measured on two independent noise images, 373 matches at a median
+    displacement of 92 px, versus 539 matches at 17 px for a true 17 px shift.
+    So a scene cut reads as large confident motion rather than as a failure,
+    and neither the match count nor a nan reveals it. What separates them is
+    descriptor distance — median Hamming 80 against 32 — which this function
+    does not currently return.
+    """
     # Detect and describe each frame independently — no shared state, so the
     # measurement never depends on which frames were selected before this pair.
     orb = cv2.ORB_create(nfeatures=n_features)
@@ -190,7 +201,17 @@ def match_orb(gray_a: np.ndarray, gray_b: np.ndarray, *, n_features: int = 1000)
 
 
 def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
-    """Median match displacement in pixels — how far image content moved between the pair."""
+    """Median match displacement in pixels — how far image content moved between the pair.
+
+    Pixels of whatever grid match_orb was handed. The report feeds it
+    _analysis_gray output, so the shipped column is _ANALYSIS_WIDTH pixels, and
+    **it does not convert to source pixels by scaling**: ORB detects different
+    keypoints at different resolutions, so the ratio is not the resize factor.
+    Measured on data/tutorial (1920x1080, factor 2.25), native-over-analysis is
+    2.37 on one pair and 3.28 on another. Comparable within a report, not
+    across videos of differing width — the same caveat compute_frame_quality
+    carries for blur, for the same reason.
+    """
     # nan, not 0.0: with no matches the displacement is unknown, and 0.0 would
     # read as "the camera held perfectly still", the opposite conclusion.
     if len(pts_a) == 0:

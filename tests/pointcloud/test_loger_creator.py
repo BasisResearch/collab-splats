@@ -19,7 +19,7 @@ from collab_splats.pointcloud.feedforward.loger import (
     _LOGER_ROOT,
     _compute_target_size,
 )
-from collab_splats.preproc.sampling import _seek_frame, get_video_info
+from collab_splats.preproc.video import _seek_frame, get_video_info
 from collab_splats.wrapper import reconstructor as R
 from collab_splats.wrapper.reconstructor import _FEEDFORWARD_BACKENDS
 

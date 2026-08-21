@@ -461,7 +461,7 @@ git add collab_splats/preproc/ tests/preproc/
 git commit -m "refactor(preproc): extract qa.py — sampling.py is now selection only"
 ```
 
-- [ ] **Step 9: Apply the code-quality review findings**
+- [x] **Step 9: Apply the code-quality review findings**
 
 Three defects the spec-compliance pass could not see, all follow-ons to the move rather than errors in it.
 

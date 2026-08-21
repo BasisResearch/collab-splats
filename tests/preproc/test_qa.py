@@ -9,6 +9,7 @@ from collab_splats.preproc.qa import (
     compute_blur_score,
     compute_exposure,
     compute_frame_quality,
+    compute_parallax,
     compute_translation,
     match_orb,
 )
@@ -255,3 +256,61 @@ def test_compute_translation_recovers_known_shift(noise_gray):
 def test_compute_translation_is_nan_without_matches():
     empty = np.empty((0, 2), np.float32)
     assert np.isnan(compute_translation(empty, empty))
+
+
+def _project(points_3d):
+    """Pinhole-project Nx3 world points with fx=fy=500, cx=320, cy=240."""
+    x = 500.0 * points_3d[:, 0] / points_3d[:, 2] + 320.0
+    y = 500.0 * points_3d[:, 1] / points_3d[:, 2] + 240.0
+    return np.stack([x, y], axis=1).astype(np.float32)
+
+
+@pytest.fixture(scope="module")
+def synthetic_scenes():
+    """A depth-varying point cloud and a planar one, both 300 points."""
+    rng = np.random.default_rng(3)
+    volume = np.stack([rng.uniform(-3, 3, 300), rng.uniform(-3, 3, 300), rng.uniform(4, 12, 300)], axis=1)
+    plane = np.stack([rng.uniform(-3, 3, 300), rng.uniform(-3, 3, 300), np.full(300, 8.0)], axis=1)
+    return volume, plane
+
+
+def test_compute_parallax_high_when_depth_varies(synthetic_scenes):
+    # Translation across a scene with real depth spread: a homography cannot
+    # explain the pair, so most H inliers are lost relative to F.
+    volume, _ = synthetic_scenes
+    pts_a, pts_b = _project(volume), _project(volume - np.array([0.8, 0.0, 0.0]))
+    assert compute_parallax(pts_a, pts_b) > 0.5
+
+
+def test_compute_parallax_zero_for_rotation_only(synthetic_scenes):
+    # A pure rotation is exactly a homography no matter how much depth exists
+    volume, _ = synthetic_scenes
+    theta = np.deg2rad(5.0)
+    rot = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
+    pts_a, pts_b = _project(volume), _project(volume @ rot.T)
+    assert compute_parallax(pts_a, pts_b) < 0.1
+    # ...and the image content really did move, so translation alone cannot tell
+    # this case apart from the planar one below.
+    assert compute_translation(pts_a, pts_b) > 10.0
+
+
+def test_compute_parallax_zero_for_translating_over_a_plane(synthetic_scenes):
+    # THE TRAP: a flat scene reads parallax 0.0 even under real translation,
+    # because a plane is also exactly a homography. parallax alone cannot
+    # distinguish "camera did not move" from "scene has no depth".
+    _, plane = synthetic_scenes
+    pts_a, pts_b = _project(plane), _project(plane - np.array([0.8, 0.0, 0.0]))
+    assert compute_parallax(pts_a, pts_b) < 0.1
+    assert compute_translation(pts_a, pts_b) > 10.0
+
+
+def test_compute_parallax_is_nan_below_eight_matches():
+    # Eight is the fundamental matrix minimum; fewer is not a small sample, it is undefined
+    pts = (np.random.default_rng(0).random((7, 2)) * 100).astype(np.float32)
+    assert np.isnan(compute_parallax(pts, pts + 1.0))
+
+
+def test_compute_parallax_is_bounded(synthetic_scenes):
+    volume, _ = synthetic_scenes
+    value = compute_parallax(_project(volume), _project(volume - np.array([0.8, 0.0, 0.0])))
+    assert 0.0 <= value <= 1.0

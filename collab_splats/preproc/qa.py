@@ -220,3 +220,31 @@ def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     # Median over per-match displacement, so a handful of bad matches cannot
     # drag the number the way a mean would.
     return float(np.median(np.linalg.norm(pts_b - pts_a, axis=1)))
+
+
+def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
+    """One minus the homography/fundamental inlier ratio — how far the pair departs from a plane.
+
+    A homography explains rotation-only motion and planar scenes exactly, so a
+    ratio near 1 (parallax near 0) means the pair carries no depth information.
+    Read it alongside translation: a flat scene under real translation also
+    reads 0. nan below 8 matches, the fundamental matrix minimum.
+    """
+    if len(pts_a) < 8:
+        return float("nan")
+
+    # Fit both models to the same correspondences. H can only explain a plane or
+    # a pure rotation; F can additionally explain translation through depth, so
+    # the gap between their inlier counts IS the depth information in the pair.
+    _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, 3.0)
+    _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, 3.0)
+    n_h = int(h_inliers.sum()) if h_inliers is not None else 0
+    n_f = int(f_inliers.sum()) if f_inliers is not None else 0
+
+    # No F inliers means the pair is unexplained by any two-view geometry
+    if n_f == 0:
+        return float("nan")
+
+    # min() guards the case where H outfits F on a degenerate pair, which would
+    # otherwise push the complement negative.
+    return float(1.0 - min(1.0, n_h / n_f))

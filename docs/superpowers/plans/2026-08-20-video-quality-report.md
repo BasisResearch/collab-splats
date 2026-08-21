@@ -37,6 +37,12 @@ rho(translation_px, blur) +0.366   n=2364
 
 **6. JSON stays; Parquet was measured and rejected.** On the real 2388-frame report: JSON 632,651 B, gzipped JSON 150,930 B, Parquet+zstd 172,387 B across **two** files. Parquet loses to gzipped JSON at this row count, splits `frames` and `pairs` into separate files, has nowhere natural for the `video`/`params` metadata, is not greppable, and adds `pyarrow` as a hard dependency plus a third serialization format beside JSON and zarr. It becomes the right answer only for cross-video queries over a corpus, which is a follow-on.
 
+**7. Every run reports its progress on the console.** A 2388-frame video is a multi-minute decode; a silent run is indistinguishable from a hung one. `compute_video_quality` logs what it is about to do, shows a `tqdm` bar over the decode pass, and logs elapsed wall time, throughput, and the written file size.
+
+The bar goes on the **orchestrator**, not the primitives. `compute_blur`, `compute_exposure`, `compute_frame_quality`, `match_orb`, `compute_translation`, and `compute_parallax` stay silent: they run once per frame or per pair, so a log line inside any of them is 2388 lines of console spam, and a nested bar per frame is worse. The single pass in `compute_video_quality` is the only loop, so it is the only thing that draws. This is the same split `sampling.py` already uses — `tqdm.auto` in the sampler, nothing in the scorers.
+
+`tqdm` is already a `preproc` dependency (`sampling.py` imports `tqdm.auto`), so this adds no new package. Note that `logger.info` only reaches the console once a handler exists — a caller running this as a script needs `logging.basicConfig(level=logging.INFO)`; the `tqdm` bar writes to stderr regardless.
+
 ## New trap, not in the spec
 
 **A planar scene shot while translating reads `parallax == 0.0` — identical to pure rotation.** Measured:
@@ -996,29 +1002,14 @@ The payload is **columnar** (a dict of lists), not a list of row dicts. Measured
 
 - [ ] **Step 1: Write the failing test**
 
-Add `compute_video_quality` to the `from collab_splats.preproc.qa import ...` line and add `import json` at the top of the file. Append to `tests/preproc/test_qa.py`:
+Add `compute_video_quality` to the `from collab_splats.preproc.qa import ...` line and add `import json` and `import logging` at the top of the file. Append to `tests/preproc/test_qa.py`:
+
+**Do not define a `tiny_video` fixture here.** Task 1's cleanup commit (`62a0352c`) created `tests/preproc/conftest.py` holding a session-scoped `tiny_video` with exactly the properties these tests need — 60 frames, 320×240, 30 fps, noise texture plus a moving square. Redefining it in this file would shadow the shared one and re-encode the mp4 a third time. Just take it as a fixture argument.
 
 ```python
 ########################################################################
 # Whole video
 ########################################################################
-
-
-@pytest.fixture(scope="module")
-def tiny_video(tmp_path_factory):
-    """Synthesize a 60-frame 320x240 30fps mp4: static noise texture + moving square."""
-    path = tmp_path_factory.mktemp("vid") / "tiny.mp4"
-    width, height = 320, 240
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (width, height))
-    rng = np.random.default_rng(0)
-    noise = (rng.random((height, width, 3)) * 255).astype(np.uint8)
-    for i in range(60):
-        frame = noise.copy()
-        x = 10 + i * 4
-        cv2.rectangle(frame, (x, 60), (x + 60, 140), (0, 255, 0), -1)
-        writer.write(frame)
-    writer.release()
-    return str(path)
 
 
 def test_compute_video_quality_top_level_keys(tiny_video):
@@ -1108,6 +1099,16 @@ def test_compute_video_quality_reports_unavailable_for_an_undecodable_file(tmp_p
     report = compute_video_quality(broken)
     assert report["available"] is False
     assert "broken.mp4" in report["reason"]
+
+
+def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, caplog):
+    # A silent multi-minute run is indistinguishable from a hung one, so the
+    # announce-then-summarise pair is a contract, not a nicety.
+    with caplog.at_level(logging.INFO, logger="collab_splats.preproc.qa"):
+        compute_video_quality(tiny_video, motion_stride=5)
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("60 frames @" in m for m in messages), "no line logged before the decode"
+    assert any("frames/s" in m for m in messages), "no elapsed/throughput line logged after"
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1122,11 +1123,13 @@ Extend `qa.py`'s imports — this is where `qa.py` first depends on `video.py`:
 ```python
 import json
 import logging
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 from skimage.measure import blur_effect
+from tqdm.auto import tqdm
 
 from collab_splats.preproc.video import _iter_frames, get_video_info
 ```
@@ -1178,7 +1181,28 @@ def compute_video_quality(
     # so memory does not track video length.
     pending: dict[int, np.ndarray] = {}
 
-    for idx, bgr in enumerate(_iter_frames(str(video_path))):
+    # Announce the work before the first decode — a multi-minute silent run is
+    # indistinguishable from a hung one. %s on the ints so a probe that came
+    # back with None does not crash the log line itself.
+    logger.info(
+        "video quality: %s — %s frames @ %.2f fps, %sx%s, stride %d",
+        video_path.name,
+        info["total_frames"],
+        info["fps"] or 0.0,
+        info["width"],
+        info["height"],
+        stride,
+    )
+    started = time.perf_counter()
+
+    for idx, bgr in enumerate(
+        tqdm(
+            _iter_frames(str(video_path)),
+            total=info["total_frames"],
+            desc="measuring frames",
+            unit="frame",
+        )
+    ):
         # Photometry for every frame, no stride
         frames["frame_idx"].append(idx)
         for key, value in compute_frame_quality(bgr).items():
@@ -1216,19 +1240,30 @@ def compute_video_quality(
                 "parallax": [None if np.isnan(v) else v for v in parallax],
             },
         }
-        logger.info("video quality: %d frames, %d pairs, stride %d", len(frames["frame_idx"]), len(frame_idx_a), stride)
+        # Throughput, not just a count: it is the number that tells a reader
+        # whether a long run is progressing or degrading.
+        elapsed = max(time.perf_counter() - started, 1e-9)
+        logger.info(
+            "video quality: %d frames, %d pairs, stride %d — %.1fs (%.1f frames/s)",
+            len(frames["frame_idx"]),
+            len(frame_idx_a),
+            stride,
+            elapsed,
+            len(frames["frame_idx"]) / elapsed,
+        )
 
     if output_path is not None:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(report, indent=2))
+        logger.info("video quality: wrote %s (%.1f kB)", output_path, output_path.stat().st_size / 1000)
     return report
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
-Expected: 9 more tests pass
+Expected: 10 more tests pass
 
 - [ ] **Step 5: Run the whole preproc suite**
 
@@ -1311,7 +1346,28 @@ translation → 0.807; 3D scene + 5° rotation → 0.000; planar scene + transla
 consecutive runs. Never assert an exact parallax value.
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Record the progress-logging contract**
+
+Add under "Report shape":
+
+```markdown
+**Every run is visible on the console.** `compute_video_quality` logs the video,
+frame count, fps, resolution and stride before the first decode, draws a tqdm bar
+over the decode pass, and logs elapsed seconds, frames/s and the written file
+size after. A 2388-frame video takes ~5 minutes; a silent run of that length is
+indistinguishable from a hung one.
+
+The bar belongs to the orchestrator alone. `compute_blur`, `compute_exposure`,
+`compute_frame_quality`, `match_orb`, `compute_translation` and
+`compute_parallax` log nothing — each runs once per frame or per pair, so a line
+inside any of them is thousands of lines of spam and a nested bar is worse. This
+mirrors `sampling.py`, which puts tqdm in the sampler and nothing in the scorers.
+tqdm is already a preproc dependency, so this adds no package. `logger.info`
+reaches the console only once a handler exists; a script caller needs
+`logging.basicConfig(level=logging.INFO)`, while the bar writes to stderr anyway.
+```
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -f docs/superpowers/specs/2026-08-20-video-quality-report-design.md
@@ -1330,8 +1386,11 @@ git commit -m "docs(specs): three-module preproc split; correlations and clean_f
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "
-import time, numpy as np
+import logging, time, numpy as np
 from collab_splats.preproc.qa import compute_video_quality
+# Without a handler the announce/summary lines go nowhere; the tqdm bar is on
+# stderr regardless. This is the run that proves the logging contract works.
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 t = time.perf_counter()
 r = compute_video_quality('data/tutorial/tutorial_example-video.mp4', output_path='/tmp/tutorial_vqr.json')
 elapsed = time.perf_counter() - t

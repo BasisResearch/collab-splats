@@ -96,3 +96,19 @@ def compute_blur(gray: np.ndarray) -> dict:
     # Laplacian variance reuses the frame-selection gate's own metric verbatim,
     # so sharpness has exactly one implementation in the repo.
     return {"blur": perceptual, "laplacian": compute_blur_score(gray)}
+
+
+def compute_exposure(gray: np.ndarray) -> dict:
+    """Brightness distribution plus the fraction of pixels pinned at either end."""
+    return {
+        # Mean and median together: they separate when a small bright region
+        # (a window, a lamp) drags the mean while most of the scene stays dark.
+        "exposure_mean": float(gray.mean()),
+        "exposure_median": float(np.median(gray)),
+        # Contrast. A low std is a flat, textureless frame regardless of brightness.
+        "exposure_std": float(gray.std()),
+        # Clipped pixels are destroyed data, not merely dark or bright data:
+        # 0 and 255 are the two values where the sensor recorded nothing recoverable.
+        "clipped_low_frac": float((gray == 0).mean()),
+        "clipped_high_frac": float((gray == 255).mean()),
+    }

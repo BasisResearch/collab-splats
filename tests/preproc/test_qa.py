@@ -6,6 +6,7 @@ from collab_splats.preproc.qa import (
     check_frame_quality,
     compute_blur,
     compute_blur_score,
+    compute_exposure,
 )
 
 ########################################################################
@@ -93,3 +94,54 @@ def test_compute_blur_reuses_the_gate_metric(noise_gray):
 
 def test_compute_blur_is_bounded(noise_gray):
     assert 0.0 <= compute_blur(noise_gray)["blur"] <= 1.0
+
+
+def test_compute_exposure_keys():
+    keys = set(compute_exposure(np.full((10, 10), 128, np.uint8)))
+    assert keys == {
+        "exposure_mean",
+        "exposure_median",
+        "exposure_std",
+        "clipped_low_frac",
+        "clipped_high_frac",
+    }
+
+
+def test_compute_exposure_flat_image():
+    result = compute_exposure(np.full((10, 10), 128, np.uint8))
+    assert result["exposure_mean"] == pytest.approx(128.0)
+    assert result["exposure_median"] == pytest.approx(128.0)
+    assert result["exposure_std"] == pytest.approx(0.0)
+    assert result["clipped_low_frac"] == 0.0
+    assert result["clipped_high_frac"] == 0.0
+
+
+def test_compute_exposure_counts_clipping_at_both_ends():
+    # 5 of 100 pixels crushed to black, 5 of 100 blown to white
+    gray = np.full((10, 10), 128, np.uint8)
+    gray[0, :5] = 0
+    gray[1, :5] = 255
+    result = compute_exposure(gray)
+    assert result["clipped_low_frac"] == pytest.approx(0.05)
+    assert result["clipped_high_frac"] == pytest.approx(0.05)
+
+
+def test_compute_exposure_clipping_rises_only_at_saturation():
+    # Scale a uniform mid-bright frame up and down: the mean tracks the scale,
+    # but the clipping fractions stay 0 until pixels actually reach 255 or 0.
+    base = np.full((10, 10), 200, np.uint8)
+    brighter = [compute_exposure(np.clip(base * f, 0, 255).astype(np.uint8)) for f in (1.0, 1.2, 1.3)]
+    assert [r["exposure_mean"] for r in brighter] == pytest.approx([200.0, 240.0, 255.0])
+    assert [r["clipped_high_frac"] for r in brighter] == [0.0, 0.0, 1.0]
+    darker = [compute_exposure((base * f).astype(np.uint8)) for f in (0.1, 0.0)]
+    assert [r["exposure_mean"] for r in darker] == pytest.approx([20.0, 0.0])
+    assert [r["clipped_low_frac"] for r in darker] == [0.0, 1.0]
+
+
+def test_compute_exposure_median_separates_from_mean():
+    # A dark scene with a bright window: the mean is dragged up, the median is not
+    gray = np.full((100, 100), 30, np.uint8)
+    gray[:10, :] = 250
+    result = compute_exposure(gray)
+    assert result["exposure_median"] == pytest.approx(30.0)
+    assert result["exposure_mean"] > 50.0

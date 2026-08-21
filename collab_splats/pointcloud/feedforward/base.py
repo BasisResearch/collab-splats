@@ -27,6 +27,7 @@ import torch
 import torch.nn.functional as F
 import zarr
 from rich.console import Console
+from tqdm.auto import tqdm
 
 # Imported from installed VGGT-X tree (shared dep) — byte-identical to each
 # model's vendored copy today; revisit if trees diverge.
@@ -601,7 +602,12 @@ def compute_multiview_depth_confidence(
         collect["rel_depth_error_counts"] = np.zeros(len(edges) - 1, dtype=np.int64)
         cam_centers = cam2world[:, :3, 3]  # (N, 3) world-space camera positions
 
-    for i in range(N):
+    # O(N^2) pair loop with no output of its own until it finishes, and the dominant cost of any
+    # caller that enables it, so it carries a bar. Unit is the source frame; each one is checked
+    # against every other, hence the pair count in the label.
+    t_pairs = time.perf_counter()
+    for i in tqdm(range(N), desc=f"Cross-view depth check ({N * (N - 1)} pair directions)",
+                  unit="frame", leave=False):
         # Unproject source pixels to world space via cam-i intrinsics and pose
         K_i_inv = torch.linalg.inv(K[i])
         cam_rays = (K_i_inv @ pixel_h.T).T  # (H*W, 3)
@@ -723,6 +729,10 @@ def compute_multiview_depth_confidence(
     safe_denom = torch.where(valid_sum > 0, valid_sum, torch.ones_like(valid_sum))
     ratio = torch.where(valid_sum > 0, inlier_sum / safe_denom, torch.zeros_like(inlier_sum))
     judged = (valid_sum.reshape(N, -1).sum(dim=1) > 0).cpu().numpy()
+    logger.info(
+        "Cross-view depth check: %d/%d frames judged by at least one overlapping view, in %.2fs",
+        int(judged.sum()), N, time.perf_counter() - t_pairs,
+    )
     return MultiviewConfidence(
         ratio=ratio.cpu().numpy().astype(np.float32),
         inlier_count=inlier_sum.cpu().numpy().astype(np.int32),

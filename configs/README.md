@@ -192,23 +192,27 @@ poses/cameras identical to `sparse/0`), `verification.json` (per-pair epipolar +
 relative-pose stats, per-frame track survival and reprojection error), and `database.db`
 (local build artifact, excluded from pushes). `sparse/0` is never modified.
 
-- `<backend>/report.json` — reference-free scene error report. One per-pair table
-  (keyed on frame index, so epipolar and depth columns join), a per-frame table,
-  per-frame percentile ranks, running-error curves along the trajectory, and rank
-  correlations for error-vs-depth, error-vs-separation and
-  confidence-vs-error. Written by the always-on `report` leaf stage; re-runnable
-  with `--stages report --overwrite`.
+- `<backend>/reconstruction_quality_report.json` — reference-free scene error
+  report. One per-pair table (keyed on frame index, so epipolar and depth columns
+  join), a per-frame table, per-frame percentile ranks, running-error curves along
+  the trajectory, and rank correlations for error-vs-depth, error-vs-separation and
+  confidence-vs-error. Written by the always-on `reconstruction_quality_report` leaf
+  stage; re-runnable with `--stages reconstruction_quality_report --overwrite`.
+
+  Named for what it scores. The sibling artefact `video_quality_report.json` scores
+  the capture — blur, exposure, parallax — before any reconstruction exists; this one
+  scores the reconstruction built from it.
 
   The stage runs no model and no matcher. It loads `colmap/verification.json`
-  when it exists; in a full pipeline run verify is ordered ahead of `report`, so
+  when it exists; in a full pipeline run verify is ordered ahead of it, so the
   report reads verify's output rather than triggering it. With the shipping
   default (`geometric_verification: false`) no such file is produced, the
   epipolar block records `{"available": false, "reason": ...}`, and the depth and
-  photometric channels still emit — `report` never reaches around an explicit
+  photometric channels still emit — the report never reaches around an explicit
   opt-out to charge a default run for verify. To get the epipolar channel, set
   `pointcloud.geometric_verification: true` or run `--stages verify`. Note that
-  `--stages report` on its own, with the flag on and no `verification.json`
-  present, *will* run verify first and pay its cost.
+  `--stages reconstruction_quality_report` on its own, with the flag on and no
+  `verification.json` present, *will* run verify first and pay its cost.
 
   **Report-only: nothing here feeds back into the reconstruction.** No verdict,
   no grade, no cause — distributions and cumulative error only. Every block

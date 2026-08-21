@@ -46,7 +46,8 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 _SFM_BACKENDS = {"colmap", "hloc"}
 _VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
-_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify", "report"]
+_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify",
+                "reconstruction_quality_report"]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preproc": [],
     "pointcloud": ["preproc"],
@@ -61,12 +62,13 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # verify reuses the localize feature cache but builds it itself when absent, so its
     # only hard dependency is the reconstruction
     "verify": ["pointcloud"],
-    # report loads verification.json when verify has produced it and reports the epipolar
-    # channel unavailable when it has not, so its only hard dependency is the reconstruction
-    "report": ["pointcloud"],
+    # reconstruction_quality_report loads verification.json when verify has produced it and
+    # reports the epipolar channel unavailable when it has not, so its only hard dependency is
+    # the reconstruction
+    "reconstruction_quality_report": ["pointcloud"],
 }
 # A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, mesh,
-# localize, verify, report}.
+# localize, verify, reconstruction_quality_report}.
 # Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
 # mesh from this set automatically, so callers gating on it can never disagree with _STAGE_DEPS.
 LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in _STAGE_DEPS.values()))
@@ -1201,8 +1203,11 @@ class Reconstructor:
         logger.info("Verification written to %s", out_json)
         return out_json
 
-    def report(self, overwrite: bool = False) -> Path:
-        """Reference-free error report: three measurements, one report.json.
+    def reconstruction_quality_report(self, overwrite: bool = False) -> Path:
+        """Reference-free error report: three measurements, one reconstruction_quality_report.json.
+
+        Named for the artefact it produces, and to stay distinct from the video quality
+        report, which scores capture rather than reconstruction.
 
         Never fails a reconstruction — a measurement that cannot run records
         {"available": false, "reason": ...} and the rest still emit.
@@ -1211,11 +1216,12 @@ class Reconstructor:
         verification.json on disk, this runs the verify stage, which writes
         colmap/verification.json, colmap/verified/, colmap/database.db and populates
         local_features in the zarr. With the flag false — the default — nothing outside
-        report.json is written and the call is cheap: no model, no matcher, one zarr read.
+        reconstruction_quality_report.json is written and the call is cheap: no model, no
+        matcher, one zarr read.
         """
-        out_json = self.backend_dir / "report.json"
-        if not overwrite and self._stage_output_exists("report"):
-            logger.info("Report exists at %s, skipping", out_json)
+        out_json = self.backend_dir / "reconstruction_quality_report.json"
+        if not overwrite and self._stage_output_exists("reconstruction_quality_report"):
+            logger.info("Reconstruction quality report exists at %s, skipping", out_json)
             return out_json
         if self._resolve_result() is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
@@ -1233,16 +1239,16 @@ class Reconstructor:
                 logger.warning("verify failed; epipolar rows will be unavailable", exc_info=True)
 
         # Heavy deps inline so the module imports without GPU/model libs
-        from collab_splats.geometry.metrics import build_report
+        from collab_splats.geometry.metrics import build_reconstruction_quality_report
 
-        build_report(
+        build_reconstruction_quality_report(
             zarr_path=self.backend_dir / "feedforward.zarr",
             verification_json=verification_json,
             frames_zarr=self.frames_zarr,
             output_path=out_json,
             backend=self.config["pointcloud"]["backend"],
         )
-        logger.info("Report written to %s", out_json)
+        logger.info("Reconstruction quality report written to %s", out_json)
         return out_json
 
     def _stage_output_exists(self, stage: str) -> bool:
@@ -1270,8 +1276,8 @@ class Reconstructor:
             )
         if stage == "verify":
             return (self.backend_dir / "colmap" / "verification.json").exists()
-        if stage == "report":
-            return (self.backend_dir / "report.json").exists()
+        if stage == "reconstruction_quality_report":
+            return (self.backend_dir / "reconstruction_quality_report.json").exists()
         return False
 
     def _resolve_result(self) -> "PointcloudResult | None":
@@ -1291,7 +1297,7 @@ class Reconstructor:
 
         Args:
             stages: Subset of ["preproc", "pointcloud", "refine", "semantics", "mesh",
-                    "localize", "verify", "report"].
+                    "localize", "verify", "reconstruction_quality_report"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
 
@@ -1319,9 +1325,10 @@ class Reconstructor:
             # default-false flag, and the one boolean this would have had is the boolean that
             # keeps it off. Affordable because it runs no model and no matcher — it reads the
             # zarr the reconstruction just wrote — and because verify, when enabled, is appended
-            # just above and has already run by then: report loads its output rather than
-            # triggering it. A direct report() call can still run verify; see its docstring.
-            stages.append("report")
+            # just above and has already run by then: the report loads its output rather than
+            # triggering it. A direct reconstruction_quality_report() call can still run verify;
+            # see its docstring.
+            stages.append("reconstruction_quality_report")
 
         # Validate stage dependencies before starting any work. A dependency is
         # satisfied when it's in this run's stages OR its output already exists on
@@ -1362,8 +1369,8 @@ class Reconstructor:
                 self.build_localization_db(overwrite=overwrite)
             elif stage == "verify":
                 self.verify(overwrite=overwrite)
-            elif stage == "report":
-                self.report(overwrite=overwrite)
+            elif stage == "reconstruction_quality_report":
+                self.reconstruction_quality_report(overwrite=overwrite)
 
     def launch_dashboard(self) -> None:
         """Launch interactive dashboard for current reconstruction state."""

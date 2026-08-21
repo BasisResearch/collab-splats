@@ -802,3 +802,125 @@ reconstruction group from the zarr store before calling `from_feedforward`, so t
 misses and the index is re-extracted and re-saved. Regression tests in
 `tests/wrapper/test_localization_db_overwrite.py`. The post-fix rebuild took 196.0 s (real
 re-extraction) and `verify()` completed.
+
+---
+
+## 2026-08-21: first end-to-end run with all three channels live
+
+Every earlier measurement in this document ran with the epipolar channel **dead**. No scene on
+disk had both a `colmap/` directory and a `feedforward.zarr`: `data/outputs` and
+`evals/results/mv_*` had the zarr but no COLMAP, and `evals/results/chess_seq01*` had COLMAP but
+no zarr. So attribution — the entire reason three measurements exist rather than one — had never
+been exercised on real data. This run closes that.
+
+**Setup.** `docs/examples/run_pipeline.py` over `data/tutorial/tutorial_example-video.mp4`
+(99.6 s), `fps: 0.5` → 50 frames, backend `vggt_omega`,
+`pointcloud.geometric_verification: true`, localize/semantics/mesh off. Model resolution
+384×688, original 1080×1920. Wall clock 07:27:26 → 07:32:21 (**295 s**), `EXIT=0`.
+Output: `/workspace/outputs/verify_e2e/tutorial_example-video/vggt_omega/`.
+
+### verify produced usable rows
+
+`colmap/verification.json`, 94.2 KB. **237 pairs matched, 191 survived `verify_matches`** — 46
+dropped. Tier 2 triangulated 6171 points. Phase seconds: `db_export` 0.48, `pair_matching`
+13.46, `db_match_writes` 1.44, `verify_matches` 27.09, `triangulate` 1.50.
+
+| Tier 1 (191 pairs) | p10 | p50 | p90 |
+|---|---|---|---|
+| `rot_error_deg` | 0.29 | 1.82 | 27.71 |
+| `t_direction_error_deg` | 0.78 | 3.15 | 33.72 |
+| `inlier_ratio` | 0.516 | 0.724 | 0.848 |
+
+| Tier 2 (50 frames) | p10 | p50 | p90 |
+|---|---|---|---|
+| `mean_reproj_error_px` | 1.548 | 1.669 | 1.854 |
+| `track_survival` | 0.068 | 0.154 | 0.262 |
+
+`n_keypoints` is 2048 at every percentile — the extractor's top-K, not a measurement.
+
+### The report loads them
+
+`measurements_available: ["depth", "epipolar", "photometric"]`. The epipolar channel parsed 191
+pair rows and 50 frame rows in **0.00 s**, which is the contract holding: it loads verify's
+tables and never re-runs a matcher. Both derived columns are present — `inlier_ratio`, and
+`mean_reproj_error_frac_width` (p50 **0.001545**) beside the raw px, stamped `width=1080`.
+
+`running_error.epipolar` populates for the first time: 46 steps, cumulative 0.295 → **46.50**
+degrees. This is the shape the availability guard was added to protect. Before the guard, an
+unavailable channel took the `.get` default and shipped `{"frame_index": [], "cumulative": []}`,
+which reads as "error accumulated to zero" — a verdict, and a false one.
+
+**Report stage cost: 60.5 s**, and the progress logging makes the split readable without
+instrumenting anything:
+
+| step | seconds | share |
+|---|---|---|
+| photometric NCC (91 pairs @ 1080×1920) | 53.51 | 88.4% |
+| cross-view depth check (50 frames, O(N²)) | 5.72 | 9.5% |
+| depth aggregation (2395 directions, 131 M samples) | 0.01 | <0.1% |
+| epipolar load (191 pairs) | 0.00 | <0.1% |
+
+### Attribution has signal
+
+- **Spearman(epipolar rot error, depth error rank) = 0.246, p = 0.089** over the 49 frames
+  carrying both. Near zero rather than near one: the two channels are seeing largely
+  *different* errors, which is the premise the design rests on. Had this come back ~1, three
+  measurements would have been one measurement counted three times.
+- **Parallax bridge at matched separation.** Depth-equivalent disparity at sep=1 is p50
+  **0.558 px**; epipolar frame reprojection is p50 **1.669 px**; ρ = **2.99**. Measured pixel
+  error is ~3× what depth disagreement alone accounts for. Matching the separation matters:
+  `depth_error_px` scales with parallax, so the all-separations pool (p50 7.50 px) gives a
+  ratio of 0.22 and points the opposite way. The report ships both *sides* and never the
+  ratio — the join is the reader's, and this is why.
+- **Does disagreement build along the trajectory?** Both pose and depth channels rise
+  monotonically with frame separation, and appearance correlation falls:
+
+| separation | depth median \|rel\| | epipolar rot° | photometric NCC |
+|---|---|---|---|
+| 1 | 0.0087 (n=92) | 0.63 (n=46) | 0.583 (n=46) |
+| 2 | 0.0109 (n=89) | 1.26 (n=44) | 0.494 (n=45) |
+| 4 | 0.0187 (n=84) | 1.98 (n=39) | — |
+| 8 | 0.0288 (n=82) | 8.50 (n=30) | — |
+| 16 | 0.0313 (n=66) | 18.17 (n=21) | — |
+| 32 | 0.0229 (n=34) | 2.51 (n=11) | — |
+
+  The sep=32 reversal is survivorship, not recovery: only 11 pairs still match 32 frames apart,
+  and they are the ones that match *because* they are good. The count sits in the table for
+  exactly this reason.
+
+- Verify samples separations **{1, 2, 4, 8, 16, 32}**, not sequential-only. `CLAUDE.md` records
+  "Sequential pairs only" for the verification stage; that is now stale for this scene's
+  configuration. Photometric is capped at `max_separation=2` by its own parameter.
+
+### One frame, isolated by two channels independently
+
+55 of 2450 depth pair directions are missing. **Frame index 45 (`frame_002163`) accounts for 42
+of them.** Independently, it is the single frame in Tier 2 with `n_tracks: 0`,
+`track_survival: 0.0`, `mean_reproj_error_px: null`, and **zero surviving epipolar pairs** — yet
+it has the full 2048 keypoints and `crop_coverage: 1.0`.
+
+Two measurements with different dependencies — a dense geometric depth pass and a
+matcher-driven triangulation — converge on the same frame without either being told about the
+other. That is the report's stated purpose working on real data, and the report reaches it
+without grading anything: no field flags frame 45. It falls out of reading the distributions.
+
+### Two findings for the reader/viewer
+
+1. **Size scales N².** 1.15 MB at 50 frames, dominated by 2395 depth pair rows. At 300 frames
+   that is 89,700 directions ≈ **43 MB**, over the ~20 MB threshold Task 8 Step 3 set as the
+   trigger for emitting raw rows only under a filter. This is now a measurement, not an
+   extrapolation from a differently-shaped scene.
+2. **A rank without its denominator misleads.** Frame 45's `frame_percentile_ranks` entry is
+   **0.776** — unremarkable — because it is computed from the handful of pair directions the
+   frame retained, and the frame's actual problem is that it retained almost none. This is the
+   same invariant already load-bearing for rho: the number is only publishable beside its own
+   sample count. Any renderer must show `n` behind each rank.
+
+### Schema observation, not a defect
+
+`PairStats` is deliberately shared: verify fills the pose half, the depth pass fills the depth
+half, and both key on frame index so the two join. The consequence is that
+`verification.json`'s 191 pair rows each carry six permanently-null depth columns (`n_pixels`,
+`median_rel_depth_error`, `iqr_rel_depth_error`, `median_parallax_deg`, `median_depth`,
+`photometric_ncc`), and the report's epipolar rows inherit them. Inert and documented in the
+dataclass docstring — recorded here so it is not later mistaken for a leak and "fixed".

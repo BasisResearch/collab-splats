@@ -3259,9 +3259,22 @@ only remaining record of what the prior baseline was measured against."
 | `depth_error_in_pixels` | 3 + controls | non-obvious math, independently tested, floor derived not declared |
 | `compute_depth_error` | 1 | a measurement |
 | `compute_photometric_ncc` | 1 | a measurement; both grids |
-| `build_report` | 1 | the stage entry point |
-| `_load_epipolar` | 1 | file IO plus one derived column |
-| `_run_photometric` | 1 | frames.zarr IO and the never-fatal guard |
+| `build_reconstruction_quality_report` | 1 | the stage entry point |
+| `extract_photometric` | 1 | the whole photometric channel behind one call: frames.zarr IO, the correlation, and the never-fatal guard |
 | `_running_error` | 2 (depth, epipolar) + tests | the ordered/unordered grouping is the one place the two channels' row semantics meet; inline it and the depth curve silently doubles |
 
-Nine functions and **no module-level constants**: the parallax floor derives from the focal, the quantile grid is a local tuple, and the bin edges derive from the sample count. Nothing else exists. No histogram class, no `Report` class, no residual/stats dataclasses, no `MultiviewConfidence` change, and no hand-rolled Spearman, Pearson, rank, quantile, distribution, filename parser, cumulative sum, coverage routine, stratification routine, confidence-binning routine, JSON coercion, or schema stamp. **Measured correction (Task 5 quality pass):** an earlier revision had a tenth entry here, a private one-line wrapper over `stats.spearmanr` that floored small samples to nan. It is gone at all three call sites: `stats.spearmanr(a, b).statistic` is called directly and its answer ships unmodified, because every rho ships beside its own sample count and the raw columns it was computed from, and suppressing a number the reader can already discount is a verdict this report does not make.
+**Measured correction (2026-08-21, post-plan).** Three rows above changed after the plan was
+written, on the standing instruction that the module was still carrying too many functions:
+
+- `build_report` → `build_reconstruction_quality_report`, and `report.json` →
+  `reconstruction_quality_report.json`, so the artefact is named for what it scores and does
+  not collide with `video_quality_report.json`, which scores the capture instead.
+- `_load_epipolar` is **gone, inlined into the entry point.** It was file IO plus two derived
+  columns wrapped in a name that promised a `compute_*` measurement it never performed.
+- `_run_photometric` → **`extract_photometric`**, public, and it now owns the whole channel:
+  the frames.zarr read *and* the correlation. Naming it `_load_photometric` was rejected —
+  the read is 0.5 s against a 53.5 s correlation, so "load" would name the rounding error and
+  hide the work. The correlation itself stays in `compute_photometric_ncc`, which takes plain
+  arrays and is pinned by tests that must not need a scene on disk.
+
+Eight functions and **no module-level constants**: the parallax floor derives from the focal, the quantile grid is a local tuple, and the bin edges derive from the sample count. Nothing else exists. No histogram class, no `Report` class, no residual/stats dataclasses, no `MultiviewConfidence` change, and no hand-rolled Spearman, Pearson, rank, quantile, distribution, filename parser, cumulative sum, coverage routine, stratification routine, confidence-binning routine, JSON coercion, or schema stamp. **Measured correction (Task 5 quality pass):** an earlier revision had a tenth entry here, a private one-line wrapper over `stats.spearmanr` that floored small samples to nan. It is gone at all three call sites: `stats.spearmanr(a, b).statistic` is called directly and its answer ships unmodified, because every rho ships beside its own sample count and the raw columns it was computed from, and suppressing a number the reader can already discount is a verdict this report does not make.

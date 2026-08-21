@@ -838,7 +838,7 @@ def test_run_pipeline_default_uses_config_enabled(tmp_path):
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
     # report is always on and has no config flag, so a config-derived run always includes it
-    rec.report = lambda overwrite=False: calls.append("report") or tmp_path
+    rec.reconstruction_quality_report = lambda overwrite=False: calls.append("reconstruction_quality_report") or tmp_path
 
     rec.run_pipeline()  # no stages arg — uses config
     assert "semantics" in calls
@@ -887,7 +887,7 @@ def test_run_pipeline_auto_includes_localize_when_enabled(tmp_path):
         patch.object(rec, "preprocess"),
         patch.object(rec, "build_pointcloud", return_value=None),
         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")),
-        patch.object(rec, "report"),  # always on, and it would resolve a real reconstruction
+        patch.object(rec, "reconstruction_quality_report"),  # always on, and it would resolve a real reconstruction
     ):
         rec.run_pipeline()
     assert called == ["localize"]
@@ -901,7 +901,7 @@ def test_run_pipeline_omits_localize_when_disabled(tmp_path):
         patch.object(rec, "preprocess"),
         patch.object(rec, "build_pointcloud", return_value=None),
         patch.object(rec, "build_localization_db", side_effect=lambda **k: called.append("localize")),
-        patch.object(rec, "report"),  # always on, and it would resolve a real reconstruction
+        patch.object(rec, "reconstruction_quality_report"),  # always on, and it would resolve a real reconstruction
     ):
         rec.run_pipeline()
     assert called == []
@@ -1184,7 +1184,7 @@ def test_leaf_stages_derived_from_dep_graph():
     expected = {s for s in R._STAGE_ORDER if not any(s in deps for deps in R._STAGE_DEPS.values())}
     assert R.LEAF_STAGES == expected
     # Today's graph, spelled out so a failure above reads as a real change rather than a typo.
-    assert expected == {"refine", "semantics", "mesh", "localize", "verify", "report"}
+    assert expected == {"refine", "semantics", "mesh", "localize", "verify", "reconstruction_quality_report"}
 
 
 def _seed_disk_reconstruction(rec, frame_idxs, image_names):
@@ -1379,10 +1379,10 @@ def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
     rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
     rec.mesh = lambda result=None, overwrite=False: calls.append("mesh")
-    rec.report = lambda overwrite=False: calls.append("report")
+    rec.reconstruction_quality_report = lambda overwrite=False: calls.append("reconstruction_quality_report")
 
     rec.run_pipeline()  # must not raise
-    assert calls == ["preproc", "pointcloud", "mesh", "report"]
+    assert calls == ["preproc", "pointcloud", "mesh", "reconstruction_quality_report"]
 
 
 def test_base_yaml_mesh_has_fidelity_keys():
@@ -1419,10 +1419,10 @@ def test_report_is_appended_with_no_config_boolean_to_turn_it_off(tmp_path):
     calls = []
     rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
-    rec.report = lambda overwrite=False: calls.append("report")
+    rec.reconstruction_quality_report = lambda overwrite=False: calls.append("reconstruction_quality_report")
 
     rec.run_pipeline()  # stages=None: the config-derived list
-    assert calls == ["preproc", "pointcloud", "report"]
+    assert calls == ["preproc", "pointcloud", "reconstruction_quality_report"]
 
 
 def test_report_stage_dispatches_to_the_report_method_and_forwards_overwrite(tmp_path):
@@ -1430,21 +1430,21 @@ def test_report_stage_dispatches_to_the_report_method_and_forwards_overwrite(tmp
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
-    with patch.object(rec, "report") as report:
-        rec.run_pipeline(stages=["report"], overwrite=True)
+    with patch.object(rec, "reconstruction_quality_report") as report:
+        rec.run_pipeline(stages=["reconstruction_quality_report"], overwrite=True)
     report.assert_called_once_with(overwrite=True)
 
 
 def test_report_output_marker_is_report_json_in_the_backend_dir(tmp_path):
-    """The marker is what makes --stages report refuse an existing report without overwrite."""
+    """The marker makes --stages reconstruction_quality_report refuse existing output."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
-    assert rec._stage_output_exists("report") is False
-    (rec.backend_dir / "report.json").write_text("{}")
-    assert rec._stage_output_exists("report") is True
+    assert rec._stage_output_exists("reconstruction_quality_report") is False
+    (rec.backend_dir / "reconstruction_quality_report.json").write_text("{}")
+    assert rec._stage_output_exists("reconstruction_quality_report") is True
     with pytest.raises(ValueError, match="already exists"):
-        rec.run_pipeline(stages=["report"])
+        rec.run_pipeline(stages=["reconstruction_quality_report"])
 
 
 @pytest.mark.parametrize(
@@ -1470,12 +1470,12 @@ def test_report_runs_verify_only_when_the_flag_allows_it(tmp_path, flag, verific
         verification_json.write_text("{}")
 
     with patch.object(rec, "verify") as verify, \
-            patch("collab_splats.geometry.metrics.build_report") as build:
-        rec.report()
+            patch("collab_splats.geometry.metrics.build_reconstruction_quality_report") as build:
+        rec.reconstruction_quality_report()
 
     assert verify.called is expect_verify
     # The measurement is attempted either way — a missing verification.json disables the
-    # epipolar channel inside build_report, it does not skip the report.
+    # epipolar channel inside build_reconstruction_quality_report, it does not skip the report.
     build.assert_called_once()
 
 
@@ -1490,8 +1490,8 @@ def test_report_is_still_written_when_verify_raises(tmp_path):
         Path(kwargs["output_path"]).write_text('{"measurements": {}}')
 
     with patch.object(rec, "verify", side_effect=RuntimeError("pycolmap exploded")), \
-            patch("collab_splats.geometry.metrics.build_report", side_effect=_write):
-        out = rec.report()
+            patch("collab_splats.geometry.metrics.build_reconstruction_quality_report", side_effect=_write):
+        out = rec.reconstruction_quality_report()
 
     # The exception did not propagate and did not cost the other two measurements.
     assert out.exists()
@@ -1502,7 +1502,7 @@ def test_report_skips_without_overwrite_and_never_touches_the_reconstruction(tmp
     """Skip is checked BEFORE the result is resolved, so a re-run costs nothing."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    out = rec.backend_dir / "report.json"
+    out = rec.backend_dir / "reconstruction_quality_report.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("{}")
 
@@ -1510,5 +1510,5 @@ def test_report_skips_without_overwrite_and_never_touches_the_reconstruction(tmp
         raise AssertionError("_resolve_result must not run when the report already exists")
 
     rec._resolve_result = _explode
-    assert rec.report() == out
+    assert rec.reconstruction_quality_report() == out
     assert out.read_text() == "{}"

@@ -158,7 +158,8 @@ def test_run_pipeline_config_driven_appends_refine(tmp_path):
          patch.object(Reconstructor, "extract_semantics", side_effect=lambda **k: calls.append("semantics")), \
          patch.object(Reconstructor, "mesh", side_effect=lambda **k: calls.append("mesh")), \
          patch.object(Reconstructor, "build_localization_db", side_effect=lambda **k: calls.append("localize")), \
-         patch.object(Reconstructor, "report", side_effect=lambda **k: calls.append("report")):
+         patch.object(Reconstructor, "reconstruction_quality_report",
+                      side_effect=lambda **k: calls.append("reconstruction_quality_report")):
         r.run_pipeline()
     assert "refine" in calls
     assert calls.index("refine") == calls.index("pointcloud") + 1

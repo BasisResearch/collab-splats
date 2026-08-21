@@ -13,7 +13,7 @@ from scipy import stats
 from collab_splats.geometry.metrics import (
     _running_error,
     bounded_residual,
-    build_report,
+    build_reconstruction_quality_report,
     compute_depth_error,
     compute_photometric_ncc,
     depth_error_in_pixels,
@@ -896,9 +896,9 @@ def test_verify_writes_the_index_keys_so_no_merge_code_is_needed():
 
 
 def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
-    assert "report" in LEAF_STAGES
-    assert _STAGE_DEPS["report"] == ["pointcloud"]
-    assert _STAGE_ORDER.index("report") > _STAGE_ORDER.index("pointcloud")
+    assert "reconstruction_quality_report" in LEAF_STAGES
+    assert _STAGE_DEPS["reconstruction_quality_report"] == ["pointcloud"]
+    assert _STAGE_ORDER.index("reconstruction_quality_report") > _STAGE_ORDER.index("pointcloud")
 
 
 def test_report_does_not_demote_any_existing_leaf():
@@ -958,12 +958,12 @@ def test_report_json_is_valid_json_with_no_bare_nan():
 
 
 ########################################
-# build_report end to end
+# build_reconstruction_quality_report end to end
 ########################################
 
 
 def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
-    """A minimal feedforward.zarr that build_report can actually run on. Returns its path.
+    """A minimal feedforward.zarr that build_reconstruction_quality_report can actually run on. Returns its path.
 
     Depth is a SLANTED plane, never a constant one: a constant-depth scene has a degenerate
     frustum AABB, compute_multiview_depth_confidence's pair gate then skips every pair, and
@@ -1006,18 +1006,18 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
 
 
 def _build(tmp_path, image_names, with_confidence=True):
-    """build_report over _write_tiny_scene with no verification.json and no frames.zarr."""
-    return build_report(
+    """build_reconstruction_quality_report over _write_tiny_scene with no verification.json and no frames.zarr."""
+    return build_reconstruction_quality_report(
         zarr_path=_write_tiny_scene(tmp_path, image_names, with_confidence),
         verification_json=tmp_path / "absent" / "verification.json",
         frames_zarr=tmp_path / "absent" / "frames.zarr",
-        output_path=tmp_path / "report.json",
+        output_path=tmp_path / "reconstruction_quality_report.json",
         backend="vggtx",
     )
 
 
 def test_the_source_index_join_rests_on_the_frame_stem_naming_contract():
-    """build_report derives its index map with this parser; a naming change must break loudly.
+    """build_reconstruction_quality_report derives its index map with this parser; a naming change must break loudly.
 
     frame_{idx:06d} is what FrameStore.export writes and what a reconstruction's image_paths
     carry. If that convention ever moves, every row of this report silently mispairs with
@@ -1030,7 +1030,7 @@ def test_the_source_index_join_rests_on_the_frame_stem_naming_contract():
     assert FrameStore.frame_idx_from_path(Path("frame_000019.jpg")) == 19
 
 
-def test_build_report_maps_recon_index_to_SOURCE_frame_index(tmp_path):
+def test_build_reconstruction_quality_report_maps_recon_index_to_SOURCE_frame_index(tmp_path):
     """Every other per-frame block is keyed 0..N-1, which is NOT the source video index.
 
     The fixture's source indices are NON-CONTIGUOUS on purpose: sampling skips frames, so a
@@ -1044,7 +1044,7 @@ def test_build_report_maps_recon_index_to_SOURCE_frame_index(tmp_path):
     # It is derived through the same parser, not re-implemented alongside it.
     assert report["source_frame_indices"] == [FrameStore.frame_idx_from_path(Path(p)) for p in names]
     # The join happens against the FILE, so the map has to survive serialisation.
-    written = json.loads((tmp_path / "report.json").read_text())
+    written = json.loads((tmp_path / "reconstruction_quality_report.json").read_text())
     assert written["source_frame_indices"] == [0, 7, 19]
     # One entry per reconstruction row, in reconstruction order.
     assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 3
@@ -1067,7 +1067,7 @@ def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_pa
     assert FrameStore.frame_idx_from_path(Path("00019.jpg")) == 19
     assert FrameStore.frame_idx_from_path(Path("x_frame_000007.jpg")) == 7
 
-    # Through build_report, all three come back null; the one on-contract name still resolves,
+    # Through build_reconstruction_quality_report, all three come back null; the one on-contract name still resolves,
     # so the guard rejects by shape and is not just disabling the map wholesale. The prefixed
     # name is why the stem is matched WHOLE: a substring match would accept anything ending in
     # the right shape, which is the same guess this guard exists to refuse.
@@ -1078,9 +1078,37 @@ def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_pa
                                "frame_000007.jpg", "frame_1000000.jpg"])
     assert report["source_frame_indices"] == [None, None, None, 7, 1000000]
     # null, not the string "None" and not a dropped entry: one slot per reconstruction row.
-    written = json.loads((tmp_path / "report.json").read_text())
+    written = json.loads((tmp_path / "reconstruction_quality_report.json").read_text())
     assert written["source_frame_indices"] == [None, None, None, 7, 1000000]
     assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 5
+
+
+def test_running_error_says_unavailable_rather_than_shipping_empty_arrays(tmp_path):
+    """An empty cumulative array is a false verdict: it reads as "error stayed at zero".
+
+    _running_error itself is correct — the caller was the defect. It looked the rows up with a
+    .get default, so a measurement that never ran took the empty list and came back as a
+    well-formed result with nothing in it, indistinguishable from one that ran and accumulated
+    nothing. The fixture has no verification.json, so epipolar is exactly that case.
+    """
+    report = _build(tmp_path, ["frame_000000.jpg", "frame_000001.jpg", "frame_000002.jpg"])
+
+    # Epipolar never ran, and says so in the same words the measurement block uses.
+    assert report["measurements"]["epipolar"]["available"] is False
+    assert report["running_error"]["epipolar"]["available"] is False
+    assert "verification.json" in report["running_error"]["epipolar"]["reason"]
+    # The shape a reader must not receive for a dead channel.
+    assert "cumulative" not in report["running_error"]["epipolar"]
+
+    # Depth DID run on this fixture, so the live shape is unchanged beside it.
+    assert report["measurements"]["depth"]["available"] is True
+    assert report["running_error"]["depth"]["cumulative"]
+    assert len(report["running_error"]["depth"]["cumulative"]) == 2  # 3 frames -> 2 steps
+
+    # Both shapes have to survive serialisation; the file is what a reader actually opens.
+    written = json.loads((tmp_path / "reconstruction_quality_report.json").read_text())
+    assert written["running_error"]["epipolar"]["available"] is False
+    assert written["running_error"]["depth"]["cumulative"]
 
 
 def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):
@@ -1092,7 +1120,7 @@ def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):
         assert report["measurements"][dead]["available"] is False
         assert report["measurements"][dead]["reason"]
     # A bare NaN is what json.dumps emits for a nan and no strict parser accepts it.
-    assert "NaN" not in (tmp_path / "report.json").read_text()
+    assert "NaN" not in (tmp_path / "reconstruction_quality_report.json").read_text()
 
 
 def test_confidence_rho_ships_nested_with_the_n_frames_that_qualifies_it(tmp_path):

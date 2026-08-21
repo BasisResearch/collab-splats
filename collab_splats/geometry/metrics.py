@@ -10,10 +10,12 @@ are computed over, not a reimplementation of them.
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 import numpy as np
 from scipy import stats
+from tqdm.auto import tqdm
 
 from collab_splats.geometry.verification import clean_for_json
 from collab_splats.preproc.frame_store import FrameStore
@@ -141,12 +143,16 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
     """
     pairs = collected["pairs"]
     if not pairs:
+        logger.info("Depth error: unavailable — no overlapping view pairs produced residuals")
         return {
             "available": False,
             "reason": "no overlapping view pairs produced depth residuals",
             "grid": "model",
             "resolution": resolution,
         }
+
+    t0 = time.perf_counter()
+    logger.info("Depth error: assembling %d pair directions at %s", len(pairs), resolution)
 
     # One row per pair. Every column is raw, so the reader bins, thresholds and plots.
     rows = [
@@ -209,6 +215,13 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         "error_vs_frame_separation": float(stats.spearmanr(frame_seps, abs_rel_depth_error).statistic),
         "null_hypothesis": "sigma_Z ~ Z^2/(f*B) => relative residual rises ~linearly in Z",
     }
+
+    logger.info(
+        "Depth error: %d pair directions, %d residual samples over %d bins, "
+        "median |rel| %.4f, in %.2fs",
+        len(pairs), int(counts.sum()), len(counts), abs_quantiles.get("0.5", float("nan")),
+        time.perf_counter() - t0,
+    )
 
     return {
         "available": True,
@@ -289,8 +302,10 @@ def compute_photometric_ncc(
                          3x this many values. A floor is needed either way — corrcoef on two
                          values returns exactly +-1 whatever they are.
     """
+    t0 = time.perf_counter()
     N = len(depth)
     ih, iw = images.shape[1:3]
+    logger.info("Photometric NCC: %d frames at %dx%d, max_separation=%d", N, iw, ih, max_separation)
 
     # Depth on the model grid, images on the original grid: lift depth and its K to match.
     # Pairing one grid's depth with the other grid's K is the 2026-08-11 mesh-collapse bug
@@ -355,8 +370,11 @@ def compute_photometric_ncc(
     pix = np.stack([xx.ravel(), yy.ravel(), np.ones(H * W)], axis=-1)
     ones = np.ones((H * W, 1))
 
+    # Pair count is closed-form from N and max_separation, so the bar can state the real unit of
+    # work up front rather than counting frames and leaving the reader to multiply.
+    n_pairs_expected = sum(min(N, i + max_separation + 1) - (i + 1) for i in range(N))
     rows = []
-    for i in range(N):
+    for i in tqdm(range(N), desc=f"Photometric NCC ({n_pairs_expected} pairs)", unit="frame"):
         # Unproject frame i's pixels to world through its own K and pose. Local names follow
         # the multiview loop in pointcloud/feedforward/base.py (cam2world, pts_world,
         # pts_cam_j, proj_j, in_front) so the two warps read as the same operation.
@@ -401,6 +419,7 @@ def compute_photometric_ncc(
                          "photometric_ncc": ncc, "n_pixels": int(ok.sum())})
 
     if not rows:
+        logger.info("Photometric NCC: unavailable — no view pair produced a correlation")
         return {
             "available": False,
             "reason": "no view pairs produced a photometric correlation",
@@ -419,6 +438,11 @@ def compute_photometric_ncc(
     # does not make verdicts.
     correlations = {"ncc_vs_frame_separation": float(stats.spearmanr(frame_seps, ncc).statistic)}
 
+    logger.info(
+        "Photometric NCC: %d pairs correlated, median NCC %.4f, in %.2fs",
+        len(rows), float(np.median(ncc)), time.perf_counter() - t0,
+    )
+
     return {
         "available": True,
         "grid": "original",
@@ -429,6 +453,43 @@ def compute_photometric_ncc(
         "correlations": correlations,
         "pairs": rows,
     }
+
+
+def extract_photometric(result, frames_zarr: Path, n: int) -> dict:
+    """Extract the photometric channel from a scene: read the RGB, then correlate it.
+
+    The whole channel behind one call — unlike epipolar, whose numbers verify already computed,
+    this is where the photometric measurement actually happens, and the 0.6s read is a rounding
+    error against the correlation that follows it.
+
+    Never fatal. A report must not fail a reconstruction, so a missing store or any exception
+    below disables this one measurement and leaves the other two standing.
+
+    The correlation itself stays in compute_photometric_ncc, which takes plain arrays and is
+    pinned by 31 tests that must not need a scene on disk to run.
+    """
+    if not Path(frames_zarr).exists():
+        logger.info("Photometric NCC: unavailable — frames.zarr not found at %s", frames_zarr)
+        return {"available": False, "grid": "original",
+                "reason": f"frames.zarr not found at {frames_zarr}"}
+    try:
+        # images() returns the selected frames in row order, which is the order the
+        # reconstruction indexes by. frame_indices() is NOT that — it holds source-video
+        # positions, so using it to index would silently mispair depth with RGB.
+        t0 = time.perf_counter()
+        rgbs = FrameStore.open(Path(frames_zarr)).images()[:n].astype(np.float32)
+        m = len(rgbs)
+        logger.info("Photometric NCC: read %d original-resolution frames from %s in %.2fs",
+                    m, frames_zarr, time.perf_counter() - t0)
+        # No resolution argument: compute_photometric_ncc derives it from `rgbs` itself, so the
+        # stamped grid cannot disagree with the grid the numbers were measured on.
+        return compute_photometric_ncc(
+            rgbs, result.depth[:m], result.intrinsics[:m], result.extrinsics[:m],
+            original_coords=result.original_coords[:m],
+        )
+    except Exception as exc:  # noqa: BLE001 — a report must never fail a reconstruction
+        logger.warning("photometric measurement failed: %s", exc, exc_info=True)
+        return {"available": False, "grid": "original", "reason": f"{type(exc).__name__}: {exc}"}
 
 
 ########################################
@@ -467,9 +528,12 @@ def _running_error(rows: list[dict], key: str) -> dict:
     }
 
 
-def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
-                 output_path: Path, backend: str) -> dict:
-    """Run every measurement that can run and write report.json. Never raises on a dead one.
+def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path,
+                                        frames_zarr: Path, output_path: Path,
+                                        backend: str) -> dict:
+    """Run every measurement that can run and write reconstruction_quality_report.json.
+
+    Never raises on a dead measurement.
 
     Measurements are attempted independently: a missing confidence array, an absent
     verification.json or an unreadable frames.zarr each disable exactly one of them.
@@ -491,6 +555,7 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     n = len(r.depth)
     model_res = f"{r.model_width}x{r.model_height}"
     focal_px = float(r.intrinsics[:, 0, 0].mean() + r.intrinsics[:, 1, 1].mean()) / 2.0
+    logger.info("Report on %s: %d frames, model resolution %s", zarr_path, n, model_res)
 
     # One dense pass yields the depth residual, the scale split, the parallax angles and the
     # per-pair depth. abs_thresh stays 0.0: scale invariance holds only there, and that is
@@ -500,12 +565,56 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
         r.depth, r.intrinsics, r.extrinsics, abs_thresh=0.0, rel_thresh=0.05, collect=collected
     )
     depth_m = compute_depth_error(collected, focal_px, model_res)
-    epipolar_m = _load_epipolar(verification_json, image_width=int(r.original_coords[0][4]))
-    photometric_m = _run_photometric(r, frames_zarr, n)
+
+    # Epipolar: verify's tables, read off disk. NOT a measurement — verify made these rows and
+    # the matcher is never re-run here. They are the only rows that never touch depth, which is
+    # why attribution works at all: something that moves here but not in the depth rows is a
+    # pose error. Already original-resolution, since verify estimates from original-resolution
+    # keypoints.
+    image_width = int(r.original_coords[0][4])
+    verification_json = Path(verification_json)
+    if not verification_json.exists():
+        logger.info(
+            "Epipolar: unavailable — no verification.json at %s "
+            "(set pointcloud.geometric_verification: true, or run --stages verify)",
+            verification_json,
+        )
+        epipolar_m = {"available": False, "grid": "original",
+                      "reason": f"no verification.json at {verification_json} — set "
+                      "pointcloud.geometric_verification: true or run --stages verify"}
+    else:
+        t0 = time.perf_counter()
+        logger.info("Epipolar: loading verify tables from %s", verification_json)
+        data = json.loads(verification_json.read_text())
+        # inlier_ratio is the same expression verify already aggregates over at
+        # verification.py:363 (`p.num_inliers / p.num_matches ... if p.num_matches`) — per row
+        # here rather than collapsed to a distribution, so it joins against the depth rows.
+        epi_pairs = []
+        for s in data.get("pair_stats", []):
+            n_m, n_i = s.get("num_matches") or 0, s.get("num_inliers") or 0
+            epi_pairs.append({**s, "frame_separation": abs(s["idx1"] - s["idx2"]),
+                              "inlier_ratio": (n_i / n_m) if n_m else None})
+        # A bare pixel count is not comparable across backbones (a 518 crop against 448x592),
+        # so the fraction of image width ships alongside it.
+        epi_frames = []
+        for name, fs in sorted(data.get("frame_stats", {}).items()):
+            px = fs.get("mean_reproj_error_px")
+            epi_frames.append({**fs, "name": name, "mean_reproj_error_frac_width":
+                               None if px is None else px / image_width})
+        logger.info("Epipolar: %d verified pairs, %d frame reprojection rows, in %.2fs",
+                    len(epi_pairs), len(epi_frames), time.perf_counter() - t0)
+        epipolar_m = {"available": True, "grid": "original",
+                      "resolution": f"width={image_width}",
+                      "units": "degrees; reprojection in px and as a fraction of image width",
+                      "source": str(verification_json), "n_pairs": len(epi_pairs),
+                      "pairs": epi_pairs, "frames": epi_frames}
+
+    photometric_m = extract_photometric(r, frames_zarr, n)
 
     # Per-frame median |residual| — the column both the confidence check and the ranks read.
+    # Scanning every pair per frame makes this O(N * pairs) = O(N^3), so it carries a bar.
     per_frame = {}
-    for k in range(n):
+    for k in tqdm(range(n), desc="Per-frame medians", unit="frame", leave=False):
         v = [abs(p.median_rel_depth_error) for p in collected["pairs"] if k in (p.idx1, p.idx2)]
         if v:
             per_frame[k] = float(np.median(v))
@@ -542,8 +651,16 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     # The row key differs by measurement: depth ships ORDERED directions under
     # "pair_directions", epipolar ships unordered pairs under "pairs". _running_error groups by
     # unordered key either way, so only the lookup name changes.
+    # A channel that never ran must say so. Without the availability guard a dead channel takes
+    # the .get default and ships {"frame_index": [], "cumulative": []} — indistinguishable from a
+    # channel that ran and accumulated nothing, which reads as "error stayed at zero". That is a
+    # verdict, and a false one.
     running = {
-        name: _running_error(m.get(rows_key, []), key)
+        name: (
+            _running_error(m.get(rows_key, []), key)
+            if m.get("available")
+            else {"available": False, "reason": m.get("reason", "measurement unavailable")}
+        )
         for name, rows_key, key, m in (
             ("depth", "pair_directions", "median_rel_depth_error", depth_m),
             ("epipolar", "pairs", "rot_error_deg", epipolar_m),
@@ -600,61 +717,3 @@ def build_report(zarr_path: Path, verification_json: Path, frames_zarr: Path,
     output_path.write_text(json.dumps(clean_for_json(report), indent=2, default=lambda o: o.item()))
     logger.info("Wrote %s (%d measurements available)", output_path, len(report["measurements_available"]))
     return report
-
-
-def _load_epipolar(verification_json: Path, image_width: int) -> dict:
-    """Load verify's tables. Not a measurement — verify made it; the matcher is never re-run.
-
-    These rows are the only ones that never touch depth, which is why attribution works at
-    all: something that moves here but not in the depth rows is a pose error. They are already
-    original-resolution, since verify estimates from original-resolution keypoints.
-    """
-    p = Path(verification_json)
-    if not p.exists():
-        return {"available": False, "reason": f"no verification.json at {p} — set "
-                "pointcloud.geometric_verification: true or run --stages verify",
-                "grid": "original"}
-    data = json.loads(p.read_text())
-
-    rows = []
-    for s in data.get("pair_stats", []):
-        # Same expression verify already aggregates over at verification.py:363
-        # (`p.num_inliers / p.num_matches ... if p.num_matches`) — per row here rather than
-        # collapsed to a distribution, so it can be joined against the depth rows.
-        n_m, n_i = s.get("num_matches") or 0, s.get("num_inliers") or 0
-        rows.append({**s, "frame_separation": abs(s["idx1"] - s["idx2"]),
-                     "inlier_ratio": (n_i / n_m) if n_m else None})
-
-    frames = []
-    for name, fs in sorted(data.get("frame_stats", {}).items()):
-        px = fs.get("mean_reproj_error_px")
-        # A bare pixel count is not comparable across backbones (a 518 crop against 448x592),
-        # so the fraction ships alongside it.
-        frames.append({**fs, "name": name,
-                       "mean_reproj_error_frac_width": None if px is None else px / image_width})
-
-    return {"available": True, "grid": "original", "resolution": f"width={image_width}",
-            "units": "degrees; reprojection in px and as a fraction of image width",
-            "source": str(p), "n_pairs": len(rows), "pairs": rows, "frames": frames}
-
-
-def _run_photometric(r, frames_zarr: Path, n: int) -> dict:
-    """Read original-resolution RGB out of frames.zarr and correlate. Never fatal."""
-    if not Path(frames_zarr).exists():
-        return {"available": False, "reason": f"frames.zarr not found at {frames_zarr}", "grid": "original"}
-    try:
-        # images() returns the selected frames in row order, which is the order the
-        # reconstruction indexes by. frame_indices() is NOT that — it holds source-video
-        # positions, so using it to index would silently mispair depth with RGB.
-        store = FrameStore.open(Path(frames_zarr))
-        rgbs = store.images()[:n].astype(np.float32)
-        m = len(rgbs)
-        # No resolution argument: the function derives it from `rgbs` itself, so the stamped
-        # grid cannot disagree with the grid the numbers were measured on.
-        return compute_photometric_ncc(
-            rgbs, r.depth[:m], r.intrinsics[:m], r.extrinsics[:m],
-            original_coords=r.original_coords[:m],
-        )
-    except Exception as exc:  # noqa: BLE001 — a report must never fail a reconstruction
-        logger.warning("photometric measurement failed: %s", exc, exc_info=True)
-        return {"available": False, "reason": f"{type(exc).__name__}: {exc}", "grid": "original"}

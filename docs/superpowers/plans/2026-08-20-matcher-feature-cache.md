@@ -2,26 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Kill the 12.4× per-image extraction redundancy in `verify()`'s pair-matching loop: descriptor-NN models match precomputed zarr features directly, and loma — the shipping default — gets its pair forward split into per-image and per-pair halves with the per-image half persisted in the existing zarr feature cache, so loma too matches from stored features (extraction inside verify → 0; matching ~1853 s → ~100 s on payload-bearing caches, ~250 s fallback), plus phase-timing instrumentation to attribute the ~658 s residual.
+**Goal:** Kill the 12.4× per-image extraction redundancy in `verify()`'s pair-matching loop: feature-capable models match precomputed zarr features directly, and loma — the shipping default — gets its pair forward split into per-image and per-pair inline branches with the per-image payload persisted in the localization DB, so loma too matches from stored features (extraction inside verify → 0; matching ~1853 s → ~100 s; a payload-less old cache is rebuilt once, ~66 s, not served by a fallback path), plus phase-timing instrumentation to attribute the ~658 s residual.
 
-**Architecture:** `collab_splats/localization/extractors.py` (LocalMatcher: `match()` over kornia mutual-NN gated by static allowlist `_DESCRIPTOR_NN_MODELS`; loma split activated by one boolean `_split_loma_forward` — `_loma_detect_and_describe` / `_loma_match_features` / `_loma_features_cached`; `can_match_features()` as the single dispatch predicate; `LocalFeatures` gains ONE optional field `keypoints_normalized`). `collab_splats/localization/localizer.py` persists/restores that field in the existing zarr cache (one added CSR array — no new cache layer). `collab_splats/geometry/verification.py` dispatches on `can_match_features` and gains phase timings. No runtime probes for the new paths — byte-parity is enforced by GPU parity tests in the suite (env pinned); the pre-existing `_probe_index_stability` is untouched. Fallback for everything else is the current pairwise path, byte-identical.
+**Architecture:** `collab_splats/localization/extractors.py` (LocalMatcher: `match()` — kornia mutual-NN for allowlisted NN models, loma per-pair branch for the split; gating is ONE exported list `FEATURE_MATCH_MODELS`, no predicate methods; the loma per-image half is an inline branch in `extract()` activated by one boolean `_split_loma_forward`; `LocalFeatures` gains ONE optional field `keypoints_normalized`). `collab_splats/localization/localizer.py`: loader renamed `load_reconstruction_features` → `load_localization_db` (the zarr `local_features/<extractor>/reconstruction` group IS the localization DB — pycolmap Database shape) and the save/load pair persists/restores the payload (one added CSR array — no new cache layer, no in-memory cache). `collab_splats/geometry/verification.py` dispatches on `matcher.model_name not in FEATURE_MATCH_MODELS` and gains phase timings. `collab_splats/wrapper/reconstructor.py` `verify()` rebuilds the DB once when a split-capable matcher meets a payload-less cache. `match_images()` fully untouched. No runtime probes for the new paths — byte-parity is enforced by GPU parity tests in the suite (env pinned); the pre-existing `_probe_index_stability` is untouched.
 
 **Tech Stack:** vismatch model zoo (explicit `ImportSandbox` reach-in for loma — vismatch only wraps `__init__`/`_forward`, `vismatch/base_matcher.py:19-30`), `kornia.feature.match_mnn` (kornia 0.8.2 in env), zarr v3 (`compressors=[BloscCodec]`). Spec: `docs/superpowers/specs/2026-08-20-matcher-feature-cache-design.md`.
 
-**Repo rules that bind every task:** stage named files only (never `git add -A`/`.`); commit with `git commit --only <files>`; `docs/superpowers/` needs `git add -f`; python is `/opt/venv/reconstruction/bin/python`; never repo-wide `black .`; lint gate is `ruff check <touched files>` only; GPU runs serial in tmux (single A40).
+**Repo rules that bind every task:** stage named files only (never `git add -A`/`.`); commit with `git commit --only <files>`; `docs/superpowers/` needs `git add -f`; python is `/opt/venv/reconstruction/bin/python`; never repo-wide `black .`; lint gate is `ruff check <touched files>` only; GPU runs serial in tmux (single A40); repo text search with `git grep` (plain `grep -r` hangs under the rtk hook).
 
 **Key parity fact used throughout:** loma's coordinate chain (`to_pixel_coords` → `rescale_coords` → −0.5) is elementwise, so indexing the pre-chained full `keypoints` table by match indices is byte-identical to chaining the indexed subset (what `LoMaMatcher._forward` does, `vismatch/im_models/loma.py:68-102`). Hence NO shape metadata is stored — only `keypoints_normalized` (pre-transform coords the learned matcher consumes) plus the existing `keypoints`/`descriptors`.
 
 ---
 
-### Task 1: Implement the reserved `match()` seam — kornia mutual-NN behind a static allowlist
+### Task 1: Implement the reserved `match()` seam — kornia mutual-NN behind `FEATURE_MATCH_MODELS`
 
 The general path: mutual-NN over precomputed descriptors via `kornia.feature.match_mnn`
 (L2 on unit vectors orders identically to cosine, and match_mnn admits every mutual pair —
-the min_cossim=-1 semantics). Gated by `supports_descriptor_matching`, a property over a
-static allowlist `_DESCRIPTOR_NN_MODELS = {"xfeat"}`; membership is licensed by the Task 5
-GPU parity test, not a runtime probe. (Task 2 extends the guard to `can_match_features` and
-adds the loma branch — this task lands the NN core.)
+the min_cossim=-1 semantics). Gated by membership in ONE exported list,
+`FEATURE_MATCH_MODELS = {"xfeat"}` for now; Task 2 adds `"loma"` together with its branch.
+Membership is licensed by the Task 6 GPU parity test, not a runtime probe.
 
 **Files:**
 - Modify: `collab_splats/localization/extractors.py` (`match()` at ~line 153; imports)
@@ -29,7 +28,8 @@ adds the loma branch — this task lands the NN core.)
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/localization/test_local_matcher.py`:
+Append to `tests/localization/test_local_matcher.py` (add `FEATURE_MATCH_MODELS` to the
+existing `from collab_splats.localization.extractors import ...` line):
 
 ```python
 def _one_hot_features(rows, d=8):
@@ -42,8 +42,8 @@ def _one_hot_features(rows, d=8):
 @patch("vismatch.get_matcher")
 def test_match_mutual_nn_for_allowlisted_model(mock_get):
     mock_get.return_value = _fake_vismatch_matcher()
-    lm = LocalMatcher("xfeat", device="cpu", probe=False)  # "xfeat" is in _DESCRIPTOR_NN_MODELS
-    assert lm.supports_descriptor_matching is True
+    assert "xfeat" in FEATURE_MATCH_MODELS
+    lm = LocalMatcher("xfeat", device="cpu", probe=False)
     q = _one_hot_features([0, 1, 2, 3])
     db = _one_hot_features([3, 2, 1, 0])  # same one-hot basis, permuted rows
     m = lm.match(q, db, image_hw=(100, 100))
@@ -68,8 +68,8 @@ def test_match_empty_descriptors_returns_empty(mock_get):
 
 
 @patch("vismatch.get_matcher")
-def test_match_still_raises_for_non_allowlisted_model(mock_get):
-    # Not in _DESCRIPTOR_NN_MODELS — the NotImplementedError contract survives.
+def test_match_still_raises_for_non_listed_model(mock_get):
+    # Not in FEATURE_MATCH_MODELS — the NotImplementedError contract survives.
     mock_get.return_value = _fake_vismatch_matcher()
     lm = LocalMatcher("roma", device="cpu", probe=False)
     q = _one_hot_features([0, 1])
@@ -78,12 +78,14 @@ def test_match_still_raises_for_non_allowlisted_model(mock_get):
 ```
 
 Note: `test_descriptor_level_match_unsupported` (existing, ~line 103) uses
-"disk-lightglue" — not in the allowlist, keeps passing as-is.
+"disk-lightglue" — not in the list, keeps passing as-is.
 
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_local_matcher.py -v -p no:randomly`
-Expected: 3 new FAIL (`AttributeError: supports_descriptor_matching` / NotImplementedError), existing PASS.
+Expected: collection error — `ImportError: cannot import name 'FEATURE_MATCH_MODELS'` (the
+whole file fails to collect until the constant exists; after a stub constant it would be
+3 new FAIL with NotImplementedError on the xfeat tests).
 
 - [ ] **Step 3: Implement**
 
@@ -97,20 +99,11 @@ Add a module-level constant under the existing `# VisMatch-backed matcher` divid
 blocklists):
 
 ```python
-# Models whose own match stage IS descriptor mutual-NN — match() may serve them from
-# precomputed features. Membership is licensed by a GPU parity test in the suite
-# (test_real_xfeat_general_path_matches_pairwise); extending this set requires a new
-# passing parity test. Never silently substitute NN for a learned matcher.
-_DESCRIPTOR_NN_MODELS = {"xfeat"}
-```
-
-Add the property (after `__init__`):
-
-```python
-    @property
-    def supports_descriptor_matching(self) -> bool:
-        """Whether the NN match() path can serve this model — static allowlist, parity-tested."""
-        return self._model_name in _DESCRIPTOR_NN_MODELS
+# Models match() can serve from precomputed features. "xfeat": its own match stage IS
+# descriptor mutual-NN. "loma" (added with its split): pair forward split into per-image /
+# per-pair halves. Membership is licensed by GPU parity tests in the suite — extending this
+# set requires a new passing parity test. Never silently substitute NN for a learned matcher.
+FEATURE_MATCH_MODELS = {"xfeat"}
 ```
 
 Replace the `match()` body (the NotImplementedError message must keep the substring
@@ -118,14 +111,15 @@ Replace the `match()` body (the NotImplementedError message must keep the substr
 
 ```python
     def match(self, query: LocalFeatures, db: LocalFeatures, image_hw: tuple[int, int]) -> MatchResult:
-        """Descriptor-level mutual-NN match over precomputed features (allowlisted models only).
+        """Feature-level match over precomputed features (FEATURE_MATCH_MODELS only).
 
         Match rows ARE keypoint-table indices by construction — no _recover_indices.
         """
-        if not self.supports_descriptor_matching:
+        if self._model_name not in FEATURE_MATCH_MODELS:
             raise NotImplementedError(
-                f"LocalMatcher('{self._model_name}') has no descriptor-level matching — "
-                "its match stage is not descriptor-NN. Use match_images()."
+                f"LocalMatcher('{self._model_name}') has no feature-level matching "
+                "(not in FEATURE_MATCH_MODELS — its match stage is not parity-proven "
+                "on precomputed features). Use match_images()."
             )
         if len(query.descriptors) == 0 or len(db.descriptors) == 0:
             return _empty_match()
@@ -155,20 +149,20 @@ Expected: all PASS.
 ```bash
 ruff check collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
 git add collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
-git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): descriptor mutual-NN match() via kornia behind static allowlist"
+git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): feature-level match() — kornia mutual-NN behind FEATURE_MATCH_MODELS"
 ```
 
 ---
 
-### Task 2: Loma split — per-image / per-pair halves, `keypoints_normalized`, `can_match_features`
+### Task 2: Loma split — inline per-image / per-pair branches + `keypoints_normalized`
 
 Loma's learned match stage cannot take the NN path. Split its pair forward
 (`vismatch/im_models/loma.py:68-102`, vismatch in `/opt/venv/reconstruction`) into a
-per-image half (`_loma_detect_and_describe`) and a per-pair half (`_loma_match_features`),
-activated by one boolean keyed on the wrapper class name — no registry. `LocalFeatures`
-gains ONE optional field. `can_match_features(f)` becomes the single dispatch predicate.
-Byte-parity with the plain forward is enforced by Task 5's GPU gates; this task's tests are
-mock-level (routing, cache semantics, predicate logic).
+per-image branch in `extract()` and a per-pair branch in `match()` — NO new methods,
+activated by one boolean keyed on the wrapper class name. `LocalFeatures` gains ONE
+optional field. `"loma"` joins `FEATURE_MATCH_MODELS`. `match_images()` untouched.
+Byte-parity with the plain forward is enforced by Task 6's GPU gates; this task's tests
+are mock-level (flag activation, payload guard).
 
 **Files:**
 - Modify: `collab_splats/localization/extractors.py`
@@ -193,78 +187,29 @@ def test_split_flag_off_for_unknown_wrappers(mock_get):
 
 
 @patch("vismatch.get_matcher")
-def test_can_match_features_predicate(mock_get):
-    mock_get.return_value = _fake_vismatch_matcher()
-    with_norm = LocalFeatures(
-        keypoints=torch.zeros((2, 2)), descriptors=torch.zeros((2, 8)),
-        keypoints_normalized=torch.zeros((2, 2)),
-    )
-    without_norm = LocalFeatures(keypoints=torch.zeros((2, 2)), descriptors=torch.zeros((2, 8)))
-    # allowlisted NN model: always True, payload irrelevant
-    lm = LocalMatcher("xfeat", device="cpu", probe=False)
-    assert lm.can_match_features(without_norm) is True
-    # non-allowlisted, no split: always False
-    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
-    assert lm.can_match_features(with_norm) is False
-    # split active (forced — real activation needs the real wrapper): payload decides
-    lm._split_loma_forward = True
-    assert lm.can_match_features(with_norm) is True
-    assert lm.can_match_features(without_norm) is False
-
-
-@patch("vismatch.get_matcher")
-def test_match_raises_for_loma_features_without_payload(mock_get):
+def test_loma_match_without_payload_names_the_rebuild(mock_get):
+    # "loma" is in FEATURE_MATCH_MODELS, so the list guard passes; the split branch then
+    # refuses payload-less features with the rebuild hint (defensive — verify() pre-rebuilds).
     mock_get.return_value = _fake_vismatch_matcher()
     lm = LocalMatcher("loma", device="cpu", probe=False)
-    lm._split_loma_forward = True  # loma not allowlisted; split forced for the unit test
-    bare = LocalFeatures(keypoints=torch.zeros((2, 2)), descriptors=torch.zeros((2, 8)))
-    with pytest.raises(NotImplementedError, match="match_images"):
+    lm._split_loma_forward = True  # real activation needs the real wrapper; forced here
+    bare = LocalFeatures(keypoints=torch.ones((2, 2)), descriptors=torch.ones((2, 8)))
+    with pytest.raises(ValueError, match="rebuild"):
         lm.match(bare, bare, image_hw=(100, 100))
-
-
-@patch("vismatch.get_matcher")
-def test_loma_cache_identity_keyed_and_cleared_at_cap(mock_get):
-    mock_get.return_value = _fake_vismatch_matcher()
-    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
-    calls = []
-
-    def _fake_dnd(img):
-        calls.append(img)
-        return LocalFeatures(
-            keypoints=torch.zeros((1, 2)), descriptors=torch.zeros((1, 8)),
-            keypoints_normalized=torch.zeros((1, 2)),
-        )
-
-    with patch.object(lm, "_loma_detect_and_describe", side_effect=_fake_dnd):
-        a = np.zeros((4, 4, 3), np.uint8)
-        b = np.zeros((4, 4, 3), np.uint8)  # equal content, different object
-        fa = lm._loma_features_cached(a)
-        assert lm._loma_features_cached(a) is fa  # hit: same object, no re-extract
-        lm._loma_features_cached(b)  # miss: identity, not content
-        assert len(calls) == 2
-        # fill to capacity: next insert clears wholesale, then re-extracts
-        for i in range(510):
-            lm._loma_features_cached(np.full((1, 1, 3), i % 255, np.uint8))
-        c = np.ones((4, 4, 3), np.uint8)
-        fc = lm._loma_features_cached(c)  # 513th distinct image -> clear happened before insert
-        assert len(lm._loma_cache) < 512
-        assert lm._loma_features_cached(c) is fc  # still a hit after clear
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_local_matcher.py -v -p no:randomly`
-Expected: 3 new FAIL (`AttributeError: _split_loma_forward` / `can_match_features` /
-`keypoints_normalized` unexpected keyword / `_loma_detect_and_describe` missing for
-patch.object). `test_match_raises_for_loma_features_without_payload` may already pass —
-Task 1's NotImplementedError also carries "match_images"; it pins the contract.
+Expected: 2 new FAIL — `AttributeError: _split_loma_forward`, and on the second test
+NotImplementedError (loma not yet in the list) instead of the ValueError.
 
 - [ ] **Step 3: Implement**
 
 In `extractors.py`:
 
-Top of file — ensure `import sys` is present in the stdlib imports (it is used to reach the
-wrapper module's helpers).
+Top of file — add `import sys` to the stdlib imports (used to reach the wrapper module's
+helpers).
 
 `LocalFeatures` (~line 14) — add one field after `scales`:
 
@@ -272,173 +217,96 @@ wrapper module's helpers).
     keypoints_normalized: torch.Tensor | None = None  # (N, 2) pre-transform coords for the loma split
 ```
 
-Module-level, next to `_DESCRIPTOR_NN_MODELS`:
+`FEATURE_MATCH_MODELS` — add `"loma"`:
 
 ```python
-# Loma feature-cache capacity (match_images path): covers a 300-frame loop with headroom;
-# cleared wholesale at the cap — identity keys are worthless once the caller drops its arrays.
-_LOMA_CACHE_CAP = 512
+FEATURE_MATCH_MODELS = {"xfeat", "loma"}
 ```
 
-In `__init__` (right after `self.has_stable_indices: bool | None = None`):
+In `__init__` (right after `self._matcher = vismatch.get_matcher(...)`):
 
 ```python
         # Loma split: extract-once/match-from-features fast path (spec §2). One wrapper
         # class, one boolean — byte-parity with the plain forward is enforced by GPU suite tests.
         self._split_loma_forward = type(self._matcher).__name__ == "LoMaMatcher"
-        self._loma_cache: dict[int, tuple[np.ndarray, LocalFeatures]] = {}
 ```
 
-`can_match_features` (next to `supports_descriptor_matching`):
+`extract()` (~line 142) — insert the per-image branch after the `hw = image.shape[:2]` line
+(existing body stays as the general path):
 
 ```python
-    def can_match_features(self, features: LocalFeatures) -> bool:
-        """Single dispatch predicate: can match() serve these features for this model?"""
-        if self.supports_descriptor_matching:
-            return True
-        return self._split_loma_forward and features.keypoints_normalized is not None
-```
-
-`extract()` (~line 142) — route the split at the top (existing body stays as the fallback):
-
-```python
-        # Loma split: per-image half directly — skips the wrapper's self-pair match stage
+        # Loma split: per-image half of LoMaMatcher._forward — detect_and_describe once,
+        # replay the wrapper's coord chain (to_pixel_coords -> rescale_coords -> the -0.5
+        # COLMAP offset) over the FULL table, and keep the pre-transform coords the learned
+        # matcher consumes. Indexing a chained table equals chaining an indexed table
+        # (elementwise ops), so match-time pixel coords stay byte-identical. Also skips the
+        # wrapper's self-pair match stage. Sandbox entered explicitly — vismatch only wraps
+        # __init__/_forward.
         if self._split_loma_forward:
-            return self._loma_detect_and_describe(image)
-```
+            from vismatch.import_sandbox import ImportSandbox
 
-`match()` — change the guard from `supports_descriptor_matching` to `can_match_features` on
-both inputs and add the loma branch before the NN code (final body):
-
-```python
-    def match(self, query: LocalFeatures, db: LocalFeatures, image_hw: tuple[int, int]) -> MatchResult:
-        """Feature-level match over precomputed features — allowlisted NN models and the loma split.
-
-        Match rows ARE keypoint-table indices by construction — no _recover_indices.
-        """
-        if not (self.can_match_features(query) and self.can_match_features(db)):
-            raise NotImplementedError(
-                f"LocalMatcher('{self._model_name}') cannot match these features at the "
-                "feature level (no NN allowlist entry / no keypoints_normalized payload). "
-                "Use match_images()."
+            m = self._matcher
+            mod = sys.modules[type(m).__module__]  # wrapper module: to_pixel_coords
+            with ImportSandbox.get(type(m).__module__), torch.inference_mode():
+                img, orig_shape = m.preprocess(self._to_tensor(image))
+                H, W = img.shape[-2:]
+                kpts, desc, _, _ = m.matcher.detect_and_describe(img, m.max_num_keypoints)
+                px = m.rescale_coords(mod.to_pixel_coords(kpts[0], H, W), *orig_shape, H, W) - 0.5
+            feats = LocalFeatures(
+                keypoints=torch.from_numpy(_to_numpy(px)),
+                descriptors=torch.from_numpy(_to_numpy(desc[0])),
+                keypoints_normalized=torch.from_numpy(_to_numpy(kpts[0])),
             )
-        if len(query.descriptors) == 0 or len(db.descriptors) == 0:
-            return _empty_match()
-        if self._split_loma_forward:
-            return self._loma_match_features(query, db)
-        # L2 mutual-NN on unit vectors == cosine mutual-NN; match_mnn admits every mutual pair
-        d0 = torch.nn.functional.normalize(query.descriptors.to(self._device), dim=1)
-        d1 = torch.nn.functional.normalize(db.descriptors.to(self._device), dim=1)
-        _, idxs = match_mnn(d0, d1)
-        if len(idxs) == 0:
-            return _empty_match()
-        idx_q = idxs[:, 0].cpu().numpy().astype(np.int64)
-        idx_db = idxs[:, 1].cpu().numpy().astype(np.int64)
-        return MatchResult(
-            query_px=query.keypoints.numpy()[idx_q],
-            ref_px=db.keypoints.numpy()[idx_db],
-            idx_q=idx_q,
-            idx_db=idx_db,
-        )
+            self._check_pixel_frame(feats.keypoints.numpy(), hw, self._model_name)
+            return feats
 ```
 
-`match_images()` (~line 179) — split branch at the TOP of the body (current code stays
-byte-identical as the fallback):
+`match()` — insert the per-pair branch between the empty guard and the mutual-NN code:
 
 ```python
-        # Loma split: cached per-image halves + feature-level pair match (byte-parity
-        # enforced by the suite's GPU parity tests).
         if self._split_loma_forward:
-            f0 = self._loma_features_cached(query_image)
-            f1 = self._loma_features_cached(ref_image)
-            return self._loma_match_features(f0, f1)
+            # Per-pair half of LoMaMatcher._forward: learned matcher on the stored
+            # pre-transform coords + descriptors, wrapper's filter, native indices.
+            # float32 in is fine — the matcher's autocast recasts at op boundaries
+            # either way (parity-gated).
+            if query.keypoints_normalized is None or db.keypoints_normalized is None:
+                raise ValueError(
+                    "loma feature-level match needs keypoints_normalized — this feature "
+                    "cache predates the payload; rebuild the localization DB "
+                    "(build_localization_db(overwrite=True))."
+                )
+            from vismatch.import_sandbox import ImportSandbox
+
+            m = self._matcher
+            mod = sys.modules[type(m).__module__]  # wrapper module: filter_matches
+            k0 = query.keypoints_normalized.to(self._device).unsqueeze(0)
+            k1 = db.keypoints_normalized.to(self._device).unsqueeze(0)
+            d0 = query.descriptors.to(self._device).unsqueeze(0)
+            d1 = db.descriptors.to(self._device).unsqueeze(0)
+            with ImportSandbox.get(type(m).__module__), torch.inference_mode():
+                scores = m.matcher(k0, k1, d0, d1)["scores"]
+                m0, _, _, _ = mod.filter_matches(scores, m.matcher.cfg.filter_threshold)
+                valid = m0[0] > -1
+                if not bool(valid.any()):
+                    return _empty_match()
+                idx_q = torch.where(valid)[0].cpu().numpy().astype(np.int64)
+                idx_db = m0[0][valid].cpu().numpy().astype(np.int64)
+            return MatchResult(
+                query_px=query.keypoints.numpy()[idx_q],
+                ref_px=db.keypoints.numpy()[idx_db],
+                idx_q=idx_q,
+                idx_db=idx_db,
+            )
 ```
 
-New section at the end of the class (`######## Loma split — per-image / per-pair halves`).
-The halves mirror `vismatch/im_models/loma.py:68-102` (`LoMaMatcher._forward`); the sandbox
-must be entered explicitly because vismatch only wraps `__init__`/`_forward`
-(`vismatch/base_matcher.py:19-30`); wrapper-module helpers (`to_pixel_coords`,
-`filter_matches`) are reached via `sys.modules`:
-
-```python
-    def _loma_detect_and_describe(self, image: np.ndarray) -> LocalFeatures:
-        """Per-image half of LoMaMatcher._forward: preprocess + detect_and_describe + coord chain.
-
-        keypoints_normalized keeps the pre-transform coords the learned matcher consumes;
-        keypoints replays the wrapper's own chain (to_pixel_coords -> rescale_coords -> the
-        -0.5 COLMAP offset) over the FULL table — indexing a chained table equals chaining
-        an indexed table (elementwise ops), so match-time pixel coords stay byte-identical.
-        """
-        from vismatch.import_sandbox import ImportSandbox
-
-        m = self._matcher
-        mod = sys.modules[type(m).__module__]  # wrapper module: to_pixel_coords
-        with ImportSandbox.get(type(m).__module__), torch.inference_mode():
-            img, orig_shape = m.preprocess(self._to_tensor(image))
-            H, W = img.shape[-2:]
-            kpts, desc, _, _ = m.matcher.detect_and_describe(img, m.max_num_keypoints)
-            px = m.rescale_coords(mod.to_pixel_coords(kpts[0], H, W), *orig_shape, H, W) - 0.5
-        feats = LocalFeatures(
-            keypoints=torch.from_numpy(_to_numpy(px)),
-            descriptors=torch.from_numpy(_to_numpy(desc[0])),
-            keypoints_normalized=torch.from_numpy(_to_numpy(kpts[0])),
-        )
-        self._check_pixel_frame(feats.keypoints.numpy(), image.shape[:2], self._model_name)
-        return feats
-
-    def _loma_match_features(self, f0: LocalFeatures, f1: LocalFeatures) -> MatchResult:
-        """Per-pair half of LoMaMatcher._forward on two extracted feature sets.
-
-        Learned matcher on keypoints_normalized + descriptors, filter_matches, native
-        indices; pixel coords by indexing the pre-chained keypoints tables. float32 in is
-        fine — the matcher's autocast recasts at op boundaries either way (parity-gated).
-        """
-        from vismatch.import_sandbox import ImportSandbox
-
-        m = self._matcher
-        mod = sys.modules[type(m).__module__]  # wrapper module: filter_matches
-        k0 = f0.keypoints_normalized.to(self._device).unsqueeze(0)
-        k1 = f1.keypoints_normalized.to(self._device).unsqueeze(0)
-        d0 = f0.descriptors.to(self._device).unsqueeze(0)
-        d1 = f1.descriptors.to(self._device).unsqueeze(0)
-        with ImportSandbox.get(type(m).__module__), torch.inference_mode():
-            scores = m.matcher(k0, k1, d0, d1)["scores"]
-            m0, _, _, _ = mod.filter_matches(scores, m.matcher.cfg.filter_threshold)
-            valid = m0[0] > -1
-            if not bool(valid.any()):
-                return _empty_match()
-            idx_q = torch.where(valid)[0].cpu().numpy().astype(np.int64)
-            idx_db = m0[0][valid].cpu().numpy().astype(np.int64)
-        return MatchResult(
-            query_px=f0.keypoints.numpy()[idx_q],
-            ref_px=f1.keypoints.numpy()[idx_db],
-            idx_q=idx_q,
-            idx_db=idx_db,
-        )
-
-    def _loma_features_cached(self, image: np.ndarray) -> LocalFeatures:
-        """Identity-keyed per-image feature cache for the match_images path; cleared at cap.
-
-        The `is` check makes id() reuse after GC a miss, never a wrong hit. Callers hold
-        their image lists alive for the loop duration, so identity keying is exact and free.
-        """
-        entry = self._loma_cache.get(id(image))
-        if entry is not None and entry[0] is image:
-            return entry[1]
-        if len(self._loma_cache) >= _LOMA_CACHE_CAP:
-            self._loma_cache.clear()
-        feats = self._loma_detect_and_describe(image)
-        self._loma_cache[id(image)] = (image, feats)
-        return feats
-```
-
-The `from vismatch.import_sandbox import ImportSandbox` imports stay inside the methods —
-this is the documented optional-heavy-dep exception (vismatch is already lazy in `__init__`).
+The `from vismatch.import_sandbox import ImportSandbox` imports stay inside the branches —
+the documented optional-heavy-dep exception (vismatch is already lazy in `__init__`).
+`match_images()` is NOT touched.
 
 - [ ] **Step 4: Run the localization suite**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/ -v -p no:randomly`
-Expected: all PASS (plain path untouched; split never activates under mocks — MagicMock's
+Expected: all PASS (plain paths untouched; split never activates under mocks — MagicMock's
 class name is not "LoMaMatcher").
 
 - [ ] **Step 5: Lint + commit**
@@ -446,27 +314,64 @@ class name is not "LoMaMatcher").
 ```bash
 ruff check collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
 git add collab_splats/localization/extractors.py tests/localization/test_local_matcher.py
-git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): loma pair-forward split — feature-level matching via keypoints_normalized"
+git commit --only collab_splats/localization/extractors.py --only tests/localization/test_local_matcher.py -m "feat(localization): loma pair-forward split — inline extract()/match() branches via keypoints_normalized"
 ```
 
 ---
 
-### Task 3: Persist `keypoints_normalized` in the zarr feature cache
+### Task 3: Rename `load_reconstruction_features` → `load_localization_db`
+
+The zarr `local_features/<extractor>/reconstruction` group IS the localization DB
+(pycolmap Database shape); the old name reads as if it loaded reconstruction geometry.
+Mechanical rename across the 6 live code files — historical docs/superpowers files are NOT
+edited (repo rule).
+
+**Files:**
+- Modify: `collab_splats/localization/localizer.py`, `collab_splats/localization/__init__.py`,
+  `collab_splats/wrapper/reconstructor.py`, `evals/scripts/eval_verification.py`,
+  `tests/localization/test_localization_cache.py`, `tests/wrapper/test_verify_stage.py`
+
+- [ ] **Step 1: Rename**
+
+`git grep -n load_reconstruction_features -- '*.py'` — expect exactly the 6 files above.
+Rename every occurrence (definition, imports, calls, and the monkeypatch string
+`"collab_splats.localization.localizer.load_reconstruction_features"` in
+`test_verify_stage.py`). Update the function's docstring to say "localization DB" and any
+log-message strings that carry the old name.
+
+- [ ] **Step 2: Verify + run the touched suites**
+
+`git grep -n load_reconstruction_features -- '*.py'` — expect zero hits.
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/ tests/wrapper/test_verify_stage.py -v -p no:randomly`
+Expected: all PASS.
+
+- [ ] **Step 3: Lint + commit**
+
+```bash
+ruff check collab_splats/localization/localizer.py collab_splats/localization/__init__.py collab_splats/wrapper/reconstructor.py evals/scripts/eval_verification.py tests/localization/test_localization_cache.py tests/wrapper/test_verify_stage.py
+git add collab_splats/localization/localizer.py collab_splats/localization/__init__.py collab_splats/wrapper/reconstructor.py evals/scripts/eval_verification.py tests/localization/test_localization_cache.py tests/wrapper/test_verify_stage.py
+git commit --only collab_splats/localization/localizer.py --only collab_splats/localization/__init__.py --only collab_splats/wrapper/reconstructor.py --only evals/scripts/eval_verification.py --only tests/localization/test_localization_cache.py --only tests/wrapper/test_verify_stage.py -m "refactor(localization): rename load_reconstruction_features to load_localization_db"
+```
+
+---
+
+### Task 4: Persist `keypoints_normalized` in the localization DB
 
 `build_localization_db` already runs `detect_and_describe` on every image; this persists
 what is currently computed and thrown away. One CSR-aligned float32 array next to
-`keypoints`. Old caches without the array are NOT backfilled (mv_* precedent: absent, never
-zeros) — they load as `keypoints_normalized=None` and loma falls back to pairwise.
+`keypoints`, written only when EVERY frame carries it — a zero-filled normalized table
+would be wrong data, unlike scores/scales (absent, never zeros — mv_* precedent). Old
+caches load as `keypoints_normalized=None` (Task 5 makes `verify()` rebuild them once).
 
 **Files:**
-- Modify: `collab_splats/localization/localizer.py` (`save_index` ~line 284; `load_reconstruction_features` ~line 112)
+- Modify: `collab_splats/localization/localizer.py` (`save_index` ~line 284; `load_localization_db` ~line 112)
 - Test: `tests/localization/test_localizer.py`
 
 - [ ] **Step 1: Write the failing tests**
 
 Append to `tests/localization/test_localizer.py` (imports `LocalFeatures`, `LocalMatcher`,
-`CameraLocalizer`, `load_reconstruction_features`, `MagicMock`, `numpy`, `torch` — add any
-missing to the file's import block):
+`CameraLocalizer`, `load_localization_db`, `MagicMock`, `numpy`, `torch` — add any missing
+to the file's import block):
 
 ```python
 def _norm_feats(n=5, d=8, with_norm=True):
@@ -494,7 +399,7 @@ def _localizer_replaying(feats):
 def test_save_load_roundtrips_keypoints_normalized(tmp_path):
     feats = [_norm_feats() for _ in range(3)]
     _localizer_replaying(feats).save_index(tmp_path / "ff.zarr", "loma")
-    loaded, _, _ = load_reconstruction_features(tmp_path / "ff.zarr", "loma")
+    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
     for orig, got in zip(feats, loaded):
         assert got.keypoints_normalized is not None
         np.testing.assert_array_equal(got.keypoints_normalized.numpy(), orig.keypoints_normalized.numpy())
@@ -505,15 +410,15 @@ def test_save_omits_keypoints_normalized_when_any_frame_lacks_it(tmp_path):
     # is written only when every frame carries it; otherwise absent, never zeros.
     feats = [_norm_feats(), _norm_feats(with_norm=False), _norm_feats()]
     _localizer_replaying(feats).save_index(tmp_path / "ff.zarr", "loma")
-    loaded, _, _ = load_reconstruction_features(tmp_path / "ff.zarr", "loma")
+    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
     assert all(f.keypoints_normalized is None for f in loaded)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_localizer.py -v -p no:randomly`
-Expected: first test FAIL (`AttributeError`/`AssertionError`: loaded `keypoints_normalized`
-missing); second may already pass — that's fine, it pins the omission contract.
+Expected: first test FAIL (loaded `keypoints_normalized` is None); second may already pass —
+that's fine, it pins the omission contract.
 
 - [ ] **Step 3: Implement**
 
@@ -538,7 +443,7 @@ missing); second may already pass — that's fine, it pins the omission contract
             )
 ```
 
-`load_reconstruction_features` — next to the `scores`/`scales` reads (~line 146):
+`load_localization_db` — next to the `scores`/`scales` reads (~line 146):
 
 ```python
     all_norm = rec_group["keypoints_normalized"][:] if "keypoints_normalized" in rec_group else None
@@ -562,46 +467,38 @@ Expected: all PASS (existing cache tests unchanged — the new array is optional
 ```bash
 ruff check collab_splats/localization/localizer.py tests/localization/test_localizer.py
 git add collab_splats/localization/localizer.py tests/localization/test_localizer.py
-git commit --only collab_splats/localization/localizer.py --only tests/localization/test_localizer.py -m "feat(localization): persist keypoints_normalized in the zarr feature cache"
+git commit --only collab_splats/localization/localizer.py --only tests/localization/test_localizer.py -m "feat(localization): persist keypoints_normalized in the localization DB"
 ```
 
 ---
 
-### Task 4: verification.py dispatch — feature-level path via `can_match_features`
+### Task 5: verification dispatch via `FEATURE_MATCH_MODELS` + rebuild-once in `verify()`
 
-`verify_reconstruction` currently forces every `LocalMatcher` down the pairwise path
-(`verification.py:184`/`:221`). Route feature-capable matchers (allowlisted NN models AND
-loma on payload-bearing caches) to the existing feature-level else-branch: no images
-touched, no extraction, match rows are table indices.
+Two consumers of the new paths. (a) `verify_reconstruction` currently forces every
+`LocalMatcher` down the pairwise path (`verification.py:184`/`:221`) — route
+`FEATURE_MATCH_MODELS` members to the existing feature-level else-branch: no images
+touched, no extraction, match rows are table indices. Existing mock fixtures need ZERO
+edits: a `MagicMock` `model_name` is never in the set, so they stay pairwise. (b)
+`Reconstructor.verify()` rebuilds the localization DB once (~66 s) when a split-capable
+matcher meets a payload-less old cache — no degraded fallback path.
 
 **Files:**
 - Modify: `collab_splats/geometry/verification.py:182-237`
-- Test: `tests/geometry/test_verification.py`
+- Modify: `collab_splats/wrapper/reconstructor.py` (`verify()`, ~lines 1117-1140)
+- Test: `tests/geometry/test_verification.py`, `tests/wrapper/test_verify_stage.py`
 
-- [ ] **Step 1: Update the fixtures + write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-In `tests/geometry/test_verification.py`, EVERY `MagicMock(spec=LocalMatcher)` construction
-(three sites: `_pairwise_matcher` ~line 95, and the inline mocks ~lines 228 and 244) gets one
-line added right after its `has_stable_indices` assignment:
-
-```python
-    matcher.can_match_features.return_value = False
-```
-
-(MagicMock(spec=…) returns a truthy child mock for unset attributes — without this every old
-pairwise test would silently take the new feature-level path.)
-
-Append the new test (uses the existing `_synthetic_scene`/`_make_recon`/
-`_features_from_keypoints` helpers):
+Append to `tests/geometry/test_verification.py` (uses the existing `_synthetic_scene`/
+`_make_recon`/`_features_from_keypoints` helpers):
 
 ```python
 def test_feature_capable_localmatcher_skips_images(tmp_path):
-    """A feature-capable LocalMatcher takes the feature-level branch: match() on features,
+    """A FEATURE_MATCH_MODELS matcher takes the feature-level branch: match() on features,
     match_images and `images` untouched, no stable-indices requirement."""
     _, extrinsics, kps = _synthetic_scene()
     matcher = MagicMock(spec=LocalMatcher)
-    matcher.model_name = "stub-feature-capable"
-    matcher.can_match_features.return_value = True
+    matcher.model_name = "xfeat"  # in FEATURE_MATCH_MODELS -> feature-level dispatch
     matcher.has_stable_indices = False  # irrelevant on the feature-level path
 
     def _match(query, db, image_hw):
@@ -625,25 +522,69 @@ def test_feature_capable_localmatcher_skips_images(tmp_path):
     assert result.summary["n_points"] > 0
 ```
 
-- [ ] **Step 2: Run tests to verify the new one fails**
+In `tests/wrapper/test_verify_stage.py`, extend `_stub_verify_call` and add the rebuild test:
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py -v -p no:randomly`
-Expected: new test FAIL (`ValueError: pairwise matcher requires \`images\`` — the isinstance
-branch fires), existing PASS.
+- `_stub_verify_call` gains an optional `load_fn=None` parameter; when given, it replaces
+  the default load lambda in the monkeypatch (target string is now
+  `"collab_splats.localization.localizer.load_localization_db"` after Task 3).
+- Replace `r.build_localization_db = lambda: None` with kwargs capture, and return it:
+
+```python
+    rebuilds = []
+    r.build_localization_db = lambda **kw: rebuilds.append(kw)
+    ...
+    return captured, accesses, rebuilds
+```
+
+  (Update the two existing callers' unpacking. Note verify()'s unconditional up-front
+  `build_localization_db()` call records `{}` as the first entry.)
+
+```python
+def test_verify_rebuilds_db_when_loma_payload_missing(tmp_path, monkeypatch):
+    """Split-capable matcher + payload-less cache: one rebuild + reload before verification."""
+    matcher = MagicMock(spec=LocalMatcher)
+    matcher.has_stable_indices = True
+    matcher._split_loma_forward = True  # assignment is allowed on spec mocks; get-after-set works
+    stale = SimpleNamespace(keypoints_normalized=None)
+    fresh = SimpleNamespace(keypoints_normalized=np.zeros((1, 2), np.float32))
+    loads = []
+
+    def _load(path, name):
+        loads.append(name)
+        feats = [stale, stale] if len(loads) == 1 else [fresh, fresh]
+        return feats, ["frame_000003.jpg", "frame_000007.jpg"], (4, 4)
+
+    captured, _, rebuilds = _stub_verify_call(tmp_path, monkeypatch, matcher, load_fn=_load)
+    assert rebuilds == [{}, {"overwrite": True}]  # up-front build, then the payload rebuild
+    assert len(loads) == 2  # reloaded after the rebuild
+    assert captured["features"] == [fresh, fresh]
+```
+
+The two existing `_stub_verify_call` tests must keep passing WITHOUT edits to their
+matchers: the reconstructor reads the flag via `getattr(matcher, "_split_loma_forward",
+False)` — unset on the spec mock and absent on the SimpleNamespace stub, so the rebuild
+block never touches their string-typed features.
+
+- [ ] **Step 2: Run tests to verify the new ones fail**
+
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py tests/wrapper/test_verify_stage.py -v -p no:randomly`
+Expected: `test_feature_capable_localmatcher_skips_images` FAIL (`ValueError: pairwise
+matcher requires \`images\`` — the isinstance branch fires);
+`test_verify_rebuilds_db_when_loma_payload_missing` FAIL (`rebuilds == [{}]`, one load);
+existing PASS.
 
 - [ ] **Step 3: Implement the dispatch**
 
-In `verification.py`, replace the guard block (starting `if isinstance(matcher, LocalMatcher):`
-~line 184) with:
+In `verification.py`, add `FEATURE_MATCH_MODELS` to the existing
+`from collab_splats.localization.extractors import ...` line, and replace the guard block
+(starting `if isinstance(matcher, LocalMatcher):` ~line 184) with:
 
 ```python
-    # Feature-capable LocalMatchers (NN allowlist, or loma with a payload-bearing cache)
-    # match precomputed features directly — no images, no extraction. Everything else
-    # pairwise: those must prove index stability up front — a silent skip here would
-    # surface later as a missing verification.json with no explanation.
-    pairwise = isinstance(matcher, LocalMatcher) and not all(
-        matcher.can_match_features(f) for f in features
-    )
+    # FEATURE_MATCH_MODELS members (NN-parity models + the loma split) match precomputed
+    # features directly — no images, no extraction. Everything else pairwise: those must
+    # prove index stability up front — a silent skip here would surface later as a missing
+    # verification.json with no explanation.
+    pairwise = isinstance(matcher, LocalMatcher) and matcher.model_name not in FEATURE_MATCH_MODELS
     if pairwise:
         if not matcher.has_stable_indices:
             raise ValueError(
@@ -661,27 +602,49 @@ In `verification.py`, replace the guard block (starting `if isinstance(matcher, 
 In the pair loop (~line 221), change the branch condition from
 `if isinstance(matcher, LocalMatcher):` to `if pairwise:` (both branch bodies stay as they are).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Implement rebuild-once in `reconstructor.py` `verify()`**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py tests/localization/test_local_matcher.py -v -p no:randomly`
+Move the `matcher = LocalMatcher(extractor_name)` construction (currently ~line 1137)
+ABOVE the `load_localization_db` call (~line 1125), then insert after the load, BEFORE the
+stem check:
+
+```python
+        # Loma matches from stored features (keypoints_normalized). A cache from before
+        # that array existed gets rebuilt once (~1 min) — no degraded fallback path.
+        # getattr: duck-typed test stubs and non-split matchers lack the attribute.
+        if getattr(matcher, "_split_loma_forward", False) and any(
+            f.keypoints_normalized is None for f in features
+        ):
+            logger.info("verify(): feature cache lacks keypoints_normalized — rebuilding localization DB")
+            self.build_localization_db(overwrite=True)
+            features, ids, _ = load_localization_db(
+                self.backend_dir / "feedforward.zarr", extractor_name
+            )
+```
+
+(Private-attr read from inside the package — accepted, commented.)
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py tests/wrapper/test_verify_stage.py tests/localization/test_local_matcher.py -v -p no:randomly`
 Expected: all PASS.
 
-- [ ] **Step 5: Lint + commit**
+- [ ] **Step 6: Lint + commit**
 
 ```bash
-ruff check collab_splats/geometry/verification.py tests/geometry/test_verification.py
-git add collab_splats/geometry/verification.py tests/geometry/test_verification.py
-git commit --only collab_splats/geometry/verification.py --only tests/geometry/test_verification.py -m "feat(geometry): feature-level dispatch via can_match_features in verification"
+ruff check collab_splats/geometry/verification.py collab_splats/wrapper/reconstructor.py tests/geometry/test_verification.py tests/wrapper/test_verify_stage.py
+git add collab_splats/geometry/verification.py collab_splats/wrapper/reconstructor.py tests/geometry/test_verification.py tests/wrapper/test_verify_stage.py
+git commit --only collab_splats/geometry/verification.py --only collab_splats/wrapper/reconstructor.py --only tests/geometry/test_verification.py --only tests/wrapper/test_verify_stage.py -m "feat(geometry): feature-level verification dispatch + one-time localization DB rebuild"
 ```
 
 ---
 
-### Task 5: GPU parity tests (real models — the load-bearing gates that license the fast paths)
+### Task 6: GPU parity tests (real models — the load-bearing gates that license the fast paths)
 
 With no runtime probes, THESE tests are the equivalence mechanism: the loma split must be
-byte-identical to the plain forward (extract, match_images, and match-after-zarr-roundtrip),
-and xfeat's `match()` must equal its own `match_images`. Extending `_DESCRIPTOR_NN_MODELS`
-or adding another wrapper split requires adding a new passing test here.
+byte-identical to the plain forward (extract, and match-after-zarr-roundtrip), and xfeat's
+`match()` must equal its own `match_images`. Extending `FEATURE_MATCH_MODELS` requires
+adding a new passing test here.
 
 **Files:**
 - Test: `tests/localization/test_local_matcher.py` (append; CUDA-gated)
@@ -714,8 +677,8 @@ def test_real_loma_split_extract_parity():
 
 
 @requires_cuda
-def test_real_loma_split_match_parity_and_zarr_roundtrip(tmp_path):
-    """match_images (split) and match() after a zarr save/load both == plain pair forward."""
+def test_real_loma_split_match_parity_after_zarr_roundtrip(tmp_path):
+    """match() on zarr-roundtripped split features == the plain pair forward, byte-identical."""
     lm = LocalMatcher("loma")
     a, b = _real_pair(seed=4)
     # reference: plain wrapper forward
@@ -724,14 +687,7 @@ def test_real_loma_split_match_parity_and_zarr_roundtrip(tmp_path):
     lm._split_loma_forward = True
     assert len(ref) > 0
 
-    # split path through match_images (in-memory cache)
-    fast = lm.match_images(a, b)
-    np.testing.assert_array_equal(fast.query_px, ref.query_px)
-    np.testing.assert_array_equal(fast.ref_px, ref.ref_px)
-    np.testing.assert_array_equal(fast.idx_q, ref.idx_q)  # native == recovered (probe-exact)
-    np.testing.assert_array_equal(fast.idx_db, ref.idx_db)
-
-    # zarr roundtrip: extract -> save via CameraLocalizer -> load -> match()
+    # extract -> save via CameraLocalizer -> load -> match()
     feats = [lm.extract(a), lm.extract(b)]
     extractor = MagicMock(spec=LocalMatcher)
     extractor.extract.side_effect = list(feats)
@@ -743,22 +699,19 @@ def test_real_loma_split_match_parity_and_zarr_roundtrip(tmp_path):
         extractor=extractor,
     )
     loc.save_index(tmp_path / "ff.zarr", "loma")
-    from collab_splats.localization.localizer import load_reconstruction_features
-
-    loaded, _, _ = load_reconstruction_features(tmp_path / "ff.zarr", "loma")
-    assert lm.can_match_features(loaded[0]) and lm.can_match_features(loaded[1])
+    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
+    assert all(f.keypoints_normalized is not None for f in loaded)
     m = lm.match(loaded[0], loaded[1], image_hw=a.shape[:2])
     np.testing.assert_array_equal(m.query_px, ref.query_px)
     np.testing.assert_array_equal(m.ref_px, ref.ref_px)
-    np.testing.assert_array_equal(m.idx_q, ref.idx_q)
+    np.testing.assert_array_equal(m.idx_q, ref.idx_q)  # native == recovered (probe-exact)
     np.testing.assert_array_equal(m.idx_db, ref.idx_db)
 
 
 @requires_cuda
 def test_real_xfeat_general_path_matches_pairwise():
-    """Parity gate for _DESCRIPTOR_NN_MODELS entry 'xfeat' — match() == match_images()."""
+    """Parity gate for the FEATURE_MATCH_MODELS entry 'xfeat' — match() == match_images()."""
     lm = LocalMatcher("xfeat")
-    assert lm.supports_descriptor_matching is True
     a, b = _real_pair(seed=5)
     m = lm.match(lm.extract(a), lm.extract(b), image_hw=a.shape[:2])
     ref = lm.match_images(a, b)
@@ -768,8 +721,8 @@ def test_real_xfeat_general_path_matches_pairwise():
     np.testing.assert_array_equal(m.idx_db[order_m], ref.idx_db[order_ref])
 ```
 
-(The `load_reconstruction_features` import inside the test keeps the module import block
-untouched — move it to the top-of-file imports instead if Task 3 already added it there.)
+Add `load_localization_db` to the file's top import block (from
+`collab_splats.localization.localizer`) if Task 4's tests did not already.
 
 - [ ] **Step 2: Run on the A40 (serial — no concurrent GPU jobs)**
 
@@ -777,22 +730,21 @@ Run: `/opt/venv/reconstruction/bin/python -m pytest tests/localization/test_loca
 Expected: 3 PASS. **If any fails, STOP — do not weaken the assertions.** For loma: diff the
 halves tensor-by-tensor (extract parity first; then dtype — if `detect_and_describe`
 returns bf16 tensors, the float32 store must be shown equivalent under the matcher's
-autocast, and if it is not, keep original-dtype tensors in the in-memory path and record
-the dtype in zarr attrs for cast-on-load). For xfeat: read the vismatch xfeat wrapper's
-match stage — if it thresholds cossim or is not plain mutual-NN, remove "xfeat" from
-`_DESCRIPTOR_NN_MODELS` (Task 1's non-allowlisted tests then cover it) and record why in
-the spec.
+autocast, and if it is not, record the dtype in zarr attrs and cast on load). For xfeat:
+read the vismatch xfeat wrapper's match stage — if it thresholds cossim or is not plain
+mutual-NN, remove "xfeat" from `FEATURE_MATCH_MODELS` (Task 1's non-listed tests then
+cover it) and record why in the spec.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add tests/localization/test_local_matcher.py
-git commit --only tests/localization/test_local_matcher.py -m "test(localization): GPU parity gates licensing the loma split + xfeat allowlist"
+git commit --only tests/localization/test_local_matcher.py -m "test(localization): GPU parity gates licensing FEATURE_MATCH_MODELS"
 ```
 
 ---
 
-### Task 6: Phase-timing instrumentation (the residual-attribution work)
+### Task 7: Phase-timing instrumentation (the residual-attribution work)
 
 The ~658 s residual has never been measured directly. Instrument `verify_reconstruction`'s
 phases into `summary["phase_seconds"]` (lands in verification.json automatically) and log
@@ -800,7 +752,7 @@ the reconstructor-side cold-start phases.
 
 **Files:**
 - Modify: `collab_splats/geometry/verification.py`
-- Modify: `collab_splats/wrapper/reconstructor.py` (`verify()`, ~lines 1107-1157)
+- Modify: `collab_splats/wrapper/reconstructor.py` (`verify()`)
 - Test: `tests/geometry/test_verification.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -866,10 +818,11 @@ right after `output_dir.mkdir(...)`. Then:
 object and the log line carry the real value. Note this in a comment.)
 
 `reconstructor.py` `verify()`: add `import time` to the stdlib import block if it is not
-already there. Wrap the three cold-start phases with
-`logger.info("verify(): %s took %.1f s", name, dt)` lines: `build_localization_db()`,
-`load_reconstruction_features(...)`, `LocalMatcher(extractor_name)` construction (model load
-+ index-stability probe — the cold start the residual analysis needs).
+already there. Wrap the cold-start phases with
+`logger.info("verify(): %s took %.1f s", name, dt)` lines: `build_localization_db()`
+(including the rebuild-once branch), `load_localization_db(...)`, and the
+`LocalMatcher(extractor_name)` construction (model load + index-stability probe — the cold
+start the residual analysis needs).
 
 - [ ] **Step 4: Run tests**
 
@@ -886,7 +839,7 @@ git commit --only collab_splats/geometry/verification.py --only collab_splats/wr
 
 ---
 
-### Task 7: CLAUDE.md stale architecture line
+### Task 8: CLAUDE.md stale architecture line
 
 **Files:**
 - Modify: `CLAUDE.md` (architecture tree, `localization/` block)
@@ -899,7 +852,7 @@ Replace:
 ```
 with:
 ```
-    extractors.py          # Stage 2: LocalMatcher over the vismatch model zoo (allowlist-gated fast paths)
+    extractors.py          # Stage 2: LocalMatcher over the vismatch model zoo (FEATURE_MATCH_MODELS fast paths)
 ```
 
 - [ ] **Step 2: Commit**
@@ -911,7 +864,7 @@ git commit --only CLAUDE.md -m "docs: fix stale extractors.py line — legacy ma
 
 ---
 
-### Task 8: Evidence runs (tmux, serial, human-gated compute)
+### Task 9: Evidence runs (tmux, serial, human-gated compute)
 
 Measured, not assumed. Two runs against the spec's baselines: per-pair 993.8 ms and full
 verify() 2511.6 s on `/workspace/outputs/2026_07_15-Goprosplat-GH010229` (vggt_omega + loma).
@@ -996,7 +949,8 @@ print(f"[verify_bench] total {time.perf_counter() - t0:.1f} s (baseline 2511.6 s
 ```
 
 Note: `verify(overwrite=True)` reruns `build_localization_db`, so the rebuilt cache carries
-`keypoints_normalized` and the run exercises the zero-extraction feature-level path.
+`keypoints_normalized` and the run exercises the zero-extraction feature-level path. (The
+rebuild-once branch is exercised anyway if the existing cache predates the payload.)
 
 - [ ] **Step 3: Run both in tmux (nothing else on the GPU, sequential)**
 

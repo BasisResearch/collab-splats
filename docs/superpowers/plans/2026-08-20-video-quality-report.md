@@ -824,13 +824,15 @@ git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
 
 ### Task 6: `match_orb` and `compute_translation`
 
+**Pre-verified against the current tree (2026-08-21), every assertion below holds with margin:** on `noise_gray` vs `np.roll(noise_gray, 17, axis=1)`, `match_orb` returns **539** float32 `(N, 2)` pairs (the test asserts > 200) and `compute_translation` returns **exactly 17.0** (asserted to ±1.0 — the roll's wrap-around seam matches are a small enough minority that the median is untouched). `n_features` 50 → **26** matches against 1000 → **533**. A flat 50x50 frame gives `desc is None` on both sides, so the empty `(0, 2)` return path is genuinely exercised.
+
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Add `match_orb` and `compute_translation` to the `from collab_splats.preproc.qa import ...` line. Append to `tests/preproc/test_qa.py`:
+Add `match_orb` and `compute_translation` **inside the parentheses** of the `from collab_splats.preproc.qa import (...)` block, keeping the trailing comma and alphabetical order. Append to `tests/preproc/test_qa.py`:
 
 ```python
 ########################################################################
@@ -942,13 +944,23 @@ git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
 
 The three-case test below is the whole task. Delete any one case and the remaining two make `parallax` look like a self-sufficient "is there depth here" number, which it is not.
 
+**Pre-verified over 40 MAGSAC draws (2026-08-21) — zero variance, because the synthetic correspondences are noise-free:**
+
+| case | `parallax` (min = max) | asserted | `translation` |
+|---|---|---|---|
+| volume + translate | **0.8067** | > 0.5 | 51.83 |
+| rotation only | **0.0000** | < 0.1 | 45.07 |
+| plane + translate | **0.0000** | < 0.1 | 50.00 |
+
+The Step 4 three-times loop is still worth running — MAGSAC *is* randomized, and it is real footage in Task 10 where the margins narrow. n = 7 returns `nan`.
+
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Add `compute_parallax` to the `from collab_splats.preproc.qa import ...` line. Append to `tests/preproc/test_qa.py`:
+Add `compute_parallax` **inside the parentheses** of the `from collab_splats.preproc.qa import (...)` block, keeping the trailing comma and alphabetical order. Append to `tests/preproc/test_qa.py`:
 
 ```python
 def _project(points_3d):
@@ -1075,13 +1087,19 @@ Decodes once and matches each frame against its partner `motion_stride` frames b
 
 The payload is **columnar** (a dict of lists), not a list of row dicts. Measured on the 2388-frame tutorial video: 632,651 bytes, 264 bytes/frame.
 
+**Pre-verified against the current tree (2026-08-21):**
+- `get_video_info` **never raises** — it returns `{"total_frames": 0, "fps": 0.0, "duration_s": 0.0, "width": 0, "height": 0}` on an unprobeable file, and `_iter_frames` returns immediately when either dim is 0. So the `available: False` branch is reached by falling through an empty loop, not by catching anything. Its keys are exactly the five above, which is why the `video` block is those five plus `path` and `mtime`.
+- `tiny_video`: 60 frames @ 30.00 fps, so `round(fps)` is 30 and the default stride leaves 30 pairs; `motion_stride=5` leaves 55. Minimum ORB match count is **427** at stride 30 and **581** at stride 5, so `min(n_matches) > 0` holds with room. Note the fixture returns a **`str`**, not a `Path` — `Path(video_path)` in the implementation absorbs that.
+- The flat mp4v video decodes to exactly 20 frames and its gray is `min == max == 0`, giving `clipped_low_frac == 1.0`. mp4v's YUV round-trip does *not* lift black off zero, so that assertion is not fragile.
+- `tqdm` 4.67.3 is installed and `tqdm.auto` imports. `import collab_splats.preproc` does not pull in `scipy.stats`, so the Step 6 layering gate is already green before the task starts.
+
 **Files:**
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Add `compute_video_quality` to the `from collab_splats.preproc.qa import ...` line and add `import json` and `import logging` at the top of the file. Append to `tests/preproc/test_qa.py`:
+Add `compute_video_quality` **inside the parentheses** of the `from collab_splats.preproc.qa import (...)` block, keeping the trailing comma and alphabetical order, and add `import json` and `import logging` to the test file's own imports. Append to `tests/preproc/test_qa.py`:
 
 **Do not define a `tiny_video` fixture here.** Task 1's cleanup commit (`62a0352c`) created `tests/preproc/conftest.py` holding a session-scoped `tiny_video` with exactly the properties these tests need — 60 frames, 320×240, 30 fps, noise texture plus a moving square. Redefining it in this file would shadow the shared one and re-encode the mp4 a third time. Just take it as a fixture argument.
 

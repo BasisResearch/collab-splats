@@ -156,3 +156,46 @@ def compute_frame_quality(bgr: np.ndarray) -> dict:
     blur = compute_blur(_analysis_gray(bgr))
 
     return {**blur, **exposure}
+
+
+########################################################################
+# Per pair
+########################################################################
+
+
+def match_orb(gray_a: np.ndarray, gray_b: np.ndarray, *, n_features: int = 1000) -> tuple[np.ndarray, np.ndarray]:
+    """ORB keypoints matched mutually between two grayscale frames as Nx2 float32 arrays."""
+    # Detect and describe each frame independently — no shared state, so the
+    # measurement never depends on which frames were selected before this pair.
+    orb = cv2.ORB_create(nfeatures=n_features)
+    kp_a, desc_a = orb.detectAndCompute(gray_a, None)
+    kp_b, desc_b = orb.detectAndCompute(gray_b, None)
+
+    # A featureless frame yields no descriptors at all. Return empty rather than
+    # raise: zero matches is a fact about the video, not an error.
+    empty = (np.empty((0, 2), np.float32), np.empty((0, 2), np.float32))
+    if desc_a is None or desc_b is None:
+        return empty
+
+    # ORB descriptors are binary, hence Hamming distance. crossCheck keeps only
+    # mutual best matches, which removes the need for a Lowe ratio test.
+    matches = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(desc_a, desc_b)
+    if not matches:
+        return empty
+
+    # Pull the pixel coordinates behind each match into two aligned Nx2 arrays
+    pts_a = np.array([kp_a[m.queryIdx].pt for m in matches], np.float32).reshape(-1, 2)
+    pts_b = np.array([kp_b[m.trainIdx].pt for m in matches], np.float32).reshape(-1, 2)
+    return pts_a, pts_b
+
+
+def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
+    """Median match displacement in pixels — how far image content moved between the pair."""
+    # nan, not 0.0: with no matches the displacement is unknown, and 0.0 would
+    # read as "the camera held perfectly still", the opposite conclusion.
+    if len(pts_a) == 0:
+        return float("nan")
+
+    # Median over per-match displacement, so a handful of bad matches cannot
+    # drag the number the way a mean would.
+    return float(np.median(np.linalg.norm(pts_b - pts_a, axis=1)))

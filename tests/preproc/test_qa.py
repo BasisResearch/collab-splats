@@ -9,6 +9,8 @@ from collab_splats.preproc.qa import (
     compute_blur_score,
     compute_exposure,
     compute_frame_quality,
+    compute_translation,
+    match_orb,
 )
 
 ########################################################################
@@ -215,3 +217,41 @@ def test_compute_frame_quality_reads_blur_at_analysis_resolution(clipped_bgr):
     # Blur must go through _analysis_gray; assert by equality with the explicit path
     expected = compute_blur(_analysis_gray(clipped_bgr))["blur"]
     assert compute_frame_quality(clipped_bgr)["blur"] == pytest.approx(expected)
+
+
+########################################################################
+# Per pair
+########################################################################
+
+
+def test_match_orb_returns_paired_float32_arrays(noise_gray):
+    pts_a, pts_b = match_orb(noise_gray, np.roll(noise_gray, 17, axis=1))
+    assert pts_a.shape == pts_b.shape
+    assert pts_a.shape[1] == 2
+    assert pts_a.dtype == np.float32
+    assert len(pts_a) > 200
+
+
+def test_match_orb_respects_n_features(noise_gray):
+    few, _ = match_orb(noise_gray, np.roll(noise_gray, 5, axis=1), n_features=50)
+    many, _ = match_orb(noise_gray, np.roll(noise_gray, 5, axis=1), n_features=1000)
+    assert len(few) < len(many)
+
+
+def test_match_orb_on_featureless_frames_returns_empty():
+    # A flat image has no corners, so ORB returns no descriptors at all
+    flat = np.zeros((50, 50), np.uint8)
+    pts_a, pts_b = match_orb(flat, flat)
+    assert len(pts_a) == 0 and len(pts_b) == 0
+    assert pts_a.shape == (0, 2)
+
+
+def test_compute_translation_recovers_known_shift(noise_gray):
+    # Roll the image 17 px right; the median match displacement must be 17 px
+    pts_a, pts_b = match_orb(noise_gray, np.roll(noise_gray, 17, axis=1))
+    assert compute_translation(pts_a, pts_b) == pytest.approx(17.0, abs=1.0)
+
+
+def test_compute_translation_is_nan_without_matches():
+    empty = np.empty((0, 2), np.float32)
+    assert np.isnan(compute_translation(empty, empty))

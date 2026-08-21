@@ -855,7 +855,7 @@ git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \
 - Modify: `collab_splats/preproc/qa.py`
 - Modify: `tests/preproc/test_qa.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `match_orb` and `compute_translation` **inside the parentheses** of the `from collab_splats.preproc.qa import (...)` block, keeping the trailing comma and alphabetical order. Append to `tests/preproc/test_qa.py`:
 
@@ -898,12 +898,12 @@ def test_compute_translation_is_nan_without_matches():
     assert np.isnan(compute_translation(empty, empty))
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: collection error, `ImportError: cannot import name 'match_orb'`
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 Append to `collab_splats/preproc/qa.py`:
 
@@ -951,12 +951,12 @@ def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
     return float(np.median(np.linalg.norm(pts_b - pts_a, axis=1)))
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_qa.py -v`
 Expected: 5 more tests pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit --only collab_splats/preproc/qa.py tests/preproc/test_qa.py \

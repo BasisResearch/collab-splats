@@ -127,6 +127,7 @@ def test_import_all_modules():
         "collab_splats.utils.torch_utils",
         "collab_splats.preproc",
         "collab_splats.preproc.video",
+        "collab_splats.preproc.qa",
         "collab_splats.preproc.sampling",
         "collab_splats.nerfstudio.utils.camera_utils",
         "collab_splats.wrapper.splatter",

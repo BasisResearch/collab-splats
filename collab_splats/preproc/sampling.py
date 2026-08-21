@@ -3,7 +3,7 @@
 Sampling methods are fps, uniform, and optical_flow. Capture-quality
 measurement and the quality gate live in collab_splats.preproc.qa; decoding and
 video metadata live in collab_splats.preproc.video; cv2 is used here for
-in-memory image operations only (grayscale, resize, LK flow).
+in-memory image operations only (LK flow, histogram comparison, BGR->RGB).
 """
 
 from __future__ import annotations

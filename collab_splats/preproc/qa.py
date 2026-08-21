@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 ########################################################################
-# Constants — pre-existing gate values, unchanged
+# Constants — gate-only. Report functions take tuning as keyword args.
 ########################################################################
 
 # Analysis frames are downscaled to this width before scoring — bounds LK flow

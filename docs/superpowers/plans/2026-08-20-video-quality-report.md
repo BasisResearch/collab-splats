@@ -399,7 +399,7 @@ __all__ = [
 
 - [x] **Step 4: Move the gate tests**
 
-Create `tests/preproc/test_qa.py` by moving the whole `Quality gate` block out of `tests/preproc/test_sampling.py`: the `#### Quality gate ####` divider, its `# isort: split` barrier and the `check_frame_quality, compute_blur_score` import beneath it, the `_sharp_gray()` helper, and six tests — `test_compute_blur_score_sharp_exceeds_blurred`, `test_check_frame_quality_accepts_sharp_frame`, `test_check_frame_quality_rejects_blurred_frame`, `test_check_frame_quality_rejects_bad_exposure`, `test_check_frame_quality_metrics_fields`, `test_check_frame_quality_uses_precomputed_blur_score`.
+Create `tests/preproc/test_qa.py` by moving the whole `Quality gate` block out of `tests/preproc/test_sampling.py`: the `#### Quality gate ####` divider, its `# isort: split` barrier and the `check_frame_quality, compute_blur_score` import beneath it, the `_sharp_gray()` helper (Step 9 replaces it with a shared fixture), and six tests — `test_compute_blur_score_sharp_exceeds_blurred`, `test_check_frame_quality_accepts_sharp_frame`, `test_check_frame_quality_rejects_blurred_frame`, `test_check_frame_quality_rejects_bad_exposure`, `test_check_frame_quality_metrics_fields`, `test_check_frame_quality_uses_precomputed_blur_score`.
 
 **Locate the block by grep, not by line number** — `62a0352c` moved the `tiny_video` fixture to `conftest.py` and added the `# isort: split` barrier, shifting everything:
 
@@ -411,7 +411,7 @@ The block runs from the `Quality gate` divider to the line before the next `####
 
 **Two corrections found while executing this step:**
 
-**`_sharp_gray` is copied, not moved.** `test_selector_first_frame_scores_one` and `test_selector_identical_frame_scores_low` in the **Selector** section also call it, so moving it leaves two `F821 undefined name` failures behind. Same resolution as Task 1's `tiny_video`: copy the four-line helper into `test_qa.py` and leave it in `test_sampling.py`, now under the Selector divider where its remaining callers live. It is deterministic (`default_rng(1)`), so the two copies cannot drift in behaviour.
+**`_sharp_gray` has callers on both sides of the cut.** `test_selector_first_frame_scores_one` and `test_selector_identical_frame_scores_low` in the **Selector** section also call it, so moving it leaves two `F821 undefined name` failures behind. This step shipped it as a *copy* in both files, justified as "the same reason Task 1 copied the `tiny_video` fixture" — **that precedent does not exist**: Task 1 *moved* `tiny_video` into `conftest.py` and converted it to a session fixture, leaving zero duplication. Step 9 corrects the copy the same way.
 
 **The `# isort: split` barrier stays in `test_sampling.py`.** It is not a guard on the one import beneath it — `isort` treats it as a whole-file split. Measured by piping the file through `isort` with and without it: removing the barrier hoists the **Selector** section's import into the top block. The Samplers imports are *not* hoisted — real code between them and the top block already blocks it. So the barrier protects one import, not three, but it is still load-bearing and must stay. Move the divider label, keep the barrier: after the cut, `# isort: split` sits directly above the Selector section's import. `test_qa.py` needs no barrier — its one import is already in the top block.
 
@@ -461,6 +461,34 @@ git add collab_splats/preproc/ tests/preproc/
 git commit -m "refactor(preproc): extract qa.py — sampling.py is now selection only"
 ```
 
+- [ ] **Step 9: Apply the code-quality review findings**
+
+Three defects the spec-compliance pass could not see, all follow-ons to the move rather than errors in it.
+
+**`qa.py` was documented nowhere.** Sphinx `automodule` filters members on `__module__`, and neither module defines `__all__`, so once `check_frame_quality.__module__` became `collab_splats.preproc.qa`, the `sampling` page stopped rendering it and no `qa` page existed to pick it up. `compute_blur_score` and `check_frame_quality` fell off the docs entirely. Task 1 set the precedent — `62a0352c` added the `video` block *in the same commit as the move*. Add to `docs/source/api/preproc.rst`, between the `video` and `sampling` blocks so the file reads in import order:
+
+```rst
+.. automodule:: collab_splats.preproc.qa
+   :members:
+   :show-inheritance:
+```
+
+and correct the intro prose, which still said `sampling` did the quality gating. **There is no docs-build test** (`tests/docs/` is notebook-only), so nothing catches this class of break — every later task that adds a module must add its block by hand.
+
+**`_sharp_gray` becomes one session fixture.** Move it to `tests/preproc/conftest.py` as `noise_gray` and delete both copies. The "conftest hosts fixtures, not plain helpers" objection dissolves once it *is* a fixture. Seed changes `default_rng(1)` → `default_rng(0)` so Task 3's blur ladder can reuse it; the gate tests are threshold-robust (they derive thresholds from the data, or assert a ratio) so nothing re-pins — measured sharp/blurred ratio 41205× on seed 0 vs 39983× on seed 1, against an assertion of >10×. No caller mutates the array, so session scope is safe; the docstring says so.
+
+**`_ANALYSIS_WIDTH` is the gate's, not the report's.** The standing constraint is zero module constants in the new report code. Retitle the divider to `# Constants — gate-only. Report functions take tuning as keyword args.` so Tasks 3-8 do not reach for it.
+
+Also: `tests/test_cu121_migration.py` gains `"collab_splats.preproc.qa"` (it listed `video` and `sampling` but not `qa`), and `sampling.py`'s docstring drops its claim that cv2 is used there for "grayscale, resize" — both left with `_analysis_gray`; the surviving `cvtColor` calls are BGR→RGB output.
+
+**Rejected: removing `qa.py`'s unused `logging` import and `logger`.** Flagged as inconsistent with dropping `blur_effect` for being unused, but `logger = logging.getLogger(__name__)` is per-module boilerplate, not a function-specific import — `frame_store.py` already carries one with zero call sites. Task 8's `compute_video_quality` uses it. F401 does not fire because `logger` consumes the import.
+
+```bash
+/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ tests/test_cu121_migration.py -q -p no:randomly 2>&1 | tail -3
+git add collab_splats/preproc/ tests/preproc/ tests/test_cu121_migration.py docs/source/api/preproc.rst
+git commit -m "docs(preproc): document qa.py and fold _sharp_gray into a shared fixture"
+```
+
 ---
 
 ### Task 3: `compute_blur`
@@ -479,21 +507,16 @@ import pytest
 from collab_splats.preproc.qa import check_frame_quality, compute_blur, compute_blur_score
 ```
 
-`import pytest` is added here, not inherited: Task 2 shipped `test_qa.py` without it because none of the six moved gate tests used it, and flake8 flags unused imports (`F401` is not in `pyproject.toml`'s `extend-ignore`). This step is the first to need `@pytest.fixture` and `pytest.approx`. `cv2` and `numpy` are already in the file's header from Task 2.
+`import pytest` is added here, not inherited: Task 2 shipped `test_qa.py` without it because none of the six moved gate tests used it, and flake8 flags unused imports (`F401` is on by flake8's default select — note `pyproject.toml`'s `[tool.flake8]` block is inert, see Task 2's notes). This step is the first to need `@pytest.fixture` and `pytest.approx`. `cv2` and `numpy` are already in the file's header from Task 2.
 
 Append to `tests/preproc/test_qa.py`:
+
+**Do not define a `noise_gray` fixture here.** Task 2's review-fix commit put a session-scoped `noise_gray` in `tests/preproc/conftest.py` — 240x320 uniform noise, `default_rng(0)` — and both `test_qa.py` and `test_sampling.py` already take it as a fixture argument. Just take it as an argument too. It is shared across the session, so never write into it; blur a copy instead (`cv2.GaussianBlur` returns a new array, so the tests below are already safe).
 
 ```python
 ########################################################################
 # Per frame
 ########################################################################
-
-
-@pytest.fixture(scope="module")
-def noise_gray():
-    """240x320 uniform noise — maximum high-frequency content, the sharp end of the ladder."""
-    rng = np.random.default_rng(0)
-    return (rng.random((240, 320)) * 255).astype(np.uint8)
 
 
 def test_compute_blur_keys(noise_gray):
@@ -537,7 +560,7 @@ Expected: collection error, `ImportError: cannot import name 'compute_blur'`
 
 - [ ] **Step 3: Write the minimal implementation**
 
-**First add the import.** Task 2 deliberately shipped `qa.py` *without* `from skimage.measure import blur_effect` — flake8 is configured in `pyproject.toml` with `F401` not in `extend-ignore`, so an unused import fails the lint. This step is where it becomes used, so add it now:
+**First add the import.** Task 2 deliberately shipped `qa.py` *without* `from skimage.measure import blur_effect` — `F401 imported but unused` is on by flake8's default select, so an unused import fails the lint. This step is where it becomes used, so add it now:
 
 ```python
 from skimage.measure import blur_effect

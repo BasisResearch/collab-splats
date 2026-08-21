@@ -14,15 +14,9 @@ from collab_splats.preproc.sampling import _fps_targets, _uniform_targets
 from collab_splats.preproc.sampling import OpticalFlowFrameSelector, _combine_scores
 
 
-def _sharp_gray():
-    """High-frequency noise — very high Laplacian variance."""
-    rng = np.random.default_rng(1)
-    return (rng.random((240, 320)) * 255).astype(np.uint8)
-
-
-def test_selector_first_frame_scores_one():
+def test_selector_first_frame_scores_one(noise_gray):
     selector = OpticalFlowFrameSelector()
-    score, components = selector.score_frame(_sharp_gray())
+    score, components = selector.score_frame(noise_gray)
     assert score == 1.0
     assert components == {"disparity": 0.0, "rotation": 0.0, "histogram_similarity": 1.0}
 
@@ -36,9 +30,9 @@ def test_selector_scores_are_normalized():
         assert 0.0 <= score <= 1.0
 
 
-def test_selector_identical_frame_scores_low():
+def test_selector_identical_frame_scores_low(noise_gray):
     selector = OpticalFlowFrameSelector()
-    gray = _sharp_gray()
+    gray = noise_gray
     selector.score_frame(gray)  # seeds keyframe
     score, components = selector.score_frame(gray)
     # No motion, near-identical histogram → low combined score

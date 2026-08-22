@@ -57,7 +57,7 @@ Overall aim: better rendering → better mesh.
 collab_splats/splats/
   __init__.py
   trainer.py    # SplatsConfig + train(cfg, scene_dir, out_dir) -> dict   (~300 LOC)
-  losses.py     # LossSpec + compute_losses(step, out, batch, specs)     (~60 LOC)
+  losses.py     # compute_losses(step, out, batch, losses)               (~60 LOC)
   cameras.py    # CameraOptModule, vendored + attributed                  (~40 LOC)
 ```
 

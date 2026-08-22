@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace `collab_splats/nerfstudio/` + `wrapper/splatter.py` (gsplat-rade fork + nerfstudio fork) with a ~300-LOC `collab_splats/splats/` package that trains 3DGS/2DGS splats on upstream gsplat from an existing pointcloud stage, and lets `mesh` fuse the rendered depth instead of feedforward depth.
+**Goal:** Replace `collab_splats/nerfstudio/` + `wrapper/splatter.py` (gsplat-rade fork + nerfstudio fork) with a small `collab_splats/splats/` package that trains 3DGS/2DGS splats on upstream gsplat from an existing pointcloud stage, wired in as leaf stage `splats`.
 
-**Architecture:** Three files — `trainer.py` (config + one loop + save), `losses.py` (scheduled weighted sum over `gsplat.losses`), `cameras.py` (vendored `CameraOptModule`). `train()` takes plain arrays (images/poses/K/points/colors); `Reconstructor.splats()` does the ~20-line assembly from `PointcloudResult` + `FrameStore` + `feedforward.zarr`. Outputs under `<backend>/splats/`: `splats.ply`, `ckpt.pt`, `splats.zarr` (rendered rgb/depth/normal/alpha + poses), `splats_quality_report.json`. New leaf stage `splats` (`_STAGE_DEPS == ["pointcloud"]`); `mesh.source: splats` reads `splats.zarr` through the existing `get_mesh_creator` path.
+**Architecture:** Five focused files — `cameras.py` (vendored pose refinement), `losses.py` (scheduled weighted sum over `gsplat.losses`), `rendering.py` (one `render_view` for both primitives), `trainer.py` (config, Gaussian init, training loop), `outputs.py` (ply / ckpt / rendered zarr / quality report). `train()` takes plain arrays; `Reconstructor.splats()` assembles them from `PointcloudResult` + `FrameStore` + `feedforward.zarr`. Training happens in the COLMAP world frame (no normalisation) so outputs line up with every other stage artifact.
 
-**Tech Stack:** gsplat upstream pinned at commit `90d7b4b` (git source, `no-build-isolation`), torch, zarr v3, pycolmap (already present), pytest. Python: `/opt/venv/reconstruction/bin/python`.
+**Tech Stack:** gsplat upstream pinned at commit `90d7b4b` (git source, `no-build-isolation`), torch, zarr v3, numpy, sklearn (kNN), pytest. Python: `/opt/venv/reconstruction/bin/python`.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-splats-module-design.md`
 
@@ -14,17 +14,22 @@
 
 ## Binding conventions (read before any task)
 
-- Run everything with `/opt/venv/reconstruction/bin/python` (alias below as `$PY`). `export PY=/opt/venv/reconstruction/bin/python`.
-- Commit with `git commit --only <files>` (shared index race, see memory). Check `ls .git/sequencer 2>/dev/null` is empty before committing. Plans/specs need `git add -f docs/superpowers/...`.
-- Never run repo-wide `black .`. Format only the files you touched: `$PY -m black <file> && $PY -m isort <file>`. Black line length 120, isort wraps at 88 — write long imports parenthesized.
-- Code style: imports at top (heavy deps inline only inside `Reconstructor` stage methods, matching `mesh()`/`verify()`), `logging` not print, block comments, `########` dividers, one-line docstrings, flat test functions.
-- CUDA tests: mark with `pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")`. Don't run CUDA tests while another heavy job is in tmux (46.6 GB cgroup cap).
-- Vendored code cites repo + commit + file + lines at the site (feedback memory `attribute-ported-code`).
-- **Working tree is shared with a concurrent session.** At plan-writing time `pyproject.toml`, `uv.lock`, `configs/base.yaml`, `collab_splats/remote/rerun.py`, `docs/examples/run_pipeline_remote.py`, `tests/examples/test_run_pipeline_remote.py`, `data/tutorial/README.md` already had foreign unstaged edits. Before Task 1 run `git status --short`; if those are still dirty, `git diff pyproject.toml configs/base.yaml` and keep the foreign hunks intact — commit only your own hunks (`git add -p` then `git commit --only` is NOT enough; use `git add -p <file>` + `git commit` without `--only` for those specific files, or wait for the other session to land).
+- **Work in a worktree.** Task 0 creates `../collab-splats-splats` on branch `feat/splats-module` off `refactor/cu121-uv-migration`. Every later command runs from that worktree. The main checkout has foreign unstaged edits (`pyproject.toml`, `uv.lock`, `configs/base.yaml`, …) from a concurrent session — the worktree sidesteps them.
+- `export PY=/opt/venv/reconstruction/bin/python` and use `$PY` everywhere. The venv is editable-installed against the MAIN checkout, so in the worktree always run with `PYTHONPATH=<worktree>` (`export PYTHONPATH=$PWD`) and confirm `$PY -c "import collab_splats; print(collab_splats.__file__)"` prints the worktree path (memory: mesh-native-res trap — editable install silently imports HEAD).
+- Commit with `git commit --only <files>`; check `ls .git/sequencer 2>/dev/null` is empty first. Plans/specs need `git add -f docs/superpowers/...`.
+- Never run repo-wide `black .`. Format only touched files: `$PY -m black <paths> && $PY -m isort <paths>`. Black 120 / isort 88 — write long imports parenthesized.
+- **Readability rules (user-mandated for this module):**
+  - Every logical block gets a one-line comment saying what it does. Blocks are separated by a blank line.
+  - Docstrings open with `"""` on its own line, text on the next line, closing `"""` on its own line (see `collab_splats/preproc/frame_store.py`).
+  - Names say what things are: `cam_to_world` not `c2w`, `n_views` not `N`, `write_splat_outputs` not `_save`.
+  - `########` dividers between major sections.
+- CUDA tests: `pytest.mark.skipif(not torch.cuda.is_available(), ...)`. Do not run CUDA tests while a heavy tmux job is running (46.6 GB cgroup cap).
+- Vendored code cites repo + commit + file + lines at the site.
 
-### Spec deviation recorded here (update spec in Task 9)
+### Spec deviations recorded here (Task 9 writes them back into the spec)
 
-The spec says depth-loss targets come from COLMAP `points3D` tracks. **Feedforward reconstructions carry no `Point2D` tracks** — `build_pycolmap_reconstruction` (`collab_splats/pointcloud/feedforward/base.py:747`) adds points with empty tracks, so that path would be inert for the primary use case. Depth targets instead come from `feedforward.zarr` `depth` (model-res, dense) masked by `confidence_mask(confidence, mesh.conf_percentile)` — the same depth + mask the `mesh` stage already trusts — resized nearest to frame resolution inside the trainer. `train()` takes them as an optional `(N, h, w)` float32 array with `0 = no target`, so the trainer stays decoupled from zarr and the synthetic test can pass analytic depth.
+1. **Depth-loss targets.** Spec says COLMAP `points3D` tracks. Feedforward reconstructions carry NO `Point2D` tracks (`build_pycolmap_reconstruction`, `collab_splats/pointcloud/feedforward/base.py:747`, adds points with empty tracks) — that path would be inert. Targets instead come from `feedforward.zarr` `depth` masked by `confidence_mask(confidence, mesh.conf_percentile)` — the depth the `mesh` stage already trusts — resized nearest to frame resolution inside the trainer. `train()` receives an optional `(n_views, h, w)` float32 array, `0 = no target`.
+2. **`mesh.source: splats` is deferred** to a follow-on plan. This plan ends at the `splats` stage producing `splats.zarr`; `mesh` keeps reading `feedforward.zarr`. No `mesh.source` key is added now.
 
 ---
 
@@ -33,39 +38,62 @@ The spec says depth-loss targets come from COLMAP `points3D` tracks. **Feedforwa
 **Create**
 - `collab_splats/splats/__init__.py` — exports `SplatsConfig`, `train`.
 - `collab_splats/splats/cameras.py` — vendored `CameraOptModule`, `rotation_6d_to_matrix`.
-- `collab_splats/splats/losses.py` — `compute_losses(step, out, batch, losses, scene_scale)`.
-- `collab_splats/splats/trainer.py` — `SplatsConfig`, `_create_splats_with_optimizers`, `_gaussian_normals`, `_render`, `train`, `_save`.
-- `tests/splats/__init__.py`, `tests/splats/test_cameras.py`, `tests/splats/test_losses.py`, `tests/splats/test_trainer.py`
+- `collab_splats/splats/losses.py` — `active_weight`, `compute_losses`.
+- `collab_splats/splats/rendering.py` — `gaussian_normals_in_camera_frame`, `render_view`.
+- `collab_splats/splats/trainer.py` — `SplatsConfig`, `compute_scene_scale`, `init_gaussians_from_points`, `make_pose_refiner`, `prepare_training_target`, `train`.
+- `collab_splats/splats/outputs.py` — `render_all_views`, `write_splat_outputs`.
+- `tests/splats/__init__.py`, `tests/splats/synthetic.py` (shared synthetic scene), `tests/splats/test_cameras.py`, `test_losses.py`, `test_rendering.py`, `test_trainer.py`, `test_outputs.py`
 - `tests/wrapper/test_splats_stage.py`
 
 **Modify**
-- `pyproject.toml` — gsplat source → upstream `90d7b4b`; drop nerfstudio dep/source/entry points; description.
-- `setup.sh`, `Dockerfile`, `README.md` — gsplat-rade/nerfstudio wording.
+- `pyproject.toml`, `setup.sh`, `Dockerfile`, `README.md` — gsplat pin + nerfstudio removal.
 - `tests/test_cu121_migration.py` — module list + gsplat assertions.
-- `collab_splats/__init__.py`, `collab_splats/wrapper/__init__.py`, `collab_splats/wrapper/config.py` — strip Splatter exports.
-- `collab_splats/wrapper/reconstructor.py` — drop `nerfstudio` method; add `splats` stage; `mesh.source`.
-- `configs/base.yaml` — drop `nerfstudio:`; add `splats:` + `mesh.source`.
-- `configs/README.md`, `CLAUDE.md`, `collab_splats/mesh/tsdf.py` comments, `docs/source/conf.py`, `docs/source/getting_started.md`.
+- `collab_splats/__init__.py`, `collab_splats/wrapper/__init__.py`, `collab_splats/wrapper/config.py` — strip Splatter.
+- `collab_splats/wrapper/reconstructor.py` — drop `nerfstudio` method; add `splats` stage.
+- `configs/base.yaml` — drop `nerfstudio:`; add `splats:`.
+- `configs/README.md`, `CLAUDE.md`, `collab_splats/mesh/tsdf.py` comments, `docs/source/{conf.py,index.rst,getting_started.md,api/wrapper.rst,tutorials/index.rst}`, `docs/source/tutorials/02_pointcloud/feedforward_mesh.ipynb` (one markdown sentence).
 
 **Delete**
-- `collab_splats/nerfstudio/`, `collab_splats/wrapper/splatter.py`, `tests/nerfstudio_methods/`, `tests/test_models.py`, `tests/wrapper/test_splatter_mesh.py`, `tests/wrapper/test_splatter_query.py`.
+- `collab_splats/nerfstudio/`, `collab_splats/wrapper/splatter.py`, `tests/nerfstudio_methods/`, `tests/test_models.py`, `tests/wrapper/test_splatter_mesh.py`, `tests/wrapper/test_splatter_query.py`, `docs/source/tutorials/03_splats/`, `docs/source/tutorials/06_mesh/`.
 
 ---
 
-### Task 1: Swap gsplat to upstream, drop nerfstudio dependency
+### Task 0: Worktree
+
+- [ ] **Step 1: Create the worktree**
+
+```bash
+cd /workspace/collab-splats
+git worktree add ../collab-splats-splats -b feat/splats-module refactor/cu121-uv-migration
+cd ../collab-splats-splats
+export PY=/opt/venv/reconstruction/bin/python PYTHONPATH=$PWD
+$PY -c "import collab_splats; print(collab_splats.__file__)"
+```
+Expected: prints `/workspace/collab-splats-splats/collab_splats/__init__.py`. If it prints the main checkout, `PYTHONPATH` is not exported — fix before continuing.
+
+- [ ] **Step 2: Baseline**
+
+Run: `$PY -m pytest tests/wrapper/test_verify_stage.py -q`
+Expected: PASS (proves the worktree + venv combination works).
+
+---
+
+### Task 1: Swap gsplat to upstream, drop nerfstudio dependency (incl. Dockerfile)
 
 **Files:**
-- Modify: `pyproject.toml` (lines 4, 74–76, 93–95, 179–181, 210–211, 258, 262)
-- Modify: `setup.sh:12,55,60,63`, `Dockerfile:2,4,13,19,50`, `README.md:30,45,52`
-- Modify: `tests/test_cu121_migration.py:122-133,174-237`
+- Modify: `pyproject.toml` (lines 4, 74–76, 93–95, 179–181, 210–211, 258, 262), `setup.sh:12,55,60,63`, `Dockerfile:2,4,13,19,50`, `README.md:30,45,52`, `tests/test_cu121_migration.py:122-133,174-237`
+
+The Dockerfile only runs `setup.sh` / `uv sync`, so the lock file drives what gets installed; its edits here are comment/wording only. A full image rebuild is verification owed after this plan, not part of it.
 
 - [ ] **Step 1: Write the failing dependency test**
 
-Replace `test_gsplat_rade_fork` (line ~174) and `test_gsplat_not_overwritten` (line ~179) in `tests/test_cu121_migration.py` with:
+In `tests/test_cu121_migration.py` replace `test_gsplat_rade_fork` and `test_gsplat_not_overwritten` (~174–190) with:
 
 ```python
 def test_gsplat_upstream_pinned():
-    """gsplat is upstream nerfstudio-project/gsplat at >= 90d7b4b: has gsplat.losses + 2DGS + extra_signals."""
+    """
+    gsplat is upstream nerfstudio-project/gsplat @ 90d7b4b: gsplat.losses, 2DGS and extra_signals exist.
+    """
     import inspect
 
     import gsplat
@@ -76,58 +104,47 @@ def test_gsplat_upstream_pinned():
     assert "extra_signals" in inspect.signature(gsplat.rasterization).parameters
 ```
 
-Delete `test_nerfstudio_installed_local` (lines ~212–237) entirely.
-
-In the module list (lines ~122–133) replace every `"collab_splats.nerfstudio.*"` and `"collab_splats.wrapper.splatter"` entry with:
+Delete `test_nerfstudio_installed_local` (~212–237). In the module list (~122–133) replace every `"collab_splats.nerfstudio.*"` and `"collab_splats.wrapper.splatter"` entry with:
 
 ```python
         "collab_splats.splats",
-        "collab_splats.splats.trainer",
-        "collab_splats.splats.losses",
         "collab_splats.splats.cameras",
+        "collab_splats.splats.losses",
+        "collab_splats.splats.rendering",
+        "collab_splats.splats.trainer",
+        "collab_splats.splats.outputs",
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `$PY -m pytest tests/test_cu121_migration.py::test_gsplat_upstream_pinned -v`
-Expected: FAIL — `ImportError: cannot import name 'depth_l1_loss' from 'gsplat.losses'` (or `No module named 'gsplat.losses'`).
+Expected: FAIL — `ImportError` on `gsplat.losses`.
 
 - [ ] **Step 3: Edit pyproject.toml**
 
-Line 258, replace:
+Line 258, replace `gsplat = { git = "https://github.com/brian-xu/gsplat-rade.git" }` with:
 ```toml
-gsplat = { git = "https://github.com/brian-xu/gsplat-rade.git" }
-```
-with:
-```toml
-# Upstream gsplat, main @ 2026-08-20 (reports version 1.6.0 but no tag exists; v1.5.3 lacks
-# gsplat.losses + the fast 3DGS kernel). Bump the rev deliberately — extra_signals/2DGS APIs move.
+# Upstream gsplat, main @ 2026-08-20 (reports 1.6.0 but no tag exists; v1.5.3 lacks gsplat.losses
+# and the fast 3DGS kernel). Bump the rev deliberately — extra_signals / 2DGS APIs move.
 gsplat = { git = "https://github.com/nerfstudio-project/gsplat.git", rev = "90d7b4b" }
 ```
+Line 262: delete the `nerfstudio = { git = ... }` source. Lines 93–95: delete the nerfstudio comment + `"nerfstudio",`. Lines 74–76: comment → `# gsplat: upstream, built from source against the cu121 toolchain (see [tool.uv.sources])`. Lines 179–181: delete `[project.entry-points."nerfstudio.method_configs"]`. Lines 210–211: delete the `tests/nerfstudio_methods` pytest comment. Line 4: description → `"Feedforward reconstruction, Gaussian-splat training, meshing and localization pipeline"`. Keep `no-build-isolation-package = ["bae", "gsplat"]`.
 
-Line 262: delete the `nerfstudio = { git = ... }` source line.
-Lines 93–95: delete the nerfstudio comment + `"nerfstudio",` dependency entry.
-Lines 74–76: reword comment to `# gsplat: upstream, built from source against the cu121 toolchain (see [tool.uv.sources])`.
-Lines 179–181: delete the `[project.entry-points."nerfstudio.method_configs"]` table.
-Lines 210–211: delete the pytest comment referencing `tests/nerfstudio_methods`.
-Line 4: description → `"Feedforward reconstruction, Gaussian-splat training, meshing and localization pipeline"`.
-Keep line 247–248 `no-build-isolation-package = ["bae", "gsplat"]`.
+- [ ] **Step 4: Reword shell/docker/readme**
 
-- [ ] **Step 4: Reword shell/docker/readme references**
-
-`setup.sh` lines 12, 55, 60, 63: replace `gsplat-rade` → `gsplat (upstream)`; keep the import smoke (`python -c "import gsplat"`), drop any `rasterization_2dgs_inria_wrapper` mention if present.
-`Dockerfile` lines 2, 4, 13, 19, 50: replace `gsplat-rade`/`nerfstudio` wording with `gsplat`; delete any `ns-*` install line.
-`README.md` lines 30, 45, 52: `gsplat-rade` → `gsplat` and drop the nerfstudio install sentence.
+`setup.sh` 12, 55, 60, 63: `gsplat-rade` → `gsplat`; keep the `import gsplat` smoke; drop any `rasterization_2dgs_inria_wrapper` probe.
+`Dockerfile` 2, 4, 13, 19, 50: `gsplat-rade` → `gsplat`, drop "installs nerfstudio" wording.
+`README.md` 30, 45, 52: `gsplat-rade` → `gsplat`; delete the nerfstudio install sentence.
 
 - [ ] **Step 5: Re-lock and sync**
 
-Run: `cd /workspace/collab-splats && uv lock && uv sync`
-Expected: lock resolves; gsplat builds from source (several minutes, needs CUDA toolchain). `uv.lock` must no longer contain `gsplat-rade` or `nerfstudio`: `grep -c 'gsplat-rade\|name = "nerfstudio"' uv.lock` → `0`.
+Run: `uv lock && uv sync`
+Expected: gsplat builds from source (minutes). Then `grep -c 'gsplat-rade\|name = "nerfstudio"' uv.lock` → `0`.
 
-- [ ] **Step 6: Run test to verify it passes**
+- [ ] **Step 6: Run test**
 
-Run: `$PY -m pytest tests/test_cu121_migration.py -v -k "gsplat or import"`
-Expected: `test_gsplat_upstream_pinned PASSED`. The module-import test will FAIL on `collab_splats.splats` until Task 3 — that is expected; note it and move on.
+Run: `$PY -m pytest tests/test_cu121_migration.py -v -k gsplat`
+Expected: PASS. (The module-import test fails on `collab_splats.splats` until Task 3 — expected.)
 
 - [ ] **Step 7: Commit**
 
@@ -138,11 +155,13 @@ git commit --only pyproject.toml uv.lock setup.sh Dockerfile README.md tests/tes
 
 ---
 
-### Task 2: Retire the nerfstudio package and Splatter
+### Task 2: Retire nerfstudio, Splatter, and their tutorials
 
 **Files:**
-- Delete: `collab_splats/nerfstudio/`, `collab_splats/wrapper/splatter.py`, `tests/nerfstudio_methods/`, `tests/test_models.py`, `tests/wrapper/test_splatter_mesh.py`, `tests/wrapper/test_splatter_query.py`
-- Modify: `collab_splats/__init__.py`, `collab_splats/wrapper/__init__.py:10-16`, `collab_splats/wrapper/config.py:1`, `collab_splats/wrapper/reconstructor.py:54,715-716,887-…`, `configs/base.yaml:111-114`, `configs/README.md:324`, `CLAUDE.md:91-92`, `collab_splats/mesh/tsdf.py:22,119`, `docs/source/conf.py:40`, `docs/source/getting_started.md:13`
+- Delete: `collab_splats/nerfstudio/`, `collab_splats/wrapper/splatter.py`, `tests/nerfstudio_methods/`, `tests/test_models.py`, `tests/wrapper/test_splatter_mesh.py`, `tests/wrapper/test_splatter_query.py`, `docs/source/tutorials/03_splats/`, `docs/source/tutorials/06_mesh/`
+- Modify: `collab_splats/__init__.py`, `collab_splats/wrapper/__init__.py:10-16`, `collab_splats/wrapper/config.py:1`, `collab_splats/wrapper/reconstructor.py:54,715-716,887-…`, `configs/base.yaml:111-114`, `configs/README.md:324`, `CLAUDE.md:91-92`, `collab_splats/mesh/tsdf.py:22,119`, `docs/source/conf.py:40`, `docs/source/index.rst:4`, `docs/source/getting_started.md:13,26-50`, `docs/source/api/wrapper.rst:6`, `docs/source/tutorials/index.rst:42-45`, `docs/source/tutorials/02_pointcloud/feedforward_mesh.ipynb:16`
+
+`query_mesh` lives only in `splatter.py` (no other callers) — it goes with it; a semantic-mesh-query tutorial on the new stack is owed later.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -150,7 +169,9 @@ Append to `tests/wrapper/test_reconstructor.py`:
 
 ```python
 def test_nerfstudio_method_rejected():
-    """pointcloud.method=nerfstudio is gone — Reconstructor refuses it at validation."""
+    """
+    pointcloud.method=nerfstudio is gone — validation only knows feedforward and sfm.
+    """
     from collab_splats.wrapper.reconstructor import _VALID_METHODS
 
     assert _VALID_METHODS == {"feedforward", "sfm"}
@@ -160,129 +181,137 @@ def test_nerfstudio_method_rejected():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `$PY -m pytest tests/wrapper/test_reconstructor.py::test_nerfstudio_method_rejected -v`
-Expected: FAIL — `assert {'feedforward', 'sfm', 'nerfstudio'} == {'feedforward', 'sfm'}`.
+Expected: FAIL on the set comparison.
 
 - [ ] **Step 3: Delete files**
 
 ```bash
-git rm -r collab_splats/nerfstudio tests/nerfstudio_methods
-git rm collab_splats/wrapper/splatter.py tests/test_models.py \
-  tests/wrapper/test_splatter_mesh.py tests/wrapper/test_splatter_query.py
+git rm -r collab_splats/nerfstudio tests/nerfstudio_methods docs/source/tutorials/03_splats docs/source/tutorials/06_mesh
+git rm collab_splats/wrapper/splatter.py tests/test_models.py tests/wrapper/test_splatter_mesh.py tests/wrapper/test_splatter_query.py
 ```
 
-- [ ] **Step 4: Strip exports and the nerfstudio method**
+- [ ] **Step 4: Strip code references**
 
-`collab_splats/__init__.py` — replace whole file with:
-
+`collab_splats/__init__.py` → whole file:
 ```python
-"""collab-splats: feedforward reconstruction, splat training, meshing and localization."""
+"""
+collab-splats: feedforward reconstruction, splat training, meshing and localization.
+"""
 
 __version__ = "0.0.1"
 ```
+`collab_splats/wrapper/__init__.py` 10–16: delete the guarded `Splatter`/`SplatterConfig` import and the two `__all__` entries.
+`collab_splats/wrapper/config.py:1`: docstring → `Configuration loading utilities for Reconstructor workflows.`
+`collab_splats/wrapper/reconstructor.py`: line 54 `_VALID_METHODS = {"feedforward", "sfm"}`; delete the `if method == "nerfstudio": result = self._run_nerfstudio()` branch (715–716); delete the whole `_run_nerfstudio` method (~887 to the next `def`). Then `grep -n nerfstudio collab_splats/wrapper/reconstructor.py` must print nothing.
+`configs/base.yaml` 111–114: delete comment + `nerfstudio:` block.
+`configs/README.md:324`: `pointcloud.method` allowed values → `feedforward | sfm`.
+`CLAUDE.md` 91–92: delete the `nerfstudio/` tree line; `wrapper/` line → `# stage orchestration: Reconstructor (config-driven pipeline), batch drivers`.
+`collab_splats/mesh/tsdf.py` 22, 119: drop the nerfstudio mention (`Accepts rendered depth + RGB frames as numpy arrays.`).
 
-`collab_splats/wrapper/__init__.py` lines 10–16: delete the guarded `from .splatter import Splatter, SplatterConfig` block and remove the two names from `__all__`.
+- [ ] **Step 5: Strip docs references**
 
-`collab_splats/wrapper/config.py:1`: docstring → `"""Configuration loading utilities for Reconstructor workflows."""`.
+`docs/source/conf.py:40`: remove `nerfstudio` from the autodoc mock list.
+`docs/source/index.rst:4`: → `Feedforward reconstruction, Gaussian splats, semantics, and mesh export — built on gsplat.`
+`docs/source/api/wrapper.rst:6`: delete the `.. automodule:: collab_splats.wrapper.splatter` block (directive + its option lines).
+`docs/source/tutorials/index.rst`: delete the `03 · Splats` and `06 · Mesh` toctree blocks (the `06_mesh/create_mesh` entry at line 45 and the `03_splats/*` entries above it).
+`docs/source/getting_started.md`: line 13 → `This installs the package in development mode along with gsplat and all CUDA dependencies.`; replace the "Gaussian Splatting with depth and normals" quick-start (lines 26–50) with:
 
-`collab_splats/wrapper/reconstructor.py`:
-- line 54: `_VALID_METHODS = {"feedforward", "sfm"}`
-- lines 715–716: delete the `if method == "nerfstudio": result = self._run_nerfstudio()` branch (keep the `else`/raise that follows intact — it now catches any non-feedforward/sfm).
-- delete the whole `_run_nerfstudio` method starting at line ~887 (through the end of its body, before the next `def`).
-- grep the file for any remaining `nerfstudio` string and remove it: `grep -n nerfstudio collab_splats/wrapper/reconstructor.py` → must print nothing.
-
-`configs/base.yaml` lines 111–114: delete the comment + `nerfstudio:` block.
-`configs/README.md:324`: the `pointcloud.method` row → allowed values `feedforward | sfm`.
-`CLAUDE.md` lines 91–92: delete the `nerfstudio/` tree line; `wrapper/` line → `# stage orchestration: Reconstructor (config-driven pipeline), batch drivers`.
-`collab_splats/mesh/tsdf.py:22,119`: rewrite comments without the nerfstudio mention (e.g. `Accepts rendered depth + RGB frames as numpy arrays.`).
-`docs/source/conf.py:40`: drop `nerfstudio` from the autodoc mock list.
-`docs/source/getting_started.md:13`: drop the nerfstudio sentence.
-
-- [ ] **Step 5: Verify no dangling references**
-
-Run: `grep -rn 'splatter\|nerfstudio' --include='*.py' --include='*.yaml' --include='*.toml' collab_splats configs tests pyproject.toml`
-Expected: no output. (`scripts/update_kernelspecs.py` and `evals/datasets.py:124` only name the conda env — leave them.)
-
-- [ ] **Step 6: Run tests**
-
-Run: `$PY -m pytest tests/wrapper/test_reconstructor.py tests/test_cu121_migration.py -v -x -k "not splats"`
-Expected: all PASS (the `collab_splats.splats` import entries are excluded by `-k`).
-
-- [ ] **Step 7: Commit**
+````markdown
+### Reconstruct a video
 
 ```bash
-git commit --only collab_splats/nerfstudio tests/nerfstudio_methods collab_splats/wrapper/splatter.py \
-  tests/test_models.py tests/wrapper/test_splatter_mesh.py tests/wrapper/test_splatter_query.py \
-  collab_splats/__init__.py collab_splats/wrapper/__init__.py collab_splats/wrapper/config.py \
-  collab_splats/wrapper/reconstructor.py configs/base.yaml configs/README.md CLAUDE.md \
-  collab_splats/mesh/tsdf.py docs/source/conf.py docs/source/getting_started.md tests/wrapper/test_reconstructor.py \
-  -m "refactor(splats): retire nerfstudio package, Splatter, and the nerfstudio pointcloud method"
+python docs/examples/run_pipeline.py data/tutorial/<video.mp4> --config configs/base.yaml
 ```
-(Deleted paths are legal `--only` arguments. Verify `git status --short` shows nothing unexpected first.)
+
+Stages run in order: frame sampling → feedforward pointcloud → (optional) splats, mesh,
+semantics, localization. Enable Gaussian-splat training with `splats.enabled: true` in the
+config; outputs land in `<output>/<backend>/splats/`.
+````
+`docs/source/tutorials/02_pointcloud/feedforward_mesh.ipynb:16`: change the markdown sentence to `"Gaussian-splat training lives in the `splats` stage (`collab_splats/splats/`)."` (edit the JSON string in place; no cell execution).
+
+- [ ] **Step 6: Verify no dangling references**
+
+Run: `grep -rn 'splatter\|nerfstudio\|ns-train' --include='*.py' --include='*.yaml' --include='*.toml' --include='*.rst' --include='*.md' collab_splats configs tests docs/source pyproject.toml | grep -v 'display_name\|kernelspec\|/opt/conda/envs'`
+Expected: no output (kernelspec names inside notebooks are env names, not code — leave them).
+
+- [ ] **Step 7: Run tests**
+
+Run: `$PY -m pytest tests/wrapper/test_reconstructor.py tests/test_cu121_migration.py -v -x -k "not splats"`
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git commit --only collab_splats/nerfstudio tests/nerfstudio_methods docs/source/tutorials/03_splats docs/source/tutorials/06_mesh \
+  collab_splats/wrapper/splatter.py tests/test_models.py tests/wrapper/test_splatter_mesh.py tests/wrapper/test_splatter_query.py \
+  collab_splats/__init__.py collab_splats/wrapper/__init__.py collab_splats/wrapper/config.py collab_splats/wrapper/reconstructor.py \
+  configs/base.yaml configs/README.md CLAUDE.md collab_splats/mesh/tsdf.py docs/source/conf.py docs/source/index.rst \
+  docs/source/getting_started.md docs/source/api/wrapper.rst docs/source/tutorials/index.rst \
+  docs/source/tutorials/02_pointcloud/feedforward_mesh.ipynb tests/wrapper/test_reconstructor.py \
+  -m "refactor(splats): retire nerfstudio package, Splatter, and their tutorials"
+```
+(Deleted paths are legal `--only` arguments. `git status --short` first.)
 
 ---
 
 ### Task 3: `splats/cameras.py` — vendored pose refinement
 
-**Files:**
-- Create: `collab_splats/splats/__init__.py`, `collab_splats/splats/cameras.py`
-- Test: `tests/splats/__init__.py` (empty), `tests/splats/test_cameras.py`
+**Files:** Create `collab_splats/splats/__init__.py` (docstring only for now), `collab_splats/splats/cameras.py`, `tests/splats/__init__.py` (empty), `tests/splats/test_cameras.py`
+
+The body below was diffed against `/tmp/gsplat-main/examples/utils.py` lines 27–63 and 132–153 and is identical in logic; only comments/docstrings are ours.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-"""CameraOptModule: zero-init is identity; random-init perturbs; 6D rotation is orthonormal."""
+"""
+CameraOptModule: zero-init is identity; random-init perturbs; 6D rotations are proper rotations.
+"""
 
 import torch
 
 from collab_splats.splats.cameras import CameraOptModule, rotation_6d_to_matrix
 
 
-def test_zero_init_is_identity():
-    m = CameraOptModule(3)
-    m.zero_init()
-    c2w = torch.eye(4).expand(3, 4, 4).clone()
-    c2w[:, :3, 3] = torch.arange(3).float()[:, None]
-    out = m(c2w, torch.arange(3))
-    assert torch.allclose(out, c2w)
+def test_zero_init_leaves_poses_unchanged():
+    refiner = CameraOptModule(3)
+    refiner.zero_init()
+    cam_to_world = torch.eye(4).expand(3, 4, 4).clone()
+    cam_to_world[:, :3, 3] = torch.arange(3).float()[:, None]
+    assert torch.allclose(refiner(cam_to_world, torch.arange(3)), cam_to_world)
 
 
-def test_random_init_changes_pose():
-    m = CameraOptModule(2)
-    m.random_init(std=0.1)
-    c2w = torch.eye(4).expand(2, 4, 4).clone()
-    out = m(c2w, torch.arange(2))
-    assert not torch.allclose(out, c2w)
+def test_random_init_changes_poses():
+    refiner = CameraOptModule(2)
+    refiner.random_init(std=0.1)
+    cam_to_world = torch.eye(4).expand(2, 4, 4).clone()
+    assert not torch.allclose(refiner(cam_to_world, torch.arange(2)), cam_to_world)
 
 
-def test_rotation_6d_is_orthonormal():
-    R = rotation_6d_to_matrix(torch.randn(5, 6))
-    eye = torch.eye(3).expand(5, 3, 3)
-    assert torch.allclose(R @ R.transpose(-1, -2), eye, atol=1e-5)
-    assert torch.allclose(torch.linalg.det(R), torch.ones(5), atol=1e-5)
+def test_rotation_6d_gives_proper_rotations():
+    rotations = rotation_6d_to_matrix(torch.randn(5, 6))
+    identity = torch.eye(3).expand(5, 3, 3)
+    assert torch.allclose(rotations @ rotations.transpose(-1, -2), identity, atol=1e-5)
+    assert torch.allclose(torch.linalg.det(rotations), torch.ones(5), atol=1e-5)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `$PY -m pytest tests/splats/test_cameras.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'collab_splats.splats'`.
+Expected: `ModuleNotFoundError: No module named 'collab_splats.splats'`.
 
 - [ ] **Step 3: Write the module**
 
 `collab_splats/splats/__init__.py`:
-
 ```python
-"""Gaussian-splat training on upstream gsplat from an existing pointcloud stage."""
-
-from .trainer import SplatsConfig, train
-
-__all__ = ["SplatsConfig", "train"]
+"""
+Gaussian-splat training on upstream gsplat from an existing pointcloud stage.
+"""
 ```
-(The trainer import will fail until Task 5 — write `cameras.py` first and temporarily run the cameras test with `PYTHONPATH` import of the submodule only; or, simpler, create `trainer.py` in Task 5 and for now make `__init__.py` just the docstring. **Do the latter**: write only the docstring line now, add the imports in Task 5.)
 
 `collab_splats/splats/cameras.py`:
-
 ```python
-"""Per-camera pose refinement for splat training.
+"""
+Per-camera pose refinement for splat training.
 
 Vendored from nerfstudio-project/gsplat @ 90d7b4b, examples/utils.py:
 ``CameraOptModule`` lines 27-63, ``rotation_6d_to_matrix`` lines 132-153.
@@ -294,24 +323,35 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-def rotation_6d_to_matrix(d6: Tensor) -> Tensor:
-    """Gram-Schmidt 6D rotation representation (Zhou et al. 2019) -> (..., 3, 3) rotation matrices."""
-    a1, a2 = d6[..., :3], d6[..., 3:]
-    b1 = F.normalize(a1, dim=-1)
-    b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
-    b2 = F.normalize(b2, dim=-1)
-    b3 = torch.cross(b1, b2, dim=-1)
-    return torch.stack((b1, b2, b3), dim=-2)
+def rotation_6d_to_matrix(rotation_6d: Tensor) -> Tensor:
+    """
+    Gram-Schmidt 6D rotation representation (Zhou et al. 2019) -> (..., 3, 3) rotation matrices.
+    """
+    # First basis vector: normalised first triple
+    first, second = rotation_6d[..., :3], rotation_6d[..., 3:]
+    basis_x = F.normalize(first, dim=-1)
+
+    # Second basis vector: second triple with its projection onto basis_x removed
+    basis_y = second - (basis_x * second).sum(-1, keepdim=True) * basis_x
+    basis_y = F.normalize(basis_y, dim=-1)
+
+    # Third basis vector completes the right-handed frame
+    basis_z = torch.cross(basis_x, basis_y, dim=-1)
+    return torch.stack((basis_x, basis_y, basis_z), dim=-2)
 
 
 class CameraOptModule(torch.nn.Module):
-    """Learned per-camera SE(3) delta applied on the right of camera-to-world."""
+    """
+    Learned per-camera SE(3) delta, applied on the right of camera-to-world.
+    """
 
-    def __init__(self, n: int):
+    def __init__(self, n_cameras: int):
         super().__init__()
-        # Delta positions (3) + delta rotations (6), one embedding row per camera
-        self.embeds = torch.nn.Embedding(n, 9)
-        # Identity rotation in 6D representation
+
+        # One 9-vector per camera: translation delta (3) + rotation delta in 6D form (6)
+        self.embeds = torch.nn.Embedding(n_cameras, 9)
+
+        # Identity rotation in 6D form; the learned rotation delta is added to it
         self.register_buffer("identity", torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]))
 
     def zero_init(self):
@@ -320,23 +360,28 @@ class CameraOptModule(torch.nn.Module):
     def random_init(self, std: float):
         torch.nn.init.normal_(self.embeds.weight, std=std)
 
-    def forward(self, camtoworlds: Tensor, embed_ids: Tensor) -> Tensor:
-        """Apply the learned deltas: camtoworlds (..., 4, 4), embed_ids (...) -> (..., 4, 4)."""
-        assert camtoworlds.shape[:-2] == embed_ids.shape
-        batch_shape = camtoworlds.shape[:-2]
-        pose_deltas = self.embeds(embed_ids)
-        dx, drot = pose_deltas[..., :3], pose_deltas[..., 3:]
-        rot = rotation_6d_to_matrix(drot + self.identity.expand(*batch_shape, -1))
-        transform = torch.eye(4, device=pose_deltas.device).repeat((*batch_shape, 1, 1))
-        transform[..., :3, :3] = rot
-        transform[..., :3, 3] = dx
-        return torch.matmul(camtoworlds, transform)
+    def forward(self, cam_to_world: Tensor, camera_ids: Tensor) -> Tensor:
+        """
+        Apply the learned deltas: cam_to_world (..., 4, 4), camera_ids (...) -> refined (..., 4, 4).
+        """
+        assert cam_to_world.shape[:-2] == camera_ids.shape
+        batch_shape = cam_to_world.shape[:-2]
+
+        # Split each camera's 9-vector into translation and rotation deltas
+        pose_deltas = self.embeds(camera_ids)
+        translation_delta, rotation_delta = pose_deltas[..., :3], pose_deltas[..., 3:]
+        rotation = rotation_6d_to_matrix(rotation_delta + self.identity.expand(*batch_shape, -1))
+
+        # Build the 4x4 delta transform and compose it onto the input pose
+        delta_transform = torch.eye(4, device=pose_deltas.device).repeat((*batch_shape, 1, 1))
+        delta_transform[..., :3, :3] = rotation
+        delta_transform[..., :3, 3] = translation_delta
+        return torch.matmul(cam_to_world, delta_transform)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run test**
 
-Run: `$PY -m pytest tests/splats/test_cameras.py -v`
-Expected: 3 PASSED.
+Run: `$PY -m pytest tests/splats/test_cameras.py -v` → 3 PASSED.
 
 - [ ] **Step 5: Commit**
 
@@ -349,172 +394,173 @@ git commit --only collab_splats/splats/__init__.py collab_splats/splats/cameras.
 
 ### Task 4: `splats/losses.py` — scheduled weighted losses
 
-**Files:**
-- Create: `collab_splats/splats/losses.py`
-- Test: `tests/splats/test_losses.py`
+**Files:** Create `collab_splats/splats/losses.py`, `tests/splats/test_losses.py`
 
-Contract (from spec): `compute_losses(step, out, batch, losses, scene_scale) -> (total: Tensor, logs: dict[str, float])`. Photometric `0.8·L1 + 0.2·(1−SSIM)` always on. Optional loss `name` is active iff `name in losses and losses[name]["weight"] > 0 and step >= losses[name].get("start", 0)`. `out` keys: `rgb`, `alpha`, `depth` (all `(1,H,W,C)`), `normal`, `depth_normal` `(1,H,W,3)`, `distort` `(1,H,W,1)` or `None`. `batch` keys: `rgb` `(1,H,W,3)` in `[0,1]`, `depth` `(1,H,W,1)` or `None` (0 = no target).
+Contract: `compute_losses(step, render, target, loss_schedule, scene_scale) -> (total, {name: value})`. Photometric `0.8·L1 + 0.2·(1−SSIM)` always on. `loss_schedule` is the yaml `losses:` mapping `{name: {weight, start}}`; a loss contributes iff its weight is > 0 and `step >= start`. `render` keys: `rgb`, `alpha`, `depth` `(1,H,W,C)`, `normal`, `depth_normal` `(1,H,W,3)`, `distortion` `(1,H,W,1)` or `None`. `target` keys: `rgb` `(1,H,W,3)` in `[0,1]`, `depth` `(1,H,W,1)` or `None` (0 = no target).
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-"""compute_losses: photometric always on, optional losses gated by weight>0 and start step."""
+"""
+compute_losses: photometric always on; optional losses gated by weight > 0 and their start step.
+"""
 
 import pytest
 import torch
 
-from collab_splats.splats.losses import compute_losses
+from collab_splats.splats.losses import active_weight, compute_losses
 
 
-def _out(H=16, W=16, distort=True):
-    g = torch.Generator().manual_seed(0)
-    n = torch.nn.functional.normalize(torch.randn(1, H, W, 3, generator=g), dim=-1)
+def _render(height=16, width=16, with_distortion=True):
+    gen = torch.Generator().manual_seed(0)
+    normal = torch.nn.functional.normalize(torch.randn(1, height, width, 3, generator=gen), dim=-1)
     return {
-        "rgb": torch.rand(1, H, W, 3, generator=g),
-        "alpha": torch.rand(1, H, W, 1, generator=g),
-        "depth": torch.rand(1, H, W, 1, generator=g) + 0.5,
-        "normal": n,
-        "depth_normal": torch.nn.functional.normalize(n + 0.1 * torch.randn(1, H, W, 3, generator=g), dim=-1),
-        "distort": torch.rand(1, H, W, 1, generator=g) if distort else None,
+        "rgb": torch.rand(1, height, width, 3, generator=gen),
+        "alpha": torch.rand(1, height, width, 1, generator=gen),
+        "depth": torch.rand(1, height, width, 1, generator=gen) + 0.5,
+        "normal": normal,
+        "depth_normal": torch.nn.functional.normalize(normal + 0.1 * torch.randn_like(normal), dim=-1),
+        "distortion": torch.rand(1, height, width, 1, generator=gen) if with_distortion else None,
     }
 
 
-def _batch(H=16, W=16, depth=True):
-    g = torch.Generator().manual_seed(1)
-    d = torch.rand(1, H, W, 1, generator=g) + 0.5
-    d[:, :4] = 0.0  # no-target rows
-    return {"rgb": torch.rand(1, H, W, 3, generator=g), "depth": d if depth else None}
+def _target(height=16, width=16, with_depth=True):
+    gen = torch.Generator().manual_seed(1)
+    depth = torch.rand(1, height, width, 1, generator=gen) + 0.5
+    depth[:, :4] = 0.0  # rows without a target
+    return {"rgb": torch.rand(1, height, width, 3, generator=gen), "depth": depth if with_depth else None}
+
+
+def test_active_weight_schedule():
+    schedule = {"depth": {"weight": 0.5, "start": 100}}
+    assert active_weight("depth", schedule, 99) == 0.0
+    assert active_weight("depth", schedule, 100) == 0.5
+    assert active_weight("depth", {"depth": {"weight": 0.0}}, 100) == 0.0
+    assert active_weight("missing", schedule, 100) == 0.0
 
 
 def test_photometric_only_when_no_optional_losses():
-    total, logs = compute_losses(0, _out(), _batch(), {}, 1.0)
-    assert set(logs) == {"l1", "ssim"}
-    assert torch.isfinite(total)
-    assert total.item() == pytest.approx(0.8 * logs["l1"] + 0.2 * logs["ssim"], rel=1e-5)
-
-
-def test_depth_loss_gated_by_start_and_weight():
-    losses = {"depth": {"weight": 0.5, "start": 100}}
-    _, before = compute_losses(99, _out(), _batch(), losses, 1.0)
-    _, after = compute_losses(100, _out(), _batch(), losses, 1.0)
-    assert "depth" not in before and "depth" in after
-    _, zero = compute_losses(100, _out(), _batch(), {"depth": {"weight": 0.0}}, 1.0)
-    assert "depth" not in zero
+    total, values = compute_losses(0, _render(), _target(), {}, 1.0)
+    assert set(values) == {"l1", "ssim"}
+    assert total.item() == pytest.approx(0.8 * values["l1"] + 0.2 * values["ssim"], rel=1e-5)
 
 
 def test_depth_loss_ignores_zero_targets_and_scales_with_scene_scale():
-    losses = {"depth": {"weight": 1.0}}
-    out, batch = _out(), _batch()
-    _, a = compute_losses(0, out, batch, losses, 1.0)
-    _, b = compute_losses(0, out, batch, losses, 2.0)
-    assert b["depth"] == pytest.approx(2 * a["depth"], rel=1e-5)
-    # Perfect prediction on the valid pixels -> zero loss regardless of the zero rows
-    out["depth"] = batch["depth"].clone()
-    out["depth"][:, :4] = 123.0
-    _, c = compute_losses(0, out, batch, losses, 1.0)
-    assert c["depth"] == pytest.approx(0.0, abs=1e-6)
+    schedule = {"depth": {"weight": 1.0}}
+    render, target = _render(), _target()
+    _, at_scale_1 = compute_losses(0, render, target, schedule, 1.0)
+    _, at_scale_2 = compute_losses(0, render, target, schedule, 2.0)
+    assert at_scale_2["depth"] == pytest.approx(2 * at_scale_1["depth"], rel=1e-5)
+
+    # Perfect prediction on targeted pixels -> zero loss, whatever the untargeted rows hold
+    render["depth"] = target["depth"].clone()
+    render["depth"][:, :4] = 123.0
+    _, perfect = compute_losses(0, render, target, schedule, 1.0)
+    assert perfect["depth"] == pytest.approx(0.0, abs=1e-6)
 
 
 def test_depth_loss_skipped_without_targets():
-    _, logs = compute_losses(0, _out(), _batch(depth=False), {"depth": {"weight": 1.0}}, 1.0)
-    assert "depth" not in logs
+    _, values = compute_losses(0, _render(), _target(with_depth=False), {"depth": {"weight": 1.0}}, 1.0)
+    assert "depth" not in values
 
 
 def test_normal_consistency_is_zero_for_identical_normals():
-    out = _out()
-    out["depth_normal"] = out["normal"].clone()
-    out["alpha"] = torch.ones_like(out["alpha"])
-    _, logs = compute_losses(0, out, _batch(), {"normal_consistency": {"weight": 1.0}}, 1.0)
-    assert logs["normal_consistency"] == pytest.approx(0.0, abs=1e-5)
+    render = _render()
+    render["depth_normal"] = render["normal"].clone()
+    render["alpha"] = torch.ones_like(render["alpha"])
+    _, values = compute_losses(0, render, _target(), {"normal_consistency": {"weight": 1.0}}, 1.0)
+    assert values["normal_consistency"] == pytest.approx(0.0, abs=1e-5)
 
 
-def test_distortion_requires_render_output():
-    losses = {"distortion": {"weight": 1.0}}
-    _, logs = compute_losses(0, _out(), _batch(), losses, 1.0)
-    assert "distortion" in logs
-    with pytest.raises(ValueError, match="distortion"):
-        compute_losses(0, _out(distort=False), _batch(), losses, 1.0)
+def test_distortion_skipped_when_renderer_has_none():
+    schedule = {"distortion": {"weight": 1.0}}
+    _, with_map = compute_losses(0, _render(), _target(), schedule, 1.0)
+    _, without_map = compute_losses(0, _render(with_distortion=False), _target(), schedule, 1.0)
+    assert "distortion" in with_map and "distortion" not in without_map
 
 
 def test_total_is_weighted_sum():
-    losses = {"depth": {"weight": 0.3}, "normal_consistency": {"weight": 0.7}}
-    total, logs = compute_losses(0, _out(), _batch(), losses, 1.0)
-    expected = 0.8 * logs["l1"] + 0.2 * logs["ssim"] + 0.3 * logs["depth"] + 0.7 * logs["normal_consistency"]
+    schedule = {"depth": {"weight": 0.3}, "normal_consistency": {"weight": 0.7}}
+    total, v = compute_losses(0, _render(), _target(), schedule, 1.0)
+    expected = 0.8 * v["l1"] + 0.2 * v["ssim"] + 0.3 * v["depth"] + 0.7 * v["normal_consistency"]
     assert total.item() == pytest.approx(expected, rel=1e-5)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `$PY -m pytest tests/splats/test_losses.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'collab_splats.splats.losses'`.
+Run: `$PY -m pytest tests/splats/test_losses.py -v` → `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the module**
 
 ```python
-"""Scheduled, weighted loss sum over gsplat's loss functions.
+"""
+Scheduled, weighted loss sum over gsplat's loss functions.
 
 Photometric (0.8 L1 + 0.2 (1 - SSIM)) is always on. Each optional loss is a yaml entry
-``{weight, start}`` and is active iff weight > 0 and step >= start.
+``name: {weight, start}`` and contributes iff weight > 0 and step >= start.
 """
 
-import torch
 from gsplat.losses import depth_l1_loss, l1_loss, normal_cosine_loss, ssim_loss
 from torch import Tensor
 
 OPTIONAL_LOSSES = ("depth", "normal_consistency", "distortion")
 
 
-def _active(name: str, losses: dict[str, dict], step: int) -> bool:
-    """True iff `name` is configured with weight > 0 and its start step has been reached."""
-    spec = losses.get(name)
-    return spec is not None and spec.get("weight", 0.0) > 0 and step >= spec.get("start", 0)
+def active_weight(name: str, loss_schedule: dict[str, dict], step: int) -> float:
+    """
+    Weight of loss `name` at `step`; 0.0 when absent, zero-weighted, or not yet started.
+    """
+    spec = loss_schedule.get(name, {})
+    started = step >= spec.get("start", 0)
+    return float(spec.get("weight", 0.0)) if started else 0.0
 
 
 def compute_losses(
     step: int,
-    out: dict[str, Tensor | None],
-    batch: dict[str, Tensor | None],
-    losses: dict[str, dict],
+    render: dict[str, Tensor | None],
+    target: dict[str, Tensor | None],
+    loss_schedule: dict[str, dict],
     scene_scale: float,
 ) -> tuple[Tensor, dict[str, float]]:
-    """Weighted sum of the losses active at `step`; returns (total, {name: value})."""
-    # Photometric: L1 + SSIM on (1, H, W, 3); ssim_loss wants NCHW
-    rgb, gt = out["rgb"], batch["rgb"]
-    l1 = l1_loss(rgb, gt).mean()
-    ssim = ssim_loss(rgb.permute(0, 3, 1, 2), gt.permute(0, 3, 1, 2))
+    """
+    Weighted sum of the losses active at `step`. Returns (total, {name: value}).
+    """
+    # Photometric: L1 + SSIM between rendered and target RGB (ssim_loss wants NCHW)
+    rgb, rgb_target = render["rgb"], target["rgb"]
+    l1 = l1_loss(rgb, rgb_target).mean()
+    ssim = ssim_loss(rgb.permute(0, 3, 1, 2), rgb_target.permute(0, 3, 1, 2))
     total = 0.8 * l1 + 0.2 * ssim
-    logs = {"l1": l1.item(), "ssim": ssim.item()}
+    values = {"l1": l1.item(), "ssim": ssim.item()}
 
-    # Depth: disparity L1 on pixels with a target (0 = no target)
-    if _active("depth", losses, step) and batch.get("depth") is not None:
-        valid = batch["depth"] > 0
-        if valid.any():
-            d = depth_l1_loss(out["depth"][valid], batch["depth"][valid], scene_scale)
-            total = total + losses["depth"]["weight"] * d
-            logs["depth"] = d.item()
+    # Depth: disparity L1 on the pixels that have a target (0 = no target)
+    depth_weight = active_weight("depth", loss_schedule, step)
+    if depth_weight and target["depth"] is not None:
+        has_target = target["depth"] > 0
+        depth = depth_l1_loss(render["depth"][has_target], target["depth"][has_target], scene_scale)
+        total = total + depth_weight * depth
+        values["depth"] = depth.item()
 
-    # Normal consistency: rendered normals vs normals finite-differenced from rendered depth,
-    # the depth normal weighted by (detached) alpha so empty pixels do not pull
-    if _active("normal_consistency", losses, step):
-        n = normal_cosine_loss(out["normal"], out["depth_normal"] * out["alpha"].detach()).mean()
-        total = total + losses["normal_consistency"]["weight"] * n
-        logs["normal_consistency"] = n.item()
+    # Normal consistency: rendered normals vs normals finite-differenced from rendered depth;
+    # the depth normal is scaled by (detached) alpha so empty pixels do not pull
+    normal_weight = active_weight("normal_consistency", loss_schedule, step)
+    if normal_weight:
+        normal = normal_cosine_loss(render["normal"], render["depth_normal"] * render["alpha"].detach()).mean()
+        total = total + normal_weight * normal
+        values["normal_consistency"] = normal.item()
 
-    # Distortion (2DGS only): the rasterizer's per-pixel distortion map
-    if _active("distortion", losses, step):
-        if out.get("distort") is None:
-            raise ValueError("distortion loss configured but the renderer produced no distortion map (3dgs?)")
-        dist = out["distort"].mean()
-        total = total + losses["distortion"]["weight"] * dist
-        logs["distortion"] = dist.item()
+    # Distortion (2DGS only): mean of the rasterizer's per-pixel distortion map
+    distortion_weight = active_weight("distortion", loss_schedule, step)
+    if distortion_weight and render["distortion"] is not None:
+        distortion = render["distortion"].mean()
+        total = total + distortion_weight * distortion
+        values["distortion"] = distortion.item()
 
-    return total, logs
+    return total, values
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Run tests**
 
-Run: `$PY -m pytest tests/splats/test_losses.py -v`
-Expected: 7 PASSED (CPU; `ssim_loss` falls back to the torch implementation when fused-ssim is absent — a warning is fine).
+Run: `$PY -m pytest tests/splats/test_losses.py -v` → 7 PASSED (CPU; torch SSIM fallback warning is fine).
 
 - [ ] **Step 5: Commit**
 
@@ -525,129 +571,373 @@ git commit --only collab_splats/splats/losses.py tests/splats/test_losses.py \
 
 ---
 
-### Task 5: `splats/trainer.py` part 1 — config, splat init, render
+### Task 5: `splats/rendering.py` — one render for both primitives
 
-**Files:**
-- Create: `collab_splats/splats/trainer.py`
-- Modify: `collab_splats/splats/__init__.py`
-- Test: `tests/splats/test_trainer.py`
+**Files:** Create `collab_splats/splats/rendering.py`, `tests/splats/synthetic.py`, `tests/splats/test_rendering.py`
 
-- [ ] **Step 1: Write the failing tests (config + render)**
+- [ ] **Step 1: Write the shared synthetic scene helper**
 
+`tests/splats/synthetic.py`:
 ```python
-"""SplatsConfig validation and _render shape contract (both primitives)."""
+"""
+Synthetic splat-training scene: random coloured points in a box, cameras on a ring, analytic depth.
+"""
+
+import numpy as np
+
+FOCAL = 60.0
+
+
+def make_scene(n_views=8, height=64, width=64, n_points=200):
+    """
+    Returns (images uint8 (n,H,W,3), world_to_cam (n,4,4), intrinsics (n,3,3), points, colors, depths (n,H,W)).
+    """
+    rng = np.random.default_rng(0)
+    points = rng.uniform(-0.5, 0.5, (n_points, 3)).astype(np.float32)
+    colors = rng.integers(0, 255, (n_points, 3)).astype(np.uint8)
+    intrinsics = np.array([[FOCAL, 0, width / 2], [0, FOCAL, height / 2], [0, 0, 1]], dtype=np.float32)
+
+    images, depths, world_to_cam = [], [], []
+    for view in range(n_views):
+        # Camera on a ring of radius 3, looking at the origin (OpenCV: +z forward)
+        angle = 2 * np.pi * view / n_views
+        position = np.array([3 * np.cos(angle), 0.3, 3 * np.sin(angle)], dtype=np.float32)
+        forward = -position / np.linalg.norm(position)
+        right = np.cross([0, 1, 0], forward)
+        right /= np.linalg.norm(right)
+        down = np.cross(forward, right)
+        rotation_c2w = np.stack([right, down, forward], axis=1)
+        pose = np.eye(4, dtype=np.float32)
+        pose[:3, :3] = rotation_c2w.T
+        pose[:3, 3] = -rotation_c2w.T @ position
+        world_to_cam.append(pose)
+
+        # Paint each point as a 3x3 dot, far to near so nearer points overwrite
+        image = np.zeros((height, width, 3), np.uint8)
+        depth = np.zeros((height, width), np.float32)
+        points_cam = (pose[:3, :3] @ points.T + pose[:3, 3:]).T
+        for idx in np.argsort(-points_cam[:, 2]):
+            z = points_cam[idx, 2]
+            if z <= 0:
+                continue
+            u, v = (intrinsics[:2, :2] @ (points_cam[idx, :2] / z) + intrinsics[:2, 2]).round().astype(int)
+            if 1 <= u < width - 1 and 1 <= v < height - 1:
+                image[v - 1 : v + 2, u - 1 : u + 2] = colors[idx]
+                depth[v - 1 : v + 2, u - 1 : u + 2] = z
+        images.append(image)
+        depths.append(depth)
+
+    return (np.stack(images), np.stack(world_to_cam), np.stack([intrinsics] * n_views), points, colors, np.stack(depths))
+```
+
+- [ ] **Step 2: Write the failing render test**
+
+`tests/splats/test_rendering.py`:
+```python
+"""
+render_view: output shape contract for both primitives; 3DGS normals face the camera.
+"""
 
 import numpy as np
 import pytest
 import torch
 
-from collab_splats.splats.trainer import SplatsConfig, _create_splats_with_optimizers, _render
+from collab_splats.splats.rendering import gaussian_normals_in_camera_frame, render_view
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")
 
 
-def test_config_defaults_and_from_dict():
-    cfg = SplatsConfig.from_dict({"enabled": True, "primitive": "2dgs", "max_steps": 10,
-                                  "losses": {"depth": {"weight": 0.1}}})
-    assert cfg.primitive == "2dgs" and cfg.max_steps == 10 and cfg.pose_opt is False
-    assert cfg.losses == {"depth": {"weight": 0.1}}
+def _gaussians(n_points=200, device="cuda"):
+    gen = torch.Generator().manual_seed(0)
+    return torch.nn.ParameterDict(
+        {
+            "means": torch.nn.Parameter(torch.rand(n_points, 3, generator=gen) - 0.5),
+            "scales": torch.nn.Parameter(torch.full((n_points, 3), -3.0)),
+            "quats": torch.nn.Parameter(torch.rand(n_points, 4, generator=gen)),
+            "opacities": torch.nn.Parameter(torch.zeros(n_points)),
+            "sh0": torch.nn.Parameter(torch.rand(n_points, 1, 3, generator=gen)),
+            "shN": torch.nn.Parameter(torch.zeros(n_points, 15, 3)),
+        }
+    ).to(device)
 
 
-@pytest.mark.parametrize("bad", [
-    {"primitive": "4dgs"},
-    {"losses": {"tv": {"weight": 1.0}}},
-    {"losses": {"depth": {"weight": 1.0, "stop": 5}}},
-    {"primitive": "3dgs", "losses": {"distortion": {"weight": 0.1}}},
-    {"unknown_key": 1},
-])
-def test_config_rejects(bad):
-    with pytest.raises(ValueError):
-        SplatsConfig.from_dict(bad)
-
-
-def _scene(n_pts=200, device="cuda"):
-    rng = np.random.default_rng(0)
-    points = rng.uniform(-1, 1, (n_pts, 3)).astype(np.float32)
-    colors = rng.integers(0, 255, (n_pts, 3)).astype(np.uint8)
-    return _create_splats_with_optimizers(points, colors, scene_scale=1.0, device=device)
+def _camera(device="cuda"):
+    cam_to_world = torch.eye(4, device=device)[None]
+    cam_to_world[0, 2, 3] = -4.0
+    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[None]
+    return cam_to_world, intrinsics
 
 
 @cuda
 @pytest.mark.parametrize("primitive", ["3dgs", "2dgs"])
-def test_render_shapes(primitive):
-    splats, _ = _scene()
-    c2w = torch.eye(4, device="cuda")[None]
-    c2w[0, 2, 3] = -4.0
-    K = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device="cuda")[None]
-    out, info = _render(primitive, splats, c2w, K, 64, 64, sh_degree=0, absgrad=False)
-    assert out["rgb"].shape == (1, 64, 64, 3)
-    assert out["alpha"].shape == (1, 64, 64, 1)
-    assert out["depth"].shape == (1, 64, 64, 1)
-    assert out["normal"].shape == (1, 64, 64, 3)
-    assert out["depth_normal"].shape == (1, 64, 64, 3)
-    assert (out["distort"] is None) == (primitive == "3dgs")
-    key = "means2d" if primitive == "3dgs" else "gradient_2dgs"
-    assert key in info
+def test_render_view_shapes(primitive):
+    cam_to_world, intrinsics = _camera()
+    render, info = render_view(primitive, _gaussians(), cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False)
+    assert render["rgb"].shape == (1, 64, 64, 3)
+    assert render["alpha"].shape == (1, 64, 64, 1)
+    assert render["depth"].shape == (1, 64, 64, 1)
+    assert render["normal"].shape == (1, 64, 64, 3)
+    assert render["depth_normal"].shape == (1, 64, 64, 3)
+    assert (render["distortion"] is None) == (primitive == "3dgs")
+    assert ("means2d" if primitive == "3dgs" else "gradient_2dgs") in info
+
+
+@cuda
+def test_gaussian_normals_face_the_camera():
+    gaussians = _gaussians()
+    cam_to_world, _ = _camera()
+    world_to_cam = torch.linalg.inv(cam_to_world)[0]
+    normals = gaussian_normals_in_camera_frame(gaussians["quats"], torch.exp(gaussians["scales"]),
+                                               gaussians["means"], world_to_cam)
+    means_cam = gaussians["means"] @ world_to_cam[:3, :3].T + world_to_cam[:3, 3]
+    assert normals.shape == (200, 3)
+    assert torch.allclose(normals.norm(dim=-1), torch.ones(200, device="cuda"), atol=1e-5)
+    assert ((normals * means_cam).sum(-1) <= 1e-6).all()
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `$PY -m pytest tests/splats/test_rendering.py -v` → `ModuleNotFoundError`.
+
+- [ ] **Step 4: Write the module**
+
+```python
+"""
+One render call for both splat primitives.
+
+3DGS goes through ``gsplat.rasterization`` (fast kernel, antialiased); per-Gaussian normals are
+rendered as an extra signal and the depth normal is finite-differenced from rendered depth.
+2DGS goes through ``gsplat.rasterization_2dgs`` which returns both normals natively.
+Normals are camera-space for both primitives so the consistency loss compares like with like.
+"""
+
+import torch
+import torch.nn.functional as F
+from gsplat import rasterization, rasterization_2dgs
+from gsplat.utils import depth_to_normal, normalized_quat_to_rotmat
+from torch import Tensor
+
+
+def gaussian_normals_in_camera_frame(quats: Tensor, scales: Tensor, means: Tensor, world_to_cam: Tensor) -> Tensor:
+    """
+    Per-Gaussian normal (shortest scale axis), rotated into the camera frame and flipped to face it. (N, 3).
+    """
+    # Shortest axis of each Gaussian is its normal direction in world space
+    rotations = normalized_quat_to_rotmat(F.normalize(quats, dim=-1))
+    shortest_axis = scales.argmin(dim=-1)
+    normals_world = rotations[torch.arange(len(rotations), device=rotations.device), :, shortest_axis]
+
+    # Rotate normals and positions into the camera frame
+    rotation_w2c, translation_w2c = world_to_cam[:3, :3], world_to_cam[:3, 3]
+    normals_cam = normals_world @ rotation_w2c.T
+    means_cam = means @ rotation_w2c.T + translation_w2c
+
+    # A normal pointing away from the camera (positive dot with the view ray) is flipped
+    faces_away = (normals_cam * means_cam).sum(-1, keepdim=True) > 0
+    return torch.where(faces_away, -normals_cam, normals_cam)
+
+
+def render_view(
+    primitive: str,
+    gaussians: torch.nn.ParameterDict,
+    cam_to_world: Tensor,
+    intrinsics: Tensor,
+    width: int,
+    height: int,
+    sh_degree: int,
+    absgrad: bool,
+) -> tuple[dict[str, Tensor | None], dict]:
+    """
+    Render one camera. Returns ({rgb, alpha, depth, normal, depth_normal, distortion}, strategy info).
+    """
+    # Activate the raw parameters: log-scales -> scales, logit-opacities -> opacities, SH bands concatenated
+    means, quats = gaussians["means"], gaussians["quats"]
+    scales, opacities = torch.exp(gaussians["scales"]), torch.sigmoid(gaussians["opacities"])
+    sh_coeffs = torch.cat([gaussians["sh0"], gaussians["shN"]], dim=1)
+    world_to_cam = torch.linalg.inv(cam_to_world)
+    shared_kwargs = dict(
+        means=means, quats=quats, scales=scales, opacities=opacities, colors=sh_coeffs,
+        viewmats=world_to_cam, Ks=intrinsics, width=width, height=height, sh_degree=sh_degree,
+        packed=False, absgrad=absgrad, render_mode="RGB+ED",
+    )
+
+    # 2DGS: the rasterizer returns rgb+depth, alpha, both normals, and the distortion map
+    if primitive == "2dgs":
+        rgb_depth, alpha, normal, depth_normal, distortion, _median_depth, info = rasterization_2dgs(
+            **shared_kwargs, distloss=True
+        )
+        render = {
+            "rgb": rgb_depth[..., :3], "alpha": alpha, "depth": rgb_depth[..., 3:4],
+            "normal": normal, "depth_normal": depth_normal, "distortion": distortion,
+        }
+        return render, info
+
+    # 3DGS: normals ride along as an extra per-Gaussian signal; depth normal is finite-differenced
+    # in camera space (identity pose) so it lives in the same frame as the rendered normals
+    normals_cam = gaussian_normals_in_camera_frame(quats, scales, means, world_to_cam[0])
+    rgb_depth, alpha, info = rasterization(**shared_kwargs, rasterize_mode="antialiased", extra_signals=normals_cam)
+    depth = rgb_depth[..., 3:4]
+    identity_pose = torch.eye(4, device=cam_to_world.device)[None]
+    render = {
+        "rgb": rgb_depth[..., :3], "alpha": alpha, "depth": depth,
+        "normal": F.normalize(info["render_extra_signals"], dim=-1),
+        "depth_normal": depth_to_normal(depth, identity_pose, intrinsics),
+        "distortion": None,
+    }
+    return render, info
+```
+
+- [ ] **Step 5: Run tests**
+
+Run: `$PY -m pytest tests/splats/test_rendering.py -v` → 3 PASSED. If `render_extra_signals` is missing from `info`, re-check the pin: `$PY -c "import inspect,gsplat;print('extra_signals' in inspect.signature(gsplat.rasterization).parameters)"` must print `True`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git commit --only collab_splats/splats/rendering.py tests/splats/synthetic.py tests/splats/test_rendering.py \
+  -m "feat(splats): render_view — one call for 3dgs (extra-signal normals) and 2dgs"
+```
+
+---
+
+### Task 6: `splats/trainer.py` — config, Gaussian init, training loop
+
+**Files:** Create `collab_splats/splats/trainer.py`, `tests/splats/test_trainer.py`; modify `collab_splats/splats/__init__.py`
+
+`train()` calls `write_splat_outputs` from Task 7. To keep Task 6 runnable on its own, the end-to-end test lands in Task 7; Task 6 tests config, scene scale, init and the target preparation.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/splats/test_trainer.py`:
+```python
+"""
+SplatsConfig validation, scene scale, Gaussian init and training-target preparation.
+"""
+
+import numpy as np
+import pytest
+import torch
+
+from collab_splats.splats.trainer import (
+    SplatsConfig,
+    compute_scene_scale,
+    init_gaussians_from_points,
+    prepare_training_target,
+)
+
+cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")
+
+
+def test_config_from_dict_keeps_given_values_and_defaults():
+    cfg = SplatsConfig.from_dict(
+        {"enabled": True, "primitive": "2dgs", "max_steps": 10, "losses": {"depth": {"weight": 0.1}}}
+    )
+    assert (cfg.primitive, cfg.max_steps, cfg.pose_opt) == ("2dgs", 10, False)
+    assert cfg.losses == {"depth": {"weight": 0.1}}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"primitive": "4dgs"},
+        {"losses": {"tv": {"weight": 1.0}}},
+        {"losses": {"depth": {"weight": 1.0, "stop": 5}}},
+        {"primitive": "3dgs", "losses": {"distortion": {"weight": 0.1}}},
+        {"unknown_key": 1},
+    ],
+)
+def test_config_rejects_invalid(bad):
+    with pytest.raises(ValueError):
+        SplatsConfig.from_dict(bad)
+
+
+def test_scene_scale_is_max_camera_spread_times_margin():
+    cam_to_world = np.tile(np.eye(4, dtype=np.float32), (3, 1, 1))
+    cam_to_world[:, 0, 3] = [-1.0, 0.0, 1.0]
+    assert compute_scene_scale(torch.from_numpy(cam_to_world)) == pytest.approx(1.1)
+
+
+@cuda
+def test_init_gaussians_shapes_and_optimizers():
+    points = np.random.default_rng(0).uniform(-1, 1, (200, 3)).astype(np.float32)
+    colors = np.full((200, 3), 128, np.uint8)
+    gaussians, optimizers = init_gaussians_from_points(points, colors, scene_scale=1.0, device="cuda")
+    assert gaussians["means"].shape == (200, 3) and gaussians["sh0"].shape == (200, 1, 3)
+    assert gaussians["shN"].shape == (200, 15, 3) and gaussians["opacities"].shape == (200,)
+    assert torch.allclose(torch.sigmoid(gaussians["opacities"]), torch.full((200,), 0.1, device="cuda"))
+    assert set(optimizers) == {"means", "scales", "quats", "opacities", "sh0", "shN"}
+    assert optimizers["means"].param_groups[0]["lr"] == pytest.approx(1.6e-4)
+
+
+def test_prepare_training_target_scales_rgb_and_resizes_depth():
+    image = np.full((8, 8, 3), 255, np.uint8)
+    depth = np.array([[1.0, 0.0], [2.0, 3.0]], np.float32)
+    target = prepare_training_target(image, depth, device="cpu")
+    assert target["rgb"].shape == (1, 8, 8, 3) and target["rgb"].max() == 1.0
+    assert target["depth"].shape == (1, 8, 8, 1)
+    assert target["depth"][0, 0, 0, 0] == 1.0 and target["depth"][0, 0, 7, 0] == 0.0 and target["depth"][0, 7, 7, 0] == 3.0
+    assert prepare_training_target(image, None, device="cpu")["depth"] is None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `$PY -m pytest tests/splats/test_trainer.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'collab_splats.splats.trainer'`.
+Run: `$PY -m pytest tests/splats/test_trainer.py -v` → `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write trainer.py (part 1)**
+- [ ] **Step 3: Write the module**
 
 ```python
-"""One trainer for 3DGS / 2DGS splats on upstream gsplat.
+"""
+Trainer for 3DGS / 2DGS splats on upstream gsplat.
 
-Trains in the COLMAP world frame (no normalisation) so the output poses, depth and ply line up
-with every other stage artifact. ``scene_scale`` (1.1 x max camera distance from the camera
-centroid, as in gsplat's simple_trainer) only scales the means learning rate, the densification
-thresholds and the depth loss.
+Training runs in the COLMAP world frame (no normalisation) so poses, depth and the ply line up
+with every other stage artifact. ``scene_scale`` — 1.1 x the largest camera distance from the
+camera centroid, as in gsplat's simple_trainer — only scales the means learning rate, the
+densification thresholds and the depth loss.
 """
 
-import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-import zarr
-from gsplat import rasterization, rasterization_2dgs
-from gsplat.exporter import export_splats
-from gsplat.losses import ssim_loss
 from gsplat.strategy import DefaultStrategy
-from gsplat.utils import depth_to_normal, normalized_quat_to_rotmat
 from sklearn.neighbors import NearestNeighbors
 from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR
 
 from collab_splats.splats.cameras import CameraOptModule
 from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses
+from collab_splats.splats.outputs import write_splat_outputs
+from collab_splats.splats.rendering import render_view
 from collab_splats.utils.progress import progress
 
 logger = logging.getLogger(__name__)
 
-GSPLAT_COMMIT = "90d7b4b"
-
 ########################################
-# Constants (gsplat examples/simple_trainer.py defaults — not config knobs)
+# Constants (gsplat examples/simple_trainer.py defaults — deliberately not config knobs)
 ########################################
 
 PRIMITIVES = ("3dgs", "2dgs")
 SH_DEGREE = 3
-SH_DEGREE_INTERVAL = 1000
+SH_DEGREE_INTERVAL = 1000  # one more SH band unlocked every this many steps
 INIT_OPACITY = 0.1
-INIT_SCALE = 1.0
+SCENE_SCALE_MARGIN = 1.1
 LOG_EVERY = 500
-# Per-primitive densification: 3DGS uses absgrad + antialiased (examples/simple_trainer.py);
-# 2DGS uses the 2D gradient key and classic rasterization (examples/simple_trainer_2dgs.py)
-_STRATEGY = {
-    "3dgs": dict(absgrad=True, grow_grad2d=8e-4, key_for_gradient="means2d"),
-    "2dgs": dict(absgrad=False, key_for_gradient="gradient_2dgs"),
+POSE_LR = 1e-5
+POSE_WEIGHT_DECAY = 1e-6
+SH_DC_NORMALISER = 0.28209479177387814  # rgb -> SH degree-0 coefficient
+
+# Learning rate per Gaussian parameter; "means" is additionally multiplied by scene_scale
+PARAM_LR = {"means": 1.6e-4, "scales": 5e-3, "quats": 1e-3, "opacities": 5e-2, "sh0": 2.5e-3, "shN": 2.5e-3 / 20}
+
+# Densification per primitive: 3DGS uses absgrad + antialiasing (examples/simple_trainer.py),
+# 2DGS the 2D gradient key with classic rasterization (examples/simple_trainer_2dgs.py)
+STRATEGY_KWARGS = {
+    "3dgs": {"absgrad": True, "grow_grad2d": 8e-4, "key_for_gradient": "means2d"},
+    "2dgs": {"absgrad": False, "key_for_gradient": "gradient_2dgs"},
 }
 
 ########################################
@@ -657,7 +947,9 @@ _STRATEGY = {
 
 @dataclass
 class SplatsConfig:
-    """Trainer knobs; mirrors the `splats:` yaml block (minus `enabled`)."""
+    """
+    Trainer knobs; mirrors the ``splats:`` yaml block minus ``enabled``.
+    """
 
     primitive: str = "3dgs"
     max_steps: int = 30000
@@ -671,253 +963,114 @@ class SplatsConfig:
     )
 
     @classmethod
-    def from_dict(cls, d: dict) -> "SplatsConfig":
-        """Build from the yaml block, rejecting unknown keys, unknown losses and 3dgs+distortion."""
-        known = {"enabled", *cls.__dataclass_fields__}
-        unknown = set(d) - known
-        if unknown:
-            raise ValueError(f"splats: unknown keys {sorted(unknown)}; allowed {sorted(known)}")
-        cfg = cls(**{k: v for k, v in d.items() if k != "enabled"})
+    def from_dict(cls, block: dict) -> "SplatsConfig":
+        """
+        Build from the yaml block; rejects unknown keys, unknown losses, and distortion with 3dgs.
+        """
+        # Unknown top-level keys are almost always typos — refuse rather than silently default
+        allowed_keys = {"enabled", *cls.__dataclass_fields__}
+        unknown_keys = set(block) - allowed_keys
+        if unknown_keys:
+            raise ValueError(f"splats: unknown keys {sorted(unknown_keys)}; allowed {sorted(allowed_keys)}")
+        cfg = cls(**{key: value for key, value in block.items() if key != "enabled"})
+
+        # Primitive and loss names must be ones the trainer knows
         if cfg.primitive not in PRIMITIVES:
             raise ValueError(f"splats.primitive must be one of {PRIMITIVES}, got '{cfg.primitive}'")
         for name, spec in cfg.losses.items():
             if name not in OPTIONAL_LOSSES:
                 raise ValueError(f"splats.losses: unknown loss '{name}'; allowed {OPTIONAL_LOSSES}")
-            bad = set(spec) - {"weight", "start"}
-            if bad:
-                raise ValueError(f"splats.losses.{name}: unknown keys {sorted(bad)}; allowed ['weight', 'start']")
+            unknown_spec_keys = set(spec) - {"weight", "start"}
+            if unknown_spec_keys:
+                raise ValueError(f"splats.losses.{name}: unknown keys {sorted(unknown_spec_keys)}")
+
+        # The distortion map only exists for 2DGS
         if cfg.primitive == "3dgs" and cfg.losses.get("distortion", {}).get("weight", 0.0) > 0:
-            raise ValueError("splats.losses.distortion is 2dgs-only; set weight 0 or primitive: 2dgs")
+            raise ValueError("splats.losses.distortion is 2dgs-only; set its weight to 0 or use primitive: 2dgs")
         return cfg
 
 
 ########################################
-# Splat initialisation (examples/simple_trainer.py create_splats_with_optimizers @ 90d7b4b)
+# Setup helpers
 ########################################
 
 
-def _knn_dist2(points: np.ndarray, k: int = 4) -> np.ndarray:
-    """Mean squared distance to the k-1 nearest neighbours of each point (sklearn, CPU)."""
-    nn = NearestNeighbors(n_neighbors=k).fit(points)
-    dists, _ = nn.kneighbors(points)
-    return (dists[:, 1:] ** 2).mean(-1)
+def compute_scene_scale(cam_to_world: Tensor) -> float:
+    """
+    1.1 x the largest camera distance from the camera centroid (gsplat's scene-extent proxy).
+    """
+    positions = cam_to_world[:, :3, 3]
+    return float((positions - positions.mean(0)).norm(dim=-1).max()) * SCENE_SCALE_MARGIN
 
 
-def _create_splats_with_optimizers(
+def init_gaussians_from_points(
     points: np.ndarray, colors: np.ndarray, scene_scale: float, device: str
 ) -> tuple[torch.nn.ParameterDict, dict[str, torch.optim.Optimizer]]:
-    """Gaussians seeded on the sparse points (scale from kNN spacing, colour as SH DC) + one Adam per param."""
-    pts = torch.from_numpy(points).float().to(device)
-    rgb = torch.from_numpy(colors).float().to(device) / 255.0
-    n = len(pts)
-    scales = torch.log(torch.from_numpy(np.sqrt(_knn_dist2(points))).float().to(device) * INIT_SCALE)
-    scales = scales.unsqueeze(-1).repeat(1, 3)
-    sh = torch.zeros(n, (SH_DEGREE + 1) ** 2, 3, device=device)
-    sh[:, 0, :] = (rgb - 0.5) / 0.28209479177387814  # rgb_to_sh
-    params = [
-        ("means", torch.nn.Parameter(pts), 1.6e-4 * scene_scale),
-        ("scales", torch.nn.Parameter(scales), 5e-3),
-        ("quats", torch.nn.Parameter(torch.rand(n, 4, device=device)), 1e-3),
-        ("opacities", torch.nn.Parameter(torch.logit(torch.full((n,), INIT_OPACITY, device=device))), 5e-2),
-        ("sh0", torch.nn.Parameter(sh[:, :1, :]), 2.5e-3),
-        ("shN", torch.nn.Parameter(sh[:, 1:, :]), 2.5e-3 / 20),
-    ]
-    splats = torch.nn.ParameterDict({k: v for k, v, _ in params}).to(device)
-    optimizers = {
-        k: torch.optim.Adam([{"params": splats[k], "lr": lr, "name": k}], eps=1e-15) for k, _, lr in params
-    }
-    return splats, optimizers
-
-
-########################################
-# Rendering
-########################################
-
-
-def _gaussian_normals(quats: Tensor, scales: Tensor, means: Tensor, viewmat: Tensor) -> Tensor:
-    """Per-Gaussian camera-space normal: shortest scale axis, flipped to face the camera. (N, 3)."""
-    R = normalized_quat_to_rotmat(F.normalize(quats, dim=-1))  # (N, 3, 3)
-    axis = scales.argmin(dim=-1)
-    n_world = R[torch.arange(len(R), device=R.device), :, axis]  # column = rotated axis
-    R_cw, t_cw = viewmat[:3, :3], viewmat[:3, 3]
-    n_cam = n_world @ R_cw.T
-    p_cam = means @ R_cw.T + t_cw
-    flip = (n_cam * p_cam).sum(-1, keepdim=True) > 0
-    return torch.where(flip, -n_cam, n_cam)
-
-
-def _render(
-    primitive: str,
-    splats: torch.nn.ParameterDict,
-    c2w: Tensor,
-    K: Tensor,
-    width: int,
-    height: int,
-    sh_degree: int,
-    absgrad: bool,
-) -> tuple[dict[str, Tensor | None], dict]:
-    """Render one camera. Returns ({rgb, alpha, depth, normal, depth_normal, distort}, strategy info).
-
-    Normals are camera-space for both primitives; `distort` is None for 3dgs.
     """
-    means, quats = splats["means"], splats["quats"]
-    scales, opacities = torch.exp(splats["scales"]), torch.sigmoid(splats["opacities"])
-    colors = torch.cat([splats["sh0"], splats["shN"]], 1)
-    viewmat = torch.linalg.inv(c2w)
-    common = dict(
-        means=means, quats=quats, scales=scales, opacities=opacities, colors=colors, viewmats=viewmat,
-        Ks=K, width=width, height=height, sh_degree=sh_degree, packed=False, absgrad=absgrad,
-        render_mode="RGB+ED",
-    )
-    if primitive == "2dgs":
-        rgbd, alpha, normal, depth_normal, distort, _median, info = rasterization_2dgs(**common, distloss=True)
-        out = dict(rgb=rgbd[..., :3], alpha=alpha, depth=rgbd[..., 3:4], normal=normal,
-                   depth_normal=depth_normal, distort=distort)
-    else:
-        # Normals rendered as an extra per-Gaussian signal; depth normal finite-differenced
-        # in camera space (identity c2w) so both sides of the consistency loss share a frame
-        normals_cam = _gaussian_normals(quats, scales, means, viewmat[0])
-        rgbd, alpha, info = rasterization(**common, rasterize_mode="antialiased", extra_signals=normals_cam)
-        depth = rgbd[..., 3:4]
-        eye = torch.eye(4, device=c2w.device)[None]
-        out = dict(rgb=rgbd[..., :3], alpha=alpha, depth=depth,
-                   normal=F.normalize(info["render_extra_signals"], dim=-1),
-                   depth_normal=depth_to_normal(depth, eye, K), distort=None)
-    return out, info
-```
+    One Gaussian per seed point (scale from kNN spacing, colour as SH DC) plus one Adam per parameter.
 
-Then set `collab_splats/splats/__init__.py` to:
+    Port of create_splats_with_optimizers, gsplat @ 90d7b4b examples/simple_trainer.py.
+    """
+    n_points = len(points)
 
-```python
-"""Gaussian-splat training on upstream gsplat from an existing pointcloud stage."""
+    # Initial scale: mean distance to the 3 nearest neighbours, stored as log-scale
+    neighbour_dists, _ = NearestNeighbors(n_neighbors=4).fit(points).kneighbors(points)
+    mean_spacing = np.sqrt((neighbour_dists[:, 1:] ** 2).mean(-1))
+    log_scales = torch.log(torch.from_numpy(mean_spacing).float()).unsqueeze(-1).repeat(1, 3)
 
-from .trainer import SplatsConfig, train
+    # Colour: RGB goes into the degree-0 SH band, higher bands start at zero
+    rgb = torch.from_numpy(colors).float() / 255.0
+    sh_coeffs = torch.zeros(n_points, (SH_DEGREE + 1) ** 2, 3)
+    sh_coeffs[:, 0, :] = (rgb - 0.5) / SH_DC_NORMALISER
 
-__all__ = ["SplatsConfig", "train"]
-```
+    # Raw parameters: random orientation, logit-opacity so sigmoid gives INIT_OPACITY
+    gaussians = torch.nn.ParameterDict(
+        {
+            "means": torch.nn.Parameter(torch.from_numpy(points).float()),
+            "scales": torch.nn.Parameter(log_scales),
+            "quats": torch.nn.Parameter(torch.rand(n_points, 4)),
+            "opacities": torch.nn.Parameter(torch.logit(torch.full((n_points,), INIT_OPACITY))),
+            "sh0": torch.nn.Parameter(sh_coeffs[:, :1, :]),
+            "shN": torch.nn.Parameter(sh_coeffs[:, 1:, :]),
+        }
+    ).to(device)
 
-(`train` is added in Task 6 — add a stub `def train(*a, **k): raise NotImplementedError` at the bottom of `trainer.py` for now so the import resolves; Task 6 replaces it.)
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `$PY -m pytest tests/splats/test_trainer.py -v`
-Expected: `test_config_defaults_and_from_dict`, 5× `test_config_rejects`, 2× `test_render_shapes` PASSED. If `test_render_shapes[3dgs]` fails on `render_extra_signals` missing, confirm with `$PY -c "import inspect,gsplat;print('extra_signals' in inspect.signature(gsplat.rasterization).parameters)"` — must be `True` (Task 1 pin).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git commit --only collab_splats/splats/trainer.py collab_splats/splats/__init__.py tests/splats/test_trainer.py \
-  -m "feat(splats): SplatsConfig, splat init and unified 3dgs/2dgs _render"
-```
-
----
-
-### Task 6: `splats/trainer.py` part 2 — train loop + save
-
-**Files:**
-- Modify: `collab_splats/splats/trainer.py` (replace the `train` stub)
-- Test: `tests/splats/test_trainer.py`
-
-- [ ] **Step 1: Write the failing end-to-end test**
-
-Append to `tests/splats/test_trainer.py`:
-
-```python
-from collab_splats.splats.trainer import train
+    # One Adam per parameter so the densification strategy can grow/prune optimizer state per tensor
+    optimizers = {}
+    for name, lr in PARAM_LR.items():
+        if name == "means":
+            lr = lr * scene_scale
+        optimizers[name] = torch.optim.Adam([{"params": gaussians[name], "lr": lr, "name": name}], eps=1e-15)
+    return gaussians, optimizers
 
 
-def _synthetic_scene(n_frames=8, H=64, W=64, n_pts=200):
-    """Random coloured points in a unit box, cameras on a ring looking at the origin, analytic depth."""
-    rng = np.random.default_rng(0)
-    points = rng.uniform(-0.5, 0.5, (n_pts, 3)).astype(np.float32)
-    colors = rng.integers(0, 255, (n_pts, 3)).astype(np.uint8)
-    K = np.array([[60.0, 0, W / 2], [0, 60.0, H / 2], [0, 0, 1]], dtype=np.float32)
-    w2c, images, depths = [], [], []
-    for i in range(n_frames):
-        a = 2 * np.pi * i / n_frames
-        cam = np.array([3 * np.cos(a), 0.3, 3 * np.sin(a)], dtype=np.float32)
-        z = -cam / np.linalg.norm(cam)                      # look at origin (OpenCV +z forward)
-        x = np.cross([0, 1, 0], z); x /= np.linalg.norm(x)
-        y = np.cross(z, x)
-        R = np.stack([x, y, z], axis=1)                     # c2w rotation (columns = camera axes)
-        T = np.eye(4, dtype=np.float32); T[:3, :3] = R.T; T[:3, 3] = -R.T @ cam
-        w2c.append(T)
-        # Image: splat each point as a 3x3 dot; depth: z of the nearest point per pixel
-        img = np.zeros((H, W, 3), np.uint8); dep = np.zeros((H, W), np.float32)
-        pc = (T[:3, :3] @ points.T + T[:3, 3:]).T
-        order = np.argsort(-pc[:, 2])                       # far to near so near overwrites
-        for j in order:
-            if pc[j, 2] <= 0: continue
-            u, v = (K[:2, :2] @ (pc[j, :2] / pc[j, 2]) + K[:2, 2]).round().astype(int)
-            if 1 <= u < W - 1 and 1 <= v < H - 1:
-                img[v - 1:v + 2, u - 1:u + 2] = colors[j]; dep[v - 1:v + 2, u - 1:u + 2] = pc[j, 2]
-        images.append(img); depths.append(dep)
-    return (np.stack(images), np.stack(w2c), np.stack([K] * n_frames), points, colors, np.stack(depths))
+def make_pose_refiner(
+    n_views: int, scene_scale: float, lr_gamma: float, device: str
+) -> tuple[CameraOptModule, torch.optim.Optimizer, ExponentialLR]:
+    """
+    Zero-initialised CameraOptModule with its Adam optimizer and exponential lr decay.
+    """
+    refiner = CameraOptModule(n_views).to(device)
+    refiner.zero_init()
+    optimizer = torch.optim.Adam(refiner.parameters(), lr=POSE_LR * scene_scale, weight_decay=POSE_WEIGHT_DECAY)
+    return refiner, optimizer, ExponentialLR(optimizer, gamma=lr_gamma)
 
 
-@cuda
-@pytest.mark.parametrize("primitive", ["3dgs", "2dgs"])
-def test_train_end_to_end(tmp_path, primitive):
-    images, w2c, K, points, colors, depths = _synthetic_scene()
-    losses = {"depth": {"weight": 0.1}, "normal_consistency": {"weight": 0.05, "start": 10}}
-    if primitive == "2dgs":
-        losses["distortion"] = {"weight": 0.01, "start": 10}
-    cfg = SplatsConfig(primitive=primitive, max_steps=50, losses=losses)
-    report = train(cfg, images, w2c, K, points, colors, tmp_path, depth_targets=depths)
+def prepare_training_target(image: np.ndarray, depth_target: np.ndarray | None, device: str) -> dict[str, Tensor | None]:
+    """
+    One view's targets as tensors: rgb (1, H, W, 3) in [0, 1]; depth (1, H, W, 1) resized nearest, or None.
+    """
+    rgb = torch.from_numpy(image).to(device).float()[None] / 255.0
+    if depth_target is None:
+        return {"rgb": rgb, "depth": None}
 
-    assert (tmp_path / "splats.ply").exists()
-    assert (tmp_path / "ckpt.pt").exists()
-    assert (tmp_path / "splats_quality_report.json").exists()
-    s = report["summary"]
-    assert s["steps"] == 50 and s["n_gaussians"] > 0 and np.isfinite(s["psnr"])
-    assert len(report["per_frame"]) == 8
-    assert {"depth", "normal_consistency"} <= set(s["final_losses"])
-
-    import zarr
-    g = zarr.open_group(tmp_path / "splats.zarr", mode="r")
-    assert g["rgb"].shape == (8, 64, 64, 3) and g["rgb"].dtype == np.uint8
-    assert g["depth"].shape == (8, 64, 64) and g["normal"].shape == (8, 64, 64, 3)
-    assert g["alpha"].shape == (8, 64, 64) and g["c2w"].shape == (8, 4, 4) and g["K"].shape == (8, 3, 3)
-    assert g.attrs["primitive"] == primitive and g.attrs["gsplat_commit"] == "90d7b4b"
-    assert list(g.attrs["image_ids"]) == list(range(8))
-
-    ckpt = torch.load(tmp_path / "ckpt.pt", map_location="cpu", weights_only=False)
-    assert ckpt["step"] == 50 and ckpt["pose_adjust"] is None and "means" in ckpt["splats"]
+    # Depth targets may be at model resolution; nearest resize keeps zeros (no target) as zeros
+    height, width = image.shape[:2]
+    depth = torch.from_numpy(depth_target).to(device)[None, None]
+    depth = F.interpolate(depth, size=(height, width), mode="nearest").permute(0, 2, 3, 1)
+    return {"rgb": rgb, "depth": depth}
 
 
-@cuda
-def test_train_pose_opt_moves_poses(tmp_path):
-    images, w2c, K, points, colors, _ = _synthetic_scene()
-    cfg = SplatsConfig(max_steps=30, pose_opt=True, losses={})
-    train(cfg, images, w2c, K, points, colors, tmp_path)
-    import zarr
-    g = zarr.open_group(tmp_path / "splats.zarr", mode="r")
-    c2w_in = np.linalg.inv(w2c)
-    assert not np.allclose(g["c2w"][:], c2w_in, atol=1e-7)  # refined
-    assert np.allclose(g["c2w"][:], c2w_in, atol=1e-2)      # but only slightly
-    ckpt = torch.load(tmp_path / "ckpt.pt", map_location="cpu", weights_only=False)
-    assert ckpt["pose_adjust"] is not None
-
-
-@cuda
-def test_train_rejects_bad_inputs(tmp_path):
-    images, w2c, K, points, colors, _ = _synthetic_scene()
-    with pytest.raises(ValueError, match="points"):
-        train(SplatsConfig(max_steps=1), images, w2c, K, points[:50], colors[:50], tmp_path)
-    with pytest.raises(ValueError, match="frames"):
-        train(SplatsConfig(max_steps=1), images[:4], w2c, K, points, colors, tmp_path)
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `$PY -m pytest tests/splats/test_trainer.py -v -k train`
-Expected: FAIL — `NotImplementedError` from the stub.
-
-- [ ] **Step 3: Replace the stub with train + _save**
-
-Append to `collab_splats/splats/trainer.py` (delete the stub first):
-
-```python
 ########################################
 # Training
 ########################################
@@ -926,189 +1079,393 @@ Append to `collab_splats/splats/trainer.py` (delete the stub first):
 def train(
     cfg: SplatsConfig,
     images: np.ndarray,
-    w2c: np.ndarray,
-    K: np.ndarray,
+    world_to_cam: np.ndarray,
+    intrinsics: np.ndarray,
     points: np.ndarray,
     colors: np.ndarray,
     out_dir: Path,
     depth_targets: np.ndarray | None = None,
 ) -> dict:
-    """Train splats and write splats.ply / ckpt.pt / splats.zarr / splats_quality_report.json to out_dir.
+    """
+    Train splats and write splats.ply / ckpt.pt / splats.zarr / splats_quality_report.json to out_dir.
 
     Args:
-        images: (N, H, W, 3) uint8 frames.
-        w2c: (N, 4, 4) world-to-camera (COLMAP convention), K: (N, 3, 3) at frame resolution.
-        points, colors: (P, 3) float32 / uint8 sparse seed points in the same world frame.
-        depth_targets: optional (N, h, w) float32 depth (any resolution, 0 = no target).
+        images: (n_views, H, W, 3) uint8 frames.
+        world_to_cam: (n_views, 4, 4) COLMAP-convention poses; intrinsics: (n_views, 3, 3) at frame resolution.
+        points, colors: (P, 3) float32 / uint8 seed points in the same world frame.
+        depth_targets: optional (n_views, h, w) float32 depth at any resolution, 0 = no target.
 
     Returns the quality report dict.
     """
     device = "cuda"
-    N, H, W = images.shape[:3]
+    n_views, height, width = images.shape[:3]
+    out_dir = Path(out_dir)
+
+    # Refuse inputs that cannot train: too few seed points, or mismatched per-view arrays
     if len(points) < 100:
         raise ValueError(f"splats: need >= 100 seed points, got {len(points)}")
-    if not (N == len(w2c) == len(K)) or (depth_targets is not None and len(depth_targets) != N):
-        raise ValueError(f"splats: frames mismatch — images {N}, w2c {len(w2c)}, K {len(K)}, "
-                         f"depth_targets {None if depth_targets is None else len(depth_targets)}")
-    out_dir = Path(out_dir)
+    n_depth = None if depth_targets is None else len(depth_targets)
+    if not (n_views == len(world_to_cam) == len(intrinsics)) or (n_depth is not None and n_depth != n_views):
+        raise ValueError(
+            f"splats: frames mismatch — images {n_views}, world_to_cam {len(world_to_cam)}, "
+            f"intrinsics {len(intrinsics)}, depth_targets {n_depth}"
+        )
+
+    # Cameras on the GPU; frames stay uint8 on the CPU and move one view at a time
+    cam_to_world = torch.from_numpy(np.linalg.inv(world_to_cam)).float().to(device)
+    intrinsics_gpu = torch.from_numpy(intrinsics).float().to(device)
+    scene_scale = compute_scene_scale(cam_to_world)
+
+    # Gaussians, densification strategy, and the lr decay on the means (0.01x over the run)
+    gaussians, optimizers = init_gaussians_from_points(points, colors, scene_scale, device)
+    strategy = DefaultStrategy(verbose=True, **STRATEGY_KWARGS[cfg.primitive])
+    strategy.check_sanity(gaussians, optimizers)
+    strategy_state = strategy.initialize_state(scene_scale=scene_scale)
+    lr_gamma = 0.01 ** (1.0 / cfg.max_steps)
+    schedulers = [ExponentialLR(optimizers["means"], gamma=lr_gamma)]
+
+    # Optional joint pose refinement
+    pose_refiner, pose_optimizer = None, None
+    if cfg.pose_opt:
+        pose_refiner, pose_optimizer, pose_scheduler = make_pose_refiner(n_views, scene_scale, lr_gamma, device)
+        schedulers.append(pose_scheduler)
+
+    start_time = time.perf_counter()
+    loss_values: dict[str, float] = {}
+    for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
+        # Pick one random view and its (possibly refined) camera
+        view = int(torch.randint(n_views, (1,)))
+        target = prepare_training_target(images[view], None if depth_targets is None else depth_targets[view], device)
+        view_cam_to_world = cam_to_world[view : view + 1]
+        if pose_refiner is not None:
+            view_cam_to_world = pose_refiner(view_cam_to_world, torch.tensor([view], device=device))
+
+        # Render with the SH bands unlocked so far, over a random background so transparency cannot hide
+        sh_degree = min(step // SH_DEGREE_INTERVAL, SH_DEGREE)
+        render, info = render_view(
+            cfg.primitive, gaussians, view_cam_to_world, intrinsics_gpu[view : view + 1],
+            width, height, sh_degree, strategy.absgrad,
+        )
+        background = torch.rand(1, 3, device=device)
+        render["rgb"] = render["rgb"] + background * (1.0 - render["alpha"])
+
+        # Loss + backward, with the strategy's hooks around it (it needs gradients on the 2D means)
+        strategy.step_pre_backward(gaussians, optimizers, strategy_state, step, info)
+        loss, loss_values = compute_losses(step, render, target, cfg.losses, scene_scale)
+        loss.backward()
+        strategy.step_post_backward(gaussians, optimizers, strategy_state, step, info, packed=False)
+
+        # Optimizer steps for Gaussians (and poses), then lr decay
+        for optimizer in optimizers.values():
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+        if pose_optimizer is not None:
+            pose_optimizer.step()
+            pose_optimizer.zero_grad(set_to_none=True)
+        for scheduler in schedulers:
+            scheduler.step()
+
+        if step % LOG_EVERY == 0:
+            logger.info(
+                "splats step %d loss %.4f gaussians %d %s",
+                step, loss.item(), len(gaussians["means"]), {k: round(v, 4) for k, v in loss_values.items()},
+            )
+
+    train_seconds = time.perf_counter() - start_time
+    return write_splat_outputs(
+        cfg, gaussians, pose_refiner, images, cam_to_world, intrinsics_gpu, out_dir, train_seconds, loss_values
+    )
+```
+
+Set `collab_splats/splats/__init__.py` to:
+```python
+"""
+Gaussian-splat training on upstream gsplat from an existing pointcloud stage.
+"""
+
+from .trainer import SplatsConfig, train
+
+__all__ = ["SplatsConfig", "train"]
+```
+
+Until Task 7 exists, create `collab_splats/splats/outputs.py` with only a docstring and `def write_splat_outputs(*args, **kwargs): raise NotImplementedError` so the import resolves; Task 7 replaces the file.
+
+- [ ] **Step 4: Run tests**
+
+Run: `$PY -m pytest tests/splats/test_trainer.py -v` → all PASSED. (`strategy.absgrad` is a `DefaultStrategy` dataclass field.)
+
+- [ ] **Step 5: Format and commit**
+
+```bash
+$PY -m black collab_splats/splats tests/splats && $PY -m isort collab_splats/splats tests/splats
+git commit --only collab_splats/splats/trainer.py collab_splats/splats/__init__.py collab_splats/splats/outputs.py tests/splats/test_trainer.py \
+  -m "feat(splats): SplatsConfig, Gaussian init, and the training loop"
+```
+
+---
+
+### Task 7: `splats/outputs.py` — ply, ckpt, rendered zarr, quality report; end-to-end test
+
+**Files:** Replace `collab_splats/splats/outputs.py`; create `tests/splats/test_outputs.py`
+
+- [ ] **Step 1: Write the failing end-to-end tests**
+
+`tests/splats/test_outputs.py`:
+```python
+"""
+End-to-end: train() on the synthetic scene writes every artifact with the documented shapes/attrs.
+"""
+
+import numpy as np
+import pytest
+import torch
+import zarr
+
+from collab_splats.splats.trainer import SplatsConfig, train
+from tests.splats.synthetic import make_scene
+
+cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")
+
+
+@cuda
+@pytest.mark.parametrize("primitive", ["3dgs", "2dgs"])
+def test_train_writes_all_outputs(tmp_path, primitive):
+    images, world_to_cam, intrinsics, points, colors, depths = make_scene()
+    losses = {"depth": {"weight": 0.1}, "normal_consistency": {"weight": 0.05, "start": 10}}
+    if primitive == "2dgs":
+        losses["distortion"] = {"weight": 0.01, "start": 10}
+    cfg = SplatsConfig(primitive=primitive, max_steps=50, losses=losses)
+
+    report = train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+
+    # Files
+    for name in ("splats.ply", "ckpt.pt", "splats.zarr", "splats_quality_report.json"):
+        assert (tmp_path / name).exists(), name
+
+    # Report
+    summary = report["summary"]
+    assert summary["steps"] == 50 and summary["n_gaussians"] > 0 and np.isfinite(summary["psnr"])
+    assert {"depth", "normal_consistency"} <= set(summary["final_losses"])
+    assert len(report["per_frame"]) == 8 and {"image_id", "psnr", "ssim"} <= set(report["per_frame"][0])
+
+    # Rendered zarr
+    store = zarr.open_group(tmp_path / "splats.zarr", mode="r")
+    assert store["rgb"].shape == (8, 64, 64, 3) and store["rgb"].dtype == np.uint8
+    assert store["depth"].shape == (8, 64, 64) and store["normal"].shape == (8, 64, 64, 3)
+    assert store["alpha"].shape == (8, 64, 64) and store["c2w"].shape == (8, 4, 4) and store["K"].shape == (8, 3, 3)
+    assert store.attrs["primitive"] == primitive and store.attrs["gsplat_commit"] == "90d7b4b"
+    assert list(store.attrs["image_ids"]) == list(range(8)) and store.attrs["pose_opt"] is False
+
+    # Checkpoint
+    ckpt = torch.load(tmp_path / "ckpt.pt", map_location="cpu", weights_only=False)
+    assert ckpt["step"] == 50 and ckpt["pose_adjust"] is None and "means" in ckpt["splats"]
+    assert ckpt["config"]["primitive"] == primitive
+
+
+@cuda
+def test_pose_opt_refines_poses_slightly(tmp_path):
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene()
+    train(SplatsConfig(max_steps=30, pose_opt=True, losses={}), images, world_to_cam, intrinsics, points, colors, tmp_path)
+
+    store = zarr.open_group(tmp_path / "splats.zarr", mode="r")
+    cam_to_world_in = np.linalg.inv(world_to_cam)
+    assert not np.allclose(store["c2w"][:], cam_to_world_in, atol=1e-7)  # moved
+    assert np.allclose(store["c2w"][:], cam_to_world_in, atol=1e-2)      # but only a little
+    ckpt = torch.load(tmp_path / "ckpt.pt", map_location="cpu", weights_only=False)
+    assert ckpt["pose_adjust"] is not None
+
+
+@cuda
+def test_train_rejects_bad_inputs(tmp_path):
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene()
+    with pytest.raises(ValueError, match="seed points"):
+        train(SplatsConfig(max_steps=1), images, world_to_cam, intrinsics, points[:50], colors[:50], tmp_path)
+    with pytest.raises(ValueError, match="frames mismatch"):
+        train(SplatsConfig(max_steps=1), images[:4], world_to_cam, intrinsics, points, colors, tmp_path)
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `$PY -m pytest tests/splats/test_outputs.py -v` → `NotImplementedError` from the stub (the bad-inputs test passes already — fine).
+
+- [ ] **Step 3: Write the module**
+
+```python
+"""
+Splat-stage artifacts: splats.ply, ckpt.pt, splats.zarr (every view re-rendered) and the quality report.
+"""
+
+import json
+import logging
+from dataclasses import asdict
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+import zarr
+from gsplat.exporter import export_splats
+from gsplat.losses import ssim_loss
+from torch import Tensor
+
+from collab_splats.splats.cameras import CameraOptModule
+from collab_splats.splats.rendering import render_view
+from collab_splats.utils.progress import progress
+
+logger = logging.getLogger(__name__)
+
+GSPLAT_COMMIT = "90d7b4b"
+FULL_SH_DEGREE = 3
+
+
+def render_all_views(
+    primitive: str,
+    gaussians: torch.nn.ParameterDict,
+    pose_refiner: CameraOptModule | None,
+    images: np.ndarray,
+    cam_to_world: Tensor,
+    intrinsics: Tensor,
+) -> tuple[dict[str, np.ndarray], list[dict]]:
+    """
+    Re-render every training view at full SH over black. Returns (arrays for the zarr, per-frame psnr/ssim).
+    """
+    n_views, height, width = images.shape[:3]
+    device = cam_to_world.device
+    arrays = {
+        "rgb": np.zeros((n_views, height, width, 3), np.uint8),
+        "depth": np.zeros((n_views, height, width), np.float32),
+        "normal": np.zeros((n_views, height, width, 3), np.float32),
+        "alpha": np.zeros((n_views, height, width), np.float32),
+        "c2w": cam_to_world.cpu().numpy().copy(),
+        "K": intrinsics.cpu().numpy(),
+    }
+    per_frame = []
+
+    with torch.no_grad():
+        for view in progress(range(n_views), desc="splats render"):
+            # Refined pose if poses were optimised; the zarr stores what was actually rendered
+            view_cam_to_world = cam_to_world[view : view + 1]
+            if pose_refiner is not None:
+                view_cam_to_world = pose_refiner(view_cam_to_world, torch.tensor([view], device=device))
+                arrays["c2w"][view] = view_cam_to_world[0].cpu().numpy()
+
+            # Render and score against the training frame
+            render, _ = render_view(
+                primitive, gaussians, view_cam_to_world, intrinsics[view : view + 1],
+                width, height, FULL_SH_DEGREE, absgrad=False,
+            )
+            rgb = render["rgb"].clamp(0, 1)
+            rgb_target = torch.from_numpy(images[view]).to(device).float()[None] / 255.0
+            mse = F.mse_loss(rgb, rgb_target).item()
+            per_frame.append(
+                {
+                    "image_id": view,
+                    "psnr": 10 * np.log10(1.0 / max(mse, 1e-12)),
+                    "ssim": 1.0 - ssim_loss(rgb.permute(0, 3, 1, 2), rgb_target.permute(0, 3, 1, 2)).item(),
+                }
+            )
+
+            # Stash the render
+            arrays["rgb"][view] = (rgb[0] * 255).round().byte().cpu().numpy()
+            arrays["depth"][view] = render["depth"][0, ..., 0].cpu().numpy()
+            arrays["normal"][view] = render["normal"][0].cpu().numpy()
+            arrays["alpha"][view] = render["alpha"][0, ..., 0].cpu().numpy()
+
+    return arrays, per_frame
+
+
+def write_splat_outputs(
+    cfg,
+    gaussians: torch.nn.ParameterDict,
+    pose_refiner: CameraOptModule | None,
+    images: np.ndarray,
+    cam_to_world: Tensor,
+    intrinsics: Tensor,
+    out_dir: Path,
+    train_seconds: float,
+    final_losses: dict[str, float],
+) -> dict:
+    """
+    Write splats.ply, ckpt.pt, splats.zarr and splats_quality_report.json to out_dir; return the report.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Scene tensors: poses/K on GPU, frames stay uint8 on CPU and move one at a time
-    c2w_all = torch.from_numpy(np.linalg.inv(w2c)).float().to(device)
-    Ks = torch.from_numpy(K).float().to(device)
-    cam_pos = c2w_all[:, :3, 3]
-    scene_scale = float((cam_pos - cam_pos.mean(0)).norm(dim=-1).max()) * 1.1
+    # splats.ply: standard 3DGS ply (raw log-scales / logit-opacities, as every viewer expects)
+    export_splats(
+        means=gaussians["means"], scales=gaussians["scales"], quats=gaussians["quats"],
+        opacities=gaussians["opacities"], sh0=gaussians["sh0"], shN=gaussians["shN"],
+        format="ply", save_to=str(out_dir / "splats.ply"),
+    )
 
-    # Splats, densification strategy, schedulers, optional pose refinement
-    splats, optimizers = _create_splats_with_optimizers(points, colors, scene_scale, device)
-    strategy = DefaultStrategy(verbose=True, **_STRATEGY[cfg.primitive])
-    strategy.check_sanity(splats, optimizers)
-    state = strategy.initialize_state(scene_scale=scene_scale)
-    gamma = 0.01 ** (1.0 / cfg.max_steps)
-    schedulers = [ExponentialLR(optimizers["means"], gamma=gamma)]
-    pose_adjust, pose_opt = None, None
-    if cfg.pose_opt:
-        pose_adjust = CameraOptModule(N).to(device)
-        pose_adjust.zero_init()
-        pose_opt = torch.optim.Adam(pose_adjust.parameters(), lr=1e-5 * scene_scale, weight_decay=1e-6)
-        schedulers.append(ExponentialLR(pose_opt, gamma=gamma))
+    # ckpt.pt: everything needed to resume or re-render
+    torch.save(
+        {
+            "splats": {name: param.detach().cpu() for name, param in gaussians.items()},
+            "pose_adjust": None if pose_refiner is None else pose_refiner.state_dict(),
+            "config": asdict(cfg),
+            "step": cfg.max_steps,
+        },
+        out_dir / "ckpt.pt",
+    )
 
-    def batch_for(i: int) -> dict[str, Tensor | None]:
-        rgb = torch.from_numpy(images[i]).to(device).float()[None] / 255.0
-        depth = None
-        if depth_targets is not None:
-            d = torch.from_numpy(depth_targets[i]).to(device)[None, None]
-            depth = F.interpolate(d, size=(H, W), mode="nearest").permute(0, 2, 3, 1)
-        return {"rgb": rgb, "depth": depth}
+    # splats.zarr: one chunk per view so downstream stages can read frames independently
+    arrays, per_frame = render_all_views(cfg.primitive, gaussians, pose_refiner, images, cam_to_world, intrinsics)
+    store = zarr.open_group(out_dir / "splats.zarr", mode="w")
+    for name, array in arrays.items():
+        store.create_array(name, data=array, chunks=(1, *array.shape[1:]))
+    store.attrs.update(
+        image_ids=list(range(len(images))), primitive=cfg.primitive, pose_opt=cfg.pose_opt,
+        gsplat_commit=GSPLAT_COMMIT, config=asdict(cfg),
+    )
 
-    # Main loop: one random frame per step
-    t0 = time.perf_counter()
-    logs: dict[str, float] = {}
-    for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
-        i = int(torch.randint(N, (1,)))
-        batch = batch_for(i)
-        c2w = c2w_all[i : i + 1]
-        if pose_adjust is not None:
-            c2w = pose_adjust(c2w, torch.tensor([i], device=device))
-        sh_degree = min(step // SH_DEGREE_INTERVAL, SH_DEGREE)
-        out, info = _render(cfg.primitive, splats, c2w, Ks[i : i + 1], W, H, sh_degree, strategy.absgrad)
-        # Random background so transparent regions cannot hide behind a fixed colour
-        bkgd = torch.rand(1, 3, device=device)
-        out["rgb"] = out["rgb"] + bkgd * (1.0 - out["alpha"])
-
-        strategy.step_pre_backward(splats, optimizers, state, step, info)
-        loss, logs = compute_losses(step, out, batch, cfg.losses, scene_scale)
-        loss.backward()
-        strategy.step_post_backward(splats, optimizers, state, step, info, packed=False)
-        for opt in optimizers.values():
-            opt.step()
-            opt.zero_grad(set_to_none=True)
-        if pose_opt is not None:
-            pose_opt.step()
-            pose_opt.zero_grad(set_to_none=True)
-        for sched in schedulers:
-            sched.step()
-        if step % LOG_EVERY == 0:
-            logger.info("splats step %d loss %.4f gaussians %d %s", step, loss.item(), len(splats["means"]),
-                        {k: round(v, 4) for k, v in logs.items()})
-
-    seconds = time.perf_counter() - t0
-    return _save(cfg, splats, pose_adjust, images, c2w_all, Ks, out_dir, seconds, logs)
-
-
-########################################
-# Save: ply + ckpt + rendered zarr + quality report
-########################################
-
-
-def _save(cfg, splats, pose_adjust, images, c2w_all, Ks, out_dir, seconds, final_losses) -> dict:
-    """Write splats.ply, ckpt.pt, splats.zarr (full-res renders of every frame) and the quality report."""
-    N, H, W = images.shape[:3]
-    device = c2w_all.device
-    export_splats(means=splats["means"], scales=splats["scales"], quats=splats["quats"],
-                  opacities=splats["opacities"], sh0=splats["sh0"], shN=splats["shN"],
-                  format="ply", save_to=str(out_dir / "splats.ply"))
-    torch.save({"splats": {k: v.detach().cpu() for k, v in splats.items()},
-                "pose_adjust": None if pose_adjust is None else pose_adjust.state_dict(),
-                "config": asdict(cfg), "step": cfg.max_steps}, out_dir / "ckpt.pt")
-
-    # Render every frame once at full SH degree over a black background; score psnr/ssim as we go
-    rgb_all = np.zeros((N, H, W, 3), np.uint8)
-    depth_all = np.zeros((N, H, W), np.float32)
-    normal_all = np.zeros((N, H, W, 3), np.float32)
-    alpha_all = np.zeros((N, H, W), np.float32)
-    c2w_out = c2w_all.clone()
-    per_frame = []
-    with torch.no_grad():
-        for i in progress(range(N), desc="splats render"):
-            c2w = c2w_all[i : i + 1]
-            if pose_adjust is not None:
-                c2w = pose_adjust(c2w, torch.tensor([i], device=device))
-                c2w_out[i] = c2w[0]
-            out, _ = _render(cfg.primitive, splats, c2w, Ks[i : i + 1], W, H, SH_DEGREE, absgrad=False)
-            gt = torch.from_numpy(images[i]).to(device).float()[None] / 255.0
-            rgb = out["rgb"].clamp(0, 1)
-            mse = F.mse_loss(rgb, gt).item()
-            per_frame.append({"image_id": i, "psnr": 10 * np.log10(1.0 / max(mse, 1e-12)),
-                              "ssim": 1.0 - ssim_loss(rgb.permute(0, 3, 1, 2), gt.permute(0, 3, 1, 2)).item()})
-            rgb_all[i] = (rgb[0] * 255).round().byte().cpu().numpy()
-            depth_all[i] = out["depth"][0, ..., 0].cpu().numpy()
-            normal_all[i] = out["normal"][0].cpu().numpy()
-            alpha_all[i] = out["alpha"][0, ..., 0].cpu().numpy()
-
-    g = zarr.open_group(out_dir / "splats.zarr", mode="w")
-    for name, arr in (("rgb", rgb_all), ("depth", depth_all), ("normal", normal_all), ("alpha", alpha_all),
-                      ("c2w", c2w_out.cpu().numpy()), ("K", Ks.cpu().numpy())):
-        g.create_array(name, data=arr, chunks=(1, *arr.shape[1:]))
-    g.attrs.update(image_ids=list(range(N)), primitive=cfg.primitive, pose_opt=cfg.pose_opt,
-                   gsplat_commit=GSPLAT_COMMIT, config=asdict(cfg))
-
+    # splats_quality_report.json: same shape as the other stage reports (summary + per_frame)
     report = {
         "summary": {
-            "psnr": float(np.mean([f["psnr"] for f in per_frame])),
-            "ssim": float(np.mean([f["ssim"] for f in per_frame])),
-            "n_gaussians": int(len(splats["means"])),
+            "psnr": float(np.mean([frame["psnr"] for frame in per_frame])),
+            "ssim": float(np.mean([frame["ssim"] for frame in per_frame])),
+            "n_gaussians": int(len(gaussians["means"])),
             "steps": cfg.max_steps,
-            "seconds": round(seconds, 1),
+            "seconds": round(train_seconds, 1),
             "final_losses": final_losses,
             "config": asdict(cfg),
         },
         "per_frame": per_frame,
     }
     (out_dir / "splats_quality_report.json").write_text(json.dumps(report, indent=2))
-    logger.info("splats: %d gaussians, psnr %.2f, ssim %.3f, %.0fs -> %s",
-                report["summary"]["n_gaussians"], report["summary"]["psnr"], report["summary"]["ssim"],
-                seconds, out_dir)
+    logger.info(
+        "splats: %d gaussians, psnr %.2f, ssim %.3f, %.0fs -> %s",
+        report["summary"]["n_gaussians"], report["summary"]["psnr"], report["summary"]["ssim"], train_seconds, out_dir,
+    )
     return report
 ```
 
+- [ ] **Step 4: Run the whole splats suite**
 
-- [ ] **Step 4: Run the tests**
-
-Run: `$PY -m pytest tests/splats/ -v`
-Expected: all PASS (≈1–2 min on GPU). Known pitfalls: `strategy.absgrad` is a dataclass field on `DefaultStrategy` — if `AttributeError`, use `_STRATEGY[cfg.primitive]["absgrad"]`. If `export_splats` complains about `shN` being empty for `sh_degree=0`, it is not — we always build `(SH_DEGREE+1)**2 = 16` coefficients.
+Run: `$PY -m pytest tests/splats/ -v` → all PASSED (≈1–2 min GPU).
 
 - [ ] **Step 5: Format and commit**
 
 ```bash
 $PY -m black collab_splats/splats tests/splats && $PY -m isort collab_splats/splats tests/splats
-git commit --only collab_splats/splats/trainer.py tests/splats/test_trainer.py \
-  -m "feat(splats): train loop (DefaultStrategy, sh schedule, pose opt) + ply/ckpt/zarr/report save"
+git commit --only collab_splats/splats/outputs.py tests/splats/test_outputs.py \
+  -m "feat(splats): write_splat_outputs — ply, ckpt, rendered zarr, quality report"
 ```
 
 ---
 
-### Task 7: `Reconstructor.splats()` leaf stage + config
+### Task 8: `Reconstructor.splats()` leaf stage + config
 
 **Files:**
-- Modify: `collab_splats/wrapper/reconstructor.py` — `_STAGE_ORDER`/`_STAGE_DEPS` (55–78), `_stage_output_exists` (~1283), `run_pipeline` (~1320: enabled-stage list + dispatch), new method after `verify`
+- Modify: `collab_splats/wrapper/reconstructor.py` — `_STAGE_ORDER`/`_STAGE_DEPS` (55–78), `_stage_output_exists` (~1283), `run_pipeline` (~1320), new method after `verify()`
 - Modify: `configs/base.yaml` — add `splats:` block after `mesh:`
 - Test: `tests/wrapper/test_splats_stage.py`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-"""Splats-stage wiring: leaf registration, config default, array assembly handed to train()."""
+"""
+Splats-stage wiring: leaf registration, base.yaml default, and the arrays handed to train().
+"""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -1117,6 +1474,7 @@ from unittest.mock import patch
 import numpy as np
 import yaml
 
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES, Reconstructor
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
@@ -1135,111 +1493,105 @@ def test_base_yaml_defaults():
     assert cfg["splats"]["primitive"] == "3dgs"
     assert set(cfg["splats"]["losses"]) == {"depth", "normal_consistency", "distortion"}
     assert cfg["splats"]["losses"]["distortion"]["weight"] == 0.0
-    assert cfg["mesh"]["source"] == "feedforward"
 
 
-def _stub_reconstructor(tmp_path, n=3, H=8, W=8):
-    r = Reconstructor.__new__(Reconstructor)
-    r.config = {
+def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
+    """
+    Reconstructor with config + frames.zarr + a fake PointcloudResult; image_paths reversed to prove index lookup.
+    """
+    recon = Reconstructor.__new__(Reconstructor)
+    recon.config = {
         "output_path": str(tmp_path),
         "pointcloud": {"backend": "vggtx"},
         "mesh": {"conf_percentile": 20},
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
     }
-    r._stage_output_exists = lambda stage: False
-    # frames.zarr with n frames named frame_000000.. ; image_paths in reversed order to prove lookup-by-idx
-    from collab_splats.preproc.frame_store import FrameStore
-    images = np.stack([np.full((H, W, 3), i * 10, np.uint8) for i in range(n)])
-    FrameStore.create(r.frames_zarr, images, [{"frame_idx": i} for i in range(n)], provenance={"video_path": "v"})
-    paths = [Path(f"frame_{i:06d}.jpg") for i in reversed(range(n))]
-    r._resolve_result = lambda: SimpleNamespace(
-        image_paths=paths,
-        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
-        intrinsics=np.tile(np.eye(3, dtype=np.float32), (n, 1, 1)),
+    recon._stage_output_exists = lambda stage: False
+
+    frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
+    FrameStore.create(recon.frames_zarr, frames, [{"frame_idx": i} for i in range(n_views)], provenance={"video_path": "v"})
+    recon._resolve_result = lambda: SimpleNamespace(
+        image_paths=[Path(f"frame_{i:06d}.jpg") for i in reversed(range(n_views))],
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1)),
+        intrinsics=np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1)),
         points=np.zeros((200, 3), np.float32),
         colors=np.zeros((200, 3), np.uint8),
     )
-    return r, images
+    return recon
 
 
-def test_splats_stage_assembles_arrays_and_calls_train(tmp_path):
-    r, images = _stub_reconstructor(tmp_path)
-    ff = SimpleNamespace(depth=np.ones((3, 4, 4), np.float32), confidence=None)
-    with patch("collab_splats.splats.trainer.train") as train, patch(
-        "collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff
+def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    feedforward = SimpleNamespace(depth=np.ones((3, 4, 4), np.float32), confidence=None)
+    with patch("collab_splats.splats.trainer.train", return_value={"summary": {}}) as train, patch(
+        "collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward
     ):
-        train.return_value = {"summary": {}}
-        (r.backend_dir / "feedforward.zarr").mkdir(parents=True)
-        out = r.splats()
-    assert out == r.backend_dir / "splats" / "splats.zarr"
-    args, kwargs = train.call_args
-    cfg, imgs, w2c, K, pts, cols, out_dir = args
+        out = recon.splats()
+
+    assert out == recon.backend_dir / "splats" / "splats.zarr"
+    cfg, images, world_to_cam, intrinsics, points, colors, out_dir = train.call_args.args
     assert cfg.max_steps == 1
-    # image_paths were reversed -> stacked images must follow image_paths order, not store order
-    assert imgs[0, 0, 0, 0] == 20 and imgs[2, 0, 0, 0] == 0
-    assert w2c.shape == (3, 4, 4) and K.shape == (3, 3, 3) and pts.shape == (200, 3)
-    assert out_dir == r.backend_dir / "splats"
-    assert kwargs["depth_targets"].shape == (3, 4, 4)
+    assert images[0, 0, 0, 0] == 20 and images[2, 0, 0, 0] == 0  # follows image_paths (reversed), not store order
+    assert world_to_cam.shape == (3, 4, 4) and intrinsics.shape == (3, 3, 3) and points.shape == (200, 3)
+    assert out_dir == recon.backend_dir / "splats"
+    assert train.call_args.kwargs["depth_targets"].shape == (3, 4, 4)
 
 
-def test_splats_stage_skips_depth_targets_when_loss_off(tmp_path):
-    r, _ = _stub_reconstructor(tmp_path)
-    r.config["splats"]["losses"] = {}
+def test_splats_stage_skips_depth_targets_when_depth_loss_off(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["splats"]["losses"] = {}
     with patch("collab_splats.splats.trainer.train", return_value={}) as train:
-        r.splats()
+        recon.splats()
     assert train.call_args.kwargs["depth_targets"] is None
 
 
-def test_splats_stage_refuses_existing_without_overwrite(tmp_path):
-    r, _ = _stub_reconstructor(tmp_path)
-    r._stage_output_exists = lambda stage: stage == "splats"
+def test_splats_stage_skips_when_output_exists(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    recon._stage_output_exists = lambda stage: stage == "splats"
     with patch("collab_splats.splats.trainer.train") as train:
-        r.splats()
+        recon.splats()
     train.assert_not_called()
 ```
 
-(`FrameStore.create(path, frames, records, *, provenance)` — every record needs `frame_idx`; same call shape as `tests/preproc/test_frame_store.py:17`.)
-
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `$PY -m pytest tests/wrapper/test_splats_stage.py -v`
-Expected: FAIL — `assert 'splats' in _STAGE_ORDER`; `KeyError: 'splats'` on base.yaml.
+Run: `$PY -m pytest tests/wrapper/test_splats_stage.py -v` → FAIL (`'splats' in _STAGE_ORDER`, `KeyError: 'splats'`).
 
 - [ ] **Step 3: Register the stage**
 
-`collab_splats/wrapper/reconstructor.py`:
-
 `_STAGE_ORDER` → `["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify", "reconstruction_quality_report"]`.
 
-`_STAGE_DEPS` — add, with a comment in the same style as the neighbours:
+`_STAGE_DEPS` — add in the neighbours' comment style:
 ```python
-    # splats: trains from COLMAP poses/points + frames.zarr; mesh.source: splats reads its zarr
+    # splats: trains on COLMAP poses/points + frames.zarr; leaf — nothing reads it yet
     "splats": ["pointcloud"],
 ```
 
-`_stage_output_exists` — add before the `mesh` check:
+`_stage_output_exists` — before the `mesh` check:
 ```python
         if stage == "splats":
             return (self.backend_dir / "splats" / "splats.zarr").exists()
 ```
 
-`run_pipeline` enabled-stage list — after the `semantics` append:
+`run_pipeline` — after the `semantics` append:
 ```python
             if self.config["splats"]["enabled"]:
                 stages.append("splats")
 ```
-Dispatch loop — after the `semantics` branch:
+dispatch loop, after the `semantics` branch:
 ```python
             elif stage == "splats":
                 self.splats(overwrite=overwrite)
 ```
-Also extend the `stages:` docstring list with `"splats"`.
+and add `"splats"` to the `stages:` docstring list.
 
-New method, placed after `verify()`:
+New method after `verify()`:
 
 ```python
     def splats(self, overwrite: bool = False) -> Path:
-        """Train Gaussian splats from the pointcloud stage. Returns path to splats/splats.zarr."""
+        """
+        Train Gaussian splats from the pointcloud stage. Returns path to splats/splats.zarr.
+        """
         out_dir = self.backend_dir / "splats"
         if not overwrite and self._stage_output_exists("splats"):
             logger.info("Splats exist at %s, skipping", out_dir)
@@ -1256,43 +1608,38 @@ New method, placed after `verify()`:
 
         cfg = SplatsConfig.from_dict(self.config["splats"])
 
-        # Frames in image_paths order (COLMAP image order), looked up by frame index
+        # Frames in COLMAP image order, looked up in frames.zarr by the frame index in each name
         store = FrameStore.open(self.frames_zarr)
         images = np.stack([store.image_by_frame_idx(FrameStore.frame_idx_from_path(p)) for p in result.image_paths])
 
-        # Depth targets: feedforward depth masked like the mesh stage (see plan deviation note)
+        # Depth targets: feedforward depth masked like the mesh stage masks it (0 = no target)
         depth_targets = None
         if cfg.losses.get("depth", {}).get("weight", 0.0) > 0:
-            ff = FeedforwardResult.load_zarr(
+            feedforward = FeedforwardResult.load_zarr(
                 self.backend_dir / "feedforward.zarr", load_images=False, load_world_points=False
             )
-            if ff.depth is None or len(ff.depth) != len(images):
-                raise ValueError(
-                    f"splats depth loss needs feedforward depth for all {len(images)} frames; "
-                    f"feedforward.zarr has {None if ff.depth is None else len(ff.depth)}"
-                )
-            depth_targets = np.ascontiguousarray(ff.depth, dtype=np.float32)
-            pct = self.config["mesh"]["conf_percentile"]
-            if pct is not None and ff.confidence is not None:
-                conf = ff.confidence.cpu().numpy() if hasattr(ff.confidence, "cpu") else np.asarray(ff.confidence)
-                depth_targets = np.where(confidence_mask(conf, pct), depth_targets, 0.0).astype(np.float32)
+            if feedforward.depth is None or len(feedforward.depth) != len(images):
+                n_depth = None if feedforward.depth is None else len(feedforward.depth)
+                raise ValueError(f"splats depth loss needs feedforward depth for all {len(images)} frames; got {n_depth}")
+            depth_targets = np.ascontiguousarray(feedforward.depth, dtype=np.float32)
+            conf_percentile = self.config["mesh"]["conf_percentile"]
+            if conf_percentile is not None and feedforward.confidence is not None:
+                confidence = np.asarray(feedforward.confidence.cpu() if hasattr(feedforward.confidence, "cpu") else feedforward.confidence)
+                depth_targets = np.where(confidence_mask(confidence, conf_percentile), depth_targets, 0.0).astype(np.float32)
 
-        train(cfg, images, result.extrinsics, result.intrinsics, result.points, result.colors, out_dir,
-              depth_targets=depth_targets)
+        train(cfg, images, result.extrinsics, result.intrinsics, result.points, result.colors, out_dir, depth_targets=depth_targets)
         logger.info("Splats saved to %s", out_dir)
         return out_dir / "splats.zarr"
 ```
-
-(`np` is already imported at the top of `reconstructor.py` — verify with `grep -n '^import numpy' collab_splats/wrapper/reconstructor.py`.)
+(`np` is imported at the top of `reconstructor.py` — verify with `grep -n '^import numpy' collab_splats/wrapper/reconstructor.py`.)
 
 - [ ] **Step 4: Add the config block**
 
-`configs/base.yaml` — insert after the `mesh:` block (keep the file's comment style):
-
+`configs/base.yaml`, after the `mesh:` block:
 ```yaml
 # Gaussian splats trained from the pointcloud stage (leaf stage `splats`, upstream gsplat).
-# Losses: photometric (0.8 L1 + 0.2 SSIM) is always on; each entry below is active iff
-# weight > 0 and step >= start. Depth targets = feedforward depth masked by mesh.conf_percentile.
+# Photometric (0.8 L1 + 0.2 SSIM) is always on; each loss below is active iff weight > 0 and
+# step >= start. Depth targets = feedforward depth masked by mesh.conf_percentile.
 splats:
   enabled: false
   primitive: 3dgs            # 3dgs (fast kernel, antialiased) | 2dgs (surface-aligned)
@@ -1301,18 +1648,13 @@ splats:
   losses:
     depth: {weight: 0.01}
     normal_consistency: {weight: 0.05, start: 7000}
-    distortion: {weight: 0.0, start: 3000}   # 2dgs only; >0 with 3dgs is a ValueError
-```
-
-And in the `mesh:` block add, directly under `enabled:`:
-```yaml
-  source: feedforward        # feedforward | splats — which depth maps TSDF fuses
+    distortion: {weight: 0.0, start: 3000}   # 2dgs only; weight > 0 with 3dgs is a ValueError
 ```
 
 - [ ] **Step 5: Run tests**
 
 Run: `$PY -m pytest tests/wrapper/test_splats_stage.py tests/wrapper/test_verify_stage.py tests/wrapper/test_reconstructor.py -v`
-Expected: all PASS. If `test_reconstructor.py` has a test enumerating `_STAGE_ORDER` literally, update its expected list to include `"splats"` between `semantics` and `mesh`.
+Expected: PASS. If `test_reconstructor.py` enumerates `_STAGE_ORDER` literally, add `"splats"` between `semantics` and `mesh` there.
 
 - [ ] **Step 6: Commit**
 
@@ -1323,214 +1665,64 @@ git commit --only collab_splats/wrapper/reconstructor.py configs/base.yaml tests
 
 ---
 
-### Task 8: `mesh.source: splats`
+### Task 9: Docs, spec deviations, gates
 
-**Files:**
-- Modify: `collab_splats/wrapper/reconstructor.py` — `mesh()` (~1078–1116) + new module-level `_run_splats_mesh` next to `_run_tsdf_mesh`
-- Test: `tests/wrapper/test_splats_stage.py`
-
-- [ ] **Step 1: Write the failing tests**
-
-Append to `tests/wrapper/test_splats_stage.py`:
-
-```python
-import zarr
-
-from collab_splats.wrapper.reconstructor import _run_splats_mesh
-
-
-def _write_splats_zarr(path, n=2, H=8, W=8):
-    g = zarr.open_group(path, mode="w")
-    rng = np.random.default_rng(0)
-    g.create_array("rgb", data=rng.integers(0, 255, (n, H, W, 3)).astype(np.uint8))
-    g.create_array("depth", data=np.full((n, H, W), 1.0, np.float32))
-    g.create_array("normal", data=np.zeros((n, H, W, 3), np.float32))
-    alpha = np.ones((n, H, W), np.float32); alpha[:, :2] = 0.1
-    g.create_array("alpha", data=alpha)
-    g.create_array("c2w", data=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)))
-    g.create_array("K", data=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], np.float32), (n, 1, 1)))
-
-
-def test_run_splats_mesh_masks_alpha_and_calls_mesher(tmp_path):
-    _write_splats_zarr(tmp_path / "splats.zarr")
-    with patch("collab_splats.mesh.get_mesh_creator") as gmc, patch(
-        "collab_splats.mesh.utils.optimize_color_map"
-    ) as ocm:
-        mesher = gmc.return_value
-        mesher.depth_trunc = 2.0
-        mesher.create.return_value = SimpleNamespace(mesh_path=tmp_path / "mesh.ply")
-        out = _run_splats_mesh(tmp_path / "splats.zarr", tmp_path, voxel_size=0.01, sdf_trunc=0.04,
-                               depth_trunc=2.0, clean_repair=False, conf_percentile=20, color_map_iterations=3)
-    assert out == tmp_path / "mesh.ply"
-    depths = mesher.create.call_args.args[0]
-    assert (depths[:, :2] == 0).all() and (depths[:, 2:] == 1.0).all()   # low-alpha rows masked
-    assert mesher.create.call_args.args[1].dtype == np.uint8
-    ocm.assert_called_once()
-
-
-def test_run_splats_mesh_requires_zarr(tmp_path):
-    import pytest
-    with pytest.raises(ValueError, match="splats.zarr"):
-        _run_splats_mesh(tmp_path / "splats.zarr", tmp_path, voxel_size=0.01, sdf_trunc=0.04,
-                         depth_trunc=2.0, clean_repair=False, conf_percentile=None, color_map_iterations=0)
-
-
-def test_mesh_dispatches_on_source(tmp_path):
-    r, _ = _stub_reconstructor(tmp_path)
-    r.config["mesh"].update(enabled=True, source="splats", voxel_size=0.01, sdf_trunc=0.04, depth_trunc=2.0,
-                            clean_repair=False, native_resolution=True, color_map_iterations=0)
-    with patch("collab_splats.wrapper.reconstructor._run_splats_mesh", return_value=tmp_path / "m.ply") as rsm:
-        out = r.mesh()
-    rsm.assert_called_once()
-    assert rsm.call_args.args[0] == r.backend_dir / "splats" / "splats.zarr"
-    assert out == tmp_path / "m.ply"
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `$PY -m pytest tests/wrapper/test_splats_stage.py -v -k mesh`
-Expected: FAIL — `ImportError: cannot import name '_run_splats_mesh'`.
-
-- [ ] **Step 3: Implement**
-
-Module-level function in `reconstructor.py`, directly after `_run_tsdf_mesh`:
-
-```python
-def _run_splats_mesh(
-    splats_zarr: Path,
-    output_dir: Path,
-    voxel_size: float,
-    sdf_trunc: float,
-    depth_trunc: float,
-    clean_repair: bool,
-    conf_percentile: float | None,
-    color_map_iterations: int,
-) -> Path:
-    """TSDF-fuse the splat renders in splats.zarr (rendered depth/rgb/poses); alpha plays the confidence role."""
-    import zarr
-
-    from collab_splats.mesh import get_mesh_creator
-    from collab_splats.mesh.utils import optimize_color_map
-    from collab_splats.pointcloud.utils import confidence_mask
-
-    if not splats_zarr.exists():
-        raise ValueError(f"mesh.source: splats needs {splats_zarr}; run the splats stage first")
-    g = zarr.open_group(splats_zarr, mode="r")
-    depths, rgbs = g["depth"][:].astype(np.float32), g["rgb"][:]
-    c2w, K, alpha = g["c2w"][:], g["K"][:], g["alpha"][:]
-
-    # Mask low-alpha pixels exactly as the feedforward path masks low-confidence ones
-    if conf_percentile is not None:
-        depths = np.where(confidence_mask(alpha, conf_percentile), depths, 0.0).astype(np.float32)
-
-    mesher = get_mesh_creator(
-        "open3d_tsdf", Path(output_dir), voxel_size=voxel_size, sdf_trunc=sdf_trunc,
-        depth_trunc=depth_trunc, clean_repair=clean_repair,
-    )
-    mesh_path = mesher.create(depths, rgbs, c2w, K).mesh_path
-    if color_map_iterations > 0:
-        optimize_color_map(mesh_path, depths, rgbs, c2w, K, iterations=color_map_iterations,
-                           depth_trunc=mesher.depth_trunc)
-    return mesh_path
-```
-
-(`optimize_color_map(mesh_path, depths, rgbs, c2w, intrinsics, iterations, depth_trunc)` — `collab_splats/mesh/utils.py:615`; the call above matches.)
-
-In `Reconstructor.mesh()`, after the skip check and before `result = result or self._resolve_result()`:
-
-```python
-        mesh_cfg = self.config["mesh"]
-        if mesh_cfg["source"] == "splats":
-            if mesh_cfg["native_resolution"]:
-                logger.info("mesh.source: splats renders at frame resolution already; native_resolution ignored")
-            out = _run_splats_mesh(
-                self.backend_dir / "splats" / "splats.zarr", self.backend_dir,
-                voxel_size=mesh_cfg["voxel_size"], sdf_trunc=mesh_cfg["sdf_trunc"],
-                depth_trunc=mesh_cfg["depth_trunc"], clean_repair=mesh_cfg["clean_repair"],
-                conf_percentile=mesh_cfg["conf_percentile"], color_map_iterations=mesh_cfg["color_map_iterations"],
-            )
-            logger.info("Mesh saved to %s", out)
-            return out
-        if mesh_cfg["source"] != "feedforward":
-            raise ValueError(f"mesh.source must be 'feedforward' or 'splats', got '{mesh_cfg['source']}'")
-```
-and delete the later duplicate `mesh_cfg = self.config["mesh"]` line.
-
-Also: in `run_pipeline`'s dependency validation, nothing changes — `mesh` still depends on `pointcloud`; a `source: splats` run without the splats zarr fails loud inside `mesh()`.
-
-- [ ] **Step 4: Run tests**
-
-Run: `$PY -m pytest tests/wrapper/test_splats_stage.py tests/wrapper/test_reconstructor.py -v`
-Expected: all PASS. `test_reconstructor.py` stubs that build a `mesh` config dict without `source` will `KeyError` — add `"source": "feedforward"` to those fixtures.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git commit --only collab_splats/wrapper/reconstructor.py tests/wrapper/test_splats_stage.py tests/wrapper/test_reconstructor.py \
-  -m "feat(mesh): mesh.source: splats — TSDF-fuse rendered splat depth from splats.zarr"
-```
-
----
-
-### Task 9: Docs, spec deviation, gates
-
-**Files:**
-- Modify: `configs/README.md` (key table ~313+, layout table ~425, section ~461), `CLAUDE.md` (arch tree + In-Flight/Recently completed), `docs/superpowers/specs/2026-08-22-splats-module-design.md`
+**Files:** `configs/README.md` (key table ~313+, layout table ~425, section ~461), `CLAUDE.md`, `docs/superpowers/specs/2026-08-22-splats-module-design.md`
 
 - [ ] **Step 1: configs/README.md**
 
-Key table: add rows for `splats.enabled`, `splats.primitive`, `splats.max_steps`, `splats.pose_opt`, `splats.losses.<name>.{weight,start}`, `mesh.source` (one line each, same column format as neighbours).
-
-Processed-scene layout table: add `<backend>/splats/splats.ply`, `ckpt.pt`, `splats.zarr`, `splats_quality_report.json` rows.
-
-Replace section "#### `ns-train --data` does not work on a published scene, by design" with:
+Key table: rows for `splats.enabled`, `splats.primitive`, `splats.max_steps`, `splats.pose_opt`, `splats.losses.<name>.{weight,start}` in the neighbours' column format.
+Layout table: rows for `<backend>/splats/splats.ply`, `ckpt.pt`, `splats.zarr`, `splats_quality_report.json`.
+Replace the "#### `ns-train --data` does not work on a published scene, by design" section with:
 
 ```markdown
 #### Splats train from the published COLMAP + frames.zarr
 
 `--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
-`frames.zarr` — no image directory, no transforms.json round-trip. `mesh.source: splats` then
-fuses `splats/splats.zarr` (rendered depth, alpha as confidence) instead of `feedforward.zarr`.
-Every `splats/` artifact is in the COLMAP world frame; nothing is normalised.
+`frames.zarr` — no image directory, no transforms.json round-trip. Every `splats/` artifact is in
+the COLMAP world frame; nothing is normalised. `mesh` still fuses `feedforward.zarr`; fusing the
+splat renders (`mesh.source: splats`) is a follow-on.
 ```
-
-Add "Re-running one stage" list: `splats` is a leaf stage (`--stages splats`, `--stages mesh` with `source: splats`).
+Add `splats` to the "Re-running one stage" leaf list.
 
 - [ ] **Step 2: CLAUDE.md**
 
-Arch tree: add under `collab_splats/`:
+Arch tree, under `collab_splats/`:
 ```
-  splats/                  # Gaussian-splat training on upstream gsplat (trainer, losses, vendored cameras)
+  splats/                  # Gaussian-splat training on upstream gsplat: cameras, losses, rendering, trainer, outputs
 ```
-Add a "Recently completed (2026-08-22): **splats-module**" paragraph (≤6 lines): nerfstudio/gsplat-rade retired, `splats` leaf stage, `mesh.source`, depth targets from feedforward depth (spec deviation), 3DGS normals via `extra_signals` unmeasured (owed), PAGaS follow-on via `_render()`.
+Add a "Recently completed (2026-08-22): **splats-module**" paragraph (≤6 lines): nerfstudio/gsplat-rade retired; `splats` leaf stage; depth targets from feedforward depth (spec deviation); `mesh.source: splats` deferred; 3DGS `extra_signals` normals unmeasured (owed); PAGaS seam = `render_view`.
 
-- [ ] **Step 3: Record the deviation in the spec**
+- [ ] **Step 3: Spec deviations**
 
-In `docs/superpowers/specs/2026-08-22-splats-module-design.md`, find the depth-loss target sentence (grep `points3D` / `tracks`) and replace it with: *Depth targets come from `feedforward.zarr` depth masked by `confidence_mask(conf, mesh.conf_percentile)`, resized nearest to frame resolution — feedforward COLMAP models carry no Point2D tracks (`build_pycolmap_reconstruction` adds points with empty tracks), so the track path would be inert. `train()` receives them as an optional `(N, h, w)` array (0 = no target).*
+In the spec: (a) replace the depth-target sentence(s) (grep `points3D` / `tracks`) with the Deviation 1 text from the top of this plan; (b) mark the `mesh.source` subsection "Deferred to a follow-on plan (2026-08-22)"; (c) update the layout from 3 files to the 5 listed here.
 
 - [ ] **Step 4: Gates**
 
 ```bash
-$PY -m collab_splats.dashboard --smoke          # must print SMOKE PASS
-$PY -m pytest tests/ -x -q -p no:randomly         # full suite (CUDA tests run; no tmux eval concurrently)
-grep -rn 'gsplat-rade\|nerfstudio' --include='*.py' --include='*.md' --include='*.yaml' --include='*.toml' . \
-  | grep -v 'docs/superpowers\|graphify-out\|update_kernelspecs\|evals/datasets.py\|known-test-failures'
+$PY -m collab_splats.dashboard --smoke                       # must print SMOKE PASS
+$PY -m pytest tests/ -x -q -p no:randomly                      # full suite; no tmux eval concurrently
+grep -rn 'gsplat-rade\|nerfstudio\|Splatter' --include='*.py' --include='*.md' --include='*.yaml' --include='*.toml' --include='*.rst' . \
+  | grep -v 'docs/superpowers\|graphify-out\|docs/_build\|update_kernelspecs\|evals/datasets.py\|known-test-failures\|display_name\|/opt/conda/envs'
 graphify update .
 ```
-Expected: `SMOKE PASS`; suite green except entries already in `docs/known-test-failures.md`; the grep prints nothing.
+Expected: `SMOKE PASS`; suite green except `docs/known-test-failures.md` entries; the grep prints nothing.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Commit, then merge back**
 
 ```bash
 git add -f docs/superpowers/specs/2026-08-22-splats-module-design.md
 git commit --only configs/README.md CLAUDE.md docs/superpowers/specs/2026-08-22-splats-module-design.md graphify-out \
-  -m "docs(splats): config keys, processed-scene layout, spec deviation (depth targets from feedforward depth)"
+  -m "docs(splats): config keys, processed-scene layout, spec deviations"
 ```
+Merging `feat/splats-module` into `refactor/cu121-uv-migration` is a human step (the main checkout carries a concurrent session's uncommitted edits to `pyproject.toml` / `uv.lock` / `configs/base.yaml`, which will conflict with Tasks 1 and 8).
 
 ---
 
 ## Owed after this plan (not in scope)
 
-- Measured report: 3DGS `extra_signals` normals + `depth_to_normal` consistency vs 2DGS on `data/tutorial/` (psnr/ssim + mesh vertex count/components).
-- `evals/scripts/eval_splats.py`, PAGaS (gsplat `bd64a47` + CUDA patch, seam = `_render`), feature distillation, dense mono priors.
-- `cfg.losses` default includes `distortion: weight 0.0` for discoverability only — `SplatsConfig()` is valid with 3dgs because the check is `weight > 0`.
+- `mesh.source: splats` (TSDF over `splats.zarr`, alpha as confidence) — separate plan.
+- New tutorial `docs/source/tutorials/03_splats/train_splats.ipynb` on `data/tutorial/` + a semantic mesh-query tutorial replacing the deleted `06_mesh` one.
+- Measured report: 3DGS `extra_signals` normals vs 2DGS on `data/tutorial/` (psnr/ssim, mesh vertex count/components once `mesh.source` exists).
+- Docker image rebuild against the new lock.
+- `evals/scripts/eval_splats.py`, PAGaS (gsplat `bd64a47` + CUDA patch, seam = `render_view`), feature distillation, dense mono priors.

@@ -23,8 +23,14 @@ from collab_splats.pointcloud.feedforward import (
     VGGTXCreator,
 )
 from collab_splats.pointcloud.utils import lift_features
-from collab_splats.preproc import extract_frame, sample_frames
+from collab_splats.preproc import extract_frame
 from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc.qa import load_video_quality
+from collab_splats.preproc.sampling import (
+    sample_fps,
+    sample_optical_flow,
+    sample_uniform,
+)
 from collab_splats.remote import PULL_EXCLUDES, SceneSource
 from collab_splats.semantics.compression import (
     LIFTED_SUFFIX,
@@ -336,8 +342,10 @@ def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: flo
     persist_mesh_vertex_features(mesh_path, result.points, point_features, k=k, sdf_trunc=sdf_trunc)
 
 
-def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
-    """Sample frames per the configured method; return (frames, records)."""
+def _sample(video_path: Path, config: RunConfig, out_dir: Path, op_log: OperationLog):
+    """
+    Sample frames per the configured method; return (frames, records).
+    """
 
     # Live label shows images processed / total; log=False so per-frame pings don't flood the log.
     # Throttle to ~100 writes total (every 1% of frames) — the UI polls at 300ms regardless.
@@ -351,31 +359,37 @@ def _sample(video_path: Path, config: RunConfig, op_log: OperationLog):
             log=False,
         )
 
+    # Measure first, select second. The report is reused by existence, so a re-run is free.
+    op_log.update_progress(4, "sampling: measuring video quality")
+    report = load_video_quality(video_path, out_dir / "video_quality_report.json")
+
+    # Records carry true source frame indices for every method. Each method has ONE
+    # density knob, so each branch passes only its own.
     op_log.update_progress(5, f"sampling: {config.sampling_method}")
-    # One call; records carry true source frame indices for every method. Each method has
-    # ONE density knob and sample_frames rejects a knob belonging to another, so each
-    # branch passes only its own.
     method = config.sampling_method
+
     if method == "fps":
-        return sample_frames(
+        return sample_fps(
             str(video_path),
-            method="fps",
             fps=config.fps,
             max_frames=config.max_frames,
+            report=report,
             on_progress=on_progress,
         )
+
     if method == "optical_flow":
-        return sample_frames(
+        return sample_optical_flow(
             str(video_path),
-            method="optical_flow",
             min_disparity=config.min_disparity,
             max_frames=config.max_frames,
+            report=report,
             on_progress=on_progress,
         )
-    return sample_frames(
+
+    return sample_uniform(
         str(video_path),
-        method="uniform",
         max_frames=config.max_frames,
+        report=report,
         on_progress=on_progress,
     )
 
@@ -419,7 +433,7 @@ def run_pipeline(
         with op_log.attach_logging("collab_splats"):
             # Sample frames from video and persist for creator + viewer
             t = time.perf_counter()
-            frames, records = _sample(Path(video_path), config, op_log)
+            frames, records = _sample(Path(video_path), config, out_dir, op_log)
             sampling_method = config.sampling_method
             _write_frames_zarr(
                 frames,

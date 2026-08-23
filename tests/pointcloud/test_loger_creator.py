@@ -19,7 +19,7 @@ from collab_splats.pointcloud.feedforward.loger import (
     _LOGER_ROOT,
     _compute_target_size,
 )
-from collab_splats.preproc.video import _seek_frame, get_video_info
+from collab_splats.preproc.video import extract_frame, get_video_info
 from collab_splats.wrapper import reconstructor as R
 from collab_splats.wrapper.reconstructor import _FEEDFORWARD_BACKENDS
 
@@ -732,17 +732,10 @@ _PARITY_CROP_W, _PARITY_CROP_H = 810, 1080
 def _tutorial_frames() -> np.ndarray:
     """Fixed tutorial-video frames, 3:4 centre-cropped, as (N, H, W, 3) uint8 RGB."""
     # Probe once for the whole batch: get_video_info demuxes for the packet count,
-    # _seek_frame does not, so hoisting it out of the loop is 8x cheaper than extract_frame.
+    # the seek itself does not, so hoisting it out of the loop is 8x cheaper than
+    # letting extract_frame probe per call.
     info = get_video_info(str(_PARITY_VIDEO))
-    frames = np.stack(
-        [
-            _seek_frame(
-                _PARITY_VIDEO, idx, fps=info["fps"], w=info["width"], h=info["height"],
-                total=info["total_frames"],
-            )
-            for idx in _PARITY_FRAME_IDXS
-        ]
-    )
+    frames = np.stack([extract_frame(_PARITY_VIDEO, idx, info=info) for idx in _PARITY_FRAME_IDXS])
 
     # Centre-crop both axes. Assert first: a silently clamped slice would change the
     # aspect ratio and therefore the anisotropy this fixture exists to produce.

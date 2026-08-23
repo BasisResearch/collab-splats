@@ -82,7 +82,21 @@ VGGT-X/MapAnything-specific; see `project_ba_future_generalization`). P7 parity 
 `_assemble_result` must populate `images` by concatenating per-submap `frames` with the same
 first-occurrence overlap dedup it already uses for `intrinsics`.
 
-## 2026-07-20 — frame-store refactor: notebook follow-ups (RESOLVED)
+## 2026-08-22 — preproc cleanup: `keyframe_extraction.ipynb` broken again (OPEN)
+
+`docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb` is broken by the
+preproc cleanup. The 2026-07-20 fix below rewrote it against `sample_frames`,
+`score_frames`, `compute_blur_score` and `check_frame_quality` — **all four are
+deleted**. Sampling is now `sample_fps` / `sample_uniform` / `sample_optical_flow`
+over a `video_quality_report.json`, and the per-frame quality gate is
+`filter_frame_quality`, which reads report rows rather than scoring frames itself.
+
+Not patched here. The notebook's whole narrative is "score frames, then gate them",
+which is no longer how the module works; it is rebuilt in a separate pass where it
+can demonstrate the measure-then-select flow instead of being patched to compile
+(design doc §7, `docs/superpowers/specs/2026-08-22-preproc-cleanup-design.md`).
+
+## 2026-07-20 — frame-store refactor: notebook follow-ups (RESOLVED, superseded above)
 
 `docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb` was broken by the
 frame-store refactor (`frames.zarr` replacing the `output_path/images/` JPG dir): it imported

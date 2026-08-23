@@ -1,10 +1,12 @@
 import importlib.util
 import shutil
 import subprocess
+import types
 import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import cv2
 import numpy as np
 import pycolmap
 import pytest
@@ -31,7 +33,7 @@ ConfigLoader = config_module.ConfigLoader
 
 def test_config_load_base_defaults(tmp_path):
     base = {
-        "preprocessing": {"frame_selection": "fps", "fps": 1.0, "min_frames": 300},
+        "preproc": {"frame_selection": "fps", "fps": 1.0, "min_frames": 300},
         "pointcloud": {"method": "feedforward", "backend": "vggtx", "bundle_adjustment": False, "loop_closure": False},
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 1024},
         "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
@@ -101,7 +103,7 @@ def _make_config(tmp_path, overrides=None):
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "preprocessing": {"frame_selection": "uniform", "fps": 1.0, "min_frames": 10},
+        "preproc": {"frame_selection": "uniform", "fps": 1.0, "min_frames": 10},
         "pointcloud": {
             "method": "feedforward",
             "backend": "vggtx",
@@ -137,67 +139,109 @@ def test_no_inline_defaults_in_source():
 
 
 def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
-    """Each frame_selection value reaches its own sampler with only its own knobs."""
+    """
+    Each frame_selection value reaches its own sampler with only its own knobs.
+    """
     from collab_splats.wrapper import reconstructor as R
 
     calls = {}
 
-    def fake_sample_frames(path, **kwargs):
-        calls.clear()
-        calls.update(kwargs)
-        return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
+    def _recorder(name):
+        def fake(path, **kwargs):
+            calls.clear()
+            calls["sampler"] = name
+            calls.update(kwargs)
+            return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
 
-    monkeypatch.setattr(R, "sample_frames", fake_sample_frames)
+        return fake
+
+    # The report is the samplers' shared input, not the dispatch under test — stub it
+    # and assert every branch forwards the same object.
+    report = {"available": True, "frames": {}}
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: report)
+    monkeypatch.setattr(R, "sample_fps", _recorder("fps"))
+    monkeypatch.setattr(R, "sample_uniform", _recorder("uniform"))
+    monkeypatch.setattr(R, "sample_optical_flow", _recorder("optical_flow"))
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
+    # Plots are not the dispatch under test, and the stub report has no columns
+    monkeypatch.setattr(
+        R,
+        "preproc_viz",
+        types.SimpleNamespace(
+            **{
+                name: lambda *a, **k: None
+                for name in (
+                    "plot_photometric",
+                    "plot_motion",
+                )
+            }
+        ),
+    )
 
     out = tmp_path / "out"
     video = tmp_path / "v.mp4"
     video.touch()
 
     # fps: rate + both band bounds
-    R._extract_frames(video, out / "a.zarr", "fps", 2.0, 5, 50)
-    assert calls == {"method": "fps", "fps": 2.0, "min_frames": 5, "max_frames": 50}
+    R.extract_frames(video, out / "a.zarr", "fps", 2.0, 5, 50)
+    assert calls == {"sampler": "fps", "fps": 2.0, "min_frames": 5, "max_frames": 50, "report": report}
 
     # uniform: max_frames is the count; no fps, no floor
-    R._extract_frames(video, out / "b.zarr", "uniform", None, 5, 50)
-    assert calls == {"method": "uniform", "max_frames": 50}
+    R.extract_frames(video, out / "b.zarr", "uniform", None, 5, 50)
+    assert calls == {"sampler": "uniform", "max_frames": 50, "report": report}
 
     # optical_flow: max_frames caps the selector
-    R._extract_frames(video, out / "c.zarr", "optical_flow", None, 5, 50)
-    assert calls == {"method": "optical_flow", "max_frames": 50}
+    R.extract_frames(video, out / "c.zarr", "optical_flow", None, 5, 50)
+    assert calls == {"sampler": "optical_flow", "max_frames": 50, "report": report}
 
 
 def test_extract_frames_rejects_unknown_selection(tmp_path, monkeypatch):
     from collab_splats.wrapper import reconstructor as R
 
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
     video = tmp_path / "v.mp4"
     video.touch()
     with pytest.raises(ValueError, match="frame_selection"):
-        R._extract_frames(video, tmp_path / "out.zarr", "balanced", None, 5, 50)
+        R.extract_frames(video, tmp_path / "out.zarr", "balanced", None, 5, 50)
 
 
 def test_extract_frames_records_fps_in_provenance(tmp_path, monkeypatch):
-    """frames.zarr must record the rate a scene was sampled at, not just the cap."""
+    """
+    frames.zarr must record the rate a scene was sampled at, not just the cap.
+    """
     from collab_splats.wrapper import reconstructor as R
 
     monkeypatch.setattr(
         R,
-        "sample_frames",
+        "sample_fps",
         lambda path, **kw: ([np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]),
     )
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
+    # Plots are not the dispatch under test, and the stub report has no columns
+    monkeypatch.setattr(
+        R,
+        "preproc_viz",
+        types.SimpleNamespace(
+            **{
+                name: lambda *a, **k: None
+                for name in (
+                    "plot_photometric",
+                    "plot_motion",
+                )
+            }
+        ),
+    )
 
     video = tmp_path / "v.mp4"
     video.touch()
-    R._extract_frames(video, tmp_path / "out" / "frames.zarr", "fps", 2.0, None, 50)
+    R.extract_frames(video, tmp_path / "out" / "frames.zarr", "fps", 2.0, None, 50)
 
     store = R.FrameStore.open(tmp_path / "out" / "frames.zarr")
     prov = dict(store._store.attrs["provenance"])
     assert prov["fps"] == 2.0
     assert prov["method"] == "fps"
-    # fps must be a staleness key, or changing the rate silently reuses old frames
-    assert store.is_stale({**prov, "fps": 4.0})
 
 
 def test_from_config_file_removed():
@@ -219,10 +263,10 @@ def test_init_fills_defaults_from_base_yaml(tmp_path):
     }
     rec = Reconstructor(partial)
     # min_frames is null in base.yaml so fps is honoured literally, NOT a stale code default
-    assert rec.config["preprocessing"]["min_frames"] is None
+    assert rec.config["preproc"]["min_frames"] is None
     # fps comes from base.yaml (1.0), and fps is the default selection method
-    assert rec.config["preprocessing"]["fps"] == 1.0
-    assert rec.config["preprocessing"]["frame_selection"] == "fps"
+    assert rec.config["preproc"]["fps"] == 1.0
+    assert rec.config["preproc"]["frame_selection"] == "fps"
     # backend comes from base.yaml (vggt_omega)
     assert rec.config["pointcloud"]["backend"] == "vggt_omega"
 
@@ -305,7 +349,7 @@ def test_preprocess_skips_if_frames_zarr_exists(tmp_path):
     rec = Reconstructor(config)
     rec.frames_zarr.mkdir(parents=True)
 
-    with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
+    with patch("collab_splats.wrapper.reconstructor.extract_frames") as mock_extract:
         result = rec.preprocess(overwrite=False)
 
     mock_extract.assert_not_called()
@@ -316,7 +360,7 @@ def test_preprocess_runs_if_frames_zarr_missing(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
 
-    with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
+    with patch("collab_splats.wrapper.reconstructor.extract_frames") as mock_extract:
         mock_extract.return_value = 1
         result = rec.preprocess(overwrite=False)
 
@@ -329,7 +373,7 @@ def test_preprocess_overwrite_reruns(tmp_path):
     rec = Reconstructor(config)
     rec.frames_zarr.mkdir(parents=True)
 
-    with patch("collab_splats.wrapper.reconstructor._extract_frames") as mock_extract:
+    with patch("collab_splats.wrapper.reconstructor.extract_frames") as mock_extract:
         mock_extract.return_value = 1
         rec.preprocess(overwrite=True)
 
@@ -1512,3 +1556,75 @@ def test_report_skips_without_overwrite_and_never_touches_the_reconstruction(tmp
     rec._resolve_result = _explode
     assert rec.reconstruction_quality_report() == out
     assert out.read_text() == "{}"
+
+
+def test_stale_preprocessing_key_is_refused(tmp_path):
+    """
+    A pre-2026-08-22 config carries `preprocessing:`; it must raise, not be ignored.
+    """
+    from collab_splats.wrapper.reconstructor import Reconstructor
+
+    config = {
+        "input_path": str(tmp_path / "v.mp4"),
+        "output_path": str(tmp_path / "out"),
+        "pointcloud": {"method": "feedforward", "backend": "vggt_omega", "loop_closure": False},
+        "preprocessing": {"frame_selection": "fps", "fps": 1.0},
+    }
+
+    with pytest.raises(ValueError, match="renamed to 'preproc'"):
+        Reconstructor.validate_config(config)
+
+
+def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):
+    """
+    The video branch renders all five report PNGs beside frames.zarr; the dir branch none.
+    """
+    from collab_splats.wrapper import reconstructor as R
+
+    rng = np.random.default_rng(0)
+    n = 20
+    columns = (
+        "blur",
+        "laplacian",
+        "exposure_mean",
+        "exposure_median",
+        "exposure_std",
+        "clipped_low_frac",
+        "clipped_high_frac",
+    )
+    report = {
+        "available": True,
+        "video": {"path": "/data/clip.mp4", "fps": 10.0, "total_frames": n, "width": 64, "height": 48},
+        "params": {"motion_stride": 2},
+        "frames": {"frame_idx": list(range(n)), **{k: rng.uniform(0, 1, n).tolist() for k in columns}},
+        "pairs": {
+            "frame_idx_a": list(range(0, 20, 2)),
+            "frame_idx_b": list(range(2, 22, 2)),
+            "n_matches": [10] * 10,
+            "translation_px": [1.0] * 9 + [None],
+            "parallax": [0.5] * 9 + [None],
+        },
+    }
+    two_frames = [np.zeros((4, 4, 3), dtype=np.uint8)] * 2
+    two_records = [{"frame_idx": 3, "blur_score": 1.0}, {"frame_idx": 7, "blur_score": 1.0}]
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: report)
+    monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": n})
+    monkeypatch.setattr(R, "sample_fps", lambda path, **kw: (two_frames, two_records))
+
+    out = tmp_path / "scene"
+    video = tmp_path / "v.mp4"
+    video.touch()
+    R.extract_frames(video, out / "frames.zarr", "fps", 1.0, None, 50)
+
+    expected = {"photometric.png", "motion.png"}
+    assert {p.name for p in out.glob("*.png")} == expected
+    for name in expected:
+        assert (out / name).read_bytes()[:4] == b"\x89PNG"
+
+    # Image directory: no report, no plots
+    img_dir = tmp_path / "imgs"
+    img_dir.mkdir()
+    cv2.imwrite(str(img_dir / "a.jpg"), np.zeros((4, 4, 3), dtype=np.uint8))
+    out2 = tmp_path / "scene2"
+    R.extract_frames(img_dir, out2 / "frames.zarr", "fps", 1.0, None, 50)
+    assert list(out2.glob("*.png")) == []

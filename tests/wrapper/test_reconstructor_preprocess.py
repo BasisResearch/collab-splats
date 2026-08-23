@@ -30,7 +30,13 @@ def _make_config(tmp_path, video_path):
     return {
         "input_path": str(video_path),
         "output_path": str(tmp_path / "out"),
-        "preprocessing": {"frame_selection": "uniform", "fps": 1.0, "min_frames": None, "max_frames": 5},
+        "preproc": {
+            "frame_selection": "uniform",
+            "fps": 1.0,
+            "min_frames": None,
+            "max_frames": 5,
+            "n_workers": 1,
+        },
         "pointcloud": {
             "method": "feedforward",
             "backend": "vggtx",
@@ -76,3 +82,34 @@ def test_preprocess_writes_frames_zarr_for_image_dir(tmp_path):
     store = FrameStore.open(rec.frames_zarr)
     assert len(store) == 3
     assert np.isnan(store.record(0)["blur_score"])
+
+
+def test_preprocess_writes_a_quality_report_beside_frames_zarr(tmp_path, tiny_video):
+    """
+    The report is a first-class scene artefact, reused by existence like frames.zarr.
+    """
+    cfg = _make_config(tmp_path, tiny_video)
+    rec = Reconstructor(cfg)
+
+    rec.preprocess()
+
+    out = Path(cfg["output_path"])
+    assert (out / "video_quality_report.json").exists()
+    assert (out / "frames.zarr").exists()
+
+
+def test_preprocess_image_dir_writes_no_quality_report(tmp_path):
+    """
+    An image directory takes every image, so there is nothing to measure or select.
+    """
+    img_dir = tmp_path / "images_in"
+    img_dir.mkdir()
+    for i in range(3):
+        cv2.imwrite(str(img_dir / f"src_{i}.jpg"), np.full((16, 16, 3), i * 10, dtype=np.uint8))
+
+    cfg = _make_config(tmp_path, img_dir)
+    rec = Reconstructor(cfg)
+
+    rec.preprocess()
+
+    assert not (Path(cfg["output_path"]) / "video_quality_report.json").exists()

@@ -49,6 +49,9 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
 <output-root>/2024_02_06/C0043/
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
   frames.zarr                  ← decode-once keyframe store (there is no images/ dir)
+  video_quality_report.json    ← per-frame photometry + per-pair motion of the source video
+  photometric.png              ← the report rendered: blur / laplacian / exposure / clipped fractions
+  motion.png                   ←   per-pair translation / parallax (failed pairs = red | at 0) / matches
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/
@@ -279,13 +282,35 @@ large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in
 
 ## Choosing a frame sampler
 
+Preproc runs in two steps: **measure**, then **select**.
+
+1. **Measure.** `compute_video_quality` decodes the video once and writes
+   `video_quality_report.json` beside `frames.zarr` — per-frame photometry (blur,
+   exposure, clipping) and per-pair motion (matches, translation, parallax). The
+   report is **report-only**: it carries measurements, never thresholds and never
+   a usable/unusable verdict. It is reused **by existence** — if the file is
+   already there the decode pass is skipped, so delete it to re-measure.
+   `extract_frames` also renders the report to two PNGs beside it
+   (`photometric.png`, `motion.png`; plotters in `preproc/viz.py`), each panel with
+   a marginal histogram and the kept frames marked by faint green lines. `motion.png`
+   is skipped when the report has no pairs. They are written whenever
+   frames are extracted and never otherwise — scenes processed before 2026-08-23
+   have no PNGs until `preprocess(overwrite=True)` re-extracts.
+2. **Select.** The sampler reads that report through `filter_frame_quality`,
+   which is where every threshold lives. Changing sampling policy never re-decodes
+   the video.
+
+`preproc.n_workers` affects **only** step 1 — it parallelises the measurement
+decode and has no effect on which frames get selected. The report is byte-
+identical at any worker count.
+
 Each method has exactly one density knob. `max_frames` is the frame budget — the
 target count for `uniform`, a ceiling for the other two.
 
 | `frame_selection` | Density knob | What it holds constant |
 |---|---|---|
-| `fps` | `preprocessing.fps` | Wall-clock interval between frames — so the baseline between consecutive frames is fixed regardless of how long the video is. Count floats. |
-| `uniform` | `preprocessing.max_frames` | Frame count. Spacing floats with video length. |
+| `fps` | `preproc.fps` | Wall-clock interval between frames — so the baseline between consecutive frames is fixed regardless of how long the video is. Count floats. |
+| `uniform` | `preproc.max_frames` | Frame count. Spacing floats with video length. |
 | `optical_flow` | `min_disparity` (creator-level) | Inter-frame motion. Both count and spacing float. |
 
 Prefer `fps` for reconstruction: registration quality depends on the baseline
@@ -305,8 +330,10 @@ the pipeline's: `loger` is windowed and is expected to run well past 300 frames,
 its own ceiling has **not yet been swept**, so the default stays where VGGT-Omega
 needs it.
 
-**Passing a knob that belongs to another method raises `ValueError`** (e.g. `fps=`
-with `frame_selection: uniform`). There is no silently-ignored knob.
+**A knob that belongs to another method is not silently ignored.** Each method is
+its own function — `sample_fps`, `sample_uniform`, `sample_optical_flow` — so
+`fps=` under `frame_selection: uniform` reaches a signature that has no such
+parameter and raises.
 
 ---
 
@@ -316,10 +343,11 @@ with `frame_selection: uniform`). There is no silently-ignored knob.
 |-----|------|---------|-------------|
 | `input_path` | str | **set per run** | Absolute path to video (.MP4) or image directory |
 | `output_path` | str | **set per run** | Absolute path for outputs (created if absent) |
-| `preprocessing.frame_selection` | str | `fps` | Frame sampling: `fps`, `uniform`, or `optical_flow` |
-| `preprocessing.fps` | float | `1.0` | `fps` method only: samples per second |
-| `preprocessing.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
-| `preprocessing.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
+| `preproc.frame_selection` | str | `fps` | Frame sampling: `fps`, `uniform`, or `optical_flow` |
+| `preproc.fps` | float | `1.0` | `fps` method only: samples per second |
+| `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
+| `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
+| `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
 | `pointcloud.method` | str | `feedforward` | `feedforward`, `sfm`, or `nerfstudio` |
 | `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, `mapanything`, or `loger` |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
@@ -404,6 +432,8 @@ feed the buffer enough frames for the cap to matter.
 <output_path>/
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
   frames.zarr                  ← canonical decode-once keyframe store (chunked images + records + provenance)
+  video_quality_report.json    ← source-video quality measurements (report-only)
+  photometric-*.png, motion-*.png ← the report rendered (5 files, written with frames.zarr)
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/

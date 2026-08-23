@@ -2,8 +2,8 @@ Preprocessing
 =============
 
 Video preprocessing: the canonical keyframe store, ffmpeg decode and video
-metadata (``video``), capture-quality measurement and the quality gate
-(``qa``), and keyframe selection (``sampling``).
+metadata (``video``), capture-quality measurement (``qa``), and keyframe
+selection (``sampling``).
 
 .. automodule:: collab_splats.preproc.frame_store
    :members:

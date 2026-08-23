@@ -493,30 +493,34 @@ def test_collect_frames_max_frames_applies_after_filter(tmp_path):
 
 
 def test_load_video_single_decode(tmp_path, monkeypatch):
-    """Verify _load_video uses FrameStore (single decode), not extract_frames (re-decode)."""
+    """
+    _load_video uses FrameStore (single decode), not extract_frames (re-decode).
+    """
     # Create synthetic frames and records
     n_frames = 5
     synthetic_frames = [np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8) for _ in range(n_frames)]
     synthetic_records = [{"frame_idx": i, "timestamp": float(i) * 0.1} for i in range(n_frames)]
 
-    # Patch sample_frames to return synthetic data; count calls
+    # Patch the sampler to return synthetic data; count calls. max_frames is the
+    # sampler's own contract now, so the double honours it instead of the caller trimming.
     call_count = [0]
 
-    def mock_sample_frames(*args, **kwargs):
+    def mock_sample_uniform(video_path, *, max_frames, report, **kwargs):
         call_count[0] += 1
-        return synthetic_frames, synthetic_records
+        return synthetic_frames[:max_frames], synthetic_records[:max_frames]
 
-    monkeypatch.setattr("datasets.sample_frames", mock_sample_frames)
+    monkeypatch.setattr("datasets.sample_uniform", mock_sample_uniform)
+    monkeypatch.setattr("datasets.load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
 
     # Create a minimal fake video file to pass to _load_video
     video_path = tmp_path / "test_video.mp4"
     video_path.touch()
 
     # Call _load_video with max_frames limit
-    result = _load_video(video_path, max_frames=3, fps=1.0)
+    result = _load_video(video_path, max_frames=3)
 
-    # Verify sample_frames was called exactly once (if we were still using extract_frames, it would be called twice)
-    assert call_count[0] == 1, f"sample_frames called {call_count[0]} times, expected 1"
+    # Exactly one decode pass (extract_frames would have made it two)
+    assert call_count[0] == 1, f"sample_uniform called {call_count[0]} times, expected 1"
 
     # Verify result contains the expected number of images (max_frames=3)
     assert len(result.images) == 3, f"Expected 3 images, got {len(result.images)}"

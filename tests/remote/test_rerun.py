@@ -16,7 +16,7 @@ SCENE = "2026_07_20-birds-C0043"
 PULLED_CONFIG = {
     "input_path": "/on/another/machine/C0043.MP4",
     "output_path": "/on/another/machine/out",
-    "preprocessing": {"frame_selection": "uniform", "max_frames": 250},
+    "preproc": {"frame_selection": "uniform", "max_frames": 250},
     "pointcloud": {"method": "feedforward", "backend": "vggtx"},
     "mesh": {"enabled": True, "voxel_size": 0.02},
 }
@@ -73,7 +73,7 @@ def test_leaf_stages_pull_from_processed(tmp_path):
     assert not any(c[0] == "fetch_video" for c in source.calls)
     # Provenance for stages NOT being re-run survives verbatim.
     assert config["pointcloud"]["backend"] == "vggtx"
-    assert config["preprocessing"]["max_frames"] == 250
+    assert config["preproc"]["max_frames"] == 250
 
 
 def test_any_upstream_stage_fetches_the_curated_video(tmp_path):
@@ -188,7 +188,7 @@ def test_dropped_section_is_refilled_by_base_yaml_end_to_end(tmp_path):
     # The other half of the contract: a stage NOT being re-run keeps the pulled scene's provenance
     # rather than falling back to base.yaml (whose default backend is vggt_omega, not vggtx).
     assert rec.config["pointcloud"]["backend"] == "vggtx"
-    assert rec.config["preprocessing"]["max_frames"] == 250
+    assert rec.config["preproc"]["max_frames"] == 250
 
 
 def test_plan_is_logged(tmp_path, caplog):

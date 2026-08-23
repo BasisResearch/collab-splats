@@ -16,7 +16,7 @@
 #
 # Then browse http://<host>:8080. Headless (no viewer)? Set viz.enabled: false.
 
-preprocessing:
+preproc:
   # fps, NOT optical_flow: LC chains submaps through their shared overlap frame, so it
   # needs steady frame-to-frame overlap. optical_flow picks high-motion, low-overlap
   # frames → wide baseline across the submap hinge → submaps fail to register →

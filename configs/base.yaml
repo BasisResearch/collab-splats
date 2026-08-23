@@ -13,7 +13,7 @@
 input_path: null
 output_path: null
 
-preprocessing:
+preproc:
   # Output: <output_path>/frames.zarr — canonical decode-once keyframe store
   # (chunked images + selection records + provenance); no images/ JPG dir.
   #
@@ -29,6 +29,12 @@ preprocessing:
                               # NOT a LoGeR limit — LoGeR is windowed and built for longer
                               # sequences — but preproc runs first, so it binds LoGeR too.
                               # See configs/README.md.
+  n_workers: 4                # quality report only: decode+measure this many frame ranges in
+                              # parallel. 1 = serial. Measured on a 2388-frame 1080x1920 video:
+                              # 2 -> 1.90x, 4 -> 3.04x (best), 6 -> 2.95x, 12 -> 2.06x. NOT
+                              # auto-derived — os.cpu_count() reports HOST cores inside a
+                              # container and ignores the cgroup quota. Set to 1 while a GPU
+                              # eval run is using the machine (CLAUDE.md: OOM risk).
 
 pointcloud:
   method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)

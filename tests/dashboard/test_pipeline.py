@@ -59,7 +59,8 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     creator.outputs = fake_result
 
     with (
-        patch.object(pl, "sample_frames", return_value=_fake_frames()),
+        patch.object(pl, "sample_fps", return_value=_fake_frames()),
+        patch.object(pl, "load_video_quality", return_value={"available": True, "frames": {}}),
         patch.object(pl, "_write_frames_zarr") as wz,
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "pointcloud_to_mesh") as mesh,
@@ -105,7 +106,8 @@ def test_run_pipeline_does_not_push_on_failure(tmp_path):
     video.write_bytes(b"x")
 
     with (
-        patch.object(pl, "sample_frames", return_value=_fake_frames()),
+        patch.object(pl, "sample_fps", return_value=_fake_frames()),
+        patch.object(pl, "load_video_quality", return_value={"available": True, "frames": {}}),
         patch.object(pl, "_write_frames_zarr"),
         patch.object(pl, "_build_creator", side_effect=RuntimeError("boom")),
     ):

@@ -22,8 +22,15 @@ import zarr
 from mergedeep import merge
 
 from collab_splats.pointcloud.export import write_pointcloud_ply
-from collab_splats.preproc import get_video_info, sample_frames
+from collab_splats.preproc import get_video_info
+from collab_splats.preproc import viz as preproc_viz
 from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc.qa import load_video_quality
+from collab_splats.preproc.sampling import (
+    sample_fps,
+    sample_optical_flow,
+    sample_uniform,
+)
 from collab_splats.semantics.compression import (
     FeatureAutoencoder,
     lifted_store_path,
@@ -79,18 +86,22 @@ LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in
 ########################################
 
 
-def _extract_frames(
+def extract_frames(
     input_path: Path,
     frames_zarr: Path,
     frame_selection: str,
     fps: float | None,
     min_frames: int | None,
     max_frames: int | None,
+    n_workers: int = 1,
 ) -> int:
-    """Extract frames from video or image dir into frames.zarr (sole persistent store).
+    """
+    Extract frames from video or image dir into frames.zarr (sole persistent store).
 
-    frames.zarr is the canonical decode-once keyframe store; no JPEG dir is written.
-    Returns the number of frames stored.
+    Two steps for video input: measure the whole video into
+    video_quality_report.json, then select from it. An image directory takes
+    every image and needs no report. frames.zarr is the canonical decode-once
+    keyframe store; no JPEG dir is written. Returns the number of frames stored.
     """
     input_path = Path(input_path)
 
@@ -121,34 +132,42 @@ def _extract_frames(
             "Check the path exists and is a video ffmpeg can read."
         )
 
+    # Measure before selecting. The report lands beside frames.zarr and is reused by
+    # existence, so a re-run never re-measures. Report-only: it carries no verdicts —
+    # filter_frame_quality applies the thresholds inside the samplers.
+    report = load_video_quality(
+        input_path,
+        frames_zarr.parent / "video_quality_report.json",
+        workers=n_workers,
+    )
+
     # Video — 'fps' samples at a constant wall-clock rate (band-bounded), 'uniform'
     # spreads exactly max_frames over the whole video, 'optical_flow' picks high-motion
-    # frames. Each method gets only its own knobs; sample_frames rejects the others.
+    # frames. Each method gets only its own knobs.
     if frame_selection == "fps":
-        frame_arrays, records = sample_frames(
+        frame_arrays, records = sample_fps(
             str(input_path),
-            method="fps",
             fps=fps,
             min_frames=min_frames,
             max_frames=max_frames,
+            report=report,
         )
     elif frame_selection == "uniform":
-        frame_arrays, records = sample_frames(str(input_path), method="uniform", max_frames=max_frames)
+        frame_arrays, records = sample_uniform(str(input_path), max_frames=max_frames, report=report)
     elif frame_selection == "optical_flow":
-        frame_arrays, records = sample_frames(str(input_path), method="optical_flow", max_frames=max_frames)
+        frame_arrays, records = sample_optical_flow(str(input_path), max_frames=max_frames, report=report)
     else:
-        raise ValueError(
-            f"preprocessing.frame_selection must be 'fps', 'uniform' or 'optical_flow', got {frame_selection!r}"
-        )
+        raise ValueError(f"preproc.frame_selection must be 'fps', 'uniform' or 'optical_flow', got {frame_selection!r}")
+
     method = frame_selection
 
-    # Every candidate failed the quality gate (or selector rejected all) — refuse to
-    # write an empty store that would only surface as a downstream FileNotFound.
+    # Every candidate failed the quality filter (or the selector rejected all) — refuse
+    # to write an empty store that would only surface as a downstream FileNotFound.
     if not frame_arrays:
         raise ValueError(
             f"0 frames selected from {input_path} ({total_frames} decoded) with "
-            f"frame_selection={frame_selection!r}. All frames failed the quality gate — "
-            "loosen the blur threshold or use a sharper video."
+            f"frame_selection={frame_selection!r}. Every frame failed the quality filter — "
+            f"check {frames_zarr.parent / 'video_quality_report.json'} for the measurements."
         )
 
     # Write the canonical frames.zarr (decode-once keyframe store)
@@ -160,6 +179,16 @@ def _extract_frames(
         "max_frames": max_frames,
     }
     FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
+
+    # Render the report beside frames.zarr with the kept frames marked. Written
+    # whenever frames are, so the PNGs never go stale against the store.
+    out_dir = frames_zarr.parent
+    selected = [r["frame_idx"] for r in records]
+    written = [
+        preproc_viz.plot_photometric(report, out_dir, selected=selected),
+        preproc_viz.plot_motion(report, out_dir, selected=selected),
+    ]
+    logger.info("video quality: wrote %d plots to %s", sum(p is not None for p in written), out_dir)
 
     return len(frame_arrays)
 
@@ -194,7 +223,7 @@ def _run_feedforward(
     verbatim to the creator's constructor. ``max_points`` and ``use_multiview_confidence``
     are reserved — both are passed explicitly, so redeclaring either raises ValueError.
 
-    ``max_frames`` is ``preprocessing.max_frames``, used only to decide whether the LoGeR
+    ``max_frames`` is ``preproc.max_frames``, used only to decide whether the LoGeR
     frame-count advisory fires. None means no ceiling was configured, so no advice is due.
     """
     # Heavy dep imports — kept inline so module loads without GPU/model deps
@@ -246,7 +275,7 @@ def _run_feedforward(
     # mode="r" — immutable, lazy, and cheap to hold across the span.
     store = FrameStore.open(frames_zarr)
 
-    # preprocessing.max_frames is a VGGT-Omega GPU property applied in the preproc stage,
+    # preproc.max_frames is a VGGT-Omega GPU property applied in the preproc stage,
     # which has already run by the time we get here. Flipping to loger under that same
     # ceiling therefore processes exactly as many frames as Omega would, and LoGeR appears
     # to buy nothing. Warn rather than change behaviour — LoGeR's true ceiling is unmeasured.
@@ -256,10 +285,10 @@ def _run_feedforward(
         n_frames = len(store)
         if max_frames is not None and n_frames <= max_frames:
             logger.warning(
-                "LoGeR is running on %d frames, at or under the preprocessing.max_frames "
+                "LoGeR is running on %d frames, at or under the preproc.max_frames "
                 "ceiling of %d. That ceiling is VGGT-Omega's GPU limit, not LoGeR's — LoGeR "
                 "uses sliding-window inference and is built for longer sequences. Raise "
-                "preprocessing.max_frames to use it.",
+                "preproc.max_frames to use it.",
                 n_frames,
                 max_frames,
             )
@@ -587,6 +616,16 @@ class Reconstructor:
             if field not in config or config[field] is None:
                 raise ValueError(f"Reconstructor config missing required field: '{field}'")
 
+        # `preprocessing` was renamed to `preproc` (2026-08-22) to match the module
+        # and the stage name. Refuse a stale block rather than silently ignoring it
+        # and substituting base.yaml defaults — every run_config.yaml already under
+        # environments-processed/ carries the old name.
+        if "preprocessing" in config:
+            raise ValueError(
+                "config key 'preprocessing' was renamed to 'preproc' (2026-08-22); "
+                "rename the section in your config"
+            )
+
         # Single-arg .get() returns None if absent — the membership checks below reject None,
         # so no inline value defaults are needed (base.yaml is the sole default source).
         pc = config.get("pointcloud", {})
@@ -653,14 +692,15 @@ class Reconstructor:
         if overwrite and self.frames_zarr.exists():
             shutil.rmtree(self.frames_zarr)
 
-        pre_cfg = self.config["preprocessing"]
-        n_frames = _extract_frames(
+        pre_cfg = self.config["preproc"]
+        n_frames = extract_frames(
             input_path=Path(self.config["input_path"]),
             frames_zarr=self.frames_zarr,
             frame_selection=pre_cfg["frame_selection"],
             fps=pre_cfg["fps"],
             min_frames=pre_cfg["min_frames"],
             max_frames=pre_cfg["max_frames"],
+            n_workers=pre_cfg["n_workers"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",
@@ -702,7 +742,7 @@ class Reconstructor:
                 viz_port=pc_cfg["viz"]["port"],
                 max_points=pc_cfg["max_points"],
                 use_multiview_confidence=pc_cfg["use_multiview_confidence"],
-                max_frames=self.config["preprocessing"]["max_frames"],
+                max_frames=self.config["preproc"]["max_frames"],
                 creator_kwargs=pc_cfg.get(pc_cfg["backend"], {}),
             )
             self.viewer = viewer

@@ -25,6 +25,7 @@ dependencies = [
     "ftfy",
     "gdown",
     "matplotlib",
+"seaborn",
     "mergedeep",
     "numpy>=1.26",
     "zarr>=2.16",

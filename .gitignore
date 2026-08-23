@@ -31,6 +31,9 @@ evals/data/*
 # Committed tutorial example assets (video + external query frame); data/outputs/
 # stays ignored by the `data/` rule above and holds notebook-regenerated artifacts.
 !data/tutorial/
+# Test fixtures under tests/**/data/ — the bare `data/` rule above matches any
+# directory of that name at any depth, so they are invisible without this.
+!tests/**/data/
 
 # Reconstruction outputs (written to /workspace/outputs/ outside repo)
 outputs/

@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 
 from collab_splats.preproc.video import (
-    _iter_frames,
-    _probe_dims,
     _require_ffmpeg,
+    extract_frame,
     get_video_info,
+    iter_frames,
 )
 
 
@@ -31,12 +31,6 @@ def test_get_video_info_missing_file():
     assert info["total_frames"] == 0 and info["fps"] == 0.0
 
 
-def test_probe_dims_matches_full_info(tiny_video):
-    info = get_video_info(tiny_video)
-    w, h = _probe_dims(tiny_video)
-    assert (w, h) == (info["width"], info["height"])
-
-
 def test_require_ffmpeg_raises_without_binary(monkeypatch):
     # Simulate ffmpeg absent from PATH — the only decode backend must hard-fail
     monkeypatch.setattr("collab_splats.preproc.video.shutil.which", lambda _: None)
@@ -44,11 +38,57 @@ def test_require_ffmpeg_raises_without_binary(monkeypatch):
         _require_ffmpeg()
 
 
-def test_iter_frames_yields_all_frames_bgr(tiny_video):
-    frames = list(_iter_frames(tiny_video))
-    assert len(frames) == 60
-    assert frames[0].shape == (240, 320, 3)
-    assert frames[0].dtype == np.uint8
+def test_get_video_info_without_count_frames_matches_dims(tiny_video):
+    full = get_video_info(tiny_video)
+    cheap = get_video_info(tiny_video, count_frames=False)
+
+    assert (cheap["width"], cheap["height"]) == (full["width"], full["height"])
+    assert cheap["fps"] == full["fps"]
+
+
+def test_iter_frames_yields_index_and_bgr(tiny_video):
+    out = list(iter_frames(tiny_video))
+    total = get_video_info(tiny_video)["total_frames"]
+
+    assert len(out) == total
+    assert [i for i, _ in out] == list(range(total))
+    assert out[0][1].ndim == 3 and out[0][1].dtype == np.uint8
+
+
+def test_iter_frames_indices_yields_only_those(tiny_video):
+    wanted = [0, 3, 7]
+
+    out = list(iter_frames(tiny_video, indices=wanted))
+
+    assert [i for i, _ in out] == wanted
+
+
+def test_iter_frames_indices_matches_full_decode(tiny_video):
+    everything = {i: f for i, f in iter_frames(tiny_video)}
+
+    for idx, frame in iter_frames(tiny_video, indices=[1, 4]):
+        assert np.array_equal(frame, everything[idx])
+
+
+def test_iter_frames_range_matches_full_decode(tiny_video):
+    everything = {i: f for i, f in iter_frames(tiny_video)}
+
+    out = list(iter_frames(tiny_video, start=2, count=3))
+
+    assert [i for i, _ in out] == [2, 3, 4]
+    for idx, frame in out:
+        assert np.array_equal(frame, everything[idx])
+
+
+def test_iter_frames_rejects_indices_with_a_range(tiny_video):
+    with pytest.raises(ValueError, match="indices"):
+        list(iter_frames(tiny_video, indices=[1], start=2))
+
+
+def test_extract_frame_accepts_a_preprobed_info(tiny_video):
+    info = get_video_info(tiny_video)
+
+    assert np.array_equal(extract_frame(tiny_video, 2, info=info), extract_frame(tiny_video, 2))
 
 
 ########################################################################

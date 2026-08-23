@@ -15,6 +15,8 @@ import pyvista as pv
 import open3d as o3d
 from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
+from collab_splats.preproc.qa import load_video_quality
+from collab_splats.preproc.sampling import sample_optical_flow
 from collab_splats.utils.torch_utils import get_device
 from nerfstudio.utils.eval_utils import eval_setup
 
@@ -293,8 +295,6 @@ class Splatter:
         # If optical_flow frame selection is requested, pre-extract frames and redirect
         # ns-process-data to images mode using the sampled frame directory.
         if input_type == "video" and self.config.get("frame_selection") == "optical_flow":
-            from collab_splats.preproc import sample_frames
-
             tmp_dir = Path(self.config["output_path"]) / "tmp_frames"
             tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -308,7 +308,11 @@ class Splatter:
             else:
                 n_samples = n_frames
 
-            sampled_frames, _ = sample_frames(file_path.as_posix(), method="optical_flow", max_frames=min(n_samples, 200))
+            # Measure once into the scene's tmp dir, then select from the report
+            report = load_video_quality(file_path, tmp_dir / "video_quality_report.json")
+
+            sampled_frames, _ = sample_optical_flow(file_path.as_posix(), max_frames=min(n_samples, 200), report=report)
+
             for i, frame in enumerate(sampled_frames):
                 cv2.imwrite(str(tmp_dir / f"{i:05d}.jpg"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 

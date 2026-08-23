@@ -6,8 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-from collab_splats.preproc import sample_frames
 from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc.qa import load_video_quality
+from collab_splats.preproc.sampling import sample_uniform
 
 _IMG_EXTS = (".png", ".jpg", ".jpeg")
 
@@ -243,14 +244,20 @@ def _load_bicycle(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     return EvalDataset(images=images, gt_poses=np.zeros((len(images), 4, 4), dtype=np.float32))
 
 
-def _load_video(seq_dir: Path, max_frames: int = 500, fps: float = 1.0) -> EvalDataset:
-    """Sample frames from a video file at the requested fps, write to a sidecar _frames/ dir."""
+def _load_video(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
+    """
+    Sample max_frames evenly over a video, writing to a sidecar _frames/ dir.
+    """
     # Output frames into <stem>_frames/ sibling directory; created if absent
     frames_dir = seq_dir.parent / (seq_dir.stem + "_frames")
     frames_dir.mkdir(parents=True, exist_ok=True)
-    # Decode video once: sample_frames returns in-memory frames + records; write via FrameStore
-    frames, records = sample_frames(str(seq_dir), method="uniform", fps=fps)
-    frames, records = frames[:max_frames], records[:max_frames]
+
+    # Measure once, select once; the report is reused across re-runs of the eval
+    report = load_video_quality(seq_dir, frames_dir / "video_quality_report.json")
+
+    # Decode video once: sample_uniform returns in-memory frames + records
+    frames, records = sample_uniform(str(seq_dir), max_frames=max_frames, report=report)
+
     store = FrameStore.create(
         frames_dir / "frames.zarr",
         frames,

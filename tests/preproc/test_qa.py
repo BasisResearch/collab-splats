@@ -5,71 +5,41 @@ import cv2
 import numpy as np
 import pytest
 
+from collab_splats.preproc import qa
 from collab_splats.preproc.qa import (
-    _analysis_gray,
-    check_frame_quality,
+    _measure_photometry_and_motion,
+    analysis_gray,
     compute_blur,
-    compute_blur_score,
     compute_exposure,
     compute_frame_quality,
     compute_parallax,
     compute_translation,
     compute_video_quality,
-    match_orb,
+    detect_orb,
+    load_video_quality,
+    match_descriptors,
 )
-from collab_splats.preproc.video import _iter_frames
-
-########################################################################
-# Quality gate
-########################################################################
+from collab_splats.preproc.video import get_video_info, iter_frames
 
 
-def test_compute_blur_score_sharp_exceeds_blurred(noise_gray):
-    sharp = noise_gray
-    blurred = cv2.GaussianBlur(sharp, (25, 25), 0)
-    assert compute_blur_score(sharp) > compute_blur_score(blurred) * 10
-
-
-def test_check_frame_quality_accepts_sharp_frame(noise_gray):
-    ok, metrics = check_frame_quality(noise_gray)
-    assert ok is True
-    assert metrics["reject_reason"] is None
-
-
-def test_check_frame_quality_rejects_blurred_frame(noise_gray):
-    sharp = noise_gray
-    blurred = cv2.GaussianBlur(sharp, (25, 25), 0)
-    # Threshold between the two measured scores makes the test threshold-robust
-    threshold = (compute_blur_score(sharp) + compute_blur_score(blurred)) / 2
-    ok, metrics = check_frame_quality(blurred, blur_threshold=threshold)
-    assert ok is False and metrics["reject_reason"] == "blur"
-    ok, _ = check_frame_quality(sharp, blur_threshold=threshold)
-    assert ok is True
-
-
-def test_check_frame_quality_rejects_bad_exposure():
-    # Near-black and near-white frames fail regardless of sharpness
-    dark = np.zeros((240, 320), dtype=np.uint8)
-    bright = np.full((240, 320), 255, dtype=np.uint8)
-    for gray in (dark, bright):
-        ok, metrics = check_frame_quality(gray, blur_threshold=0.0)
-        assert ok is False and metrics["reject_reason"] == "exposure"
-
-
-def test_check_frame_quality_metrics_fields(noise_gray):
-    _, metrics = check_frame_quality(noise_gray)
-    assert set(metrics) == {"blur_score", "exposure_mean", "exposure_std", "reject_reason"}
-
-
-def test_check_frame_quality_uses_precomputed_blur_score(noise_gray):
-    # Passing blur_score short-circuits the Laplacian recompute
-    ok, metrics = check_frame_quality(noise_gray, blur_threshold=100.0, blur_score=50.0)
-    assert ok is False and metrics["blur_score"] == 50.0
+def match_orb(gray_a, gray_b, *, n_features=1000):
+    """
+    Detect both frames then match — a test convenience, not a module function.
+    """
+    return match_descriptors(detect_orb(gray_a, n_features=n_features), detect_orb(gray_b, n_features=n_features))
 
 
 ########################################################################
 # Per frame
 ########################################################################
+
+
+def test_analysis_gray_downscales_to_width_and_never_upscales(clipped_bgr):
+    # 640-wide source: 480 downscales, and a width above the source is a no-op
+    # rather than an upscale, so a narrow video is measured natively.
+    assert analysis_gray(clipped_bgr).shape == (360, 480)
+    assert analysis_gray(clipped_bgr, width=320).shape == (240, 320)
+    assert analysis_gray(clipped_bgr, width=1024).shape == clipped_bgr.shape[:2]
 
 
 def test_compute_blur_keys(noise_gray):
@@ -97,9 +67,9 @@ def test_compute_blur_measured_values(noise_gray):
     assert blurred["laplacian"] == pytest.approx(3.6, rel=0.2)
 
 
-def test_compute_blur_reuses_the_gate_metric(noise_gray):
-    # One implementation of the Laplacian in the repo, not two
-    assert compute_blur(noise_gray)["laplacian"] == compute_blur_score(noise_gray)
+def test_compute_blur_laplacian_is_the_variance_of_the_laplacian(noise_gray):
+    # The laplacian column is exactly cv2's Laplacian variance, nothing rescaled
+    assert compute_blur(noise_gray)["laplacian"] == float(cv2.Laplacian(noise_gray, cv2.CV_64F).var())
 
 
 def test_compute_blur_saturates_on_sparse_detail(noise_gray):
@@ -212,17 +182,28 @@ def test_compute_frame_quality_merges_both_measurements(clipped_bgr):
 
 def test_compute_frame_quality_reads_exposure_at_native_resolution(clipped_bgr):
     # The contract that keeps clipping measurable: exposure must NOT go through
-    # _analysis_gray, which erases scattered saturated pixels completely.
+    # analysis_gray, which erases scattered saturated pixels completely.
     native = compute_frame_quality(clipped_bgr)
-    downscaled = compute_exposure(_analysis_gray(clipped_bgr))
+    downscaled = compute_exposure(analysis_gray(clipped_bgr))
     assert native["clipped_high_frac"] == pytest.approx(300 / (480 * 640), rel=0.05)
     assert downscaled["clipped_high_frac"] == 0.0
 
 
 def test_compute_frame_quality_reads_blur_at_analysis_resolution(clipped_bgr):
-    # Blur must go through _analysis_gray; assert by equality with the explicit path
-    expected = compute_blur(_analysis_gray(clipped_bgr))["blur"]
+    # Blur must go through analysis_gray; assert by equality with the explicit path
+    expected = compute_blur(analysis_gray(clipped_bgr))["blur"]
     assert compute_frame_quality(clipped_bgr)["blur"] == pytest.approx(expected)
+
+
+def test_compute_frame_quality_forwards_its_tuning(clipped_bgr):
+    # analysis_width and blur_h_size are pass-throughs, and analysis_width is the
+    # cross-video comparability lever — it must actually reach analysis_gray.
+    tuned = compute_frame_quality(clipped_bgr, analysis_width=240, blur_h_size=3)
+    expected = compute_blur(analysis_gray(clipped_bgr, width=240), h_size=3)
+    assert tuned["blur"] == pytest.approx(expected["blur"])
+    assert tuned["laplacian"] == pytest.approx(expected["laplacian"])
+    # Exposure is native-resolution, so no tuning can move it
+    assert tuned["clipped_high_frac"] == compute_frame_quality(clipped_bgr)["clipped_high_frac"]
 
 
 ########################################################################
@@ -316,7 +297,7 @@ def test_compute_parallax_is_nan_when_opencv_cannot_fit(tiny_video):
     # of them zero-displacement, findHomography fine, findFundamentalMat raises
     # at estimator.cpp:353. Unhandled, one such pair discards every other
     # measurement in a multi-minute run.
-    grays = [_analysis_gray(bgr) for bgr in _iter_frames(tiny_video)]
+    grays = [analysis_gray(bgr) for _, bgr in iter_frames(tiny_video)]
     assert np.isnan(compute_parallax(*match_orb(grays[40], grays[41])))
 
 
@@ -473,3 +454,140 @@ def test_compute_video_quality_names_a_missing_file_as_missing(tmp_path):
     report = compute_video_quality(tmp_path / "nope.mp4")
     assert report["available"] is False
     assert "file does not exist" in report["reason"]
+
+
+@pytest.mark.parametrize("kind", ["uniform", "constant", "bimodal", "narrow"])
+def test_compute_exposure_matches_the_numpy_path(kind):
+    """
+    Histogram exposure must agree with the numpy definitions it replaced.
+    """
+    rng = np.random.default_rng(0)
+    shapes = [(2, 2), (3, 5), (64, 64), (17, 31)]
+
+    for shape in shapes:
+        if kind == "uniform":
+            gray = rng.integers(0, 256, shape, dtype=np.uint8)
+        elif kind == "constant":
+            gray = np.full(shape, 137, np.uint8)
+        elif kind == "bimodal":
+            gray = rng.integers(0, 2, shape, dtype=np.uint8) * 255
+        else:
+            gray = rng.integers(100, 140, shape, dtype=np.uint8)
+
+        out = compute_exposure(gray)
+
+        # Exact: mean, median and both clipping fractions. The float64 cast on the
+        # histogram and the two-order-statistic median are what make them exact —
+        # see the design doc, section 5.1.
+        assert out["exposure_mean"] == float(gray.mean())
+        assert out["exposure_median"] == float(np.median(gray))
+        assert out["clipped_low_frac"] == float((gray == 0).mean())
+        assert out["clipped_high_frac"] == float((gray == 255).mean())
+
+        # std differs only in summation order; measured max deviation 4.3e-14
+        assert out["exposure_std"] == pytest.approx(float(gray.std()), abs=1e-9)
+
+
+def test_detect_orb_is_deterministic_so_the_cached_pair_loop_is_safe(noise_gray):
+    """
+    The pair loop detects each frame once and reuses it as the next pair's
+    partner, which only reproduces a detect-per-pair run if detection repeats.
+    """
+    other = np.roll(noise_gray, 5, axis=1)
+
+    once_a, once_b = match_descriptors(detect_orb(noise_gray), detect_orb(other))
+    twice_a, twice_b = match_descriptors(detect_orb(noise_gray), detect_orb(other))
+
+    assert np.array_equal(once_a, twice_a)
+    assert np.array_equal(once_b, twice_b)
+
+
+def test_detect_orb_on_a_featureless_frame_returns_no_descriptors():
+    kp, desc = detect_orb(np.zeros((64, 64), np.uint8))
+
+    assert desc is None or len(kp) == 0
+
+
+########################################################################
+# Range parallelism and the cached report
+########################################################################
+
+
+def test_video_quality_workers_produce_an_identical_report(tiny_video):
+    """
+    Range-parallel measurement must not change a single number.
+    """
+    serial = compute_video_quality(tiny_video, motion_stride=2)
+    parallel = compute_video_quality(tiny_video, motion_stride=2, workers=3)
+
+    assert parallel["frames"] == serial["frames"]
+    assert parallel["pairs"] == serial["pairs"]
+
+
+def test_video_quality_rejects_a_bad_worker_count(tiny_video):
+    with pytest.raises(ValueError, match="workers"):
+        compute_video_quality(tiny_video, workers=0)
+
+
+def test_measure_photometry_and_motion_emits_only_the_frames_it_owns(tiny_video):
+    """
+    A range's lead-in frames are decoded to be somebody's partner, not measured.
+    """
+    info = get_video_info(tiny_video)
+
+    # A range owning frames 20-59, decoding from 18 so the pair straddling the
+    # boundary has a partner: start=18, count=42, emit_from=20, stride=2.
+    frames, pairs = _measure_photometry_and_motion((tiny_video, 18, 42, 20, 2, info))
+
+    # The two lead-in frames produce no photometry row
+    assert [row["frame_idx"] for row in frames] == list(range(20, 60))
+
+    # But they do produce the boundary pair, which no other range can emit
+    assert (pairs[0]["frame_idx_a"], pairs[0]["frame_idx_b"]) == (18, 20)
+    assert [row["frame_idx_b"] for row in pairs] == list(range(20, 60))
+
+
+def test_video_quality_refuses_non_contiguous_ranges(tiny_video, monkeypatch):
+    """
+    Ranges tile the video exactly once, so a gap means a seek landed wrong.
+    """
+
+    class InlinePool:
+        # Runs map in-process, so the fake below never has to pickle
+        def __init__(self, n_workers):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def map(self, fn, items):
+            return [fn(item) for item in items]
+
+    # One row per range instead of the whole range: indices 0 and 30, a gap
+    def one_row_per_range(args):
+        emit_from = args[3]
+        return [{"frame_idx": emit_from, "blur": 1.0}], []
+
+    monkeypatch.setattr(qa, "ProcessPoolExecutor", InlinePool)
+    monkeypatch.setattr(qa, "_measure_photometry_and_motion", one_row_per_range)
+
+    with pytest.raises(ValueError, match="not contiguous"):
+        compute_video_quality(tiny_video, motion_stride=2, workers=2)
+
+
+def test_load_video_quality_writes_then_reuses(tiny_video, tmp_path):
+    report_path = tmp_path / "video_quality_report.json"
+
+    first = load_video_quality(tiny_video, report_path, motion_stride=2)
+
+    assert report_path.exists() and first["available"]
+
+    # Second call must read the file, not re-measure it
+    stamp = report_path.stat().st_mtime_ns
+    second = load_video_quality(tiny_video, report_path, motion_stride=2)
+
+    assert report_path.stat().st_mtime_ns == stamp
+    assert second["frames"] == first["frames"]

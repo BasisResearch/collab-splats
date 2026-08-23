@@ -2,7 +2,7 @@
 # All dataset configs inherit from this and override specific values.
 # Required per dataset: input_path, output_path
 
-preprocessing:
+preproc:
   frame_selection: fps
   fps: 1.0
   min_frames: 300

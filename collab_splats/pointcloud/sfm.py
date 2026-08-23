@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
+import sqlite3
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -363,6 +366,80 @@ def _pixel_indices_from_reconstruction(
     return out
 
 
+########################################
+# SIFT feature database (system colmap)
+########################################
+
+# CPU SIFT threads: colmap's default (-1) spawns one thread per HOST core — 96 on
+# this machine — and per-thread RAM blows past the 46.6 GB container cgroup cap
+# (measured: OOM-kill at default, clean 1.5 min run at 8 threads on 100 frames
+# of 1920x1080).
+_SIFT_NUM_THREADS = 8
+
+
+def _sift_database_valid(database_path: Path) -> bool:
+    """
+    True when the SIFT DB holds both extraction and matching output.
+
+    - A crashed colmap subprocess (e.g. OOM-killed under the cgroup cap) leaves a
+      partial DB behind; an existence-only check would cache-hit on it and feed
+      ReadColmapDatabase zero tracks.
+    """
+    if not database_path.exists():
+        return False
+    try:
+        with sqlite3.connect(database_path) as conn:
+            keypoints = conn.execute("SELECT COUNT(*) FROM keypoints").fetchone()[0]
+            geometries = conn.execute("SELECT COUNT(*) FROM two_view_geometries").fetchone()[0]
+    except sqlite3.Error:
+        return False
+    return keypoints > 0 and geometries > 0
+
+
+def _generate_sift_database(image_path: Path, database_path: Path, single_camera: bool) -> None:
+    """
+    Build the COLMAP SIFT feature database: CPU extraction + exhaustive matching.
+
+    - Reimplements upstream GenerateDatabase (cre185/InstantSfM
+      instantsfm/controllers/feature_handler.py:18-57 @ d3e599e) with the same
+      commands plus a thread cap: upstream neither caps threads (OOM-kill under
+      the cgroup, see _SIFT_NUM_THREADS) nor propagates CalledProcessError, so a
+      colmap crash there surfaces only as an empty-tracks IndexError much later.
+    - CUDA_VISIBLE_DEVICES="" mirrors upstream — CPU SIFT needs no GPU/OpenGL
+      context inside the container.
+    - On failure the partial DB is unlinked so a re-run rebuilds from scratch.
+    """
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = ""
+
+    extractor_cmd = [
+        "colmap", "feature_extractor",
+        "--image_path", str(image_path),
+        "--database_path", str(database_path),
+        "--ImageReader.camera_model", "SIMPLE_RADIAL",
+        "--ImageReader.single_camera", "1" if single_camera else "0",
+        "--SiftExtraction.use_gpu", "0",
+        "--SiftExtraction.num_threads", str(_SIFT_NUM_THREADS),
+    ]
+    matcher_cmd = [
+        "colmap", "exhaustive_matcher",
+        "--database_path", str(database_path),
+        "--SiftMatching.use_gpu", "0",
+        "--SiftMatching.num_threads", str(_SIFT_NUM_THREADS),
+    ]
+
+    try:
+        for cmd in (extractor_cmd, matcher_cmd):
+            logger.info("InstantSfM: running %s %s", cmd[0], cmd[1])
+            subprocess.run(cmd, check=True, env=env)
+    except (subprocess.CalledProcessError, FileNotFoundError) as err:
+        database_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"COLMAP SIFT database build failed ({err}) — is the `colmap` binary installed "
+            "and is there enough memory for CPU SIFT?"
+        ) from err
+
+
 @dataclass
 class InstantSfMCreator:
     """
@@ -371,10 +448,12 @@ class InstantSfMCreator:
     - License: CC-BY-NC-4.0 (non-commercial) — cleared for this repo's research use;
       revisit before any commercial deployment. Install pinned in setup.sh.
     - Drives the upstream Python API directly (never their CLI): ReadData ->
-      GenerateDatabase (system colmap binary, CPU SIFT, exhaustive) ->
-      ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures (VDA metric depth) ->
-      SolveGlobalMapper -> WriteGlomapReconstruction. Call pattern follows
-      instantsfm/scripts/sfm.py::run_sfm at the installed version (0.3.0).
+      SIFT DB build (_generate_sift_database, reimplemented from upstream
+      GenerateDatabase with a thread cap; system colmap binary, CPU SIFT,
+      exhaustive) -> ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures
+      (VDA metric depth) -> SolveGlobalMapper -> WriteGlomapReconstruction.
+      Call pattern follows instantsfm/scripts/sfm.py::run_sfm at the installed
+      version (0.3.0).
     - Not a BasePointcloudCreator: its contract is reconstruct(data_dir) ->
       pycolmap.Reconstruction over a staged scene dir, not (image_dir, output_dir) ->
       PointcloudResult; the Reconstructor wraps the result.
@@ -413,7 +492,6 @@ class InstantSfMCreator:
             ReadData,
             ReadDepthsIntoFeatures,
         )
-        from instantsfm.controllers.feature_handler import GenerateDatabase
         from instantsfm.controllers.global_mapper import SolveGlobalMapper
         from instantsfm.controllers.reconstruction_writer import (
             WriteGlomapReconstruction,
@@ -441,27 +519,17 @@ class InstantSfMCreator:
         colmap_dir = data_dir / "colmap"
         colmap_dir.mkdir(parents=True, exist_ok=True)
         path_info.database_path = str(colmap_dir / "instantsfm.db")
-        path_info.database_exists = Path(path_info.database_path).exists()
         path_info.output_path = str(colmap_dir / "sparse")
         shutil.rmtree(Path(path_info.output_path), ignore_errors=True)
         sparse_dst = Path(path_info.output_path) / "0"
 
-        # SIFT database: reuse an existing one (idempotent re-runs), else build via the
-        # system colmap binary (upstream subprocesses it; CPU SIFT, exhaustive). Upstream
-        # swallows CalledProcessError, so the existence check below is the real gate.
-        if not path_info.database_exists:
+        # SIFT database: reuse a complete one (idempotent re-runs); a partial DB left by
+        # a crashed colmap run is rebuilt from scratch (build failures raise RuntimeError)
+        db_path = Path(path_info.database_path)
+        if not _sift_database_valid(db_path):
+            db_path.unlink(missing_ok=True)
             logger.info("InstantSfM: building COLMAP feature database (CPU SIFT, exhaustive)")
-            GenerateDatabase(
-                str(path_info.image_path),
-                str(path_info.database_path),
-                self.features,
-                None,
-                single_camera=self.single_camera,
-            )
-        if not Path(path_info.database_path).exists():
-            raise RuntimeError(
-                "COLMAP database missing after GenerateDatabase — is the `colmap` binary installed?"
-            )
+            _generate_sift_database(Path(path_info.image_path), db_path, self.single_camera)
 
         view_graph, cameras, images, _feature_name, _rig = ReadColmapDatabase(path_info.database_path)
         if view_graph is None or cameras is None or images is None:

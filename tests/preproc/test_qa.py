@@ -22,6 +22,13 @@ from collab_splats.preproc.qa import (
 from collab_splats.preproc.video import get_video_info, iter_frames
 
 
+def _raise_usac_error(*args, **kwargs):
+    """
+    Stand in for the USAC assert OpenCV throws on a pair it cannot estimate.
+    """
+    raise cv2.error("USAC: bad model")
+
+
 def match_orb(gray_a, gray_b, *, n_features=1000):
     """
     Detect both frames then match — a test convenience, not a module function.
@@ -290,15 +297,18 @@ def test_compute_parallax_zero_for_translating_over_a_plane(synthetic_scenes):
     assert compute_translation(pts_a, pts_b) > 10.0
 
 
-def test_compute_parallax_is_nan_when_opencv_cannot_fit(tiny_video):
-    # USAC asserts instead of returning an empty model on configurations it
-    # cannot estimate, and it does so at any size — not only below the 8-point
-    # floor. Frames 40 and 41 of tiny_video are such a pair: 720 matches, 97.5%
-    # of them zero-displacement, findHomography fine, findFundamentalMat raises
-    # at estimator.cpp:353. Unhandled, one such pair discards every other
-    # measurement in a multi-minute run.
-    grays = [analysis_gray(bgr) for _, bgr in iter_frames(tiny_video)]
-    assert np.isnan(compute_parallax(*match_orb(grays[40], grays[41])))
+def test_compute_parallax_is_nan_when_opencv_cannot_fit(monkeypatch):
+    # USAC asserts instead of returning an empty model on configurations it cannot
+    # estimate, and it does so at any size — not only below the 8-point floor.
+    # Measured on frames 40/41 of tiny_video: 720 matches, 97.5% of them
+    # zero-displacement, findHomography fine, findFundamentalMat raising at
+    # estimator.cpp:353. Which pairs trip it moves with the OpenCV build (4.10.0
+    # fits that same pair), so the raise is injected rather than provoked.
+    # Unhandled, one such pair discards every other measurement in a long run.
+    pts = (np.random.default_rng(0).random((50, 2)) * 100).astype(np.float32)
+    monkeypatch.setattr(cv2, "findFundamentalMat", _raise_usac_error)
+
+    assert np.isnan(compute_parallax(pts, pts + 1.0))
 
 
 def test_compute_parallax_is_nan_below_eight_matches():
@@ -427,17 +437,31 @@ def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, capl
     assert any("frames/s" in m for m in messages), "no elapsed/throughput line logged after"
 
 
-def test_compute_video_quality_survives_a_pair_opencv_cannot_fit(tiny_video):
-    # The end-to-end half of the same failure: at stride 1 the run meets two
-    # unfittable pairs. Before the guard this raised cv2.error and lost all 60
-    # frames of photometry along with the other 57 pairs.
+def test_compute_video_quality_survives_a_pair_opencv_cannot_fit(tiny_video, monkeypatch):
+    # The end-to-end half of the same failure: before the guard, an unfittable pair
+    # raised cv2.error and lost all 60 frames of photometry along with the other 57
+    # pairs. The first two pairs are made unfittable here; tiny_video met two of them
+    # on its own until OpenCV 4.10.0 started fitting that configuration.
+    real_find_f = cv2.findFundamentalMat
+    seen = []
+
+    def fail_first_two_pairs(*args, **kwargs):
+        seen.append(1)
+        if len(seen) <= 2:
+            _raise_usac_error()
+        return real_find_f(*args, **kwargs)
+
+    monkeypatch.setattr(cv2, "findFundamentalMat", fail_first_two_pairs)
+
     report = compute_video_quality(tiny_video, motion_stride=1)
     assert len(report["frames"]["frame_idx"]) == 60
     parallax = report["pairs"]["parallax"]
     assert len(parallax) == 59
-    # The unfittable pairs survive as null, and everything else still measured
-    assert parallax.count(None) == 2
-    assert sum(v is not None for v in parallax) == 57
+    # The unfittable pairs survive as null, and everything else is still measured.
+    # Degenerate pairs null out on their own too (5 of them under 4.10.0), so the
+    # count is a floor, not an equality.
+    assert parallax[0] is None and parallax[1] is None
+    assert sum(v is not None for v in parallax) >= 50
 
 
 def test_compute_video_quality_rejects_a_stride_below_one(tiny_video):

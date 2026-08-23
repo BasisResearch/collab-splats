@@ -89,3 +89,29 @@ def test_refine_poses_refuses_sfm_method(tmp_path):
     r = Reconstructor(config)
     with pytest.raises(ValueError, match="refine_poses"):
         r.refine_poses()
+
+
+def test_sfm_rejects_loop_closure():
+    """
+    loop_closure is a sequential-submap mechanism; InstantSfM is a global mapper — refused.
+    """
+    cfg = _base_config()
+    cfg["pointcloud"]["method"] = "sfm"
+    cfg["pointcloud"]["backend"] = "instantsfm"
+    cfg["pointcloud"]["loop_closure"] = True
+    with pytest.raises(ValueError, match="loop_closure"):
+        Reconstructor.validate_config(cfg)
+
+
+def test_run_sfm_colmap_hloc_still_not_implemented(tmp_path):
+    """
+    _run_sfm only implements backend: instantsfm; colmap/hloc raise NotImplementedError naming it.
+    """
+    cfg = _base_config()
+    cfg["input_path"] = str(tmp_path / "video.mp4")
+    cfg["output_path"] = str(tmp_path / "out")
+    cfg["pointcloud"]["method"] = "sfm"
+    cfg["pointcloud"]["backend"] = "colmap"
+    r = Reconstructor(cfg)
+    with pytest.raises(NotImplementedError, match="instantsfm"):
+        r._run_sfm()

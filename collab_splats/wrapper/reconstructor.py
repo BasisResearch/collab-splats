@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.metadata
 import json
 import logging
 import shutil
@@ -19,8 +20,14 @@ import torch
 import yaml
 import zarr
 from mergedeep import merge
+from vggt.utils.geometry import unproject_depth_map_to_point_map
 
 from collab_splats.pointcloud.export import write_pointcloud_ply
+from collab_splats.pointcloud.sfm import (
+    InstantSfMCreator,
+    _pixel_indices_from_reconstruction,
+    generate_vda_depth,
+)
 from collab_splats.preproc import get_video_info
 from collab_splats.preproc import viz as preproc_viz
 from collab_splats.preproc.frame_store import FrameStore
@@ -37,7 +44,10 @@ from collab_splats.semantics.compression import (
 )
 
 if TYPE_CHECKING:
+    import pycolmap
+
     from collab_splats.pointcloud.base import PointcloudResult
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.viewer import Viewer
 
 logger = logging.getLogger(__name__)
@@ -705,6 +715,13 @@ class Reconstructor:
                 "InstantSfM runs its own global bundle adjustment"
             )
 
+        # SfM path: LC wraps a feedforward creator in sequential submaps — nothing to wrap here
+        if method == "sfm" and lc_enabled:
+            raise ValueError(
+                "pointcloud.loop_closure is not supported with method: sfm — "
+                "InstantSfM is a global mapper, not a sequential submap pipeline"
+            )
+
         # InstantSfM feature-handler allowlist (v0.3.0 supports only colmap)
         if method == "sfm" and backend == "instantsfm":
             features = pc.get("instantsfm", {}).get("features")
@@ -945,8 +962,161 @@ class Reconstructor:
         logger.info("transforms.json written to %s", out)
 
     def _run_sfm(self) -> "PointcloudResult":
-        """Run SfM pointcloud stage (colmap/hloc). Experimental."""
-        raise NotImplementedError("SfM path not yet implemented — use method: feedforward")
+        """
+        SfM pointcloud path (backend: instantsfm) — VDA metric depth + InstantSfM global mapping.
+
+        - Stages frames.zarr keyframes to backend_dir/images/ (InstantSfM reads a dir).
+        - Generates depth_vda/images/npy/<stem>.npy (skipped when present), runs InstantSfMCreator,
+          renames COLMAP images to the frame_NNNNNN contract, builds a FeedforwardResult at VDA
+          depth resolution → pointcloud.zarr with provenance attrs, returns the PointcloudResult
+          for the shared tail.
+        """
+        from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
+
+        pc_cfg = self.config["pointcloud"]
+        backend = pc_cfg["backend"]
+        if backend != "instantsfm":
+            raise NotImplementedError(f"sfm backend {backend!r} is not implemented — only 'instantsfm' is")
+        backend_dir = self.backend_dir
+        backend_dir.mkdir(parents=True, exist_ok=True)
+        store = FrameStore.open(self.frames_zarr)
+        names = [f"frame_{int(fi):06d}.jpg" for fi in store.frame_indices()]
+
+        # Stage keyframes as jpgs — exactly what FrameStore.export writes, so a complete staged set
+        # is reused as-is. Any other set (partial, or from a different selection) is re-staged,
+        # and the SIFT database keyed on it is dropped so InstantSfM cannot reuse stale features.
+        image_dir = backend_dir / "images"
+        staged = sorted(p.name for p in image_dir.iterdir()) if image_dir.is_dir() else []
+        if staged != names:
+            shutil.rmtree(image_dir, ignore_errors=True)
+            (backend_dir / "colmap" / "database.db").unlink(missing_ok=True)
+            store.export(image_dir, ext="jpg")
+            logger.info("Staged %d keyframes to %s", len(names), image_dir)
+
+        # VDA metric depth — the only shipped mode (use_depths=True). VDA only echoes fps back
+        # alongside the depths (no temporal resampling), so the keyframe rate is informational.
+        frames = np.ascontiguousarray(store.images())
+        generate_vda_depth(frames, fps=float(self.config["preproc"]["fps"]), out_dir=backend_dir, names=names)
+        del frames
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Global SfM via the upstream python API; writes colmap/database.db + colmap/sparse/0
+        creator = InstantSfMCreator(features=pc_cfg["instantsfm"]["features"])
+        recon = creator.reconstruct(backend_dir)
+        del creator
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        # InstantSfM registers images under their filenames (frame_000000.jpg); the pipeline
+        # contract is frame_{source_idx:06d} with NO extension (see _load_pointcloud_from_disk).
+        # Rename in place and rewrite the model so every later load sees the contract names.
+        for im in recon.images.values():
+            im.name = Path(im.name).stem
+        recon.write_binary(str(backend_dir / "colmap" / "sparse" / "0"))
+
+        # Unified pointcloud.zarr at VDA depth res, with provenance from the installed package
+        outputs = self._sfm_result_from_reconstruction(recon, backend_dir, store)
+        zarr_path = backend_dir / "pointcloud.zarr"
+        outputs.save_zarr(
+            zarr_path,
+            extra_attrs={
+                "method": "sfm",
+                "backend": "instantsfm",
+                "instantsfm_version": importlib.metadata.version("instantsfm"),
+            },
+        )
+        logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(outputs.points):,}")
+
+        return PointcloudResult(
+            reconstruction=recon,
+            frame=CoordinateFrame.COLMAP,
+            image_paths=outputs.image_paths,
+        )
+
+    def _sfm_result_from_reconstruction(
+        self, recon: "pycolmap.Reconstruction", backend_dir: Path, store: FrameStore
+    ) -> "FeedforwardResult":
+        """
+        Build a FeedforwardResult from an InstantSfM COLMAP model + VDA depth maps.
+
+        - Rows follow store order; image names must already be the frame_NNNNNN contract.
+        - Depth maps define the (h, w) grid; K, images and pixel_indices are scaled to it.
+        - confidence / mv_* stay absent — SfM has no learned per-pixel confidence.
+        """
+        from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+        # Every store frame must be registered — a partial model would leave rows without poses
+        if len(recon.images) != len(store):
+            raise RuntimeError(
+                f"InstantSfM registered {len(recon.images)}/{len(store)} frames — partial "
+                "registration is not supported; re-run with more overlap"
+            )
+        images_sorted = sorted(recon.images.values(), key=lambda im: im.name)
+        expected = [f"frame_{int(fi):06d}" for fi in store.frame_indices()]
+        registered = [im.name for im in images_sorted]
+        if registered != expected:
+            raise ValueError(
+                f"registered image names do not match {self.frames_zarr} frame indices "
+                f"(first registered: {registered[0]}, first expected: {expected[0]}); the frame "
+                "store and the reconstruction describe different runs."
+            )
+        name_to_row = {name: row for row, name in enumerate(registered)}
+
+        # Per-frame VDA depth, aligned by name; its grid is the model resolution of this result
+        depth_dir = backend_dir / "depth_vda" / "images" / "npy"
+        depths = np.stack([np.load(depth_dir / f"{im.name}.npy") for im in images_sorted]).astype(np.float32)
+        n, h, w = depths.shape
+
+        # Poses: cam_from_world (w2c) as homogeneous 4x4
+        extrinsics = np.stack(
+            [np.vstack([im.cam_from_world().matrix(), [0.0, 0.0, 0.0, 1.0]]) for im in images_sorted]
+        ).astype(np.float32)
+
+        # COLMAP K is at staged-jpg (original) resolution; the depth grid is model-res, so K is
+        # rescaled to it — pairing original-res K with model-res depth is the 2026-08-11
+        # mesh-regression class (see _feedforward_to_tsdf_inputs).
+        orig_h, orig_w = store.image(0).shape[:2]
+        sx, sy = w / orig_w, h / orig_h
+        intrinsics = np.stack([recon.cameras[im.camera_id].calibration_matrix() for im in images_sorted])
+        intrinsics = intrinsics.astype(np.float32)
+        intrinsics[:, 0, :] *= sx
+        intrinsics[:, 1, :] *= sy
+
+        # Sparse points in point3D-id order; pixel_indices from each point's first observation
+        point3d_ids = sorted(recon.points3D)
+        points = np.array([recon.points3D[pid].xyz for pid in point3d_ids], dtype=np.float32).reshape(-1, 3)
+        colors = np.array([recon.points3D[pid].color for pid in point3d_ids], dtype=np.uint8).reshape(-1, 3)
+        pixel_indices = _pixel_indices_from_reconstruction(
+            recon, point3d_ids, name_to_row, scale_x=sx, scale_y=sy, depth_hw=(h, w)
+        )
+
+        # RGB at depth res as (N, 3, H, W) float32 in [0, 1] — the feedforward images convention
+        images_arr = np.stack([cv2.resize(store.image(i), (w, h), interpolation=cv2.INTER_AREA) for i in range(n)])
+        images_arr = images_arr.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
+
+        # Dense world points by unprojecting depth through the rescaled K and w2c poses
+        world_points = unproject_depth_map_to_point_map(depths[..., None], extrinsics[:, :3, :], intrinsics)
+        world_points = world_points.astype(np.float32)
+
+        # No crop: the depth grid is a full-frame resize of the original
+        original_coords = np.array([[0, 0, w, h, orig_w, orig_h]] * n, dtype=np.float32)
+
+        return FeedforwardResult(
+            points=points,
+            colors=colors,
+            extrinsics=extrinsics,
+            intrinsics=intrinsics,
+            image_paths=[Path(im.name) for im in images_sorted],
+            original_coords=original_coords,
+            model_width=w,
+            model_height=h,
+            images=images_arr,
+            world_points=world_points,
+            depth=depths,
+            pixel_indices=pixel_indices,
+        )
 
     def refine_poses(self, overwrite: bool = False) -> "PointcloudResult":
         """Refine camera poses via LM bundle adjustment; rewrite pose-derived artifacts.

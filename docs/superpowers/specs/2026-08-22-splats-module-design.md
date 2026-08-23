@@ -47,7 +47,7 @@ Overall aim: better rendering → better mesh.
 | Quality flags | `antialiased=True`, `absgrad=True` (`grow_grad2d=8e-4` per upstream note), `random_bkgd=True`, `sh_degree=3` — hardcoded | Upstream-proven improvements; not yaml knobs. |
 | Off | `app_opt` (view-dependent exposure breaks RGB/depth handoff), MCMC, bilateral grid + TV, compression, distributed, holdout split, LPIPS | Not needed for train-view → mesh use case. Ablation tooling belongs in a later `evals/scripts/eval_splats.py`. |
 | Eval separation | none in stage; PSNR/SSIM over train views only | Pipeline only renders train views. Caveat: train PSNR cannot detect pose-opt drift — eval script catches it. |
-| Output handoff | `mesh.source: feedforward \| splats` — **Deferred to a follow-on plan (2026-08-22)**; `mesh` keeps fusing `feedforward.zarr` | `splats` would feed rendered depth+RGB+poses+K from `splats.zarr` (all mutually consistent, native res). |
+| Output handoff | `mesh.source: feedforward \| splats` — **Built 2026-08-23 (this plan)** — `mesh.source: splats` fuses the renders (alpha as confidence, poses as rendered); `feedforward` stays the default | `splats` would feed rendered depth+RGB+poses+K from `splats.zarr` (all mutually consistent, native res). |
 | PAGaS | follow-on spec | Needs gsplat pinned at `bd64a47` (=1.4.0) + 865-line CUDA patch; incompatible in-process with main. Seam: `_render()` in `trainer.py`. |
 | Feature distillation (rade_features) | follow-on spec | Out of scope for the trainer. |
 
@@ -138,7 +138,7 @@ splats:                      # as shipped in configs/base.yaml (2026-08-22)
     normal_consistency: {weight: 0.05, start: 7000}    # rendered normal vs depth_to_normal
     opacity_reg: {weight: 0.01}                        # 3dgs/MCMC
     scale_reg: {weight: 0.01}                          # 3dgs/MCMC
-    # 2dgs: replace the two regularisers with  distortion: {weight: 100.0, start: 3000}
+    # 2dgs: replace the two regularisers with  distortion: {weight: 0.01, start: 3000}
 ```
 
 `mesh.source` is deferred (see Output handoff above) — no `mesh.source` key ships. Unlisted loss = off. `nerfstudio:` block deleted from `configs/base.yaml` and
@@ -206,15 +206,20 @@ As built (2026-08-22): no `"step"` in `ckpt.pt` and no `steps` in the summary (`
 
 ## Owed measurements (human-run, appended to a measured report)
 
-- Tutorial scene (`data/tutorial/`): 3dgs vs 2dgs step time and `splats_quality_report` PSNR.
-- 3DGS `normal_consistency` on/off: mesh visual + rendered-depth error (not upstream-validated).
-- `mesh.source: splats` vs `feedforward` mesh on the same scene — visual + the 7-Scenes
-  rendered-depth error via the existing out10/p90 harness (gate design deferred).
-- `pose_opt` effect on BA-clean poses.
+Measured 2026-08-23 → [2026-08-23-splats-measured-report.md](2026-08-23-splats-measured-report.md).
+
+- [x] Tutorial scene (`data/tutorial/`): 3dgs vs 2dgs step time and `splats_quality_report` PSNR —
+  native 1920×1080: 3dgs 19.74/0.707 @ 57 ms/step, 2dgs 19.96/0.707 @ 60 ms/step (after the
+  distortion-weight fix 100 → 0.01; at 100 2dgs collapsed to PSNR 13.9).
+- [ ] 3DGS `normal_consistency` on/off: not run. Normals sanity only: unit, no flips, ~21° median
+  off the depth normal.
+- [x] `mesh.source: splats` vs `feedforward` mesh on the same scene — splat meshes carry 2.3–2.7×
+  more speckle components; default stays `feedforward`. 7-Scenes rendered-depth error not run.
+- [x] `pose_opt` effect: +0.44 dB / +0.04 SSIM for +5% time on the tutorial scene.
 
 ## Follow-ons (separate specs)
 
-- `evals/scripts/eval_splats.py` — holdout split, LPIPS, config ablations.
+- `evals/scripts/eval_splats.py` — built 2026-08-23 (train-view psnr/ssim; `--pose-opt`, `--primitives`, `--model-res`); holdout split, LPIPS still owed.
 - PAGaS depth refinement — separate env or kernel port; plugs at `_render`.
 - Feature distillation (replaces `rade_features`).
 - Dense feedforward depth / mono normal priors.

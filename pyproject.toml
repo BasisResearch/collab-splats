@@ -74,6 +74,8 @@ dependencies = [
     "torchpack",
     # gsplat: upstream, built from source against the cu121 toolchain (see [tool.uv.sources])
     "gsplat",
+    # fused-ssim: CUDA fast path for gsplat.losses.ssim_loss (else a slow torch fallback); needs nvcc
+    "fused-ssim",
     "maskclip_onnx",
     # pypose<0.9 required: pypose 0.9+ adds _ensure_sparse_backend_version() which runs at
     # `import pypose` and hard-rejects any bae != 0.2 (strict version.parse inequality), so it
@@ -234,8 +236,8 @@ override-dependencies = [
     "uniception==0.1.7",
     "lightning>=2.6",
 ]
-# bae + gsplat import torch at build time → must build without isolation.
-no-build-isolation-package = ["bae", "gsplat"]
+# bae + gsplat + fused-ssim import torch at build time → must build without isolation.
+no-build-isolation-package = ["bae", "gsplat", "fused-ssim"]
 
 [[tool.uv.index]]
 name = "pytorch-cu121"
@@ -250,6 +252,8 @@ torchvision = { index = "pytorch-cu121" }
 # `cuda::ceil_div` (CUDA >= 12.3) and 31f5b3d (2026-06-08) needs `c10d::wait_tensor` (torch >= 2.7).
 # Headers still need CCCL >= 2.2 for <cuda/std/optional> — see setup.sh. Bump deliberately.
 gsplat = { git = "https://github.com/nerfstudio-project/gsplat.git", rev = "d2f5c0f" }
+# fused-ssim main @ 2026-08-23; the CUDA SSIM kernel gsplat.losses.ssim_loss prefers when importable
+fused-ssim = { git = "https://github.com/rahul-goel/fused-ssim.git", rev = "a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" }
 mobile_sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
 maskclip_onnx = { git = "https://github.com/RogerQi/maskclip_onnx.git" }
 bae = { git = "https://github.com/pypose/bae.git", rev = "0.2.4" }

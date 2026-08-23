@@ -9,7 +9,7 @@ PYTHON="$VENV/bin/python"
 export PIP_ROOT_USER_ACTION=ignore
 export UV_PROJECT_ENVIRONMENT="$VENV"
 
-# CUDA build environment for the source-compiled extensions (bae, gsplat).
+# CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim).
 # Prefer a complete SYSTEM toolkit: the nvidia/cuda:*-devel image ships nvcc + all headers +
 # libs under one root at /usr/local/cuda — exactly the unified layout torch's cpp_extension
 # expects. There is no pip fallback: every nvidia-cuda-nvcc-cu12 wheel (12.1 … 12.8) ships
@@ -56,15 +56,15 @@ for name in ("disk-lightglue",):  # extend when configs reference more models
     print(f"vismatch weights cached: {name}")
 EOF
 
-# Smoke test — mandatory: torch + the extensions this script compiled (bae, gsplat).
+# Smoke test — mandatory: torch + the extensions this script compiled (bae, gsplat, fused-ssim).
 # The full creator chain pulls cv2/open3d, which need GUI/X11 system libs absent in a Docker
 # BUILD stage but present at runtime — so import it best-effort here (verified for real in the
 # runtime image). Keeps the build from failing on runtime-only system libs.
 "$PYTHON" - << 'PYEOF'
-import torch, bae, gsplat
+import torch, bae, gsplat, fused_ssim
 assert "12.1" in torch.version.cuda, f"FAIL: cuda={torch.version.cuda}"
 assert torch.__version__.startswith("2.5"), f"FAIL: torch={torch.__version__}"
-print(f"[OK] torch={torch.__version__} cuda={torch.version.cuda}; bae + gsplat compiled")
+print(f"[OK] torch={torch.__version__} cuda={torch.version.cuda}; bae + gsplat + fused-ssim compiled")
 try:
     from collab_splats.pointcloud import VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator
     print("[OK] full creator chain imports")

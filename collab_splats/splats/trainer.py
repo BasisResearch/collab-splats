@@ -25,7 +25,7 @@ from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR
 
 from collab_splats.splats.cameras import CameraOptModule
-from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses
+from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
 from collab_splats.splats.outputs import write_splat_outputs
 from collab_splats.splats.rendering import render_view
 from collab_splats.utils.progress import progress
@@ -49,7 +49,7 @@ def _default_losses(primitive: str) -> dict[str, dict]:
         losses["opacity_reg"] = {"weight": 0.01}
         losses["scale_reg"] = {"weight": 0.01}
     else:
-        losses["distortion"] = {"weight": 100.0, "start": 3000}
+        losses["distortion"] = {"weight": 0.01, "start": 3000}
     return losses
 
 
@@ -309,6 +309,7 @@ def train(
     start_time = time.perf_counter()
     loss_values: dict[str, float] = {}
     use_pre_backward_hook = isinstance(strategy, DefaultStrategy)
+    normal_spec = cfg.losses.get("normal_consistency")
     for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
         # Pick one random view and its (possibly refined) camera
         view = int(torch.randint(n_views, (1,)))
@@ -321,11 +322,21 @@ def train(
             camera_id = torch.tensor([view], device=device)
             view_cam_to_world = pose_refiner(view_cam_to_world, camera_id)
 
-        # Render with the SH bands unlocked so far, over a random background so transparency cannot hide
+        # Render with the SH bands unlocked so far, over a random background so transparency cannot hide.
+        # 3DGS normals cost an extra-signal pass, so they are only rendered once the consistency loss is on.
         sh_degree = min(step // cfg.sh_degree_interval, cfg.sh_degree)
         absgrad = use_pre_backward_hook and strategy.absgrad
+        render_normals = loss_active(step, normal_spec)
         render, info = render_view(
-            cfg.primitive, gaussians, view_cam_to_world, view_intrinsics, width, height, sh_degree, absgrad
+            cfg.primitive,
+            gaussians,
+            view_cam_to_world,
+            view_intrinsics,
+            width,
+            height,
+            sh_degree,
+            absgrad,
+            render_normals=render_normals,
         )
         background = torch.rand(1, 3, device=device)
         transparency = 1.0 - render["alpha"]

@@ -104,6 +104,7 @@ semantics:
 
 mesh:
   enabled: true
+  source: feedforward     # feedforward (model depth) | splats (rendered depth; alpha = confidence)
   voxel_size: 0.005         # dashboard-parity TSDF defaults
   sdf_trunc: 0.02
   depth_trunc: 1.0          # drop depth samples beyond this range (metres)
@@ -140,7 +141,7 @@ splats:
     normal_consistency: {weight: 0.05, start: 7000}
     opacity_reg: {weight: 0.01}
     scale_reg: {weight: 0.01}
-    # 2dgs: replace the two regularisers with  distortion: {weight: 100.0, start: 3000}
+    # 2dgs: replace the two regularisers with  distortion: {weight: 0.01, start: 3000}
 
 localization:
   enabled: false

@@ -1164,7 +1164,7 @@ def test_build_localization_db_runs_when_missing(tmp_path):
     ):
         rec.build_localization_db(overwrite=False)
     # top_k comes from base.yaml's localization.top_k default (pairwise/vismatch fan-out)
-    build.assert_called_once_with(ff, "loma", rec.frames_zarr, top_k=8)
+    build.assert_called_once_with(ff, "loma", rec.frames_zarr, top_k=8, overwrite=False)
 
 
 ########################################

@@ -19,6 +19,12 @@ Tutorials
 
 .. toctree::
    :maxdepth: 1
+   :caption: 03 · Splats
+
+   03_splats/train_splats
+
+.. toctree::
+   :maxdepth: 1
    :caption: 04 · Semantics
 
    04_semantics/feature_extraction
@@ -30,6 +36,12 @@ Tutorials
    :caption: 05 · Lifting
 
    05_lifting/semantic_lifting
+
+.. toctree::
+   :maxdepth: 1
+   :caption: 06 · Mesh
+
+   06_mesh/splats_mesh
 
 .. toctree::
    :maxdepth: 1

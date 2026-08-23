@@ -10,6 +10,7 @@ import numpy as np
 import open3d as o3d
 import torch
 import torch.nn.functional as F
+import zarr
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
@@ -612,6 +613,46 @@ def _feedforward_to_tsdf_inputs(
     return depths, rgbs, c2w, result.intrinsics.copy()
 
 
+def _splats_to_tsdf_inputs(
+    splats_zarr: Path, conf_percentile: float | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Unpack splats.zarr (rendered views) into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
+
+    - `alpha` is the confidence: pixels with alpha == 0 never reach Open3D, and
+      `conf_percentile` drops the lowest-alpha percentile globally (same rule as the
+      feedforward path's confidence gate).
+    - Poses are the zarr's `c2w` — what was actually rendered, including pose-opt deltas.
+    - Already native to the training frames, so there is no upsampling path.
+    """
+    # Loud failure before opening: the splats stage is never auto-run by mesh()
+    splats_zarr = Path(splats_zarr)
+    if not splats_zarr.exists():
+        raise FileNotFoundError(f"{splats_zarr} — run the splats stage first")
+    store = zarr.open_group(str(splats_zarr), mode="r")
+
+    # Alpha gate: zero alpha is "no surface rendered here"; the percentile cut mirrors the
+    # feedforward path's confidence_mask so both sources filter by the same global rule
+    depths = np.ascontiguousarray(store["depth"][:], dtype=np.float32)
+    alpha = store["alpha"][:]
+    keep = alpha > 0
+    if conf_percentile is not None:
+        keep &= confidence_mask(alpha, conf_percentile)
+    dropped = ~keep
+    depths[dropped] = 0.0
+    logger.info(
+        "Alpha mask (p%s): %.1f%% of depth pixels dropped",
+        "none" if conf_percentile is None else f"{conf_percentile:.0f}",
+        100.0 * float(dropped.mean()),
+    )
+
+    # Rendered uint8 RGB + the poses/intrinsics actually rendered, all native to the frames
+    rgbs = np.ascontiguousarray(store["rgb"][:])
+    c2w = store["c2w"][:].astype(np.float32)
+    intrinsics = store["K"][:].astype(np.float32)
+    return depths, rgbs, c2w, intrinsics
+
+
 def optimize_color_map(
     mesh_path: Path,
     depths: np.ndarray,
@@ -731,6 +772,41 @@ def pointcloud_to_mesh(
         ValueError: if result.depth/result.images are None, method is not in the registry,
                     or color_map_iterations > 0 with a non-TSDF method.
     """
+    # Adapter then fuse — the splats source runs the same fuse on its own adapter's output
+    depths, rgbs, c2w, intrinsics = _feedforward_to_tsdf_inputs(
+        result,
+        conf_percentile=conf_percentile,
+        frame_store=frame_store,
+        native_intrinsics=native_intrinsics,
+    )
+    return mesh_from_tsdf_inputs(
+        depths,
+        rgbs,
+        c2w,
+        intrinsics,
+        output_dir,
+        method=method,
+        color_map_iterations=color_map_iterations,
+        **mesher_kwargs,
+    )
+
+
+def mesh_from_tsdf_inputs(
+    depths: np.ndarray,
+    rgbs: np.ndarray,
+    c2w: np.ndarray,
+    intrinsics: np.ndarray,
+    output_dir: Path,
+    method: str = "open3d_tsdf",
+    color_map_iterations: int = 0,
+    **mesher_kwargs,
+) -> MeshResult:
+    """
+    Fuse pre-built (depths, rgbs, c2w, intrinsics) with any registered mesher; optional colour-map pass.
+
+    - Shared tail of both input adapters (feedforward.zarr and splats.zarr).
+    - Raises ValueError when color_map_iterations > 0 with a non-TSDF method.
+    """
     from collab_splats.mesh import get_mesh_creator
 
     # Loud failure before any work — only the TSDF path has the depth_trunc + mesh.ply
@@ -740,12 +816,6 @@ def pointcloud_to_mesh(
             f"color_map_iterations requires method='open3d_tsdf', got {method!r}"
         )
 
-    depths, rgbs, c2w, intrinsics = _feedforward_to_tsdf_inputs(
-        result,
-        conf_percentile=conf_percentile,
-        frame_store=frame_store,
-        native_intrinsics=native_intrinsics,
-    )
     mesher = get_mesh_creator(method, Path(output_dir), **mesher_kwargs)
     mesh_result = mesher.create(depths, rgbs, c2w, intrinsics)
 

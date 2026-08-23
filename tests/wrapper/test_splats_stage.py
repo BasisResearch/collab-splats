@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import torch
 import yaml
+import zarr
 
 from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.splats.trainer import SplatsConfig
@@ -51,7 +52,16 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
     recon.config = {
         "output_path": str(tmp_path),
         "pointcloud": {"backend": "vggtx"},
-        "mesh": {"conf_percentile": 20},
+        "mesh": {
+            "voxel_size": 0.01,
+            "sdf_trunc": 0.04,
+            "depth_trunc": 1.0,
+            "clean_repair": False,
+            "conf_percentile": 20,
+            "native_resolution": False,
+            "color_map_iterations": 0,
+            "source": "feedforward",
+        },
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
     }
     recon._stage_output_exists = lambda stage: False
@@ -136,3 +146,46 @@ def test_splats_stage_skips_when_output_exists(tmp_path):
     with patch("collab_splats.splats.trainer.train") as train:
         recon.splats()
     train.assert_not_called()
+
+
+def _write_minimal_splats_zarr(path, n_views=3, height=4, width=5):
+    """
+    splats.zarr with the array set the mesh adapter reads; all-ones alpha so nothing is dropped.
+    """
+    store = zarr.open_group(path, mode="w")
+    rgb = np.full((n_views, height, width, 3), 7, np.uint8)
+    depth = np.ones((n_views, height, width), np.float32)
+    alpha = np.ones((n_views, height, width), np.float32)
+    c2w = np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1))
+    intrinsics = np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1))
+    for name, array in (("rgb", rgb), ("depth", depth), ("alpha", alpha), ("c2w", c2w), ("K", intrinsics)):
+        store.create_array(name, data=array)
+    store.attrs["primitive"] = "3dgs"
+
+
+def test_mesh_source_splats_without_zarr_raises(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["mesh"]["source"] = "splats"
+    with pytest.raises(ValueError, match="mesh.source: splats"):
+        recon.mesh()
+
+
+def test_mesh_source_splats_fuses_from_splats_zarr(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["mesh"]["source"] = "splats"
+    recon.config["mesh"]["native_resolution"] = True  # ignored on this path, must not raise
+    splats_dir = recon.backend_dir / "splats"
+    splats_dir.mkdir(parents=True)
+    _write_minimal_splats_zarr(splats_dir / "splats.zarr", n_views=3)
+    with patch("collab_splats.mesh.utils.mesh_from_tsdf_inputs") as fuse:
+        fuse.return_value = SimpleNamespace(mesh_path=recon.backend_dir / "mesh.ply")
+        out = recon.mesh()
+    depths, rgbs, c2w, intrinsics = fuse.call_args.args[:4]
+    assert depths.shape[0] == 3 and out == recon.backend_dir / "mesh.ply"
+
+
+def test_mesh_source_unknown_raises(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["mesh"]["source"] = "nerf"
+    with pytest.raises(ValueError, match="mesh.source"):
+        recon.mesh()

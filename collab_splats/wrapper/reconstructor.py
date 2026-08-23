@@ -448,10 +448,47 @@ def _run_tsdf_mesh(
     native_resolution: bool = False,
     color_map_iterations: int = 0,
     frames_zarr: Path | None = None,
+    source: str = "feedforward",
+    splats_zarr: Path | None = None,
 ) -> Path:
-    """Fuse depth + RGB from feedforward.zarr into a TSDF mesh, using COLMAP poses."""
+    """Fuse depth + RGB from feedforward.zarr (or splats.zarr renders) into a TSDF mesh, using COLMAP poses."""
     from collab_splats.mesh.utils import pointcloud_to_mesh
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
+    # Splats source: rendered depth/RGB/alpha + the poses actually rendered; no native path
+    if source == "splats":
+        from collab_splats.mesh.utils import _splats_to_tsdf_inputs, mesh_from_tsdf_inputs
+
+        if native_resolution:
+            logger.info(
+                "mesh.native_resolution ignored: splats renders are already at frame resolution"
+            )
+        depths, rgbs, c2w, intrinsics = _splats_to_tsdf_inputs(
+            splats_zarr, conf_percentile=conf_percentile
+        )
+        n_views = depths.shape[0]
+        n_poses = result.extrinsics.shape[0]
+        if n_views != n_poses:
+            raise ValueError(
+                f"Frame-count mismatch: COLMAP reconstruction has {n_poses} images but "
+                f"{splats_zarr} has {n_views}. They are from different runs — re-run the "
+                "splats stage, or point --stages mesh at the matching scene."
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        mesh_result = mesh_from_tsdf_inputs(
+            depths,
+            rgbs,
+            c2w,
+            intrinsics,
+            output_dir,
+            method="open3d_tsdf",
+            voxel_size=voxel_size,
+            sdf_trunc=sdf_trunc,
+            depth_trunc=depth_trunc,
+            clean_repair=clean_repair,
+            color_map_iterations=color_map_iterations,
+        )
+        return mesh_result.mesh_path
 
     # world_points is the largest array in the store and the mesh path no longer reads it.
     # native_resolution skips the zarr's model-res RGB too — it comes from frames.zarr instead.
@@ -1023,7 +1060,13 @@ class Reconstructor:
         result: "PointcloudResult | None" = None,
         overwrite: bool = False,
     ) -> Path:
-        """Build mesh from pointcloud depth maps. Returns path to mesh.ply."""
+        """Build a TSDF mesh from `mesh.source` depth: feedforward.zarr (default) or splats.zarr renders.
+
+        COLMAP is the pose authority on the feedforward path; the splats path fuses the poses
+        the splats were actually rendered with (including pose-opt deltas) and uses alpha as
+        confidence. The splats stage is never auto-run — `source: splats` requires it on disk.
+        Returns path to mesh.ply.
+        """
         mesh_path = self.backend_dir / "mesh.ply"
 
         # Skip if mesh already on disk
@@ -1035,14 +1078,28 @@ class Reconstructor:
         if result is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
+        # Source-specific input check: each branch needs only its own zarr on disk
+        mesh_cfg = self.config["mesh"]
+        source = mesh_cfg["source"]
+        if source not in ("feedforward", "splats"):
+            raise ValueError(
+                f"mesh.source must be 'feedforward' or 'splats', got {source!r}"
+            )
         feedforward_zarr = self.backend_dir / "feedforward.zarr"
-        if not feedforward_zarr.exists():
+        splats_zarr = None
+        if source == "splats":
+            splats_zarr = self.backend_dir / "splats" / "splats.zarr"
+            if not splats_zarr.exists():
+                raise ValueError(
+                    f"mesh.source: splats needs {splats_zarr} — run the splats stage first "
+                    "(it is never auto-run)"
+                )
+        elif not feedforward_zarr.exists():
             raise FileNotFoundError(
                 f"feedforward.zarr not found at {feedforward_zarr}. "
                 "Mesh requires depth maps from a feedforward backend."
             )
 
-        mesh_cfg = self.config["mesh"]
         out = _run_tsdf_mesh(
             result=result,
             feedforward_zarr=feedforward_zarr,
@@ -1055,6 +1112,8 @@ class Reconstructor:
             native_resolution=mesh_cfg["native_resolution"],
             color_map_iterations=mesh_cfg["color_map_iterations"],
             frames_zarr=self.frames_zarr,
+            source=source,
+            splats_zarr=splats_zarr,
         )
         logger.info("Mesh saved to %s", out)
         return out

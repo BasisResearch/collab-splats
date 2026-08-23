@@ -5,7 +5,7 @@ compute_losses: photometric always on; optional losses gated by weight > 0, star
 import pytest
 import torch
 
-from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses
+from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
 
 
 def _render(height=16, width=16, with_distortion=True):
@@ -100,12 +100,38 @@ def test_normal_consistency_is_one_when_alpha_is_zero():
     assert values["normal_consistency"] == pytest.approx(1.0, abs=1e-5)
 
 
-def test_normal_consistency_skipped_on_3dgs_render():
+def test_distortion_skipped_on_3dgs_render():
     render_3dgs = _render(with_distortion=False)
-    del render_3dgs["normal"], render_3dgs["depth_normal"]
-    schedule = {"normal_consistency": {"weight": 1.0}, "distortion": {"weight": 1.0}}
+    schedule = {"distortion": {"weight": 1.0}}
     _, values = compute_losses(0, render_3dgs, _target(), _gaussians(), schedule, 1.0)
-    assert "normal_consistency" not in values and "distortion" not in values
+    assert "distortion" not in values
+
+
+def test_normal_consistency_raises_when_active_without_normals():
+    render_no_normals = _render(with_distortion=False)
+    del render_no_normals["normal"], render_no_normals["depth_normal"]
+    schedule = {"normal_consistency": {"weight": 1.0}}
+    with pytest.raises(ValueError, match="render_normals"):
+        compute_losses(0, render_no_normals, _target(), _gaussians(), schedule, 1.0)
+
+
+def test_normal_consistency_inactive_tolerates_missing_normals():
+    render_no_normals = _render(with_distortion=False)
+    del render_no_normals["normal"], render_no_normals["depth_normal"]
+    schedule = {"normal_consistency": {"weight": 0.0}}
+    _, values = compute_losses(0, render_no_normals, _target(), _gaussians(), schedule, 1.0)
+    assert "normal_consistency" not in values
+    schedule = {"normal_consistency": {"weight": 1.0, "start": 500}}
+    _, values = compute_losses(0, render_no_normals, _target(), _gaussians(), schedule, 1.0)
+    assert "normal_consistency" not in values
+
+
+def test_loss_active_gates_on_weight_start_and_presence():
+    assert loss_active(0, {"weight": 1.0})
+    assert loss_active(500, {"weight": 1.0, "start": 500})
+    assert not loss_active(0, {"weight": 0.0})
+    assert not loss_active(499, {"weight": 1.0, "start": 500})
+    assert not loss_active(0, None)
 
 
 def test_distortion_skipped_when_render_has_no_map():

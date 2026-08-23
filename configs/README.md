@@ -359,6 +359,7 @@ parameter and raises.
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
 | `mesh.enabled` | bool | `false` | Build TSDF/Poisson mesh (opt-in) |
+| `mesh.source` | str | `feedforward` | `feedforward` fuses feedforward.zarr depth; `splats` fuses splats.zarr renders (needs the splats stage; `native_resolution` ignored) |
 | `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
@@ -523,8 +524,8 @@ features + the raw COLMAP binaries, and read poses via `pycolmap`.
 
 `--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
 `frames.zarr` — no image directory, no transforms.json round-trip. Every `splats/` artifact is in
-the COLMAP world frame; nothing is normalised. `mesh` still fuses `feedforward.zarr`; fusing the
-splat renders (`mesh.source: splats`) is a follow-on.
+the COLMAP world frame; nothing is normalised. `mesh` fuses `feedforward.zarr` by default;
+`mesh.source: splats` fuses the renders instead (alpha as confidence, poses as rendered).
 
 #### The dashboard cannot browse a scene published by the remote driver
 

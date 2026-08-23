@@ -49,12 +49,15 @@ def render_view(
     height: int,
     sh_degree: int,
     absgrad: bool,
+    render_normals: bool = True,
 ) -> tuple[dict[str, Tensor], dict]:
     """
-    Render one camera. Returns ({rgb, alpha, depth, normal, depth_normal[, distortion]}, strategy info).
+    Render one camera. Returns ({rgb, alpha, depth[, normal, depth_normal][, distortion]}, strategy info).
 
     - Normals are camera-frame for both primitives; `depth_normal` is finite-differenced at an identity pose.
-    - 3DGS `normal` is unit length (zero where nothing renders).
+    - 3DGS `normal` is unit length (zero where nothing renders). `render_normals=False` skips the extra-signal
+      pass and omits both `normal` and `depth_normal` (only the normal_consistency loss reads them); 2DGS
+      always returns normals from its rasterizer, so the flag is ignored there.
     - 2DGS `normal` is the alpha-weighted accumulated normal (non-unit), mirroring upstream gsplat's 2DGS
       trainer, so the consistency loss is effectively alpha^2-weighted there. Deliberately not normalized.
     """
@@ -106,6 +109,12 @@ def render_view(
             "depth_normal": depth_to_normal(depth, identity_pose, intrinsics),
             "distortion": distortion,
         }
+        return render, info
+
+    # 3DGS without normals: plain rgb+depth pass (no extra-signal channels through the kernel)
+    if not render_normals:
+        rgb_depth, alpha, info = rasterization(**shared_kwargs, rasterize_mode="antialiased")
+        render = {"rgb": rgb_depth[..., :3], "alpha": alpha, "depth": rgb_depth[..., 3:4]}
         return render, info
 
     # 3DGS: normals ride along as an extra per-Gaussian signal, zero-padded to 4 channels because the

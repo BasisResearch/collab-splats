@@ -1194,6 +1194,7 @@ dependencies = [
     { name = "collab-data" },
     { name = "einops" },
     { name = "ftfy" },
+    { name = "fused-ssim" },
     { name = "gdown" },
     { name = "gradio" },
     { name = "gsplat" },
@@ -1330,6 +1331,7 @@ requires-dist = [
     { name = "evo", marker = "extra == 'feedforward'" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "ftfy" },
+    { name = "fused-ssim", git = "https://github.com/rahul-goel/fused-ssim.git?rev=a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" },
     { name = "gdown" },
     { name = "gradio" },
     { name = "gsplat", git = "https://github.com/nerfstudio-project/gsplat.git?rev=d2f5c0f" },
@@ -2394,6 +2396,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
+]
+
+[[package]]
+name = "fused-ssim"
+version = "1.0.0"
+source = { git = "https://github.com/rahul-goel/fused-ssim.git?rev=a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38#a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" }
+dependencies = [
+    { name = "torch" },
 ]
 
 [[package]]

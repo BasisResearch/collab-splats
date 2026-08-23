@@ -48,6 +48,18 @@ def test_render_view_shapes(primitive):
 
 
 @cuda
+def test_render_view_3dgs_without_normals_omits_normal_keys():
+    cam_to_world, intrinsics = _camera()
+    render, info = render_view(
+        "3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False, render_normals=False
+    )
+    assert set(render) == {"rgb", "alpha", "depth"}
+    assert render["rgb"].shape == (1, 64, 64, 3)
+    assert "render_extra_signals" not in info or info["render_extra_signals"] is None
+    assert "means2d" in info
+
+
+@cuda
 def test_gaussian_normals_face_the_camera():
     gaussians = _gaussians()
     cam_to_world, _ = _camera()

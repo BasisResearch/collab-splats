@@ -40,12 +40,13 @@ def normal_consistency_loss(
     """
     Cosine distance between rendered normals and normals finite-differenced from rendered depth.
 
-    - None when the render carries no normals (e.g. a renderer without normal output), so the loss is skipped.
+    - Raises when the render carries no normals: the trainer gates `render_normals` on `loss_active`, so an
+      active loss without normals is a wiring bug, not a condition to skip silently.
     """
     rendered_normal = render.get("normal")
     depth_normal = render.get("depth_normal")
     if rendered_normal is None or depth_normal is None:
-        return None
+        raise ValueError("normal_consistency is active but the render has no normals; render with render_normals=True")
 
     # Scaling depth_normal by detached alpha scales the GRADIENT so empty pixels stop pulling; the
     # reported value still carries a (1 - alpha) offset on those pixels. Parity with upstream
@@ -97,6 +98,17 @@ OPTIONAL_LOSSES = {
 ########################################
 
 
+def loss_active(step: int, spec: dict | None) -> bool:
+    """
+    Whether a `{weight[, start]}` schedule entry contributes at `step`; a missing entry (None) never does.
+    """
+    if spec is None:
+        return False
+    weight = spec["weight"]
+    start = spec.get("start", 0)
+    return weight > 0 and step >= start
+
+
 def compute_losses(
     step: int,
     render: dict,
@@ -122,10 +134,9 @@ def compute_losses(
 
     # Optional losses: skip when not started, zero-weighted, or the loss has no input this step
     for name, spec in loss_schedule.items():
-        weight = spec["weight"]
-        start = spec.get("start", 0)
-        if weight <= 0 or step < start:
+        if not loss_active(step, spec):
             continue
+        weight = spec["weight"]
         loss_fn = OPTIONAL_LOSSES[name]
         value = loss_fn(render, target, gaussians, scene_scale)
         if value is None:

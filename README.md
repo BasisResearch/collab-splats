@@ -94,10 +94,10 @@ Tutorials in `docs/source/tutorials/`, numbered by pipeline stage:
 |-------|-------|
 | 01 · Preprocessing | Keyframe extraction |
 | 02 · Pointcloud | Feedforward methods, bundle adjustment, loop closure, COLMAP |
-| 03 · Splats | Gaussian-splat training (tutorial owed — rebuild on `collab_splats.splats`) |
+| 03 · Splats | [Gaussian-splat training](docs/source/tutorials/03_splats/train_splats.ipynb) (3DGS on upstream gsplat, 2DGS config diff) |
 | 04 · Semantics | Feature extraction, segmentation |
 | 05 · Lifting | Semantic feature lifting |
-| 06 · Mesh | Surface reconstruction (tutorial owed) |
+| 06 · Mesh | [Surface reconstruction](docs/source/tutorials/06_mesh/splats_mesh.ipynb) (TSDF from feedforward depth vs splat renders, semantic mesh query) |
 | 07 · Localization | Camera localization |
 
 ## Dashboard

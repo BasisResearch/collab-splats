@@ -56,6 +56,34 @@ for name in ("disk-lightglue",):  # extend when configs reference more models
     print(f"vismatch weights cached: {name}")
 EOF
 
+# --- InstantSfM backend (optional, CC-BY-NC-4.0 — research use) ------------------
+# Their pyproject pins numpy==1.26.4; --no-deps is load-bearing (we run numpy 2.x).
+# NOTE: plain `uv sync` prunes these (outside the lock) — rerun this block after any sync.
+echo "=== install InstantSfM backend (instantsfm --no-deps, pyceres, scikit-sparse) ==="
+/root/.local/bin/uv pip install --python "$PYTHON" --no-deps \
+    'git+https://github.com/cre185/InstantSfM@d3e599e1a42b4c5a806a84d9f383e1005d25f61b'
+/root/.local/bin/uv pip install --python "$PYTHON" pyceres==2.3 scikit-sparse==0.4.15   # needs: apt-get install -y libsuitesparse-dev
+
+# --- Video Depth Anything (metric) — clone + checkpoint, not pip-installable -----
+# Imported from the clone root via sys.path (collab_splats/pointcloud/sfm.py:generate_vda_depth).
+# easydict is VDA's only hard runtime dep missing from the lock (dpt_temporal.py); xformers is
+# optional upstream (falls back to plain attention) and decord is only used by its video reader.
+# The 1.47 GB checkpoint is best-effort like the vismatch pre-fetch: a no-network build stage
+# skips it and the first SfM run fails fast with an actionable FileNotFoundError.
+/root/.local/bin/uv pip install --python "$PYTHON" easydict==1.13
+VDA_DIR="$SCRIPT_DIR/third_party/Video-Depth-Anything"
+if [ ! -d "$VDA_DIR/video_depth_anything" ]; then
+    git clone https://github.com/DepthAnything/Video-Depth-Anything "$VDA_DIR"
+    git -C "$VDA_DIR" checkout 4f5ae23172ba60fd7bc11ef671cca678842c7072
+fi
+mkdir -p "$VDA_DIR/checkpoints"
+VDA_CKPT="$VDA_DIR/checkpoints/metric_video_depth_anything_vitl.pth"
+if [ ! -f "$VDA_CKPT" ]; then
+    wget -q -O "$VDA_CKPT" \
+        "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Large/resolve/main/metric_video_depth_anything_vitl.pth" \
+        || { rm -f "$VDA_CKPT"; echo "WARN: VDA metric checkpoint download failed — re-run setup.sh before using pointcloud.backend: instantsfm."; }
+fi
+
 # Smoke test — mandatory: torch + the extensions this script compiled (bae, gsplat, fused-ssim).
 # The full creator chain pulls cv2/open3d, which need GUI/X11 system libs absent in a Docker
 # BUILD stage but present at runtime — so import it best-effort here (verified for real in the

@@ -37,12 +37,11 @@ def test_colmap_creator_output_path(tiny_image_dir, tmp_path):
 
     with patch("collab_splats.pointcloud.sfm.pycolmap.extract_features"), \
          patch("collab_splats.pointcloud.sfm.pycolmap.match_exhaustive"), \
-         patch("collab_splats.pointcloud.sfm.pycolmap.incremental_mapping", return_value={0: mock_recon}), \
-         patch.object(ColmapCreator, "_write_transforms") as mock_wt:
+         patch("collab_splats.pointcloud.sfm.pycolmap.incremental_mapping", return_value={0: mock_recon}):
         creator = ColmapCreator()
         creator.reconstruct(tiny_image_dir, out)
         sparse_dir = out / "colmap" / "sparse" / "0"
-        mock_wt.assert_called_once_with(sparse_dir, out)
+        mock_recon.write_binary.assert_called_once_with(str(sparse_dir))
 
 
 def test_colmap_creator_no_reconstruction_raises(tiny_image_dir, tmp_path):
@@ -126,11 +125,9 @@ def test_hloc_creator_output_path(tiny_image_dir, tmp_path):
         sys.modules['hloc.match_features'] = mock_match
         sys.modules['hloc.reconstruction'] = mock_reconstruction
 
-        with patch.object(HlocCreator, "_write_transforms") as mock_wt:
-            creator = HlocCreator()
-            creator.reconstruct(tiny_image_dir, out)
-            sparse_dir = out / "colmap" / "sparse" / "0"
-            mock_wt.assert_called_once_with(sparse_dir, out)
+        creator = HlocCreator()
+        creator.reconstruct(tiny_image_dir, out)
+        mock_reconstruction.main.assert_called_once()
     finally:
         for key, val in old_modules.items():
             if val is None:
@@ -200,17 +197,3 @@ def test_hloc_creator_missing_image_dir_raises(tmp_path):
             sys.modules.pop('hloc', None)
         else:
             sys.modules['hloc'] = old_hloc
-
-
-def test_hloc_no_nerfstudio_dep():
-    """HlocCreator must not import nerfstudio at module level."""
-    import collab_splats.pointcloud.sfm as sfm_module
-    import inspect
-    src = inspect.getsource(sfm_module)
-    hloc_src = src.split("class HlocCreator")[1].split("class ")[0]
-    # Check for actual imports, not just the string in docstring/comments
-    import_lines = [line.strip() for line in hloc_src.split('\n')
-                   if 'import' in line and not line.strip().startswith('#')]
-    nerfstudio_imports = [line for line in import_lines if 'nerfstudio' in line]
-    assert not nerfstudio_imports, \
-        f"HlocCreator must not import nerfstudio. Found: {nerfstudio_imports}"

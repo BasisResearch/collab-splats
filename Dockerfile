@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-# CUDA 12.1 + torch 2.5.1 + Python 3.11 + gsplat-rade
+# CUDA 12.1 + torch 2.5.1 + Python 3.11 + gsplat
 # Build: docker pull nvidia/cuda:12.1.1-devel-ubuntu22.04 && docker build --platform=linux/amd64 --progress=plain -t collab-env:cu121 .
-# After build: bash setup.sh  (installs nerfstudio + bae + collab-splats)
+# After build: bash setup.sh  (installs bae + gsplat + collab-splats)
 
 ARG UBUNTU_VERSION=22.04
 ARG NVIDIA_CUDA_VERSION=12.1.1
@@ -10,7 +10,7 @@ ARG CUDA_ARCHITECTURES="90;89;86;80;75;70"
 ARG TORCH_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 
 ##################################################
-# Stage 1: Builder — uv + Python 3.11 + torch + gsplat-rade
+# Stage 1: Builder — uv + Python 3.11 + torch + gsplat
 ##################################################
 
 FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
@@ -47,7 +47,7 @@ ENV CUDA_HOME=/usr/local/cuda \
     TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST}
 
 # Build the full env at image-build time: copy the repo and run the single-source setup.
-# uv sync installs all deps incl. cuda-toolkit (nvcc) then compiles bae + gsplat.
+# uv sync installs all deps, then compiles bae + gsplat with the base image's nvcc.
 # nvcc cross-compiles to TORCH_CUDA_ARCH_LIST; no GPU needed during build.
 WORKDIR /workspace/collab-splats
 COPY . /workspace/collab-splats

@@ -249,16 +249,6 @@ def test_tsdf_mesh_synthetic(tmp_path):
     assert isinstance(mesh_result.mesh_path, Path)
 
 
-def test_nerfstudio_method_registry():
-    """rade-gs and rade-features appear in nerfstudio method registry after import."""
-    import collab_splats.nerfstudio.method_configs.rade_gs  # noqa: F401
-    import collab_splats.nerfstudio.method_configs.rade_features  # noqa: F401
-    from nerfstudio.configs.method_configs import all_methods
-
-    assert "rade-gs" in all_methods, f"rade-gs not registered. Available: {sorted(all_methods)}"
-    assert "rade-features" in all_methods, f"rade-features not registered. Available: {sorted(all_methods)}"
-
-
 def test_pointcloudresult_new_api():
     """PointcloudResult takes reconstruction as primary; exposes points/colors/extrinsics/intrinsics as properties."""
     from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction

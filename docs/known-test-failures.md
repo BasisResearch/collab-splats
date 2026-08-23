@@ -1,5 +1,17 @@
 # Known Test Failures
 
+## 2026-08-23 — pre-existing on `refactor/cu121-uv-migration`: 2 `test_qa` OpenCV-cannot-fit tests + 4 env/working-tree failures
+
+`tests/preproc/test_qa.py::test_compute_parallax_is_nan_when_opencv_cannot_fit` and
+`::test_compute_video_quality_survives_a_pair_opencv_cannot_fit` fail identically on the base
+branch (`compute_parallax` returns a finite value, 0.0123, where the test expects NaN) — not a
+splats-module regression; owed to the preproc-cleanup owner. Seen in the same run and also
+NOT regressions: `tests/evals/test_run_vggt_slam.py` ×2 (gitignored `third_party/VGGT-SLAM`
+absent in a git worktree — env, pass in the main checkout) and
+`tests/examples/test_run_pipeline_remote.py::test_main_rejects_a_scene_id_that_is_not_a_curated_dir_name`
+×2 (the fix lives in a concurrent session's **uncommitted** edit to that test + `remote/rerun.py`
+on the base checkout; committed HEAD fails).
+
 ## 2026-08-21 — RESOLVED: xfeat GPU parity test failed under TF32 import pollution
 
 `tests/localization/test_local_matcher.py::test_real_xfeat_general_path_matches_pairwise`

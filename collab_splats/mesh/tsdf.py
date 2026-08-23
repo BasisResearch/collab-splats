@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class Open3DTSDFFusion(BaseMeshCreator):
     """TSDF fusion via Open3D ScalableTSDFVolume.
 
-    Accepts rendered depth + RGB frames as numpy arrays — no nerfstudio dependency.
+    Accepts rendered depth + RGB frames as numpy arrays.
     """
 
     output_dir: Path
@@ -116,7 +116,7 @@ class Open3DTSDFFusion(BaseMeshCreator):
         o3d.io.write_triangle_mesh(str(mesh_path), mesh)
 
         # Opt-in cleanup, rewriting in place: mesh.ply is the one name every reader in this repo
-        # uses (Reconstructor's skip-check, splatter, dashboard, the remote push), and a separate
+        # uses (Reconstructor's skip-check, the dashboard, the remote push), and a separate
         # mesh_clean.ply would mean each of them needs a second probe and a precedence rule.
         if self.clean_repair:
             clean_repair_mesh(

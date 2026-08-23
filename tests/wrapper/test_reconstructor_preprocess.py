@@ -47,7 +47,6 @@ def _make_config(tmp_path, video_path):
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
         "mesh": {"enabled": False, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04},
         "localization": {"enabled": False},
-        "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
     }
 
 

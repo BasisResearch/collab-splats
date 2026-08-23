@@ -74,7 +74,6 @@ class ColmapCreator(BasePointcloudCreator):
 
         recon = reconstructions[0]
         recon.write_binary(str(sparse_dir))
-        self._write_transforms(sparse_dir, output_dir)
         image_paths = sorted(
             [image_dir / img.name for img in recon.images.values()],
             key=lambda p: p.name,
@@ -194,7 +193,6 @@ class HlocCreator(BasePointcloudCreator):
         if recon is None:
             raise RuntimeError("reconstruction failed — hloc returned None")
 
-        self._write_transforms(sparse_dir, output_dir)
         image_paths = sorted(
             [image_dir / img.name for img in recon.images.values()],
             key=lambda p: p.name,

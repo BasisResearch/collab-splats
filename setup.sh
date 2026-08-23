@@ -12,18 +12,22 @@ export UV_PROJECT_ENVIRONMENT="$VENV"
 # CUDA build environment for the source-compiled extensions (bae, gsplat).
 # Prefer a complete SYSTEM toolkit: the nvidia/cuda:*-devel image ships nvcc + all headers +
 # libs under one root at /usr/local/cuda — exactly the unified layout torch's cpp_extension
-# expects. Fall back to the pip cuda-toolkit wheels on bare machines with no system CUDA,
-# wiring the scattered site-packages/nvidia/* dirs via CPATH/LIBRARY_PATH.
+# expects. There is no pip fallback: every nvidia-cuda-nvcc-cu12 wheel (12.1 … 12.8) ships
+# only ptxas, so a bare host must provide the toolkit itself — fail fast with the recipe.
 if [ -x /usr/local/cuda/bin/nvcc ]; then
     export CUDA_HOME=/usr/local/cuda
     export PATH="$CUDA_HOME/bin:$PATH"
 else
-    NV="$VENV/lib/python3.11/site-packages/nvidia"
-    export CUDA_HOME="$NV/cuda_nvcc"
-    export PATH="$CUDA_HOME/bin:$PATH"
-    export CPATH="$NV/cuda_runtime/include:$NV/cuda_cccl/include${CPATH:+:$CPATH}"
-    export LIBRARY_PATH="$NV/cuda_runtime/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-    export LD_LIBRARY_PATH="$NV/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cat >&2 <<'MSG'
+setup.sh: no nvcc at /usr/local/cuda/bin/nvcc — bae and gsplat build from source and need it.
+Use the nvidia/cuda:12.1.1-devel image, or on a bare host build the toolkit with micromamba
+(gsplat d2f5c0f needs CCCL >= 2.2 for <cuda/std/optional>; verified 2026-08-22):
+  micromamba create -p /opt/cuda-nvcc-12.1 -c nvidia -c conda-forge \
+      cuda-version=12.1 cuda-nvcc=12.1 cuda-cudart-dev=12.1 cuda-libraries-dev=12.1
+  ln -sfn libcudart.so.12 /opt/cuda-nvcc-12.1/lib/libcudart.so   # solver leaves it dangling
+  ln -sfn lib /opt/cuda-nvcc-12.1/lib64 && ln -sfn /opt/cuda-nvcc-12.1 /usr/local/cuda
+MSG
+    exit 1
 fi
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0;8.9;8.6;8.0;7.5;7.0}"
 # Cap parallel compile jobs. torch's cpp_extension defaults to one job per CPU; each cc1plus

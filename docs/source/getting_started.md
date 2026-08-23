@@ -10,7 +10,7 @@ cd collab-splats
 bash setup.sh
 ```
 
-This installs the package in development mode along with nerfstudio and all CUDA dependencies.
+This installs the package in development mode along with gsplat and all CUDA dependencies.
 
 ### Docker
 
@@ -22,31 +22,14 @@ docker pull tommybotch/collab-splats:latest
 
 ## Quickstart
 
-### Gaussian Splatting with depth and normals
+### Reconstruct a video
 
-```python
-from collab_splats.wrapper.splatter import Splatter, SplatterConfig
-
-config = SplatterConfig(
-    file_path="path/to/video.mp4",
-    method="rade-gs",
-    output_path="path/to/output",
-)
-splatter = Splatter(config)
-splatter.preprocess()
-splatter.train()
+```bash
+python docs/examples/run_pipeline.py data/tutorial/<video.mp4> --config configs/base.yaml
 ```
 
-### Semantic feature splatting
-
-```python
-config = SplatterConfig(
-    file_path="path/to/video.mp4",
-    method="rade-features",
-)
-splatter = Splatter(config)
-splatter.preprocess()
-splatter.train()
-```
+Stages run in order: frame sampling → feedforward pointcloud → (optional) splats, mesh,
+semantics, localization. Enable Gaussian-splat training with `splats.enabled: true` in the
+config; outputs land in `<output>/<backend>/splats/`.
 
 See the [Tutorials](tutorials/index) for full worked examples.

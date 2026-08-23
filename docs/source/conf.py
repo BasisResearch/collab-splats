@@ -33,11 +33,10 @@ html_title = "collab-splats"
 # Never re-execute notebooks — use committed outputs
 nbsphinx_execute = "never"
 
-# Mock all heavy dependencies so autodoc works in CI without CUDA/nerfstudio
+# Mock all heavy dependencies so autodoc works in CI without CUDA
 autodoc_mock_imports = [
     "torch",
     "torchvision",
-    "nerfstudio",
     "gsplat",
     "open3d",
     "meshlib",

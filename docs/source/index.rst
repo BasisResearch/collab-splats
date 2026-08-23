@@ -1,7 +1,7 @@
 collab-splats
 =============
 
-Gaussian Splatting with depth, normals, semantics, and mesh export — built on nerfstudio.
+Feedforward reconstruction, Gaussian splats, semantics, and mesh export — built on gsplat.
 
 .. toctree::
    :maxdepth: 1

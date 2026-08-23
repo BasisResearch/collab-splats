@@ -1143,13 +1143,12 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             o.original_coords,
             (o.model_width, o.model_height),
         )
-        # Write binary COLMAP reconstruction to disk and export transforms.json
+        # Write binary COLMAP reconstruction to disk
         sparse_dir = Path(output_dir) / "colmap" / "sparse" / "0"
         sparse_dir.mkdir(parents=True, exist_ok=True)
         recon.write_binary(str(sparse_dir))
-        self._write_transforms(sparse_dir, Path(output_dir))
 
-        # Replace the ASCII sparse_pc.ply colmap_to_json just wrote with a binary one
+        # Write the binary sparse_pc.ply
         result = PointcloudResult(
             reconstruction=recon,
             frame=CoordinateFrame.COLMAP,

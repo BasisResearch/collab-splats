@@ -1,4 +1,4 @@
-"""Configuration loading utilities for Splatter workflows."""
+"""Configuration loading utilities for Reconstructor workflows."""
 
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
@@ -78,7 +78,7 @@ class ConfigLoader:
             - preprocess: SfM and preprocessing settings
             - training: Model training parameters
             - meshing: Mesh generation settings
-            - file_path, method, etc: Top-level splatter settings
+            - file_path, method, etc: Top-level reconstruction settings
 
         Raises:
             ValueError: If dataset config not found

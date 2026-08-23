@@ -1,0 +1,138 @@
+"""
+Splats-stage wiring: leaf registration, base.yaml default, and the arrays handed to train().
+"""
+
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+import torch
+import yaml
+
+from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.splats.trainer import SplatsConfig
+from collab_splats.wrapper.reconstructor import (
+    _STAGE_DEPS,
+    _STAGE_ORDER,
+    LEAF_STAGES,
+    Reconstructor,
+)
+
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
+
+
+def test_splats_is_a_leaf_stage():
+    assert "splats" in _STAGE_ORDER
+    assert _STAGE_ORDER.index("splats") < _STAGE_ORDER.index("mesh")
+    assert _STAGE_DEPS["splats"] == ["pointcloud"]
+    assert "splats" in LEAF_STAGES
+
+
+def test_base_yaml_defaults():
+    cfg = yaml.safe_load((CONFIG_DIR / "base.yaml").read_text())["splats"]
+    assert cfg["enabled"] is False and cfg["primitive"] == "3dgs" and cfg["cap_max"] == 1_000_000
+    assert set(cfg["losses"]) == {"depth", "normal_consistency", "opacity_reg", "scale_reg"}
+
+    # The block must round-trip through from_dict (enabled stripped) and equal dataclass defaults
+    parsed = SplatsConfig.from_dict(cfg)
+    defaults = SplatsConfig()
+    for field in SplatsConfig.__dataclass_fields__:
+        assert getattr(parsed, field) == getattr(defaults, field), field
+        assert type(getattr(parsed, field)) is type(getattr(defaults, field)), field
+
+
+def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
+    """
+    Reconstructor with config + frames.zarr + a fake PointcloudResult; image_paths reversed to prove index lookup.
+    """
+    recon = Reconstructor.__new__(Reconstructor)
+    recon.config = {
+        "output_path": str(tmp_path),
+        "pointcloud": {"backend": "vggtx"},
+        "mesh": {"conf_percentile": 20},
+        "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
+    }
+    recon._stage_output_exists = lambda stage: False
+
+    frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
+    records = [{"frame_idx": view} for view in range(n_views)]
+    FrameStore.create(recon.frames_zarr, frames, records, provenance={"video_path": "v"})
+    image_paths = [Path(f"frame_{view:06d}.jpg") for view in reversed(range(n_views))]
+    recon._resolve_result = lambda: SimpleNamespace(
+        image_paths=image_paths,
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1)),
+        intrinsics=np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1)),
+        points=np.zeros((200, 3), np.float32),
+        colors=np.zeros((200, 3), np.uint8),
+    )
+    return recon
+
+
+def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    # Feedforward rows in store order (0, 1, 2) with per-frame distinguishable depth = frame_idx + 1
+    depth = np.stack([np.full((4, 4), view + 1, np.float32) for view in range(3)])
+    feedforward = SimpleNamespace(
+        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
+        depth=depth,
+        confidence=torch.ones(3, 4, 4),
+    )
+    (recon.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    with (
+        patch("collab_splats.splats.trainer.train") as train,
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+    ):
+        out = recon.splats()
+
+    assert out == recon.backend_dir / "splats" / "splats.zarr"
+    cfg, images, world_to_cam, intrinsics, points, colors, out_dir = train.call_args.args
+    depth_targets = train.call_args.kwargs["depth_targets"]
+    assert cfg.max_steps == 1
+    assert images[0, 0, 0, 0] == 20 and images[2, 0, 0, 0] == 0  # follows image_paths (reversed), not store order
+    assert world_to_cam.shape == (3, 4, 4) and intrinsics.shape == (3, 3, 3) and points.shape == (200, 3)
+    assert out_dir == recon.backend_dir / "splats"
+    # Model-res depth is handed over as-is; train() resizes per view (prepare_training_target)
+    assert depth_targets.shape == (3, 4, 4)
+    # Depth rows reordered to image_paths (reversed): row 0 is frame 2, row 2 is frame 0
+    assert depth_targets[0, 0, 0] == 3 and depth_targets[2, 0, 0] == 1
+
+
+def test_splats_stage_rejects_frames_missing_from_feedforward(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    feedforward = SimpleNamespace(
+        image_paths=[Path("frame_000000.jpg"), Path("frame_000001.jpg")],
+        depth=np.ones((2, 4, 4), np.float32),
+        confidence=None,
+    )
+    (recon.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    with (
+        patch("collab_splats.splats.trainer.train") as train,
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        pytest.raises(ValueError, match="no depth"),
+    ):
+        recon.splats()
+    train.assert_not_called()
+
+
+def test_splats_stage_requires_feedforward_zarr_for_depth_loss(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    with patch("collab_splats.splats.trainer.train"), pytest.raises(FileNotFoundError, match="feedforward.zarr"):
+        recon.splats()
+
+
+def test_splats_stage_skips_depth_targets_when_depth_loss_off(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["splats"]["losses"] = {}
+    with patch("collab_splats.splats.trainer.train") as train:
+        recon.splats()
+    assert train.call_args.kwargs["depth_targets"] is None
+
+
+def test_splats_stage_skips_when_output_exists(tmp_path):
+    recon = _stub_reconstructor(tmp_path)
+    recon._stage_output_exists = lambda stage: stage == "splats"
+    with patch("collab_splats.splats.trainer.train") as train:
+        recon.splats()
+    train.assert_not_called()

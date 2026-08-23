@@ -9,8 +9,6 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
-
 
 class CoordinateFrame(str, Enum):
     COLMAP = "colmap"  # w2c, OpenCV axes, world -Y up
@@ -105,8 +103,9 @@ class BasePointcloudCreator(ABC):
 
         Produces:
             {output_dir}/colmap/sparse/0/{cameras,images,points3D}.bin
-            {output_dir}/transforms.json
             {output_dir}/sparse_pc.ply   (binary little-endian from the feedforward path; see pointcloud/export.py)
+
+        transforms.json is written by Reconstructor._write_transforms_json from the returned result.
 
         Raises:
             RuntimeError: if reconstruction fails
@@ -114,17 +113,9 @@ class BasePointcloudCreator(ABC):
         """
         ...
 
-    def _write_transforms(self, sparse_dir: Path, output_dir: Path) -> None:
-        from nerfstudio.process_data.colmap_utils import colmap_to_json
-
-        colmap_to_json(recon_dir=sparse_dir, output_dir=output_dir)
-
     def _write_ply(self, result: PointcloudResult, output_dir: Path, max_points: int | None = None) -> Path:
-        """Overwrite nerfstudio's ASCII sparse_pc.ply with our binary one.
-
-        colmap_to_json always emits an ASCII sparse_pc.ply and points transforms.json
-        at that filename, so we keep the name and replace the bytes — smaller file,
-        no coordinate truncation, same consumers.
+        """
+        Write the binary little-endian sparse_pc.ply next to the COLMAP model.
         """
         # Inline, not top-level: export.py -> pointcloud/utils.py -> `from .base import
         # PointcloudResult` cycles back to this module, so a module-top import fails at import time.

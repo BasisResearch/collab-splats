@@ -140,7 +140,8 @@ the environment or passed on the command line.
 
 ### Re-running one stage against a processed scene
 
-`--stages` naming only *leaf* stages — `refine`, `mesh`, `semantics`, `localize` — pulls the scene back
+`--stages` naming only *leaf* stages — `refine`, `mesh`, `semantics`, `splats`, `localize`, `verify`,
+`reconstruction_quality_report` — pulls the scene back
 out of `environments-processed` instead of rebuilding it from its curated video:
 
 ```bash
@@ -348,7 +349,7 @@ parameter and raises.
 | `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
-| `pointcloud.method` | str | `feedforward` | `feedforward`, `sfm`, or `nerfstudio` |
+| `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
 | `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, `mapanything`, or `loger` |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud |
@@ -361,6 +362,25 @@ parameter and raises.
 | `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
+| `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `frames.zarr` (opt-in) |
+| `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
+| `splats.max_steps` | int | `30000` | Training iterations |
+| `splats.pose_opt` | bool | `false` | Refine camera poses jointly (`CameraOptModule`) |
+| `splats.sh_degree` | int | `3` | Max spherical-harmonics degree |
+| `splats.sh_degree_interval` | int | `1000` | Steps between SH-degree increments |
+| `splats.init_opacity` | float | `0.1` | Initial Gaussian opacity |
+| `splats.means_lr` | float | `1.6e-4` | Means learning rate, × scene scale, decays 0.01× over the run |
+| `splats.scales_lr` | float | `5.0e-3` | Scales learning rate |
+| `splats.quats_lr` | float | `1.0e-3` | Quaternion learning rate |
+| `splats.opacities_lr` | float | `5.0e-2` | Opacity learning rate |
+| `splats.sh0_lr` | float | `2.5e-3` | DC colour learning rate |
+| `splats.shN_lr` | float | `1.25e-4` | Higher-order SH learning rate |
+| `splats.pose_lr` | float | `1.0e-5` | Pose-opt learning rate, × scene scale |
+| `splats.cap_max` | int | `1000000` | `3dgs` only: Gaussian budget for `MCMCStrategy` |
+| `splats.grow_grad2d` | float | `8.0e-4` | `2dgs` only: `DefaultStrategy` densification gradient threshold |
+| `splats.log_every` | int | `500` | Steps between loss log lines |
+| `splats.losses.<name>.weight` | float | see `base.yaml` | Weight of an optional loss: `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`. Absent = off. `3dgs` wants `opacity_reg`+`scale_reg` (MCMC); `2dgs` wants `distortion` instead |
+| `splats.losses.<name>.start` | int | `0` | Step at which that loss switches on |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
 | `localization.matcher` | str | `loma` | vismatch model name (`loma`, `xfeat`, `disk-lightglue`, `aliked-lightglue`, …) |
 | `localization.top_k` | int | `8` | Reference frames matched per query |
@@ -459,9 +479,13 @@ A processed scene (`environments-processed/<scene>/`) carries:
 |---|---|
 | `<backend>/sparse_pc.ply` | any pipeline — binary little-endian, float32 xyz + uchar rgb |
 | `<backend>/mesh.ply` | any pipeline |
-| `<backend>/transforms.json` | camera poses, `ply_file_path`, `applied_transform` (splatfacto) |
+| `<backend>/transforms.json` | `camera_model` + `frames` (frame_idx-keyed against frames.zarr; fl_x/fl_y/cx/cy, OpenCV c2w `transform_matrix`) |
 | `<backend>/semantics/<extractor>_lifted.zarr` | per-point latent codes (`semantics.n_components`-D) |
 | `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
+| `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |
+| `<backend>/splats/ckpt.pt` | trainer checkpoint: Gaussian params + pose-opt state, for resuming or re-rendering |
+| `<backend>/splats/splats.zarr` | per-training-view renders: `rgb`, `depth`, `normal`, `alpha`, `c2w`, `K` |
+| `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
 | `<backend>/feedforward.zarr` | further processing inside this repo (depth, poses, confidence) |
 | `frames.zarr` | the keyframes the reconstruction was built from; required to localize |
@@ -487,17 +511,20 @@ decoded space is. Each scene's `recon_cosine` is measured on the **training set*
 held-out split, so treat it as an upper bound on fidelity rather than a generalisation
 estimate.
 
-#### `ns-train --data` does not work on a published scene, by design
+#### A published scene has no `images/` directory, by design
 
-Both stock nerfstudio dataparser routes need real image files on disk. The nerfstudio
-dataparser calls `Path(frame["file_path"])` unconditionally
-(`nerfstudio_dataparser.py:127,134`), and the COLMAP dataparser resolves
-`data/images/{im_data.name}` (`colmap_dataparser.py:93,176`). Our `transforms.json` frames
-key on `frame_idx` against `frames.zarr` instead, and there is no `images/` directory — it
-was removed in the frame-store migration. No `images/` export will be added. Downstream
-consumers get `sparse_pc.ply` + the mesh + the features + the raw COLMAP binaries, and
-read poses via `pycolmap`. Do not expect `ns-train --data` to work against one of these
-scenes.
+Any loader that resolves `frame["file_path"]` or `data/images/{name}` off disk needs real
+image files. Our `transforms.json` frames key on `frame_idx` against `frames.zarr` instead,
+and there is no `images/` directory — it was removed in the frame-store migration. No
+`images/` export will be added. Downstream consumers get `sparse_pc.ply` + the mesh + the
+features + the raw COLMAP binaries, and read poses via `pycolmap`.
+
+#### Splats train from the published COLMAP + frames.zarr
+
+`--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
+`frames.zarr` — no image directory, no transforms.json round-trip. Every `splats/` artifact is in
+the COLMAP world frame; nothing is normalised. `mesh` still fuses `feedforward.zarr`; fusing the
+splat renders (`mesh.source: splats`) is a follow-on.
 
 #### The dashboard cannot browse a scene published by the remote driver
 
@@ -511,7 +538,7 @@ path would orphan them all. Use the viewer or a notebook for published scenes.
 #### Scenes reconstructed before the layout rename need one re-run
 
 The TSDF output is now `<backend>/mesh.ply` (was `mesh/mesh_tsdf.ply`, then `mesh/mesh.ply`),
-so older scenes make `wrapper/splatter.py` raise `FileNotFoundError` and the dashboard show no
+so older scenes make the mesh readers raise `FileNotFoundError` and the dashboard show no
 mesh. Semantics moved the same way: the 2D cache is `<scene>/semantics/<extractor>.zarr` (was
 `features/<extractor>/<extractor>.zarr`) and the lifted pair is
 `<backend>/semantics/<extractor>_lifted.zarr` + `_ae.pt` (was

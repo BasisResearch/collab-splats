@@ -3,14 +3,16 @@
 Run:
     /opt/conda/envs/reconstruction/bin/python -m pytest tests/test_cu121_migration.py -v
 
-All tests are hard gates: any failure blocks the migration merge.
+All tests are hard gates: any failure blocks the migration merge. Exception while the splats
+module is being built (plan 2026-08-22-splats-module): test_import_all_modules lists
+collab_splats.splats.* ahead of the package and stays red until Task 4 lands.
 """
 
+import importlib
 import importlib.metadata as importlib_metadata
 import importlib.util
 import sys
 import sysconfig
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -119,21 +121,20 @@ def test_import_all_modules():
         "collab_splats.mesh.poisson",
         "collab_splats.mesh.tsdf",
         "collab_splats.mesh.utils",
-        "collab_splats.nerfstudio.method_configs.rade_gs",
-        "collab_splats.nerfstudio.method_configs.rade_features",
-        "collab_splats.nerfstudio.models.rade_gs",
-        "collab_splats.nerfstudio.models.rade_features",
+        "collab_splats.splats",
+        "collab_splats.splats.cameras",
+        "collab_splats.splats.losses",
+        "collab_splats.splats.rendering",
+        "collab_splats.splats.trainer",
+        "collab_splats.splats.outputs",
         "collab_splats.utils",
         "collab_splats.utils.torch_utils",
         "collab_splats.preproc",
         "collab_splats.preproc.video",
         "collab_splats.preproc.qa",
         "collab_splats.preproc.sampling",
-        "collab_splats.nerfstudio.utils.camera_utils",
-        "collab_splats.wrapper.splatter",
         # collab_splats.dashboard excluded: requires 'panel' which is not installed
     ]
-    import importlib
 
     failed = []
     for mod in modules:
@@ -171,84 +172,77 @@ def test_flagged_package_imports():
 # ── Phase 3: Migration smoke tests ────────────────────────────────────────────
 
 
-def test_gsplat_rade_fork():
-    """rasterization_2dgs_inria_wrapper is a rade-specific symbol absent in official gsplat."""
-    from gsplat import rasterization_2dgs_inria_wrapper  # noqa: F401
+def test_gsplat_upstream_pinned():
+    """
+    gsplat is upstream nerfstudio-project/gsplat @ d2f5c0f: gsplat.losses, 2DGS, MCMC and extra_signals exist.
+    """
+    import inspect
 
-
-def test_gsplat_not_overwritten():
-    """gsplat installed is the rade fork, not official PyPI gsplat 1.4.0."""
     import gsplat
-
-    assert hasattr(gsplat, "rasterization_2dgs_inria_wrapper"), (
-        f"gsplat at {gsplat.__file__} is missing rade-specific symbol — "
-        "nerfstudio install may have overwritten gsplat-rade fork"
+    from gsplat.losses import (  # noqa: F401
+        depth_l1_loss,
+        normal_cosine_loss,
+        opacity_reg_loss,
+        scale_reg_loss,
+        ssim_loss,
     )
+    from gsplat.strategy import MCMCStrategy  # noqa: F401
+
+    assert hasattr(gsplat, "rasterization_2dgs")
+    assert "extra_signals" in inspect.signature(gsplat.rasterization).parameters
+
+
+def test_gsplat_commit_constant_matches_pyproject():
+    """
+    collab_splats.splats.GSPLAT_COMMIT must match the [tool.uv.sources] gsplat rev in pyproject.toml.
+    """
+    import tomllib
+    from pathlib import Path
+
+    from collab_splats.splats import GSPLAT_COMMIT
+
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    pyproject = tomllib.loads(pyproject_path.read_text())
+    gsplat_source = pyproject["tool"]["uv"]["sources"]["gsplat"]
+    assert gsplat_source["rev"] == GSPLAT_COMMIT
 
 
 def test_gtsam_sl4_manifold():
     """gtsam-develop 4.3a1 provides SL4 manifold; PyPI gtsam 4.2.1 does not."""
-    from gtsam import SL4, PriorFactorSL4, BetweenFactorSL4  # noqa: F401
+    from gtsam import SL4, BetweenFactorSL4, PriorFactorSL4  # noqa: F401
 
 
 def test_bae_use_cudss():
     """bae key symbols importable: TrackingTensor, PCG solver, LM optimiser."""
-    import pypose  # must import before bae
+    import pypose  # noqa: F401  # must import before bae
     from bae.autograd.function import TrackingTensor, map_transform  # noqa: F401
-    from bae.utils.pysolvers import PCG  # noqa: F401
     from bae.optim import LM  # noqa: F401
+    from bae.utils.pysolvers import PCG  # noqa: F401
 
 
 def test_bae_cuda_backend():
     """bae active with CUDA 12.1 / torch 2.5."""
-    import pypose  # noqa: F401
     import bae  # noqa: F401
+    import pypose  # noqa: F401
     import torch
 
     assert torch.__version__.startswith("2.5"), f"Wrong torch: {torch.__version__}"
     assert "12.1" in torch.version.cuda, f"Wrong CUDA: {torch.version.cuda}"
 
 
-def test_nerfstudio_installed_local():
-    """nerfstudio loads from the active venv site-packages (BasisResearch fork via pyproject)."""
-    # tests/nerfstudio dir shadows the real nerfstudio package; temporarily remove it from sys.path
-    tests_dir = Path(__file__).parent
-    orig_path = sys.path.copy()
-    try:
-        # Clear nerfstudio from sys.modules cache to force reimport from site-packages
-        sys.modules.pop("nerfstudio", None)
-        sys.modules.pop("nerfstudio.field_components.activations", None)
-        # Remove tests/ from sys.path to allow site-packages nerfstudio to be found
-        sys.path = [p for p in sys.path if Path(p).resolve() != tests_dir.resolve()]
-        import nerfstudio.field_components.activations as _ns_probe
-
-        ns_file = _ns_probe.__file__
-    finally:
-        sys.path = orig_path
-
-    assert ns_file is not None
-    # Location check: must resolve under the running interpreter's site-packages
-    # (venv-agnostic — conda or uv), not a stale /workspace/nerfstudio or PyPI build.
-    site = sysconfig.get_path("purelib")
-    assert ns_file.startswith(site), (
-        f"nerfstudio loaded from unexpected location: {ns_file}. "
-        f"Expected site-packages under the active venv ({site}) — "
-        "stale /workspace/nerfstudio or PyPI nerfstudio may be on sys.path."
-    )
-
-
 def test_mapanything_compat_patch_safe():
     """_patch_mapanything_torch_compat must not raise RuntimeError at import time."""
-    from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator  # noqa: F401
+    from collab_splats.pointcloud.feedforward.mapanything import (  # noqa: F401
+        MapAnythingCreator,
+    )
 
 
 def test_pycolmap_api_surface():
     """pycolmap 4.0.4 API: all constructors and new 4.x methods present and callable."""
     import pycolmap
-    import numpy as np
 
     recon = pycolmap.Reconstruction()
-    track = pycolmap.Track()
+    pycolmap.Track()
 
     camera = pycolmap.Camera(
         model="PINHOLE",
@@ -271,18 +265,6 @@ def test_pycolmap_api_surface():
     assert len(recon.cameras) == 1, f"Expected 1 camera, got {len(recon.cameras)}"
 
 
-def test_nerfstudio_method_configs():
-    """rade-gs and rade-features appear in nerfstudio's method registry."""
-    import collab_splats.nerfstudio.method_configs.rade_gs  # noqa: F401
-    import collab_splats.nerfstudio.method_configs.rade_features  # noqa: F401
-    from nerfstudio.configs.method_configs import all_methods
-
-    assert "rade-gs" in all_methods, f"rade-gs missing from nerfstudio registry. Keys: {sorted(all_methods)}"
-    assert (
-        "rade-features" in all_methods
-    ), f"rade-features missing from nerfstudio registry. Keys: {sorted(all_methods)}"
-
-
 @pytest.mark.skipif(
     importlib.util.find_spec("collab_data") is None,
     reason="collab-data is a private dep installed at deploy (git creds); absent in creds-less builds",
@@ -292,28 +274,21 @@ def test_collab_data_installed():
     import collab_data  # noqa: F401
 
 
-def test_nerfstudio_patched_deps():
-    """nerfacc and timm resolve to patched (unpinned) versions."""
-    import nerfacc
+def test_timm_version():
+    """
+    timm resolves to >= 0.6.7 (the feedforward backbones need the modern ViT API).
+    """
     import timm
 
-    nerfacc_parts = [int(x) for x in nerfacc.__version__.split(".")[:3]]
-    assert tuple(nerfacc_parts) >= (0, 5, 2), f"Expected nerfacc >= 0.5.2, got {nerfacc.__version__}"
     timm_parts = [int(x) for x in timm.__version__.split(".")[:2]]
     assert tuple(timm_parts) >= (0, 6), f"Expected timm >= 0.6.7, got {timm.__version__}"
-
-
-def test_splatfacto_uses_gsplat_rade():
-    """nerfstudio.models.splatfacto imports without error and sees gsplat-rade."""
-    import nerfstudio.models.splatfacto  # noqa: F401
-    from gsplat import rasterization_2dgs_inria_wrapper  # noqa: F401
 
 
 def test_bae_cudss_importable():
     """bae built with USE_CUDSS=1: CuDirectSparseSolver must import and instantiate."""
     import pypose  # noqa: F401 — must precede bae imports
-    from bae.sparse.solve import CuDirectSparseSolver
     import torch
+    from bae.sparse.solve import CuDirectSparseSolver
 
     assert torch.cuda.is_available(), "CUDA not available — CuDSS build meaningless"
     solver = CuDirectSparseSolver()

@@ -6,7 +6,7 @@
 
 **Architecture:** Five focused files — `cameras.py` (vendored pose refinement), `losses.py` (registry of small loss functions + one scheduled loop), `rendering.py` (one `render_view` for both primitives), `trainer.py` (config with all tunables, Gaussian init, strategy, training loop), `outputs.py` (ply / ckpt / rendered zarr / quality report). `train()` takes plain arrays; `Reconstructor.splats()` assembles them from `PointcloudResult` + `FrameStore` + `feedforward.zarr`. Training happens in the COLMAP world frame (no normalisation). Densification: `MCMCStrategy` for 3DGS (fixed Gaussian budget, no gradient heuristics), `DefaultStrategy` for 2DGS (the only pairing upstream ships).
 
-**Tech Stack:** gsplat upstream pinned at commit `90d7b4b` (git source, `no-build-isolation`), torch, zarr v3, numpy, sklearn (kNN), pytest. Python: `/opt/venv/reconstruction/bin/python`.
+**Tech Stack:** gsplat upstream pinned at commit `d2f5c0f` (git source, `no-build-isolation`), torch, zarr v3, numpy, sklearn (kNN), pytest. Python: `/opt/venv/reconstruction/bin/python`.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-splats-module-design.md`
 
@@ -16,7 +16,7 @@
 
 - **Work in a worktree.** Task 0 creates `../collab-splats-splats` on branch `feat/splats-module` off `refactor/cu121-uv-migration`. Every later command runs from that worktree. The main checkout has foreign unstaged edits (`pyproject.toml`, `uv.lock`, `configs/base.yaml`, …) from a concurrent session — the worktree sidesteps them.
 - `export PY=/opt/venv/reconstruction/bin/python` and use `$PY` everywhere. The venv is editable-installed against the MAIN checkout, so in the worktree always `export PYTHONPATH=$PWD` and confirm `$PY -c "import collab_splats; print(collab_splats.__file__)"` prints the worktree path.
-- Commit with `git commit --only <files>`; check `ls .git/sequencer 2>/dev/null` is empty first. Plans/specs need `git add -f docs/superpowers/...`.
+- Commit with `git commit --only <files>` (new files must be `git add <path>`-ed first — `--only` rejects untracked pathspecs); check `ls .git/sequencer 2>/dev/null` is empty first. Plans/specs need `git add -f docs/superpowers/...`.
 - Never run repo-wide `black .`. Format only touched files: `$PY -m black <paths> && $PY -m isort <paths>`. Black 120 / isort 88 — write long imports parenthesized.
 - **Readability rules (user-mandated for this module):**
   - Every logical block gets a one-line comment saying what it does. Blocks are separated by a blank line.
@@ -63,7 +63,7 @@
 
 ### Task 0: Worktree
 
-- [ ] **Step 1: Create the worktree**
+- [x] **Step 1: Create the worktree**
 
 ```bash
 cd /workspace/collab-splats
@@ -74,7 +74,7 @@ $PY -c "import collab_splats; print(collab_splats.__file__)"
 ```
 Expected: prints `/workspace/collab-splats-splats/collab_splats/__init__.py`. If it prints the main checkout, `PYTHONPATH` is not exported — fix before continuing.
 
-- [ ] **Step 2: Baseline**
+- [x] **Step 2: Baseline**
 
 Run: `$PY -m pytest tests/wrapper/test_verify_stage.py -q`
 Expected: PASS.
@@ -88,14 +88,14 @@ Expected: PASS.
 
 The Dockerfile only runs `setup.sh` / `uv sync`, so the lock file drives what gets installed; its edits here are comment/wording only. A full image rebuild is verification owed after this plan.
 
-- [ ] **Step 1: Write the failing dependency test**
+- [x] **Step 1: Write the failing dependency test**
 
 In `tests/test_cu121_migration.py` replace `test_gsplat_rade_fork` and `test_gsplat_not_overwritten` (~174–190) with:
 
 ```python
 def test_gsplat_upstream_pinned():
     """
-    gsplat is upstream nerfstudio-project/gsplat @ 90d7b4b: gsplat.losses, 2DGS, MCMC and extra_signals exist.
+    gsplat is upstream nerfstudio-project/gsplat @ d2f5c0f: gsplat.losses, 2DGS, MCMC and extra_signals exist.
     """
     import inspect
 
@@ -119,41 +119,43 @@ Delete `test_nerfstudio_installed_local` (~212–237). In the module list (~122�
         "collab_splats.splats.outputs",
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `$PY -m pytest tests/test_cu121_migration.py::test_gsplat_upstream_pinned -v`
 Expected: FAIL — `ImportError` on `gsplat.losses`.
 
-- [ ] **Step 3: Edit pyproject.toml**
+- [x] **Step 3: Edit pyproject.toml**
 
 Line 258, replace `gsplat = { git = "https://github.com/brian-xu/gsplat-rade.git" }` with:
 ```toml
-# Upstream gsplat, main @ 2026-08-20 (reports 1.6.0 but no tag exists; v1.5.3 lacks gsplat.losses
-# and the fast 3DGS kernel). Bump the rev deliberately — extra_signals / 2DGS APIs move.
-gsplat = { git = "https://github.com/nerfstudio-project/gsplat.git", rev = "90d7b4b" }
+# Upstream gsplat, main @ 2026-07-09 (version string 1.5.3; the v1.5.3 TAG lacks gsplat.losses and
+# extra_signals). Newest rev that builds on torch 2.5.1+cu121: 4561ac4 (2026-06-01) needs CCCL
+# `cuda::ceil_div` (CUDA >= 12.3) and 31f5b3d (2026-06-08) needs `c10d::wait_tensor` (torch >= 2.7).
+# Headers still need CCCL >= 2.2 for <cuda/std/optional> — see setup.sh. Bump deliberately.
+gsplat = { git = "https://github.com/nerfstudio-project/gsplat.git", rev = "d2f5c0f" }
 ```
 Line 262: delete the `nerfstudio = { git = ... }` source. Lines 93–95: delete the nerfstudio comment + `"nerfstudio",`. Lines 74–76: comment → `# gsplat: upstream, built from source against the cu121 toolchain (see [tool.uv.sources])`. Lines 179–181: delete `[project.entry-points."nerfstudio.method_configs"]`. Lines 210–211: delete the `tests/nerfstudio_methods` pytest comment. Line 4: description → `"Feedforward reconstruction, Gaussian-splat training, meshing and localization pipeline"`. Keep `no-build-isolation-package = ["bae", "gsplat"]`.
 
-- [ ] **Step 4: Reword shell/docker/readme**
+- [x] **Step 4: Reword shell/docker/readme**
 
 `setup.sh` 12, 55, 60, 63: `gsplat-rade` → `gsplat`; keep the `import gsplat` smoke; drop any `rasterization_2dgs_inria_wrapper` probe.
 `Dockerfile` 2, 4, 13, 19, 50: `gsplat-rade` → `gsplat`, drop "installs nerfstudio" wording.
 `README.md` 30, 45, 52: `gsplat-rade` → `gsplat`; delete the nerfstudio install sentence.
 
-- [ ] **Step 5: Re-lock and sync**
+- [x] **Step 5: Re-lock and sync**
 
 Run: `uv lock && uv sync`
 Expected: gsplat builds from source (minutes). Then `grep -c 'gsplat-rade\|name = "nerfstudio"' uv.lock` → `0`.
 
-- [ ] **Step 6: Run test**
+- [x] **Step 6: Run test**
 
 Run: `$PY -m pytest tests/test_cu121_migration.py -v -k gsplat` → PASS. (The module-import test fails on `collab_splats.splats` until Task 3 — expected.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git commit --only pyproject.toml uv.lock setup.sh Dockerfile README.md tests/test_cu121_migration.py \
-  -m "build(deps): pin upstream gsplat 90d7b4b, drop gsplat-rade fork and nerfstudio"
+  -m "build(deps): pin upstream gsplat d2f5c0f, drop gsplat-rade fork and nerfstudio"
 ```
 
 ---
@@ -166,7 +168,9 @@ git commit --only pyproject.toml uv.lock setup.sh Dockerfile README.md tests/tes
 
 `query_mesh` lives only in `splatter.py` (no other callers) — it goes with it.
 
-- [ ] **Step 1: Write the failing test**
+**Found during implementation:** `BasePointcloudCreator._write_transforms` imported `nerfstudio.process_data.colmap_utils.colmap_to_json` — every creator raised `ModuleNotFoundError` once nerfstudio left the env. Its output never survived (`Reconstructor._write_transforms_json` replaced `frames`, `_write_ply` replaced the ply; `ply_file_path`/`applied_transform` only served splatfacto), so the method and its three call sites were deleted and the Reconstructor now writes `transforms.json` outright (`camera_model` + `frames`, no merge). Commit `95c3fbcf`.
+
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/wrapper/test_reconstructor.py`:
 
@@ -181,18 +185,18 @@ def test_nerfstudio_method_rejected():
     assert not hasattr(Reconstructor, "_run_nerfstudio")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `$PY -m pytest tests/wrapper/test_reconstructor.py::test_nerfstudio_method_rejected -v` → FAIL on the set comparison.
 
-- [ ] **Step 3: Delete files**
+- [x] **Step 3: Delete files**
 
 ```bash
 git rm -r collab_splats/nerfstudio tests/nerfstudio_methods docs/source/tutorials/03_splats docs/source/tutorials/06_mesh
 git rm collab_splats/wrapper/splatter.py tests/test_models.py tests/wrapper/test_splatter_mesh.py tests/wrapper/test_splatter_query.py
 ```
 
-- [ ] **Step 4: Strip code references**
+- [x] **Step 4: Strip code references**
 
 `collab_splats/__init__.py` → whole file:
 ```python
@@ -210,7 +214,7 @@ __version__ = "0.0.1"
 `CLAUDE.md` 91–92: delete the `nerfstudio/` tree line; `wrapper/` line → `# stage orchestration: Reconstructor (config-driven pipeline), batch drivers`.
 `collab_splats/mesh/tsdf.py` 22, 119: drop the nerfstudio mention (`Accepts rendered depth + RGB frames as numpy arrays.`).
 
-- [ ] **Step 5: Strip docs references**
+- [x] **Step 5: Strip docs references**
 
 `docs/source/conf.py:40`: remove `nerfstudio` from the autodoc mock list.
 `docs/source/index.rst:4`: → `Feedforward reconstruction, Gaussian splats, semantics, and mesh export — built on gsplat.`
@@ -231,16 +235,16 @@ config; outputs land in `<output>/<backend>/splats/`.
 ````
 `docs/source/tutorials/02_pointcloud/feedforward_mesh.ipynb:16`: change the markdown sentence to `"Gaussian-splat training lives in the `splats` stage (`collab_splats/splats/`)."` (edit the JSON string in place; no cell execution).
 
-- [ ] **Step 6: Verify no dangling references**
+- [x] **Step 6: Verify no dangling references**
 
 Run: `grep -rn 'splatter\|nerfstudio\|ns-train' --include='*.py' --include='*.yaml' --include='*.toml' --include='*.rst' --include='*.md' collab_splats configs tests docs/source pyproject.toml | grep -v 'display_name\|kernelspec\|/opt/conda/envs'`
 Expected: no output.
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run: `$PY -m pytest tests/wrapper/test_reconstructor.py tests/test_cu121_migration.py -v -x -k "not splats"` → PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git status --short
@@ -261,7 +265,7 @@ git commit --only collab_splats/nerfstudio tests/nerfstudio_methods docs/source/
 
 Body diffed against `/tmp/gsplat-main/examples/utils.py` lines 27–63 and 132–153: identical logic, only names/comments ours.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """
@@ -301,11 +305,11 @@ def test_rotation_6d_gives_proper_rotations():
     assert torch.allclose(determinants, torch.ones(5), atol=1e-5)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `$PY -m pytest tests/splats/test_cameras.py -v` → `ModuleNotFoundError: No module named 'collab_splats.splats'`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 `collab_splats/splats/__init__.py`:
 ```python
@@ -314,7 +318,7 @@ Gaussian-splat training on upstream gsplat from an existing pointcloud stage.
 """
 
 # The gsplat commit pinned in pyproject.toml; recorded in every splats.zarr for provenance
-GSPLAT_COMMIT = "90d7b4b"
+GSPLAT_COMMIT = "d2f5c0f"
 ```
 
 `collab_splats/splats/cameras.py`:
@@ -322,7 +326,7 @@ GSPLAT_COMMIT = "90d7b4b"
 """
 Per-camera pose refinement for splat training.
 
-Vendored from nerfstudio-project/gsplat @ 90d7b4b, examples/utils.py:
+Vendored from nerfstudio-project/gsplat @ d2f5c0f, examples/utils.py:
 ``CameraOptModule`` lines 27-63, ``rotation_6d_to_matrix`` lines 132-153.
 ``examples/`` is not shipped in the gsplat wheel, so the two pieces we need are copied verbatim.
 """
@@ -391,11 +395,11 @@ class CameraOptModule(torch.nn.Module):
         return torch.matmul(cam_to_world, delta_transform)
 ```
 
-- [ ] **Step 4: Run test**
+- [x] **Step 4: Run test**
 
 Run: `$PY -m pytest tests/splats/test_cameras.py -v` → 3 PASSED.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit --only collab_splats/splats/__init__.py collab_splats/splats/cameras.py tests/splats/__init__.py tests/splats/test_cameras.py \
@@ -412,7 +416,7 @@ Contract: `compute_losses(step, render, target, gaussians, loss_schedule, scene_
 
 `render` keys: `rgb`, `alpha`, `depth` `(1,H,W,C)`, `normal`, `depth_normal` `(1,H,W,3)`, and `distortion` `(1,H,W,1)` **only for 2dgs** (key absent otherwise). `target` keys: `rgb` `(1,H,W,3)` in `[0,1]`, `depth` `(1,H,W,1)` or `None` (0 = no target). `gaussians` is the `ParameterDict` (raw `opacities` logits, raw `scales` logs — what `gsplat.losses` regularisers expect).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """
@@ -530,11 +534,11 @@ def test_total_is_weighted_sum():
     assert total.item() == pytest.approx(expected, rel=1e-5)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `$PY -m pytest tests/splats/test_losses.py -v` → `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 ```python
 """
@@ -658,11 +662,11 @@ def compute_losses(
     return total, values
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `$PY -m pytest tests/splats/test_losses.py -v` → 10 PASSED (CPU).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit --only collab_splats/splats/losses.py tests/splats/test_losses.py \
@@ -675,7 +679,7 @@ git commit --only collab_splats/splats/losses.py tests/splats/test_losses.py \
 
 **Files:** Create `collab_splats/splats/rendering.py`, `tests/splats/synthetic.py`, `tests/splats/test_rendering.py`
 
-- [ ] **Step 1: Write the shared synthetic scene helper**
+- [x] **Step 1: Write the shared synthetic scene helper**
 
 `tests/splats/synthetic.py`:
 ```python
@@ -733,7 +737,7 @@ def make_scene(n_views=8, height=64, width=64, n_points=200):
     return np.stack(images), np.stack(world_to_cam), intrinsics_per_view, points, colors, np.stack(depths)
 ```
 
-- [ ] **Step 2: Write the failing render test**
+- [x] **Step 2: Write the failing render test**
 
 `tests/splats/test_rendering.py`:
 ```python
@@ -804,11 +808,11 @@ def test_gaussian_normals_face_the_camera():
     assert (facing <= 1e-6).all()
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `$PY -m pytest tests/splats/test_rendering.py -v` → `ModuleNotFoundError`.
 
-- [ ] **Step 4: Write the module**
+- [x] **Step 4: Write the module**
 
 ```python
 """
@@ -920,11 +924,11 @@ def render_view(
     return render, info
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `$PY -m pytest tests/splats/test_rendering.py -v` → 3 PASSED. If `render_extra_signals` is missing from `info`, re-check the pin (`extra_signals` must be in `inspect.signature(gsplat.rasterization).parameters`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git commit --only collab_splats/splats/rendering.py tests/splats/synthetic.py tests/splats/test_rendering.py \
@@ -939,7 +943,7 @@ git commit --only collab_splats/splats/rendering.py tests/splats/synthetic.py te
 
 `train()` calls `write_splat_outputs` from Task 7, so this task stubs it; the end-to-end test lands in Task 7.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/splats/test_trainer.py`:
 ```python
@@ -1036,11 +1040,11 @@ def test_prepare_training_target_scales_rgb_and_resizes_depth():
     assert no_depth["depth"] is None
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `$PY -m pytest tests/splats/test_trainer.py -v` → `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 ```python
 """
@@ -1185,7 +1189,7 @@ def init_gaussians_from_points(
     """
     One Gaussian per seed point (scale from kNN spacing, colour as SH DC) plus one Adam per parameter.
 
-    Port of create_splats_with_optimizers, gsplat @ 90d7b4b examples/simple_trainer.py.
+    Port of create_splats_with_optimizers, gsplat @ d2f5c0f examples/simple_trainer.py.
     """
     n_points = len(points)
 
@@ -1404,7 +1408,7 @@ Gaussian-splat training on upstream gsplat from an existing pointcloud stage.
 """
 
 # The gsplat commit pinned in pyproject.toml; recorded in every splats.zarr for provenance
-GSPLAT_COMMIT = "90d7b4b"
+GSPLAT_COMMIT = "d2f5c0f"
 
 from .trainer import SplatsConfig, train  # noqa: E402
 
@@ -1422,11 +1426,11 @@ def write_splat_outputs(*args, **kwargs):
     raise NotImplementedError
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `$PY -m pytest tests/splats/test_trainer.py -v` → all PASSED.
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 $PY -m black collab_splats/splats tests/splats && $PY -m isort collab_splats/splats tests/splats
@@ -1440,7 +1444,7 @@ git commit --only collab_splats/splats/trainer.py collab_splats/splats/__init__.
 
 **Files:** Replace `collab_splats/splats/outputs.py`; create `tests/splats/test_outputs.py`
 
-- [ ] **Step 1: Write the failing end-to-end tests**
+- [x] **Step 1: Write the failing end-to-end tests**
 
 `tests/splats/test_outputs.py`:
 ```python
@@ -1526,11 +1530,11 @@ def test_train_rejects_bad_inputs(tmp_path):
         train(cfg, fewer_images, world_to_cam, intrinsics, points, colors, tmp_path)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `$PY -m pytest tests/splats/test_outputs.py -v` → `NotImplementedError` from the stub (the bad-inputs test passes already — fine).
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 ```python
 """
@@ -1686,11 +1690,11 @@ def write_splat_outputs(
     )
 ```
 
-- [ ] **Step 4: Run the whole splats suite**
+- [x] **Step 4: Run the whole splats suite**
 
 Run: `$PY -m pytest tests/splats/ -v` → all PASSED (≈1–2 min GPU).
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 $PY -m black collab_splats/splats tests/splats && $PY -m isort collab_splats/splats tests/splats
@@ -1707,7 +1711,7 @@ git commit --only collab_splats/splats/outputs.py tests/splats/test_outputs.py \
 - Modify: `configs/base.yaml` — add `splats:` block after `mesh:`
 - Test: `tests/wrapper/test_splats_stage.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """
@@ -1802,11 +1806,11 @@ def test_splats_stage_skips_when_output_exists(tmp_path):
     train.assert_not_called()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `$PY -m pytest tests/wrapper/test_splats_stage.py -v` → FAIL (`'splats' in _STAGE_ORDER`, `KeyError: 'splats'`).
 
-- [ ] **Step 3: Register the stage**
+- [x] **Step 3: Register the stage**
 
 `_STAGE_ORDER` → `["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify", "reconstruction_quality_report"]`.
 
@@ -1890,7 +1894,7 @@ New method after `verify()`:
 ```
 (`np` is imported at the top of `reconstructor.py` — verify with `grep -n '^import numpy' collab_splats/wrapper/reconstructor.py`.)
 
-- [ ] **Step 4: Add the config block**
+- [x] **Step 4: Add the config block**
 
 `configs/base.yaml`, after the `mesh:` block (every key mirrors a `SplatsConfig` field; values are the dataclass defaults, listed so the knobs are visible):
 ```yaml
@@ -1925,11 +1929,11 @@ splats:
     # 2dgs: replace the two regularisers with  distortion: {weight: 100.0, start: 3000}
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `$PY -m pytest tests/wrapper/test_splats_stage.py tests/wrapper/test_verify_stage.py tests/wrapper/test_reconstructor.py -v` → PASS. If `test_reconstructor.py` enumerates `_STAGE_ORDER` literally, add `"splats"` between `semantics` and `mesh` there.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git commit --only collab_splats/wrapper/reconstructor.py configs/base.yaml tests/wrapper/test_splats_stage.py tests/wrapper/test_reconstructor.py \
@@ -1942,7 +1946,7 @@ git commit --only collab_splats/wrapper/reconstructor.py configs/base.yaml tests
 
 **Files:** `configs/README.md` (key table ~313+, layout table ~425, section ~461), `CLAUDE.md`, `docs/superpowers/specs/2026-08-22-splats-module-design.md`
 
-- [ ] **Step 1: configs/README.md**
+- [x] **Step 1: configs/README.md**
 
 Key table: one row per `splats.*` key from the yaml block above, in the neighbours' column format, plus `splats.losses.<name>.{weight,start}`.
 Layout table: rows for `<backend>/splats/splats.ply`, `ckpt.pt`, `splats.zarr`, `splats_quality_report.json`.
@@ -1958,7 +1962,7 @@ splat renders (`mesh.source: splats`) is a follow-on.
 ```
 Add `splats` to the "Re-running one stage" leaf list.
 
-- [ ] **Step 2: CLAUDE.md**
+- [x] **Step 2: CLAUDE.md**
 
 Arch tree, under `collab_splats/`:
 ```
@@ -1966,11 +1970,11 @@ Arch tree, under `collab_splats/`:
 ```
 Add a "Recently completed (2026-08-22): **splats-module**" paragraph (≤6 lines): nerfstudio/gsplat-rade retired; `splats` leaf stage; MCMC for 3dgs / Default for 2dgs; depth targets from feedforward depth (spec deviation); `mesh.source: splats` deferred; 3DGS `extra_signals` normals unmeasured (owed); PAGaS seam = `render_view` + one `OPTIONAL_LOSSES` entry.
 
-- [ ] **Step 3: Spec deviations**
+- [x] **Step 3: Spec deviations**
 
 In the spec: (a) replace the depth-target sentence(s) (grep `points3D` / `tracks`) with Deviation 1; (b) mark the `mesh.source` subsection "Deferred to a follow-on plan (2026-08-22)"; (c) replace the strategy paragraph with Deviation 3; (d) update the layout to the 5 files listed here and the config block to the full key list.
 
-- [ ] **Step 4: Gates**
+- [x] **Step 4: Gates**
 
 ```bash
 $PY -m collab_splats.dashboard --smoke                       # must print SMOKE PASS
@@ -1981,7 +1985,7 @@ graphify update .
 ```
 Expected: `SMOKE PASS`; suite green except `docs/known-test-failures.md` entries; the grep prints nothing.
 
-- [ ] **Step 5: Commit, then merge back**
+- [x] **Step 5: Commit, then merge back**
 
 ```bash
 git add -f docs/superpowers/specs/2026-08-22-splats-module-design.md

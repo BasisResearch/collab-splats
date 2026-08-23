@@ -2,9 +2,8 @@
 
 Single place that knows the on-disk PLY byte layout. Written as
 ``format binary_little_endian 1.0`` with float32 xyz + uchar rgb = 15 bytes per
-vertex, ~1.5x smaller than the ASCII file nerfstudio's ``create_ply_from_colmap``
-emits and lossless in the coordinates (ASCII truncates to 6 significant digits).
-Read back byte-exact by open3d, which is what every nerfstudio dataparser uses.
+vertex, ~1.5x smaller than the equivalent ASCII file and lossless in the coordinates
+(ASCII truncates to 6 significant digits). Read back byte-exact by open3d.
 """
 
 import logging

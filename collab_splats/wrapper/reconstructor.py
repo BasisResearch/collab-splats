@@ -6,7 +6,6 @@ import dataclasses
 import json
 import logging
 import shutil
-import subprocess
 import time
 import warnings
 from collections.abc import Sequence
@@ -52,8 +51,8 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 _SFM_BACKENDS = {"colmap", "hloc"}
-_VALID_METHODS = {"feedforward", "sfm", "nerfstudio"}
-_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "mesh", "localize", "verify",
+_VALID_METHODS = {"feedforward", "sfm"}
+_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify",
                 "reconstruction_quality_report"]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preproc": [],
@@ -64,6 +63,8 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # (configs/README.md). Inline runs are ordered refine-before-dependents, so never stale.
     "refine": ["pointcloud"],
     "semantics": ["pointcloud"],
+    # splats: trains on COLMAP poses/points + frames.zarr; leaf — nothing reads it yet
+    "splats": ["pointcloud"],
     "mesh": ["pointcloud"],
     "localize": ["pointcloud"],
     # verify reuses the localize feature cache but builds it itself when absent, so its
@@ -74,7 +75,7 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # the reconstruction
     "reconstruction_quality_report": ["pointcloud"],
 }
-# A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, mesh,
+# A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, splats, mesh,
 # localize, verify, reconstruction_quality_report}.
 # Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
 # mesh from this set automatically, so callers gating on it can never disagree with _STAGE_DEPS.
@@ -723,9 +724,7 @@ class Reconstructor:
             return self.pointcloud
 
         # Dispatch to the appropriate reconstruction method
-        if method == "nerfstudio":
-            result = self._run_nerfstudio()
-        elif method == "sfm":
+        if method == "sfm":
             warnings.warn(
                 "pointcloud.method='sfm' is experimental and not production-tested.",
                 UserWarning,
@@ -756,7 +755,7 @@ class Reconstructor:
         # the creator wrote its copy. Density is opt-in via pointcloud.export_max_points.
         self._export_pointcloud_ply(result)
 
-        # Write nerfstudio-compatible transforms.json
+        # Write the pose+intrinsics transforms.json alongside the COLMAP model
         self._write_transforms_json(result)
 
         self.pointcloud = result
@@ -842,25 +841,21 @@ class Reconstructor:
         )
 
     def _write_transforms_json(self, result: "PointcloudResult") -> None:
-        """Merge pose+intrinsics frames into backend_dir/transforms.json.
+        """Write pose+intrinsics frames to backend_dir/transforms.json.
 
         Frames are frame_idx-keyed against frames.zarr, not file_path-keyed against an
-        images/ dir, so stock nerfstudio dataparsers cannot load this file as-is.
+        images/ dir, so a stock file_path-keyed dataparser cannot load this file as-is.
         """
-        # Nothing to write if reconstruction has no registered images
-        if not result.reconstruction.images:
-            return
-
-        extrinsics = result.extrinsics  # (N, 4, 4) w2c
-        image_paths = result.image_paths
-
         # Nothing to write if there are no registered frames
+        extrinsics = result.extrinsics  # (N, 4, 4) w2c
         if extrinsics is None or len(extrinsics) == 0:
             return
 
+        image_paths = result.image_paths
+
         intrinsics = result.intrinsics  # (N, 3, 3)
 
-        # c2w = inv(w2c): invert each 4x4 pose for nerfstudio convention
+        # c2w = inv(w2c): invert each 4x4 pose into camera-to-world convention
         c2w = np.linalg.inv(extrinsics)  # (N, 4, 4)
 
         # Frames live in the canonical frames.zarr store (no images/ dir); pose+intrinsics only.
@@ -880,77 +875,14 @@ class Reconstructor:
         self.backend_dir.mkdir(parents=True, exist_ok=True)
         out = self.backend_dir / "transforms.json"
 
-        # Merge over whatever colmap_to_json already wrote: it owns ply_file_path and
-        # applied_transform (splatfacto needs both), we own camera_model + frames.
-        payload: dict = {}
-        if out.exists():
-            payload = json.loads(out.read_text())
-        payload["camera_model"] = "PINHOLE"
-        payload["frames"] = frames
-
+        # Poses are OpenCV c2w straight from the COLMAP model; no applied_transform
+        payload = {"camera_model": "PINHOLE", "frames": frames}
         out.write_text(json.dumps(payload, indent=2))
         logger.info("transforms.json written to %s", out)
 
     def _run_sfm(self) -> "PointcloudResult":
         """Run SfM pointcloud stage (colmap/hloc). Experimental."""
         raise NotImplementedError("SfM path not yet implemented — use method: feedforward")
-
-    def _run_nerfstudio(self) -> "PointcloudResult":
-        """Run full nerfstudio pipeline via ns-process-data + ns-train subprocesses.
-
-        output_path/nerfstudio/ acts as nerfstudio data dir.
-        """
-        import pycolmap
-
-        from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
-
-        ns_cfg = self.config["nerfstudio"]
-        sfm_tool = ns_cfg["sfm_tool"]
-        train_method = ns_cfg["train_method"]
-
-        ns_data_dir = Path(self.config["output_path"]) / "nerfstudio"
-        input_path = Path(self.config["input_path"])
-
-        # ns-process-data: frame extraction + SfM
-        data_type = "video" if input_path.suffix.lower() in {".mp4", ".mov", ".avi"} else "images"
-        process_cmd = [
-            "ns-process-data",
-            data_type,
-            "--data",
-            str(input_path),
-            "--output-dir",
-            str(ns_data_dir),
-            "--sfm-tool",
-            sfm_tool,
-        ]
-        logger.info("Running ns-process-data: %s", " ".join(process_cmd))
-        subprocess.run(process_cmd, check=True)
-
-        # ns-train: train nerfstudio model
-        train_cmd = [
-            "ns-train",
-            train_method,
-            "--data",
-            str(ns_data_dir),
-            "--output-dir",
-            str(ns_data_dir / "outputs"),
-        ]
-        logger.info("Running ns-train: %s", " ".join(train_cmd))
-        subprocess.run(train_cmd, check=True)
-
-        # Load COLMAP sparse model produced by ns-process-data
-        colmap_dir = ns_data_dir / "colmap" / "sparse" / "0"
-        if not colmap_dir.exists():
-            raise RuntimeError(f"ns-process-data did not produce COLMAP sparse model at {colmap_dir}")
-
-        recon = pycolmap.Reconstruction()
-        recon.read(str(colmap_dir))
-        image_paths = sorted((ns_data_dir / "images").glob("*.jpg")) + sorted((ns_data_dir / "images").glob("*.png"))
-        return PointcloudResult(
-            reconstruction=recon,
-            frame=CoordinateFrame.COLMAP,
-            image_paths=image_paths,
-        )
 
     def refine_poses(self, overwrite: bool = False) -> "PointcloudResult":
         """Refine camera poses via LM bundle adjustment; rewrite pose-derived artifacts.
@@ -1243,6 +1175,74 @@ class Reconstructor:
         logger.info("Verification written to %s", out_json)
         return out_json
 
+    def splats(self, overwrite: bool = False) -> Path:
+        """
+        Train Gaussian splats from the pointcloud stage. Returns path to splats/splats.zarr.
+        """
+        out_dir = self.backend_dir / "splats"
+        splats_zarr = out_dir / "splats.zarr"
+        if not overwrite and self._stage_output_exists("splats"):
+            logger.info("Splats exist at %s, skipping", out_dir)
+            return splats_zarr
+
+        result = self._resolve_result()
+        if result is None:
+            raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
+
+        # gsplat is CUDA-only; import lazily so Reconstructor stays importable without it
+        from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+        from collab_splats.pointcloud.utils import confidence_mask
+        from collab_splats.splats.trainer import SplatsConfig, train
+
+        cfg = SplatsConfig.from_dict(self.config["splats"])
+
+        # Frames in COLMAP image order, looked up in frames.zarr by the frame index in each name
+        store = FrameStore.open(self.frames_zarr)
+        frame_indices = [FrameStore.frame_idx_from_path(path) for path in result.image_paths]
+        # CPU-resident by design: train() moves one view to the GPU at a time
+        images = np.stack([store.image_by_frame_idx(frame_idx) for frame_idx in frame_indices])
+
+        # Depth targets: model-res feedforward depth masked like the mesh stage masks it (0 = no
+        # target); train() resizes each view to the frame's resolution with nearest sampling
+        depth_targets = None
+        depth_on = "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0  # from_dict guarantees weight
+        if depth_on:
+            feedforward_zarr = self.backend_dir / "feedforward.zarr"
+            if not feedforward_zarr.exists():
+                raise FileNotFoundError(
+                    f"feedforward.zarr not found at {feedforward_zarr}. "
+                    "Splats depth loss requires depth maps from a feedforward backend."
+                )
+            feedforward = FeedforwardResult.load_zarr(feedforward_zarr, load_images=False, load_world_points=False)
+            if feedforward.depth is None:
+                raise ValueError(f"{feedforward_zarr} has no depth — cannot build splats depth targets.")
+
+            # Feedforward rows follow the zarr's own image_paths order; align to result.image_paths
+            # by frame index so depth (and confidence, before masking) match the frames above
+            feedforward_rows = {
+                FrameStore.frame_idx_from_path(path): row for row, path in enumerate(feedforward.image_paths)
+            }
+            missing = [frame_idx for frame_idx in frame_indices if frame_idx not in feedforward_rows]
+            if missing:
+                raise ValueError(
+                    f"splats depth loss: {len(missing)} reconstruction frames have no depth in "
+                    f"{feedforward_zarr} (frame_idx {missing[:5]}) — re-run the pointcloud stage."
+                )
+            rows = [feedforward_rows[frame_idx] for frame_idx in frame_indices]
+            depth_targets = np.ascontiguousarray(feedforward.depth[rows], dtype=np.float32)
+            conf_percentile = self.config["mesh"]["conf_percentile"]
+            if conf_percentile is not None and feedforward.confidence is not None:
+                confidence = feedforward.confidence.cpu().numpy()[rows]
+                keep = confidence_mask(confidence, conf_percentile)
+                depth_targets = np.where(keep, depth_targets, 0.0).astype(np.float32)
+
+        train(
+            cfg, images, result.extrinsics, result.intrinsics, result.points, result.colors, out_dir,
+            depth_targets=depth_targets,
+        )
+        logger.info("Splats saved to %s", out_dir)
+        return splats_zarr
+
     def reconstruction_quality_report(self, overwrite: bool = False) -> Path:
         """Reference-free error report: three measurements, one reconstruction_quality_report.json.
 
@@ -1304,6 +1304,8 @@ class Reconstructor:
         # Leaf-stage markers. Only preproc/pointcloud are ever depended on, but run_pipeline also
         # needs these to refuse a named stage whose output already exists — and each leaf stage's
         # own skip-check reads them, so they live here once instead of three times.
+        if stage == "splats":
+            return (self.backend_dir / "splats" / "splats.zarr").exists()
         if stage == "mesh":
             return (self.backend_dir / "mesh.ply").exists()
         if stage == "semantics":
@@ -1336,7 +1338,7 @@ class Reconstructor:
         """Run named stages in dependency order.
 
         Args:
-            stages: Subset of ["preproc", "pointcloud", "refine", "semantics", "mesh",
+            stages: Subset of ["preproc", "pointcloud", "refine", "semantics", "splats", "mesh",
                     "localize", "verify", "reconstruction_quality_report"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
@@ -1355,6 +1357,8 @@ class Reconstructor:
                 stages.append("refine")
             if self.config["semantics"]["enabled"]:
                 stages.append("semantics")
+            if self.config["splats"]["enabled"]:
+                stages.append("splats")
             if self.config["mesh"]["enabled"]:
                 stages.append("mesh")
             if self.config["localization"]["enabled"]:
@@ -1403,6 +1407,8 @@ class Reconstructor:
                 result = self.refine_poses(overwrite=overwrite)
             elif stage == "semantics":
                 self.extract_semantics(result=result, overwrite=overwrite)
+            elif stage == "splats":
+                self.splats(overwrite=overwrite)
             elif stage == "mesh":
                 self.mesh(result=result, overwrite=overwrite)
             elif stage == "localize":

@@ -43,8 +43,8 @@ def test_open3d_tsdf_writes_ply(tmp_path):
 def test_open3d_tsdf_clean_repair_runs_and_keeps_one_mesh_ply(tmp_path):
     """clean_repair=True cleans in place — no second filename for readers to probe for.
 
-    Every reader in the repo (Reconstructor's skip-check, splatter, the dashboard, the remote
-    push) looks for `mesh.ply`; a separate `mesh_clean.ply` would need a precedence rule in each.
+    Every reader in the repo (Reconstructor's skip-check, the dashboard, the remote push)
+    looks for `mesh.ply`; a separate `mesh_clean.ply` would need a precedence rule in each.
     """
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
 

@@ -27,7 +27,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
 
 Clone and run `setup.sh`. It creates the venv at `/opt/venv/reconstruction`, syncs all
 dependencies (incl. the VGGT-X + MapAnything feedforward stack), and compiles the CUDA
-extensions (`bae`, `gsplat-rade`):
+extensions (`bae`, `gsplat`):
 
 ```sh
 git clone https://github.com/BasisResearch/collab-splats.git
@@ -42,14 +42,14 @@ extras individually:
 ```sh
 uv sync                          # core deps only
 uv sync --extra feedforward      # + VGGT-X, MapAnything, LightGlue, SALAD, CO3D
-uv sync --extra gpu              # + CUDA build toolkit (nvcc) for compiling bae / gsplat
+uv sync --extra gpu              # + CUDA runtime/header wheels used when compiling bae / gsplat
 uv sync --extra dashboard        # + Panel dashboard
 uv sync --extra dev              # + lint / test tooling
 uv sync --all-extras             # everything (what setup.sh does)
 ```
 
 > **Prefer `setup.sh` over a bare `uv sync` — and never `uv pip install ... @ git+...`.** Why:
-> - The CUDA extensions (`bae`, `gsplat-rade`) build from source and need `nvcc` + `build-essential`. `setup.sh` wires `CUDA_HOME`/`PATH` (system `/usr/local/cuda`, else the `[gpu]` extra's `cuda-toolkit` wheels).
+> - The CUDA extensions (`bae`, `gsplat`) build from source and need `nvcc` + `build-essential`. `setup.sh` wires `CUDA_HOME`/`PATH` to the system `/usr/local/cuda` and fails fast with a micromamba recipe when nvcc is absent (no pip wheel ships nvcc).
 > - `uv pip install` ignores this project's `[tool.uv]` config, so it resolves wrong package sources and fails.
 
 ### 3. Private dependency (collab-data)
@@ -94,10 +94,10 @@ Tutorials in `docs/source/tutorials/`, numbered by pipeline stage:
 |-------|-------|
 | 01 · Preprocessing | Keyframe extraction |
 | 02 · Pointcloud | Feedforward methods, bundle adjustment, loop closure, COLMAP |
-| 03 · Splats | Derive splats, visualization |
+| 03 · Splats | Gaussian-splat training (tutorial owed — rebuild on `collab_splats.splats`) |
 | 04 · Semantics | Feature extraction, segmentation |
 | 05 · Lifting | Semantic feature lifting |
-| 06 · Mesh | Surface reconstruction |
+| 06 · Mesh | Surface reconstruction (tutorial owed) |
 | 07 · Localization | Camera localization |
 
 ## Dashboard

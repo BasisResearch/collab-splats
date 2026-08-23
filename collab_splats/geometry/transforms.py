@@ -2,7 +2,7 @@
 
 Conventions:
   OpenCV camera axes:  X right, Y down,  Z forward  (COLMAP, VGGT-X, BA)
-  OpenGL camera axes:  X right, Y up,    Z backward  (nerfstudio, splats)
+  OpenGL camera axes:  X right, Y up,    Z backward  (CoordinateFrame.NERFSTUDIO)
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""_write_transforms_json must preserve keys colmap_to_json already wrote."""
+"""_write_transforms_json owns transforms.json outright: stale files are replaced, not merged."""
 
 import json
 
@@ -7,16 +7,9 @@ import numpy as np
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 
-class _Reconstruction:
-    """Stand-in with a non-empty `images` dict to pass the early-return guard."""
-
-    images = {0: object()}
-
-
 class _Result:
-    """Two-frame stand-in: only reconstruction.images/extrinsics/intrinsics/image_paths are read."""
+    """Two-frame stand-in: only extrinsics/intrinsics/image_paths are read."""
 
-    reconstruction = _Reconstruction()
     points = np.zeros((3, 3), dtype=np.float32)
     colors = None
     extrinsics = np.stack([np.eye(4, dtype=np.float32)] * 2)
@@ -34,7 +27,7 @@ def _reconstructor(tmp_path):
     )
 
 
-def test_preserves_ply_file_path_and_applied_transform(tmp_path):
+def test_replaces_stale_file(tmp_path):
     r = _reconstructor(tmp_path)
     r.backend_dir.mkdir(parents=True, exist_ok=True)
     existing = {
@@ -48,8 +41,8 @@ def test_preserves_ply_file_path_and_applied_transform(tmp_path):
     r._write_transforms_json(_Result())
 
     out = json.loads((r.backend_dir / "transforms.json").read_text())
-    assert out["ply_file_path"] == "sparse_pc.ply"
-    assert out["applied_transform"] == existing["applied_transform"]
+    # Keys from the old merged-over file do not survive
+    assert set(out) == {"camera_model", "frames"}
     # frames are ours, not the stale ones (real frame dicts key on frame_idx, not file_path)
     assert len(out["frames"]) == 2
     assert out["frames"][0] != existing["frames"][0]

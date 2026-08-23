@@ -38,7 +38,6 @@ def test_config_load_base_defaults(tmp_path):
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 1024},
         "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
         "localization": {"enabled": False, "matcher": "loma"},
-        "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
     }
     (tmp_path / "base.yaml").write_text(yaml.dump(base))
     (tmp_path / "datasets").mkdir()
@@ -114,7 +113,6 @@ def _make_config(tmp_path, overrides=None):
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
         "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
         "localization": {"enabled": False},
-        "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
     }
     if overrides:
         config = merge({}, config, overrides)
@@ -431,29 +429,6 @@ def test_build_pointcloud_method_dir_routing(tmp_path):
     config = _make_config(tmp_path, {"pointcloud": {"backend": "mapanything"}})
     rec = Reconstructor(config)
     assert rec.backend_dir == tmp_path / "out" / "mapanything"
-
-
-def test_build_pointcloud_nerfstudio_dispatches_correctly(tmp_path):
-    """Test that method='nerfstudio' dispatches to _run_nerfstudio."""
-    config = _make_config(
-        tmp_path,
-        {
-            "pointcloud": {"method": "nerfstudio", "backend": "vggtx"},
-            "nerfstudio": {"sfm_tool": "hloc", "train_method": "rade-features"},
-        },
-    )
-    rec = Reconstructor(config)
-
-    with (
-        patch.object(rec, "_run_nerfstudio") as mock_ns,
-        patch("collab_splats.wrapper.reconstructor._run_feedforward") as mock_ff,
-    ):
-        mock_ns.return_value = _make_mock_pointcloud_result(tmp_path)
-        rec.build_pointcloud(overwrite=True)
-
-    # _run_nerfstudio was called, not _run_feedforward
-    mock_ns.assert_called_once()
-    mock_ff.assert_not_called()
 
 
 def test_extract_semantics_uses_feature_cache(tmp_path):
@@ -889,28 +864,6 @@ def test_run_pipeline_default_uses_config_enabled(tmp_path):
     assert "mesh" not in calls
 
 
-def test_splatter_emits_deprecation_warning(tmp_path):
-    # splatter.py has a hard top-level nerfstudio import; skip if import fails
-    try:
-        from collab_splats.wrapper.splatter import Splatter
-    except (ImportError, ModuleNotFoundError):
-        pytest.skip("nerfstudio not importable in this env")
-    config = {
-        "file_path": str(tmp_path / "video.mp4"),
-        "method": "rade-features",
-    }
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        try:
-            Splatter(config)
-        except Exception:
-            pass  # Splatter init may fail due to missing deps; warning should still fire
-    assert any(
-        "deprecated" in str(warning.message).lower() for warning in w
-    ), f"No deprecation warning found in: {[str(x.message) for x in w]}"
-    assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
-
-
 ########################################
 # Localization stage
 ########################################
@@ -1228,7 +1181,7 @@ def test_leaf_stages_derived_from_dep_graph():
     expected = {s for s in R._STAGE_ORDER if not any(s in deps for deps in R._STAGE_DEPS.values())}
     assert R.LEAF_STAGES == expected
     # Today's graph, spelled out so a failure above reads as a real change rather than a typo.
-    assert expected == {"refine", "semantics", "mesh", "localize", "verify", "reconstruction_quality_report"}
+    assert expected == {"refine", "semantics", "splats", "mesh", "localize", "verify", "reconstruction_quality_report"}
 
 
 def _seed_disk_reconstruction(rec, frame_idxs, image_names):
@@ -1573,6 +1526,16 @@ def test_stale_preprocessing_key_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match="renamed to 'preproc'"):
         Reconstructor.validate_config(config)
+
+
+def test_nerfstudio_method_rejected():
+    """
+    pointcloud.method=nerfstudio is gone — validation only knows feedforward and sfm.
+    """
+    from collab_splats.wrapper.reconstructor import _VALID_METHODS
+
+    assert _VALID_METHODS == {"feedforward", "sfm"}
+    assert not hasattr(Reconstructor, "_run_nerfstudio")
 
 
 def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):

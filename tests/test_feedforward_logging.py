@@ -48,9 +48,6 @@ class _MockCreator(BaseFeedforwardCreator):
         import numpy as np
         return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
 
-    def _write_transforms(self, sparse_dir, output_dir):
-        pass  # suppress file I/O in tests
-
 
 def test_load_model_logs_device(capsys):
     creator = _MockCreator()

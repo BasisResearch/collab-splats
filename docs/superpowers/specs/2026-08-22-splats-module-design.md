@@ -36,18 +36,18 @@ Overall aim: better rendering → better mesh.
 
 | Topic | Decision | Why |
 |---|---|---|
-| gsplat version | git source `nerfstudio-project/gsplat` at commit `90d7b4b` (main, 2026-08-20, version string 1.6.0), `no-build-isolation` | No v1.6.0 release tag exists; latest tag v1.5.3 (2025-07-04) lacks `gsplat.losses`, fast 3DGS kernel (+31k CUDA lines since), `GaussianScene`. Pin is a SHA; bump is one line. |
+| gsplat version | git source `nerfstudio-project/gsplat` at commit `d2f5c0f` (main, 2026-07-09, version string 1.5.3 — newest rev buildable on torch 2.5.1+cu121), `no-build-isolation` | No v1.6.0 release tag exists; latest tag v1.5.3 (2025-07-04) lacks `gsplat.losses`, fast 3DGS kernel (+31k CUDA lines since), `GaussianScene`. Pin is a SHA; bump is one line. |
 | Primitive | `primitive: 3dgs \| 2dgs`, default `3dgs` | 3DGS has the fast kernel (Jun-2026 perf pass, ~30%); normals for 3DGS are rendered via `extra_signals` (below), so normal consistency works on both. 2DGS kept for its distortion loss + native surfel normals. One trainer, branch only at the rasterizer call. |
 | Losses | photometric (always on, `0.8·L1 + 0.2·SSIM`), optional `depth`, `normal_consistency`, `distortion`, each a plain `{weight, start}` dict | `depth`/`distortion` upstream-proven. `normal_consistency` on 3DGS is composed from package pieces (not upstream-validated — owed measurement). `distortion` is 2DGS-only → `ValueError` under 3dgs. No `end`; no ramps. |
 | 3DGS normals | per-Gaussian normal = shortest scale axis rotated by quat (what `rade_gs.py:74` did), rendered as 3 `extra_signals` channels of `rasterization()` (`meta["render_extra_signals"]`); depth normal via `gsplat.utils.depth_to_normal(depth, c2w, K)`; loss `normal_cosine_loss(render_normal, depth_normal * alpha.detach())` | No fused kernel (unlike RaDe-GS); every piece is in the installed package. 2DGS uses `normals_rend` / `normals_surf` from the rasterizer directly. |
 | TV loss | not included | In nerfstudio/NeRF land TV regularizes grid-shaped *parameters* (hash grid, planes, bilateral grid); Gaussians have no grid. Only splat use is the bilateral grid (skipped — view-dependent exposure breaks RGB/depth handoff) or edge-aware depth TV (not upstream-validated). Do not re-propose without a measured need. |
-| Depth targets | COLMAP `points3D` projected through tracks (upstream `datasets/colmap.py` logic), `gsplat.losses.depth_l1_loss` | Every backend writes points3D via `build_colmap`; one init + one depth-target path. Dense feedforward depth prior deferred. |
+| Depth targets | **Deviation 1 (2026-08-22):** depth targets come from model-res `feedforward.zarr` depth (aligned to `image_paths` by frame index, masked by `mesh.conf_percentile`, 0 = no target, nearest-resized to image res in the trainer) — COLMAP points3D/tracks are too sparse for a per-pixel disparity L1 and a dense prior was already on disk. *Original:* "COLMAP `points3D` projected through tracks (upstream `datasets/colmap.py` logic), `gsplat.losses.depth_l1_loss`" | points3D still seed the Gaussian init via `build_colmap`; only the depth-target path changed. |
 | Pose opt | vendored `CameraOptModule` (`examples/utils.py`, not in installed package; verified no package-native pose opt at main), `pose_opt: bool`, lr 1e-5, wd 1e-6 | Refined poses written to `splats.zarr`; pointcloud COLMAP untouched (no-invalidate contract like `refine`). |
 | Intrinsics | read from COLMAP; one camera → shared K automatically; not optimized | gsplat has no differentiable K. |
 | Quality flags | `antialiased=True`, `absgrad=True` (`grow_grad2d=8e-4` per upstream note), `random_bkgd=True`, `sh_degree=3` — hardcoded | Upstream-proven improvements; not yaml knobs. |
 | Off | `app_opt` (view-dependent exposure breaks RGB/depth handoff), MCMC, bilateral grid + TV, compression, distributed, holdout split, LPIPS | Not needed for train-view → mesh use case. Ablation tooling belongs in a later `evals/scripts/eval_splats.py`. |
 | Eval separation | none in stage; PSNR/SSIM over train views only | Pipeline only renders train views. Caveat: train PSNR cannot detect pose-opt drift — eval script catches it. |
-| Output handoff | `mesh.source: feedforward \| splats` | `splats` feeds rendered depth+RGB+poses+K from `splats.zarr` (all mutually consistent, native res). |
+| Output handoff | `mesh.source: feedforward \| splats` — **Deferred to a follow-on plan (2026-08-22)**; `mesh` keeps fusing `feedforward.zarr` | `splats` would feed rendered depth+RGB+poses+K from `splats.zarr` (all mutually consistent, native res). |
 | PAGaS | follow-on spec | Needs gsplat pinned at `bd64a47` (=1.4.0) + 865-line CUDA patch; incompatible in-process with main. Seam: `_render()` in `trainer.py`. |
 | Feature distillation (rade_features) | follow-on spec | Out of scope for the trainer. |
 
@@ -65,15 +65,19 @@ collab_splats/splats/
 
 Sections (`########` dividers):
 
-- `SplatsConfig` dataclass: `primitive`, `max_steps`, `pose_opt`, `losses: dict[str, dict]` (each `{weight, start?}`, straight from yaml).
-  Upstream defaults as module constants (per-param lrs, `DefaultStrategy(refine_start_iter=500,
+- `SplatsConfig` dataclass: `primitive`, `max_steps`, `pose_opt`, `losses: dict[str, dict]` (each `{weight, start?}`, straight from yaml),
+  plus the per-param lrs, `cap_max`, `grow_grad2d`, `sh_degree`, `sh_degree_interval`, `init_opacity`, `log_every` (all yaml keys with upstream defaults).
+  **Deviation 3 (2026-08-22):** densification is primitive-bound — 3dgs uses `MCMCStrategy(cap_max)`
+  (needs `opacity_reg` + `scale_reg`), 2dgs uses `DefaultStrategy(grow_grad2d, absgrad=True)` +
+  distortion loss; one `make_strategy` switch, no user-facing `strategy:` key. *Original:* "Upstream
+  defaults as module constants (per-param lrs, `DefaultStrategy(refine_start_iter=500,
   refine_stop_iter=15000, reset_every=3000, refine_every=100, prune_opa=0.05,
-  grow_grad2d=8e-4, absgrad=True)`, `sh_degree_interval=1000`, `ExponentialLR` on means
-  to 0.01× over `max_steps`). `__post_init__` validates: unknown loss name, 2dgs-only loss
-  under 3dgs.
+  grow_grad2d=8e-4, absgrad=True)` ...)" for both primitives, with MCMC listed under "Off".
+  `sh_degree_interval=1000`, `ExponentialLR` on means to 0.01× over `max_steps`.
+  `__post_init__` validates: unknown loss name, 2dgs-only loss under 3dgs.
 - `# Load scene` block inside `train()` (no function — existing accessors do the work):
-  `PointcloudResult.extrinsics/.intrinsics/.points/.colors`, `FrameStore.images()`; new code is
-  only per-frame sparse `(pixel_xy, depth)` targets from point2D↔point3D tracks (~15 LOC) and
+  `PointcloudResult.extrinsics/.intrinsics/.points/.colors`, `FrameStore.images()`; depth targets
+  per Deviation 1 (dense `feedforward.zarr` depth, not sparse point2D↔point3D tracks) and
   upstream world-space normalization (similarity `T_norm`, stored, inverted at export, ~10 LOC).
   All tensors resident on GPU (scenes ≤ ~300 frames).
 - `_create_splats_with_optimizers(points, rgbs, scene_scale)`: copied from
@@ -105,45 +109,61 @@ on sparse targets (disparity space, `scene_scale`). `normal_consistency`:
 ### `cameras.py`
 
 `CameraOptModule` + `rotation_6d_to_matrix`, copied from
-`nerfstudio-project/gsplat@90d7b4b examples/utils.py` (line range cited in file).
+`nerfstudio-project/gsplat@d2f5c0f examples/utils.py` (line range cited in file).
 `nn.Embedding(n, 9)` zero-init, `c2w @ delta`.
 
 ## Config surface
 
 ```yaml
-splats:
+splats:                      # as shipped in configs/base.yaml (2026-08-22)
   enabled: false
-  primitive: 3dgs            # 3dgs | 2dgs
+  primitive: 3dgs            # 3dgs (fast kernel, antialiased) | 2dgs (surface-aligned)
   max_steps: 30000
-  pose_opt: false
+  pose_opt: false            # refine camera poses jointly (CameraOptModule)
+  sh_degree: 3
+  sh_degree_interval: 1000
+  init_opacity: 0.1
+  means_lr: 1.6e-4           # x scene_scale, decays 0.01x over the run
+  scales_lr: 5.0e-3
+  quats_lr: 1.0e-3
+  opacities_lr: 5.0e-2
+  sh0_lr: 2.5e-3
+  shN_lr: 1.25e-4
+  pose_lr: 1.0e-5            # x scene_scale
+  cap_max: 1000000           # 3dgs only: Gaussian budget (MCMCStrategy)
+  grow_grad2d: 8.0e-4        # 2dgs only (DefaultStrategy)
+  log_every: 500
   losses:                    # photometric (0.8 L1 + 0.2 SSIM) always on; entries optional, {weight, start}
-    depth: {weight: 0.01}                              # sparse COLMAP points, depth_l1_loss
+    depth: {weight: 0.01}                              # dense feedforward depth (Deviation 1), depth_l1_loss
     normal_consistency: {weight: 0.05, start: 7000}    # rendered normal vs depth_to_normal
-    distortion: {weight: 0.0, start: 3000}             # 2dgs only
-mesh:
-  source: feedforward        # feedforward | splats
+    opacity_reg: {weight: 0.01}                        # 3dgs/MCMC
+    scale_reg: {weight: 0.01}                          # 3dgs/MCMC
+    # 2dgs: replace the two regularisers with  distortion: {weight: 100.0, start: 3000}
 ```
 
-Unlisted loss = off. `nerfstudio:` block deleted from `configs/base.yaml` and
+`mesh.source` is deferred (see Output handoff above) — no `mesh.source` key ships. Unlisted loss = off. `nerfstudio:` block deleted from `configs/base.yaml` and
 `configs/README.md`.
 
 ## Outputs — `<backend>/splats/`
 
 ```
 splats.ply                   export_splats(format="ply"), COLMAP world frame
-ckpt.pt                      {"splats": params, "pose_adjust": state|None, "config": asdict(cfg), "step"}
-splats.zarr
+ckpt.pt                      {"splats": params (cpu), "pose_adjust": state|None, "config": asdict(cfg)}
+splats.zarr                  streamed one view at a time (never N views resident)
   rgb     (N,H,W,3) uint8    rendered train views, native resolution
   depth   (N,H,W)   float32  expected depth (3dgs) / median depth (2dgs), COLMAP scale
-  normal  (N,H,W,3) float32  rendered Gaussian normal (both primitives)
+  normal  (N,H,W,3) float32  rendered Gaussian normal (both primitives), camera frame
   alpha   (N,H,W)   float32
   c2w     (N,4,4)   float32  refined if pose_opt, else COLMAP verbatim
   K       (N,3,3)   float32
   attrs: image_ids, primitive, pose_opt, gsplat_commit, config
 splats_quality_report.json
-  summary:   psnr, ssim, n_gaussians, steps, seconds, final per-loss values, config
-  per_frame: psnr, ssim          (nan → null)
+  summary:   psnr, ssim, n_gaussians, seconds, final_losses, config
+  per_frame: view, psnr, ssim
 ```
+
+As built (2026-08-22): no `"step"` in `ckpt.pt` and no `steps` in the summary (`max_steps` is in
+`config`); `per_frame` carries the view index.
 
 ## Pipeline wiring (`wrapper/reconstructor.py`)
 
@@ -151,7 +171,7 @@ splats_quality_report.json
   `environments-processed` via `--stages splats`. Marker: `splats/splats.zarr`.
 - `Reconstructor.splats(overwrite)` (~40 LOC, mirrors `verify`): resolves result, calls
   `train`, returns `Path`.
-- `mesh.source`: `feedforward` keeps today's path. `splats` → `_run_tsdf_mesh` reads
+- `mesh.source` — **Deferred to a follow-on plan (2026-08-22)**, not built: `feedforward` keeps today's path. `splats` → `_run_tsdf_mesh` reads
   `(depth, rgb, c2w, K)` from `splats.zarr`; `conf_percentile` masks on `alpha`;
   `native_resolution` ignored (already native) with a log line. Mesh deps stay
   `["pointcloud"]`; `source: splats` with no `splats.zarr` → `ValueError`, never auto-run.
@@ -167,7 +187,7 @@ splats_quality_report.json
 - `primitive: 3dgs` with `distortion` weight > 0 → `ValueError`.
 - `points3D` fewer than 100 → `ValueError` (pointcloud-stage knob, not ours).
 - frames.zarr length ≠ COLMAP image count → `ValueError`.
-- `mesh.source: splats` without `splats.zarr` → `ValueError`.
+- `mesh.source: splats` without `splats.zarr` → `ValueError` (deferred with `mesh.source`).
 - `pose_opt` with BA/LC: allowed (poses are inputs; nothing written back).
 
 ## Testing

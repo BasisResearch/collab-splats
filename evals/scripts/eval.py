@@ -18,23 +18,27 @@ For long sequences that exceed GPU memory in a single forward pass, use
 windowed VGGT-X (LC pipeline with loop detection disabled) and ``ba``
 wraps that with bundle adjustment.  ``lc`` always uses the full LC loop
 regardless of this flag.
+
+``instantsfm`` / ``instantsfm_nodepth`` run classical global SfM (system
+``colmap`` SIFT + InstantSfM, with / without Video-Depth-Anything depth priors)
+instead of a feedforward backbone: ``--backbone`` does not apply (TUM files are
+named by the condition alone) and ``--submap_size`` is rejected.
 """
 
 from __future__ import annotations
 
 import argparse
 import itertools
-import logging
-from dataclasses import dataclass
-from typing import Any
-from datetime import datetime
 import json
+import logging
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib
@@ -43,20 +47,35 @@ import yaml
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from datasets import get_dataset
-from trajectory_io import read_tum
 from eval_compare import collect_grid_metrics, format_markdown_rows
+from trajectory_io import read_tum
 
-from collab_splats.pointcloud import get_creator
 from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig
-from collab_splats.geometry.loop_closure.eval import ate_translation, rpe, auc_at_threshold
 from collab_splats.geometry.loop_closure import LoopClosureConfig
+from collab_splats.geometry.loop_closure.eval import (
+    ate_translation,
+    auc_at_threshold,
+    rpe,
+)
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+from collab_splats.pointcloud import get_creator
+from collab_splats.pointcloud.sfm import (
+    InstantSfMCreator,
+    generate_vda_depth,
+    vda_depth_complete,
+)
 
-_FIXED_CONDITIONS = {"baseline", "ba", "ba_coarse", "ba_percam", "lc"}
+# InstantSfM conditions: condition name -> use_depths. Classical global SfM (system colmap
+# SIFT + InstantSfM global mapper), not a feedforward backbone — --backbone and --submap_size
+# do not apply, and the TUM file is keyed by the condition alone.
+_INSTANTSFM_CONDITIONS = {"instantsfm": True, "instantsfm_nodepth": False}
+_FIXED_CONDITIONS = {"baseline", "ba", "ba_coarse", "ba_percam", "lc", *_INSTANTSFM_CONDITIONS}
 _COLORS = {
     "gt": "black",
     "baseline": "tab:red",
@@ -65,6 +84,8 @@ _COLORS = {
     "ba_percam": "tab:purple",
     "lc": "tab:green",
     "vggt_slam": "tab:orange",
+    "instantsfm": "tab:brown",
+    "instantsfm_nodepth": "tab:pink",
 }
 
 
@@ -296,6 +317,62 @@ def _make_creator(
     return base, None  # baseline
 
 
+def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.ndarray:
+    """
+    Run an InstantSfM condition over image_dir, return w2c extrinsics (N,4,4) in sorted-name order.
+
+    Mirrors Reconstructor._run_sfm on the eval's image dir instead of frames.zarr:
+    - Stages image_dir/* as symlinks into output_dir/images/ (InstantSfM's data_dir contract;
+      colmap SIFT reads png/jpg alike, and the SIFT DB colmap/instantsfm.db is keyed on these
+      names — a changed name set drops it so stale features are never reused).
+    - instantsfm: Video-Depth-Anything metric depth at depth_vda/images/npy/<stem>.npy (skipped
+      when the per-stem set is complete), GPU released before InstantSfM's CUDA step.
+    - Raises RuntimeError on partial registration, naming the unregistered images.
+    """
+    use_depths = _INSTANTSFM_CONDITIONS[condition]
+    image_paths = sorted(p for p in Path(image_dir).iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    names = [p.name for p in image_paths]
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stage symlinks under output_dir/images; a different staged name set invalidates the SIFT DB
+    staged_dir = output_dir / "images"
+    staged = sorted(p.name for p in staged_dir.iterdir()) if staged_dir.is_dir() else []
+    if staged != names:
+        (output_dir / "colmap" / "instantsfm.db").unlink(missing_ok=True)
+    shutil.rmtree(staged_dir, ignore_errors=True)
+    staged_dir.mkdir(parents=True)
+    for src in image_paths:
+        (staged_dir / src.name).symlink_to(src.resolve())
+
+    # Depth priors: VDA over the staged frames. infer_video_depth only echoes target_fps back
+    # (video_depth.py:70,162 — no temporal resampling), so the rate is informational; 1.0 here.
+    if use_depths and not vda_depth_complete(output_dir, names):
+        frames = np.stack([np.asarray(Image.open(p).convert("RGB")) for p in image_paths])
+        generate_vda_depth(frames, fps=1.0, out_dir=output_dir, names=names)
+        del frames
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+    # Global SfM: colmap/instantsfm.db + colmap/sparse/0 under output_dir
+    recon = InstantSfMCreator(use_depths=use_depths).reconstruct(output_dir)
+
+    # Every staged image must be registered — partial models leave frames without poses
+    by_name = {im.name: im for im in recon.images.values()}
+    missing = [n for n in names if n not in by_name]
+    if missing:
+        raise RuntimeError(
+            f"InstantSfM registered {len(by_name)}/{len(names)} images — partial registration is not "
+            f"supported (unregistered: {missing[:10]}{' ...' if len(missing) > 10 else ''})"
+        )
+
+    # w2c 4x4 per image, in the sorted-name order the GT poses follow
+    return np.stack([np.vstack([by_name[n].cam_from_world().matrix(), [0.0, 0.0, 0.0, 1.0]]) for n in names]).astype(
+        np.float32
+    )
+
+
 def _run_condition(
     name: str,
     image_dir: Path,
@@ -306,8 +383,18 @@ def _run_condition(
     max_loops_per_submap: int | None = None,
     loop_edge_timing: str = "deferred",
     tracks_cache_dir: Path | None = None,
-) -> tuple[np.ndarray, Any]:
-    """Run condition, return (extrinsics (N,4,4), creator)."""
+) -> tuple[np.ndarray, int | None]:
+    """
+    Run condition, return (extrinsics (N,4,4), n_loops_applied).
+
+    - n_loops_applied is the accepted loop-closure count (LC conditions only), else None.
+    """
+    # InstantSfM is not a feedforward backbone: no creator, no BA, no windowing
+    if name in _INSTANTSFM_CONDITIONS:
+        if submap_size is not None:
+            raise ValueError(f"--submap_size does not apply to condition {name!r} (global SfM has no windows)")
+        return _run_instantsfm(name, image_dir, output_dir), None
+
     creator, ba_cfg = _make_creator(
         name,
         submap_size=submap_size,
@@ -330,7 +417,12 @@ def _run_condition(
         creator.build_colmap(output_dir)
     if creator.outputs is None:
         raise RuntimeError(f"Condition '{name}' produced no outputs")
-    return creator.outputs.extrinsics, creator
+
+    # Loop-closure summary (only field LC now exposes)
+    n_loops_applied: int | None = None
+    if hasattr(creator, "base") and hasattr(creator.base, "n_loops_applied"):
+        n_loops_applied = int(creator.base.n_loops_applied)
+    return creator.outputs.extrinsics, n_loops_applied
 
 
 def _save_outputs(
@@ -459,13 +551,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--backbone",
         choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark", "loger"],
         default="vggt_omega",
-        help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, mapanything→mapanything_*, vggt_spark→spark_*, loger→loger_*",
+        help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, "
+        "mapanything→mapanything_*, vggt_spark→spark_*, loger→loger_*. Ignored by the instantsfm* "
+        "conditions (TUM named by the condition alone).",
     )
     parser.add_argument(
         "--conditions",
         nargs="+",
         default=["baseline", "ba", "lc"],
-        help="Conditions: baseline | ba | lc | ba_track-density-{N}",
+        help="Conditions: baseline | ba | ba_coarse | ba_percam | lc | ba_track-density-{N} | "
+        "incremental_ba-{N} | instantsfm (global SfM + VDA depth priors, system colmap SIFT) | "
+        "instantsfm_nodepth (same without depth priors). instantsfm* ignore --backbone and reject "
+        "--submap_size.",
     )
     parser.add_argument(
         "--lc_scale_method",
@@ -531,7 +628,7 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
     _validate_condition(args._condition)
     backbone = getattr(args, "backbone", "vggt_omega")
     t0 = time.perf_counter()
-    pred, creator = _run_condition(
+    pred, n_loops_applied = _run_condition(
         args._condition,
         args._image_dir,
         args.output_dir / args._condition,
@@ -543,11 +640,6 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
         tracks_cache_dir=getattr(args, "tracks_cache_dir", None),
     )
     elapsed = time.perf_counter() - t0
-
-    # Loop-closure summary (only field LC now exposes).
-    n_loops_applied: int | None = None
-    if hasattr(creator, "base") and hasattr(creator.base, "n_loops_applied"):
-        n_loops_applied = int(creator.base.n_loops_applied)
 
     args._result_file.write_text(
         json.dumps(
@@ -640,6 +732,10 @@ def main() -> None:
         _validate_condition(cond)
     if args._condition is not None:
         _validate_condition(args._condition)
+
+    # Global SfM has no windows — refuse up front rather than after earlier conditions ran
+    if args.submap_size is not None and any(c in _INSTANTSFM_CONDITIONS for c in args.conditions or []):
+        parser.error("--submap_size does not apply to the instantsfm* conditions")
 
     # Optional LC verify-layer override for sweeps — set the ClassVar on the
     # backbone creator class (applies in both orchestrator and subprocess leaf).
@@ -776,13 +872,15 @@ def main() -> None:
         shutil.rmtree(tmp_image_dir, ignore_errors=True)
         shutil.rmtree(result_dir, ignore_errors=True)
 
-    # Write TUM files for eval_compare.py phase-2 runner
+    # Write TUM files for eval_compare.py phase-2 runner. InstantSfM conditions are not
+    # backbone runs, so their TUM is keyed by the condition alone (instantsfm.tum).
     prefix = _BACKBONE_PREFIX.get(args.backbone, args.backbone)
     _write_tum(args.output_dir / "gt.tum", dataset.gt_poses)
     for cond, poses in trajectories.items():
         if cond == "gt":
             continue
-        _write_tum(args.output_dir / f"{prefix}_{cond}.tum", poses)
+        stem = cond if cond in _INSTANTSFM_CONDITIONS else f"{prefix}_{cond}"
+        _write_tum(args.output_dir / f"{stem}.tum", poses)
 
     # Optional upstream SLAM reference — plot overlay only. Added after the TUM-write
     # loop above (so it isn't re-serialized to its own <prefix>_vggt_slam.tum; the

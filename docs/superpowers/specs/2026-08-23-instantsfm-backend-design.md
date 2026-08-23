@@ -23,9 +23,9 @@ feedforward, faster than incremental COLMAP.
 | Question | Decision |
 |---|---|
 | Role | Full pointcloud backend (`method: sfm`, `backend: instantsfm`) — primary bet on pose + depth quality, not a side-by-side experiment |
-| Depth | **"Poses first"**: VDA metric depth generated in v1 and fed to SfM (`use_depths: true`); maps persist beside `frames.zarr`. Downstream dense consumption (splat depth targets, TSDF mesh) = named fast-follow spec, NOT v1 |
-| Invocation | Same-env Python API (verified 2026-08-23, see Install) |
-| Features | Their native feature pipeline as-is; our xfeat/loma injection = possible follow-on |
+| Depth | **Depth path is THE path (2026-08-23 review):** VDA metric depth generated in v1, fed to SfM (`use_depths=True`, not configurable — only shipped mode). Maps persist at `backend_dir/depth_vda/` only. Downstream dense consumption (splat targets, TSDF mesh) = named fast-follow spec, NOT v1 |
+| Invocation | **Their code, never CLI/subprocess** (2026-08-23 review): InstantSfM via Python API controllers; VDA via `VideoDepthAnything` class imported from cloned upstream repo (`third_party/`, not pip-installable) — zero reimplementation |
+| Features | Their native feature pipeline as-is |
 | Eval | In-plan: chess/seq-01 ATE + wall-clock vs 4 feedforward backends |
 | License | CC-BY-NC-4.0 — user cleared as non-issue; noted in creator docstring |
 
@@ -44,41 +44,47 @@ feedforward, faster than incremental COLMAP.
 - `instantsfm` joins `_SFM_BACKENDS` in `wrapper/reconstructor.py`.
 - Usage: `pointcloud: {method: sfm, backend: instantsfm}`. Output dir `out/instantsfm/`
   via the existing `backend_dir` property.
-- Per-backend block `pointcloud.instantsfm:` forwarded verbatim to the creator, keys:
-  - `feature_handler`: one of `colmap | dedode | disk+lightglue | superpoint+lightglue | sift`
-    (default `colmap` — only handler exercised so far; also what their docker example uses).
-  - `config_name`: their `manual_config_name` (default `"colmap"`; **must match the
-    feature_handler family** — the 2026-08-23 smoke showed default config × SIFT db
-    yields broken track filtering).
-  - `single_camera`: bool, default `true` (video frames share one camera).
-  - `use_depths`: bool, default `true` — forwarded into their `Config`; the whole point of
-    the backend. `false` = pure-geometry ablation condition.
-  - `depth_encoder`: `vits | vitb | vitl` (default `vitl`) for the VDA model.
+- Per-backend block `pointcloud.instantsfm:` — **ONE key**:
+  - `features`: one of `colmap | dedode | disk+lightglue | superpoint+lightglue | sift`
+    (default `colmap`). The creator derives BOTH their `feature_handler` AND
+    `manual_config_name` from it internally — the 2026-08-23 smoke showed a mismatched
+    pair (default config × SIFT db) silently breaks track filtering, so the pair is not
+    user-composable.
+- NOT config keys (creator dataclass fields with fixed defaults; eval overrides
+  programmatically): `use_depths=True` (depth path is the only shipped mode),
+  `single_camera=True` (video frames share one camera), `encoder="vitl"`.
 - The existing `method='sfm' is experimental` warning stays.
 
 ### 2. VDA depth generation (`pointcloud/vda.py`)
 
 InstantSfM does not generate depth — it consumes a `depth_vda/` folder (metric depth only;
 their `data_reader.py` samples it at keypoint locations for global positioning + BA cost).
-Their generator is `tools/video_depth_anything.py`, which is **not in the installed package**
-(setuptools packages `instantsfm*` only), so we own a small runner:
 
-- New module `collab_splats/pointcloud/vda.py`: `generate_vda_depth(image_dir, out_dir,
-  encoder="vitl") -> Path`. Reimplements the thin loop of their tools script (attribution:
-  upstream repo + commit + `tools/video_depth_anything.py`), calling the
-  [Video Depth Anything](https://github.com/DepthAnything/Video-Depth-Anything) model with a
-  **Metric-Video-Depth-Anything** checkpoint (huggingface download, cached).
-- Output: `backend_dir/depth_vda/` in exactly their single-camera layout (`depths.npz`),
-  written beside the staged `images/` so `ins-sfm`'s data reader finds it by convention.
-- The maps persist after reconstruction — this is the artifact the fast-follow spec
-  (splat depth targets, TSDF fusion) consumes. Nothing downstream reads them in v1.
-- VDA requires a **continuous frame sequence** (temporal model) — our fps-sampled
-  `frames.zarr` frames are ordered and near-uniform, which satisfies it; document that
-  optical-flow-sampled sets with wild gaps degrade VDA temporal consistency.
-- Metric-only: InstantSfM rejects relative depth; the mono-depth rule ("detail, never
+**We run their code, we do not reimplement it.** The
+[Video Depth Anything](https://github.com/DepthAnything/Video-Depth-Anything) repo is not
+pip-installable (no setup.py/pyproject) — upstream InstantSfM's own
+`tools/video_depth_anything.py` handles this with `sys.path.insert(vda_path)` then
+`from video_depth_anything.video_depth import VideoDepthAnything`. We do the same:
+
+- VDA repo cloned to `third_party/Video-Depth-Anything` by setup.sh (pinned commit),
+  Metric-Video-Depth-Anything **vitl** checkpoint downloaded beside it.
+- New module `collab_splats/pointcloud/vda.py`: `generate_vda_depth(frames, out_dir) ->
+  Path` — pure orchestration: sys.path shim, load `VideoDepthAnything` (their class, their
+  weights, their `infer_video_depth`), write `depths.npz` in their layout. Attribution at
+  the call site: both upstream repos + commits, per repo rule.
+- Frames feed in **directly from `frames.zarr`** as arrays. Their tools script's
+  images→mp4→re-decode roundtrip is CLI glue for people with image folders — skipped
+  (their model API takes frame arrays; the roundtrip adds a lossy encode for nothing).
+- Output: `backend_dir/depth_vda/depths.npz` beside the staged `images/`, exactly where
+  `ins-sfm`'s data reader looks. Maps persist after reconstruction — this is the artifact
+  the fast-follow spec (splat depth targets, TSDF fusion) consumes. Nothing downstream
+  reads them in v1.
+- VDA is a temporal model — needs a continuous ordered sequence. fps-sampled
+  `frames.zarr` satisfies this; optical-flow-sampled sets with wild gaps degrade it
+  (documented, not guarded).
+- Metric-only: InstantSfM rejects relative depth. The mono-depth rule ("detail, never
   scale") is relaxed *inside* the SfM objective only — their global positioning estimates
-  scene scale from the depth values, and the output COLMAP model remains the single pose
-  authority downstream.
+  scene scale from depth values; the output COLMAP model stays the single pose authority.
 
 ### 3. `InstantSfMCreator` (`pointcloud/sfm.py`)
 
@@ -87,8 +93,8 @@ Dataclass sibling of `ColmapCreator`/`HlocCreator`, same contract:
 
 - Lazy-imports `instantsfm` (optional heavy dep; clear ImportError names the install extra).
 - Calls their Python API (controllers: `feature_handler` → `global_mapper` →
-  `reconstruction_writer`) with their `Config` loaded by `config_name` — NOT the CLI
-  entrypoints; no subprocess, no argv parsing.
+  `reconstruction_writer`) with their `Config` loaded by the name derived from `features`,
+  `use_depths=True` set on it — NOT the CLI entrypoints; no subprocess, no argv parsing.
 - Reads the written COLMAP model with pycolmap → `PointcloudResult(reconstruction,
   frame=CoordinateFrame.COLMAP, image_paths=..., confidence=None)`.
 - Attribution comment at the call site: upstream repo + commit + files, per repo rule.
@@ -101,15 +107,14 @@ Replaces the stub, dispatches all three sfm backends:
 1. Stage images: export `frames.zarr` → `backend_dir/images/` (uint8 PNGs, skipped when
    already present and not `overwrite`). frames.zarr stays the canonical store; the images
    dir is a staging artifact for SfM backends only.
-2. For `instantsfm` with `use_depths: true`: run `generate_vda_depth` →
-   `backend_dir/depth_vda/` (skipped when present and not `overwrite`).
-3. Creator map `{"colmap": ColmapCreator, "hloc": HlocCreator, "instantsfm": InstantSfMCreator}`,
-   kwargs from `pointcloud.<backend>` block.
+2. Run `generate_vda_depth` → `backend_dir/depth_vda/` (skipped when present and not
+   `overwrite`).
+3. Dispatch to `InstantSfMCreator` (kwargs from `pointcloud.instantsfm`). **`colmap` and
+   `hloc` keep their `NotImplementedError` behaviour** — wiring untested backends "for
+   free" was overengineering; they get wired when someone needs them.
 4. Shared tail identical to the feedforward path: optional clean, `sparse_pc.ply` export,
    `transforms.json`, COLMAP binary model on disk.
 
-Only `instantsfm` is smoke-tested in this effort; colmap/hloc get the wiring for free and
-stay experimental.
 
 ### 5. Downstream contract (v1)
 
@@ -145,12 +150,12 @@ uv pip install scikit-sparse==0.4.15                                   # builds 
   the vggt-omega `--no-deps` install).
 - `tensorly`, `nerfview`, `splines` deliberately NOT installed — used only by their
   `vis/` 3DGS path, which we do not call.
-- **VDA is a separate install, not yet verified**: Video-Depth-Anything repo deps
-  (xformers, easydict, decord-free image path) against our torch 2.5.1+cu121 / py3.11.
-  Their docs suggest a dedicated py3.10 conda env; plan task probes same-env install
-  first (same `--no-deps`-style discipline), subprocess-into-side-env is the recorded
-  fallback. Metric checkpoint (`metric_video_depth_anything_vitl.pth`, HF) cached under
-  the model cache dir.
+- **VDA is a clone, not an install**: no setup.py — `third_party/Video-Depth-Anything`
+  (pinned commit) + sys.path shim, upstream InstantSfM's own pattern. Their
+  requirements.txt pins torch 2.1.1 / xformers 0.0.23 — ignored; their modules must import
+  against our torch 2.5.1+cu121 / py3.11 (plan task: probe import + one inference; if
+  xformers is a hard import, install the wheel matching OUR torch, never their pin).
+  Metric checkpoint `metric_video_depth_anything_vitl.pth` (HF) downloaded by setup.sh.
 - Packaging: optional uv extra `instantsfm` (git SHA pin + pyceres + scikit-sparse) with
   `no-build-isolation`-style handling as needed; `libsuitesparse-dev` added to the Docker
   image. TRAP (memory): plain `uv sync` prunes extras — setup.sh must install the extra
@@ -173,22 +178,24 @@ uv pip install scikit-sparse==0.4.15                                   # builds 
 3. **Upstream tested env divergence:** they test py3.12 / numpy 1.26.4 / torch 2.3.1; we run
    py3.11 / numpy 2.1.3 / torch 2.5.1. Imports and stage 1 are proven; numerical parity is
    not. The eval run doubles as the parity check.
-4. **VDA same-env install unverified** (see Install). Also VDA quality itself is a bet:
-   "metric" VDA scale error on indoor scenes is unmeasured here — if its scale is badly
-   wrong, `use_depths` could *hurt* poses. The `use_depths: false` ablation in the eval
-   isolates this.
+4. **VDA import against our torch unverified** (see Install). Also VDA quality itself is a
+   bet: "metric" VDA scale error on indoor scenes is unmeasured here — if its scale is
+   badly wrong, depth constraints could *hurt* poses. The `use_depths=False` eval ablation
+   (programmatic creator override, not a config key) isolates this.
 
 ## Testing
 
 - Unit (no GPU): backend accepted by config validation; `_run_sfm` dispatch reaches the
-  creator; frames.zarr → images staging writes N files and is idempotent; sparse-only
-  guards raise with the documented messages; empty-track pre-check raises cleanly.
+  creator; `features` key derives a matched handler/config pair for every allowed value;
+  frames.zarr → images staging writes N files and is idempotent; downstream guards raise
+  with the documented messages; empty-track pre-check raises cleanly.
 - Smoke (GPU, human-gated): `data/tutorial/` video end-to-end
   `preproc → pointcloud(sfm/instantsfm)` → valid COLMAP model + `sparse_pc.ply` +
   `transforms.json`; then `splats` trains from it.
 - Eval (GPU, tmux, human-gated): two conditions in `evals/scripts/eval.py` —
-  `instantsfm` (`use_depths: true`, the shipping default) and `instantsfm_nodepth`
-  (`use_depths: false`, isolates the VDA contribution) — 7-Scenes chess/seq-01, ATE/RPE +
+  `instantsfm` (the shipping configuration, depth-constrained) and `instantsfm_nodepth`
+  (`use_depths=False` programmatic override, isolates the VDA contribution) —
+  7-Scenes chess/seq-01, ATE/RPE +
   wall-clock vs vggtx/mapanything/vggt_omega/loger; results appended to a measured report.
   This eval is the gate on the whole bet: if `instantsfm` does not beat the best
   feedforward ATE, the fast-follow (dense consumption) does not start.
@@ -201,8 +208,8 @@ uv pip install scikit-sparse==0.4.15                                   # builds 
 - GPU pycolmap build (system CUDA COLMAP binary already exists; pycolmap wheel stays CPU;
   speed-only change, separate infra effort if ever wanted).
 - Their `ins-gs` 3DGS trainer and `vis/` stack — we have `collab_splats/splats/`.
-- Feature injection from our xfeat/loma matchers — follow-on candidate.
-- colmap/hloc backend validation beyond compile-level wiring.
+- Feature injection from our xfeat/loma matchers.
+- colmap/hloc backend wiring — stubs stay `NotImplementedError`.
 
 ## Rejected alternatives
 
@@ -211,3 +218,10 @@ uv pip install scikit-sparse==0.4.15                                   # builds 
   programmatic config. Recorded as fallback only if a runtime numpy-2 incompatibility
   proves unpatchable.
 - **Vendoring the SfM core** — upstream is active; huge surface for no control we need.
+- **Reimplementing the VDA runner loop** — their `VideoDepthAnything` class is importable
+  from a clone; our module is orchestration only (2026-08-23 review).
+- **Cut as overengineering (2026-08-23 review):** `depth_encoder` / `single_camera` /
+  `use_depths` config keys (always-default params — dataclass fields, not user surface);
+  the `feature_handler`+`config_name` pair (must-match foot-gun → one `features` key);
+  wiring colmap/hloc "for free"; the images→mp4→re-decode roundtrip from their tools
+  script; persisting depth in a second location beside `frames.zarr`.

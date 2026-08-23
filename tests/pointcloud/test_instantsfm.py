@@ -68,6 +68,18 @@ def test_vda_incomplete_npy_set_does_not_skip(tmp_path, monkeypatch):
         sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path, names=_NAMES)
 
 
+def test_vda_wrong_named_npy_set_does_not_skip(tmp_path, monkeypatch):
+    # Right COUNT, wrong stems (a stale selection) -> the skip gate compares stem sets, not counts
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
+    npy_dir = tmp_path / "depth_vda" / "images" / "npy"
+    npy_dir.mkdir(parents=True)
+    for stem in ("frame_000000", "frame_000007"):
+        np.save(npy_dir / f"{stem}.npy", np.ones((4, 4), dtype=np.float32))
+    frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
+    with pytest.raises(ImportError, match="setup.sh"):
+        sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path, names=_NAMES)
+
+
 def test_pixel_indices_from_reconstruction_scales_to_depth_res():
     # Original 800x600 -> depth 80x60 = scale 0.1; keypoint (200, 100) -> (row 10, col 20)
     idx = sfm._pixel_indices_from_reconstruction(

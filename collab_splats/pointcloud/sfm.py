@@ -253,7 +253,8 @@ def generate_vda_depth(
       blending across discontinuities). 518 matches the feedforward model-res convention
       so downstream stages see the same resolution class. Any depth res is valid for SfM —
       instantsfm's sample_depth_at_pixel normalises keypoints by camera w/h.
-    - Returns out_dir/depth_vda. Skips inference when npy/ already holds len(names) maps.
+    - Returns out_dir/depth_vda. Skips inference when npy/ already holds exactly the
+      stems in `names`.
 
     Attribution: inference pattern follows
     https://github.com/DepthAnything/Video-Depth-Anything metric_depth/run.py.
@@ -263,8 +264,9 @@ def generate_vda_depth(
     depth_dir = Path(out_dir) / "depth_vda"
     npy_dir = depth_dir / "images" / "npy"
 
-    # Idempotent: a complete per-frame npy set is authoritative (overwrite = delete upstream)
-    if npy_dir.is_dir() and len(list(npy_dir.glob("*.npy"))) == len(names):
+    # Idempotent: the exact per-frame stem set is authoritative (overwrite = delete upstream);
+    # compared as sets so a wrong-named or leftover file never satisfies the gate
+    if npy_dir.is_dir() and {p.stem for p in npy_dir.glob("*.npy")} == {Path(n).stem for n in names}:
         logger.info("VDA depth exists at %s (%d maps) — skipping inference", npy_dir, len(names))
         return depth_dir
 
@@ -390,7 +392,9 @@ class InstantSfMCreator:
         )
         from instantsfm.controllers.feature_handler import GenerateDatabase
         from instantsfm.controllers.global_mapper import SolveGlobalMapper
-        from instantsfm.controllers.reconstruction_writer import WriteGlomapReconstruction
+        from instantsfm.controllers.reconstruction_writer import (
+            WriteGlomapReconstruction,
+        )
 
         # ReadData falls back to data_dir itself as the image dir when images/ is
         # absent — refuse that silently-wrong layout up front
@@ -405,16 +409,16 @@ class InstantSfMCreator:
 
         # Redirect upstream's flat data_dir/{database.db,sparse} into the contract layout
         # colmap/ (PathInfo is a plain mutable class) — the DB then survives for re-runs
-        # instead of being re-extracted, and no post-hoc moves are needed. A stale sparse/0
-        # is removed so a re-run never mixes models.
+        # instead of being re-extracted, and no post-hoc moves are needed. The whole stale
+        # sparse/ tree is removed (not just 0/) so a re-run never mixes models and leftover
+        # sibling cluster dirs (sparse/1) cannot trip the multi-cluster warning below.
         colmap_dir = data_dir / "colmap"
         colmap_dir.mkdir(parents=True, exist_ok=True)
         path_info.database_path = str(colmap_dir / "database.db")
         path_info.database_exists = Path(path_info.database_path).exists()
         path_info.output_path = str(colmap_dir / "sparse")
+        shutil.rmtree(Path(path_info.output_path), ignore_errors=True)
         sparse_dst = Path(path_info.output_path) / "0"
-        if sparse_dst.exists():
-            shutil.rmtree(sparse_dst)
 
         # SIFT database: reuse an existing one (idempotent re-runs), else build via the
         # system colmap binary (upstream subprocesses it; CPU SIFT, exhaustive). Upstream

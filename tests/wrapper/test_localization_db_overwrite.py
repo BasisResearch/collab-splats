@@ -21,20 +21,20 @@ REC_KEY = "local_features/loma/reconstruction"
 
 def _make_stale_store(tmp_path: Path) -> Path:
     """Create a pointcloud.zarr holding a dummy stale reconstruction group."""
-    ff = tmp_path / "pointcloud.zarr"
-    store = zarr.open_group(str(ff), mode="a")
+    pc_zarr = tmp_path / "pointcloud.zarr"
+    store = zarr.open_group(str(pc_zarr), mode="a")
     grp = store.require_group(REC_KEY)
     grp.create_array("dummy", shape=(3,), dtype="float32")
-    return ff
+    return pc_zarr
 
 
-def _patch_heavy_deps(stack: ExitStack, ff: Path, seen: dict):
+def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
     """Stub the heavy inline deps of _build_localization_db; record cache state at call time."""
 
     # from_feedforward is where the cache check lives — capture whether the stale
     # reconstruction group still exists in the store at the moment it runs.
     def record_cache_state(*args, **kwargs):
-        seen["rec_group_present"] = REC_KEY in zarr.open_group(str(ff), mode="r")
+        seen["rec_group_present"] = REC_KEY in zarr.open_group(str(pc_zarr), mode="r")
         return MagicMock()
 
     stack.enter_context(
@@ -56,24 +56,24 @@ def _patch_heavy_deps(stack: ExitStack, ff: Path, seen: dict):
 
 
 def test_overwrite_true_drops_stale_group_before_rebuild(tmp_path):
-    ff = _make_stale_store(tmp_path)
+    pc_zarr = _make_stale_store(tmp_path)
     frames = tmp_path / "frames.zarr"
     seen = {}
     with ExitStack() as stack:
-        _patch_heavy_deps(stack, ff, seen)
-        out = _build_localization_db(ff, "loma", frames, top_k=8, overwrite=True)
+        _patch_heavy_deps(stack, pc_zarr, seen)
+        out = _build_localization_db(pc_zarr, "loma", frames, top_k=8, overwrite=True)
     # The stale group must be gone when from_feedforward runs, so its cache check misses
     assert seen["rec_group_present"] is False
-    assert out == ff
+    assert out == pc_zarr
 
 
 def test_overwrite_false_keeps_existing_group(tmp_path):
-    ff = _make_stale_store(tmp_path)
+    pc_zarr = _make_stale_store(tmp_path)
     frames = tmp_path / "frames.zarr"
     seen = {}
     with ExitStack() as stack:
-        _patch_heavy_deps(stack, ff, seen)
-        _build_localization_db(ff, "loma", frames, top_k=8, overwrite=False)
+        _patch_heavy_deps(stack, pc_zarr, seen)
+        _build_localization_db(pc_zarr, "loma", frames, top_k=8, overwrite=False)
     # Default path is untouched: the existing group is still there for the cache hit
     assert seen["rec_group_present"] is True
 

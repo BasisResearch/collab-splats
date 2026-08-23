@@ -50,7 +50,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
-_SFM_BACKENDS = {"colmap", "hloc"}
+_SFM_BACKENDS = {"colmap", "hloc", "instantsfm"}
+# InstantSfM v0.3.0's GenerateDatabase step ignores the feature-handler name it's given and
+# always runs CPU SIFT + exhaustive matching, so "colmap" is the only value that means anything
+# today. Key kept (not hardcoded) so a future upstream feature handler has somewhere to land.
+_INSTANTSFM_FEATURES = {"colmap"}
 _VALID_METHODS = {"feedforward", "sfm"}
 _STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify",
                 "reconstruction_quality_report"]
@@ -694,6 +698,21 @@ class Reconstructor:
                 "exclusive — BA needs per-frame model tensors that LC submaps do not carry."
             )
 
+        # SfM path: BA re-refinement is InstantSfM's own job — refuse the flag
+        if method == "sfm" and pc.get("bundle_adjustment"):
+            raise ValueError(
+                "pointcloud.bundle_adjustment is not supported with method: sfm — "
+                "InstantSfM runs its own global bundle adjustment"
+            )
+
+        # InstantSfM feature-handler allowlist (v0.3.0 supports only colmap)
+        if method == "sfm" and backend == "instantsfm":
+            features = pc.get("instantsfm", {}).get("features")
+            if features not in _INSTANTSFM_FEATURES:
+                raise ValueError(
+                    f"pointcloud.instantsfm.features={features!r} not in {sorted(_INSTANTSFM_FEATURES)}"
+                )
+
         return config
 
     ########################################
@@ -938,6 +957,10 @@ class Reconstructor:
         pointcloud.bundle_adjustment is enabled, and from disk via --stages refine against
         a processed scene. Loads everything from pointcloud.zarr — no live creator needed.
         """
+        # SfM results are already globally bundle-adjusted; LM re-refinement is undefined here
+        if self.config["pointcloud"]["method"] == "sfm":
+            raise ValueError("refine_poses is not supported for pointcloud.method: sfm")
+
         # Heavy deps imported lazily, matching the other stage methods
         from vggt.utils.geometry import unproject_depth_map_to_point_map
 

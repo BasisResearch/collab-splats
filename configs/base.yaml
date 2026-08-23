@@ -37,8 +37,9 @@ preproc:
                               # eval run is using the machine (CLAUDE.md: OOM risk).
 
 pointcloud:
-  method: feedforward         # feedforward (sfm is NOT YET IMPLEMENTED)
-  backend: vggt_omega         # vggt_omega | vggtx | mapanything | loger  (feedforward only)
+  method: feedforward         # feedforward | sfm
+  backend: vggt_omega         # feedforward: vggt_omega | vggtx | mapanything | loger
+                              # sfm: instantsfm (colmap | hloc not implemented)
   # Per-backend creator kwargs. Only the block matching `backend` is read, so all
   # four can be documented here at once. max_points is NOT settable here — it is a
   # pipeline-level guard below.
@@ -86,6 +87,11 @@ pointcloud:
     outlier_removal: true
     voxel_size: null          # null = adaptive per-scene
     confidence_threshold: null  # NOT YET READ by the clean step
+  # InstantSfM (method: sfm, backend: instantsfm) config surface.
+  instantsfm:
+    features: colmap          # feature/matching handler; v0.3.0 upstream supports only colmap
+                               # (CPU SIFT + exhaustive matching) — the value is validated but
+                               # not yet dispatched on.
 
 semantics:
   enabled: true

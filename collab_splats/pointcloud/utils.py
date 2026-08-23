@@ -762,8 +762,10 @@ def lift_features(
     Args:
         feature_maps: List of (D, H_p, W_p) per-frame dense features. Caller runs
             the extractor (and optional AE encode) before calling.
-        result:       FeedforwardResult with points, pixel_indices, depth, confidence,
+        result:       FeedforwardResult with points, pixel_indices, depth,
             extrinsics, intrinsics, model_height, model_width populated.
+            `confidence` is optional — SfM-derived results carry none, and
+            absent confidence falls back to uniform per-pixel visibility weights.
             Reload zarr with load_images=True before re-extracting features so
             the extractor sees the same FOV as the depth map.
         depth_tol:    Relative depth tolerance for visibility test.
@@ -772,7 +774,7 @@ def lift_features(
         (P, D) float32 tensor of per-point features, aligned with result.points.
     """
     # Required fields — fail loud at function entry, not deep in the kernel
-    for name in ("points", "pixel_indices", "depth", "confidence", "extrinsics", "intrinsics"):
+    for name in ("points", "pixel_indices", "depth", "extrinsics", "intrinsics"):
         assert getattr(result, name) is not None, (
             f"lift_features requires result.{name}; " f"load zarr with load_images=True or run pipeline fresh"
         )
@@ -798,11 +800,17 @@ def lift_features(
     ext = torch.as_tensor(np.ascontiguousarray(ext_np), dtype=torch.float32, device=device)  # (N, 4, 4)
     intr = torch.as_tensor(np.ascontiguousarray(result.intrinsics), dtype=torch.float32, device=device)  # (N, 3, 3)
 
-    # Conf / depth → (N, H, W) float32 on device
-    conf_np = (
-        result.confidence.detach().cpu().numpy() if isinstance(result.confidence, torch.Tensor) else result.confidence
-    )
-    conf = torch.as_tensor(np.ascontiguousarray(conf_np), dtype=torch.float32, device=device)
+    # Conf → (N, H, W) float32 on device; absent confidence (SfM results) = uniform weights
+    if result.confidence is None:
+        conf = torch.ones((N, H, W), dtype=torch.float32, device=device)
+    else:
+        conf_np = (
+            result.confidence.detach().cpu().numpy()
+            if isinstance(result.confidence, torch.Tensor)
+            else result.confidence
+        )
+        conf = torch.as_tensor(np.ascontiguousarray(conf_np), dtype=torch.float32, device=device)
+
     depth_np = result.depth
     if depth_np.ndim == 4:
         depth_np = depth_np[..., 0]

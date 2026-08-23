@@ -1304,6 +1304,10 @@ class Reconstructor:
                 confidence = feedforward.confidence.cpu().numpy()[rows]
                 keep = confidence_mask(confidence, conf_percentile)
                 depth_targets = np.where(keep, depth_targets, 0.0).astype(np.float32)
+            elif conf_percentile is not None:
+                # SfM-derived results (e.g. instantsfm) carry no confidence — use unmasked
+                # depth targets rather than fail.
+                logger.info("splats depth targets: no confidence in zarr — using unmasked depth")
 
         train(
             cfg, images, result.extrinsics, result.intrinsics, result.points, result.colors, out_dir,

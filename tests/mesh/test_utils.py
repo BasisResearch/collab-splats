@@ -351,12 +351,15 @@ def test_tsdf_inputs_conf_percentile_zeroes_low_confidence_depth():
     assert np.all(depths[:, :, :4] > 0)  # high-confidence half untouched
 
 
-def test_tsdf_inputs_conf_percentile_without_confidence_raises():
+def test_tsdf_inputs_conf_percentile_without_confidence_skips_masking(caplog):
+    """SfM-derived results carry no confidence — conf_percentile is logged and skipped, not fatal."""
     from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
 
     ff = _tiny_ff_result(with_confidence=False)
-    with pytest.raises(ValueError, match="confidence"):
-        _feedforward_to_tsdf_inputs(ff, conf_percentile=50.0)
+    with caplog.at_level("INFO"):
+        depths, _, _, _ = _feedforward_to_tsdf_inputs(ff, conf_percentile=50.0)
+    np.testing.assert_array_equal(depths, ff.depth)  # unmasked — byte-identical to the input depth
+    assert any("no confidence" in r.message for r in caplog.records)
 
 
 def test_tsdf_inputs_defaults_unchanged():

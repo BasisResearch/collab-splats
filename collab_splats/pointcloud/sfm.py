@@ -220,8 +220,9 @@ class HlocCreator(BasePointcloudCreator):
 VDA_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "Video-Depth-Anything"
 VDA_CHECKPOINT = "metric_video_depth_anything_vitl.pth"
 
-# Upstream encoder table (Video-Depth-Anything metric_depth/run.py `model_configs`); vitl only —
-# VDA_CHECKPOINT is the vitl metric weight, so `encoder` must be a key here
+# Upstream encoder table — DepthAnything/Video-Depth-Anything @ 4f5ae23, run.py:45-50
+# `model_configs`; vitl only — VDA_CHECKPOINT is the vitl metric weight, so `encoder` must be a
+# key here. Metric vs relative is a constructor flag (`metric=True`), not a separate subdir.
 _VDA_MODEL_CONFIGS = {
     "vitl": {"encoder": "vitl", "features": 256, "out_channels": [256, 512, 1024, 1024]},
 }
@@ -265,7 +266,8 @@ def generate_vda_depth(
       stems in `names`.
 
     Attribution: inference pattern follows
-    https://github.com/DepthAnything/Video-Depth-Anything metric_depth/run.py.
+    https://github.com/DepthAnything/Video-Depth-Anything @ 4f5ae23 run.py:45-57
+    (construct with `metric=`, `load_state_dict(strict=True)`, `infer_video_depth`).
     """
     if len(names) != len(frames):
         raise ValueError(f"names ({len(names)}) and frames ({len(frames)}) must align one-to-one")
@@ -278,23 +280,29 @@ def generate_vda_depth(
         logger.info("VDA depth exists at %s (%d maps) — skipping inference", npy_dir, len(names))
         return depth_dir
 
-    # Lazy heavy import — VDA lives in a third_party clone, not site-packages
-    metric_dir = VDA_ROOT / "metric_depth"
-    if not metric_dir.exists():
+    # Lazy heavy import — VDA lives in a third_party clone (repo root on sys.path), not
+    # site-packages. Upstream HEAD (4f5ae23) has no metric_depth/ subdir: `video_depth_anything/`
+    # sits at the clone root and `video_depth.py:27` imports a TOP-LEVEL `utils` namespace
+    # package (`utils/util.py`) from the same root. Probed 2026-08-23: no foreign top-level
+    # `utils` in the venv, and importing collab_splats.wrapper.reconstructor leaves none in
+    # sys.modules — a regular `utils` package anywhere on sys.path would shadow VDA's namespace
+    # one regardless of insert order, so re-probe if a dependency ever ships one.
+    if not (VDA_ROOT / "video_depth_anything").is_dir():
         raise ImportError(
             f"Video-Depth-Anything clone not found at {VDA_ROOT} — run setup.sh "
-            "(clones the repo and downloads the metric vitl checkpoint)"
+            "(clones the repo at 4f5ae23 and downloads the metric vitl checkpoint)"
         )
-    if str(metric_dir) not in sys.path:
-        sys.path.insert(0, str(metric_dir))
+    if str(VDA_ROOT) not in sys.path:
+        sys.path.insert(0, str(VDA_ROOT))
     from video_depth_anything.video_depth import VideoDepthAnything
 
     ckpt = VDA_ROOT / "checkpoints" / VDA_CHECKPOINT
     if not ckpt.exists():
         raise FileNotFoundError(f"VDA metric checkpoint missing: {ckpt} — run setup.sh")
 
-    # Load the metric model on the target device
-    model = VideoDepthAnything(**_VDA_MODEL_CONFIGS[encoder])
+    # Load the metric model on the target device — `metric=True` selects the metric head
+    # (run.py:52 `metric=args.metric`); the checkpoint is the metric vitl weight
+    model = VideoDepthAnything(**_VDA_MODEL_CONFIGS[encoder], metric=True)
     model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=True)
     model = model.to(device).eval()
 
@@ -302,6 +310,11 @@ def generate_vda_depth(
     logger.info("VDA metric inference: %d frames @ %.2f fps (encoder=%s)", len(frames), fps, encoder)
     depths, _fps = model.infer_video_depth(frames, fps, input_size=input_size, device=device, fp32=False)
     depths = np.asarray(depths, dtype=np.float32)
+
+    # Free the GPU before the caller's InstantSfM CUDA step — resize/write below is CPU-only
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # Nearest-resize to depth_width and write one map per frame, keyed by image stem
     h, w = depths.shape[1:3]

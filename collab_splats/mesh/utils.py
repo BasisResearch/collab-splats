@@ -804,7 +804,7 @@ def mesh_from_tsdf_inputs(
     """
     Fuse pre-built (depths, rgbs, c2w, intrinsics) with any registered mesher; optional colour-map pass.
 
-    - Shared tail of both input adapters (feedforward.zarr and splats.zarr).
+    - Shared tail of both input adapters (pointcloud.zarr and splats.zarr).
     - Raises ValueError when color_map_iterations > 0 with a non-TSDF method.
     """
     from collab_splats.mesh import get_mesh_creator

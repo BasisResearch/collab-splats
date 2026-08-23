@@ -19,7 +19,7 @@ def _tiny_result_with_dense(tmp_path):
         model_height=h,
         depth=np.ones((n, h, w), dtype=np.float32),
     )
-    store = tmp_path / "feedforward.zarr"
+    store = tmp_path / "pointcloud.zarr"
     result.save_zarr(store)
     return store
 

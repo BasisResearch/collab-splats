@@ -240,7 +240,7 @@ class CameraLocalizer:
 
         logger.info("CameraLocalizer: building index for %d frames", len(ids))
 
-        # TODO(future-C): pre-compute and store these features in feedforward.zarr so index
+        # TODO(future-C): pre-compute and store these features in pointcloud.zarr so index
         # build is a zarr read (~1 s) instead of O(N) GPU inference. See spec 2026-05-29.
 
         # Extract local features for all reference frames. Pixels are supplied by the caller
@@ -294,14 +294,14 @@ class CameraLocalizer:
         return np.concatenate([self._extrinsics, np.stack(self._localized_extrinsics)], axis=0)
 
     def save_index(self, zarr_path: "str | Path", extractor_name: str, attrs: "dict | None" = None) -> None:
-        """Persist extracted frame features to feedforward.zarr reconstruction/ subgroup.
+        """Persist extracted frame features to pointcloud.zarr reconstruction/ subgroup.
 
         Overwrites any existing reconstruction cache for extractor_name.
         Not automatically invalidated when source images change — caller's responsibility.
         Single-writer assumption; not safe for concurrent calls.
 
         Args:
-            zarr_path:      feedforward.zarr store path.
+            zarr_path:      pointcloud.zarr store path.
             extractor_name: registry key naming the local_features/ subgroup.
             attrs:          optional build provenance (e.g. backbone, ba, lc, built_at)
                             written to the extractor-level group. Replaces any prior
@@ -472,7 +472,7 @@ class CameraLocalizer:
         if isinstance(obj._extractor, LocalMatcher) and obj._ref_images is None:
             raise RuntimeError(
                 "Pairwise matcher needs reference images: build via from_feedforward "
-                "(feedforward.zarr images array), not load_index alone."
+                "(pointcloud.zarr images array), not load_index alone."
             )
 
         logger.info(
@@ -715,7 +715,7 @@ class CameraLocalizer:
 
     @staticmethod
     def clear_localized_frames(zarr_path: "str | Path", extractor_name: str) -> None:
-        """Delete the localized/ group for extractor_name from feedforward.zarr.
+        """Delete the localized/ group for extractor_name from pointcloud.zarr.
 
         Reconstruction data is untouched. Call this after BA/LC updates that
         invalidate previously estimated localized poses, then reload via load_index().
@@ -964,7 +964,7 @@ class CameraLocalizer:
         if self._ref_images is None:
             raise RuntimeError(
                 "Pairwise matcher needs reference images: build via from_feedforward "
-                "(feedforward.zarr images array), not load_index alone."
+                "(pointcloud.zarr images array), not load_index alone."
             )
 
         # Rank reconstruction frames by retrieval cosine similarity (descriptors are

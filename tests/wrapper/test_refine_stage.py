@@ -48,7 +48,7 @@ def test_validate_config_allows_ba_without_lc(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _write_ff_zarr(backend_dir, N=2, H=8, W=8, P=10):
-    """Synthetic FeedforwardResult persisted to backend_dir/feedforward.zarr."""
+    """Synthetic FeedforwardResult persisted to backend_dir/pointcloud.zarr."""
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     K = np.tile(
@@ -74,7 +74,7 @@ def _write_ff_zarr(backend_dir, N=2, H=8, W=8, P=10):
         ),
     )
     backend_dir.mkdir(parents=True, exist_ok=True)
-    ff.save_zarr(backend_dir / "feedforward.zarr")
+    ff.save_zarr(backend_dir / "pointcloud.zarr")
     return ff
 
 
@@ -83,9 +83,9 @@ def _reconstructor(tmp_path):
 
 
 def test_refine_poses_missing_zarr_raises(tmp_path):
-    """No feedforward.zarr → clear FileNotFoundError, not a deep BA stack trace."""
+    """No pointcloud.zarr → clear FileNotFoundError, not a deep BA stack trace."""
     r = _reconstructor(tmp_path)
-    with pytest.raises(FileNotFoundError, match="feedforward.zarr"):
+    with pytest.raises(FileNotFoundError, match="pointcloud.zarr"):
         r.refine_poses()
 
 
@@ -126,7 +126,7 @@ def test_refine_poses_refines_and_persists(tmp_path):
     # COLMAP rewritten with refined poses
     assert (r.backend_dir / "colmap" / "sparse" / "0" / "images.bin").exists()
     # zarr extrinsics updated in place — never diverges from COLMAP
-    store = zarr_mod.open(str(r.backend_dir / "feedforward.zarr"), mode="r")
+    store = zarr_mod.open(str(r.backend_dir / "pointcloud.zarr"), mode="r")
     np.testing.assert_allclose(store["extrinsics"][:, 0, 3], ff.extrinsics[:, 0, 3] + 1.0)
     # standard writers refreshed the derived artifacts
     mock_ply.assert_called_once_with(fake_result)
@@ -171,7 +171,7 @@ def test_run_pipeline_named_refine_refuses_existing_output(tmp_path):
     # Satisfy the pointcloud dependency and the refine marker on disk
     (r.backend_dir / "colmap" / "sparse" / "0").mkdir(parents=True)
     (r.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").touch()
-    (r.backend_dir / "feedforward.zarr").mkdir()
+    (r.backend_dir / "pointcloud.zarr").mkdir()
     (r.backend_dir / "colmap" / "refine.json").write_text("{}")
     with pytest.raises(ValueError, match="already exists"):
         r.run_pipeline(stages=["refine"])

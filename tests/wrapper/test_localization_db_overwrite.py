@@ -20,8 +20,8 @@ REC_KEY = "local_features/loma/reconstruction"
 
 
 def _make_stale_store(tmp_path: Path) -> Path:
-    """Create a feedforward.zarr holding a dummy stale reconstruction group."""
-    ff = tmp_path / "feedforward.zarr"
+    """Create a pointcloud.zarr holding a dummy stale reconstruction group."""
+    ff = tmp_path / "pointcloud.zarr"
     store = zarr.open_group(str(ff), mode="a")
     grp = store.require_group(REC_KEY)
     grp.create_array("dummy", shape=(3,), dtype="float32")
@@ -86,7 +86,7 @@ def test_reconstructor_passes_overwrite_through(tmp_path):
         "localization": {"enabled": True, "matcher": "loma"},
     }
     rec = Reconstructor(config)
-    ff = rec.backend_dir / "feedforward.zarr"
+    ff = rec.backend_dir / "pointcloud.zarr"
     ff.mkdir(parents=True)
     with patch.object(R, "_build_localization_db") as build:
         rec.build_localization_db(overwrite=True)

@@ -376,11 +376,11 @@ def test_extract_semantics_returns_nothing(tmp_path):
 
 
 def _make_localized_zarr(tmp_path, extractor="loma", n=2):
-    """Minimal feedforward.zarr with a localized/ group for one extractor."""
+    """Minimal pointcloud.zarr with a localized/ group for one extractor."""
     import zarr
     from zarr.codecs import BloscCodec
 
-    zpath = tmp_path / "feedforward.zarr"
+    zpath = tmp_path / "pointcloud.zarr"
     store = zarr.open(str(zpath), mode="a")
     group = store.require_group(f"local_features/{extractor}/localized")
     lz4 = BloscCodec(cname="lz4")
@@ -402,7 +402,7 @@ def test_read_localized_group_returns_poses_and_local_paths(tmp_path):
 def test_read_localized_group_missing_group_is_empty(tmp_path):
     import zarr
 
-    zpath = tmp_path / "feedforward.zarr"
+    zpath = tmp_path / "pointcloud.zarr"
     zarr.open(str(zpath), mode="a")  # store exists, no localized group
     poses, paths = pl.read_localized_group(zpath, "disk", tmp_path)
     assert poses.shape == (0, 4, 4)
@@ -452,7 +452,7 @@ def test_load_browse_data_pulls_scene_into_its_local_dir(tmp_path, monkeypatch):
         lambda d: SimpleNamespace(extrinsics=ref_ext),
     )
     source = MagicMock()
-    # feedforward.zarr absent -> the pull fires; create it so the read path proceeds.
+    # pointcloud.zarr absent -> the pull fires; create it so the read path proceeds.
     source.pull_processed.side_effect = lambda *a, **k: _make_localized_zarr(out_dir, extractor="loma", n=1)
     pl.load_browse_data(
         scene=scene,

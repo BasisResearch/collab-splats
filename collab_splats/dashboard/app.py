@@ -414,7 +414,7 @@ class SplatsApp(param.Parameterized):
         if self._op_log.is_running:
             return
         out = self._base_dir / scene
-        if (out / "feedforward.zarr").exists():
+        if (out / "pointcloud.zarr").exists():
             self._load_outputs(scene)
             return
         # Remote check is a blocking rclone list -> run off the IOLoop, then load if present.
@@ -473,7 +473,7 @@ class SplatsApp(param.Parameterized):
             self._invalidate_scene(scene)
             self._start_run(scene)
             return
-        if (out / "feedforward.zarr").exists():
+        if (out / "pointcloud.zarr").exists():
             self._load_outputs(scene)
             return
         # Remote-cache check is a blocking rclone list — off the IOLoop (a cold check
@@ -593,7 +593,7 @@ class SplatsApp(param.Parameterized):
             if cached is not None:
                 self._op_log.append_line(f"{scene}: using in-memory cache")
                 return cached
-            if not (out / "feedforward.zarr").exists():
+            if not (out / "pointcloud.zarr").exists():
                 with self._op_log.step(f"{scene}: pulling from server"):
                     self._source.pull_processed(
                         scene,
@@ -603,16 +603,16 @@ class SplatsApp(param.Parameterized):
                     )
             # Display needs only points/colors/extrinsics; skip decoding dense arrays
             # (GBs when present locally). The lift path reloads them on demand.
-            with self._op_log.step(f"{scene}: reading feedforward.zarr"):
+            with self._op_log.step(f"{scene}: reading pointcloud.zarr"):
                 result = FeedforwardResult.load_zarr(
-                    out / "feedforward.zarr",
+                    out / "pointcloud.zarr",
                     load_depth=False,
                     load_world_points=False,
                     load_confidence=False,
                     load_features=False,
                     load_pixel_indices=False,
                 )
-            # Flat `{scene}/semantics/`, matching the flat feedforward.zarr gated on above — the
+            # Flat `{scene}/semantics/`, matching the flat pointcloud.zarr gated on above — the
             # dashboard browses its own scenes, not the published backend-keyed tree. None when absent.
             semantics_dir = resolve_semantics_dir(out)
             mesh_path = out / "mesh.ply"
@@ -748,7 +748,7 @@ class SplatsApp(param.Parameterized):
         semantics_dir = resolve_semantics_dir(out)
         if semantics_dir is not None and point_features_cached(semantics_dir):
             return False  # cached per-point features -> no lift, no dense arrays needed
-        zarr_dir = out / "feedforward.zarr"
+        zarr_dir = out / "pointcloud.zarr"
         if not zarr_dir.exists():
             return False  # nothing local yet; the load path owns the initial pull
         core_missing = any(not (zarr_dir / m).exists() for m in ("pixel_indices", "depth"))
@@ -787,7 +787,7 @@ class SplatsApp(param.Parameterized):
             return  # lift didn't complete -> keep the inputs for a retry
         freed = 0
         for member in self._LIFT_MEMBERS:
-            member_dir = out / "feedforward.zarr" / member
+            member_dir = out / "pointcloud.zarr" / member
             if member_dir.exists():
                 freed += sum(f.stat().st_size for f in member_dir.rglob("*") if f.is_file())
                 shutil.rmtree(member_dir, ignore_errors=True)

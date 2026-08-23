@@ -64,7 +64,7 @@ def test_lift_point_features_reloads_dense_on_demand(tmp_path):
         confidence=torch.ones((n, h, w)),
         pixel_indices=np.zeros((p, 3), dtype=np.int32),
     )
-    store = tmp_path / "feedforward.zarr"
+    store = tmp_path / "pointcloud.zarr"
     full.save_zarr(store)
     lean = FeedforwardResult.load_zarr(
         store,

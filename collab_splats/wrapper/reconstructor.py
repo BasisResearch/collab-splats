@@ -211,7 +211,7 @@ def _run_feedforward(
 ) -> tuple["PointcloudResult", "Viewer | None"]:
     """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
 
-    Saves feedforward.zarr to output_dir after inference so downstream stages
+    Saves pointcloud.zarr to output_dir after inference so downstream stages
     (semantics lift, mesh) can load depth/confidence/pixel data. Returns the
     PointcloudResult and the created Viewer (None unless loop_closure + viz_enabled),
     so callers can keep the viser server reachable after this function returns.
@@ -335,14 +335,17 @@ def _run_feedforward(
     # model preprocessing); build_colmap appends colmap/sparse/0 under output_dir internally
     result = creator.reconstruct(store, output_dir)
 
-    # Persist FeedforwardResult to feedforward.zarr — required by semantics lift + mesh stages
+    # Persist FeedforwardResult to pointcloud.zarr — required by semantics lift + mesh stages
     ff_outputs = getattr(creator, "outputs", None)
     if ff_outputs is not None:
-        zarr_path = output_dir / "feedforward.zarr"
-        ff_outputs.save_zarr(zarr_path)
-        logger.info("feedforward.zarr saved: %s  (%s pts)", zarr_path, f"{len(ff_outputs.points):,}")
+        zarr_path = output_dir / "pointcloud.zarr"
+        ff_outputs.save_zarr(
+            zarr_path,
+            extra_attrs={"method": "feedforward", "backend": backend},
+        )
+        logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(ff_outputs.points):,}")
     else:
-        logger.warning("Creator has no outputs after reconstruct — feedforward.zarr not saved")
+        logger.warning("Creator has no outputs after reconstruct — pointcloud.zarr not saved")
 
     # Explicitly release model + GPU memory before next stage (semantics) loads its model
     import torch as _torch
@@ -382,7 +385,7 @@ def _extract_2d_features(
 def _lift_and_save(
     extractor_name: str,
     zarr_path: Path,
-    feedforward_zarr: Path,
+    pointcloud_zarr: Path,
     output_dir: Path,
     n_components: int | None,
     target_cosine: float | None,
@@ -401,10 +404,10 @@ def _lift_and_save(
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.pointcloud.utils import lift_features
 
-    # Validate feedforward zarr exists before attempting load
-    if not feedforward_zarr.exists():
+    # Validate pointcloud zarr exists before attempting load
+    if not pointcloud_zarr.exists():
         raise FileNotFoundError(
-            f"feedforward.zarr not found at {feedforward_zarr}. "
+            f"pointcloud.zarr not found at {pointcloud_zarr}. "
             "Run build_pointcloud() with a feedforward backend first."
         )
 
@@ -414,7 +417,7 @@ def _lift_and_save(
     feature_maps = [torch.from_numpy(np.array(features_arr[i])) for i in range(features_arr.shape[0])]
 
     # Load FeedforwardResult with depth/pixel data for lifting
-    ff_result = FeedforwardResult.load_zarr(feedforward_zarr)
+    ff_result = FeedforwardResult.load_zarr(pointcloud_zarr)
 
     # Lift 2D features to 3D: (P, D)
     lifted = lift_features(feature_maps, ff_result)
@@ -438,7 +441,7 @@ def _lift_and_save(
 
 def _run_tsdf_mesh(
     result: "PointcloudResult",
-    feedforward_zarr: Path,
+    pointcloud_zarr: Path,
     output_dir: Path,
     voxel_size: float,
     sdf_trunc: float,
@@ -451,7 +454,7 @@ def _run_tsdf_mesh(
     source: str = "feedforward",
     splats_zarr: Path | None = None,
 ) -> Path:
-    """Fuse depth + RGB from feedforward.zarr (or splats.zarr renders) into a TSDF mesh, using COLMAP poses."""
+    """Fuse depth + RGB from pointcloud.zarr (or splats.zarr renders) into a TSDF mesh, using COLMAP poses."""
     from collab_splats.mesh.utils import pointcloud_to_mesh
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
@@ -493,7 +496,7 @@ def _run_tsdf_mesh(
     # world_points is the largest array in the store and the mesh path no longer reads it.
     # native_resolution skips the zarr's model-res RGB too — it comes from frames.zarr instead.
     ff = FeedforwardResult.load_zarr(
-        feedforward_zarr, load_images=not native_resolution, load_world_points=False
+        pointcloud_zarr, load_images=not native_resolution, load_world_points=False
     )
 
     # COLMAP is the pose authority — BA and loop-closure corrections land in the reconstruction,
@@ -501,11 +504,11 @@ def _run_tsdf_mesh(
     # rescaled COLMAP's camera to original resolution, while the zarr's depth and RGB are at
     # model resolution); the native path swaps in COLMAP's original-res K below.
     if ff.depth is None:
-        raise ValueError(f"{feedforward_zarr} has no depth — cannot mesh.")
+        raise ValueError(f"{pointcloud_zarr} has no depth — cannot mesh.")
     if result.extrinsics.shape[0] != ff.depth.shape[0]:
         raise ValueError(
             f"Frame-count mismatch: COLMAP reconstruction has {result.extrinsics.shape[0]} "
-            f"images but {feedforward_zarr} has {ff.depth.shape[0]}. They are from different "
+            f"images but {pointcloud_zarr} has {ff.depth.shape[0]}. They are from different "
             "runs — re-run the pointcloud stage, or point --stages mesh at the matching scene."
         )
     ff.extrinsics = result.extrinsics
@@ -538,12 +541,12 @@ def _run_tsdf_mesh(
     return mesh_result.mesh_path
 
 
-def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool:
-    """True if the local-feature DB group already exists in feedforward.zarr."""
+def _localization_db_exists(pointcloud_zarr: Path, extractor_name: str) -> bool:
+    """True if the local-feature DB group already exists in pointcloud.zarr."""
     import zarr as zarr_lib
 
     try:
-        store = zarr_lib.open_group(str(feedforward_zarr), mode="r")
+        store = zarr_lib.open_group(str(pointcloud_zarr), mode="r")
         return (
             "local_features" in store
             and extractor_name in store["local_features"]
@@ -554,13 +557,13 @@ def _localization_db_exists(feedforward_zarr: Path, extractor_name: str) -> bool
 
 
 def _build_localization_db(
-    feedforward_zarr: Path,
+    pointcloud_zarr: Path,
     extractor_name: str,
     frames_zarr: Path,
     top_k: int = 8,
     overwrite: bool = False,
 ) -> Path:
-    """Build the per-frame local-feature localization cache into feedforward.zarr.
+    """Build the per-frame local-feature localization cache into pointcloud.zarr.
 
     Loads the FeedforwardResult, runs the local matcher over every DB frame, and persists
     keypoints/descriptors to group local_features/{extractor_name}/reconstruction. top_k
@@ -576,12 +579,12 @@ def _build_localization_db(
     # misses and the index is re-extracted + re-saved (from_feedforward has no
     # overwrite notion of its own — an existing group always cache-hits).
     if overwrite:
-        store = zarr.open_group(str(feedforward_zarr), mode="a")
+        store = zarr.open_group(str(pointcloud_zarr), mode="a")
         rec_key = f"local_features/{extractor_name}/reconstruction"
         if rec_key in store:
             del store[rec_key]
 
-    ff = FeedforwardResult.load_zarr(feedforward_zarr, load_images=True, load_world_points=True)
+    ff = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=True, load_world_points=True)
     extractor = LocalMatcher(extractor_name)
 
     # Boundary adapter: canonical store → (images, ids) core objects. Lazy genexpr → zero
@@ -596,11 +599,11 @@ def _build_localization_db(
         ids=ids,
         extractor=extractor,
         extractor_name=extractor_name,
-        zarr_path=feedforward_zarr,
+        zarr_path=pointcloud_zarr,
         top_k=top_k,
     )
-    logger.info("Localization DB built: %s :: local_features/%s", feedforward_zarr, extractor_name)
-    return feedforward_zarr
+    logger.info("Localization DB built: %s :: local_features/%s", pointcloud_zarr, extractor_name)
+    return pointcloud_zarr
 
 
 class _LazyFrames(Sequence):
@@ -708,6 +711,13 @@ class Reconstructor:
         return Path(self.config["output_path"]) / "frames.zarr"
 
     @property
+    def pointcloud_zarr(self) -> Path:
+        """
+        Unified reconstruction zarr for this backend (all pointcloud methods).
+        """
+        return self.backend_dir / "pointcloud.zarr"
+
+    @property
     def semantics_cache_dir(self) -> Path:
         """output_path / semantics/ — 2D patch cache, one {extractor}.zarr per extractor.
 
@@ -752,8 +762,8 @@ class Reconstructor:
         pc_cfg = self.config["pointcloud"]
         method = pc_cfg["method"]
 
-        # Skip if COLMAP + feedforward.zarr both exist and overwrite not requested.
-        # Require feedforward.zarr too — if a previous run was partial (zarr missing),
+        # Skip if COLMAP + pointcloud.zarr both exist and overwrite not requested.
+        # Require pointcloud.zarr too — if a previous run was partial (zarr missing),
         # we must re-run inference rather than loading stale COLMAP.
         if not overwrite and self._stage_output_exists("pointcloud"):
             logger.info("Pointcloud exists at %s, loading from disk", self.backend_dir / "colmap")
@@ -926,7 +936,7 @@ class Reconstructor:
 
         One implementation for both triggers: runs inline after the pointcloud stage when
         pointcloud.bundle_adjustment is enabled, and from disk via --stages refine against
-        a processed scene. Loads everything from feedforward.zarr — no live creator needed.
+        a processed scene. Loads everything from pointcloud.zarr — no live creator needed.
         """
         # Heavy deps imported lazily, matching the other stage methods
         from vggt.utils.geometry import unproject_depth_map_to_point_map
@@ -947,7 +957,7 @@ class Reconstructor:
 
         # Load the full FeedforwardResult from zarr: images/confidence/world_points feed track
         # extraction, depth+pixel_indices feed the deterministic creator-free reproject.
-        zarr_path = self.backend_dir / "feedforward.zarr"
+        zarr_path = self.pointcloud_zarr
         if not zarr_path.exists():
             raise FileNotFoundError(f"refine requires {zarr_path}; run the pointcloud stage first.")
         ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
@@ -975,7 +985,7 @@ class Reconstructor:
         sparse_dir.mkdir(parents=True, exist_ok=True)
         recon.write_binary(str(sparse_dir))
 
-        # Write pose-derived arrays back to feedforward.zarr so zarr and COLMAP never disagree
+        # Write pose-derived arrays back to pointcloud.zarr so zarr and COLMAP never disagree
         # (localization samples world_points; a later --stages refine re-reads these poses).
         store = zarr.open(str(zarr_path), mode="r+")
         store["extrinsics"][:] = ff.extrinsics
@@ -1042,12 +1052,12 @@ class Reconstructor:
             logger.info("2D feature cache hit: %s", zarr_path)
 
         # Stage 2: Lift to 3D and save
-        feedforward_zarr = self.backend_dir / "feedforward.zarr"
+        pointcloud_zarr = self.pointcloud_zarr
         logger.info("Lifting 2D features to 3D pointcloud")
         out_dir = _lift_and_save(
             extractor_name,
             zarr_path,
-            feedforward_zarr,
+            pointcloud_zarr,
             lifted_dir,
             n_components,
             target_cosine=sem_cfg["target_cosine"],
@@ -1060,7 +1070,7 @@ class Reconstructor:
         result: "PointcloudResult | None" = None,
         overwrite: bool = False,
     ) -> Path:
-        """Build a TSDF mesh from `mesh.source` depth: feedforward.zarr (default) or splats.zarr renders.
+        """Build a TSDF mesh from `mesh.source` depth: pointcloud.zarr (default) or splats.zarr renders.
 
         COLMAP is the pose authority on the feedforward path; the splats path fuses the poses
         the splats were actually rendered with (including pose-opt deltas) and uses alpha as
@@ -1085,7 +1095,7 @@ class Reconstructor:
             raise ValueError(
                 f"mesh.source must be 'feedforward' or 'splats', got {source!r}"
             )
-        feedforward_zarr = self.backend_dir / "feedforward.zarr"
+        pointcloud_zarr = self.pointcloud_zarr
         splats_zarr = None
         if source == "splats":
             splats_zarr = self.backend_dir / "splats" / "splats.zarr"
@@ -1094,15 +1104,15 @@ class Reconstructor:
                     f"mesh.source: splats needs {splats_zarr} — run the splats stage first "
                     "(it is never auto-run)"
                 )
-        elif not feedforward_zarr.exists():
+        elif not pointcloud_zarr.exists():
             raise FileNotFoundError(
-                f"feedforward.zarr not found at {feedforward_zarr}. "
+                f"pointcloud.zarr not found at {pointcloud_zarr}. "
                 "Mesh requires depth maps from a feedforward backend."
             )
 
         out = _run_tsdf_mesh(
             result=result,
-            feedforward_zarr=feedforward_zarr,
+            pointcloud_zarr=pointcloud_zarr,
             output_dir=self.backend_dir,
             voxel_size=mesh_cfg["voxel_size"],
             sdf_trunc=mesh_cfg["sdf_trunc"],
@@ -1119,14 +1129,14 @@ class Reconstructor:
         return out
 
     def build_localization_db(self, overwrite: bool = False) -> Path:
-        """Build/refresh the per-frame local-feature localization cache in feedforward.zarr."""
+        """Build/refresh the per-frame local-feature localization cache in pointcloud.zarr."""
         loc_cfg = self.config["localization"]
         extractor_name = loc_cfg["matcher"]
 
-        feedforward_zarr = self.backend_dir / "feedforward.zarr"
-        if not feedforward_zarr.exists():
+        pointcloud_zarr = self.pointcloud_zarr
+        if not pointcloud_zarr.exists():
             raise FileNotFoundError(
-                f"feedforward.zarr not found at {feedforward_zarr}. "
+                f"pointcloud.zarr not found at {pointcloud_zarr}. "
                 "Localization DB requires a feedforward pointcloud stage first."
             )
 
@@ -1134,13 +1144,13 @@ class Reconstructor:
         if not overwrite and self._stage_output_exists("localize"):
             logger.info(
                 "Localization DB exists at %s :: local_features/%s, skipping",
-                feedforward_zarr,
+                pointcloud_zarr,
                 extractor_name,
             )
-            return feedforward_zarr
+            return pointcloud_zarr
 
         return _build_localization_db(
-            feedforward_zarr,
+            pointcloud_zarr,
             extractor_name,
             self.frames_zarr,
             top_k=loc_cfg["top_k"],
@@ -1180,7 +1190,7 @@ class Reconstructor:
         logger.info("verify(): LocalMatcher construction took %.1f s", time.perf_counter() - t)
         t = time.perf_counter()
         features, ids, _ = load_localization_db(
-            self.backend_dir / "feedforward.zarr", extractor_name
+            self.pointcloud_zarr, extractor_name
         )
         logger.info("verify(): load_localization_db took %.1f s", time.perf_counter() - t)
         # Loma matches from stored features (keypoints_normalized). A cache from before
@@ -1195,7 +1205,7 @@ class Reconstructor:
             logger.info("verify(): build_localization_db(overwrite=True) took %.1f s", time.perf_counter() - t)
             t = time.perf_counter()
             features, ids, _ = load_localization_db(
-                self.backend_dir / "feedforward.zarr", extractor_name
+                self.pointcloud_zarr, extractor_name
             )
             logger.info("verify(): load_localization_db (rebuilt) took %.1f s", time.perf_counter() - t)
         # The cache ids are frame_XXXXXX.jpg, the reconstruction registers frame_XXXXXX
@@ -1266,15 +1276,15 @@ class Reconstructor:
         depth_targets = None
         depth_on = "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0  # from_dict guarantees weight
         if depth_on:
-            feedforward_zarr = self.backend_dir / "feedforward.zarr"
-            if not feedforward_zarr.exists():
+            pointcloud_zarr = self.pointcloud_zarr
+            if not pointcloud_zarr.exists():
                 raise FileNotFoundError(
-                    f"feedforward.zarr not found at {feedforward_zarr}. "
+                    f"pointcloud.zarr not found at {pointcloud_zarr}. "
                     "Splats depth loss requires depth maps from a feedforward backend."
                 )
-            feedforward = FeedforwardResult.load_zarr(feedforward_zarr, load_images=False, load_world_points=False)
+            feedforward = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
             if feedforward.depth is None:
-                raise ValueError(f"{feedforward_zarr} has no depth — cannot build splats depth targets.")
+                raise ValueError(f"{pointcloud_zarr} has no depth — cannot build splats depth targets.")
 
             # Feedforward rows follow the zarr's own image_paths order; align to result.image_paths
             # by frame index so depth (and confidence, before masking) match the frames above
@@ -1285,7 +1295,7 @@ class Reconstructor:
             if missing:
                 raise ValueError(
                     f"splats depth loss: {len(missing)} reconstruction frames have no depth in "
-                    f"{feedforward_zarr} (frame_idx {missing[:5]}) — re-run the pointcloud stage."
+                    f"{pointcloud_zarr} (frame_idx {missing[:5]}) — re-run the pointcloud stage."
                 )
             rows = [feedforward_rows[frame_idx] for frame_idx in frame_indices]
             depth_targets = np.ascontiguousarray(feedforward.depth[rows], dtype=np.float32)
@@ -1341,7 +1351,7 @@ class Reconstructor:
         from collab_splats.geometry.metrics import build_reconstruction_quality_report
 
         build_reconstruction_quality_report(
-            zarr_path=self.backend_dir / "feedforward.zarr",
+            zarr_path=self.pointcloud_zarr,
             verification_json=verification_json,
             frames_zarr=self.frames_zarr,
             output_path=out_json,
@@ -1356,7 +1366,7 @@ class Reconstructor:
             return self.frames_zarr.exists()
         if stage == "pointcloud":
             colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
-            zarr_done = (self.backend_dir / "feedforward.zarr").exists()
+            zarr_done = self.pointcloud_zarr.exists()
             return colmap_done and zarr_done
         if stage == "refine":
             return (self.backend_dir / "colmap" / "refine.json").exists()
@@ -1371,9 +1381,9 @@ class Reconstructor:
             lifted = lifted_store_path(self.backend_dir / "semantics", self.config["semantics"]["extractor"])
             return lifted.exists()
         if stage == "localize":
-            feedforward_zarr = self.backend_dir / "feedforward.zarr"
-            return feedforward_zarr.exists() and _localization_db_exists(
-                feedforward_zarr, self.config["localization"]["matcher"]
+            pointcloud_zarr = self.pointcloud_zarr
+            return pointcloud_zarr.exists() and _localization_db_exists(
+                pointcloud_zarr, self.config["localization"]["matcher"]
             )
         if stage == "verify":
             return (self.backend_dir / "colmap" / "verification.json").exists()

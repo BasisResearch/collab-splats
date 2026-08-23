@@ -963,7 +963,7 @@ def test_report_json_is_valid_json_with_no_bare_nan():
 
 
 def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
-    """A minimal feedforward.zarr that build_reconstruction_quality_report can actually run on. Returns its path.
+    """A minimal pointcloud.zarr that build_reconstruction_quality_report can actually run on. Returns its path.
 
     Depth is a SLANTED plane, never a constant one: a constant-depth scene has a degenerate
     frustum AABB, compute_multiview_depth_confidence's pair gate then skips every pair, and
@@ -1000,7 +1000,7 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
         depth=depth,
         confidence=rng.uniform(0.5, 1.0, size=(n, hw, hw)).astype(np.float32) if with_confidence else None,
     )
-    zarr_path = tmp_path / "feedforward.zarr"
+    zarr_path = tmp_path / "pointcloud.zarr"
     result.save_zarr(zarr_path)
     return zarr_path
 

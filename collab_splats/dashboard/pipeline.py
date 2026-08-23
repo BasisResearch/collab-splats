@@ -195,7 +195,7 @@ def resolve_semantics_dir(scene_dir: Path) -> "Path | None":
     """A scene's flat `{scene}/semantics/` dir, or None when it has none.
 
     Flat only, deliberately. The dashboard is a browser over its OWN scenes: its loader gates on
-    and reads flat `{scene}/feedforward.zarr` and flat `{scene}/mesh.ply`, so a published
+    and reads flat `{scene}/pointcloud.zarr` and flat `{scene}/mesh.ply`, so a published
     (Reconstructor) scene — everything one level deeper under `{scene}/{backend}/` — fails on the
     pointcloud before semantics is ever consulted. Resolving a backend-keyed semantics dir would
     only serve a hybrid tree (flat pointcloud + nested semantics) that no writer produces.
@@ -474,7 +474,10 @@ def run_pipeline(
             op_log.append_line(
                 f"pointcloud: postprocessed ({len(result.points):,} pts) in {time.perf_counter() - t:.1f}s"
             )
-            result.save_zarr(out_dir / "feedforward.zarr")
+            result.save_zarr(
+                out_dir / "pointcloud.zarr",
+                extra_attrs={"method": "feedforward", "backend": config.env_model},
+            )
 
             # Mesh from TSDF depth fusion
             op_log.update_progress(60, "mesh: tsdf fusion")
@@ -549,7 +552,7 @@ def _load_feedforward_result(out_dir: Path, load_world_points: bool = False, loa
     # images are opted in by the localizer path — CameraLocalizer.from_feedforward requires
     # world_points, and the pairwise LocalMatcher additionally needs model-res ref images.
     return FeedforwardResult.load_zarr(
-        out_dir / "feedforward.zarr",
+        out_dir / "pointcloud.zarr",
         load_depth=False,
         load_world_points=load_world_points,
         load_images=load_images,
@@ -689,11 +692,11 @@ def load_browse_data(
     """Non-GPU DB browse load: minimal pull if absent, then ref extrinsics + stored localized poses."""
     out_dir = Path(base_dir) / scene
     # Minimal pull only when the zarr is not yet local (same excludes as run_localization)
-    if not (out_dir / "feedforward.zarr").exists():
+    if not (out_dir / "pointcloud.zarr").exists():
         with op_log.step("browse: pulling reconstruction"):
             source.pull_processed(scene, out_dir, excludes=PULL_EXCLUDES)
     result = _load_feedforward_result(out_dir)
-    loc_ext, loc_paths = read_localized_group(out_dir / "feedforward.zarr", extractor, out_dir)
+    loc_ext, loc_paths = read_localized_group(out_dir / "pointcloud.zarr", extractor, out_dir)
     return BrowseData(
         extractor=extractor,
         ref_extrinsics=np.asarray(result.extrinsics),
@@ -723,7 +726,7 @@ def run_localization(
         with op_log.attach_logging("collab_splats"):
             # Reconstruction data: pull once (minimal set), then load from local zarr
             op_log.update_progress(5, "localize: pulling reconstruction")
-            if not (out_dir / "feedforward.zarr").exists():
+            if not (out_dir / "pointcloud.zarr").exists():
                 source.pull_processed(scene, out_dir, excludes=PULL_EXCLUDES)
             op_log.update_progress(15, "localize: loading reconstruction")
             with op_log.step("localize: loading reconstruction"):
@@ -738,13 +741,13 @@ def run_localization(
                 localizer = _build_localizer(
                     result,
                     config,
-                    out_dir / "feedforward.zarr",
+                    out_dir / "pointcloud.zarr",
                     op_log,
                     cache=cache,
                     scene_key=scene,
                     frames_zarr=frames_zarr if frames_zarr.exists() else None,
                 )
-            _stamp_db_provenance(out_dir / "feedforward.zarr", config.matcher, out_dir)
+            _stamp_db_provenance(out_dir / "pointcloud.zarr", config.matcher, out_dir)
 
             # Query frame + intrinsics
             op_log.update_progress(55, f"localize: extracting frame {frame_idx}")
@@ -776,7 +779,7 @@ def run_localization(
                     loc.pose,
                     K,
                     loc.query_features,
-                    zarr_path=out_dir / "feedforward.zarr",
+                    zarr_path=out_dir / "pointcloud.zarr",
                     extractor_name=config.matcher,
                     provenance=provenance,
                 )

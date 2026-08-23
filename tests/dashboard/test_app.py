@@ -78,7 +78,7 @@ def test_run_button_submits_pipeline_job(tmp_path):
 def test_run_loads_cache_without_recompute(tmp_path):
     app, source = _app(tmp_path)
     app.scene_select.value = SCENE
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     with patch.object(app, "_load_outputs") as load:
         app._on_run(event=None, force=False)
     load.assert_called_once()  # loaded from cache, no recompute job
@@ -87,7 +87,7 @@ def test_run_loads_cache_without_recompute(tmp_path):
 def test_force_rerun_submits_even_when_cached(tmp_path):
     app, source = _app(tmp_path)
     app.scene_select.value = SCENE
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     app._on_run(event=None, force=True)
     assert len(app._gpu.submitted) == 1  # recompute despite cache
 
@@ -100,7 +100,7 @@ def test_load_outputs_pull_excludes_dense_arrays(tmp_path):
     job_fn, _on_done, _doc = app._gpu.submitted[-1]
 
     source.pull_processed.reset_mock()
-    # feedforward.zarr absent -> job pulls; assert it forwards the exclude set.
+    # pointcloud.zarr absent -> job pulls; assert it forwards the exclude set.
     try:
         job_fn()
     except Exception:
@@ -213,7 +213,7 @@ def _recording_app(tmp_path, cache=None):
 
 def test_load_outputs_defers_heavy_work_to_worker(tmp_path):
     app, worker = _recording_app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     app._load_outputs(SCENE)
     # The handler must NOT render inline; it enqueues exactly one job.
     app._viewer.load.assert_not_called()
@@ -231,7 +231,7 @@ def test_load_job_reports_pull_progress_to_op_log(tmp_path):
     def fake_pull(scene, out, excludes=(), on_line=None):
         if on_line:
             on_line("Transferred: 1 GiB / 2 GiB, 42%, 10 MiB/s")
-        (out / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+        (out / "pointcloud.zarr").mkdir(parents=True, exist_ok=True)
         raise RuntimeError("stop before load_zarr")
 
     app._source.pull_processed = fake_pull
@@ -246,7 +246,7 @@ def test_load_job_reports_pull_progress_to_op_log(tmp_path):
 
 def test_load_outputs_on_done_renders_into_viewer(tmp_path):
     app, worker = _recording_app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     app._load_outputs(SCENE)
     _job, on_done, _doc = worker.submitted[0]
     # Job returns (result, mesh_path, semantics_dir, point_features). point_features=None here means
@@ -286,14 +286,14 @@ def _run_load_job(app, scene):
 
 
 def test_load_outputs_resolves_the_flat_semantics_layout(tmp_path):
-    """The load job reports the flat semantics dir, matching the flat feedforward.zarr it gated on.
+    """The load job reports the flat semantics dir, matching the flat pointcloud.zarr it gated on.
 
     Both halves of a loadable scene are flat, because the dashboard browses its own output. A
     backend-keyed (published) scene is not loadable at all — load_zarr raises on the pointcloud
     long before semantics is consulted — so there is no layout to unify here.
     """
     app, _source = _app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     flat = _write_features_zarr(tmp_path / SCENE / "semantics")
 
     _result, _mesh, semantics_dir, _features = _run_load_job(app, SCENE)
@@ -303,7 +303,7 @@ def test_load_outputs_resolves_the_flat_semantics_layout(tmp_path):
 def test_load_outputs_semantics_is_none_when_scene_has_none(tmp_path):
     """No flat semantics dir -> None, which viewer.load already tolerates."""
     app, _source = _app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
 
     _result, _mesh, semantics_dir, _features = _run_load_job(app, SCENE)
     assert semantics_dir is None
@@ -357,9 +357,9 @@ def test_load_outputs_logs_steps(tmp_path, monkeypatch):
 
     app, worker = _recording_app(tmp_path)
 
-    # feedforward.zarr absent -> job pulls; fake pull materialises the zarr dir.
+    # pointcloud.zarr absent -> job pulls; fake pull materialises the zarr dir.
     def fake_pull(scene, out, excludes=(), on_line=None):
-        (out / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+        (out / "pointcloud.zarr").mkdir(parents=True, exist_ok=True)
 
     app._source.pull_processed = fake_pull
     monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p, **kwargs: object())
@@ -368,7 +368,7 @@ def test_load_outputs_logs_steps(tmp_path, monkeypatch):
     job_fn()
     joined = "\n".join(app._op_log.log_lines)
     assert "pulling from server" in joined
-    assert "reading feedforward.zarr" in joined and "done (" in joined
+    assert "reading pointcloud.zarr" in joined and "done (" in joined
 
 
 def test_density_change_logs_hint(tmp_path):
@@ -397,9 +397,9 @@ def test_load_does_not_eager_load_features(tmp_path, monkeypatch):
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     app, worker = _recording_app(tmp_path)
-    # Fake local scene: feedforward.zarr present (skips the pull) + cached lifted features.
+    # Fake local scene: pointcloud.zarr present (skips the pull) + cached lifted features.
     out = tmp_path / SCENE
-    (out / "feedforward.zarr").mkdir(parents=True)
+    (out / "pointcloud.zarr").mkdir(parents=True)
     sem_dir = out / "semantics"
     sem_dir.mkdir()
     (sem_dir / "talk2dino_lifted.zarr").mkdir()  # contents irrelevant — nothing may open it yet
@@ -765,7 +765,7 @@ def test_render_query_length_mismatch_falls_back(tmp_path):
 def test_ensure_lift_inputs_pulls_missing_dense_members(tmp_path, monkeypatch):
     """Legacy scene (no lifted store, dense arrays excluded by the pull) fetches them."""
     app, _src = _app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     pulls = []
     monkeypatch.setattr(
         app._source, "pull_zarr_members", lambda scene, out, members, on_line=None: pulls.append(members)
@@ -793,7 +793,7 @@ def _write_cached_features(sem_dir, *, weights=True, extractor="talk2dino"):
 def test_ensure_lift_inputs_skips_when_lifted_cached(tmp_path, monkeypatch):
     """A cached lifted store means the lift never runs -> no dense-array fetch."""
     app, _src = _app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     _write_cached_features(tmp_path / SCENE / "semantics")
     pulls = []
     monkeypatch.setattr(app._source, "pull_zarr_members", lambda *a, **k: pulls.append(a))
@@ -808,7 +808,7 @@ def test_ensure_lift_inputs_refetches_when_cached_features_lack_weights(tmp_path
     no inputs, and the unreadable cache is never rewritten.
     """
     app, _src = _app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     _write_cached_features(tmp_path / SCENE / "semantics", weights=False)
     pulls = []
     monkeypatch.setattr(
@@ -821,7 +821,7 @@ def test_ensure_lift_inputs_refetches_when_cached_features_lack_weights(tmp_path
 def test_ensure_lift_inputs_skips_when_members_present(tmp_path, monkeypatch):
     """Dense members already on disk (fresh local run) -> no fetch."""
     app, _src = _app(tmp_path)
-    zarr_dir = tmp_path / SCENE / "feedforward.zarr"
+    zarr_dir = tmp_path / SCENE / "pointcloud.zarr"
     for member in ("pixel_indices", "depth", "confidence"):
         (zarr_dir / member).mkdir(parents=True)
     pulls = []
@@ -835,13 +835,13 @@ def test_cleanup_lift_inputs_removes_members_after_lift(tmp_path):
     app, _src = _app(tmp_path)
     out = tmp_path / SCENE
     for member in ("pixel_indices", "depth", "confidence"):
-        d = out / "feedforward.zarr" / member
+        d = out / "pointcloud.zarr" / member
         d.mkdir(parents=True)
         (d / "chunk").write_bytes(b"x" * 10)
     _write_cached_features(out / "semantics")
     app._cleanup_lift_inputs(SCENE)
-    assert not (out / "feedforward.zarr" / "pixel_indices").exists()
-    assert not (out / "feedforward.zarr" / "depth").exists()
+    assert not (out / "pointcloud.zarr" / "pixel_indices").exists()
+    assert not (out / "pointcloud.zarr" / "depth").exists()
     assert any("dense arrays" in line and "freed" in line for line in app._op_log.log_lines)
 
 
@@ -849,29 +849,29 @@ def test_cleanup_lift_inputs_keeps_members_when_weights_missing(tmp_path):
     """Codes without their weights are not a completed lift — keep the only inputs a retry has."""
     app, _src = _app(tmp_path)
     out = tmp_path / SCENE
-    d = out / "feedforward.zarr" / "depth"
+    d = out / "pointcloud.zarr" / "depth"
     d.mkdir(parents=True)
     (d / "chunk").write_bytes(b"x")
     _write_cached_features(out / "semantics", weights=False)
     app._cleanup_lift_inputs(SCENE)
-    assert (out / "feedforward.zarr" / "depth").exists()
+    assert (out / "pointcloud.zarr" / "depth").exists()
 
 
 def test_cleanup_lift_inputs_keeps_members_when_lift_failed(tmp_path):
     """No cached lifted store (lift failed) -> members stay so a retry can run."""
     app, _src = _app(tmp_path)
     out = tmp_path / SCENE
-    d = out / "feedforward.zarr" / "depth"
+    d = out / "pointcloud.zarr" / "depth"
     d.mkdir(parents=True)
     (d / "chunk").write_bytes(b"x")
     app._cleanup_lift_inputs(SCENE)
-    assert (out / "feedforward.zarr" / "depth").exists()
+    assert (out / "pointcloud.zarr" / "depth").exists()
 
 
 def test_ensure_lift_inputs_reports_fetch(tmp_path, monkeypatch):
     """Returns True only when a fetch actually happened."""
     app, _src = _app(tmp_path)
-    (tmp_path / SCENE / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / SCENE / "pointcloud.zarr").mkdir(parents=True)
     monkeypatch.setattr(app._source, "pull_zarr_members", lambda *a, **k: None)
     assert app._ensure_lift_inputs(SCENE) is True
     _write_cached_features(tmp_path / SCENE / "semantics")

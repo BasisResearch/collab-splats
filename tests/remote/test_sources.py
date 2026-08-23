@@ -309,7 +309,7 @@ def test_list_localization_dbs_returns_extractor_dirs(monkeypatch):
     _fake_run(
         monkeypatch,
         listings={
-            f"collab-data:{PROCESSED_BUCKET}/s/feedforward.zarr/local_features": _dirs("xfeat", "disk")
+            f"collab-data:{PROCESSED_BUCKET}/s/pointcloud.zarr/local_features": _dirs("xfeat", "disk")
             + _files("zarr.json")
         },
     )
@@ -568,12 +568,12 @@ def test_pull_zarr_members_includes_each_bare_member(monkeypatch, tmp_path):
     client = _FakeClient()
     SceneSource(client).pull_zarr_members("s", tmp_path, members=("pixel_indices", "depth"))
     cmd = client.cmds[0]
-    # The remote is already rooted at feedforward.zarr, so an --include may not repeat that prefix,
+    # The remote is already rooted at pointcloud.zarr, so an --include may not repeat that prefix,
     # and each pattern needs the /** suffix — either mistake matches nothing and "succeeds" empty.
     assert cmd[:3] == [
         "copy",
-        f"collab-data:{PROCESSED_BUCKET}/s/feedforward.zarr",
-        str(tmp_path / "feedforward.zarr"),
+        f"collab-data:{PROCESSED_BUCKET}/s/pointcloud.zarr",
+        str(tmp_path / "pointcloud.zarr"),
     ]
     includes = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--include"]
     assert includes == ["pixel_indices/**", "depth/**"]
@@ -581,13 +581,13 @@ def test_pull_zarr_members_includes_each_bare_member(monkeypatch, tmp_path):
 
 def test_pull_excludes_cover_the_dense_per_pixel_arrays():
     assert PULL_EXCLUDES == (
-        "feedforward.zarr/depth/**",
-        "feedforward.zarr/world_points/**",
-        "feedforward.zarr/confidence/**",
-        "feedforward.zarr/conf/**",
-        "feedforward.zarr/features/**",
-        "feedforward.zarr/pixel_indices/**",
-        "feedforward.zarr/images/**",
+        "pointcloud.zarr/depth/**",
+        "pointcloud.zarr/world_points/**",
+        "pointcloud.zarr/confidence/**",
+        "pointcloud.zarr/conf/**",
+        "pointcloud.zarr/features/**",
+        "pointcloud.zarr/pixel_indices/**",
+        "pointcloud.zarr/images/**",
     )
 
 
@@ -750,7 +750,7 @@ def test_push_excludes_anchor_the_2d_feature_cache_at_the_scene_root():
     """Unanchored, `semantics/**` would also exclude `<backend>/semantics/**` — the deliverable.
 
     Measured with rclone v1.53.3-DEV, local->local `copy --dry-run` over a tree holding both
-    `features/x` and `sub/feedforward.zarr/features/x`: `--exclude 'features/**'` skipped BOTH,
+    `features/x` and `sub/pointcloud.zarr/features/x`: `--exclude 'features/**'` skipped BOTH,
     while `--exclude '/features/**'` skipped only the root one. The same rule applies here, and
     the stakes are higher: the intended target is Reconstructor.semantics_cache_dir ==
     output_path/"semantics" (regenerable 2D patch maps, depth 1 under the pushed root), while the
@@ -804,7 +804,7 @@ def test_push_outputs_invalidates_processed_listings(monkeypatch, tmp_path):
         listings={
             f"collab-data:{PROCESSED_BUCKET}/s": _files("transforms.json"),
             f"collab-data:{PROCESSED_BUCKET}": _dirs("2026_07_20-birds-C0043"),
-            f"collab-data:{PROCESSED_BUCKET}/s/feedforward.zarr/local_features": _dirs("disk"),
+            f"collab-data:{PROCESSED_BUCKET}/s/pointcloud.zarr/local_features": _dirs("disk"),
         },
     )
     client = _FakeClient()

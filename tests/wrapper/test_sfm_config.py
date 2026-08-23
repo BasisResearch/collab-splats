@@ -11,7 +11,8 @@ BASE_YAML = Path(__file__).parents[2] / "configs" / "base.yaml"
 
 
 def _base_config():
-    """Load configs/base.yaml as a plain dict, with dummy required top-level fields.
+    """
+    Load configs/base.yaml as a plain dict, with dummy required top-level fields.
 
     base.yaml itself carries `input_path: null` / `output_path: null` (they're filled in
     at Reconstructor construction time from the caller's config) — validate_config's
@@ -25,12 +26,16 @@ def _base_config():
 
 
 def test_instantsfm_is_valid_sfm_backend():
-    """instantsfm joins colmap/hloc in the sfm backend allowlist."""
+    """
+    instantsfm joins colmap/hloc in the sfm backend allowlist.
+    """
     assert "instantsfm" in _SFM_BACKENDS
 
 
 def test_sfm_instantsfm_config_validates():
-    """method: sfm, backend: instantsfm is a valid, constructible config."""
+    """
+    method: sfm, backend: instantsfm is a valid, constructible config.
+    """
     cfg = _base_config()
     cfg["pointcloud"]["method"] = "sfm"
     cfg["pointcloud"]["backend"] = "instantsfm"
@@ -38,7 +43,9 @@ def test_sfm_instantsfm_config_validates():
 
 
 def test_sfm_rejects_bundle_adjustment():
-    """bundle_adjustment is InstantSfM's own job — refused at validation."""
+    """
+    bundle_adjustment is InstantSfM's own job — refused at validation.
+    """
     cfg = _base_config()
     cfg["pointcloud"]["method"] = "sfm"
     cfg["pointcloud"]["backend"] = "instantsfm"
@@ -48,7 +55,9 @@ def test_sfm_rejects_bundle_adjustment():
 
 
 def test_instantsfm_features_allowlist():
-    """pointcloud.instantsfm.features must be in the installed-version allowlist."""
+    """
+    pointcloud.instantsfm.features must be in the installed-version allowlist.
+    """
     cfg = _base_config()
     cfg["pointcloud"]["method"] = "sfm"
     cfg["pointcloud"]["backend"] = "instantsfm"
@@ -58,13 +67,16 @@ def test_instantsfm_features_allowlist():
 
 
 def test_base_yaml_has_instantsfm_block():
-    """base.yaml carries the instantsfm sub-block with its documented default."""
+    """
+    base.yaml carries the instantsfm sub-block with its documented default.
+    """
     cfg = _base_config()
     assert cfg["pointcloud"]["instantsfm"] == {"features": "colmap"}
 
 
 def test_refine_poses_refuses_sfm_method(tmp_path):
-    """refine_poses refuses outright when pointcloud.method is sfm.
+    """
+    refine_poses refuses outright when pointcloud.method is sfm.
 
     Cheap to construct directly since the guard is the first line of the method —
     no pointcloud.zarr or heavy creator setup needed.

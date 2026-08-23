@@ -709,9 +709,7 @@ class Reconstructor:
         if method == "sfm" and backend == "instantsfm":
             features = pc.get("instantsfm", {}).get("features")
             if features not in _INSTANTSFM_FEATURES:
-                raise ValueError(
-                    f"pointcloud.instantsfm.features={features!r} not in {sorted(_INSTANTSFM_FEATURES)}"
-                )
+                raise ValueError(f"pointcloud.instantsfm.features={features!r} not in {sorted(_INSTANTSFM_FEATURES)}")
 
         return config
 

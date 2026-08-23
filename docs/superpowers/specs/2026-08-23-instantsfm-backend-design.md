@@ -15,16 +15,16 @@ backend beside the existing (unwired) `colmap` and `hloc` creators.
 This is a bet against the two measured pains of the feedforward backbones: **pose quality**
 (poses from epipolar geometry + depth-constrained global positioning, a different objective
 from the rejected reprojection-BA family) and **depth fidelity** (VDA depth maps generated
-per scene; consumed by SfM and — via the standard `feedforward.zarr` contract — by the
-splats depth loss in v1; mesh/semantics in a fast-follow). Slower than feedforward, faster
-than incremental COLMAP.
+per scene; consumed by SfM and — via the standard dense-tensor contract, written as
+`dense.zarr` — by every downstream stage: splats depth loss, mesh, semantics, localize,
+verify). Slower than feedforward, faster than incremental COLMAP.
 
 ## Decisions (from brainstorm Q&A)
 
 | Question | Decision |
 |---|---|
 | Role | Full pointcloud backend (`method: sfm`, `backend: instantsfm`) — primary bet on pose + depth quality, not a side-by-side experiment |
-| Depth | **Depth path is THE path (2026-08-23 review):** VDA metric depth generated in v1, fed to SfM (`use_depths=True`, not configurable — only shipped mode) **and written into the standard output contract** — a minimal `feedforward.zarr` (depth + poses + K) so the splats depth loss works unchanged. TSDF mesh / semantics consumption = fast-follow |
+| Depth | **Depth path is THE path (2026-08-23 review):** VDA metric depth generated in v1, fed to SfM (`use_depths=True`, not configurable — only shipped mode) **and written into the standard dense-tensor contract as `dense.zarr`** (depth + images + world_points + poses + K — NOT named feedforward, it isn't one) so EVERY downstream stage works: splats depth loss, mesh, semantics, localize, verify. Only `refine` excluded (InstantSfM has its own BA) |
 | Invocation | **Their code, never CLI/subprocess** (2026-08-23 review): InstantSfM via Python API controllers; VDA via `VideoDepthAnything` class imported from cloned upstream repo (`third_party/`, not pip-installable) — zero reimplementation |
 | Features | Their native feature pipeline as-is |
 | Eval | In-plan: chess/seq-01 ATE + wall-clock vs 4 feedforward backends |
@@ -112,46 +112,64 @@ Replaces the stub, dispatches all three sfm backends:
 3. Dispatch to `InstantSfMCreator` (kwargs from `pointcloud.instantsfm`). **`colmap` and
    `hloc` keep their `NotImplementedError` behaviour** — wiring untested backends "for
    free" was overengineering; they get wired when someone needs them.
-4. Write the minimal `feedforward.zarr` (section 5) from the VDA maps + the reconstructed
+4. Write `dense.zarr` (section 5) from the VDA maps + frames.zarr RGB + the reconstructed
    model.
 5. Shared tail identical to the feedforward path: optional clean, `sparse_pc.ply` export,
    `transforms.json`, COLMAP binary model on disk.
 
 
-### 5. Output contract — minimal `feedforward.zarr` (v1)
+### 5. Output contract — `dense.zarr`, full-pipeline compatible (v1)
 
-The backend matches the standard output contract so the splats pipeline consumes VDA depth
-with no new plumbing: after reconstruction, `_run_sfm` writes `backend_dir/feedforward.zarr`
-via `FeedforwardResult.save_zarr` with exactly:
+The backend fills the SAME per-frame dense-tensor contract every downstream stage already
+reads — but the artifact is **not named `feedforward.zarr`** (this is not a feedforward
+method). After reconstruction, `_run_sfm` writes `backend_dir/dense.zarr` via
+`FeedforwardResult.save_zarr` (the dataclass stays — it is the internal tensor container,
+not user-facing naming; renaming it is a wide refactor deliberately out of scope):
 
-- `depth`: the VDA maps `(N, H_vda, W_vda)` float32, **ordered to match
-  `result.image_paths`** (the splats stage aligns depth targets by array index — order
-  mismatch silently trains on wrong-view depth).
+- `depth`: VDA maps `(N, H, W)` float32 at **VDA working resolution, not native** (native
+  world_points for 300 frames ≈ 7.5 GB; plan task pins the actual VDA output res),
+  **ordered to match `result.image_paths`** (stages align by array index — order mismatch
+  silently pairs wrong-view tensors).
+- `images`: depth-aligned RGB at the same resolution (resized from frames.zarr) — unlocks
+  mesh (non-native path), semantics lifting, localize, refine-free verify.
+- `world_points`: unprojected from depth + K + poses via the existing
+  `unproject_depth_map_to_point_map` util — unlocks semantics lifting + localize 2D→3D.
 - `extrinsics`: from the InstantSfM COLMAP model (same poses as the COLMAP binary output).
-- `intrinsics`: COLMAP K **rescaled to the VDA depth resolution** — `.intrinsics` on
+- `intrinsics`: COLMAP K **rescaled to the depth resolution** — `.intrinsics` on
   `FeedforwardResult` means depth-res by contract; storing original-res K here is exactly
   the 2026-08-11 mesh-intrinsics regression class.
-- NOT written: `images`, `world_points`, `confidence`, `pixel_indices`, `mv_*` — absent,
-  never zeros (existing convention).
+- NOT written: `confidence`, `pixel_indices`, `mv_*` — absent, never zeros (existing
+  convention). VDA has no per-pixel confidence; fabricating ones would be fake data.
 
-Why this is sound: with `use_depths=True`, InstantSfM's global positioning estimates scene
-scale from these same depth values, so poses and VDA depth land in one consistent (metric)
-scale — the property that makes the depth valid as a splat target in the COLMAP world
-frame. Residual per-frame scale error is unmeasured (Open risk 4); the depth loss weight
-(0.01, disparity L1) bounds the damage.
+**Path resolution:** one resolver property `Reconstructor.dense_zarr` — returns
+`backend_dir/feedforward.zarr` for feedforward scenes (disk layout unchanged, zero
+migration of processed scenes) and `backend_dir/dense.zarr` for sfm backends. Every stage
+loader goes through it; no stage hardcodes the filename anymore. The processed-scene
+output contract in `configs/README.md` gains the `dense.zarr` entry (GCS push includes it
+like `feedforward.zarr`).
 
-Per-stage consequences:
+Why the scale is sound: with `use_depths=True`, InstantSfM's global positioning estimates
+scene scale from these same depth values, so poses and VDA depth land in one consistent
+(metric) scale — the property that makes the depth valid downstream in the COLMAP world
+frame. Residual per-frame scale error is unmeasured (Open risk 4); the splat depth loss
+weight (0.01, disparity L1) bounds the damage there.
 
-- `splats` **fully works, depth loss included**: `splats()` already loads depth targets
-  from `feedforward.zarr`. One small change: absent `confidence` → skip the
-  `confidence_mask` step (use depth unmasked) instead of erroring. No trainer changes.
-- Fail loud (missing arrays, existing zarr-load seams; error names the backend):
-  `semantics` lifting (needs images/world_points), `localize` (feature cache needs
-  images), `refine` (track extraction needs images/confidence/world_points), `verify`
-  (features come from the localize cache).
-- `mesh` would nearly work off this zarr (depth + K + poses) — **deliberately still
-  gated to the fast-follow**: TSDF from VDA depth needs its own speckle/`depth_trunc`
-  calibration (cf. splat-mesh 2.3–2.7× speckle finding), not a silent default.
+Per-stage matrix (v1):
+
+- `splats` — works, **depth loss included**; absent `confidence` → skip `confidence_mask`
+  (train unmasked) instead of erroring. No trainer changes.
+- `mesh` — works off `dense.zarr` (depth + RGB + K + poses). `conf_percentile` with absent
+  confidence → no masking (logged). VDA-depth TSDF quality (speckle, `depth_trunc`) is
+  measured in the smoke, not assumed.
+- `semantics` — works: lifting reads depth/world_points/images from the store.
+- `localize` — works: feature cache builds from images; 2D→3D samples world_points.
+- `verify` — works via the localize cache + COLMAP model.
+- `refine` — **excluded by design** (raises with message): InstantSfM already runs its own
+  bae-based BA inside reconstruction; stacking our BA on top re-litigates the rejected
+  BA-family lever.
+
+Absent-confidence tolerance ("absent → no masking, log it") is a general contract fix at
+each `confidence_mask` seam, not instantsfm-special-casing.
 
 ## Install (verified 2026-08-23 on this container)
 
@@ -209,14 +227,16 @@ uv pip install scikit-sparse==0.4.15                                   # builds 
 
 - Unit (no GPU): backend accepted by config validation; `_run_sfm` dispatch reaches the
   creator; `features` key derives a matched handler/config pair for every allowed value;
-  frames.zarr → images staging writes N files and is idempotent; downstream guards raise
-  with the documented messages; empty-track pre-check raises cleanly; zarr contract —
-  depth order matches `image_paths`, K stored at depth res (synthetic round-trip through
-  `FeedforwardResult.load_zarr`), `splats()` depth path tolerates absent confidence.
+  frames.zarr → images staging writes N files and is idempotent; empty-track pre-check
+  raises cleanly; `refine` raises on this backend; zarr contract — depth/images order
+  matches `image_paths`, K stored at depth res, world_points round-trips through
+  `FeedforwardResult.load_zarr`; `dense_zarr` resolver returns the right path per method;
+  every `confidence_mask` seam tolerates absent confidence (no masking + log).
 - Smoke (GPU, human-gated): `data/tutorial/` video end-to-end
   `preproc → pointcloud(sfm/instantsfm)` → valid COLMAP model + `sparse_pc.ply` +
-  `transforms.json` + `feedforward.zarr`; then `splats` trains from it **with the depth
-  loss active** (log line confirms N depth targets loaded).
+  `transforms.json` + `dense.zarr`; then every downstream stage runs: `splats` **with the
+  depth loss active** (log line confirms N depth targets loaded), `mesh` (TSDF over VDA
+  depth — speckle/`depth_trunc` observed and recorded), `semantics`, `localize`, `verify`.
 - Eval (GPU, tmux, human-gated): two conditions in `evals/scripts/eval.py` —
   `instantsfm` (the shipping configuration, depth-constrained) and `instantsfm_nodepth`
   (`use_depths=False` programmatic override, isolates the VDA contribution) —
@@ -227,9 +247,12 @@ uv pip install scikit-sparse==0.4.15                                   # builds 
 
 ## Non-goals
 
-- **Mesh/semantics consumption of VDA depth** — fast-follow spec, gated on the eval
-  above (TSDF over VDA depth needs its own speckle/`depth_trunc` calibration). Splat
-  depth targets ARE in v1 via the `feedforward.zarr` contract.
+- **`refine` on this backend** — InstantSfM runs its own bae-based BA; stacking ours
+  re-litigates the rejected BA-family lever. Raises, documented.
+- **Renaming the `FeedforwardResult` dataclass** — internal container, wide refactor;
+  the artifact name (`dense.zarr`) is the user-facing fix.
+- **Migrating existing feedforward scenes to `dense.zarr`** — feedforward backends keep
+  writing `feedforward.zarr`; the `dense_zarr` resolver absorbs the difference.
 - GPU pycolmap build (system CUDA COLMAP binary already exists; pycolmap wheel stays CPU;
   speed-only change, separate infra effort if ever wanted).
 - Their `ins-gs` 3DGS trainer and `vis/` stack — we have `collab_splats/splats/`.

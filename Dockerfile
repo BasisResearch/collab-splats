@@ -25,6 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         wget curl ca-certificates gnupg build-essential git \
         unzip xz-utils cmake ninja-build \
+        libsuitesparse-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # uv — fast Python package manager (replaces conda + pip)
@@ -77,7 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends --no-install-su
         libgl1 libglew2.2 libgoogle-glog0v5 \
         libqt5core5a libqt5gui5 libqt5widgets5 \
         libgl1-mesa-glx libhdf5-dev xvfb \
-        build-essential ffmpeg \
+        build-essential ffmpeg libsuitesparse-dev \
         wget curl unzip xz-utils git vim htop tmux less \
         openssh-server gnupg ca-certificates \
     && rm -rf /var/lib/apt/lists/*

@@ -220,7 +220,7 @@ class HlocCreator(BasePointcloudCreator):
 VDA_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "Video-Depth-Anything"
 VDA_CHECKPOINT = "metric_video_depth_anything_vitl.pth"
 
-# Upstream encoder table — DepthAnything/Video-Depth-Anything @ 4f5ae23, run.py:45-50
+# Upstream encoder table — DepthAnything/Video-Depth-Anything @ 4f5ae23, run.py:45-49
 # `model_configs`; vitl only — VDA_CHECKPOINT is the vitl metric weight, so `encoder` must be a
 # key here. Metric vs relative is a constructor flag (`metric=True`), not a separate subdir.
 _VDA_MODEL_CONFIGS = {

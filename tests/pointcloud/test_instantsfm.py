@@ -35,22 +35,37 @@ def _recon_with_keypoint(xy):
     return _Recon()
 
 
+_NAMES = ["frame_000000.jpg", "frame_000001.jpg"]
+
+
 def test_vda_missing_clone_raises_actionable_import_error(tmp_path, monkeypatch):
     monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
     frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
     with pytest.raises(ImportError, match="setup.sh"):
-        sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path)
+        sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path, names=_NAMES)
 
 
 def test_vda_skips_when_depths_exist(tmp_path):
-    out = tmp_path / "depth_vda"
-    out.mkdir()
-    np.savez_compressed(out / "depths.npz", depths=np.ones((2, 4, 4), dtype=np.float32))
+    npy_dir = tmp_path / "depth_vda" / "images" / "npy"
+    npy_dir.mkdir(parents=True)
+    for name in _NAMES:
+        np.save(npy_dir / f"{name[:-4]}.npy", np.ones((4, 4), dtype=np.float32))
     frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
 
-    # Existing depths.npz -> returned untouched, no VDA import attempted
-    path = sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path)
-    assert path == out / "depths.npz"
+    # Complete per-frame npy set -> returned untouched, no VDA import attempted
+    path = sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path, names=_NAMES)
+    assert path == tmp_path / "depth_vda"
+
+
+def test_vda_incomplete_npy_set_does_not_skip(tmp_path, monkeypatch):
+    # One map for two names -> treated as missing -> inference path -> missing clone raises
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
+    npy_dir = tmp_path / "depth_vda" / "images" / "npy"
+    npy_dir.mkdir(parents=True)
+    np.save(npy_dir / "frame_000000.npy", np.ones((4, 4), dtype=np.float32))
+    frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
+    with pytest.raises(ImportError, match="setup.sh"):
+        sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path, names=_NAMES)
 
 
 def test_pixel_indices_from_reconstruction_scales_to_depth_res():

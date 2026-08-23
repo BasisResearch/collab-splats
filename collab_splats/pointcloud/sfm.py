@@ -7,8 +7,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pycolmap
+import torch
 
 from .base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
 
@@ -218,9 +220,9 @@ class HlocCreator(BasePointcloudCreator):
 VDA_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "Video-Depth-Anything"
 VDA_CHECKPOINT = "metric_video_depth_anything_vitl.pth"
 
-# Upstream encoder table (Video-Depth-Anything metric_depth/run.py `model_configs`)
+# Upstream encoder table (Video-Depth-Anything metric_depth/run.py `model_configs`); vitl only —
+# VDA_CHECKPOINT is the vitl metric weight, so `encoder` must be a key here
 _VDA_MODEL_CONFIGS = {
-    "vits": {"encoder": "vits", "features": 64, "out_channels": [48, 96, 192, 384]},
     "vitl": {"encoder": "vitl", "features": 256, "out_channels": [256, 512, 1024, 1024]},
 }
 
@@ -229,9 +231,11 @@ def generate_vda_depth(
     frames: np.ndarray,
     fps: float,
     out_dir: Path,
+    names: list[str],
     *,
     encoder: str = "vitl",
     input_size: int = 518,
+    depth_width: int = 518,
     device: str = "cuda",
 ) -> Path:
     """
@@ -239,20 +243,30 @@ def generate_vda_depth(
 
     - frames: (N, H, W, 3) uint8 RGB (frames.zarr order).
     - fps: effective keyframe rate — VDA is temporal.
-    - out_dir: parent dir; depths land at out_dir/depth_vda/depths.npz key 'depths'
-      (the exact layout instantsfm ReadDepthsIntoFeatures consumes).
-    - Returns the depths.npz path. Skips inference when it already exists.
+    - names: staged image filenames (e.g. frame_000000.jpg), one per frame, same order.
+    - out_dir: parent dir; one float32 map per frame lands at
+      out_dir/depth_vda/images/npy/<stem>.npy — the layout instantsfm's
+      ReadDepthsIntoFeatures single-camera branch consumes (data_reader.py:404-407 ->
+      ReadDepthsWithFilenames(depth_vda/images) -> npy/<stem>.npy matched by image stem).
+    - depth_width: VDA returns depth at the input frame resolution (300 x 1080p = 2.5 GB),
+      too heavy for pointcloud.zarr; each map is nearest-resized to this width (no depth
+      blending across discontinuities). 518 matches the feedforward model-res convention
+      so downstream stages see the same resolution class. Any depth res is valid for SfM —
+      instantsfm's sample_depth_at_pixel normalises keypoints by camera w/h.
+    - Returns out_dir/depth_vda. Skips inference when npy/ already holds len(names) maps.
 
     Attribution: inference pattern follows
     https://github.com/DepthAnything/Video-Depth-Anything metric_depth/run.py.
     """
+    if len(names) != len(frames):
+        raise ValueError(f"names ({len(names)}) and frames ({len(frames)}) must align one-to-one")
     depth_dir = Path(out_dir) / "depth_vda"
-    npz_path = depth_dir / "depths.npz"
+    npy_dir = depth_dir / "images" / "npy"
 
-    # Idempotent: an existing depth archive is authoritative (overwrite = delete upstream)
-    if npz_path.exists():
-        logger.info("VDA depth exists at %s — skipping inference", npz_path)
-        return npz_path
+    # Idempotent: a complete per-frame npy set is authoritative (overwrite = delete upstream)
+    if npy_dir.is_dir() and len(list(npy_dir.glob("*.npy"))) == len(names):
+        logger.info("VDA depth exists at %s (%d maps) — skipping inference", npy_dir, len(names))
+        return depth_dir
 
     # Lazy heavy import — VDA lives in a third_party clone, not site-packages
     metric_dir = VDA_ROOT / "metric_depth"
@@ -263,7 +277,6 @@ def generate_vda_depth(
         )
     if str(metric_dir) not in sys.path:
         sys.path.insert(0, str(metric_dir))
-    import torch
     from video_depth_anything.video_depth import VideoDepthAnything
 
     ckpt = VDA_ROOT / "checkpoints" / VDA_CHECKPOINT
@@ -275,16 +288,20 @@ def generate_vda_depth(
     model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=True)
     model = model.to(device).eval()
 
-    # Metric inference over the whole keyframe sequence
+    # Metric inference over the whole keyframe sequence (returns input-res depth)
     logger.info("VDA metric inference: %d frames @ %.2f fps (encoder=%s)", len(frames), fps, encoder)
     depths, _fps = model.infer_video_depth(frames, fps, input_size=input_size, device=device, fp32=False)
     depths = np.asarray(depths, dtype=np.float32)
 
-    # Write InstantSfM's npz layout
-    depth_dir.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(npz_path, depths=depths)
-    logger.info("VDA depths written: %s shape=%s", npz_path, depths.shape)
-    return npz_path
+    # Nearest-resize to depth_width and write one map per frame, keyed by image stem
+    h, w = depths.shape[1:3]
+    depth_hw = (int(round(depth_width * h / w)), depth_width)
+    npy_dir.mkdir(parents=True, exist_ok=True)
+    for name, depth in zip(names, depths):
+        small = cv2.resize(depth, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_NEAREST)
+        np.save(npy_dir / f"{Path(name).stem}.npy", small.astype(np.float32))
+    logger.info("VDA depths written: %s (%d maps @ %dx%d)", npy_dir, len(names), depth_hw[1], depth_hw[0])
+    return depth_dir
 
 
 ########################################################################
@@ -293,7 +310,7 @@ def generate_vda_depth(
 
 
 def _pixel_indices_from_reconstruction(
-    recon,
+    recon: pycolmap.Reconstruction,
     point3d_ids: list[int],
     name_to_row: dict[str, int],
     scale_x: float,
@@ -328,18 +345,16 @@ class InstantSfMCreator:
     """
     Global SfM via InstantSfM (https://github.com/cre185/InstantSfM, IROS 2026).
 
-    License: CC-BY-NC-4.0 (non-commercial) — cleared for this repo's research use;
-    revisit before any commercial deployment. Install pinned in setup.sh.
-
-    Drives the upstream Python API directly (never their CLI): ReadData ->
-    GenerateDatabase (system colmap binary, CPU SIFT, exhaustive) ->
-    ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures (VDA metric depth) ->
-    SolveGlobalMapper -> WriteGlomapReconstruction. Call pattern follows
-    instantsfm/scripts/sfm.py::run_sfm at the installed version (0.3.0).
-
-    Not a BasePointcloudCreator: its contract is reconstruct(data_dir) ->
-    pycolmap.Reconstruction over a staged scene dir, not (image_dir, output_dir) ->
-    PointcloudResult; the Reconstructor wraps the result.
+    - License: CC-BY-NC-4.0 (non-commercial) — cleared for this repo's research use;
+      revisit before any commercial deployment. Install pinned in setup.sh.
+    - Drives the upstream Python API directly (never their CLI): ReadData ->
+      GenerateDatabase (system colmap binary, CPU SIFT, exhaustive) ->
+      ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures (VDA metric depth) ->
+      SolveGlobalMapper -> WriteGlomapReconstruction. Call pattern follows
+      instantsfm/scripts/sfm.py::run_sfm at the installed version (0.3.0).
+    - Not a BasePointcloudCreator: its contract is reconstruct(data_dir) ->
+      pycolmap.Reconstruction over a staged scene dir, not (image_dir, output_dir) ->
+      PointcloudResult; the Reconstructor wraps the result.
     """
 
     features: str = "colmap"
@@ -361,10 +376,10 @@ class InstantSfMCreator:
 
     def reconstruct(self, data_dir: Path) -> pycolmap.Reconstruction:
         """
-        Run InstantSfM over data_dir (must hold images/; depth_vda/depths.npz when use_depths).
+        Run InstantSfM over data_dir (must hold images/; depth_vda/ from generate_vda_depth when use_depths).
 
-        - Writes COLMAP binary to data_dir/colmap/sparse/0 and moves the SIFT DB
-          to data_dir/colmap/database.db (contract layout; GCS push excludes the DB).
+        - Works in the contract layout directly: SIFT DB at data_dir/colmap/database.db
+          (reused on re-runs; GCS push excludes it), COLMAP binary at data_dir/colmap/sparse/0.
         - Returns the pycolmap.Reconstruction read back from the written model.
         """
         # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
@@ -387,6 +402,19 @@ class InstantSfMCreator:
         # Depth is the shipped mode; the nodepth path exists only for the eval ablation
         if self.use_depths and not path_info.depth_path:
             raise RuntimeError(f"no depth_vda/ under {data_dir} — generate_vda_depth must run first")
+
+        # Redirect upstream's flat data_dir/{database.db,sparse} into the contract layout
+        # colmap/ (PathInfo is a plain mutable class) — the DB then survives for re-runs
+        # instead of being re-extracted, and no post-hoc moves are needed. A stale sparse/0
+        # is removed so a re-run never mixes models.
+        colmap_dir = data_dir / "colmap"
+        colmap_dir.mkdir(parents=True, exist_ok=True)
+        path_info.database_path = str(colmap_dir / "database.db")
+        path_info.database_exists = Path(path_info.database_path).exists()
+        path_info.output_path = str(colmap_dir / "sparse")
+        sparse_dst = Path(path_info.output_path) / "0"
+        if sparse_dst.exists():
+            shutil.rmtree(sparse_dst)
 
         # SIFT database: reuse an existing one (idempotent re-runs), else build via the
         # system colmap binary (upstream subprocesses it; CPU SIFT, exhaustive). Upstream
@@ -416,44 +444,36 @@ class InstantSfMCreator:
             logger.info("InstantSfM: loading depths from %s", path_info.depth_path)
             ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
 
-        # Global mapping. Upstream crashes with IndexError (numpy-2 empty float64 mask,
-        # scene/defs.py filter_by_mask) when track filtering leaves zero tracks —
-        # translate to an actionable error instead of the raw traceback.
+        # Global mapping. Upstream raises a raw IndexError on several failure paths
+        # (numpy-2 empty float64 mask in scene/defs.py filter_by_mask once every track is
+        # filtered; empty images.depths when depth priors did not load) — log the
+        # traceback and re-raise with an honest pointer to the chained cause.
         try:
             cameras, images, tracks = SolveGlobalMapper(view_graph, cameras, images, config, visualizer=None)
         except IndexError as err:
+            logger.exception("InstantSfM SolveGlobalMapper raised IndexError")
             raise RuntimeError(
-                "InstantSfM global mapping failed — all tracks were filtered out. "
-                "Sparse/low-overlap frame sets do this (upstream numpy-2 bug on the "
-                "empty-track path); use more frames or higher overlap."
+                "InstantSfM global mapping raised IndexError — usually every track was filtered out "
+                "(sparse/low-overlap frames, upstream numpy-2 empty-mask path) or depth priors failed "
+                "to load; see chained cause"
             ) from err
         if not tracks:
             raise RuntimeError("InstantSfM produced zero tracks — reconstruction is empty")
 
-        # Upstream writes output_path/0 for a single cluster, output_path/<id> per cluster otherwise
+        # Upstream writes output_path/0 for a single cluster, output_path/<id> per cluster
+        # otherwise, and returns WITHOUT creating output_path when no image is registered
         WriteGlomapReconstruction(str(path_info.output_path), cameras, images, tracks, str(path_info.image_path))
-        written = Path(path_info.output_path) / "0"
-        clusters = sorted(p.name for p in Path(path_info.output_path).iterdir() if p.is_dir())
-        if not written.is_dir():
+        output_path = Path(path_info.output_path)
+        if not output_path.exists():
+            raise RuntimeError("InstantSfM wrote no reconstruction (no registered images)")
+        clusters = sorted(p.name for p in output_path.iterdir() if p.is_dir())
+        if not sparse_dst.is_dir():
             raise RuntimeError(
                 f"InstantSfM wrote no sparse/0 model (clusters: {clusters}) — the scene split "
                 "into disconnected components; use more frames or higher overlap."
             )
         if len(clusters) > 1:
             logger.warning("InstantSfM split the scene into clusters %s — keeping cluster 0 only", clusters)
-
-        # Move to contract layout: sparse/0 -> colmap/sparse/0, database.db -> colmap/database.db
-        colmap_dir = data_dir / "colmap"
-        sparse_dst = colmap_dir / "sparse" / "0"
-        if sparse_dst.exists():
-            shutil.rmtree(sparse_dst)
-        sparse_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(written), str(sparse_dst))
-        shutil.rmtree(path_info.output_path, ignore_errors=True)
-        db_dst = colmap_dir / "database.db"
-        if db_dst.exists():
-            db_dst.unlink()
-        shutil.move(str(path_info.database_path), str(db_dst))
 
         # Read back the written model as the return value
         recon = pycolmap.Reconstruction(str(sparse_dst))

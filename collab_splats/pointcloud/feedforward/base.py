@@ -122,7 +122,7 @@ class FeedforwardResult:
             pixel_indices=d["pixel_indices"] if "pixel_indices" in d else None,
         )
 
-    def save_zarr(self, path: Path) -> None:
+    def save_zarr(self, path: Path, extra_attrs: dict | None = None) -> None:
         """Save to a zarr v3 store with lz4 compression.
 
         Unlike save(), this backend also persists world_points (chunked by frame),
@@ -131,6 +131,7 @@ class FeedforwardResult:
 
         Args:
             path: Directory path for the zarr store (created if absent).
+            extra_attrs: optional provenance attrs (method, backend, upstream version) merged into store.attrs.
         """
         lz4 = BloscCodec(cname="lz4")
         store = zarr.open(str(path), mode="w")
@@ -139,6 +140,11 @@ class FeedforwardResult:
         store.attrs["image_paths"] = [str(p) for p in self.image_paths]
         store.attrs["model_width"] = self.model_width
         store.attrs["model_height"] = self.model_height
+
+        # Provenance attrs — which method/backend produced this artifact
+        if extra_attrs:
+            for key, value in extra_attrs.items():
+                store.attrs[key] = value
 
         # Save required arrays with lz4 compression
         for name, arr in (

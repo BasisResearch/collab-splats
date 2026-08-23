@@ -151,3 +151,39 @@ def test_run_instantsfm_changed_name_set_drops_sift_db(tmp_path, monkeypatch):
     db.touch()
     eval_gt._run_instantsfm("instantsfm_nodepth", tmp_path / "imgs", out)
     assert db.exists()
+
+
+def test_run_instantsfm_same_names_different_source_drops_caches(tmp_path, monkeypatch):
+    # Eval names are positional (000000.png...), so two sources with the same frame
+    # count collide on names — link targets must key the SIFT DB and VDA depth cache
+    _write_pngs(tmp_path / "imgs_a", 2)
+    _write_pngs(tmp_path / "imgs_b", 2)
+    out = tmp_path / "out"
+
+    class _Creator:
+        def __init__(self, **kw):
+            pass
+
+        def reconstruct(self, data_dir):
+            return _FakeRecon(["000000.png", "000001.png"])
+
+    monkeypatch.setattr(eval_gt, "InstantSfMCreator", _Creator)
+
+    # First run stages imgs_a; plant a DB and depth cache as if it completed
+    eval_gt._run_instantsfm("instantsfm_nodepth", tmp_path / "imgs_a", out)
+    db = out / "colmap" / "instantsfm.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.touch()
+    depth_dir = out / "depth_vda"
+    depth_dir.mkdir()
+
+    # Same names, different source -> both caches dropped
+    eval_gt._run_instantsfm("instantsfm_nodepth", tmp_path / "imgs_b", out)
+    assert not db.exists()
+    assert not depth_dir.exists()
+
+    # Same source again -> caches kept
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.touch()
+    eval_gt._run_instantsfm("instantsfm_nodepth", tmp_path / "imgs_b", out)
+    assert db.exists()

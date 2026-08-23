@@ -31,6 +31,7 @@ import argparse
 import itertools
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -323,8 +324,9 @@ def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.nda
 
     Mirrors Reconstructor._run_sfm on the eval's image dir instead of frames.zarr:
     - Stages image_dir/* as symlinks into output_dir/images/ (InstantSfM's data_dir contract;
-      colmap SIFT reads png/jpg alike, and the SIFT DB colmap/instantsfm.db is keyed on these
-      names — a changed name set drops it so stale features are never reused).
+      colmap SIFT reads png/jpg alike). Staged (name, link-target) pairs key the caches: eval
+      names are positional, so a same-count rerun from a different source keeps the name set —
+      any change drops both colmap/instantsfm.db and depth_vda/ so stale features are never reused.
     - instantsfm: Video-Depth-Anything metric depth at depth_vda/images/npy/<stem>.npy (skipped
       when the per-stem set is complete), GPU released before InstantSfM's CUDA step.
     - Raises RuntimeError on partial registration, naming the unregistered images.
@@ -335,15 +337,21 @@ def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.nda
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Stage symlinks under output_dir/images; a different staged name set invalidates the SIFT DB
+    # Stage symlinks under output_dir/images; changed staged content — names OR link targets
+    # (eval names are positional, so a same-count rerun from a different --seq_dir/--keyframe_list
+    # keeps an identical name set) — invalidates the SIFT DB and the VDA depth cache together
     staged_dir = output_dir / "images"
-    staged = sorted(p.name for p in staged_dir.iterdir()) if staged_dir.is_dir() else []
-    if staged != names:
+    new_links = [(p.name, str(p.resolve())) for p in image_paths]
+    old_links = (
+        sorted((p.name, os.readlink(p)) for p in staged_dir.iterdir() if p.is_symlink()) if staged_dir.is_dir() else []
+    )
+    if old_links != new_links:
         (output_dir / "colmap" / "instantsfm.db").unlink(missing_ok=True)
+        shutil.rmtree(output_dir / "depth_vda", ignore_errors=True)
     shutil.rmtree(staged_dir, ignore_errors=True)
     staged_dir.mkdir(parents=True)
-    for src in image_paths:
-        (staged_dir / src.name).symlink_to(src.resolve())
+    for link_name, target in new_links:
+        (staged_dir / link_name).symlink_to(target)
 
     # Depth priors: VDA over the staged frames. infer_video_depth only echoes target_fps back
     # (video_depth.py:70,162 — no temporal resampling), so the rate is informational; 1.0 here.

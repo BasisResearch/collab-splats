@@ -75,7 +75,7 @@ echo "=== install InstantSfM backend (instantsfm --no-deps, pyceres, scikit-spar
 # The pin is re-applied on every run (idempotent), so an existing clone cannot drift. NOTE: a
 # dangling third_party/Video-Depth-Anything symlink (worktree layouts pointing at an absent
 # main-checkout clone) makes `git clone` fail — fix the link target first.
-# The 1.47 GB checkpoint is best-effort like the vismatch pre-fetch: a no-network build stage
+# The ~1.5 GB checkpoint is best-effort like the vismatch pre-fetch: a no-network build stage
 # skips it and the first SfM run fails fast with an actionable FileNotFoundError. Download to a
 # .part file so an interrupted transfer never leaves a truncated .pth the guard would then skip.
 VDA_DIR="$SCRIPT_DIR/third_party/Video-Depth-Anything"

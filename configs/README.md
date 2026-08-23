@@ -350,7 +350,7 @@ parameter and raises.
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
-| `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate but are not implemented) |
+| `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm.py` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
 | `pointcloud.instantsfm.features` | str | `colmap` | sfm only: feature/matching handler. `colmap` (CPU SIFT + exhaustive) is the only allowed value — anything else raises at validation |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`) |
@@ -449,7 +449,9 @@ feed the buffer enough frames for the cap to matter.
 ### The `instantsfm` backend (`pointcloud.method: sfm`)
 
 Classical global SfM instead of a feedforward model: system COLMAP SIFT + exhaustive
-matching, then InstantSfM's global mapper (rotation averaging, global positioning,
+matching (CPU — upstream forces `CUDA_VISIBLE_DEVICES=""` on the colmap subprocess,
+`instantsfm/controllers/feature_handler.py:23`, even though VDA runs on the GPU), then
+InstantSfM's global mapper (rotation averaging, global positioning,
 global bundle adjustment), with Video-Depth-Anything (VDA) metric depth supplying the
 dense per-frame depth every downstream stage expects. Experimental — it warns at run time
 and its numbers are not yet measured.
@@ -466,7 +468,7 @@ pointcloud:
 (upstream pins `numpy==1.26.4`, the lock runs numpy 2.x), plus `pyceres==2.3`,
 `scikit-sparse==0.4.15` (needs `libsuitesparse-dev`) and `easydict==1.13`; it clones
 Video-Depth-Anything into `third_party/Video-Depth-Anything` at commit `4f5ae23` and
-downloads `checkpoints/metric_video_depth_anything_vitl.pth` (1.47 GB, best-effort — a
+downloads `checkpoints/metric_video_depth_anything_vitl.pth` (~1.5 GB, best-effort — a
 no-network build skips it and the first sfm run fails fast with `FileNotFoundError`). A
 system `colmap` binary must be on `PATH`. Plain `uv sync` prunes the `--no-deps` packages;
 re-run the setup.sh block afterwards.
@@ -502,7 +504,9 @@ lift uses uniform weights, splats depth targets are unmasked).
 **Known limitation (dashboard).** `_ensure_lift_inputs` in `collab_splats/dashboard/app.py`
 treats a `pointcloud.zarr` without `confidence` as a legacy scene and re-pulls its dense
 members before a feature lift, so an instantsfm scene always takes that (harmless but
-slow) path. Not changed yet.
+slow) path; once the lift is cached, `_cleanup_lift_inputs` rmtree's the pulled
+`depth`/`pixel_indices` from the local copy again — pull-then-delete, once per extractor.
+Not changed yet.
 
 ---
 
@@ -513,7 +517,7 @@ slow) path. Not changed yet.
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
   frames.zarr                  ← canonical decode-once keyframe store (chunked images + records + provenance)
   video_quality_report.json    ← source-video quality measurements (report-only)
-  photometric-*.png, motion-*.png ← the report rendered (5 files, written with frames.zarr)
+  photometric.png, motion.png  ← the report rendered (two files, written with frames.zarr)
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
@@ -567,10 +571,19 @@ backend that reconstructs the scene.
   fallback. Scenes written before the rename need a one-time rename or a re-run:
   - local: `mv <scene>/<backend>/feedforward.zarr <scene>/<backend>/pointcloud.zarr`
     (dashboard-built scenes are flat: `mv <scene>/feedforward.zarr <scene>/pointcloud.zarr`)
-  - remote: `rclone moveto <remote>:environments-processed/<scene>/<backend>/feedforward.zarr \
+  - remote (backend-keyed, as published by the remote driver):
+    `rclone moveto <remote>:environments-processed/<scene>/<backend>/feedforward.zarr \
       <remote>:environments-processed/<scene>/<backend>/pointcloud.zarr`
+  - remote (flat, the layout the dashboard pulls — `pull_zarr_members` in
+    `collab_splats/remote/sources.py`):
+    `rclone moveto <remote>:environments-processed/<scene>/feedforward.zarr \
+      <remote>:environments-processed/<scene>/pointcloud.zarr`
 
-  Notebooks/tools reading the old name break until the scene is migrated.
+  Notebooks/tools reading the old name break until the scene is migrated. The tutorial
+  notebooks (`docs/source/tutorials/03_splats/train_splats.ipynb`,
+  `06_mesh/splats_mesh.ipynb`, `07_localization/localization.ipynb`) read
+  `tutorial_config.RECON`, which already points at `pointcloud.zarr`; their stored
+  *output* cells still print the old path and stay stale until re-executed.
 
 Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote/sources.py`): `/semantics/**` at the
 scene root (raw 2D patch maps, regenerable from frames + extractor — note the leading slash,

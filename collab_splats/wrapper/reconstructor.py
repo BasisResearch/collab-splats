@@ -27,6 +27,7 @@ from collab_splats.pointcloud.sfm import (
     InstantSfMCreator,
     _pixel_indices_from_reconstruction,
     generate_vda_depth,
+    vda_depth_complete,
 )
 from collab_splats.preproc import get_video_info
 from collab_splats.preproc import viz as preproc_viz
@@ -371,6 +372,19 @@ def _run_feedforward(
     logger.info("Pointcloud model released from GPU")
 
     return result, viewer
+
+
+def _rename_images_to_stems(recon: "pycolmap.Reconstruction", sparse_dir: Path) -> None:
+    """
+    Rename COLMAP images to their filename stems and rewrite the binary model in place.
+
+    - InstantSfM registers images under their filenames (frame_000000.jpg); the pipeline
+      contract is frame_{source_idx:06d} with NO extension (see _load_pointcloud_from_disk).
+    - pycolmap.Image.name is settable by reference, so the rename lands on the model itself.
+    """
+    for im in recon.images.values():
+        im.name = Path(im.name).stem
+    recon.write_binary(str(sparse_dir))
 
 
 def _get_extractor(name: str):
@@ -989,32 +1003,31 @@ class Reconstructor:
         staged = sorted(p.name for p in image_dir.iterdir()) if image_dir.is_dir() else []
         if staged != names:
             shutil.rmtree(image_dir, ignore_errors=True)
-            (backend_dir / "colmap" / "database.db").unlink(missing_ok=True)
+            (backend_dir / "colmap" / "instantsfm.db").unlink(missing_ok=True)
             store.export(image_dir, ext="jpg")
             logger.info("Staged %d keyframes to %s", len(names), image_dir)
 
-        # VDA metric depth — the only shipped mode (use_depths=True). VDA only echoes fps back
-        # alongside the depths (no temporal resampling), so the keyframe rate is informational.
-        frames = np.ascontiguousarray(store.images())
-        generate_vda_depth(frames, fps=float(self.config["preproc"]["fps"]), out_dir=backend_dir, names=names)
-        del frames
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # VDA metric depth — the only shipped mode (use_depths=True). Gate on the npy set BEFORE
+        # decoding the whole store (300 x 1080p is ~1.9 GB). VDA only echoes fps back alongside
+        # the depths (no temporal resampling), so the keyframe rate is informational.
+        if not vda_depth_complete(backend_dir, names):
+            frames = np.ascontiguousarray(store.images())
+            generate_vda_depth(frames, fps=float(self.config["preproc"]["fps"]), out_dir=backend_dir, names=names)
+            del frames
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
 
-        # Global SfM via the upstream python API; writes colmap/database.db + colmap/sparse/0
+        # Global SfM via the upstream python API; writes colmap/instantsfm.db + colmap/sparse/0
         creator = InstantSfMCreator(features=pc_cfg["instantsfm"]["features"])
         recon = creator.reconstruct(backend_dir)
         del creator
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
             torch.cuda.synchronize()
+            torch.cuda.empty_cache()
 
-        # InstantSfM registers images under their filenames (frame_000000.jpg); the pipeline
-        # contract is frame_{source_idx:06d} with NO extension (see _load_pointcloud_from_disk).
-        # Rename in place and rewrite the model so every later load sees the contract names.
-        for im in recon.images.values():
-            im.name = Path(im.name).stem
-        recon.write_binary(str(backend_dir / "colmap" / "sparse" / "0"))
+        # Rename to the frame_NNNNNN contract and rewrite the model in place
+        _rename_images_to_stems(recon, backend_dir / "colmap" / "sparse" / "0")
 
         # Unified pointcloud.zarr at VDA depth res, with provenance from the installed package
         outputs = self._sfm_result_from_reconstruction(recon, backend_dir, store)
@@ -1076,8 +1089,15 @@ class Reconstructor:
 
         # COLMAP K is at staged-jpg (original) resolution; the depth grid is model-res, so K is
         # rescaled to it — pairing original-res K with model-res depth is the 2026-08-11
-        # mesh-regression class (see _feedforward_to_tsdf_inputs).
+        # mesh-regression class (see _feedforward_to_tsdf_inputs). The COLMAP cameras must be at
+        # the store's resolution, else the staged set / SIFT DB came from a different store.
         orig_h, orig_w = store.image(0).shape[:2]
+        cam_dims = {(recon.cameras[im.camera_id].width, recon.cameras[im.camera_id].height) for im in images_sorted}
+        if cam_dims != {(orig_w, orig_h)}:
+            raise ValueError(
+                f"COLMAP camera resolution {sorted(cam_dims)} does not match {self.frames_zarr} "
+                f"({orig_w}x{orig_h}); the staged images / SIFT database came from a different store."
+            )
         sx, sy = w / orig_w, h / orig_h
         intrinsics = np.stack([recon.cameras[im.camera_id].calibration_matrix() for im in images_sorted])
         intrinsics = intrinsics.astype(np.float32)
@@ -1100,8 +1120,10 @@ class Reconstructor:
         world_points = unproject_depth_map_to_point_map(depths[..., None], extrinsics[:, :3, :], intrinsics)
         world_points = world_points.astype(np.float32)
 
-        # No crop: the depth grid is a full-frame resize of the original
-        original_coords = np.array([[0, 0, w, h, orig_w, orig_h]] * n, dtype=np.float32)
+        # No crop: the depth grid is a full-frame resize, so the crop box is the whole original
+        # frame in ORIGINAL pixels — [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], the loger convention
+        # (consumers read [:4] as original-res coordinates, not depth-grid ones)
+        original_coords = np.array([[0, 0, orig_w, orig_h, orig_w, orig_h]] * n, dtype=np.float32)
 
         return FeedforwardResult(
             points=points,
@@ -1112,7 +1134,7 @@ class Reconstructor:
             original_coords=original_coords,
             model_width=w,
             model_height=h,
-            images=images_arr,
+            images=images_arr,  # numpy float32 on purpose — save_zarr accepts it; no torch tensor needed
             world_points=world_points,
             depth=depths,
             pixel_indices=pixel_indices,

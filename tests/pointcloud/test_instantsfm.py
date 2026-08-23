@@ -68,6 +68,18 @@ def test_vda_incomplete_npy_set_does_not_skip(tmp_path, monkeypatch):
         sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path, names=_NAMES)
 
 
+def test_vda_depth_complete_is_an_exact_stem_set_check(tmp_path):
+    npy_dir = tmp_path / "depth_vda" / "images" / "npy"
+    assert not sfm.vda_depth_complete(tmp_path, _NAMES)  # no dir
+    npy_dir.mkdir(parents=True)
+    np.save(npy_dir / "frame_000000.npy", np.ones((4, 4), dtype=np.float32))
+    assert not sfm.vda_depth_complete(tmp_path, _NAMES)  # partial
+    np.save(npy_dir / "frame_000001.npy", np.ones((4, 4), dtype=np.float32))
+    assert sfm.vda_depth_complete(tmp_path, _NAMES)  # exact
+    np.save(npy_dir / "frame_000009.npy", np.ones((4, 4), dtype=np.float32))
+    assert not sfm.vda_depth_complete(tmp_path, _NAMES)  # leftover extra file
+
+
 def test_vda_wrong_named_npy_set_does_not_skip(tmp_path, monkeypatch):
     # Right COUNT, wrong stems (a stale selection) -> the skip gate compares stem sets, not counts
     monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")

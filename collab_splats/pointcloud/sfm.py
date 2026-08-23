@@ -227,6 +227,14 @@ _VDA_MODEL_CONFIGS = {
 }
 
 
+def vda_depth_complete(out_dir: Path, names: list[str]) -> bool:
+    """
+    True when out_dir/depth_vda/images/npy holds exactly one .npy per stem in `names`.
+    """
+    npy_dir = Path(out_dir) / "depth_vda" / "images" / "npy"
+    return npy_dir.is_dir() and {p.stem for p in npy_dir.glob("*.npy")} == {Path(n).stem for n in names}
+
+
 def generate_vda_depth(
     frames: np.ndarray,
     fps: float,
@@ -265,8 +273,8 @@ def generate_vda_depth(
     npy_dir = depth_dir / "images" / "npy"
 
     # Idempotent: the exact per-frame stem set is authoritative (overwrite = delete upstream);
-    # compared as sets so a wrong-named or leftover file never satisfies the gate
-    if npy_dir.is_dir() and {p.stem for p in npy_dir.glob("*.npy")} == {Path(n).stem for n in names}:
+    # callers may check vda_depth_complete first to avoid decoding frames at all
+    if vda_depth_complete(out_dir, names):
         logger.info("VDA depth exists at %s (%d maps) — skipping inference", npy_dir, len(names))
         return depth_dir
 
@@ -380,8 +388,10 @@ class InstantSfMCreator:
         """
         Run InstantSfM over data_dir (must hold images/; depth_vda/ from generate_vda_depth when use_depths).
 
-        - Works in the contract layout directly: SIFT DB at data_dir/colmap/database.db
-          (reused on re-runs; GCS push excludes it), COLMAP binary at data_dir/colmap/sparse/0.
+        - Works in the contract layout directly: SIFT DB at data_dir/colmap/instantsfm.db
+          (reused on re-runs; GCS push excludes it; its own name so geometry/verification.py's
+          colmap/database.db can never be mistaken for it), COLMAP binary at
+          data_dir/colmap/sparse/0.
         - Returns the pycolmap.Reconstruction read back from the written model.
         """
         # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
@@ -409,12 +419,15 @@ class InstantSfMCreator:
 
         # Redirect upstream's flat data_dir/{database.db,sparse} into the contract layout
         # colmap/ (PathInfo is a plain mutable class) — the DB then survives for re-runs
-        # instead of being re-extracted, and no post-hoc moves are needed. The whole stale
-        # sparse/ tree is removed (not just 0/) so a re-run never mixes models and leftover
-        # sibling cluster dirs (sparse/1) cannot trip the multi-cluster warning below.
+        # instead of being re-extracted, and no post-hoc moves are needed. The DB is named
+        # instantsfm.db: colmap/database.db belongs to the verify stage (loma/xfeat matches),
+        # which unlinks and rewrites it, and reusing that as the SIFT DB would feed
+        # ReadColmapDatabase the wrong features. The whole stale sparse/ tree is removed (not
+        # just 0/) so a re-run never mixes models and leftover sibling cluster dirs (sparse/1)
+        # cannot trip the multi-cluster warning below.
         colmap_dir = data_dir / "colmap"
         colmap_dir.mkdir(parents=True, exist_ok=True)
-        path_info.database_path = str(colmap_dir / "database.db")
+        path_info.database_path = str(colmap_dir / "instantsfm.db")
         path_info.database_exists = Path(path_info.database_path).exists()
         path_info.output_path = str(colmap_dir / "sparse")
         shutil.rmtree(Path(path_info.output_path), ignore_errors=True)

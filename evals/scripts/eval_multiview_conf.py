@@ -9,7 +9,7 @@ s = median(d_gt) / median(d_pred) over pixels with valid GT before any error is 
 CLI/tmux only. Results under evals/results/ (gitignored).
 
 Usage:
-  python evals/scripts/eval_multiview_conf.py --zarr data/outputs/feedforward.zarr \
+  python evals/scripts/eval_multiview_conf.py --zarr data/outputs/pointcloud.zarr \
       --seq data/7scenes/chess/seq-01 --max-frames 60 --out evals/results/mv_sweep_chess01.json
 """
 
@@ -80,7 +80,7 @@ def retained_error(pred_s: np.ndarray, gt: np.ndarray, keep: np.ndarray) -> dict
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--zarr", type=Path, required=True, help="feedforward.zarr from the backend run")
+    ap.add_argument("--zarr", type=Path, required=True, help="pointcloud.zarr from the backend run")
     ap.add_argument("--seq", type=Path, required=True, help="7-Scenes sequence dir with .depth.png")
     ap.add_argument("--max-frames", type=int, default=60)
     ap.add_argument("--out", type=Path, required=True)

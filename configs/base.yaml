@@ -66,7 +66,7 @@ pointcloud:
   # Geometric verification: triangulate independent feature tracks (the localization
   # extractor's — shared zarr cache, one extraction serves both stages) against the final
   # poses via pycolmap. Writes <backend>/colmap/{verified/, verification.json, database.db}.
-  # Reports only — never gates the pipeline or mutates model outputs (feedforward.zarr,
+  # Reports only — never gates the pipeline or mutates model outputs (pointcloud.zarr,
   # sparse_pc.ply, mesh untouched). Off until the first measured report justifies a default.
   geometric_verification: false
   # Export density for sparse_pc.ply. null = write every reconstructed point (default);
@@ -77,7 +77,7 @@ pointcloud:
     port: 8080              # viser server port
   # LM bundle adjustment pose refinement (leaf stage `refine`; runs inline after the
   # pointcloud stage when enabled here, or standalone via --stages refine). Rewrites
-  # COLMAP/transforms.json/sparse_pc.ply/feedforward.zarr poses in place. Mutually
+  # COLMAP/transforms.json/sparse_pc.ply/pointcloud.zarr poses in place. Mutually
   # exclusive with loop_closure. Knobs stay on BundleAdjustmentConfig defaults
   # (global BA; tracks cached in <backend>/).
   bundle_adjustment: false

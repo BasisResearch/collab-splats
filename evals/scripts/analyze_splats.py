@@ -4,13 +4,13 @@ Reports:
   Table 1: per primitive, over pixels with alpha > 0.5 in <results>/<prim>/splats.zarr —
            unit-norm fraction of the stored normal, and the angle between the stored normal
            and a finite-difference normal of the rendered depth (camera frame, stored K).
-  Table 2: TSDF meshes (same mesher settings) from feedforward.zarr and from each primitive's
+  Table 2: TSDF meshes (same mesher settings) from pointcloud.zarr and from each primitive's
            rendered depth — vertices, triangles, connected components, largest-component
            triangle fraction, wall seconds. PLYs land at <results>/mesh_<source>.ply.
 
 Usage (tmux, never a notebook):
   /opt/venv/reconstruction/bin/python evals/scripts/analyze_splats.py \
-      --results evals/results/splats/tutorial --zarr data/outputs/feedforward.zarr \
+      --results evals/results/splats/tutorial --zarr data/outputs/pointcloud.zarr \
       --primitives 3dgs 2dgs --conf-percentile 20
 """
 
@@ -258,7 +258,7 @@ def main() -> None:
     """Parse arguments, run both analyses, write analysis.json, print the tables."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--results", type=Path, default=Path("evals/results/splats/tutorial"))
-    parser.add_argument("--zarr", type=Path, default=Path("data/outputs/feedforward.zarr"))
+    parser.add_argument("--zarr", type=Path, default=Path("data/outputs/pointcloud.zarr"))
     parser.add_argument("--primitives", nargs="+", default=["3dgs", "2dgs"])
     parser.add_argument("--conf-percentile", type=float, default=20.0)
     args = parser.parse_args()

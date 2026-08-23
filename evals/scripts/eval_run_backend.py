@@ -1,4 +1,4 @@
-"""Reconstruct a 7-Scenes sequence with one feedforward backend and dump feedforward.zarr.
+"""Reconstruct a 7-Scenes sequence with one feedforward backend and dump pointcloud.zarr.
 
 Feeds the sweep in ``eval_multiview_conf.py``. Multiview confidence is deliberately OFF here:
 the zarr must hold unfiltered depth so the sweep can apply every (rel_thresh, min_views)
@@ -58,7 +58,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", required=True, choices=sorted(CREATORS))
     ap.add_argument("--seq", type=Path, required=True, help="7-Scenes sequence dir")
-    ap.add_argument("--out", type=Path, required=True, help="output dir for feedforward.zarr")
+    ap.add_argument("--out", type=Path, required=True, help="output dir for pointcloud.zarr")
     ap.add_argument("--max-frames", type=int, default=60)
     args = ap.parse_args()
 
@@ -73,7 +73,7 @@ def main() -> None:
     creator = CREATORS[args.backend](use_multiview_confidence=False)
     result = creator.run(staged)
 
-    zarr_path = args.out / "feedforward.zarr"
+    zarr_path = args.out / "pointcloud.zarr"
     result.save_zarr(zarr_path)
     logger.info("wrote %s  depth=%s", zarr_path, result.depth.shape)
 

@@ -136,9 +136,9 @@ def main() -> None:
     recon = pycolmap.Reconstruction()
     recon.read(str(args.backend_dir / "colmap" / "sparse" / "0"))
     features, ids, _ = load_localization_db(
-        args.backend_dir / "feedforward.zarr", args.extractor
+        args.backend_dir / "pointcloud.zarr", args.extractor
     )
-    ff = FeedforwardResult.load_zarr(args.backend_dir / "feedforward.zarr")
+    ff = FeedforwardResult.load_zarr(args.backend_dir / "pointcloud.zarr")
     frame_indices = FrameStore.open(args.backend_dir.parent / "frames.zarr").frame_indices()
 
     perturbed_names: list[str] = []

@@ -923,15 +923,15 @@ def test_build_localization_db_skips_when_exists(tmp_path):
 
     config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
-    ff = rec.backend_dir / "pointcloud.zarr"
-    ff.mkdir(parents=True)
+    pc_zarr = rec.backend_dir / "pointcloud.zarr"
+    pc_zarr.mkdir(parents=True)
     with (
         patch.object(R, "_localization_db_exists", return_value=True),
         patch.object(R, "_build_localization_db") as build,
     ):
         out = rec.build_localization_db(overwrite=False)
     build.assert_not_called()
-    assert out == ff
+    assert out == pc_zarr
 
 
 ########################################
@@ -1156,15 +1156,15 @@ def test_build_localization_db_runs_when_missing(tmp_path):
 
     config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
-    ff = rec.backend_dir / "pointcloud.zarr"
-    ff.mkdir(parents=True)
+    pc_zarr = rec.backend_dir / "pointcloud.zarr"
+    pc_zarr.mkdir(parents=True)
     with (
         patch.object(R, "_localization_db_exists", return_value=False),
         patch.object(R, "_build_localization_db") as build,
     ):
         rec.build_localization_db(overwrite=False)
     # top_k comes from base.yaml's localization.top_k default (pairwise/vismatch fan-out)
-    build.assert_called_once_with(ff, "loma", rec.frames_zarr, top_k=8, overwrite=False)
+    build.assert_called_once_with(pc_zarr, "loma", rec.frames_zarr, top_k=8, overwrite=False)
 
 
 ########################################

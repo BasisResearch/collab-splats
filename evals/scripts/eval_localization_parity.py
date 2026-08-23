@@ -216,7 +216,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, epilog=_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--scene", type=Path, required=True, help="scene dir containing feedforward.zarr")
+    ap.add_argument("--scene", type=Path, required=True, help="scene dir containing pointcloud.zarr")
     ap.add_argument("--matchers", default=_DEFAULT_MATCHERS, help="comma list; 'vismatch:<name>' forces vismatch")
     ap.add_argument("--n_queries", type=int, default=10, help="held-out frames to localize per matcher")
     ap.add_argument("--top_k", type=int, default=8, help="retrieval-ranked refs per query (pairwise path only)")
@@ -226,9 +226,9 @@ def main() -> None:
     # Load reconstruction: model-res images double as reference AND query pixels —
     # matched ref pixels then live on the world_points grid with no rescale, and
     # every matcher sees identical inputs (the parity condition).
-    ff = FeedforwardResult.load_zarr(args.scene / "feedforward.zarr", load_images=True)
+    ff = FeedforwardResult.load_zarr(args.scene / "pointcloud.zarr", load_images=True)
     if ff.images is None:
-        raise ValueError(f"{args.scene / 'feedforward.zarr'} has no images array — required for queries/pairwise refs")
+        raise ValueError(f"{args.scene / 'pointcloud.zarr'} has no images array — required for queries/pairwise refs")
     images = _model_res_images(ff.images)
     ids = [str(p) for p in ff.image_paths]
 

@@ -86,8 +86,8 @@ def test_reconstructor_passes_overwrite_through(tmp_path):
         "localization": {"enabled": True, "matcher": "loma"},
     }
     rec = Reconstructor(config)
-    ff = rec.backend_dir / "pointcloud.zarr"
-    ff.mkdir(parents=True)
+    pc_zarr = rec.backend_dir / "pointcloud.zarr"
+    pc_zarr.mkdir(parents=True)
     with patch.object(R, "_build_localization_db") as build:
         rec.build_localization_db(overwrite=True)
-    build.assert_called_once_with(ff, "loma", rec.frames_zarr, top_k=8, overwrite=True)
+    build.assert_called_once_with(pc_zarr, "loma", rec.frames_zarr, top_k=8, overwrite=True)

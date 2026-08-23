@@ -55,7 +55,7 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/
-    feedforward.zarr           ← depth maps, poses, confidence, 3D points
+    pointcloud.zarr           ← depth maps, poses, confidence, 3D points
                                ←   (+ local_features/<extractor>/reconstruction if localize ran)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
@@ -190,7 +190,7 @@ Nothing here deletes a remote object. The push is still `rclone copy`, so a re-r
 the artifacts it produced and leaves everything else in place.
 
 `verify` is a leaf stage: `--stages verify` re-runs geometric verification against a
-processed scene (needs `colmap/` + `feedforward.zarr` locally). Outputs under
+processed scene (needs `colmap/` + `pointcloud.zarr` locally). Outputs under
 `<backend>/colmap/`: `verified/` (COLMAP model whose points carry real feature tracks;
 poses/cameras identical to `sparse/0`), `verification.json` (per-pair epipolar +
 relative-pose stats, per-frame track survival and reprojection error), and `database.db`
@@ -236,7 +236,7 @@ relative-pose stats, per-frame track survival and reprojection error), and `data
 
 `refine` (LM bundle adjustment) rewrites the reconstruction's poses in place —
 COLMAP, `transforms.json`, `sparse_pc.ply`, and the pose-derived arrays in
-`feedforward.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the
+`pointcloud.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the
 localization DB built under the old poses: after `--stages refine`, re-run those
 stages with `overwrite` if pose-sensitive outputs matter. Provenance for the last
 refine run (BA config + LM loss history) is in `<backend>/colmap/refine.json`.
@@ -359,7 +359,7 @@ parameter and raises.
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
 | `mesh.enabled` | bool | `false` | Build TSDF/Poisson mesh (opt-in) |
-| `mesh.source` | str | `feedforward` | `feedforward` fuses feedforward.zarr depth; `splats` fuses splats.zarr renders (needs the splats stage; `native_resolution` ignored) |
+| `mesh.source` | str | `feedforward` | `feedforward` fuses pointcloud.zarr depth; `splats` fuses splats.zarr renders (needs the splats stage; `native_resolution` ignored) |
 | `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
@@ -458,7 +458,7 @@ feed the buffer enough frames for the cap to matter.
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/
-    feedforward.zarr           ← depth maps, poses, confidence, 3D points
+    pointcloud.zarr           ← depth maps, poses, confidence, 3D points
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
     semantics/
@@ -488,7 +488,7 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/splats/splats.zarr` | per-training-view renders: `rgb`, `depth`, `normal`, `alpha`, `c2w`, `K` |
 | `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
-| `<backend>/feedforward.zarr` | further processing inside this repo (depth, poses, confidence) |
+| `<backend>/pointcloud.zarr` | further processing inside this repo (depth, poses, confidence) |
 | `frames.zarr` | the keyframes the reconstruction was built from; required to localize |
 | `run_config.yaml` | exact settings used |
 
@@ -524,13 +524,13 @@ features + the raw COLMAP binaries, and read poses via `pycolmap`.
 
 `--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
 `frames.zarr` — no image directory, no transforms.json round-trip. Every `splats/` artifact is in
-the COLMAP world frame; nothing is normalised. `mesh` fuses `feedforward.zarr` by default;
+the COLMAP world frame; nothing is normalised. `mesh` fuses `pointcloud.zarr` by default;
 `mesh.source: splats` fuses the renders instead (alpha as confidence, poses as rendered).
 
 #### The dashboard cannot browse a scene published by the remote driver
 
-The published tree is backend-keyed (`<scene>/<backend>/feedforward.zarr`) and the dashboard reads
-flat (`<scene>/feedforward.zarr`, `<scene>/semantics/`, `<scene>/mesh.ply`). Pointing the
+The published tree is backend-keyed (`<scene>/<backend>/pointcloud.zarr`) and the dashboard reads
+flat (`<scene>/pointcloud.zarr`, `<scene>/semantics/`, `<scene>/mesh.ply`). Pointing the
 dashboard at a published scene does not just fail to load — its existence gate never trips, so the
 scene re-pulls from GCS on every select and then errors in the op log. This is deliberate: the
 dashboard's flat layout is what every dashboard scene already on disk uses, and unifying the read
@@ -553,7 +553,7 @@ cache re-extracts, which is the expensive half.
 ## Dashboard
 
 The dashboard browses **dashboard-produced scenes**, whose tree is flat: it reads
-`<scene>/feedforward.zarr` for the pointcloud, `<scene>/semantics/<extractor>_lifted.zarr` for
+`<scene>/pointcloud.zarr` for the pointcloud, `<scene>/semantics/<extractor>_lifted.zarr` for
 semantic features, and `<scene>/mesh.ply` for the mesh. Point it at a scene the dashboard itself
 built. It cannot read the backend-keyed tree the remote driver publishes — see "The dashboard
 cannot browse a scene published by the remote driver" under Where outputs land.

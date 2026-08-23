@@ -25,7 +25,7 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CU
 def test_config_from_dict_keeps_given_values_and_defaults():
     block = {"enabled": True, "primitive": "2dgs", "max_steps": 10, "losses": {"depth": {"weight": 0.1}}}
     cfg = SplatsConfig.from_dict(block)
-    assert (cfg.primitive, cfg.max_steps, cfg.pose_opt, cfg.sh_degree) == ("2dgs", 10, False, 3)
+    assert (cfg.primitive, cfg.max_steps, cfg.pose_opt, cfg.sh_degree) == ("2dgs", 10, True, 3)
     assert cfg.losses == {"depth": {"weight": 0.1}}
 
 

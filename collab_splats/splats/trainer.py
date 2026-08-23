@@ -61,7 +61,7 @@ class SplatsConfig:
 
     primitive: str = "3dgs"
     max_steps: int = 30000
-    pose_opt: bool = False
+    pose_opt: bool = True
     losses: dict[str, dict] | None = None  # None -> _default_losses(primitive)
 
     # Appearance

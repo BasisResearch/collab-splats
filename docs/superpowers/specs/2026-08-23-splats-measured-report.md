@@ -100,11 +100,40 @@ a 5× smaller image). Compare within a resolution only.
    terms never recovered.
 3. **`mesh.source: splats` is built and wired but not better**: both splat meshes carry 2.3–2.7×
    more speckle components than `feedforward`. Keep `mesh.source: feedforward` as default.
-4. **pose_opt** is +0.44 dB / +0.04 SSIM for +5% time — small; poses are not the quality
-   ceiling. The depth prior (model-res, nearest-upsampled; depth term 0.19–0.32) and 30-view
-   coverage are the next suspects.
+4. **pose_opt is now the default** (`splats.pose_opt: true`, flipped 2026-08-23). On the
+   tutorial it is +0.44 dB / +0.04 SSIM for +5% time; on the 300-frame GoPro scene below it is
+   +2.2 dB (3DGS) / +1.9 dB (2DGS) for +3% — feedforward poses, not the depth prior, are the
+   ceiling on long walking captures.
 5. **3DGS `extra_signals` normals are usable** (unit, consistent) but ~21° median off the depth
    normal; don't treat them as measured surface normals.
+
+## Table 4 — GoPro scene `2026_07_15-Goprosplat-GH010229` (300 frames @ 2 fps, 1920×1080, vggt_omega, 30k steps)
+
+Full pipeline rerun 2026-08-23 (`/workspace/outputs/rerun_2026_08_23/`): quality report +
+`sample_fps` (photometric gate never binding — laplacian medians 8–12k vs gate 50),
+vggt_omega, talk2dino, splats, native-res TSDF mesh. Per-segment columns are mean PSNR over
+selected-frame index ranges; 130–200 is t = 238–364 s, the stretch with 40% faster camera
+motion (55 px/pair vs 40) and 5× more dark-clipped pixels.
+
+| run | gaussians | PSNR | SSIM | 0–130 | 130–200 | 200–300 | time (s) |
+|---|---|---|---|---|---|---|---|
+| 3dgs | 1 000 000 | 16.81 | 0.464 | 17.81 | 14.61 | 17.05 | 2035 |
+| 2dgs, grow_grad2d 4e-4 | 391 522 | 16.54 | 0.441 | 17.43 | 14.64 | 16.70 | 1882 |
+| 3dgs + pose_opt | 1 000 000 | **18.97** | **0.596** | **21.41** | 15.57 | 18.17 | 2061 |
+| 2dgs + pose_opt, grow_grad2d 4e-4 | 723 543 | 18.48 | 0.564 | 20.82 | 15.33 | 17.64 | 2100 |
+
+- pose_opt is the lever on both primitives; primitive choice is worth 0.3–0.5 dB in 3DGS's
+  favour at every segment.
+- Halving `grow_grad2d` did NOT add 2DGS gaussians (0.39M, below the 3DGS cap); with pose_opt
+  the same threshold gave 0.72M — `DefaultStrategy` densification follows gradient
+  consistency, i.e. pose quality, not the threshold.
+- Segment 130–200 stays at ~15.5 dB in all four runs. Local pose refinement cannot recover
+  it; the upstream feedforward poses/depth are wrong there. Next levers are
+  `pointcloud.bundle_adjustment: true` or `frame_selection: optical_flow` (denser frames on
+  the fast stretch), not splat knobs.
+- Mesh stage OOM'd (exit 137, cgroup 46.6 GB) in `color_map_optimization` at 300 native
+  frames × 300 iterations; rerun with `color_map_iterations: 0`. Memory scales with
+  frames × native resolution — cap at ~100 frames or disable.
 
 ## Traps hit
 

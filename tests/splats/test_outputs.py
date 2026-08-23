@@ -46,12 +46,12 @@ def test_train_writes_all_outputs(tmp_path, primitive):
     assert store["depth"].shape == (8, 64, 64) and store["normal"].shape == (8, 64, 64, 3)
     assert store["alpha"].shape == (8, 64, 64) and store["c2w"].shape == (8, 4, 4) and store["K"].shape == (8, 3, 3)
     assert store.attrs["primitive"] == primitive and store.attrs["gsplat_commit"] == GSPLAT_COMMIT
-    assert list(store.attrs["image_ids"]) == list(range(8)) and store.attrs["pose_opt"] is False
+    assert list(store.attrs["image_ids"]) == list(range(8)) and store.attrs["pose_opt"] is True
 
     # Checkpoint
     ckpt = torch.load(tmp_path / "ckpt.pt", map_location="cpu", weights_only=False)
     assert set(ckpt) == {"splats", "pose_adjust", "config"}
-    assert ckpt["pose_adjust"] is None and "means" in ckpt["splats"] and ckpt["config"]["primitive"] == primitive
+    assert ckpt["pose_adjust"] is not None and "means" in ckpt["splats"] and ckpt["config"]["primitive"] == primitive
 
 
 @cuda

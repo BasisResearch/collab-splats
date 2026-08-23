@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Integrate InstantSfM (global SfM, IROS 2026) as `pointcloud.method: sfm` / `backend: instantsfm`, fed by Video Depth Anything metric depth, emitting the new unified `pointcloud.zarr` artifact that every downstream stage (splats, mesh, semantics, localize, verify) consumes.
+**Goal:** Integrate InstantSfM (global SfM, IROS 2026) as `pointcloud.method: sfm` / `backend: instantsfm`, fed by Video Depth Anything metric depth, emitting the unified `pointcloud.zarr` artifact that every downstream stage (splats, mesh, semantics, localize, verify) consumes.
 
-**Architecture:** A new `InstantSfMCreator` (in `collab_splats/pointcloud/sfm.py`) drives InstantSfM through its Python API (`ReadData → GenerateDatabase → ReadColmapDatabase → Config → ReadDepthsIntoFeatures → SolveGlobalMapper → WriteGlomapReconstruction`). A new `collab_splats/pointcloud/vda.py` generates metric depth from `frames.zarr` via a `third_party/Video-Depth-Anything` clone. `Reconstructor._run_sfm` orchestrates: stage images → VDA depth → creator → build a `FeedforwardResult` (container reused; artifact renamed) → save `pointcloud.zarr` with provenance attrs. All zarr read sites go through one resolver (`resolve_pointcloud_zarr`) that prefers `pointcloud.zarr` and falls back to legacy `feedforward.zarr`; all write sites write `pointcloud.zarr`.
+**Architecture:** A new `InstantSfMCreator` plus a `generate_vda_depth` helper — both in `collab_splats/pointcloud/sfm.py` — drive InstantSfM through its Python API (`ReadData → GenerateDatabase → ReadColmapDatabase → Config → ReadDepthsIntoFeatures → SolveGlobalMapper → WriteGlomapReconstruction`). VDA itself lives in a `third_party/Video-Depth-Anything` clone (not pip-installable; sys.path shim at call time). `Reconstructor._run_sfm` orchestrates: stage images → VDA depth → creator → build a `FeedforwardResult` (dataclass container reused; artifact renamed) → save `pointcloud.zarr` with provenance attrs. **The artifact rename is a hard cutover: `feedforward.zarr` is replaced by `pointcloud.zarr` everywhere — no resolver, no fallback.** Legacy scenes migrate with a one-line rename (documented in Task 8), or reprocess.
 
-**Tech Stack:** InstantSfM v0.3.0 (`cre185/InstantSfM` @ `d3e599e1a42b4c5a806a84d9f383e1005d25f61b`, CC-BY-NC-4.0 — user cleared), Video-Depth-Anything (metric, vitl), pycolmap, zarr v3, torch 2.5.1+cu121, py3.11 (`/opt/venv/reconstruction/bin/python`).
+**Tech Stack:** InstantSfM v0.3.0 (`cre185/InstantSfM` @ `d3e599e1a42b4c5a806a84d9f383e1005d25f61b`, CC-BY-NC-4.0 — user cleared; pin lives ONLY in setup.sh), Video-Depth-Anything (metric, vitl), pycolmap, zarr v3, torch 2.5.1+cu121, py3.11 (`/opt/venv/reconstruction/bin/python`).
 
 **Spec:** `docs/superpowers/specs/2026-08-23-instantsfm-backend-design.md`
 
@@ -20,6 +20,7 @@
 1. `features` allowlist is `{"colmap"}` only. Installed `GenerateDatabase` ignores `feature_handler_name` (always subprocesses the system `colmap` binary: SIMPLE_RADIAL + exhaustive matcher, CPU SIFT) and `Config` maps only `'colmap'`. The config key stays so future upstream values slot in without config migration.
 2. `pixel_indices` is synthesized from COLMAP track observations (first observation per point3D, keypoint xy scaled to depth res) — `lift_features` hard-requires it.
 3. `Config` aliasing trap: `Config.__init__` sets `self.OPTIONS = GENERAL_OPTIONS` / `self.RUNTIME_OPTIONS = RUNTIME_OPTIONS` — **module-level dict aliases**. The creator must copy both dicts before mutating, or `use_depths=True` leaks into every later `Config` in-process (breaks the eval `instantsfm_nodepth` ablation).
+4. (Review feedback) No resolver/fallback layer: `pointcloud.zarr` fully replaces `feedforward.zarr`. No new `paths.py` / `vda.py` modules. No hardcoded upstream-commit constant — provenance version read from installed package metadata.
 
 ---
 
@@ -27,139 +28,32 @@
 
 ```
 collab_splats/pointcloud/
-  paths.py                 # NEW — resolve_pointcloud_zarr (import-light, no torch)
-  vda.py                   # NEW — generate_vda_depth (Video Depth Anything wrapper)
-  sfm.py                   # MODIFY — add InstantSfMCreator + _pixel_indices_from_reconstruction
+  sfm.py                   # MODIFY — add generate_vda_depth + InstantSfMCreator + _pixel_indices_from_reconstruction
   feedforward/base.py      # MODIFY — save_zarr(extra_attrs=...)
   utils.py                 # MODIFY — lift_features tolerates confidence=None
 collab_splats/mesh/utils.py        # MODIFY — absent-confidence: log-and-skip, not raise
-collab_splats/wrapper/reconstructor.py  # MODIFY — _run_sfm, pointcloud_zarr property, site conversion,
-                                        #          validate_config, refine_poses refusal, splats log
-collab_splats/dashboard/pipeline.py     # MODIFY — resolver at read sites, pointcloud.zarr at write site
-collab_splats/dashboard/app.py          # MODIFY — resolver at read sites
-collab_splats/remote/sources.py         # MODIFY — PULL_EXCLUDES twins, remote zarr-name resolution
+collab_splats/wrapper/reconstructor.py  # MODIFY — rename artifact, _run_sfm, validate_config,
+                                        #          refine_poses refusal, splats log
+collab_splats/dashboard/pipeline.py     # MODIFY — rename artifact
+collab_splats/dashboard/app.py          # MODIFY — rename artifact
+collab_splats/remote/sources.py         # MODIFY — rename artifact in excludes + helpers
 configs/base.yaml                       # MODIFY — pointcloud.instantsfm block
-configs/README.md                       # MODIFY — pointcloud.zarr contract
-pyproject.toml                          # MODIFY — [project.optional-dependencies] instantsfm extra note
+configs/README.md                       # MODIFY — pointcloud.zarr contract + migration
+pyproject.toml                          # MODIFY — comment: instantsfm deps via setup.sh
 setup.sh                                # MODIFY — instantsfm deps + VDA clone + checkpoint
 evals/scripts/eval.py                   # MODIFY — instantsfm / instantsfm_nodepth conditions
-tests/pointcloud/test_paths.py          # NEW
-tests/pointcloud/test_vda.py            # NEW
-tests/pointcloud/test_instantsfm_creator.py  # NEW
 tests/pointcloud/test_zarr_attrs.py     # NEW
+tests/pointcloud/test_instantsfm.py     # NEW — VDA helper + pixel indices + config copy
 tests/wrapper/test_sfm_config.py        # NEW
-tests/wrapper/test_pointcloud_zarr_resolution.py  # NEW
 tests/mesh/test_absent_confidence.py    # NEW
 ```
 
 ---
 
-### Task 1: Resolver module `resolve_pointcloud_zarr`
-
-The single place that knows `pointcloud.zarr` is canonical and `feedforward.zarr` is legacy-read-only. Import-light (stdlib only) so dashboard/remote fast-bind stays clean.
+### Task 1: `save_zarr(extra_attrs=...)`
 
 **Files:**
-- Create: `collab_splats/pointcloud/paths.py`
-- Test: `tests/pointcloud/test_paths.py`
-
-- [ ] **Step 1: Write the failing tests**
-
-```python
-# tests/pointcloud/test_paths.py
-from pathlib import Path
-
-from collab_splats.pointcloud.paths import resolve_pointcloud_zarr
-
-
-def test_prefers_pointcloud_zarr(tmp_path):
-    (tmp_path / "pointcloud.zarr").mkdir()
-    (tmp_path / "feedforward.zarr").mkdir()
-    assert resolve_pointcloud_zarr(tmp_path) == tmp_path / "pointcloud.zarr"
-
-
-def test_falls_back_to_legacy_feedforward_zarr(tmp_path):
-    (tmp_path / "feedforward.zarr").mkdir()
-    assert resolve_pointcloud_zarr(tmp_path) == tmp_path / "feedforward.zarr"
-
-
-def test_neither_exists_returns_canonical_name(tmp_path):
-    # Error messages downstream should name the canonical artifact
-    assert resolve_pointcloud_zarr(tmp_path) == tmp_path / "pointcloud.zarr"
-
-
-def test_accepts_str(tmp_path):
-    (tmp_path / "pointcloud.zarr").mkdir()
-    assert resolve_pointcloud_zarr(str(tmp_path)) == tmp_path / "pointcloud.zarr"
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_paths.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'collab_splats.pointcloud.paths'`
-
-- [ ] **Step 3: Implement**
-
-```python
-# collab_splats/pointcloud/paths.py
-"""
-Path resolution for the unified pointcloud artifact.
-
-pointcloud.zarr is the canonical reconstruction artifact for every pointcloud
-method (feedforward and sfm). feedforward.zarr is the legacy name — read-only
-back-compat for scenes written before the rename; nothing writes it anymore.
-
-Import-light on purpose (stdlib only): dashboard and remote import this at
-fast-bind time.
-"""
-
-from pathlib import Path
-
-########################################################################
-# Resolver
-########################################################################
-
-
-def resolve_pointcloud_zarr(backend_dir: Path | str) -> Path:
-    """
-    Return the reconstruction zarr path under backend_dir.
-
-    - Prefers `pointcloud.zarr` (canonical).
-    - Falls back to `feedforward.zarr` (legacy scenes).
-    - When neither exists, returns the canonical path so callers' existence
-      checks and error messages name the current artifact.
-    """
-    backend_dir = Path(backend_dir)
-
-    canonical = backend_dir / "pointcloud.zarr"
-    if canonical.exists():
-        return canonical
-
-    legacy = backend_dir / "feedforward.zarr"
-    if legacy.exists():
-        return legacy
-
-    return canonical
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_paths.py -v`
-Expected: 4 PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add tests/pointcloud/test_paths.py collab_splats/pointcloud/paths.py
-git commit --only tests/pointcloud/test_paths.py collab_splats/pointcloud/paths.py -m "feat(pointcloud): resolve_pointcloud_zarr — canonical pointcloud.zarr with feedforward.zarr fallback"
-```
-
----
-
-### Task 2: `save_zarr(extra_attrs=...)` + provenance attrs on the feedforward write path
-
-**Files:**
-- Modify: `collab_splats/pointcloud/feedforward/base.py` (`FeedforwardResult.save_zarr`, ~line 200s)
-- Modify: `collab_splats/wrapper/reconstructor.py:347-354` (`_run_feedforward` zarr save site)
+- Modify: `collab_splats/pointcloud/feedforward/base.py` (`FeedforwardResult.save_zarr`)
 - Test: `tests/pointcloud/test_zarr_attrs.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -189,12 +83,12 @@ def _tiny_result():
 def test_save_zarr_writes_extra_attrs(tmp_path):
     out = tmp_path / "pointcloud.zarr"
     _tiny_result().save_zarr(
-        out, extra_attrs={"method": "sfm", "backend": "instantsfm", "instantsfm_commit": "d3e599e"}
+        out, extra_attrs={"method": "sfm", "backend": "instantsfm", "instantsfm_version": "0.3.0"}
     )
     store = zarr.open(str(out), mode="r")
     assert store.attrs["method"] == "sfm"
     assert store.attrs["backend"] == "instantsfm"
-    assert store.attrs["instantsfm_commit"] == "d3e599e"
+    assert store.attrs["instantsfm_version"] == "0.3.0"
 
 
 def test_save_zarr_no_extra_attrs_unchanged(tmp_path):
@@ -226,7 +120,7 @@ to:
     def save_zarr(self, path: Path, extra_attrs: dict | None = None) -> None:
 ```
 
-Add to the docstring bullet list: `- extra_attrs: optional provenance attrs (method, backend, upstream commit) merged into store.attrs.`
+Add to the docstring bullet list: `- extra_attrs: optional provenance attrs (method, backend, upstream version) merged into store.attrs.`
 
 Directly after the existing block that writes `store.attrs["image_paths"]` / `"model_width"` / `"model_height"`, add:
 
@@ -242,9 +136,60 @@ Directly after the existing block that writes `store.attrs["image_paths"]` / `"m
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_zarr_attrs.py -v`
 Expected: 2 PASS
 
-- [ ] **Step 5: Switch the feedforward write site to pointcloud.zarr with attrs**
+- [ ] **Step 5: Commit**
 
-In `collab_splats/wrapper/reconstructor.py` (`_run_feedforward`, ~line 347-354), find:
+```bash
+git add tests/pointcloud/test_zarr_attrs.py collab_splats/pointcloud/feedforward/base.py
+git commit --only tests/pointcloud/test_zarr_attrs.py collab_splats/pointcloud/feedforward/base.py -m "feat(pointcloud): save_zarr provenance attrs (method, backend, upstream version)"
+```
+
+---
+
+### Task 2: Hard rename `feedforward.zarr` → `pointcloud.zarr` (whole repo)
+
+No resolver, no fallback — every literal changes. Legacy scenes migrate by rename (Task 8 documents the commands) or reprocess.
+
+**Files:**
+- Modify: `collab_splats/wrapper/reconstructor.py` (~12 sites)
+- Modify: `collab_splats/dashboard/pipeline.py`, `collab_splats/dashboard/app.py`
+- Modify: `collab_splats/remote/sources.py`
+- Modify: existing tests under `tests/` that use the old literal
+
+- [ ] **Step 1: Add the property (single source of the path)**
+
+In `reconstructor.py`, next to the existing properties (`backend_dir` / `frames_zarr`, ~line 704-721):
+
+```python
+    @property
+    def pointcloud_zarr(self) -> Path:
+        """
+        Unified reconstruction zarr for this backend (all pointcloud methods).
+        """
+        return self.backend_dir / "pointcloud.zarr"
+```
+
+- [ ] **Step 2: Convert every reconstructor site**
+
+Replace each `self.backend_dir / "feedforward.zarr"` (and local `feedforward_zarr = ...` constructions from it) with `self.pointcloud_zarr`. Sites as of `6204e0b9` (grep to confirm none are missed):
+
+| ~Line | Method |
+|---|---|
+| 347-354 | `_run_feedforward` write site (see Step 3) |
+| 957 | `refine_poses` |
+| 1049 | `extract_semantics` |
+| 1092 | `mesh` |
+| 1130 | `build_localization_db` |
+| 1186, 1197 | `verify` |
+| 1267 | `splats` depth-targets |
+| 1348 | `reconstruction_quality_report` |
+| 1362-1364 | `_stage_output_exists` "pointcloud" |
+| 1378-1381 | `_stage_output_exists` "localize" |
+
+Rename local variables `feedforward_zarr` → `pointcloud_zarr` in the methods you touch, and the corresponding params of the private helpers they feed (`_lift_and_save`, `_run_tsdf_mesh`, `_localization_db_exists`, `_build_localization_db`). Private helpers only — no public API rename. Update docstrings/log strings mentioning the old name.
+
+- [ ] **Step 3: Feedforward write site gets provenance attrs**
+
+In `_run_feedforward` (~line 347-354), find:
 
 ```python
             zarr_path = output_dir / "feedforward.zarr"
@@ -261,234 +206,60 @@ replace with:
             )
 ```
 
-(Adapt the config access to whatever variable already holds the backend name in that scope — `_run_feedforward` may have `backend` local; use it if present.)
+(Adapt the config access to whatever variable already holds the backend name in that scope — `_run_feedforward` may have a `backend` local; use it if present.)
 
-- [ ] **Step 6: Run the wrapper suite**
+- [ ] **Step 4: dashboard/pipeline.py**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/ tests/pointcloud/ -x -q`
-Expected: some `tests/wrapper/` tests that assert on the `feedforward.zarr` name may now FAIL — note them; Task 3 converts the read sites and those tests. If failures are ONLY name-related, proceed (Task 3 fixes them before the next commit gate). If anything else fails, fix before continuing.
+Every `out_dir / "feedforward.zarr"` → `out_dir / "pointcloud.zarr"`:
+- write site (~477): `result.save_zarr(out_dir / "pointcloud.zarr", extra_attrs={"method": "feedforward", "backend": backend})` (`backend` = the name already in scope; grep for the variable used to build `out_dir`)
+- `_load_feedforward_result` (~552), browse existence check (~692), `read_localized_group` (~696), localize pull check (~726), `_build_localizer` (~741-747), `_stamp_db_provenance`, `zarr_path=` (~779)
 
-- [ ] **Step 7: Commit (with Task 3 if wrapper tests are name-broken, else now)**
+- [ ] **Step 5: dashboard/app.py**
 
-```bash
-git add tests/pointcloud/test_zarr_attrs.py collab_splats/pointcloud/feedforward/base.py collab_splats/wrapper/reconstructor.py
-git commit --only tests/pointcloud/test_zarr_attrs.py collab_splats/pointcloud/feedforward/base.py collab_splats/wrapper/reconstructor.py -m "feat(pointcloud): unified pointcloud.zarr artifact with provenance attrs"
-```
+Same literal rename at ~417, ~476, ~596-608 (including the step label `f"{scene}: reading feedforward.zarr"` → `"... reading pointcloud.zarr"`), ~751, ~790.
 
----
+- [ ] **Step 6: remote/sources.py**
 
-### Task 3: Convert Reconstructor read sites to the resolver
+- `PULL_EXCLUDES` (~28-40): rename each `feedforward.zarr/<member>/**` entry to `pointcloud.zarr/<member>/**` (same member list, no additions).
+- `list_localization_dbs` (~341): `path = f"{scene}/pointcloud.zarr/local_features"`.
+- `pull_zarr_members` (~405-420): `dest = Path(dest_dir) / "pointcloud.zarr"`, `remote = f"{self._remote}:{PROCESSED_BUCKET}/{scene}/pointcloud.zarr"`; update the docstring.
+- `PUSH_EXCLUDES`: unchanged — `/*/colmap/database.db` anchor already covers the InstantSfM database (Task 5 moves it under `colmap/`).
 
-**Files:**
-- Modify: `collab_splats/wrapper/reconstructor.py` (property + ~10 sites)
-- Test: `tests/wrapper/test_pointcloud_zarr_resolution.py`
-
-- [ ] **Step 1: Add import + property**
-
-Top of `reconstructor.py`, with the other collab_splats imports:
-
-```python
-from collab_splats.pointcloud.paths import resolve_pointcloud_zarr
-```
-
-Next to the existing properties (`backend_dir` / `frames_zarr`, ~line 704-721):
-
-```python
-    @property
-    def pointcloud_zarr(self) -> Path:
-        """
-        Reconstruction zarr for this backend — pointcloud.zarr, legacy feedforward.zarr fallback.
-        """
-        return resolve_pointcloud_zarr(self.backend_dir)
-```
-
-- [ ] **Step 2: Convert every read site**
-
-Replace each `self.backend_dir / "feedforward.zarr"` (and local `feedforward_zarr = ...` constructions from it) with `self.pointcloud_zarr`. Sites as of `6204e0b9` (grep to confirm none are missed):
-
-| ~Line | Method | Change |
-|---|---|---|
-| 957 | `refine_poses` | `self.pointcloud_zarr` |
-| 1049 | `extract_semantics` | `feedforward_zarr = self.pointcloud_zarr` |
-| 1092 | `mesh` | `feedforward_zarr = self.pointcloud_zarr` |
-| 1130 | `build_localization_db` | `self.pointcloud_zarr` |
-| 1186, 1197 | `verify` | `self.pointcloud_zarr` |
-| 1267 | `splats` depth-targets | `self.pointcloud_zarr` |
-| 1348 | `reconstruction_quality_report` | `self.pointcloud_zarr` |
-| 1362-1364 | `_stage_output_exists` "pointcloud" | see below |
-| 1378-1381 | `_stage_output_exists` "localize" | `self.pointcloud_zarr` |
-
-`_stage_output_exists` "pointcloud" branch — the zarr existence check becomes:
-
-```python
-            return cameras_bin.exists() and self.pointcloud_zarr.exists()
-```
-
-(resolver returns whichever name exists; returns the non-existent canonical path when neither does, so `.exists()` is False — correct.)
-
-Rename local variables `feedforward_zarr` → `pointcloud_zarr` in the methods you touch, and the corresponding keyword/positional params of the private helpers they feed (`_lift_and_save(feedforward_zarr=...)` → `pointcloud_zarr=...`, `_run_tsdf_mesh(feedforward_zarr=...)` → `pointcloud_zarr=...`, `_localization_db_exists` / `_build_localization_db` first param). Private helpers only — no public API rename.
-
-Grep gate after editing:
+- [ ] **Step 7: Grep gate + fix tests**
 
 ```bash
-grep -n 'feedforward.zarr' collab_splats/wrapper/reconstructor.py
+grep -rn 'feedforward\.zarr' collab_splats/ tests/ docs/examples/
 ```
 
-Expected: zero matches (docstrings updated too — say "pointcloud.zarr (legacy feedforward.zarr)").
+Expected in `collab_splats/`: **zero matches**. In `tests/` and `docs/examples/`: update every fixture/assertion to the new name (the write path IS the contract — updating them is the point, not a regression). Do not touch `docs/superpowers/` history or notebooks in this task; notebooks that break are recorded in Task 8's migration note.
 
-- [ ] **Step 3: Write the resolution test**
-
-```python
-# tests/wrapper/test_pointcloud_zarr_resolution.py
-from pathlib import Path
-
-from collab_splats.pointcloud.paths import resolve_pointcloud_zarr
-
-
-def test_reconstructor_pointcloud_zarr_property(tmp_path, monkeypatch):
-    # Property must delegate to the shared resolver — construct a minimal Reconstructor
-    # via __new__ to avoid config plumbing; only backend_dir is exercised.
-    from collab_splats.wrapper.reconstructor import Reconstructor
-
-    r = Reconstructor.__new__(Reconstructor)
-    monkeypatch.setattr(
-        type(r), "backend_dir", property(lambda self: tmp_path), raising=False
-    )
-    (tmp_path / "feedforward.zarr").mkdir()
-    assert r.pointcloud_zarr == tmp_path / "feedforward.zarr"
-    (tmp_path / "pointcloud.zarr").mkdir()
-    assert r.pointcloud_zarr == tmp_path / "pointcloud.zarr"
-```
-
-If monkeypatching the property proves brittle against the real class, drop this test to asserting `Reconstructor.pointcloud_zarr.fget` calls `resolve_pointcloud_zarr` on a stub object with a plain `backend_dir` attribute — the resolver itself is already covered by Task 1.
-
-- [ ] **Step 4: Run suites**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/ tests/pointcloud/ -q`
-Expected: PASS. Any pre-existing wrapper test that writes a fixture `feedforward.zarr` still passes via the fallback; tests that assert the WRITE path name must be updated to `pointcloud.zarr` (that is the new contract, not a regression).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Run suites + smoke gate**
 
 ```bash
-git add tests/wrapper/test_pointcloud_zarr_resolution.py collab_splats/wrapper/reconstructor.py tests/wrapper/
-git commit --only tests/wrapper/test_pointcloud_zarr_resolution.py collab_splats/wrapper/reconstructor.py tests/wrapper/ -m "refactor(wrapper): all reconstruction-zarr reads go through resolve_pointcloud_zarr"
-```
-
----
-
-### Task 4: Dashboard + remote pointcloud.zarr awareness
-
-**Files:**
-- Modify: `collab_splats/dashboard/pipeline.py` (write site ~477; read sites ~552, ~692-696, ~726, ~741-747, ~779)
-- Modify: `collab_splats/dashboard/app.py` (~417, ~476, ~596-608, ~751, ~790)
-- Modify: `collab_splats/remote/sources.py` (PULL_EXCLUDES ~28-40; `list_localization_dbs` ~341; `pull_zarr_members` ~405-420)
-
-- [ ] **Step 1: pipeline.py**
-
-Import at top: `from collab_splats.pointcloud.paths import resolve_pointcloud_zarr`
-
-Write site (~477): `result.save_zarr(out_dir / "feedforward.zarr")` →
-
-```python
-            result.save_zarr(
-                out_dir / "pointcloud.zarr",
-                extra_attrs={"method": "feedforward", "backend": backend},
-            )
-```
-
-(`backend` = the backend name already in scope in that function; grep for the variable, it is the same one used to build `out_dir`.)
-
-Read sites — every `out_dir / "feedforward.zarr"` becomes `resolve_pointcloud_zarr(out_dir)`:
-- `_load_feedforward_result` (~552): `FeedforwardResult.load_zarr(resolve_pointcloud_zarr(out_dir), ...)`
-- browse existence check (~692): `if not resolve_pointcloud_zarr(out_dir).exists():`
-- `read_localized_group(resolve_pointcloud_zarr(out_dir), extractor, out_dir)` (~696)
-- localize pull check (~726), `_build_localizer(..., resolve_pointcloud_zarr(out_dir), ...)` (~741-747), `_stamp_db_provenance(resolve_pointcloud_zarr(out_dir), ...)`, `zarr_path=resolve_pointcloud_zarr(out_dir)` (~779)
-
-- [ ] **Step 2: app.py**
-
-Same import. Convert:
-- ~417 and ~476: `if (out / "feedforward.zarr").exists():` → `if resolve_pointcloud_zarr(out).exists():`
-- ~596-608: pull-check + `FeedforwardResult.load_zarr(out / "feedforward.zarr", ...)` → `resolve_pointcloud_zarr(out)` (compute once into a local `zarr_dir`); the step label `f"{scene}: reading feedforward.zarr"` → `f"{scene}: reading {zarr_dir.name}"`
-- ~751: `zarr_dir = out / "feedforward.zarr"` → `zarr_dir = resolve_pointcloud_zarr(out)`
-- ~790: `member_dir = out / "feedforward.zarr" / member` → `member_dir = resolve_pointcloud_zarr(out) / member`
-
-Grep gate: `grep -rn 'feedforward.zarr' collab_splats/dashboard/` → only comments/docstrings mentioning the legacy name may remain.
-
-- [ ] **Step 3: sources.py**
-
-PULL_EXCLUDES (~28-40) — add a pointcloud.zarr twin for every feedforward.zarr entry:
-
-```python
-PULL_EXCLUDES = (
-    "feedforward.zarr/depth/**",
-    "feedforward.zarr/world_points/**",
-    "feedforward.zarr/images/**",
-    "feedforward.zarr/confidence/**",
-    "pointcloud.zarr/depth/**",
-    "pointcloud.zarr/world_points/**",
-    "pointcloud.zarr/images/**",
-    "pointcloud.zarr/confidence/**",
-)
-```
-
-(Match the EXACT existing member list — mirror each entry, do not invent members.)
-
-`list_localization_dbs` (~341) — try canonical first, fall back:
-
-```python
-        def _produce():
-            # Canonical artifact first; legacy name for scenes processed before the rename
-            for zarr_name in ("pointcloud.zarr", "feedforward.zarr"):
-                path = f"{scene}/{zarr_name}/local_features"
-                entries = self._lsjson(PROCESSED_BUCKET, path)
-                if entries:
-                    return [e["Name"] for e in entries if e.get("IsDir")]
-            logger.info("no localization DBs for %s in %s", scene, PROCESSED_BUCKET)
-            return []
-```
-
-(Keep the existing entry-filtering expression from the current body — the loop wraps it, the parsing logic is unchanged.)
-
-`pull_zarr_members` (~405-420) — resolve the remote zarr name by probing canonical first:
-
-```python
-        # Canonical name first; legacy scenes only have feedforward.zarr remotely
-        zarr_name = "pointcloud.zarr"
-        if not self._lsjson(PROCESSED_BUCKET, f"{scene}/{zarr_name}"):
-            zarr_name = "feedforward.zarr"
-        dest = Path(dest_dir) / zarr_name
-        dest.mkdir(parents=True, exist_ok=True)
-        remote = f"{self._remote}:{PROCESSED_BUCKET}/{scene}/{zarr_name}"
-```
-
-(`_lsjson` is already used in this class and returns falsy on missing paths — see the memoized helper above it.)
-
-PUSH_EXCLUDES: unchanged — `/*/colmap/database.db` anchor already covers the InstantSfM database (Task 6 moves it under `colmap/`).
-
-- [ ] **Step 4: Run dashboard smoke gate + suites**
-
-```bash
+/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/ tests/pointcloud/ tests/dashboard/ tests/remote/ tests/localization/ -q
 /opt/venv/reconstruction/bin/python -m collab_splats.dashboard --smoke
-/opt/venv/reconstruction/bin/python -m pytest tests/dashboard/ tests/remote/ -q
 ```
-Expected: `SMOKE PASS`; suites PASS (update any test asserting the old literal path the same way as Task 3).
+Expected: PASS; `SMOKE PASS`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add collab_splats/dashboard/pipeline.py collab_splats/dashboard/app.py collab_splats/remote/sources.py tests/
-git commit --only collab_splats/dashboard/pipeline.py collab_splats/dashboard/app.py collab_splats/remote/sources.py tests -m "refactor(dashboard,remote): pointcloud.zarr awareness (resolver reads, exclude twins, remote name probe)"
+git add collab_splats/ tests/ docs/examples/
+git commit --only collab_splats tests docs/examples -m "refactor!: pointcloud.zarr replaces feedforward.zarr (hard rename, no fallback)
+
+Legacy scenes: mv <backend>/feedforward.zarr <backend>/pointcloud.zarr (local),
+rclone moveto for environments-processed, or reprocess."
 ```
 
 ---
 
-### Task 5: Absent-confidence seams (mesh, lift_features, splats log)
+### Task 3: Absent-confidence seams (mesh, lift_features, splats log)
 
 `pointcloud.zarr` from instantsfm has **no confidence array** (absent, never zeros). Three seams must tolerate that.
 
 **Files:**
 - Modify: `collab_splats/mesh/utils.py:555-560`
-- Modify: `collab_splats/pointcloud/utils.py:774-778` + confidence tensor block ~801-805 + weight line ~833
+- Modify: `collab_splats/pointcloud/utils.py:774-778` + confidence tensor block ~801-805
 - Modify: `collab_splats/wrapper/reconstructor.py` splats depth-targets block (~1288)
 - Test: `tests/mesh/test_absent_confidence.py`
 
@@ -540,7 +311,7 @@ def test_lift_features_uniform_weights_when_confidence_absent():
     assert feats.shape == (5, 4)
 ```
 
-(Adjust `_feedforward_to_tsdf_inputs`'s actual signature/return if it takes `frame_store`/`native_intrinsics` positionally — pass the defaults `None`. If `FeedforwardResult` needs more required args, mirror Task 2's note.)
+(Adjust `_feedforward_to_tsdf_inputs`'s actual signature if it takes `frame_store`/`native_intrinsics` positionally — pass the defaults `None`. If `FeedforwardResult` needs more required args, mirror Task 1's note.)
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -599,7 +370,7 @@ Confidence tensor block (~801-805) becomes:
         conf = torch.as_tensor(np.ascontiguousarray(conf_np), dtype=torch.float32, device=device)
 ```
 
-**Ordering note:** the `H, W = ...` and `device = ...` assignments precede this block already; `N` is defined at line 779 — no reordering needed. Update the docstring: `confidence` moves from required to "optional; absent → uniform visibility weights". Weight line 833 needs no change (uniform conf = pure visibility mask).
+**Ordering note:** `H, W` (line 782) and `device` (789) and `N` (779) all precede this block — no reordering needed. Update the docstring: `confidence` moves from required to "optional; absent → uniform visibility weights". Weight line ~833 needs no change (uniform conf = pure visibility mask).
 
 - [ ] **Step 5: splats log line**
 
@@ -626,7 +397,7 @@ git commit --only tests/mesh/test_absent_confidence.py collab_splats/mesh/utils.
 
 ---
 
-### Task 6: Config surface + validation
+### Task 4: Config surface + validation
 
 **Files:**
 - Modify: `collab_splats/wrapper/reconstructor.py:52-54` (`_SFM_BACKENDS`), `validate_config` (~677-696), `refine_poses` (~928)
@@ -637,8 +408,6 @@ git commit --only tests/mesh/test_absent_confidence.py collab_splats/mesh/utils.
 
 ```python
 # tests/wrapper/test_sfm_config.py
-import copy
-
 import pytest
 import yaml
 
@@ -757,80 +526,131 @@ git add tests/wrapper/test_sfm_config.py collab_splats/wrapper/reconstructor.py 
 git commit --only tests/wrapper/test_sfm_config.py collab_splats/wrapper/reconstructor.py configs/base.yaml -m "feat(config): instantsfm sfm backend — allowlist, BA rejection, refine refusal"
 ```
 
----### Task 7: VDA depth module `generate_vda_depth`
+---
+
+### Task 5: `generate_vda_depth` + `InstantSfMCreator` in `pointcloud/sfm.py`
+
+One file gains both: the VDA helper exists only to feed InstantSfM depth, so it lives beside the creator — not as its own module. VDA code itself stays in the `third_party/` clone.
 
 **Files:**
-- Create: `collab_splats/pointcloud/vda.py`
-- Modify: `setup.sh` (clone + checkpoint), `pyproject.toml` (comment block only — VDA is a clone, not a dep)
-- Test: `tests/pointcloud/test_vda.py`
+- Modify: `collab_splats/pointcloud/sfm.py` (ColmapCreator/HlocCreator untouched)
+- Test: `tests/pointcloud/test_instantsfm.py`
 
-- [ ] **Step 1: Write the failing tests (no GPU, no VDA install needed)**
+- [ ] **Step 1: Write the failing tests (no GPU, no installs needed except the last, which skips)**
 
 ```python
-# tests/pointcloud/test_vda.py
+# tests/pointcloud/test_instantsfm.py
 import numpy as np
 import pytest
 
-from collab_splats.pointcloud import vda
+from collab_splats.pointcloud import sfm
 
 
-def test_missing_clone_raises_actionable_import_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(vda, "VDA_ROOT", tmp_path / "nope")
+def test_vda_missing_clone_raises_actionable_import_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
     frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
     with pytest.raises(ImportError, match="setup.sh"):
-        vda.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path)
+        sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path)
 
 
-def test_skips_when_depths_exist(tmp_path):
+def test_vda_skips_when_depths_exist(tmp_path):
     out = tmp_path / "depth_vda"
     out.mkdir()
     np.savez_compressed(out / "depths.npz", depths=np.ones((2, 4, 4), dtype=np.float32))
     frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
     # Existing depths.npz -> returned untouched, no VDA import attempted
-    path = vda.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path)
+    path = sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path)
     assert path == out / "depths.npz"
+
+
+def test_pixel_indices_from_reconstruction_scales_to_depth_res():
+    # Minimal stand-in for pycolmap objects: 1 point3D observed in frame 0 at
+    # original-res keypoint (200, 100); original 800x600 -> depth 80x60 = scale 0.1
+    class _Elem:
+        image_id, point2D_idx = 1, 0
+
+    class _Track:
+        elements = [_Elem()]
+
+    class _P3D:
+        track = _Track()
+
+    class _Pt2D:
+        xy = np.array([200.0, 100.0])
+
+    class _Img:
+        name = "frame_000000.jpg"
+        points2D = [_Pt2D()]
+
+    class _Recon:
+        points3D = {7: _P3D()}
+        images = {1: _Img()}
+
+    idx = sfm._pixel_indices_from_reconstruction(
+        _Recon(), point3d_ids=[7], name_to_row={"frame_000000.jpg": 0},
+        scale_x=0.1, scale_y=0.1, depth_hw=(60, 80),
+    )
+    assert idx.shape == (1, 3)
+    assert idx.dtype == np.int32
+    assert idx.tolist() == [[0, 10, 20]]  # [frame_row, row=y*0.1, col=x*0.1]
+
+
+def test_pixel_indices_clamped_to_grid():
+    class _Elem:
+        image_id, point2D_idx = 1, 0
+
+    class _Track:
+        elements = [_Elem()]
+
+    class _P3D:
+        track = _Track()
+
+    class _Pt2D:
+        xy = np.array([799.9, 599.9])  # edge keypoint -> scaled index must stay in-grid
+
+    class _Img:
+        name = "frame_000000.jpg"
+        points2D = [_Pt2D()]
+
+    class _Recon:
+        points3D = {7: _P3D()}
+        images = {1: _Img()}
+
+    idx = sfm._pixel_indices_from_reconstruction(
+        _Recon(), point3d_ids=[7], name_to_row={"frame_000000.jpg": 0},
+        scale_x=0.1, scale_y=0.1, depth_hw=(60, 80),
+    )
+    assert 0 <= idx[0, 1] < 60 and 0 <= idx[0, 2] < 80
+
+
+def test_creator_config_copy_prevents_module_dict_leak():
+    pytest.importorskip("instantsfm")
+    from instantsfm.controllers.config import RUNTIME_OPTIONS
+
+    before = dict(RUNTIME_OPTIONS)
+    cfg = sfm.InstantSfMCreator(features="colmap")._build_config()
+    cfg.RUNTIME_OPTIONS["use_depths"] = True
+    # Module-level dict must be untouched — Config aliases it; creator must copy
+    assert RUNTIME_OPTIONS == before
 ```
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_vda.py -v`
-Expected: FAIL — `ModuleNotFoundError: ... 'collab_splats.pointcloud.vda'`
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_instantsfm.py -v`
+Expected: FAIL — `AttributeError: module 'collab_splats.pointcloud.sfm' has no attribute 'generate_vda_depth'`
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement in `collab_splats/pointcloud/sfm.py`**
+
+Append after the existing creators. File-top imports to ensure present (top of file, not inline): `logging`, `shutil`, `sys`, `numpy as np`, `pycolmap`, `dataclass`, `Path`; `logger = logging.getLogger(__name__)` if missing. `torch` and `instantsfm` imports stay lazy inside functions (optional heavy deps, per code style exception).
 
 ```python
-# collab_splats/pointcloud/vda.py
-"""
-Metric depth generation via Video Depth Anything for the SfM pipeline.
-
-VDA is not pip-installable: setup.sh clones DepthAnything/Video-Depth-Anything
-into third_party/ and downloads the metric vitl checkpoint. This module adds the
-clone's metric_depth/ dir to sys.path at call time (upstream InstantSfM's own
-integration pattern) and runs metric inference over frames.zarr keyframes.
-
-Attribution: inference call pattern follows
-https://github.com/DepthAnything/Video-Depth-Anything metric_depth/run.py.
-"""
-
-import logging
-import sys
-from pathlib import Path
-
-import numpy as np
-
-logger = logging.getLogger(__name__)
-
 ########################################################################
-# Locations
+# Video Depth Anything — metric depth for the SfM path
 ########################################################################
 
 # Repo root -> third_party clone (setup.sh owns creation); module-level so tests can monkeypatch
 VDA_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "Video-Depth-Anything"
 VDA_CHECKPOINT = "metric_video_depth_anything_vitl.pth"
-
-########################################################################
-# Depth generation
-########################################################################
 
 
 def generate_vda_depth(
@@ -846,10 +666,13 @@ def generate_vda_depth(
     Run Video Depth Anything metric depth over keyframes; write InstantSfM's depth layout.
 
     - frames: (N, H, W, 3) uint8 RGB (frames.zarr order).
-    - fps: effective keyframe rate (frame spacing / video fps) — VDA is temporal.
+    - fps: effective keyframe rate — VDA is temporal.
     - out_dir: parent dir; depths land at out_dir/depth_vda/depths.npz key 'depths'
       (the exact layout instantsfm.ReadDepths consumes).
     - Returns the depths.npz path. Skips inference when it already exists.
+
+    Attribution: inference pattern follows
+    https://github.com/DepthAnything/Video-Depth-Anything metric_depth/run.py.
     """
     depth_dir = Path(out_dir) / "depth_vda"
     npz_path = depth_dir / "depths.npz"
@@ -892,166 +715,11 @@ def generate_vda_depth(
     np.savez_compressed(npz_path, depths=np.asarray(depths, dtype=np.float32))
     logger.info("VDA depths written: %s shape=%s", npz_path, np.asarray(depths).shape)
     return npz_path
-```
-
-**Probe note for the executor:** the exact import path (`video_depth_anything.video_depth` under `metric_depth/`) and `infer_video_depth` signature were read from the upstream repo in the design session but NOT yet executed against torch 2.5.1. Task 10 Step 2 is the live probe; if the metric variant exports a differently named class/module, fix HERE (one place) and update this docstring.
-
-- [ ] **Step 4: Run tests**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_vda.py -v`
-Expected: 2 PASS (neither touches the real clone).
-
-- [ ] **Step 5: setup.sh additions**
-
-Append to `setup.sh` after the vismatch pre-fetch block:
-
-```bash
-# --- InstantSfM backend (optional, CC-BY-NC-4.0 — research use) ------------------
-# Their pyproject pins numpy==1.26.4; --no-deps is load-bearing (we run numpy 2.1.3).
-uv pip install --no-deps 'git+https://github.com/cre185/InstantSfM@d3e599e1a42b4c5a806a84d9f383e1005d25f61b'
-uv pip install pyceres==2.3 scikit-sparse==0.4.15   # needs: apt-get install -y libsuitesparse-dev
-
-# --- Video Depth Anything (metric) — clone + checkpoint, not pip-installable -----
-VDA_DIR="third_party/Video-Depth-Anything"
-if [ ! -d "$VDA_DIR" ]; then
-    git clone https://github.com/DepthAnything/Video-Depth-Anything "$VDA_DIR"
-fi
-mkdir -p "$VDA_DIR/checkpoints"
-if [ ! -f "$VDA_DIR/checkpoints/metric_video_depth_anything_vitl.pth" ]; then
-    wget -q -O "$VDA_DIR/checkpoints/metric_video_depth_anything_vitl.pth" \
-        "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Large/resolve/main/metric_video_depth_anything_vitl.pth"
-fi
-```
-
-Also ensure `third_party/` is gitignored (check `.gitignore`; add `third_party/` if absent).
-
-**TRAP (memory):** plain `uv sync` prunes packages installed outside the lock (gsplat extras precedent). Document in the same setup.sh comment: rerun this block after any `uv sync`.
-
-- [ ] **Step 6: pyproject.toml note**
-
-InstantSfM/pyceres/scikit-sparse are installed via setup.sh `--no-deps` (their numpy pin conflicts with the lock), NOT via pyproject. Add a comment in `pyproject.toml` near the existing dependency notes:
-
-```toml
-# InstantSfM backend deps (instantsfm, pyceres, scikit-sparse, VDA clone) are installed
-# by setup.sh with --no-deps — upstream pins numpy==1.26.4 which conflicts with the lock.
-```
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add tests/pointcloud/test_vda.py collab_splats/pointcloud/vda.py setup.sh pyproject.toml .gitignore
-git commit --only tests/pointcloud/test_vda.py collab_splats/pointcloud/vda.py setup.sh pyproject.toml .gitignore -m "feat(pointcloud): Video Depth Anything metric depth module + install plumbing"
-```
-
----
-
-### Task 8: `InstantSfMCreator`
-
-**Files:**
-- Modify: `collab_splats/pointcloud/sfm.py` (add creator + helper; ColmapCreator/HlocCreator untouched)
-- Test: `tests/pointcloud/test_instantsfm_creator.py`
-
-- [ ] **Step 1: Write the failing tests (pixel-indices helper + config-copy guard; no InstantSfM run)**
-
-```python
-# tests/pointcloud/test_instantsfm_creator.py
-import numpy as np
-import pytest
 
 
-def test_pixel_indices_from_reconstruction_scales_to_depth_res():
-    from collab_splats.pointcloud.sfm import _pixel_indices_from_reconstruction
-
-    # Minimal stand-in for pycolmap objects: 1 point3D observed in frame 0 at
-    # original-res keypoint (200, 100); original 800x600 -> depth 80x60 = scale 0.1
-    class _Elem:
-        image_id, point2D_idx = 1, 0
-
-    class _Track:
-        elements = [_Elem()]
-
-    class _P3D:
-        track = _Track()
-
-    class _Pt2D:
-        xy = np.array([200.0, 100.0])
-
-    class _Img:
-        name = "frame_000000.jpg"
-        points2D = [_Pt2D()]
-
-    class _Recon:
-        points3D = {7: _P3D()}
-        images = {1: _Img()}
-
-    idx = _pixel_indices_from_reconstruction(
-        _Recon(), point3d_ids=[7], name_to_row={"frame_000000.jpg": 0},
-        scale_x=0.1, scale_y=0.1, depth_hw=(60, 80),
-    )
-    assert idx.shape == (1, 3)
-    assert idx.dtype == np.int32
-    assert idx.tolist() == [[0, 10, 20]]  # [frame_row, row=y*0.1, col=x*0.1]
-
-
-def test_pixel_indices_clamped_to_grid():
-    from collab_splats.pointcloud.sfm import _pixel_indices_from_reconstruction
-
-    class _Elem:
-        image_id, point2D_idx = 1, 0
-
-    class _Track:
-        elements = [_Elem()]
-
-    class _P3D:
-        track = _Track()
-
-    class _Pt2D:
-        xy = np.array([799.9, 599.9])  # edge keypoint -> scaled index must stay in-grid
-
-    class _Img:
-        name = "frame_000000.jpg"
-        points2D = [_Pt2D()]
-
-    class _Recon:
-        points3D = {7: _P3D()}
-        images = {1: _Img()}
-
-    idx = _pixel_indices_from_reconstruction(
-        _Recon(), point3d_ids=[7], name_to_row={"frame_000000.jpg": 0},
-        scale_x=0.1, scale_y=0.1, depth_hw=(60, 80),
-    )
-    assert 0 <= idx[0, 1] < 60 and 0 <= idx[0, 2] < 80
-
-
-def test_creator_config_copy_prevents_module_dict_leak():
-    pytest.importorskip("instantsfm")
-    from instantsfm.controllers.config import RUNTIME_OPTIONS
-
-    from collab_splats.pointcloud.sfm import InstantSfMCreator
-
-    before = dict(RUNTIME_OPTIONS)
-    cfg = InstantSfMCreator(features="colmap")._build_config()
-    cfg.RUNTIME_OPTIONS["use_depths"] = True
-    # Module-level dict must be untouched — Config aliases it; creator must copy
-    assert RUNTIME_OPTIONS == before
-```
-
-- [ ] **Step 2: Run to verify failure**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_instantsfm_creator.py -v`
-Expected: FAIL — `ImportError: cannot import name '_pixel_indices_from_reconstruction'`
-
-- [ ] **Step 3: Implement in `collab_splats/pointcloud/sfm.py`**
-
-Append after the existing creators (imports for `dataclass`, `Path`, `logging`, `numpy`, `pycolmap` already exist at top — add any missing there, not inline; `instantsfm` imports stay lazy inside methods since it is an optional extra):
-
-```python
 ########################################################################
 # InstantSfM
 ########################################################################
-
-# Upstream pin — attribution + provenance attr written into pointcloud.zarr
-INSTANTSFM_COMMIT = "d3e599e1a42b4c5a806a84d9f383e1005d25f61b"
 
 
 def _pixel_indices_from_reconstruction(
@@ -1087,20 +755,21 @@ def _pixel_indices_from_reconstruction(
 @dataclass
 class InstantSfMCreator:
     """
-    Global SfM via InstantSfM (cre185/InstantSfM @ d3e599e, IROS 2026).
+    Global SfM via InstantSfM (https://github.com/cre185/InstantSfM, IROS 2026).
 
     License: CC-BY-NC-4.0 (non-commercial) — cleared for this repo's research use;
-    revisit before any commercial deployment.
+    revisit before any commercial deployment. Install pinned in setup.sh.
 
     Drives the upstream Python API directly (never their CLI): ReadData ->
     GenerateDatabase (system colmap binary, CPU SIFT, exhaustive) ->
-    ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures (VDA metric depth,
-    the only shipped mode) -> SolveGlobalMapper -> WriteGlomapReconstruction.
-    Call pattern follows instantsfm/scripts/sfm.py::run_sfm at the pinned commit.
+    ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures (VDA metric depth) ->
+    SolveGlobalMapper -> WriteGlomapReconstruction. Call pattern follows
+    instantsfm/scripts/sfm.py::run_sfm at the installed version.
     """
 
     features: str = "colmap"
     single_camera: bool = True
+    use_depths: bool = True
 
     def _build_config(self):
         """
@@ -1116,7 +785,7 @@ class InstantSfMCreator:
 
     def reconstruct(self, data_dir: Path) -> "pycolmap.Reconstruction":
         """
-        Run InstantSfM over data_dir (must hold images/ and depth_vda/depths.npz).
+        Run InstantSfM over data_dir (must hold images/; depth_vda/depths.npz when use_depths).
 
         - Writes COLMAP binary to data_dir/colmap/sparse/0 and moves the SIFT DB
           to data_dir/colmap/database.db (contract layout; GCS push excludes the DB).
@@ -1136,8 +805,8 @@ class InstantSfMCreator:
         if not path_info:
             raise RuntimeError(f"InstantSfM ReadData rejected {data_dir} — is images/ staged?")
 
-        # Depth is mandatory: use_depths=True is the only shipped mode
-        if not path_info.depth_path:
+        # Depth is the shipped mode; the nodepth path exists only for the eval ablation
+        if self.use_depths and not path_info.depth_path:
             raise RuntimeError(
                 f"no depth_vda/ under {data_dir} — generate_vda_depth must run first"
             )
@@ -1162,11 +831,12 @@ class InstantSfMCreator:
         if view_graph is None or cameras is None or images is None:
             raise RuntimeError(f"InstantSfM could not read {path_info.database_path}")
 
-        # Config with copied dicts; depth-aware mode on
+        # Config with copied dicts; depth-aware mode per creator field
         config = self._build_config()
-        config.RUNTIME_OPTIONS["use_depths"] = True
-        logger.info("InstantSfM: loading depths from %s", path_info.depth_path)
-        ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
+        config.RUNTIME_OPTIONS["use_depths"] = self.use_depths
+        if self.use_depths:
+            logger.info("InstantSfM: loading depths from %s", path_info.depth_path)
+            ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
 
         # Global mapping. Upstream crashes with IndexError (numpy-2 empty float64 mask,
         # scene/defs.py filter_by_mask) when track filtering leaves zero tracks —
@@ -1206,23 +876,21 @@ class InstantSfMCreator:
         return recon
 ```
 
-(Add `import shutil` and `logger = logging.getLogger(__name__)` to the file top if not already present — sfm.py has both patterns in the repo; check.)
-
 - [ ] **Step 4: Run tests**
 
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_instantsfm_creator.py -v`
-Expected: 3 PASS (third skips if instantsfm not installed in the test env).
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_instantsfm.py -v`
+Expected: 5 PASS (last skips if instantsfm not installed in the test env).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/pointcloud/test_instantsfm_creator.py collab_splats/pointcloud/sfm.py
-git commit --only tests/pointcloud/test_instantsfm_creator.py collab_splats/pointcloud/sfm.py -m "feat(pointcloud): InstantSfMCreator — python-API global SfM with VDA depth"
+git add tests/pointcloud/test_instantsfm.py collab_splats/pointcloud/sfm.py
+git commit --only tests/pointcloud/test_instantsfm.py collab_splats/pointcloud/sfm.py -m "feat(pointcloud): InstantSfMCreator + VDA metric depth helper"
 ```
 
 ---
 
-### Task 9: `Reconstructor._run_sfm` — orchestration + pointcloud.zarr build
+### Task 6: `Reconstructor._run_sfm` — orchestration + pointcloud.zarr build
 
 **Files:**
 - Modify: `collab_splats/wrapper/reconstructor.py:924-926` (`_run_sfm` stub)
@@ -1292,14 +960,15 @@ Replace the stub at `reconstructor.py:924-926`:
         creator = InstantSfMCreator(features=insfm_cfg.get("features", "colmap"))
         recon = creator.reconstruct(backend_dir)
 
-        # Assemble the unified result at VDA depth resolution
+        # Assemble the unified result at VDA depth resolution; provenance version from
+        # the installed package, never a hardcoded pin
         result = self._sfm_result_from_reconstruction(recon, backend_dir, store)
         result.save_zarr(
             backend_dir / "pointcloud.zarr",
             extra_attrs={
                 "method": "sfm",
                 "backend": "instantsfm",
-                "instantsfm_commit": INSTANTSFM_COMMIT,
+                "instantsfm_version": importlib.metadata.version("instantsfm"),
             },
         )
         return result
@@ -1392,11 +1061,10 @@ Then add the builder directly below:
         )
 ```
 
-Imports to add at reconstructor.py top (with existing import groups): `cv2` (already imported — check), and
+Imports to add at reconstructor.py top (with existing import groups): `import importlib.metadata`, `cv2` (already imported — check), and
 
 ```python
-from collab_splats.pointcloud.sfm import INSTANTSFM_COMMIT, InstantSfMCreator, _pixel_indices_from_reconstruction
-from collab_splats.pointcloud.vda import generate_vda_depth
+from collab_splats.pointcloud.sfm import InstantSfMCreator, _pixel_indices_from_reconstruction, generate_vda_depth
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 ```
 
@@ -1416,18 +1084,102 @@ git commit --only collab_splats/wrapper/reconstructor.py tests/wrapper/test_sfm_
 
 ---
 
-### Task 10: Live probes + GPU smoke (human-gated, tmux)
+### Task 7: Install plumbing — setup.sh + pyproject note
+
+**Files:**
+- Modify: `setup.sh`, `pyproject.toml`, `.gitignore`
+
+- [ ] **Step 1: setup.sh additions**
+
+Append after the vismatch pre-fetch block. The upstream commit pin lives HERE and only here:
+
+```bash
+# --- InstantSfM backend (optional, CC-BY-NC-4.0 — research use) ------------------
+# Their pyproject pins numpy==1.26.4; --no-deps is load-bearing (we run numpy 2.1.3).
+# NOTE: plain `uv sync` prunes these (outside the lock) — rerun this block after any sync.
+uv pip install --no-deps 'git+https://github.com/cre185/InstantSfM@d3e599e1a42b4c5a806a84d9f383e1005d25f61b'
+uv pip install pyceres==2.3 scikit-sparse==0.4.15   # needs: apt-get install -y libsuitesparse-dev
+
+# --- Video Depth Anything (metric) — clone + checkpoint, not pip-installable -----
+VDA_DIR="third_party/Video-Depth-Anything"
+if [ ! -d "$VDA_DIR" ]; then
+    git clone https://github.com/DepthAnything/Video-Depth-Anything "$VDA_DIR"
+fi
+mkdir -p "$VDA_DIR/checkpoints"
+if [ ! -f "$VDA_DIR/checkpoints/metric_video_depth_anything_vitl.pth" ]; then
+    wget -q -O "$VDA_DIR/checkpoints/metric_video_depth_anything_vitl.pth" \
+        "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Large/resolve/main/metric_video_depth_anything_vitl.pth"
+fi
+```
+
+Ensure `third_party/` is gitignored (check `.gitignore`; add `third_party/` if absent).
+
+- [ ] **Step 2: pyproject.toml note**
+
+InstantSfM/pyceres/scikit-sparse are installed via setup.sh `--no-deps` (their numpy pin conflicts with the lock), NOT via pyproject. Add a comment near the existing dependency notes:
+
+```toml
+# InstantSfM backend deps (instantsfm, pyceres, scikit-sparse, VDA clone) are installed
+# by setup.sh with --no-deps — upstream pins numpy==1.26.4 which conflicts with the lock.
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add setup.sh pyproject.toml .gitignore
+git commit --only setup.sh pyproject.toml .gitignore -m "build: instantsfm + VDA install plumbing (setup.sh, --no-deps guard)"
+```
+
+---
+
+### Task 8: Docs — configs/README.md contract + migration
+
+**Files:**
+- Modify: `configs/README.md`
+
+- [ ] **Step 1: Update the processed-scene output contract**
+
+In the output-contract section, rename the artifact and document the hard cutover:
+
+```markdown
+- `<backend>/pointcloud.zarr` — the unified reconstruction artifact for every
+  `pointcloud.method` (feedforward and sfm). Store attrs carry provenance:
+  `method`, `backend`, and for instantsfm the installed upstream version.
+  `confidence` and `mv_*` arrays are present only when the method produces them
+  (absent, never zeros).
+
+  **Migration (breaking, 2026-08-23):** `feedforward.zarr` was renamed with no
+  fallback. Scenes written before the rename need a one-time rename or a re-run:
+  - local: `mv <scene>/<backend>/feedforward.zarr <scene>/<backend>/pointcloud.zarr`
+  - remote: `rclone moveto <remote>:environments-processed/<scene>/feedforward.zarr \
+      <remote>:environments-processed/<scene>/pointcloud.zarr`
+  Notebooks/tools reading the old name break until the scene is migrated.
+```
+
+- [ ] **Step 2: Add sfm/instantsfm subsection**
+
+Config keys (`pointcloud.method: sfm`, `backend: instantsfm`, `instantsfm.features: colmap`), the VDA depth requirement (setup.sh clone + checkpoint, system `colmap` binary required), CC-BY-NC-4.0 license note, `bundle_adjustment`/`refine` unsupported, `database.db` excluded from GCS push (existing anchor), outputs land in the standard layout (`colmap/sparse/0`, `pointcloud.zarr`, `sparse_pc.ply`, `transforms.json`).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add configs/README.md
+git commit --only configs/README.md -m "docs(configs): pointcloud.zarr contract, migration, instantsfm backend notes"
+```
+
+---
+
+### Task 9: Live probes + GPU smoke (human-gated, tmux)
 
 No code — evidence gates. Run in tmux (memory: heavy inference never in notebooks; 46.6 GB cgroup).
 
 - [ ] **Step 1: Install per setup.sh block (if not already)**
 
 ```bash
-bash -x setup.sh 2>&1 | tail -40   # or run just the new instantsfm/VDA block manually
-/opt/venv/reconstruction/bin/python -c "import instantsfm, pyceres; print('instantsfm ok')"
+/opt/venv/reconstruction/bin/python -c "import instantsfm, pyceres; import importlib.metadata as m; print('instantsfm', m.version('instantsfm'))"
 /opt/venv/reconstruction/bin/python -c "import numpy, torch, gsplat; print(numpy.__version__, torch.__version__, gsplat.__version__)"
 ```
-Expected: `instantsfm ok`; pins intact: `2.1.3 2.5.1+cu121 1.5.3`. **If numpy moved, stop — the `--no-deps` guard failed.**
+Expected: `instantsfm 0.3.0`; pins intact: `2.1.3 2.5.1+cu121 1.5.3`. **If numpy moved, stop — the `--no-deps` guard failed.**
 
 - [ ] **Step 2: VDA import + inference probe vs torch 2.5.1 (open risk from spec)**
 
@@ -1435,7 +1187,7 @@ Expected: `instantsfm ok`; pins intact: `2.1.3 2.5.1+cu121 1.5.3`. **If numpy mo
 /opt/venv/reconstruction/bin/python - <<'EOF'
 import sys, numpy as np
 sys.path.insert(0, "third_party/Video-Depth-Anything/metric_depth")
-from video_depth_anything.video_depth import VideoDepthAnything  # exact path may differ — fix vda.py if so
+from video_depth_anything.video_depth import VideoDepthAnything  # exact path may differ — fix sfm.py if so
 import torch
 m = VideoDepthAnything(encoder="vitl", features=256, out_channels=[256, 512, 1024, 1024])
 sd = torch.load("third_party/Video-Depth-Anything/checkpoints/metric_video_depth_anything_vitl.pth", map_location="cpu")
@@ -1445,7 +1197,7 @@ depths, fps = m.infer_video_depth(frames, 1.0, input_size=518, device="cuda", fp
 print("OK", np.asarray(depths).shape, np.asarray(depths).dtype, float(np.median(depths)))
 EOF
 ```
-Expected: `OK (8, ...)` with positive metric-scale medians. Any import/signature mismatch → fix `vda.py` (single place) and note in the measured report.
+Expected: `OK (8, ...)` with positive metric-scale medians. Any import/signature mismatch → fix `generate_vda_depth` in `sfm.py` (single place) and note in the measured report.
 
 - [ ] **Step 3: Realistic-frame-count InstantSfM smoke (open risk: the 12-frame 81→0 crash)**
 
@@ -1453,6 +1205,7 @@ Run the full pipeline on the tutorial video at real density:
 
 ```bash
 tmux new -s insfm_smoke
+which colmap   # system binary required by GenerateDatabase; apt-get install colmap if missing
 /opt/venv/reconstruction/bin/python docs/examples/run_pipeline.py \
     --video data/tutorial/*.MP4 --output /tmp/claude-0/-workspace-collab-splats/a554d3f6-ae28-4875-bc24-afcfa133dfb5/scratchpad/insfm_e2e \
     --set pointcloud.method=sfm --set pointcloud.backend=instantsfm
@@ -1460,11 +1213,9 @@ tmux new -s insfm_smoke
 
 (Adapt to the actual run_pipeline.py CLI — check `--help`; if there is no `--set`, write a one-off yaml overlay next to the output dir.)
 
-Expected: ≥30 keyframes staged; SIFT DB built (needs system `colmap` binary — `which colmap` first, install via apt if missing); tracks survive filtering (log line `Before filtering: N , after filtering: M` with M > 0); `pointcloud.zarr` + `colmap/sparse/0` + `sparse_pc.ply` + `transforms.json` written. **If M = 0 again at realistic density, STOP and report — that's a design-level blocker (spec open-risk #1), not a bug to patch silently.**
+Expected: ≥30 keyframes staged; SIFT DB built; tracks survive filtering (log line `Before filtering: N , after filtering: M` with M > 0); `pointcloud.zarr` + `colmap/sparse/0` + `sparse_pc.ply` + `transforms.json` written. **If M = 0 again at realistic density, STOP and report — that's a design-level blocker (spec open-risk #1), not a bug to patch silently.**
 
 - [ ] **Step 4: Downstream stage matrix on the smoke output**
-
-Against the same output dir, run each stage and record pass/fail:
 
 ```bash
 /opt/venv/reconstruction/bin/python - <<'EOF'
@@ -1484,9 +1235,9 @@ cfg["splats"]["enabled"] = True
 # Construct against the smoke output dir the same way run_pipeline.py does (copy its
 # Reconstructor(...) call — video/output args); then drive each stage explicitly:
 r = Reconstructor(config=cfg, output_path=out)   # adapt kwargs to the actual __init__
-r.build_pointcloud()          # loads the Task-10-Step-3 result from disk (skip/load path)
-r.splats()                    # expect Task 5 log: "no confidence in zarr — using unmasked depth"
-r.mesh()                      # expect Task 5 log: "fusing unmasked"
+r.build_pointcloud()          # loads the Step-3 result from disk (skip/load path)
+r.splats()                    # expect Task 3 log: "no confidence in zarr — using unmasked depth"
+r.mesh()                      # expect Task 3 log: "fusing unmasked"
 r.extract_semantics()         # lift_features with uniform weights — no assert
 r.build_localization_db()
 r.verify()
@@ -1499,11 +1250,10 @@ EOF
 ```
 
 Checks:
-- `splats`: trains; log shows depth targets loaded from pointcloud.zarr (VDA metric depth), NOT the "no confidence" masking path silently zeroing everything — expect the Task 5 log line `no confidence in zarr — using unmasked depth`.
-- `mesh`: fuses; expect the Task 5 `fusing unmasked` log; visually sane ply.
-- `semantics`: `lift_features` runs with uniform weights (no assert).
-- `build_localization_db` + `verify`: run to completion on the zarr.
-- `refine_poses`: raises `ValueError` (Task 6).
+- `splats`: trains; depth targets loaded from pointcloud.zarr (VDA metric depth); Task 3 log line present.
+- `mesh`: fuses; visually sane ply.
+- `semantics`, `build_localization_db`, `verify`: run to completion.
+- `refine_poses`: raises `ValueError` (Task 4).
 
 - [ ] **Step 5: Record results**
 
@@ -1516,37 +1266,7 @@ git commit --only docs/superpowers/specs/2026-08-23-instantsfm-backend-design.md
 
 ---
 
-### Task 11: Docs — configs/README.md contract
-
-**Files:**
-- Modify: `configs/README.md`
-
-- [ ] **Step 1: Update the processed-scene output contract**
-
-In the output-contract section, rename the artifact and document back-compat:
-
-```markdown
-- `<backend>/pointcloud.zarr` — the unified reconstruction artifact for every
-  `pointcloud.method` (feedforward and sfm). Store attrs carry provenance:
-  `method`, `backend`, and for instantsfm the upstream commit. `confidence` and
-  `mv_*` arrays are present only when the method produces them (absent, never
-  zeros). Legacy scenes have `feedforward.zarr` instead — all readers resolve
-  via pointcloud.zarr-first fallback; nothing writes the legacy name anymore,
-  and no backfill/rename of remote scenes is performed.
-```
-
-Add an `sfm / instantsfm` subsection: config keys (`pointcloud.method: sfm`, `backend: instantsfm`, `instantsfm.features: colmap`), the VDA depth requirement (setup.sh clone + checkpoint, system `colmap` binary required), CC-BY-NC-4.0 license note, `bundle_adjustment`/`refine` unsupported, `database.db` excluded from GCS push (existing anchor).
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add configs/README.md
-git commit --only configs/README.md -m "docs(configs): pointcloud.zarr contract + instantsfm backend notes"
-```
-
----
-
-### Task 12: Eval conditions (human-gated, gates the fast-follow)
+### Task 10: Eval conditions (human-gated, gates the fast-follow)
 
 **Files:**
 - Modify: `evals/scripts/eval.py`
@@ -1555,7 +1275,7 @@ git commit --only configs/README.md -m "docs(configs): pointcloud.zarr contract 
 
 Follow the existing condition-registration pattern in `eval.py` (e.g. how `ba_percam` was added) — two new conditions:
 - `instantsfm`: `pointcloud.method=sfm`, `backend=instantsfm` (depth-aware, the shipped mode)
-- `instantsfm_nodepth`: same but the creator's config sets `use_depths=False` — thread a `use_depths` field through `InstantSfMCreator` (add `use_depths: bool = True` dataclass field; in `reconstruct`, `config.RUNTIME_OPTIONS["use_depths"] = self.use_depths` and skip `ReadDepthsIntoFeatures` + the depth-dir requirement when False). The Task 8 config-copy test is what makes this ablation valid in-process.
+- `instantsfm_nodepth`: same but `InstantSfMCreator(use_depths=False)` — the field already exists (Task 5); the condition threads it through however eval conditions override creator kwargs. The Task 5 config-copy test is what makes this ablation valid in-process.
 
 - [ ] **Step 2: Run (tmux, human-watched) on 7-Scenes chess/seq-01**
 
@@ -1568,13 +1288,13 @@ Compare ATE/RPE against the four feedforward backends' recorded numbers. Results
 - [ ] **Step 3: Commit**
 
 ```bash
-git add evals/scripts/eval.py collab_splats/pointcloud/sfm.py tests/pointcloud/test_instantsfm_creator.py
-git commit --only evals/scripts/eval.py collab_splats/pointcloud/sfm.py tests/pointcloud/test_instantsfm_creator.py -m "feat(evals): instantsfm / instantsfm_nodepth conditions"
+git add evals/scripts/eval.py
+git commit --only evals/scripts/eval.py -m "feat(evals): instantsfm / instantsfm_nodepth conditions"
 ```
 
 ---
 
-### Task 13: Full-suite gate + graph update
+### Task 11: Full-suite gate + graph update
 
 - [ ] **Step 1: Full test suite**
 
@@ -1584,8 +1304,8 @@ Expected: green modulo `docs/known-test-failures.md`. Fix regressions before dec
 - [ ] **Step 2: Format + graph**
 
 ```bash
-black collab_splats/pointcloud/paths.py collab_splats/pointcloud/vda.py collab_splats/pointcloud/sfm.py tests/pointcloud/ tests/mesh/test_absent_confidence.py tests/wrapper/test_sfm_config.py tests/wrapper/test_pointcloud_zarr_resolution.py
-isort collab_splats/pointcloud/paths.py collab_splats/pointcloud/vda.py collab_splats/pointcloud/sfm.py
+black collab_splats/pointcloud/sfm.py tests/pointcloud/test_instantsfm.py tests/pointcloud/test_zarr_attrs.py tests/mesh/test_absent_confidence.py tests/wrapper/test_sfm_config.py
+isort collab_splats/pointcloud/sfm.py
 graphify update .
 ```
 
@@ -1604,7 +1324,7 @@ git commit --only <changed files> -m "style: format instantsfm backend files"
 
 - colmap/hloc creator implementations (stubs stay).
 - Partial-registration handling (v1 requires full registration; RuntimeError names the fix).
-- Backfilling/renaming remote `feedforward.zarr` scenes.
+- Automated backfill of legacy scenes — migration is the documented one-line rename (Task 8) or a reprocess.
 - Loop closure with sfm method (LC is a feedforward-creator concern; config combination untested, not blocked).
 - BFMatcher/feature tuning inside InstantSfM; upstream numpy-2 `filter_by_mask` fix (report upstream instead).
 - Docker rebuild (no docker binary here — owed alongside the splats-module Docker debt).

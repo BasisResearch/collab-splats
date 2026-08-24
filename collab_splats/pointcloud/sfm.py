@@ -330,6 +330,144 @@ def generate_vda_depth(
 
 
 ########################################################################
+# Depth alignment: fit per-frame scales taking VDA metric depth to the
+# COLMAP world
+########################################################################
+
+MIN_ALIGN_OBS = 20  # per-frame track-observation floor for a trustworthy median
+
+
+def align_depth_to_reconstruction(
+    reconstruction: pycolmap.Reconstruction,
+    image_names: list[str],
+    depth: np.ndarray,
+) -> tuple[np.ndarray, dict]:
+    """
+    Per-frame scale factors aligning VDA depth to the reconstruction's world scale.
+
+    - Correspondences are track observations: each points2D with a point3D gives an exact
+      pixel plus the point's z in the camera frame (d_colmap); the pixel is rescaled from
+      native camera resolution to the depth grid and nearest-sampled into VDA depth (d_vda).
+    - s_i = median(d_colmap / d_vda) per frame; frames with fewer than MIN_ALIGN_OBS valid
+      pairs inherit the global median of the fitted scales; zero fitted frames raises.
+    - Returns (scales, stats): (N,) float64 depth multipliers, and a stats dict with the
+      global scale, fallback frames, per-frame obs counts, and the pooled ratio spread
+      before/after alignment (the after-spread is the unit-level success check).
+    """
+    # Row order is the caller's; every name must be registered (mirrors points3d_depth_maps)
+    name_to_image = {image.name: image for image in reconstruction.images.values()}
+    missing = [name for name in image_names if name not in name_to_image]
+    if missing:
+        raise ValueError(f"{len(missing)} image names not in reconstruction (first: {missing[0]})")
+
+    n_frames, grid_h, grid_w = depth.shape
+    scales = np.full(n_frames, np.nan)
+    obs_counts = np.zeros(n_frames, dtype=np.int64)
+    pooled_ratios: list[np.ndarray] = []
+    pooled_rows: list[np.ndarray] = []
+
+    for row, name in enumerate(image_names):
+        image = name_to_image[name]
+        camera = reconstruction.cameras[image.camera_id]
+
+        # Track observations: exact 2D pixel + the observed point's depth in this view
+        observations = [p for p in image.points2D if p.has_point3D()]
+        if not observations:
+            continue
+        xyz = np.stack([reconstruction.points3D[p.point3D_id].xyz for p in observations])
+        cam_from_world = image.cam_from_world().matrix()
+        d_colmap = (xyz @ cam_from_world[:3, :3].T + cam_from_world[:3, 3])[:, 2]
+
+        # Rescale native pixels to the depth grid (the localization ref_px bug class —
+        # native-res keypoints indexed into a model-res grid), then nearest-sample
+        xy = np.stack([p.xy for p in observations])
+        u = np.rint(xy[:, 0] * (grid_w / camera.width)).astype(np.int64)
+        v = np.rint(xy[:, 1] * (grid_h / camera.height)).astype(np.int64)
+        in_bounds = (u >= 0) & (u < grid_w) & (v >= 0) & (v < grid_h)
+        d_vda = np.zeros(len(observations))
+        d_vda[in_bounds] = depth[row, v[in_bounds], u[in_bounds]]
+
+        # Keep pairs with positive depth on both sides; fit only above the obs floor
+        valid = in_bounds & (d_vda > 0) & (d_colmap > 0)
+        obs_counts[row] = int(valid.sum())
+        if obs_counts[row] == 0:
+            continue
+        ratios = d_colmap[valid] / d_vda[valid]
+        pooled_ratios.append(ratios)
+        pooled_rows.append(np.full(len(ratios), row))
+        if obs_counts[row] >= MIN_ALIGN_OBS:
+            scales[row] = np.median(ratios)
+
+    fitted = ~np.isnan(scales)
+    if not fitted.any():
+        raise ValueError(
+            f"depth alignment: no frame has >= {MIN_ALIGN_OBS} valid track observations — "
+            "the reconstruction is too sparse to align VDA depth to the COLMAP world."
+        )
+
+    # Thin frames inherit the scene answer (below the obs floor: don't fit, inherit)
+    global_scale = float(np.median(scales[fitted]))
+    fallback_frames = [image_names[i] for i in np.flatnonzero(~fitted)]
+    if fallback_frames:
+        logger.warning(
+            "depth alignment: %d frames under %d obs (first: %s) — using global scale",
+            len(fallback_frames),
+            MIN_ALIGN_OBS,
+            fallback_frames[0],
+        )
+    scales[~fitted] = global_scale
+
+    # Pooled spread: before = one global scale for all frames, after = per-frame scales
+    ratios_all = np.concatenate(pooled_ratios)
+    rows_all = np.concatenate(pooled_rows).astype(np.int64)
+    stats = {
+        "global_scale": global_scale,
+        "n_fallback": len(fallback_frames),
+        "fallback_frames": fallback_frames,
+        "obs_counts": obs_counts.tolist(),
+        "ratio_p10_p50_p90_before": [float(x) for x in np.percentile(ratios_all / global_scale, [10, 50, 90])],
+        "ratio_p10_p50_p90_after": [float(x) for x in np.percentile(ratios_all / scales[rows_all], [10, 50, 90])],
+    }
+    return scales, stats
+
+
+def apply_depth_alignment(result: "FeedforwardResult", reconstruction: pycolmap.Reconstruction) -> dict:
+    """
+    Scale result.depth to the reconstruction's world scale in place; recompute world_points.
+
+    - Fits per-frame scales via align_depth_to_reconstruction over the result's rows, then
+      re-derives dense world_points from the scaled depth under the COLMAP poses, so the
+      zarr and the COLMAP model share one scale.
+    - Returns the provenance attrs to merge into save_zarr's extra_attrs; raises on an
+      unalignable scene — never a silent VDA-metric write.
+    """
+    # SfM image_paths are extension-less stems (Path(im.name) from COLMAP, whose image
+    # names ARE stems) — path.name is the COLMAP image name, the splats-branch convention
+    names = [path.name for path in result.image_paths]
+    scales, stats = align_depth_to_reconstruction(reconstruction, names, result.depth)
+    logger.info(
+        "depth alignment: global scale %.4f, ratio p10/p50/p90 %s -> %s, %d fallback frames",
+        stats["global_scale"],
+        [round(x, 4) for x in stats["ratio_p10_p50_p90_before"]],
+        [round(x, 4) for x in stats["ratio_p10_p50_p90_after"]],
+        stats["n_fallback"],
+    )
+
+    # Scale depth per frame; re-unproject dense world points (t is not scale-invariant,
+    # so world_points cannot be scaled directly — they must be re-derived)
+    result.depth = (result.depth * scales[:, None, None]).astype(np.float32)
+    result.world_points = unproject_depth_map_to_point_map(
+        result.depth[..., None], result.extrinsics[:, :3, :], result.intrinsics
+    ).astype(np.float32)
+
+    return {
+        "depth_scale": "colmap",
+        "depth_scales": [float(s) for s in scales],
+        "depth_scale_fallback_frames": stats["fallback_frames"],
+    }
+
+
+########################################################################
 # InstantSfM
 ########################################################################
 

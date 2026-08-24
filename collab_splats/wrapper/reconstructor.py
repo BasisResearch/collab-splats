@@ -27,6 +27,7 @@ from collab_splats.pointcloud.sfm import (
     InstantSfMCreator,
     _pixel_indices_from_reconstruction,
     _tracked_point3d_ids,
+    apply_depth_alignment,
     generate_vda_depth,
     vda_depth_complete,
 )
@@ -521,7 +522,10 @@ def _run_tsdf_mesh(
 
     # Splats source: rendered depth/RGB/alpha + the poses actually rendered; no native path
     if source == "splats":
-        from collab_splats.mesh.utils import _splats_to_tsdf_inputs, mesh_from_tsdf_inputs
+        from collab_splats.mesh.utils import (
+            _splats_to_tsdf_inputs,
+            mesh_from_tsdf_inputs,
+        )
 
         if native_resolution:
             logger.info(
@@ -1068,6 +1072,12 @@ class Reconstructor:
 
         # Unified pointcloud.zarr at VDA depth res, with provenance from the installed package
         outputs = self._sfm_result_from_reconstruction(recon, backend_dir, store)
+
+        # Align VDA depth to the COLMAP world before anything persists — the zarr and the
+        # model must share one scale (splat depth targets, mesh fusion, localization lookup).
+        # Raises rather than writing a VDA-metric zarr; depth_scale attrs mark aligned scenes.
+        align_attrs = apply_depth_alignment(outputs, recon)
+
         zarr_path = backend_dir / "pointcloud.zarr"
         outputs.save_zarr(
             zarr_path,
@@ -1075,6 +1085,7 @@ class Reconstructor:
                 "method": "sfm",
                 "backend": "instantsfm",
                 "instantsfm_version": importlib.metadata.version("instantsfm"),
+                **align_attrs,
             },
         )
         logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(outputs.points):,}")
@@ -1193,7 +1204,10 @@ class Reconstructor:
         # Heavy deps imported lazily, matching the other stage methods
         from vggt.utils.geometry import unproject_depth_map_to_point_map
 
-        from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+        from collab_splats.geometry.bundle_adjustment import (
+            BundleAdjustment,
+            BundleAdjustmentConfig,
+        )
         from collab_splats.pointcloud.feedforward.base import (
             FeedforwardResult,
             _rescale_reconstruction_to_original_dimensions,

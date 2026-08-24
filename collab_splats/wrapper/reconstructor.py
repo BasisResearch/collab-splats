@@ -26,6 +26,7 @@ from collab_splats.pointcloud.export import write_pointcloud_ply
 from collab_splats.pointcloud.sfm import (
     InstantSfMCreator,
     _pixel_indices_from_reconstruction,
+    _tracked_point3d_ids,
     generate_vda_depth,
     vda_depth_complete,
 )
@@ -1105,8 +1106,10 @@ class Reconstructor:
         intrinsics[:, 0, :] *= sx
         intrinsics[:, 1, :] *= sy
 
-        # Sparse points in point3D-id order; pixel_indices from each point's first observation
-        point3d_ids = sorted(recon.points3D)
+        # Sparse points in point3D-id order; pixel_indices from each point's first
+        # observation. Observation-less points (InstantSfM's sub-min-track-length
+        # exports) have no pixel provenance and are dropped.
+        point3d_ids = _tracked_point3d_ids(recon)
         points = np.array([recon.points3D[pid].xyz for pid in point3d_ids], dtype=np.float32).reshape(-1, 3)
         colors = np.array([recon.points3D[pid].color for pid in point3d_ids], dtype=np.uint8).reshape(-1, 3)
         pixel_indices = _pixel_indices_from_reconstruction(

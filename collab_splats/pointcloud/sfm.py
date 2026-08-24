@@ -335,6 +335,17 @@ def generate_vda_depth(
 ########################################################################
 
 
+def _tracked_point3d_ids(recon: pycolmap.Reconstruction) -> list[int]:
+    """
+    Sorted point3D ids that carry at least one observation.
+
+    - InstantSfM exports sub-min-track-length points with EMPTY tracks (the writer
+      consistency patch drops their unverifiable observations); no observation means
+      no pixel provenance, so the result tail excludes them.
+    """
+    return sorted(pid for pid, p in recon.points3D.items() if len(p.track.elements) > 0)
+
+
 def _pixel_indices_from_reconstruction(
     recon: pycolmap.Reconstruction,
     point3d_ids: list[int],

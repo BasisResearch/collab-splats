@@ -92,6 +92,20 @@ def test_vda_wrong_named_npy_set_does_not_skip(tmp_path, monkeypatch):
         sfm.generate_vda_depth(frames, fps=30.0, out_dir=tmp_path, names=_NAMES)
 
 
+def test_tracked_point3d_ids_drops_observationless_points():
+    # InstantSfM exports sub-min-track-length points with empty tracks — the result
+    # tail must exclude them (pixel_indices reads track.elements[0])
+    class _EmptyTrack:
+        elements = []
+
+    class _EmptyP3D:
+        track = _EmptyTrack()
+
+    recon = _recon_with_keypoint((1.0, 2.0))
+    recon.points3D[3] = _EmptyP3D()
+    assert sfm._tracked_point3d_ids(recon) == [7]
+
+
 def test_pixel_indices_from_reconstruction_scales_to_depth_res():
     # Original 800x600 -> depth 80x60 = scale 0.1; keypoint (200, 100) -> (row 10, col 20)
     idx = sfm._pixel_indices_from_reconstruction(

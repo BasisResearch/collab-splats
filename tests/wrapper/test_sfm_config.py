@@ -68,10 +68,10 @@ def test_instantsfm_features_allowlist():
 
 def test_base_yaml_has_instantsfm_block():
     """
-    base.yaml carries the instantsfm sub-block with its documented default.
+    base.yaml carries the instantsfm sub-block with its documented defaults.
     """
     cfg = _base_config()
-    assert cfg["pointcloud"]["instantsfm"] == {"features": "colmap"}
+    assert cfg["pointcloud"]["instantsfm"] == {"features": "colmap", "retriangulation": False}
 
 
 def test_refine_poses_refuses_sfm_method(tmp_path):

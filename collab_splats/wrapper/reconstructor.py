@@ -1373,7 +1373,7 @@ class Reconstructor:
         elif not pointcloud_zarr.exists():
             raise FileNotFoundError(
                 f"pointcloud.zarr not found at {pointcloud_zarr}. "
-                "Mesh requires depth maps from a feedforward backend."
+                "Mesh requires pointcloud.zarr depth maps — run the pointcloud stage first."
             )
         elif self.config["pointcloud"]["method"] == "sfm":
             # SfM scenes fuse only after zarr depth was aligned to the COLMAP world
@@ -1383,7 +1383,8 @@ class Reconstructor:
             if "depth_scale" not in attrs:
                 raise ValueError(
                     f"{pointcloud_zarr} predates depth alignment (no depth_scale attr) — "
-                    "re-run the pointcloud stage, or set mesh.source: splats."
+                    "re-run the pointcloud stage to align VDA depth to the COLMAP world, "
+                    "or set mesh.source: splats."
                 )
 
         out = _run_tsdf_mesh(

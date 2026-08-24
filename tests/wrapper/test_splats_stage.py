@@ -1,5 +1,10 @@
 """
 Splats-stage wiring: leaf registration, base.yaml default, and the arrays handed to train().
+
+- Depth targets come from pointcloud.zarr depth for every method — sfm scenes use the
+  dense COLMAP-scale-aligned zarr depth through the same path as feedforward backends.
+- A legacy sfm zarr without the depth_scale attr is VDA-metric and raises (re-run the
+  pointcloud stage to align).
 """
 
 from pathlib import Path

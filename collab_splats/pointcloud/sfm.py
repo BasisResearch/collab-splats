@@ -354,7 +354,7 @@ def align_depth_to_reconstruction(
       global scale, fallback frames, per-frame obs counts, and the pooled ratio spread
       before/after alignment (the after-spread is the unit-level success check).
     """
-    # Row order is the caller's; every name must be registered (mirrors points3d_depth_maps)
+    # Row order is the caller's; every name must be registered
     name_to_image = {image.name: image for image in reconstruction.images.values()}
     missing = [name for name in image_names if name not in name_to_image]
     if missing:

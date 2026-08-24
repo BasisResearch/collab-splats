@@ -352,7 +352,7 @@ parameter and raises.
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm.py` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
-| `pointcloud.instantsfm.features` | str | `colmap` | sfm only: feature/matching handler. `colmap` (CPU SIFT + exhaustive) is the only allowed value — anything else raises at validation |
+| `pointcloud.instantsfm.features` | str | `colmap` | sfm only: feature/matching handler. `colmap` (SIFT + exhaustive; GPU when CUDA is available, capped CPU threads otherwise) is the only allowed value — anything else raises at validation |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`) |
 | `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`) |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points |

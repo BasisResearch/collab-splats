@@ -62,9 +62,10 @@ DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 
 _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 _SFM_BACKENDS = {"colmap", "hloc", "instantsfm"}
-# InstantSfM v0.3.0's GenerateDatabase step ignores the feature-handler name it's given and
-# always runs CPU SIFT + exhaustive matching, so "colmap" is the only value that means anything
-# today. Key kept (not hardcoded) so a future upstream feature handler has somewhere to land.
+# InstantSfM v0.3.0's DB step ignores the feature-handler name it's given and always runs
+# colmap SIFT + exhaustive matching (our _generate_sift_database, GPU when CUDA is available),
+# so "colmap" is the only value that means anything today. Key kept (not hardcoded) so a
+# future feature handler (e.g. loma) has somewhere to land.
 _INSTANTSFM_FEATURES = {"colmap"}
 _VALID_METHODS = {"feedforward", "sfm"}
 _STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify",

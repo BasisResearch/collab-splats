@@ -398,19 +398,23 @@ def _sift_database_valid(database_path: Path) -> bool:
 
 def _generate_sift_database(image_path: Path, database_path: Path, single_camera: bool) -> None:
     """
-    Build the COLMAP SIFT feature database: CPU extraction + exhaustive matching.
+    Build the COLMAP SIFT feature database: extraction + exhaustive matching.
 
     - Reimplements upstream GenerateDatabase (cre185/InstantSfM
-      instantsfm/controllers/feature_handler.py:18-57 @ d3e599e) with the same
-      commands plus a thread cap: upstream neither caps threads (OOM-kill under
-      the cgroup, see _SIFT_NUM_THREADS) nor propagates CalledProcessError, so a
-      colmap crash there surfaces only as an empty-tracks IndexError much later.
-    - CUDA_VISIBLE_DEVICES="" mirrors upstream — CPU SIFT needs no GPU/OpenGL
-      context inside the container.
+      instantsfm/controllers/feature_handler.py:18-57 @ d3e599e): upstream
+      hardcodes CPU SIFT with no thread cap (OOM-kill under the cgroup, see
+      _SIFT_NUM_THREADS) and swallows CalledProcessError, so a colmap crash
+      there surfaces only as an empty-tracks IndexError much later.
+    - GPU SIFT when CUDA is available (CUDA-built colmap runs SiftGPU headless;
+      measured 100x1920x1080: extraction 7 s vs 90 s CPU, exhaustive matching
+      55 s vs ~816 s CPU); CPU fallback keeps upstream's CUDA_VISIBLE_DEVICES=""
+      plus the thread cap.
     - On failure the partial DB is unlinked so a re-run rebuilds from scratch.
     """
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = ""
+    use_gpu = torch.cuda.is_available()
+    if not use_gpu:
+        env["CUDA_VISIBLE_DEVICES"] = ""
 
     extractor_cmd = [
         "colmap", "feature_extractor",
@@ -418,25 +422,26 @@ def _generate_sift_database(image_path: Path, database_path: Path, single_camera
         "--database_path", str(database_path),
         "--ImageReader.camera_model", "SIMPLE_RADIAL",
         "--ImageReader.single_camera", "1" if single_camera else "0",
-        "--SiftExtraction.use_gpu", "0",
-        "--SiftExtraction.num_threads", str(_SIFT_NUM_THREADS),
+        "--SiftExtraction.use_gpu", "1" if use_gpu else "0",
     ]
     matcher_cmd = [
         "colmap", "exhaustive_matcher",
         "--database_path", str(database_path),
-        "--SiftMatching.use_gpu", "0",
-        "--SiftMatching.num_threads", str(_SIFT_NUM_THREADS),
+        "--SiftMatching.use_gpu", "1" if use_gpu else "0",
     ]
+    if not use_gpu:
+        extractor_cmd += ["--SiftExtraction.num_threads", str(_SIFT_NUM_THREADS)]
+        matcher_cmd += ["--SiftMatching.num_threads", str(_SIFT_NUM_THREADS)]
 
     try:
         for cmd in (extractor_cmd, matcher_cmd):
-            logger.info("InstantSfM: running %s %s", cmd[0], cmd[1])
+            logger.info("InstantSfM: running %s %s (%s)", cmd[0], cmd[1], "gpu" if use_gpu else "cpu")
             subprocess.run(cmd, check=True, env=env)
     except (subprocess.CalledProcessError, FileNotFoundError) as err:
         database_path.unlink(missing_ok=True)
         raise RuntimeError(
             f"COLMAP SIFT database build failed ({err}) — is the `colmap` binary installed "
-            "and is there enough memory for CPU SIFT?"
+            "(CUDA-built for the GPU path) and is there enough memory?"
         ) from err
 
 
@@ -449,8 +454,8 @@ class InstantSfMCreator:
       revisit before any commercial deployment. Install pinned in setup.sh.
     - Drives the upstream Python API directly (never their CLI): ReadData ->
       SIFT DB build (_generate_sift_database, reimplemented from upstream
-      GenerateDatabase with a thread cap; system colmap binary, CPU SIFT,
-      exhaustive) -> ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures
+      GenerateDatabase; system colmap binary, SIFT + exhaustive, GPU when
+      CUDA is available) -> ReadColmapDatabase -> Config -> ReadDepthsIntoFeatures
       (VDA metric depth) -> SolveGlobalMapper -> WriteGlomapReconstruction.
       Call pattern follows instantsfm/scripts/sfm.py::run_sfm at the installed
       version (0.3.0).
@@ -528,7 +533,7 @@ class InstantSfMCreator:
         db_path = Path(path_info.database_path)
         if not _sift_database_valid(db_path):
             db_path.unlink(missing_ok=True)
-            logger.info("InstantSfM: building COLMAP feature database (CPU SIFT, exhaustive)")
+            logger.info("InstantSfM: building COLMAP feature database (SIFT, exhaustive)")
             _generate_sift_database(Path(path_info.image_path), db_path, self.single_camera)
 
         view_graph, cameras, images, _feature_name, _rig = ReadColmapDatabase(path_info.database_path)

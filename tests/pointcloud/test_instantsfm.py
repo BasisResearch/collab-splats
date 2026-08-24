@@ -165,3 +165,22 @@ def test_track_id_patch_renumbers_packed_64bit_ids():
     assert len(tracks) == 1
     assert tracks.ids[0] == 0
     np.testing.assert_array_equal(tracks.observations[0], obs)
+
+
+def test_pypose_robustmodel_target_patch_defaults_none():
+    pytest.importorskip("instantsfm")
+    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
+    import inspect
+
+    from pypose.optim.optimizer import RobustModel
+
+    sfm._patch_pypose_robustmodel_target()
+
+    # Idempotent — a second call must not wrap the wrapper
+    patched = RobustModel.forward
+    sfm._patch_pypose_robustmodel_target()
+    assert RobustModel.forward is patched
+
+    # bae's LM.step calls self.model(input) with no target — the patched signature
+    # must default it to None instead of raising TypeError
+    assert inspect.signature(RobustModel.forward).parameters["target"].default is None

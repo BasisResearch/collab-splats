@@ -471,6 +471,32 @@ def _patch_instantsfm_track_ids() -> None:
     TrackEngine.FindTracksForProblem = find_tracks_renumbered
 
 
+def _patch_pypose_robustmodel_target() -> None:
+    """
+    Default target=None on pypose RobustModel.forward for bae's LM.
+
+    - instantsfm's global positioning/BA drive `bae.optim.LM`, whose step calls
+      self.model(input) with no target; pypose 0.7.5 RobustModel.forward requires
+      target positionally, so every LM step raises TypeError (same incompatibility
+      geometry/bundle_adjustment.py:401 binds away per-instance — instantsfm builds
+      its optimizers internally, so the class-level default is the only reachable fix).
+    - target=None makes residuals fall back to the raw model output, the intended
+      objective. Idempotent.
+    """
+    # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
+    from pypose.optim.optimizer import RobustModel
+
+    if getattr(RobustModel.forward, "_collab_splats_default_target", False):
+        return
+    upstream_forward = RobustModel.forward
+
+    def forward_default_target(self, input, target=None):
+        return upstream_forward(self, input, target)
+
+    forward_default_target._collab_splats_default_target = True
+    RobustModel.forward = forward_default_target
+
+
 @dataclass
 class InstantSfMCreator:
     """
@@ -528,8 +554,10 @@ class InstantSfMCreator:
             WriteGlomapReconstruction,
         )
 
-        # numpy-2 OverflowError fix: packed 64-bit track ids vs int32 storage upstream
+        # Upstream compat fixes: packed 64-bit track ids vs int32 storage (numpy 2),
+        # bae LM.step vs pypose-0.7.5 RobustModel.forward(target)
         _patch_instantsfm_track_ids()
+        _patch_pypose_robustmodel_target()
 
         # ReadData falls back to data_dir itself as the image dir when images/ is
         # absent — refuse that silently-wrong layout up front

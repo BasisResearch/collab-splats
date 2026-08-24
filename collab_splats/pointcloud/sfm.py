@@ -497,6 +497,36 @@ def _patch_pypose_robustmodel_target() -> None:
     RobustModel.forward = forward_default_target
 
 
+def _patch_bae_pcg_column_shape() -> None:
+    """
+    Make bae's PCG solver return a column vector for a column-vector rhs.
+
+    - pypose 0.7.5 CG.forward squeezes an (n, 1) rhs to 1-D and returns 1-D;
+      bae's PCG wrapper (bae/utils/pysolvers.py:25-38) only restores the shape
+      when the CALLER passed 1-D. bae LM.step passes -J_T @ R.view(-1, 1), gets a
+      1-D step back, and pypose TrustRegion.update then dies on (J @ D).mT
+      ("tensor.mT is only supported on matrices..."). instantsfm hardcodes
+      PCG(tol=1e-5); our own BA avoids this only because it prefers CuDSS.
+    - Restoring the column dimension matches the pre-0.7.5 CG contract
+      ("layout is the same as the layout of b"). Idempotent.
+    """
+    # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
+    from bae.utils.pysolvers import PCG
+
+    if getattr(PCG.forward, "_collab_splats_column_shape", False):
+        return
+    upstream_pcg_forward = PCG.forward
+
+    def forward_keep_column(self, A, b, x=None, M=None):
+        res = upstream_pcg_forward(self, A, b, x, M)
+        if b.dim() == 2 and res.dim() == 1:
+            res = res[:, None]
+        return res
+
+    forward_keep_column._collab_splats_column_shape = True
+    PCG.forward = forward_keep_column
+
+
 @dataclass
 class InstantSfMCreator:
     """
@@ -555,9 +585,11 @@ class InstantSfMCreator:
         )
 
         # Upstream compat fixes: packed 64-bit track ids vs int32 storage (numpy 2),
-        # bae LM.step vs pypose-0.7.5 RobustModel.forward(target)
+        # bae LM.step vs pypose-0.7.5 RobustModel.forward(target), PCG 1-D step vs
+        # TrustRegion.update
         _patch_instantsfm_track_ids()
         _patch_pypose_robustmodel_target()
+        _patch_bae_pcg_column_shape()
 
         # ReadData falls back to data_dir itself as the image dir when images/ is
         # absent — refuse that silently-wrong layout up front

@@ -184,3 +184,32 @@ def test_pypose_robustmodel_target_patch_defaults_none():
     # bae's LM.step calls self.model(input) with no target — the patched signature
     # must default it to None instead of raising TypeError
     assert inspect.signature(RobustModel.forward).parameters["target"].default is None
+
+
+def test_bae_pcg_patch_keeps_column_shape():
+    pytest.importorskip("instantsfm")
+    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
+    import torch
+
+    from bae.utils.pysolvers import PCG
+
+    sfm._patch_bae_pcg_column_shape()
+
+    # Idempotent — a second call must not wrap the wrapper
+    patched = PCG.forward
+    sfm._patch_bae_pcg_column_shape()
+    assert PCG.forward is patched
+
+    # bae LM passes a column rhs (-J_T @ R.view(-1, 1)); pypose-0.7.5 CG squeezes it
+    # to 1-D and the unpatched wrapper returned 1-D, crashing TrustRegion's (J @ D).mT.
+    # bae's preconditioner build (spdiags_) is a Triton kernel — CUDA tensors only.
+    if not torch.cuda.is_available():
+        pytest.skip("bae PCG preconditioner needs CUDA")
+    solver = PCG(tol=1e-6)
+    A = torch.eye(4, dtype=torch.float64, device="cuda").to_sparse_csr()
+    b = torch.arange(1.0, 5.0, dtype=torch.float64, device="cuda")
+    column = solver(A, b[:, None])
+    vector = solver(A, b)
+    assert column.shape == (4, 1)
+    assert vector.shape == (4,)
+    torch.testing.assert_close(column[:, 0], b, rtol=1e-4, atol=1e-6)

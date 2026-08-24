@@ -308,6 +308,62 @@ def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
     return above if above.any() else np.ones(conf.shape, dtype=bool)
 
 
+def points3d_depth_maps(
+    reconstruction: pycolmap.Reconstruction,
+    image_names: list[str],
+    height: int,
+    width: int,
+) -> np.ndarray:
+    """
+    Per-view sparse depth maps from the reconstruction's own points3D; 0 = no target.
+
+    - Ports instantsfm's splat depth supervision (cre185/InstantSfM @ d3e599e,
+      instantsfm/vis/utils/colmap.py:361-382): project each image's observed points3D
+      into the view, keep in-bounds positive depths. The reconstruction is the single
+      scale authority — targets are consistent with its poses at any scale.
+    - Deviation from upstream: depths land on the nearest pixel of an (N, H, W) map
+      (the splat trainer's target format) instead of being grid_sampled at float
+      coords; pixel collisions keep the nearer point.
+    - height/width must match each image's camera resolution — the caller passes the
+      native frame size the splat trainer sees.
+    """
+    name_to_image = {image.name: image for image in reconstruction.images.values()}
+    missing = [name for name in image_names if name not in name_to_image]
+    if missing:
+        raise ValueError(f"{len(missing)} images not in reconstruction (first: {missing[0]})")
+
+    maps = np.zeros((len(image_names), height, width), dtype=np.float32)
+    for row, name in enumerate(image_names):
+        image = name_to_image[name]
+        camera = reconstruction.cameras[image.camera_id]
+        if (camera.height, camera.width) != (height, width):
+            raise ValueError(
+                f"{name}: camera is {camera.width}x{camera.height} but depth maps are "
+                f"{width}x{height} — pass the native frame resolution."
+            )
+
+        # This image's observed points3D, projected through its pose
+        point3d_ids = [p.point3D_id for p in image.points2D if p.has_point3D()]
+        if not point3d_ids:
+            logger.warning("%s: no points3D observations — empty depth target", name)
+            continue
+        xyz = np.stack([reconstruction.points3D[pid].xyz for pid in point3d_ids])
+        cam_from_world = image.cam_from_world().matrix()
+        points_cam = xyz @ cam_from_world[:3, :3].T + cam_from_world[:3, 3]
+        depths = points_cam[:, 2]
+
+        # Pixel coords via the camera K; keep in-bounds positive depths
+        proj = points_cam @ camera.calibration_matrix().T
+        uv = np.rint(proj[:, :2] / proj[:, 2:3]).astype(np.int64)
+        keep = (depths > 0) & (uv[:, 0] >= 0) & (uv[:, 0] < width) & (uv[:, 1] >= 0) & (uv[:, 1] < height)
+        u, v, z = uv[keep, 0], uv[keep, 1], depths[keep]
+
+        # Far-to-near write order so a collision keeps the nearer point
+        order = np.argsort(-z)
+        maps[row, v[order], u[order]] = z[order]
+    return maps
+
+
 def subsample_points(
     points: np.ndarray,
     colors: Optional[np.ndarray] = None,

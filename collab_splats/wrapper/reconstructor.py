@@ -1329,6 +1329,16 @@ class Reconstructor:
                 f"pointcloud.zarr not found at {pointcloud_zarr}. "
                 "Mesh requires depth maps from a feedforward backend."
             )
+        elif self.config["pointcloud"]["method"] == "sfm":
+            # SfM scenes: the zarr's VDA depth is at metric scale while the COLMAP poses are
+            # at the SfM's own scale (instantsfm's depth anchoring is soft — measured 3.2x
+            # apart on GH010229). Fusing them produces geometry at the wrong scale in the
+            # wrong places, so refuse rather than emit a silently-broken mesh.
+            raise ValueError(
+                "mesh.source: feedforward fuses pointcloud.zarr depth against COLMAP poses, "
+                "which are not scale-consistent on an sfm scene — set mesh.source: splats "
+                "(train the splats stage first)."
+            )
 
         out = _run_tsdf_mesh(
             result=result,
@@ -1495,7 +1505,18 @@ class Reconstructor:
         # target); train() resizes each view to the frame's resolution with nearest sampling
         depth_targets = None
         depth_on = "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0  # from_dict guarantees weight
-        if depth_on:
+        if depth_on and self.config["pointcloud"]["method"] == "sfm":
+            # SfM scenes: the zarr's VDA depth is NOT scale-consistent with the COLMAP world
+            # (instantsfm's depth anchoring is soft — measured 3.2x off on GH010229), so follow
+            # upstream instantsfm's splat supervision instead: the reconstruction's own points3D
+            # projected per view (points3d_depth_maps). Single scale authority, sparse targets.
+            from collab_splats.pointcloud.utils import points3d_depth_maps
+
+            height, width = images.shape[1:3]
+            depth_targets = points3d_depth_maps(
+                result.reconstruction, [path.name for path in result.image_paths], height, width
+            )
+        elif depth_on:
             pointcloud_zarr = self.pointcloud_zarr
             if not pointcloud_zarr.exists():
                 raise FileNotFoundError(

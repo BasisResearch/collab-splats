@@ -117,11 +117,14 @@ def _pair_pose_errors(estimated: pycolmap.Rigid3d, model_rel: pycolmap.Rigid3d) 
 def _write_frames(db: pycolmap.Database, recon: pycolmap.Reconstruction, features: list[LocalFeatures]) -> None:
     """Write cameras/images/keypoints into an open COLMAP database.
 
-    Ids mirror `recon` exactly (one camera per image, camera_id == image_id) —
-    triangulate_points joins DB rows to reconstruction frames by id, and a shared DB
-    camera against per-image trivial rigs fails COLMAP's RigId check. Matches are
-    written later by the caller (pair generation needs the images in the DB first).
+    Ids mirror `recon` exactly — triangulate_points joins DB rows to reconstruction
+    frames by id, and any camera-sharing disagreement between DB and recon fails
+    COLMAP's RigId check. Feedforward recons carry one camera per image
+    (camera_id == image_id); SfM recons (instantsfm) share one camera across all
+    images, so each camera_id is written once. Matches are written later by the
+    caller (pair generation needs the images in the DB first).
     """
+    written_cameras: set[int] = set()
     for image_id, feats in zip(sorted(recon.images), features):
         image = recon.images[image_id]
         camera = recon.cameras[image.camera_id]
@@ -133,7 +136,10 @@ def _write_frames(db: pycolmap.Database, recon: pycolmap.Reconstruction, feature
                 f"Keypoints for {image.name} exceed camera bounds ({camera.width}x{camera.height}) "
                 "— the feature cache and the reconstruction disagree on image resolution."
             )
-        db.write_camera(camera, use_camera_id=True)
+        # Shared cameras (SfM recons) appear under many images — write each id once
+        if image.camera_id not in written_cameras:
+            db.write_camera(camera, use_camera_id=True)
+            written_cameras.add(image.camera_id)
         # Set image_id via the property, not the ctor (the ctor kwarg is unverified in
         # this pycolmap build; the property + use_image_id=True path is the documented one)
         image_row = pycolmap.Image(name=image.name, camera_id=image.camera_id)

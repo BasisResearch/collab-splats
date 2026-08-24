@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock
 
 import numpy as np
+import pycolmap
 import pytest
 import torch
 
@@ -50,6 +51,24 @@ def _make_recon(extrinsics):
         image_height=H,
         image_names=[f"frame_{i:05d}" for i in range(n)],
     )
+
+
+def _make_shared_camera_recon(extrinsics):
+    """Poses-only reconstruction with ONE camera shared by every image (instantsfm layout)."""
+    recon = pycolmap.Reconstruction()
+    camera = pycolmap.Camera(
+        model="PINHOLE",
+        width=W,
+        height=H,
+        params=[_K[0, 0], _K[1, 1], _K[0, 2], _K[1, 2]],
+        camera_id=1,
+    )
+    recon.add_camera_with_trivial_rig(camera)
+    for i, E in enumerate(extrinsics):
+        pose = pycolmap.Rigid3d(pycolmap.Rotation3d(E[:3, :3].astype(np.float64)), E[:3, 3].astype(np.float64))
+        image = pycolmap.Image(name=f"frame_{i:05d}", camera_id=1, image_id=i + 1)
+        recon.add_image_with_trivial_frame(image, pose)
+    return recon
 
 
 def _features_from_keypoints(kps):
@@ -183,6 +202,28 @@ def test_triangulation_recovers_scene(tmp_path):
     assert len(report["pair_stats"]) == 3
     # COLMAP model on disk for downstream tooling
     assert (tmp_path / "verified" / "points3D.bin").exists()
+
+
+def test_shared_camera_recon_exports_and_triangulates(tmp_path):
+    """A shared-camera recon (instantsfm) exports one DB camera row and verifies end to end.
+
+    Regression: the old export wrote the camera once per image, so the second image
+    died on sqlite's camera_id-unique check.
+    """
+    pts_w, extrinsics, kps = _synthetic_scene()
+    result = verify_reconstruction(
+        recon=_make_shared_camera_recon(extrinsics),
+        features=_features_from_keypoints(kps),
+        matcher=_IdentityMatcher(),
+        output_dir=tmp_path,
+    )
+    # Tier 1 + Tier 2 both survive the shared camera
+    assert len(result.pair_stats) == 3
+    for p in result.pair_stats:
+        assert p.rot_error_deg < 0.1
+    assert result.reconstruction.num_points3D() >= 55
+    for p in result.reconstruction.points3D.values():
+        assert np.linalg.norm(pts_w - p.xyz, axis=1).min() < 1e-3
 
 
 def test_verify_pairwise_matcher_uses_images_and_recovered_indices(tmp_path):

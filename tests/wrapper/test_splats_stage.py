@@ -89,7 +89,7 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
         depth=depth,
         confidence=torch.ones(3, 4, 4),
     )
-    (recon.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
         patch("collab_splats.splats.trainer.train") as train,
         patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
@@ -116,7 +116,7 @@ def test_splats_stage_rejects_frames_missing_from_feedforward(tmp_path):
         depth=np.ones((2, 4, 4), np.float32),
         confidence=None,
     )
-    (recon.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
         patch("collab_splats.splats.trainer.train") as train,
         patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
@@ -126,9 +126,9 @@ def test_splats_stage_rejects_frames_missing_from_feedforward(tmp_path):
     train.assert_not_called()
 
 
-def test_splats_stage_requires_feedforward_zarr_for_depth_loss(tmp_path):
+def test_splats_stage_requires_pointcloud_zarr_for_depth_loss(tmp_path):
     recon = _stub_reconstructor(tmp_path)
-    with patch("collab_splats.splats.trainer.train"), pytest.raises(FileNotFoundError, match="feedforward.zarr"):
+    with patch("collab_splats.splats.trainer.train"), pytest.raises(FileNotFoundError, match="pointcloud.zarr"):
         recon.splats()
 
 

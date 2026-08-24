@@ -1,7 +1,7 @@
 """resolve_semantics_dir resolves the FLAT dashboard layout — the only one the dashboard reads.
 
 The dashboard writes and reads flat: ``{scene}/semantics/<extractor>_lifted.zarr``, matching the flat
-``{scene}/feedforward.zarr`` its loader gates on. The Reconstructor (the published output
+``{scene}/pointcloud.zarr`` its loader gates on. The Reconstructor (the published output
 contract) writes everything two levels deeper — ``{scene}/{backend}/...`` — and the dashboard
 cannot browse such a scene at all: it fails on the pointcloud long before semantics. Resolving
 a backend-keyed semantics dir therefore had no reachable caller, and no writer produces the
@@ -32,7 +32,7 @@ def test_resolve_finds_the_flat_dashboard_layout(tmp_path):
 
 def test_resolve_returns_none_when_no_semantics_dir_exists(tmp_path):
     """No flat dir -> None; every caller tolerates a missing semantics dir."""
-    (tmp_path / "feedforward.zarr").mkdir(parents=True)
+    (tmp_path / "pointcloud.zarr").mkdir(parents=True)
     assert resolve_semantics_dir(tmp_path) is None
 
 
@@ -51,7 +51,7 @@ def test_resolve_keeps_flat_dir_holding_only_the_2d_cache(tmp_path):
 def test_resolve_ignores_a_backend_keyed_tree(tmp_path):
     """A published (Reconstructor) scene is not browsable by the dashboard, so do not pretend.
 
-    Reporting a semantics dir for a scene whose flat feedforward.zarr does not exist would only
+    Reporting a semantics dir for a scene whose flat pointcloud.zarr does not exist would only
     put the loader one step further into a failure it cannot recover from.
     """
     _write_features(tmp_path / "vggt_omega" / "semantics")

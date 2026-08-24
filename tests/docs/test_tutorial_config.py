@@ -16,7 +16,7 @@ def test_paths_are_repo_relative_and_correct():
     assert ns["QUERY_IMAGE"] == REPO_ROOT / "data/tutorial/tutorial_example-frame.jpg"
     assert ns["OUTPUT_DIR"] == REPO_ROOT / "data/outputs"
     assert ns["FRAMES_ZARR"] == REPO_ROOT / "data/outputs/frames.zarr"
-    assert ns["RECON"] == REPO_ROOT / "data/outputs/feedforward.zarr"
+    assert ns["RECON"] == REPO_ROOT / "data/outputs/pointcloud.zarr"
     assert ns["TUTORIAL_CACHE"] == REPO_ROOT / "data/outputs/tutorial_cache"
     assert ns["MAX_FRAMES"] == 30
 

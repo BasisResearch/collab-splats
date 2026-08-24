@@ -54,8 +54,8 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
   motion.png                   ←   per-pair translation / parallax (failed pairs = red | at 0) / matches
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
-  <backend>/                   ← e.g. vggt_omega/
-    feedforward.zarr           ← depth maps, poses, confidence, 3D points
+  <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
+    pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
                                ←   (+ local_features/<extractor>/reconstruction if localize ran)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
@@ -190,7 +190,7 @@ Nothing here deletes a remote object. The push is still `rclone copy`, so a re-r
 the artifacts it produced and leaves everything else in place.
 
 `verify` is a leaf stage: `--stages verify` re-runs geometric verification against a
-processed scene (needs `colmap/` + `feedforward.zarr` locally). Outputs under
+processed scene (needs `colmap/` + `pointcloud.zarr` locally). Outputs under
 `<backend>/colmap/`: `verified/` (COLMAP model whose points carry real feature tracks;
 poses/cameras identical to `sparse/0`), `verification.json` (per-pair epipolar +
 relative-pose stats, per-frame track survival and reprojection error), and `database.db`
@@ -236,7 +236,7 @@ relative-pose stats, per-frame track survival and reprojection error), and `data
 
 `refine` (LM bundle adjustment) rewrites the reconstruction's poses in place —
 COLMAP, `transforms.json`, `sparse_pc.ply`, and the pose-derived arrays in
-`feedforward.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the
+`pointcloud.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the
 localization DB built under the old poses: after `--stages refine`, re-run those
 stages with `overwrite` if pose-sensitive outputs matter. Provenance for the last
 refine run (BA config + LM loss history) is in `<backend>/colmap/refine.json`.
@@ -350,16 +350,17 @@ parameter and raises.
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
-| `pointcloud.backend` | str | `vggt_omega` | `vggt_omega`, `vggtx`, `mapanything`, or `loger` |
+| `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm.py` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
-| `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud |
-| `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud |
+| `pointcloud.instantsfm.features` | str | `colmap` | sfm only: feature/matching handler. `colmap` (SIFT + exhaustive; GPU when CUDA is available, capped CPU threads otherwise) is the only allowed value — anything else raises at validation |
+| `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`) |
+| `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`) |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points |
 | `semantics.enabled` | bool | `true` | Extract and lift semantic features |
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
 | `mesh.enabled` | bool | `false` | Build TSDF/Poisson mesh (opt-in) |
-| `mesh.source` | str | `feedforward` | `feedforward` fuses feedforward.zarr depth; `splats` fuses splats.zarr renders (needs the splats stage; `native_resolution` ignored) |
+| `mesh.source` | str | `feedforward` | `feedforward` fuses pointcloud.zarr depth; `splats` fuses splats.zarr renders (needs the splats stage; `native_resolution` ignored) |
 | `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
@@ -445,6 +446,68 @@ and confidence — 8.13 MB/frame at LoGeR's default `pixel_limit` of 255,000 —
 since each backend resolves frames differently. LoGeR is merely the first backend able to
 feed the buffer enough frames for the cap to matter.
 
+### The `instantsfm` backend (`pointcloud.method: sfm`)
+
+Classical global SfM instead of a feedforward model: system COLMAP SIFT + exhaustive
+matching (CPU — upstream forces `CUDA_VISIBLE_DEVICES=""` on the colmap subprocess,
+`instantsfm/controllers/feature_handler.py:23`, even though VDA runs on the GPU), then
+InstantSfM's global mapper (rotation averaging, global positioning,
+global bundle adjustment), with Video-Depth-Anything (VDA) metric depth supplying the
+dense per-frame depth every downstream stage expects. Experimental — it warns at run time
+and its numbers are not yet measured.
+
+```yaml
+pointcloud:
+  method: sfm
+  backend: instantsfm
+  instantsfm:
+    features: colmap     # the only allowed value (validated; upstream v0.3.0 has no other handler)
+```
+
+**Install.** `setup.sh` installs `instantsfm` from a pinned git commit with `--no-deps`
+(upstream pins `numpy==1.26.4`, the lock runs numpy 2.x), plus `pyceres==2.3`,
+`scikit-sparse==0.4.15` (needs `libsuitesparse-dev`) and `easydict==1.13`; it clones
+Video-Depth-Anything into `third_party/Video-Depth-Anything` at commit `4f5ae23` and
+downloads `checkpoints/metric_video_depth_anything_vitl.pth` (~1.5 GB, best-effort — a
+no-network build skips it and the first sfm run fails fast with `FileNotFoundError`). A
+system `colmap` binary must be on `PATH`. Plain `uv sync` prunes the `--no-deps` packages;
+re-run the setup.sh block afterwards.
+
+**Licences.** InstantSfM is CC-BY-NC-4.0 (research use only). VDA code is Apache-2.0; the
+VDA metric weights are CC-BY-NC-4.0.
+
+**Unsupported with sfm (all `ValueError` at config validation):** `bundle_adjustment: true`
+(InstantSfM runs its own global BA; `refine_poses` / `--stages refine` also refuse),
+`loop_closure` (global mapper, not a sequential submap pipeline), and any
+`instantsfm.features` other than `colmap`.
+
+**Output layout** (`<backend>` is `instantsfm/`):
+
+```
+<scene>/instantsfm/
+  images/frame_NNNNNN.jpg      ← frames.zarr staged for the path-locked COLMAP/InstantSfM tools
+  depth_vda/images/npy/<stem>.npy ← VDA metric depth, 518-wide model res (skipped when complete)
+  colmap/instantsfm.db         ← SIFT database (local build artifact, NOT pushed)
+  colmap/sparse/0/*.bin        ← InstantSfM global-mapper model, image names = frame stems
+  pointcloud.zarr              ← depth/images/poses/K at model res; world_points unprojected from VDA depth;
+                               ←   no `confidence`, no `mv_*` (absent, never zeros); attrs: method, backend, instantsfm_version
+  sparse_pc.ply, transforms.json
+```
+
+`colmap/instantsfm.db` has its own name so it never collides with the `verify` stage's
+`colmap/database.db`; both are anchored in `PUSH_EXCLUDES` and stay local. Downstream
+stages — `mesh`, `splats` (depth loss), `semantics`, `localize`, `verify` — consume
+`pointcloud.zarr` unchanged; consumers that read `confidence` handle its absence
+(mesh fuses unmasked with a log line even when `mesh.conf_percentile` is set, the feature
+lift uses uniform weights, splats depth targets are unmasked).
+
+**Known limitation (dashboard).** `_ensure_lift_inputs` in `collab_splats/dashboard/app.py`
+treats a `pointcloud.zarr` without `confidence` as a legacy scene and re-pulls its dense
+members before a feature lift, so an instantsfm scene always takes that (harmless but
+slow) path; once the lift is cached, `_cleanup_lift_inputs` rmtree's the pulled
+`depth`/`pixel_indices` from the local copy again — pull-then-delete, once per extractor.
+Not changed yet.
+
 ---
 
 ## Where outputs land
@@ -454,11 +517,11 @@ feed the buffer enough frames for the cap to matter.
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
   frames.zarr                  ← canonical decode-once keyframe store (chunked images + records + provenance)
   video_quality_report.json    ← source-video quality measurements (report-only)
-  photometric-*.png, motion-*.png ← the report rendered (5 files, written with frames.zarr)
+  photometric.png, motion.png  ← the report rendered (two files, written with frames.zarr)
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
-  <backend>/                   ← e.g. vggt_omega/
-    feedforward.zarr           ← depth maps, poses, confidence, 3D points
+  <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
+    pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
     semantics/
@@ -488,7 +551,7 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/splats/splats.zarr` | per-training-view renders: `rgb`, `depth`, `normal`, `alpha`, `c2w`, `K` |
 | `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
-| `<backend>/feedforward.zarr` | further processing inside this repo (depth, poses, confidence) |
+| `<backend>/pointcloud.zarr` | further processing inside this repo (depth, poses, confidence when the method produces it) — see below |
 | `frames.zarr` | the keyframes the reconstruction was built from; required to localize |
 | `run_config.yaml` | exact settings used |
 
@@ -498,11 +561,37 @@ latent code is only meaningful next to the point set it indexes. `frames.zarr` s
 scene root instead: the keyframes are decoded once from the video and shared by every
 backend that reconstructs the scene.
 
+- `<backend>/pointcloud.zarr` — the unified reconstruction artifact for every
+  `pointcloud.method` (feedforward and sfm). Store attrs carry provenance:
+  `method`, `backend`, and for instantsfm the installed upstream version
+  (`instantsfm_version`). `confidence` and `mv_*` arrays are present only when the
+  method produces them (absent, never zeros).
+
+  **Migration (breaking, 2026-08-23):** `feedforward.zarr` was renamed with no
+  fallback. Scenes written before the rename need a one-time rename or a re-run:
+  - local: `mv <scene>/<backend>/feedforward.zarr <scene>/<backend>/pointcloud.zarr`
+    (dashboard-built scenes are flat: `mv <scene>/feedforward.zarr <scene>/pointcloud.zarr`)
+  - remote (backend-keyed, as published by the remote driver):
+    `rclone moveto <remote>:environments-processed/<scene>/<backend>/feedforward.zarr \
+      <remote>:environments-processed/<scene>/<backend>/pointcloud.zarr`
+  - remote (flat, the layout the dashboard pulls — `pull_zarr_members` in
+    `collab_splats/remote/sources.py`):
+    `rclone moveto <remote>:environments-processed/<scene>/feedforward.zarr \
+      <remote>:environments-processed/<scene>/pointcloud.zarr`
+
+  Notebooks/tools reading the old name break until the scene is migrated. The tutorial
+  notebooks (`docs/source/tutorials/03_splats/train_splats.ipynb`,
+  `06_mesh/splats_mesh.ipynb`, `07_localization/localization.ipynb`) read
+  `tutorial_config.RECON`, which already points at `pointcloud.zarr`; their stored
+  *output* cells still print the old path and stay stale until re-executed.
+
 Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote/sources.py`): `/semantics/**` at the
 scene root (raw 2D patch maps, regenerable from frames + extractor — note the leading slash,
-which is what keeps `<backend>/semantics/**` in the push) and the source video, which the remote
+which is what keeps `<backend>/semantics/**` in the push), the source video, which the remote
 driver fetches into the very scene dir it later pushes and which already lives in
-`environments-curated`. `frames.zarr` **is** pushed — it is the sole persistent keyframe
+`environments-curated`, and the two COLMAP match databases — `<backend>/colmap/database.db`
+(verify) and `<backend>/colmap/instantsfm.db` (instantsfm SIFT), both rebuildable local
+artifacts. `frames.zarr` **is** pushed — it is the sole persistent keyframe
 store, so localization or a correspondence plot against a published scene works directly,
 with no re-decode of the curated video.
 
@@ -524,13 +613,13 @@ features + the raw COLMAP binaries, and read poses via `pycolmap`.
 
 `--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
 `frames.zarr` — no image directory, no transforms.json round-trip. Every `splats/` artifact is in
-the COLMAP world frame; nothing is normalised. `mesh` fuses `feedforward.zarr` by default;
+the COLMAP world frame; nothing is normalised. `mesh` fuses `pointcloud.zarr` by default;
 `mesh.source: splats` fuses the renders instead (alpha as confidence, poses as rendered).
 
 #### The dashboard cannot browse a scene published by the remote driver
 
-The published tree is backend-keyed (`<scene>/<backend>/feedforward.zarr`) and the dashboard reads
-flat (`<scene>/feedforward.zarr`, `<scene>/semantics/`, `<scene>/mesh.ply`). Pointing the
+The published tree is backend-keyed (`<scene>/<backend>/pointcloud.zarr`) and the dashboard reads
+flat (`<scene>/pointcloud.zarr`, `<scene>/semantics/`, `<scene>/mesh.ply`). Pointing the
 dashboard at a published scene does not just fail to load — its existence gate never trips, so the
 scene re-pulls from GCS on every select and then errors in the op log. This is deliberate: the
 dashboard's flat layout is what every dashboard scene already on disk uses, and unifying the read
@@ -553,7 +642,7 @@ cache re-extracts, which is the expensive half.
 ## Dashboard
 
 The dashboard browses **dashboard-produced scenes**, whose tree is flat: it reads
-`<scene>/feedforward.zarr` for the pointcloud, `<scene>/semantics/<extractor>_lifted.zarr` for
+`<scene>/pointcloud.zarr` for the pointcloud, `<scene>/semantics/<extractor>_lifted.zarr` for
 semantic features, and `<scene>/mesh.ply` for the mesh. Point it at a scene the dashboard itself
 built. It cannot read the backend-keyed tree the remote driver publishes — see "The dashboard
 cannot browse a scene published by the remote driver" under Where outputs land.

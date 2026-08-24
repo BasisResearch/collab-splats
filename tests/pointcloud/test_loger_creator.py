@@ -880,7 +880,7 @@ def _call_run_feedforward(tmp_path, *, n_frames=10, **overrides):
     sources = []
 
     class _StubCreator:
-        # None makes _run_feedforward skip the feedforward.zarr save without touching disk.
+        # None makes _run_feedforward skip the pointcloud.zarr save without touching disk.
         outputs = None
 
         def __init__(self, **kwargs):

@@ -531,13 +531,15 @@ def _feedforward_to_tsdf_inputs(
 
     Default: everything at model resolution, mutually pixel-aligned, straight off the forward
     pass. `conf_percentile` zeroes depth below that confidence percentile (0 = no
-    observation to Open3D). `frame_store` + `native_intrinsics` switch to native resolution:
-    original-res uint8 RGB from frames.zarr, depth guided-upsampled into the model crop region
-    (see guided_upsample_depth), and the caller's original-res K (the COLMAP camera).
+    observation to Open3D); if the result has no confidence (e.g. an SfM-derived
+    reconstruction), the gate is skipped and fusion proceeds unmasked. `frame_store` +
+    `native_intrinsics` switch to native resolution: original-res uint8 RGB from frames.zarr,
+    depth guided-upsampled into the model crop region (see guided_upsample_depth), and the
+    caller's original-res K (the COLMAP camera).
 
     Raises:
-        ValueError: depth/images missing; conf_percentile set but confidence absent;
-                    frame_store length != frame count; frame_store without native_intrinsics.
+        ValueError: depth/images missing; frame_store length != frame count;
+                    frame_store without native_intrinsics.
     """
     # depth is the model's own output — all three backends populate it, so a fallback
     # derivation here would be dead code (and was measurably worse: see the design doc)
@@ -554,21 +556,25 @@ def _feedforward_to_tsdf_inputs(
     # so the mesh inherits exactly the filter that makes the sparse cloud look clean.
     if conf_percentile is not None:
         if result.confidence is None:
-            raise ValueError(
-                "conf_percentile is set but this result has no confidence — re-run the "
-                "pointcloud stage, or unset mesh.conf_percentile."
+            # SfM-derived results (e.g. instantsfm) carry no per-pixel confidence — fuse
+            # unmasked rather than fail; the percentile gate only applies when the model
+            # produced one.
+            logger.info(
+                "conf_percentile=%s set but result has no confidence — fusing unmasked",
+                conf_percentile,
             )
-        conf = result.confidence
-        if hasattr(conf, "numpy"):
-            conf = conf.detach().cpu().numpy()
-        dropped = ~confidence_mask(conf, conf_percentile)
-        depths = depths.copy()  # copy only when mutating — the default path fuses read-only
-        depths[dropped] = 0.0
-        logger.info(
-            "Confidence mask (p%.0f): %.1f%% of depth pixels dropped",
-            conf_percentile,
-            100.0 * float(dropped.mean()),
-        )
+        else:
+            conf = result.confidence
+            if hasattr(conf, "numpy"):
+                conf = conf.detach().cpu().numpy()
+            dropped = ~confidence_mask(conf, conf_percentile)
+            depths = depths.copy()  # copy only when mutating — the default path fuses read-only
+            depths[dropped] = 0.0
+            logger.info(
+                "Confidence mask (p%.0f): %.1f%% of depth pixels dropped",
+                conf_percentile,
+                100.0 * float(dropped.mean()),
+            )
 
     c2w = invert_poses(result.extrinsics).astype(np.float32)
 
@@ -804,7 +810,7 @@ def mesh_from_tsdf_inputs(
     """
     Fuse pre-built (depths, rgbs, c2w, intrinsics) with any registered mesher; optional colour-map pass.
 
-    - Shared tail of both input adapters (feedforward.zarr and splats.zarr).
+    - Shared tail of both input adapters (pointcloud.zarr and splats.zarr).
     - Raises ValueError when color_map_iterations > 0 with a non-TSDF method.
     """
     from collab_splats.mesh import get_mesh_creator

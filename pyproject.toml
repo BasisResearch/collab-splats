@@ -102,6 +102,9 @@ feedforward = [
     # vggt @ third_party/VGGT-X submodule (--no-deps, pinned commit)
     # mapanything @ git+https://github.com/facebookresearch/map-anything.git (--no-deps)
     # lightglue @ git+https://github.com/cvg/LightGlue.git (--no-deps, mapanything colmap extra)
+    # InstantSfM backend deps (instantsfm, pyceres, scikit-sparse, easydict, VDA clone) are
+    # installed by setup.sh with --no-deps — upstream pins numpy==1.26.4 which conflicts with
+    # the lock. Plain `uv sync` prunes them; rerun setup.sh (or its InstantSfM block) after.
     "uniception==0.1.7",
     "viser>=0.2.23",
     "evo",

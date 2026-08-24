@@ -33,7 +33,7 @@ def _make_localizer(tmp_path, n_frames=2):
 
 def test_save_index_writes_build_attrs(tmp_path):
     loc, *_ = _make_localizer(tmp_path)
-    zp = tmp_path / "feedforward.zarr"
+    zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk", attrs={"backbone": "vggtx", "ba": True, "lc": False, "built_at": "2026-07-14T00:00:00"})
     group = zarr.open(str(zp), mode="r")["local_features/disk"]
     assert group.attrs["backbone"] == "vggtx"
@@ -43,7 +43,7 @@ def test_save_index_writes_build_attrs(tmp_path):
 
 def test_save_index_without_attrs_still_stamps_extractor(tmp_path):
     loc, *_ = _make_localizer(tmp_path)
-    zp = tmp_path / "feedforward.zarr"
+    zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
     group = zarr.open(str(zp), mode="r")["local_features/disk"]
     assert group.attrs["extractor"] == "disk"
@@ -52,7 +52,7 @@ def test_save_index_without_attrs_still_stamps_extractor(tmp_path):
 def test_save_index_rebuild_replaces_stale_attrs(tmp_path):
     # Rebuild without attrs must not inherit provenance from a previous build
     loc, *_ = _make_localizer(tmp_path)
-    zp = tmp_path / "feedforward.zarr"
+    zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk", attrs={"backbone": "vggtx", "ba": True})
     loc.save_index(zp, "disk")
     group = zarr.open(str(zp), mode="r")["local_features/disk"]
@@ -63,7 +63,7 @@ def test_save_index_rebuild_replaces_stale_attrs(tmp_path):
 
 def test_add_localized_frame_records_provenance(tmp_path):
     loc, wp, extr, intr = _make_localizer(tmp_path)
-    zp = tmp_path / "feedforward.zarr"
+    zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
 
     feats = _FakeExtractor().extract(None)
@@ -84,7 +84,7 @@ def test_add_localized_frame_records_provenance(tmp_path):
 
 def test_provenance_list_grows_per_frame(tmp_path):
     loc, wp, extr, intr = _make_localizer(tmp_path)
-    zp = tmp_path / "feedforward.zarr"
+    zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
     feats = _FakeExtractor().extract(None)
     pose = np.eye(4, dtype=np.float32)
@@ -105,7 +105,7 @@ def test_provenance_list_grows_per_frame(tmp_path):
 def test_append_backfills_pre_provenance_store(tmp_path):
     # Older stores lack the provenance attr entirely — appending must backfill {}
     loc, wp, extr, intr = _make_localizer(tmp_path)
-    zp = tmp_path / "feedforward.zarr"
+    zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
     feats = _FakeExtractor().extract(None)
     pose = np.eye(4, dtype=np.float32)

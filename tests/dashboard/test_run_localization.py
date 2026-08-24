@@ -35,7 +35,7 @@ class _FakeSource:
         # Guard: only materialise under an absolute dest — a swapped-arg call would otherwise
         # create a stray relative directory named after the scene id in the cwd.
         if Path(dest).is_absolute():
-            (Path(dest) / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+            (Path(dest) / "pointcloud.zarr").mkdir(parents=True, exist_ok=True)
 
     def push_outputs(self, out_dir, scene, on_line=None):
         self.pushed = True
@@ -241,7 +241,7 @@ def test_stamp_db_provenance_writes_attrs(tmp_path):
             }
         )
     )
-    zp = out_dir / "feedforward.zarr"
+    zp = out_dir / "pointcloud.zarr"
     store = zarr.open(str(zp), mode="a")
     store.require_group("local_features/loma-g/reconstruction")
 

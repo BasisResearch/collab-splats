@@ -36,13 +36,13 @@ SCENE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 # Dense per-frame arrays a viewer does not need — pulled on demand instead.
 PULL_EXCLUDES = (
-    "feedforward.zarr/depth/**",
-    "feedforward.zarr/world_points/**",
-    "feedforward.zarr/confidence/**",
-    "feedforward.zarr/conf/**",  # legacy key for confidence
-    "feedforward.zarr/features/**",
-    "feedforward.zarr/pixel_indices/**",
-    "feedforward.zarr/images/**",
+    "pointcloud.zarr/depth/**",
+    "pointcloud.zarr/world_points/**",
+    "pointcloud.zarr/confidence/**",
+    "pointcloud.zarr/conf/**",  # legacy key for confidence
+    "pointcloud.zarr/features/**",
+    "pointcloud.zarr/pixel_indices/**",
+    "pointcloud.zarr/images/**",
 )
 
 # Never pushed: raw 2D feature maps (regenerable from frames + extractor) and the source
@@ -56,9 +56,9 @@ PULL_EXCLUDES = (
 # files are commonly uppercase (C0043.MP4).
 # The 2D-cache pattern MUST keep its leading slash. rclone matches an unanchored pattern at ANY
 # depth (measured, v1.53.3-DEV: `--exclude 'features/**'` on a local copy also skipped
-# `sub/feedforward.zarr/features/x`). Unanchored, `semantics/**` would also match
+# `sub/pointcloud.zarr/features/x`). Unanchored, `semantics/**` would also match
 # `<backend>/semantics/**` — the lifted per-point features, which are the whole point of the push —
-# and it would still match the feedforward.zarr `features` member. Anchored it hits exactly
+# and it would still match the pointcloud.zarr `features` member. Anchored it hits exactly
 # Reconstructor.semantics_cache_dir, the regenerable patch cache at the pushed root.
 PUSH_EXCLUDES = (
     "/semantics/**",
@@ -68,6 +68,9 @@ PUSH_EXCLUDES = (
     # COLMAP match database is a local build artifact, rebuildable from the zarr feature
     # cache + poses (geometry/verification.py). Anchored at <backend>/colmap depth.
     "/*/colmap/database.db",
+    # InstantSfM's SIFT database (pointcloud/sfm.py) — same class of artifact, its own name so
+    # it never collides with the verification DB above. Rebuilt from the staged images.
+    "/*/colmap/instantsfm.db",
 )
 
 ########
@@ -338,7 +341,7 @@ class SceneSource:
         """Extractor names with a feature DB in the remote zarr (memoized directory listing)."""
 
         def _produce():
-            path = f"{scene}/feedforward.zarr/local_features"
+            path = f"{scene}/pointcloud.zarr/local_features"
             entries = self._lsjson(PROCESSED_BUCKET, path)
             if not entries:
                 logger.info("no localization DBs for %s: %s/%s listed empty", scene, PROCESSED_BUCKET, path)
@@ -407,15 +410,15 @@ class SceneSource:
         members: tuple,
         on_line: Callable[[str], None] | None = None,
     ) -> None:
-        """Fetch named feedforward.zarr member arrays (names relative to the zarr root).
+        """Fetch named pointcloud.zarr member arrays (names relative to the zarr root).
 
         The scene pull skips the dense per-pixel arrays (PULL_EXCLUDES) because display
         never needs them — but the feature lift on legacy scenes (no cached
         semantics/<extractor>_lifted.zarr) does. This pulls exactly the named members on demand.
         """
-        dest = Path(dest_dir) / "feedforward.zarr"
+        dest = Path(dest_dir) / "pointcloud.zarr"
         dest.mkdir(parents=True, exist_ok=True)
-        remote = f"{self._remote}:{PROCESSED_BUCKET}/{scene}/feedforward.zarr"
+        remote = f"{self._remote}:{PROCESSED_BUCKET}/{scene}/pointcloud.zarr"
         args = ["copy", remote, str(dest)]
         for member in members:
             args += ["--include", f"{member}/**"]

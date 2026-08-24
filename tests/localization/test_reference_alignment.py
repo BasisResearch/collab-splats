@@ -77,7 +77,7 @@ def test_private_extrinsics_stays_reconstruction_only(tmp_path):
 def test_load_index_round_trip_preserves_localized_pose(tmp_path):
     # save → append (persisted) → reload: the localized pose must survive and stay aligned
     loc, wp, extr, intr = _make_localizer(tmp_path, n_frames=2)
-    zp = tmp_path / "feedforward.zarr"
+    zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
     pose = _distinct_pose(2.5)
     loc.add_localized_frame(

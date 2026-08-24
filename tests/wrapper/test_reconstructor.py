@@ -392,14 +392,14 @@ def _make_mock_pointcloud_result(tmp_path):
 
 
 def test_build_pointcloud_skips_if_colmap_and_zarr_exist(tmp_path):
-    """Skip rebuild only when BOTH colmap/sparse/0/cameras.bin and feedforward.zarr exist."""
+    """Skip rebuild only when BOTH colmap/sparse/0/cameras.bin and pointcloud.zarr exist."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
     colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
     colmap_dir.mkdir(parents=True)
     (colmap_dir / "cameras.bin").touch()
     # The pointcloud zarr marker is also required; colmap alone no longer skips.
-    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     mock_result = _make_mock_pointcloud_result(tmp_path)
 
     with (
@@ -514,7 +514,7 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
     # 2D feature cache the writer reads: (N, D, H_p, W_p)
     cache = zarr.open(str(tmp_path / "dinov2.zarr"), mode="w")
     cache["features"] = np.zeros((2, dim, 2, 2), dtype=np.float32)
-    (tmp_path / "feedforward.zarr").mkdir()
+    (tmp_path / "pointcloud.zarr").mkdir()
     out_dir = tmp_path / "semantics"
 
     with (
@@ -525,7 +525,7 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
         rec_mod._lift_and_save(
             "dinov2",
             tmp_path / "dinov2.zarr",
-            tmp_path / "feedforward.zarr",
+            tmp_path / "pointcloud.zarr",
             out_dir,
             n_components,
             target_cosine=None,
@@ -615,8 +615,8 @@ def test_mesh_runs_tsdf(tmp_path):
     mock_result = _make_mock_pointcloud_result(tmp_path)
     rec.pointcloud = mock_result
 
-    # feedforward.zarr must exist for the pre-flight check in mesh()
-    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    # pointcloud.zarr must exist for the pre-flight check in mesh()
+    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
         mock_mesh.return_value = rec.backend_dir / "mesh.ply"
@@ -634,7 +634,7 @@ def test_mesh_forwards_clean_repair_from_config(tmp_path):
     config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf", "clean_repair": True}})
     rec = Reconstructor(config)
     mock_result = _make_mock_pointcloud_result(tmp_path)
-    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
         mock_mesh.return_value = rec.backend_dir / "mesh.ply"
@@ -647,7 +647,7 @@ def test_mesh_clean_repair_defaults_off(tmp_path):
     """base.yaml is the sole default source, and the default must not cost every run a second pass."""
     rec = Reconstructor(_make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}}))
     mock_result = _make_mock_pointcloud_result(tmp_path)
-    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
         mock_mesh.return_value = rec.backend_dir / "mesh.ply"
@@ -701,7 +701,7 @@ def test_run_tsdf_mesh_fuses_zarr_intrinsics_not_colmap(tmp_path):
     ):
         _run_tsdf_mesh(
             result=result,
-            feedforward_zarr=tmp_path / "feedforward.zarr",
+            pointcloud_zarr=tmp_path / "pointcloud.zarr",
             output_dir=tmp_path,
             voxel_size=0.01,
             sdf_trunc=0.04,
@@ -726,7 +726,7 @@ def test_run_tsdf_mesh_uses_colmap_poses(tmp_path):
     ):
         _run_tsdf_mesh(
             result=result,
-            feedforward_zarr=tmp_path / "feedforward.zarr",
+            pointcloud_zarr=tmp_path / "pointcloud.zarr",
             output_dir=tmp_path,
             voxel_size=0.01,
             sdf_trunc=0.04,
@@ -739,17 +739,17 @@ def test_run_tsdf_mesh_uses_colmap_poses(tmp_path):
 
 
 def test_run_tsdf_mesh_raises_on_frame_count_mismatch(tmp_path):
-    """Stage re-runs can pair a COLMAP dir with a feedforward.zarr from a different run."""
+    """Stage re-runs can pair a COLMAP dir with a pointcloud.zarr from a different run."""
     from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
 
     result, ff = _tsdf_mesh_doubles(n_colmap=3, n_zarr=2)
     with (
         patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
-        pytest.raises(ValueError, match="feedforward.zarr"),
+        pytest.raises(ValueError, match="pointcloud.zarr"),
     ):
         _run_tsdf_mesh(
             result=result,
-            feedforward_zarr=tmp_path / "feedforward.zarr",
+            pointcloud_zarr=tmp_path / "pointcloud.zarr",
             output_dir=tmp_path,
             voxel_size=0.01,
             sdf_trunc=0.04,
@@ -770,7 +770,7 @@ def test_run_tsdf_mesh_passes_clean_repair_to_the_fusion(tmp_path):
     ):
         _run_tsdf_mesh(
             result=result,
-            feedforward_zarr=tmp_path / "feedforward.zarr",
+            pointcloud_zarr=tmp_path / "pointcloud.zarr",
             output_dir=tmp_path,
             voxel_size=0.01,
             sdf_trunc=0.04,
@@ -914,7 +914,7 @@ def test_localize_without_pointcloud_raises(tmp_path):
 def test_build_localization_db_missing_zarr_raises(tmp_path):
     config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
-    with pytest.raises(FileNotFoundError, match="feedforward.zarr"):
+    with pytest.raises(FileNotFoundError, match="pointcloud.zarr"):
         rec.build_localization_db()
 
 
@@ -923,15 +923,15 @@ def test_build_localization_db_skips_when_exists(tmp_path):
 
     config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
-    ff = rec.backend_dir / "feedforward.zarr"
-    ff.mkdir(parents=True)
+    pc_zarr = rec.backend_dir / "pointcloud.zarr"
+    pc_zarr.mkdir(parents=True)
     with (
         patch.object(R, "_localization_db_exists", return_value=True),
         patch.object(R, "_build_localization_db") as build,
     ):
         out = rec.build_localization_db(overwrite=False)
     build.assert_not_called()
-    assert out == ff
+    assert out == pc_zarr
 
 
 ########################################
@@ -1156,15 +1156,15 @@ def test_build_localization_db_runs_when_missing(tmp_path):
 
     config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
-    ff = rec.backend_dir / "feedforward.zarr"
-    ff.mkdir(parents=True)
+    pc_zarr = rec.backend_dir / "pointcloud.zarr"
+    pc_zarr.mkdir(parents=True)
     with (
         patch.object(R, "_localization_db_exists", return_value=False),
         patch.object(R, "_build_localization_db") as build,
     ):
         rec.build_localization_db(overwrite=False)
     # top_k comes from base.yaml's localization.top_k default (pairwise/vismatch fan-out)
-    build.assert_called_once_with(ff, "loma", rec.frames_zarr, top_k=8, overwrite=False)
+    build.assert_called_once_with(pc_zarr, "loma", rec.frames_zarr, top_k=8, overwrite=False)
 
 
 ########################################
@@ -1266,7 +1266,7 @@ def test_stage_output_exists_localize(tmp_path):
     rec = Reconstructor(config)
     # No zarr at all: absent, and _localization_db_exists must not even be consulted.
     assert rec._stage_output_exists("localize") is False
-    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True)
+    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with patch.object(R, "_localization_db_exists", return_value=True):
         assert rec._stage_output_exists("localize") is True
     with patch.object(R, "_localization_db_exists", return_value=False):
@@ -1278,7 +1278,7 @@ def _seed_pointcloud_markers(rec):
     colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
     colmap_dir.mkdir(parents=True, exist_ok=True)
     (colmap_dir / "cameras.bin").touch()
-    (rec.backend_dir / "feedforward.zarr").mkdir(parents=True, exist_ok=True)
+    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True, exist_ok=True)
 
 
 def test_mesh_resolves_result_from_disk_when_not_in_memory(tmp_path):

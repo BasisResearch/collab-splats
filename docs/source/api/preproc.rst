@@ -42,7 +42,7 @@ deletes after use.
    img = store.image_by_frame_idx(120)   # (H,W,3) RGB, by source video index
    paths = store.export(tmp_dir)          # transient JPGs for path-locked tools
 
-``feedforward.zarr`` (written by the pointcloud stage) keeps its own
+``pointcloud.zarr`` (written by the pointcloud stage) keeps its own
 model-resolution ``images`` tensor — that is not a duplicate of
 ``frames.zarr``; it is used directly by mesh extraction, bundle adjustment,
 and point colorization at the model's inference resolution.

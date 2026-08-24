@@ -1,5 +1,5 @@
 """
-Train each splat primitive straight from a feedforward.zarr and tabulate the trainer's own quality report.
+Train each splat primitive straight from a pointcloud.zarr and tabulate the trainer's own quality report.
 
 Metric: the trainer's held-in PSNR / SSIM over the training views, Gaussian count and wall-clock,
 read back from splats_quality_report.json. No COLMAP is needed — the zarr carries poses, K,
@@ -7,14 +7,14 @@ points, colours and depth. Optional GT depth error (--seq, 7-Scenes) scores the 
 splats.zarr depth where alpha > 0.5 after median alignment, via the eval_multiview_conf helpers.
 
 Resolution: like the pipeline's splats stage, training uses the NATIVE frames from frames.zarr
-(found beside feedforward.zarr, or via --frames-zarr) with the zarr's model-res K rescaled to
+(found beside pointcloud.zarr, or via --frames-zarr) with the zarr's model-res K rescaled to
 native size; --model-res trains on the model-res images stored in the zarr instead (ablation row).
 Depth targets stay model-res either way — the trainer nearest-resizes them to the frame size.
 
 CLI/tmux only (GPU training). Results under evals/results/ (gitignored).
 
 Usage:
-  python evals/scripts/eval_splats.py --zarr data/outputs/feedforward.zarr \
+  python evals/scripts/eval_splats.py --zarr data/outputs/pointcloud.zarr \
       --out evals/results/splats_tutorial --primitives 3dgs 2dgs --max-steps 30000 [--model-res]
 """
 
@@ -46,7 +46,7 @@ AUTO_FRAMES_ZARR = "auto"  # sentinel: use <zarr>.parent / frames.zarr when it e
 @dataclass
 class SplatInputs:
     """
-    Everything ``train()`` needs, pulled from one feedforward.zarr.
+    Everything ``train()`` needs, pulled from one pointcloud.zarr.
     """
 
     images: np.ndarray  # (N, H, W, 3) uint8
@@ -107,13 +107,13 @@ def _native_images_and_intrinsics(
     return images, intrinsics
 
 
-def inputs_from_feedforward_zarr(
+def inputs_from_pointcloud_zarr(
     path: Path,
     conf_percentile: float | None = DEFAULT_CONF_PERCENTILE,
     frames_zarr: Path | str | None = AUTO_FRAMES_ZARR,
 ) -> SplatInputs:
     """
-    Load a feedforward.zarr into trainer inputs.
+    Load a pointcloud.zarr into trainer inputs.
 
     - frames_zarr: ``AUTO_FRAMES_ZARR`` uses ``path.parent / frames.zarr`` when it exists (native
       resolution, as the pipeline's splats stage does); an explicit Path forces it; None trains on
@@ -230,7 +230,7 @@ def _markdown_table(rows: list[dict]) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--zarr", type=Path, required=True, help="feedforward.zarr from the backend run")
+    ap.add_argument("--zarr", type=Path, required=True, help="pointcloud.zarr from the backend run")
     ap.add_argument("--out", type=Path, required=True, help="output dir; one subdir per primitive")
     ap.add_argument("--primitives", nargs="+", default=["3dgs", "2dgs"])
     ap.add_argument("--max-steps", type=int, default=30000)
@@ -251,7 +251,7 @@ def main() -> None:
     # Inputs are shared across primitives; only the config differs per run
     # --model-res wins over --frames-zarr; neither means the auto sentinel (sibling frames.zarr)
     frames_zarr = None if args.model_res else (args.frames_zarr or AUTO_FRAMES_ZARR)
-    inputs = inputs_from_feedforward_zarr(args.zarr, conf_percentile=args.conf_percentile, frames_zarr=frames_zarr)
+    inputs = inputs_from_pointcloud_zarr(args.zarr, conf_percentile=args.conf_percentile, frames_zarr=frames_zarr)
     n_frames, height, width, _ = inputs.images.shape
     n_points = inputs.points.shape[0]
     logger.info("%d frames at %dx%d, %d init points", n_frames, width, height, n_points)

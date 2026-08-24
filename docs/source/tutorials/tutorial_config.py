@@ -17,7 +17,7 @@ QUERY_IMAGE = REPO_ROOT / "data/tutorial/tutorial_example-frame.jpg"
 # ── Generated outputs (gitignored; notebooks write here) ──────────────────────
 OUTPUT_DIR = REPO_ROOT / "data/outputs"
 FRAMES_ZARR = OUTPUT_DIR / "frames.zarr"          # canonical keyframes (nb 01 writes)
-RECON = OUTPUT_DIR / "feedforward.zarr"           # canonical reconstruction (nb 02 writes)
+RECON = OUTPUT_DIR / "pointcloud.zarr"            # canonical reconstruction (nb 02 writes)
 TUTORIAL_CACHE = OUTPUT_DIR / "tutorial_cache"    # notebook scratch (plots, ae caches)
 
 if not VIDEO_PATH.exists():

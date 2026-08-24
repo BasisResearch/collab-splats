@@ -75,10 +75,10 @@ def _build_localizer_with_mock(world_points, extrinsics, image_paths, desc_dim=1
 
 
 def _empty_zarr(tmp_path: Path) -> Path:
-    """Create an empty feedforward.zarr store and return its path."""
+    """Create an empty pointcloud.zarr store and return its path."""
     import zarr
 
-    zarr_path = tmp_path / "feedforward.zarr"
+    zarr_path = tmp_path / "pointcloud.zarr"
     zarr.open(str(zarr_path), mode="w")
     return zarr_path
 

@@ -131,3 +131,37 @@ def test_creator_config_copy_prevents_module_dict_leak():
 
     # Module-level dict must be untouched — Config aliases it; creator must copy
     assert RUNTIME_OPTIONS == before
+
+
+def test_track_id_patch_renumbers_packed_64bit_ids():
+    pytest.importorskip("instantsfm")
+    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
+    from instantsfm.processors.track_establishment import TrackEngine
+
+    sfm._patch_instantsfm_track_ids()
+
+    # Idempotent — a second call must not wrap the wrapper
+    patched = TrackEngine.FindTracksForProblem
+    sfm._patch_instantsfm_track_ids()
+    assert TrackEngine.FindTracksForProblem is patched
+
+    # Packed global id (image 4, feature 12273) overflows int32 unless renumbered —
+    # exactly the id that OverflowError'd the smoke run under numpy 2
+    class _Images:
+        is_registered = np.ones(3, dtype=bool)
+
+        def __len__(self):
+            return 3
+
+    engine = TrackEngine(view_graph=None, images=_Images())
+    packed_id = (4 << 32) | 12273
+    obs = np.array([[0, 10], [1, 20], [2, 30]])
+    tracks = engine.FindTracksForProblem(
+        {packed_id: obs},
+        {"min_num_view_per_track": 2, "max_num_view_per_track": 100},
+    )
+
+    # One surviving track, id stored without overflow, observations preserved
+    assert len(tracks) == 1
+    assert tracks.ids[0] == 0
+    np.testing.assert_array_equal(tracks.observations[0], obs)

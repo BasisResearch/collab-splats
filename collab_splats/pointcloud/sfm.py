@@ -445,6 +445,32 @@ def _generate_sift_database(image_path: Path, database_path: Path, single_camera
         ) from err
 
 
+def _patch_instantsfm_track_ids() -> None:
+    """
+    Renumber track ids to sequential ints before they reach int32 storage.
+
+    - Upstream keys tracks by packed 64-bit global point ids ((image_id << 32) | feature_idx,
+      cre185/InstantSfM @ d3e599e instantsfm/processors/track_establishment.py:56) but stores
+      them in an int32 array (instantsfm/scene/defs.py:339) — numpy 1.x wrapped these silently
+      (with collision risk), numpy 2 raises OverflowError for any track rooted past image 0.
+    - Track ids are opaque labels downstream (dict keys in track_retriangulation, max()+1
+      allocation), so a compact renumber is lossless. Idempotent across creator instances.
+    """
+    # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
+    from instantsfm.processors.track_establishment import TrackEngine
+
+    if getattr(TrackEngine.FindTracksForProblem, "_collab_splats_renumber", False):
+        return
+    upstream_find_tracks = TrackEngine.FindTracksForProblem
+
+    def find_tracks_renumbered(self, tracks_full, TRACK_ESTABLISHMENT_OPTIONS):
+        renumbered = dict(enumerate(tracks_full.values()))
+        return upstream_find_tracks(self, renumbered, TRACK_ESTABLISHMENT_OPTIONS)
+
+    find_tracks_renumbered._collab_splats_renumber = True
+    TrackEngine.FindTracksForProblem = find_tracks_renumbered
+
+
 @dataclass
 class InstantSfMCreator:
     """
@@ -501,6 +527,9 @@ class InstantSfMCreator:
         from instantsfm.controllers.reconstruction_writer import (
             WriteGlomapReconstruction,
         )
+
+        # numpy-2 OverflowError fix: packed 64-bit track ids vs int32 storage upstream
+        _patch_instantsfm_track_ids()
 
         # ReadData falls back to data_dir itself as the image dir when images/ is
         # absent — refuse that silently-wrong layout up front

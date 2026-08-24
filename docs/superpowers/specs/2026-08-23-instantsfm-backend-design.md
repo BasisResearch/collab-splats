@@ -279,3 +279,71 @@ uv pip install scikit-sparse==0.4.15                                   # builds 
   the `feature_handler`+`config_name` pair (must-match foot-gun → one `features` key);
   wiring colmap/hloc "for free"; the images→mp4→re-decode roundtrip from their tools
   script; persisting depth in a second location beside `frames.zarr`.
+
+## Measured (smoke, 2026-08-24)
+
+End-to-end `run_pipeline` on `data/tutorial/tutorial_example-video.mp4` (2388 frames,
+1920×1080, ~100 s), override `pointcloud: {method: sfm, backend: instantsfm}` +
+`preproc.fps: 4.0`. Worktree `insfm-exec`; numbers from the passing attempt-8 run and
+the stage matrix that followed.
+
+**Registration needs dense overlap.** At the base `fps: 1.0` (100 frames) InstantSfM
+registered only 60/100 and the v1 full-registration guard fired as designed
+(`RuntimeError` naming the fix). At `fps: 4.0` (300 frames, `max_frames` cap):
+**300/300 registered, 111,127 points3D**. Track filtering was deterministic across
+runs (250,886 → 117,896 tracks both times). Practical rule: the sfm backend wants
+several-fps sampling where feedforward tolerates 1 fps.
+
+**Runtimes (300 frames, warm caches unless noted):** GPU SIFT extract 7 s vs 90 s
+CPU; GPU match 55 s vs ~816 s CPU (measured at 100 frames); VDA metric depth 90 s;
+global mapping ~8 min; full warm pipeline run ~19 min. `colmap/instantsfm.db` is
+506 MB — excluded from GCS push.
+
+**Artifact contract verified on disk:** `instantsfm/pointcloud.zarr` with attrs
+`{method: sfm, backend: instantsfm, instantsfm_version: 0.3.0}`, model-res
+(518×921) depth/images/poses/K, `world_points` from VDA depth, **no `confidence`
+array** (absent, not zeros); `colmap/sparse/0/` readable by pycolmap;
+`sparse_pc.ply` (109,458 pts); `transforms.json`.
+
+**Six bugs found by the smoke iterations** (each patched idempotently from
+`InstantSfMCreator.reconstruct()` unless noted, unit-tested in
+`tests/pointcloud/test_instantsfm.py` / `tests/geometry/test_verification.py`):
+
+1. Upstream packs `(image_id << 32) | feature_idx` into an int32 `Tracks.ids` —
+   numpy 2 raises `OverflowError` (numpy 1.x wrapped silently) →
+   `_patch_instantsfm_track_ids` renumbers sequentially (`6e2d7c63`).
+2. bae-0.2.4 `LM.step` × pypose-0.7.5 `RobustModel.forward(target)` TypeError —
+   instantsfm builds its optimizers internally → class-level `target=None`
+   (`_patch_pypose_robustmodel_target`, `42c722d4`).
+3. pypose-0.7.5 CG squeezes a column rhs to 1-D → bae `PCG` hands LM a 1-D step →
+   `TrustRegion.update` dies on `(J @ D).mT` → `_patch_bae_pcg_column_shape`
+   (`3db4afc5`; bae `spdiags_` is Triton, so the test is CUDA-only).
+4. Upstream COLMAP binary writer emits a model pycolmap refuses
+   (`vector::_M_range_check`): `_write_images_binary` compresses points2D to the
+   valid-track subset while `_write_points3d_binary` keeps ORIGINAL SIFT feature
+   indices plus obs on unregistered images / sub-min-track-length tracks →
+   `_patch_instantsfm_colmap_write` (full keypoint list with `-1` ids, obs
+   filtered through the `build_correspondences` table; `e784ba6c`).
+5. Our result tail then hit the legitimately-empty tracks that patch exposes:
+   `_pixel_indices_from_reconstruction` read `track.elements[0]` →
+   `_tracked_point3d_ids` drops observation-less points (330 of 111,127 on this
+   scene; `20cb80a2`).
+6. `verify()` was unusable on any sfm scene: `geometry/verification.py::_write_frames`
+   wrote the camera row once per image, but instantsfm shares ONE camera across all
+   images → sqlite `camera_id must be unique`. Fixed to write each camera_id once
+   (`59e1786c`).
+
+**Downstream stage matrix (Step-3 scene, all against the no-confidence zarr):**
+splats OK (2000-step probe), mesh OK, extract_semantics OK, build_localization_db
+OK, verify OK after fix 6 (1,907 pairs, 61,521 triangulated points; pair_matching
+102 s + verify_matches 128 s + triangulate 22 s), `refine_poses` correctly refused
+with `ValueError` for `method: sfm`.
+
+Note: the "legacy `feedforward.zarr` stays readable via the resolver fallback"
+bullet under Non-goals is superseded by the plan revision (0ca5005f) — the rename
+shipped hard, no resolver; pre-rename scenes need the one-time `mv` documented in
+`configs/README.md`.
+
+Still owed: 7-Scenes ATE vs the feedforward backends (Task 10 Step 2, human-gated)
+and the GoPro fidelity run (instantsfm + 30k-step 3dgs pose_opt splats vs the
+vggt_omega reference).

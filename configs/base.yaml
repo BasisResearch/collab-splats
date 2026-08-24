@@ -144,7 +144,7 @@ splats:
   shN_lr: 1.25e-4
   pose_lr: 1.0e-5            # x scene_scale
   cap_max: 1000000           # 3dgs only: Gaussian budget
-  grow_grad2d: 8.0e-4        # 2dgs only
+  grow_grad2d: 2.0e-4        # 2dgs only (gsplat non-absgrad default; 8e-4 starved densification)
   log_every: 500
   losses:
     depth: {weight: 0.01}

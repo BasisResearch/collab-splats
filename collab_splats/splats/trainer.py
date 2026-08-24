@@ -80,7 +80,10 @@ class SplatsConfig:
 
     # Densification
     cap_max: int = 1_000_000  # 3dgs (MCMC): Gaussian budget
-    grow_grad2d: float = 8e-4  # 2dgs (Default): 2D-gradient threshold to split/duplicate
+    # 2dgs (Default): 2D-gradient threshold to split/duplicate. gsplat's non-absgrad default;
+    # the spec's 8e-4 was calibrated for absgrad=True and starved densification (GH010229:
+    # 160k vs 1.4M gaussians, -1.26 dB).
+    grow_grad2d: float = 2e-4
 
     log_every: int = 500
 

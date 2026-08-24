@@ -4,8 +4,8 @@ Absent-confidence seams.
 A pointcloud.zarr may carry no confidence array (absent, never zeros — e.g. one
 written by an SfM backend). Three seams must tolerate that: mesh fusion
 (_feedforward_to_tsdf_inputs), feature lifting (lift_features), and the splats
-depth-targets block in Reconstructor.splats() (feedforward branch; sfm scenes
-take the points3d_depth_maps branch and never read zarr depth).
+depth-targets block in Reconstructor.splats() (sfm scenes use the same zarr
+path once depth is aligned (depth_scale attr)).
 """
 
 from pathlib import Path

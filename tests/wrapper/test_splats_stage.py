@@ -189,3 +189,38 @@ def test_mesh_source_unknown_raises(tmp_path):
     recon.config["mesh"]["source"] = "nerf"
     with pytest.raises(ValueError, match="mesh.source"):
         recon.mesh()
+
+
+def test_splats_sfm_aligned_zarr_uses_zarr_depth(tmp_path):
+    # sfm scene whose zarr carries depth_scale: falls through to the zarr-depth path
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
+    depth = np.stack([np.full((4, 4), view + 1, np.float32) for view in range(3)])
+    feedforward = SimpleNamespace(
+        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
+        depth=depth,
+        confidence=None,  # sfm scenes carry no confidence — unmasked targets
+    )
+    group = zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
+    group.attrs["depth_scale"] = "colmap"
+    with (
+        patch("collab_splats.splats.trainer.train") as train,
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+    ):
+        recon.splats()
+
+    depth_targets = train.call_args.kwargs["depth_targets"]
+    assert depth_targets.shape == (3, 4, 4)
+    # Rows reordered to image_paths (reversed): row 0 is frame 2, row 2 is frame 0
+    assert depth_targets[0, 0, 0] == 3 and depth_targets[2, 0, 0] == 1
+
+
+def test_splats_sfm_legacy_zarr_refused(tmp_path):
+    # sfm zarr without depth_scale is VDA-metric — feeding it as targets collapsed
+    # training once (PSNR 6.15); must refuse with a re-run pointer
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
+    zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
+    with patch("collab_splats.splats.trainer.train") as train, pytest.raises(ValueError, match="depth_scale"):
+        recon.splats()
+    train.assert_not_called()

@@ -1547,28 +1547,28 @@ class Reconstructor:
         # CPU-resident by design: train() moves one view to the GPU at a time
         images = np.stack([store.image_by_frame_idx(frame_idx) for frame_idx in frame_indices])
 
-        # Depth targets: model-res feedforward depth masked like the mesh stage masks it (0 = no
+        # Depth targets: model-res pointcloud.zarr depth masked like the mesh stage masks it (0 = no
         # target); train() resizes each view to the frame's resolution with nearest sampling
         depth_targets = None
         depth_on = "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0  # from_dict guarantees weight
-        if depth_on and self.config["pointcloud"]["method"] == "sfm":
-            # SfM scenes: the zarr's VDA depth is NOT scale-consistent with the COLMAP world
-            # (instantsfm's depth anchoring is soft — measured 3.2x off on GH010229), so follow
-            # upstream instantsfm's splat supervision instead: the reconstruction's own points3D
-            # projected per view (points3d_depth_maps). Single scale authority, sparse targets.
-            from collab_splats.pointcloud.utils import points3d_depth_maps
-
-            height, width = images.shape[1:3]
-            depth_targets = points3d_depth_maps(
-                result.reconstruction, [path.name for path in result.image_paths], height, width
-            )
-        elif depth_on:
+        if depth_on:
             pointcloud_zarr = self.pointcloud_zarr
             if not pointcloud_zarr.exists():
                 raise FileNotFoundError(
                     f"pointcloud.zarr not found at {pointcloud_zarr}. "
-                    "Splats depth loss requires depth maps from a feedforward backend."
+                    "Splats depth loss requires depth maps from the pointcloud stage."
                 )
+
+            # SfM scenes: zarr depth is usable only once aligned to the COLMAP world — a
+            # legacy VDA-metric store fed as targets collapsed training (measured PSNR 6.15)
+            if self.config["pointcloud"]["method"] == "sfm":
+                attrs = zarr.open(str(pointcloud_zarr), mode="r").attrs
+                if "depth_scale" not in attrs:
+                    raise ValueError(
+                        f"{pointcloud_zarr} predates depth alignment (no depth_scale attr) — "
+                        "re-run the pointcloud stage to align VDA depth to the COLMAP world."
+                    )
+
             feedforward = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
             if feedforward.depth is None:
                 raise ValueError(f"{pointcloud_zarr} has no depth — cannot build splats depth targets.")

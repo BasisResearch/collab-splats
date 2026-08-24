@@ -144,3 +144,21 @@ Order is binding (user directive: tests + evals before applying).
 - Retire: `points3d_depth_maps` + sfm splats dispatch + mesh refusal (only after the eval wins).
 - Minimal: one new function, one wiring block, attr-guarded consumer changes; module constants
   over config keys.
+
+## Measured (GH010229, 300 frames, pose_opt, 30k steps, retriangulation on)
+
+| condition | PSNR | SSIM |
+|---|---|---|
+| 3dgs sparse points3D targets + retri (baseline) | 19.111 | 0.6044 |
+| **3dgs dense aligned VDA targets + retri** | **19.236** | 0.6029 |
+| 2dgs (grow 2e-4) sparse targets + retri (baseline) | 19.211 | 0.6209 |
+| **2dgs (grow 2e-4) dense aligned targets + retri** | **19.378** | 0.6150 |
+| plan gate (3dgs sparse, pre-retri) | 18.38 | 0.574 |
+| vggt_omega reference | 18.97 | 0.596 |
+
+- Alignment: global scale 3.2248 (predicted ≈ 3.2), per-frame ratio p10/p50/p90 [0.7675, 0.9939, 1.4617] → [0.8881, 1.0, 1.1822] after alignment, 0 fallback frames, 300 registered images, 110,710 points3D.
+- Dense targets win PSNR on both primitives (+0.13 / +0.17 dB); SSIM within noise or slightly lower (−0.0015 / −0.006).
+- 2dgs dense grew to 2.02M gaussians (sparse: 1.40M); its report was recovered from ckpt.pt after a disk-full crash in the render stream (training completed; renders regenerated, no retrain).
+- Mesh (source: splats, voxel 0.2 / sdf 0.8 / trunc 100, judged by renders from scene cameras 0/100/200): parity — no structural difference between dense- and sparse-target splat meshes; sparse marginally cleaner speckle in 2 of 3 views.
+- Feedforward-fusion probe on the aligned zarr (newly possible — depth_scale guard passes): fusion works (1.92M verts) but renders carry heavy triangle-confetti speckle and holes — no confidence array, so every VDA pixel fuses unmasked; `mesh.source: splats` stays the recommended path for sfm scenes.
+- Verdict: dense shipped — `points3d_depth_maps` retired; sfm splats consume aligned `pointcloud.zarr` depth through the same path as feedforward backends; legacy zarr without `depth_scale` raises.

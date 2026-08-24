@@ -527,6 +527,89 @@ def _patch_bae_pcg_column_shape() -> None:
     PCG.forward = forward_keep_column
 
 
+def _patch_instantsfm_colmap_write() -> None:
+    """
+    Make the upstream COLMAP binary writer internally consistent so pycolmap can read it.
+
+    - Upstream `_write_images_binary` (cre185/InstantSfM @ d3e599e instantsfm/scene/
+      reconstruction.py:214-253) compresses each image's points2D list to the
+      valid-track subset, while `_write_points3d_binary` (:255-275) writes track
+      observations carrying ORIGINAL SIFT feature indices — pycolmap range-checks
+      the pair and refuses the model (`vector::_M_range_check`). points3D.bin also
+      keeps observations on unregistered images and on sub-min-track-length tracks,
+      which exist in no written image.
+    - Fix: images.bin gets the FULL per-image keypoint list (point3D id -1 = COLMAP
+      invalid where no surviving track), so original feature indices stay valid;
+      points3D.bin drops observations that don't round-trip through the per-image
+      correspondence table built by build_correspondences.
+    - Binary writers only (our path never exports text). In-memory mapping untouched;
+      idempotent.
+    """
+    # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
+    from instantsfm.scene.reconstruction import Reconstruction as InsfmReconstruction
+    from instantsfm.utils.read_write_model import write_next_bytes
+    from scipy.spatial.transform import Rotation
+
+    if getattr(InsfmReconstruction._write_images_binary, "_collab_splats_consistent", False):
+        return
+
+    def write_images_full_points2d(self, filepath):
+        # Upstream body with one change: no valid_mask compression of the keypoint list
+        if self.images is None or self._selected_indices is None:
+            return
+        with open(filepath, "wb") as fid:
+            write_next_bytes(fid, len(self._selected_indices), "Q")
+            for idx in self._selected_indices:
+                world2cam = self.images.world2cams[idx]
+                tvec = world2cam[:3, 3]
+                qvec = Rotation.from_matrix(world2cam[:3, :3]).as_quat()  # xyzw
+                write_next_bytes(fid, int(idx), "i")  # index-as-id, as upstream
+                write_next_bytes(fid, [float(qvec[3]), float(qvec[0]), float(qvec[1]), float(qvec[2])], "dddd")
+                write_next_bytes(fid, tvec.tolist(), "ddd")
+                write_next_bytes(fid, int(self.images.cam_ids[idx]), "i")
+                filename = self.images.filenames[idx] if hasattr(self.images, "filenames") else f"{idx}.jpg"
+                for char in filename:
+                    write_next_bytes(fid, char.encode("utf-8"), "c")
+                write_next_bytes(fid, b"\x00", "c")
+
+                # FULL keypoint list keeps track observation indices valid; "q" packs
+                # -1 as 0xFF..FF, COLMAP's invalid point3D id
+                point3d_ids = self._point3d_ids[idx]
+                features = self.images.features[idx]
+                write_next_bytes(fid, len(features), "Q")
+                for xy, p3d_id in zip(features, point3d_ids):
+                    write_next_bytes(fid, [float(xy[0]), float(xy[1]), int(p3d_id)], "ddq")
+
+    def write_points3d_consistent(self, filepath):
+        # Upstream body with one change: observations filtered through the
+        # correspondence table (drops unregistered images + sub-min-length tracks)
+        if self.tracks is None:
+            return
+        with open(filepath, "wb") as fid:
+            write_next_bytes(fid, len(self.tracks), "Q")
+            for track_id in range(len(self.tracks)):
+                obs = self.tracks.observations[track_id]
+                kept = [
+                    (int(image_id), int(feat_idx))
+                    for image_id, feat_idx in obs
+                    if self._point3d_ids[image_id] is not None
+                    and feat_idx < len(self._point3d_ids[image_id])
+                    and self._point3d_ids[image_id][feat_idx] == track_id
+                ]
+                write_next_bytes(fid, track_id, "Q")
+                write_next_bytes(fid, self.tracks.xyzs[track_id].tolist(), "ddd")
+                write_next_bytes(fid, [int(c) for c in self.tracks.colors[track_id]], "BBB")
+                write_next_bytes(fid, 0.0, "d")  # error, as upstream
+                write_next_bytes(fid, len(kept), "Q")
+                for image_id, feat_idx in kept:
+                    write_next_bytes(fid, [image_id, feat_idx], "ii")
+
+    write_images_full_points2d._collab_splats_consistent = True
+    write_points3d_consistent._collab_splats_consistent = True
+    InsfmReconstruction._write_images_binary = write_images_full_points2d
+    InsfmReconstruction._write_points3d_binary = write_points3d_consistent
+
+
 @dataclass
 class InstantSfMCreator:
     """
@@ -586,10 +669,11 @@ class InstantSfMCreator:
 
         # Upstream compat fixes: packed 64-bit track ids vs int32 storage (numpy 2),
         # bae LM.step vs pypose-0.7.5 RobustModel.forward(target), PCG 1-D step vs
-        # TrustRegion.update
+        # TrustRegion.update, COLMAP writer emitting a model pycolmap can't read
         _patch_instantsfm_track_ids()
         _patch_pypose_robustmodel_target()
         _patch_bae_pcg_column_shape()
+        _patch_instantsfm_colmap_write()
 
         # ReadData falls back to data_dir itself as the image dir when images/ is
         # absent — refuse that silently-wrong layout up front

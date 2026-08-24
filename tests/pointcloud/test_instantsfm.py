@@ -213,3 +213,63 @@ def test_bae_pcg_patch_keeps_column_shape():
     assert column.shape == (4, 1)
     assert vector.shape == (4,)
     torch.testing.assert_close(column[:, 0], b, rtol=1e-4, atol=1e-6)
+
+
+def test_colmap_write_patch_produces_pycolmap_readable_model(tmp_path):
+    pytest.importorskip("instantsfm")
+    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
+    import pycolmap
+    from instantsfm.scene.reconstruction import Reconstruction as InsfmReconstruction
+
+    sfm._patch_instantsfm_colmap_write()
+
+    # Idempotent — a second call must not wrap the wrapper
+    patched = InsfmReconstruction._write_images_binary
+    sfm._patch_instantsfm_colmap_write()
+    assert InsfmReconstruction._write_images_binary is patched
+
+    # Minimal scene reproducing the smoke-run crash: upstream compressed each
+    # image's points2D to the valid-track subset while points3D observations kept
+    # ORIGINAL feature indices (vector::_M_range_check on read-back). Image 0 is
+    # unregistered; track 1 is below min_track_length — both contribute
+    # observations that must be dropped, not written.
+    class _ModelId:
+        value = 1  # PINHOLE
+
+    class _Cam:
+        model_id = _ModelId()
+        width, height = 64, 48
+        params = [50.0, 50.0, 32.0, 24.0]
+
+    class _Images:
+        world2cams = [np.eye(4)] * 3
+        cam_ids = [0, 0, 0]
+        filenames = ["frame_000000.jpg", "frame_000001.jpg", "frame_000002.jpg"]
+        features = [np.array([[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]])] * 3
+
+        def __len__(self):
+            return 3
+
+    class _Tracks:
+        xyzs = np.zeros((2, 3))
+        colors = np.zeros((2, 3), dtype=np.uint8)
+        observations = [
+            np.array([[1, 2], [2, 1], [0, 1]]),  # feat 2 of image 1 crashed the old writer
+            np.array([[1, 0]]),  # sub-min-length: exported point, no valid obs
+        ]
+
+        def __len__(self):
+            return 2
+
+    recon = InsfmReconstruction([_Cam()], _Images(), _Tracks())
+    recon._selected_indices = np.array([1, 2])
+    recon.build_correspondences(min_track_length=2)
+    recon.write_binary(str(tmp_path))
+
+    # pycolmap must accept the model; full keypoint lists, filtered observations
+    read_back = pycolmap.Reconstruction(str(tmp_path))
+    assert set(read_back.images) == {1, 2}
+    assert all(len(img.points2D) == 3 for img in read_back.images.values())
+    assert len(read_back.points3D[0].track.elements) == 2
+    assert len(read_back.points3D[1].track.elements) == 0
+    assert read_back.images[1].points2D[2].point3D_id == 0

@@ -51,7 +51,7 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
     recon = Reconstructor.__new__(Reconstructor)
     recon.config = {
         "output_path": str(tmp_path),
-        "pointcloud": {"backend": "vggtx"},
+        "pointcloud": {"method": "feedforward", "backend": "vggtx"},
         "mesh": {
             "voxel_size": 0.01,
             "sdf_trunc": 0.04,

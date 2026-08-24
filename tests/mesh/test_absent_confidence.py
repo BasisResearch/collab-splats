@@ -1,10 +1,11 @@
 """
 Absent-confidence seams.
 
-pointcloud.zarr from an SfM-derived backend (e.g. instantsfm) carries no confidence
-array (absent, never zeros). Three seams must tolerate that: mesh fusion
+A pointcloud.zarr may carry no confidence array (absent, never zeros — e.g. one
+written by an SfM backend). Three seams must tolerate that: mesh fusion
 (_feedforward_to_tsdf_inputs), feature lifting (lift_features), and the splats
-depth-targets block in Reconstructor.splats().
+depth-targets block in Reconstructor.splats() (feedforward branch; sfm scenes
+take the points3d_depth_maps branch and never read zarr depth).
 """
 
 from pathlib import Path
@@ -85,7 +86,7 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
     recon = Reconstructor.__new__(Reconstructor)
     recon.config = {
         "output_path": str(tmp_path),
-        "pointcloud": {"backend": "instantsfm"},
+        "pointcloud": {"method": "feedforward", "backend": "vggtx"},
         "mesh": {"conf_percentile": 20},
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
     }
@@ -106,7 +107,7 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
 
 
 def test_splats_depth_targets_skip_masking_when_confidence_absent(tmp_path, caplog):
-    """SfM-derived pointcloud.zarr has no confidence; conf_percentile set -> log and skip masking."""
+    """pointcloud.zarr without confidence; conf_percentile set -> log and skip masking."""
     recon = _stub_reconstructor_for_splats(tmp_path)
     feedforward = SimpleNamespace(
         image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(2)],

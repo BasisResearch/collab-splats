@@ -643,6 +643,7 @@ class InstantSfMCreator:
     features: str = "colmap"
     single_camera: bool = True
     use_depths: bool = True
+    retriangulation: bool = False
 
     def _build_config(self):
         """
@@ -655,6 +656,11 @@ class InstantSfMCreator:
         config = Config(self.features)
         config.OPTIONS = dict(config.OPTIONS)
         config.RUNTIME_OPTIONS = dict(config.RUNTIME_OPTIONS)
+
+        # Optional GLOMAP-style refinement: retriangulate from the full pre-filter track
+        # set, then up to ba_global_max_refinements (5) further BA rounds. Upstream
+        # defaults skip_retriangulation True; this is their only post-BA refinement knob.
+        config.OPTIONS["skip_retriangulation"] = not self.retriangulation
         return config
 
     def reconstruct(self, data_dir: Path) -> pycolmap.Reconstruction:

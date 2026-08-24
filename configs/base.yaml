@@ -92,6 +92,9 @@ pointcloud:
     features: colmap          # feature/matching handler; v0.3.0 upstream supports only colmap
                                # (CPU SIFT + exhaustive matching) — the value is validated but
                                # not yet dispatched on.
+    retriangulation: false    # GLOMAP-style post-BA refinement: retriangulate tracks from the
+                               # full pre-filter set + up to 5 further BA rounds (upstream
+                               # skip_retriangulation flag). Costs extra runtime.
 
 semantics:
   enabled: true

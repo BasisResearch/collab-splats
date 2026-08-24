@@ -147,6 +147,17 @@ def test_creator_config_copy_prevents_module_dict_leak():
     assert RUNTIME_OPTIONS == before
 
 
+def test_creator_retriangulation_flag_flips_skip_retriangulation():
+    pytest.importorskip("instantsfm")
+    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
+    from instantsfm.controllers.config import GENERAL_OPTIONS
+
+    # Default off matches upstream; enabling must flip only the copied dict
+    assert sfm.InstantSfMCreator()._build_config().OPTIONS["skip_retriangulation"] is True
+    assert sfm.InstantSfMCreator(retriangulation=True)._build_config().OPTIONS["skip_retriangulation"] is False
+    assert GENERAL_OPTIONS["skip_retriangulation"] is True
+
+
 def test_track_id_patch_renumbers_packed_64bit_ids():
     pytest.importorskip("instantsfm")
     # Optional heavy dep, may be absent — imported inside the importorskip'd test body

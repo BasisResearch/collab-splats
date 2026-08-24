@@ -1021,7 +1021,10 @@ class Reconstructor:
                 torch.cuda.empty_cache()
 
         # Global SfM via the upstream python API; writes colmap/instantsfm.db + colmap/sparse/0
-        creator = InstantSfMCreator(features=pc_cfg["instantsfm"]["features"])
+        creator = InstantSfMCreator(
+            features=pc_cfg["instantsfm"]["features"],
+            retriangulation=pc_cfg["instantsfm"]["retriangulation"],
+        )
         recon = creator.reconstruct(backend_dir)
         del creator
         if torch.cuda.is_available():

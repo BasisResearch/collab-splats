@@ -224,3 +224,26 @@ def test_splats_sfm_legacy_zarr_refused(tmp_path):
     with patch("collab_splats.splats.trainer.train") as train, pytest.raises(ValueError, match="depth_scale"):
         recon.splats()
     train.assert_not_called()
+
+
+def test_mesh_sfm_legacy_zarr_refused(tmp_path):
+    # Legacy VDA-metric zarr against COLMAP poses fused geometry at the wrong scale —
+    # keep refusing scenes without the depth_scale attr
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
+    zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
+    with pytest.raises(ValueError, match="depth_scale"):
+        recon.mesh()
+
+
+def test_mesh_sfm_aligned_zarr_fuses(tmp_path):
+    # Aligned sfm zarr (depth_scale attr) passes the guard and reaches TSDF fusion
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
+    group = zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
+    group.attrs["depth_scale"] = "colmap"
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as fuse:
+        fuse.return_value = recon.backend_dir / "mesh" / "mesh.ply"
+        out = recon.mesh()
+    fuse.assert_called_once()
+    assert out == recon.backend_dir / "mesh" / "mesh.ply"

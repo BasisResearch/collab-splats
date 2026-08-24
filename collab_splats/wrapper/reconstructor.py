@@ -1376,15 +1376,15 @@ class Reconstructor:
                 "Mesh requires depth maps from a feedforward backend."
             )
         elif self.config["pointcloud"]["method"] == "sfm":
-            # SfM scenes: the zarr's VDA depth is at metric scale while the COLMAP poses are
-            # at the SfM's own scale (instantsfm's depth anchoring is soft — measured 3.2x
-            # apart on GH010229). Fusing them produces geometry at the wrong scale in the
-            # wrong places, so refuse rather than emit a silently-broken mesh.
-            raise ValueError(
-                "mesh.source: feedforward fuses pointcloud.zarr depth against COLMAP poses, "
-                "which are not scale-consistent on an sfm scene — set mesh.source: splats "
-                "(train the splats stage first)."
-            )
+            # SfM scenes fuse only after zarr depth was aligned to the COLMAP world
+            # (depth_scale attr). A legacy VDA-metric store against COLMAP poses produced
+            # geometry at the wrong scale in the wrong places (measured 3.2x on GH010229).
+            attrs = zarr.open(str(pointcloud_zarr), mode="r").attrs
+            if "depth_scale" not in attrs:
+                raise ValueError(
+                    f"{pointcloud_zarr} predates depth alignment (no depth_scale attr) — "
+                    "re-run the pointcloud stage, or set mesh.source: splats."
+                )
 
         out = _run_tsdf_mesh(
             result=result,

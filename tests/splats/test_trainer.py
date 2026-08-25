@@ -249,3 +249,60 @@ def test_splats_config_accepts_downscale_fields():
     # Defaults are splatfacto's
     default = SplatsConfig()
     assert default.num_downscales == 2 and default.resolution_schedule == 3000
+
+
+def test_scene_normalization_centres_and_unit_cubes_cameras():
+    cam_to_world = np.tile(np.eye(4, dtype=np.float32), (3, 1, 1))
+    cam_to_world[:, :3, 3] = [[0, 0, 0], [4, 0, 0], [2, 6, -2]]
+    center, scale = trainer_module.scene_normalization(cam_to_world)
+
+    # Centre = mean position; scale = 1 / max |coord - centre| (L-inf, splatfacto auto_scale_poses)
+    np.testing.assert_allclose(center, [2, 2, -2 / 3], rtol=1e-6)
+    normalised = (cam_to_world[:, :3, 3] - center) * scale
+    assert np.isclose(np.abs(normalised).max(), 1.0)
+    with pytest.raises(ValueError, match="coincide"):
+        trainer_module.scene_normalization(np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)))
+
+
+def test_denormalize_outputs_round_trips_gaussians_cameras_and_pose_deltas():
+    from collab_splats.splats.cameras import CameraOptModule
+
+    rng = np.random.default_rng(0)
+    cam_to_world = np.tile(np.eye(4, dtype=np.float32), (4, 1, 1))
+    cam_to_world[:, :3, 3] = rng.normal(size=(4, 3)) * 5 + 10
+    center, scale = trainer_module.scene_normalization(cam_to_world)
+
+    # Gaussians and cameras in the normalised frame; refiner with a known camera-frame translation delta
+    world_means = rng.normal(size=(20, 3)).astype(np.float32) * 5 + 10
+    world_log_scales = np.log(rng.uniform(0.1, 2, size=(20, 3)).astype(np.float32))
+    gaussians = torch.nn.ParameterDict(
+        {
+            "means": torch.nn.Parameter(torch.from_numpy((world_means - center) * scale)),
+            "scales": torch.nn.Parameter(torch.from_numpy(world_log_scales + np.log(scale))),
+        }
+    )
+    normalised_cams = torch.from_numpy(cam_to_world.copy())
+    normalised_cams[:, :3, 3] = (normalised_cams[:, :3, 3] - torch.from_numpy(center)) * scale
+    refiner = CameraOptModule(4)
+    refiner.zero_init()
+    with torch.no_grad():
+        refiner.embeds.weight[1, :3] = torch.tensor([0.1, -0.2, 0.3])
+    refined_normalised = refiner(normalised_cams[1:2], torch.tensor([1]))[0]
+
+    trainer_module.denormalize_outputs(gaussians, refiner, normalised_cams, center, scale)
+
+    # Back in world units; the refined pose maps through the same Sim3 as the raw one
+    np.testing.assert_allclose(gaussians["means"].detach().numpy(), world_means, rtol=1e-4, atol=1e-4)
+    np.testing.assert_allclose(gaussians["scales"].detach().numpy(), world_log_scales, atol=1e-5)
+    np.testing.assert_allclose(normalised_cams[:, :3, 3].numpy(), cam_to_world[:, :3, 3], rtol=1e-4, atol=1e-4)
+    refined_world = refiner(normalised_cams[1:2], torch.tensor([1]))[0]
+    expected_t = refined_normalised[:3, 3] / scale + torch.from_numpy(center)
+    np.testing.assert_allclose(refined_world[:3, 3].detach().numpy(), expected_t.detach().numpy(), rtol=1e-4, atol=1e-4)
+    np.testing.assert_allclose(
+        refined_world[:3, :3].detach().numpy(), refined_normalised[:3, :3].detach().numpy(), atol=1e-6
+    )
+
+
+def test_config_normalize_scene_default_off_and_settable():
+    assert SplatsConfig().normalize_scene is False
+    assert SplatsConfig.from_dict({"enabled": True, "normalize_scene": True}).normalize_scene is True

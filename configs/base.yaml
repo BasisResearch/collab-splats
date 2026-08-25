@@ -153,6 +153,8 @@ splats:
   grow_grad2d: 2.0e-4        # 2dgs only (gsplat non-absgrad default; 8e-4 starved densification)
   num_downscales: 2          # coarse-to-fine (splatfacto): start at 1/4 res, double every
   resolution_schedule: 3000  # this many steps until native. 0 disables.
+  normalize_scene: false     # splatfacto Sim3 normalisation (centre on cameras, unit cube,
+                             # scene_scale = 1); outputs are mapped back to world units
   log_every: 500
   losses:
     depth: {weight: 0.01}

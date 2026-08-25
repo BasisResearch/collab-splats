@@ -383,6 +383,7 @@ parameter and raises.
 | `splats.grow_grad2d` | float | `2.0e-4` | `2dgs` only: `DefaultStrategy` densification gradient threshold (gsplat non-absgrad default; 8e-4 starved densification) |
 | `splats.num_downscales` | int | `2` | Coarse-to-fine (splatfacto): train at `1/2^num_downscales` resolution first, doubling every `resolution_schedule` steps until native. `0` disables |
 | `splats.resolution_schedule` | int | `3000` | Steps per coarse-to-fine resolution doubling |
+| `splats.normalize_scene` | bool | `false` | Train in splatfacto's normalised frame (centre on camera mean, scale so max \|camera coord\| = 1, `scene_scale` = 1). Outputs (ply, ckpt, zarr c2w, renders) are mapped back to world units |
 | `splats.log_every` | int | `500` | Steps between loss log lines |
 | `splats.losses.<name>.weight` | float | see `base.yaml` | Weight of an optional loss: `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`. Absent = off. `3dgs` wants `opacity_reg`+`scale_reg` (MCMC); `2dgs` wants `distortion` instead |
 | `splats.losses.<name>.start` | int | `0` | Step at which that loss switches on |

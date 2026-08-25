@@ -1,10 +1,14 @@
 """
 Trainer for 3DGS / 2DGS splats on upstream gsplat.
 
-Training runs in the COLMAP world frame (no normalisation) so poses, depth and the ply line up
-with every other stage artifact. ``scene_scale`` — 1.1 x the largest camera distance from the
+Training runs in the COLMAP world frame by default so poses, depth and the ply line up with
+every other stage artifact. ``scene_scale`` — 1.1 x the largest camera distance from the
 camera centroid, as in gsplat's simple_trainer — only scales the means learning rate, the
-densification thresholds and the depth loss.
+densification thresholds and the depth loss. With ``normalize_scene`` the cameras, seed points
+and depth targets are instead Sim3-normalised the splatfacto way (centre on the camera-position
+mean, scale so the largest |camera coordinate| is 1) and ``scene_scale`` is fixed to 1.0; the
+outputs are mapped back to world units before writing, so downstream stages never see the
+normalised frame.
 
 Densification: ``MCMCStrategy`` for 3DGS (fixed budget ``cap_max``, dead Gaussians relocated,
 no gradient heuristics — upstream's ``mcmc`` preset), ``DefaultStrategy`` for 2DGS (the only
@@ -12,6 +16,7 @@ pairing upstream ships; prunes opacity < 0.005 and oversized Gaussians, resets o
 """
 
 import logging
+import math
 import random
 import time
 from dataclasses import dataclass
@@ -94,6 +99,10 @@ class SplatsConfig:
     num_downscales: int = 2
     resolution_schedule: int = 3000
 
+    # splatfacto scene normalisation (nerfstudio center_method="poses" + auto_scale_poses):
+    # train in a unit-cube frame with scene_scale = 1.0 instead of world units x scene_scale.
+    normalize_scene: bool = False
+
     def __post_init__(self):
         if self.losses is None:
             self.losses = _default_losses(self.primitive)
@@ -148,6 +157,44 @@ def compute_scene_scale(cam_to_world: Tensor) -> float:
     centroid = positions.mean(0)
     spread = (positions - centroid).norm(dim=-1).max()
     return float(spread) * 1.1
+
+
+def scene_normalization(cam_to_world: np.ndarray) -> tuple[np.ndarray, float]:
+    """
+    Splatfacto's Sim3: centre = mean camera position, scale = 1 / max |camera coordinate - centre|.
+
+    - Matches nerfstudio ``center_method="poses"`` + ``auto_scale_poses`` (L-inf, not L2); the
+      "up" re-orientation is skipped because no loss or lr depends on the world's rotation.
+    """
+    positions = cam_to_world[:, :3, 3]
+    center = positions.mean(0)
+    spread = float(np.abs(positions - center).max())
+    if spread <= 0:
+        raise ValueError("splats: cannot normalise a scene whose cameras coincide")
+    return center.astype(np.float32), 1.0 / spread
+
+
+def denormalize_outputs(
+    gaussians: torch.nn.ParameterDict,
+    pose_refiner: CameraOptModule | None,
+    cam_to_world: Tensor,
+    center: np.ndarray,
+    scale: float,
+) -> None:
+    """
+    Undo ``scene_normalization`` in place on the trained Gaussians, cameras and pose deltas.
+
+    - means / camera translations: p / scale + center; log-scales: - log(scale).
+    - Pose-refiner translation deltas live in the camera frame (c2w @ delta), so they only
+      need the 1 / scale; rotations are untouched.
+    """
+    center_t = torch.as_tensor(center, dtype=torch.float32, device=cam_to_world.device)
+    with torch.no_grad():
+        gaussians["means"].data = gaussians["means"].data / scale + center_t
+        gaussians["scales"].data = gaussians["scales"].data - math.log(scale)
+        cam_to_world[:, :3, 3] = cam_to_world[:, :3, 3] / scale + center_t
+        if pose_refiner is not None:
+            pose_refiner.embeds.weight[:, :3] /= scale
 
 
 def init_gaussians_from_points(
@@ -367,11 +414,20 @@ def train(
             f"intrinsics {n_intrinsics}, depth_targets {n_depth}"
         )
 
-    # Cameras on the GPU; frames stay uint8 on the CPU and move one view at a time
+    # Cameras on the GPU; frames stay uint8 on the CPU and move one view at a time.
+    # normalize_scene trains in splatfacto's unit-cube frame (scene_scale fixed to 1.0);
+    # otherwise the world frame is kept and scene_scale carries the extent.
     cam_to_world_np = np.linalg.inv(world_to_cam)
+    if cfg.normalize_scene:
+        center, scale = scene_normalization(cam_to_world_np)
+        cam_to_world_np[:, :3, 3] = (cam_to_world_np[:, :3, 3] - center) * scale
+        points = (points - center) * scale
+        if depth_targets is not None:
+            depth_targets = depth_targets * scale
+        logger.info("splats: normalised scene, centre %s scale %.4g", np.round(center, 3), scale)
     cam_to_world = torch.from_numpy(cam_to_world_np).float().to(device)
     intrinsics_gpu = torch.from_numpy(intrinsics).float().to(device)
-    scene_scale = compute_scene_scale(cam_to_world)
+    scene_scale = 1.0 if cfg.normalize_scene else compute_scene_scale(cam_to_world)
 
     # Gaussians, densification strategy, and the lr decay on the means (0.01x over the run)
     gaussians, optimizers = init_gaussians_from_points(cfg, points, colors, scene_scale, device)
@@ -469,6 +525,10 @@ def train(
 
     # loss_values is the LAST step's single-view snapshot, reported as summary.final_losses (not an average)
     train_seconds = time.perf_counter() - start_time
+    # Outputs stay in world units: undo the normalisation before anything is written
+    if cfg.normalize_scene:
+        denormalize_outputs(gaussians, pose_refiner, cam_to_world, center, scale)
+
     write_splat_outputs(
         cfg, gaussians, pose_refiner, images, cam_to_world, intrinsics_gpu, out_dir, train_seconds, loss_values
     )

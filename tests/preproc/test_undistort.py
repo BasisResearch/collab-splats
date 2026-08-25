@@ -2,11 +2,18 @@
 Tests for preproc undistortion: profile round-trip, cv2 undistort/crop path.
 """
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
 
-from collab_splats.preproc.undistort import DistortionProfile, undistort_frames
+from collab_splats.preproc.undistort import (
+    DistortionProfile,
+    estimate_camera_distortion,
+    undistort_frames,
+)
+from collab_splats.preproc.video import iter_frames
 
 
 def _profile(width=640, height=480, k1=0.006, k2=-0.003):
@@ -73,14 +80,41 @@ def test_crop_dims_even_and_k_consistent():
     assert 0 < K_new[0, 2] < w and 0 < K_new[1, 2] < h
 
 
-def test_all_frames_same_shape():
+def test_mismatched_frame_shape_raises():
+    # Second frame disagrees with the profile dims even though frames[0] matches
     profile = _profile()
-    frames = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(3)]
-    out, _, _ = undistort_frames(frames, profile)
-    assert len({f.shape for f in out}) == 1
+    frames = [
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        np.zeros((480, 320, 3), dtype=np.uint8),
+        np.zeros((480, 640, 3), dtype=np.uint8),
+    ]
+    with pytest.raises(ValueError, match="frame 1"):
+        undistort_frames(frames, profile)
 
 
 def test_wrong_frame_dims_raise():
     profile = _profile(width=640, height=480)
     with pytest.raises(ValueError, match="dims"):
         undistort_frames([np.zeros((100, 100, 3), dtype=np.uint8)], profile)
+
+
+def test_estimate_camera_distortion_tutorial_smoke():
+    # Real-footage smoke: SIFT + exhaustive + mapper on 20 tutorial frames.
+    # Slow (~1-3 min CPU); asserts a sane shared-camera OPENCV solve, not
+    # specific distortion values.
+    pytest.importorskip("pycolmap")
+
+    video = Path("data/tutorial/tutorial_example-video.mp4")
+    if not video.exists():
+        pytest.skip("tutorial video not present")
+
+    # 20 frames over ~20 s keeps enough overlap for exhaustive matching
+    frames = [cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB) for _, bgr in iter_frames(video, indices=list(range(0, 600, 30)))]
+    assert len(frames) == 20
+    profile = estimate_camera_distortion(frames, max_frames=20)
+
+    height, width = frames[0].shape[:2]
+    assert (profile.width, profile.height) == (width, height)
+    assert 0 < profile.fx < 4 * width and 0 < profile.fy < 4 * width
+    assert abs(profile.k1) < 0.5 and abs(profile.k2) < 0.5
+    assert np.isfinite([profile.k1, profile.k2, profile.p1, profile.p2]).all()

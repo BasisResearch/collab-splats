@@ -51,7 +51,7 @@ class DistortionProfile:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "DistortionProfile":
+    def from_dict(cls, d: dict) -> DistortionProfile:
         """
         Inverse of to_dict.
         """
@@ -86,7 +86,16 @@ def estimate_camera_distortion(frames: list[np.ndarray], max_frames: int = 60) -
     - Raises ValueError when mapping fails or registers < 60% of the subset
       (too weak a solve to trust the distortion params).
     """
-    import pycolmap  # heavy optional dep; hard-required only when undistort is on
+    try:
+        import pycolmap
+    except ImportError as e:
+        raise ImportError(
+            "pycolmap is required for preproc.undistort.estimate_camera_distortion; "
+            "install it in the reconstruction env"
+        ) from e
+
+    if not frames:
+        raise ValueError("estimate_camera_distortion: no frames given")
 
     n = len(frames)
     idxs = np.unique(np.linspace(0, n - 1, min(max_frames, n)).round().astype(int))
@@ -118,13 +127,13 @@ def estimate_camera_distortion(frames: list[np.ndarray], max_frames: int = 60) -
 
         if not reconstructions:
             raise ValueError(
-                f"undistort: self-calibration failed — pycolmap registered no model " f"from {len(idxs)} frames"
+                f"undistort: self-calibration failed — pycolmap registered no model from {len(idxs)} frames"
             )
         recon = max(reconstructions.values(), key=lambda r: r.num_reg_images())
         if recon.num_reg_images() < 0.6 * len(idxs):
             raise ValueError(
-                f"undistort: self-calibration too weak — {recon.num_reg_images()}/"
-                f"{len(idxs)} frames registered; distortion params not trustworthy"
+                f"undistort: self-calibration too weak — {recon.num_reg_images()}/{len(idxs)} frames "
+                "registered; distortion params not trustworthy"
             )
 
         # Shared camera: exactly the largest model's camera params, OPENCV order
@@ -171,9 +180,17 @@ def undistort_frames(
       K_new is the optimal new camera matrix shifted by the crop offset.
     - Raises ValueError when frame dims disagree with the profile.
     """
+    if not frames:
+        raise ValueError("undistort_frames: no frames given")
+
+    # Every frame must match the profile's calibrated dims; name the first offender
+    for i, frame in enumerate(frames):
+        height, width = frame.shape[:2]
+        if (width, height) != (profile.width, profile.height):
+            raise ValueError(
+                f"undistort: frame {i} dims {width}x{height} != profile dims {profile.width}x{profile.height}"
+            )
     height, width = frames[0].shape[:2]
-    if (width, height) != (profile.width, profile.height):
-        raise ValueError(f"undistort: frame dims {width}x{height} != profile dims " f"{profile.width}x{profile.height}")
 
     # alpha=0: zoom so the valid (distortion-free) region fills the ROI
     K_new, roi = cv2.getOptimalNewCameraMatrix(profile.K, profile.dist_coeffs, (width, height), 0)

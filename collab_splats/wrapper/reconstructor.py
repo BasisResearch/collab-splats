@@ -39,6 +39,10 @@ from collab_splats.preproc.sampling import (
     sample_optical_flow,
     sample_uniform,
 )
+from collab_splats.preproc.undistort import (
+    estimate_camera_distortion,
+    undistort_frames,
+)
 from collab_splats.semantics.compression import (
     FeatureAutoencoder,
     lifted_store_path,
@@ -104,6 +108,20 @@ LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in
 ########################################
 
 
+def _apply_undistortion(frame_arrays: list, prov: dict) -> list:
+    """
+    Self-calibrate + undistort selected frames in place of the raw ones; stamp provenance.
+    """
+    profile = estimate_camera_distortion(frame_arrays)
+    frame_arrays, K_new, roi = undistort_frames(frame_arrays, profile)
+    prov["undistort"] = {
+        "profile": profile.to_dict(),
+        "K_new": K_new.tolist(),
+        "roi": list(roi),
+    }
+    return frame_arrays
+
+
 def extract_frames(
     input_path: Path,
     frames_zarr: Path,
@@ -112,6 +130,7 @@ def extract_frames(
     min_frames: int | None,
     max_frames: int | None,
     n_workers: int = 1,
+    undistort: bool = False,
 ) -> int:
     """
     Extract frames from video or image dir into frames.zarr (sole persistent store).
@@ -138,6 +157,8 @@ def extract_frames(
             "fps": None,
             "max_frames": max_frames,
         }
+        if undistort:
+            frame_arrays = _apply_undistortion(frame_arrays, prov)
         FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
         return len(frame_arrays)
 
@@ -196,6 +217,8 @@ def extract_frames(
         "fps": fps,
         "max_frames": max_frames,
     }
+    if undistort:
+        frame_arrays = _apply_undistortion(frame_arrays, prov)
     FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
 
     # Render the report beside frames.zarr with the kept frames marked. Written
@@ -799,6 +822,7 @@ class Reconstructor:
             min_frames=pre_cfg["min_frames"],
             max_frames=pre_cfg["max_frames"],
             n_workers=pre_cfg["n_workers"],
+            undistort=pre_cfg["undistort"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",

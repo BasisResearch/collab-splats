@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import pytest
 
+import collab_splats.wrapper.reconstructor as recon_mod
+from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.preproc.undistort import (
     DistortionProfile,
     estimate_camera_distortion,
@@ -118,3 +120,79 @@ def test_estimate_camera_distortion_tutorial_smoke():
     assert 0 < profile.fx < 4 * width and 0 < profile.fy < 4 * width
     assert abs(profile.k1) < 0.5 and abs(profile.k2) < 0.5
     assert np.isfinite([profile.k1, profile.k2, profile.p1, profile.p2]).all()
+
+
+def test_provenance_roundtrip_through_frame_store(tmp_path):
+    # The undistort provenance payload written by extract_frames must survive
+    # zarr attrs json round-trip and rebuild an identical profile.
+    profile = _profile()
+    frames = [np.zeros((480, 640, 3), dtype=np.uint8)]
+    out, K_new, roi = undistort_frames(frames, profile)
+    prov = {
+        "video_path": "v.mp4",
+        "video_mtime": None,
+        "method": "dir",
+        "fps": None,
+        "max_frames": None,
+        "undistort": {
+            "profile": profile.to_dict(),
+            "K_new": K_new.tolist(),
+            "roi": list(roi),
+        },
+    }
+    store = FrameStore.create(tmp_path / "frames.zarr", out, [{"frame_idx": 0}], provenance=prov)
+
+    stored = store._store.attrs["provenance"]["undistort"]
+    assert DistortionProfile.from_dict(stored["profile"]) == profile
+    assert stored["roi"] == list(roi)
+    assert np.allclose(np.array(stored["K_new"]), K_new)
+
+
+def test_extract_frames_dir_undistorts(tmp_path, monkeypatch):
+    # Image-dir branch: undistort=True estimates once, crops every frame, and
+    # stamps provenance. Estimation is monkeypatched — no pycolmap in this test.
+    src = tmp_path / "imgs"
+    src.mkdir()
+    for i in range(3):
+        cv2.imwrite(str(src / f"{i:03d}.jpg"), np.full((480, 640, 3), 128, np.uint8))
+
+    profile = _profile()
+    monkeypatch.setattr(recon_mod, "estimate_camera_distortion", lambda frames, **kw: profile)
+
+    frames_zarr = tmp_path / "frames.zarr"
+    n = recon_mod.extract_frames(
+        input_path=src,
+        frames_zarr=frames_zarr,
+        frame_selection="fps",
+        fps=None,
+        min_frames=None,
+        max_frames=None,
+        undistort=True,
+    )
+    assert n == 3
+
+    store = FrameStore.open(frames_zarr)
+    prov = store._store.attrs["provenance"]
+    x, y, w, h = prov["undistort"]["roi"]
+    assert store.image(0).shape == (h, w, 3)
+    assert DistortionProfile.from_dict(prov["undistort"]["profile"]) == profile
+
+
+def test_extract_frames_dir_no_undistort_no_payload(tmp_path):
+    # Default path unchanged: no undistort key in provenance, native dims kept.
+    src = tmp_path / "imgs"
+    src.mkdir()
+    cv2.imwrite(str(src / "000.jpg"), np.zeros((480, 640, 3), np.uint8))
+
+    frames_zarr = tmp_path / "frames.zarr"
+    recon_mod.extract_frames(
+        input_path=src,
+        frames_zarr=frames_zarr,
+        frame_selection="fps",
+        fps=None,
+        min_frames=None,
+        max_frames=None,
+    )
+    store = FrameStore.open(frames_zarr)
+    assert "undistort" not in store._store.attrs["provenance"]
+    assert store.image(0).shape == (480, 640, 3)

@@ -18,12 +18,19 @@ from collab_splats.preproc.sampling import (
     sample_optical_flow,
     sample_uniform,
 )
+from collab_splats.preproc.undistort import (
+    DistortionProfile,
+    estimate_camera_distortion,
+    undistort_frames,
+)
 from collab_splats.preproc.video import extract_frame, get_video_info, iter_frames
 
 __all__ = [
+    "DistortionProfile",
     "FrameStore",
     "analysis_gray",
     "compute_video_quality",
+    "estimate_camera_distortion",
     "extract_frame",
     "filter_frame_quality",
     "get_video_info",
@@ -32,4 +39,5 @@ __all__ = [
     "sample_fps",
     "sample_optical_flow",
     "sample_uniform",
+    "undistort_frames",
 ]

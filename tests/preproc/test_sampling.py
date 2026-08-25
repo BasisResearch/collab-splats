@@ -360,15 +360,17 @@ def test_samplers_require_a_report(tiny_video):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 11 public names — viz is opt-in and must NOT be re-exported.
+    # Exactly the 14 public names — viz is opt-in and must NOT be re-exported.
     # The surface is the two-step contract: qa measures the whole video into a
     # report (compute_video_quality / load_video_quality), filter_frame_quality
     # turns it into a usability mask, and the three samplers select from it.
     # iter_frames is public because it is the one streamed-decode entry point.
     assert set(preproc.__all__) == {
+        "DistortionProfile",
         "FrameStore",
         "analysis_gray",
         "compute_video_quality",
+        "estimate_camera_distortion",
         "extract_frame",
         "filter_frame_quality",
         "get_video_info",
@@ -377,6 +379,7 @@ def test_public_api_surface():
         "sample_fps",
         "sample_optical_flow",
         "sample_uniform",
+        "undistort_frames",
     }
     assert not hasattr(preproc, "plot_frame_scores")
     # The report is the deliverable; the primitives that build it stay behind

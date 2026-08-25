@@ -35,6 +35,12 @@ preproc:
                               # auto-derived — os.cpu_count() reports HOST cores inside a
                               # container and ignores the cgroup quota. Set to 1 while a GPU
                               # eval run is using the machine (CLAUDE.md: OOM risk).
+  undistort: false            # self-calibrate one shared OPENCV camera (pycolmap, <=60 frames)
+                              # and undistort every selected frame (cv2, alpha=0 crop) before
+                              # frames.zarr is written. Off until the GH010229 A/B measures the
+                              # win. frames.zarr reuse is by EXISTENCE — toggling this on an
+                              # existing scene needs preprocess(overwrite=True). Localization
+                              # QUERY images are NOT undistorted (they never pass through here).
 
 pointcloud:
   method: feedforward         # feedforward | sfm

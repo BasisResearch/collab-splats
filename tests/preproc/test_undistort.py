@@ -108,8 +108,8 @@ def test_estimate_camera_distortion_tutorial_smoke():
     if not video.exists():
         pytest.skip("tutorial video not present")
 
-    # 20 frames over ~20 s keeps enough overlap for exhaustive matching
-    frames = [cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB) for _, bgr in iter_frames(video, indices=list(range(0, 600, 30)))]
+    # 20 frames over a tighter window keeps enough overlap for exhaustive matching
+    frames = [cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB) for _, bgr in iter_frames(video, indices=list(range(0, 400, 20)))]
     assert len(frames) == 20
     profile = estimate_camera_distortion(frames, max_frames=20)
 

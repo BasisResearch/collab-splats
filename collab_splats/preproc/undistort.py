@@ -115,12 +115,13 @@ def estimate_camera_distortion(frames: list[np.ndarray], max_frames: int = 60) -
                 cv2.cvtColor(frames[int(i)], cv2.COLOR_RGB2BGR),
             )
 
-        # One shared OPENCV camera across the subset; mapper refines k1 k2 p1 p2
+        # One shared OPENCV camera across the subset; mapper refines k1 k2 p1 p2.
+        # camera_model lives on reader_options, not as a top-level kwarg (pycolmap 4.0.4 API).
         pycolmap.extract_features(
             database,
             image_dir,
             camera_mode=pycolmap.CameraMode.SINGLE,
-            camera_model="OPENCV",
+            reader_options=pycolmap.ImageReaderOptions(camera_model="OPENCV"),
         )
         pycolmap.match_exhaustive(database)
         reconstructions = pycolmap.incremental_mapping(database, image_dir, out_dir)

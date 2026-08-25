@@ -12,6 +12,7 @@ pairing upstream ships; prunes opacity < 0.005 and oversized Gaussians, resets o
 """
 
 import logging
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -200,6 +201,30 @@ def init_gaussians_from_points(
     return gaussians, optimizers
 
 
+class ViewSampler:
+    """
+    Splatfacto's view schedule: seeded shuffled permutation, popped until empty, reshuffled.
+
+    - Guarantees every view trains max_steps/n_views (+-1) times, vs +-17%
+      spread from torch.randint sampling with replacement.
+    - Port of nerfstudio @ 50e0e3c full_images_datamanager (random.Random shuffle + pop).
+    """
+
+    def __init__(self, n_views: int, seed: int = 42):
+        self._rng = random.Random(seed)
+        self._n_views = n_views
+        self._pending: list[int] = []
+
+    def next(self) -> int:
+        """
+        Next view index; reshuffles a fresh permutation when the epoch empties.
+        """
+        if not self._pending:
+            self._pending = list(range(self._n_views))
+            self._rng.shuffle(self._pending)
+        return self._pending.pop()
+
+
 def make_strategy(cfg: SplatsConfig) -> MCMCStrategy | DefaultStrategy:
     """
     MCMC for 3dgs (budgeted, no gradient heuristics); Default with the 2D-gradient key for 2dgs.
@@ -310,12 +335,13 @@ def train(
         schedulers.append(pose_scheduler)
 
     start_time = time.perf_counter()
+    view_sampler = ViewSampler(n_views)
     loss_values: dict[str, float] = {}
     use_pre_backward_hook = isinstance(strategy, DefaultStrategy)
     normal_spec = cfg.losses.get("normal_consistency")
     for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
-        # Pick one random view and its (possibly refined) camera
-        view = int(torch.randint(n_views, (1,)))
+        # Pick one view (splatfacto's permutation schedule) and its (possibly refined) camera
+        view = view_sampler.next()
         view_image = images[view]
         view_depth_target = None if depth_targets is None else depth_targets[view]
         target = prepare_training_target(view_image, view_depth_target, device)

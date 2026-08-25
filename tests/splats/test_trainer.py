@@ -165,3 +165,25 @@ def test_train_refining_every_step_still_moves_gaussians(monkeypatch, tmp_path):
     sh0 = calls[0]["gaussians"]["sh0"].detach().cpu()
     seed_sh0 = (torch.from_numpy(colors).float() / 255.0 - 0.5) / SH_DC_NORMALISER
     assert not torch.allclose(sh0[: len(points), 0, :], seed_sh0)
+
+
+def test_view_sampler_covers_every_view_once_per_epoch():
+    from collab_splats.splats.trainer import ViewSampler
+
+    sampler = ViewSampler(7, seed=42)
+    epoch1 = [sampler.next() for _ in range(7)]
+    epoch2 = [sampler.next() for _ in range(7)]
+
+    assert sorted(epoch1) == list(range(7))
+    assert sorted(epoch2) == list(range(7))
+    # Reshuffle across epochs: identical order for 7 views has p = 1/5040
+    assert epoch1 != epoch2
+
+
+def test_view_sampler_deterministic_for_seed():
+    from collab_splats.splats.trainer import ViewSampler
+
+    a = [ViewSampler(5, seed=42).next() for _ in range(1)]
+    runs = [[ViewSampler(5, seed=42).next() for _ in range(15)] for _ in range(2)]
+    assert runs[0] == runs[1]
+    assert a[0] == runs[0][0]

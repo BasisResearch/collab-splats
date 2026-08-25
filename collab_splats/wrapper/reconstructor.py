@@ -108,12 +108,16 @@ LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in
 ########################################
 
 
-def _apply_undistortion(frame_arrays: list, prov: dict) -> list:
+def _apply_undistortion(frame_arrays: list[np.ndarray], prov: dict) -> list[np.ndarray]:
     """
     Self-calibrate + undistort selected frames in place of the raw ones; stamp provenance.
     """
     profile = estimate_camera_distortion(frame_arrays)
     frame_arrays, K_new, roi = undistort_frames(frame_arrays, profile)
+    logger.info(
+        "undistort: k1=%.4f k2=%.4f p1=%.4f p2=%.4f; alpha=0 crop roi=%s (frames now %dx%d)",
+        profile.k1, profile.k2, profile.p1, profile.p2, roi, roi[2], roi[3],
+    )
     prov["undistort"] = {
         "profile": profile.to_dict(),
         "K_new": K_new.tolist(),
@@ -139,6 +143,10 @@ def extract_frames(
     video_quality_report.json, then select from it. An image directory takes
     every image and needs no report. frames.zarr is the canonical decode-once
     keyframe store; no JPEG dir is written. Returns the number of frames stored.
+
+    - undistort=True self-calibrates one shared OPENCV camera and undistorts every
+      selected frame before writing (alpha=0 crop changes frame dims; profile,
+      K_new and roi are stamped into provenance["undistort"]).
     """
     input_path = Path(input_path)
 

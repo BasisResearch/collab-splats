@@ -306,3 +306,10 @@ def test_denormalize_outputs_round_trips_gaussians_cameras_and_pose_deltas():
 def test_config_normalize_scene_default_off_and_settable():
     assert SplatsConfig().normalize_scene is False
     assert SplatsConfig.from_dict({"enabled": True, "normalize_scene": True}).normalize_scene is True
+
+
+def test_pose_refiner_lr_scales_with_world_extent_not_training_frame():
+    # pose_lr x world-frame camera extent; a normalised scene (scene_scale 1) must not collapse it
+    cfg = SplatsConfig(pose_lr=1e-5, max_steps=100)
+    _, optimizer, _ = trainer_module.make_pose_refiner(cfg, n_views=4, pose_lr_scale=78.65, lr_gamma=0.99, device="cpu")
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-5 * 78.65)

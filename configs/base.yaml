@@ -148,7 +148,7 @@ splats:
   opacities_lr: 5.0e-2
   sh0_lr: 2.5e-3
   shN_lr: 1.25e-4
-  pose_lr: 1.0e-5            # x scene_scale
+  pose_lr: 1.0e-5            # x world-frame camera extent (also under normalize_scene)
   cap_max: 1000000           # 3dgs only: Gaussian budget
   grow_grad2d: 2.0e-4        # 2dgs only (gsplat non-absgrad default; 8e-4 starved densification)
   num_downscales: 2          # coarse-to-fine (splatfacto): start at 1/4 res, double every

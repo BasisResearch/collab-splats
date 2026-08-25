@@ -8,7 +8,9 @@ densification thresholds and the depth loss. With ``normalize_scene`` the camera
 and depth targets are instead Sim3-normalised the splatfacto way (centre on the camera-position
 mean, scale so the largest |camera coordinate| is 1) and ``scene_scale`` is fixed to 1.0; the
 outputs are mapped back to world units before writing, so downstream stages never see the
-normalised frame.
+normalised frame. The pose-refiner lr is always scaled by the WORLD-frame camera extent
+(measured 2026-08-25: scaling it by the unit-cube scene_scale of 1.0 made pose opt ~79x
+weaker and the Gaussians absorbed the misalignment — 2.3x over-densification by step 2k).
 
 Densification: ``MCMCStrategy`` for 3DGS (fixed budget ``cap_max``, dead Gaussians relocated,
 no gradient heuristics — upstream's ``mcmc`` preset), ``DefaultStrategy`` for 2DGS (the only
@@ -76,7 +78,7 @@ class SplatsConfig:
     sh_degree_interval: int = 1000  # one more SH band unlocked every this many steps
     init_opacity: float = 0.1
 
-    # Learning rates (means_lr and pose_lr are multiplied by scene_scale; means/pose decay 0.01x over the run)
+    # Learning rates (means_lr x scene_scale, pose_lr x world-frame camera extent; means/pose decay 0.01x over the run)
     means_lr: float = 1.6e-4
     scales_lr: float = 5e-3
     quats_lr: float = 1e-3
@@ -317,14 +319,18 @@ def make_strategy(cfg: SplatsConfig, n_views: int) -> MCMCStrategy | DefaultStra
 
 
 def make_pose_refiner(
-    cfg: SplatsConfig, n_views: int, scene_scale: float, lr_gamma: float, device: str
+    cfg: SplatsConfig, n_views: int, pose_lr_scale: float, lr_gamma: float, device: str
 ) -> tuple[CameraOptModule, torch.optim.Optimizer, ExponentialLR]:
     """
     Zero-initialised CameraOptModule with its Adam optimizer and exponential lr decay.
+
+    - `pose_lr_scale` is the world-frame camera extent (`compute_scene_scale` of the un-normalised
+      cameras), not the training-frame scene_scale: the 9-vector embedding shares one lr across
+      rotation and translation, so the lr must not collapse when the scene is normalised.
     """
     refiner = CameraOptModule(n_views).to(device)
     refiner.zero_init()
-    pose_lr = cfg.pose_lr * scene_scale
+    pose_lr = cfg.pose_lr * pose_lr_scale
     # weight_decay=1e-6 as in gsplat @ d2f5c0f examples/simple_trainer.py pose_optimizers
     optimizer = torch.optim.Adam(refiner.parameters(), lr=pose_lr, weight_decay=1e-6)
     scheduler = ExponentialLR(optimizer, gamma=lr_gamma)
@@ -418,6 +424,7 @@ def train(
     # normalize_scene trains in splatfacto's unit-cube frame (scene_scale fixed to 1.0);
     # otherwise the world frame is kept and scene_scale carries the extent.
     cam_to_world_np = np.linalg.inv(world_to_cam)
+    pose_lr_scale = compute_scene_scale(torch.from_numpy(cam_to_world_np))
     if cfg.normalize_scene:
         center, scale = scene_normalization(cam_to_world_np)
         cam_to_world_np[:, :3, 3] = (cam_to_world_np[:, :3, 3] - center) * scale
@@ -445,7 +452,7 @@ def train(
     # Optional joint pose refinement
     pose_refiner, pose_optimizer = None, None
     if cfg.pose_opt:
-        pose_refiner, pose_optimizer, pose_scheduler = make_pose_refiner(cfg, n_views, scene_scale, lr_gamma, device)
+        pose_refiner, pose_optimizer, pose_scheduler = make_pose_refiner(cfg, n_views, pose_lr_scale, lr_gamma, device)
         schedulers.append(pose_scheduler)
 
     start_time = time.perf_counter()

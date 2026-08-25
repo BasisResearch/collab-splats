@@ -128,3 +128,29 @@ Two runs, ~1–1.5 h GPU each. Report deltas per lever. No 875-frame runs.
 - `splats.num_downscales` (int, default 2), `splats.resolution_schedule`
   (int, default 3000)
 - `collab_splats.preproc.undistort.{estimate_camera_distortion, undistort_frames}`
+
+## Amendment 2026-08-25 — scene normalisation (`splats.normalize_scene`)
+
+Implementation-time finding: gsplat's `scene_scale` is NOT equivalent to
+splatfacto's scene normalisation. Splatfacto centres poses on the camera-position
+mean and scales so max |camera coord| = 1 (L-inf), then trains with
+`scene_scale = 1.0`; we kept world units and multiplied lrs/thresholds by
+`1.1 x max L2 camera spread`. The two agree (to ~1.1–1.9x) for `means_lr` and
+the 3D densification thresholds, but not for the depth loss (disparity L1 x
+scene_scale), the 2dgs distortion loss (depth units), `pose_lr`, or the kNN
+scale init. Measured consequence: the §3 splatfacto strategy args
+(`prune_scale3d=0.5`, calibrated for the unit cube) applied in world units
+multiply to a threshold no Gaussian exceeds — run 1 (undistort + strategy args,
+no normalisation) grew to 3.1M Gaussians by step 10.5k and OOM'd (44 GB).
+
+- New `SplatsConfig.normalize_scene` (bool, default false). On: cameras, seed
+  points and depth targets are Sim3-normalised before training
+  (`scene_normalization`), `scene_scale = 1.0`; Gaussians, cameras and
+  pose-refiner translation deltas are mapped back to world units
+  (`denormalize_outputs`) before `write_splat_outputs`, so ply/ckpt/zarr/mesh
+  consumers are unchanged. The "up" re-orientation is skipped (no loss or lr
+  depends on world rotation).
+- Measurement amended: run 1 as specified is an incoherent config and is
+  dropped. The A/B is now **full stack** (undistort + sampler + strategy args +
+  coarse-to-fine + normalize_scene) vs the 19.21/0.621 baseline; per-lever
+  attribution runs only if the full stack wins and the user asks.

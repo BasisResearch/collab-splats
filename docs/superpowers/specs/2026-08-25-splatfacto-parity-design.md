@@ -154,3 +154,27 @@ no normalisation) grew to 3.1M Gaussians by step 10.5k and OOM'd (44 GB).
   dropped. The A/B is now **full stack** (undistort + sampler + strategy args +
   coarse-to-fine + normalize_scene) vs the 19.21/0.621 baseline; per-lever
   attribution runs only if the full stack wins and the user asks.
+
+## Measured 2026-08-25 — GH010229, 300 fr, InstantSfM 2dgs, pose_opt, 12k steps
+
+| # | Config (cumulative) | PSNR | SSIM | Gaussians |
+|---|---|---|---|---|
+| 0 | baseline 30k, sparse targets, world units | 19.21 | 0.621 | 1.40M |
+| 1 | 12k + permutation sampler | 18.97 | 0.615 | 2.04M |
+| 2 | + `preproc.undistort` | 19.23 | 0.624 | 1.84M |
+| 3 | + `normalize_scene`, pose lr shared 1e-5 | exploded (>2x growth by 4k) | — | — |
+| 4 | + normalize, pose lr shared 7.9e-4 | 17.62 | 0.492 | 927k |
+| 5 | + normalize, split pose lr (9fff4573) | 19.38 | 0.634 | 1.93M |
+| 6 | #5 + dense COLMAP-aligned VDA targets | **20.27** | **0.663** | 1.87M |
+| 7 | #6 + coarse-to-fine (`num_downscales 2`) | OOM @ 10.9k | — | — |
+
+- Undistort +0.26 dB; normalisation +0.15 dB but ONLY with the pose-lr split
+  (rotation lr x world extent, translation lr x training-frame scene_scale;
+  shared lr in either frame loses); dense targets +0.89 dB on top (compound
+  with normalisation — +0.17 measured unnormalised). Sampler neutral.
+- Coarse-to-fine rejected: three OOMs at ~10.5k steps (last with the fixed
+  pose lr) — over-densification at low resolution on this scene.
+- Mesh from #6 splats (voxel 0.2 world ~ 6 cm): 2.10M verts, parity with the
+  2.09M sfm reference, render-checked.
+- Defaults on evidence: `preproc.undistort: true`, `splats.normalize_scene:
+  true`, `num_downscales: 0`. Owed: 30k confirmation, holdout eval.

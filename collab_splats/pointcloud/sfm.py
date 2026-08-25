@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 import pycolmap
 import torch
+from vggt.utils.geometry import unproject_depth_map_to_point_map
 
 from .base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
 

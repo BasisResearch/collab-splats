@@ -191,7 +191,9 @@ def undistort_frames(
             raise ValueError(
                 f"undistort: frame {i} dims {width}x{height} != profile dims {profile.width}x{profile.height}"
             )
-    height, width = frames[0].shape[:2]
+
+    # Loop guarantees every frame equals the profile dims
+    width, height = profile.width, profile.height
 
     # alpha=0: zoom so the valid (distortion-free) region fills the ROI
     K_new, roi = cv2.getOptimalNewCameraMatrix(profile.K, profile.dist_coeffs, (width, height), 0)

@@ -100,6 +100,7 @@ def test_wrong_frame_dims_raise():
         undistort_frames([np.zeros((100, 100, 3), dtype=np.uint8)], profile)
 
 
+@pytest.mark.slow
 def test_estimate_camera_distortion_tutorial_smoke():
     # Real-footage smoke: SIFT + exhaustive + mapper on 20 tutorial frames.
     # Slow (~1-3 min CPU); asserts a sane shared-camera OPENCV solve, not

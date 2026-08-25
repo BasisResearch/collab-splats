@@ -187,3 +187,46 @@ def test_view_sampler_deterministic_for_seed():
     runs = [[ViewSampler(5, seed=42).next() for _ in range(15)] for _ in range(2)]
     assert runs[0] == runs[1]
     assert a[0] == runs[0][0]
+
+
+def test_downscale_factor_boundaries():
+    from collab_splats.splats.trainer import downscale_factor
+
+    # splatfacto defaults: num_downscales=2, resolution_schedule=3000
+    assert downscale_factor(0, 2, 3000) == 4
+    assert downscale_factor(2999, 2, 3000) == 4
+    assert downscale_factor(3000, 2, 3000) == 2
+    assert downscale_factor(5999, 2, 3000) == 2
+    assert downscale_factor(6000, 2, 3000) == 1
+    assert downscale_factor(29999, 2, 3000) == 1
+    # 0 disables the schedule entirely
+    assert downscale_factor(0, 0, 3000) == 1
+
+
+def test_downscale_view_scales_image_and_k():
+    import numpy as np
+    import torch
+
+    from collab_splats.splats.trainer import downscale_view
+
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    K = torch.tensor([[[500.0, 0, 320.0], [0, 500.0, 240.0], [0, 0, 1.0]]])
+
+    small, K_small = downscale_view(image, K, 4)
+    assert small.shape == (120, 160, 3)
+    assert torch.allclose(K_small[0, 0, 0], torch.tensor(125.0))
+    assert torch.allclose(K_small[0, 0, 2], torch.tensor(80.0))
+    assert torch.allclose(K_small[0, 2, 2], torch.tensor(1.0))
+
+    same, K_same = downscale_view(image, K, 1)
+    assert same is image and K_same is K
+
+
+def test_splats_config_accepts_downscale_fields():
+    from collab_splats.splats.trainer import SplatsConfig
+
+    cfg = SplatsConfig.from_dict({"enabled": True, "num_downscales": 1, "resolution_schedule": 100})
+    assert cfg.num_downscales == 1 and cfg.resolution_schedule == 100
+    # Defaults are splatfacto's
+    default = SplatsConfig()
+    assert default.num_downscales == 2 and default.resolution_schedule == 3000

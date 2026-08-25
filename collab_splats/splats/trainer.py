@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -87,6 +88,11 @@ class SplatsConfig:
     grow_grad2d: float = 2e-4
 
     log_every: int = 500
+
+    # Coarse-to-fine (splatfacto): start at 1/2^num_downscales resolution, double
+    # every resolution_schedule steps. 0 disables.
+    num_downscales: int = 2
+    resolution_schedule: int = 3000
 
     def __post_init__(self):
         if self.losses is None:
@@ -249,6 +255,29 @@ def make_pose_refiner(
     return refiner, optimizer, scheduler
 
 
+def downscale_factor(step: int, num_downscales: int, resolution_schedule: int) -> int:
+    """
+    Coarse-to-fine divisor at a step: 2^max(0, num_downscales - step // resolution_schedule).
+    """
+    if num_downscales <= 0:
+        return 1
+    return 2 ** max(0, num_downscales - step // resolution_schedule)
+
+
+def downscale_view(image: np.ndarray, intrinsics: Tensor, factor: int):
+    """
+    Image (bilinear) and K scaled by 1/factor; passthrough at factor 1.
+    """
+    if factor == 1:
+        return image, intrinsics
+
+    height, width = image.shape[:2]
+    small = cv2.resize(image, (width // factor, height // factor), interpolation=cv2.INTER_LINEAR)
+    K_small = intrinsics.clone()
+    K_small[:, :2, :] /= factor
+    return small, K_small
+
+
 def prepare_training_target(image: np.ndarray, depth_target: np.ndarray | None, device: str) -> dict:
     """
     One view's targets as tensors: rgb (1, H, W, 3) in [0, 1]; depth (1, H, W, 1) resized nearest, or None.
@@ -344,9 +373,17 @@ def train(
         view = view_sampler.next()
         view_image = images[view]
         view_depth_target = None if depth_targets is None else depth_targets[view]
+
+        # Coarse-to-fine: train at 1/4 -> 1/2 -> native resolution on the splatfacto
+        # schedule. Depth targets follow the image automatically — prepare_training_target
+        # nearest-resizes them to the (downscaled) image dims.
+        factor = downscale_factor(step, cfg.num_downscales, cfg.resolution_schedule)
+        view_intrinsics = intrinsics_gpu[view : view + 1]
+        view_image, view_intrinsics = downscale_view(view_image, view_intrinsics, factor)
+        step_height, step_width = view_image.shape[:2]
+
         target = prepare_training_target(view_image, view_depth_target, device)
         view_cam_to_world = cam_to_world[view : view + 1]
-        view_intrinsics = intrinsics_gpu[view : view + 1]
         if pose_refiner is not None:
             camera_id = torch.tensor([view], device=device)
             view_cam_to_world = pose_refiner(view_cam_to_world, camera_id)
@@ -361,8 +398,8 @@ def train(
             gaussians,
             view_cam_to_world,
             view_intrinsics,
-            width,
-            height,
+            step_width,
+            step_height,
             sh_degree,
             absgrad,
             render_normals=render_normals,

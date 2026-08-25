@@ -11,7 +11,10 @@ import collab_splats.splats.trainer as trainer_module
 from collab_splats.splats.trainer import (
     SH_DC_NORMALISER,
     SplatsConfig,
+    ViewSampler,
     compute_scene_scale,
+    downscale_factor,
+    downscale_view,
     init_gaussians_from_points,
     make_strategy,
     prepare_training_target,
@@ -65,10 +68,32 @@ def test_scene_scale_is_max_camera_spread_times_margin():
 
 
 def test_strategy_follows_primitive():
-    mcmc = make_strategy(SplatsConfig(primitive="3dgs", cap_max=1234))
-    default = make_strategy(SplatsConfig(primitive="2dgs"))
+    mcmc = make_strategy(SplatsConfig(primitive="3dgs", cap_max=1234), n_views=300)
+    default = make_strategy(SplatsConfig(primitive="2dgs"), n_views=300)
     assert isinstance(mcmc, MCMCStrategy) and mcmc.cap_max == 1234
     assert isinstance(default, DefaultStrategy) and default.key_for_gradient == "gradient_2dgs"
+
+
+def test_make_strategy_2dgs_splatfacto_args():
+    cfg = SplatsConfig(primitive="2dgs")
+    strategy = make_strategy(cfg, n_views=300)
+
+    assert isinstance(strategy, DefaultStrategy)
+    # splatfacto (nerfstudio @ 50e0e3c) non-default args
+    assert strategy.prune_opa == 0.1
+    assert strategy.prune_scale3d == 0.5
+    assert strategy.refine_scale2d_stop_iter == 4000
+    assert strategy.pause_refine_after_reset == 400  # n_views + 100
+    # Measured-good pair kept (absgrad unusable on gradient_2dgs — see spec)
+    assert strategy.absgrad is False
+    assert strategy.grow_grad2d == pytest.approx(2e-4)
+    assert strategy.key_for_gradient == "gradient_2dgs"
+
+
+def test_make_strategy_3dgs_untouched():
+    strategy = make_strategy(SplatsConfig(primitive="3dgs"), n_views=300)
+    assert isinstance(strategy, MCMCStrategy)
+    assert strategy.cap_max == 1_000_000
 
 
 @cuda
@@ -156,7 +181,7 @@ def test_train_refining_every_step_still_moves_gaussians(monkeypatch, tmp_path):
     images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
     calls = _recorder(monkeypatch)
     strategy = MCMCStrategy(cap_max=300, refine_start_iter=-1, refine_every=1, verbose=False)
-    monkeypatch.setattr(trainer_module, "make_strategy", lambda cfg: strategy)
+    monkeypatch.setattr(trainer_module, "make_strategy", lambda cfg, n_views: strategy)
     cfg = SplatsConfig(primitive="3dgs", max_steps=5, log_every=1, means_lr=1e-2)
     train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
     _assert_trained(calls, points)
@@ -168,8 +193,6 @@ def test_train_refining_every_step_still_moves_gaussians(monkeypatch, tmp_path):
 
 
 def test_view_sampler_covers_every_view_once_per_epoch():
-    from collab_splats.splats.trainer import ViewSampler
-
     sampler = ViewSampler(7, seed=42)
     epoch1 = [sampler.next() for _ in range(7)]
     epoch2 = [sampler.next() for _ in range(7)]
@@ -181,17 +204,13 @@ def test_view_sampler_covers_every_view_once_per_epoch():
 
 
 def test_view_sampler_deterministic_for_seed():
-    from collab_splats.splats.trainer import ViewSampler
-
-    a = [ViewSampler(5, seed=42).next() for _ in range(1)]
+    a = ViewSampler(5, seed=42).next()
     runs = [[ViewSampler(5, seed=42).next() for _ in range(15)] for _ in range(2)]
     assert runs[0] == runs[1]
-    assert a[0] == runs[0][0]
+    assert a == runs[0][0]
 
 
 def test_downscale_factor_boundaries():
-    from collab_splats.splats.trainer import downscale_factor
-
     # splatfacto defaults: num_downscales=2, resolution_schedule=3000
     assert downscale_factor(0, 2, 3000) == 4
     assert downscale_factor(2999, 2, 3000) == 4
@@ -204,11 +223,6 @@ def test_downscale_factor_boundaries():
 
 
 def test_downscale_view_scales_image_and_k():
-    import numpy as np
-    import torch
-
-    from collab_splats.splats.trainer import downscale_view
-
     image = np.zeros((480, 640, 3), dtype=np.uint8)
     K = torch.tensor([[[500.0, 0, 320.0], [0, 500.0, 240.0], [0, 0, 1.0]]])
 
@@ -223,8 +237,6 @@ def test_downscale_view_scales_image_and_k():
 
 
 def test_splats_config_accepts_downscale_fields():
-    from collab_splats.splats.trainer import SplatsConfig
-
     cfg = SplatsConfig.from_dict({"enabled": True, "num_downscales": 1, "resolution_schedule": 100})
     assert cfg.num_downscales == 1 and cfg.resolution_schedule == 100
     # Defaults are splatfacto's

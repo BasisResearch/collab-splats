@@ -231,13 +231,27 @@ class ViewSampler:
         return self._pending.pop()
 
 
-def make_strategy(cfg: SplatsConfig) -> MCMCStrategy | DefaultStrategy:
+def make_strategy(cfg: SplatsConfig, n_views: int) -> MCMCStrategy | DefaultStrategy:
     """
-    MCMC for 3dgs (budgeted, no gradient heuristics); Default with the 2D-gradient key for 2dgs.
+    MCMC for 3dgs (budgeted, no gradient heuristics); Default with splatfacto's args for 2dgs.
     """
     if cfg.primitive == "3dgs":
         return MCMCStrategy(cap_max=cfg.cap_max, verbose=False)
-    return DefaultStrategy(absgrad=False, grow_grad2d=cfg.grow_grad2d, key_for_gradient="gradient_2dgs", verbose=False)
+
+    # splatfacto (nerfstudio @ 50e0e3c) non-default DefaultStrategy args. absgrad stays
+    # False: the 2dgs backward writes .absgrad on means2d only, never on the
+    # gradient_2dgs densify tensor this strategy reads (see the parity spec's verdict),
+    # and grow_grad2d 2e-4 is the measured-good non-absgrad threshold.
+    return DefaultStrategy(
+        absgrad=False,
+        grow_grad2d=cfg.grow_grad2d,
+        key_for_gradient="gradient_2dgs",
+        prune_opa=0.1,
+        prune_scale3d=0.5,
+        refine_scale2d_stop_iter=4000,
+        pause_refine_after_reset=n_views + 100,
+        verbose=False,
+    )
 
 
 def make_pose_refiner(
@@ -346,7 +360,7 @@ def train(
 
     # Gaussians, densification strategy, and the lr decay on the means (0.01x over the run)
     gaussians, optimizers = init_gaussians_from_points(cfg, points, colors, scene_scale, device)
-    strategy = make_strategy(cfg)
+    strategy = make_strategy(cfg, n_views)
     strategy.check_sanity(gaussians, optimizers)
     if isinstance(strategy, MCMCStrategy):
         strategy_state = strategy.initialize_state()

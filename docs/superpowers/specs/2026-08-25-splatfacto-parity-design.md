@@ -52,8 +52,11 @@ New `collab_splats/preproc/undistort.py`:
   → rewritten K.
 - Wired into `Reconstructor.extract_frames` between frame selection and
   `FrameStore.create`. Profile + K_new + ROI stored in frames.zarr provenance.
-  `undistort` joins `FrameStore._STALENESS_KEYS` so toggling the flag rebuilds
-  the store.
+  **Plan-time correction:** `FrameStore._STALENESS_KEYS` no longer exists —
+  preproc-cleanup made store reuse existence-only ("reuse is by existence,
+  never by comparison", frame_store.py). Toggling `preproc.undistort` on an
+  existing scene therefore requires `preprocess(overwrite=True)`; documented
+  beside the flag in base.yaml.
 - Rationale for preproc placement: every consumer (feedforward backbones,
   SIFT/InstantSfM, splat trainer, localization DB export) assumes pinhole;
   undistorting once fixes all of them and keeps a single camera contract.
@@ -80,11 +83,19 @@ New `collab_splats/preproc/undistort.py`:
 - Pass splatfacto's non-default args explicitly: `prune_opa=0.1`,
   `prune_scale3d=0.5`, `refine_scale2d_stop_iter=4000`,
   `pause_refine_after_reset=n_views+100`.
-- absgrad/8e-4 pair gated on a verification task: splatfacto's pair was
-  calibrated on 3dgs `rasterization`; whether `rasterization_2dgs` produces
-  `means2d.absgrad` is unverified. If supported → defaults become
-  `absgrad: true` + `grow_grad2d: 8e-4` (new `absgrad` config field). If not →
-  2dgs keeps the measured-good `(False, 2e-4)` and only the other args land.
+- absgrad/8e-4 pair — **verification VERDICT (recorded at plan time): NOT
+  usable on 2dgs.** `rasterization_2dgs` accepts `absgrad`, but the backward
+  sets `.absgrad` only on `means2d` (gsplat `cuda/_wrapper.py`,
+  `_RasterizeToPixels2DGS.backward`), while our `DefaultStrategy` reads
+  `info["gradient_2dgs"].absgrad` (`key_for_gradient="gradient_2dgs"`,
+  `strategy/default.py:245`) — the `densify` tensor never gets the attribute,
+  so `absgrad=True` raises AttributeError at the first refine step. Switching
+  `key_for_gradient` to `means2d` is not parity either: splatfacto's 8e-4 is
+  calibrated on the 3dgs means2d gradient, and gsplat added the dedicated
+  `gradient_2dgs` densify tensor precisely because 2dgs means2d gradients are
+  not the right densification signal. 2dgs keeps the measured-good
+  `(absgrad=False, grow_grad2d=2e-4)`; only the other splatfacto args land.
+  No `splats.absgrad` config field.
 - 3dgs stays MCMC (`cap_max`), untouched by this section.
 
 ### 4. Measurement (after implementation)
@@ -102,19 +113,18 @@ Two runs, ~1–1.5 h GPU each. Report deltas per lever. No 875-frame runs.
 - `tests/preproc/test_undistort.py`: synthetic-distortion roundtrip (apply
   known k1/k2 → estimate → undistort → residual < tolerance); alpha=0 crop
   keeps dims even and K consistent; profile provenance round-trips through
-  FrameStore; staleness key triggers rebuild.
+  FrameStore.
 - `tests/splats/test_trainer.py` additions: permutation covers every view
   exactly once per epoch and reshuffles across epochs (seeded, deterministic);
   coarse-to-fine returns the right resolution/K at boundary steps; config
   rejects unknown keys unchanged; densification args reach the strategy
   (constructor introspection).
-- absgrad-on-2dgs verification is a plan task with a recorded verdict, not a
-  unit test (CUDA-dependent).
+- absgrad-on-2dgs verification: done at plan time by source inspection
+  (verdict above); no unit test.
 
 ## Public API surface
 
 - `preproc.undistort` (bool, base.yaml, default false)
 - `splats.num_downscales` (int, default 2), `splats.resolution_schedule`
-  (int, default 3000), `splats.absgrad` (bool, default set by the
-  verification task)
+  (int, default 3000)
 - `collab_splats.preproc.undistort.{estimate_camera_distortion, undistort_frames}`

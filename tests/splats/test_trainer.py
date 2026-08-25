@@ -90,6 +90,13 @@ def test_make_strategy_2dgs_splatfacto_args():
     assert strategy.key_for_gradient == "gradient_2dgs"
 
 
+def test_make_strategy_2dgs_pause_capped_for_many_views():
+    # n_views + 100 >= reset_every would gate refine off forever; cap keeps it reachable
+    strategy = make_strategy(SplatsConfig(primitive="2dgs"), n_views=3000)
+    assert strategy.pause_refine_after_reset == strategy.reset_every - strategy.refine_every
+    assert strategy.pause_refine_after_reset < strategy.reset_every
+
+
 def test_make_strategy_3dgs_untouched():
     strategy = make_strategy(SplatsConfig(primitive="3dgs"), n_views=300)
     assert isinstance(strategy, MCMCStrategy)

@@ -242,6 +242,21 @@ def make_strategy(cfg: SplatsConfig, n_views: int) -> MCMCStrategy | DefaultStra
     # False: the 2dgs backward writes .absgrad on means2d only, never on the
     # gradient_2dgs densify tensor this strategy reads (see the parity spec's verdict),
     # and grow_grad2d 2e-4 is the measured-good non-absgrad threshold.
+    # gsplat gates refine on `step % reset_every >= pause_refine_after_reset`, so
+    # splatfacto's n_views + 100 silently disables densification once n_views
+    # >= reset_every - 100 (2900 at gsplat defaults). Cap it and say so.
+    defaults = DefaultStrategy()
+    pause = n_views + 100
+    max_pause = defaults.reset_every - defaults.refine_every
+    if pause > max_pause:
+        logger.warning(
+            "pause_refine_after_reset=%d (n_views+100) >= reset_every=%d would never refine; capped to %d",
+            pause,
+            defaults.reset_every,
+            max_pause,
+        )
+        pause = max_pause
+
     return DefaultStrategy(
         absgrad=False,
         grow_grad2d=cfg.grow_grad2d,
@@ -249,7 +264,7 @@ def make_strategy(cfg: SplatsConfig, n_views: int) -> MCMCStrategy | DefaultStra
         prune_opa=0.1,
         prune_scale3d=0.5,
         refine_scale2d_stop_iter=4000,
-        pause_refine_after_reset=n_views + 100,
+        pause_refine_after_reset=pause,
         verbose=False,
     )
 

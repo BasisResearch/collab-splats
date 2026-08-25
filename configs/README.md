@@ -349,6 +349,7 @@ parameter and raises.
 | `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
+| `preproc.undistort` | bool | `false` | Self-calibrate one shared OPENCV camera (pycolmap, ≤60 frames) and undistort every selected frame (cv2, alpha=0 crop) before `frames.zarr` is written. `frames.zarr` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm.py` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
@@ -367,7 +368,7 @@ parameter and raises.
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `frames.zarr` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
-| `splats.pose_opt` | bool | `false` | Refine camera poses jointly (`CameraOptModule`) |
+| `splats.pose_opt` | bool | `true` | Refine camera poses jointly (`CameraOptModule`) |
 | `splats.sh_degree` | int | `3` | Max spherical-harmonics degree |
 | `splats.sh_degree_interval` | int | `1000` | Steps between SH-degree increments |
 | `splats.init_opacity` | float | `0.1` | Initial Gaussian opacity |
@@ -379,7 +380,9 @@ parameter and raises.
 | `splats.shN_lr` | float | `1.25e-4` | Higher-order SH learning rate |
 | `splats.pose_lr` | float | `1.0e-5` | Pose-opt learning rate, × scene scale |
 | `splats.cap_max` | int | `1000000` | `3dgs` only: Gaussian budget for `MCMCStrategy` |
-| `splats.grow_grad2d` | float | `8.0e-4` | `2dgs` only: `DefaultStrategy` densification gradient threshold |
+| `splats.grow_grad2d` | float | `2.0e-4` | `2dgs` only: `DefaultStrategy` densification gradient threshold (gsplat non-absgrad default; 8e-4 starved densification) |
+| `splats.num_downscales` | int | `2` | Coarse-to-fine (splatfacto): train at `1/2^num_downscales` resolution first, doubling every `resolution_schedule` steps until native. `0` disables |
+| `splats.resolution_schedule` | int | `3000` | Steps per coarse-to-fine resolution doubling |
 | `splats.log_every` | int | `500` | Steps between loss log lines |
 | `splats.losses.<name>.weight` | float | see `base.yaml` | Weight of an optional loss: `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`. Absent = off. `3dgs` wants `opacity_reg`+`scale_reg` (MCMC); `2dgs` wants `distortion` instead |
 | `splats.losses.<name>.start` | int | `0` | Step at which that loss switches on |

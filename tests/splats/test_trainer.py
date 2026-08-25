@@ -286,7 +286,7 @@ def test_denormalize_outputs_round_trips_gaussians_cameras_and_pose_deltas():
     refiner = CameraOptModule(4)
     refiner.zero_init()
     with torch.no_grad():
-        refiner.embeds.weight[1, :3] = torch.tensor([0.1, -0.2, 0.3])
+        refiner.translation.weight[1] = torch.tensor([0.1, -0.2, 0.3])
     refined_normalised = refiner(normalised_cams[1:2], torch.tensor([1]))[0]
 
     trainer_module.denormalize_outputs(gaussians, refiner, normalised_cams, center, scale)
@@ -308,8 +308,12 @@ def test_config_normalize_scene_default_off_and_settable():
     assert SplatsConfig.from_dict({"enabled": True, "normalize_scene": True}).normalize_scene is True
 
 
-def test_pose_refiner_lr_scales_with_world_extent_not_training_frame():
-    # pose_lr x world-frame camera extent; a normalised scene (scene_scale 1) must not collapse it
+def test_pose_refiner_rotation_lr_follows_world_extent_translation_lr_follows_frame():
+    # Normalised scene: rotation keeps the world-extent lr, translation gets the unit-cube lr
     cfg = SplatsConfig(pose_lr=1e-5, max_steps=100)
-    _, optimizer, _ = trainer_module.make_pose_refiner(cfg, n_views=4, pose_lr_scale=78.65, lr_gamma=0.99, device="cpu")
-    assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-5 * 78.65)
+    refiner, optimizer, _ = trainer_module.make_pose_refiner(
+        cfg, n_views=4, rotation_lr_scale=78.65, translation_lr_scale=1.0, lr_gamma=0.99, device="cpu"
+    )
+    lrs = {id(group["params"][0]): group["lr"] for group in optimizer.param_groups}
+    assert lrs[id(refiner.rotation.weight)] == pytest.approx(1e-5 * 78.65)
+    assert lrs[id(refiner.translation.weight)] == pytest.approx(1e-5)

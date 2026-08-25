@@ -8,9 +8,11 @@ densification thresholds and the depth loss. With ``normalize_scene`` the camera
 and depth targets are instead Sim3-normalised the splatfacto way (centre on the camera-position
 mean, scale so the largest |camera coordinate| is 1) and ``scene_scale`` is fixed to 1.0; the
 outputs are mapped back to world units before writing, so downstream stages never see the
-normalised frame. The pose-refiner lr is always scaled by the WORLD-frame camera extent
-(measured 2026-08-25: scaling it by the unit-cube scene_scale of 1.0 made pose opt ~79x
-weaker and the Gaussians absorbed the misalignment — 2.3x over-densification by step 2k).
+normalised frame. The pose refiner's rotation lr is scaled by the WORLD-frame camera extent
+and its translation lr by the training-frame ``scene_scale`` (measured 2026-08-25: one shared
+lr x unit-cube scene_scale made pose opt ~79x weaker — 2.3x over-densification by step 2k; one
+shared lr x world extent made translation steps 65x too large in world units, -1.6 dB). The
+2dgs distortion loss is in depth units, so its weight is rescaled to world units as well.
 
 Densification: ``MCMCStrategy`` for 3DGS (fixed budget ``cap_max``, dead Gaussians relocated,
 no gradient heuristics — upstream's ``mcmc`` preset), ``DefaultStrategy`` for 2DGS (the only
@@ -78,7 +80,8 @@ class SplatsConfig:
     sh_degree_interval: int = 1000  # one more SH band unlocked every this many steps
     init_opacity: float = 0.1
 
-    # Learning rates (means_lr x scene_scale, pose_lr x world-frame camera extent; means/pose decay 0.01x over the run)
+    # Learning rates (means_lr x scene_scale; pose_lr x world extent for rotation, x scene_scale for
+    # translation; means/pose decay 0.01x over the run)
     means_lr: float = 1.6e-4
     scales_lr: float = 5e-3
     quats_lr: float = 1e-3
@@ -196,7 +199,7 @@ def denormalize_outputs(
         gaussians["scales"].data = gaussians["scales"].data - math.log(scale)
         cam_to_world[:, :3, 3] = cam_to_world[:, :3, 3] / scale + center_t
         if pose_refiner is not None:
-            pose_refiner.embeds.weight[:, :3] /= scale
+            pose_refiner.translation.weight /= scale
 
 
 def init_gaussians_from_points(
@@ -319,20 +322,24 @@ def make_strategy(cfg: SplatsConfig, n_views: int) -> MCMCStrategy | DefaultStra
 
 
 def make_pose_refiner(
-    cfg: SplatsConfig, n_views: int, pose_lr_scale: float, lr_gamma: float, device: str
+    cfg: SplatsConfig, n_views: int, rotation_lr_scale: float, translation_lr_scale: float, lr_gamma: float, device: str
 ) -> tuple[CameraOptModule, torch.optim.Optimizer, ExponentialLR]:
     """
-    Zero-initialised CameraOptModule with its Adam optimizer and exponential lr decay.
+    Zero-initialised CameraOptModule with a two-group Adam (rotation, translation) and exponential lr decay.
 
-    - `pose_lr_scale` is the world-frame camera extent (`compute_scene_scale` of the un-normalised
-      cameras), not the training-frame scene_scale: the 9-vector embedding shares one lr across
-      rotation and translation, so the lr must not collapse when the scene is normalised.
+    - `rotation_lr_scale`: world-frame camera extent (`compute_scene_scale` of the un-normalised cameras) —
+      the value the pose_opt win was measured at; rotation is unit-free so it must not follow the frame.
+    - `translation_lr_scale`: training-frame `scene_scale`, so translation steps keep their world-unit size
+      whether or not the scene is normalised.
     """
     refiner = CameraOptModule(n_views).to(device)
     refiner.zero_init()
-    pose_lr = cfg.pose_lr * pose_lr_scale
+    param_groups = [
+        {"params": refiner.rotation.parameters(), "lr": cfg.pose_lr * rotation_lr_scale},
+        {"params": refiner.translation.parameters(), "lr": cfg.pose_lr * translation_lr_scale},
+    ]
     # weight_decay=1e-6 as in gsplat @ d2f5c0f examples/simple_trainer.py pose_optimizers
-    optimizer = torch.optim.Adam(refiner.parameters(), lr=pose_lr, weight_decay=1e-6)
+    optimizer = torch.optim.Adam(param_groups, weight_decay=1e-6)
     scheduler = ExponentialLR(optimizer, gamma=lr_gamma)
     return refiner, optimizer, scheduler
 
@@ -424,7 +431,8 @@ def train(
     # normalize_scene trains in splatfacto's unit-cube frame (scene_scale fixed to 1.0);
     # otherwise the world frame is kept and scene_scale carries the extent.
     cam_to_world_np = np.linalg.inv(world_to_cam)
-    pose_lr_scale = compute_scene_scale(torch.from_numpy(cam_to_world_np))
+    world_extent = compute_scene_scale(torch.from_numpy(cam_to_world_np))
+    loss_schedule = cfg.losses
     if cfg.normalize_scene:
         center, scale = scene_normalization(cam_to_world_np)
         cam_to_world_np[:, :3, 3] = (cam_to_world_np[:, :3, 3] - center) * scale
@@ -432,6 +440,15 @@ def train(
         if depth_targets is not None:
             depth_targets = depth_targets * scale
         logger.info("splats: normalised scene, centre %s scale %.4g", np.round(center, 3), scale)
+
+        # The 2dgs distortion loss is linear in depth units: rescale its weight so the penalty
+        # matches what the same weight applies in the world frame (reported value stays unit-cube)
+        if "distortion" in loss_schedule:
+            loss_schedule = dict(loss_schedule)
+            loss_schedule["distortion"] = {
+                **loss_schedule["distortion"],
+                "weight": loss_schedule["distortion"]["weight"] / scale,
+            }
     cam_to_world = torch.from_numpy(cam_to_world_np).float().to(device)
     intrinsics_gpu = torch.from_numpy(intrinsics).float().to(device)
     scene_scale = 1.0 if cfg.normalize_scene else compute_scene_scale(cam_to_world)
@@ -452,7 +469,9 @@ def train(
     # Optional joint pose refinement
     pose_refiner, pose_optimizer = None, None
     if cfg.pose_opt:
-        pose_refiner, pose_optimizer, pose_scheduler = make_pose_refiner(cfg, n_views, pose_lr_scale, lr_gamma, device)
+        pose_refiner, pose_optimizer, pose_scheduler = make_pose_refiner(
+            cfg, n_views, world_extent, scene_scale, lr_gamma, device
+        )
         schedulers.append(pose_scheduler)
 
     start_time = time.perf_counter()
@@ -503,7 +522,7 @@ def train(
         # Loss + backward; DefaultStrategy needs a hook before backward to retain 2D-means gradients
         if use_pre_backward_hook:
             strategy.step_pre_backward(gaussians, optimizers, strategy_state, step, info)
-        loss, loss_values = compute_losses(step, render, target, gaussians, cfg.losses, scene_scale)
+        loss, loss_values = compute_losses(step, render, target, gaussians, loss_schedule, scene_scale)
         loss.backward()
 
         # Optimizer steps for Gaussians (and poses), then lr decay

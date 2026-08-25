@@ -62,9 +62,7 @@ class ColmapCreator(BasePointcloudCreator):
         db_path = output_dir / "colmap" / "database.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        camera_mode = (
-            pycolmap.CameraMode.SINGLE if self.single_camera else pycolmap.CameraMode.AUTO
-        )
+        camera_mode = pycolmap.CameraMode.SINGLE if self.single_camera else pycolmap.CameraMode.AUTO
         # pycolmap >=4.0: camera_model lives in ImageReaderOptions, not as a
         # top-level kwarg of extract_features.
         reader_opts = pycolmap.ImageReaderOptions(camera_model=self.camera_model)
@@ -168,7 +166,12 @@ class HlocCreator(BasePointcloudCreator):
     matcher_conf: str = "superglue"
 
     def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
-        from hloc import extract_features, match_features, pairs_from_retrieval, reconstruction
+        from hloc import (
+            extract_features,
+            match_features,
+            pairs_from_retrieval,
+            reconstruction,
+        )
 
         image_dir, output_dir = Path(image_dir), Path(output_dir)
         if not image_dir.exists():
@@ -179,15 +182,11 @@ class HlocCreator(BasePointcloudCreator):
         hloc_dir = output_dir / "colmap" / "hloc"
         hloc_dir.mkdir(parents=True, exist_ok=True)
 
-        retrieval_path = extract_features.main(
-            extract_features.confs[self.retrieval_conf], image_dir, hloc_dir
-        )
+        retrieval_path = extract_features.main(extract_features.confs[self.retrieval_conf], image_dir, hloc_dir)
         pairs_path = hloc_dir / "pairs.txt"
         pairs_from_retrieval.main(retrieval_path, pairs_path)
 
-        feature_path = extract_features.main(
-            extract_features.confs[self.feature_conf], image_dir, hloc_dir
-        )
+        feature_path = extract_features.main(extract_features.confs[self.feature_conf], image_dir, hloc_dir)
         match_path = match_features.main(
             match_features.confs[self.matcher_conf],
             pairs_path,
@@ -388,6 +387,24 @@ def _pixel_indices_from_reconstruction(
 _SIFT_NUM_THREADS = 8
 
 
+def _nudge_edge_keypoints(features: np.ndarray, width: int, height: int) -> np.ndarray:
+    """
+    Pull keypoints sitting exactly on the far image edge (x == width or y == height) inward.
+
+    - Upstream ``sample_depth_at_pixel`` rejects coords with ``x / width > 1`` but lets
+      ``== 1`` through, then indexes ``depth_map[:, W]`` -> IndexError. SIFT emits such
+      keypoints rarely (2 of 3M on GH010229 undistorted); coords beyond the edge are left
+      alone so upstream still marks them depth-unavailable.
+    """
+    features = np.asarray(features)
+    if features.size == 0:
+        return features
+    nudged = features.copy()
+    nudged[nudged[:, 0] == width, 0] = width - 1e-3
+    nudged[nudged[:, 1] == height, 1] = height - 1e-3
+    return nudged
+
+
 def _sift_database_valid(database_path: Path) -> bool:
     """
     True when the SIFT DB holds both extraction and matching output.
@@ -428,17 +445,26 @@ def _generate_sift_database(image_path: Path, database_path: Path, single_camera
         env["CUDA_VISIBLE_DEVICES"] = ""
 
     extractor_cmd = [
-        "colmap", "feature_extractor",
-        "--image_path", str(image_path),
-        "--database_path", str(database_path),
-        "--ImageReader.camera_model", "SIMPLE_RADIAL",
-        "--ImageReader.single_camera", "1" if single_camera else "0",
-        "--SiftExtraction.use_gpu", "1" if use_gpu else "0",
+        "colmap",
+        "feature_extractor",
+        "--image_path",
+        str(image_path),
+        "--database_path",
+        str(database_path),
+        "--ImageReader.camera_model",
+        "SIMPLE_RADIAL",
+        "--ImageReader.single_camera",
+        "1" if single_camera else "0",
+        "--SiftExtraction.use_gpu",
+        "1" if use_gpu else "0",
     ]
     matcher_cmd = [
-        "colmap", "exhaustive_matcher",
-        "--database_path", str(database_path),
-        "--SiftMatching.use_gpu", "1" if use_gpu else "0",
+        "colmap",
+        "exhaustive_matcher",
+        "--database_path",
+        str(database_path),
+        "--SiftMatching.use_gpu",
+        "1" if use_gpu else "0",
     ]
     if not use_gpu:
         extractor_cmd += ["--SiftExtraction.num_threads", str(_SIFT_NUM_THREADS)]
@@ -735,6 +761,9 @@ class InstantSfMCreator:
         config.RUNTIME_OPTIONS["use_depths"] = self.use_depths
         if self.use_depths:
             logger.info("InstantSfM: loading depths from %s", path_info.depth_path)
+            for idx in range(len(images)):
+                camera = cameras[images[idx].cam_id]
+                images.features[idx] = _nudge_edge_keypoints(images.features[idx], camera.width, camera.height)
             ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
 
         # Global mapping. Upstream raises a raw IndexError on several failure paths
@@ -770,7 +799,5 @@ class InstantSfMCreator:
 
         # Read back the written model as the return value
         recon = pycolmap.Reconstruction(str(sparse_dst))
-        logger.info(
-            "InstantSfM: %d registered images, %d points3D", recon.num_reg_images(), recon.num_points3D()
-        )
+        logger.info("InstantSfM: %d registered images, %d points3D", recon.num_reg_images(), recon.num_points3D())
         return recon

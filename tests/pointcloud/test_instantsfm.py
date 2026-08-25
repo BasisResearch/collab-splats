@@ -215,7 +215,6 @@ def test_bae_pcg_patch_keeps_column_shape():
     pytest.importorskip("instantsfm")
     # Optional heavy dep, may be absent — imported inside the importorskip'd test body
     import torch
-
     from bae.utils.pysolvers import PCG
 
     sfm._patch_bae_pcg_column_shape()
@@ -298,3 +297,15 @@ def test_colmap_write_patch_produces_pycolmap_readable_model(tmp_path):
     assert len(read_back.points3D[0].track.elements) == 2
     assert len(read_back.points3D[1].track.elements) == 0
     assert read_back.images[1].points2D[2].point3D_id == 0
+
+
+def test_nudge_edge_keypoints_pulls_exact_edge_inward_only():
+    feats = np.array([[10.0, 20.0], [1918.0, 5.0], [7.0, 1078.0], [1930.0, 3.0]], dtype=np.float32)
+    out = sfm._nudge_edge_keypoints(feats, 1918, 1078)
+
+    # Exact-edge coords move just inside; interior and beyond-edge coords are untouched
+    assert out[1, 0] < 1918 and out[1, 0] > 1917.9
+    assert out[2, 1] < 1078 and out[2, 1] > 1077.9
+    np.testing.assert_array_equal(out[[0, 3]], feats[[0, 3]])
+    assert feats[1, 0] == 1918.0  # input not mutated
+    assert sfm._nudge_edge_keypoints(np.empty((0, 2)), 10, 10).size == 0

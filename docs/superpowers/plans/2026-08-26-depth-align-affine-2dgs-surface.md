@@ -1008,10 +1008,24 @@ def align_depth_affine(
       fit is unsolvable, a <= 0, or the fitted disparity is non-positive at the frame's far
       end. The far end is p99 of the depth map, not its max: a single sky pixel rejects
       78/300 frames, p99 rejects 14/300 (measured 2026-08-26).
-    - far_limits is the furthest observed track depth per frame. Beyond it the fit is
+    - far_limits bounds where the fit stops being interpolation. Beyond it the fit is
       extrapolating, and held-out observations there are 2.2x worse. The bound is ONE-SIDED
       by design: SIFT tracks do not cover close surfaces, so a near-side bound would delete
       the closest ~4% of every frame — the near-field geometry this exists to sharpen.
+
+    AMENDED by Task 5's review remediation — the shipped contract is stricter than the
+    code block below, which is kept as the historical record of what was first written:
+
+    - The bound carries the SAME observation floor as the model it bounds. A frame that
+      falls back to the global scale gets `inf`, i.e. no masking, exactly matching today's
+      scale path. Bounding a scale-only frame by its own 3 observations supervised 3.9% of
+      it while a zero-observation frame stayed fully supervised — less evidence, more
+      masking, which is not defensible.
+    - The bound is sourced from the fit's SURVIVING INLIERS, not the raw correspondences,
+      so one track on a sky pixel cannot extend the supervised range into garbage.
+    - The effective bound is `min(far_limit, saturation_horizon)` where the horizon is
+      `-a/b` for `b < 0`. Without the horizon term, pixels between it and far_limit do not
+      saturate — they explode (measured: 49.9 -> 16633.2 at a=1.5, b=-0.03).
     """
     n_frames = depth.shape[0]
     coeffs = np.zeros((n_frames, 2), dtype=np.float64)
@@ -1213,7 +1227,9 @@ def apply_depth_alignment(
             "depth_scale": "colmap",
             "depth_align_model": "affine",
             "depth_affine_ab": [[float(a), float(b)] for a, b in coeffs],
-            "depth_far_limits": [float(x) for x in far_limits],
+            # inf is not valid JSON and zarr attrs are JSON — a scale-only frame's bound
+            # must be written as null, not float("inf"), or the attr write raises
+            "depth_far_limits": [None if not np.isfinite(x) else float(x) for x in far_limits],
             "depth_masked_fraction": masked,
             "depth_scale_fallback_frames": stats["fallback_frames"],
         }
@@ -2060,8 +2076,30 @@ In `_run_sfm`, replace the VDA block with:
 ```python
         # VDA metric depth — the only shipped mode (use_depths=True). Gate on the npy set BEFORE
         # decoding anything (300 x 1080p is ~1.9 GB).
-        if not vda_depth_complete(backend_dir, names):
-            context_fps = self.config["preproc"]["vda_context_fps"]
+        context_fps = self.config["preproc"]["vda_context_fps"]
+
+        # vda_depth_complete keys on `names` alone, but depth CONTENT now also depends on the
+        # context grid. `names` is always the sequential frame_000000..N, so switching
+        # vda_context_fps leaves the stem set identical and would silently reuse stale depth
+        # (reproduced twice in review 2026-08-26). A sidecar records the generating inputs.
+        depth_sidecar = backend_dir / "depth_vda" / "inputs.json"
+        signature = {
+            "context_fps": float(context_fps) if context_fps else None,
+            "keyframe_fps": float(self.config["preproc"]["fps"]),
+            "n_names": len(names),
+        }
+        cached_signature = json.loads(depth_sidecar.read_text()) if depth_sidecar.exists() else None
+
+        # A missing sidecar means depths predate this stamp — trust them rather than forcing a
+        # re-run of every existing scene. Only a PRESENT and DIFFERENT stamp invalidates.
+        stale = cached_signature is not None and cached_signature != signature
+        if stale:
+            logger.info(
+                "VDA depth cache invalidated: generating inputs changed %s -> %s",
+                cached_signature, signature,
+            )
+
+        if stale or not vda_depth_complete(backend_dir, names):
             keep_rows, context_frames = None, None
 
             # Context stream: VDA is temporal, so run it over a contiguous constant-rate grid
@@ -2108,7 +2146,17 @@ In `_run_sfm`, replace the VDA block with:
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
+
+            # Stamp what produced these maps, so a later context-rate change invalidates them
+            depth_sidecar.write_text(json.dumps(signature))
 ```
+
+Add `json` to the imports at the top of `reconstructor.py` if it is not already there.
+
+**Why a sidecar and not a wider `vda_depth_complete` signature:** the gate helper lives in
+`sfm.py` and is also called by `evals/scripts/eval.py`, which has no notion of a context grid.
+Keeping the signature in the Reconstructor — the only place that knows the context rate — avoids
+changing a shared helper's contract for one caller's benefit.
 
 Add `random_seed` to the creator construction in `_run_sfm`:
 
@@ -2168,10 +2216,27 @@ git commit --only collab_splats/wrapper/reconstructor.py tests/wrapper/test_vda_
 
 ## Task 12: Config surface and docs
 
+> **RUN THIS BEFORE TASK 11.** Task 11 indexes `self.config["preproc"]["vda_context_fps"]`
+> directly, and `tests/wrapper/test_reconstructor.py:122` (`test_no_inline_defaults_in_source`)
+> forbids a `.get("key", default)` fallback in `reconstructor.py` — base.yaml is the only
+> permitted default source. So the yaml key must exist before the wiring that reads it.
+> Task 10 hit this same landmine and resolved it by carrying the default on the function
+> signature instead; Task 11 cannot, because its value is genuinely user-facing config.
+
 **Files:**
 - Modify: `configs/base.yaml` (FOREIGN DIFFS — stage with `git commit --only`)
 - Modify: `configs/README.md`
+- Modify: `collab_splats/wrapper/reconstructor.py` (the `mesh()` call site Task 10 deferred)
 - Test: `tests/wrapper/test_reconstructor.py` (read-only; confirm no key-validation break)
+
+**On the foreign `configs/base.yaml` diff:** that file carries another session's uncommitted
+edits (`preproc.fps 1.0 -> 2.0`, and the whole `mesh:` block — `voxel_size`, `sdf_trunc`,
+`depth_trunc`, `clean_repair`, `conf_percentile`, `native_resolution`,
+`color_map_iterations`). `git commit --only configs/base.yaml` re-stages from the worktree and
+would sweep all of it in. Capture the foreign hunks as a real patch FIRST — plain `git diff` is
+rewritten by the RTK hook into a non-patch, so use `rtk proxy git diff -- configs/base.yaml >
+foreign.patch` and confirm it with `git apply --check --reverse foreign.patch`. Then revert the
+file, add only the new keys, commit, and re-apply the foreign patch.
 
 - [ ] **Step 1: Add the knobs to `configs/base.yaml`**
 
@@ -2240,39 +2305,116 @@ print('SplatsConfig OK')
 ```
 Expected: the four values print and `SplatsConfig OK`
 
-- [ ] **Step 3: Document the knobs in `configs/README.md`**
+- [ ] **Step 3: Wire the `mesh()` call site Task 10 deferred**
+
+Task 10 added `splat_depth` to `_run_tsdf_mesh`'s signature but deliberately did NOT add the
+call-site line, because doing so before the yaml key existed would have meant a
+`.get("splat_depth", "expected")` fallback, which `test_no_inline_defaults_in_source` rejects.
+Now that Step 1 has added the key, add the line. In `collab_splats/wrapper/reconstructor.py`,
+in `mesh()` (~`:1339`), find the `_run_tsdf_mesh(...)` call and add to its keyword arguments,
+beside the sibling `conf_percentile=` / `clean_repair=` lines:
+
+```python
+            splat_depth=mesh_cfg["splat_depth"],
+```
+
+Direct indexing, not `.get()` — the key is guaranteed by base.yaml, and the architectural test
+requires it. Without this line the yaml key is inert.
+
+**Then pin the hop you just created.** Task 10's remediation (`9ec5c38f`) added
+`test_run_tsdf_mesh_forwards_splat_depth_to_the_adapter`, which covers `_run_tsdf_mesh` -> the
+splats adapter. It does NOT cover `mesh()` -> `_run_tsdf_mesh`, because that call-site line did
+not exist when it was written. Deleting the line you just added would therefore still pass the
+whole suite — the same silent-no-op defect the review caught one level down. Append to
+`tests/wrapper/test_splats_stage.py`:
+
+```python
+def test_mesh_stage_forwards_splat_depth_from_the_config(tmp_path):
+    """
+    mesh.splat_depth has to survive the first hop too — config -> mesh() -> _run_tsdf_mesh.
+    """
+    # Patch the callee, not the adapter: this pins the config read and the keyword, and stays
+    # green regardless of what the adapter does with the value
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as run_mesh:
+        recon = _reconstructor_with(tmp_path, mesh={"source": "splats", "splat_depth": "median"})
+        recon.mesh()
+
+    assert run_mesh.call_args.kwargs["splat_depth"] == "median"
+```
+
+Match the file's existing helper for building a Reconstructor with config overrides — copy the
+shape from whichever sibling test already constructs one, rather than inventing
+`_reconstructor_with` if it does not exist. Verify it has teeth by deleting the
+`splat_depth=mesh_cfg["splat_depth"]` line and confirming this test, and only this test, fails.
+
+- [ ] **Step 4: Verify the unknown-spec-key error message names `depth_ratio`**
+
+Moved into the Task 9 remediation commit (it edits `trainer.py`, which this task does not).
+Verify only — the message for an unknown key on `normal_consistency` should name the legal set
+including `depth_ratio`, not the hardcoded `{weight[, start, end, end_weight]}`:
+
+```bash
+/opt/venv/reconstruction/bin/python -c "
+from collab_splats.splats.trainer import SplatsConfig
+try:
+    SplatsConfig.from_dict({'primitive': '2dgs', 'losses': {'normal_consistency': {'weight': 0.05, 'depth_ration': 0.6}}})
+except ValueError as e:
+    print(e)
+"
+```
+Expected: the message lists `depth_ratio` among the legal keys. If it does not, the Task 9
+remediation did not land — fix it there, not here.
+
+- [ ] **Step 5: Document the knobs in `configs/README.md`**
 
 Add one row/paragraph per knob in the sections that already document `preproc`,
 `pointcloud.instantsfm`, `mesh`, and `splats.losses`, matching that file's existing format.
 Each entry states: what it does, its default, and the measured justification (the numbers in the
 yaml comments above).
 
-- [ ] **Step 4: Run the full suite**
+- [ ] **Step 6: Run the full suite**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/ -q -x --ignore=tests/integration`
 Expected: no new failures against `docs/known-test-failures.md`
 
-- [ ] **Step 5: Commit (own hunks only — `configs/base.yaml` carries foreign work)**
+- [ ] **Step 7: Commit (own hunks only — `configs/base.yaml` carries foreign work)**
 
 ```bash
 git diff configs/base.yaml   # confirm only your hunks are staged-worthy; if foreign hunks are
                              # interleaved, commit with `git commit --only` and verify with
                              # `git show --stat HEAD`
-git commit --only configs/base.yaml configs/README.md -m "feat(configs): vda_context_fps, depth_align, random_seed, splat_depth"
+git commit --only configs/base.yaml configs/README.md collab_splats/wrapper/reconstructor.py \
+  tests/wrapper/test_splats_stage.py \
+  -m "feat(configs): vda_context_fps, depth_align, random_seed, splat_depth"
 ```
 
 ---
 
-## Task 13: Run the 4-cell grid
+## Task 13: Run the grid — 3 new cells against a reused baseline
 
 **Files:**
 - Create: `evals/results/2026-08-26-depth-align-grid/` (gitignored)
 
-Do not start any cell until Tasks 1-15 are committed and the suite is green.
+Do not start any cell until Tasks 1-12 are committed and the suite is green.
 
-- [ ] **Step 1: Write the four override configs**
+**Cell 1 is already on disk — do not re-run it.**
+`/workspace/outputs/rerun_2026_08_23_instantsfm/GH010229_undist_r7/instantsfm/splats_combined2dgs/`
+holds a 2dgs / 12k / 300-frame run at PSNR 20.805, SSIM 0.6776, 1,875,613 gaussians, 803.3 s,
+with `ckpt.pt`, `mesh.ply` and `mesh_v0.1.ply` (the voxel-0.1 mesh, 422 MB) beside it. Its
+config is reproduced verbatim as the common block below, so the other three cells differ from it
+only in the knob under test. Keeping the `ckpt.pt` also means the mesh can be re-fused at other
+parameters without retraining.
 
-Create one yaml per cell in the scratchpad. Common to all four:
+**Budget note:** the voxel-0.1 mesh on this scene took roughly 80 minutes (mesh.ply 03:51 ->
+mesh_v0.1.ply 05:12), against ~13 minutes of training. Meshing, not training, is what this grid
+costs — 6x per cell. Reusing cell 1 saves about 1.5 hours, and training all three before fusing
+any of them (Steps 2-4) means the mesh budget is spent only where the PSNR table says it is
+worth spending.
+
+- [ ] **Step 1: Write the three override configs**
+
+Create one yaml per new cell in the scratchpad. Common to all four cells — this is cell 1's
+recorded config, not an idealised one:
 
 ```yaml
 semantics: {enabled: false}
@@ -2289,42 +2431,116 @@ splats:
   pose_opt: true
   appearance_opt: true
   grow_grad2d: 2.0e-4
+  normalize_scene: true
   losses:
-    depth: {weight: 0.01}
+    depth: {weight: 0.01, end: 12000, end_weight: 0.001}
     normal_consistency: {weight: 0.05, start: 7000, depth_ratio: 0.0}
     distortion: {weight: 0.01, start: 3000}
+    opacity_reg: {weight: 0.0}
+    scale_reg: {weight: 0.0}
+    appearance_reg: {weight: 0.001}
 ```
+
+Two details in that block are load-bearing and are easy to "clean up" into a different
+experiment:
+
+- `depth` decays from 0.01 to 0.001 by step 12000. Cell 1 was trained that way, so every cell
+  must be. It does mean the depth prior — the thing `depth_align: affine` improves — is weakest
+  at the end of training, which biases the affine measurement *downward*. Read a positive affine
+  result as a floor, not a ceiling.
+- `opacity_reg` and `scale_reg` must be listed at `0.0` explicitly. `configs/base.yaml`
+  regularisers survive the deep merge, so omitting them silently re-enables them and the run is
+  no longer comparable to cell 1.
 
 Per-cell deltas:
 
-| cell | `preproc.vda_context_fps` | `instantsfm.depth_align` | `instantsfm.random_seed` | `normal_consistency.depth_ratio` |
-|---|---|---|---|---|
-| 1 | `null` | `scale` | `null` | `0.0` |
-| 2 | `null` | `affine` | `null` | `0.0` |
-| 3 | `null` | `affine` | `null` | `0.6` |
-| 4 | `8.0` | `affine` | `0` | `0.6` |
+| cell | `preproc.vda_context_fps` | `instantsfm.depth_align` | `instantsfm.random_seed` | `normal_consistency.depth_ratio` | status |
+|---|---|---|---|---|---|
+| 1 | `null` | `scale` | `null` | `0.0` | ON DISK — reuse, do not run |
+| 2 | `null` | `affine` | `null` | `0.0` | run |
+| 3 | `null` | `affine` | `null` | `0.6` | run |
+| 4 | `8.0` | `affine` | `0` | `0.6` | run |
 
-Cells 1-3 reuse the existing `GH010229_undist_r7` reconstruction: run them with
-`--stages splats mesh` against that scene after re-running only the pointcloud stage's
-alignment for cell 2/3 (`--stages pointcloud splats mesh`, which re-reads the same COLMAP model
-and re-aligns depth). Cell 4 needs a fresh scene directory — a new SfM run.
+Cells 2 and 3 reuse the existing `GH010229_undist_r7` reconstruction: run them with
+`--stages pointcloud splats mesh`, which re-reads the same COLMAP model and only re-aligns
+depth. Cell 4 needs a fresh scene directory — its context stream changes frame selection, so
+SfM itself is different.
 
-- [ ] **Step 2: Run the cells sequentially in tmux**
+Write each cell's outputs to a fresh subdirectory so nothing overwrites
+`splats_combined2dgs/`. Note that zarr `mode="w"` rmtree's a symlinked `splats.zarr`; a
+directory-level symlink is safe, a file-level one is not.
+
+- [ ] **Step 2: Train all three cells first — no meshing yet**
+
+Training is ~13 min/cell against ~80 min/mesh, so all three train before anything is fused.
+`ckpt.pt` is written at the end of training and meshing reads it, so deferring the fuse never
+costs a retrain.
+
+Override `mesh: {enabled: false}` on top of the common block for this pass and run
+`--stages pointcloud splats`. The mesh is re-run later with a leaf-only `--stages mesh`, which
+pulls its inputs from the processed scene rather than recomputing them.
 
 One GPU job at a time — the container cgroup caps at 46.6 GB and parallel heavy jobs OOM.
 
 ```bash
-tmux new-session -d -s grid_cell1 '/opt/venv/reconstruction/bin/python docs/examples/run_pipeline.py --config <cell1.yaml> 2>&1 | tee /tmp/claude-0/-workspace-collab-splats/a554d3f6-ae28-4875-bc24-afcfa133dfb5/scratchpad/cell1.log'
+SP=/tmp/claude-0/-workspace-collab-splats/a554d3f6-ae28-4875-bc24-afcfa133dfb5/scratchpad
+tmux new-session -d -s grid_cell2 \
+  '/opt/venv/reconstruction/bin/python docs/examples/run_pipeline.py \
+     --config '"$SP"'/cell2.yaml --stages pointcloud splats 2>&1 | tee '"$SP"'/cell2.log'
 ```
 
-Wait for each to exit before launching the next. Check `tmux list-sessions` and the tail of the
-log rather than polling on a timer.
+Wait for each session to exit before launching the next. Check `tmux list-sessions` and the tail
+of the log rather than polling on a timer.
 
-- [ ] **Step 3: Grade the meshes (primary)**
+- [ ] **Step 3: Report PSNR/SSIM for all three cells**
 
-For each cell, record: main-component vertex fraction, speckle component count, total vertex
-count after `clean_repair`, and renders from the scene cameras. Vertex counts alone have hidden
-truncation before — always render.
+Read `summary.psnr` / `summary.ssim` from each run's `splats_quality_report.json`. Cell 1 is
+20.805 / 0.6776 and is not re-run. Present all four rows in one table.
+
+All four sit below the 30k-step record because 12k gives 40 visits/view against 100; cross-cell
+deltas are what matter, not the absolute level. Remember the depth prior decays to 0.001 by step
+12000, so a positive `depth_align: affine` delta is a floor rather than a ceiling.
+
+- [ ] **Step 4: GATE — decide which cells to mesh**
+
+**Do not start any mesh until the Step 3 table has been reported and the choice of cells has
+been made.** User directive, 2026-08-26: "report psnr for all first then decide meshing."
+
+This is a gate, not a formality. Mesh quality is the primary objective and PSNR is only the
+secondary signal, so PSNR cannot settle the question on its own — but at ~80 min per mesh,
+fusing all three unconditionally costs about four hours of GPU time to answer a question three
+of those hours may not be needed for. Propose a subset with reasoning; do not pick it
+unilaterally.
+
+Two things bias the decision away from "just mesh the winner":
+
+- `depth_ratio` (cell 3) changes the *normal* supervision, which the TSDF fuse reads through
+  the surface it converges to. Its PSNR delta may be ~0 while its mesh delta is not. A flat
+  PSNR row is not evidence against meshing that cell.
+- Cell 4 changes frame selection, so its reconstruction differs. Its PSNR is not comparable
+  to cells 1-3 on equal terms.
+
+- [ ] **Step 5: Mesh the chosen cells**
+
+Leaf-only re-run against the already-trained scene:
+
+```bash
+tmux new-session -d -s mesh_cell2 \
+  '/opt/venv/reconstruction/bin/python docs/examples/run_pipeline.py \
+     --config '"$SP"'/cell2.yaml --stages mesh 2>&1 | tee '"$SP"'/mesh_cell2.log'
+```
+
+One at a time, same OOM constraint. `mesh: {enabled: true, source: splats, voxel_size: 0.1,
+conf_percentile: null}` must be restored in the config for this pass.
+
+Note that zarr `mode="w"` rmtree's a symlinked `splats.zarr`; a directory-level symlink is safe,
+a file-level one is not.
+
+- [ ] **Step 6: Grade the meshes (primary)**
+
+For each meshed cell, record: main-component vertex fraction, speckle component count, total
+vertex count after `clean_repair`, and renders from the scene cameras. Vertex counts alone have
+hidden truncation before — always render.
 
 ```bash
 /opt/venv/reconstruction/bin/python - <<'PY'
@@ -2339,17 +2555,39 @@ PY
 
 One `OffscreenRenderer` per process — open3d does not tolerate more.
 
-- [ ] **Step 4: Grade PSNR/SSIM (secondary)**
+Cell 1's reference numbers for 2dgs on this scene: main-component fraction 0.634 (against 0.457
+for 3dgs), which is why 2dgs is the mesh source at all.
 
-Read the per-frame metrics from each run's splats report. Expect all four to read below the
-recorded 20.80, which was trained at 30k (100 visits/view) against 12k here (40). Cross-cell
-deltas are what matter.
-
-- [ ] **Step 5: Write the results document**
+- [ ] **Step 7: Write the results document**
 
 Create `docs/superpowers/specs/2026-08-26-depth-align-grid-results.md` with the four-cell table
-(mesh primary, PSNR secondary), the verdict per component, and which defaults (if any) should
-flip. Commit with `git add -f`.
+(cell 1 reused), PSNR for all cells and mesh grades for the meshed subset, the verdict per
+component, and which defaults (if any) should flip. Say explicitly which cells were not meshed
+and why. Commit with `git add -f`.
+
+---
+
+## Follow-ups found during review (not in the original spec)
+
+- **`weight` accepts a bool the same way `depth_ratio` used to.** Task 9's remediation
+  (`f1443802`) type-checks `depth_ratio` but the sibling reads — `spec.get("weight", 0.0)` in
+  `loss_weight`, and `distortion_spec.get("weight", 0.0) > 0` in the trainer's guard — have no
+  type check at all. YAML parses `yes`/`on`/`true` to `True`, so `weight: yes` on any loss
+  silently trains at 1.0. On `normal_consistency` that is 20x the intended 0.05, with no
+  diagnostic. Same class of trap, one field over, and `weight` reaches arithmetic where
+  `depth_ratio` only reached a comparison. Not blocking the grid (our override configs use
+  unquoted floats), so it is deliberately deferred rather than folded into Task 9. Fix in one
+  commit against `trainer.py` after Task 13, reusing the `isinstance(raw, bool) or not
+  isinstance(raw, (int, float))` shape already there.
+
+- **A `splats.zarr` missing its `depth` array still fails with a bare `KeyError`.** Task 10's
+  remediation (`9ec5c38f`) scoped the friendly missing-array message to the `median` branch,
+  because the generic version told an `expected` user to "use splat_depth: expected". That
+  restores exactly the pre-`8bf2988e` behaviour on the default path, so it is a faithful revert
+  rather than an improvement. Making both paths fail actionably is a separate change — a generic
+  message naming whichever array is absent, with the "needs a 2dgs run from this version"
+  sentence appended only on the median branch. Not done deliberately; doing it naively re-creates
+  the bug that was just fixed.
 
 ---
 

@@ -5,9 +5,11 @@
 import numpy as np
 import pytest
 
+from collab_splats.preproc.undistort import DistortionProfile
 from collab_splats.preproc.video import (
     _require_ffmpeg,
     context_indices,
+    decode_context,
     extract_frame,
     get_video_info,
     iter_frames,
@@ -209,3 +211,46 @@ def test_context_indices_floors_stride_at_one(tiny_video):
 def test_context_indices_reuses_a_probe(tiny_video):
     info = {"total_frames": 10, "fps": 30.0, "width": 320, "height": 240}
     assert context_indices(tiny_video, target_fps=15.0, info=info) == [0, 2, 4, 6, 8]
+
+
+########################################################################
+# decode_context: chunked undistort-then-downscale context decode
+########################################################################
+
+
+def test_decode_context_downscales_to_short_side(tiny_video):
+    # 320x240 source; short side 240 -> requested 120 halves both dimensions
+    frames = decode_context(tiny_video, [0, 3, 6], out_short_side=120)
+    assert frames.shape == (3, 120, 160, 3)
+    assert frames.dtype == np.uint8
+
+
+def test_decode_context_is_rgb_not_bgr(tiny_video):
+    # tiny_video paints a pure-green rectangle; RGB output puts the peak in channel 1
+    frames = decode_context(tiny_video, [30], out_short_side=240)
+    patch = frames[0, 90:110, 130:150]
+    assert patch[..., 1].mean() > patch[..., 0].mean()
+    assert patch[..., 1].mean() > patch[..., 2].mean()
+
+
+def test_decode_context_chunking_does_not_change_output(tiny_video):
+    indices = [0, 3, 6, 9, 12]
+    one_chunk = decode_context(tiny_video, indices, out_short_side=120, chunk_size=64)
+    many_chunks = decode_context(tiny_video, indices, out_short_side=120, chunk_size=2)
+    np.testing.assert_array_equal(one_chunk, many_chunks)
+
+
+def test_decode_context_empty_indices(tiny_video):
+    frames = decode_context(tiny_video, [], out_short_side=120)
+    assert frames.shape[0] == 0
+
+
+def test_decode_context_undistorts_before_downscaling(tiny_video):
+    # A profile calibrated at the SOURCE resolution: undistortion must happen at
+    # 320x240, so it must not raise, and the alpha=0 crop shrinks the frame.
+    profile = DistortionProfile(
+        width=320, height=240, fx=300.0, fy=300.0, cx=160.0, cy=120.0, k1=-0.2, k2=0.0, p1=0.0, p2=0.0
+    )
+    frames = decode_context(tiny_video, [0, 3], profile=profile, out_short_side=100)
+    assert frames.shape[0] == 2
+    assert min(frames.shape[1:3]) == 100

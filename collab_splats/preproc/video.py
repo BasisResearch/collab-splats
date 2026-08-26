@@ -16,6 +16,7 @@ import subprocess
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -251,3 +252,55 @@ def extract_frame(video_path: str | Path, frame_idx: int, *, info: dict | None =
         raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}: {err}")
 
     return np.frombuffer(raw[: w * h * 3], dtype=np.uint8).reshape(h, w, 3).copy()
+
+
+def decode_context(
+    video_path: str | Path,
+    indices: Sequence[int],
+    *,
+    profile=None,
+    out_short_side: int = 518,
+    chunk_size: int = 64,
+) -> np.ndarray:
+    """
+    Decode a context frame grid as RGB, undistorted at native resolution, then downscaled.
+
+    - `indices` come from `context_indices`; the return is (N, h, w, 3) uint8 RGB in that order.
+    - `profile` is the DistortionProfile frames.zarr was written with (None = raw frames).
+      Undistortion runs at the SOURCE resolution before any downscale, or the alpha=0 crop
+      and K_new stop matching the keyframes.
+    - `out_short_side` is the model's native grid (VDA resizes the short side to 518 and
+      upscales anything smaller, so decoding below that loses detail without saving GPU).
+    - Chunked so a 2000-frame grid never holds 2000 full-resolution frames at once.
+    """
+    # Lazy import: undistort pulls pycolmap, which video.py otherwise never needs
+    from collab_splats.preproc.undistort import undistort_frames
+
+    ordered = sorted({int(i) for i in indices})
+    if not ordered:
+        return np.zeros((0, out_short_side, out_short_side, 3), dtype=np.uint8)
+
+    out: list[np.ndarray] = []
+    for start in range(0, len(ordered), chunk_size):
+        chunk = ordered[start : start + chunk_size]
+
+        # One ffmpeg select pass per chunk, BGR at source resolution
+        decoded = dict(iter_frames(video_path, indices=chunk))
+        bgr_frames = [decoded[i] for i in chunk if i in decoded]
+        if not bgr_frames:
+            continue
+
+        # Undistort at native resolution — the crop is what makes the context aspect
+        # ratio match the keyframes'
+        if profile is not None:
+            bgr_frames, _K_new, _roi = undistort_frames(bgr_frames, profile)
+
+        # Downscale to the model grid (INTER_AREA: this is always a shrink), then BGR -> RGB
+        height, width = bgr_frames[0].shape[:2]
+        scale = out_short_side / min(height, width)
+        target = (int(round(width * scale)), int(round(height * scale)))
+        for bgr in bgr_frames:
+            small = cv2.resize(bgr, target, interpolation=cv2.INTER_AREA)
+            out.append(cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+
+    return np.stack(out).astype(np.uint8)

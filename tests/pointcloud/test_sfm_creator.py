@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from PIL import Image
-from collab_splats.pointcloud.sfm import ColmapCreator
+from collab_splats.pointcloud.sfm import ColmapCreator, InstantSfMCreator
 from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
 
 
@@ -197,3 +197,25 @@ def test_hloc_creator_missing_image_dir_raises(tmp_path):
             sys.modules.pop('hloc', None)
         else:
             sys.modules['hloc'] = old_hloc
+
+
+def test_instantsfm_random_seed_defaults_to_none():
+    assert InstantSfMCreator().random_seed is None
+
+
+def test_instantsfm_random_seed_reaches_runtime_options():
+    pytest.importorskip("instantsfm")
+    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
+    from instantsfm.controllers.config import RUNTIME_OPTIONS
+
+    # Upstream SolveGlobalMapper reads RUNTIME_OPTIONS['random_seed'] with .get(key, None),
+    # so an unset seed must leave the key ABSENT rather than write a default in
+    assert "random_seed" not in InstantSfMCreator()._build_config().RUNTIME_OPTIONS
+
+    # A set seed must reach the option verbatim — a hardcoded or coerced value silently
+    # makes every scene reproduce to the same wrong reconstruction
+    seeded = InstantSfMCreator(random_seed=1234)._build_config()
+    assert seeded.RUNTIME_OPTIONS["random_seed"] == 1234
+
+    # Config aliases the module-level dict; the seed must not leak out of this instance
+    assert "random_seed" not in RUNTIME_OPTIONS

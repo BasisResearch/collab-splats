@@ -1120,6 +1120,7 @@ class InstantSfMCreator:
     single_camera: bool = True
     use_depths: bool = True
     retriangulation: bool = False
+    random_seed: int | None = None
 
     def _build_config(self):
         """
@@ -1137,6 +1138,16 @@ class InstantSfMCreator:
         # set, then up to ba_global_max_refinements (5) further BA rounds. Upstream
         # defaults skip_retriangulation True; this is their only post-BA refinement knob.
         config.OPTIONS["skip_retriangulation"] = not self.retriangulation
+
+        # InitializeRandomPositions draws camera translations and track xyzs from an unseeded
+        # np.random.uniform(-1, 1) (cre185/InstantSfM @ 0.3.0 instantsfm/processors/
+        # global_positioning.py:229-243), so two runs of the same scene differ. random_seed is
+        # an upstream RUNTIME_OPTION read by SolveGlobalMapper (instantsfm/controllers/
+        # global_mapper.py:25) that seeds numpy/random/torch/cuda; neither we nor upstream's
+        # CLI sets it by default, so an absent key must stay absent
+        if self.random_seed is not None:
+            config.RUNTIME_OPTIONS["random_seed"] = int(self.random_seed)
+
         return config
 
     def reconstruct(self, data_dir: Path) -> pycolmap.Reconstruction:

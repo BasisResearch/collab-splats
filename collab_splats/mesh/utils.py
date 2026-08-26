@@ -620,7 +620,7 @@ def _feedforward_to_tsdf_inputs(
 
 
 def _splats_to_tsdf_inputs(
-    splats_zarr: Path, conf_percentile: float | None = None
+    splats_zarr: Path, conf_percentile: float | None = None, splat_depth: str = "expected"
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Unpack splats.zarr (rendered views) into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
@@ -628,18 +628,33 @@ def _splats_to_tsdf_inputs(
     - `alpha` is the confidence: pixels with alpha == 0 never reach Open3D, and
       `conf_percentile` drops the lowest-alpha percentile globally (same rule as the
       feedforward path's confidence gate).
+    - `splat_depth` picks which rendered depth to fuse: "expected" (alpha-weighted, the
+      default) or "median" (RaDe-GS surface depth, 2dgs renders only).
     - Poses are the zarr's `c2w` — what was actually rendered, including pose-opt deltas.
     - Already native to the training frames, so there is no upsampling path.
     """
+    # Value check before any IO so a typo fails on the config, not on a missing array
+    depth_arrays = {"expected": "depth", "median": "median_depth"}
+    if splat_depth not in depth_arrays:
+        raise ValueError(f"mesh.splat_depth must be 'expected' or 'median', got {splat_depth!r}")
+
     # Loud failure before opening: the splats stage is never auto-run by mesh()
     splats_zarr = Path(splats_zarr)
     if not splats_zarr.exists():
         raise FileNotFoundError(f"{splats_zarr} — run the splats stage first")
     store = zarr.open_group(str(splats_zarr), mode="r")
 
+    # median_depth only exists in 2dgs stores written by this version of the splats stage
+    depth_array = depth_arrays[splat_depth]
+    if depth_array not in store:
+        raise ValueError(
+            f"{splats_zarr} has no '{depth_array}' array — mesh.splat_depth: median needs a 2dgs "
+            "splats run from this version; re-run the splats stage or use splat_depth: expected."
+        )
+
     # Alpha gate: zero alpha is "no surface rendered here"; the percentile cut mirrors the
     # feedforward path's confidence_mask so both sources filter by the same global rule
-    depths = np.ascontiguousarray(store["depth"][:], dtype=np.float32)
+    depths = np.ascontiguousarray(store[depth_array][:], dtype=np.float32)
     alpha = store["alpha"][:]
     keep = alpha > 0
     if conf_percentile is not None:
@@ -647,7 +662,9 @@ def _splats_to_tsdf_inputs(
     dropped = ~keep
     depths[dropped] = 0.0
     logger.info(
-        "Alpha mask (p%s): %.1f%% of depth pixels dropped",
+        "Splat depth source '%s' (%s); alpha mask (p%s): %.1f%% of depth pixels dropped",
+        splat_depth,
+        depth_array,
         "none" if conf_percentile is None else f"{conf_percentile:.0f}",
         100.0 * float(dropped.mean()),
     )

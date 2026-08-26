@@ -83,13 +83,24 @@ def test_correspondences_pair_track_depth_with_sampled_vda_depth():
     np.testing.assert_allclose(sorted(d_vda), [5.0, 8.0])
 
 
-def test_correspondences_drop_zero_and_out_of_bounds_samples():
-    recon = _fake_reconstruction({"frame_000000.jpg": [(3, 4, 10.0), (5, 5, 20.0)]})
+def test_correspondences_drop_zero_out_of_bounds_and_behind_camera_samples():
+    recon = _fake_reconstruction(
+        {
+            "frame_000000.jpg": [
+                (3, 4, 10.0),  # kept
+                (5, 5, 20.0),  # VDA depth left at 0 -> dropped
+                (GRID_W + 8, 4, 10.0),  # pixel off the right edge of the depth grid -> dropped
+                (7, 8, -10.0),  # point behind the camera, on a pixel that HAS depth -> dropped
+            ]
+        }
+    )
     depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
-    depth[0, 4, 3] = 5.0  # (5,5) is left at 0 -> dropped
+    depth[0, 4, 3] = 5.0
+    depth[0, 8, 7] = 9.0
 
     d_colmap, d_vda = sfm._depth_correspondences(recon, ["frame_000000.jpg"], depth)[0]
-    assert len(d_colmap) == 1
+    np.testing.assert_allclose(d_colmap, [10.0])
+    np.testing.assert_allclose(d_vda, [5.0])
 
 
 def test_correspondences_raise_on_unregistered_name():
@@ -100,8 +111,10 @@ def test_correspondences_raise_on_unregistered_name():
 
 
 def test_scale_alignment_recovers_a_constant_ratio():
-    # 30 observations at exactly 2x -> the frame's fitted scale is 2.0
+    # 30 observations at exactly 2x, three of them 100x wrong: the median holds at 2.0 while
+    # the mean of the same ratios is 21.8
     observations = [(i % GRID_W, i % GRID_H, 2.0 * (i + 1)) for i in range(30)]
+    observations[:3] = [(u, v, d * 100.0) for u, v, d in observations[:3]]
     recon = _fake_reconstruction({"frame_000000.jpg": observations})
     depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
     for i in range(30):
@@ -135,6 +148,25 @@ def _affine_scene(a, b, n_obs=200, d_min=2.0, d_max=40.0):
     return _fake_reconstruction({"frame_000000.jpg": observations}), depth_row[None]
 
 
+def _two_depth_scene(n_obs, a=1.5, b=-0.004, d_near=10.0, d_far=30.0, n_far=20):
+    """
+    One frame with only two distinct depths, a strict majority of them at the near one.
+
+    - Two distinct depths make the least-squares fit exact and give every observation in a
+      group the same residual, so the MAD median is exactly zero and the rejection rounds
+      drop nothing. The observation count is then the only thing deciding whether the fit
+      survives, which is what an MIN_AFFINE_OBS boundary test needs.
+    """
+    observations = []
+    depth_row = np.zeros((GRID_H, GRID_W), dtype=np.float32)
+    for i in range(n_obs):
+        u, v = i % GRID_W, (i // GRID_W) % GRID_H
+        d_vda = d_far if i < n_far else d_near
+        depth_row[v, u] = d_vda
+        observations.append((u, v, float(1.0 / (a / d_vda + b))))
+    return _fake_reconstruction({"frame_000000.jpg": observations}), depth_row[None]
+
+
 def test_affine_recovers_the_generating_coefficients():
     recon, depth = _affine_scene(a=1.5, b=-0.004)
     coeffs, _far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
@@ -154,9 +186,69 @@ def test_affine_is_robust_to_gross_outliers():
     assert coeffs[0, 1] == pytest.approx(-0.004, abs=5e-5)
 
 
+def test_affine_rejection_is_tight_enough_to_drop_a_moderate_outlier():
+    # 20 of 200 observations off by only 1.5x. At 3 MAD they are rejected and the fit is
+    # exact; at a much looser threshold they survive and drag the fit to a=1.36, b=+0.0017
+    recon, depth = _affine_scene(a=1.5, b=-0.004)
+    for point in list(recon.points3D.values())[:20]:
+        point.xyz[2] *= 1.5
+
+    coeffs, _far, _stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert coeffs[0, 0] == pytest.approx(1.5, rel=1e-4)
+    assert coeffs[0, 1] == pytest.approx(-0.004, abs=1e-6)
+
+
+def test_affine_survives_a_single_sky_pixel():
+    # The positivity guard reads p99 of the depth map, not its max. One unobserved 5000-unit
+    # sky pixel puts the fitted disparity at -0.0297 at the max and +0.0077 at p99, so max
+    # would throw this frame away. Measured 2026-08-26: max rejected 78/300 frames, p99 14/300
+    recon, depth = _affine_scene(a=1.5, b=-0.03)
+    depth[0, GRID_H - 1, GRID_W - 1] = 5000.0
+
+    _coeffs, _far, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert stats["n_fitted"] == 1
+    assert stats["n_saturating"] == 0
+
+
+def test_affine_rejects_a_fit_that_saturates_inside_the_frame():
+    # a=1.5, b=-0.03 saturates at d = 50. Tracks only reach 40, but the depth map itself runs
+    # to 60, so p99 (60) sits past the horizon and the fit must not be used at all. p50 (25.9)
+    # would wave it through
+    recon, depth = _affine_scene(a=1.5, b=-0.03)
+    depth[0, GRID_H - 1, :] = 60.0
+
+    coeffs, far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert stats["n_fitted"] == 0
+    assert stats["n_saturating"] == 1
+    assert coeffs[0, 1] == 0.0  # scale-only
+    assert far_limits[0] == np.inf  # a rejected fit leaves no range evidence behind
+
+
+def test_affine_rejects_a_fit_that_inverts_depth():
+    # d_colmap FALLS as d_vda rises, so the least-squares slope comes out negative
+    recon, depth = _affine_scene(a=-1.0, b=0.6)
+
+    coeffs, far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert stats["n_fitted"] == 0
+    assert stats["n_nonpositive_a"] == 1
+    assert coeffs[0, 1] == 0.0
+    assert far_limits[0] == np.inf
+
+
+def test_affine_obs_floor_is_exactly_min_affine_obs():
+    # 49 falls back, 50 and 51 fit. Pins the constant and which side of it is strict; the
+    # two-depth fixture rejects nothing, so the observation count is the only variable
+    for n_obs, expected_fitted in ((49, 0), (50, 1), (51, 1)):
+        recon, depth = _two_depth_scene(n_obs)
+        _coeffs, _far, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+        assert stats["n_fitted"] == expected_fitted, f"n_obs={n_obs}"
+
+
 def test_affine_falls_back_to_scale_below_the_obs_floor():
-    # 30 observations: above MIN_ALIGN_OBS (20) but below MIN_AFFINE_OBS (50)
+    # 30 observations: above MIN_ALIGN_OBS (20) but below MIN_AFFINE_OBS (50). Three are 100x
+    # wrong, so the fallback scale is a median (2.0), not a mean (21.8)
     observations = [(i % GRID_W, i % GRID_H, 2.0 * (i + 1)) for i in range(30)]
+    observations[:3] = [(u, v, d * 100.0) for u, v, d in observations[:3]]
     recon = _fake_reconstruction({"frame_000000.jpg": observations})
     depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
     for i in range(30):
@@ -185,11 +277,29 @@ def test_affine_sub_floor_frame_gets_no_far_bound():
     assert stats["n_below_obs_floor"] == 1
 
 
-def test_affine_far_limit_is_the_furthest_fitted_observation():
-    recon, depth = _affine_scene(a=1.0, b=0.0, d_min=2.0, d_max=40.0)
-    _coeffs, far_limits, _stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
-    # Observations stop at 40 m, so nothing beyond ~40 m has evidence
-    assert far_limits[0] == pytest.approx(40.0, rel=0.05)
+def test_affine_far_limit_is_the_furthest_surviving_vda_inlier():
+    # a=2.0, b=-0.002 puts d_colmap on a visibly different scale from d_vda (max 20.8 vs
+    # 39.9), so a bound sourced from the COLMAP side instead of the VDA side is detectable
+    recon, depth = _affine_scene(a=2.0, b=-0.002, d_min=2.0, d_max=40.0)
+    colmap_max = max(float(point.xyz[2]) for point in recon.points3D.values())
+
+    _coeffs, far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert stats["n_fitted"] == 1
+    assert far_limits[0] == pytest.approx(float(depth[0].max()))
+    assert far_limits[0] > 1.5 * colmap_max
+
+
+def test_affine_far_limit_ignores_a_rejected_outlier():
+    # One track lands on a 200-unit sky pixel while reporting a 3 m COLMAP depth. MAD throws
+    # it out of the fit, so it must not stretch the supported range to where there is no fit
+    observations, depth_row = _affine_observations(a=1.5, b=-0.004)
+    depth_row[GRID_H - 1, GRID_W - 1] = 200.0
+    observations.append((GRID_W - 1, GRID_H - 1, 3.0))
+    recon = _fake_reconstruction({"frame_000000.jpg": observations})
+
+    _coeffs, far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth_row[None])
+    assert stats["n_fitted"] == 1
+    assert far_limits[0] == pytest.approx(float(np.sort(depth_row.ravel())[-2]))
 
 
 def test_apply_affine_inverts_the_fitted_mapping():
@@ -216,7 +326,11 @@ def test_apply_affine_masks_past_the_saturation_horizon():
     assert out[0, 2] == 0.0  # past the horizon, inside far_limit: masked, not a negative depth
 
 
-def test_apply_affine_keeps_zeros_zero():
-    depth = np.array([[0.0, 5.0]], dtype=np.float32)
-    out = sfm._apply_affine_depth(depth, a=1.0, b=0.0, far_limit=np.inf)
+def test_apply_affine_targets_only_positive_input_depths():
+    # 0 = no VDA depth, and a negative depth is nonsense; neither may become a target. With
+    # a=0.5, b=-0.01 an unguarded negative pixel would map to a finite negative depth
+    depth = np.array([[0.0, -5.0, 5.0]], dtype=np.float32)
+    out = sfm._apply_affine_depth(depth, a=0.5, b=-0.01, far_limit=np.inf)
     assert out[0, 0] == 0.0
+    assert out[0, 1] == 0.0
+    assert out[0, 2] == pytest.approx(5.0 / 0.45)

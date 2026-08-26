@@ -135,3 +135,34 @@ rebuild SIGKILLed during `estimate_camera_distortion`: the pycolmap wheel here i
 (`has_cuda False`), so the default `num_threads = -1` spawned one SIFT thread per host core
 (96) on 1080p frames and blew past the 46.6 GB cgroup cap. Now capped at 8, mirroring
 `pointcloud/sfm.py::_SIFT_NUM_THREADS`. Any fresh undistorted scene would have hit this.
+
+## Combined runs (user-requested, both primitives)
+
+Run anyway on request, on the r7 scene (`GH010229_undist_r7`, already built), all three levers
+stacked: `appearance_opt: true` + depth decay `{0.01 → 0.001 @ 12k}` + the radius-7 frame set.
+Configs `$SP/gopro_lever_combined.yaml` (3dgs) and `$SP/gopro_lever_combined_2dgs.yaml` (2dgs).
+
+| run | primitive | PSNR | SSIM | gaussians | train s | mesh verts / tris | main-frac |
+|---|---|---|---|---|---|---|---|
+| base MCMC + c2f | 3dgs | 21.020 | 0.7076 | 1M | 596 | 2 840 472 / 4 461 422 | 0.41 |
+| appearance only | 3dgs | **21.606** | **0.7169** | 1M | 601 | 2 981 732 / 4 662 060 | — |
+| combined (all 3) | 3dgs | 21.400 | 0.7140 | 1M | 612 | 3 453 612 / 5 420 513 | 0.457 |
+| dense_best | 2dgs | 20.270 | 0.6630 | 1.87M | — | 2 100 000 (approx) | 0.60 |
+| combined (all 3) | 2dgs | **20.800** | **0.6780** | 1 875 613 | 803 | 1 967 540 / 3 310 479 | 0.634 |
+
+**The levers are anti-additive on 3dgs.** Summing the isolated deltas predicts 21.76; the
+combined run gives 21.400, i.e. −0.21 dB below appearance alone. Decay's late depth
+down-weight and the r7 frame set both pull against the appearance fit. Appearance alone
+remains the best 3dgs configuration.
+
+**2dgs gains +0.53 dB** (20.270 → 20.800) at effectively unchanged gaussian count, tracking
+the +0.59 dB appearance-alone gain measured on 3dgs — the appearance model is the whole effect
+on this primitive too, and it is primitive-agnostic by construction (`trainer.py:557` applies
+the affine to `render["rgb"]` after rasterization). This is the new 2dgs high-water mark.
+Coarse-to-fine stayed pinned off for 2dgs; DefaultStrategy still OOMs with it.
+
+**Mesh.** 2dgs remains the better surface source: main-component fraction 0.634 vs 0.457, at
+43% fewer triangles. The 3dgs combined mesh is the largest of the five runs (3.45M verts) but
+its main-fraction barely moves, so the extra geometry is fragments, not surface.
+
+**Verdict unchanged:** ship `appearance_opt` on its own. Do not stack decay or radius-7 for PSNR.

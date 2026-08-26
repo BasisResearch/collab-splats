@@ -1004,8 +1004,8 @@ def align_depth_affine(
     """
     Per-frame affine-in-disparity alignment of VDA depth to the reconstruction's world.
 
-    - Returns (coeffs (N,2) [a, b], far_limits (N,) metres, stats). Apply with
-      `_apply_affine_depth`; a scale-only frame is returned as (1/s, 0.0), which is the
+    - Returns (coeffs (N,2) [a, b], far_limits (N,) in INPUT VDA DEPTH UNITS, stats). Apply
+      with `_apply_affine_depth`; a scale-only frame is returned as (1/s, 0.0), which is the
       same mapping the scale path applies.
     - Falls back to scale-only when a frame has fewer than MIN_AFFINE_OBS observations, the
       fit is unsolvable, a <= 0, or the fitted disparity is non-positive at the frame's far
@@ -1238,8 +1238,9 @@ def apply_depth_alignment(
             "depth_scale": "colmap",
             "depth_align_model": "affine",
             "depth_affine_ab": [[float(a), float(b)] for a, b in coeffs],
-            # inf is not valid JSON and zarr attrs are JSON — a scale-only frame's bound
-            # must be written as null, not float("inf"), or the attr write raises
+            # inf is not valid JSON and zarr attrs are JSON. zarr 3.1.6 does NOT raise
+            # here — it writes a bare `Infinity` token, which strict JSON readers
+            # reject. A scale-only frame's bound must be written as null.
             "depth_far_limits": [None if not np.isfinite(x) else float(x) for x in far_limits],
             "depth_masked_fraction": masked,
             "depth_scale_fallback_frames": stats["fallback_frames"],

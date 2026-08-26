@@ -110,3 +110,80 @@ def test_scale_alignment_recovers_a_constant_ratio():
     scales, stats = sfm.align_depth_to_reconstruction(recon, ["frame_000000.jpg"], depth)
     assert scales[0] == pytest.approx(2.0, rel=1e-6)
     assert stats["n_fallback"] == 0
+
+
+def _affine_scene(a, b, n_obs=200, d_min=2.0, d_max=40.0):
+    """
+    One frame whose true mapping is 1/d_colmap = a*(1/d_vda) + b, sampled on the depth grid.
+    """
+    rng = np.random.default_rng(0)
+    d_vda_values = rng.uniform(d_min, d_max, n_obs)
+    depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
+    observations = []
+    for i, d_vda in enumerate(d_vda_values):
+        u, v = i % GRID_W, (i // GRID_W) % GRID_H
+        depth[0, v, u] = d_vda
+        observations.append((u, v, float(1.0 / (a / d_vda + b))))
+    return _fake_reconstruction({"frame_000000.jpg": observations}), depth
+
+
+def test_affine_recovers_the_generating_coefficients():
+    recon, depth = _affine_scene(a=1.5, b=-0.004)
+    coeffs, _far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert coeffs[0, 0] == pytest.approx(1.5, rel=1e-4)
+    assert coeffs[0, 1] == pytest.approx(-0.004, abs=1e-6)
+    assert stats["n_fallback"] == 0
+
+
+def test_affine_is_robust_to_gross_outliers():
+    recon, depth = _affine_scene(a=1.5, b=-0.004)
+    # Corrupt 5% of the observations with a 100x depth error
+    for point in list(recon.points3D.values())[:10]:
+        point.xyz[2] *= 100.0
+
+    coeffs, _far, _stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert coeffs[0, 0] == pytest.approx(1.5, rel=5e-3)
+    assert coeffs[0, 1] == pytest.approx(-0.004, abs=5e-5)
+
+
+def test_affine_falls_back_to_scale_below_the_obs_floor():
+    # 30 observations: above MIN_ALIGN_OBS (20) but below MIN_AFFINE_OBS (50)
+    observations = [(i % GRID_W, i % GRID_H, 2.0 * (i + 1)) for i in range(30)]
+    recon = _fake_reconstruction({"frame_000000.jpg": observations})
+    depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
+    for i in range(30):
+        depth[0, i % GRID_H, i % GRID_W] = float(i + 1)
+
+    coeffs, _far, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert coeffs[0, 1] == 0.0  # scale-only: b is exactly zero
+    assert coeffs[0, 0] == pytest.approx(0.5)  # a = 1/s with s = 2.0
+    assert stats["n_fallback"] == 1
+
+
+def test_affine_far_limit_is_the_furthest_fitted_observation():
+    recon, depth = _affine_scene(a=1.0, b=0.0, d_min=2.0, d_max=40.0)
+    _coeffs, far_limits, _stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    # Observations stop at 40 m, so nothing beyond ~40 m has evidence
+    assert far_limits[0] == pytest.approx(40.0, rel=0.05)
+
+
+def test_apply_affine_inverts_the_fitted_mapping():
+    depth = np.array([[5.0, 10.0, 20.0]], dtype=np.float32)
+    out = sfm._apply_affine_depth(depth, a=1.5, b=-0.004, far_limit=np.inf)
+    expected = depth / (1.5 - 0.004 * depth)
+    np.testing.assert_allclose(out, expected, rtol=1e-6)
+
+
+def test_apply_affine_zeroes_saturated_and_far_pixels():
+    depth = np.array([[5.0, 100.0, 400.0]], dtype=np.float32)
+    # a + b*d goes non-positive at d = 250; far_limit cuts at 90
+    out = sfm._apply_affine_depth(depth, a=1.0, b=-0.004, far_limit=90.0)
+    assert out[0, 0] > 0.0
+    assert out[0, 1] == 0.0  # beyond far_limit
+    assert out[0, 2] == 0.0  # saturated AND beyond far_limit
+
+
+def test_apply_affine_keeps_zeros_zero():
+    depth = np.array([[0.0, 5.0]], dtype=np.float32)
+    out = sfm._apply_affine_depth(depth, a=1.0, b=0.0, far_limit=np.inf)
+    assert out[0, 0] == 0.0

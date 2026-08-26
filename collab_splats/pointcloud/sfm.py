@@ -373,6 +373,9 @@ def generate_vda_depth(
 ########################################################################
 
 MIN_ALIGN_OBS = 20  # per-frame track-observation floor for a trustworthy median
+MIN_AFFINE_OBS = 50  # per-frame floor for the 2-parameter disparity fit (scale needs only 20)
+AFFINE_REJECT_ROUNDS = 2  # MAD-3sigma rejection passes over the least-squares fit
+AFFINE_EPS = 1e-9  # positivity floor on the fitted disparity at the frame's far end
 
 
 def _depth_correspondences(
@@ -493,6 +496,133 @@ def align_depth_to_reconstruction(
         "ratio_p10_p50_p90_after": [float(x) for x in np.percentile(ratios_all / scales[rows_all], [10, 50, 90])],
     }
     return scales, stats
+
+
+def _fit_affine_disparity(d_colmap: np.ndarray, d_vda: np.ndarray) -> tuple[float, float] | None:
+    """
+    Least-squares 1/d_colmap ~= a*(1/d_vda) + b with two MAD-3sigma rejection rounds.
+
+    - Disparity, not depth: gsplat's depth_l1_loss is L1 on 1/d, so the fit is done in the
+      space the loss is paid in. Measured 2026-08-26: the offset term b carries the entire
+      -18.9% loss-floor improvement over a scale-only fit.
+    - Returns None when the surviving inlier set is too small or degenerate to solve.
+    """
+    q_vda = 1.0 / d_vda
+    q_colmap = 1.0 / d_colmap
+    inliers = np.ones(len(q_vda), dtype=bool)
+
+    for _round in range(AFFINE_REJECT_ROUNDS + 1):
+        if inliers.sum() < MIN_AFFINE_OBS:
+            return None
+
+        # Solve the 2-parameter normal equations over the current inliers
+        design = np.stack([q_vda[inliers], np.ones(int(inliers.sum()))], axis=1)
+        solution, _residuals, rank, _sv = np.linalg.lstsq(design, q_colmap[inliers], rcond=None)
+        if rank < 2:
+            return None
+        a, b = float(solution[0]), float(solution[1])
+
+        # Reject at 3 MAD (scaled to sigma) and refit; a zero MAD means an exact fit
+        residual = q_colmap - (a * q_vda + b)
+        mad = float(np.median(np.abs(residual[inliers] - np.median(residual[inliers]))))
+        if mad <= 0:
+            return a, b
+        inliers = np.abs(residual) <= 3.0 * 1.4826 * mad
+
+    return a, b
+
+
+def _apply_affine_depth(depth_row: np.ndarray, a: float, b: float, far_limit: float) -> np.ndarray:
+    """
+    Map one VDA depth map through the fitted affine disparity: d_new = d / (a + b*d).
+
+    - Applied in depth form so a zero-depth pixel never divides; zeros stay zero.
+    - Pixels where the denominator collapses (b < 0 saturates past a horizon) and pixels
+      beyond `far_limit` (no track evidence at that range) are written as 0 = no target.
+    """
+    denominator = a + b * depth_row
+    out = np.zeros_like(depth_row, dtype=np.float32)
+    supported = (depth_row > 0) & (denominator > AFFINE_EPS) & (depth_row <= far_limit)
+    out[supported] = depth_row[supported] / denominator[supported]
+    return out
+
+
+def align_depth_affine(
+    reconstruction: pycolmap.Reconstruction,
+    image_names: list[str],
+    depth: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """
+    Per-frame affine-in-disparity alignment of VDA depth to the reconstruction's world.
+
+    - Returns (coeffs (N,2) [a, b], far_limits (N,) metres, stats). Apply with
+      `_apply_affine_depth`; a scale-only frame is returned as (1/s, 0.0), which is the
+      same mapping the scale path applies.
+    - Falls back to scale-only when a frame has fewer than MIN_AFFINE_OBS observations, the
+      fit is unsolvable, a <= 0, or the fitted disparity is non-positive at the frame's far
+      end. The far end is p99 of the depth map, not its max: a single sky pixel rejects
+      78/300 frames, p99 rejects 14/300 (measured 2026-08-26).
+    - far_limits is the furthest observed track depth per frame. Beyond it the fit is
+      extrapolating, and held-out observations there are 2.2x worse. The bound is ONE-SIDED
+      by design: SIFT tracks do not cover close surfaces, so a near-side bound would delete
+      the closest ~4% of every frame — the near-field geometry this exists to sharpen.
+    """
+    n_frames = depth.shape[0]
+    coeffs = np.zeros((n_frames, 2), dtype=np.float64)
+    far_limits = np.full(n_frames, np.inf)
+    fitted = np.zeros(n_frames, dtype=bool)
+    scale_only_rows: list[int] = []
+    scales = np.full(n_frames, np.nan)
+
+    pairs = _depth_correspondences(reconstruction, image_names, depth)
+    for row, (d_colmap, d_vda) in enumerate(pairs):
+        if len(d_colmap) == 0:
+            continue
+
+        # Evidence bound first: it applies whether or not the affine fit survives
+        far_limits[row] = float(d_vda.max())
+        if len(d_colmap) >= MIN_ALIGN_OBS:
+            scales[row] = float(np.median(d_colmap / d_vda))
+
+        # Affine needs its own, higher observation floor
+        if len(d_colmap) < MIN_AFFINE_OBS:
+            continue
+        solution = _fit_affine_disparity(d_colmap, d_vda)
+        if solution is None:
+            continue
+        a, b = solution
+
+        # Reject a fit that inverts depth or saturates inside the frame's own range
+        far_depth = float(np.percentile(depth[row][depth[row] > 0], 99)) if (depth[row] > 0).any() else 0.0
+        if a <= 0 or far_depth <= 0 or (a / far_depth + b) <= AFFINE_EPS:
+            continue
+        coeffs[row] = (a, b)
+        fitted[row] = True
+
+    # Scale-only frames: a = 1/s, b = 0 reproduces the scale path exactly
+    global_scale = float(np.median(scales[~np.isnan(scales)])) if (~np.isnan(scales)).any() else None
+    for row in np.flatnonzero(~fitted):
+        scale = scales[row] if not np.isnan(scales[row]) else global_scale
+        if scale is None or scale <= 0:
+            raise ValueError(
+                "depth alignment: no frame has enough valid track observations to fit even a "
+                "scale — the reconstruction is too sparse to align VDA depth to the COLMAP world."
+            )
+        coeffs[row] = (1.0 / scale, 0.0)
+        scale_only_rows.append(int(row))
+
+    stats = {
+        "n_fitted": int(fitted.sum()),
+        "n_fallback": len(scale_only_rows),
+        "fallback_frames": [image_names[i] for i in scale_only_rows],
+        "global_scale": global_scale,
+        "far_limit_p10_p50_p90": (
+            [float(x) for x in np.percentile(far_limits[np.isfinite(far_limits)], [10, 50, 90])]
+            if np.isfinite(far_limits).any()
+            else []
+        ),
+    }
+    return coeffs, far_limits, stats
 
 
 def apply_depth_alignment(result: "FeedforwardResult", reconstruction: pycolmap.Reconstruction) -> dict:

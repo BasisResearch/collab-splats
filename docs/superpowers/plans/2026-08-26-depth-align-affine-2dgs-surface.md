@@ -2216,16 +2216,26 @@ inspect and report instead).
 
 - [ ] **Step 5: Format and commit**
 
+**Do NOT run black or isort on `collab_splats/wrapper/reconstructor.py`.** Measured while
+executing Task 12: this venv's black (26.5.1, newer than whatever last formatted the repo)
+reformats 74 pre-existing lines of that file — `_STAGE_ORDER`, the undistort log call, two
+`load_zarr` wraps — none of them yours. That churn buries the real change and touches lines
+another session may be editing. Format the NEW test file only, and hand-match the surrounding
+style (120 columns, trailing commas) in `reconstructor.py`. Verify with
+`rtk proxy git diff --stat` that `reconstructor.py`'s line count matches what you actually
+changed before committing.
+
 ```bash
-/opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/wrapper/reconstructor.py tests/wrapper/test_vda_context.py
-/opt/venv/reconstruction/bin/python -m isort collab_splats/wrapper/reconstructor.py tests/wrapper/test_vda_context.py
-git add -f tests/wrapper/test_vda_context.py
+/opt/venv/reconstruction/bin/python -m black --target-version py311 -l 120 tests/wrapper/test_vda_context.py
+/opt/venv/reconstruction/bin/python -m isort tests/wrapper/test_vda_context.py
+rtk proxy git diff --stat -- collab_splats/wrapper/reconstructor.py   # only your lines
+git add tests/wrapper/test_vda_context.py
 git commit --only collab_splats/wrapper/reconstructor.py tests/wrapper/test_vda_context.py -m "feat(wrapper): wire vda_context_fps, depth_align, random_seed and splat_depth"
 ```
 
 ---
 
-## Task 12: Config surface and docs
+## Task 12: Config surface and docs — DONE (`90df852a`)
 
 > **RUN THIS BEFORE TASK 11.** Task 11 indexes `self.config["preproc"]["vda_context_fps"]`
 > directly, and `tests/wrapper/test_reconstructor.py:122` (`test_no_inline_defaults_in_source`)
@@ -2249,7 +2259,7 @@ rewritten by the RTK hook into a non-patch, so use `rtk proxy git diff -- config
 foreign.patch` and confirm it with `git apply --check --reverse foreign.patch`. Then revert the
 file, add only the new keys, commit, and re-apply the foreign patch.
 
-- [ ] **Step 1: Add the knobs to `configs/base.yaml`**
+- [x] **Step 1: Add the knobs to `configs/base.yaml`**
 
 Under `preproc:`, after `undistort:`:
 
@@ -2298,7 +2308,7 @@ block above `losses:` to:
   # normal, (1-r)*cos(n, dn_expected) + r*cos(n, dn_median).
 ```
 
-- [ ] **Step 2: Verify the config loads and validates**
+- [x] **Step 2: Verify the config loads and validates**
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "
@@ -2316,7 +2326,7 @@ print('SplatsConfig OK')
 ```
 Expected: the four values print and `SplatsConfig OK`
 
-- [ ] **Step 3: Wire the `mesh()` call site Task 10 deferred**
+- [x] **Step 3: Wire the `mesh()` call site Task 10 deferred**
 
 Task 10 added `splat_depth` to `_run_tsdf_mesh`'s signature but deliberately did NOT add the
 call-site line, because doing so before the yaml key existed would have meant a
@@ -2358,7 +2368,7 @@ shape from whichever sibling test already constructs one, rather than inventing
 `_reconstructor_with` if it does not exist. Verify it has teeth by deleting the
 `splat_depth=mesh_cfg["splat_depth"]` line and confirming this test, and only this test, fails.
 
-- [ ] **Step 4: Verify the unknown-spec-key error message names `depth_ratio`**
+- [x] **Step 4: Verify the unknown-spec-key error message names `depth_ratio`**
 
 Moved into the Task 9 remediation commit (it edits `trainer.py`, which this task does not).
 Verify only — the message for an unknown key on `normal_consistency` should name the legal set
@@ -2376,19 +2386,19 @@ except ValueError as e:
 Expected: the message lists `depth_ratio` among the legal keys. If it does not, the Task 9
 remediation did not land — fix it there, not here.
 
-- [ ] **Step 5: Document the knobs in `configs/README.md`**
+- [x] **Step 5: Document the knobs in `configs/README.md`**
 
 Add one row/paragraph per knob in the sections that already document `preproc`,
 `pointcloud.instantsfm`, `mesh`, and `splats.losses`, matching that file's existing format.
 Each entry states: what it does, its default, and the measured justification (the numbers in the
 yaml comments above).
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/ -q -x --ignore=tests/integration`
 Expected: no new failures against `docs/known-test-failures.md`
 
-- [ ] **Step 7: Commit (own hunks only — `configs/base.yaml` carries foreign work)**
+- [x] **Step 7: Commit (own hunks only — `configs/base.yaml` carries foreign work)**
 
 ```bash
 git diff configs/base.yaml   # confirm only your hunks are staged-worthy; if foreign hunks are

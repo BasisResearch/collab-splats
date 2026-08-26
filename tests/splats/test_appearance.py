@@ -33,9 +33,9 @@ def test_affine_per_channel_and_only_addressed_row_gets_gradient():
 
 def test_appearance_reg_reads_render_params_or_skips():
     assert OPTIONAL_LOSSES["appearance_reg"] is appearance_reg_loss
-    assert appearance_reg_loss({}, {}, None, 1.0) is None
+    assert appearance_reg_loss({}, {}, None, 1.0, {"weight": 1.0}) is None
     params = torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-    assert appearance_reg_loss({"appearance": params}, {}, None, 1.0).item() == pytest.approx(1.0 / 6)
+    assert appearance_reg_loss({"appearance": params}, {}, None, 1.0, {"weight": 1.0}).item() == pytest.approx(1.0 / 6)
 
 
 def test_config_appearance_fields():

@@ -190,3 +190,65 @@ def test_compute_losses_uses_decayed_weight():
     total, values = compute_losses(50, _render(), _target(), _gaussians(), schedule, 1.0)
     expected = 0.8 * values["l1"] + 0.2 * values["ssim"] + 0.2 * values["depth"]
     assert total.item() == pytest.approx(expected, rel=1e-5)
+
+
+def test_depth_ratio_zero_matches_the_expected_only_loss():
+    render = _render()
+    render["depth_normal_median"] = torch.nn.functional.normalize(
+        torch.randn(1, 16, 16, 3, generator=torch.Generator().manual_seed(2)), dim=-1
+    )
+    target, gaussians = _target(), _gaussians()
+    fn = OPTIONAL_LOSSES["normal_consistency"]
+
+    plain = fn(render, target, gaussians, 1.0, {"weight": 1.0})
+    ratio_zero = fn(render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 0.0})
+    assert torch.allclose(plain, ratio_zero)
+
+
+def test_depth_ratio_one_uses_only_the_median_normal():
+    render = _render()
+    median = torch.nn.functional.normalize(
+        torch.randn(1, 16, 16, 3, generator=torch.Generator().manual_seed(2)), dim=-1
+    )
+    render["depth_normal_median"] = median
+    target, gaussians = _target(), _gaussians()
+    fn = OPTIONAL_LOSSES["normal_consistency"]
+
+    blended = fn(render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 1.0})
+
+    # Same computation with the median normal in the expected slot
+    swapped = dict(render)
+    swapped["depth_normal"] = median
+    reference = fn(swapped, target, gaussians, 1.0, {"weight": 1.0})
+    assert torch.allclose(blended, reference)
+
+
+def test_depth_ratio_is_a_convex_blend():
+    render = _render()
+    render["depth_normal_median"] = torch.nn.functional.normalize(
+        torch.randn(1, 16, 16, 3, generator=torch.Generator().manual_seed(2)), dim=-1
+    )
+    target, gaussians = _target(), _gaussians()
+    fn = OPTIONAL_LOSSES["normal_consistency"]
+
+    at_zero = fn(render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 0.0})
+    at_one = fn(render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 1.0})
+    at_six = fn(render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 0.6})
+    assert torch.allclose(at_six, 0.4 * at_zero + 0.6 * at_one, atol=1e-6)
+
+
+def test_depth_ratio_without_a_median_normal_raises():
+    render = _render()  # no depth_normal_median
+    target, gaussians = _target(), _gaussians()
+    with pytest.raises(ValueError, match="depth_normal_median"):
+        OPTIONAL_LOSSES["normal_consistency"](render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 0.6})
+
+
+def test_compute_losses_passes_the_spec_through():
+    render = _render()
+    render["depth_normal_median"] = torch.nn.functional.normalize(
+        torch.randn(1, 16, 16, 3, generator=torch.Generator().manual_seed(2)), dim=-1
+    )
+    schedule = {"normal_consistency": {"weight": 1.0, "depth_ratio": 1.0}}
+    total, values = compute_losses(0, render, _target(), _gaussians(), schedule, 1.0)
+    assert "normal_consistency" in values

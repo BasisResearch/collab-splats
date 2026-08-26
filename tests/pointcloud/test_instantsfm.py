@@ -311,22 +311,11 @@ def test_nudge_edge_keypoints_pulls_exact_edge_inward_only():
     assert sfm._nudge_edge_keypoints(np.empty((0, 2)), 10, 10).size == 0
 
 
-def test_keep_rows_length_must_match_names(tmp_path, monkeypatch):
-    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
-    frames = np.zeros((6, 32, 32, 3), dtype=np.uint8)
-    with pytest.raises(ValueError, match="keep_rows"):
-        sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[0, 2, 4])
+def _stub_vda_model(monkeypatch):
+    """
+    Patch _load_vda_model with a stub whose depth map for row i is filled with i + 1.
+    """
 
-
-def test_keep_rows_must_be_in_range(tmp_path, monkeypatch):
-    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
-    frames = np.zeros((3, 32, 32, 3), dtype=np.uint8)
-    with pytest.raises(ValueError, match="keep_rows"):
-        sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[0, 9])
-
-
-def test_keep_rows_writes_only_the_requested_rows(tmp_path, monkeypatch):
-    # Stub inference: 5 context frames in, one distinguishable depth map per frame
     def _fake_model(**_kwargs):
         class _M:
             def load_state_dict(self, *_a, **_k):
@@ -345,11 +334,50 @@ def test_keep_rows_writes_only_the_requested_rows(tmp_path, monkeypatch):
         return _M()
 
     monkeypatch.setattr(sfm, "_load_vda_model", _fake_model)
-    (tmp_path / "ckpt").mkdir()
+
+
+def test_keep_rows_length_must_match_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
+    frames = np.zeros((6, 32, 32, 3), dtype=np.uint8)
+    with pytest.raises(ValueError, match=r"keep_rows \(3\) must align one-to-one"):
+        sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[0, 2, 4])
+
+
+def test_keep_rows_must_be_in_range(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
+    frames = np.zeros((3, 32, 32, 3), dtype=np.uint8)
+    with pytest.raises(ValueError, match="out of range"):
+        sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[0, 9])
+
+
+def test_keep_rows_must_not_repeat_a_row(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
+    frames = np.zeros((5, 32, 32, 3), dtype=np.uint8)
+
+    # A collision would hand both keyframes the same depth map instead of raising
+    with pytest.raises(ValueError, match="duplicate rows"):
+        sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[2, 2])
+
+
+def test_keep_rows_writes_only_the_requested_rows(tmp_path, monkeypatch):
+    # Stub inference: 5 context frames in, one distinguishable depth map per frame
+    _stub_vda_model(monkeypatch)
     frames = np.zeros((5, 32, 32, 3), dtype=np.uint8)
     sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[1, 3], depth_width=8)
 
     npy_dir = tmp_path / "depth_vda" / "images" / "npy"
     assert sorted(p.name for p in npy_dir.iterdir()) == ["frame_000000.npy", "frame_000001.npy"]
-    assert np.load(npy_dir / "frame_000000.npy").flat[0] == pytest.approx(2.0)
-    assert np.load(npy_dir / "frame_000001.npy").flat[0] == pytest.approx(4.0)
+    assert np.all(np.load(npy_dir / "frame_000000.npy") == 2.0)
+    assert np.all(np.load(npy_dir / "frame_000001.npy") == 4.0)
+
+
+def test_keep_rows_none_writes_every_frame_in_order(tmp_path, monkeypatch):
+    # Default path: no row selection, so every context row is a keyframe
+    _stub_vda_model(monkeypatch)
+    frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
+    sfm.generate_vda_depth(frames, fps=2.0, out_dir=tmp_path, names=_NAMES, depth_width=8)
+
+    npy_dir = tmp_path / "depth_vda" / "images" / "npy"
+    assert sorted(p.name for p in npy_dir.iterdir()) == ["frame_000000.npy", "frame_000001.npy"]
+    assert np.all(np.load(npy_dir / "frame_000000.npy") == 1.0)
+    assert np.all(np.load(npy_dir / "frame_000001.npy") == 2.0)

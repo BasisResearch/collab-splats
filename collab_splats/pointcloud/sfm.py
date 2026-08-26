@@ -295,9 +295,12 @@ def generate_vda_depth(
     - keep_rows: when set, `frames` is a CONTEXT stream (a contiguous constant-rate grid)
       and only these rows are written, one per entry of `names`, in order. VDA is temporal,
       so inference sees the whole stream and only the write is filtered.
-    - fps: effective keyframe rate — VDA is temporal.
-    - names: staged image filenames (e.g. frame_000000.jpg), one per frame, same order.
-    - out_dir: parent dir; one float32 map per frame lands at
+    - fps: the stream's own frame rate. It only reaches the log line below and upstream's
+      returned value — infer_video_depth takes it as `target_fps` and never reads it
+      (4f5ae23 video_depth.py:70 signature, :162 return), so it resamples nothing.
+    - names: staged image filenames (e.g. frame_000000.jpg), one per KEPT frame — one per
+      entry of `keep_rows`, or one per frame when keep_rows is None. Same order.
+    - out_dir: parent dir; one float32 map per kept frame lands at
       out_dir/depth_vda/images/npy/<stem>.npy — the layout instantsfm's
       ReadDepthsIntoFeatures single-camera branch consumes (data_reader.py:404-407 ->
       ReadDepthsWithFilenames(depth_vda/images) -> npy/<stem>.npy matched by image stem).
@@ -313,6 +316,9 @@ def generate_vda_depth(
     https://github.com/DepthAnything/Video-Depth-Anything @ 4f5ae23 run.py:45-57
     (construct with `metric=`, `load_state_dict(strict=True)`, `infer_video_depth`).
     """
+    # Rows are consumed positionally against `names`, so the selection must be one-to-one:
+    # same length, in range, and no repeats (rounding keyframes onto a context grid can
+    # collide, which would silently hand two keyframes the same depth target)
     if keep_rows is None:
         if len(names) != len(frames):
             raise ValueError(f"names ({len(names)}) and frames ({len(frames)}) must align one-to-one")
@@ -323,6 +329,9 @@ def generate_vda_depth(
         out_of_range = [r for r in keep_rows if not 0 <= r < len(frames)]
         if out_of_range:
             raise ValueError(f"keep_rows out of range for {len(frames)} context frames (first: {out_of_range[0]})")
+        if len(set(keep_rows)) != len(keep_rows):
+            duplicates = sorted({r for r in keep_rows if keep_rows.count(r) > 1})
+            raise ValueError(f"keep_rows has duplicate rows — each keyframe needs its own (first: {duplicates[0]})")
 
     depth_dir = Path(out_dir) / "depth_vda"
     npy_dir = depth_dir / "images" / "npy"
@@ -356,11 +365,11 @@ def generate_vda_depth(
     if keep_rows is not None:
         depths = depths[np.asarray(keep_rows, dtype=np.int64)]
 
-    # Nearest-resize to depth_width and write one map per frame, keyed by image stem
+    # Nearest-resize to depth_width and write one map per kept frame, keyed by image stem
     h, w = depths.shape[1:3]
     depth_hw = (int(round(depth_width * h / w)), depth_width)
     npy_dir.mkdir(parents=True, exist_ok=True)
-    for name, depth in zip(names, depths):
+    for name, depth in zip(names, depths, strict=True):
         small = cv2.resize(depth, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_NEAREST)
         np.save(npy_dir / f"{Path(name).stem}.npy", small.astype(np.float32))
     logger.info("VDA depths written: %s (%d maps @ %dx%d)", npy_dir, len(names), depth_hw[1], depth_hw[0])

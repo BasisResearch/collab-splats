@@ -345,11 +345,14 @@ Extend its docstring with one bullet:
 Replace the window/choose block (the `spacing`/`radius`/`chosen` section) with:
 
 ```python
-    # Window radius: half the target spacing, capped, and kept under spacing/2 so
-    # neighbouring windows never overlap (the index map stays deterministic).
+    # Window radius: half the target spacing, capped. This does NOT guarantee that
+    # neighbouring windows never overlap — the no-grid branch derives spacing from the
+    # FIRST target gap only, and grid mode's spacing is an average — so the dedup pass
+    # below is what actually keeps the index map deterministic.
     if candidates is not None:
-        # Grid mode: spacing and radius are counted in grid steps, and each target
-        # snaps to its nearest grid member before the window is cut around it.
+        # Grid mode: spacing and radius are counted in grid steps, and each target snaps
+        # to the first grid member at or after it (searchsorted side="left", so a target
+        # that is already a grid member maps to itself) before the window is cut.
         grid = np.asarray(sorted({int(c) for c in candidates}), dtype=np.int64)
         if grid.size == 0:
             raise ValueError("_sample_by_quality: candidates is empty")
@@ -2579,6 +2582,16 @@ and why. Commit with `git add -f`.
   unquoted floats), so it is deliberately deferred rather than folded into Task 9. Fix in one
   commit against `trainer.py` after Task 13, reusing the `isinstance(raw, bool) or not
   isinstance(raw, (int, float))` shape already there.
+
+- **The no-grid window radius is derived from the first target gap only.** `spacing =
+  targets[1] - targets[0]` in `_sample_by_quality`, so irregular gaps let neighbouring search
+  windows overlap and two targets collapse onto one frame. Measured at the shipped
+  `search_radius=7`: 17.3% of realistic `(total, n=30)` shapes overlap, 18.3% at `n=300`. The
+  dedup pass added in `24761838` catches the consequence, so nothing is broken — but
+  `min(np.diff(targets))` would remove the cause. Deliberately not folded into Task 3's
+  remediation: it changes frame selection, and the grid runs must not move underneath the
+  measurement. Both `parity_baseline.json` cases have `radius_min == radius_first == 3`, so the
+  fix is verified not to move the parity baseline when it is eventually made.
 
 - **A `splats.zarr` missing its `depth` array still fails with a bare `KeyError`.** Task 10's
   remediation (`9ec5c38f`) scoped the friendly missing-array message to the `median` branch,

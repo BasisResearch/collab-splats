@@ -2444,7 +2444,8 @@ pointcloud:
   method: sfm
   backend: instantsfm
   instantsfm: {retriangulation: true}
-mesh: {enabled: true, source: splats, voxel_size: 0.1, conf_percentile: null}
+mesh: {enabled: true, source: splats, voxel_size: 0.2, sdf_trunc: 0.8, depth_trunc: 100.0,
+       clean_repair: true, conf_percentile: 0, native_resolution: true, color_map_iterations: 0}
 splats:
   enabled: true
   primitive: 2dgs
@@ -2482,10 +2483,45 @@ Per-cell deltas:
 | 3 | `null` | `affine` | `null` | `0.6` | run |
 | 4 | `8.0` | `affine` | `0` | `0.6` | run |
 
-Cells 2 and 3 reuse the existing `GH010229_undist_r7` reconstruction: run them with
-`--stages pointcloud splats mesh`, which re-reads the same COLMAP model and only re-aligns
-depth. Cell 4 needs a fresh scene directory — its context stream changes frame selection, so
-SfM itself is different.
+Cells 2 and 3 must share cell 1's *reconstruction*, not merely its scene directory — and
+neither setting of `--stages pointcloud` gives that. Measured while preparing the run:
+
+- `build_pointcloud(overwrite=False)` short-circuits on `_stage_output_exists("pointcloud")`
+  (`reconstructor.py:860`) and loads the model from disk, so `apply_depth_alignment` never runs
+  and the zarr keeps cell 1's **scale**-aligned depth. The cell would silently be a rerun of
+  cell 1.
+- `build_pointcloud(overwrite=True)` reaches `_run_sfm`, and `InstantSfMCreator.reconstruct`
+  deletes the whole `colmap/sparse/` tree before mapping (`sfm.py:1198-1206`). Unseeded, that
+  puts fresh SfM noise on top of the depth-alignment change and the affine delta stops being
+  attributable.
+
+Re-align against the model already on disk instead. This is the `_run_sfm` tail
+(`reconstructor.py:1076-1096`) verbatim, minus the mapping call, so it exercises the shipped
+`apply_depth_alignment` path:
+
+```python
+model = pycolmap.Reconstruction(str(backend_dir / "colmap" / "sparse" / "0"))
+store = FrameStore.open(recon.frames_zarr)
+outputs = recon._sfm_result_from_reconstruction(model, backend_dir, store)
+attrs = apply_depth_alignment(outputs, model, model="affine")
+outputs.save_zarr(
+    backend_dir / "pointcloud.zarr",
+    extra_attrs={"method": "sfm", "backend": "instantsfm",
+                 "instantsfm_version": importlib.metadata.version("instantsfm"), **attrs},
+)
+```
+
+Then `recon.build_pointcloud()` (no overwrite — it now loads the model from disk) and
+`recon.splats(overwrite=True)`.
+
+Overwriting cell 1's `pointcloud.zarr` this way is safe: it is a pure function of `sparse/0`
+plus the cached VDA npys, so re-running the same driver with `model="scale"` restores it, and
+cell 1's finished outputs in `splats_combined2dgs/` never read it again. Rename `splats/` to
+`splats_cell<N>/` after each cell so the next one starts clean.
+
+Cell 4 is the only cell that legitimately re-runs SfM — its context stream changes frame
+selection, so the reconstruction *must* differ. It sets `random_seed: 0` so that run is at
+least reproducible, and it needs its own scene directory.
 
 Write each cell's outputs to a fresh subdirectory so nothing overwrites
 `splats_combined2dgs/`. Note that zarr `mode="w"` rmtree's a symlinked `splats.zarr`; a

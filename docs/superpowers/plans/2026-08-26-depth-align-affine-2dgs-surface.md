@@ -602,7 +602,11 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_instants
 
 ---
 
-## Task 5: Extract `_depth_correspondences` (pure refactor)
+## Task 5: Affine-in-disparity alignment with a one-sided far bound
+
+Two commits: the pure refactor that exposes the correspondences, then the alignment model that consumes them.
+
+### Part A: Extract `_depth_correspondences` (pure refactor)
 
 **Files:**
 - Modify: `collab_splats/pointcloud/sfm.py:340-430`
@@ -834,7 +838,7 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_al
 
 ---
 
-## Task 6: Affine-in-disparity alignment with a one-sided far bound
+### Part B: Affine-in-disparity alignment with a one-sided far bound
 
 **Files:**
 - Modify: `collab_splats/pointcloud/sfm.py` (append after `align_depth_to_reconstruction`)
@@ -1080,7 +1084,7 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_al
 
 ---
 
-## Task 7: Select the alignment model in `apply_depth_alignment`
+## Task 6: Select the alignment model in `apply_depth_alignment`
 
 **Files:**
 - Modify: `collab_splats/pointcloud/sfm.py:435-475` (`apply_depth_alignment`)
@@ -1238,7 +1242,7 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_al
 
 ---
 
-## Task 8: Reproducible InstantSfM (`random_seed`)
+## Task 7: Reproducible InstantSfM (`random_seed`)
 
 **Files:**
 - Modify: `collab_splats/pointcloud/sfm.py:808-829` (`InstantSfMCreator` fields + `_build_config`)
@@ -1312,7 +1316,11 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_sfm_crea
 
 ---
 
-## Task 9: 2DGS median depth reaches the render dict
+## Task 8: 2DGS median depth: render dict and `splats.zarr`
+
+Two commits: median depth reaches the render dict, then it is persisted. Part B needs only Part A, nothing from the loss tasks.
+
+### Part A: 2DGS median depth reaches the render dict
 
 **Files:**
 - Modify: `collab_splats/splats/rendering.py:90-111`
@@ -1423,7 +1431,91 @@ git commit --only collab_splats/splats/rendering.py tests/splats/test_rendering.
 
 ---
 
-## Task 10: Blended normal consistency (`depth_ratio`)
+### Part B: Write `median_depth` into `splats.zarr`
+
+**Files:**
+- Modify: `collab_splats/splats/outputs.py:30-110`
+- Test: `tests/splats/test_outputs.py`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/splats/test_outputs.py`:
+
+```python
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat rasterization is CUDA-only")
+def test_2dgs_render_all_views_writes_median_depth(tmp_path):
+    store = _render_scene(tmp_path, primitive="2dgs")
+    assert "median_depth" in store
+    assert store["median_depth"].shape == store["depth"].shape
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat rasterization is CUDA-only")
+def test_3dgs_render_all_views_omits_median_depth(tmp_path):
+    store = _render_scene(tmp_path, primitive="3dgs")
+    assert "median_depth" not in store
+```
+
+Add a `_render_scene(tmp_path, primitive)` helper to that file if one does not already exist,
+built on `tests/splats/synthetic.make_scene` and `render_all_views`, matching the way the
+existing tests in `tests/splats/test_outputs.py` construct their inputs.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_outputs.py -k median_depth -v`
+Expected: FAIL with `assert 'median_depth' in store` (or SKIPPED without CUDA — verify on a GPU box before merging)
+
+- [ ] **Step 3: Write the implementation**
+
+In `collab_splats/splats/outputs.py`, in `render_all_views`, extend the array declaration:
+
+```python
+    # Per-view chunks so downstream stages read frames independently; filled inside the loop
+    per_view_arrays = {
+        "rgb": ((n_views, height, width, 3), np.uint8),
+        "depth": ((n_views, height, width), np.float32),
+        "normal": ((n_views, height, width, 3), np.float32),
+        "alpha": ((n_views, height, width), np.float32),
+    }
+
+    # 2DGS also renders a median (surface) depth; mesh.splat_depth chooses which one TSDF fuses
+    writes_median_depth = cfg.primitive == "2dgs"
+    if writes_median_depth:
+        per_view_arrays["median_depth"] = ((n_views, height, width), np.float32)
+```
+
+And in the per-view write block, after the `store["alpha"][view] = ...` line:
+
+```python
+            if writes_median_depth:
+                store["median_depth"][view] = render["median_depth"][0, ..., 0].cpu().numpy()
+```
+
+Add one docstring bullet to `render_all_views`:
+
+```
+    - 2DGS additionally writes ``median_depth`` (the RaDe-GS surface depth); 3DGS has none.
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/ -v`
+Expected: all pass (or skipped without CUDA)
+
+- [ ] **Step 5: Format and commit**
+
+```bash
+/opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/splats/outputs.py tests/splats/test_outputs.py
+/opt/venv/reconstruction/bin/python -m isort collab_splats/splats/outputs.py tests/splats/test_outputs.py
+git commit --only collab_splats/splats/outputs.py tests/splats/test_outputs.py -m "feat(splats): write 2dgs median_depth into splats.zarr"
+```
+
+---
+
+## Task 9: Blended normal consistency (`depth_ratio`)
+
+Two commits: the blended loss, then the config validation that guards its one knob.
+
+### Part A: Blended normal consistency (`depth_ratio`)
 
 **Files:**
 - Modify: `collab_splats/splats/losses.py` (all six loss functions + `compute_losses`)
@@ -1587,7 +1679,7 @@ git commit --only collab_splats/splats/losses.py tests/splats/test_losses.py -m 
 
 ---
 
-## Task 11: Validate `depth_ratio` in `SplatsConfig`
+### Part B: Validate `depth_ratio` in `SplatsConfig`
 
 **Files:**
 - Modify: `collab_splats/splats/trainer.py:140-165`
@@ -1678,87 +1770,7 @@ git commit --only collab_splats/splats/trainer.py tests/splats/test_trainer.py -
 
 ---
 
-## Task 12: Write `median_depth` into `splats.zarr`
-
-**Files:**
-- Modify: `collab_splats/splats/outputs.py:30-110`
-- Test: `tests/splats/test_outputs.py`
-
-- [ ] **Step 1: Write the failing test**
-
-Append to `tests/splats/test_outputs.py`:
-
-```python
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat rasterization is CUDA-only")
-def test_2dgs_render_all_views_writes_median_depth(tmp_path):
-    store = _render_scene(tmp_path, primitive="2dgs")
-    assert "median_depth" in store
-    assert store["median_depth"].shape == store["depth"].shape
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat rasterization is CUDA-only")
-def test_3dgs_render_all_views_omits_median_depth(tmp_path):
-    store = _render_scene(tmp_path, primitive="3dgs")
-    assert "median_depth" not in store
-```
-
-Add a `_render_scene(tmp_path, primitive)` helper to that file if one does not already exist,
-built on `tests/splats/synthetic.make_scene` and `render_all_views`, matching the way the
-existing tests in `tests/splats/test_outputs.py` construct their inputs.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_outputs.py -k median_depth -v`
-Expected: FAIL with `assert 'median_depth' in store` (or SKIPPED without CUDA — verify on a GPU box before merging)
-
-- [ ] **Step 3: Write the implementation**
-
-In `collab_splats/splats/outputs.py`, in `render_all_views`, extend the array declaration:
-
-```python
-    # Per-view chunks so downstream stages read frames independently; filled inside the loop
-    per_view_arrays = {
-        "rgb": ((n_views, height, width, 3), np.uint8),
-        "depth": ((n_views, height, width), np.float32),
-        "normal": ((n_views, height, width, 3), np.float32),
-        "alpha": ((n_views, height, width), np.float32),
-    }
-
-    # 2DGS also renders a median (surface) depth; mesh.splat_depth chooses which one TSDF fuses
-    writes_median_depth = cfg.primitive == "2dgs"
-    if writes_median_depth:
-        per_view_arrays["median_depth"] = ((n_views, height, width), np.float32)
-```
-
-And in the per-view write block, after the `store["alpha"][view] = ...` line:
-
-```python
-            if writes_median_depth:
-                store["median_depth"][view] = render["median_depth"][0, ..., 0].cpu().numpy()
-```
-
-Add one docstring bullet to `render_all_views`:
-
-```
-    - 2DGS additionally writes ``median_depth`` (the RaDe-GS surface depth); 3DGS has none.
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/ -v`
-Expected: all pass (or skipped without CUDA)
-
-- [ ] **Step 5: Format and commit**
-
-```bash
-/opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/splats/outputs.py tests/splats/test_outputs.py
-/opt/venv/reconstruction/bin/python -m isort collab_splats/splats/outputs.py tests/splats/test_outputs.py
-git commit --only collab_splats/splats/outputs.py tests/splats/test_outputs.py -m "feat(splats): write 2dgs median_depth into splats.zarr"
-```
-
----
-
-## Task 13: `mesh.splat_depth` selects the fused depth
+## Task 10: `mesh.splat_depth` selects the fused depth
 
 **Files:**
 - Modify: `collab_splats/mesh/utils.py:622-659` (`_splats_to_tsdf_inputs`), `collab_splats/wrapper/reconstructor.py:521-560` and `:1339-1412`
@@ -1909,7 +1921,7 @@ git commit --only collab_splats/mesh/utils.py collab_splats/wrapper/reconstructo
 
 ---
 
-## Task 14: Wire the context stream and alignment model through the Reconstructor
+## Task 11: Wire the context stream and alignment model through the Reconstructor
 
 **Files:**
 - Modify: `collab_splats/wrapper/reconstructor.py:129-240` (`extract_frames`), `:832-843` (call site), `:1020-1090` (`_run_sfm`)
@@ -2154,7 +2166,7 @@ git commit --only collab_splats/wrapper/reconstructor.py tests/wrapper/test_vda_
 
 ---
 
-## Task 15: Config surface and docs
+## Task 12: Config surface and docs
 
 **Files:**
 - Modify: `configs/base.yaml` (FOREIGN DIFFS — stage with `git commit --only`)
@@ -2251,7 +2263,7 @@ git commit --only configs/base.yaml configs/README.md -m "feat(configs): vda_con
 
 ---
 
-## Task 16: Run the 4-cell grid
+## Task 13: Run the 4-cell grid
 
 **Files:**
 - Create: `evals/results/2026-08-26-depth-align-grid/` (gitignored)
@@ -2351,24 +2363,24 @@ flip. Commit with `git add -f`.
 | A — `decode_context` | 2 |
 | A — `_sample_by_quality(candidates=)`, `sample_fps`/`sample_uniform` passthrough | 3 |
 | A — `generate_vda_depth(keep_rows=)` | 4 |
-| A — reconstructor wiring + video-absent fallback | 14 |
-| B — `_depth_correspondences` extraction | 5 |
-| B — `align_depth_affine`, p99 positivity guard, MAD rejection, scale fallback | 6 |
-| B — `depth_align_model` / `depth_affine_ab` attrs, `depth_scale: "colmap"` retained | 7 |
-| C — `median_depth` + `depth_normal_median` in the render | 9 |
-| C — uniform `spec` 5th arg, blended loss, default 0.0 | 10 |
-| C — trainer allow-list, range check, 2dgs-only | 11 |
-| C — `outputs.py` writes `median_depth` | 12 |
-| D — `random_seed` | 8, 14 |
-| E — `mesh.splat_depth` | 13 |
-| F — one-sided far bound | 6 (inside `align_depth_affine` / `_apply_affine_depth`) |
-| F — honest sfm masking log | 14 |
-| Config surface | 15 |
-| Grid + grading | 16 |
+| A — reconstructor wiring + video-absent fallback | 11 |
+| B — `_depth_correspondences` extraction | 5 (Part A) |
+| B — `align_depth_affine`, p99 positivity guard, MAD rejection, scale fallback | 5 (Part B) |
+| B — `depth_align_model` / `depth_affine_ab` attrs, `depth_scale: "colmap"` retained | 6 |
+| C — `median_depth` + `depth_normal_median` in the render | 8 (Part A) |
+| C — uniform `spec` 5th arg, blended loss, default 0.0 | 9 (Part A) |
+| C — trainer allow-list, range check, 2dgs-only | 9 (Part B) |
+| C — `outputs.py` writes `median_depth` | 8 (Part B) |
+| D — `random_seed` | 7, 11 |
+| E — `mesh.splat_depth` | 10 |
+| F — one-sided far bound | 5 (Part B, inside `align_depth_affine` / `_apply_affine_depth`) |
+| F — honest sfm masking log | 11 |
+| Config surface | 12 |
+| Grid + grading | 13 |
 | Comment fix at `sfm.py:307` (metric=True) | 4 (`_load_vda_model`) |
 
 **Placeholder scan:** none — every code step carries the code, every command carries its
-expected output. Two steps say "match the existing helper" (Task 9's `_toy_scene`, Task 12's
+expected output. Two steps say "match the existing helper" (Task 8's `_toy_scene` and
 `_render_scene`) because those files' fixture style must be read first; both name the exact
 source (`tests/splats/synthetic.make_scene`) and the exact signature to check
 (`trainer.py:222`).

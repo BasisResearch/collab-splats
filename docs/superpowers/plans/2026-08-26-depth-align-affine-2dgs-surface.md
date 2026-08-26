@@ -280,15 +280,17 @@ def test_candidates_restrict_chosen_frames_to_the_grid(tiny_video, clean_report)
 
 
 def test_candidates_substitute_a_blurry_target_within_the_grid(tiny_video):
-    # Grid every 3rd frame; frame 30 is a grid member and unusable -> substitute must
-    # also be a grid member, not 29 or 31
+    # Grid every 3rd frame (20 members), 5 targets -> grid spacing 4 -> radius 1, so each
+    # window is 3 grid members wide and substitution is actually possible. Target 30 is an
+    # exact grid member and unusable, so the pick must move to 27 or 33 — never to 29 or 31.
     report = _synthetic_report(60, bad=(30,))
     grid = list(range(0, 60, 3))
     _frames, records = sample_uniform(
-        tiny_video, max_frames=10, report=report, search_radius=7, candidates=grid
+        tiny_video, max_frames=5, report=report, search_radius=7, candidates=grid
     )
     chosen = [r["frame_idx"] for r in records]
     assert 30 not in chosen
+    assert {27, 33} & set(chosen)
     assert set(chosen) <= set(grid)
 
 

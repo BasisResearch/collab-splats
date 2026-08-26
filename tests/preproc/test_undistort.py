@@ -11,6 +11,7 @@ import pytest
 import collab_splats.wrapper.reconstructor as recon_mod
 from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.preproc.undistort import (
+    _SIFT_NUM_THREADS,
     DistortionProfile,
     estimate_camera_distortion,
     undistort_frames,
@@ -98,6 +99,30 @@ def test_wrong_frame_dims_raise():
     profile = _profile(width=640, height=480)
     with pytest.raises(ValueError, match="dims"):
         undistort_frames([np.zeros((100, 100, 3), dtype=np.uint8)], profile)
+
+
+def test_estimate_camera_distortion_caps_sift_threads(monkeypatch):
+    # The pycolmap wheel here is CPU-only, so an uncapped num_threads (-1) spawns one
+    # SIFT thread per host core and OOM-kills the container on 1080p frames.
+    pycolmap = pytest.importorskip("pycolmap")
+    captured = {}
+
+    def fake_extract(database, image_dir, **kwargs):
+        captured["extract"] = kwargs["extraction_options"].num_threads
+
+    def fake_match(database, **kwargs):
+        captured["match"] = kwargs["matching_options"].num_threads
+
+    monkeypatch.setattr(pycolmap, "extract_features", fake_extract)
+    monkeypatch.setattr(pycolmap, "match_exhaustive", fake_match)
+    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **kw: {})
+
+    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(3)]
+    with pytest.raises(ValueError, match="registered no model"):
+        estimate_camera_distortion(frames, max_frames=3)
+
+    assert captured == {"extract": _SIFT_NUM_THREADS, "match": _SIFT_NUM_THREADS}
+    assert 0 < _SIFT_NUM_THREADS <= 16
 
 
 @pytest.mark.slow

@@ -76,6 +76,13 @@ class DistortionProfile:
 # Estimation (pycolmap self-calibration)
 ########################################
 
+# CPU SIFT threads: pycolmap 4.0.4 here is a CPU-only wheel (has_cuda False), so the
+# default num_threads (-1) spawns one thread per HOST core — 96 on this machine — and
+# per-thread RAM on 1920x1080 frames blows past the 46.6 GB container cgroup cap
+# (measured: SIGKILL during calibration on a 300-frame GoPro scene). Mirrors
+# pointcloud/sfm.py::_SIFT_NUM_THREADS.
+_SIFT_NUM_THREADS = 8
+
 
 def estimate_camera_distortion(frames: list[np.ndarray], max_frames: int = 60) -> DistortionProfile:
     """
@@ -122,8 +129,12 @@ def estimate_camera_distortion(frames: list[np.ndarray], max_frames: int = 60) -
             image_dir,
             camera_mode=pycolmap.CameraMode.SINGLE,
             reader_options=pycolmap.ImageReaderOptions(camera_model="OPENCV"),
+            extraction_options=pycolmap.FeatureExtractionOptions(num_threads=_SIFT_NUM_THREADS),
         )
-        pycolmap.match_exhaustive(database)
+        pycolmap.match_exhaustive(
+            database,
+            matching_options=pycolmap.FeatureMatchingOptions(num_threads=_SIFT_NUM_THREADS),
+        )
         reconstructions = pycolmap.incremental_mapping(database, image_dir, out_dir)
 
         if not reconstructions:

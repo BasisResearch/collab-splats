@@ -74,6 +74,11 @@ def test_splat_depth_median_reads_the_median_array(tmp_path):
     assert expected[0, 0, 0] == 1.0
     assert median[0, 0, 0] == 3.0
 
+    # Pin the default against a store that HAS median_depth — otherwise a flipped default
+    # only trips the missing-array guard, and that catch dies the day a fixture gains the array
+    default, _rgbs, _c2w, _K = _splats_to_tsdf_inputs(path)
+    assert default[0, 0, 0] == 1.0  # omitted splat_depth means expected, not median
+
 
 def test_splat_depth_median_missing_raises_actionably(tmp_path):
     path = tmp_path / "splats.zarr"
@@ -84,5 +89,5 @@ def test_splat_depth_median_missing_raises_actionably(tmp_path):
 
 
 def test_splat_depth_rejects_an_unknown_value(tmp_path):
-    with pytest.raises(ValueError, match="splat_depth"):
+    with pytest.raises(ValueError, match=r"mesh\.splat_depth"):
         _splats_to_tsdf_inputs(tmp_path / "splats.zarr", splat_depth="surf")

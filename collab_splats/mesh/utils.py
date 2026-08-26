@@ -646,9 +646,9 @@ def _splats_to_tsdf_inputs(
 
     # median_depth only exists in 2dgs stores written by this version of the splats stage
     depth_array = depth_arrays[splat_depth]
-    if depth_array not in store:
+    if splat_depth == "median" and depth_array not in store:
         raise ValueError(
-            f"{splats_zarr} has no '{depth_array}' array — mesh.splat_depth: median needs a 2dgs "
+            f"{splats_zarr} has no 'median_depth' array — mesh.splat_depth: median needs a 2dgs "
             "splats run from this version; re-run the splats stage or use splat_depth: expected."
         )
 

@@ -24,6 +24,7 @@ from collab_splats.wrapper.reconstructor import (
     _STAGE_ORDER,
     LEAF_STAGES,
     Reconstructor,
+    _run_tsdf_mesh,
 )
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
@@ -252,3 +253,32 @@ def test_mesh_sfm_aligned_zarr_fuses(tmp_path):
         out = recon.mesh()
     fuse.assert_called_once()
     assert out == recon.backend_dir / "mesh" / "mesh.ply"
+
+
+def test_run_tsdf_mesh_forwards_splat_depth_to_the_adapter(tmp_path):
+    """
+    splat_depth has to survive the last hop too — mesh() → _run_tsdf_mesh → the splats adapter.
+    """
+    # Store carries BOTH depth arrays, so a dropped pass-through fuses 1.0 instead of raising
+    splats_zarr = tmp_path / "splats.zarr"
+    _write_minimal_splats_zarr(splats_zarr, n_views=2, height=4, width=5)
+    store = zarr.open_group(splats_zarr, mode="a")
+    store.create_array("median_depth", data=np.full((2, 4, 5), 3.0, np.float32))
+
+    result = SimpleNamespace(extrinsics=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)))
+    with patch("collab_splats.mesh.utils.mesh_from_tsdf_inputs") as fuse:
+        fuse.return_value = SimpleNamespace(mesh_path=tmp_path / "mesh.ply")
+        _run_tsdf_mesh(
+            result=result,
+            pointcloud_zarr=tmp_path / "pointcloud.zarr",
+            output_dir=tmp_path,
+            voxel_size=0.01,
+            sdf_trunc=0.04,
+            depth_trunc=2.0,
+            source="splats",
+            splats_zarr=splats_zarr,
+            splat_depth="median",
+        )
+
+    # Assert on the fused values, not a mock kwarg — this exercises the adapter end of the hop
+    assert fuse.call_args.args[0][0, 0, 0] == 3.0  # the median array, not the expected one

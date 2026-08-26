@@ -131,6 +131,35 @@ def test_2dgs_render_carries_median_depth_and_its_normal():
     assert render["depth_normal_median"].shape == render["depth_normal"].shape
     assert render["median_depth"].requires_grad
 
+    # Content, not just plumbing: over a cloud the median depth is not the alpha-weighted
+    # expectation, and its finite difference is not a second copy of the expected depth normal
+    assert (render["median_depth"] > 0).any()
+    assert not torch.equal(render["median_depth"], render["depth"])
+    assert not torch.allclose(render["depth_normal_median"], render["depth_normal"])
+
+
+@cuda
+def test_2dgs_median_depth_equals_expected_depth_on_a_single_surface():
+    # One opaque disc face-on at distance 4: exactly one Gaussian per ray, so the median depth IS the
+    # expected depth and the distortion map is 0 there. Both rasterizer outputs are (C,H,W,1) and both
+    # differentiable, so only their values separate median_depth from the distortion map next to it.
+    cam_to_world, intrinsics = _rotated_camera()
+    render, _info = render_view("2dgs", _flat_disc(), cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False)
+    assert render["alpha"][0, 32, 32, 0] > 0.5
+    assert render["depth"][0, 32, 32, 0].item() == pytest.approx(4.0, rel=1e-3)
+    assert render["median_depth"][0, 32, 32, 0].item() == pytest.approx(4.0, rel=1e-3)
+    assert render["distortion"][0, 32, 32, 0].item() == pytest.approx(0.0, abs=1e-6)
+
+
+@cuda
+def test_2dgs_without_normals_omits_the_finite_differenced_depth_normals():
+    # The rasterizer's own normal and median depth come free and stay; only depth_to_normal is skipped
+    cam_to_world, intrinsics = _camera()
+    render, _info = render_view(
+        "2dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False, render_normals=False
+    )
+    assert set(render) == {"rgb", "alpha", "depth", "median_depth", "normal", "distortion"}
+
 
 @cuda
 def test_3dgs_render_has_no_median_depth():

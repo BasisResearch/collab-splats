@@ -57,11 +57,12 @@ def render_view(
 
     - Normals are camera-frame for both primitives; `depth_normal` is finite-differenced at an identity pose.
     - 3DGS `normal` is unit length (zero where nothing renders). `render_normals=False` skips the extra-signal
-      pass and omits both `normal` and `depth_normal` (only the normal_consistency loss reads them); 2DGS
-      always returns normals from its rasterizer, so the flag is ignored there.
+      pass and omits both `normal` and `depth_normal` (only the normal_consistency loss reads them); for 2DGS
+      it omits only the finite-differenced `depth_normal`/`depth_normal_median`, since the rasterizer's own
+      `normal` and `median_depth` come free and other consumers read them.
     - 2DGS `normal` is the alpha-weighted accumulated normal (non-unit), mirroring upstream gsplat's 2DGS
       trainer, so the consistency loss is effectively alpha^2-weighted there. Deliberately not normalized.
-    - 2DGS extras: `distortion`, plus `median_depth` and its finite-differenced `depth_normal_median`.
+    - 2DGS extras: `distortion`, plus `median_depth` and, when `render_normals`, its `depth_normal_median`.
     """
     assert cam_to_world.shape[0] == 1, "render_view renders one camera at a time"
 
@@ -107,18 +108,23 @@ def render_view(
 
         # RaDe-GS median depth: the depth of the median Gaussian along each ray, rather than
         # the alpha-weighted expectation. Sparse by construction (one Gaussian per ray
-        # receives gradient) but sharper across depth discontinuities, so its finite-differenced
-        # normal is a second consistency target — see losses.normal_consistency_loss.
+        # receives gradient) but sharper across depth discontinuities. Unconditional — the
+        # splats.zarr writer persists it and has no render_normals to gate on.
         render = {
             "rgb": rgb,
             "alpha": alpha,
             "depth": depth,
             "median_depth": median_depth,
             "normal": normal_cam,
-            "depth_normal": depth_to_normal(depth, identity_pose, intrinsics),
-            "depth_normal_median": depth_to_normal(median_depth, identity_pose, intrinsics),
             "distortion": distortion,
         }
+
+        # Only normal_consistency_loss reads either depth normal (the median one only when its
+        # depth_ratio > 0), and the trainer gates render_normals on that same loss_active — so off
+        # its schedule both finite differences are dead tensors held live through backward
+        if render_normals:
+            render["depth_normal"] = depth_to_normal(depth, identity_pose, intrinsics)
+            render["depth_normal_median"] = depth_to_normal(median_depth, identity_pose, intrinsics)
         return render, info
 
     # 3DGS without normals: plain rgb+depth pass (no extra-signal channels through the kernel)

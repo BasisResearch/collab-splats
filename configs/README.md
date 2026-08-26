@@ -552,7 +552,7 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |
 | `<backend>/splats/ckpt.pt` | trainer checkpoint: Gaussian params + pose-opt state, for resuming or re-rendering |
-| `<backend>/splats/splats.zarr` | per-training-view renders: `rgb`, `depth`, `normal`, `alpha`, `c2w`, `K` |
+| `<backend>/splats/splats.zarr` | per-training-view renders: `rgb`, `depth`, `normal`, `alpha`, `c2w`, `K`, plus `median_depth` (the RaDe-GS surface depth) on 2DGS runs |
 | `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
 | `<backend>/pointcloud.zarr` | further processing inside this repo (depth, poses, confidence when the method produces it) — see below |

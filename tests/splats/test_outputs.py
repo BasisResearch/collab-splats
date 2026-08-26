@@ -107,6 +107,12 @@ def test_2dgs_render_all_views_writes_median_depth(tmp_path):
     assert "median_depth" in store
     assert store["median_depth"].shape == store["depth"].shape
 
+    # Content, not just the create_array: the per-view write ran, and what landed is the median
+    # depth rather than a second copy of the alpha-weighted expected depth
+    median = store["median_depth"][:]
+    assert (median > 0).any()
+    assert not np.array_equal(median, store["depth"][:])
+
 
 @cuda
 def test_3dgs_render_all_views_omits_median_depth(tmp_path):

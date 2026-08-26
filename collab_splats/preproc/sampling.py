@@ -267,14 +267,25 @@ def _sample_by_quality(
     usable = filter_frame_quality(report, **(quality or {}))
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
-    # Window radius: half the target spacing, capped, and kept under spacing/2 so
-    # neighbouring windows never overlap (the index map stays deterministic).
+    # Window radius: half the target spacing, capped at search_radius. This does NOT
+    # make the windows disjoint — the no-grid path takes spacing from the FIRST target
+    # gap only, and grid mode takes an average, so irregular targets still overlap.
+    # The dedup pass below is what keeps the index map one-frame-one-row.
     if candidates is not None:
         # Grid mode: spacing and radius are counted in grid steps, and each target
         # snaps to the first grid member at or after it before the window is cut.
         grid = np.asarray(sorted({int(c) for c in candidates}), dtype=np.int64)
         if grid.size == 0:
             raise ValueError("_sample_by_quality: candidates is empty")
+
+        # The grid indexes `usable`/`laplacian` directly, so an out-of-range member is
+        # not a lookup error but silent corruption: a negative one wraps to the far end
+        # of the video and writes a negative frame_idx no downstream row can match.
+        if grid[0] < 0 or grid[-1] >= total:
+            raise ValueError(
+                f"_sample_by_quality: candidates span [{int(grid[0])}, {int(grid[-1])}], "
+                f"outside the video's {total} frames"
+            )
 
         spacing = grid.size / len(targets) if len(targets) > 1 else grid.size
         radius = min(max(int((spacing - 1) // 2), 0), search_radius)
@@ -290,13 +301,14 @@ def _sample_by_quality(
     # `key > best` comparison — the tie-break is parity-critical.
     chosen: list[int] = [max(window, key=lambda i: (bool(usable[i]), float(laplacian[i]))) for window in windows]
 
-    # Two targets can snap to one grid member when the grid is coarse relative to the
-    # budget; keep the first and say so rather than writing a duplicate frame.
+    # Two targets can land on one frame: overlapping search windows when the target gaps
+    # are irregular, or a candidate grid coarser than the frame budget. Keep the first
+    # and say so rather than writing the same frame into the store twice.
     deduped = list(dict.fromkeys(chosen))
     if len(deduped) != len(chosen):
         logger.warning(
-            "%d of %d targets collapsed onto an already-chosen frame (candidate grid too coarse "
-            "for the frame budget); keeping %d unique frames",
+            "%d of %d targets collapsed onto an already-chosen frame (overlapping search "
+            "windows, or a candidate grid too coarse for the frame budget); keeping %d unique frames",
             len(chosen) - len(deduped),
             len(chosen),
             len(deduped),
@@ -337,6 +349,8 @@ def sample_uniform(
     Exactly max_frames evenly-spaced frames spanning the whole video.
 
     - The COUNT is the contract; spacing falls out of the video length.
+    - The count can come in short if two targets pick the same frame; a warning
+      names the cause. Duplicates are dropped, never written to the store twice.
     - report is required — a quality report from qa.compute_video_quality or
       qa.load_video_quality. quality= overrides filter_frame_quality's thresholds.
     - candidates: restrict every selected frame to this index grid (see _sample_by_quality).
@@ -383,6 +397,8 @@ def sample_fps(
     - Outside [min_frames, max_frames] the targets are re-spread evenly over the
       WHOLE video, never truncated — truncation would hand the reconstructor half
       a scene.
+    - The band binds on TARGETS, not on the result: the count can still come in
+      under min_frames if two targets pick the same frame; a warning names the cause.
     - candidates: restrict every selected frame to this index grid (see _sample_by_quality).
     """
     # fps is the contract here, so an absent one is a config error, not a default

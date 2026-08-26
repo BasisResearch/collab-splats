@@ -475,3 +475,71 @@ def test_sample_fps_accepts_candidates(tiny_video, clean_report):
     grid = list(range(0, 60, 3))
     _frames, records = sample_fps(tiny_video, fps=5.0, report=clean_report, search_radius=7, candidates=grid)
     assert set(r["frame_idx"] for r in records) <= set(grid)
+
+
+def test_candidates_keep_a_target_that_is_already_a_grid_member(tiny_video, clean_report):
+    # A target that IS a grid member must snap to itself, not forward to the next one —
+    # sample_fps's targets are grid members by construction, so a forward-biased snap
+    # would shift every keyframe one grid step later.
+    grid = list(range(0, 60, 3))
+    _frames, records = sample_uniform(tiny_video, max_frames=2, report=clean_report, search_radius=0, candidates=grid)
+    assert [r["frame_idx"] for r in records] == [0, 57]
+
+
+def test_fps_targets_survive_the_grid_unchanged(tiny_video, clean_report):
+    # The property the whole context stream rests on, end to end: keyframes at 2 fps drawn
+    # from a 6 fps grid are the SAME frames as without the grid.
+    grid = context_indices(tiny_video, target_fps=6.0)
+    _f1, plain = sample_fps(tiny_video, fps=2.0, report=clean_report, search_radius=0)
+    _f2, gridded = sample_fps(tiny_video, fps=2.0, report=clean_report, search_radius=0, candidates=grid)
+    assert [r["frame_idx"] for r in gridded] == [r["frame_idx"] for r in plain]
+
+
+def test_candidates_coarser_than_the_budget_dedups_and_warns(tiny_video, clean_report, caplog):
+    # 5 grid members, 10 keyframes: targets collapse. The store must never see a frame twice —
+    # a duplicate makes len(store) != len(_idx_to_row) and hands out a zero-baseline pair.
+    grid = list(range(0, 60, 12))
+    with caplog.at_level(logging.WARNING, logger="collab_splats.preproc.sampling"):
+        _frames, records = sample_uniform(
+            tiny_video, max_frames=10, report=clean_report, search_radius=0, candidates=grid
+        )
+
+    chosen = [r["frame_idx"] for r in records]
+    assert chosen == sorted(set(chosen))
+    assert len(chosen) <= len(grid)
+    assert any("collapsed" in r.getMessage() for r in caplog.records)
+
+
+def test_candidates_empty_grid_is_a_hard_error(tiny_video, clean_report):
+    # An empty grid has no member to snap to; returning nothing would look like a short video.
+    with pytest.raises(ValueError, match="candidates is empty"):
+        sample_uniform(tiny_video, max_frames=5, report=clean_report, candidates=[])
+
+
+def test_candidates_need_not_be_sorted_or_unique(tiny_video, clean_report):
+    # The grid is a SET of source indices, so caller order and duplicates must not move a pick.
+    grid = list(range(0, 60, 3))
+    _f1, a = sample_uniform(tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=grid)
+    _f2, b = sample_uniform(
+        tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=list(reversed(grid)) + grid
+    )
+    assert [r["frame_idx"] for r in a] == [r["frame_idx"] for r in b]
+
+
+def test_candidates_outside_the_video_are_rejected(tiny_video, clean_report):
+    # The grid indexes the report's per-frame columns, so a member past `total` is a bug
+    # in the caller's grid, not a frame to clamp. The error must name the offending span.
+    with pytest.raises(ValueError, match="outside the video's 60 frames"):
+        sample_uniform(
+            tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=list(range(-6, 90, 3))
+        )
+
+
+def test_candidates_below_zero_are_rejected(tiny_video, clean_report):
+    # The silent-corruption half: usable[-3] wraps round to frame 57, so frame 57's sharpness
+    # is attributed to index -3 and frame_idx -3 reaches frames.zarr, matching no context row.
+    # A grid running past `total` at least raised an IndexError; a negative one raised nothing.
+    with pytest.raises(ValueError, match=r"candidates span \[-6, 57\], outside the video's 60 frames"):
+        sample_uniform(
+            tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=list(range(-6, 60, 3))
+        )

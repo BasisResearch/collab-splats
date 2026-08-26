@@ -6,6 +6,10 @@ with the same signature ``(render, target, gaussians, scene_scale, spec)``; ``co
 loops over the yaml schedule ``name: {weight[, start, end, end_weight]}`` and adds a loss iff its
 weight at the step is > 0 and the function returns a value. With ``end`` the weight decays
 log-linearly from ``weight`` at ``start`` to ``end_weight`` at ``end`` and holds there.
+
+A loss receives its FULL yaml spec: the scheduling keys (``weight``, ``start``, ``end``,
+``end_weight``) are the caller's — ``compute_losses`` has already applied them, so a loss reads
+only its own extra keys or it double-applies what the caller handled.
 """
 
 import torch
@@ -44,10 +48,14 @@ def normal_consistency_loss(
     """
     Cosine distance between rendered normals and normals finite-differenced from rendered depth.
 
-    - `spec["depth_ratio"]` (default 0.0) blends in the RaDe-GS median-depth normal:
-      `(1 - r) * cos(n, dn_expected) + r * cos(n, dn_median)`. This is a blend of two LOSSES,
+    - `spec["depth_ratio"]` (default 0.0) blends in the RaDe-GS median-depth normal, writing
+      `d(n, m) = 1 - cos(n, m)` for the per-pixel cosine DISTANCE gsplat minimises:
+      `(1 - r) * d(n, dn_expected) + r * d(n, dn_median)`. This is a blend of two LOSSES,
       the RaDe-GS semantics — not upstream-2DGS's `depth_ratio`, which blends the two depths
       into one surf_depth before differencing.
+    - RaDe-GS refills background median depth with its max before differencing
+      (`.worktrees/streaming/collab_splats/nerfstudio/models/rade_gs.py:254`); omitted here on
+      purpose, because the `* alpha` scaling below already zeroes those pixels.
     - Raises when the render carries no normals: the trainer gates `render_normals` on `loss_active`, so an
       active loss without normals is a wiring bug, not a condition to skip silently.
     """
@@ -111,7 +119,6 @@ def scale_reg_loss(
     return gsplat_losses.scale_reg_loss(log_scales)
 
 
-# Name in the yaml `losses:` block -> function. Also the allow-list for config validation.
 def appearance_reg_loss(
     render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
 ) -> Tensor | None:
@@ -124,6 +131,7 @@ def appearance_reg_loss(
     return params.square().mean()
 
 
+# Name in the yaml `losses:` block -> function. Also the allow-list for config validation.
 OPTIONAL_LOSSES = {
     "depth": depth_loss,
     "normal_consistency": normal_consistency_loss,

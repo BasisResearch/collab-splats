@@ -363,14 +363,32 @@ def test_depth_ratio_accepted_on_normal_consistency_for_2dgs():
 
 
 def test_depth_ratio_rejected_on_another_loss():
-    with pytest.raises(ValueError, match="depth_ratio"):
+    with pytest.raises(ValueError, match=r"splats\.losses\.depth:"):
         SplatsConfig.from_dict({"primitive": "2dgs", "losses": {"depth": {"weight": 0.01, "depth_ratio": 0.6}}})
 
 
-def test_depth_ratio_out_of_range_rejected():
-    with pytest.raises(ValueError, match="depth_ratio"):
+def test_bad_spec_key_message_names_the_keys_legal_for_that_loss():
+    # normal_consistency also allows depth_ratio, so its message must offer it; depth's must not
+    with pytest.raises(ValueError, match=r"expected \{weight\[, depth_ratio, end, end_weight, start\]\}"):
+        SplatsConfig.from_dict({"primitive": "2dgs", "losses": {"normal_consistency": {"weight": 0.05, "nope": 1}}})
+    with pytest.raises(ValueError, match=r"expected \{weight\[, end, end_weight, start\]\}"):
+        SplatsConfig.from_dict({"primitive": "2dgs", "losses": {"depth": {"weight": 0.01, "nope": 1}}})
+
+
+@pytest.mark.parametrize("depth_ratio", [1.5, -0.5])
+def test_depth_ratio_out_of_range_rejected(depth_ratio):
+    with pytest.raises(ValueError, match=r"depth_ratio must be in \[0, 1\]"):
         SplatsConfig.from_dict(
-            {"primitive": "2dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": 1.5}}}
+            {"primitive": "2dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": depth_ratio}}}
+        )
+
+
+# I2: yaml parses `yes`/`on`/`true` to True, which a bare float() would accept as a full median blend
+@pytest.mark.parametrize("depth_ratio", [True, False, None, "0.6", [0.6]])
+def test_depth_ratio_non_numeric_rejected(depth_ratio):
+    with pytest.raises(ValueError, match=r"depth_ratio must be a number in \[0, 1\]"):
+        SplatsConfig.from_dict(
+            {"primitive": "2dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": depth_ratio}}}
         )
 
 

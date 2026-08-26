@@ -193,10 +193,7 @@ def test_compute_losses_uses_decayed_weight():
 
 
 def test_depth_ratio_zero_matches_the_expected_only_loss():
-    render = _render()
-    render["depth_normal_median"] = torch.nn.functional.normalize(
-        torch.randn(1, 16, 16, 3, generator=torch.Generator().manual_seed(2)), dim=-1
-    )
+    render = _render()  # no depth_normal_median — the 3dgs / explicit-zero config
     target, gaussians = _target(), _gaussians()
     fn = OPTIONAL_LOSSES["normal_consistency"]
 
@@ -249,6 +246,9 @@ def test_compute_losses_passes_the_spec_through():
     render["depth_normal_median"] = torch.nn.functional.normalize(
         torch.randn(1, 16, 16, 3, generator=torch.Generator().manual_seed(2)), dim=-1
     )
+    fn = OPTIONAL_LOSSES["normal_consistency"]
+    median_only = fn(render, _target(), _gaussians(), 1.0, {"weight": 1.0, "depth_ratio": 1.0}).item()
+
     schedule = {"normal_consistency": {"weight": 1.0, "depth_ratio": 1.0}}
-    total, values = compute_losses(0, render, _target(), _gaussians(), schedule, 1.0)
-    assert "normal_consistency" in values
+    _, values = compute_losses(0, render, _target(), _gaussians(), schedule, 1.0)
+    assert values["normal_consistency"] == pytest.approx(median_only)

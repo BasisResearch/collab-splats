@@ -150,9 +150,9 @@ class SplatsConfig:
                 allowed_spec_keys = allowed_spec_keys | {"depth_ratio"}
             unknown_spec_keys = set(spec) - allowed_spec_keys
             if unknown_spec_keys or "weight" not in spec:
-                raise ValueError(
-                    f"splats.losses.{name}: expected {{weight[, start, end, end_weight]}}, got {sorted(spec)}"
-                )
+                # Report the keys legal for THIS loss, so a depth_ratio typo isn't told the key doesn't exist
+                optional_keys = ", ".join(sorted(allowed_spec_keys - {"weight"}))
+                raise ValueError(f"splats.losses.{name}: expected {{weight[, {optional_keys}]}}, got {sorted(spec)}")
 
             # Decay entries need both endpoints positive (log-linear) and a non-empty interval
             if "end" in spec:
@@ -168,8 +168,16 @@ class SplatsConfig:
         if cfg.primitive == "3dgs" and distortion_weight > 0:
             raise ValueError("splats.losses.distortion is 2dgs-only; set its weight to 0 or use primitive: 2dgs")
 
+        # bool is an int subclass, so `depth_ratio: yes` would coerce to a silent full median blend;
+        # reject bools and non-numbers (a quoted '0.6' too) before any coercion, naming the key
+        raw_depth_ratio = cfg.losses.get("normal_consistency", {}).get("depth_ratio", 0.0)
+        if isinstance(raw_depth_ratio, bool) or not isinstance(raw_depth_ratio, (int, float)):
+            raise ValueError(
+                f"splats.losses.normal_consistency.depth_ratio must be a number in [0, 1], got {raw_depth_ratio!r}"
+            )
+
         # Median depth only exists for 2DGS, so a non-zero blend on 3dgs is a config error
-        depth_ratio = float(cfg.losses.get("normal_consistency", {}).get("depth_ratio", 0.0))
+        depth_ratio = float(raw_depth_ratio)
         if not 0.0 <= depth_ratio <= 1.0:
             raise ValueError(f"splats.losses.normal_consistency.depth_ratio must be in [0, 1], got {depth_ratio}")
         if depth_ratio > 0 and cfg.primitive != "2dgs":

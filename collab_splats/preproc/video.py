@@ -276,13 +276,17 @@ def decode_context(
     - `out_short_side` is the model's native grid (VDA resizes the short side to 518 and
       upscales anything smaller, so decoding below that loses detail without saving GPU).
     - Chunked so a 2000-frame grid never holds 2000 full-resolution frames at once.
+    - Refuses a short decode: rows are consumed positionally downstream, so a missing
+      index raises rather than silently shifting every later row against its image.
     """
     # Lazy import: undistort pulls pycolmap, which video.py otherwise never needs
     from collab_splats.preproc.undistort import undistort_frames
 
     ordered = sorted({int(i) for i in indices})
     if not ordered:
-        return np.zeros((0, out_short_side, out_short_side, 3), dtype=np.uint8)
+        # Degenerate on purpose: guessing a square frame here would look plausible and be
+        # wrong for every real video, so refuse to imply dimensions we never decoded
+        return np.zeros((0, 0, 0, 3), dtype=np.uint8)
 
     out: list[np.ndarray] = []
     for start in range(0, len(ordered), chunk_size):
@@ -290,9 +294,17 @@ def decode_context(
 
         # One ffmpeg select pass per chunk, BGR at source resolution
         decoded = dict(iter_frames(video_path, indices=chunk))
-        bgr_frames = [decoded[i] for i in chunk if i in decoded]
-        if not bgr_frames:
-            continue
+
+        # Rows are consumed positionally downstream (keyframe rows are picked out of this
+        # stack by position), so a silently short chunk would shift every later row against
+        # its image. Refuse rather than return a misaligned stack.
+        missing = [i for i in chunk if i not in decoded]
+        if missing:
+            raise ValueError(
+                f"decode_context: {video_path} returned {len(chunk) - len(missing)}/{len(chunk)} "
+                f"requested frames; first missing index {missing[0]}"
+            )
+        bgr_frames = [decoded[i] for i in chunk]
 
         # Undistort at native resolution — the crop is what makes the context aspect
         # ratio match the keyframes'

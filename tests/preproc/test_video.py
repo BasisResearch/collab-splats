@@ -240,8 +240,24 @@ def test_decode_context_chunking_does_not_change_output(tiny_video):
 
 
 def test_decode_context_empty_indices(tiny_video):
+    # Degenerate trailing dims on purpose — see the docstring; assert the whole shape so a
+    # regression back to a square placeholder is caught
     frames = decode_context(tiny_video, [], out_short_side=120)
-    assert frames.shape[0] == 0
+    assert frames.shape == (0, 0, 0, 3)
+
+
+def test_decode_context_raises_on_a_missing_frame(tiny_video):
+    # 60-frame fixture: index 999 cannot decode, and a short stack would misalign every
+    # later row against its image
+    with pytest.raises(ValueError, match="requested frames"):
+        decode_context(tiny_video, [0, 3, 999], out_short_side=120)
+
+
+def test_decode_context_raises_on_a_missing_video(tmp_path):
+    # A bad path decodes nothing; the error must name the video, not surface as a bare
+    # numpy stack error
+    with pytest.raises(ValueError, match="decode_context"):
+        decode_context(tmp_path / "nope.mp4", [0, 1], out_short_side=64)
 
 
 def test_decode_context_undistorts_before_downscaling(tiny_video):

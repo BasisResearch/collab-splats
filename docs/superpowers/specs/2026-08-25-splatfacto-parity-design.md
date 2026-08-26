@@ -178,3 +178,19 @@ no normalisation) grew to 3.1M Gaussians by step 10.5k and OOM'd (44 GB).
   2.09M sfm reference, render-checked.
 - Defaults on evidence: `preproc.undistort: true`, `splats.normalize_scene:
   true`, `num_downscales: 0`. Owed: 30k confirmation, holdout eval.
+
+### Follow-up 2026-08-26 — 30k confirmation + c2f on 3dgs MCMC
+
+| Run (undist + normalize + dense targets) | PSNR | SSIM | Gauss | Mesh verts / comps / main-frac |
+|---|---|---|---|---|
+| 2dgs 12k (#6) | 20.27 | 0.663 | 1.87M | 2.10M / 98k / 0.60 |
+| 2dgs 30k | 20.03 | 0.661 | 1.23M | 1.73M / 73k / 0.66 |
+| 3dgs MCMC 12k | 20.72 | 0.688 | 1.0M | 2.88M / 221k / 0.43 |
+| 3dgs MCMC + c2f 12k | **21.02** | **0.708** | 1.0M | 2.84M / 234k / 0.41 |
+
+- c2f is NOT buggy: +0.30 dB on 3dgs MCMC (count capped at 1M from 6k, 12% faster).
+  The 2dgs failure is DefaultStrategy runaway at the resolution jumps, not c2f code.
+- 2dgs 30k loses 0.24 dB vs 12k: refine stops at 15k while opacity resets keep pruning.
+  12k is the 2dgs operating point on this scene.
+- Mesh: 2dgs stays the better mesh source (0.60 main-frac vs 0.41 — 3dgs depth ghosting
+  fragments the TSDF); 3dgs is the better PSNR source. Mesh voxel 0.2 world ≈ 6 cm.

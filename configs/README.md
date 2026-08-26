@@ -350,10 +350,13 @@ parameter and raises.
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
 | `preproc.undistort` | bool | `false` | Self-calibrate one shared OPENCV camera (pycolmap, ≤60 frames) and undistort every selected frame (cv2, alpha=0 crop) before `frames.zarr` is written. `frames.zarr` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
+| `preproc.vda_context_fps` | float\|null | `null` | `method: sfm` only: run VDA over a contiguous frame grid at this rate and keep the keyframe rows, instead of running it over the keyframes alone. VDA is temporal, so a sparse keyframe subsample is out of distribution. Setting it also restricts keyframe selection (and blur substitution) to this grid, so keyframes stay a subset of the context stream. Incompatible with `frame_selection: optical_flow` (raises — that sampler picks frames by content, not on a grid). Falls back to keyframe-only VDA, with a warning, when the source video is unavailable (a rerun from a processed scene). `null` = VDA over the keyframes. |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm.py` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
 | `pointcloud.instantsfm.features` | str | `colmap` | sfm only: feature/matching handler. `colmap` (SIFT + exhaustive; GPU when CUDA is available, capped CPU threads otherwise) is the only allowed value — anything else raises at validation |
+| `pointcloud.instantsfm.depth_align` | str | `scale` | How VDA metric depth is mapped into the COLMAP world. `scale` fits one robust multiplier per frame. `affine` fits `1/d_colmap ≈ a·(1/d_vda) + b` per frame — the disparity space gsplat's `depth_l1_loss` is actually paid in; measured 2026-08-26 on GH010229, it cuts the irreducible depth-loss floor 18.9% pooled and 28.8% in the near field. Frames whose fit would send a p99 depth non-positive fall back to `scale`. |
+| `pointcloud.instantsfm.random_seed` | int\|null | `null` | Seed InstantSfM's `RUNTIME_OPTIONS` (numpy/random/torch/cuda). Upstream `InitializeRandomPositions` draws unseeded, so two runs of one scene differ. `null` = upstream behaviour |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`) |
 | `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`) |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points |
@@ -365,6 +368,7 @@ parameter and raises.
 | `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
+| `mesh.splat_depth` | str | `expected` | `source: splats` only: `expected` (alpha-weighted rendered depth) or `median` (RaDe-GS surface depth, sharper across depth discontinuities — 2dgs renders only) |
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `frames.zarr` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
@@ -387,6 +391,7 @@ parameter and raises.
 | `splats.log_every` | int | `500` | Steps between loss log lines |
 | `splats.losses.<name>.weight` | float | see `base.yaml` | Weight of an optional loss: `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`. Absent = off. `3dgs` wants `opacity_reg`+`scale_reg` (MCMC); `2dgs` wants `distortion` instead |
 | `splats.losses.<name>.start` | int | `0` | Step at which that loss switches on |
+| `splats.losses.normal_consistency.depth_ratio` | float | `0.0` | `2dgs` only: RaDe-GS blend weight on the median-depth normal — `(1-r)·d(n, dn_expected) + r·d(n, dn_median)`, `d = 1 - cos`. `0` = expected depth only. Rejected on `3dgs` and outside `[0, 1]` |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
 | `localization.matcher` | str | `loma` | vismatch model name (`loma`, `xfeat`, `disk-lightglue`, `aliked-lightglue`, …) |
 | `localization.top_k` | int | `8` | Reference frames matched per query |

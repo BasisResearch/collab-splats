@@ -1404,6 +1404,7 @@ class Reconstructor:
             conf_percentile=mesh_cfg["conf_percentile"],
             native_resolution=mesh_cfg["native_resolution"],
             color_map_iterations=mesh_cfg["color_map_iterations"],
+            splat_depth=mesh_cfg["splat_depth"],
             frames_zarr=self.frames_zarr,
             source=source,
             splats_zarr=splats_zarr,

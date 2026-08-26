@@ -44,6 +44,15 @@ preproc:
                               # win. frames.zarr reuse is by EXISTENCE — toggling this on an
                               # existing scene needs preprocess(overwrite=True). Localization
                               # QUERY images are NOT undistorted (they never pass through here).
+  vda_context_fps: null       # sfm only: run VDA over a contiguous grid at this rate instead
+                              # of over the keyframes, keeping only the keyframe rows. VDA is
+                              # temporal, so a sparse subsample is out of distribution. Setting
+                              # it also restricts keyframe selection (and blur substitution) to
+                              # the same grid, so keyframes are grid members by construction.
+                              # Measured 2026-08-26 at 8.56 FPS: per-frame depth CV 0.409 ->
+                              # 0.401, co-visible sep-50 disagreement 34.5% -> 25.3%.
+                              # Incompatible with frame_selection: optical_flow.
+                              # null = keyframe-only VDA.
 
 pointcloud:
   method: feedforward         # feedforward | sfm
@@ -104,6 +113,19 @@ pointcloud:
     retriangulation: false    # GLOMAP-style post-BA refinement: retriangulate tracks from the
                                # full pre-filter set + up to 5 further BA rounds (upstream
                                # skip_retriangulation flag). Costs extra runtime.
+    depth_align: scale        # scale | affine — how VDA metric depth is mapped to the
+                              # COLMAP world. 'scale' fits one robust multiplier per frame.
+                              # 'affine' fits 1/d_colmap ~= a*(1/d_vda) + b per frame, the
+                              # space gsplat's depth_l1_loss is actually paid in; measured
+                              # 2026-08-26 it cuts the irreducible depth-loss floor 18.9%
+                              # pooled and 28.8% in the near field. 'affine' also writes 0
+                              # (= no target) for pixels past its saturation horizon and past
+                              # the furthest surviving track observation — one-sided, far side
+                              # only, because tracks do not cover close surfaces and a
+                              # near-side bound would delete the near field this sharpens.
+    random_seed: null         # seed InstantSfM's RUNTIME_OPTIONS (numpy/random/torch/cuda).
+                              # InitializeRandomPositions draws unseeded, so two runs of the
+                              # same scene differ. null = upstream behaviour (unseeded).
 
 semantics:
   enabled: true
@@ -130,6 +152,8 @@ mesh:
   conf_percentile: null    # mask depth below this global confidence percentile (null = off)
   native_resolution: false # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
   color_map_iterations: 0  # rigid color-map optimization iterations after fusion (0 = off)
+  splat_depth: expected    # source: splats only — 'expected' (alpha-weighted rendered
+                           # depth) or 'median' (RaDe-GS surface depth; 2dgs renders only).
 
 # Gaussian splats trained from the pointcloud stage (leaf stage `splats`, upstream gsplat).
 # Photometric (0.8 L1 + 0.2 SSIM) is always on; each loss below is active iff weight > 0 and
@@ -165,7 +189,9 @@ splats:
   log_every: 500
   # Each entry: {weight[, start, end, end_weight]} — with end the weight decays log-linearly
   # from weight at start to end_weight at end and holds there (e.g. fade the depth prior:
-  # depth: {weight: 0.01, end: 12000, end_weight: 0.001}).
+  # depth: {weight: 0.01, end: 12000, end_weight: 0.001}). normal_consistency additionally
+  # accepts depth_ratio (2dgs only, default 0): the RaDe-GS blend weight on the median-depth
+  # normal, (1-r)*cos(n, dn_expected) + r*cos(n, dn_median).
   losses:
     depth: {weight: 0.01}
     normal_consistency: {weight: 0.05, start: 7000}

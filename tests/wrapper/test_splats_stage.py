@@ -66,6 +66,7 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "conf_percentile": 20,
             "native_resolution": False,
             "color_map_iterations": 0,
+            "splat_depth": "expected",
             "source": "feedforward",
         },
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
@@ -253,6 +254,24 @@ def test_mesh_sfm_aligned_zarr_fuses(tmp_path):
         out = recon.mesh()
     fuse.assert_called_once()
     assert out == recon.backend_dir / "mesh" / "mesh.ply"
+
+
+def test_mesh_stage_forwards_splat_depth_from_the_config(tmp_path):
+    """
+    splat_depth has to survive the first hop too — the config dict -> mesh() -> _run_tsdf_mesh.
+    """
+    recon = _stub_reconstructor(tmp_path)
+    recon.config["mesh"]["source"] = "splats"
+    recon.config["mesh"]["splat_depth"] = "median"
+    splats_dir = recon.backend_dir / "splats"
+    splats_dir.mkdir(parents=True)
+    _write_minimal_splats_zarr(splats_dir / "splats.zarr", n_views=3)
+
+    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as fuse:
+        recon.mesh()
+
+    # "median" is not the base.yaml default, so a dropped pass-through cannot fake this
+    assert fuse.call_args.kwargs["splat_depth"] == "median"
 
 
 def test_run_tsdf_mesh_forwards_splat_depth_to_the_adapter(tmp_path):

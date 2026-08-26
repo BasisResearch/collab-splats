@@ -89,3 +89,26 @@ def test_train_rejects_bad_inputs(tmp_path):
     fewer_images = images[:4]
     with pytest.raises(ValueError, match="frames mismatch"):
         train(cfg, fewer_images, world_to_cam, intrinsics, points, colors, tmp_path)
+
+
+def _render_scene(tmp_path, primitive):
+    """
+    Train briefly on a tiny synthetic scene and return the splats.zarr group it wrote.
+    """
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=2, height=32, width=32)
+    cfg = SplatsConfig(primitive=primitive, max_steps=1, cap_max=500, losses={})
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    return zarr.open_group(tmp_path / "splats.zarr", mode="r")
+
+
+@cuda
+def test_2dgs_render_all_views_writes_median_depth(tmp_path):
+    store = _render_scene(tmp_path, primitive="2dgs")
+    assert "median_depth" in store
+    assert store["median_depth"].shape == store["depth"].shape
+
+
+@cuda
+def test_3dgs_render_all_views_omits_median_depth(tmp_path):
+    store = _render_scene(tmp_path, primitive="3dgs")
+    assert "median_depth" not in store

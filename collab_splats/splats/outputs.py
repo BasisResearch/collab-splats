@@ -41,6 +41,7 @@ def render_all_views(
     Re-render every training view at full SH over black, streaming each render into ``store``.
 
     - Writes rgb/depth/normal/alpha (one chunk per view) and c2w/K (one chunk each) to the group.
+    - 2DGS additionally writes ``median_depth`` (the RaDe-GS surface depth); 3DGS has none.
     - With a pose refiner the stored c2w holds the refined poses: what was actually rendered.
     - With an appearance module each view gets its learned colour correction (train views only).
     - Returns per-frame psnr/ssim.
@@ -55,6 +56,12 @@ def render_all_views(
         "normal": ((n_views, height, width, 3), np.float32),
         "alpha": ((n_views, height, width), np.float32),
     }
+
+    # 2DGS also renders a median (surface) depth; mesh.splat_depth chooses which one TSDF fuses
+    writes_median_depth = cfg.primitive == "2dgs"
+    if writes_median_depth:
+        per_view_arrays["median_depth"] = ((n_views, height, width), np.float32)
+
     for name, (shape, dtype) in per_view_arrays.items():
         per_view_chunks = (1, *shape[1:])
         store.create_array(name, shape=shape, dtype=dtype, chunks=per_view_chunks)
@@ -102,6 +109,8 @@ def render_all_views(
             store["depth"][view] = render["depth"][0, ..., 0].cpu().numpy()
             store["normal"][view] = render["normal"][0].cpu().numpy()
             store["alpha"][view] = render["alpha"][0, ..., 0].cpu().numpy()
+            if writes_median_depth:
+                store["median_depth"][view] = render["median_depth"][0, ..., 0].cpu().numpy()
 
     # Cameras are tiny: one chunk each rather than 2N chunk files
     intrinsics_out = intrinsics.cpu().numpy()

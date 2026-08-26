@@ -1027,8 +1027,16 @@ def align_depth_affine(
     - The bound is sourced from the fit's SURVIVING INLIERS, not the raw correspondences,
       so one track on a sky pixel cannot extend the supervised range into garbage.
     - The effective bound is `min(far_limit, saturation_horizon)` where the horizon is
-      `-a/b` for `b < 0`. Without the horizon term, pixels between it and far_limit do not
-      saturate — they explode (measured: 49.9 -> 16633.2 at a=1.5, b=-0.03).
+      `-a/b` for `b < 0`. Without it, pixels AT or PAST the horizon but inside far_limit
+      come out negative or infinite rather than masked. Measured on the shipped code at
+      a=1.5, b=-0.03 (horizon 50), far_limit 60:
+      `[10, 45, 49, 49.9, 50, 55, 80] -> [8.33, 300.0, 1633.3, 16633.3, 0, 0, 0]`.
+      Note what the horizon term does NOT retire: pixels just BELOW the horizon still
+      produce very large depth targets. Zeroing those would need a margin below the
+      horizon, which is an unmeasured tunable and was deliberately not invented. The band
+      is only reachable when `far_limit > horizon`, and the p99 positivity guard already
+      forces `horizon > p99` — so it needs a track landing above the 99th percentile of
+      the depth map, i.e. on sky. Bounded, documented, not fixed.
     """
     n_frames = depth.shape[0]
     coeffs = np.zeros((n_frames, 2), dtype=np.float64)

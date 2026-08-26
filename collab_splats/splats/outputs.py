@@ -19,6 +19,7 @@ from gsplat.losses import ssim_loss
 from torch import Tensor
 
 from collab_splats.splats import GSPLAT_COMMIT
+from collab_splats.splats.appearance import AppearanceModule
 from collab_splats.splats.cameras import CameraOptModule
 from collab_splats.splats.rendering import render_view
 from collab_splats.utils.progress import progress
@@ -30,6 +31,7 @@ def render_all_views(
     cfg,
     gaussians: torch.nn.ParameterDict,
     pose_refiner: CameraOptModule | None,
+    appearance: AppearanceModule | None,
     images: np.ndarray,
     cam_to_world: Tensor,
     intrinsics: Tensor,
@@ -40,6 +42,7 @@ def render_all_views(
 
     - Writes rgb/depth/normal/alpha (one chunk per view) and c2w/K (one chunk each) to the group.
     - With a pose refiner the stored c2w holds the refined poses: what was actually rendered.
+    - With an appearance module each view gets its learned colour correction (train views only).
     - Returns per-frame psnr/ssim.
     """
     n_views, height, width = images.shape[:3]
@@ -63,8 +66,8 @@ def render_all_views(
             # Refined pose if poses were optimised
             view_cam_to_world = cam_to_world[view : view + 1]
             view_intrinsics = intrinsics[view : view + 1]
+            camera_id = torch.tensor([view], device=device)
             if pose_refiner is not None:
-                camera_id = torch.tensor([view], device=device)
                 view_cam_to_world = pose_refiner(view_cam_to_world, camera_id)
                 refined_pose = view_cam_to_world[0]
                 cam_to_world_out[view] = refined_pose.cpu().numpy()
@@ -80,7 +83,10 @@ def render_all_views(
                 cfg.sh_degree,
                 absgrad=False,
             )
-            rendered_rgb = render["rgb"].clamp(0, 1)
+            rendered_rgb = render["rgb"]
+            if appearance is not None:
+                rendered_rgb = appearance(rendered_rgb, camera_id)
+            rendered_rgb = rendered_rgb.clamp(0, 1)
             view_image = images[view]
             target_rgb = torch.from_numpy(view_image).to(device).float()[None] / 255.0
             rendered_nchw = rendered_rgb.permute(0, 3, 1, 2)
@@ -108,6 +114,7 @@ def write_splat_outputs(
     cfg,
     gaussians: torch.nn.ParameterDict,
     pose_refiner: CameraOptModule | None,
+    appearance: AppearanceModule | None,
     images: np.ndarray,
     cam_to_world: Tensor,
     intrinsics: Tensor,
@@ -136,15 +143,21 @@ def write_splat_outputs(
         save_to=ply_path,
     )
 
-    # ckpt.pt: raw parameters + pose deltas + config — everything needed to re-render or continue
+    # ckpt.pt: raw parameters + pose/appearance state + config — everything needed to re-render or continue
     splats_cpu = {name: param.detach().cpu() for name, param in gaussians.items()}
     pose_adjust = None if pose_refiner is None else pose_refiner.state_dict()
-    checkpoint = {"splats": splats_cpu, "pose_adjust": pose_adjust, "config": config_dict}
+    appearance_state = None if appearance is None else appearance.state_dict()
+    checkpoint = {
+        "splats": splats_cpu,
+        "pose_adjust": pose_adjust,
+        "appearance": appearance_state,
+        "config": config_dict,
+    }
     torch.save(checkpoint, out_dir / "ckpt.pt")
 
     # splats.zarr: renders streamed per view, provenance in attrs
     store = zarr.open_group(out_dir / "splats.zarr", mode="w")
-    per_frame = render_all_views(cfg, gaussians, pose_refiner, images, cam_to_world, intrinsics, store)
+    per_frame = render_all_views(cfg, gaussians, pose_refiner, appearance, images, cam_to_world, intrinsics, store)
     image_ids = list(range(len(images)))
     store.attrs.update(
         image_ids=image_ids,

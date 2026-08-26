@@ -50,8 +50,9 @@ def test_train_writes_all_outputs(tmp_path, primitive):
 
     # Checkpoint
     ckpt = torch.load(tmp_path / "ckpt.pt", map_location="cpu", weights_only=False)
-    assert set(ckpt) == {"splats", "pose_adjust", "config"}
+    assert set(ckpt) == {"splats", "pose_adjust", "appearance", "config"}
     assert ckpt["pose_adjust"] is not None and "means" in ckpt["splats"] and ckpt["config"]["primitive"] == primitive
+    assert ckpt["appearance"] is None
 
 
 @cuda

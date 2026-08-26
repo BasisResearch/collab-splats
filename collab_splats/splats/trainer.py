@@ -35,6 +35,7 @@ from sklearn.neighbors import NearestNeighbors
 from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR
 
+from collab_splats.splats.appearance import AppearanceModule
 from collab_splats.splats.cameras import CameraOptModule
 from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
 from collab_splats.splats.outputs import write_splat_outputs
@@ -55,7 +56,11 @@ def _default_losses(primitive: str) -> dict[str, dict]:
     """
     Default loss schedule per primitive: MCMC regularisers for 3dgs, distortion for 2dgs.
     """
-    losses = {"depth": {"weight": 0.01}, "normal_consistency": {"weight": 0.05, "start": 7000}}
+    losses = {
+        "depth": {"weight": 0.01},
+        "normal_consistency": {"weight": 0.05, "start": 7000},
+        "appearance_reg": {"weight": 1e-3},
+    }
     if primitive == "3dgs":
         losses["opacity_reg"] = {"weight": 0.01}
         losses["scale_reg"] = {"weight": 0.01}
@@ -73,6 +78,7 @@ class SplatsConfig:
     primitive: str = "3dgs"
     max_steps: int = 30000
     pose_opt: bool = True
+    appearance_opt: bool = False  # per-image affine colour (AppearanceModule); train views only
     losses: dict[str, dict] | None = None  # None -> _default_losses(primitive)
 
     # Appearance
@@ -89,6 +95,7 @@ class SplatsConfig:
     sh0_lr: float = 2.5e-3
     shN_lr: float = 1.25e-4
     pose_lr: float = 1e-5
+    appearance_lr: float = 1e-3
 
     # Densification
     cap_max: int = 1_000_000  # 3dgs (MCMC): Gaussian budget
@@ -354,6 +361,18 @@ def make_pose_refiner(
     return refiner, optimizer, scheduler
 
 
+def make_appearance_module(
+    cfg: SplatsConfig, n_views: int, lr_gamma: float, device: str
+) -> tuple[AppearanceModule, torch.optim.Optimizer, ExponentialLR]:
+    """
+    Identity-initialised AppearanceModule with Adam at `appearance_lr` and the run's exponential lr decay.
+    """
+    module = AppearanceModule(n_views).to(device)
+    optimizer = torch.optim.Adam(module.parameters(), lr=cfg.appearance_lr)
+    scheduler = ExponentialLR(optimizer, gamma=lr_gamma)
+    return module, optimizer, scheduler
+
+
 def downscale_factor(step: int, num_downscales: int, resolution_schedule: int) -> int:
     """
     Coarse-to-fine divisor at a step: 2^max(0, num_downscales - step // resolution_schedule).
@@ -485,6 +504,12 @@ def train(
         )
         schedulers.append(pose_scheduler)
 
+    # Optional per-image appearance (exposure / white balance) model
+    appearance, appearance_optimizer = None, None
+    if cfg.appearance_opt:
+        appearance, appearance_optimizer, appearance_scheduler = make_appearance_module(cfg, n_views, lr_gamma, device)
+        schedulers.append(appearance_scheduler)
+
     start_time = time.perf_counter()
     view_sampler = ViewSampler(n_views)
     loss_values: dict[str, float] = {}
@@ -506,8 +531,8 @@ def train(
 
         target = prepare_training_target(view_image, view_depth_target, device)
         view_cam_to_world = cam_to_world[view : view + 1]
+        camera_id = torch.tensor([view], device=device)
         if pose_refiner is not None:
-            camera_id = torch.tensor([view], device=device)
             view_cam_to_world = pose_refiner(view_cam_to_world, camera_id)
 
         # Render with the SH bands unlocked so far, over a random background so transparency cannot hide.
@@ -526,6 +551,11 @@ def train(
             absgrad,
             render_normals=render_normals,
         )
+        # Per-image colour correction goes on the splat colour before the background is composited
+        # (the background is not part of the photo's exposure); its params feed appearance_reg
+        if appearance is not None:
+            render["rgb"] = appearance(render["rgb"], camera_id)
+            render["appearance"] = appearance.params(camera_id)
         background = torch.rand(1, 3, device=device)
         transparency = 1.0 - render["alpha"]
         render["rgb"] = render["rgb"] + background * transparency
@@ -543,6 +573,9 @@ def train(
         if pose_optimizer is not None:
             pose_optimizer.step()
             pose_optimizer.zero_grad(set_to_none=True)
+        if appearance_optimizer is not None:
+            appearance_optimizer.step()
+            appearance_optimizer.zero_grad(set_to_none=True)
         for scheduler in schedulers:
             scheduler.step()
 
@@ -567,5 +600,14 @@ def train(
         denormalize_outputs(gaussians, pose_refiner, cam_to_world, center, scale)
 
     write_splat_outputs(
-        cfg, gaussians, pose_refiner, images, cam_to_world, intrinsics_gpu, out_dir, train_seconds, loss_values
+        cfg,
+        gaussians,
+        pose_refiner,
+        appearance,
+        images,
+        cam_to_world,
+        intrinsics_gpu,
+        out_dir,
+        train_seconds,
+        loss_values,
     )

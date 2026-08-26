@@ -44,7 +44,14 @@ def _gaussians(n_points=50):
 
 
 def test_registry_names():
-    assert set(OPTIONAL_LOSSES) == {"depth", "normal_consistency", "distortion", "opacity_reg", "scale_reg"}
+    assert set(OPTIONAL_LOSSES) == {
+        "depth",
+        "normal_consistency",
+        "distortion",
+        "opacity_reg",
+        "scale_reg",
+        "appearance_reg",
+    }
 
 
 def test_photometric_only_when_no_optional_losses():

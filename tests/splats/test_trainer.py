@@ -164,11 +164,14 @@ def _recorder(monkeypatch):
     """
     calls = []
 
-    def record(cfg, gaussians, pose_refiner, images, cam_to_world, intrinsics, out_dir, train_seconds, loss_values):
+    def record(
+        cfg, gaussians, pose_refiner, appearance, images, cam_to_world, intrinsics, out_dir, train_seconds, loss_values
+    ):
         calls.append(
             {
                 "gaussians": gaussians,
                 "pose_refiner": pose_refiner,
+                "appearance": appearance,
                 "train_seconds": train_seconds,
                 "loss_values": loss_values,
             }
@@ -190,14 +193,28 @@ def _assert_trained(calls, points):
 
 
 @cuda
-@pytest.mark.parametrize("primitive, pose_opt", [("3dgs", False), ("2dgs", False), ("3dgs", True)])
-def test_train_short_run_moves_gaussians(monkeypatch, tmp_path, primitive, pose_opt):
+@pytest.mark.parametrize(
+    "primitive, pose_opt, appearance_opt",
+    [("3dgs", False, False), ("2dgs", False, False), ("3dgs", True, True)],
+)
+def test_train_short_run_moves_gaussians(monkeypatch, tmp_path, primitive, pose_opt, appearance_opt):
     images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
     calls = _recorder(monkeypatch)
-    cfg = SplatsConfig(primitive=primitive, pose_opt=pose_opt, max_steps=5, log_every=1, means_lr=1e-2)
+    cfg = SplatsConfig(
+        primitive=primitive,
+        pose_opt=pose_opt,
+        appearance_opt=appearance_opt,
+        max_steps=5,
+        log_every=1,
+        means_lr=1e-2,
+    )
     train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
     _assert_trained(calls, points)
     assert (calls[0]["pose_refiner"] is not None) == pose_opt
+    assert (calls[0]["appearance"] is not None) == appearance_opt
+    if appearance_opt:
+        assert "appearance_reg" in calls[0]["loss_values"]
+        assert calls[0]["appearance"].params.weight.abs().sum() > 0
 
 
 @cuda

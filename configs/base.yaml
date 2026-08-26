@@ -139,6 +139,9 @@ splats:
   max_steps: 30000
   pose_opt: true             # refine camera poses jointly (CameraOptModule). +2.2 dB on a
                              # 300-frame GoPro scene, +0.4 dB on the 30-frame tutorial, ~+3% time.
+  appearance_opt: false      # per-image affine colour (gain + bias per channel) to absorb
+                             # exposure / white-balance drift. Train views only — novel views
+                             # render uncorrected. Regularised by losses.appearance_reg.
   sh_degree: 3
   sh_degree_interval: 1000
   init_opacity: 0.1
@@ -149,6 +152,7 @@ splats:
   sh0_lr: 2.5e-3
   shN_lr: 1.25e-4
   pose_lr: 1.0e-5            # x world-frame camera extent (also under normalize_scene)
+  appearance_lr: 1.0e-3
   cap_max: 1000000           # 3dgs only: Gaussian budget
   grow_grad2d: 2.0e-4        # 2dgs only (gsplat non-absgrad default; 8e-4 starved densification)
   num_downscales: 2          # coarse-to-fine (splatfacto): start at 1/4 res, double every
@@ -156,11 +160,15 @@ splats:
   normalize_scene: false     # splatfacto Sim3 normalisation (centre on cameras, unit cube,
                              # scene_scale = 1); outputs are mapped back to world units
   log_every: 500
+  # Each entry: {weight[, start, end, end_weight]} — with end the weight decays log-linearly
+  # from weight at start to end_weight at end and holds there (e.g. fade the depth prior:
+  # depth: {weight: 0.01, end: 12000, end_weight: 0.001}).
   losses:
     depth: {weight: 0.01}
     normal_consistency: {weight: 0.05, start: 7000}
     opacity_reg: {weight: 0.01}
     scale_reg: {weight: 0.01}
+    appearance_reg: {weight: 1.0e-3}   # no-op unless appearance_opt
     # 2dgs: replace the two regularisers with  distortion: {weight: 0.01, start: 3000}
 
 localization:

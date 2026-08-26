@@ -87,12 +87,25 @@ def scale_reg_loss(render: dict, target: dict, gaussians: torch.nn.ParameterDict
 
 
 # Name in the yaml `losses:` block -> function. Also the allow-list for config validation.
+def appearance_reg_loss(
+    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float
+) -> Tensor | None:
+    """
+    Mean squared per-image appearance params of the rendered view (pull towards identity); None when off.
+    """
+    params = render.get("appearance")
+    if params is None:
+        return None
+    return params.square().mean()
+
+
 OPTIONAL_LOSSES = {
     "depth": depth_loss,
     "normal_consistency": normal_consistency_loss,
     "distortion": distortion_loss,
     "opacity_reg": opacity_reg_loss,
     "scale_reg": scale_reg_loss,
+    "appearance_reg": appearance_reg_loss,
 }
 
 ########################################

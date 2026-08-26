@@ -39,7 +39,7 @@ def test_splats_is_a_leaf_stage():
 def test_base_yaml_defaults():
     cfg = yaml.safe_load((CONFIG_DIR / "base.yaml").read_text())["splats"]
     assert cfg["enabled"] is False and cfg["primitive"] == "3dgs" and cfg["cap_max"] == 1_000_000
-    assert set(cfg["losses"]) == {"depth", "normal_consistency", "opacity_reg", "scale_reg"}
+    assert set(cfg["losses"]) == {"depth", "normal_consistency", "opacity_reg", "scale_reg", "appearance_reg"}
 
     # The block must round-trip through from_dict (enabled stripped) and equal dataclass defaults
     parsed = SplatsConfig.from_dict(cfg)

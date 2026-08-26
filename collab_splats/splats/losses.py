@@ -2,8 +2,10 @@
 Loss registry and the scheduled weighted sum over it.
 
 Photometric (0.8 L1 + 0.2 (1 - SSIM)) is always on. Each optional loss is one small function
-with the same signature; ``compute_losses`` loops over the yaml schedule ``name: {weight, start}``
-and adds a loss iff weight > 0, step >= start, and the function returns a value.
+with the same signature; ``compute_losses`` loops over the yaml schedule
+``name: {weight[, start, end, end_weight]}`` and adds a loss iff its weight at the step is > 0
+and the function returns a value. With ``end`` the weight decays log-linearly from ``weight``
+at ``start`` to ``end_weight`` at ``end`` and holds there.
 """
 
 import torch
@@ -98,15 +100,31 @@ OPTIONAL_LOSSES = {
 ########################################
 
 
+def loss_weight(step: int, spec: dict | None) -> float:
+    """
+    Weight of a schedule entry at `step`: 0 before `start`, `weight` (or its log-linear decay to
+    `end_weight` over [start, end], held after) from then on; a missing entry (None) is always 0.
+    """
+    if spec is None or step < spec.get("start", 0):
+        return 0.0
+    weight = spec["weight"]
+    end = spec.get("end")
+    if end is None:
+        return weight
+    if step >= end:
+        return spec["end_weight"]
+
+    # Geometric interpolation: equal ratios per step, so a 100x decay is smooth in log space
+    start = spec.get("start", 0)
+    fraction = (step - start) / (end - start)
+    return weight * (spec["end_weight"] / weight) ** fraction
+
+
 def loss_active(step: int, spec: dict | None) -> bool:
     """
-    Whether a `{weight[, start]}` schedule entry contributes at `step`; a missing entry (None) never does.
+    Whether a schedule entry contributes at `step`.
     """
-    if spec is None:
-        return False
-    weight = spec["weight"]
-    start = spec.get("start", 0)
-    return weight > 0 and step >= start
+    return loss_weight(step, spec) > 0
 
 
 def compute_losses(
@@ -134,9 +152,9 @@ def compute_losses(
 
     # Optional losses: skip when not started, zero-weighted, or the loss has no input this step
     for name, spec in loss_schedule.items():
-        if not loss_active(step, spec):
+        weight = loss_weight(step, spec)
+        if weight <= 0:
             continue
-        weight = spec["weight"]
         loss_fn = OPTIONAL_LOSSES[name]
         value = loss_fn(render, target, gaussians, scene_scale)
         if value is None:

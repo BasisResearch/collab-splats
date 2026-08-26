@@ -55,6 +55,25 @@ def test_config_rejects_invalid(bad):
         SplatsConfig.from_dict(bad)
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"weight": 0.01, "end": 100},  # end without end_weight
+        {"weight": 0.01, "start": 100, "end": 100, "end_weight": 0.001},  # end <= start
+        {"weight": 0.0, "end": 100, "end_weight": 0.001},  # log-linear needs positive endpoints
+        {"weight": 0.01, "end": 100, "end_weight": 0.0},
+    ],
+)
+def test_config_rejects_bad_decay(spec):
+    with pytest.raises(ValueError, match="splats.losses.depth"):
+        SplatsConfig.from_dict({"losses": {"depth": spec}})
+
+
+def test_config_accepts_decay():
+    cfg = SplatsConfig.from_dict({"losses": {"depth": {"weight": 0.01, "end": 100, "end_weight": 0.001}}})
+    assert cfg.losses["depth"]["end_weight"] == 0.001
+
+
 def test_config_rejects_zero_steps():
     with pytest.raises(ValueError, match="max_steps"):
         SplatsConfig(max_steps=0)

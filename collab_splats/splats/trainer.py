@@ -137,9 +137,19 @@ class SplatsConfig:
         for name, spec in cfg.losses.items():
             if name not in OPTIONAL_LOSSES:
                 raise ValueError(f"splats.losses: unknown loss '{name}'; allowed {sorted(OPTIONAL_LOSSES)}")
-            unknown_spec_keys = set(spec) - {"weight", "start"}
+            unknown_spec_keys = set(spec) - {"weight", "start", "end", "end_weight"}
             if unknown_spec_keys or "weight" not in spec:
-                raise ValueError(f"splats.losses.{name}: expected {{weight[, start]}}, got {sorted(spec)}")
+                raise ValueError(
+                    f"splats.losses.{name}: expected {{weight[, start, end, end_weight]}}, got {sorted(spec)}"
+                )
+
+            # Decay entries need both endpoints positive (log-linear) and a non-empty interval
+            if "end" in spec:
+                end_weight = spec.get("end_weight")
+                if end_weight is None or spec["weight"] <= 0 or end_weight <= 0 or spec["end"] <= spec.get("start", 0):
+                    raise ValueError(
+                        f"splats.losses.{name}: decay needs weight > 0, end_weight > 0 and end > start, got {spec}"
+                    )
 
         # The distortion map only exists for 2DGS
         distortion_spec = cfg.losses.get("distortion", {})
@@ -445,10 +455,11 @@ def train(
         # matches what the same weight applies in the world frame (reported value stays unit-cube)
         if "distortion" in loss_schedule:
             loss_schedule = dict(loss_schedule)
-            loss_schedule["distortion"] = {
-                **loss_schedule["distortion"],
-                "weight": loss_schedule["distortion"]["weight"] / scale,
-            }
+            distortion = dict(loss_schedule["distortion"])
+            distortion["weight"] = distortion["weight"] / scale
+            if "end_weight" in distortion:
+                distortion["end_weight"] = distortion["end_weight"] / scale
+            loss_schedule["distortion"] = distortion
     cam_to_world = torch.from_numpy(cam_to_world_np).float().to(device)
     intrinsics_gpu = torch.from_numpy(intrinsics).float().to(device)
     scene_scale = 1.0 if cfg.normalize_scene else compute_scene_scale(cam_to_world)

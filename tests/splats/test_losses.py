@@ -5,7 +5,12 @@ compute_losses: photometric always on; optional losses gated by weight > 0, star
 import pytest
 import torch
 
-from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
+from collab_splats.splats.losses import (
+    OPTIONAL_LOSSES,
+    compute_losses,
+    loss_active,
+    loss_weight,
+)
 
 
 def _render(height=16, width=16, with_distortion=True):
@@ -154,4 +159,27 @@ def test_total_is_weighted_sum():
     schedule = {"depth": {"weight": 0.3}, "normal_consistency": {"weight": 0.7}}
     total, values = compute_losses(0, _render(), _target(), _gaussians(), schedule, 1.0)
     expected = 0.8 * values["l1"] + 0.2 * values["ssim"] + 0.3 * values["depth"] + 0.7 * values["normal_consistency"]
+    assert total.item() == pytest.approx(expected, rel=1e-5)
+
+
+def test_loss_weight_constant_without_end():
+    assert loss_weight(0, {"weight": 0.5}) == 0.5
+    assert loss_weight(10**6, {"weight": 0.5, "start": 100}) == 0.5
+    assert loss_weight(99, {"weight": 0.5, "start": 100}) == 0.0
+    assert loss_weight(0, None) == 0.0
+
+
+def test_loss_weight_decays_log_linearly_then_holds():
+    spec = {"weight": 0.01, "start": 1000, "end": 3000, "end_weight": 0.0001}
+    assert loss_weight(999, spec) == 0.0
+    assert loss_weight(1000, spec) == pytest.approx(0.01)
+    assert loss_weight(2000, spec) == pytest.approx(0.001)  # geometric midpoint
+    assert loss_weight(3000, spec) == pytest.approx(0.0001)
+    assert loss_weight(10**6, spec) == pytest.approx(0.0001)
+
+
+def test_compute_losses_uses_decayed_weight():
+    schedule = {"depth": {"weight": 0.4, "end": 100, "end_weight": 0.1}}
+    total, values = compute_losses(50, _render(), _target(), _gaussians(), schedule, 1.0)
+    expected = 0.8 * values["l1"] + 0.2 * values["ssim"] + 0.2 * values["depth"]
     assert total.item() == pytest.approx(expected, rel=1e-5)

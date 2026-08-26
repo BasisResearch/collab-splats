@@ -698,40 +698,85 @@ def align_depth_affine(
     return coeffs, far_limits, stats
 
 
-def apply_depth_alignment(result: "FeedforwardResult", reconstruction: pycolmap.Reconstruction) -> dict:
+def apply_depth_alignment(
+    result: "FeedforwardResult",
+    reconstruction: pycolmap.Reconstruction,
+    model: str = "scale",
+) -> dict:
     """
-    Scale result.depth to the reconstruction's world scale in place; recompute world_points.
+    Align result.depth to the reconstruction's world scale in place; recompute world_points.
 
-    - Fits per-frame scales via align_depth_to_reconstruction over the result's rows, then
-      re-derives dense world_points from the scaled depth under the COLMAP poses, so the
-      zarr and the COLMAP model share one scale.
+    - model="scale": one robust multiplier per frame (the shipped behaviour).
+    - model="affine": a per-frame affine fit in disparity, applied as d/(a + b*d), with
+      saturated and beyond-evidence pixels written as 0 (= no depth target, no mesh sample).
     - Returns the provenance attrs to merge into save_zarr's extra_attrs; raises on an
       unalignable scene — never a silent VDA-metric write.
     """
+    if model not in ("scale", "affine"):
+        raise ValueError(f"pointcloud.instantsfm.depth_align must be 'scale' or 'affine', got {model!r}")
+
     # SfM image_paths are extension-less stems (Path(im.name) from COLMAP, whose image
     # names ARE stems) — path.name is the COLMAP image name, the splats-branch convention
     names = [path.name for path in result.image_paths]
-    scales, stats = align_depth_to_reconstruction(reconstruction, names, result.depth)
-    logger.info(
-        "depth alignment: global scale %.4f, ratio p10/p50/p90 %s -> %s, %d fallback frames",
-        stats["global_scale"],
-        [round(x, 4) for x in stats["ratio_p10_p50_p90_before"]],
-        [round(x, 4) for x in stats["ratio_p10_p50_p90_after"]],
-        stats["n_fallback"],
-    )
 
-    # Scale depth per frame; re-unproject dense world points (t is not scale-invariant,
-    # so world_points cannot be scaled directly — they must be re-derived)
-    result.depth = (result.depth * scales[:, None, None]).astype(np.float32)
+    if model == "scale":
+        scales, stats = align_depth_to_reconstruction(reconstruction, names, result.depth)
+        logger.info(
+            "depth alignment (scale): global scale %.4f, ratio p10/p50/p90 %s -> %s, %d fallback frames",
+            stats["global_scale"],
+            [round(x, 4) for x in stats["ratio_p10_p50_p90_before"]],
+            [round(x, 4) for x in stats["ratio_p10_p50_p90_after"]],
+            stats["n_fallback"],
+        )
+        result.depth = (result.depth * scales[:, None, None]).astype(np.float32)
+        attrs = {
+            "depth_scale": "colmap",
+            "depth_align_model": "scale",
+            "depth_scales": [float(s) for s in scales],
+            "depth_scale_fallback_frames": stats["fallback_frames"],
+        }
+    else:
+        coeffs, far_limits, stats = align_depth_affine(reconstruction, names, result.depth)
+        aligned = np.stack(
+            [
+                _apply_affine_depth(result.depth[row], coeffs[row, 0], coeffs[row, 1], far_limits[row])
+                for row in range(len(names))
+            ]
+        )
+
+        # Masked fraction is the honest reliability signal on this path — the sfm branch has
+        # no confidence channel, so this is what mesh/splats consumers actually see.
+        # align_depth_affine already logged the fit/fallback counts and their causes, so this
+        # line carries only what the apply step alone knows: the range and what it costs.
+        # The far limits are INPUT VDA depth units, not metres, and cover fitted frames only
+        had_depth = result.depth > 0
+        masked = float((had_depth & (aligned <= 0)).sum()) / max(float(had_depth.sum()), 1.0)
+        logger.info(
+            "depth alignment (affine): far-limit p10/p50/p90 %s (input VDA depth units, fitted frames "
+            "only), %.2f%% of positive pixels masked (saturation + beyond-evidence)",
+            [round(x, 1) for x in stats["far_limit_p10_p50_p90"]],
+            100.0 * masked,
+        )
+        result.depth = aligned.astype(np.float32)
+        attrs = {
+            "depth_scale": "colmap",
+            "depth_align_model": "affine",
+            "depth_affine_ab": [[float(a), float(b)] for a, b in coeffs],
+            # A scale-only frame's bound is inf, and inf is not valid JSON — zarr writes it
+            # through as a bare `Infinity` token that strict JSON readers reject — so the
+            # attr carries null instead
+            "depth_far_limits": [None if not np.isfinite(x) else float(x) for x in far_limits],
+            "depth_masked_fraction": masked,
+            "depth_scale_fallback_frames": stats["fallback_frames"],
+        }
+
+    # Re-unproject dense world points (t is not scale-invariant, so world_points cannot be
+    # scaled directly — they must be re-derived from the aligned depth under the COLMAP poses)
     result.world_points = unproject_depth_map_to_point_map(
         result.depth[..., None], result.extrinsics[:, :3, :], result.intrinsics
     ).astype(np.float32)
 
-    return {
-        "depth_scale": "colmap",
-        "depth_scales": [float(s) for s in scales],
-        "depth_scale_fallback_frames": stats["fallback_frames"],
-    }
+    return attrs
 
 
 ########################################################################

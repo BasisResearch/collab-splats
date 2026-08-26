@@ -2,6 +2,9 @@
 Depth alignment: track-observation correspondences, scale fit, affine-in-disparity fit.
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -334,3 +337,125 @@ def test_apply_affine_targets_only_positive_input_depths():
     assert out[0, 0] == 0.0
     assert out[0, 1] == 0.0
     assert out[0, 2] == pytest.approx(5.0 / 0.45)
+
+
+########################################################################
+# apply_depth_alignment: model selection, provenance attrs, world points
+########################################################################
+
+
+class _Result:
+    """
+    Minimal FeedforwardResult stand-in: the fields apply_depth_alignment touches.
+    """
+
+    def __init__(self, depth):
+        n_frames = depth.shape[0]
+        self.depth = depth
+        self.image_paths = [Path(f"frame_{row:06d}.jpg") for row in range(n_frames)]
+        self.extrinsics = np.repeat(np.eye(4, dtype=np.float32)[None], n_frames, axis=0)
+        self.intrinsics = np.repeat(
+            np.array([[[10.0, 0.0, GRID_W / 2], [0.0, 10.0, GRID_H / 2], [0.0, 0.0, 1.0]]], dtype=np.float32),
+            n_frames,
+            axis=0,
+        )
+        self.world_points = None
+
+
+def _scale_scene(ratio=2.0, n_obs=30):
+    """
+    One frame whose COLMAP depths are a constant multiple of its VDA depths.
+    """
+    observations = [(i % GRID_W, i % GRID_H, ratio * (i + 1)) for i in range(n_obs)]
+    depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
+    for i in range(n_obs):
+        depth[0, i % GRID_H, i % GRID_W] = float(i + 1)
+    return _fake_reconstruction({"frame_000000.jpg": observations}), depth
+
+
+def test_apply_depth_alignment_scale_is_the_default_and_stamps_the_model():
+    recon, depth = _scale_scene(ratio=2.0)
+    result = _Result(depth.copy())
+
+    attrs = sfm.apply_depth_alignment(result, recon)
+    assert attrs["depth_scale"] == "colmap"
+    assert attrs["depth_align_model"] == "scale"
+    assert attrs["depth_scales"] == [pytest.approx(2.0)]
+    assert result.depth[0, 4, 4] == pytest.approx(2.0 * depth[0, 4, 4])
+
+
+def test_apply_depth_alignment_reunprojects_world_points_from_the_aligned_depth():
+    # Identity extrinsics, so a world point's z IS its depth in that view: world_points must
+    # be re-derived from the ALIGNED depth, never left at None or carried over unscaled
+    recon, depth = _scale_scene(ratio=2.0)
+    result = _Result(depth.copy())
+
+    sfm.apply_depth_alignment(result, recon)
+    assert result.world_points is not None
+    assert result.world_points.shape == (1, GRID_H, GRID_W, 3)
+    np.testing.assert_allclose(result.world_points[..., 2], result.depth, rtol=1e-5)
+    assert result.world_points[0, 4, 4, 2] == pytest.approx(10.0)
+
+
+def test_apply_depth_alignment_affine_stamps_coefficients():
+    recon, depth = _affine_scene(a=1.5, b=-0.004)
+    result = _Result(depth.copy())
+
+    attrs = sfm.apply_depth_alignment(result, recon, model="affine")
+    assert attrs["depth_scale"] == "colmap"
+    assert attrs["depth_align_model"] == "affine"
+    assert attrs["depth_affine_ab"][0][0] == pytest.approx(1.5, rel=1e-4)
+    assert attrs["depth_affine_ab"][0][1] == pytest.approx(-0.004, abs=1e-6)
+    assert result.world_points is not None
+    np.testing.assert_allclose(result.world_points[..., 2], result.depth, rtol=1e-5)
+
+
+def test_apply_depth_alignment_affine_applies_the_affine_mapping_not_a_scale():
+    # a=1.5, b=-0.02 runs the true d_colmap/d_vda ratio from 0.69 to 1.43 across the frame,
+    # so an affine-aligned pixel lands nowhere near its scale-aligned value
+    recon, depth = _affine_scene(a=1.5, b=-0.02)
+    affine_result, scale_result = _Result(depth.copy()), _Result(depth.copy())
+
+    sfm.apply_depth_alignment(affine_result, recon, model="affine")
+    sfm.apply_depth_alignment(scale_result, recon, model="scale")
+
+    # Every surviving pixel must equal d / (a + b*d), the mapping the fit defines
+    supported = affine_result.depth[0] > 0
+    expected = depth[0] / (1.5 - 0.02 * depth[0])
+    np.testing.assert_allclose(affine_result.depth[0][supported], expected[supported], rtol=1e-4)
+    assert np.abs(affine_result.depth[0][supported] - scale_result.depth[0][supported]).max() > 5.0
+
+
+def test_apply_depth_alignment_affine_masks_beyond_the_fitted_range():
+    # An unobserved 100-unit pixel sits well inside the saturation horizon (-a/b = 375) but
+    # far past the furthest fitted observation (~40), so only the far bound can mask it
+    observations, depth_row = _affine_observations(a=1.5, b=-0.004)
+    depth_row[GRID_H - 1, GRID_W - 1] = 100.0
+    recon = _fake_reconstruction({"frame_000000.jpg": observations})
+    result = _Result(depth_row[None].copy())
+
+    attrs = sfm.apply_depth_alignment(result, recon, model="affine")
+    assert result.depth[0, GRID_H - 1, GRID_W - 1] == 0.0
+    assert 0.0 < attrs["depth_masked_fraction"] < 0.05
+    assert attrs["depth_far_limits"][0] == pytest.approx(float(np.sort(depth_row.ravel())[-2]))
+
+
+def test_apply_depth_alignment_affine_writes_a_scale_only_far_limit_as_null():
+    # Frame 1 falls under the observation floor, so its bound is inf. Zarr attrs are JSON and
+    # inf is not valid JSON — zarr writes it through as a bare `Infinity` token
+    obs_fitted, row_fitted = _affine_observations(a=1.5, b=-0.004)
+    obs_thin, row_thin = _affine_observations(a=1.5, b=-0.004, n_obs=3, d_min=4.0, d_max=5.5, seed=7)
+    recon = _fake_reconstruction({"frame_000000.jpg": obs_fitted, "frame_000001.jpg": obs_thin})
+    result = _Result(np.stack([row_fitted, row_thin]))
+
+    attrs = sfm.apply_depth_alignment(result, recon, model="affine")
+    assert attrs["depth_far_limits"][1] is None
+    assert attrs["depth_far_limits"][0] is not None
+    assert attrs["depth_scale_fallback_frames"] == ["frame_000001.jpg"]
+    json.dumps(attrs, allow_nan=False)
+
+
+def test_apply_depth_alignment_rejects_an_unknown_model():
+    recon, depth = _affine_scene(a=1.0, b=0.0)
+    with pytest.raises(ValueError, match="depth_align"):
+        sfm.apply_depth_alignment(_Result(depth.copy()), recon, model="quadratic")

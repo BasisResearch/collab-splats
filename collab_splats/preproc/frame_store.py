@@ -119,6 +119,12 @@ class FrameStore:
         """
         return self._store["frame_idx"][:].astype(int)
 
+    def provenance(self) -> dict:
+        """
+        Provenance attrs this store was written with (video_path, method, undistort, ...).
+        """
+        return dict(self._store.attrs.get("provenance", {}))
+
     def export(self, out_dir, *, ext="jpg") -> list[Path]:
         """
         Write frames to out_dir as frame_NNNNNN.<ext> (source-idx named); return paths.

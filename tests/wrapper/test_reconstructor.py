@@ -189,11 +189,18 @@ def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "max_frames": 50,
         "report": report,
         "search_radius": 3,
+        "candidates": None,
     }
 
     # uniform: max_frames is the count; no fps, no floor
     R.extract_frames(video, out / "b.zarr", "uniform", None, 5, 50)
-    assert calls == {"sampler": "uniform", "max_frames": 50, "report": report, "search_radius": 3}
+    assert calls == {
+        "sampler": "uniform",
+        "max_frames": 50,
+        "report": report,
+        "search_radius": 3,
+        "candidates": None,
+    }
 
     # optical_flow: max_frames caps the selector
     R.extract_frames(video, out / "c.zarr", "optical_flow", None, 5, 50)

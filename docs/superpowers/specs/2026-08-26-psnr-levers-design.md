@@ -88,3 +88,50 @@ Base config = `gopro_3dgs_c2f_overrides.yaml` (21.02 / 0.708). Sequential tmux r
 
 Each run also meshes (source: splats) and archives as `instantsfm/splats_<tag>/`. Results go into
 this spec's §Measured; defaults flip on evidence only.
+
+## Measured — 2026-08-26 (GH010229, 300 fr, InstantSfM + retriangulation, undistort, dense aligned VDA targets)
+
+Base = `gopro_3dgs_c2f_overrides.yaml`: 3dgs MCMC + c2f (`num_downscales 2`,
+`resolution_schedule 3000`), `normalize_scene`, `pose_opt`, 12k steps, cap_max 1M.
+
+| run | PSNR | SSIM | gaussians | train s | Δ PSNR |
+|---|---|---|---|---|---|
+| base 3dgs MCMC + c2f | 21.020 | 0.7076 | 1 000 000 | 596 | — |
+| **+ appearance (`appearance_opt: true`)** | **21.606** | **0.7169** | 1 000 000 | 601 | **+0.59** |
+| + depth decay (`end: 12000, end_weight: 0.001`) | 21.117 | 0.7094 | 1 000 000 | 787 | +0.10 |
+| + `preproc.search_radius: 7` (fresh scene) | 21.07 | 0.708 | 1 000 000 | 589 | +0.05 |
+
+Same-target loss trace (appearance and decay share the base's 300 images; radius7 does not):
+
+| step | base | appearance | decay | radius7 |
+|---|---|---|---|---|
+| 3000 | 0.2332 | 0.2230 | 0.2265 | 0.2337 |
+| 6000 | 0.1896 | 0.1791 | 0.1850 | 0.1859 |
+| 9000 | 0.1051 | 0.0995 | 0.1013 | 0.1039 |
+
+### Verdicts
+
+- **Appearance: WIN, +0.59 dB for +5 s.** Clears the 0.2 dB bar set for option A, so the
+  bilateral grid (option B) is not needed. Caveat: PSNR is measured on train views with the
+  per-image correction applied, so part of the gain is a free 6-param affine fit per image —
+  `$SP/appearance_identity_eval.py` decomposes it (geometry gain vs fit) and is still owed.
+  Learned params are smooth, not per-frame noise: neighbour |Δ| median 0.0081 vs overall std
+  0.0508 (ratio 0.16), luminance gain p5 0.917 / p95 1.077, per-view WB spread median 0.0181.
+- **Depth decay: MARGINAL, +0.10 dB for +32% wall-clock (596 → 787 s).** Not worth defaulting on.
+- **`search_radius: 7`: NO PSNR EFFECT, +0.05 dB** — and measured on a different frame set, so
+  not even a clean A/B. The sampler did what it claims: Laplacian variance p10 233.9 → 252.5
+  (+8.0%), mean 379.3 → 387.3, min 88.6 → 93.6; only 100/300 slots kept the same frame (median
+  shift 3, max 10). Cost is spacing regularity: 37–50 → 29–58, which cost 0.5% of the points
+  (104 436 → 103 871 points3D, 536 522 → 533 094 obs) at unchanged track quality (mean track
+  5.14 → 5.13, 300/300 registered). Keep for mesh/localization sharpness, not for splat PSNR.
+
+The plan's step 4 (combined run) required at least two winners; only one lever won, so it is
+not run by default.
+
+### Incidental fix
+
+`fix(preproc): cap SIFT threads in undistort self-calibration` (17381b58). The fresh-scene
+rebuild SIGKILLed during `estimate_camera_distortion`: the pycolmap wheel here is CPU-only
+(`has_cuda False`), so the default `num_threads = -1` spawned one SIFT thread per host core
+(96) on 1080p frames and blew past the 46.6 GB cgroup cap. Now capped at 8, mirroring
+`pointcloud/sfm.py::_SIFT_NUM_THREADS`. Any fresh undistorted scene would have hit this.

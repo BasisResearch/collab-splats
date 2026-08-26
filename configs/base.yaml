@@ -35,6 +35,9 @@ preproc:
                               # auto-derived — os.cpu_count() reports HOST cores inside a
                               # container and ignores the cgroup quota. Set to 1 while a GPU
                               # eval run is using the machine (CLAUDE.md: OOM risk).
+  search_radius: 7            # fps/uniform: each target is replaced by the sharpest usable
+                              # frame within +-search_radius, auto-capped below half the target
+                              # spacing (2 fps on 30 fps video -> spacing 15 -> +-7 is the max).
   undistort: false            # self-calibrate one shared OPENCV camera (pycolmap, <=60 frames)
                               # and undistort every selected frame (cv2, alpha=0 crop) before
                               # frames.zarr is written. Off until the GH010229 A/B measures the

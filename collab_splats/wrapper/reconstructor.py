@@ -136,6 +136,7 @@ def extract_frames(
     max_frames: int | None,
     n_workers: int = 1,
     undistort: bool = False,
+    search_radius: int = 3,
 ) -> int:
     """
     Extract frames from video or image dir into frames.zarr (sole persistent store).
@@ -199,9 +200,12 @@ def extract_frames(
             min_frames=min_frames,
             max_frames=max_frames,
             report=report,
+            search_radius=search_radius,
         )
     elif frame_selection == "uniform":
-        frame_arrays, records = sample_uniform(str(input_path), max_frames=max_frames, report=report)
+        frame_arrays, records = sample_uniform(
+            str(input_path), max_frames=max_frames, report=report, search_radius=search_radius
+        )
     elif frame_selection == "optical_flow":
         frame_arrays, records = sample_optical_flow(str(input_path), max_frames=max_frames, report=report)
     else:
@@ -835,6 +839,7 @@ class Reconstructor:
             max_frames=pre_cfg["max_frames"],
             n_workers=pre_cfg["n_workers"],
             undistort=pre_cfg["undistort"],
+            search_radius=pre_cfg["search_radius"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",

@@ -401,3 +401,29 @@ def test_importing_preproc_does_not_import_matplotlib():
     result = sp.run([sys.executable, "-c", code])
 
     assert result.returncode == 0
+
+
+########################################################################
+# search_radius: window half-width, capped below half the target spacing
+########################################################################
+
+
+def test_search_radius_capped_by_spacing(tiny_video):
+    # Stride 3 (10 fps of 30) caps the window at +-1 however large the radius: frame 2
+    # is claimed by target 3 only; an uncapped +-7 would hand it to targets 0 and 6 too
+    report = _synthetic_report(n=60)
+    report["frames"]["laplacian"][2] = 900.0
+    _, records = sample_fps(tiny_video, fps=10.0, report=report, search_radius=7)
+    idxs = [r["frame_idx"] for r in records]
+    assert idxs[:2] == [0, 2] and len(idxs) == len(set(idxs))
+
+
+def test_search_radius_picks_sharpest_in_wide_window(tiny_video):
+    # Stride 15 (2 fps): radius 7 reaches a sharp frame 6 away, radius 3 does not
+    report = _synthetic_report(n=60)
+    report["frames"]["laplacian"][15] = 300.0
+    report["frames"]["laplacian"][21] = 900.0
+    _, wide = sample_fps(tiny_video, fps=2.0, report=report, search_radius=7)
+    _, narrow = sample_fps(tiny_video, fps=2.0, report=report, search_radius=3)
+    assert [r["frame_idx"] for r in wide][:2] == [0, 21]
+    assert [r["frame_idx"] for r in narrow][:2] == [0, 15]

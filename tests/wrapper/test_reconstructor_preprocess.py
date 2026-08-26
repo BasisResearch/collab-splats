@@ -112,3 +112,20 @@ def test_preprocess_image_dir_writes_no_quality_report(tmp_path):
     rec.preprocess()
 
     assert not (Path(cfg["output_path"]) / "video_quality_report.json").exists()
+
+
+def test_preprocess_forwards_search_radius(tmp_path, tiny_video, monkeypatch):
+    # The sampler receives preproc.search_radius (base.yaml default 7 unless overridden)
+    import collab_splats.wrapper.reconstructor as recon_module
+
+    seen = {}
+
+    def fake_uniform(video, *, max_frames, report, search_radius=3, **kwargs):
+        seen["search_radius"] = search_radius
+        return [np.zeros((8, 8, 3), np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
+
+    monkeypatch.setattr(recon_module, "sample_uniform", fake_uniform)
+    cfg = _make_config(tmp_path, tiny_video)
+    cfg["preproc"]["search_radius"] = 5
+    Reconstructor(cfg).preprocess()
+    assert seen["search_radius"] == 5

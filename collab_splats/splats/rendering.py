@@ -3,9 +3,10 @@ One render call for both splat primitives.
 
 3DGS goes through ``gsplat.rasterization`` (fast kernel, antialiased); per-Gaussian normals are
 rendered as an extra signal and the depth normal is finite-differenced from rendered depth.
-2DGS goes through ``gsplat.rasterization_2dgs`` which returns rendered normals (world frame) plus a
-distortion map. Normals are rotated into camera space and the depth normal is finite-differenced at an
-identity pose for both primitives, so the consistency loss compares like with like.
+2DGS goes through ``gsplat.rasterization_2dgs`` which returns rendered normals (world frame), a
+distortion map, and the median depth (RaDe-GS's surface depth). Normals are rotated into camera
+space and depth normals are finite-differenced at an identity pose for both primitives and for
+both depths, so the consistency loss compares like with like.
 """
 
 import torch
@@ -52,7 +53,7 @@ def render_view(
     render_normals: bool = True,
 ) -> tuple[dict[str, Tensor], dict]:
     """
-    Render one camera. Returns ({rgb, alpha, depth[, normal, depth_normal][, distortion]}, strategy info).
+    Render one camera. Returns ({rgb, alpha, depth[, normal, depth_normal][, 2dgs extras]}, strategy info).
 
     - Normals are camera-frame for both primitives; `depth_normal` is finite-differenced at an identity pose.
     - 3DGS `normal` is unit length (zero where nothing renders). `render_normals=False` skips the extra-signal
@@ -60,6 +61,7 @@ def render_view(
       always returns normals from its rasterizer, so the flag is ignored there.
     - 2DGS `normal` is the alpha-weighted accumulated normal (non-unit), mirroring upstream gsplat's 2DGS
       trainer, so the consistency loss is effectively alpha^2-weighted there. Deliberately not normalized.
+    - 2DGS extras: `distortion`, plus `median_depth` and its finite-differenced `depth_normal_median`.
     """
     assert cam_to_world.shape[0] == 1, "render_view renders one camera at a time"
 
@@ -91,22 +93,30 @@ def render_view(
     # Depth normals are finite-differenced in camera space (identity pose) for both primitives
     identity_pose = torch.eye(4, device=cam_to_world.device)[None]
 
-    # 2DGS: the rasterizer returns rgb+depth, alpha, rendered normals (world frame), and the distortion
-    # map; normals are rotated back into the camera frame and the depth normal recomputed there
+    # 2DGS: the rasterizer returns rgb+depth, alpha, rendered normals (world frame), the distortion
+    # map and the median depth; normals are rotated back into the camera frame and both depth normals
+    # are recomputed there
     if primitive == "2dgs":
-        rgb_depth, alpha, normal_world, _depth_normal_world, distortion, _median_depth, info = rasterization_2dgs(
+        rgb_depth, alpha, normal_world, _depth_normal_world, distortion, median_depth, info = rasterization_2dgs(
             **shared_kwargs, distloss=True
         )
         rgb = rgb_depth[..., :3]
         depth = rgb_depth[..., 3:4]
         rotation_w2c = world_to_cam[:, :3, :3]
         normal_cam = torch.einsum("cij,chwj->chwi", rotation_w2c, normal_world)
+
+        # RaDe-GS median depth: the depth of the median Gaussian along each ray, rather than
+        # the alpha-weighted expectation. Sparse by construction (one Gaussian per ray
+        # receives gradient) but sharper across depth discontinuities, so its finite-differenced
+        # normal is a second consistency target — see losses.normal_consistency_loss.
         render = {
             "rgb": rgb,
             "alpha": alpha,
             "depth": depth,
+            "median_depth": median_depth,
             "normal": normal_cam,
             "depth_normal": depth_to_normal(depth, identity_pose, intrinsics),
+            "depth_normal_median": depth_to_normal(median_depth, identity_pose, intrinsics),
             "distortion": distortion,
         }
         return render, info

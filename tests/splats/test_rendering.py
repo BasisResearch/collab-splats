@@ -121,3 +121,19 @@ def test_normals_are_camera_frame_under_rotated_camera(primitive):
     assert unit_normal[2] < -0.9
     assert torch.allclose(unit_normal, expected, atol=0.05)
     assert torch.allclose(unit_depth_normal, expected, atol=0.05)
+
+
+@cuda
+def test_2dgs_render_carries_median_depth_and_its_normal():
+    cam_to_world, intrinsics = _camera()
+    render, _info = render_view("2dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False)
+    assert render["median_depth"].shape == render["depth"].shape
+    assert render["depth_normal_median"].shape == render["depth_normal"].shape
+    assert render["median_depth"].requires_grad
+
+
+@cuda
+def test_3dgs_render_has_no_median_depth():
+    cam_to_world, intrinsics = _camera()
+    render, _info = render_view("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False)
+    assert "median_depth" not in render

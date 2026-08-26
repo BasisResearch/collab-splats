@@ -384,7 +384,9 @@ def generate_vda_depth(
 MIN_ALIGN_OBS = 20  # per-frame track-observation floor for a trustworthy median
 MIN_AFFINE_OBS = 50  # per-frame floor for the 2-parameter disparity fit (scale needs only 20)
 AFFINE_REJECT_ROUNDS = 2  # MAD-3sigma rejection passes over the least-squares fit
-AFFINE_EPS = 1e-9  # positivity floor on the fitted disparity at the frame's far end
+# Positivity floor on the fitted disparity at the frame's far end. Guard only: the apply path
+# bounds at the saturation horizon d = -a/b, so no epsilon ever floors a denominator there.
+AFFINE_EPS = 1e-9
 
 
 def _depth_correspondences(
@@ -408,7 +410,6 @@ def _depth_correspondences(
         raise ValueError(f"{len(missing)} image names not in reconstruction (first: {missing[0]})")
 
     _n_frames, grid_h, grid_w = depth.shape
-    empty = (np.zeros(0), np.zeros(0))
     pairs: list[tuple[np.ndarray, np.ndarray]] = []
 
     for row, name in enumerate(image_names):
@@ -418,7 +419,7 @@ def _depth_correspondences(
         # Track observations: exact 2D pixel + the observed point's depth in this view
         observations = [p for p in image.points2D if p.has_point3D()]
         if not observations:
-            pairs.append(empty)
+            pairs.append((np.zeros(0), np.zeros(0)))
             continue
         xyz = np.stack([reconstruction.points3D[p.point3D_id].xyz for p in observations])
         cam_from_world = image.cam_from_world().matrix()
@@ -507,52 +508,81 @@ def align_depth_to_reconstruction(
     return scales, stats
 
 
-def _fit_affine_disparity(d_colmap: np.ndarray, d_vda: np.ndarray) -> tuple[float, float] | None:
+def _solve_disparity(q_vda: np.ndarray, q_colmap: np.ndarray, inliers: np.ndarray) -> tuple[float, float] | None:
     """
-    Least-squares 1/d_colmap ~= a*(1/d_vda) + b with two MAD-3sigma rejection rounds.
+    One least-squares pass of q_colmap ~= a*q_vda + b over `inliers`.
+
+    - Returns None when the inlier set is under the observation floor or too degenerate
+      (rank < 2, i.e. every surviving q_vda is the same) to determine both parameters.
+    """
+    if inliers.sum() < MIN_AFFINE_OBS:
+        return None
+
+    # Solve the 2-parameter normal equations over the current inliers
+    design = np.stack([q_vda[inliers], np.ones(int(inliers.sum()))], axis=1)
+    solution, _residuals, rank, _sv = np.linalg.lstsq(design, q_colmap[inliers], rcond=None)
+    if rank < 2:
+        return None
+    return float(solution[0]), float(solution[1])
+
+
+def _fit_affine_disparity(d_colmap: np.ndarray, d_vda: np.ndarray) -> tuple[float, float, np.ndarray] | None:
+    """
+    Least-squares 1/d_colmap ~= a*(1/d_vda) + b with AFFINE_REJECT_ROUNDS MAD-3sigma rounds.
 
     - Disparity, not depth: gsplat's depth_l1_loss is L1 on 1/d, so the fit is done in the
       space the loss is paid in. Measured 2026-08-26: the offset term b carries the entire
       -18.9% loss-floor improvement over a scale-only fit.
+    - Returns (a, b, inliers) — the boolean mask the returned fit was solved on, so callers
+      can bound the supported range by the evidence that actually produced the model.
     - Returns None when the surviving inlier set is too small or degenerate to solve.
     """
     q_vda = 1.0 / d_vda
     q_colmap = 1.0 / d_colmap
     inliers = np.ones(len(q_vda), dtype=bool)
 
-    for _round in range(AFFINE_REJECT_ROUNDS + 1):
-        if inliers.sum() < MIN_AFFINE_OBS:
-            return None
+    # Initial fit over every correspondence
+    solution = _solve_disparity(q_vda, q_colmap, inliers)
+    if solution is None:
+        return None
+    a, b = solution
 
-        # Solve the 2-parameter normal equations over the current inliers
-        design = np.stack([q_vda[inliers], np.ones(int(inliers.sum()))], axis=1)
-        solution, _residuals, rank, _sv = np.linalg.lstsq(design, q_colmap[inliers], rcond=None)
-        if rank < 2:
-            return None
-        a, b = float(solution[0]), float(solution[1])
-
-        # Reject at 3 MAD (scaled to sigma) and refit; a zero MAD means an exact fit
+    # Then AFFINE_REJECT_ROUNDS x (reject at 3 MAD about the residual median, refit)
+    for _round in range(AFFINE_REJECT_ROUNDS):
         residual = q_colmap - (a * q_vda + b)
-        mad = float(np.median(np.abs(residual[inliers] - np.median(residual[inliers]))))
-        if mad <= 0:
-            return a, b
-        inliers = np.abs(residual) <= 3.0 * 1.4826 * mad
+        center = float(np.median(residual[inliers]))
+        mad = float(np.median(np.abs(residual[inliers] - center)))
 
-    return a, b
+        # A zero MAD means the inliers already sit on the fit; there is nothing to reject
+        if mad <= 0:
+            break
+        inliers = np.abs(residual - center) <= 3.0 * 1.4826 * mad
+        solution = _solve_disparity(q_vda, q_colmap, inliers)
+        if solution is None:
+            return None
+        a, b = solution
+
+    return a, b, inliers
 
 
 def _apply_affine_depth(depth_row: np.ndarray, a: float, b: float, far_limit: float) -> np.ndarray:
     """
     Map one VDA depth map through the fitted affine disparity: d_new = d / (a + b*d).
 
-    - Applied in depth form so a zero-depth pixel never divides; zeros stay zero.
-    - Pixels where the denominator collapses (b < 0 saturates past a horizon) and pixels
-      beyond `far_limit` (no track evidence at that range) are written as 0 = no target.
+    - Applied in depth form so a zero-depth pixel never divides; zeros stay zero. The output
+      keeps the input map's dtype rather than forcing float32.
+    - A b < 0 fit has a saturation horizon at d = -a/b where the aligned depth runs to
+      infinity, so the effective far bound is the nearer of that horizon and `far_limit`
+      (the range the fit has track evidence for). Pixels past it are written as 0 = no
+      target, which is why no epsilon has to floor the denominator here.
+    - The bound is ONE-SIDED by design: near-side pixels are never masked.
     """
-    denominator = a + b * depth_row
-    out = np.zeros_like(depth_row, dtype=np.float32)
-    supported = (depth_row > 0) & (denominator > AFFINE_EPS) & (depth_row <= far_limit)
-    out[supported] = depth_row[supported] / denominator[supported]
+    # b >= 0 never saturates; b < 0 does, at d = -a/b
+    horizon = -a / b if b < 0 else np.inf
+
+    out = np.zeros_like(depth_row)
+    supported = (depth_row > 0) & (depth_row <= far_limit) & (depth_row < horizon)
+    out[supported] = depth_row[supported] / (a + b * depth_row[supported])
     return out
 
 
@@ -564,17 +594,21 @@ def align_depth_affine(
     """
     Per-frame affine-in-disparity alignment of VDA depth to the reconstruction's world.
 
-    - Returns (coeffs (N,2) [a, b], far_limits (N,) metres, stats). Apply with
-      `_apply_affine_depth`; a scale-only frame is returned as (1/s, 0.0), which is the
-      same mapping the scale path applies.
+    - Returns (coeffs (N,2) [a, b], far_limits (N,), stats). Apply with `_apply_affine_depth`;
+      a scale-only frame is returned as (1/s, 0.0), which is the same mapping the scale path
+      applies.
     - Falls back to scale-only when a frame has fewer than MIN_AFFINE_OBS observations, the
       fit is unsolvable, a <= 0, or the fitted disparity is non-positive at the frame's far
       end. The far end is p99 of the depth map, not its max: a single sky pixel rejects
-      78/300 frames, p99 rejects 14/300 (measured 2026-08-26).
-    - far_limits is the furthest observed track depth per frame. Beyond it the fit is
-      extrapolating, and held-out observations there are 2.2x worse. The bound is ONE-SIDED
-      by design: SIFT tracks do not cover close surfaces, so a near-side bound would delete
-      the closest ~4% of every frame — the near-field geometry this exists to sharpen.
+      78/300 frames, p99 rejects 14/300 (measured 2026-08-26). stats counts each cause.
+    - far_limits[i] is the largest INPUT VDA depth among the surviving inliers of frame i's
+      affine fit — a value in the input map's own units, not metres and not the track's
+      COLMAP depth. Beyond it the fit extrapolates, and held-out observations there are 2.2x
+      worse. A frame with no affine fit gets inf: its model is a scale carrying no per-frame
+      range evidence, so it is masked exactly as little as the scale path masks (not at all).
+    - The bound is ONE-SIDED by design: SIFT tracks do not cover close surfaces, so a
+      near-side bound would delete the closest ~4% of every frame — the near-field geometry
+      this exists to sharpen.
     """
     n_frames = depth.shape[0]
     coeffs = np.zeros((n_frames, 2), dtype=np.float64)
@@ -583,29 +617,42 @@ def align_depth_affine(
     scale_only_rows: list[int] = []
     scales = np.full(n_frames, np.nan)
 
+    # One counter per fallback cause: a single total cannot tell you whether the p99 far end
+    # is still buying frames back on a new scene, which is what it was chosen for
+    n_below_obs_floor = 0
+    n_unsolvable = 0
+    n_nonpositive_a = 0
+    n_saturating = 0
+
     pairs = _depth_correspondences(reconstruction, image_names, depth)
     for row, (d_colmap, d_vda) in enumerate(pairs):
-        if len(d_colmap) == 0:
-            continue
-
-        # Evidence bound first: it applies whether or not the affine fit survives
-        far_limits[row] = float(d_vda.max())
         if len(d_colmap) >= MIN_ALIGN_OBS:
             scales[row] = float(np.median(d_colmap / d_vda))
 
         # Affine needs its own, higher observation floor
         if len(d_colmap) < MIN_AFFINE_OBS:
+            n_below_obs_floor += 1
             continue
         solution = _fit_affine_disparity(d_colmap, d_vda)
         if solution is None:
+            n_unsolvable += 1
             continue
-        a, b = solution
+        a, b, inliers = solution
 
-        # Reject a fit that inverts depth or saturates inside the frame's own range
-        far_depth = float(np.percentile(depth[row][depth[row] > 0], 99)) if (depth[row] > 0).any() else 0.0
-        if a <= 0 or far_depth <= 0 or (a / far_depth + b) <= AFFINE_EPS:
+        # Reject a fit that inverts depth, or that saturates inside the frame's own range.
+        # p99, not max: one sky pixel rejected 78/300 frames, p99 rejects 14/300
+        if a <= 0:
+            n_nonpositive_a += 1
             continue
+        far_depth = float(np.percentile(depth[row][depth[row] > 0], 99)) if (depth[row] > 0).any() else 0.0
+        if far_depth <= 0 or (a / far_depth + b) <= AFFINE_EPS:
+            n_saturating += 1
+            continue
+
+        # The evidence bound belongs to the fit that survived: the furthest VDA depth among
+        # its inliers. A frame that falls back to a scale keeps inf and is never masked
         coeffs[row] = (a, b)
+        far_limits[row] = float(d_vda[inliers].max())
         fitted[row] = True
 
     # Scale-only frames: a = 1/s, b = 0 reproduces the scale path exactly
@@ -620,9 +667,26 @@ def align_depth_affine(
         coeffs[row] = (1.0 / scale, 0.0)
         scale_only_rows.append(int(row))
 
+    logger.info(
+        "depth alignment (affine): %d/%d frames fitted, %d scale-only "
+        "(%d under %d obs, %d unsolvable, %d a<=0, %d saturating at p99)",
+        int(fitted.sum()),
+        n_frames,
+        len(scale_only_rows),
+        n_below_obs_floor,
+        MIN_AFFINE_OBS,
+        n_unsolvable,
+        n_nonpositive_a,
+        n_saturating,
+    )
+
     stats = {
         "n_fitted": int(fitted.sum()),
         "n_fallback": len(scale_only_rows),
+        "n_below_obs_floor": n_below_obs_floor,
+        "n_unsolvable": n_unsolvable,
+        "n_nonpositive_a": n_nonpositive_a,
+        "n_saturating": n_saturating,
         "fallback_frames": [image_names[i] for i in scale_only_rows],
         "global_scale": global_scale,
         "far_limit_p10_p50_p90": (

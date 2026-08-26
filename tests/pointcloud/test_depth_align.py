@@ -112,19 +112,27 @@ def test_scale_alignment_recovers_a_constant_ratio():
     assert stats["n_fallback"] == 0
 
 
+def _affine_observations(a, b, n_obs=200, d_min=2.0, d_max=40.0, seed=0):
+    """
+    Observations plus one depth row whose true mapping is 1/d_colmap = a*(1/d_vda) + b.
+    """
+    rng = np.random.default_rng(seed)
+    d_vda_values = rng.uniform(d_min, d_max, n_obs)
+    depth_row = np.zeros((GRID_H, GRID_W), dtype=np.float32)
+    observations = []
+    for i, d_vda in enumerate(d_vda_values):
+        u, v = i % GRID_W, (i // GRID_W) % GRID_H
+        depth_row[v, u] = d_vda
+        observations.append((u, v, float(1.0 / (a / d_vda + b))))
+    return observations, depth_row
+
+
 def _affine_scene(a, b, n_obs=200, d_min=2.0, d_max=40.0):
     """
     One frame whose true mapping is 1/d_colmap = a*(1/d_vda) + b, sampled on the depth grid.
     """
-    rng = np.random.default_rng(0)
-    d_vda_values = rng.uniform(d_min, d_max, n_obs)
-    depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
-    observations = []
-    for i, d_vda in enumerate(d_vda_values):
-        u, v = i % GRID_W, (i // GRID_W) % GRID_H
-        depth[0, v, u] = d_vda
-        observations.append((u, v, float(1.0 / (a / d_vda + b))))
-    return _fake_reconstruction({"frame_000000.jpg": observations}), depth
+    observations, depth_row = _affine_observations(a, b, n_obs, d_min, d_max)
+    return _fake_reconstruction({"frame_000000.jpg": observations}), depth_row[None]
 
 
 def test_affine_recovers_the_generating_coefficients():
@@ -158,6 +166,23 @@ def test_affine_falls_back_to_scale_below_the_obs_floor():
     assert coeffs[0, 1] == 0.0  # scale-only: b is exactly zero
     assert coeffs[0, 0] == pytest.approx(0.5)  # a = 1/s with s = 2.0
     assert stats["n_fallback"] == 1
+    assert stats["n_below_obs_floor"] == 1
+    assert (stats["n_unsolvable"], stats["n_nonpositive_a"], stats["n_saturating"]) == (0, 0, 0)
+
+
+def test_affine_sub_floor_frame_gets_no_far_bound():
+    # Frame 0 carries the fit; frame 1 has 3 observations, all landing on near surfaces.
+    # Its model is the GLOBAL scale, so it has no per-frame range evidence to be bounded by
+    # and must be supervised exactly as fully as the scale path supervises it.
+    obs_fitted, row_fitted = _affine_observations(a=1.5, b=-0.004)
+    obs_thin, row_thin = _affine_observations(a=1.5, b=-0.004, n_obs=3, d_min=4.0, d_max=5.5, seed=7)
+    recon = _fake_reconstruction({"frame_000000.jpg": obs_fitted, "frame_000001.jpg": obs_thin})
+    depth = np.stack([row_fitted, row_thin])
+
+    _coeffs, far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg", "frame_000001.jpg"], depth)
+    assert np.isfinite(far_limits[0])
+    assert far_limits[1] == np.inf
+    assert stats["n_below_obs_floor"] == 1
 
 
 def test_affine_far_limit_is_the_furthest_fitted_observation():
@@ -181,6 +206,14 @@ def test_apply_affine_zeroes_saturated_and_far_pixels():
     assert out[0, 0] > 0.0
     assert out[0, 1] == 0.0  # beyond far_limit
     assert out[0, 2] == 0.0  # saturated AND beyond far_limit
+
+
+def test_apply_affine_masks_past_the_saturation_horizon():
+    # a=1.5, b=-0.03 saturates at d = -a/b = 50; far_limit is deliberately set past it
+    out = sfm._apply_affine_depth(np.array([[10.0, 50.0, 55.0]]), a=1.5, b=-0.03, far_limit=60.0)
+    assert out[0, 0] == pytest.approx(10.0 / 1.2)
+    assert out[0, 1] == 0.0  # exactly at the horizon: the denominator is zero
+    assert out[0, 2] == 0.0  # past the horizon, inside far_limit: masked, not a negative depth
 
 
 def test_apply_affine_keeps_zeros_zero():

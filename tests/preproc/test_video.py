@@ -7,6 +7,7 @@ import pytest
 
 from collab_splats.preproc.video import (
     _require_ffmpeg,
+    context_indices,
     extract_frame,
     get_video_info,
     iter_frames,
@@ -184,3 +185,27 @@ def test_extract_frame_rotated_video_matches_display_dims(rotated_video):
 def test_extract_frame_out_of_range_raises(synth_video):
     with pytest.raises(ValueError, match="out of range"):
         extract_frame(synth_video, 10_000)
+
+
+########################################################################
+# context_indices: constant-rate source frame grid
+########################################################################
+
+
+def test_context_indices_matches_sample_fps_stride(tiny_video):
+    # tiny_video is 60 frames @ 30 fps -> fps=10 gives stride 3
+    grid = context_indices(tiny_video, target_fps=10.0)
+    assert grid[:4] == [0, 3, 6, 9]
+    assert grid[-1] < 60
+    assert len(grid) == 20
+
+
+def test_context_indices_floors_stride_at_one(tiny_video):
+    # A target rate above the source rate cannot sample sub-frame
+    grid = context_indices(tiny_video, target_fps=1000.0)
+    assert grid == list(range(60))
+
+
+def test_context_indices_reuses_a_probe(tiny_video):
+    info = {"total_frames": 10, "fps": 30.0, "width": 320, "height": 240}
+    assert context_indices(tiny_video, target_fps=15.0, info=info) == [0, 2, 4, 6, 8]

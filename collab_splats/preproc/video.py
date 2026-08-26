@@ -184,6 +184,28 @@ def iter_frames(
         proc.wait()
 
 
+def context_indices(video_path: str | Path, *, target_fps: float, info: dict | None = None) -> list[int]:
+    """
+    Source frame indices on a constant-rate grid at target_fps.
+
+    - Uses the same `step = round(native_fps / target_fps)` rule as
+      `sampling.sample_fps`, so a keyframe grid and a context grid built at the
+      same rate agree frame-for-frame and keyframes are a subset by construction.
+    - Stride floors at 1: a rate above the source rate cannot sample sub-frame.
+    """
+    if target_fps is None or target_fps <= 0:
+        raise ValueError(f"context_indices needs a positive target_fps, got {target_fps!r}")
+
+    info = info if info is not None else get_video_info(video_path)
+    total = info["total_frames"]
+    if total == 0:
+        return []
+
+    native_fps = info["fps"] or 30.0
+    step = max(1, int(round(native_fps / target_fps)))
+    return list(range(0, total, step))
+
+
 def extract_frame(video_path: str | Path, frame_idx: int, *, info: dict | None = None) -> np.ndarray:
     """
     Decode one frame via ffmpeg input-seek; returns (H, W, 3) uint8 RGB.

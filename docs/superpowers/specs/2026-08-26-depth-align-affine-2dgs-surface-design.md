@@ -81,6 +81,29 @@ which this metric cannot observe.
 its gradient reaches the Gaussian means. Sparse by construction: only the median Gaussian on
 each ray receives gradient.
 
+### Extrapolation is a masking signal, but only on the far side
+
+`mesh.conf_percentile: 20` is configured, but InstantSfM carries no confidence, so
+`reconstructor.py:1603` logs "no confidence in zarr — using unmasked depth" and every
+positive-depth pixel becomes a target. The only evidence-based reliability signal available on
+this path is extrapolation: the affine fit is constrained solely over the disparity range the
+track observations span.
+
+Held-out test (fit on half of each frame's tracks, score the other half): out-of-range
+observations are **2.2x worse** (0.00782 vs 0.00355 mean disparity residual). Real signal.
+
+But the extrapolated pixels are not where the naive reading suggests:
+
+| side | meaning | mean | p90 |
+|---|---|---|---|
+| `q < q_min` | farther than the furthest track | 0.58% | 1.33% |
+| `q > q_max` | nearer than the nearest track | **4.22%** | 11.34% |
+
+Median depth of the near-side pixels is 2.58m against a nearest-track median of 8.67m. SIFT
+tracks do not cover close surfaces, so a two-sided extrapolation mask would delete the closest
+~4% of every frame — precisely the near-field geometry this work exists to sharpen, and where
+VDA is most reliable (near = large disparity). **The mask must be one-sided.**
+
 ## Components
 
 ### A — VDA context stream (`preproc/video.py`, `pointcloud/sfm.py`, `wrapper/reconstructor.py`)
@@ -153,6 +176,19 @@ and track xyzs, making reconstructions non-deterministic. `random_seed` is a sup
 upstream RUNTIME_OPTION (`controllers/global_mapper.py:25`, seeds numpy/random/torch) that
 neither we nor upstream's CLI sets. One line beside the existing `use_depths`.
 
+### F — honest sfm depth-target masking (`pointcloud/sfm.py`, `wrapper/reconstructor.py`)
+
+Two parts, both following from the measurement above.
+
+- **Far-side extrapolation bound.** `align_depth_affine` already zeroes pixels past its
+  saturation horizon; extend the same "no supervision without evidence" rule to pixels whose
+  disparity falls below the fitted range (`q < q_min` over that frame's track observations).
+  One-sided by design — the near side is left fully supervised. Combined cost 0.58% + 0.06%
+  of pixels.
+- **Stop the silent no-op.** `reconstructor.py` currently accepts `conf_percentile` on the sfm
+  path and quietly ignores it at info level. Alignment-based masking is now the sfm channel, so
+  the log must say that rather than imply the percentile was applied.
+
 ### E — mesh depth source (`mesh/`)
 
 `mesh.splat_depth: expected | median` selects which rendered depth TSDF fuses. RaDe-GS itself
@@ -206,8 +242,6 @@ Secondary: PSNR/SSIM. Expect these to read below the recorded 20.80, which was t
 - Far-field depth masking — measured as low-value above.
 - 400-frame scenes — deferred; 400 at 12k is 30 visits/view, below the 34 that cost -0.9 dB in
   the 875-frame run. Frame count gets its own axis later.
-- Fixing the unmasked sfm depth targets (`reconstructor.py:1603` logs "no confidence in zarr —
-  using unmasked depth"). Real, but not the far-field culprit; recorded for follow-up.
 - The `upstream max_res=1280` cap: measured, exact null. `Resize(lower_bound, ensure_multiple_of=14)`
   forces the short side to 518 regardless.
 

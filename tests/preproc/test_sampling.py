@@ -436,3 +436,42 @@ def test_sample_fps_targets_lie_on_the_context_grid(tiny_video, clean_report):
     grid = set(context_indices(tiny_video, target_fps=2.0))
     _frames, records = sample_fps(tiny_video, fps=2.0, report=clean_report, search_radius=0)
     assert {r["frame_idx"] for r in records} <= grid
+
+
+########################################################################
+# candidates: keyframes and their blur substitutes drawn from a fixed grid
+########################################################################
+
+
+def test_candidates_restrict_chosen_frames_to_the_grid(tiny_video, clean_report):
+    # 60-frame video, grid every 3rd frame, 10 keyframes -> every pick is a grid member
+    grid = list(range(0, 60, 3))
+    _frames, records = sample_uniform(tiny_video, max_frames=10, report=clean_report, search_radius=7, candidates=grid)
+    chosen = [r["frame_idx"] for r in records]
+    assert set(chosen) <= set(grid)
+    assert len(chosen) == len(set(chosen))
+
+
+def test_candidates_substitute_a_blurry_target_within_the_grid(tiny_video):
+    # Grid every 3rd frame (20 members), 5 targets -> grid spacing 4 -> radius 1, so each
+    # window is 3 grid members wide and substitution is actually possible. Target 30 is an
+    # exact grid member and unusable, so the pick must move to 27 or 33 — never to 29 or 31.
+    report = _synthetic_report(60, bad=(30,))
+    grid = list(range(0, 60, 3))
+    _frames, records = sample_uniform(tiny_video, max_frames=5, report=report, search_radius=7, candidates=grid)
+    chosen = [r["frame_idx"] for r in records]
+    assert 30 not in chosen
+    assert {27, 33} & set(chosen)
+    assert set(chosen) <= set(grid)
+
+
+def test_candidates_none_is_byte_identical_to_today(tiny_video, clean_report):
+    _f1, r1 = sample_uniform(tiny_video, max_frames=10, report=clean_report, search_radius=3)
+    _f2, r2 = sample_uniform(tiny_video, max_frames=10, report=clean_report, search_radius=3, candidates=None)
+    assert [r["frame_idx"] for r in r1] == [r["frame_idx"] for r in r2]
+
+
+def test_sample_fps_accepts_candidates(tiny_video, clean_report):
+    grid = list(range(0, 60, 3))
+    _frames, records = sample_fps(tiny_video, fps=5.0, report=clean_report, search_radius=7, candidates=grid)
+    assert set(r["frame_idx"] for r in records) <= set(grid)

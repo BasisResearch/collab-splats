@@ -10,6 +10,7 @@ video metadata live in preproc.video.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Callable
 
 import cv2
@@ -244,6 +245,7 @@ def _sample_by_quality(
     search_radius: int,
     on_progress,
     desc: str,
+    candidates: Sequence[int] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
     Pick one frame per target from its window, then decode exactly those.
@@ -254,6 +256,9 @@ def _sample_by_quality(
     - Quality picks the winner WITHIN each window only. The targets come from the
       caller, so it never decides which regions of the video get sampled — a
       stretch of unusable footage still contributes its share of frames.
+    - candidates restricts BOTH the target and its substitutes to a fixed index grid
+      (the VDA context grid), so every keyframe is a grid member by construction. The
+      window radius is then counted in grid steps, not source frames.
     """
     if not targets:
         return [], []
@@ -264,16 +269,39 @@ def _sample_by_quality(
 
     # Window radius: half the target spacing, capped, and kept under spacing/2 so
     # neighbouring windows never overlap (the index map stays deterministic).
-    spacing = targets[1] - targets[0] if len(targets) > 1 else total
-    radius = min(max((spacing - 1) // 2, 0), search_radius)
+    if candidates is not None:
+        # Grid mode: spacing and radius are counted in grid steps, and each target
+        # snaps to the first grid member at or after it before the window is cut.
+        grid = np.asarray(sorted({int(c) for c in candidates}), dtype=np.int64)
+        if grid.size == 0:
+            raise ValueError("_sample_by_quality: candidates is empty")
+
+        spacing = grid.size / len(targets) if len(targets) > 1 else grid.size
+        radius = min(max(int((spacing - 1) // 2), 0), search_radius)
+        positions = np.clip(np.searchsorted(grid, targets), 0, grid.size - 1)
+        windows = [grid[max(0, p - radius) : p + radius + 1].tolist() for p in positions]
+    else:
+        spacing = targets[1] - targets[0] if len(targets) > 1 else total
+        radius = min(max((spacing - 1) // 2, 0), search_radius)
+        windows = [sorted({min(max(t + o, 0), total - 1) for o in range(-radius, radius + 1)}) for t in targets]
 
     # Per target, prefer a usable frame and break ties on sharpness. max() over an
     # ascending range returns the FIRST maximal element, matching the old strict
     # `key > best` comparison — the tie-break is parity-critical.
-    chosen: list[int] = []
-    for t in targets:
-        window = sorted({min(max(t + o, 0), total - 1) for o in range(-radius, radius + 1)})
-        chosen.append(max(window, key=lambda i: (bool(usable[i]), float(laplacian[i]))))
+    chosen: list[int] = [max(window, key=lambda i: (bool(usable[i]), float(laplacian[i]))) for window in windows]
+
+    # Two targets can snap to one grid member when the grid is coarse relative to the
+    # budget; keep the first and say so rather than writing a duplicate frame.
+    deduped = list(dict.fromkeys(chosen))
+    if len(deduped) != len(chosen):
+        logger.warning(
+            "%d of %d targets collapsed onto an already-chosen frame (candidate grid too coarse "
+            "for the frame budget); keeping %d unique frames",
+            len(chosen) - len(deduped),
+            len(chosen),
+            len(deduped),
+        )
+        chosen = deduped
 
     # One ffmpeg select pass over exactly the frames we keep
     decoded = dict(iter_frames(video_path, indices=chosen))
@@ -303,6 +331,7 @@ def sample_uniform(
     search_radius: int = 3,
     quality: dict | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    candidates: Sequence[int] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
     Exactly max_frames evenly-spaced frames spanning the whole video.
@@ -310,6 +339,7 @@ def sample_uniform(
     - The COUNT is the contract; spacing falls out of the video length.
     - report is required — a quality report from qa.compute_video_quality or
       qa.load_video_quality. quality= overrides filter_frame_quality's thresholds.
+    - candidates: restrict every selected frame to this index grid (see _sample_by_quality).
     """
     info = get_video_info(str(video_path))
     total = info["total_frames"]
@@ -329,6 +359,7 @@ def sample_uniform(
         search_radius=search_radius,
         on_progress=on_progress,
         desc="Uniform sampling",
+        candidates=candidates,
     )
 
 
@@ -342,6 +373,7 @@ def sample_fps(
     search_radius: int = 3,
     quality: dict | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    candidates: Sequence[int] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
     One frame every 1/fps seconds; re-spread if the count falls outside the band.
@@ -351,6 +383,7 @@ def sample_fps(
     - Outside [min_frames, max_frames] the targets are re-spread evenly over the
       WHOLE video, never truncated — truncation would hand the reconstructor half
       a scene.
+    - candidates: restrict every selected frame to this index grid (see _sample_by_quality).
     """
     # fps is the contract here, so an absent one is a config error, not a default
     if fps is None or fps <= 0:
@@ -395,6 +428,7 @@ def sample_fps(
         search_radius=search_radius,
         on_progress=on_progress,
         desc="fps sampling",
+        candidates=candidates,
     )
 
 

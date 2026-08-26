@@ -375,6 +375,59 @@ def generate_vda_depth(
 MIN_ALIGN_OBS = 20  # per-frame track-observation floor for a trustworthy median
 
 
+def _depth_correspondences(
+    reconstruction: pycolmap.Reconstruction,
+    image_names: list[str],
+    depth: np.ndarray,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """
+    Per-frame (d_colmap, d_vda) pairs from track observations, both positive and in bounds.
+
+    - Each points2D carrying a point3D gives an exact pixel plus that point's z in the camera
+      frame; the pixel is rescaled from native camera resolution to the depth grid and
+      nearest-sampled into VDA depth.
+    - Returns one (d_colmap, d_vda) tuple per row of `depth`, in `image_names` order; a frame
+      with no usable observation gets a pair of empty arrays.
+    """
+    # Row order is the caller's; every name must be registered
+    name_to_image = {image.name: image for image in reconstruction.images.values()}
+    missing = [name for name in image_names if name not in name_to_image]
+    if missing:
+        raise ValueError(f"{len(missing)} image names not in reconstruction (first: {missing[0]})")
+
+    _n_frames, grid_h, grid_w = depth.shape
+    empty = (np.zeros(0), np.zeros(0))
+    pairs: list[tuple[np.ndarray, np.ndarray]] = []
+
+    for row, name in enumerate(image_names):
+        image = name_to_image[name]
+        camera = reconstruction.cameras[image.camera_id]
+
+        # Track observations: exact 2D pixel + the observed point's depth in this view
+        observations = [p for p in image.points2D if p.has_point3D()]
+        if not observations:
+            pairs.append(empty)
+            continue
+        xyz = np.stack([reconstruction.points3D[p.point3D_id].xyz for p in observations])
+        cam_from_world = image.cam_from_world().matrix()
+        d_colmap = (xyz @ cam_from_world[:3, :3].T + cam_from_world[:3, 3])[:, 2]
+
+        # Rescale native pixels to the depth grid (the localization ref_px bug class —
+        # native-res keypoints indexed into a model-res grid), then nearest-sample
+        xy = np.stack([p.xy for p in observations])
+        u = np.rint(xy[:, 0] * (grid_w / camera.width)).astype(np.int64)
+        v = np.rint(xy[:, 1] * (grid_h / camera.height)).astype(np.int64)
+        in_bounds = (u >= 0) & (u < grid_w) & (v >= 0) & (v < grid_h)
+        d_vda = np.zeros(len(observations))
+        d_vda[in_bounds] = depth[row, v[in_bounds], u[in_bounds]]
+
+        # Keep pairs with positive depth on both sides
+        valid = in_bounds & (d_vda > 0) & (d_colmap > 0)
+        pairs.append((d_colmap[valid], d_vda[valid]))
+
+    return pairs
+
+
 def align_depth_to_reconstruction(
     reconstruction: pycolmap.Reconstruction,
     image_names: list[str],
@@ -392,45 +445,18 @@ def align_depth_to_reconstruction(
       global scale, fallback frames, per-frame obs counts, and the pooled ratio spread
       before/after alignment (the after-spread is the unit-level success check).
     """
-    # Row order is the caller's; every name must be registered
-    name_to_image = {image.name: image for image in reconstruction.images.values()}
-    missing = [name for name in image_names if name not in name_to_image]
-    if missing:
-        raise ValueError(f"{len(missing)} image names not in reconstruction (first: {missing[0]})")
-
-    n_frames, grid_h, grid_w = depth.shape
+    n_frames = depth.shape[0]
     scales = np.full(n_frames, np.nan)
     obs_counts = np.zeros(n_frames, dtype=np.int64)
     pooled_ratios: list[np.ndarray] = []
     pooled_rows: list[np.ndarray] = []
 
-    for row, name in enumerate(image_names):
-        image = name_to_image[name]
-        camera = reconstruction.cameras[image.camera_id]
-
-        # Track observations: exact 2D pixel + the observed point's depth in this view
-        observations = [p for p in image.points2D if p.has_point3D()]
-        if not observations:
-            continue
-        xyz = np.stack([reconstruction.points3D[p.point3D_id].xyz for p in observations])
-        cam_from_world = image.cam_from_world().matrix()
-        d_colmap = (xyz @ cam_from_world[:3, :3].T + cam_from_world[:3, 3])[:, 2]
-
-        # Rescale native pixels to the depth grid (the localization ref_px bug class —
-        # native-res keypoints indexed into a model-res grid), then nearest-sample
-        xy = np.stack([p.xy for p in observations])
-        u = np.rint(xy[:, 0] * (grid_w / camera.width)).astype(np.int64)
-        v = np.rint(xy[:, 1] * (grid_h / camera.height)).astype(np.int64)
-        in_bounds = (u >= 0) & (u < grid_w) & (v >= 0) & (v < grid_h)
-        d_vda = np.zeros(len(observations))
-        d_vda[in_bounds] = depth[row, v[in_bounds], u[in_bounds]]
-
-        # Keep pairs with positive depth on both sides; fit only above the obs floor
-        valid = in_bounds & (d_vda > 0) & (d_colmap > 0)
-        obs_counts[row] = int(valid.sum())
+    # One robust scale per frame from its track observations; below the obs floor, don't fit
+    for row, (d_colmap, d_vda) in enumerate(_depth_correspondences(reconstruction, image_names, depth)):
+        obs_counts[row] = len(d_colmap)
         if obs_counts[row] == 0:
             continue
-        ratios = d_colmap[valid] / d_vda[valid]
+        ratios = d_colmap / d_vda
         pooled_ratios.append(ratios)
         pooled_rows.append(np.full(len(ratios), row))
         if obs_counts[row] >= MIN_ALIGN_OBS:

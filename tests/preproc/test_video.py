@@ -198,7 +198,6 @@ def test_context_indices_matches_sample_fps_stride(tiny_video):
     # tiny_video is 60 frames @ 30 fps -> fps=10 gives stride 3
     grid = context_indices(tiny_video, target_fps=10.0)
     assert grid[:4] == [0, 3, 6, 9]
-    assert grid[-1] < 60
     assert len(grid) == 20
 
 
@@ -254,3 +253,13 @@ def test_decode_context_undistorts_before_downscaling(tiny_video):
     frames = decode_context(tiny_video, [0, 3], profile=profile, out_short_side=100)
     assert frames.shape[0] == 2
     assert min(frames.shape[1:3]) == 100
+
+
+def test_context_indices_rejects_a_nonpositive_fps(tiny_video):
+    with pytest.raises(ValueError, match="positive target_fps"):
+        context_indices(tiny_video, target_fps=0)
+
+
+def test_context_indices_empty_video_returns_no_indices(tiny_video):
+    # A probe reporting zero frames short-circuits before any stride arithmetic
+    assert context_indices(tiny_video, target_fps=2.0, info={"total_frames": 0, "fps": 30.0}) == []

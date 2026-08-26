@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 
 from collab_splats.preproc.qa import analysis_gray
-from collab_splats.preproc.video import get_video_info, iter_frames
+from collab_splats.preproc.video import context_indices, get_video_info, iter_frames
 from collab_splats.utils.progress import progress
 
 logger = logging.getLogger(__name__)
@@ -361,10 +361,9 @@ def sample_fps(
     if total == 0:
         return [], []
 
-    # Stride floors at 1 — a rate above the source rate cannot sample sub-frame
-    native_fps = info["fps"] or 30.0
-    step = max(1, int(round(native_fps / fps)))
-    targets = list(range(0, total, step))
+    # One source of truth for the stride: passing the probe through means a context grid
+    # built at this same rate contains these targets by construction, not by coincidence
+    targets = context_indices(video_path, target_fps=fps, info=info)
 
     # Clamp the floating count into the band by re-spreading, never by truncating
     requested = len(targets)
@@ -384,7 +383,7 @@ def sample_fps(
             min_frames,
             max_frames,
             len(targets),
-            native_fps * len(targets) / total,
+            (info["fps"] or 30.0) * len(targets) / total,
         )
 
     return _sample_by_quality(

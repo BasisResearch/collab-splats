@@ -1,8 +1,9 @@
 """
 Video decode and probe: the only module that shells out to ffmpeg/ffprobe.
 
-Holds no measurement and no selection logic, so both preproc.qa and
-preproc.sampling can depend on it without a cycle.
+Holds no measurement logic and no quality-driven selection, so both preproc.qa
+and preproc.sampling can depend on it without a cycle. The constant-rate index
+grid lives here rather than in sampling because sampling delegates to it.
 
 Colour convention: iter_frames yields BGR (what cv2 wants), extract_frame
 returns RGB (what its consumers store). Both are uint8 HWC.
@@ -189,19 +190,22 @@ def context_indices(video_path: str | Path, *, target_fps: float, info: dict | N
     """
     Source frame indices on a constant-rate grid at target_fps.
 
-    - Uses the same `step = round(native_fps / target_fps)` rule as
-      `sampling.sample_fps`, so a keyframe grid and a context grid built at the
-      same rate agree frame-for-frame and keyframes are a subset by construction.
+    - `sampling.sample_fps` calls this for its own targets, so a keyframe grid and a
+      context grid built at the same rate agree frame-for-frame and keyframes are a
+      subset by construction.
     - Stride floors at 1: a rate above the source rate cannot sample sub-frame.
     """
+    # target_fps is the contract here, so an absent one is a config error, not a default
     if target_fps is None or target_fps <= 0:
         raise ValueError(f"context_indices needs a positive target_fps, got {target_fps!r}")
 
+    # Reuse a caller's probe when given — a fresh one costs an ffprobe subprocess
     info = info if info is not None else get_video_info(video_path)
     total = info["total_frames"]
     if total == 0:
         return []
 
+    # Stride floors at 1 — a rate above the source rate cannot sample sub-frame
     native_fps = info["fps"] or 30.0
     step = max(1, int(round(native_fps / target_fps)))
     return list(range(0, total, step))

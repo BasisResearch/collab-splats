@@ -13,7 +13,7 @@ from collab_splats.preproc.sampling import (
     sample_optical_flow,
     sample_uniform,
 )
-from collab_splats.preproc.video import iter_frames
+from collab_splats.preproc.video import context_indices, iter_frames
 
 ########################################################################
 # Fixtures
@@ -427,3 +427,12 @@ def test_search_radius_picks_sharpest_in_wide_window(tiny_video):
     _, narrow = sample_fps(tiny_video, fps=2.0, report=report, search_radius=3)
     assert [r["frame_idx"] for r in wide][:2] == [0, 21]
     assert [r["frame_idx"] for r in narrow][:2] == [0, 15]
+
+
+def test_sample_fps_targets_lie_on_the_context_grid(tiny_video, clean_report):
+    # The guarantee the VDA context stream rests on: keyframes picked at a given rate are
+    # all members of the context grid built at that same rate. search_radius=0 pins the
+    # picks to the targets, so this tests the stride rule and nothing else.
+    grid = set(context_indices(tiny_video, target_fps=2.0))
+    _frames, records = sample_fps(tiny_video, fps=2.0, report=clean_report, search_radius=0)
+    assert {r["frame_idx"] for r in records} <= grid

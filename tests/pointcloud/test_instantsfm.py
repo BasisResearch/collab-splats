@@ -309,3 +309,47 @@ def test_nudge_edge_keypoints_pulls_exact_edge_inward_only():
     np.testing.assert_array_equal(out[[0, 3]], feats[[0, 3]])
     assert feats[1, 0] == 1918.0  # input not mutated
     assert sfm._nudge_edge_keypoints(np.empty((0, 2)), 10, 10).size == 0
+
+
+def test_keep_rows_length_must_match_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
+    frames = np.zeros((6, 32, 32, 3), dtype=np.uint8)
+    with pytest.raises(ValueError, match="keep_rows"):
+        sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[0, 2, 4])
+
+
+def test_keep_rows_must_be_in_range(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfm, "VDA_ROOT", tmp_path / "nope")
+    frames = np.zeros((3, 32, 32, 3), dtype=np.uint8)
+    with pytest.raises(ValueError, match="keep_rows"):
+        sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[0, 9])
+
+
+def test_keep_rows_writes_only_the_requested_rows(tmp_path, monkeypatch):
+    # Stub inference: 5 context frames in, one distinguishable depth map per frame
+    def _fake_model(**_kwargs):
+        class _M:
+            def load_state_dict(self, *_a, **_k):
+                return None
+
+            def to(self, *_a, **_k):
+                return self
+
+            def eval(self):
+                return self
+
+            def infer_video_depth(self, frames, fps, **_k):
+                maps = np.stack([np.full((8, 8), float(i + 1), dtype=np.float32) for i in range(len(frames))])
+                return maps, fps
+
+        return _M()
+
+    monkeypatch.setattr(sfm, "_load_vda_model", _fake_model)
+    (tmp_path / "ckpt").mkdir()
+    frames = np.zeros((5, 32, 32, 3), dtype=np.uint8)
+    sfm.generate_vda_depth(frames, fps=8.0, out_dir=tmp_path, names=_NAMES, keep_rows=[1, 3], depth_width=8)
+
+    npy_dir = tmp_path / "depth_vda" / "images" / "npy"
+    assert sorted(p.name for p in npy_dir.iterdir()) == ["frame_000000.npy", "frame_000001.npy"]
+    assert np.load(npy_dir / "frame_000000.npy").flat[0] == pytest.approx(2.0)
+    assert np.load(npy_dir / "frame_000001.npy").flat[0] == pytest.approx(4.0)

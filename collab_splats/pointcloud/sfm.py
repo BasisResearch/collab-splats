@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -239,50 +240,13 @@ def vda_depth_complete(out_dir: Path, names: list[str]) -> bool:
     return npy_dir.is_dir() and {p.stem for p in npy_dir.glob("*.npy")} == {Path(n).stem for n in names}
 
 
-def generate_vda_depth(
-    frames: np.ndarray,
-    fps: float,
-    out_dir: Path,
-    names: list[str],
-    *,
-    encoder: str = "vitl",
-    input_size: int = 518,
-    depth_width: int = 518,
-    device: str = "cuda",
-) -> Path:
+def _load_vda_model(*, encoder: str, device: str):
     """
-    Run Video Depth Anything metric depth over keyframes; write InstantSfM's depth layout.
+    Construct the VDA metric model on `device` from the pinned checkpoint.
 
-    - frames: (N, H, W, 3) uint8 RGB (frames.zarr order).
-    - fps: effective keyframe rate — VDA is temporal.
-    - names: staged image filenames (e.g. frame_000000.jpg), one per frame, same order.
-    - out_dir: parent dir; one float32 map per frame lands at
-      out_dir/depth_vda/images/npy/<stem>.npy — the layout instantsfm's
-      ReadDepthsIntoFeatures single-camera branch consumes (data_reader.py:404-407 ->
-      ReadDepthsWithFilenames(depth_vda/images) -> npy/<stem>.npy matched by image stem).
-    - depth_width: VDA returns depth at the input frame resolution (300 x 1080p = 2.5 GB),
-      too heavy for pointcloud.zarr; each map is nearest-resized to this width (no depth
-      blending across discontinuities). 518 matches the feedforward model-res convention
-      so downstream stages see the same resolution class. Any depth res is valid for SfM —
-      instantsfm's sample_depth_at_pixel normalises keypoints by camera w/h.
-    - Returns out_dir/depth_vda. Skips inference when npy/ already holds exactly the
-      stems in `names`.
-
-    Attribution: inference pattern follows
-    https://github.com/DepthAnything/Video-Depth-Anything @ 4f5ae23 run.py:45-57
-    (construct with `metric=`, `load_state_dict(strict=True)`, `infer_video_depth`).
+    - Split out from generate_vda_depth so the write path is testable without a GPU or
+      the third_party clone.
     """
-    if len(names) != len(frames):
-        raise ValueError(f"names ({len(names)}) and frames ({len(frames)}) must align one-to-one")
-    depth_dir = Path(out_dir) / "depth_vda"
-    npy_dir = depth_dir / "images" / "npy"
-
-    # Idempotent: the exact per-frame stem set is authoritative (overwrite = delete upstream);
-    # callers may check vda_depth_complete first to avoid decoding frames at all
-    if vda_depth_complete(out_dir, names):
-        logger.info("VDA depth exists at %s (%d maps) — skipping inference", npy_dir, len(names))
-        return depth_dir
-
     # Lazy heavy import — VDA lives in a third_party clone (repo root on sys.path), not
     # site-packages. Upstream HEAD (4f5ae23) has no metric_depth/ subdir: `video_depth_anything/`
     # sits at the clone root and `video_depth.py:27` imports a TOP-LEVEL `utils` namespace
@@ -303,14 +267,83 @@ def generate_vda_depth(
     if not ckpt.exists():
         raise FileNotFoundError(f"VDA metric checkpoint missing: {ckpt} — run setup.sh")
 
-    # Load the metric model on the target device — `metric=True` selects the metric head
-    # (run.py:52 `metric=args.metric`); the checkpoint is the metric vitl weight
+    # metric=True loads the metric head AND disables infer_video_depth's cross-window
+    # scale-and-shift chaining (video_depth.py:135), so consecutive windows are stitched
+    # on the head's own absolute output rather than fitted to each other. Measured
+    # 2026-08-26: this is why a full-video pass does not improve metric contiguity.
     model = VideoDepthAnything(**_VDA_MODEL_CONFIGS[encoder], metric=True)
     model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=True)
-    model = model.to(device).eval()
+    return model.to(device).eval()
 
-    # Metric inference over the whole keyframe sequence (returns input-res depth)
-    logger.info("VDA metric inference: %d frames @ %.2f fps (encoder=%s)", len(frames), fps, encoder)
+
+def generate_vda_depth(
+    frames: np.ndarray,
+    fps: float,
+    out_dir: Path,
+    names: list[str],
+    *,
+    encoder: str = "vitl",
+    input_size: int = 518,
+    depth_width: int = 518,
+    device: str = "cuda",
+    keep_rows: Sequence[int] | None = None,
+) -> Path:
+    """
+    Run Video Depth Anything metric depth over keyframes; write InstantSfM's depth layout.
+
+    - frames: (N, H, W, 3) uint8 RGB (frames.zarr order).
+    - keep_rows: when set, `frames` is a CONTEXT stream (a contiguous constant-rate grid)
+      and only these rows are written, one per entry of `names`, in order. VDA is temporal,
+      so inference sees the whole stream and only the write is filtered.
+    - fps: effective keyframe rate — VDA is temporal.
+    - names: staged image filenames (e.g. frame_000000.jpg), one per frame, same order.
+    - out_dir: parent dir; one float32 map per frame lands at
+      out_dir/depth_vda/images/npy/<stem>.npy — the layout instantsfm's
+      ReadDepthsIntoFeatures single-camera branch consumes (data_reader.py:404-407 ->
+      ReadDepthsWithFilenames(depth_vda/images) -> npy/<stem>.npy matched by image stem).
+    - depth_width: VDA returns depth at the input frame resolution (300 x 1080p = 2.5 GB),
+      too heavy for pointcloud.zarr; each map is nearest-resized to this width (no depth
+      blending across discontinuities). 518 matches the feedforward model-res convention
+      so downstream stages see the same resolution class. Any depth res is valid for SfM —
+      instantsfm's sample_depth_at_pixel normalises keypoints by camera w/h.
+    - Returns out_dir/depth_vda. Skips inference when npy/ already holds exactly the
+      stems in `names`.
+
+    Attribution: inference pattern follows
+    https://github.com/DepthAnything/Video-Depth-Anything @ 4f5ae23 run.py:45-57
+    (construct with `metric=`, `load_state_dict(strict=True)`, `infer_video_depth`).
+    """
+    if keep_rows is None:
+        if len(names) != len(frames):
+            raise ValueError(f"names ({len(names)}) and frames ({len(frames)}) must align one-to-one")
+    else:
+        keep_rows = [int(r) for r in keep_rows]
+        if len(names) != len(keep_rows):
+            raise ValueError(f"names ({len(names)}) and keep_rows ({len(keep_rows)}) must align one-to-one")
+        out_of_range = [r for r in keep_rows if not 0 <= r < len(frames)]
+        if out_of_range:
+            raise ValueError(f"keep_rows out of range for {len(frames)} context frames (first: {out_of_range[0]})")
+
+    depth_dir = Path(out_dir) / "depth_vda"
+    npy_dir = depth_dir / "images" / "npy"
+
+    # Idempotent: the exact per-frame stem set is authoritative (overwrite = delete upstream);
+    # callers may check vda_depth_complete first to avoid decoding frames at all
+    if vda_depth_complete(out_dir, names):
+        logger.info("VDA depth exists at %s (%d maps) — skipping inference", npy_dir, len(names))
+        return depth_dir
+
+    model = _load_vda_model(encoder=encoder, device=device)
+
+    # Metric inference over the whole sequence (returns input-res depth). With keep_rows
+    # the stream is the context grid and `fps` is the CONTEXT rate, not the keyframe rate.
+    logger.info(
+        "VDA metric inference: %d frames @ %.2f fps (encoder=%s, writing %d maps)",
+        len(frames),
+        fps,
+        encoder,
+        len(names),
+    )
     depths, _fps = model.infer_video_depth(frames, fps, input_size=input_size, device=device, fp32=False)
     depths = np.asarray(depths, dtype=np.float32)
 
@@ -318,6 +351,10 @@ def generate_vda_depth(
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+    # Keep only the rows the caller asked for (all of them when keep_rows is None)
+    if keep_rows is not None:
+        depths = depths[np.asarray(keep_rows, dtype=np.int64)]
 
     # Nearest-resize to depth_width and write one map per frame, keyed by image stem
     h, w = depths.shape[1:3]

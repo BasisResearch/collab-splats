@@ -144,7 +144,11 @@ class SplatsConfig:
         for name, spec in cfg.losses.items():
             if name not in OPTIONAL_LOSSES:
                 raise ValueError(f"splats.losses: unknown loss '{name}'; allowed {sorted(OPTIONAL_LOSSES)}")
-            unknown_spec_keys = set(spec) - {"weight", "start", "end", "end_weight"}
+            # depth_ratio is the RaDe-GS median-normal blend and belongs to one loss only
+            allowed_spec_keys = {"weight", "start", "end", "end_weight"}
+            if name == "normal_consistency":
+                allowed_spec_keys = allowed_spec_keys | {"depth_ratio"}
+            unknown_spec_keys = set(spec) - allowed_spec_keys
             if unknown_spec_keys or "weight" not in spec:
                 raise ValueError(
                     f"splats.losses.{name}: expected {{weight[, start, end, end_weight]}}, got {sorted(spec)}"
@@ -163,6 +167,16 @@ class SplatsConfig:
         distortion_weight = distortion_spec.get("weight", 0.0)
         if cfg.primitive == "3dgs" and distortion_weight > 0:
             raise ValueError("splats.losses.distortion is 2dgs-only; set its weight to 0 or use primitive: 2dgs")
+
+        # Median depth only exists for 2DGS, so a non-zero blend on 3dgs is a config error
+        depth_ratio = float(cfg.losses.get("normal_consistency", {}).get("depth_ratio", 0.0))
+        if not 0.0 <= depth_ratio <= 1.0:
+            raise ValueError(f"splats.losses.normal_consistency.depth_ratio must be in [0, 1], got {depth_ratio}")
+        if depth_ratio > 0 and cfg.primitive != "2dgs":
+            raise ValueError(
+                "splats.losses.normal_consistency.depth_ratio > 0 is 2dgs-only "
+                "(median depth is a rasterization_2dgs output); set it to 0 or use primitive: 2dgs"
+            )
         return cfg
 
 

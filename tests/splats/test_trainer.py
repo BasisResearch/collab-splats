@@ -353,3 +353,36 @@ def test_pose_refiner_rotation_lr_follows_world_extent_translation_lr_follows_fr
     lrs = {id(group["params"][0]): group["lr"] for group in optimizer.param_groups}
     assert lrs[id(refiner.rotation.weight)] == pytest.approx(1e-5 * 78.65)
     assert lrs[id(refiner.translation.weight)] == pytest.approx(1e-5)
+
+
+def test_depth_ratio_accepted_on_normal_consistency_for_2dgs():
+    cfg = SplatsConfig.from_dict(
+        {"primitive": "2dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": 0.6}}}
+    )
+    assert cfg.losses["normal_consistency"]["depth_ratio"] == 0.6
+
+
+def test_depth_ratio_rejected_on_another_loss():
+    with pytest.raises(ValueError, match="depth_ratio"):
+        SplatsConfig.from_dict({"primitive": "2dgs", "losses": {"depth": {"weight": 0.01, "depth_ratio": 0.6}}})
+
+
+def test_depth_ratio_out_of_range_rejected():
+    with pytest.raises(ValueError, match="depth_ratio"):
+        SplatsConfig.from_dict(
+            {"primitive": "2dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": 1.5}}}
+        )
+
+
+def test_depth_ratio_is_2dgs_only():
+    with pytest.raises(ValueError, match="2dgs"):
+        SplatsConfig.from_dict(
+            {"primitive": "3dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": 0.6}}}
+        )
+
+
+def test_depth_ratio_zero_is_allowed_on_3dgs():
+    cfg = SplatsConfig.from_dict(
+        {"primitive": "3dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": 0.0}}}
+    )
+    assert cfg.losses["normal_consistency"]["depth_ratio"] == 0.0

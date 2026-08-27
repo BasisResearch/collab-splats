@@ -2431,7 +2431,7 @@ git commit --only configs/base.yaml configs/README.md collab_splats/wrapper/reco
 
 ---
 
-## Task 13: Run the grid — 3 new cells against a reused baseline — MEASURED
+## Task 13: Run the grid — 3 new cells against a reused baseline — DONE (results `9df45f26`, renders `28897a47`)
 
 | cell | alignment | normals | PSNR | SSIM | gaussians |
 |---|---|---|---|---|---|
@@ -2484,7 +2484,7 @@ costs — 6x per cell. Reusing cell 1 saves about 1.5 hours, and training all th
 any of them (Steps 2-4) means the mesh budget is spent only where the PSNR table says it is
 worth spending.
 
-- [ ] **Step 1: Write the three override configs**
+- [x] **Step 1: Write the three override configs**
 
 Create one yaml per new cell in the scratchpad. Common to all four cells — this is cell 1's
 recorded config, not an idealised one:
@@ -2579,7 +2579,7 @@ Write each cell's outputs to a fresh subdirectory so nothing overwrites
 `splats_combined2dgs/`. Note that zarr `mode="w"` rmtree's a symlinked `splats.zarr`; a
 directory-level symlink is safe, a file-level one is not.
 
-- [ ] **Step 2: Train all three cells first — no meshing yet**
+- [x] **Step 2: Train all three cells first — no meshing yet**
 
 Training is ~13 min/cell against ~80 min/mesh, so all three train before anything is fused.
 `ckpt.pt` is written at the end of training and meshing reads it, so deferring the fuse never
@@ -2601,7 +2601,7 @@ tmux new-session -d -s grid_cell2 \
 Wait for each session to exit before launching the next. Check `tmux list-sessions` and the tail
 of the log rather than polling on a timer.
 
-- [ ] **Step 3: Report PSNR/SSIM for all three cells**
+- [x] **Step 3: Report PSNR/SSIM for all three cells**
 
 Read `summary.psnr` / `summary.ssim` from each run's `splats_quality_report.json`. Cell 1 is
 20.805 / 0.6776 and is not re-run. Present all four rows in one table.
@@ -2610,7 +2610,7 @@ All four sit below the 30k-step record because 12k gives 40 visits/view against 
 deltas are what matter, not the absolute level. Remember the depth prior decays to 0.001 by step
 12000, so a positive `depth_align: affine` delta is a floor rather than a ceiling.
 
-- [ ] **Step 4: GATE — decide which cells to mesh**
+- [x] **Step 4: GATE — decide which cells to mesh**
 
 **Do not start any mesh until the Step 3 table has been reported and the choice of cells has
 been made.** User directive, 2026-08-26: "report psnr for all first then decide meshing."
@@ -2629,7 +2629,7 @@ Two things bias the decision away from "just mesh the winner":
 - Cell 4 changes frame selection, so its reconstruction differs. Its PSNR is not comparable
   to cells 1-3 on equal terms.
 
-- [ ] **Step 5: Mesh the chosen cells**
+- [x] **Step 5: Mesh the chosen cells**
 
 Leaf-only re-run against the already-trained scene:
 
@@ -2645,7 +2645,7 @@ conf_percentile: null}` must be restored in the config for this pass.
 Note that zarr `mode="w"` rmtree's a symlinked `splats.zarr`; a directory-level symlink is safe,
 a file-level one is not.
 
-- [ ] **Step 6: Grade the meshes (primary)**
+- [x] **Step 6: Grade the meshes (primary)**
 
 For each meshed cell, record: main-component vertex fraction, speckle component count, total
 vertex count after `clean_repair`, and renders from the scene cameras. Vertex counts alone have
@@ -2667,12 +2667,22 @@ One `OffscreenRenderer` per process — open3d does not tolerate more.
 Cell 1's reference numbers for 2dgs on this scene: main-component fraction 0.634 (against 0.457
 for 3dgs), which is why 2dgs is the mesh source at all.
 
-- [ ] **Step 7: Write the results document**
+- [x] **Step 7: Write the results document**
 
 Create `docs/superpowers/specs/2026-08-26-depth-align-grid-results.md` with the four-cell table
 (cell 1 reused), PSNR for all cells and mesh grades for the meshed subset, the verdict per
 component, and which defaults (if any) should flip. Say explicitly which cells were not meshed
 and why. Commit with `git add -f`.
+
+---
+
+**Outcome.** The Step 4 gate chose cell 1 vs cell 3b (`normal_consistency.depth_ratio: 0.6`
+re-rendered from its checkpoint), one variable, crossed with `mesh.splat_depth` expected|median
+and voxel 0.2|0.1 — 8 meshes. Cell 2 and cell 4 were not meshed: cell 2 is a PSNR regression on
+the same normals, and cell 4 changes frame selection so its mesh is not comparable. Grades,
+renders and the verdict are in `docs/superpowers/specs/2026-08-26-depth-align-grid-results.md`:
+`mesh.splat_depth: median` ships, voxel 0.1 when the mesh is the deliverable, `depth_ratio`
+stays at its default.
 
 ---
 

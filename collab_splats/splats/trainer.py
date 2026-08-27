@@ -607,6 +607,14 @@ def train(
     use_pre_backward_hook = isinstance(strategy, DefaultStrategy)
     normal_spec = cfg.losses.get("normal_consistency")
     for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
+        # Offsets and the MLP heads follow their own exponential schedules, which the shared
+        # ExponentialLR below cannot express (it drives one optimizer at one gamma). Their horizon is
+        # scaffold.lr_max_steps, not cfg.max_steps — upstream's schedules are run-length free. Upstream
+        # sets them at the TOP of the iteration it trains (GS-SR gssr/trainer.py before render), so
+        # setting them after the step would run every group one iteration behind.
+        if anchor_field is not None:
+            anchor_field.update_learning_rate(step)
+
         # Pick one view (splatfacto's permutation schedule) and its (possibly refined) camera
         view = view_sampler.next()
         view_image = images[view]
@@ -692,11 +700,6 @@ def train(
         if anchor_field is not None:
             anchor_field.mlp_optimizer.step()
             anchor_field.mlp_optimizer.zero_grad(set_to_none=True)
-
-            # Offsets and the MLP heads follow their own exponential schedules, which the shared
-            # ExponentialLR below cannot express (it drives one optimizer at one gamma). Their horizon
-            # is scaffold.lr_max_steps, not cfg.max_steps — upstream's schedules are run-length free.
-            anchor_field.update_learning_rate(step)
         if pose_optimizer is not None:
             pose_optimizer.step()
             pose_optimizer.zero_grad(set_to_none=True)

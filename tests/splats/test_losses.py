@@ -271,8 +271,17 @@ def test_scale_reg_prefers_decoded_log_scales():
     gaussians = torch.nn.ParameterDict({"scales": torch.nn.Parameter(torch.zeros(5, 3))})
     decoded_value = scale_reg_loss(render, {}, gaussians, 1.0, {"weight": 1.0})
     parameter_value = scale_reg_loss({}, {}, gaussians, 1.0, {"weight": 1.0})
-    assert decoded_value.item() == pytest.approx(0.1353352832366127, rel=1e-5)
+    assert decoded_value.item() == pytest.approx(0.1353352832366127**3, rel=1e-5)
     assert parameter_value.item() == pytest.approx(1.0, rel=1e-5)
+
+
+def test_scale_reg_on_decoded_scales_is_the_volume_not_the_mean():
+    """Scaffold penalises the decoded volume, so the 2dgs zeroed third channel leaves the area."""
+    flat = {"log_scales": torch.cat([torch.full((4, 2), -2.0), torch.zeros(4, 1)], dim=-1)}
+    gaussians = torch.nn.ParameterDict({"scales": torch.nn.Parameter(torch.zeros(4, 3))})
+    assert scale_reg_loss(flat, {}, gaussians, 1.0, {"weight": 1.0}).item() == pytest.approx(
+        0.1353352832366127**2, rel=1e-5
+    )
 
 
 def test_opacity_reg_prefers_decoded_opacities():

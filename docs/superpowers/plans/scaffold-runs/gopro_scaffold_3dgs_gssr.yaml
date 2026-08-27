@@ -1,0 +1,49 @@
+# Scaffold-GS on 3dgs at GS-SR's own parameters (Task 13, run B of the scaffold-gs plan).
+# Same scene and pipeline knobs as gopro_scaffold_3dgs.yaml (run A); the scaffold block and the
+# appearance path are upstream's shipped defaults instead of ours:
+#   scaffold.appearance_dim 32 (yanxian-ll/GS-SR gssr/gaussian/scaffold_gaussian.py:41) and
+#   appearance_opt false — upstream has no per-image affine module, its appearance path IS the
+#   embedding. Every other scaffold default (lrs, 30k lr horizon, start_stat, windows, thresholds)
+#   now matches upstream in code, so nothing else needs overriding here.
+# Baseline (GH010229_undist/instantsfm/splats_appearance) — do NOT rerun it:
+#   vanilla 3dgs  psnr 21.606  ssim 0.7169  1,000,000 gaussians  601 s
+# Run A, for reference: psnr 20.386  ssim 0.6460  85,738 anchors  242,126 decoded/view
+preproc:
+  fps: 2.0
+  min_frames: null
+  max_frames: 300
+  n_workers: 4
+  undistort: true
+pointcloud:
+  method: sfm
+  backend: instantsfm
+  instantsfm:
+    retriangulation: true
+semantics:
+  enabled: false
+mesh:
+  enabled: false            # parity is PSNR / primitive count; meshing is the stage-2 (2dgs) question
+splats:
+  enabled: true
+  primitive: 3dgs
+  representation: scaffold
+  appearance_opt: false     # run B: Scaffold's embedding is the whole appearance path, as upstream
+  pose_opt: true
+  max_steps: 12000
+  num_downscales: 2         # c2f, as the baseline ran it
+  resolution_schedule: 3000
+  normalize_scene: true
+  scaffold:
+    n_offsets: 10
+    feat_dim: 32
+    appearance_dim: 32
+  losses:                   # the baseline's mix, except opacity_reg (see below)
+    depth: {weight: 0.01}
+    normal_consistency: {weight: 0.05, start: 7000}
+    # opacity_reg is off under scaffold: opacity is decoded per view and its SIGN is the offset
+    # visibility mask, so pulling it toward zero shuts offsets rather than thinning gaussians.
+    # Upstream has no such term; scale_reg below IS its lambda_scaling (0.01 x decoded volume).
+    opacity_reg: {weight: 0.0}
+    scale_reg: {weight: 0.01}
+    appearance_reg: {weight: 1.0e-3}
+    distortion: {weight: 0.0}

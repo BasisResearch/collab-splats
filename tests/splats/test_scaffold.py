@@ -68,8 +68,8 @@ def test_scaffold_accepts_the_inherited_sh_defaults():
 def test_mlp_heads_emit_per_offset_outputs():
     from collab_splats.splats.scaffold import ScaffoldMLPs
 
-    cfg = ScaffoldConfig(n_offsets=4, feat_dim=8)
-    mlps = ScaffoldMLPs(cfg)
+    cfg = ScaffoldConfig(n_offsets=4, feat_dim=8, appearance_dim=0)
+    mlps = ScaffoldMLPs(cfg, n_views=5)
     features = torch.zeros(6, cfg.feat_dim + 3)  # feat + unit view dir (3)
     opacity, cov, colour = mlps(features, camera_id=None)
     assert opacity.shape == (6, 4)
@@ -175,10 +175,10 @@ def test_optimizers_cover_every_anchor_parameter():
 ########################################
 
 
-def _field(n_offsets=4, appearance_dim=0, n_views=3, device="cpu"):
+def _field(n_offsets=4, appearance_dim=0, n_views=3, device="cpu", lr_max_steps=30000):
     from collab_splats.splats.scaffold import AnchorField
 
-    cfg = ScaffoldConfig(n_offsets=n_offsets, feat_dim=8, appearance_dim=appearance_dim)
+    cfg = ScaffoldConfig(n_offsets=n_offsets, feat_dim=8, appearance_dim=appearance_dim, lr_max_steps=lr_max_steps)
     points, colors = _seed_points(n=200)
     return AnchorField(cfg, points, colors, scene_scale=1.0, n_views=n_views, device=device)
 
@@ -343,7 +343,7 @@ def test_accumulation_renormalises_gradients_like_gsplat():
 
     means2d = torch.zeros(1, 3, 2)
     means2d.grad = torch.tensor([[[1e-3, 0.0], [0.0, 2e-3], [0.0, 0.0]]])
-    info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1}
+    info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1, "radii": torch.ones(3, 2)}
     decode_index = torch.tensor([0, 5, 7])
 
     strategy.accumulate(
@@ -368,7 +368,7 @@ def test_accumulation_is_additive_over_steps():
     state = strategy.initialize_state(n_anchors=2)
     means2d = torch.zeros(1, 1, 2)
     means2d.grad = torch.tensor([[[1e-3, 0.0]]])
-    info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1}
+    info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1, "radii": torch.ones(1, 2)}
     for _ in range(3):
         strategy.accumulate(
             state, info, torch.tensor([2]), opacities=torch.tensor([0.25]), visible_ids=torch.tensor([1])
@@ -384,10 +384,51 @@ def test_accumulation_without_a_gradient_is_a_no_op():
 
     strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
     state = strategy.initialize_state(n_anchors=2)
-    info = {"means2d": torch.zeros(1, 1, 2), "width": 800, "height": 600, "n_cameras": 1}
+    info = {"means2d": torch.zeros(1, 1, 2), "width": 800, "height": 600, "n_cameras": 1, "radii": torch.ones(1, 2)}
     strategy.accumulate(state, info, torch.tensor([2]), opacities=torch.tensor([0.25]), visible_ids=torch.tensor([1]))
     assert state["denom"].sum() == 0
     assert state["anchor_denom"].sum() == 0
+
+
+def test_accumulation_skips_gaussians_the_projection_dropped():
+    """Upstream counts gradients only for decoded Gaussians that rendered (update_filter)."""
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
+    state = strategy.initialize_state(n_anchors=4)
+
+    means2d = torch.zeros(1, 2, 2)
+    means2d.grad = torch.tensor([[[1e-3, 0.0], [1e-3, 0.0]]])
+    info = {
+        "means2d": means2d,
+        "width": 800,
+        "height": 600,
+        "n_cameras": 1,
+        "radii": torch.tensor([[3.0, 3.0], [0.0, 0.0]]),
+    }
+    strategy.accumulate(
+        state, info, torch.tensor([0, 4]), opacities=torch.tensor([0.5, 0.5]), visible_ids=torch.tensor([0, 2])
+    )
+
+    # Slot 4 never rendered, so it carries no gradient evidence; both anchors still count a visit
+    assert state["denom"][0] == 1
+    assert state["denom"][4] == 0
+    assert state["grad_accum"][4] == 0.0
+    assert list(state["anchor_denom"]) == [1, 0, 1, 0]
+
+
+def test_statistics_window_opens_before_growing_does():
+    """Upstream gathers statistics over (start_stat, update_until), a window wider than growing's."""
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    cfg = ScaffoldConfig(n_offsets=2, feat_dim=8, start_stat=500, update_from=1500, update_until=15000)
+    strategy = AnchorStrategy(cfg, primitive="3dgs")
+
+    assert not strategy.should_accumulate(500)
+    assert strategy.should_accumulate(501)
+    assert strategy.should_accumulate(1000)  # counting starts long before the first refine
+    assert strategy.should_accumulate(14999)
+    assert not strategy.should_accumulate(15000)
 
 
 def _strategy_and_state(field):
@@ -497,10 +538,10 @@ def test_anchors_are_frozen_by_default():
 def test_learning_rates_decay_per_head():
     field = _field(n_offsets=2, appearance_dim=4)
 
-    field.update_learning_rate(0, 1000)
+    field.update_learning_rate(0)
     start = {group["name"]: group["lr"] for group in field.mlp_optimizer.param_groups}
     start_offsets = field.optimizers["offsets"].param_groups[0]["lr"]
-    field.update_learning_rate(1000, 1000)
+    field.update_learning_rate(field.cfg.lr_max_steps)
     end = {group["name"]: group["lr"] for group in field.mlp_optimizer.param_groups}
     end_offsets = field.optimizers["offsets"].param_groups[0]["lr"]
 
@@ -511,6 +552,36 @@ def test_learning_rates_decay_per_head():
     assert end["embedding_appearance"] < start["embedding_appearance"]
     assert end["mlp_cov"] == pytest.approx(start["mlp_cov"])
     assert end_offsets < start_offsets
+
+
+def test_learning_rate_horizon_is_the_config_not_the_run_length():
+    """Upstream keys every schedule to a fixed 30k horizon, so a short run stops partway down."""
+    long_horizon = _field(n_offsets=2)
+    short_horizon = _field(n_offsets=2, lr_max_steps=1000)
+
+    long_horizon.update_learning_rate(1000)
+    short_horizon.update_learning_rate(1000)
+    long_lr = long_horizon.optimizers["offsets"].param_groups[0]["lr"]
+    short_lr = short_horizon.optimizers["offsets"].param_groups[0]["lr"]
+
+    assert long_horizon.cfg.lr_max_steps == 30000
+    assert short_lr < long_lr
+    assert short_lr == pytest.approx(short_horizon.cfg.offset_lr_final)
+
+
+def test_defaults_match_the_reference_implementation():
+    """GS-SR's shipped scaffold defaults, including the appearance embedding."""
+    cfg = ScaffoldConfig()
+
+    assert (cfg.feat_dim, cfg.n_offsets, cfg.appearance_dim) == (32, 10, 32)
+    assert (cfg.start_stat, cfg.update_from, cfg.update_until, cfg.refine_every) == (500, 1500, 15000, 100)
+    assert (cfg.update_depth, cfg.update_init_factor, cfg.update_hierarchy_factor) == (3, 16, 4)
+    assert (cfg.grad_threshold, cfg.min_opacity, cfg.success_threshold) == (0.0002, 0.005, 0.8)
+    assert (cfg.anchor_lr, cfg.anchor_feat_lr, cfg.scaling_lr, cfg.rotation_lr) == (0.0, 0.0075, 0.007, 0.002)
+    assert (cfg.offset_lr, cfg.offset_lr_final) == (0.01, 0.0001)
+    assert (cfg.mlp_opacity_lr, cfg.mlp_opacity_lr_final) == (0.002, 0.00002)
+    assert (cfg.mlp_cov_lr, cfg.mlp_colour_lr, cfg.mlp_colour_lr_final) == (0.004, 0.008, 0.00005)
+    assert (cfg.appearance_lr, cfg.appearance_lr_final, cfg.lr_max_steps) == (0.05, 0.0005, 30000)
 
 
 def test_pruning_removes_persistently_transparent_anchors():
@@ -526,6 +597,24 @@ def test_pruning_removes_persistently_transparent_anchors():
     strategy.prune(field, state)
     assert len(field.params["anchors"]) == n_before - 1
     assert len(state["grad_accum"]) == (n_before - 1) * 2
+
+
+def test_pruning_caps_the_raw_gaussian_extent():
+    """Upstream clamps scaling[:, 3:] to SCALE_CAP at every prune; the offset extent is untouched."""
+    from collab_splats.splats.scaffold import SCALE_CAP
+
+    field = _field(n_offsets=2)
+    strategy, state = _strategy_and_state(field)
+    with torch.no_grad():
+        field.params["scaling"][:, :] = 3.0
+
+    state["anchor_denom"][0:2] = 100.0
+    state["opacity_accum"][0] = 1e-6
+    state["opacity_accum"][1] = 50.0
+    strategy.prune(field, state)
+
+    assert float(field.params["scaling"][:, 3:].max()) == pytest.approx(SCALE_CAP)
+    assert float(field.params["scaling"][:, :3].max()) == pytest.approx(3.0)
 
 
 def test_pruning_keeps_anchors_that_were_never_seen():

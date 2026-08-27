@@ -119,15 +119,19 @@ def scale_reg_loss(
     render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
 ) -> Tensor:
     """
-    Scale regulariser from gsplat (MCMC); expects raw log scales.
+    Scale regulariser; expects raw log scales.
 
+    - Vanilla uses gsplat's MCMC form (mean of the exponentiated scales) over the scales parameter.
     - Scaffold has no scales parameter — its Gaussians are decoded per view — so the render carries
-      `log_scales` and that is used when present.
+      `log_scales`, and the penalty is the decoded VOLUME upstream uses: lambda_scaling *
+      scaling.prod(dim=1).mean() (GS-SR gssr/scene/scaffold_scene.py:184). Under 2dgs the third
+      channel is zeroed at decode, so exp() makes it 1 and the product is the 2-channel area
+      upstream's scaffold-2dgs scene penalises (gssr/scene/scaffold_2dgs_scene.py:25).
     """
     log_scales = render.get("log_scales")
     if log_scales is None:
-        log_scales = gaussians["scales"]
-    return gsplat_losses.scale_reg_loss(log_scales)
+        return gsplat_losses.scale_reg_loss(gaussians["scales"])
+    return torch.exp(log_scales).prod(dim=-1).mean()
 
 
 def appearance_reg_loss(

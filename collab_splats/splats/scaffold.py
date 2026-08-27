@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 import torch.nn.functional as F
+from gsplat import fully_fused_projection
 from gsplat.strategy.base import Strategy
 from gsplat.strategy.ops import _update_param_with_optimizer
 from sklearn.neighbors import NearestNeighbors
@@ -46,6 +47,7 @@ class ScaffoldConfig:
     # Densification window and thresholds. grad_threshold is Scaffold's published value and is
     # directly comparable because AnchorStrategy renormalises gradients the way gsplat's
     # DefaultStrategy does (strategy/default.py:243-249).
+    start_stat: int = 500  # statistics start here, before growing does
     update_from: int = 1500
     update_until: int = 15000
     refine_every: int = 100
@@ -57,9 +59,10 @@ class ScaffoldConfig:
     success_threshold: float = 0.8  # fraction of the window a slot/anchor must be seen for to count
 
     # Scaffold's own per-image appearance embedding, concatenated into the colour MLP input.
+    # 32 is upstream's shipped default (yanxian-ll/GS-SR gssr/gaussian/scaffold_gaussian.py:41);
     # 0 disables it. Independent of splats.appearance_opt (our per-image affine module): both
     # ship, neither retires the other, and the 2x2 is measured.
-    appearance_dim: int = 0
+    appearance_dim: int = 32
 
     # Learning rates (anchor / offset lrs are multiplied by scene_scale, like means_lr). Anchors are
     # frozen upstream (position_lr_init = position_lr_final = 0): the voxel grid the growing dedup
@@ -80,6 +83,11 @@ class ScaffoldConfig:
     appearance_lr: float = 5e-2
     appearance_lr_final: float = 5e-4
 
+    # Every upstream schedule is keyed to a FIXED horizon (*_lr_max_steps = 30_000 in
+    # gssr/gaussian/scaffold_gaussian.py:35-91), not to the run length: a 12k run therefore stops
+    # at the lr upstream would hold at step 12k instead of racing to the final lr.
+    lr_max_steps: int = 30000
+
     @classmethod
     def from_dict(cls, block: dict) -> "ScaffoldConfig":
         """
@@ -99,6 +107,8 @@ class ScaffoldConfig:
             raise ValueError(f"splats.scaffold.feat_dim must be >= 1, got {cfg.feat_dim}")
         if cfg.voxel_size is not None and cfg.voxel_size <= 0:
             raise ValueError(f"splats.scaffold.voxel_size must be > 0 when set, got {cfg.voxel_size}")
+        if cfg.lr_max_steps < 1:
+            raise ValueError(f"splats.scaffold.lr_max_steps must be >= 1, got {cfg.lr_max_steps}")
         if cfg.voxel_multiplier <= 0:
             raise ValueError(f"splats.scaffold.voxel_multiplier must be > 0, got {cfg.voxel_multiplier}")
         return cfg
@@ -115,6 +125,11 @@ class ScaffoldConfig:
 # the heads scale-free: distance is a world-unit quantity, and feeding it would make every decode
 # depend on the frame the scene happened to be trained in.
 VIEW_DIM = 3
+
+# Upstream clamps the raw (log-space) gaussian-extent channels at every prune
+# (GS-SR gssr/gaussian/scaffold_gaussian.py:530), so no decoded Gaussian may exceed exp(0.05)
+# world units however far the scaling parameter drifts.
+SCALE_CAP = 0.05
 
 
 class ScaffoldMLPs(torch.nn.Module):
@@ -155,7 +170,6 @@ class ScaffoldMLPs(torch.nn.Module):
             if n_views < 1:
                 raise ValueError("scaffold.appearance_dim > 0 needs n_views >= 1 to size the embedding")
             self.embedding_appearance = torch.nn.Embedding(n_views, cfg.appearance_dim)
-            torch.nn.init.zeros_(self.embedding_appearance.weight)
             colour_dim += cfg.appearance_dim
         self.mlp_colour = torch.nn.Sequential(
             torch.nn.Linear(colour_dim, width),
@@ -309,23 +323,53 @@ class AnchorField:
             "embedding_appearance": (cfg.appearance_lr, cfg.appearance_lr_final),
         }
 
-    def update_learning_rate(self, step: int, max_steps: int) -> None:
+    def update_learning_rate(self, step: int) -> None:
         """
         Decay the offset and MLP lrs for this step; the other anchor tensors hold a constant lr.
+
+        - The horizon is ``cfg.lr_max_steps``, not the run length: upstream keys every schedule to a
+          fixed 30k and a shorter run simply stops partway down the curve.
         """
-        t = min(max(step / max(max_steps, 1), 0.0), 1.0)
+        t = min(max(step / max(self.cfg.lr_max_steps, 1), 0.0), 1.0)
         for group in self.optimizers["offsets"].param_groups:
             group["lr"] = expon_lr(*self.lr_schedule["offsets"], t)
         for group in self.mlp_optimizer.param_groups:
             group["lr"] = expon_lr(*self.lr_schedule[group["name"]], t)
 
+    @torch.no_grad()
     def visible_anchors(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> Tensor:
         """
-        Boolean mask of anchors whose centre projects in front of the camera and inside the frame.
+        Boolean mask of the anchors this view's projection keeps (radii > 0).
 
-        - Deviation from upstream, which reuses the rasterizer's own prefilter pass: a projection test
-          is cheaper and needs no extra rasterization. The whole-frame margin keeps anchors whose
-          Gaussians spill into frame from centres just outside it.
+        - Upstream's prefilter_voxel, which runs the rasterizer's visible_filter over the anchors with
+          their OFFSET extent and rotation (GS-SR gssr/scene/scaffold_scene.py:122-155). gsplat exposes
+          the same projection kernel directly, so this needs no extra rasterization pass.
+        - gsplat ships CUDA kernels only, so off-GPU the analytic frustum test below stands in — the
+          decode path stays exercisable on CPU, and training never takes that branch.
+        - No gradient: the mask only selects which anchors decode.
+        """
+        anchors = self.params["anchors"]
+        if not anchors.is_cuda:
+            return self._frustum_anchors(cam_to_world, intrinsics, width, height)
+
+        radii, *_ = fully_fused_projection(
+            anchors,
+            None,
+            self.params["rotation"],
+            torch.exp(self.params["scaling"][:, :3]),
+            torch.linalg.inv(cam_to_world),
+            intrinsics,
+            width,
+            height,
+        )
+        return radii.reshape(len(anchors), -1).amax(dim=-1) > 0
+
+    def _frustum_anchors(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> Tensor:
+        """
+        CPU stand-in for the projection prefilter: anchor centres in front of the camera and in frame.
+
+        - The whole-frame margin keeps anchors whose Gaussians spill into frame from centres just
+          outside it, which is what the projection kernel's radii do on GPU.
         """
         world_to_cam = torch.linalg.inv(cam_to_world)[0]
         anchors_cam = self.params["anchors"] @ world_to_cam[:3, :3].T + world_to_cam[:3, 3]
@@ -486,6 +530,10 @@ class AnchorStrategy(Strategy):
         - Opacity is summed per anchor over all its offsets and divided by the anchor's VISIT count,
           not by how often its offsets happened to render (upstream training_statis): an anchor that
           is visible with every offset shut must score zero, or it can never be pruned.
+        - Only Gaussians the projection actually kept (radii > 0) carry gradient evidence, so the
+          gradient half is filtered by it — upstream's update_filter (training_statis, GS-SR
+          gssr/gaussian/scaffold_gaussian.py:506-508). The opacity half is not: an anchor is visited
+          whether or not its Gaussians landed on screen.
         - A step whose gradient never reached the tensor (nothing rendered) is skipped, not counted.
         """
         grads = info[self.key_for_gradient].grad
@@ -498,8 +546,12 @@ class AnchorStrategy(Strategy):
 
         device = state["grad_accum"].device
         index = decode_index.to(device)
-        state["grad_accum"].index_add_(0, index, grad_norm.to(device))
-        state["denom"].index_add_(0, index, torch.ones_like(index, dtype=state["denom"].dtype))
+
+        # radii is [C, N, 2] (or [N, 2] for one camera); a Gaussian counts if any axis rendered
+        rendered = info["radii"].reshape(len(grad_norm), -1).amax(dim=-1) > 0
+        grad_index = index[rendered.to(device)]
+        state["grad_accum"].index_add_(0, grad_index, grad_norm[rendered].to(device))
+        state["denom"].index_add_(0, grad_index, torch.ones_like(grad_index, dtype=state["denom"].dtype))
 
         # Negative opacities were dropped at decode, and upstream clamps them to zero before summing,
         # so summing the slots that survived gives the same per-anchor numerator
@@ -507,6 +559,16 @@ class AnchorStrategy(Strategy):
         state["opacity_accum"].index_add_(0, anchor_index, opacities.detach().to(device))
         visible = visible_ids.to(device)
         state["anchor_denom"].index_add_(0, visible, torch.ones_like(visible, dtype=state["anchor_denom"].dtype))
+
+    def should_accumulate(self, step: int) -> bool:
+        """
+        True inside upstream's statistics window (start_stat, update_until).
+
+        - Growing starts later than counting does, so the first refine reads a full window instead of
+          a cold one, and nothing is counted after the last refine (GS-SR densify(),
+          gssr/gaussian/scaffold_gaussian.py:710).
+        """
+        return self.cfg.start_stat < step < self.cfg.update_until
 
     def grow(self, field: "AnchorField", state: dict) -> int:
         """
@@ -665,6 +727,11 @@ class AnchorStrategy(Strategy):
             return value[keep]
 
         _update_param_with_optimizer(param_fn, optimizer_fn, field.params, field.optimizers)
+
+        # Upstream caps the raw gaussian-extent channels every time it prunes (SCALE_CAP)
+        with torch.no_grad():
+            field.params["scaling"][:, 3:].clamp_(max=SCALE_CAP)
+
         for key in ("grad_accum", "denom"):
             state[key] = state[key][keep_slots]
         for key in ("opacity_accum", "anchor_denom"):

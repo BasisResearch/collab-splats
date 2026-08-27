@@ -680,8 +680,9 @@ def train(
         loss, loss_values = compute_losses(step, render, target, gaussians, loss_schedule, scene_scale)
         loss.backward()
 
-        # Scaffold reads the screen-space gradient off the retained tensor BEFORE the optimizers zero it
-        if anchor_field is not None:
+        # Scaffold reads the screen-space gradient off the retained tensor BEFORE the optimizers zero it,
+        # and only inside the statistics window upstream gathers over
+        if anchor_field is not None and strategy.should_accumulate(step):
             strategy.accumulate(strategy_state, info, decode_index, decoded["opacities"], decoded["visible_ids"])
 
         # Optimizer steps for Gaussians (and poses), then lr decay
@@ -693,8 +694,9 @@ def train(
             anchor_field.mlp_optimizer.zero_grad(set_to_none=True)
 
             # Offsets and the MLP heads follow their own exponential schedules, which the shared
-            # ExponentialLR below cannot express (it drives one optimizer at one gamma)
-            anchor_field.update_learning_rate(step, cfg.max_steps)
+            # ExponentialLR below cannot express (it drives one optimizer at one gamma). Their horizon
+            # is scaffold.lr_max_steps, not cfg.max_steps — upstream's schedules are run-length free.
+            anchor_field.update_learning_rate(step)
         if pose_optimizer is not None:
             pose_optimizer.step()
             pose_optimizer.zero_grad(set_to_none=True)

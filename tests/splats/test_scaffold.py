@@ -159,3 +159,94 @@ def test_optimizers_cover_every_anchor_parameter():
     assert set(field.optimizers) == set(field.params)
     for optimizer in field.optimizers.values():
         assert len(optimizer.param_groups) == 1
+
+
+########################################
+# Decode
+########################################
+
+
+def _field(n_offsets=4, appearance_dim=0, n_views=3, device="cpu"):
+    from collab_splats.splats.scaffold import AnchorField
+
+    cfg = ScaffoldConfig(n_offsets=n_offsets, feat_dim=8, appearance_dim=appearance_dim)
+    points, colors = _seed_points(n=200)
+    return AnchorField(cfg, points, colors, scene_scale=1.0, n_views=n_views, device=device)
+
+
+def _cam(device="cpu"):
+    cam_to_world = torch.eye(4, device=device)[None]
+    cam_to_world[0, 2, 3] = -4.0
+    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[None]
+    return cam_to_world, intrinsics
+
+
+def test_decode_returns_rasterizer_inputs_and_index():
+    field = _field()
+    cam_to_world, intrinsics = _cam()
+    decoded, index = field.decode("3dgs", cam_to_world, intrinsics, width=64, height=64, camera_id=None)
+    n = len(decoded["means"])
+    assert n > 0
+    assert decoded["means"].shape == (n, 3)
+    assert decoded["quats"].shape == (n, 4)
+    assert decoded["scales"].shape == (n, 3)
+    assert decoded["opacities"].shape == (n,)
+    assert decoded["colors"].shape == (n, 3)  # post-activation RGB, so sh_degree=None at rasterize
+    assert decoded["log_scales"].shape == (n, 3)  # scale_reg reads this instead of a parameter
+    assert index.shape == (n,)
+    assert index.dtype == torch.int64
+    assert int(index.max()) < len(field.params["anchors"]) * field.cfg.n_offsets
+
+
+def test_decode_index_points_at_the_generating_anchor():
+    field = _field(n_offsets=2)
+    cam_to_world, intrinsics = _cam()
+    decoded, index = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    anchor_ids = index // field.cfg.n_offsets
+
+    # Each decoded mean is its anchor plus a scaled offset, so it must sit within the offset extent
+    anchors = field.params["anchors"][anchor_ids]
+    offset_extent = torch.exp(field.params["scaling"][anchor_ids][:, :3])
+    displacement = (decoded["means"] - anchors).abs()
+    assert torch.all(displacement <= offset_extent * 1.001 + 1e-6)
+
+
+def test_decode_drops_offsets_with_non_positive_opacity():
+    field = _field(n_offsets=4)
+    cam_to_world, intrinsics = _cam()
+
+    # Force every opacity negative: the tanh head's last linear bias dominates the feature input
+    with torch.no_grad():
+        field.mlps.mlp_opacity[-2].weight.zero_()
+        field.mlps.mlp_opacity[-2].bias.fill_(-5.0)
+    decoded, index = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    assert len(decoded["means"]) == 0
+    assert len(index) == 0
+
+
+def test_decode_is_differentiable_into_the_mlps():
+    field = _field()
+    cam_to_world, intrinsics = _cam()
+    decoded, _ = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    decoded["colors"].sum().backward()
+    assert field.mlps.mlp_colour[0].weight.grad is not None
+    assert field.params["anchor_feat"].grad is not None
+
+
+def test_decode_2dgs_zeroes_the_third_scale():
+    field = _field()
+    cam_to_world, intrinsics = _cam()
+    decoded, _ = field.decode("2dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    assert torch.all(decoded["scales"][:, 2] == 0.0)
+
+
+def test_decode_frustum_filter_drops_anchors_behind_the_camera():
+    field = _field(n_offsets=2)
+    cam_to_world, intrinsics = _cam()
+    visible = field.visible_anchors(cam_to_world, intrinsics, 64, 64)
+
+    # Camera sits at z = -4 looking down +z, so a point far behind it can never be visible
+    with torch.no_grad():
+        field.params["anchors"][0] = torch.tensor([0.0, 0.0, -100.0])
+    assert not bool(field.visible_anchors(cam_to_world, intrinsics, 64, 64)[0])
+    assert bool(visible.any())

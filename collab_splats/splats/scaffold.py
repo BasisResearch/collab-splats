@@ -256,3 +256,98 @@ class AnchorField:
             for name, lr in learning_rates.items()
         }
         self.mlp_optimizer = torch.optim.Adam(self.mlps.parameters(), lr=cfg.mlp_lr, eps=1e-15)
+
+    def visible_anchors(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> Tensor:
+        """
+        Boolean mask of anchors whose centre projects in front of the camera and inside the frame.
+
+        - Deviation from upstream, which reuses the rasterizer's own prefilter pass: a projection test
+          is cheaper and needs no extra rasterization. The whole-frame margin keeps anchors whose
+          Gaussians spill into frame from centres just outside it.
+        """
+        world_to_cam = torch.linalg.inv(cam_to_world)[0]
+        anchors_cam = self.params["anchors"] @ world_to_cam[:3, :3].T + world_to_cam[:3, 3]
+        depth = anchors_cam[:, 2]
+        in_front = depth > 1e-3
+
+        # Project with the frame's K; the margin keeps off-centre anchors that still splat into frame
+        safe_depth = depth.clamp_min(1e-3)
+        projected = (anchors_cam[:, :2] / safe_depth[:, None]) @ intrinsics[0, :2, :2].T + intrinsics[0, :2, 2]
+        margin_x, margin_y = width * 0.5, height * 0.5
+        in_frame = (
+            (projected[:, 0] > -margin_x)
+            & (projected[:, 0] < width + margin_x)
+            & (projected[:, 1] > -margin_y)
+            & (projected[:, 1] < height + margin_y)
+        )
+        return in_front & in_frame
+
+    def decode(
+        self,
+        primitive: str,
+        cam_to_world: Tensor,
+        intrinsics: Tensor,
+        width: int,
+        height: int,
+        camera_id: Tensor | None,
+    ) -> tuple[dict[str, Tensor], Tensor]:
+        """
+        Decode this view's neural Gaussians. Returns (rasterizer inputs, decode_index).
+
+        - ``decode_index`` is ``anchor_index * n_offsets + offset_index`` per emitted Gaussian.
+        - ``colors`` are post-activation RGB, so the caller rasterizes with ``sh_degree=None``.
+        - ``log_scales`` carries the decoded scales in log space for the scale regulariser.
+
+        Follows generate_neural_gaussians in city-super/Scaffold-GS scene/gaussian_model.py
+        (reimplemented; no code copied).
+        """
+        n_offsets = self.cfg.n_offsets
+        visible = self.visible_anchors(cam_to_world, intrinsics, width, height)
+        anchor_ids = torch.nonzero(visible, as_tuple=False).squeeze(-1)
+        anchors = self.params["anchors"][anchor_ids]
+        feat = self.params["anchor_feat"][anchor_ids]
+        scaling = torch.exp(self.params["scaling"][anchor_ids])
+        offsets = self.params["offsets"][anchor_ids]
+
+        # View direction and distance from each anchor to the camera centre feed every head
+        camera_centre = cam_to_world[0, :3, 3]
+        to_camera = anchors - camera_centre
+        view_distance = to_camera.norm(dim=-1, keepdim=True)
+        view_direction = to_camera / view_distance.clamp_min(1e-8)
+        features = torch.cat([feat, view_direction, view_distance], dim=-1)
+
+        neural_opacity, cov, colour = self.mlps(features, camera_id)
+
+        # Offsets with non-positive opacity contribute nothing: dropping them here is what keeps the
+        # decoded count far below anchors x n_offsets
+        keep = (neural_opacity > 0).reshape(-1)
+        slot_index = (anchor_ids[:, None] * n_offsets + torch.arange(n_offsets, device=anchors.device)).reshape(-1)
+        decode_index = slot_index[keep]
+
+        # means = anchor + offset scaled by the anchor's offset extent (scaling[:, :3])
+        means = (anchors[:, None, :] + offsets * scaling[:, None, :3]).reshape(-1, 3)[keep]
+
+        # scales = the anchor's gaussian extent (scaling[:, 3:6]) modulated per offset
+        cov = cov.reshape(-1, 7)[keep]
+        scales = scaling[:, 3:6].repeat_interleave(n_offsets, dim=0)[keep] * torch.sigmoid(cov[:, :3])
+        quats = F.normalize(cov[:, 3:7], dim=-1)
+        opacities = neural_opacity.reshape(-1)[keep]
+        colors = colour.reshape(-1, 3)[keep]
+
+        # 2DGS reads scales[..., :2]; zero the unused third channel so it can never be misread
+        if primitive == "2dgs":
+            zeros = torch.zeros_like(scales[:, :1])
+            log_scales = torch.cat([torch.log(scales[:, :2].clamp_min(1e-12)), zeros], dim=-1)
+            scales = torch.cat([scales[:, :2], zeros], dim=-1)
+        else:
+            log_scales = torch.log(scales.clamp_min(1e-12))
+
+        decoded = {
+            "means": means,
+            "quats": quats,
+            "scales": scales,
+            "opacities": opacities,
+            "colors": colors,
+            "log_scales": log_scales,
+        }
+        return decoded, decode_index

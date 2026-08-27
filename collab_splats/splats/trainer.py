@@ -39,8 +39,8 @@ from collab_splats.splats.appearance import AppearanceModule
 from collab_splats.splats.cameras import CameraOptModule
 from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
 from collab_splats.splats.outputs import write_splat_outputs
-from collab_splats.splats.rendering import render_view
-from collab_splats.splats.scaffold import ScaffoldConfig
+from collab_splats.splats.rendering import render_gaussians, render_view
+from collab_splats.splats.scaffold import AnchorField, AnchorStrategy, ScaffoldConfig
 from collab_splats.utils.progress import progress
 
 logger = logging.getLogger(__name__)
@@ -259,6 +259,28 @@ def denormalize_outputs(
     with torch.no_grad():
         gaussians["means"].data = gaussians["means"].data / scale + center_t
         gaussians["scales"].data = gaussians["scales"].data - math.log(scale)
+        cam_to_world[:, :3, 3] = cam_to_world[:, :3, 3] / scale + center_t
+        if pose_refiner is not None:
+            pose_refiner.translation.weight /= scale
+
+
+def denormalize_anchors(
+    anchors: torch.nn.ParameterDict,
+    pose_refiner: CameraOptModule | None,
+    cam_to_world: Tensor,
+    center: np.ndarray,
+    scale: float,
+) -> None:
+    """
+    Undo ``scene_normalization`` in place on the anchors, cameras and pose deltas.
+
+    - anchors: p / scale + center; both halves of the log ``scaling`` shift by - log(scale).
+    - offsets are stored in units of the anchor's own extent, so they are scale-free and untouched.
+    """
+    center_t = torch.as_tensor(center, dtype=torch.float32, device=cam_to_world.device)
+    with torch.no_grad():
+        anchors["anchors"].data = anchors["anchors"].data / scale + center_t
+        anchors["scaling"].data = anchors["scaling"].data - math.log(scale)
         cam_to_world[:, :3, 3] = cam_to_world[:, :3, 3] / scale + center_t
         if pose_refiner is not None:
             pose_refiner.translation.weight /= scale
@@ -528,16 +550,28 @@ def train(
     intrinsics_gpu = torch.from_numpy(intrinsics).float().to(device)
     scene_scale = 1.0 if cfg.normalize_scene else compute_scene_scale(cam_to_world)
 
-    # Gaussians, densification strategy, and the lr decay on the means (0.01x over the run)
-    gaussians, optimizers = init_gaussians_from_points(cfg, points, colors, scene_scale, device)
-    strategy = make_strategy(cfg, n_views)
-    strategy.check_sanity(gaussians, optimizers)
-    if isinstance(strategy, MCMCStrategy):
-        strategy_state = strategy.initialize_state()
+    # Representation: vanilla Gaussians with a gsplat strategy, or Scaffold anchors with AnchorStrategy.
+    # Both expose the same (ParameterDict, {name: Adam}) pair, so everything below is shared.
+    anchor_field = None
+    if cfg.representation == "scaffold":
+        anchor_field = AnchorField(cfg.scaffold_config, points, colors, scene_scale, n_views, device)
+        gaussians, optimizers = anchor_field.params, anchor_field.optimizers
+        strategy = AnchorStrategy(cfg.scaffold_config, cfg.primitive, anchor_field.voxel_size)
+        n_slots = len(gaussians["anchors"]) * cfg.scaffold_config.n_offsets
+        strategy_state = {name: value.to(device) for name, value in strategy.initialize_state(n_slots).items()}
     else:
-        strategy_state = strategy.initialize_state(scene_scale=scene_scale)
+        gaussians, optimizers = init_gaussians_from_points(cfg, points, colors, scene_scale, device)
+        strategy = make_strategy(cfg, n_views)
+        strategy.check_sanity(gaussians, optimizers)
+        if isinstance(strategy, MCMCStrategy):
+            strategy_state = strategy.initialize_state()
+        else:
+            strategy_state = strategy.initialize_state(scene_scale=scene_scale)
+
+    # lr decay on the anchor / Gaussian positions (0.01x over the run)
     lr_gamma = 0.01 ** (1.0 / cfg.max_steps)
-    means_optimizer = optimizers["means"]
+    means_key = "anchors" if anchor_field is not None else "means"
+    means_optimizer = optimizers[means_key]
     means_scheduler = ExponentialLR(means_optimizer, gamma=lr_gamma)
     schedulers = [means_scheduler]
 
@@ -558,6 +592,8 @@ def train(
     start_time = time.perf_counter()
     view_sampler = ViewSampler(n_views)
     loss_values: dict[str, float] = {}
+    # AnchorStrategy is not a DefaultStrategy, so scaffold never takes the pre-backward hook: it retains
+    # the screen-space gradient itself, below, and accumulates per anchor slot after backward
     use_pre_backward_hook = isinstance(strategy, DefaultStrategy)
     normal_spec = cfg.losses.get("normal_consistency")
     for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
@@ -582,20 +618,41 @@ def train(
 
         # Render with the SH bands unlocked so far, over a random background so transparency cannot hide.
         # 3DGS normals cost an extra-signal pass, so they are only rendered once the consistency loss is on.
-        sh_degree = min(step // cfg.sh_degree_interval, cfg.sh_degree)
-        absgrad = use_pre_backward_hook and strategy.absgrad
         render_normals = loss_active(step, normal_spec)
-        render, info = render_view(
-            cfg.primitive,
-            gaussians,
-            view_cam_to_world,
-            view_intrinsics,
-            step_width,
-            step_height,
-            sh_degree,
-            absgrad,
-            render_normals=render_normals,
-        )
+        if anchor_field is not None:
+            # Scaffold decodes this view's Gaussians from the visible anchors (post-activation RGB, so
+            # sh_degree=None); the decoded scales and opacities feed the regularisers, which have no
+            # parameter to read under this representation
+            decoded, decode_index = anchor_field.decode(
+                cfg.primitive, view_cam_to_world, view_intrinsics, step_width, step_height, camera_id
+            )
+            render, info = render_gaussians(
+                cfg.primitive,
+                decoded,
+                view_cam_to_world,
+                view_intrinsics,
+                step_width,
+                step_height,
+                sh_degree=None,
+                absgrad=False,
+                render_normals=render_normals,
+            )
+            render["log_scales"] = decoded["log_scales"]
+            render["opacities"] = decoded["opacities"]
+        else:
+            sh_degree = min(step // cfg.sh_degree_interval, cfg.sh_degree)
+            absgrad = use_pre_backward_hook and strategy.absgrad
+            render, info = render_view(
+                cfg.primitive,
+                gaussians,
+                view_cam_to_world,
+                view_intrinsics,
+                step_width,
+                step_height,
+                sh_degree,
+                absgrad,
+                render_normals=render_normals,
+            )
         # Per-image colour correction goes on the splat colour before the background is composited
         # (the background is not part of the photo's exposure); its params feed appearance_reg
         if appearance is not None:
@@ -608,13 +665,22 @@ def train(
         # Loss + backward; DefaultStrategy needs a hook before backward to retain 2D-means gradients
         if use_pre_backward_hook:
             strategy.step_pre_backward(gaussians, optimizers, strategy_state, step, info)
+        if anchor_field is not None:
+            info[strategy.key_for_gradient].retain_grad()
         loss, loss_values = compute_losses(step, render, target, gaussians, loss_schedule, scene_scale)
         loss.backward()
+
+        # Scaffold reads the screen-space gradient off the retained tensor BEFORE the optimizers zero it
+        if anchor_field is not None:
+            strategy.accumulate(strategy_state, info, decode_index, decoded["opacities"])
 
         # Optimizer steps for Gaussians (and poses), then lr decay
         for optimizer in optimizers.values():
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
+        if anchor_field is not None:
+            anchor_field.mlp_optimizer.step()
+            anchor_field.mlp_optimizer.zero_grad(set_to_none=True)
         if pose_optimizer is not None:
             pose_optimizer.step()
             pose_optimizer.zero_grad(set_to_none=True)
@@ -627,22 +693,28 @@ def train(
         # Densify / prune / relocate AFTER the optimizer step (upstream simple_trainer order): refine ops
         # rebuild the Parameters, so stepping afterwards would see .grad=None and silently skip them.
         # The two strategies take different extra arguments; MCMC reads the post-decay means lr like upstream.
-        if isinstance(strategy, MCMCStrategy):
+        if anchor_field is not None:
+            strategy.step_post_backward(anchor_field, strategy_state, step)
+        elif isinstance(strategy, MCMCStrategy):
             means_lr_now = means_scheduler.get_last_lr()[0]
             strategy.step_post_backward(gaussians, optimizers, strategy_state, step, info, lr=means_lr_now)
         else:
             strategy.step_post_backward(gaussians, optimizers, strategy_state, step, info, packed=False)
 
         if step % cfg.log_every == 0:
-            n_gaussians = len(gaussians["means"])
+            unit = "anchors" if anchor_field is not None else "gaussians"
+            n_primitives = len(gaussians[means_key])
             rounded = {name: round(value, 4) for name, value in loss_values.items()}
-            logger.info("splats step %d loss %.4f gaussians %d %s", step, loss.item(), n_gaussians, rounded)
+            logger.info("splats step %d loss %.4f %s %d %s", step, loss.item(), unit, n_primitives, rounded)
 
     # loss_values is the LAST step's single-view snapshot, reported as summary.final_losses (not an average)
     train_seconds = time.perf_counter() - start_time
     # Outputs stay in world units: undo the normalisation before anything is written
     if cfg.normalize_scene:
-        denormalize_outputs(gaussians, pose_refiner, cam_to_world, center, scale)
+        if anchor_field is not None:
+            denormalize_anchors(gaussians, pose_refiner, cam_to_world, center, scale)
+        else:
+            denormalize_outputs(gaussians, pose_refiner, cam_to_world, center, scale)
 
     write_splat_outputs(
         cfg,
@@ -655,4 +727,5 @@ def train(
         out_dir,
         train_seconds,
         loss_values,
+        anchor_field=anchor_field,
     )

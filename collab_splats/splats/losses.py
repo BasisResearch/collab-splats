@@ -104,9 +104,15 @@ def opacity_reg_loss(
 ) -> Tensor:
     """
     Opacity regulariser from gsplat (MCMC); expects raw logit opacities.
+
+    - Scaffold has no opacity parameter — its Gaussians are decoded per view — so the render carries
+      the decoded opacities, which are ALREADY activated and are therefore averaged directly rather
+      than pushed through `gsplat_losses.opacity_reg_loss` (that helper sigmoids its argument).
     """
-    opacities = gaussians["opacities"]
-    return gsplat_losses.opacity_reg_loss(opacities)
+    decoded_opacities = render.get("opacities")
+    if decoded_opacities is not None:
+        return decoded_opacities.mean()
+    return gsplat_losses.opacity_reg_loss(gaussians["opacities"])
 
 
 def scale_reg_loss(
@@ -114,8 +120,13 @@ def scale_reg_loss(
 ) -> Tensor:
     """
     Scale regulariser from gsplat (MCMC); expects raw log scales.
+
+    - Scaffold has no scales parameter — its Gaussians are decoded per view — so the render carries
+      `log_scales` and that is used when present.
     """
-    log_scales = gaussians["scales"]
+    log_scales = render.get("log_scales")
+    if log_scales is None:
+        log_scales = gaussians["scales"]
     return gsplat_losses.scale_reg_loss(log_scales)
 
 

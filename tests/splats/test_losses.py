@@ -10,6 +10,8 @@ from collab_splats.splats.losses import (
     compute_losses,
     loss_active,
     loss_weight,
+    opacity_reg_loss,
+    scale_reg_loss,
 )
 
 
@@ -252,3 +254,21 @@ def test_compute_losses_passes_the_spec_through():
     schedule = {"normal_consistency": {"weight": 1.0, "depth_ratio": 1.0}}
     _, values = compute_losses(0, render, _target(), _gaussians(), schedule, 1.0)
     assert values["normal_consistency"] == pytest.approx(median_only)
+
+
+def test_scale_reg_prefers_decoded_log_scales():
+    """Under scaffold there is no scales parameter: the regulariser reads the decoded scales."""
+    render = {"log_scales": torch.full((5, 3), -2.0)}
+    gaussians = torch.nn.ParameterDict({"scales": torch.nn.Parameter(torch.zeros(5, 3))})
+    decoded_value = scale_reg_loss(render, {}, gaussians, 1.0, {"weight": 1.0})
+    parameter_value = scale_reg_loss({}, {}, gaussians, 1.0, {"weight": 1.0})
+    assert decoded_value.item() == pytest.approx(0.1353352832366127, rel=1e-5)
+    assert parameter_value.item() == pytest.approx(1.0, rel=1e-5)
+
+
+def test_opacity_reg_prefers_decoded_opacities():
+    """Scaffold's opacities are decoded and already activated, so they are averaged as-is."""
+    render = {"opacities": torch.full((4,), 0.25)}
+    gaussians = torch.nn.ParameterDict({"opacities": torch.nn.Parameter(torch.zeros(4))})
+    assert opacity_reg_loss(render, {}, gaussians, 1.0, {"weight": 1.0}).item() == pytest.approx(0.25)
+    assert opacity_reg_loss({}, {}, gaussians, 1.0, {"weight": 1.0}).item() == pytest.approx(0.5)

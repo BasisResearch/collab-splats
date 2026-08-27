@@ -5,6 +5,7 @@ SplatsConfig validation, scene scale, Gaussian init, strategy choice and trainin
 import numpy as np
 import pytest
 import torch
+import zarr
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
 
 import collab_splats.splats.trainer as trainer_module
@@ -404,3 +405,55 @@ def test_depth_ratio_zero_is_allowed_on_3dgs():
         {"primitive": "3dgs", "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": 0.0}}}
     )
     assert cfg.losses["normal_consistency"]["depth_ratio"] == 0.0
+
+
+@cuda
+@pytest.mark.parametrize("primitive", ["3dgs", "2dgs"])
+def test_train_scaffold_runs_and_writes_outputs(tmp_path, primitive):
+    """A short scaffold run produces the same artifact set as a vanilla run."""
+    images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
+    cfg = SplatsConfig.from_dict(
+        {
+            "representation": "scaffold",
+            "primitive": primitive,
+            "max_steps": 60,
+            "log_every": 10,
+            "scaffold": {"n_offsets": 4, "feat_dim": 8, "update_from": 20, "update_until": 50, "refine_every": 10},
+        }
+    )
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+
+    for name in ("splats.ply", "ckpt.pt", "splats.zarr", "splats_quality_report.json"):
+        assert (tmp_path / name).exists(), name
+    checkpoint = torch.load(tmp_path / "ckpt.pt", weights_only=False)
+    assert "anchors" in checkpoint["splats"]
+    assert "mlps" in checkpoint
+    assert checkpoint["voxel_size"] > 0
+
+
+@cuda
+def test_scaffold_records_anchor_provenance(tmp_path):
+    images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
+    cfg = SplatsConfig.from_dict(
+        {
+            "representation": "scaffold",
+            "primitive": "3dgs",
+            "max_steps": 60,
+            "log_every": 10,
+            "scaffold": {
+                "n_offsets": 4,
+                "feat_dim": 8,
+                "update_from": 10,
+                "update_until": 50,
+                "refine_every": 10,
+                "min_opacity": 0.5,
+            },
+        }
+    )
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+
+    checkpoint = torch.load(tmp_path / "ckpt.pt", weights_only=False)
+    store = zarr.open_group(tmp_path / "splats.zarr", mode="r")
+    assert store.attrs["representation"] == "scaffold"
+    assert store.attrs["ply_baked"] is True
+    assert store.attrs["n_anchors"] == len(checkpoint["splats"]["anchors"])

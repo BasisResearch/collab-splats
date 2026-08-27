@@ -110,6 +110,11 @@ def render_gaussians(
         render_mode="RGB+ED",
     )
 
+    # rasterization_2dgs concatenates the depth channel onto precomputed colours per camera, so RGB
+    # must arrive as (C, N, 3) there; SH coefficients (N, K, 3) and the 3DGS kernel broadcast on their own
+    if primitive == "2dgs" and sh_degree is None and colors.dim() == 2:
+        shared_kwargs["colors"] = colors[None].expand(len(intrinsics), -1, -1)
+
     # Depth normals are finite-differenced in camera space (identity pose) for both primitives
     identity_pose = torch.eye(4, device=cam_to_world.device)[None]
 

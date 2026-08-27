@@ -250,3 +250,38 @@ def test_decode_frustum_filter_drops_anchors_behind_the_camera():
         field.params["anchors"][0] = torch.tensor([0.0, 0.0, -100.0])
     assert not bool(field.visible_anchors(cam_to_world, intrinsics, 64, 64)[0])
     assert bool(visible.any())
+
+
+########################################
+# Rasterization
+########################################
+
+
+@cuda
+@pytest.mark.parametrize("primitive", ["3dgs", "2dgs"])
+def test_scaffold_decode_renders_through_gsplat(primitive):
+    from collab_splats.splats.rendering import render_gaussians
+
+    field = _field(device="cuda")
+    cam_to_world, intrinsics = _cam(device="cuda")
+    decoded, _ = field.decode(primitive, cam_to_world, intrinsics, 64, 64, camera_id=None)
+    render, info = render_gaussians(
+        primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None, absgrad=False
+    )
+    assert render["rgb"].shape == (1, 64, 64, 3)
+    assert render["depth"].shape == (1, 64, 64, 1)
+    expected_gradient_key = "means2d" if primitive == "3dgs" else "gradient_2dgs"
+    assert expected_gradient_key in info
+
+
+@cuda
+def test_render_gradient_reaches_the_anchor_features():
+    from collab_splats.splats.rendering import render_gaussians
+
+    field = _field(device="cuda")
+    cam_to_world, intrinsics = _cam(device="cuda")
+    decoded, _ = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    render, _ = render_gaussians("3dgs", decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None, absgrad=False)
+    render["rgb"].sum().backward()
+    assert field.params["anchor_feat"].grad is not None
+    assert torch.isfinite(field.params["anchor_feat"].grad).all()

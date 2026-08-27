@@ -166,3 +166,18 @@ def test_3dgs_render_has_no_median_depth():
     cam_to_world, intrinsics = _camera()
     render, _info = render_view("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False)
     assert "median_depth" not in render
+
+
+@cuda
+@pytest.mark.parametrize("primitive", ["3dgs", "2dgs"])
+def test_activated_dict_renders_identically_to_parameter_dict(primitive):
+    """render_gaussians on a pre-activated dict == render_view on the raw ParameterDict."""
+    from collab_splats.splats.rendering import activate_vanilla, render_gaussians
+
+    cam_to_world, intrinsics = _camera()
+    gaussians = _gaussians()
+    reference, _ = render_view(primitive, gaussians, cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False)
+    decoded = activate_vanilla(gaussians)
+    actual, _ = render_gaussians(primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=0, absgrad=False)
+    for key, expected in reference.items():
+        assert torch.equal(actual[key], expected), key

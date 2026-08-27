@@ -41,19 +41,40 @@ def gaussian_normals_in_camera_frame(quats: Tensor, scales: Tensor, means: Tenso
     return torch.where(faces_away, -normals_cam, normals_cam)
 
 
-def render_view(
+def activate_vanilla(gaussians: torch.nn.ParameterDict) -> dict[str, Tensor]:
+    """
+    Activate raw vanilla parameters into the tensors the rasterizer takes.
+
+    - log-scales -> scales, logit-opacities -> opacities, SH bands concatenated.
+    - `colors` here are SH coefficients: the caller passes `sh_degree` to the rasterizer.
+    """
+    return {
+        "means": gaussians["means"],
+        "quats": gaussians["quats"],
+        "scales": torch.exp(gaussians["scales"]),
+        "opacities": torch.sigmoid(gaussians["opacities"]),
+        "colors": torch.cat([gaussians["sh0"], gaussians["shN"]], dim=1),
+    }
+
+
+def render_gaussians(
     primitive: str,
-    gaussians: torch.nn.ParameterDict,
+    decoded: dict[str, Tensor],
     cam_to_world: Tensor,
     intrinsics: Tensor,
     width: int,
     height: int,
-    sh_degree: int,
+    sh_degree: int | None,
     absgrad: bool,
     render_normals: bool = True,
 ) -> tuple[dict[str, Tensor], dict]:
     """
-    Render one camera. Returns ({rgb, alpha, depth[, normal, depth_normal][, 2dgs extras]}, strategy info).
+    Rasterize already-activated Gaussians. Returns ({rgb, alpha, depth[, normal, ...]}, strategy info).
+
+    - `decoded` holds means/quats/scales/opacities/colors post-activation; any other key it carries
+      (scaffold's `log_scales`, say) is ignored here.
+    - `sh_degree=None` with `colors` of shape (N, 3) rasterizes post-activation RGB — that is the
+      scaffold path. Vanilla passes SH coefficients and an integer degree.
 
     - Normals are camera-frame for both primitives; `depth_normal` is finite-differenced at an identity pose.
     - 3DGS `normal` is unit length (zero where nothing renders). `render_normals=False` skips the extra-signal
@@ -64,23 +85,21 @@ def render_view(
       trainer, so the consistency loss is effectively alpha^2-weighted there. Deliberately not normalized.
     - 2DGS extras: `distortion`, plus `median_depth` and, when `render_normals`, its `depth_normal_median`.
     """
-    assert cam_to_world.shape[0] == 1, "render_view renders one camera at a time"
+    assert cam_to_world.shape[0] == 1, "render_gaussians renders one camera at a time"
 
-    # Activate the raw parameters: log-scales -> scales, logit-opacities -> opacities, SH bands concatenated
-    means = gaussians["means"]
-    quats = gaussians["quats"]
-    sh0 = gaussians["sh0"]
-    shN = gaussians["shN"]
-    scales = torch.exp(gaussians["scales"])
-    opacities = torch.sigmoid(gaussians["opacities"])
-    sh_coeffs = torch.cat([sh0, shN], dim=1)
+    # The five tensors the rasterizer takes; everything else in `decoded` is for the caller
+    means = decoded["means"]
+    quats = decoded["quats"]
+    scales = decoded["scales"]
+    opacities = decoded["opacities"]
+    colors = decoded["colors"]
     world_to_cam = torch.linalg.inv(cam_to_world)
     shared_kwargs = dict(
         means=means,
         quats=quats,
         scales=scales,
         opacities=opacities,
-        colors=sh_coeffs,
+        colors=colors,
         viewmats=world_to_cam,
         Ks=intrinsics,
         width=width,
@@ -152,3 +171,30 @@ def render_view(
         "depth_normal": depth_to_normal(depth, identity_pose, intrinsics),
     }
     return render, info
+
+
+def render_view(
+    primitive: str,
+    gaussians: torch.nn.ParameterDict,
+    cam_to_world: Tensor,
+    intrinsics: Tensor,
+    width: int,
+    height: int,
+    sh_degree: int,
+    absgrad: bool,
+    render_normals: bool = True,
+) -> tuple[dict[str, Tensor], dict]:
+    """
+    Render one camera from raw vanilla parameters (activate, then rasterize).
+    """
+    return render_gaussians(
+        primitive,
+        activate_vanilla(gaussians),
+        cam_to_world,
+        intrinsics,
+        width,
+        height,
+        sh_degree,
+        absgrad,
+        render_normals=render_normals,
+    )

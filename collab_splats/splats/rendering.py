@@ -7,6 +7,11 @@ rendered as an extra signal and the depth normal is finite-differenced from rend
 distortion map, and the median depth (RaDe-GS's surface depth). Normals are rotated into camera
 space and depth normals are finite-differenced at an identity pose for both primitives and for
 both depths, so the consistency loss compares like with like.
+
+``render_plane`` adds PGSR's planar signals to the 3DGS path: the per-Gaussian plane distance
+``|n . x_cam|`` fills the extra-signal channel that is otherwise a zero pad, and the raw
+alpha-accumulated normal/distance pair yields the unbiased ray-plane depth. It is 3DGS-only —
+PGSR is built on the vanilla rasterizer and has no 2DGS counterpart upstream.
 """
 
 import torch
@@ -15,15 +20,21 @@ from gsplat import rasterization, rasterization_2dgs
 from gsplat.utils import depth_to_normal, normalized_quat_to_rotmat
 from torch import Tensor
 
+from collab_splats.splats.pgsr import plane_depth as compute_plane_depth
+
 SH_DC_NORMALISER = 0.28209479177387814  # rgb -> SH degree-0 coefficient (1 / (2 sqrt(pi)))
 
 
-def gaussian_normals_in_camera_frame(quats: Tensor, scales: Tensor, means: Tensor, world_to_cam: Tensor) -> Tensor:
+def gaussian_normals_in_camera_frame(
+    quats: Tensor, scales: Tensor, means: Tensor, world_to_cam: Tensor
+) -> tuple[Tensor, Tensor]:
     """
-    Per-Gaussian normal (shortest scale axis), rotated into the camera frame and flipped to face it. (N, 3).
+    Per-Gaussian camera-frame normal (shortest scale axis, flipped to face the camera) and mean. Both (N, 3).
 
     - `argmin` over scales is non-differentiable, so no gradient reaches `scales` through the normal;
       `quats` and `means` do receive gradient.
+    - The camera-frame means are returned alongside because PGSR's plane distance `|n . x_cam|` needs
+      exactly the positions the normals were flipped against.
     """
     # Shortest axis of each Gaussian is its normal direction in world space
     unit_quats = F.normalize(quats, dim=-1)
@@ -40,7 +51,7 @@ def gaussian_normals_in_camera_frame(quats: Tensor, scales: Tensor, means: Tenso
 
     # A normal pointing away from the camera (positive dot with the view ray) is flipped
     faces_away = (normals_cam * means_cam).sum(-1, keepdim=True) > 0
-    return torch.where(faces_away, -normals_cam, normals_cam)
+    return torch.where(faces_away, -normals_cam, normals_cam), means_cam
 
 
 def activate_vanilla(gaussians: torch.nn.ParameterDict) -> dict[str, Tensor]:
@@ -69,6 +80,7 @@ def render_gaussians(
     sh_degree: int | None,
     absgrad: bool,
     render_normals: bool = True,
+    render_plane: bool = False,
 ) -> tuple[dict[str, Tensor], dict]:
     """
     Rasterize already-activated Gaussians. Returns ({rgb, alpha, depth[, normal, ...]}, strategy info).
@@ -86,7 +98,28 @@ def render_gaussians(
     - 2DGS `normal` is the alpha-weighted accumulated normal (non-unit), mirroring upstream gsplat's 2DGS
       trainer, so the consistency loss is effectively alpha^2-weighted there. Deliberately not normalized.
     - 2DGS extras: `distortion`, plus `median_depth` and, when `render_normals`, its `depth_normal_median`.
+
+    - `render_plane` is PGSR and 3DGS-only: it raises on 2DGS, and it forces the extra-signal pass on
+      (so `normal`/`depth_normal` come back too even with `render_normals=False`) because the plane
+      signals ride the same four extra channels.
+    - It adds `plane_normal` (1,H,W,3), `plane_distance` (1,H,W,1), `plane_depth` (1,H,W,1) and
+      `plane_depth_normal` (1,H,W,3). The first two are the RAW alpha-accumulated maps — the plane
+      depth is their ratio, so the missing `1/alpha` cancels and normalising either would break it.
+    - `normal`, `depth_normal` and `depth` keep their meaning and values exactly, so the
+      normal_consistency loss is unaffected by the plane path.
     """
+    # PGSR is a 3DGS-kernel method: GS-SR's scaffold-pgsr builds on the vanilla rasterizer and there
+    # is no 2dgs-pgsr upstream, so the plane signals have no 2DGS definition to reproduce
+    if render_plane and primitive == "2dgs":
+        raise ValueError(
+            "render_plane is 3DGS-only: PGSR builds on the vanilla/3dgs rasterizer and there is no "
+            "2dgs-pgsr upstream. Use primitive='3dgs' or turn plane rendering off."
+        )
+
+    # The plane signals share the extra-signal channels with the normals, so asking for planes turns
+    # that pass on whatever the normal flag says
+    render_normals = render_normals or render_plane
+
     assert cam_to_world.shape[0] == 1, "render_gaussians renders one camera at a time"
 
     # The five tensors the rasterizer takes; everything else in `decoded` is for the caller
@@ -159,12 +192,19 @@ def render_gaussians(
         render = {"rgb": rgb_depth[..., :3], "alpha": alpha, "depth": rgb_depth[..., 3:4]}
         return render, info
 
-    # 3DGS: normals ride along as an extra per-Gaussian signal, zero-padded to 4 channels because the
+    # 3DGS: normals ride along as an extra per-Gaussian signal, padded to 4 channels because the
     # compiled kernel supports 8 total channels (rgb + depth + 4) but not 7
     first_world_to_cam = world_to_cam[0]
-    normals_cam = gaussian_normals_in_camera_frame(quats, scales, means, first_world_to_cam)
-    padding = torch.zeros_like(normals_cam[:, :1])
-    extra_signals = torch.cat([normals_cam, padding], dim=-1)
+    normals_cam, means_cam = gaussian_normals_in_camera_frame(quats, scales, means, first_world_to_cam)
+
+    # PGSR's plane distance |n . x_cam| claims the 4th channel (GS-SR gssr/scene/pgsr_scene.py:296-302);
+    # without plane rendering that channel stays the zero pad, so the ordinary path is untouched
+    if render_plane:
+        fourth_channel = (normals_cam * means_cam).sum(-1, keepdim=True).abs()
+    else:
+        fourth_channel = torch.zeros_like(normals_cam[:, :1])
+    extra_signals = torch.cat([normals_cam, fourth_channel], dim=-1)
+
     rgb_depth, alpha, info = rasterization(**shared_kwargs, rasterize_mode="antialiased", extra_signals=extra_signals)
     rgb = rgb_depth[..., :3]
     depth = rgb_depth[..., 3:4]
@@ -177,6 +217,21 @@ def render_gaussians(
         "normal": F.normalize(rendered_normals, dim=-1),
         "depth_normal": depth_to_normal(depth, identity_pose, intrinsics),
     }
+    if not render_plane:
+        return render, info
+
+    # Both accumulated maps stay raw: upstream's `rendered_normal` is the un-normalised sum and the
+    # plane depth is a ratio of the two, so the missing 1/alpha cancels
+    # (GS-SR gssr/scene/pgsr_scene.py:316-318)
+    plane_distance = rendered_signals[..., 3:4]
+    render["plane_normal"] = rendered_normals
+    render["plane_distance"] = plane_distance
+    render["plane_depth"] = compute_plane_depth(rendered_normals, plane_distance, intrinsics)
+
+    # Upstream scales this normal by `rendered_alpha.detach()` inside render()
+    # (GS-SR gssr/scene/pgsr_scene.py:320); we leave the alpha weighting to the loss so the key stays
+    # a pure geometric quantity — camera frame, unit length
+    render["plane_depth_normal"] = depth_to_normal(render["plane_depth"], identity_pose, intrinsics)
     return render, info
 
 
@@ -190,6 +245,7 @@ def render_view(
     sh_degree: int,
     absgrad: bool,
     render_normals: bool = True,
+    render_plane: bool = False,
 ) -> tuple[dict[str, Tensor], dict]:
     """
     Render one camera from raw vanilla parameters (activate, then rasterize).
@@ -204,4 +260,5 @@ def render_view(
         sh_degree,
         absgrad,
         render_normals=render_normals,
+        render_plane=render_plane,
     )

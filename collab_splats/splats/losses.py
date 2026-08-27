@@ -16,6 +16,14 @@ import torch
 from gsplat import losses as gsplat_losses
 from torch import Tensor
 
+from collab_splats.splats.pgsr import (
+    flat_region_weight,
+    forward_backward_noise,
+    patch_ncc,
+    pixel_grid,
+    to_gray,
+)
+
 ########################################
 # Optional losses — each returns None when its input is absent
 ########################################
@@ -146,6 +154,106 @@ def appearance_reg_loss(
     return params.square().mean()
 
 
+def pgsr_normal_loss(
+    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+) -> Tensor:
+    """
+    PGSR single-view planar loss: L1 between the plane normal and the plane-depth normal, on flat regions.
+
+    - Reproduces GS-SR gssr/scene/pgsr_scene.py, the `# sigle-view loss` block of `get_loss_dict`.
+    - The weight is the detached `(1 - image gradient)^5`, eroded: textured pixels contribute ~0, so the
+      loss flattens surfaces without straightening the depth discontinuities that edges usually mark.
+    - Upstream scales the depth normal by detached alpha inside its renderer; `render_plane` keeps that
+      key a pure geometric quantity, so the scaling happens here instead.
+    - Raises when the render carries no plane maps: the trainer gates `render_plane` on this same
+      schedule, so an active loss without them is a wiring bug, not a condition to skip silently.
+    """
+    plane_normal = render.get("plane_normal")
+    plane_depth_normal = render.get("plane_depth_normal")
+    if plane_normal is None or plane_depth_normal is None:
+        raise ValueError("pgsr_normal is active but the render has no plane maps; render with render_plane=True")
+
+    # The flat-region weight is read off the TARGET image, so it is data rather than something to fit
+    weight = flat_region_weight(target["rgb"][0], ksize=int(spec.get("erode_ksize", 5)))
+
+    # Scaling the depth normal by accumulated alpha stops empty pixels pulling, as upstream does
+    alpha = render["alpha"].detach()
+    residual = (plane_depth_normal * alpha - plane_normal).abs().sum(dim=-1)[0]
+    return (weight * residual).mean()
+
+
+def pgsr_multiview_loss(
+    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+) -> Tensor | None:
+    """
+    PGSR multi-view loss: geometric round-trip error plus patch NCC through the plane homography.
+
+    - Reproduces GS-SR gssr/scene/pgsr_scene.py, the `# multi-view loss` block of `get_loss_dict`.
+    - Both terms are ONE schedule entry because upstream computes them from a single shared
+      correspondence pass: `spec["geo"]` (0.03) and `spec["ncc"]` (0.15) are its `lambda_geo` and
+      `lambda_ncc`, and the entry's own `weight` multiplies their sum.
+    - Extra spec keys: `pixel_noise_threshold` (1.0 px), `num_sample` (102400 patches), `patch_size`
+      (3, the half-width, so 7x7 patches). `num_multi_view` and `max_points` are read by the trainer
+      once, for neighbour selection.
+    - Returns None when the trainer rendered no neighbour this step — a view with no co-visible
+      partner, or a round-trip that kept no pixel.
+    """
+    neighbour = render.get("pgsr_neighbour")
+    if neighbour is None:
+        return None
+
+    # Round trip: reference pixel -> its plane depth -> the neighbour's own surface -> back. A pixel
+    # whose two views disagree about where the surface is lands away from where it started.
+    world_to_cam, intrinsics = render["world_to_cam"], render["intrinsics"]
+    pixel_noise, valid = forward_backward_noise(
+        render["plane_depth"],
+        world_to_cam,
+        intrinsics,
+        neighbour["plane_depth"],
+        neighbour["world_to_cam"],
+        neighbour["intrinsics"],
+    )
+    valid = valid & (pixel_noise < float(spec.get("pixel_noise_threshold", 1.0)))
+    if not bool(valid.any()):
+        return None
+
+    # exp(-noise) down-weights the pixels that are already nearly consistent; detached, so the weight
+    # itself is not a target
+    weights = torch.where(valid, (1.0 / torch.exp(pixel_noise)).detach(), torch.zeros_like(pixel_noise))
+    geometric = (weights * pixel_noise)[valid].mean()
+
+    # Sample the surviving pixels down to a fixed patch budget; which pixels is not differentiable
+    with torch.no_grad():
+        indices = valid.nonzero(as_tuple=False)[:, 0]
+        num_sample = int(spec.get("num_sample", 102400))
+        if len(indices) > num_sample:
+            indices = indices[torch.randperm(len(indices), device=indices.device)[:num_sample]]
+        sample_weights = weights[indices]
+
+    # Photometric: warp each reference patch into the neighbour through ITS OWN rendered plane and
+    # compare structure. The gradient goes to the plane normal and distance, so a wrong plane is what
+    # the NCC penalises.
+    height, width = render["plane_depth"].shape[1:3]
+    pixels = pixel_grid(height, width, render["plane_depth"].device)[indices]
+    ncc, keep = patch_ncc(
+        to_gray(target["rgb"][0]),
+        neighbour["gray"],
+        pixels,
+        render["plane_normal"].reshape(-1, 3)[indices],
+        render["plane_distance"].reshape(-1)[indices],
+        world_to_cam,
+        intrinsics,
+        neighbour["world_to_cam"],
+        neighbour["intrinsics"],
+        half_patch=int(spec.get("patch_size", 3)),
+    )
+    keep = keep.reshape(-1)
+    total = float(spec.get("geo", 0.03)) * geometric
+    if bool(keep.any()):
+        total = total + float(spec.get("ncc", 0.15)) * (ncc.reshape(-1) * sample_weights)[keep].mean()
+    return total
+
+
 # Name in the yaml `losses:` block -> function. Also the allow-list for config validation.
 OPTIONAL_LOSSES = {
     "depth": depth_loss,
@@ -154,6 +262,8 @@ OPTIONAL_LOSSES = {
     "opacity_reg": opacity_reg_loss,
     "scale_reg": scale_reg_loss,
     "appearance_reg": appearance_reg_loss,
+    "pgsr_normal": pgsr_normal_loss,
+    "pgsr_multiview": pgsr_multiview_loss,
 }
 
 ########################################

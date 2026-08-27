@@ -39,6 +39,7 @@ from collab_splats.splats.appearance import AppearanceModule
 from collab_splats.splats.cameras import CameraOptModule
 from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
 from collab_splats.splats.outputs import write_splat_outputs
+from collab_splats.splats.pgsr import select_near_views, to_gray
 from collab_splats.splats.rendering import (
     SH_DC_NORMALISER,
     render_gaussians,
@@ -72,6 +73,25 @@ def _default_losses(primitive: str) -> dict[str, dict]:
     else:
         losses["distortion"] = {"weight": 0.01, "start": 3000}
     return losses
+
+
+# Per-loss tuning keys beyond {weight, start, end, end_weight}. depth_ratio is the RaDe-GS
+# median-normal blend; the pgsr_* keys are PGSR's own hyperparameters (GS-SR
+# gssr/scene/pgsr_scene.py:52-70), kept on the loss spec rather than promoted to SplatsConfig
+# because they mean nothing when the loss is off.
+LOSS_SPEC_KEYS = {
+    "normal_consistency": {"depth_ratio"},
+    "pgsr_normal": {"erode_ksize"},
+    "pgsr_multiview": {
+        "geo",
+        "ncc",
+        "pixel_noise_threshold",
+        "num_sample",
+        "patch_size",
+        "num_multi_view",
+        "max_points",
+    },
+}
 
 
 @dataclass
@@ -174,10 +194,8 @@ class SplatsConfig:
         for name, spec in cfg.losses.items():
             if name not in OPTIONAL_LOSSES:
                 raise ValueError(f"splats.losses: unknown loss '{name}'; allowed {sorted(OPTIONAL_LOSSES)}")
-            # depth_ratio is the RaDe-GS median-normal blend and belongs to one loss only
-            allowed_spec_keys = {"weight", "start", "end", "end_weight"}
-            if name == "normal_consistency":
-                allowed_spec_keys = allowed_spec_keys | {"depth_ratio"}
+            # Some losses carry their own tuning keys; each belongs to exactly one loss
+            allowed_spec_keys = {"weight", "start", "end", "end_weight"} | LOSS_SPEC_KEYS.get(name, set())
             unknown_spec_keys = set(spec) - allowed_spec_keys
             if unknown_spec_keys or "weight" not in spec:
                 # Report the keys legal for THIS loss, so a depth_ratio typo isn't told the key doesn't exist
@@ -599,6 +617,27 @@ def train(
         appearance, appearance_optimizer, appearance_scheduler = make_appearance_module(cfg, n_views, lr_gamma, device)
         schedulers.append(appearance_scheduler)
 
+    # PGSR: the losses are only defined against the 3dgs kernel (GS-SR pairs scaffold-pgsr with the
+    # vanilla rasterizer; there is no 2dgs-pgsr upstream)
+    pgsr_normal_spec = cfg.losses.get("pgsr_normal")
+    pgsr_mv_spec = cfg.losses.get("pgsr_multiview")
+    if (pgsr_normal_spec is not None or pgsr_mv_spec is not None) and cfg.primitive != "3dgs":
+        raise ValueError(f"pgsr losses need primitive: 3dgs, got {cfg.primitive!r}")
+
+    # Neighbour views for the multi-view losses, scored once over the seed cloud: a partner that sees
+    # the same surface from a useful baseline beats both a near-duplicate and a wide one
+    near_ids: list[list[int]] = []
+    if pgsr_mv_spec is not None:
+        near_ids = select_near_views(
+            torch.linalg.inv(cam_to_world),
+            intrinsics_gpu,
+            torch.from_numpy(np.ascontiguousarray(points)).float().to(device),
+            height,
+            width,
+            num_views=int(pgsr_mv_spec.get("num_multi_view", 5)),
+            max_points=int(pgsr_mv_spec.get("max_points", 20000)),
+        )
+
     start_time = time.perf_counter()
     view_sampler = ViewSampler(n_views)
     loss_values: dict[str, float] = {}
@@ -637,6 +676,7 @@ def train(
         # Render with the SH bands unlocked so far, over a random background so transparency cannot hide.
         # 3DGS normals cost an extra-signal pass, so they are only rendered once the consistency loss is on.
         render_normals = loss_active(step, normal_spec)
+        render_plane = loss_active(step, pgsr_normal_spec) or loss_active(step, pgsr_mv_spec)
         if anchor_field is not None:
             # Scaffold decodes this view's Gaussians from the visible anchors (post-activation RGB, so
             # sh_degree=None); the decoded scales and opacities feed the regularisers, which have no
@@ -654,6 +694,7 @@ def train(
                 sh_degree=None,
                 absgrad=False,
                 render_normals=render_normals,
+                render_plane=render_plane,
             )
             render["log_scales"] = decoded["log_scales"]
             render["opacities"] = decoded["opacities"]
@@ -670,7 +711,59 @@ def train(
                 sh_degree,
                 absgrad,
                 render_normals=render_normals,
+                render_plane=render_plane,
             )
+        # PGSR multi-view: render one co-visible neighbour at this step's resolution. Upstream does NOT
+        # detach it — the geometric term pulls both views' plane depths towards each other (GS-SR
+        # gssr/scene/pgsr_scene.py, get_train_loss_dict). Costs a second decode and rasterization.
+        if render_plane and loss_active(step, pgsr_mv_spec) and near_ids[view]:
+            near = near_ids[view][random.randrange(len(near_ids[view]))]
+            near_image, near_intrinsics = downscale_view(images[near], intrinsics_gpu[near : near + 1], factor)
+            near_cam_to_world = cam_to_world[near : near + 1]
+            near_camera_id = torch.tensor([near], device=device)
+            if pose_refiner is not None:
+                near_cam_to_world = pose_refiner(near_cam_to_world, near_camera_id)
+
+            # Only the neighbour's plane depth and its grey image are read, so it needs no normals,
+            # no appearance correction and no background composite
+            if anchor_field is not None:
+                near_decoded, _ = anchor_field.decode(
+                    cfg.primitive, near_cam_to_world, near_intrinsics, step_width, step_height, near_camera_id
+                )
+                near_render, _ = render_gaussians(
+                    cfg.primitive,
+                    near_decoded,
+                    near_cam_to_world,
+                    near_intrinsics,
+                    step_width,
+                    step_height,
+                    sh_degree=None,
+                    absgrad=False,
+                    render_normals=False,
+                    render_plane=True,
+                )
+            else:
+                near_render, _ = render_view(
+                    cfg.primitive,
+                    gaussians,
+                    near_cam_to_world,
+                    near_intrinsics,
+                    step_width,
+                    step_height,
+                    min(step // cfg.sh_degree_interval, cfg.sh_degree),
+                    False,
+                    render_normals=False,
+                    render_plane=True,
+                )
+            render["world_to_cam"] = torch.linalg.inv(view_cam_to_world)
+            render["intrinsics"] = view_intrinsics
+            render["pgsr_neighbour"] = {
+                "plane_depth": near_render["plane_depth"],
+                "gray": to_gray(torch.from_numpy(near_image).to(device).float() / 255.0),
+                "world_to_cam": torch.linalg.inv(near_cam_to_world),
+                "intrinsics": near_intrinsics,
+            }
+
         # Per-image colour correction goes on the splat colour before the background is composited
         # (the background is not part of the photo's exposure); its params feed appearance_reg
         if appearance is not None:

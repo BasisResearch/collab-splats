@@ -53,6 +53,8 @@ def test_registry_names():
         "opacity_reg",
         "scale_reg",
         "appearance_reg",
+        "pgsr_normal",
+        "pgsr_multiview",
     }
 
 

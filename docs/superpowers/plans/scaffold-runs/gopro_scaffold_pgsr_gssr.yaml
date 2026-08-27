@@ -1,0 +1,57 @@
+# Scaffold-PGSR at GS-SR's own parameters (Task 13, run C of the scaffold-gs plan).
+# Upstream's `scaffold-pgsr` is ScaffoldPGSRScene(PGSRScene, ScaffoldScene) with
+# ScaffoldGaussianConfig — Scaffold's generate_gaussians, PGSR's get_loss_dict, plus
+# scaling_loss = lambda_scaling * scaling.prod(1).mean(). Notably it does NOT use
+# PGSRGaussianConfig, so PGSR's absgrad/out_observe densification is absent: anchor growing is
+# the densifier, which is what AnchorStrategy already does. scaling_loss IS our scale_reg under
+# scaffold (identical formula), so the whole method reduces to scaffold + PGSR's three losses.
+# Same scene and pipeline knobs as gopro_scaffold_3dgs_gssr.yaml (run B).
+# Baselines — do NOT rerun any of them:
+#   vanilla 3dgs      psnr 21.606  ssim 0.7169  1,000,000 gaussians          601 s
+#   scaffold 3dgs (B) psnr 20.845  ssim 0.6729  119,327 anchors / 141,332 dec 617 s
+#   scaffold 2dgs     psnr 20.949  ssim 0.6810  111,673 anchors / 214,298 dec 718 s
+preproc:
+  fps: 2.0
+  min_frames: null
+  max_frames: 300
+  n_workers: 4
+  undistort: true
+pointcloud:
+  method: sfm
+  backend: instantsfm
+  instantsfm:
+    retriangulation: true
+semantics:
+  enabled: false
+mesh:
+  enabled: false            # meshed separately from the checkpoint, in the world frame
+splats:
+  enabled: true
+  primitive: 3dgs           # PGSR is a 3dgs-kernel method; there is no 2dgs-pgsr upstream
+  representation: scaffold
+  appearance_opt: false     # Scaffold's embedding is the whole appearance path, as upstream
+  pose_opt: true
+  max_steps: 12000
+  num_downscales: 2         # c2f, as every run in this comparison ran it
+  resolution_schedule: 3000
+  normalize_scene: true
+  scaffold:
+    n_offsets: 10
+    feat_dim: 32
+    appearance_dim: 32
+  losses:
+    depth: {weight: 0.01}
+    # normal_consistency is OFF here, superseded rather than dropped: it and pgsr_normal both
+    # regularise the rendered normal, but against different depth estimators (expected depth vs
+    # the ray-plane intersection). Running both double-counts and they disagree on edges.
+    normal_consistency: {weight: 0.0}
+    # start 6000 is where the c2f schedule reaches native resolution (num_downscales 2,
+    # resolution_schedule 3000). Upstream's 7000/30000 is 23% of the run; matching that fraction
+    # here would start the multi-view terms at 1/4 resolution, where a 1.0 px round-trip
+    # threshold means something else entirely. 6000/12000 keeps every multi-view step native.
+    pgsr_normal: {weight: 0.015, start: 6000}
+    pgsr_multiview: {weight: 1.0, start: 6000, geo: 0.03, ncc: 0.15}
+    opacity_reg: {weight: 0.0}
+    scale_reg: {weight: 0.01}   # upstream's lambda_scaling
+    appearance_reg: {weight: 1.0e-3}
+    distortion: {weight: 0.0}

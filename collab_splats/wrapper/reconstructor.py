@@ -140,7 +140,9 @@ def _context_keep_rows(grid: Sequence[int], keyframe_indices: Sequence[int]) -> 
       a scene whose frames.zarr predates that change is not, and gets the keyframe-only VDA
       path rather than a silently misaligned depth stack.
     """
-    grid_array = np.asarray(grid, dtype=np.int64)
+    # np.unique, matching decode_context's sorted({...}): searchsorted needs a sorted grid, and
+    # the two must agree on row order or positions point at the wrong frames
+    grid_array = np.unique(np.asarray(grid, dtype=np.int64))
     if grid_array.size == 0:
         logger.warning("VDA context grid is empty — falling back to keyframe-only VDA")
         return None
@@ -159,6 +161,26 @@ def _context_keep_rows(grid: Sequence[int], keyframe_indices: Sequence[int]) -> 
         return None
 
     return [int(p) for p in positions]
+
+
+def _video_unchanged(video_path: Path, provenance: dict) -> bool:
+    """
+    Check that the video on disk is still the one frames.zarr was built from.
+
+    - The context grid is indexed against that specific decode; a re-encoded or replaced clip
+      at the same path shifts every index, pairing keyframes with other frames' depth.
+    - Both grids start at 0, so a mismatch is not self-announcing — nothing downstream errors.
+    - Missing provenance (a store written before the stamp existed) is treated as unchanged.
+    """
+    recorded_mtime = provenance.get("video_mtime")
+    if recorded_mtime is not None and abs(float(recorded_mtime) - video_path.stat().st_mtime) > 1.0:
+        logger.warning(
+            "%s was modified since frames.zarr was written (mtime %s -> %s)",
+            video_path, recorded_mtime, video_path.stat().st_mtime,
+        )
+        return False
+
+    return True
 
 
 def extract_frames(
@@ -1151,17 +1173,31 @@ class Reconstructor:
         # sidecar records the generating inputs; an ABSENT one means the maps predate this stamp
         # and are trusted, so only a present-and-different stamp invalidates.
         depth_sidecar = backend_dir / "depth_vda" / "inputs.json"
+        keyframe_fps = self.config["preproc"]["fps"]
         signature = {
             "context_fps": float(context_fps) if context_fps else None,
-            "keyframe_fps": float(self.config["preproc"]["fps"]),
+            "keyframe_fps": float(keyframe_fps) if keyframe_fps else None,
             "n_names": len(names),
         }
-        cached_signature = json.loads(depth_sidecar.read_text()) if depth_sidecar.exists() else None
-        stale = cached_signature is not None and cached_signature != signature
+
+        # write_text is not atomic and runs here get OOM-killed, so a half-written stamp is
+        # realistic; an unreadable one is treated as a mismatch because regenerating is always safe
+        cached_signature, unreadable = None, False
+        if depth_sidecar.exists():
+            try:
+                cached_signature = json.loads(depth_sidecar.read_text())
+            except (json.JSONDecodeError, OSError):
+                logger.warning("VDA depth sidecar %s is unreadable — regenerating depth", depth_sidecar)
+                unreadable = True
+        stale = unreadable or (cached_signature is not None and cached_signature != signature)
         if stale:
             logger.info(
                 "VDA depth cache invalidated: generating inputs changed %s -> %s", cached_signature, signature,
             )
+
+            # generate_vda_depth early-returns on a complete stem set, and none of these inputs
+            # change that set — so the superseded maps must be REMOVED, not merely out-stamped
+            shutil.rmtree(backend_dir / "depth_vda", ignore_errors=True)
 
         if stale or not vda_depth_complete(backend_dir, names):
             keep_rows, context_frames = None, None
@@ -1172,7 +1208,20 @@ class Reconstructor:
             if context_fps:
                 provenance = store.provenance()
                 video_path = provenance.get("video_path")
-                if video_path and Path(video_path).is_file():
+                same_video = bool(video_path) and Path(video_path).is_file() and _video_unchanged(
+                    Path(video_path), provenance,
+                )
+                if same_video:
+                    # The keyframes were drawn from the grid recorded at preproc time; a
+                    # different rate here is only caught when it happens to push them off-grid
+                    sampled_at = provenance.get("vda_context_fps")
+                    if sampled_at is not None and float(sampled_at) != float(context_fps):
+                        logger.warning(
+                            "preproc.vda_context_fps is %.2f but frames.zarr was sampled against a "
+                            "%.2f fps grid — keyframes may not be members of the grid VDA runs on",
+                            float(context_fps), float(sampled_at),
+                        )
+
                     grid = context_indices(video_path, target_fps=float(context_fps))
                     keep_rows = _context_keep_rows(grid, [int(fi) for fi in store.frame_indices()])
                     if keep_rows is not None:
@@ -1188,18 +1237,22 @@ class Reconstructor:
                         context_frames = decode_context(video_path, grid, profile=profile)
                 else:
                     logger.warning(
-                        "preproc.vda_context_fps is set but the source video is unavailable (%s) — "
-                        "falling back to keyframe-only VDA",
+                        "preproc.vda_context_fps is set but the source video is unavailable or no longer "
+                        "matches the one frames.zarr was built from (%s) — falling back to keyframe-only VDA",
                         video_path,
                     )
 
-            # One VDA pass either way; the context branch writes only the keyframe rows out
+            # One VDA pass either way; the context branch writes only the keyframe rows out.
+            # used_context_fps is bound HERE, not read back after the branch: `del context_frames`
+            # unbinds the name, and it is the resolved rate the sidecar has to record anyway.
             if context_frames is not None:
+                used_context_fps = float(context_fps)
                 generate_vda_depth(
                     context_frames, fps=float(context_fps), out_dir=backend_dir, names=names, keep_rows=keep_rows,
                 )
                 del context_frames
             else:
+                used_context_fps = None
                 frames = np.ascontiguousarray(store.images())
                 generate_vda_depth(frames, fps=float(self.config["preproc"]["fps"]), out_dir=backend_dir, names=names)
                 del frames
@@ -1207,9 +1260,10 @@ class Reconstructor:
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
 
-            # Stamp what produced these maps, so a later context-rate change invalidates them
+            # Stamp what actually produced these maps: both fallbacks above land here, so a
+            # requested context rate that never ran must not be recorded as if it had
             depth_sidecar.parent.mkdir(parents=True, exist_ok=True)
-            depth_sidecar.write_text(json.dumps(signature))
+            depth_sidecar.write_text(json.dumps({**signature, "context_fps": used_context_fps}))
 
         # Global SfM via the upstream python API; writes colmap/instantsfm.db + colmap/sparse/0
         creator = InstantSfMCreator(
@@ -1750,15 +1804,19 @@ class Reconstructor:
                 keep = confidence_mask(confidence, conf_percentile)
                 depth_targets = np.where(keep, depth_targets, 0.0).astype(np.float32)
             elif conf_percentile is not None:
-                # SfM depth carries no confidence channel, so mesh.conf_percentile cannot apply
-                # here. Reliability is enforced upstream instead: affine alignment writes 0 for
-                # saturated and beyond-evidence pixels, and 0 means "no target".
+                # No confidence channel, so mesh.conf_percentile cannot apply. On the sfm path
+                # reliability is enforced upstream instead: affine alignment writes 0 for
+                # saturated and beyond-evidence pixels, and 0 means "no target" — while scale
+                # alignment masks nothing, which is why the model is named rather than implied.
+                # The branch is reachable off the sfm path too, hence the guarded lookup.
+                instantsfm_cfg = self.config["pointcloud"].get("instantsfm")
+                zero_fraction = 100.0 * float((depth_targets <= 0).mean())
                 logger.info(
-                    "splats depth targets: mesh.conf_percentile=%s not applied on the sfm path "
-                    "(no confidence channel); masking comes from depth alignment — %.2f%% of "
-                    "target pixels are zero",
+                    "splats depth targets: mesh.conf_percentile=%s not applied (no confidence "
+                    "channel); depth_align=%s masks %.2f%% of target pixels",
                     conf_percentile,
-                    100.0 * float((depth_targets <= 0).mean()),
+                    instantsfm_cfg.get("depth_align") if instantsfm_cfg else None,
+                    zero_fraction,
                 )
 
         train(

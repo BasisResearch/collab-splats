@@ -1949,7 +1949,26 @@ git commit --only collab_splats/mesh/utils.py collab_splats/wrapper/reconstructo
 
 ---
 
-## Task 11: Wire the context stream and alignment model through the Reconstructor
+## Task 11: Wire the context stream and alignment model through the Reconstructor — DONE (`5ee7d0ac`, remediated)
+
+Both reviews returned FAIL on the same Critical: the sidecar staleness gate was a no-op.
+`generate_vda_depth` early-returns on a complete stem set, and no input this sidecar tracks
+changes that set — so a `vda_context_fps` change logged "cache invalidated", regenerated
+nothing, and then stamped the new signature over the old maps, permanently blessing them.
+The covering test mocked `generate_vda_depth`, so it asserted the call, not the effect.
+
+Remediated in the working tree: `shutil.rmtree(depth_vda)` on stale; the stamp records the
+rate that actually ran (both fallbacks land on the same line); an unreadable sidecar is
+treated as a mismatch instead of raising `JSONDecodeError` out of a cache check; the video's
+`mtime` is checked against the one frames.zarr recorded (`_video_unchanged`); a context rate
+differing from the store's sampled grid warns; `float(fps)` no longer runs unconditionally
+(`fps: null` is legal under `frame_selection: uniform`); `_context_keep_rows` normalises its
+grid with `np.unique` to match `decode_context`'s `sorted({...})`; `decode_context` makes one
+ffmpeg pass over the whole grid into a preallocated buffer instead of one pass per 64-frame
+chunk (a 2250-frame grid was ~18 full decodes and ~9.6 GB transient). Tests now assert the
+effect: stale maps are gone at the moment `generate_vda_depth` is called, matching sidecars
+keep their maps, and the distortion-profile branch is covered.
+
 
 **Files:**
 - Modify: `collab_splats/wrapper/reconstructor.py:129-240` (`extract_frames`), `:832-843` (call site), `:1020-1090` (`_run_sfm`)
@@ -2412,7 +2431,31 @@ git commit --only configs/base.yaml configs/README.md collab_splats/wrapper/reco
 
 ---
 
-## Task 13: Run the grid — 3 new cells against a reused baseline
+## Task 13: Run the grid — 3 new cells against a reused baseline — MEASURED
+
+| cell | alignment | normals | PSNR | SSIM | gaussians |
+|---|---|---|---|---|---|
+| 1 (baseline) | scale | mean | 20.8049 | 0.6776 | 1,875,613 |
+| 2 | affine | mean | 20.7293 | 0.6798 | 1,829,766 |
+| 3 | affine | median 0.6 | 20.8762 | **0.6854** | 1,833,964 |
+| 3b | scale | median 0.6 | **20.9080** | 0.6831 | 1,871,864 |
+
+Median normals alone: +0.103 dB / +0.0055 SSIM. Affine alone: -0.076 dB. Affine on top of
+median: -0.032 dB. Anti-additive, like every prior lever in this repo. **Recommend shipping
+median normals and dropping affine** — which also keeps the near-pole affine blow-up (finding
+I1 of the Task 6/7 review) off the splat path entirely. It still has to be fixed for the
+metric path, where `world_points` re-unprojection feeds `sparse_pc.ply` and the
+pointcloud-sourced TSDF.
+
+**Cell 4 (8 FPS contiguous VDA context stream) skipped, user decision.** Its mechanism is
+refuted in-tree: `sfm.py:270-273` records that `metric=True` disables
+`infer_video_depth`'s cross-window scale-and-shift chaining (`video_depth.py:135`), so
+consecutive windows stitch on the head's own absolute output rather than being fitted to
+each other — measured 2026-08-26 at -0.7% CV and -0.9% residual. A control would also cost
+a second full pipeline, since SfM consumes the VDA maps rather than re-aligning them. The
+code ships tested; the relative (non-metric) path is untested and would need a relative
+checkpoint plus a scale-and-shift fit.
+
 
 **Files:**
 - Create: `evals/results/2026-08-26-depth-align-grid/` (gitignored)
@@ -2656,6 +2699,27 @@ and why. Commit with `git add -f`.
   message naming whichever array is absent, with the "needs a 2dgs run from this version"
   sentence appended only on the median branch. Not done deliberately; doing it naively re-creates
   the bug that was just fixed.
+
+- **`_run_sfm`'s depth block wants to be `_ensure_vda_depth(store, names, backend_dir)`.** The
+  quality review's N6: the block is ~70 lines inside an already-long method, and it is only
+  reachable through an eight-way mock stack — which is what let the C1 no-op ship green.
+  Extracting it makes the stale/regenerate logic directly unit-testable. Deliberately not done
+  during remediation: it is a refactor of shipped code while a GPU job holds the module, and the
+  correctness fix stands on its own.
+
+- **Off-grid keyframes fall back where a raise may be better.** When the user set
+  `vda_context_fps` *and* the video is present, off-grid keyframes mean config and store
+  disagree, fixable only by re-running preproc. Continuing on a WARNING buried in a multi-hour
+  log gives a quietly worse result; `decode_context` raises on a short decode by contrast. Kept
+  as a fallback deliberately — rerun-from-processed must not hard-fail — but worth revisiting.
+
+- **`_DEPTH_ALIGN_MODELS` mirrors `apply_depth_alignment`'s literal `("scale", "affine")`** with
+  nothing pinning them together. Correct today, drifts silently when a third model lands.
+
+- **The context and keyframe VDA paths are not resolution-matched.** `decode_context` feeds
+  frames pre-downscaled to a 518 short side; the keyframe path feeds full-resolution frames and
+  lets VDA resize internally. Toggling `vda_context_fps` therefore moves two variables at once,
+  which confounds any on/off A/B of the context stream.
 
 ---
 

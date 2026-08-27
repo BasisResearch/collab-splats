@@ -275,7 +275,8 @@ def decode_context(
       and K_new stop matching the keyframes.
     - `out_short_side` is the model's native grid (VDA resizes the short side to 518 and
       upscales anything smaller, so decoding below that loses detail without saving GPU).
-    - Chunked so a 2000-frame grid never holds 2000 full-resolution frames at once.
+    - One ffmpeg pass over the whole grid, flushed in batches: iter_frames still demuxes from
+      frame 0, so a pass per chunk would cost O(chunks x video length).
     - Refuses a short decode: rows are consumed positionally downstream, so a missing
       index raises rather than silently shifting every later row against its image.
     """
@@ -288,23 +289,12 @@ def decode_context(
         # wrong for every real video, so refuse to imply dimensions we never decoded
         return np.zeros((0, 0, 0, 3), dtype=np.uint8)
 
-    out: list[np.ndarray] = []
-    for start in range(0, len(ordered), chunk_size):
-        chunk = ordered[start : start + chunk_size]
+    # Written into a preallocated (N, h, w, 3) buffer rather than a list of frames: a
+    # 2000-frame grid stacked from a list holds the list AND the stack at once
+    frames_out: np.ndarray | None = None
 
-        # One ffmpeg select pass per chunk, BGR at source resolution
-        decoded = dict(iter_frames(video_path, indices=chunk))
-
-        # Rows are consumed positionally downstream (keyframe rows are picked out of this
-        # stack by position), so a silently short chunk would shift every later row against
-        # its image. Refuse rather than return a misaligned stack.
-        missing = [i for i in chunk if i not in decoded]
-        if missing:
-            raise ValueError(
-                f"decode_context: {video_path} returned {len(chunk) - len(missing)}/{len(chunk)} "
-                f"requested frames; first missing index {missing[0]}"
-            )
-        bgr_frames = [decoded[i] for i in chunk]
+    def flush(bgr_frames: list[np.ndarray], write_at: int) -> None:
+        nonlocal frames_out
 
         # Undistort at native resolution — the crop is what makes the context aspect
         # ratio match the keyframes'
@@ -315,8 +305,37 @@ def decode_context(
         height, width = bgr_frames[0].shape[:2]
         scale = out_short_side / min(height, width)
         target = (int(round(width * scale)), int(round(height * scale)))
-        for bgr in bgr_frames:
-            small = cv2.resize(bgr, target, interpolation=cv2.INTER_AREA)
-            out.append(cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+        if frames_out is None:
+            frames_out = np.empty((len(ordered), target[1], target[0], 3), dtype=np.uint8)
 
-    return np.stack(out).astype(np.uint8)
+        for offset, bgr in enumerate(bgr_frames):
+            small = cv2.resize(bgr, target, interpolation=cv2.INTER_AREA)
+            frames_out[write_at + offset] = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+
+    # Rows are consumed positionally downstream (keyframe rows are picked out of this stack
+    # by position), so a frame arriving out of order — or not at all — would shift every
+    # later row against its image. Refuse rather than return a misaligned stack.
+    pending: list[np.ndarray] = []
+    cursor = 0
+    for index, bgr in iter_frames(video_path, indices=ordered):
+        if cursor >= len(ordered) or index != ordered[cursor]:
+            raise ValueError(
+                f"decode_context: {video_path} yielded frame {index} where {ordered[cursor]} was "
+                f"expected (position {cursor} of {len(ordered)})"
+            )
+
+        pending.append(bgr)
+        cursor += 1
+        if len(pending) == chunk_size:
+            flush(pending, cursor - len(pending))
+            pending.clear()
+
+    if pending:
+        flush(pending, cursor - len(pending))
+    if cursor != len(ordered):
+        raise ValueError(
+            f"decode_context: {video_path} returned {cursor}/{len(ordered)} requested frames; "
+            f"first missing index {ordered[cursor]}"
+        )
+
+    return frames_out

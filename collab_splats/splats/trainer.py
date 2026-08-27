@@ -162,8 +162,12 @@ class SplatsConfig:
         if cfg.scaffold is not None and cfg.representation != "scaffold":
             raise ValueError("splats.scaffold requires representation: scaffold")
 
-        # Scaffold decodes RGB from mlp_colour, so the SH schedule has nothing to act on
-        if cfg.representation == "scaffold" and ("sh_degree" in block or "sh_degree_interval" in block):
+        # Scaffold decodes RGB from mlp_colour, so the SH schedule has nothing to act on. Only a
+        # DELIBERATE override is an error: base.yaml always carries both keys at their defaults and
+        # deep-merges them into every block, so presence alone would make scaffold unrunnable.
+        sh_keys = ("sh_degree", "sh_degree_interval")
+        sh_overridden = any(key in block and block[key] != cls.__dataclass_fields__[key].default for key in sh_keys)
+        if cfg.representation == "scaffold" and sh_overridden:
             raise ValueError(
                 "splats.sh_degree / sh_degree_interval are vanilla-only; scaffold decodes RGB from mlp_colour"
             )

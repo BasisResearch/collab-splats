@@ -47,8 +47,17 @@ def test_scaffold_block_without_scaffold_representation_is_rejected():
 
 
 def test_sh_degree_is_rejected_under_scaffold():
+    """A deliberate SH override is a misunderstanding of the representation, so it raises."""
     with pytest.raises(ValueError, match="sh_degree"):
-        SplatsConfig.from_dict({"representation": "scaffold", "sh_degree": 3})
+        SplatsConfig.from_dict({"representation": "scaffold", "sh_degree": 0})
+    with pytest.raises(ValueError, match="sh_degree"):
+        SplatsConfig.from_dict({"representation": "scaffold", "sh_degree_interval": 500})
+
+
+def test_scaffold_accepts_the_inherited_sh_defaults():
+    """base.yaml deep-merges sh_degree/sh_degree_interval into every block at their defaults."""
+    cfg = SplatsConfig.from_dict({"representation": "scaffold", "sh_degree": 3, "sh_degree_interval": 1000})
+    assert cfg.representation == "scaffold"
 
 
 ########################################

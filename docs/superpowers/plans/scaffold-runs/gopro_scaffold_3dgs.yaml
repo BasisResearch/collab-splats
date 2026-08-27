@@ -1,26 +1,41 @@
 # Scaffold-GS on 3dgs, GoPro parity run (Task 13 of the scaffold-gs plan).
-# Baseline to beat, from the logged splatfacto-parity runs — do NOT rerun it:
-#   vanilla 3dgs GH010229  psnr 21.606  ssim 0.7169  1,000,000 gaussians  601 s
+# Every knob below is copied from the logged baseline run so the only difference is the
+# representation. Baseline (GH010229_undist/instantsfm/splats_appearance) — do NOT rerun it:
+#   vanilla 3dgs  psnr 21.606  ssim 0.7169  1,000,000 gaussians  601 s
 # The appearance sweep is this file x {scaffold.appearance_dim: 0 | 32} x {appearance_opt: false | true}.
+preproc:
+  fps: 2.0
+  min_frames: null
+  max_frames: 300
+  n_workers: 4
+  undistort: true
+pointcloud:
+  method: sfm
+  backend: instantsfm
+  instantsfm:
+    retriangulation: true
+semantics:
+  enabled: false
+mesh:
+  enabled: false            # parity is PSNR / primitive count; meshing is the stage-2 (2dgs) question
 splats:
   enabled: true
   primitive: 3dgs
   representation: scaffold
-  appearance_opt: true
-  max_steps: 30000
+  appearance_opt: true      # run A: our affine appearance, Scaffold's embedding off
   pose_opt: true
-  normalize_scene: false
-  num_downscales: 2
+  max_steps: 12000
+  num_downscales: 2         # c2f, as the baseline ran it
   resolution_schedule: 3000
+  normalize_scene: true
   scaffold:
     n_offsets: 10
     feat_dim: 32
     appearance_dim: 0
-  losses:
+  losses:                   # byte-identical to the baseline's mix
     depth: {weight: 0.01}
+    normal_consistency: {weight: 0.05, start: 7000}
     opacity_reg: {weight: 0.01}
     scale_reg: {weight: 0.01}
     appearance_reg: {weight: 1.0e-3}
-
-semantics:
-  enabled: false
+    distortion: {weight: 0.0}

@@ -40,11 +40,13 @@ from collab_splats.splats.cameras import CameraOptModule
 from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
 from collab_splats.splats.outputs import write_splat_outputs
 from collab_splats.splats.rendering import render_view
+from collab_splats.splats.scaffold import ScaffoldConfig
 from collab_splats.utils.progress import progress
 
 logger = logging.getLogger(__name__)
 
 PRIMITIVES = ("3dgs", "2dgs")
+REPRESENTATIONS = ("vanilla", "scaffold")
 SH_DC_NORMALISER = 0.28209479177387814  # rgb -> SH degree-0 coefficient (1 / (2 sqrt(pi)))
 
 ########################################
@@ -76,6 +78,8 @@ class SplatsConfig:
     """
 
     primitive: str = "3dgs"
+    representation: str = "vanilla"  # vanilla (per-gaussian params) | scaffold (anchors + MLP decode)
+    scaffold: dict | None = None  # scaffold block; only with representation: scaffold
     max_steps: int = 30000
     pose_opt: bool = True
     appearance_opt: bool = False  # per-image affine colour (AppearanceModule); train views only
@@ -123,6 +127,13 @@ class SplatsConfig:
         if self.max_steps < 1:
             raise ValueError(f"splats.max_steps must be >= 1, got {self.max_steps}")
 
+        # Parsed scaffold block, kept off the dataclass fields so asdict(cfg) — which lands in ckpt.pt
+        # and the zarr attrs — stays plain yaml-shaped data
+        if self.representation == "scaffold":
+            self.scaffold_config = ScaffoldConfig.from_dict(self.scaffold or {})
+        else:
+            self.scaffold_config = None
+
     @classmethod
     def from_dict(cls, block: dict) -> "SplatsConfig":
         """
@@ -141,6 +152,18 @@ class SplatsConfig:
         # Primitive and loss entries must be ones the trainer knows, each with a weight
         if cfg.primitive not in PRIMITIVES:
             raise ValueError(f"splats.primitive must be one of {PRIMITIVES}, got '{cfg.primitive}'")
+
+        # Representation and its block: a scaffold block without the representation is a silent no-op
+        if cfg.representation not in REPRESENTATIONS:
+            raise ValueError(f"splats.representation must be one of {REPRESENTATIONS}, got '{cfg.representation}'")
+        if cfg.scaffold is not None and cfg.representation != "scaffold":
+            raise ValueError("splats.scaffold requires representation: scaffold")
+
+        # Scaffold decodes RGB from mlp_colour, so the SH schedule has nothing to act on
+        if cfg.representation == "scaffold" and ("sh_degree" in block or "sh_degree_interval" in block):
+            raise ValueError(
+                "splats.sh_degree / sh_degree_interval are vanilla-only; scaffold decodes RGB from mlp_colour"
+            )
         for name, spec in cfg.losses.items():
             if name not in OPTIONAL_LOSSES:
                 raise ValueError(f"splats.losses: unknown loss '{name}'; allowed {sorted(OPTIONAL_LOSSES)}")

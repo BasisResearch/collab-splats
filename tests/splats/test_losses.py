@@ -148,6 +148,15 @@ def test_loss_active_gates_on_weight_start_and_presence():
     assert not loss_active(0, None)
 
 
+def test_yaml_bool_weight_is_refused_not_coerced():
+    # `weight: yes` in a config reads as True, and float(True) is 1.0 — a loss the author
+    # meant to switch on would have trained at full strength without a word
+    with pytest.raises(TypeError, match="yaml booleans"):
+        loss_weight(0, {"weight": True})
+    with pytest.raises(TypeError, match="end_weight"):
+        loss_weight(0, {"weight": 0.1, "end": 100, "end_weight": False})
+
+
 def test_distortion_skipped_when_render_has_no_map():
     schedule = {"distortion": {"weight": 1.0}}
     render_without_map = _render(with_distortion=False)

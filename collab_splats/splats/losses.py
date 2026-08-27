@@ -164,6 +164,13 @@ def loss_weight(step: int, spec: dict | None) -> float:
     """
     if spec is None or step < spec.get("start", 0):
         return 0.0
+
+    # yaml reads `weight: yes` as True, and True floats to 1.0 — a loss meant to be switched
+    # on would silently train at full strength, so refuse the bool instead of coercing it
+    for key in ("weight", "end_weight"):
+        if isinstance(spec.get(key), bool):
+            raise TypeError(f"loss {key} must be a number, got {spec[key]!r} — yaml booleans are not weights")
+
     weight = spec["weight"]
     end = spec.get("end")
     if end is None:

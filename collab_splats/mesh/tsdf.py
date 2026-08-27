@@ -31,9 +31,12 @@ class Open3DTSDFFusion(BaseMeshCreator):
     # for it rather than getting it silently. Config-driven runs reach this default — that is why
     # it is the value that works, not the one that raises.
     clean_repair: bool = False
-    clean_max_hole_size: float = 3.0
+    # Cleanup thresholds are fractions of the mesh's own scene scale, not world distances —
+    # see clean_repair_mesh. A backend's units never make a default mean something else.
+    clean_min_area_frac: float = 6e-6
+    clean_max_gap_frac: float = 0.01
+    clean_max_hole_frac: float = 0.014
     clean_max_edge_splits: int = 1_000_000  # global subdivision budget across all hole patches
-    clean_use_largest: bool = False
 
     def create(
         self,
@@ -86,9 +89,7 @@ class Open3DTSDFFusion(BaseMeshCreator):
 
         for i in tqdm(range(N), desc="TSDF integration"):
             rgb_u8 = (
-                np.ascontiguousarray(rgbs[i])
-                if is_uint8
-                else (np.ascontiguousarray(rgbs[i]) * 255).astype(np.uint8)
+                np.ascontiguousarray(rgbs[i]) if is_uint8 else (np.ascontiguousarray(rgbs[i]) * 255).astype(np.uint8)
             )
             depth_f32 = np.ascontiguousarray(depths[i]).astype(np.float32)
 
@@ -121,9 +122,10 @@ class Open3DTSDFFusion(BaseMeshCreator):
         if self.clean_repair:
             clean_repair_mesh(
                 mesh_path,
-                max_hole_size=self.clean_max_hole_size,
+                min_area_frac=self.clean_min_area_frac,
+                max_gap_frac=self.clean_max_gap_frac,
+                max_hole_frac=self.clean_max_hole_frac,
                 max_edge_splits=self.clean_max_edge_splits,
-                use_largest=self.clean_use_largest,
             )
 
         return MeshResult(mesh_path=mesh_path)

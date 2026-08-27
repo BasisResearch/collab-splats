@@ -155,7 +155,10 @@ def test_persist_mesh_vertex_features(tmp_path):
 
 
 def _holed_sphere_with_strays(path, radius=1.0, resolution=20, color=None):
-    """Sphere missing a cap, plus one stray blob inside its bbox and one far outside."""
+    """Sphere missing a cap, plus one stray blob against its surface and one far away.
+
+    Everything scales with radius, so the same fractions describe the same mesh at any size.
+    """
     import open3d as o3d
 
     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius, resolution=resolution)
@@ -163,24 +166,24 @@ def _holed_sphere_with_strays(path, radius=1.0, resolution=20, color=None):
     sphere.triangles = o3d.utility.Vector3iVector(tris[:-12])  # punch a hole
     sphere.remove_unreferenced_vertices()
 
-    inside = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=6)
-    inside.translate((0.2, 0.0, 0.0))
-    outside = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=6)
-    outside.translate((radius * 9, 0.0, 0.0))
+    near = o3d.geometry.TriangleMesh.create_sphere(radius=radius * 0.1, resolution=6)
+    near.translate((radius * 1.15, 0.0, 0.0))  # just off the surface: detached scene content
+    far = o3d.geometry.TriangleMesh.create_sphere(radius=radius * 0.1, resolution=6)
+    far.translate((radius * 9, 0.0, 0.0))  # floating off in space: a stray
 
-    combined = sphere + inside + outside
+    combined = sphere + near + far
     if color is not None:  # colored variant for the color-preservation test
         combined.paint_uniform_color(color)
     o3d.io.write_triangle_mesh(str(path), combined)
     return path
 
 
-def test_clean_repair_mesh_drops_out_of_bounds_components_and_fills_holes(tmp_path):
+def test_clean_repair_mesh_drops_isolated_components_and_fills_holes(tmp_path):
     """The two jobs of the cleanup, on a mesh built to need both.
 
-    A TSDF scene comes out with floating specks from stray depth and small holes where coverage
-    thinned. Detached geometry *inside* the room (furniture) must survive — that is why the
-    bounding-box test exists instead of a plain keep-the-largest.
+    A TSDF scene comes out with specks floating off the room from stray depth and small holes
+    where coverage thinned. Detached geometry sitting against the scene (furniture) must
+    survive — that is what the gap threshold buys over a plain keep-the-largest.
     """
     import open3d as o3d
 
@@ -191,23 +194,23 @@ def test_clean_repair_mesh_drops_out_of_bounds_components_and_fills_holes(tmp_pa
     assert len(before.cluster_connected_triangles()[2]) == 3
     assert not before.is_watertight()
 
-    out = clean_repair_mesh(mesh_path, max_hole_size=3.0)
+    out = clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_frac=0.3)
 
     assert out == mesh_path  # rewritten in place, not to a new name
     after = o3d.io.read_triangle_mesh(str(mesh_path))
-    # The far blob is dropped, the one inside the bbox is kept, and the sphere's hole is closed.
+    # The far blob is dropped, the one against the surface is kept, and the hole is closed.
     assert len(after.cluster_connected_triangles()[2]) == 2
     assert after.is_watertight()
 
 
 def test_clean_repair_mesh_leaves_large_holes_alone(tmp_path):
-    """A hole bigger than max_hole_size is a real opening (unscanned wall), not a defect."""
+    """A hole wider than max_hole_frac of the scene is a real opening, not a defect."""
     import open3d as o3d
 
     from collab_splats.mesh.utils import clean_repair_mesh
 
     mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply")
-    clean_repair_mesh(mesh_path, max_hole_size=1e-6)  # below any real perimeter → fill nothing
+    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_frac=0.1)  # hole runs 0.22 of scale
 
     after = o3d.io.read_triangle_mesh(str(mesh_path))
     assert not after.is_watertight()  # the hole survived
@@ -215,18 +218,38 @@ def test_clean_repair_mesh_leaves_large_holes_alone(tmp_path):
     assert len(after.cluster_connected_triangles()[2]) == 2  # component filtering still ran
 
 
-def test_clean_repair_mesh_use_largest_keeps_only_the_main_component(tmp_path):
-    """use_largest=True is the aggressive mode: everything but the biggest body is discarded."""
+def test_clean_repair_mesh_area_floor_drops_small_components(tmp_path):
+    """An area floor above every stray leaves the main body alone — no keep-the-largest flag needed."""
     import open3d as o3d
 
     from collab_splats.mesh.utils import clean_repair_mesh
 
     mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply")
-    clean_repair_mesh(mesh_path, use_largest=True)
+    clean_repair_mesh(mesh_path, min_area_frac=0.1, max_hole_frac=0.3)  # blobs run 0.01 of scale²
 
     after = o3d.io.read_triangle_mesh(str(mesh_path))
-    assert len(after.cluster_connected_triangles()[2]) == 1  # the in-bbox blob went too
+    assert len(after.cluster_connected_triangles()[2]) == 1  # the near blob went too
     assert after.is_watertight()
+
+
+def test_clean_repair_mesh_thresholds_follow_mesh_scale(tmp_path):
+    """The same fractions do the same thing to the same mesh at 10x the size.
+
+    This is the point of fractions over world distances: nothing here assumes the units a
+    reconstruction happened to come out in.
+    """
+    import open3d as o3d
+
+    from collab_splats.mesh.utils import clean_repair_mesh
+
+    results = []
+    for radius in (1.0, 10.0):
+        mesh_path = _holed_sphere_with_strays(tmp_path / f"mesh_r{radius}.ply", radius=radius)
+        clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_frac=0.3)
+        after = o3d.io.read_triangle_mesh(str(mesh_path))
+        results.append((len(after.cluster_connected_triangles()[2]), after.is_watertight()))
+
+    assert results[0] == results[1] == (2, True)
 
 
 def test_clean_repair_mesh_preserves_vertex_colors(tmp_path):
@@ -236,7 +259,7 @@ def test_clean_repair_mesh_preserves_vertex_colors(tmp_path):
     from collab_splats.mesh.utils import clean_repair_mesh
 
     mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply", color=(0.2, 0.6, 0.9))
-    clean_repair_mesh(mesh_path, max_hole_size=3.0)
+    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_frac=0.3)
 
     after = o3d.io.read_triangle_mesh(str(mesh_path))
     assert after.has_vertex_colors()
@@ -385,9 +408,7 @@ def test_tsdf_inputs_native_resolution_uses_store_rgb_and_upsampled_depth():
 
     ff = _tiny_ff_result()
     native_K = ff.intrinsics * np.array([[2, 1, 2], [1, 2, 2], [1, 1, 1]], np.float32)
-    depths, rgbs, _, K = _feedforward_to_tsdf_inputs(
-        ff, frame_store=FakeStore(), native_intrinsics=native_K
-    )
+    depths, rgbs, _, K = _feedforward_to_tsdf_inputs(ff, frame_store=FakeStore(), native_intrinsics=native_K)
     assert depths.shape == (2, 16, 16)
     assert rgbs.dtype == np.uint8 and rgbs.shape == (2, 16, 16, 3)
     np.testing.assert_array_equal(K, native_K)
@@ -422,9 +443,7 @@ def test_tsdf_inputs_native_resolution_wrong_store_resolution_raises():
 
     ff = _tiny_ff_result()
     with pytest.raises(ValueError, match="resolution"):
-        _feedforward_to_tsdf_inputs(
-            ff, frame_store=WrongResStore(), native_intrinsics=ff.intrinsics
-        )
+        _feedforward_to_tsdf_inputs(ff, frame_store=WrongResStore(), native_intrinsics=ff.intrinsics)
 
 
 ########
@@ -446,14 +465,10 @@ def test_optimize_color_map_runs_and_recolors(tmp_path):
     c2w = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
     c2w[:, 0, 3] = np.linspace(-0.02, 0.02, n)
 
-    fusion = Open3DTSDFFusion(
-        output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=5.0
-    )
+    fusion = Open3DTSDFFusion(output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=5.0)
     result = fusion.create(depths, rgbs, c2w, intrinsics)
 
-    optimize_color_map(
-        result.mesh_path, depths, rgbs, c2w, intrinsics, iterations=5, depth_trunc=5.0
-    )
+    optimize_color_map(result.mesh_path, depths, rgbs, c2w, intrinsics, iterations=5, depth_trunc=5.0)
 
     mesh = o3d.io.read_triangle_mesh(str(result.mesh_path))
     assert len(mesh.vertices) > 0
@@ -472,19 +487,13 @@ def test_optimize_color_map_float_rgb_and_empty_mesh_guard(tmp_path):
     c2w = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
     c2w[:, 0, 3] = np.linspace(-0.01, 0.01, n)
 
-    fusion = Open3DTSDFFusion(
-        output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=5.0
-    )
+    fusion = Open3DTSDFFusion(output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=5.0)
     result = fusion.create(depths, rgbs, c2w, intrinsics)
-    optimize_color_map(
-        result.mesh_path, depths, rgbs, c2w, intrinsics, iterations=2, depth_trunc=5.0
-    )
+    optimize_color_map(result.mesh_path, depths, rgbs, c2w, intrinsics, iterations=2, depth_trunc=5.0)
     assert o3d.io.read_triangle_mesh(str(result.mesh_path)).has_vertices()
 
     with pytest.raises(ValueError, match="missing or empty"):
-        optimize_color_map(
-            tmp_path / "nope.ply", depths, rgbs, c2w, intrinsics, iterations=2, depth_trunc=5.0
-        )
+        optimize_color_map(tmp_path / "nope.ply", depths, rgbs, c2w, intrinsics, iterations=2, depth_trunc=5.0)
 
 
 ########
@@ -500,9 +509,7 @@ def test_pointcloud_to_mesh_default_skips_color_map(tmp_path, monkeypatch):
         lambda *a, **k: called.append(1),
     )
     result = _tiny_ff_result()
-    pointcloud_to_mesh(
-        result, tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=10.0
-    )
+    pointcloud_to_mesh(result, tmp_path, voxel_size=0.05, sdf_trunc=0.15, depth_trunc=10.0)
     assert called == []
 
 
@@ -510,9 +517,7 @@ def test_pointcloud_to_mesh_color_map_requires_tsdf(tmp_path):
     """A non-TSDF method with color_map_iterations>0 fails loudly before any work."""
     result = _tiny_ff_result()
     with pytest.raises(ValueError, match="color_map_iterations"):
-        pointcloud_to_mesh(
-            result, tmp_path, method="depth_normal_poisson", color_map_iterations=10
-        )
+        pointcloud_to_mesh(result, tmp_path, method="depth_normal_poisson", color_map_iterations=10)
 
 
 def test_pointcloud_to_mesh_color_map_called_with_fusion_arrays(tmp_path, monkeypatch):

@@ -32,6 +32,11 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Compute budget for the component-gap KD-tree, not a geometric threshold: the main body of a
+# TSDF scene runs to millions of vertices, and a strided subsample this size resolves a
+# nearest-surface distance to well under the gap thresholds it feeds.
+_GAP_KDTREE_POINTS = 200_000
+
 
 def pick_indices_at_random(valid_mask, samples_per_frame):
     indices = torch.nonzero(torch.ravel(valid_mask))
@@ -222,11 +227,68 @@ def persist_mesh_vertex_features(
 ########################################################
 
 
+def _scene_scale(vertices: np.ndarray) -> float:
+    """Robust extent of a vertex set: the diagonal of its p1-p99 AABB.
+
+    Percentiles rather than the raw min/max because far-field tendrils inflate the true
+    extent by ~25% on a TSDF scene, which would slacken every threshold derived from it.
+    """
+    lo = np.percentile(vertices, 1, axis=0)
+    hi = np.percentile(vertices, 99, axis=0)
+    return float(np.linalg.norm(hi - lo))
+
+
+def _select_components(
+    mesh: "o3d.geometry.TriangleMesh",
+    cluster_ids: np.ndarray,
+    cluster_sizes: np.ndarray,
+    min_area_frac: float,
+    max_gap_frac: float,
+) -> tuple[np.ndarray, float]:
+    """Decide which connected components to keep, on thresholds relative to the scene's own scale.
+
+    A component survives if it is big enough to be geometry rather than speckle AND close
+    enough to the main body to be part of the same scene. Both thresholds are fractions of
+    the scene scale, so the same defaults hold whatever units the reconstruction came out in.
+
+    Returns the per-component keep mask and the scene scale it was measured against.
+    """
+    verts = np.asarray(mesh.vertices)
+    tris = np.asarray(mesh.triangles)
+    n_comp = len(cluster_sizes)
+    largest = int(cluster_sizes.argmax())
+
+    # Scene scale from the largest component alone — on a TSDF scene that is the room, and
+    # the strays this function exists to drop are exactly what must not set the yardstick.
+    main_verts = np.unique(tris[cluster_ids == largest])
+    main_xyz = verts[main_verts]
+    scale = _scene_scale(main_xyz)
+
+    # Per-component surface area, accumulated over triangles in one vectorized pass.
+    tri_pts = verts[tris]
+    tri_area = 0.5 * np.linalg.norm(np.cross(tri_pts[:, 1] - tri_pts[:, 0], tri_pts[:, 2] - tri_pts[:, 0]), axis=1)
+    comp_area = np.zeros(n_comp)
+    np.add.at(comp_area, cluster_ids, tri_area)
+
+    # Per-component centroid, then its distance to the nearest point on the main body. The
+    # KD-tree is built over a strided subsample so the query cost does not track scene size.
+    comp_centroid_sum = np.zeros((n_comp, 3))
+    np.add.at(comp_centroid_sum, cluster_ids, tri_pts.mean(axis=1))
+    comp_centroid = comp_centroid_sum / cluster_sizes[:, None]
+    stride = max(1, len(main_xyz) // _GAP_KDTREE_POINTS)
+    comp_gap, _ = cKDTree(main_xyz[::stride]).query(comp_centroid, k=1)
+
+    keep = (comp_area >= min_area_frac * scale**2) & (comp_gap <= max_gap_frac * scale)
+    keep[largest] = True
+    return keep, scale
+
+
 def clean_repair_mesh(
     mesh_path: str | Path,
-    max_hole_size: float = 3.0,
+    min_area_frac: float = 6e-6,
+    max_gap_frac: float = 0.01,
+    max_hole_frac: float = 0.014,
     max_edge_splits: int = 1_000_000,
-    use_largest: bool = False,  # if True, selects only the largest
 ) -> Path:
     """Drop stray components and fill small holes in a mesh on disk, rewriting it in place.
 
@@ -236,14 +298,21 @@ def clean_repair_mesh(
     dense per-component FaceBitSet (240k components x 7.1M faces ≈ 214 GB on a TSDF scene)
     and was OOM-killed.
 
+    Every threshold is a fraction of the scene's own scale (see `_scene_scale`), never a
+    world distance — a reconstruction's units depend on its backend, and an absolute default
+    silently means something different on each one.
+
     Args:
         mesh_path: Mesh to clean. Overwritten with the result.
-        max_hole_size: Fill holes whose perimeter is below this; larger ones are real openings
-            (an unscanned wall, the open side of a room) and get left alone.
+        min_area_frac: Drop components with surface area below this fraction of scene_scale**2.
+            The floor between real geometry and TSDF speckle.
+        max_gap_frac: Drop components whose centroid sits further than this fraction of the
+            scene scale from the main body. Detached geometry inside the scene (furniture,
+            objects) stays; specks floating off it do not.
+        max_hole_frac: Fill holes whose perimeter is below this fraction of the scene scale;
+            larger ones are real openings (an unscanned wall, the open side of a room).
         max_edge_splits: Global subdivision budget shared by all hole patches, so patch
             refinement cannot explode the triangle count.
-        use_largest: Keep only the biggest component. Off by default — that also throws away
-            legitimate detached geometry (furniture, objects) that sits inside the scene.
     Returns:
         The path written (same as mesh_path).
     """
@@ -260,24 +329,17 @@ def clean_repair_mesh(
     cluster_ids = np.asarray(cluster_ids)
     cluster_sizes = np.asarray(cluster_sizes)
     n_comp = len(cluster_sizes)
-    largest = int(cluster_sizes.argmax())
 
-    if use_largest:
-        keep = np.zeros(n_comp, dtype=bool)
-    else:
-        # Per-component AABBs in one vectorized pass, then the cheap separator between scene
-        # content and the floating specks TSDF leaves outside the room from stray depth:
-        # keep every component whose bounding box sits inside the main one.
-        tri_pts = np.asarray(mesh.vertices)[np.asarray(mesh.triangles)]
-        comp_min = np.full((n_comp, 3), np.inf)
-        comp_max = np.full((n_comp, 3), -np.inf)
-        np.minimum.at(comp_min, cluster_ids, tri_pts.min(axis=1))
-        np.maximum.at(comp_max, cluster_ids, tri_pts.max(axis=1))
-        keep = np.all(comp_min >= comp_min[largest], axis=1) & np.all(comp_max <= comp_max[largest], axis=1)
-    keep[largest] = True
+    keep, scale = _select_components(mesh, cluster_ids, cluster_sizes, min_area_frac, max_gap_frac)
     mesh.remove_triangles_by_mask(~keep[cluster_ids])
     mesh.remove_unreferenced_vertices()
-    logger.info("Kept %d of %d components (removed %d)", int(keep.sum()), n_comp, n_comp - int(keep.sum()))
+    logger.info(
+        "Kept %d of %d components (removed %d) at scene_scale=%.3f",
+        int(keep.sum()),
+        n_comp,
+        n_comp - int(keep.sum()),
+        scale,
+    )
 
     # Hand off to meshlib for hole filling — via arrays, not disk: meshlib's PLY round-trip
     # drops vertex colors, so colors stay behind in numpy and are reattached after.
@@ -291,6 +353,7 @@ def clean_repair_mesh(
 
     # Perimeter gate in Python (cheap: ~2 s for 176k holes), then ONE native batch fill —
     # a per-hole fill/subdivide/smooth loop does not finish at TSDF hole counts.
+    max_hole_size = max_hole_frac * scale
     hole_ids = mmesh.topology.findHoleRepresentiveEdges()
     small = mm.std_vector_Id_EdgeTag()
     for he in tqdm(hole_ids, desc=f"Measuring holes ({len(hole_ids)})"):
@@ -314,7 +377,7 @@ def clean_repair_mesh(
     subdiv_settings.newVerts = new_verts
     mm.subdivideMesh(mmesh, subdiv_settings)
     mm.positionVertsSmoothly(mmesh, new_verts)
-    logger.info("Filled %d of %d holes (max_hole_size=%s)", len(small), len(hole_ids), max_hole_size)
+    logger.info("Filled %d of %d holes (perimeter < %.3f)", len(small), len(hole_ids), max_hole_size)
 
     # Back to numpy. Original vertices keep their indices through fill/subdivide/pack, so
     # colors copy straight through and only patch vertices need a nearest-neighbour lookup;

@@ -1161,6 +1161,59 @@ class Reconstructor:
             store.export(image_dir, ext="jpg")
             logger.info("Staged %d keyframes to %s", len(names), image_dir)
 
+        # VDA metric depth for every keyframe — cached across runs, stamped with what made it
+        self._ensure_vda_depth(backend_dir, store, names)
+
+        # Global SfM via the upstream python API; writes colmap/instantsfm.db + colmap/sparse/0
+        creator = InstantSfMCreator(
+            features=pc_cfg["instantsfm"]["features"],
+            retriangulation=pc_cfg["instantsfm"]["retriangulation"],
+            random_seed=pc_cfg["instantsfm"]["random_seed"],
+        )
+        recon = creator.reconstruct(backend_dir)
+        del creator
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+        # Rename to the frame_NNNNNN contract and rewrite the model in place
+        _rename_images_to_stems(recon, backend_dir / "colmap" / "sparse" / "0")
+
+        # Unified pointcloud.zarr at VDA depth res, with provenance from the installed package
+        outputs = self._sfm_result_from_reconstruction(recon, backend_dir, store)
+
+        # Align VDA depth to the COLMAP world before anything persists — the zarr and the
+        # model must share one scale (splat depth targets, mesh fusion, localization lookup).
+        # Raises rather than writing a VDA-metric zarr; depth_scale attrs mark aligned scenes.
+        align_attrs = apply_depth_alignment(outputs, recon, model=pc_cfg["instantsfm"]["depth_align"])
+
+        zarr_path = backend_dir / "pointcloud.zarr"
+        outputs.save_zarr(
+            zarr_path,
+            extra_attrs={
+                "method": "sfm",
+                "backend": "instantsfm",
+                "instantsfm_version": importlib.metadata.version("instantsfm"),
+                **align_attrs,
+            },
+        )
+        logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(outputs.points):,}")
+
+        return PointcloudResult(
+            reconstruction=recon,
+            frame=CoordinateFrame.COLMAP,
+            image_paths=outputs.image_paths,
+        )
+
+    def _ensure_vda_depth(self, backend_dir: Path, store: FrameStore, names: list[str]) -> None:
+        """
+        Write depth_vda/images/npy/<stem>.npy for every keyframe, reusing what is already there.
+
+        - Regenerates when the recorded generating inputs differ from this run's; an absent
+          sidecar means the maps predate the stamp and are trusted.
+        - Runs VDA over the contiguous context grid when preproc.vda_context_fps is set and the
+          source video still matches, keeping only the keyframe rows; falls back to keyframes.
+        """
         # VDA metric depth — the only shipped mode (use_depths=True). Gate on the npy set BEFORE
         # decoding anything (300 x 1080p is ~1.9 GB).
         context_fps = self.config["preproc"]["vda_context_fps"]
@@ -1262,47 +1315,6 @@ class Reconstructor:
             # requested context rate that never ran must not be recorded as if it had
             depth_sidecar.parent.mkdir(parents=True, exist_ok=True)
             depth_sidecar.write_text(json.dumps({**signature, "context_fps": used_context_fps}))
-
-        # Global SfM via the upstream python API; writes colmap/instantsfm.db + colmap/sparse/0
-        creator = InstantSfMCreator(
-            features=pc_cfg["instantsfm"]["features"],
-            retriangulation=pc_cfg["instantsfm"]["retriangulation"],
-            random_seed=pc_cfg["instantsfm"]["random_seed"],
-        )
-        recon = creator.reconstruct(backend_dir)
-        del creator
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-
-        # Rename to the frame_NNNNNN contract and rewrite the model in place
-        _rename_images_to_stems(recon, backend_dir / "colmap" / "sparse" / "0")
-
-        # Unified pointcloud.zarr at VDA depth res, with provenance from the installed package
-        outputs = self._sfm_result_from_reconstruction(recon, backend_dir, store)
-
-        # Align VDA depth to the COLMAP world before anything persists — the zarr and the
-        # model must share one scale (splat depth targets, mesh fusion, localization lookup).
-        # Raises rather than writing a VDA-metric zarr; depth_scale attrs mark aligned scenes.
-        align_attrs = apply_depth_alignment(outputs, recon, model=pc_cfg["instantsfm"]["depth_align"])
-
-        zarr_path = backend_dir / "pointcloud.zarr"
-        outputs.save_zarr(
-            zarr_path,
-            extra_attrs={
-                "method": "sfm",
-                "backend": "instantsfm",
-                "instantsfm_version": importlib.metadata.version("instantsfm"),
-                **align_attrs,
-            },
-        )
-        logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(outputs.points):,}")
-
-        return PointcloudResult(
-            reconstruction=recon,
-            frame=CoordinateFrame.COLMAP,
-            image_paths=outputs.image_paths,
-        )
 
     def _sfm_result_from_reconstruction(
         self, recon: "pycolmap.Reconstruction", backend_dir: Path, store: FrameStore

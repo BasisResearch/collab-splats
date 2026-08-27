@@ -342,3 +342,74 @@ def test_accumulation_without_a_gradient_is_a_no_op():
     info = {"means2d": torch.zeros(1, 1, 2), "width": 800, "height": 600, "n_cameras": 1}
     strategy.accumulate(state, info, torch.tensor([2]), opacities=torch.tensor([0.25]))
     assert state["denom"].sum() == 0
+
+
+def _strategy_and_state(field):
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    strategy = AnchorStrategy(field.cfg, primitive="3dgs", voxel_size=field.voxel_size)
+    state = strategy.initialize_state(n_slots=len(field.params["anchors"]) * field.cfg.n_offsets)
+    return strategy, state
+
+
+def test_growing_adds_an_anchor_at_a_high_gradient_slot():
+    field = _field(n_offsets=2)
+    n_before = len(field.params["anchors"])
+    strategy, state = _strategy_and_state(field)
+
+    # One slot far above threshold, displaced well clear of every occupied voxel
+    with torch.no_grad():
+        field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+    state["grad_accum"][0] = 1.0
+    state["denom"][0] = 1.0
+
+    strategy.grow(field, state)
+    assert len(field.params["anchors"]) > n_before
+
+
+def test_growing_skips_slots_below_threshold():
+    field = _field(n_offsets=2)
+    n_before = len(field.params["anchors"])
+    strategy, state = _strategy_and_state(field)
+    with torch.no_grad():
+        field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+    state["grad_accum"][0] = field.cfg.grad_threshold * 0.5
+    state["denom"][0] = 1.0
+
+    strategy.grow(field, state)
+    assert len(field.params["anchors"]) == n_before
+
+
+def test_growing_does_not_duplicate_an_occupied_voxel():
+    field = _field(n_offsets=2)
+    n_before = len(field.params["anchors"])
+    strategy, state = _strategy_and_state(field)
+
+    # Zero offset: the candidate lands in its own anchor's voxel, which is already occupied
+    state["grad_accum"][0] = 1.0
+    state["denom"][0] = 1.0
+    strategy.grow(field, state)
+    assert len(field.params["anchors"]) == n_before
+
+
+def test_growing_extends_optimizer_state_to_match():
+    field = _field(n_offsets=2)
+    strategy, state = _strategy_and_state(field)
+
+    # Take one Adam step so exp_avg exists and must be grown alongside the parameters
+    for name, optimizer in field.optimizers.items():
+        field.params[name].grad = torch.ones_like(field.params[name])
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+
+    with torch.no_grad():
+        field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+    state["grad_accum"][0] = 1.0
+    state["denom"][0] = 1.0
+    strategy.grow(field, state)
+
+    n_anchors = len(field.params["anchors"])
+    for name, optimizer in field.optimizers.items():
+        exp_avg = optimizer.state[field.params[name]]["exp_avg"]
+        assert len(exp_avg) == n_anchors, name
+    assert len(state["grad_accum"]) == n_anchors * field.cfg.n_offsets

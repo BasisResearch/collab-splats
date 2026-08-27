@@ -415,3 +415,89 @@ class AnchorStrategy(Strategy):
         state["grad_accum"].index_add_(0, index, grad_norm.to(device))
         state["denom"].index_add_(0, index, torch.ones_like(index, dtype=state["denom"].dtype))
         state["opacity_accum"].index_add_(0, index, opacities.detach().to(device))
+
+    def grow(self, field: "AnchorField", state: dict) -> int:
+        """
+        Add anchors in unoccupied voxels around slots whose mean gradient clears the threshold.
+
+        - Runs ``update_depth`` coarse-to-fine levels: level i raises the threshold by
+          ``update_hierarchy_factor ** i`` and coarsens the voxel by the same factor, so a few strong
+          slots seed coarse anchors and many weak ones seed fine anchors (Scaffold's anchor_growing).
+        - Candidates are the decoded Gaussian positions, deduped against each other and against the
+          existing anchor grid; a candidate landing in an occupied voxel is dropped.
+
+        Returns the number of anchors added.
+        """
+        n_offsets = self.cfg.n_offsets
+        mean_grads = state["grad_accum"] / state["denom"].clamp_min(1.0)
+        seen = state["denom"] > 0
+
+        added_total = 0
+        for level in range(self.cfg.update_depth):
+            threshold = self.cfg.grad_threshold * (self.cfg.update_hierarchy_factor**level)
+            level_voxel = self.voxel_size * (self.cfg.update_hierarchy_factor**level)
+            selected = seen & (mean_grads >= threshold)
+            if not bool(selected.any()):
+                continue
+
+            # Candidate positions are the slots' decoded means, rebuilt from the current anchors so
+            # each level sees the ones the previous level added
+            anchors = field.params["anchors"].detach()
+            offset_extent = torch.exp(field.params["scaling"].detach()[:, :3])
+            candidates = (anchors[:, None, :] + field.params["offsets"].detach() * offset_extent[:, None, :])
+            candidates = candidates.reshape(-1, 3)[selected]
+
+            # Quantise onto this level's grid; a candidate cell already holding an anchor is dropped.
+            # unique+counts rather than a pairwise mask: at 100k anchors the latter is tens of GB.
+            candidate_cells = torch.unique(torch.round(candidates / level_voxel), dim=0)
+            occupied_cells = torch.round(anchors / level_voxel)
+            combined = torch.cat([occupied_cells, candidate_cells], dim=0)
+            _, inverse, counts = torch.unique(combined, dim=0, return_inverse=True, return_counts=True)
+            free = counts[inverse[len(occupied_cells) :]] == 1
+            new_cells = candidate_cells[free]
+            if len(new_cells) == 0:
+                continue
+
+            self._append_anchors(field, state, new_cells * level_voxel, level_voxel)
+            added_total += len(new_cells)
+
+            # The accumulators grew with the anchors, so the per-slot views must grow too; new slots
+            # have no history and cannot seed the next level
+            padding = torch.zeros(len(new_cells) * n_offsets, device=mean_grads.device)
+            mean_grads = torch.cat([mean_grads, padding])
+            seen = torch.cat([seen, padding.bool()])
+
+        if self.verbose and added_total:
+            logger.info("scaffold: grew %d anchors -> %d", added_total, len(field.params["anchors"]))
+        return added_total
+
+    def _append_anchors(self, field: "AnchorField", state: dict, new_anchors: Tensor, level_voxel: float) -> None:
+        """
+        Append new anchors (zero offsets, zero features, level-sized scaling) to params, optimizer state
+        and the per-slot accumulators.
+        """
+        n_new = len(new_anchors)
+        device = field.params["anchors"].device
+        log_voxel = math.log(level_voxel)
+        additions = {
+            "anchors": new_anchors.to(device),
+            "offsets": torch.zeros(n_new, self.cfg.n_offsets, 3, device=device),
+            "anchor_feat": torch.zeros(n_new, self.cfg.feat_dim, device=device),
+            "scaling": torch.full((n_new, 6), log_voxel, device=device),
+            "rotation": torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(n_new, 1),
+        }
+
+        # gsplat's helper rebuilds each Parameter and its Adam moments together; new rows start at zero
+        # momentum, as upstream densification does
+        def param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
+            return torch.nn.Parameter(torch.cat([param.detach(), additions[name]], dim=0))
+
+        def optimizer_fn(key: str, value: torch.Tensor) -> torch.Tensor:
+            return torch.cat([value, torch.zeros((n_new, *value.shape[1:]), device=value.device)], dim=0)
+
+        _update_param_with_optimizer(param_fn, optimizer_fn, field.params, field.optimizers)
+
+        # Accumulators are per slot, so they grow by n_new x n_offsets rows
+        n_new_slots = n_new * self.cfg.n_offsets
+        for key in ("grad_accum", "denom", "opacity_accum"):
+            state[key] = torch.cat([state[key], torch.zeros(n_new_slots, device=state[key].device)])

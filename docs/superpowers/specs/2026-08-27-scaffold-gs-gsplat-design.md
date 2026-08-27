@@ -297,3 +297,64 @@ Mesh quality (main-component fraction — current best 2dgs 0.634) is deferred t
 1. **This spec** — anchors + `AnchorStrategy` on the existing 3dgs / 2dgs rasterizers.
 2. **Scaffold + 2DGS tuning** — threshold and `n_offsets` calibration on the surface primitive.
 3. **Scaffold + PGSR** — planar primitive, unbiased depth, single- and multi-view geometric losses.
+
+## Measured
+
+Task 13, run 2026-08-27 on the `rerun_2026_08_23_instantsfm` scenes. Vanilla rows are the logged
+baselines and were **not** rerun. Every scaffold run is GS-SR's own `method_configs` entry at 12k
+steps: `docs/superpowers/plans/scaffold-runs/gopro_scaffold_{3dgs,2dgs,pgsr}_gssr.yaml`.
+
+| run | scene | PSNR | SSIM | primitives | s |
+|---|---|---|---|---|---|
+| vanilla 3dgs | `GH010229_undist` | 21.606 | 0.7169 | 1,000,000 gaussians | 601 |
+| scaffold-3dgs | `GH010229_undist` | 20.85 | 0.673 | 119,327 anchors (141,332 decoded) | 617 |
+| scaffold-pgsr | `GH010229_undist` | 18.36 | 0.574 | 187,723 anchors (335,671 decoded) | 1074 |
+| vanilla 2dgs | `GH010229_undist_r7` | 20.805 | 0.6776 | 1,875,613 gaussians | 803 |
+| **scaffold-2dgs** | `GH010229_undist_r7` | **20.95** | **0.681** | 111,673 anchors (214,298 decoded) | 718 |
+
+**Scaffold-2DGS is the result.** It beats vanilla 2dgs on both metrics at **17× fewer primitives**
+and less wall time — the acceptance bar was "within noise at materially fewer primitives", and it
+clears it outright. Scaffold-3dgs does not: −0.76 dB against a vanilla 3dgs run that is itself
+only ~220k effective gaussians (median opacity 0.017), so the primitive saving there is smaller
+than the raw counts suggest and does not pay for the loss.
+
+The 2×2 appearance question resolves to Scaffold's own embedding: `appearance_dim: 32` with
+`appearance_opt: false` is what every row above ran, and it is the row that wins.
+
+### Scaffold-PGSR — rejected
+
+`scaffold-pgsr` upstream is `ScaffoldPGSRScene(PGSRScene, ScaffoldScene)` over a
+`ScaffoldGaussianConfig`, so it is exactly our scaffold plus PGSR's three losses: no new primitive,
+no new strategy, no new gaussian class. PGSR's own absgrad/`out_observe` densification is absent —
+anchor growing is the densifier — and its `scaling_loss` is bit-identical to our `scale_reg`. That
+is what we implemented, and the losses trained cleanly (final l1 0.0594 against scaffold-3dgs's
+0.0483, so nothing diverged).
+
+It still loses 2.49 dB against scaffold-3dgs for 1.74× the time. The geometric channels backprop
+into `means2d`, which is the signal `AnchorStrategy` grows on, so the terms inflate densification
+and the same 12k steps spread over 2.4× the primitives.
+
+The mesh looked like the win it was supposed to be, and was not. Both meshes below are post
+`clean_repair`, fused with the world-frame TSDF block (voxel 0.2 / sdf_trunc 0.8 / depth_trunc 100
+/ conf_percentile 0 / native_resolution):
+
+| mesh | verts | tris | components | main-frac |
+|---|---|---|---|---|
+| scaffold-3dgs | 1,340,650 | 2,460,372 | 3,006 | 0.913 |
+| scaffold-pgsr | 1,213,577 | 2,212,596 | **1,518** | **0.942** |
+
+Half the components and a higher main-fraction reads as PGSR's advertised trade. Rendering both
+from the scene's own cameras says otherwise: at view 040 (near field) the two are a tie, but at
+view 150 PGSR has lost two parked cars and a concrete wall to a single white blob, and at view 260
+it has lost a utility vehicle, a pickup, a building and five curb cones — smeared into speckle —
+while smearing the container's lettering and hallucinating foliage. PGSR did not clean up floaters;
+it dissolved the mid- and far-field, so there was less geometry left to fragment.
+
+This is the standing trap in its purest form: **vertex and component counts hid truncation.** Grade
+a mesh by rendering it from the scene cameras, never by its topology statistics alone.
+
+Not pursued further. The implementation stays (`collab_splats/splats/pgsr.py`, losses
+`pgsr_normal` / `pgsr_multiview`, both default-off) because it is correct and cheap to keep, but
+nothing in the pipeline selects it. If it is ever revisited, the cost driver is `patch_ncc`'s
+102,400 `grid_sample` patches per step — RaDe-GS's fast NCC patch match is the fix, and would have
+to be reimplemented rather than vendored (GS-2M is NOASSERTION → Inria/MPII non-commercial).

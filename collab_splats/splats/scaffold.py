@@ -501,3 +501,60 @@ class AnchorStrategy(Strategy):
         n_new_slots = n_new * self.cfg.n_offsets
         for key in ("grad_accum", "denom", "opacity_accum"):
             state[key] = torch.cat([state[key], torch.zeros(n_new_slots, device=state[key].device)])
+
+    def prune(self, field: "AnchorField", state: dict) -> int:
+        """
+        Drop anchors whose mean decoded opacity stayed below min_opacity across the window.
+
+        - Anchors never decoded (denom 0 across all their slots) are kept: no evidence is not evidence
+          of transparency, and a frustum-filtered anchor may simply not have been visited yet.
+
+        Returns the number of anchors removed.
+        """
+        n_offsets = self.cfg.n_offsets
+        denom = state["denom"].reshape(-1, n_offsets).sum(dim=1)
+        opacity = state["opacity_accum"].reshape(-1, n_offsets).sum(dim=1)
+        seen = denom > 0
+        mean_opacity = opacity / denom.clamp_min(1.0)
+        drop = seen & (mean_opacity < self.cfg.min_opacity)
+        if not bool(drop.any()):
+            return 0
+
+        keep = ~drop
+        keep_slots = keep.repeat_interleave(n_offsets)
+
+        def param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
+            return torch.nn.Parameter(param.detach()[keep])
+
+        def optimizer_fn(key: str, value: torch.Tensor) -> torch.Tensor:
+            return value[keep]
+
+        _update_param_with_optimizer(param_fn, optimizer_fn, field.params, field.optimizers)
+        for key in ("grad_accum", "denom", "opacity_accum"):
+            state[key] = state[key][keep_slots]
+
+        n_dropped = int(drop.sum())
+        if self.verbose:
+            logger.info("scaffold: pruned %d anchors -> %d", n_dropped, len(field.params["anchors"]))
+        return n_dropped
+
+    def step_post_backward(self, field: "AnchorField", state: dict, step: int) -> None:
+        """
+        Grow then prune on the refine cadence inside [update_from, update_until]; reset accumulators after.
+
+        - Signature deliberately differs from gsplat's (params, optimizers, state, step, info): the
+          anchor field owns both params and optimizers, and gradient accumulation happens in
+          ``accumulate`` right after backward, before the optimizer step.
+        """
+        if step < self.cfg.update_from or step > self.cfg.update_until:
+            return
+        if step % self.cfg.refine_every != 0:
+            return
+
+        self.grow(field, state)
+        self.prune(field, state)
+
+        # Statistics are per window: carrying them across refines would let a long-dead slot's history
+        # keep triggering growth (Scaffold resets both accumulators after adjust_anchor)
+        for key in ("grad_accum", "denom", "opacity_accum"):
+            state[key] = torch.zeros_like(state[key])

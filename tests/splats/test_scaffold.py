@@ -413,3 +413,67 @@ def test_growing_extends_optimizer_state_to_match():
         exp_avg = optimizer.state[field.params[name]]["exp_avg"]
         assert len(exp_avg) == n_anchors, name
     assert len(state["grad_accum"]) == n_anchors * field.cfg.n_offsets
+
+
+def test_pruning_removes_persistently_transparent_anchors():
+    field = _field(n_offsets=2)
+    n_before = len(field.params["anchors"])
+    strategy, state = _strategy_and_state(field)
+
+    # Anchor 0 seen many times at ~zero opacity; anchor 1 seen many times at high opacity
+    state["denom"][0:2] = 100.0
+    state["opacity_accum"][0:2] = 1e-6
+    state["denom"][2:4] = 100.0
+    state["opacity_accum"][2:4] = 50.0
+
+    strategy.prune(field, state)
+    assert len(field.params["anchors"]) == n_before - 1
+    assert len(state["grad_accum"]) == (n_before - 1) * 2
+
+
+def test_pruning_keeps_anchors_that_were_never_seen():
+    field = _field(n_offsets=2)
+    n_before = len(field.params["anchors"])
+    strategy, state = _strategy_and_state(field)
+    strategy.prune(field, state)
+    assert len(field.params["anchors"]) == n_before
+
+
+def test_pruning_shrinks_optimizer_state_to_match():
+    field = _field(n_offsets=2)
+    strategy, state = _strategy_and_state(field)
+    for name, optimizer in field.optimizers.items():
+        field.params[name].grad = torch.ones_like(field.params[name])
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+
+    state["denom"][0:2] = 100.0
+    state["opacity_accum"][0:2] = 1e-6
+    strategy.prune(field, state)
+
+    n_anchors = len(field.params["anchors"])
+    for name, optimizer in field.optimizers.items():
+        assert len(optimizer.state[field.params[name]]["exp_avg"]) == n_anchors, name
+
+
+def test_step_post_backward_refines_only_inside_the_window():
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    field = _field(n_offsets=2)
+    field.cfg = ScaffoldConfig(n_offsets=2, feat_dim=8, update_from=10, update_until=20, refine_every=5)
+    strategy = AnchorStrategy(field.cfg, primitive="3dgs", voxel_size=field.voxel_size)
+    state = strategy.initialize_state(n_slots=len(field.params["anchors"]) * 2)
+    state["denom"][0:2] = 100.0
+    state["opacity_accum"][0:2] = 1e-6
+    n_before = len(field.params["anchors"])
+
+    strategy.step_post_backward(field, state, step=5)  # before the window
+    assert len(field.params["anchors"]) == n_before
+    strategy.step_post_backward(field, state, step=12)  # inside, but not on the cadence
+    assert len(field.params["anchors"]) == n_before
+    strategy.step_post_backward(field, state, step=15)  # inside and on the cadence
+    assert len(field.params["anchors"]) == n_before - 1
+
+    # Statistics reset after a refine, so the next one starts from a clean window
+    assert state["denom"].sum() == 0
+    assert state["opacity_accum"].sum() == 0

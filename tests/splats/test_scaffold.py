@@ -92,3 +92,70 @@ def test_appearance_embedding_needs_view_count():
 
     with pytest.raises(ValueError, match="n_views"):
         ScaffoldMLPs(ScaffoldConfig(appearance_dim=6), n_views=0)
+
+
+########################################
+# Anchor field
+########################################
+
+
+def _seed_points(n=500, seed=0):
+    rng = np.random.default_rng(seed)
+    points = rng.uniform(-1.0, 1.0, size=(n, 3)).astype(np.float32)
+    colors = rng.integers(0, 255, size=(n, 3)).astype(np.uint8)
+    return points, colors
+
+
+def test_anchor_init_voxelizes_seed_points():
+    from collab_splats.splats.scaffold import AnchorField
+
+    cfg = ScaffoldConfig(n_offsets=4, feat_dim=8)
+    points, colors = _seed_points()
+    field = AnchorField(cfg, points, colors, scene_scale=1.0, n_views=3, device="cpu")
+    n_anchors = len(field.params["anchors"])
+    assert 0 < n_anchors <= len(points)
+    assert field.params["offsets"].shape == (n_anchors, 4, 3)
+    assert field.params["anchor_feat"].shape == (n_anchors, 8)
+    assert field.params["scaling"].shape == (n_anchors, 6)
+    assert field.params["rotation"].shape == (n_anchors, 4)
+    assert field.voxel_size > 0
+
+    # Opacity is decoded per view by mlp_opacity, so there is no anchor opacity parameter to train
+    assert "opacities" not in field.params
+
+
+def test_anchor_count_is_invariant_to_scene_scale():
+    """voxel_size is derived from kNN spacing, so a 10x bigger copy of a scene gets the same anchors."""
+    from collab_splats.splats.scaffold import AnchorField
+
+    cfg = ScaffoldConfig(n_offsets=2, feat_dim=8)
+    points, colors = _seed_points()
+    small = AnchorField(cfg, points, colors, scene_scale=1.0, n_views=1, device="cpu")
+    large = AnchorField(cfg, points * 10.0, colors, scene_scale=10.0, n_views=1, device="cpu")
+    assert len(large.params["anchors"]) == len(small.params["anchors"])
+    assert large.voxel_size == pytest.approx(small.voxel_size * 10.0, rel=1e-5)
+
+
+def test_explicit_voxel_size_overrides_the_derived_one():
+    from collab_splats.splats.scaffold import AnchorField
+
+    points, colors = _seed_points()
+    field = AnchorField(
+        ScaffoldConfig(n_offsets=2, feat_dim=8, voxel_size=0.5),
+        points,
+        colors,
+        scene_scale=1.0,
+        n_views=1,
+        device="cpu",
+    )
+    assert field.voxel_size == 0.5
+
+
+def test_optimizers_cover_every_anchor_parameter():
+    from collab_splats.splats.scaffold import AnchorField
+
+    points, colors = _seed_points()
+    field = AnchorField(ScaffoldConfig(n_offsets=2, feat_dim=8), points, colors, 1.0, n_views=1, device="cpu")
+    assert set(field.optimizers) == set(field.params)
+    for optimizer in field.optimizers.values():
+        assert len(optimizer.param_groups) == 1

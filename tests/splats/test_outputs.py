@@ -118,3 +118,56 @@ def test_2dgs_render_all_views_writes_median_depth(tmp_path):
 def test_3dgs_render_all_views_omits_median_depth(tmp_path):
     store = _render_scene(tmp_path, primitive="3dgs")
     assert "median_depth" not in store
+
+
+def _scaffold_field(device="cuda"):
+    """AnchorField seeded from the synthetic scene's points, on the given device."""
+    from collab_splats.splats.scaffold import AnchorField, ScaffoldConfig
+
+    _, _, _, points, colors, _ = make_scene(n_views=3)
+    cfg = ScaffoldConfig(n_offsets=2, feat_dim=8)
+    return AnchorField(cfg, points, colors, scene_scale=1.0, n_views=3, device=device)
+
+
+@cuda
+def test_bake_anchor_gaussians_uses_mean_observed_view_direction():
+    from collab_splats.splats.outputs import bake_anchor_gaussians
+
+    field = _scaffold_field()
+    cam_to_world = torch.eye(4, device="cuda")[None].repeat(3, 1, 1)
+    cam_to_world[:, 2, 3] = -4.0
+    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device="cuda")[None].repeat(3, 1, 1)
+
+    baked = bake_anchor_gaussians(field, cam_to_world, intrinsics, width=64, height=64)
+    n = len(baked["means"])
+    assert baked["scales"].shape == (n, 3)  # log scales, as the ply writer expects
+    assert baked["quats"].shape == (n, 4)
+    assert baked["opacities"].shape == (n,)
+    assert baked["sh0"].shape == (n, 1, 3)
+    assert baked["shN"].shape == (n, 0, 3)
+    assert torch.isfinite(baked["means"]).all()
+
+
+@cuda
+def test_scaffold_ply_loads_with_the_expected_field_set(tmp_path_factory):
+    """The baked ply is a normal degree-0 3DGS ply: any viewer must be able to read it."""
+    from plyfile import PlyData
+
+    images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
+    cfg = SplatsConfig.from_dict(
+        {
+            "representation": "scaffold",
+            "primitive": "3dgs",
+            "max_steps": 30,
+            "log_every": 10,
+            "scaffold": {"n_offsets": 2, "feat_dim": 8, "update_from": 10, "update_until": 20, "refine_every": 10},
+        }
+    )
+    out_dir = tmp_path_factory.mktemp("scaffold_ply")
+    train(cfg, images, world_to_cam, intrinsics, points, colors, out_dir, depth_targets=depths)
+
+    ply = PlyData.read(str(out_dir / "splats.ply"))
+    fields = {prop.name for prop in ply["vertex"].properties}
+    assert {"x", "y", "z", "opacity", "f_dc_0", "f_dc_1", "f_dc_2"} <= fields
+    assert {"scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"} <= fields
+    assert len(ply["vertex"]) > 0

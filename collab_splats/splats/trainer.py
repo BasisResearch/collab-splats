@@ -39,7 +39,11 @@ from collab_splats.splats.appearance import AppearanceModule
 from collab_splats.splats.cameras import CameraOptModule
 from collab_splats.splats.losses import OPTIONAL_LOSSES, compute_losses, loss_active
 from collab_splats.splats.outputs import write_splat_outputs
-from collab_splats.splats.rendering import render_gaussians, render_view
+from collab_splats.splats.rendering import (
+    SH_DC_NORMALISER,
+    render_gaussians,
+    render_view,
+)
 from collab_splats.splats.scaffold import AnchorField, AnchorStrategy, ScaffoldConfig
 from collab_splats.utils.progress import progress
 
@@ -47,7 +51,6 @@ logger = logging.getLogger(__name__)
 
 PRIMITIVES = ("3dgs", "2dgs")
 REPRESENTATIONS = ("vanilla", "scaffold")
-SH_DC_NORMALISER = 0.28209479177387814  # rgb -> SH degree-0 coefficient (1 / (2 sqrt(pi)))
 
 ########################################
 # Config — every tunable, with gsplat simple_trainer defaults

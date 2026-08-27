@@ -21,7 +21,11 @@ from torch import Tensor
 from collab_splats.splats import GSPLAT_COMMIT
 from collab_splats.splats.appearance import AppearanceModule
 from collab_splats.splats.cameras import CameraOptModule
-from collab_splats.splats.rendering import render_view
+from collab_splats.splats.rendering import (
+    SH_DC_NORMALISER,
+    render_gaussians,
+    render_view,
+)
 from collab_splats.utils.progress import progress
 
 logger = logging.getLogger(__name__)
@@ -36,6 +40,7 @@ def render_all_views(
     cam_to_world: Tensor,
     intrinsics: Tensor,
     store: zarr.Group,
+    anchor_field=None,
 ) -> list[dict]:
     """
     Re-render every training view at full SH over black, streaming each render into ``store``.
@@ -44,6 +49,8 @@ def render_all_views(
     - 2DGS additionally writes ``median_depth`` (the RaDe-GS surface depth); 3DGS has none.
     - With a pose refiner the stored c2w holds the refined poses: what was actually rendered.
     - With an appearance module each view gets its learned colour correction (train views only).
+    - With ``anchor_field`` the view's Gaussians are decoded from the anchors instead (post-activation
+      RGB, so there is no SH degree to render at): these renders ARE the scaffold model, unlike the ply.
     - Returns per-frame psnr/ssim.
     """
     n_views, height, width = images.shape[:3]
@@ -80,16 +87,31 @@ def render_all_views(
                 cam_to_world_out[view] = refined_pose.cpu().numpy()
 
             # Render and score against the training frame
-            render, _ = render_view(
-                cfg.primitive,
-                gaussians,
-                view_cam_to_world,
-                view_intrinsics,
-                width,
-                height,
-                cfg.sh_degree,
-                absgrad=False,
-            )
+            if anchor_field is not None:
+                decoded, _ = anchor_field.decode(
+                    cfg.primitive, view_cam_to_world, view_intrinsics, width, height, camera_id
+                )
+                render, _ = render_gaussians(
+                    cfg.primitive,
+                    decoded,
+                    view_cam_to_world,
+                    view_intrinsics,
+                    width,
+                    height,
+                    sh_degree=None,
+                    absgrad=False,
+                )
+            else:
+                render, _ = render_view(
+                    cfg.primitive,
+                    gaussians,
+                    view_cam_to_world,
+                    view_intrinsics,
+                    width,
+                    height,
+                    cfg.sh_degree,
+                    absgrad=False,
+                )
             rendered_rgb = render["rgb"]
             if appearance is not None:
                 rendered_rgb = appearance(rendered_rgb, camera_id)
@@ -119,6 +141,73 @@ def render_all_views(
     return per_frame
 
 
+def bake_anchor_gaussians(
+    anchor_field, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int
+) -> dict[str, Tensor]:
+    """
+    Decode each anchor once at its mean observed view direction, for a static viewer-loadable ply.
+
+    - Anchors seen by no training camera fall back to the direction of the nearest camera.
+    - Colours are baked into the degree-0 SH band; there are no higher bands to write.
+    - Lossy by construction: the trained model is view-dependent. splats.zarr renders are not affected.
+    """
+    device = anchor_field.params["anchors"].device
+    anchors = anchor_field.params["anchors"].detach()
+
+    # Accumulate the unit direction to every camera that can see each anchor
+    direction_sum = torch.zeros_like(anchors)
+    seen_count = torch.zeros(len(anchors), device=device)
+    for view in range(len(cam_to_world)):
+        visible = anchor_field.visible_anchors(
+            cam_to_world[view : view + 1], intrinsics[view : view + 1], width, height
+        )
+        to_camera = anchors - cam_to_world[view, :3, 3]
+        unit = to_camera / to_camera.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        direction_sum[visible] += unit[visible]
+        seen_count[visible] += 1
+
+    # Unseen anchors: use the nearest camera's direction rather than dropping them from the ply
+    unseen = seen_count == 0
+    if bool(unseen.any()):
+        camera_centres = cam_to_world[:, :3, 3]
+        nearest = torch.cdist(anchors[unseen], camera_centres).argmin(dim=1)
+        to_nearest = anchors[unseen] - camera_centres[nearest]
+        direction_sum[unseen] = to_nearest / to_nearest.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        seen_count[unseen] = 1
+
+    mean_direction = direction_sum / seen_count[:, None]
+    mean_direction = mean_direction / mean_direction.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+    mean_distance = (anchors - cam_to_world[:, :3, 3].mean(dim=0)).norm(dim=-1, keepdim=True)
+
+    # One decode at that direction, bypassing the frustum filter so every anchor is written
+    with torch.no_grad():
+        features = torch.cat([anchor_field.params["anchor_feat"].detach(), mean_direction, mean_distance], dim=-1)
+        camera_id = torch.zeros(1, dtype=torch.long, device=device)
+        neural_opacity, cov, colour = anchor_field.mlps(features, camera_id)
+
+        n_offsets = anchor_field.cfg.n_offsets
+        scaling = torch.exp(anchor_field.params["scaling"].detach())
+        offsets = anchor_field.params["offsets"].detach()
+        keep = (neural_opacity > 0).reshape(-1)
+
+        means = (anchors[:, None, :] + offsets * scaling[:, None, :3]).reshape(-1, 3)[keep]
+        cov = cov.reshape(-1, 7)[keep]
+        scales = scaling[:, 3:6].repeat_interleave(n_offsets, dim=0)[keep] * torch.sigmoid(cov[:, :3])
+        quats = F.normalize(cov[:, 3:7], dim=-1)
+        opacities = neural_opacity.reshape(-1)[keep]
+        colors = colour.reshape(-1, 3)[keep]
+
+    # The ply writer wants the raw forms every viewer expects: log scales, logit opacities, SH DC
+    return {
+        "means": means,
+        "scales": torch.log(scales.clamp_min(1e-12)),
+        "quats": quats,
+        "opacities": torch.logit(opacities.clamp(1e-4, 1 - 1e-4)),
+        "sh0": ((colors - 0.5) / SH_DC_NORMALISER).unsqueeze(1),
+        "shN": torch.zeros(len(means), 0, 3, device=means.device),
+    }
+
+
 def write_splat_outputs(
     cfg,
     gaussians: torch.nn.ParameterDict,
@@ -130,24 +219,35 @@ def write_splat_outputs(
     out_dir: Path,
     train_seconds: float,
     final_losses: dict[str, float],
+    anchor_field=None,
 ) -> None:
     """
     Write splats.ply, ckpt.pt, splats.zarr and splats_quality_report.json to out_dir.
 
     - ``final_losses`` is the last training step's single-view snapshot, not an average.
+    - ``anchor_field`` (scaffold only) carries the anchors and MLP heads: the ply is baked from them,
+      the checkpoint gains the heads, and every render decodes rather than reading `gaussians`.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     config_dict = asdict(cfg)
 
-    # splats.ply: standard 3DGS ply (raw log-scales / logit-opacities, as every viewer expects)
+    # splats.ply: standard 3DGS ply (raw log-scales / logit-opacities, as every viewer expects).
+    # Scaffold has no static Gaussians, so the ply is baked at each anchor's mean observed view
+    # direction — lossy, and marked as such in the zarr provenance.
     ply_path = str(out_dir / "splats.ply")
+    ply_baked = anchor_field is not None
+    ply_source = (
+        bake_anchor_gaussians(anchor_field, cam_to_world, intrinsics, images.shape[2], images.shape[1])
+        if ply_baked
+        else gaussians
+    )
     export_splats(
-        means=gaussians["means"],
-        scales=gaussians["scales"],
-        quats=gaussians["quats"],
-        opacities=gaussians["opacities"],
-        sh0=gaussians["sh0"],
-        shN=gaussians["shN"],
+        means=ply_source["means"],
+        scales=ply_source["scales"],
+        quats=ply_source["quats"],
+        opacities=ply_source["opacities"],
+        sh0=ply_source["sh0"],
+        shN=ply_source["shN"],
         format="ply",
         save_to=ply_path,
     )
@@ -162,15 +262,25 @@ def write_splat_outputs(
         "appearance": appearance_state,
         "config": config_dict,
     }
+
+    # Scaffold's decode heads are half the model: without them the anchors cannot be rendered
+    if anchor_field is not None:
+        checkpoint["mlps"] = anchor_field.mlps.state_dict()
+        checkpoint["voxel_size"] = anchor_field.voxel_size
     torch.save(checkpoint, out_dir / "ckpt.pt")
 
     # splats.zarr: renders streamed per view, provenance in attrs
     store = zarr.open_group(out_dir / "splats.zarr", mode="w")
-    per_frame = render_all_views(cfg, gaussians, pose_refiner, appearance, images, cam_to_world, intrinsics, store)
+    per_frame = render_all_views(
+        cfg, gaussians, pose_refiner, appearance, images, cam_to_world, intrinsics, store, anchor_field=anchor_field
+    )
     image_ids = list(range(len(images)))
     store.attrs.update(
         image_ids=image_ids,
         primitive=cfg.primitive,
+        representation=cfg.representation,
+        n_anchors=(0 if anchor_field is None else len(anchor_field.params["anchors"])),
+        ply_baked=ply_baked,
         pose_opt=cfg.pose_opt,
         gsplat_commit=GSPLAT_COMMIT,
         config=config_dict,
@@ -179,7 +289,8 @@ def write_splat_outputs(
     # splats_quality_report.json: same shape as the other stage reports (summary + per_frame)
     mean_psnr = float(np.mean([frame["psnr"] for frame in per_frame]))
     mean_ssim = float(np.mean([frame["ssim"] for frame in per_frame]))
-    n_gaussians = int(len(gaussians["means"]))
+    # Primitive count: gaussians for vanilla, anchors for scaffold (the decoded count is per view)
+    n_gaussians = int(len(gaussians["anchors" if anchor_field is not None else "means"]))
     report = {
         "summary": {
             "psnr": mean_psnr,

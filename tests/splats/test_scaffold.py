@@ -215,13 +215,14 @@ def test_decode_drops_offsets_with_non_positive_opacity():
     field = _field(n_offsets=4)
     cam_to_world, intrinsics = _cam()
 
-    # Force every opacity negative: the tanh head's last linear bias dominates the feature input
+    # Close offsets 0 and 2, open 1 and 3: the tanh head's last linear bias dominates the feature input
     with torch.no_grad():
         field.mlps.mlp_opacity[-2].weight.zero_()
-        field.mlps.mlp_opacity[-2].bias.fill_(-5.0)
+        field.mlps.mlp_opacity[-2].bias.copy_(torch.tensor([-5.0, 5.0, -5.0, 5.0]))
     decoded, index = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
-    assert len(decoded["means"]) == 0
-    assert len(index) == 0
+    n_visible = int(field.visible_anchors(cam_to_world, intrinsics, 64, 64).sum())
+    assert len(decoded["means"]) == 2 * n_visible
+    assert set((index % 4).tolist()) == {1, 3}
 
 
 def test_decode_is_differentiable_into_the_mlps():
@@ -252,6 +253,33 @@ def test_decode_frustum_filter_drops_anchors_behind_the_camera():
     assert bool(visible.any())
 
 
+def test_decode_never_returns_zero_gaussians_when_every_offset_is_closed():
+    """gsplat's projection kernel raises SIGFPE on an empty input, so decode keeps the best offset."""
+    field = _field(n_offsets=2)
+    cam_to_world, intrinsics = _cam()
+
+    # Drive every neural opacity negative: the tanh head saturates at -1 for a large negative bias
+    with torch.no_grad():
+        field.mlps.mlp_opacity[-2].bias.fill_(-50.0)
+        field.mlps.mlp_opacity[-2].weight.zero_()
+    decoded, decode_index = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    assert len(decoded["means"]) == 1
+    assert len(decode_index) == 1
+
+
+def test_decode_falls_back_to_every_anchor_when_the_frustum_is_empty():
+    """A camera looking away culls every anchor; decode still emits Gaussians the rasterizer can cull."""
+    field = _field(n_offsets=2)
+    cam_to_world, intrinsics = _cam()
+
+    # Push every anchor far behind the camera, which sits at z = -4 looking down +z
+    with torch.no_grad():
+        field.params["anchors"].data[:] = torch.tensor([0.0, 0.0, -100.0])
+    assert not bool(field.visible_anchors(cam_to_world, intrinsics, 64, 64).any())
+    decoded, _ = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    assert len(decoded["means"]) > 0
+
+
 ########################################
 # Rasterization
 ########################################
@@ -265,9 +293,7 @@ def test_scaffold_decode_renders_through_gsplat(primitive):
     field = _field(device="cuda")
     cam_to_world, intrinsics = _cam(device="cuda")
     decoded, _ = field.decode(primitive, cam_to_world, intrinsics, 64, 64, camera_id=None)
-    render, info = render_gaussians(
-        primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None, absgrad=False
-    )
+    render, info = render_gaussians(primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None, absgrad=False)
     assert render["rgb"].shape == (1, 64, 64, 3)
     assert render["depth"].shape == (1, 64, 64, 1)
     expected_gradient_key = "means2d" if primitive == "3dgs" else "gradient_2dgs"

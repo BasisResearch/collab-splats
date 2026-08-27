@@ -166,11 +166,22 @@ def _recorder(monkeypatch):
     calls = []
 
     def record(
-        cfg, gaussians, pose_refiner, appearance, images, cam_to_world, intrinsics, out_dir, train_seconds, loss_values
+        cfg,
+        gaussians,
+        pose_refiner,
+        appearance,
+        images,
+        cam_to_world,
+        intrinsics,
+        out_dir,
+        train_seconds,
+        loss_values,
+        anchor_field=None,
     ):
         calls.append(
             {
                 "gaussians": gaussians,
+                "anchor_field": anchor_field,
                 "pose_refiner": pose_refiner,
                 "appearance": appearance,
                 "train_seconds": train_seconds,

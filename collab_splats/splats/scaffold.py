@@ -235,9 +235,7 @@ class AnchorField:
                 "offsets": torch.nn.Parameter(torch.zeros(n_anchors, cfg.n_offsets, 3, device=device)),
                 "anchor_feat": torch.nn.Parameter(torch.zeros(n_anchors, cfg.feat_dim, device=device)),
                 "scaling": torch.nn.Parameter(torch.full((n_anchors, 6), log_voxel, device=device)),
-                "rotation": torch.nn.Parameter(
-                    torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(n_anchors, 1)
-                ),
+                "rotation": torch.nn.Parameter(torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(n_anchors, 1)),
             }
         )
 
@@ -297,6 +295,7 @@ class AnchorField:
         - ``decode_index`` is ``anchor_index * n_offsets + offset_index`` per emitted Gaussian.
         - ``colors`` are post-activation RGB, so the caller rasterizes with ``sh_degree=None``.
         - ``log_scales`` carries the decoded scales in log space for the scale regulariser.
+        - Never returns zero Gaussians: gsplat's projection kernel raises SIGFPE on an empty input.
 
         Follows generate_neural_gaussians in city-super/Scaffold-GS scene/gaussian_model.py
         (reimplemented; no code copied).
@@ -304,6 +303,13 @@ class AnchorField:
         n_offsets = self.cfg.n_offsets
         visible = self.visible_anchors(cam_to_world, intrinsics, width, height)
         anchor_ids = torch.nonzero(visible, as_tuple=False).squeeze(-1)
+
+        # gsplat's projection kernel divides by the primitive count, so an empty decode is a fatal
+        # floating-point exception, not an empty image: when the frustum test culls everything, decode
+        # every anchor instead and let the rasterizer cull them (rare, and the graph stays alive)
+        if len(anchor_ids) == 0:
+            anchor_ids = torch.arange(len(self.params["anchors"]), device=self.params["anchors"].device)
+
         anchors = self.params["anchors"][anchor_ids]
         feat = self.params["anchor_feat"][anchor_ids]
         scaling = torch.exp(self.params["scaling"][anchor_ids])
@@ -321,6 +327,13 @@ class AnchorField:
         # Offsets with non-positive opacity contribute nothing: dropping them here is what keeps the
         # decoded count far below anchors x n_offsets
         keep = (neural_opacity > 0).reshape(-1)
+
+        # Same kernel constraint as above: if no offset is open this view, keep the single most
+        # opaque one. It renders as good as nothing, and the MLP heads keep receiving gradient.
+        if not bool(keep.any()):
+            keep = torch.zeros_like(keep)
+            keep[neural_opacity.reshape(-1).argmax()] = True
+
         slot_index = (anchor_ids[:, None] * n_offsets + torch.arange(n_offsets, device=anchors.device)).reshape(-1)
         decode_index = slot_index[keep]
 
@@ -444,7 +457,7 @@ class AnchorStrategy(Strategy):
             # each level sees the ones the previous level added
             anchors = field.params["anchors"].detach()
             offset_extent = torch.exp(field.params["scaling"].detach()[:, :3])
-            candidates = (anchors[:, None, :] + field.params["offsets"].detach() * offset_extent[:, None, :])
+            candidates = anchors[:, None, :] + field.params["offsets"].detach() * offset_extent[:, None, :]
             candidates = candidates.reshape(-1, 3)[selected]
 
             # Quantise onto this level's grid; a candidate cell already holding an anchor is dropped.
@@ -508,6 +521,7 @@ class AnchorStrategy(Strategy):
 
         - Anchors never decoded (denom 0 across all their slots) are kept: no evidence is not evidence
           of transparency, and a frustum-filtered anchor may simply not have been visited yet.
+        - Never prunes the field empty: gsplat's projection kernel raises SIGFPE on an empty input.
 
         Returns the number of anchors removed.
         """
@@ -519,6 +533,13 @@ class AnchorStrategy(Strategy):
         drop = seen & (mean_opacity < self.cfg.min_opacity)
         if not bool(drop.any()):
             return 0
+
+        # An empty field cannot be decoded or rendered, so the most opaque anchor always survives
+        if bool(drop.all()):
+            drop[mean_opacity.argmax()] = False
+            logger.warning(
+                "scaffold: every anchor fell below min_opacity %.4g; kept the most opaque one", self.cfg.min_opacity
+            )
 
         keep = ~drop
         keep_slots = keep.repeat_interleave(n_offsets)

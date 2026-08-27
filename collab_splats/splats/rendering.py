@@ -15,6 +15,8 @@ from gsplat import rasterization, rasterization_2dgs
 from gsplat.utils import depth_to_normal, normalized_quat_to_rotmat
 from torch import Tensor
 
+SH_DC_NORMALISER = 0.28209479177387814  # rgb -> SH degree-0 coefficient (1 / (2 sqrt(pi)))
+
 
 def gaussian_normals_in_camera_frame(quats: Tensor, scales: Tensor, means: Tensor, world_to_cam: Tensor) -> Tensor:
     """

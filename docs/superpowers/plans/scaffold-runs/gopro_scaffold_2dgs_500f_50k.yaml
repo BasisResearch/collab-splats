@@ -1,0 +1,67 @@
+# Scaffold-GS on 2dgs at a 500-frame / 50k-step budget (mesh-quality run, NOT a GS-SR parity run).
+#
+# Base: gopro_scaffold_2dgs_gssr.yaml, which is GS-SR's method_configs["scaffold-2dgs"]
+# (yanxian-ll/GS-SR gssr/configs/method_config.py:104-109) at 300 frames / 12k steps and measured
+#   splats_scaffold2dgs_gssr_v2  psnr 20.95  ssim 0.681  111,673 anchors (214,298 decoded)  718 s
+#
+# Two deliberate changes, both requested: 500 frames instead of 300, and 50k steps instead of 12k.
+# PGSR is deliberately absent — the scaffold-pgsr run lost 2.5 dB and its mesh dropped the mid- and
+# far-field geometry outright (see the scaffold-gs spec's Measured section).
+#
+# Upstream keys every schedule to a FIXED 30k horizon, so a 50k run at upstream's numbers would
+# stop growing anchors at step 15000 and sit at the final lr for its last 20k steps. The three
+# horizon-bound numbers are therefore rescaled by 50/30 so the run keeps upstream's RATIOS:
+#   scaffold.update_until   15000 -> 25000   (growing stops at 50% of the run, as upstream)
+#   scaffold.lr_max_steps   30000 -> 50000   (lr reaches its final value at the end, as upstream)
+#   normal_consistency.start 7000 -> 11700   (23.3% of the run, as upstream)
+# start_stat / update_from stay at upstream's absolute 500 / 1500: they are warm-ups, and starting
+# to accumulate statistics earlier in a longer run costs nothing.
+#
+# Scene: GH010229_undist_r7_500f — a NEW scene dir. 500 frames is a different keyframe set, so the
+# reconstruction has to be rebuilt; the 300-frame scenes the logged baselines were measured on are
+# left untouched.
+preproc:
+  frame_selection: fps
+  fps: 2.3                  # 218.8 s x 2.3 = 503 candidates, then bounded to exactly 500
+  min_frames: 500           # min == max forces sample_fps to re-spread evenly over the whole video
+  max_frames: 500
+  search_radius: 7          # the "_r7" the 2dgs baseline scene is named for
+  n_workers: 1          # a concurrent session is holding the machine; quality-report decode stays serial
+  undistort: true
+pointcloud:
+  method: sfm
+  backend: instantsfm
+  instantsfm:
+    retriangulation: true
+    random_seed: 0          # reproducible reconstruction (a3ff3e8a)
+semantics:
+  enabled: false
+mesh:
+  enabled: false            # meshed separately from the re-rendered zarr, pre- and post-clean
+splats:
+  enabled: true
+  primitive: 2dgs
+  representation: scaffold
+  appearance_opt: false     # Scaffold's embedding is the whole appearance path, as upstream
+  pose_opt: true
+  max_steps: 50000
+  num_downscales: 0         # no c2f: the 2dgs baseline ran without it and upstream has none
+  resolution_schedule: 3000
+  normalize_scene: true
+  scaffold:
+    n_offsets: 10
+    feat_dim: 32
+    appearance_dim: 32
+    update_until: 25000     # upstream 15000 at a 30k horizon; same 50% at 50k
+    lr_max_steps: 50000     # upstream 30000 = its own horizon; ours is 50000
+  # configs/base.yaml's loss block deep-merges into this one, so every term upstream does NOT
+  # have has to be zeroed by name here or it silently keeps training.
+  losses:
+    normal_consistency: {weight: 0.05, start: 11700}  # lambda_normal, upstream's 7000/30000 gate
+    distortion: {weight: 0.0}                         # lambda_dist = 0.0 upstream
+    depth: {weight: 0.0}                              # base.yaml ships 0.01; upstream has no depth term
+    # scale_reg IS upstream's lambda_scaling: 0.01 x the decoded 2-channel area.
+    scale_reg: {weight: 0.01}
+    # opacity_reg stays off under scaffold: opacity is decoded per view and its SIGN is the offset
+    # visibility mask, so pulling it toward zero shuts offsets instead of thinning gaussians.
+    opacity_reg: {weight: 0.0}

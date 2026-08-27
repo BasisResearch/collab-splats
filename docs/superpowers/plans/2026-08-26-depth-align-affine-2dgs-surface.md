@@ -39,13 +39,13 @@
 
 ---
 
-## Task 1: Context frame grid (`context_indices`)
+## Task 1: Context frame grid (`context_indices`) — DONE (`de269565`, `ec888209`)
 
 **Files:**
 - Modify: `collab_splats/preproc/video.py` (append after `iter_frames`)
 - Test: `tests/preproc/test_video.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/preproc/test_video.py`:
 
@@ -71,12 +71,12 @@ def test_context_indices_reuses_a_probe(tiny_video):
 
 Add `context_indices` to the `from collab_splats.preproc.video import ...` line at the top of that test file.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_video.py -k context_indices -v`
 Expected: FAIL with `ImportError: cannot import name 'context_indices'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `collab_splats/preproc/video.py`:
 
@@ -103,12 +103,12 @@ def context_indices(video_path: str | Path, *, target_fps: float, info: dict | N
     return list(range(0, total, step))
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_video.py -k context_indices -v`
 Expected: 3 passed
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/preproc/video.py tests/preproc/test_video.py
@@ -118,7 +118,7 @@ git commit --only collab_splats/preproc/video.py tests/preproc/test_video.py -m 
 
 ---
 
-## Task 2: Chunked context decode (`decode_context`)
+## Task 2: Chunked context decode (`decode_context`) — DONE (`be072d52`, `71a657c7`)
 
 **Files:**
 - Modify: `collab_splats/preproc/video.py` (append after `context_indices`)
@@ -129,7 +129,7 @@ here because `undistort_frames` derives it deterministically from the profile
 (`cv2.getOptimalNewCameraMatrix`), so passing it in would let a caller silently disagree with the
 crop the keyframes actually got. Everything else is as specced.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/preproc/test_video.py`:
 
@@ -178,12 +178,12 @@ from collab_splats.preproc.undistort import DistortionProfile
 from collab_splats.preproc.video import context_indices, decode_context
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_video.py -k decode_context -v`
 Expected: FAIL with `ImportError: cannot import name 'decode_context'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `collab_splats/preproc/video.py`:
 
@@ -242,12 +242,12 @@ def decode_context(
 
 Ensure `import cv2` and `from collections.abc import Sequence` are present at the top of `video.py` (`Sequence` already is — `iter_frames` uses it). Add `import cv2` if absent.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_video.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/preproc/video.py tests/preproc/test_video.py
@@ -257,13 +257,13 @@ git commit --only collab_splats/preproc/video.py tests/preproc/test_video.py -m 
 
 ---
 
-## Task 3: Restrict keyframe selection to a candidate grid
+## Task 3: Restrict keyframe selection to a candidate grid — DONE (`24761838`, `7c55d78a`, `b4678b93`)
 
 **Files:**
 - Modify: `collab_splats/preproc/sampling.py:237-296` (`_sample_by_quality`), `:298-333` (`sample_uniform`), `:335-400` (`sample_fps`)
 - Test: `tests/preproc/test_sampling.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/preproc/test_sampling.py`:
 
@@ -310,12 +310,12 @@ def test_sample_fps_accepts_candidates(tiny_video, clean_report):
     assert set(r["frame_idx"] for r in records) <= set(grid)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/test_sampling.py -k candidates -v`
 Expected: FAIL with `TypeError: sample_uniform() got an unexpected keyword argument 'candidates'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/preproc/sampling.py`, change `_sample_by_quality`'s signature to add `candidates`:
 
@@ -390,12 +390,12 @@ Add `candidates: Sequence[int] | None = None` as the last keyword parameter of b
 
 Confirm `Sequence` is imported in `sampling.py`; if not, add `from collections.abc import Callable, Sequence`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -v`
 Expected: all pass, including the pre-existing `tests/preproc/test_sampling_parity.py`
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/preproc/sampling.py tests/preproc/test_sampling.py
@@ -405,13 +405,13 @@ git commit --only collab_splats/preproc/sampling.py tests/preproc/test_sampling.
 
 ---
 
-## Task 4: `generate_vda_depth(keep_rows=)` + correct the metric-head comment
+## Task 4: `generate_vda_depth(keep_rows=)` + correct the metric-head comment — DONE (`5835172b`, `7f2edd91`)
 
 **Files:**
 - Modify: `collab_splats/pointcloud/sfm.py:242-330`
 - Test: `tests/pointcloud/test_instantsfm.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/pointcloud/test_instantsfm.py`:
 
@@ -462,12 +462,12 @@ def test_keep_rows_writes_only_the_requested_rows(tmp_path, monkeypatch):
     assert np.load(npy_dir / "frame_000001.npy").flat[0] == pytest.approx(4.0)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_instantsfm.py -k keep_rows -v`
 Expected: FAIL with `TypeError: generate_vda_depth() got an unexpected keyword argument 'keep_rows'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/pointcloud/sfm.py`, extract model construction so tests can stub it. Insert above `generate_vda_depth`:
 
@@ -590,12 +590,12 @@ Replace the inference log line and the write loop:
 
 Confirm `from collections.abc import Sequence` is imported at the top of `sfm.py`; add it if not.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_instantsfm.py -v`
 Expected: all pass (the pre-existing `test_vda_missing_clone_raises_actionable_import_error` still passes — `_load_vda_model` raises the same `ImportError`)
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/pointcloud/sfm.py tests/pointcloud/test_instantsfm.py
@@ -605,7 +605,7 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_instants
 
 ---
 
-## Task 5: Affine-in-disparity alignment with a one-sided far bound
+## Task 5: Affine-in-disparity alignment with a one-sided far bound — DONE (`75731b03`, `5a54169d`, `e733ca19`, `a52df6e6`, `05dd14ba`, `942a550f`)
 
 Two commits: the pure refactor that exposes the correspondences, then the alignment model that consumes them.
 
@@ -615,7 +615,7 @@ Two commits: the pure refactor that exposes the correspondences, then the alignm
 - Modify: `collab_splats/pointcloud/sfm.py:340-430`
 - Test: `tests/pointcloud/test_depth_align.py` (create)
 
-- [ ] **Step 1: Write the characterisation test**
+- [x] **Step 1: Write the characterisation test**
 
 Create `tests/pointcloud/test_depth_align.py`:
 
@@ -739,12 +739,12 @@ def test_scale_alignment_recovers_a_constant_ratio():
 Note: the observation pixels above collide in the depth map for `i >= 16`; that is fine — every
 colliding pair still satisfies `d_colmap = 2 * d_vda`, which is what the test asserts.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_depth_align.py -v`
 Expected: FAIL with `AttributeError: module 'collab_splats.pointcloud.sfm' has no attribute '_depth_correspondences'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/pointcloud/sfm.py`, insert above `align_depth_to_reconstruction`:
 
@@ -825,12 +825,12 @@ Replace the whole per-frame loop inside `align_depth_to_reconstruction` (from `#
 
 The rest of `align_depth_to_reconstruction` (fallback handling, stats, return) is unchanged.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_depth_align.py tests/pointcloud/test_instantsfm.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_align.py
@@ -847,7 +847,7 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_al
 - Modify: `collab_splats/pointcloud/sfm.py` (append after `align_depth_to_reconstruction`)
 - Test: `tests/pointcloud/test_depth_align.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/pointcloud/test_depth_align.py`:
 
@@ -929,12 +929,12 @@ def test_apply_affine_keeps_zeros_zero():
     assert out[0, 0] == 0.0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_depth_align.py -k affine -v`
 Expected: FAIL with `AttributeError: module 'collab_splats.pointcloud.sfm' has no attribute 'align_depth_affine'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/pointcloud/sfm.py`, add beside `MIN_ALIGN_OBS`:
 
@@ -1094,12 +1094,12 @@ def align_depth_affine(
     return coeffs, far_limits, stats
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_depth_align.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_align.py
@@ -1109,13 +1109,13 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_al
 
 ---
 
-## Task 6: Select the alignment model in `apply_depth_alignment`
+## Task 6: Select the alignment model in `apply_depth_alignment` — DONE (`9f560217`, `c68962f8`)
 
 **Files:**
 - Modify: `collab_splats/pointcloud/sfm.py:435-475` (`apply_depth_alignment`)
 - Test: `tests/pointcloud/test_depth_align.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/pointcloud/test_depth_align.py`:
 
@@ -1166,12 +1166,12 @@ def test_apply_depth_alignment_rejects_an_unknown_model():
         sfm.apply_depth_alignment(_Result(depth.copy()), recon, model="quadratic")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_depth_align.py -k apply_depth_alignment -v`
 Expected: FAIL with `KeyError: 'depth_align_model'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Replace `apply_depth_alignment` in `collab_splats/pointcloud/sfm.py` with:
 
@@ -1255,12 +1255,12 @@ def apply_depth_alignment(
     return attrs
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/ -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_align.py
@@ -1270,13 +1270,13 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_depth_al
 
 ---
 
-## Task 7: Reproducible InstantSfM (`random_seed`)
+## Task 7: Reproducible InstantSfM (`random_seed`) — DONE (`a3ff3e8a`)
 
 **Files:**
 - Modify: `collab_splats/pointcloud/sfm.py:808-829` (`InstantSfMCreator` fields + `_build_config`)
 - Test: `tests/pointcloud/test_sfm_creator.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/pointcloud/test_sfm_creator.py`:
 
@@ -1301,12 +1301,12 @@ def test_random_seed_reaches_runtime_options(monkeypatch):
     assert "random_seed" not in unseeded.RUNTIME_OPTIONS
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_sfm_creator.py -k random_seed -v`
 Expected: FAIL with `TypeError: __init__() got an unexpected keyword argument 'random_seed'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/pointcloud/sfm.py`, add a field to `InstantSfMCreator`:
 
@@ -1329,12 +1329,12 @@ And in `_build_config`, after the `skip_retriangulation` line:
             config.RUNTIME_OPTIONS["random_seed"] = int(self.random_seed)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_sfm_creator.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/pointcloud/sfm.py tests/pointcloud/test_sfm_creator.py
@@ -1344,7 +1344,7 @@ git commit --only collab_splats/pointcloud/sfm.py tests/pointcloud/test_sfm_crea
 
 ---
 
-## Task 8: 2DGS median depth: render dict and `splats.zarr`
+## Task 8: 2DGS median depth: render dict and `splats.zarr` — DONE (`7ba92fa4`, `05a2eccf`, `3bb1333a`)
 
 Two commits: median depth reaches the render dict, then it is persisted. Part B needs only Part A, nothing from the loss tasks.
 
@@ -1354,7 +1354,7 @@ Two commits: median depth reaches the render dict, then it is persisted. Part B 
 - Modify: `collab_splats/splats/rendering.py:90-111`
 - Test: `tests/splats/test_rendering.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/splats/test_rendering.py`:
 
@@ -1399,12 +1399,12 @@ def _toy_scene(n_points=200, device="cuda"):
 Check `init_gaussians_from_points`'s exact signature before wiring the helper
 (`collab_splats/splats/trainer.py:222`) and match it.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_rendering.py -k median -v`
 Expected: FAIL with `KeyError: 'median_depth'` (or SKIPPED with no CUDA — then verify on a GPU box before merging)
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/splats/rendering.py`, replace the 2dgs branch:
 
@@ -1444,12 +1444,12 @@ space and depth normals are finite-differenced at an identity pose for both prim
 both depths, so the consistency loss compares like with like.
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_rendering.py -v`
 Expected: all pass (or skipped without CUDA)
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/splats/rendering.py tests/splats/test_rendering.py
@@ -1465,7 +1465,7 @@ git commit --only collab_splats/splats/rendering.py tests/splats/test_rendering.
 - Modify: `collab_splats/splats/outputs.py:30-110`
 - Test: `tests/splats/test_outputs.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/splats/test_outputs.py`:
 
@@ -1487,12 +1487,12 @@ Add a `_render_scene(tmp_path, primitive)` helper to that file if one does not a
 built on `tests/splats/synthetic.make_scene` and `render_all_views`, matching the way the
 existing tests in `tests/splats/test_outputs.py` construct their inputs.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_outputs.py -k median_depth -v`
 Expected: FAIL with `assert 'median_depth' in store` (or SKIPPED without CUDA — verify on a GPU box before merging)
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/splats/outputs.py`, in `render_all_views`, extend the array declaration:
 
@@ -1524,12 +1524,12 @@ Add one docstring bullet to `render_all_views`:
     - 2DGS additionally writes ``median_depth`` (the RaDe-GS surface depth); 3DGS has none.
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/ -v`
 Expected: all pass (or skipped without CUDA)
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/splats/outputs.py tests/splats/test_outputs.py
@@ -1539,7 +1539,7 @@ git commit --only collab_splats/splats/outputs.py tests/splats/test_outputs.py -
 
 ---
 
-## Task 9: Blended normal consistency (`depth_ratio`)
+## Task 9: Blended normal consistency (`depth_ratio`) — DONE (`5f3e9288`, `ae7290e5`, `f1443802`)
 
 Two commits: the blended loss, then the config validation that guards its one knob.
 
@@ -1549,7 +1549,7 @@ Two commits: the blended loss, then the config validation that guards its one kn
 - Modify: `collab_splats/splats/losses.py` (all six loss functions + `compute_losses`)
 - Test: `tests/splats/test_losses.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/splats/test_losses.py`:
 
@@ -1621,12 +1621,12 @@ def test_compute_losses_passes_the_spec_through():
 Every existing call in `tests/splats/test_losses.py` that invokes a loss function directly must
 gain the new 5th argument `{"weight": 1.0}`. Update them in this step.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_losses.py -k depth_ratio -v`
 Expected: FAIL with `TypeError: normal_consistency_loss() takes 4 positional arguments but 5 were given`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/splats/losses.py`, add `spec: dict` as the 5th parameter of all six loss
 functions (`depth_loss`, `normal_consistency_loss`, `distortion_loss`, `opacity_reg_loss`,
@@ -1692,12 +1692,12 @@ loops over the yaml schedule ``name: {weight[, start, end, end_weight]}`` and ad
 weight at the step is > 0 and the function returns a value.
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_losses.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/splats/losses.py tests/splats/test_losses.py
@@ -1713,7 +1713,7 @@ git commit --only collab_splats/splats/losses.py tests/splats/test_losses.py -m 
 - Modify: `collab_splats/splats/trainer.py:140-165`
 - Test: `tests/splats/test_trainer.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/splats/test_trainer.py`:
 
@@ -1751,12 +1751,12 @@ def test_depth_ratio_zero_is_allowed_on_3dgs():
     assert cfg.losses["normal_consistency"]["depth_ratio"] == 0.0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_trainer.py -k depth_ratio -v`
 Expected: FAIL — `SplatsConfig.from_dict` raises `splats.losses.normal_consistency: expected {weight[, start, end, end_weight]}`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/splats/trainer.py`, inside `from_dict`'s loss loop, replace the
 `unknown_spec_keys` line with:
@@ -1783,12 +1783,12 @@ And after the loop, beside the distortion guard:
             )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_trainer.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/splats/trainer.py tests/splats/test_trainer.py
@@ -1798,13 +1798,13 @@ git commit --only collab_splats/splats/trainer.py tests/splats/test_trainer.py -
 
 ---
 
-## Task 10: `mesh.splat_depth` selects the fused depth
+## Task 10: `mesh.splat_depth` selects the fused depth — DONE (`8bf2988e`, `9ec5c38f`, `1135294d`)
 
 **Files:**
 - Modify: `collab_splats/mesh/utils.py:622-659` (`_splats_to_tsdf_inputs`), `collab_splats/wrapper/reconstructor.py:521-560` and `:1339-1412`
 - Test: `tests/mesh/test_splats_adapter.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/mesh/test_splats_adapter.py`:
 
@@ -1857,12 +1857,12 @@ def test_splat_depth_rejects_an_unknown_value(tmp_path):
         _splats_to_tsdf_inputs(tmp_path / "splats.zarr", splat_depth="surf")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/test_splats_adapter.py -k splat_depth -v`
 Expected: FAIL with `TypeError: _splats_to_tsdf_inputs() got an unexpected keyword argument 'splat_depth'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/mesh/utils.py`, change `_splats_to_tsdf_inputs`:
 
@@ -1934,12 +1934,12 @@ And in the `mesh()` stage's `_run_tsdf_mesh(...)` call, add:
             splat_depth=mesh_cfg["splat_depth"],
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/mesh/ -v`
 Expected: all pass
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m black --target-version py311 collab_splats/mesh/utils.py collab_splats/wrapper/reconstructor.py tests/mesh/test_splats_adapter.py
@@ -1974,7 +1974,7 @@ keep their maps, and the distortion-profile branch is covered.
 - Modify: `collab_splats/wrapper/reconstructor.py:129-240` (`extract_frames`), `:832-843` (call site), `:1020-1090` (`_run_sfm`)
 - Test: `tests/wrapper/test_vda_context.py` (create)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/wrapper/test_vda_context.py`:
 
@@ -2018,12 +2018,12 @@ def test_context_grid_contains_a_keyframe_grid_at_a_multiple_rate(tiny_video):
 Add the `tiny_video` fixture to `tests/wrapper/` by importing it, or copy the fixture from
 `tests/preproc/conftest.py` into `tests/wrapper/conftest.py` if the wrapper conftest has none.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/test_vda_context.py -v`
 Expected: FAIL with `ImportError: cannot import name '_context_keep_rows'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `collab_splats/wrapper/reconstructor.py`, add a helper beside `_apply_undistortion`:
 
@@ -2224,7 +2224,7 @@ Finally, replace the silent `conf_percentile` no-op in the splats stage:
 Add `DistortionProfile` to the `collab_splats.preproc.undistort` import at the top of
 `reconstructor.py`, and `Sequence` to its typing imports.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m pytest tests/wrapper/test_vda_context.py -v
@@ -2234,7 +2234,7 @@ Expected: all pass. `tests/wrapper/test_reconstructor.py` carries a foreign diff
 check whether the failure predates this change (`git stash` the foreign hunk is NOT allowed;
 inspect and report instead).
 
-- [ ] **Step 5: Format and commit**
+- [x] **Step 5: Format and commit**
 
 **Do NOT run black or isort on `collab_splats/wrapper/reconstructor.py`.** Measured while
 executing Task 12: this venv's black (26.5.1, newer than whatever last formatted the repo)

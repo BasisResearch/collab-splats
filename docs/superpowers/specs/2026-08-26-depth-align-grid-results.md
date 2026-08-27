@@ -123,5 +123,40 @@ and a noisier one when it is not: the training knob and the fusion knob want to 
 and speckle 2.4-5.2x while main fraction drops 0.04-0.08 in every cell. There is no setting here
 where fine voxels are free.
 
-On these numbers the clean-surface pick is median depth, and the near-field detail question is
-what the renders under `t13_renders/` decide; the counts cannot separate detail from speckle.
+### What the renders show
+
+Every mesh was rendered from the scene's own cameras at views 0 / 75 / 150 / 225 / 299,
+1296x972, one open3d process per mesh (`t13_render_mesh.py`); the four variants of each cell are
+stacked as `t13_montage_view{000,150,225}.jpg`. The counts above cannot tell detail from speckle,
+so these are the half of the verdict that decides the voxel.
+
+**Distant sloppiness is voxel-bound, not depth-mode-bound.** At voxel 0.2 both paths render the
+far hedge as smooth pale blobs with no leaf structure (view 225) — median does not sharpen them.
+What median removes at distance is the bridging: the sheets that expected depth stretches between
+the tree trunk and the wall behind it become honest holes. Leaf-scale structure only appears at
+voxel 0.1, and only the median mesh also opens the dark gaps between leaves, which is what makes
+the hedge read as foliage instead of a cliff face.
+
+**Near-field detail arrives with the voxel too, and median is what keeps it usable.** At 0.2 the
+near ground is a smooth blur (view 0) and the truck's side panel is featureless (view 150); at 0.1
+individual cobbles and grass tufts resolve, the truck's door ribs appear, and the railing spindles
+separate. `expected` at 0.1 buys that same detail buried under 318,576 speckle components;
+`median` at 0.1 keeps it at 61,305 — 5.2x fewer — for 33% fewer vertices. This is the setting the
+"fine detail up close" goal asks for.
+
+**Median's cost is holes, not blur.** Every median tile carries black gaps where the expected mesh
+has geometry: grazing surfaces and thin structures never accumulate consistent median votes and
+drop out entirely. Nothing that survives is softer than its expected twin. Prefer expected only
+where coverage matters more than correctness.
+
+**Cell 3b is not visually separable from cell 1 at matched settings.** That confirms the table:
+`depth_ratio: 0.6` earns its +0.10 dB in renders of the splats, not in the mesh.
+
+### Verdict
+
+- Set `mesh.splat_depth: median`. It is free at training time, cuts components 3.3-6.5x, and
+  costs no visible sharpness — only coverage on grazing surfaces.
+- Use voxel 0.1 when the mesh is the deliverable (5.7M verts, 289 MB, ~10 min fuse); keep 0.2 for
+  preview meshes, where the distant surfaces are blobs either way.
+- Leave `normal_consistency.depth_ratio` at its default. Revisit it only if median fusion becomes
+  the default, since its sign flips favourable on that path.

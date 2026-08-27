@@ -253,6 +253,19 @@ def test_decode_context_raises_on_a_missing_frame(tiny_video):
         decode_context(tiny_video, [0, 3, 999], out_short_side=120)
 
 
+def test_decode_context_raises_on_a_surplus_frame(tiny_video, monkeypatch):
+    # A decoder that overruns the request has no row to align the extra frame against;
+    # the guard must name the surplus, not index past the end of the request list
+    def _one_too_many(video_path, indices=None):
+        for index in indices:
+            yield index, np.zeros((8, 8, 3), dtype=np.uint8)
+        yield 999, np.zeros((8, 8, 3), dtype=np.uint8)
+
+    monkeypatch.setattr("collab_splats.preproc.video.iter_frames", _one_too_many)
+    with pytest.raises(ValueError, match="beyond the 2 requested"):
+        decode_context(tiny_video, [0, 3], out_short_side=4)
+
+
 def test_decode_context_raises_on_a_missing_video(tmp_path):
     # A bad path decodes nothing; the error must name the video, not surface as a bare
     # numpy stack error

@@ -2758,6 +2758,13 @@ stays at its default.
   readable literal for two keys, the second desyncs the attr name from every already-written
   zarr.
 
+- **`decode_context`'s ordering guard indexed past the end of its own request list** — found
+  in the final whole-implementation review, fixed the same day. `if cursor >= len(ordered) or
+  index != ordered[cursor]` evaluated `ordered[cursor]` inside the message it was about to
+  raise, so a decoder that yielded MORE rows than were asked for died with a bare
+  `IndexError: list index out of range` instead of the ValueError naming the video. Split into
+  two guards; `test_decode_context_raises_on_a_surplus_frame` pins the surplus path.
+
 - **The context and keyframe VDA paths are not resolution-matched.** `decode_context` feeds
   frames pre-downscaled to a 518 short side; the keyframe path feeds full-resolution frames and
   lets VDA resize internally. Toggling `vda_context_fps` therefore moves two variables at once,

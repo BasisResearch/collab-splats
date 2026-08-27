@@ -318,7 +318,12 @@ def decode_context(
     pending: list[np.ndarray] = []
     cursor = 0
     for index, bgr in iter_frames(video_path, indices=ordered):
-        if cursor >= len(ordered) or index != ordered[cursor]:
+        # An overrun has no request row to align against, and ordered[cursor] is past the end
+        if cursor >= len(ordered):
+            raise ValueError(
+                f"decode_context: {video_path} yielded frame {index} beyond the {len(ordered)} requested frames"
+            )
+        if index != ordered[cursor]:
             raise ValueError(
                 f"decode_context: {video_path} yielded frame {index} where {ordered[cursor]} was "
                 f"expected (position {cursor} of {len(ordered)})"

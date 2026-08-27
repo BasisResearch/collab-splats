@@ -577,7 +577,8 @@ class AnchorStrategy(Strategy):
         - Runs ``update_depth`` levels COARSE to fine: level i raises the threshold by
           ``(update_hierarchy_factor // 2) ** i`` while shrinking the grid from ``update_init_factor``
           voxels down towards one, so weak gradients seed coarse anchors and strong ones seed fine
-          anchors (upstream anchor_growing; the two factors move in opposite directions).
+          anchors (upstream anchor_growing; the two factors move in opposite directions). A level
+          past the first only runs if a coarser one added anchors in the same call, as upstream does.
         - Only slots decoded for most of the refine window count, and candidates are thinned per level.
         - Candidates are the decoded Gaussian positions, deduped against each other and against the
           existing anchor grid; a candidate landing in an occupied voxel is dropped.
@@ -595,6 +596,13 @@ class AnchorStrategy(Strategy):
 
         added_total = 0
         for level in range(self.cfg.update_depth):
+            # Upstream gates the finer levels on a coarser one having added something in THIS call: its
+            # `length_inc == 0` branch `continue`s out of every level after the first while the anchor
+            # count has not moved (GS-SR gssr/gaussian/scaffold_gaussian.py:568-573). Fine anchors
+            # therefore only appear in a refine that also placed coarse ones.
+            if level > 0 and added_total == 0:
+                break
+
             threshold = self.cfg.grad_threshold * ((self.cfg.update_hierarchy_factor // 2) ** level)
             size_factor = max(self.cfg.update_init_factor // (self.cfg.update_hierarchy_factor**level), 1)
             level_voxel = self.voxel_size * size_factor
@@ -707,6 +715,12 @@ class AnchorStrategy(Strategy):
         state["opacity_accum"][seen] = 0.0
         state["anchor_denom"][seen] = 0.0
 
+        # Upstream caps the raw gaussian-extent channels on every refine, not only the ones that drop
+        # an anchor: its clamp rides inside the optimizer surgery it runs unconditionally
+        # (GS-SR gssr/gaussian/scaffold_gaussian.py:530, called from adjust_anchor:703)
+        with torch.no_grad():
+            field.params["scaling"][:, 3:].clamp_(max=SCALE_CAP)
+
         if not bool(drop.any()):
             return 0
 
@@ -728,10 +742,6 @@ class AnchorStrategy(Strategy):
 
         _update_param_with_optimizer(param_fn, optimizer_fn, field.params, field.optimizers)
 
-        # Upstream caps the raw gaussian-extent channels every time it prunes (SCALE_CAP)
-        with torch.no_grad():
-            field.params["scaling"][:, 3:].clamp_(max=SCALE_CAP)
-
         for key in ("grad_accum", "denom"):
             state[key] = state[key][keep_slots]
         for key in ("opacity_accum", "anchor_denom"):
@@ -750,7 +760,10 @@ class AnchorStrategy(Strategy):
           anchor field owns both params and optimizers, and gradient accumulation happens in
           ``accumulate`` right after backward, before the optimizer step.
         """
-        if step < self.cfg.update_from or step > self.cfg.update_until:
+        # Both bounds are exclusive upstream: densify() refines on `densify_from_iter < step <
+        # densify_until_iter` and frees its accumulators at the upper bound
+        # (GS-SR gssr/gaussian/scaffold_gaussian.py:707-717)
+        if step <= self.cfg.update_from or step >= self.cfg.update_until:
             return
         if step % self.cfg.refine_every != 0:
             return

@@ -439,14 +439,16 @@ def _strategy_and_state(field):
     return strategy, state
 
 
-def test_growing_adds_an_anchor_at_a_high_gradient_slot():
+def test_growing_adds_an_anchor_at_a_high_gradient_slot(monkeypatch):
     field = _field(n_offsets=2)
     n_before = len(field.params["anchors"])
     strategy, state = _strategy_and_state(field)
 
+    # Upstream thins candidates at random per level; keep them all so one hot slot is a fixed outcome
+    monkeypatch.setattr(torch, "rand_like", torch.ones_like)
+
     # One slot far above threshold, displaced well clear of every occupied voxel, and seen
     # for most of the window (the gate is a fraction of refine_every, not a single sighting)
-    torch.manual_seed(0)
     with torch.no_grad():
         field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
     state["grad_accum"][0] = 100.0
@@ -467,6 +469,26 @@ def test_growing_skips_slots_below_threshold():
     with torch.no_grad():
         field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
     state["grad_accum"][0] = field.cfg.grad_threshold * 0.5 * 100.0
+    state["denom"][0] = 100.0
+
+    strategy.grow(field, state)
+    assert len(field.params["anchors"]) == n_before
+
+
+def test_fine_levels_need_a_coarse_anchor_in_the_same_call(monkeypatch):
+    """A candidate inside an occupied COARSE cell grows nothing, even where the fine grid is free."""
+    field = _field(n_offsets=2)
+    n_before = len(field.params["anchors"])
+    strategy, state = _strategy_and_state(field)
+    monkeypatch.setattr(torch, "rand_like", torch.ones_like)
+
+    # Land the candidate on its own anchor's level-0 cell centre: level 0 adds nothing, so upstream
+    # never reaches the finer levels that would have placed it
+    coarse = field.voxel_size * field.cfg.update_init_factor
+    anchor = field.params["anchors"][0]
+    with torch.no_grad():
+        field.params["offsets"][0, 0] = (torch.round(anchor / coarse) * coarse - anchor) / field.voxel_size
+    state["grad_accum"][0] = 100.0
     state["denom"][0] = 100.0
 
     strategy.grow(field, state)
@@ -511,13 +533,13 @@ def test_growing_extends_optimizer_state_to_match():
     assert len(state["anchor_denom"]) == n_anchors
 
 
-def test_grown_anchors_inherit_the_source_feature():
+def test_grown_anchors_inherit_the_source_feature(monkeypatch):
     field = _field(n_offsets=2)
     strategy, state = _strategy_and_state(field)
     n_before = len(field.params["anchors"])
+    monkeypatch.setattr(torch, "rand_like", torch.ones_like)
 
     # Anchor 0 carries a distinctive feature; only its first slot grows
-    torch.manual_seed(0)
     with torch.no_grad():
         field.params["anchor_feat"][0] = 5.0
         field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])

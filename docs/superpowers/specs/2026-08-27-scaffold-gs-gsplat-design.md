@@ -124,7 +124,14 @@ off by a large factor in our world-unit frame.
 **`decode(cam_to_world)`** per view:
 
 1. Frustum-filter anchors.
-2. Compute view direction and distance from each surviving anchor to the camera centre.
+2. Compute the unit view direction from each surviving anchor to the camera centre. The distance is
+   computed only to normalize it, and is NOT concatenated into the head input: upstream's
+   `add_opacity_dist` / `add_cov_dist` / `add_color_dist` all default to `False`
+   (`arguments/__init__.py`), so the shipped heads read `[anchor_feat, ob_view]` and
+   `generate_neural_gaussians` takes the `cat_local_view_wodist` branch. This is also what keeps the
+   heads scale-free, which our `normalize_scene` path requires: outputs are written after
+   `denormalize_anchors`, so a world-unit head input would render a different model than the one that
+   trained (measured: 62.7x distance shift saturated `mlp_opacity`'s tanh at -1 for 100% of offsets).
 3. Run the three heads.
 4. Drop offsets whose decoded opacity is <= 0.
 5. `means = anchor + offset * scaling[:, :3]`; scales/quats from the cov head times `scaling[:, 3:6]`.

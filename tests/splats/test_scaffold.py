@@ -70,7 +70,7 @@ def test_mlp_heads_emit_per_offset_outputs():
 
     cfg = ScaffoldConfig(n_offsets=4, feat_dim=8)
     mlps = ScaffoldMLPs(cfg)
-    features = torch.zeros(6, cfg.feat_dim + 4)  # feat + view dir (3) + view distance (1)
+    features = torch.zeros(6, cfg.feat_dim + 3)  # feat + unit view dir (3)
     opacity, cov, colour = mlps(features, camera_id=None)
     assert opacity.shape == (6, 4)
     assert cov.shape == (6, 4 * 7)
@@ -82,7 +82,7 @@ def test_mlp_heads_emit_per_offset_outputs():
 def test_appearance_embedding_changes_colour_only_when_enabled():
     from collab_splats.splats.scaffold import ScaffoldMLPs
 
-    features = torch.zeros(3, 8 + 4)
+    features = torch.zeros(3, 8 + 3)
     camera_id = torch.zeros(3, dtype=torch.long)
 
     off = ScaffoldMLPs(ScaffoldConfig(n_offsets=2, feat_dim=8, appearance_dim=0), n_views=5)
@@ -516,7 +516,7 @@ def test_step_post_backward_refines_only_inside_the_window():
 
 def test_decode_is_invariant_to_denormalization():
     """
-    The heads are a learned function of view_distance, so decode must feed them the training frame.
+    Everything written after training decodes post-denormalisation, so the heads must be scale-free.
     """
     from collab_splats.splats.trainer import denormalize_anchors
 
@@ -535,7 +535,7 @@ def test_decode_is_invariant_to_denormalization():
     # Undo a normalisation the way the trainer does before writing outputs: anchors and the camera
     # both move to world units, K is unchanged, so the same anchors stay visible
     scale = 0.02
-    denormalize_anchors(field, None, cam_to_world, np.zeros(3, dtype=np.float32), scale)
+    denormalize_anchors(field.params, None, cam_to_world, np.zeros(3, dtype=np.float32), scale)
     world, _ = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
 
     assert len(world["means"]) == len(trained["means"])
@@ -545,14 +545,11 @@ def test_decode_is_invariant_to_denormalization():
     assert torch.allclose(world["scales"], trained["scales"] / scale, rtol=1e-4)
 
 
-def test_denormalize_anchors_records_the_training_frame_scale():
+def test_mlp_input_is_direction_only():
     """
-    distance_scale converts a world-frame distance back into the frame the heads were trained in.
+    Upstream's add_opacity_dist / add_cov_dist / add_color_dist all ship off, so no distance rides in.
     """
-    from collab_splats.splats.trainer import denormalize_anchors
-
     field = _field()
-    cam_to_world, _ = _cam()
-    assert field.distance_scale == 1.0
-    denormalize_anchors(field, None, cam_to_world, np.zeros(3, dtype=np.float32), 0.02)
-    assert field.distance_scale == 0.02
+    assert field.mlps.mlp_opacity[0].in_features == field.cfg.feat_dim + 3
+    assert field.mlps.mlp_cov[0].in_features == field.cfg.feat_dim + 3
+    assert field.mlps.mlp_colour[0].in_features == field.cfg.feat_dim + 3

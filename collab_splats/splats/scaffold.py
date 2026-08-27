@@ -95,14 +95,20 @@ class ScaffoldConfig:
 # MLP heads
 ########################################
 
-VIEW_DIM = 4  # unit view direction (3) + view distance (1)
+# Unit view direction only. Upstream can also concatenate the view DISTANCE, but all three of its
+# switches ship off (city-super/Scaffold-GS arguments/__init__.py: add_opacity_dist / add_cov_dist /
+# add_color_dist = False), so the shipped heads read [anchor_feat, ob_view] and gaussian_renderer/
+# __init__.py takes the cat_local_view_wodist branch. Direction is unit length, which is what keeps
+# the heads scale-free: distance is a world-unit quantity, and feeding it would make every decode
+# depend on the frame the scene happened to be trained in.
+VIEW_DIM = 3
 
 
 class ScaffoldMLPs(torch.nn.Module):
     """
     The three Scaffold-GS decode heads: opacity, covariance, colour.
 
-    - Input is [anchor_feat, view_dir, view_dist] per visible anchor; every head emits one row of
+    - Input is [anchor_feat, view_dir] per visible anchor; every head emits one row of
       ``n_offsets`` outputs per anchor.
     - opacity ends in tanh (its sign is the offset visibility mask), colour in sigmoid (RGB),
       covariance is raw (3 scale factors + 4 quaternion components per offset).
@@ -241,12 +247,6 @@ class AnchorField:
 
         self.mlps = ScaffoldMLPs(cfg, n_views=n_views).to(device)
 
-        # view_distance is an MLP INPUT, so it is only meaningful in the frame the heads were trained
-        # in. Geometry can be rescaled freely (denormalize_anchors does exactly that before the outputs
-        # are written); this factor carries the world-frame distance back into the training frame so
-        # the heads keep seeing the domain they learned. 1.0 while training, set at denormalisation.
-        self.distance_scale = 1.0
-
         # One Adam per anchor tensor so the strategy can grow/prune optimizer state per tensor
         learning_rates = {
             "anchors": cfg.anchor_lr * scene_scale,
@@ -321,12 +321,13 @@ class AnchorField:
         scaling = torch.exp(self.params["scaling"][anchor_ids])
         offsets = self.params["offsets"][anchor_ids]
 
-        # View direction and distance from each anchor to the camera centre feed every head
+        # Unit direction from each anchor to the camera centre feeds every head; the distance is
+        # computed only to normalise it (upstream's ob_dist, whose add_*_dist switches ship off)
         camera_centre = cam_to_world[0, :3, 3]
         to_camera = anchors - camera_centre
         view_distance = to_camera.norm(dim=-1, keepdim=True)
         view_direction = to_camera / view_distance.clamp_min(1e-8)
-        features = torch.cat([feat, view_direction, view_distance * self.distance_scale], dim=-1)
+        features = torch.cat([feat, view_direction], dim=-1)
 
         neural_opacity, cov, colour = self.mlps(features, camera_id)
 

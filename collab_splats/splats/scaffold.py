@@ -53,19 +53,32 @@ class ScaffoldConfig:
     min_opacity: float = 0.005
     update_depth: int = 3  # coarse-to-fine growing levels
     update_hierarchy_factor: int = 4
+    update_init_factor: int = 16  # level 0 grows on a grid this many voxels across, level i shrinks it
+    success_threshold: float = 0.8  # fraction of the window a slot/anchor must be seen for to count
 
     # Scaffold's own per-image appearance embedding, concatenated into the colour MLP input.
     # 0 disables it. Independent of splats.appearance_opt (our per-image affine module): both
     # ship, neither retires the other, and the 2x2 is measured.
     appearance_dim: int = 0
 
-    # Learning rates (anchor / offset lrs are multiplied by scene_scale, like means_lr)
-    anchor_lr: float = 1.6e-4
+    # Learning rates (anchor / offset lrs are multiplied by scene_scale, like means_lr). Anchors are
+    # frozen upstream (position_lr_init = position_lr_final = 0): the voxel grid the growing dedup
+    # tests against only stays a grid if the anchors sitting on it do not drift.
+    anchor_lr: float = 0.0
     offset_lr: float = 1e-2
+    offset_lr_final: float = 1e-4
     anchor_feat_lr: float = 7.5e-3
     scaling_lr: float = 7e-3
     rotation_lr: float = 2e-3
-    mlp_lr: float = 2e-3
+
+    # One lr per head, each with its own exponential decay, as upstream ships them
+    mlp_opacity_lr: float = 2e-3
+    mlp_opacity_lr_final: float = 2e-5
+    mlp_cov_lr: float = 4e-3
+    mlp_colour_lr: float = 8e-3
+    mlp_colour_lr_final: float = 5e-5
+    appearance_lr: float = 5e-2
+    appearance_lr_final: float = 5e-4
 
     @classmethod
     def from_dict(cls, block: dict) -> "ScaffoldConfig":
@@ -174,6 +187,18 @@ class ScaffoldMLPs(torch.nn.Module):
 ########################################
 
 
+def expon_lr(lr_init: float, lr_final: float, t: float) -> float:
+    """
+    Log-space interpolation from lr_init to lr_final over t in [0, 1].
+
+    - Same curve as 3DGS's ``get_expon_lr_func``, which upstream Scaffold drives every iteration;
+      its delay term is inert there (lr_delay_steps defaults to 0), so it is not reproduced.
+    """
+    if lr_init <= 0.0 or lr_final <= 0.0:
+        return lr_init
+    return math.exp(math.log(lr_init) * (1.0 - t) + math.log(lr_final) * t)
+
+
 def median_knn_spacing(points: Tensor, k: int = 3) -> float:
     """
     Median mean-distance to the k nearest neighbours — the seed points' own length scale.
@@ -259,7 +284,40 @@ class AnchorField:
             name: torch.optim.Adam([{"params": self.params[name], "lr": lr, "name": name}], eps=1e-15)
             for name, lr in learning_rates.items()
         }
-        self.mlp_optimizer = torch.optim.Adam(self.mlps.parameters(), lr=cfg.mlp_lr, eps=1e-15)
+        # One param group per head: upstream gives each head its own lr and its own decay schedule
+        mlp_groups = [
+            {"params": self.mlps.mlp_opacity.parameters(), "lr": cfg.mlp_opacity_lr, "name": "mlp_opacity"},
+            {"params": self.mlps.mlp_cov.parameters(), "lr": cfg.mlp_cov_lr, "name": "mlp_cov"},
+            {"params": self.mlps.mlp_colour.parameters(), "lr": cfg.mlp_colour_lr, "name": "mlp_colour"},
+        ]
+        if self.mlps.embedding_appearance is not None:
+            mlp_groups.append(
+                {
+                    "params": self.mlps.embedding_appearance.parameters(),
+                    "lr": cfg.appearance_lr,
+                    "name": "embedding_appearance",
+                }
+            )
+        self.mlp_optimizer = torch.optim.Adam(mlp_groups, lr=0.0, eps=1e-15)
+
+        # (init, final) per decaying group; mlp_cov is constant upstream and the anchors are frozen
+        self.lr_schedule = {
+            "offsets": (cfg.offset_lr * scene_scale, cfg.offset_lr_final * scene_scale),
+            "mlp_opacity": (cfg.mlp_opacity_lr, cfg.mlp_opacity_lr_final),
+            "mlp_cov": (cfg.mlp_cov_lr, cfg.mlp_cov_lr),
+            "mlp_colour": (cfg.mlp_colour_lr, cfg.mlp_colour_lr_final),
+            "embedding_appearance": (cfg.appearance_lr, cfg.appearance_lr_final),
+        }
+
+    def update_learning_rate(self, step: int, max_steps: int) -> None:
+        """
+        Decay the offset and MLP lrs for this step; the other anchor tensors hold a constant lr.
+        """
+        t = min(max(step / max(max_steps, 1), 0.0), 1.0)
+        for group in self.optimizers["offsets"].param_groups:
+            group["lr"] = expon_lr(*self.lr_schedule["offsets"], t)
+        for group in self.mlp_optimizer.param_groups:
+            group["lr"] = expon_lr(*self.lr_schedule[group["name"]], t)
 
     def visible_anchors(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> Tensor:
         """
@@ -300,7 +358,9 @@ class AnchorField:
 
         - ``decode_index`` is ``anchor_index * n_offsets + offset_index`` per emitted Gaussian.
         - ``colors`` are post-activation RGB, so the caller rasterizes with ``sh_degree=None``.
-        - ``log_scales`` carries the decoded scales in log space for the scale regulariser.
+        - ``log_scales`` carries the decoded scales in log space for the scale regulariser, and
+          ``visible_ids`` the anchors this view decoded — an anchor whose offsets all shut renders
+          nothing yet still counts as visited, which is the whole basis of opacity pruning.
         - Never returns zero Gaussians: gsplat's projection kernel raises SIGFPE on an empty input.
 
         Follows generate_neural_gaussians in city-super/Scaffold-GS scene/gaussian_model.py
@@ -369,6 +429,7 @@ class AnchorField:
             "opacities": opacities,
             "colors": colors,
             "log_scales": log_scales,
+            "visible_ids": anchor_ids,
         }
         return decoded, decode_index
 
@@ -403,23 +464,28 @@ class AnchorStrategy(Strategy):
         # DefaultStrategy reads, so the key must follow the primitive or accumulation is all zeros
         self.key_for_gradient = "means2d" if primitive == "3dgs" else "gradient_2dgs"
 
-    def initialize_state(self, n_slots: int) -> dict[str, Tensor]:
+    def initialize_state(self, n_anchors: int) -> dict[str, Tensor]:
         """
-        Per-slot accumulators; n_slots = n_anchors x n_offsets.
+        Growing statistics are per slot (n_anchors x n_offsets), pruning statistics are per anchor.
         """
         return {
-            "grad_accum": torch.zeros(n_slots),
-            "denom": torch.zeros(n_slots),
-            "opacity_accum": torch.zeros(n_slots),
+            "grad_accum": torch.zeros(n_anchors * self.cfg.n_offsets),
+            "denom": torch.zeros(n_anchors * self.cfg.n_offsets),
+            "opacity_accum": torch.zeros(n_anchors),
+            "anchor_denom": torch.zeros(n_anchors),
         }
 
-    def accumulate(self, state: dict, info: dict, decode_index: Tensor, opacities: Tensor) -> None:
+    def accumulate(self, state: dict, info: dict, decode_index: Tensor, opacities: Tensor, visible_ids: Tensor) -> None:
         """
-        Scatter this view's screen-space gradient norms and opacities into the per-slot accumulators.
+        Scatter this view's screen-space gradient norms into the slot accumulators and its opacities
+        into the anchor accumulators.
 
         - Gradients are renormalised to [-1, 1] screen space exactly as gsplat's DefaultStrategy does
           (strategy/default.py:243-249), which is what makes Scaffold's published grad_threshold
           directly usable here.
+        - Opacity is summed per anchor over all its offsets and divided by the anchor's VISIT count,
+          not by how often its offsets happened to render (upstream training_statis): an anchor that
+          is visible with every offset shut must score zero, or it can never be pruned.
         - A step whose gradient never reached the tensor (nothing rendered) is skipped, not counted.
         """
         grads = info[self.key_for_gradient].grad
@@ -434,29 +500,47 @@ class AnchorStrategy(Strategy):
         index = decode_index.to(device)
         state["grad_accum"].index_add_(0, index, grad_norm.to(device))
         state["denom"].index_add_(0, index, torch.ones_like(index, dtype=state["denom"].dtype))
-        state["opacity_accum"].index_add_(0, index, opacities.detach().to(device))
+
+        # Negative opacities were dropped at decode, and upstream clamps them to zero before summing,
+        # so summing the slots that survived gives the same per-anchor numerator
+        anchor_index = torch.div(index, self.cfg.n_offsets, rounding_mode="floor")
+        state["opacity_accum"].index_add_(0, anchor_index, opacities.detach().to(device))
+        visible = visible_ids.to(device)
+        state["anchor_denom"].index_add_(0, visible, torch.ones_like(visible, dtype=state["anchor_denom"].dtype))
 
     def grow(self, field: "AnchorField", state: dict) -> int:
         """
         Add anchors in unoccupied voxels around slots whose mean gradient clears the threshold.
 
-        - Runs ``update_depth`` coarse-to-fine levels: level i raises the threshold by
-          ``update_hierarchy_factor ** i`` and coarsens the voxel by the same factor, so a few strong
-          slots seed coarse anchors and many weak ones seed fine anchors (Scaffold's anchor_growing).
+        - Runs ``update_depth`` levels COARSE to fine: level i raises the threshold by
+          ``(update_hierarchy_factor // 2) ** i`` while shrinking the grid from ``update_init_factor``
+          voxels down towards one, so weak gradients seed coarse anchors and strong ones seed fine
+          anchors (upstream anchor_growing; the two factors move in opposite directions).
+        - Only slots decoded for most of the refine window count, and candidates are thinned per level.
         - Candidates are the decoded Gaussian positions, deduped against each other and against the
           existing anchor grid; a candidate landing in an occupied voxel is dropped.
+        - A new anchor inherits the per-element max of its source slots' features: starting them blank
+          leaves a grown field mostly feature-less, since growing adds far more anchors than seeding.
 
         Returns the number of anchors added.
         """
         n_offsets = self.cfg.n_offsets
         mean_grads = state["grad_accum"] / state["denom"].clamp_min(1.0)
-        seen = state["denom"] > 0
+
+        # A slot must have been decoded for most of the window before its gradient is evidence
+        # (upstream offset_denom > check_interval * success_threshold * 0.5)
+        seen = state["denom"] > self.cfg.refine_every * self.cfg.success_threshold * 0.5
 
         added_total = 0
         for level in range(self.cfg.update_depth):
-            threshold = self.cfg.grad_threshold * (self.cfg.update_hierarchy_factor**level)
-            level_voxel = self.voxel_size * (self.cfg.update_hierarchy_factor**level)
+            threshold = self.cfg.grad_threshold * ((self.cfg.update_hierarchy_factor // 2) ** level)
+            size_factor = max(self.cfg.update_init_factor // (self.cfg.update_hierarchy_factor**level), 1)
+            level_voxel = self.voxel_size * size_factor
             selected = seen & (mean_grads >= threshold)
+
+            # Upstream thins candidates per level (rand > 0.5 ** (i + 1)), so one refine cannot claim
+            # every free cell around a hot region at once
+            selected = selected & (torch.rand_like(mean_grads) > 0.5 ** (level + 1))
             if not bool(selected.any()):
                 continue
 
@@ -467,9 +551,18 @@ class AnchorStrategy(Strategy):
             candidates = anchors[:, None, :] + field.params["offsets"].detach() * offset_extent[:, None, :]
             candidates = candidates.reshape(-1, 3)[selected]
 
+            # Each candidate carries its source anchor's feature into the cell it lands in
+            slot_ids = torch.nonzero(selected, as_tuple=False).squeeze(-1)
+            source_feat = field.params["anchor_feat"].detach()[torch.div(slot_ids, n_offsets, rounding_mode="floor")]
+
             # Quantise onto this level's grid; a candidate cell already holding an anchor is dropped.
             # unique+counts rather than a pairwise mask: at 100k anchors the latter is tens of GB.
-            candidate_cells = torch.unique(torch.round(candidates / level_voxel), dim=0)
+            candidate_cells, cell_of_candidate = torch.unique(
+                torch.round(candidates / level_voxel), dim=0, return_inverse=True
+            )
+            cell_feat = torch.zeros(len(candidate_cells), self.cfg.feat_dim, device=source_feat.device)
+            cell_feat.index_reduce_(0, cell_of_candidate, source_feat, "amax", include_self=False)
+
             occupied_cells = torch.round(anchors / level_voxel)
             combined = torch.cat([occupied_cells, candidate_cells], dim=0)
             _, inverse, counts = torch.unique(combined, dim=0, return_inverse=True, return_counts=True)
@@ -478,7 +571,7 @@ class AnchorStrategy(Strategy):
             if len(new_cells) == 0:
                 continue
 
-            self._append_anchors(field, state, new_cells * level_voxel, level_voxel)
+            self._append_anchors(field, state, new_cells * level_voxel, level_voxel, cell_feat[free])
             added_total += len(new_cells)
 
             # The accumulators grew with the anchors, so the per-slot views must grow too; new slots
@@ -487,14 +580,21 @@ class AnchorStrategy(Strategy):
             mean_grads = torch.cat([mean_grads, padding])
             seen = torch.cat([seen, padding.bool()])
 
+        # Only the slots that carried evidence reset; upstream leaves the rest accumulating so a slot
+        # that is rarely visible still builds a window's worth of history
+        state["grad_accum"][seen] = 0.0
+        state["denom"][seen] = 0.0
+
         if self.verbose and added_total:
             logger.info("scaffold: grew %d anchors -> %d", added_total, len(field.params["anchors"]))
         return added_total
 
-    def _append_anchors(self, field: "AnchorField", state: dict, new_anchors: Tensor, level_voxel: float) -> None:
+    def _append_anchors(
+        self, field: "AnchorField", state: dict, new_anchors: Tensor, level_voxel: float, new_feat: Tensor
+    ) -> None:
         """
-        Append new anchors (zero offsets, zero features, level-sized scaling) to params, optimizer state
-        and the per-slot accumulators.
+        Append new anchors (zero offsets, inherited features, level-sized scaling) to params, optimizer
+        state and the accumulators.
         """
         n_new = len(new_anchors)
         device = field.params["anchors"].device
@@ -502,7 +602,7 @@ class AnchorStrategy(Strategy):
         additions = {
             "anchors": new_anchors.to(device),
             "offsets": torch.zeros(n_new, self.cfg.n_offsets, 3, device=device),
-            "anchor_feat": torch.zeros(n_new, self.cfg.feat_dim, device=device),
+            "anchor_feat": new_feat.to(device),
             "scaling": torch.full((n_new, 6), log_voxel, device=device),
             "rotation": torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(n_new, 1),
         }
@@ -517,27 +617,34 @@ class AnchorStrategy(Strategy):
 
         _update_param_with_optimizer(param_fn, optimizer_fn, field.params, field.optimizers)
 
-        # Accumulators are per slot, so they grow by n_new x n_offsets rows
+        # Growing statistics are per slot, pruning statistics per anchor, so they grow by different rows
         n_new_slots = n_new * self.cfg.n_offsets
-        for key in ("grad_accum", "denom", "opacity_accum"):
+        for key in ("grad_accum", "denom"):
             state[key] = torch.cat([state[key], torch.zeros(n_new_slots, device=state[key].device)])
+        for key in ("opacity_accum", "anchor_denom"):
+            state[key] = torch.cat([state[key], torch.zeros(n_new, device=state[key].device)])
 
     def prune(self, field: "AnchorField", state: dict) -> int:
         """
         Drop anchors whose mean decoded opacity stayed below min_opacity across the window.
 
-        - Anchors never decoded (denom 0 across all their slots) are kept: no evidence is not evidence
-          of transparency, and a frustum-filtered anchor may simply not have been visited yet.
+        - An anchor must have been visited for most of the window before its mean opacity is evidence
+          (upstream anchor_demon > check_interval * success_threshold); one that was never decoded is
+          kept, since no evidence is not evidence of transparency.
         - Never prunes the field empty: gsplat's projection kernel raises SIGFPE on an empty input.
 
         Returns the number of anchors removed.
         """
         n_offsets = self.cfg.n_offsets
-        denom = state["denom"].reshape(-1, n_offsets).sum(dim=1)
-        opacity = state["opacity_accum"].reshape(-1, n_offsets).sum(dim=1)
-        seen = denom > 0
-        mean_opacity = opacity / denom.clamp_min(1.0)
+        denom = state["anchor_denom"]
+        mean_opacity = state["opacity_accum"] / denom.clamp_min(1.0)
+        seen = denom > self.cfg.refine_every * self.cfg.success_threshold
         drop = seen & (mean_opacity < self.cfg.min_opacity)
+
+        # The window closes for the anchors that carried evidence, whether or not they were dropped
+        state["opacity_accum"][seen] = 0.0
+        state["anchor_denom"][seen] = 0.0
+
         if not bool(drop.any()):
             return 0
 
@@ -558,8 +665,10 @@ class AnchorStrategy(Strategy):
             return value[keep]
 
         _update_param_with_optimizer(param_fn, optimizer_fn, field.params, field.optimizers)
-        for key in ("grad_accum", "denom", "opacity_accum"):
+        for key in ("grad_accum", "denom"):
             state[key] = state[key][keep_slots]
+        for key in ("opacity_accum", "anchor_denom"):
+            state[key] = state[key][keep]
 
         n_dropped = int(drop.sum())
         if self.verbose:
@@ -568,7 +677,7 @@ class AnchorStrategy(Strategy):
 
     def step_post_backward(self, field: "AnchorField", state: dict, step: int) -> None:
         """
-        Grow then prune on the refine cadence inside [update_from, update_until]; reset accumulators after.
+        Grow then prune on the refine cadence inside [update_from, update_until].
 
         - Signature deliberately differs from gsplat's (params, optimizers, state, step, info): the
           anchor field owns both params and optimizers, and gradient accumulation happens in
@@ -579,10 +688,7 @@ class AnchorStrategy(Strategy):
         if step % self.cfg.refine_every != 0:
             return
 
+        # Each half resets only the slots / anchors whose statistics it consumed, so a rarely-visible
+        # one keeps building history instead of being wiped every window
         self.grow(field, state)
         self.prune(field, state)
-
-        # Statistics are per window: carrying them across refines would let a long-dead slot's history
-        # keep triggering growth (Scaffold resets both accumulators after adjust_anchor)
-        for key in ("grad_accum", "denom", "opacity_accum"):
-            state[key] = torch.zeros_like(state[key])

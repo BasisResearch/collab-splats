@@ -567,8 +567,8 @@ def train(
         anchor_field = AnchorField(cfg.scaffold_config, points, colors, scene_scale, n_views, device)
         gaussians, optimizers = anchor_field.params, anchor_field.optimizers
         strategy = AnchorStrategy(cfg.scaffold_config, cfg.primitive, anchor_field.voxel_size)
-        n_slots = len(gaussians["anchors"]) * cfg.scaffold_config.n_offsets
-        strategy_state = {name: value.to(device) for name, value in strategy.initialize_state(n_slots).items()}
+        anchor_state = strategy.initialize_state(len(gaussians["anchors"]))
+        strategy_state = {name: value.to(device) for name, value in anchor_state.items()}
     else:
         gaussians, optimizers = init_gaussians_from_points(cfg, points, colors, scene_scale, device)
         strategy = make_strategy(cfg, n_views)
@@ -682,7 +682,7 @@ def train(
 
         # Scaffold reads the screen-space gradient off the retained tensor BEFORE the optimizers zero it
         if anchor_field is not None:
-            strategy.accumulate(strategy_state, info, decode_index, decoded["opacities"])
+            strategy.accumulate(strategy_state, info, decode_index, decoded["opacities"], decoded["visible_ids"])
 
         # Optimizer steps for Gaussians (and poses), then lr decay
         for optimizer in optimizers.values():
@@ -691,6 +691,10 @@ def train(
         if anchor_field is not None:
             anchor_field.mlp_optimizer.step()
             anchor_field.mlp_optimizer.zero_grad(set_to_none=True)
+
+            # Offsets and the MLP heads follow their own exponential schedules, which the shared
+            # ExponentialLR below cannot express (it drives one optimizer at one gamma)
+            anchor_field.update_learning_rate(step, cfg.max_steps)
         if pose_optimizer is not None:
             pose_optimizer.step()
             pose_optimizer.zero_grad(set_to_none=True)

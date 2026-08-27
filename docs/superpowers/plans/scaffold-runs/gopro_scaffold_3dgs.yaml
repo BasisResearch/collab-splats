@@ -32,10 +32,13 @@ splats:
     n_offsets: 10
     feat_dim: 32
     appearance_dim: 0
-  losses:                   # byte-identical to the baseline's mix
+  losses:                   # the baseline's mix, except opacity_reg (see below)
     depth: {weight: 0.01}
     normal_consistency: {weight: 0.05, start: 7000}
-    opacity_reg: {weight: 0.01}
+    # opacity_reg is off under scaffold: opacity is decoded per view and its SIGN is the offset
+    # visibility mask, so pulling it toward zero shuts offsets rather than thinning gaussians.
+    # Upstream has no such term (its only extra loss is 0.01 x mean prod of the decoded scales).
+    opacity_reg: {weight: 0.0}
     scale_reg: {weight: 0.01}
     appearance_reg: {weight: 1.0e-3}
     distortion: {weight: 0.0}

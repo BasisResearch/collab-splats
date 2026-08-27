@@ -339,51 +339,62 @@ def test_accumulation_renormalises_gradients_like_gsplat():
     from collab_splats.splats.scaffold import AnchorStrategy
 
     strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
-    state = strategy.initialize_state(n_slots=8)
+    state = strategy.initialize_state(n_anchors=4)
 
     means2d = torch.zeros(1, 3, 2)
     means2d.grad = torch.tensor([[[1e-3, 0.0], [0.0, 2e-3], [0.0, 0.0]]])
     info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1}
     decode_index = torch.tensor([0, 5, 7])
 
-    strategy.accumulate(state, info, decode_index, opacities=torch.tensor([0.5, 0.5, 0.5]))
+    strategy.accumulate(
+        state, info, decode_index, opacities=torch.tensor([0.5, 0.5, 0.5]), visible_ids=torch.tensor([0, 2, 3])
+    )
     assert state["grad_accum"][0] == pytest.approx(1e-3 * 400.0)
     assert state["grad_accum"][5] == pytest.approx(2e-3 * 300.0)
     assert state["denom"][0] == 1
     assert state["denom"][1] == 0
+
+    # Opacity is per anchor (slot 5 and 7 belong to anchors 2 and 3), and every visible anchor
+    # counts a visit whether or not any of its offsets rendered
     assert state["opacity_accum"][0] == pytest.approx(0.5)
+    assert state["opacity_accum"][2] == pytest.approx(0.5)
+    assert list(state["anchor_denom"]) == [1, 0, 1, 1]
 
 
 def test_accumulation_is_additive_over_steps():
     from collab_splats.splats.scaffold import AnchorStrategy
 
     strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
-    state = strategy.initialize_state(n_slots=4)
+    state = strategy.initialize_state(n_anchors=2)
     means2d = torch.zeros(1, 1, 2)
     means2d.grad = torch.tensor([[[1e-3, 0.0]]])
     info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1}
     for _ in range(3):
-        strategy.accumulate(state, info, torch.tensor([2]), opacities=torch.tensor([0.25]))
+        strategy.accumulate(
+            state, info, torch.tensor([2]), opacities=torch.tensor([0.25]), visible_ids=torch.tensor([1])
+        )
     assert state["denom"][2] == 3
     assert state["grad_accum"][2] == pytest.approx(3 * 1e-3 * 400.0)
-    assert state["opacity_accum"][2] == pytest.approx(0.75)
+    assert state["opacity_accum"][1] == pytest.approx(0.75)
+    assert state["anchor_denom"][1] == 3
 
 
 def test_accumulation_without_a_gradient_is_a_no_op():
     from collab_splats.splats.scaffold import AnchorStrategy
 
     strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
-    state = strategy.initialize_state(n_slots=4)
+    state = strategy.initialize_state(n_anchors=2)
     info = {"means2d": torch.zeros(1, 1, 2), "width": 800, "height": 600, "n_cameras": 1}
-    strategy.accumulate(state, info, torch.tensor([2]), opacities=torch.tensor([0.25]))
+    strategy.accumulate(state, info, torch.tensor([2]), opacities=torch.tensor([0.25]), visible_ids=torch.tensor([1]))
     assert state["denom"].sum() == 0
+    assert state["anchor_denom"].sum() == 0
 
 
 def _strategy_and_state(field):
     from collab_splats.splats.scaffold import AnchorStrategy
 
     strategy = AnchorStrategy(field.cfg, primitive="3dgs", voxel_size=field.voxel_size)
-    state = strategy.initialize_state(n_slots=len(field.params["anchors"]) * field.cfg.n_offsets)
+    state = strategy.initialize_state(n_anchors=len(field.params["anchors"]))
     return strategy, state
 
 
@@ -392,14 +403,20 @@ def test_growing_adds_an_anchor_at_a_high_gradient_slot():
     n_before = len(field.params["anchors"])
     strategy, state = _strategy_and_state(field)
 
-    # One slot far above threshold, displaced well clear of every occupied voxel
+    # One slot far above threshold, displaced well clear of every occupied voxel, and seen
+    # for most of the window (the gate is a fraction of refine_every, not a single sighting)
+    torch.manual_seed(0)
     with torch.no_grad():
         field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
-    state["grad_accum"][0] = 1.0
-    state["denom"][0] = 1.0
+    state["grad_accum"][0] = 100.0
+    state["denom"][0] = 100.0
 
     strategy.grow(field, state)
     assert len(field.params["anchors"]) > n_before
+
+    # Growing consumes the window it grew from
+    assert state["grad_accum"][0] == 0.0
+    assert state["denom"][0] == 0.0
 
 
 def test_growing_skips_slots_below_threshold():
@@ -408,8 +425,8 @@ def test_growing_skips_slots_below_threshold():
     strategy, state = _strategy_and_state(field)
     with torch.no_grad():
         field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
-    state["grad_accum"][0] = field.cfg.grad_threshold * 0.5
-    state["denom"][0] = 1.0
+    state["grad_accum"][0] = field.cfg.grad_threshold * 0.5 * 100.0
+    state["denom"][0] = 100.0
 
     strategy.grow(field, state)
     assert len(field.params["anchors"]) == n_before
@@ -421,8 +438,9 @@ def test_growing_does_not_duplicate_an_occupied_voxel():
     strategy, state = _strategy_and_state(field)
 
     # Zero offset: the candidate lands in its own anchor's voxel, which is already occupied
-    state["grad_accum"][0] = 1.0
-    state["denom"][0] = 1.0
+    torch.manual_seed(0)
+    state["grad_accum"][0] = 100.0
+    state["denom"][0] = 100.0
     strategy.grow(field, state)
     assert len(field.params["anchors"]) == n_before
 
@@ -437,10 +455,11 @@ def test_growing_extends_optimizer_state_to_match():
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
 
+    torch.manual_seed(0)
     with torch.no_grad():
         field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
-    state["grad_accum"][0] = 1.0
-    state["denom"][0] = 1.0
+    state["grad_accum"][0] = 100.0
+    state["denom"][0] = 100.0
     strategy.grow(field, state)
 
     n_anchors = len(field.params["anchors"])
@@ -448,6 +467,50 @@ def test_growing_extends_optimizer_state_to_match():
         exp_avg = optimizer.state[field.params[name]]["exp_avg"]
         assert len(exp_avg) == n_anchors, name
     assert len(state["grad_accum"]) == n_anchors * field.cfg.n_offsets
+    assert len(state["anchor_denom"]) == n_anchors
+
+
+def test_grown_anchors_inherit_the_source_feature():
+    field = _field(n_offsets=2)
+    strategy, state = _strategy_and_state(field)
+    n_before = len(field.params["anchors"])
+
+    # Anchor 0 carries a distinctive feature; only its first slot grows
+    torch.manual_seed(0)
+    with torch.no_grad():
+        field.params["anchor_feat"][0] = 5.0
+        field.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+    state["grad_accum"][0] = 100.0
+    state["denom"][0] = 100.0
+
+    strategy.grow(field, state)
+    grown = field.params["anchor_feat"][n_before:]
+    assert len(grown) > 0
+    assert torch.equal(grown, torch.full_like(grown, 5.0))
+
+
+def test_anchors_are_frozen_by_default():
+    field = _field(n_offsets=2)
+    assert field.optimizers["anchors"].param_groups[0]["lr"] == 0.0
+
+
+def test_learning_rates_decay_per_head():
+    field = _field(n_offsets=2, appearance_dim=4)
+
+    field.update_learning_rate(0, 1000)
+    start = {group["name"]: group["lr"] for group in field.mlp_optimizer.param_groups}
+    start_offsets = field.optimizers["offsets"].param_groups[0]["lr"]
+    field.update_learning_rate(1000, 1000)
+    end = {group["name"]: group["lr"] for group in field.mlp_optimizer.param_groups}
+    end_offsets = field.optimizers["offsets"].param_groups[0]["lr"]
+
+    # Heads do not share one rate, and each decays on its own schedule (the cov head is flat upstream)
+    assert start["mlp_colour"] > start["mlp_cov"] > start["mlp_opacity"]
+    assert end["mlp_colour"] < start["mlp_colour"]
+    assert end["mlp_opacity"] < start["mlp_opacity"]
+    assert end["embedding_appearance"] < start["embedding_appearance"]
+    assert end["mlp_cov"] == pytest.approx(start["mlp_cov"])
+    assert end_offsets < start_offsets
 
 
 def test_pruning_removes_persistently_transparent_anchors():
@@ -456,10 +519,9 @@ def test_pruning_removes_persistently_transparent_anchors():
     strategy, state = _strategy_and_state(field)
 
     # Anchor 0 seen many times at ~zero opacity; anchor 1 seen many times at high opacity
-    state["denom"][0:2] = 100.0
-    state["opacity_accum"][0:2] = 1e-6
-    state["denom"][2:4] = 100.0
-    state["opacity_accum"][2:4] = 50.0
+    state["anchor_denom"][0:2] = 100.0
+    state["opacity_accum"][0] = 1e-6
+    state["opacity_accum"][1] = 50.0
 
     strategy.prune(field, state)
     assert len(field.params["anchors"]) == n_before - 1
@@ -482,8 +544,8 @@ def test_pruning_shrinks_optimizer_state_to_match():
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
 
-    state["denom"][0:2] = 100.0
-    state["opacity_accum"][0:2] = 1e-6
+    state["anchor_denom"][0] = 100.0
+    state["opacity_accum"][0] = 1e-6
     strategy.prune(field, state)
 
     n_anchors = len(field.params["anchors"])
@@ -497,9 +559,9 @@ def test_step_post_backward_refines_only_inside_the_window():
     field = _field(n_offsets=2)
     field.cfg = ScaffoldConfig(n_offsets=2, feat_dim=8, update_from=10, update_until=20, refine_every=5)
     strategy = AnchorStrategy(field.cfg, primitive="3dgs", voxel_size=field.voxel_size)
-    state = strategy.initialize_state(n_slots=len(field.params["anchors"]) * 2)
-    state["denom"][0:2] = 100.0
-    state["opacity_accum"][0:2] = 1e-6
+    state = strategy.initialize_state(n_anchors=len(field.params["anchors"]))
+    state["anchor_denom"][0] = 100.0
+    state["opacity_accum"][0] = 1e-6
     n_before = len(field.params["anchors"])
 
     strategy.step_post_backward(field, state, step=5)  # before the window
@@ -509,8 +571,9 @@ def test_step_post_backward_refines_only_inside_the_window():
     strategy.step_post_backward(field, state, step=15)  # inside and on the cadence
     assert len(field.params["anchors"]) == n_before - 1
 
-    # Statistics reset after a refine, so the next one starts from a clean window
+    # Each half resets the window it consumed, so the next refine starts clean
     assert state["denom"].sum() == 0
+    assert state["anchor_denom"].sum() == 0
     assert state["opacity_accum"].sum() == 0
 
 

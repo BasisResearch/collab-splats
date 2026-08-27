@@ -273,15 +273,11 @@ def clean_repair_mesh(
         comp_max = np.full((n_comp, 3), -np.inf)
         np.minimum.at(comp_min, cluster_ids, tri_pts.min(axis=1))
         np.maximum.at(comp_max, cluster_ids, tri_pts.max(axis=1))
-        keep = np.all(comp_min >= comp_min[largest], axis=1) & np.all(
-            comp_max <= comp_max[largest], axis=1
-        )
+        keep = np.all(comp_min >= comp_min[largest], axis=1) & np.all(comp_max <= comp_max[largest], axis=1)
     keep[largest] = True
     mesh.remove_triangles_by_mask(~keep[cluster_ids])
     mesh.remove_unreferenced_vertices()
-    logger.info(
-        "Kept %d of %d components (removed %d)", int(keep.sum()), n_comp, n_comp - int(keep.sum())
-    )
+    logger.info("Kept %d of %d components (removed %d)", int(keep.sum()), n_comp, n_comp - int(keep.sum()))
 
     # Hand off to meshlib for hole filling — via arrays, not disk: meshlib's PLY round-trip
     # drops vertex colors, so colors stay behind in numpy and are reattached after.
@@ -327,15 +323,11 @@ def clean_repair_mesh(
     out_verts = mn.getNumpyVerts(mmesh).astype(np.float64)
     out_faces = mn.getNumpyFaces(mmesh.topology)
 
-    out = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(out_verts), o3d.utility.Vector3iVector(out_faces)
-    )
+    out = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(out_verts), o3d.utility.Vector3iVector(out_faces))
     if has_colors:
         out_colors = np.empty((len(out_verts), 3))
         n_orig = len(verts)
-        prefix_stable = len(out_verts) >= n_orig and np.allclose(
-            out_verts[:n_orig], verts, atol=1e-5
-        )
+        prefix_stable = len(out_verts) >= n_orig and np.allclose(out_verts[:n_orig], verts, atol=1e-5)
         if prefix_stable:
             out_colors[:n_orig] = colors
             new_idx = np.arange(n_orig, len(out_verts))
@@ -644,13 +636,17 @@ def _splats_to_tsdf_inputs(
         raise FileNotFoundError(f"{splats_zarr} — run the splats stage first")
     store = zarr.open_group(str(splats_zarr), mode="r")
 
-    # median_depth only exists in 2dgs stores written by this version of the splats stage
+    # median_depth only exists in 2dgs stores written by this version of the splats stage;
+    # 'depth' should always be there, so its absence means a truncated or foreign store
     depth_array = depth_arrays[splat_depth]
-    if splat_depth == "median" and depth_array not in store:
-        raise ValueError(
-            f"{splats_zarr} has no 'median_depth' array — mesh.splat_depth: median needs a 2dgs "
-            "splats run from this version; re-run the splats stage or use splat_depth: expected."
+    if depth_array not in store:
+        hint = (
+            "mesh.splat_depth: median needs a 2dgs splats run from this version; re-run the "
+            "splats stage or use splat_depth: expected."
+            if splat_depth == "median"
+            else "every splats store writes 'depth' — this one is truncated or was not written " "by the splats stage."
         )
+        raise ValueError(f"{splats_zarr} has no '{depth_array}' array — {hint}")
 
     # Alpha gate: zero alpha is "no surface rendered here"; the percentile cut mirrors the
     # feedforward path's confidence_mask so both sources filter by the same global rule
@@ -750,9 +746,7 @@ def optimize_color_map(
     logger.info("Color map optimization: %d frames, %d iterations", depths.shape[0], iterations)
     start = time.perf_counter()
     with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug):
-        mesh, _ = o3d.pipelines.color_map.run_rigid_optimizer(
-            mesh, rgbd_images, trajectory, option
-        )
+        mesh, _ = o3d.pipelines.color_map.run_rigid_optimizer(mesh, rgbd_images, trajectory, option)
     o3d.io.write_triangle_mesh(str(mesh_path), mesh)
     logger.info("Color map optimization done in %.1fs", time.perf_counter() - start)
 
@@ -835,9 +829,7 @@ def mesh_from_tsdf_inputs(
     # Loud failure before any work — only the TSDF path has the depth_trunc + mesh.ply
     # contract the optimizer needs
     if color_map_iterations > 0 and method != "open3d_tsdf":
-        raise ValueError(
-            f"color_map_iterations requires method='open3d_tsdf', got {method!r}"
-        )
+        raise ValueError(f"color_map_iterations requires method='open3d_tsdf', got {method!r}")
 
     mesher = get_mesh_creator(method, Path(output_dir), **mesher_kwargs)
     mesh_result = mesher.create(depths, rgbs, c2w, intrinsics)

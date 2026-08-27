@@ -88,6 +88,17 @@ def test_splat_depth_median_missing_raises_actionably(tmp_path):
         _splats_to_tsdf_inputs(path, splat_depth="median")
 
 
+def test_a_store_without_depth_raises_instead_of_keyerror(tmp_path):
+    # The median path already said what was wrong; the default path used to fall through to a
+    # bare KeyError('depth') from zarr, which reads as a library bug rather than a bad store
+    path = tmp_path / "splats.zarr"
+    _write_splats_zarr(path)
+    del zarr.open_group(path, mode="a")["depth"]
+
+    with pytest.raises(ValueError, match="truncated"):
+        _splats_to_tsdf_inputs(path)
+
+
 def test_splat_depth_rejects_an_unknown_value(tmp_path):
     with pytest.raises(ValueError, match=r"mesh\.splat_depth"):
         _splats_to_tsdf_inputs(tmp_path / "splats.zarr", splat_depth="surf")

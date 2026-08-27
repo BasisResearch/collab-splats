@@ -88,4 +88,40 @@ Both cells' `splats.zarr` were rebuilt from `ckpt.pt` rather than retrained, sin
 is unseeded and a retrain would not reproduce the graded PSNR. The rebuild reproduces cell 1's
 recorded metrics exactly (PSNR delta 0.0000, SSIM delta 0.0000), which is asserted in the driver.
 
-*(numbers pending)*
+Cell 1: `normal_consistency` without `depth_ratio` (mean normals) — PSNR 20.8049 / SSIM 0.6776,
+1,875,613 gaussians. Cell 3b: the same run with `depth_ratio: 0.6` — PSNR 20.9080 / SSIM 0.6831,
+1,871,864 gaussians. Component counts are post-`clean_repair`; "speckle" counts components of 10
+triangles or fewer.
+
+| cell | splat_depth | voxel | verts | components | main frac | main area | speckle | ply | fuse |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | expected | 0.2 | 1,967,467 | 92,271 | 0.6338 | 0.7403 | 71,134 | 96 MB | 249 s |
+| 1 | median | 0.2 | 1,510,864 | 23,386 | 0.6082 | 0.6376 | 16,661 | 76 MB | 191 s |
+| 1 | expected | 0.1 | 8,592,585 | 428,028 | 0.5729 | 0.6838 | 318,576 | 423 MB | 700 s |
+| 1 | median | 0.1 | 5,726,475 | 88,713 | 0.5469 | 0.5802 | 61,305 | 289 MB | 593 s |
+| 3b | expected | 0.2 | 2,196,254 | 100,286 | 0.5895 | 0.7024 | 72,816 | 107 MB | 225 s |
+| 3b | median | 0.2 | 1,703,976 | 30,206 | 0.5826 | 0.6174 | 21,094 | 85 MB | 194 s |
+| 3b | expected | 0.1 | 9,546,593 | 493,405 | 0.5053 | 0.6000 | 377,800 | 467 MB | 666 s |
+| 3b | median | 0.1 | 4,430,759 | 76,314 | 0.5471 | 0.5884 | 51,541 | 223 MB | 475 s |
+
+**`splat_depth` is the larger lever, and it is a meshing-time one.** Fusing the median depth
+instead of the alpha-weighted expected depth cuts component count 3.3-6.5x across both cells
+(92,271 -> 23,386 at cell 1 / voxel 0.2) for 22-54% fewer vertices. Alpha-weighted depth places a
+sample at the opacity centroid along each ray, which for a semi-transparent gaussian sitting in
+front of a surface lands in empty space — those are the components that vanish. Nothing about the
+trained field changed; this is one config key at fuse time.
+
+**`depth_ratio: 0.6` in training does not transfer to the mesh the way it does to PSNR.** It is
+worth +0.10 dB / +0.0055 SSIM, and on the expected-depth path it fuses ~12% MORE geometry, but
+the extra geometry is fragments: main fraction falls 0.6338 -> 0.5895 at voxel 0.2 and
+0.5729 -> 0.5053 at 0.1, with 19% more speckle at 0.1. On the median path the sign flips — cell
+3b fuses 23% FEWER vertices than cell 1 (4.43M vs 5.73M at voxel 0.1) and 16% less speckle. A
+field trained toward its median surface fuses a thinner shell when the median is what TSDF reads,
+and a noisier one when it is not: the training knob and the fusion knob want to agree.
+
+**Halving the voxel buys resolution and noise together.** 0.2 -> 0.1 multiplies vertices 2.6-4.4x
+and speckle 2.4-5.2x while main fraction drops 0.04-0.08 in every cell. There is no setting here
+where fine voxels are free.
+
+On these numbers the clean-surface pick is median depth, and the near-field detail question is
+what the renders under `t13_renders/` decide; the counts cannot separate detail from speckle.

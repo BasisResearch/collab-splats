@@ -1,0 +1,27 @@
+# Scaffold-GS on 2dgs, GoPro parity run (Task 13 of the scaffold-gs plan).
+# Baseline to beat, from the logged splatfacto-parity runs — do NOT rerun it:
+#   vanilla 2dgs GH010229_undist_r7  psnr 20.800  ssim 0.6780  1,875,613 gaussians  803 s
+# The appearance sweep is this file x {scaffold.appearance_dim: 0 | 32} x {appearance_opt: false | true}.
+splats:
+  enabled: true
+  primitive: 2dgs
+  representation: scaffold
+  appearance_opt: true
+  max_steps: 30000
+  pose_opt: true
+  normalize_scene: false
+  num_downscales: 2
+  resolution_schedule: 3000
+  grow_grad2d: 2.0e-4
+  scaffold:
+    n_offsets: 10
+    feat_dim: 32
+    appearance_dim: 0
+  losses:
+    depth: {weight: 0.01}
+    normal_consistency: {weight: 0.05, start: 7000}
+    distortion: {weight: 0.01, start: 3000}
+    appearance_reg: {weight: 1.0e-3}
+
+semantics:
+  enabled: false

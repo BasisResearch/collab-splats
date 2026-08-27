@@ -163,6 +163,20 @@ mesh:
 splats:
   enabled: false
   primitive: 3dgs            # 3dgs (fast kernel, antialiased) | 2dgs (surface-aligned)
+  # representation: vanilla (per-gaussian parameters) | scaffold (anchors + MLP decode).
+  # scaffold ignores sh_degree — its colours come from mlp_colour — and densifies anchors
+  # rather than gaussians.
+  representation: vanilla
+  # scaffold:
+  #   n_offsets: 10
+  #   feat_dim: 32
+  #   voxel_multiplier: 1.0     # x median kNN spacing of the seed points
+  #   update_from: 1500
+  #   update_until: 15000
+  #   refine_every: 100
+  #   grad_threshold: 2.0e-4
+  #   min_opacity: 0.005
+  #   appearance_dim: 0         # Scaffold's per-image embedding; independent of appearance_opt
   max_steps: 30000
   pose_opt: true             # refine camera poses jointly (CameraOptModule). +2.2 dB on a
                              # 300-frame GoPro scene, +0.4 dB on the 30-frame tutorial, ~+3% time.

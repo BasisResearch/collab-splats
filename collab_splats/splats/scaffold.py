@@ -89,3 +89,75 @@ class ScaffoldConfig:
         if cfg.voxel_multiplier <= 0:
             raise ValueError(f"splats.scaffold.voxel_multiplier must be > 0, got {cfg.voxel_multiplier}")
         return cfg
+
+
+########################################
+# MLP heads
+########################################
+
+VIEW_DIM = 4  # unit view direction (3) + view distance (1)
+
+
+class ScaffoldMLPs(torch.nn.Module):
+    """
+    The three Scaffold-GS decode heads: opacity, covariance, colour.
+
+    - Input is [anchor_feat, view_dir, view_dist] per visible anchor; every head emits one row of
+      ``n_offsets`` outputs per anchor.
+    - opacity ends in tanh (its sign is the offset visibility mask), colour in sigmoid (RGB),
+      covariance is raw (3 scale factors + 4 quaternion components per offset).
+    - ``appearance_dim > 0`` adds Scaffold's per-image embedding to the colour head input only.
+
+    Head shapes follow city-super/Scaffold-GS scene/gaussian_model.py (MLP definitions); no code copied.
+    """
+
+    def __init__(self, cfg: ScaffoldConfig, n_views: int = 0):
+        super().__init__()
+        self.n_offsets = cfg.n_offsets
+        width = cfg.feat_dim
+        base_dim = cfg.feat_dim + VIEW_DIM
+
+        self.mlp_opacity = torch.nn.Sequential(
+            torch.nn.Linear(base_dim, width),
+            torch.nn.ReLU(True),
+            torch.nn.Linear(width, cfg.n_offsets),
+            torch.nn.Tanh(),
+        )
+        self.mlp_cov = torch.nn.Sequential(
+            torch.nn.Linear(base_dim, width),
+            torch.nn.ReLU(True),
+            torch.nn.Linear(width, 7 * cfg.n_offsets),
+        )
+
+        # Scaffold's appearance embedding rides the colour head only
+        self.embedding_appearance = None
+        colour_dim = base_dim
+        if cfg.appearance_dim > 0:
+            if n_views < 1:
+                raise ValueError("scaffold.appearance_dim > 0 needs n_views >= 1 to size the embedding")
+            self.embedding_appearance = torch.nn.Embedding(n_views, cfg.appearance_dim)
+            torch.nn.init.zeros_(self.embedding_appearance.weight)
+            colour_dim += cfg.appearance_dim
+        self.mlp_colour = torch.nn.Sequential(
+            torch.nn.Linear(colour_dim, width),
+            torch.nn.ReLU(True),
+            torch.nn.Linear(width, 3 * cfg.n_offsets),
+            torch.nn.Sigmoid(),
+        )
+
+    def forward(self, features: Tensor, camera_id: Tensor | None) -> tuple[Tensor, Tensor, Tensor]:
+        """
+        Decode (opacity, covariance, colour) for every visible anchor. Shapes [A, K], [A, 7K], [A, 3K].
+        """
+        opacity = self.mlp_opacity(features)
+        cov = self.mlp_cov(features)
+
+        # The embedding is per-image, so the colour head needs to know which view is being rendered
+        colour_input = features
+        if self.embedding_appearance is not None:
+            if camera_id is None:
+                raise ValueError("scaffold.appearance_dim > 0 requires camera_id at decode time")
+            embedding = self.embedding_appearance(camera_id[:1]).expand(len(features), -1)
+            colour_input = torch.cat([features, embedding], dim=-1)
+        colour = self.mlp_colour(colour_input)
+        return opacity, cov, colour

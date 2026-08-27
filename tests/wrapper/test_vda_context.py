@@ -504,6 +504,30 @@ def test_run_sfm_defaults_depth_align_to_scale(tiny_video, tmp_path):
     assert mocks["apply_depth_alignment"].call_args.kwargs["model"] == "scale"
 
 
+def test_ensure_vda_depth_stamps_only_the_rate_that_actually_ran(tiny_video, tmp_path):
+    # The extracted method stands on its own: three patches and no SfM, where _run_sfm needs
+    # eight. Frame 5 is off the 10 fps grid, so the context stream never runs — and a rate
+    # that never ran must not be stamped as if it had.
+    recon = _sfm_reconstructor(
+        tmp_path, video_path=tiny_video, vda_context_fps=10.0, frame_idx=(0, 5, 30, 57)
+    )
+    store = FrameStore.open(recon.frames_zarr)
+    names = [f"frame_{int(fi):06d}.jpg" for fi in store.frame_indices()]
+
+    with ExitStack() as stack:
+        stack.enter_context(patch(f"{RECONSTRUCTOR}.vda_depth_complete", return_value=False))
+        generate = stack.enter_context(patch(f"{RECONSTRUCTOR}.generate_vda_depth"))
+        stack.enter_context(
+            patch(f"{RECONSTRUCTOR}.torch", SimpleNamespace(cuda=MagicMock(is_available=lambda: False)))
+        )
+        recon._ensure_vda_depth(recon.backend_dir, store, names)
+
+    assert generate.call_count == 1
+    assert generate.call_args.kwargs.get("keep_rows") is None
+    sidecar = json.loads((recon.backend_dir / "depth_vda" / "inputs.json").read_text())
+    assert sidecar == {"context_fps": None, "keyframe_fps": 2.0, "n_names": 4}
+
+
 def test_run_sfm_forwards_random_seed_from_the_config(tiny_video, tmp_path):
     recon = _sfm_reconstructor(tmp_path, video_path=tiny_video, random_seed=7)
     mocks = _run_sfm_with_mocks(recon)

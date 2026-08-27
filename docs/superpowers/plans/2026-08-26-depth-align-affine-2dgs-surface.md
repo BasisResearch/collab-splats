@@ -2678,7 +2678,11 @@ and why. Commit with `git add -f`.
 
 ## Follow-ups found during review (not in the original spec)
 
-- **`weight` accepts a bool the same way `depth_ratio` used to.** Task 9's remediation
+- **`weight` accepts a bool the same way `depth_ratio` used to** — DONE after Task 13.
+  `loss_weight` now refuses a bool `weight` or `end_weight` with a TypeError naming the field,
+  rather than letting `float(True)` train the loss at 1.0.
+
+  Original finding: Task 9's remediation
   (`f1443802`) type-checks `depth_ratio` but the sibling reads — `spec.get("weight", 0.0)` in
   `loss_weight`, and `distortion_spec.get("weight", 0.0) > 0` in the trainer's guard — have no
   type check at all. YAML parses `yes`/`on`/`true` to `True`, so `weight: yes` on any loss
@@ -2689,7 +2693,11 @@ and why. Commit with `git add -f`.
   commit against `trainer.py` after Task 13, reusing the `isinstance(raw, bool) or not
   isinstance(raw, (int, float))` shape already there.
 
-- **The no-grid window radius is derived from the first target gap only.** `spacing =
+- **The no-grid window radius is derived from the first target gap only** — DONE after Task
+  13, once the grid runs no longer depended on frame selection holding still. `spacing` is now
+  `min(np.diff(targets))`.
+
+  Original finding: `spacing =
   targets[1] - targets[0]` in `_sample_by_quality`, so irregular gaps let neighbouring search
   windows overlap and two targets collapse onto one frame. Measured at the shipped
   `search_radius=7`: 17.3% of realistic `(total, n=30)` shapes overlap, 18.3% at `n=300`. The
@@ -2699,7 +2707,12 @@ and why. Commit with `git add -f`.
   measurement. Both `parity_baseline.json` cases have `radius_min == radius_first == 3`, so the
   fix is verified not to move the parity baseline when it is eventually made.
 
-- **A `splats.zarr` missing its `depth` array still fails with a bare `KeyError`.** Task 10's
+- **A `splats.zarr` missing its `depth` array still fails with a bare `KeyError`** — DONE
+  after Task 13, the non-naive way the finding asks for: one message naming whichever array is
+  absent, with a branch-specific hint appended (the median one keeps "needs a 2dgs run from this
+  version", the default one says the store is truncated or foreign).
+
+  Original finding: Task 10's
   remediation (`9ec5c38f`) scoped the friendly missing-array message to the `median` branch,
   because the generic version told an `expected` user to "use splat_depth: expected". That
   restores exactly the pre-`8bf2988e` behaviour on the default path, so it is a faithful revert
@@ -2709,11 +2722,12 @@ and why. Commit with `git add -f`.
   the bug that was just fixed.
 
 - **`_run_sfm`'s depth block wants to be `_ensure_vda_depth(store, names, backend_dir)`.** The
-  quality review's N6: the block is ~70 lines inside an already-long method, and it is only
-  reachable through an eight-way mock stack — which is what let the C1 no-op ship green.
-  Extracting it makes the stale/regenerate logic directly unit-testable. Deliberately not done
-  during remediation: it is a refactor of shipped code while a GPU job holds the module, and the
-  correctness fix stands on its own.
+  quality review's N6. DONE 2026-08-27 (`199c7a9f`), once the GPU job had stopped importing the
+  module: the ~100-line block moved verbatim into `_ensure_vda_depth(backend_dir, store, names)`,
+  so `_run_sfm` reads as the five stages it is. Behaviour unchanged — `tests/wrapper/
+  test_vda_context.py` + `test_sfm_config.py` 40 passed against the extracted method. The
+  stale/regenerate logic is now reachable without the eight-way mock stack that let the C1 no-op
+  ship green; a direct unit test of it is still owed.
 
 - **Off-grid keyframes fall back where a raise may be better.** When the user set
   `vda_context_fps` *and* the video is present, off-grid keyframes mean config and store
@@ -2721,8 +2735,18 @@ and why. Commit with `git add -f`.
   log gives a quietly worse result; `decode_context` raises on a short decode by contrast. Kept
   as a fallback deliberately — rerun-from-processed must not hard-fail — but worth revisiting.
 
-- **`_DEPTH_ALIGN_MODELS` mirrors `apply_depth_alignment`'s literal `("scale", "affine")`** with
-  nothing pinning them together. Correct today, drifts silently when a third model lands.
+- **`_DEPTH_ALIGN_MODELS` mirrored `apply_depth_alignment`'s literal `("scale", "affine")`**
+  with nothing pinning them together — DONE after Task 13. `sfm.py` names them once as
+  `DepthAlignModel = Literal["scale", "affine"]` with `DEPTH_ALIGN_MODELS = get_args(...)`; the
+  reconstructor imports that tuple instead of keeping its own copy.
+
+- **Two review items were checked and closed without a change.** N8 (tighten
+  `importorskip`) is already scoped to the single test that needs `instantsfm`, and N9 (move the
+  seed tests) found them in `tests/pointcloud/test_sfm_creator.py`, which is the creator's own
+  test file — the right home. N2 (hoist the shared attr keys out of the two `attrs` literals)
+  and N3 (rename `depth_scale_fallback_frames`) stay deliberately undone: the first splits a
+  readable literal for two keys, the second desyncs the attr name from every already-written
+  zarr.
 
 - **The context and keyframe VDA paths are not resolution-matched.** `decode_context` feeds
   frames pre-downscaled to a 518 short side; the keyframe path feeds full-resolution frames and

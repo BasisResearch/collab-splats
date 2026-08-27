@@ -154,6 +154,12 @@ mesh:
   color_map_iterations: 0  # rigid color-map optimization iterations after fusion (0 = off)
   splat_depth: expected    # source: splats only — 'expected' (alpha-weighted rendered
                            # depth) or 'median' (RaDe-GS surface depth; 2dgs renders only).
+  # source: splats only — pre-fusion depth cuts. Both are ratios, not distances: rendered
+  # depth beyond this fraction of the camera trajectory's extent is unconstrained by any
+  # view, and a neighbour pair jumping by more than this fraction of its own depth is a
+  # silhouette TSDF would otherwise weld into a tendril. null = off.
+  splat_max_depth_frac: 0.75
+  splat_max_depth_grad: 0.05
 
 # Gaussian splats trained from the pointcloud stage (leaf stage `splats`, upstream gsplat).
 # Photometric (0.8 L1 + 0.2 SSIM) is always on; each loss below is active iff weight > 0 and

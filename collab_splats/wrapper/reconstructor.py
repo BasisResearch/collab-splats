@@ -611,6 +611,8 @@ def _run_tsdf_mesh(
     source: str = "feedforward",
     splats_zarr: Path | None = None,
     splat_depth: str = "expected",
+    splat_max_depth_frac: float | None = 0.75,
+    splat_max_depth_grad: float | None = 0.05,
 ) -> Path:
     """Fuse depth + RGB from pointcloud.zarr (or splats.zarr renders) into a TSDF mesh, using COLMAP poses."""
     from collab_splats.mesh.utils import pointcloud_to_mesh
@@ -628,7 +630,11 @@ def _run_tsdf_mesh(
                 "mesh.native_resolution ignored: splats renders are already at frame resolution"
             )
         depths, rgbs, c2w, intrinsics = _splats_to_tsdf_inputs(
-            splats_zarr, conf_percentile=conf_percentile, splat_depth=splat_depth
+            splats_zarr,
+            conf_percentile=conf_percentile,
+            splat_depth=splat_depth,
+            max_depth_frac=splat_max_depth_frac,
+            max_depth_grad=splat_max_depth_grad,
         )
         n_views = depths.shape[0]
         n_poses = result.extrinsics.shape[0]
@@ -1619,6 +1625,8 @@ class Reconstructor:
             native_resolution=mesh_cfg["native_resolution"],
             color_map_iterations=mesh_cfg["color_map_iterations"],
             splat_depth=mesh_cfg["splat_depth"],
+            splat_max_depth_frac=mesh_cfg["splat_max_depth_frac"],
+            splat_max_depth_grad=mesh_cfg["splat_max_depth_grad"],
             frames_zarr=self.frames_zarr,
             source=source,
             splats_zarr=splats_zarr,

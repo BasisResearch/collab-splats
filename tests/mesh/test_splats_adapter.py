@@ -102,3 +102,73 @@ def test_a_store_without_depth_raises_instead_of_keyerror(tmp_path):
 def test_splat_depth_rejects_an_unknown_value(tmp_path):
     with pytest.raises(ValueError, match=r"mesh\.splat_depth"):
         _splats_to_tsdf_inputs(tmp_path / "splats.zarr", splat_depth="surf")
+
+
+########
+# Pre-fusion depth cuts: far-field and discontinuity
+########
+
+
+def _write_moving_camera_zarr(path, depths, n_views=None):
+    """Splats store whose cameras travel 10 units along x, with caller-supplied depth."""
+    depths = np.asarray(depths, dtype=np.float32)
+    n_views, height, width = depths.shape
+    store = zarr.open_group(str(path), mode="w")
+    c2w = np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1))
+    c2w[:, 0, 3] = np.linspace(0.0, 10.0, n_views)
+    store.create_array("depth", data=depths)
+    store.create_array("alpha", data=np.ones_like(depths))
+    store.create_array("rgb", data=np.zeros((n_views, height, width, 3), dtype=np.uint8))
+    store.create_array("c2w", data=c2w)
+    store.create_array("K", data=np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1)))
+    return path
+
+
+def test_far_depth_cut_drops_depth_past_the_camera_trajectory(tmp_path):
+    """Rendered depth well beyond where the cameras went is unconstrained by any view."""
+    depths = np.full((4, 2, 2), 1.0, dtype=np.float32)
+    depths[:, 0, 0] = 500.0  # blown-out background
+    _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
+
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_grad=None)
+    assert np.all(out[:, 0, 0] == 0.0)  # the far pixel went
+    assert np.all(out[:, 0, 1] == 1.0)  # everything inside the trajectory stayed
+
+
+def test_far_depth_cut_skipped_when_the_cameras_never_move(tmp_path):
+    """A zero-extent rig has no trajectory to measure against — cut it and nothing survives."""
+    _write_splats_zarr(tmp_path / "splats.zarr")  # every c2w is the identity
+
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr")
+    assert out.max() == 1.0
+
+
+def test_depth_gradient_cut_drops_both_sides_of_a_jump(tmp_path):
+    """A silhouette is a jump between two good surfaces; TSDF welds a tendril across it."""
+    depths = np.full((2, 3, 4), 1.0, dtype=np.float32)
+    depths[:, :, 2:] = 2.0  # step edge between columns 1 and 2
+    _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
+
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=None)
+    assert np.all(out[:, :, 1] == 0.0) and np.all(out[:, :, 2] == 0.0)  # both sides go
+    assert np.all(out[:, :, 0] == 1.0) and np.all(out[:, :, 3] == 2.0)  # the surfaces stay
+
+
+def test_depth_gradient_cut_ignores_already_dropped_pixels(tmp_path):
+    """A zero neighbour is a hole, not a surface — it must not take live pixels with it."""
+    depths = np.full((2, 3, 4), 1.0, dtype=np.float32)
+    depths[:, :, 0] = 0.0  # no observation in the first column
+    _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
+
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=None)
+    assert np.all(out[:, :, 1:] == 1.0)
+
+
+def test_depth_cuts_are_off_when_set_to_none(tmp_path):
+    """Both filters disable cleanly, so a config can fuse raw renders."""
+    depths = np.full((2, 3, 4), 1.0, dtype=np.float32)
+    depths[:, :, 2:] = 500.0
+    _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
+
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=None, max_depth_grad=None)
+    assert out.min() == 1.0 and out.max() == 500.0

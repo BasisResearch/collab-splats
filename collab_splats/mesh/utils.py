@@ -674,15 +674,57 @@ def _feedforward_to_tsdf_inputs(
     return depths, rgbs, c2w, result.intrinsics.copy()
 
 
+def _depth_edge_mask(depths: np.ndarray, max_grad: float) -> np.ndarray:
+    """Mark pixels on either side of a relative depth jump larger than max_grad.
+
+    TSDF fuses a depth discontinuity as a smooth ramp between the two surfaces, and those
+    ramps are where the tendrils hanging off object silhouettes come from. The test is a
+    ratio of neighbouring depths, so it carries no scale of its own.
+
+    Args:
+        depths: (N, H, W) float32; zeros are already-dropped pixels and never form an edge.
+        max_grad: jump-to-depth ratio above which a neighbour pair is an edge.
+    Returns:
+        (N, H, W) bool, True on the pixels to drop.
+    """
+    edges = np.zeros(depths.shape, dtype=bool)
+
+    # One pass per axis: flag the pair, then paint both of its pixels so the ramp goes with it.
+    # Neighbour pairs are slice views, not copies — the depth stack runs to gigabytes.
+    for axis in (1, 2):
+        idx_lo = [slice(None)] * 3
+        idx_hi = [slice(None)] * 3
+        idx_lo[axis] = slice(0, -1)
+        idx_hi[axis] = slice(1, None)
+        lo = depths[tuple(idx_lo)]
+        hi = depths[tuple(idx_hi)]
+
+        pair = np.abs(hi - lo) > max_grad * 0.5 * (hi + lo)  # ratio test, without the divide
+        pair &= (lo > 0) & (hi > 0)
+
+        edges[tuple(idx_lo)] |= pair
+        edges[tuple(idx_hi)] |= pair
+
+    return edges
+
+
 def _splats_to_tsdf_inputs(
-    splats_zarr: Path, conf_percentile: float | None = None, splat_depth: str = "expected"
+    splats_zarr: Path,
+    conf_percentile: float | None = None,
+    splat_depth: str = "expected",
+    max_depth_frac: float | None = 0.75,
+    max_depth_grad: float | None = 0.05,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Unpack splats.zarr (rendered views) into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
 
     - `alpha` is the confidence: pixels with alpha == 0 never reach Open3D, and
       `conf_percentile` drops the lowest-alpha percentile globally (same rule as the
-      feedforward path's confidence gate).
+      feedforward path's confidence gate). Note that a trained splat field renders alpha
+      near 1 almost everywhere (median 0.998 on GH010229), so this gate is weak on its own —
+      the two depth filters below are what remove blown-out background.
+    - `max_depth_frac` and `max_depth_grad` cut depth before fusion: too far to be
+      constrained, or straddling a discontinuity. Both are ratios; neither is a distance.
     - `splat_depth` picks which rendered depth to fuse: "expected" (alpha-weighted, the
       default) or "median" (RaDe-GS surface depth, 2dgs renders only).
     - Poses are the zarr's `c2w` — what was actually rendered, including pose-opt deltas.
@@ -711,27 +753,54 @@ def _splats_to_tsdf_inputs(
         )
         raise ValueError(f"{splats_zarr} has no '{depth_array}' array — {hint}")
 
+    # Rendered uint8 RGB + the poses/intrinsics actually rendered, all native to the frames
+    depths = np.ascontiguousarray(store[depth_array][:], dtype=np.float32)
+    rgbs = np.ascontiguousarray(store["rgb"][:])
+    c2w = store["c2w"][:].astype(np.float32)
+    intrinsics = store["K"][:].astype(np.float32)
+
     # Alpha gate: zero alpha is "no surface rendered here"; the percentile cut mirrors the
     # feedforward path's confidence_mask so both sources filter by the same global rule
-    depths = np.ascontiguousarray(store[depth_array][:], dtype=np.float32)
     alpha = store["alpha"][:]
     keep = alpha > 0
     if conf_percentile is not None:
         keep &= confidence_mask(alpha, conf_percentile)
-    dropped = ~keep
-    depths[dropped] = 0.0
     logger.info(
-        "Splat depth source '%s' (%s); alpha mask (p%s): %.1f%% of depth pixels dropped",
+        "Splat depth source '%s' (%s); alpha mask (p%s) drops %.1f%% of depth pixels",
         splat_depth,
         depth_array,
         "none" if conf_percentile is None else f"{conf_percentile:.0f}",
-        100.0 * float(dropped.mean()),
+        100.0 * float((~keep).mean()),
     )
 
-    # Rendered uint8 RGB + the poses/intrinsics actually rendered, all native to the frames
-    rgbs = np.ascontiguousarray(store["rgb"][:])
-    c2w = store["c2w"][:].astype(np.float32)
-    intrinsics = store["K"][:].astype(np.float32)
+    # Far-depth cut, measured against how far the cameras themselves travelled: past the
+    # trajectory nothing constrains the splat field, so background pixels come back as opaque
+    # surfaces at arbitrary depth. A fraction, never a distance — units vary by backend.
+    if max_depth_frac is not None:
+        extent = _scene_scale(c2w[:, :3, 3])
+        if extent > 0:
+            far = max_depth_frac * extent
+            too_far = depths > far
+            keep &= ~too_far
+            logger.info("Far-depth cut (> %.2f) drops %.1f%% of depth pixels", far, 100.0 * float(too_far.mean()))
+        else:
+            # A rig that never moves has no trajectory to measure against; cutting on a zero
+            # extent would drop every pixel.
+            logger.info("Far-depth cut skipped: cameras span zero extent")
+
+    # Discontinuity cut: the ramps TSDF builds across depth jumps are the tendrils hanging off
+    # object silhouettes.
+    if max_depth_grad is not None:
+        edges = _depth_edge_mask(depths, max_depth_grad)
+        keep &= ~edges
+        logger.info(
+            "Depth-gradient cut (> %.2f relative) drops %.1f%% of depth pixels",
+            max_depth_grad,
+            100.0 * float(edges.mean()),
+        )
+
+    depths[~keep] = 0.0
+    logger.info("Depth pixels surviving all masks: %.1f%%", 100.0 * float(keep.mean()))
     return depths, rgbs, c2w, intrinsics
 
 

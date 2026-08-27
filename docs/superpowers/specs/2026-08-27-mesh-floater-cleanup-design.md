@@ -1,7 +1,7 @@
 # Mesh floater cleanup — design
 
 Date: 2026-08-27
-Status: approved, not yet implemented
+Status: implemented
 
 ## Problem
 
@@ -127,13 +127,49 @@ masking, normal-consistency face pruning, the cross-source VDA gate, and trainin
 blow-out rather than masking it, and it is excluded to protect the GS-SR parity these runs
 exist to measure.
 
-## Follow-up, not designed yet
+## Follow-up: pre-fusion depth cuts, built and measured off
 
-If floaters survive the cleaner: pre-fusion filtering in `_splats_to_tsdf_inputs` — a
-scene-relative far-depth cut (4% of pixels at 0.75x the camera-trajectory diagonal), a relative
-depth-gradient mask (3.5% at 0.05), and `splat_depth: median` for the 2dgs run, where expected
-and median depth disagree by more than 5% on 9% of pixels. Scoped only after the cleaner's
-result is seen.
+Built in `_splats_to_tsdf_inputs` as `max_depth_frac` (scene-relative far cut) and
+`max_depth_grad` (relative depth-jump mask), plus `splat_depth: median` for 2dgs. Both cuts
+ship **off**. The first shipped defaults were 0.75 / 0.05; the ablation below says neither
+earns a default, and 0.05 visibly deleted patches of good mesh.
+
+Ablation, both scenes, voxel 0.2 / sdf 0.8 / depth_trunc 100, 2dgs on `median_depth`:
+
+| scene | arm | raw comps | cleaned comps | cleaned faces |
+| --- | --- | --- | --- | --- |
+| 2dgs | none | 44,791 | 447 | 1,447,369 |
+| 2dgs | far 0.75 | 44,791 | 447 | 1,447,369 |
+| 2dgs | far 0.75 + grad 0.3 | 42,069 | 433 | 1,445,940 |
+| 3dgs | none | 246,457 | 1,691 | 2,354,800 |
+| 3dgs | far 0.75 | 232,540 | 1,790 | 2,376,717 |
+| 3dgs | far 0.75 + grad 0.3 | 231,795 | 1,785 | 2,375,586 |
+
+Three findings behind the off defaults:
+
+1. **`depth_trunc` is the tighter far gate.** `0.75 * extent` is 102.2 / 97.2 against a
+   `depth_trunc` of 100, so on 2dgs the far cut removed only pixels Open3D already discarded —
+   the two `2dgs far` rows are identical to `none` to the digit. Depth runs p50 15.8, p90 63.0,
+   p95 92.5, p99 226.1: the blow-out sits past `depth_trunc` and real room surface fills
+   everything below it, so any frac low enough to slip under `depth_trunc` deletes 8-15% of
+   live pixels of real geometry. The knob is a backstop for configs where `depth_trunc` is set
+   beyond the trajectory, not a filter for this one.
+2. **`max_depth_grad: 0.05` masks surfaces, not silhouettes.** 65.5% (2dgs) / 53.9% (3dgs) of
+   masked pixels sit in blobs over 10,000 px, largest single blob 3.3% / 5.5% of a frame. A
+   3x3 median pre-filter moves that by ~3 points, so the blobs are coherent structure rather
+   than speckle. The threshold sits below the scene's own grazing-angle gradient: at fx ~= 1000
+   a plane 88 degrees off the ray steps 0.03 of its depth per pixel. 3dgs becomes edge-like at
+   0.3 (0.22% masked, no blob over 10k); 2dgs `median_depth` is rougher and still shows 22k-px
+   blobs there.
+3. **At a safe threshold the cut is redundant.** grad 0.3 removes 14 components on 2dgs and
+   none on 3dgs. `clean_repair` already removes what it removes.
+
+What actually cleaned these meshes: the component selector above, plus `splat_depth: median`
+on 2dgs, which drops raw components 240,461 -> 44,791 before any cleaning. 3dgs has no median
+render, which is why 1,691 speckle components survive there against 447 on 2dgs.
+
+Shipped beside each `mesh.ply` as `mesh_filtered.ply`: 2dgs 447 comps / 1,447,369 faces,
+main body 96.3%; 3dgs 1,691 / 2,354,800, main body 95.5%.
 
 ## Risks
 

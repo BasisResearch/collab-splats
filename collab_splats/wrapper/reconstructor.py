@@ -611,8 +611,8 @@ def _run_tsdf_mesh(
     source: str = "feedforward",
     splats_zarr: Path | None = None,
     splat_depth: str = "expected",
-    splat_max_depth_frac: float | None = 0.75,
-    splat_max_depth_grad: float | None = 0.05,
+    splat_max_depth_frac: float | None = None,
+    splat_max_depth_grad: float | None = None,
 ) -> Path:
     """Fuse depth + RGB from pointcloud.zarr (or splats.zarr renders) into a TSDF mesh, using COLMAP poses."""
     from collab_splats.mesh.utils import pointcloud_to_mesh

@@ -20,7 +20,7 @@ preproc:
   # Each method has ONE density knob. max_frames is the frame budget: the target
   # COUNT for 'uniform', a ceiling for 'fps' and 'optical_flow'.
   frame_selection: fps        # fps | uniform | optical_flow
-  fps: 1.0                    # 'fps' only: samples/second. Fixes the baseline between
+  fps: 2.0                    # 'fps' only: samples/second. Fixes the baseline between
                               # consecutive frames regardless of video length — which a
                               # count-based knob cannot do.
   min_frames: null            # 'fps' only: floor on the resulting count. null = fps is
@@ -145,21 +145,24 @@ semantics:
 mesh:
   enabled: true
   source: feedforward     # feedforward (model depth) | splats (rendered depth; alpha = confidence)
-  voxel_size: 0.005         # dashboard-parity TSDF defaults
-  sdf_trunc: 0.02
-  depth_trunc: 1.0          # drop depth samples beyond this range (metres)
-  clean_repair: false       # drop out-of-bounds components + fill small holes, rewriting mesh.ply
-  conf_percentile: null    # mask depth below this global confidence percentile (null = off)
-  native_resolution: false # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
-  color_map_iterations: 0  # rigid color-map optimization iterations after fusion (0 = off)
+  voxel_size: 0.0025         # dashboard-parity TSDF defaults
+  sdf_trunc: 0.01
+  depth_trunc: 1.5          # drop depth samples beyond this range (metres)
+  clean_repair: true       # drop out-of-bounds components + fill small holes, rewriting mesh.ply
+  conf_percentile: 20    # mask depth below this global confidence percentile (null = off)
+  native_resolution: true # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
+  color_map_iterations: 300  # rigid color-map optimization iterations after fusion (0 = off)
   splat_depth: expected    # source: splats only — 'expected' (alpha-weighted rendered
                            # depth) or 'median' (RaDe-GS surface depth; 2dgs renders only).
-  # source: splats only — pre-fusion depth cuts. Both are ratios, not distances: rendered
-  # depth beyond this fraction of the camera trajectory's extent is unconstrained by any
-  # view, and a neighbour pair jumping by more than this fraction of its own depth is a
-  # silhouette TSDF would otherwise weld into a tendril. null = off.
-  splat_max_depth_frac: 0.75
-  splat_max_depth_grad: 0.05
+  # source: splats only — opt-in pre-fusion depth cuts, both ratios rather than distances.
+  # Both ship off: measured on GH010229, clean_repair already removes everything they remove.
+  # frac cuts depth past that fraction of the camera trajectory's extent, but depth_trunc
+  # above is the tighter of the two far gates unless it is set beyond the trajectory. grad
+  # cuts neighbour pairs jumping by more than that fraction of their own depth — it must
+  # clear the scene's real grazing-angle gradient (~0.03 here) or it deletes whole surfaces
+  # instead of silhouettes; 0.05 removed visible patches of good mesh.
+  splat_max_depth_frac: null
+  splat_max_depth_grad: null
 
 # Gaussian splats trained from the pointcloud stage (leaf stage `splats`, upstream gsplat).
 # Photometric (0.8 L1 + 0.2 SSIM) is always on; each loss below is active iff weight > 0 and
@@ -171,7 +174,8 @@ splats:
   primitive: 3dgs            # 3dgs (fast kernel, antialiased) | 2dgs (surface-aligned)
   # representation: vanilla (per-gaussian parameters) | scaffold (anchors + MLP decode).
   # scaffold ignores sh_degree — its colours come from mlp_colour — and densifies anchors
-  # rather than gaussians.
+  # rather than gaussians. Set losses.opacity_reg to 0 under scaffold: opacity is decoded and
+  # its sign is the offset visibility mask, so regularising it shuts offsets.
   representation: vanilla
   # scaffold:
   #   n_offsets: 10
@@ -182,6 +186,8 @@ splats:
   #   refine_every: 100
   #   grad_threshold: 2.0e-4
   #   min_opacity: 0.005
+  #   update_init_factor: 16    # level-0 growing grid, in voxels; later levels shrink it
+  #   success_threshold: 0.8    # fraction of a refine window a slot/anchor must be seen for
   #   appearance_dim: 0         # Scaffold's per-image embedding; independent of appearance_opt
   max_steps: 30000
   pose_opt: true             # refine camera poses jointly (CameraOptModule). +2.2 dB on a
@@ -219,6 +225,17 @@ splats:
     scale_reg: {weight: 0.01}
     appearance_reg: {weight: 1.0e-3}   # no-op unless appearance_opt
     # 2dgs: replace the two regularisers with  distortion: {weight: 0.01, start: 3000}
+    # PGSR (3dgs only — GS-SR pairs it with the vanilla rasterizer, there is no 2dgs-pgsr):
+    #   pgsr_normal:    {weight: 0.015, start: 7000}
+    #   pgsr_multiview: {weight: 1.0, start: 7000, geo: 0.03, ncc: 0.15}
+    # pgsr_normal flattens surfaces against their own plane depth, weighted towards flat image
+    # regions. pgsr_multiview is upstream's two multi-view terms in ONE entry, because both come
+    # from one shared correspondence pass: geo is the round-trip reprojection error against a
+    # co-visible neighbour and ncc the patch photometric error through the plane homography (its
+    # own weight multiplies their sum). It renders a second view every step, so expect ~2x the
+    # step cost from `start` on. Extra keys: pixel_noise_threshold (1.0 px), num_sample (102400),
+    # patch_size (3 = 7x7 patches), num_multi_view (5) and max_points (20000) for the one-time
+    # neighbour selection.
 
 localization:
   enabled: false

@@ -712,8 +712,8 @@ def _splats_to_tsdf_inputs(
     splats_zarr: Path,
     conf_percentile: float | None = None,
     splat_depth: str = "expected",
-    max_depth_frac: float | None = 0.75,
-    max_depth_grad: float | None = 0.05,
+    max_depth_frac: float | None = None,
+    max_depth_grad: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Unpack splats.zarr (rendered views) into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
@@ -724,7 +724,10 @@ def _splats_to_tsdf_inputs(
       near 1 almost everywhere (median 0.998 on GH010229), so this gate is weak on its own —
       the two depth filters below are what remove blown-out background.
     - `max_depth_frac` and `max_depth_grad` cut depth before fusion: too far to be
-      constrained, or straddling a discontinuity. Both are ratios; neither is a distance.
+      constrained, or straddling a discontinuity. Both are ratios, never distances, and both
+      ship off — measured on GH010229, the component cleaner already removes everything they
+      remove, and a `max_depth_grad` low enough to catch anything deletes whole oblique
+      surfaces. Turn one on only for a scene that shows the failure it names.
     - `splat_depth` picks which rendered depth to fuse: "expected" (alpha-weighted, the
       default) or "median" (RaDe-GS surface depth, 2dgs renders only).
     - Poses are the zarr's `c2w` — what was actually rendered, including pose-opt deltas.
@@ -776,6 +779,9 @@ def _splats_to_tsdf_inputs(
     # Far-depth cut, measured against how far the cameras themselves travelled: past the
     # trajectory nothing constrains the splat field, so background pixels come back as opaque
     # surfaces at arbitrary depth. A fraction, never a distance — units vary by backend.
+    # Note this is the looser of two far gates: the fusion's own depth_trunc also discards
+    # depth, and whichever is smaller wins. It only bites where depth_trunc is set beyond the
+    # camera trajectory.
     if max_depth_frac is not None:
         extent = _scene_scale(c2w[:, :3, 3])
         if extent > 0:
@@ -789,7 +795,9 @@ def _splats_to_tsdf_inputs(
             logger.info("Far-depth cut skipped: cameras span zero extent")
 
     # Discontinuity cut: the ramps TSDF builds across depth jumps are the tendrils hanging off
-    # object silhouettes.
+    # object silhouettes. The threshold has to clear the scene's real grazing-angle gradient —
+    # a plane 88 degrees off the ray already steps 0.03 of its own depth per pixel — or the
+    # mask stops finding edges and starts deleting whole surfaces.
     if max_depth_grad is not None:
         edges = _depth_edge_mask(depths, max_depth_grad)
         keep &= ~edges

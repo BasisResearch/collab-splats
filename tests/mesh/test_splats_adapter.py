@@ -130,7 +130,7 @@ def test_far_depth_cut_drops_depth_past_the_camera_trajectory(tmp_path):
     depths[:, 0, 0] = 500.0  # blown-out background
     _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
 
-    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_grad=None)
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=0.75)
     assert np.all(out[:, 0, 0] == 0.0)  # the far pixel went
     assert np.all(out[:, 0, 1] == 1.0)  # everything inside the trajectory stayed
 
@@ -139,7 +139,7 @@ def test_far_depth_cut_skipped_when_the_cameras_never_move(tmp_path):
     """A zero-extent rig has no trajectory to measure against — cut it and nothing survives."""
     _write_splats_zarr(tmp_path / "splats.zarr")  # every c2w is the identity
 
-    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr")
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=0.75)
     assert out.max() == 1.0
 
 
@@ -149,7 +149,7 @@ def test_depth_gradient_cut_drops_both_sides_of_a_jump(tmp_path):
     depths[:, :, 2:] = 2.0  # step edge between columns 1 and 2
     _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
 
-    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=None)
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_grad=0.3)
     assert np.all(out[:, :, 1] == 0.0) and np.all(out[:, :, 2] == 0.0)  # both sides go
     assert np.all(out[:, :, 0] == 1.0) and np.all(out[:, :, 3] == 2.0)  # the surfaces stay
 
@@ -160,15 +160,16 @@ def test_depth_gradient_cut_ignores_already_dropped_pixels(tmp_path):
     depths[:, :, 0] = 0.0  # no observation in the first column
     _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
 
-    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=None)
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_grad=0.3)
     assert np.all(out[:, :, 1:] == 1.0)
 
 
-def test_depth_cuts_are_off_when_set_to_none(tmp_path):
-    """Both filters disable cleanly, so a config can fuse raw renders."""
+def test_depth_cuts_ship_off(tmp_path):
+    """Neither cut runs unless a config asks for it — both delete real surface if mistuned."""
     depths = np.full((2, 3, 4), 1.0, dtype=np.float32)
     depths[:, :, 2:] = 500.0
     _write_moving_camera_zarr(tmp_path / "splats.zarr", depths)
 
-    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr", max_depth_frac=None, max_depth_grad=None)
+    # No cut arguments at all: the 1 -> 500 step would trip either filter if one defaulted on
+    out, _, _, _ = _splats_to_tsdf_inputs(tmp_path / "splats.zarr")
     assert out.min() == 1.0 and out.max() == 500.0

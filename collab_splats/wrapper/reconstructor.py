@@ -24,6 +24,7 @@ from vggt.utils.geometry import unproject_depth_map_to_point_map
 
 from collab_splats.pointcloud.export import write_pointcloud_ply
 from collab_splats.pointcloud.sfm import (
+    DEPTH_ALIGN_MODELS,
     InstantSfMCreator,
     _pixel_indices_from_reconstruction,
     _tracked_point3d_ids,
@@ -75,9 +76,6 @@ _SFM_BACKENDS = {"colmap", "hloc", "instantsfm"}
 # so "colmap" is the only value that means anything today. Key kept (not hardcoded) so a
 # future feature handler (e.g. loma) has somewhere to land.
 _INSTANTSFM_FEATURES = {"colmap"}
-# How VDA metric depth is mapped to the COLMAP world; sfm.apply_depth_alignment is the
-# authority and raises on anything else — this mirror only moves the failure to config load.
-_DEPTH_ALIGN_MODELS = {"scale", "affine"}
 _VALID_METHODS = {"feedforward", "sfm"}
 _STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify",
                 "reconstruction_quality_report"]
@@ -883,9 +881,9 @@ class Reconstructor:
             # depth_align only once the model is solved. Reject a bad value here so a typo
             # costs a config load, not a whole reconstruction.
             depth_align = instantsfm.get("depth_align")
-            if depth_align not in _DEPTH_ALIGN_MODELS:
+            if depth_align not in DEPTH_ALIGN_MODELS:
                 raise ValueError(
-                    f"pointcloud.instantsfm.depth_align={depth_align!r} not in {sorted(_DEPTH_ALIGN_MODELS)}"
+                    f"pointcloud.instantsfm.depth_align={depth_align!r} not in {sorted(DEPTH_ALIGN_MODELS)}"
                 )
 
             # np.random.seed's domain; InstantSfM passes the value straight through

@@ -10,7 +10,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import cv2
 import numpy as np
@@ -382,6 +382,11 @@ def generate_vda_depth(
 # disparity -- taking VDA metric depth to the COLMAP world
 ########################################################################
 
+# The alignment models, named once: the type below and the config surface's allowed values are
+# the same tuple, so a third model cannot land in one and be missing from the other
+DepthAlignModel = Literal["scale", "affine"]
+DEPTH_ALIGN_MODELS = get_args(DepthAlignModel)
+
 MIN_ALIGN_OBS = 20  # per-frame track-observation floor for a trustworthy median
 MIN_AFFINE_OBS = 50  # per-frame floor for the 2-parameter disparity fit (scale needs only 20)
 AFFINE_REJECT_ROUNDS = 2  # MAD-3sigma rejection passes over the least-squares fit
@@ -721,7 +726,7 @@ def align_depth_affine(
 def apply_depth_alignment(
     result: "FeedforwardResult",
     reconstruction: pycolmap.Reconstruction,
-    model: Literal["scale", "affine"] = "scale",
+    model: DepthAlignModel = "scale",
 ) -> dict:
     """
     Align result.depth to the reconstruction's world scale in place; recompute world_points.
@@ -732,8 +737,8 @@ def apply_depth_alignment(
     - Returns the provenance attrs to merge into save_zarr's extra_attrs; raises on an
       unalignable scene — never a silent VDA-metric write.
     """
-    if model not in ("scale", "affine"):
-        raise ValueError(f"pointcloud.instantsfm.depth_align must be 'scale' or 'affine', got {model!r}")
+    if model not in DEPTH_ALIGN_MODELS:
+        raise ValueError(f"pointcloud.instantsfm.depth_align must be one of {DEPTH_ALIGN_MODELS}, got {model!r}")
 
     # SfM image_paths are extension-less stems (Path(im.name) from COLMAP, whose image
     # names ARE stems) — path.name is the COLMAP image name, the splats-branch convention

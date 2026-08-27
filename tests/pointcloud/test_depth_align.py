@@ -395,10 +395,11 @@ class _Result:
         self.world_points = None
 
 
-def _scale_scene(ratio=2.0, n_obs=30):
+def _scale_scene(ratio=2.0):
     """
     One frame whose COLMAP depths are a constant multiple of its VDA depths.
     """
+    n_obs = 30  # comfortably over MIN_ALIGN_OBS, under MIN_AFFINE_OBS: a scale-path fixture
     observations = [(i % GRID_W, i % GRID_H, ratio * (i + 1)) for i in range(n_obs)]
     depth = np.zeros((1, GRID_H, GRID_W), dtype=np.float32)
     for i in range(n_obs):
@@ -407,7 +408,7 @@ def _scale_scene(ratio=2.0, n_obs=30):
 
 
 def test_apply_depth_alignment_scale_is_the_default_and_stamps_the_model():
-    recon, depth = _scale_scene(ratio=2.0)
+    recon, depth = _scale_scene()
     result = _Result(depth.copy())
 
     attrs = sfm.apply_depth_alignment(result, recon)
@@ -420,7 +421,7 @@ def test_apply_depth_alignment_scale_is_the_default_and_stamps_the_model():
 def test_apply_depth_alignment_reunprojects_world_points_from_the_aligned_depth():
     # Identity extrinsics, so a world point's z IS its depth in that view: world_points must
     # be re-derived from the ALIGNED depth, never left at None or carried over unscaled
-    recon, depth = _scale_scene(ratio=2.0)
+    recon, depth = _scale_scene()
     result = _Result(depth.copy())
 
     sfm.apply_depth_alignment(result, recon)

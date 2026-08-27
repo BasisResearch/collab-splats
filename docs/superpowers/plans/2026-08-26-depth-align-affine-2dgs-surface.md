@@ -2443,9 +2443,17 @@ git commit --only configs/base.yaml configs/README.md collab_splats/wrapper/reco
 Median normals alone: +0.103 dB / +0.0055 SSIM. Affine alone: -0.076 dB. Affine on top of
 median: -0.032 dB. Anti-additive, like every prior lever in this repo. **Recommend shipping
 median normals and dropping affine** — which also keeps the near-pole affine blow-up (finding
-I1 of the Task 6/7 review) off the splat path entirely. It still has to be fixed for the
-metric path, where `world_points` re-unprojection feeds `sparse_pc.ply` and the
-pointcloud-sourced TSDF.
+I1 of the Task 6/7 review) off the splat path entirely.
+
+That blow-up is now fixed at the source, since it also reached the metric path through
+`world_points` re-unprojection into `sparse_pc.ply` and the pointcloud-sourced TSDF. The
+absolute `AFFINE_EPS = 1e-9` positivity floor is replaced by `AFFINE_MIN_FAR_DISPARITY_FRAC
+= 0.5`: the fitted disparity at the frame's far end (p99 of the map, or the furthest inlier,
+whichever is larger) must keep at least half of the scale-only disparity there, capping the
+pole's distortion at 2x. Measured on GH010229's 300 frames — positivity only: 273 fitted /
+27 fallback; 0.25: 243 / 57; **0.5 (shipped): 202 / 98**. A third of the frames carried a fit
+that blew up past 2x at its own far end and now take the scale path, so the affine mode is
+materially closer to the scale mode than the grid above tested it at.
 
 **Cell 4 (8 FPS contiguous VDA context stream) skipped, user decision.** Its mechanism is
 refuted in-tree: `sfm.py:270-273` records that `metric=True` disables

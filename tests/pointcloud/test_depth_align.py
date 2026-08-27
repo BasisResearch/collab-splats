@@ -202,15 +202,37 @@ def test_affine_rejection_is_tight_enough_to_drop_a_moderate_outlier():
 
 
 def test_affine_survives_a_single_sky_pixel():
-    # The positivity guard reads p99 of the depth map, not its max. One unobserved 5000-unit
-    # sky pixel puts the fitted disparity at -0.0297 at the max and +0.0077 at p99, so max
-    # would throw this frame away. Measured 2026-08-26: max rejected 78/300 frames, p99 14/300
-    recon, depth = _affine_scene(a=1.5, b=-0.03)
+    # The far-end guard reads p99 of the depth map, not its max. One unobserved 5000-unit sky
+    # pixel puts the fitted disparity at -0.0097 at the max and +0.0275 at p99, so max would
+    # throw this frame away. Measured 2026-08-26: max rejected 78/300 frames, p99 14/300
+    recon, depth = _affine_scene(a=1.5, b=-0.01)
     depth[0, GRID_H - 1, GRID_W - 1] = 5000.0
 
     _coeffs, _far, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
     assert stats["n_fitted"] == 1
-    assert stats["n_saturating"] == 0
+    assert stats["n_pole_too_close"] == 0
+
+
+def test_alignment_rejects_a_names_to_depth_row_mismatch():
+    # One name short of the depth stack used to walk off the end of image_names silently,
+    # aligning row i of the depth with frame i of a different list
+    recon, depth = _affine_scene(a=1.5, b=-0.004)
+    two_rows = np.concatenate([depth, depth])
+
+    with pytest.raises(ValueError, match="rows would misalign"):
+        sfm.align_depth_affine(recon, ["frame_000000.jpg"], two_rows)
+
+
+def test_affine_rejects_a_fit_whose_pole_crowds_the_far_end():
+    # a=1.5, b=-0.03 saturates at d = 50 while the frame only reaches 40, so the disparity
+    # there is positive (0.0075) and a positivity-only floor waves it through — at 5x the
+    # scale-only depth, inside every downstream mask. The relative floor rejects it
+    recon, depth = _affine_scene(a=1.5, b=-0.03)
+
+    coeffs, _far, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert stats["n_fitted"] == 0
+    assert stats["n_pole_too_close"] == 1
+    assert coeffs[0, 1] == 0.0  # scale-only
 
 
 def test_affine_rejects_a_fit_that_saturates_inside_the_frame():
@@ -222,7 +244,7 @@ def test_affine_rejects_a_fit_that_saturates_inside_the_frame():
 
     coeffs, far_limits, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
     assert stats["n_fitted"] == 0
-    assert stats["n_saturating"] == 1
+    assert stats["n_pole_too_close"] == 1
     assert coeffs[0, 1] == 0.0  # scale-only
     assert far_limits[0] == np.inf  # a rejected fit leaves no range evidence behind
 
@@ -262,7 +284,7 @@ def test_affine_falls_back_to_scale_below_the_obs_floor():
     assert coeffs[0, 0] == pytest.approx(0.5)  # a = 1/s with s = 2.0
     assert stats["n_fallback"] == 1
     assert stats["n_below_obs_floor"] == 1
-    assert (stats["n_unsolvable"], stats["n_nonpositive_a"], stats["n_saturating"]) == (0, 0, 0)
+    assert (stats["n_unsolvable"], stats["n_nonpositive_a"], stats["n_pole_too_close"]) == (0, 0, 0)
 
 
 def test_affine_sub_floor_frame_gets_no_far_bound():
@@ -411,9 +433,9 @@ def test_apply_depth_alignment_affine_stamps_coefficients():
 
 
 def test_apply_depth_alignment_affine_applies_the_affine_mapping_not_a_scale():
-    # a=1.5, b=-0.02 runs the true d_colmap/d_vda ratio from 0.69 to 1.43 across the frame,
+    # a=1.5, b=-0.015 runs the true d_colmap/d_vda ratio from 0.68 to 1.11 across the frame,
     # so an affine-aligned pixel lands nowhere near its scale-aligned value
-    recon, depth = _affine_scene(a=1.5, b=-0.02)
+    recon, depth = _affine_scene(a=1.5, b=-0.015)
     affine_result, scale_result = _Result(depth.copy()), _Result(depth.copy())
 
     sfm.apply_depth_alignment(affine_result, recon, model="affine")
@@ -421,7 +443,7 @@ def test_apply_depth_alignment_affine_applies_the_affine_mapping_not_a_scale():
 
     # Every surviving pixel must equal d / (a + b*d), the mapping the fit defines
     supported = affine_result.depth[0] > 0
-    expected = depth[0] / (1.5 - 0.02 * depth[0])
+    expected = depth[0] / (1.5 - 0.015 * depth[0])
     np.testing.assert_allclose(affine_result.depth[0][supported], expected[supported], rtol=1e-4)
     assert np.abs(affine_result.depth[0][supported] - scale_result.depth[0][supported]).max() > 5.0
 

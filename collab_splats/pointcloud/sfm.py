@@ -10,6 +10,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -377,16 +378,18 @@ def generate_vda_depth(
 
 
 ########################################################################
-# Depth alignment: fit per-frame scales taking VDA metric depth to the
-# COLMAP world
+# Depth alignment: fit per-frame maps -- a scale, or an affine in
+# disparity -- taking VDA metric depth to the COLMAP world
 ########################################################################
 
 MIN_ALIGN_OBS = 20  # per-frame track-observation floor for a trustworthy median
 MIN_AFFINE_OBS = 50  # per-frame floor for the 2-parameter disparity fit (scale needs only 20)
 AFFINE_REJECT_ROUNDS = 2  # MAD-3sigma rejection passes over the least-squares fit
-# Positivity floor on the fitted disparity at the frame's far end. Guard only: the apply path
-# bounds at the saturation horizon d = -a/b, so no epsilon ever floors a denominator there.
-AFFINE_EPS = 1e-9
+# Floor on the fitted disparity at the frame's far end, as a fraction of the disparity the
+# scale-only mapping (b = 0) would give there. A positivity-only floor accepts fits whose
+# saturation horizon sits just past the far end, where the aligned depth blows up while
+# staying inside every mask; 0.5 caps that blow-up at 2x the scale-only depth.
+AFFINE_MIN_FAR_DISPARITY_FRAC = 0.5
 
 
 def _depth_correspondences(
@@ -403,7 +406,9 @@ def _depth_correspondences(
     - Returns one (d_colmap, d_vda) tuple per row of `depth`, in `image_names` order; a frame
       with no usable observation gets a pair of empty arrays.
     """
-    # Row order is the caller's; every name must be registered
+    # Row order is the caller's: one name per depth row, and every name registered
+    if len(image_names) != depth.shape[0]:
+        raise ValueError(f"{len(image_names)} image names for {depth.shape[0]} depth maps — rows would misalign")
     name_to_image = {image.name: image for image in reconstruction.images.values()}
     missing = [name for name in image_names if name not in name_to_image]
     if missing:
@@ -598,9 +603,10 @@ def align_depth_affine(
       a scale-only frame is returned as (1/s, 0.0), which is the same mapping the scale path
       applies.
     - Falls back to scale-only when a frame has fewer than MIN_AFFINE_OBS observations, the
-      fit is unsolvable, a <= 0, or the fitted disparity is non-positive at the frame's far
-      end. The far end is p99 of the depth map, not its max: a single sky pixel rejects
-      78/300 frames, p99 rejects 14/300 (measured 2026-08-26). stats counts each cause.
+      fit is unsolvable, a <= 0, or the fitted disparity at the frame's far end has fallen to
+      under AFFINE_MIN_FAR_DISPARITY_FRAC of what the scale-only mapping would give there.
+      That far end is p99 of the depth map, not its max: a single sky pixel rejects 78/300
+      frames, p99 rejects 14/300 (measured 2026-08-26). stats counts each cause.
     - far_limits[i] is the largest INPUT VDA depth among the surviving inliers of frame i's
       affine fit — a value in the input map's own units, not metres and not the track's
       COLMAP depth. Beyond it the fit extrapolates, and held-out observations there are 2.2x
@@ -622,7 +628,7 @@ def align_depth_affine(
     n_below_obs_floor = 0
     n_unsolvable = 0
     n_nonpositive_a = 0
-    n_saturating = 0
+    n_pole_too_close = 0
 
     pairs = _depth_correspondences(reconstruction, image_names, depth)
     for row, (d_colmap, d_vda) in enumerate(pairs):
@@ -639,14 +645,17 @@ def align_depth_affine(
             continue
         a, b, inliers = solution
 
-        # Reject a fit that inverts depth, or that saturates inside the frame's own range.
-        # p99, not max: one sky pixel rejected 78/300 frames, p99 rejects 14/300
+        # Reject a fit that inverts depth, or whose saturation horizon crowds the far end of
+        # the range it will be applied over. p99, not max, for the frame's own far end: one
+        # sky pixel rejected 78/300 frames, p99 rejects 14/300. The inlier max joins it
+        # because the apply path also trusts the fit that far out
         if a <= 0:
             n_nonpositive_a += 1
             continue
         far_depth = float(np.percentile(depth[row][depth[row] > 0], 99)) if (depth[row] > 0).any() else 0.0
-        if far_depth <= 0 or (a / far_depth + b) <= AFFINE_EPS:
-            n_saturating += 1
+        far_edge = max(far_depth, float(d_vda[inliers].max()))
+        if far_edge <= 0 or (a / far_edge + b) <= AFFINE_MIN_FAR_DISPARITY_FRAC * (a / far_edge):
+            n_pole_too_close += 1
             continue
 
         # The evidence bound belongs to the fit that survived: the furthest VDA depth among
@@ -669,7 +678,7 @@ def align_depth_affine(
 
     logger.info(
         "depth alignment (affine): %d/%d frames fitted, %d scale-only "
-        "(%d under %d obs, %d unsolvable, %d a<=0, %d saturating at p99)",
+        "(%d under %d obs, %d unsolvable, %d a<=0, %d pole too close to the far end)",
         int(fitted.sum()),
         n_frames,
         len(scale_only_rows),
@@ -677,7 +686,7 @@ def align_depth_affine(
         MIN_AFFINE_OBS,
         n_unsolvable,
         n_nonpositive_a,
-        n_saturating,
+        n_pole_too_close,
     )
 
     stats = {
@@ -686,7 +695,7 @@ def align_depth_affine(
         "n_below_obs_floor": n_below_obs_floor,
         "n_unsolvable": n_unsolvable,
         "n_nonpositive_a": n_nonpositive_a,
-        "n_saturating": n_saturating,
+        "n_pole_too_close": n_pole_too_close,
         "fallback_frames": [image_names[i] for i in scale_only_rows],
         "global_scale": global_scale,
         "far_limit_p10_p50_p90": (
@@ -701,7 +710,7 @@ def align_depth_affine(
 def apply_depth_alignment(
     result: "FeedforwardResult",
     reconstruction: pycolmap.Reconstruction,
-    model: str = "scale",
+    model: Literal["scale", "affine"] = "scale",
 ) -> dict:
     """
     Align result.depth to the reconstruction's world scale in place; recompute world_points.

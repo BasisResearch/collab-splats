@@ -52,6 +52,11 @@ Measured on GH010229 (300 frames, all frames clear the observation floor and non
 | 0.25 (4x cap) | 243 | 57 |
 | **0.5 (2x cap, shipped)** | **202** | **98** |
 
+`align_depth_affine` now also reports how well the accepted fits explain their own inliers —
+per-frame median relative disparity residual, p10/p50/p90. On the same scene it moves 0.0208 /
+0.0454 / 0.1020 (positivity only) to 0.0193 / 0.0414 / 0.0897 at the shipped floor: the frames
+the guard rejects were the worse-fitting ones, not a random third.
+
 So a third of the frames carried a fit that blew up past 2x at its own far end. They now take the
 scale path. Anyone re-measuring affine later should read the fitted count first: at 202/300 the
 affine mode is much closer to the scale mode than the grid above tested it at.

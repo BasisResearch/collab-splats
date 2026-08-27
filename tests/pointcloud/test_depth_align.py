@@ -213,6 +213,17 @@ def test_affine_survives_a_single_sky_pixel():
     assert stats["n_pole_too_close"] == 0
 
 
+def test_affine_stats_report_the_fit_residual():
+    # The counters say how many frames fitted, not how well; a clean synthetic scene must
+    # come back at ~0 residual, which is what makes a real scene's number readable
+    recon, depth = _affine_scene(a=1.5, b=-0.004)
+
+    _coeffs, _far, stats = sfm.align_depth_affine(recon, ["frame_000000.jpg"], depth)
+    assert stats["n_fitted"] == 1
+    assert len(stats["disparity_residual_p10_p50_p90"]) == 3
+    assert max(stats["disparity_residual_p10_p50_p90"]) < 1e-6
+
+
 def test_alignment_rejects_a_names_to_depth_row_mismatch():
     # One name short of the depth stack used to walk off the end of image_names silently,
     # aligning row i of the depth with frame i of a different list

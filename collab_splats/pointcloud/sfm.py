@@ -629,6 +629,7 @@ def align_depth_affine(
     n_unsolvable = 0
     n_nonpositive_a = 0
     n_pole_too_close = 0
+    residuals: list[float] = []
 
     pairs = _depth_correspondences(reconstruction, image_names, depth)
     for row, (d_colmap, d_vda) in enumerate(pairs):
@@ -664,6 +665,11 @@ def align_depth_affine(
         far_limits[row] = float(d_vda[inliers].max())
         fitted[row] = True
 
+        # How well the accepted fit actually explains its own inliers, in disparity and
+        # relative to the track's own disparity so frames of different scenes compare
+        predicted = a / d_vda[inliers] + b
+        residuals.append(float(np.median(np.abs(predicted - 1.0 / d_colmap[inliers]) * d_colmap[inliers])))
+
     # Scale-only frames: a = 1/s, b = 0 reproduces the scale path exactly
     global_scale = float(np.median(scales[~np.isnan(scales)])) if (~np.isnan(scales)).any() else None
     for row in np.flatnonzero(~fitted):
@@ -676,9 +682,12 @@ def align_depth_affine(
         coeffs[row] = (1.0 / scale, 0.0)
         scale_only_rows.append(int(row))
 
+    residual_percentiles = [float(x) for x in np.percentile(residuals, [10, 50, 90])] if residuals else []
+
     logger.info(
         "depth alignment (affine): %d/%d frames fitted, %d scale-only "
-        "(%d under %d obs, %d unsolvable, %d a<=0, %d pole too close to the far end)",
+        "(%d under %d obs, %d unsolvable, %d a<=0, %d pole too close to the far end); "
+        "per-frame median relative disparity residual p10/p50/p90 %s",
         int(fitted.sum()),
         n_frames,
         len(scale_only_rows),
@@ -687,6 +696,7 @@ def align_depth_affine(
         n_unsolvable,
         n_nonpositive_a,
         n_pole_too_close,
+        [round(x, 4) for x in residual_percentiles],
     )
 
     stats = {
@@ -696,6 +706,7 @@ def align_depth_affine(
         "n_unsolvable": n_unsolvable,
         "n_nonpositive_a": n_nonpositive_a,
         "n_pole_too_close": n_pole_too_close,
+        "disparity_residual_p10_p50_p90": residual_percentiles,
         "fallback_frames": [image_names[i] for i in scale_only_rows],
         "global_scale": global_scale,
         "far_limit_p10_p50_p90": (

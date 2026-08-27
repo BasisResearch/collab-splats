@@ -512,3 +512,47 @@ def test_step_post_backward_refines_only_inside_the_window():
     # Statistics reset after a refine, so the next one starts from a clean window
     assert state["denom"].sum() == 0
     assert state["opacity_accum"].sum() == 0
+
+
+def test_decode_is_invariant_to_denormalization():
+    """
+    The heads are a learned function of view_distance, so decode must feed them the training frame.
+    """
+    from collab_splats.splats.trainer import denormalize_anchors
+
+    field = _field(n_offsets=4)
+    cam_to_world, intrinsics = _cam()
+
+    # Random heads, so the invariant cannot be carried by a near-constant untrained output
+    with torch.no_grad():
+        for head in (field.mlps.mlp_opacity, field.mlps.mlp_cov, field.mlps.mlp_colour):
+            for layer in head:
+                if isinstance(layer, torch.nn.Linear):
+                    torch.nn.init.normal_(layer.weight, std=0.5)
+                    torch.nn.init.normal_(layer.bias, std=0.5)
+    trained, _ = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+
+    # Undo a normalisation the way the trainer does before writing outputs: anchors and the camera
+    # both move to world units, K is unchanged, so the same anchors stay visible
+    scale = 0.02
+    denormalize_anchors(field, None, cam_to_world, np.zeros(3, dtype=np.float32), scale)
+    world, _ = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+
+    assert len(world["means"]) == len(trained["means"])
+    assert torch.allclose(world["opacities"], trained["opacities"], atol=1e-5)
+    assert torch.allclose(world["colors"], trained["colors"], atol=1e-5)
+    assert torch.allclose(world["means"], trained["means"] / scale, atol=1e-4)
+    assert torch.allclose(world["scales"], trained["scales"] / scale, rtol=1e-4)
+
+
+def test_denormalize_anchors_records_the_training_frame_scale():
+    """
+    distance_scale converts a world-frame distance back into the frame the heads were trained in.
+    """
+    from collab_splats.splats.trainer import denormalize_anchors
+
+    field = _field()
+    cam_to_world, _ = _cam()
+    assert field.distance_scale == 1.0
+    denormalize_anchors(field, None, cam_to_world, np.zeros(3, dtype=np.float32), 0.02)
+    assert field.distance_scale == 0.02

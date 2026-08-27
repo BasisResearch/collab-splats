@@ -241,6 +241,12 @@ class AnchorField:
 
         self.mlps = ScaffoldMLPs(cfg, n_views=n_views).to(device)
 
+        # view_distance is an MLP INPUT, so it is only meaningful in the frame the heads were trained
+        # in. Geometry can be rescaled freely (denormalize_anchors does exactly that before the outputs
+        # are written); this factor carries the world-frame distance back into the training frame so
+        # the heads keep seeing the domain they learned. 1.0 while training, set at denormalisation.
+        self.distance_scale = 1.0
+
         # One Adam per anchor tensor so the strategy can grow/prune optimizer state per tensor
         learning_rates = {
             "anchors": cfg.anchor_lr * scene_scale,
@@ -320,7 +326,7 @@ class AnchorField:
         to_camera = anchors - camera_centre
         view_distance = to_camera.norm(dim=-1, keepdim=True)
         view_direction = to_camera / view_distance.clamp_min(1e-8)
-        features = torch.cat([feat, view_direction, view_distance], dim=-1)
+        features = torch.cat([feat, view_direction, view_distance * self.distance_scale], dim=-1)
 
         neural_opacity, cov, colour = self.mlps(features, camera_id)
 

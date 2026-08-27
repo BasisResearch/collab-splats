@@ -183,7 +183,9 @@ def bake_anchor_gaussians(
 
     mean_direction = direction_sum / seen_count[:, None]
     mean_direction = mean_direction / mean_direction.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+    # distance_scale carries the world-frame distance back into the frame the heads were trained in
     mean_distance = (anchors - cam_to_world[:, :3, 3].mean(dim=0)).norm(dim=-1, keepdim=True)
+    mean_distance = mean_distance * anchor_field.distance_scale
 
     # One decode at that direction, bypassing the frustum filter so every anchor is written
     with torch.no_grad():
@@ -280,6 +282,9 @@ def write_splat_outputs(
     if anchor_field is not None:
         checkpoint["mlps"] = anchor_field.mlps.state_dict()
         checkpoint["voxel_size"] = anchor_field.voxel_size
+
+        # Anything reloading these heads renders in world units, so it needs the training-frame factor
+        checkpoint["distance_scale"] = anchor_field.distance_scale
     torch.save(checkpoint, out_dir / "ckpt.pt")
 
     # splats.zarr: renders streamed per view, provenance in attrs

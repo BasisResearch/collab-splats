@@ -272,7 +272,7 @@ def denormalize_outputs(
 
 
 def denormalize_anchors(
-    anchors: torch.nn.ParameterDict,
+    anchor_field,
     pose_refiner: CameraOptModule | None,
     cam_to_world: Tensor,
     center: np.ndarray,
@@ -283,14 +283,19 @@ def denormalize_anchors(
 
     - anchors: p / scale + center; both halves of the log ``scaling`` shift by - log(scale).
     - offsets are stored in units of the anchor's own extent, so they are scale-free and untouched.
+    - the MLP heads are NOT scale-free: ``view_distance`` is one of their inputs, so the field records
+      the factor that maps a world distance back into the training frame. Without it every decode
+      after this call feeds the heads a domain they never saw and mlp_opacity's tanh saturates.
     """
     center_t = torch.as_tensor(center, dtype=torch.float32, device=cam_to_world.device)
+    anchors = anchor_field.params
     with torch.no_grad():
         anchors["anchors"].data = anchors["anchors"].data / scale + center_t
         anchors["scaling"].data = anchors["scaling"].data - math.log(scale)
         cam_to_world[:, :3, 3] = cam_to_world[:, :3, 3] / scale + center_t
         if pose_refiner is not None:
             pose_refiner.translation.weight /= scale
+    anchor_field.distance_scale = scale
 
 
 def init_gaussians_from_points(
@@ -719,7 +724,7 @@ def train(
     # Outputs stay in world units: undo the normalisation before anything is written
     if cfg.normalize_scene:
         if anchor_field is not None:
-            denormalize_anchors(gaussians, pose_refiner, cam_to_world, center, scale)
+            denormalize_anchors(anchor_field, pose_refiner, cam_to_world, center, scale)
         else:
             denormalize_outputs(gaussians, pose_refiner, cam_to_world, center, scale)
 

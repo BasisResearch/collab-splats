@@ -351,3 +351,67 @@ class AnchorField:
             "log_scales": log_scales,
         }
         return decoded, decode_index
+
+
+########################################
+# Densification
+########################################
+
+
+class AnchorStrategy(Strategy):
+    """
+    Scaffold-GS anchor growing and pruning, in gsplat's Strategy shape.
+
+    - Screen-space gradients are accumulated per (anchor, offset) slot through the decode index, then
+      averaged by visit count — Scaffold's offset_gradient_accum / offset_denom.
+    - Growing adds anchors in unoccupied voxels around high-gradient slots; pruning drops anchors whose
+      accumulated decoded opacity stays below min_opacity.
+    - Anchor tensors are grown/pruned through gsplat's own optimizer-state surgery, so Adam moments
+      follow the parameters. The MLP heads are fixed-size and are never handed to this class.
+
+    Reimplemented from Scaffold-GS (Lu et al., CVPR 2024) — adjust_anchor / anchor_growing /
+    training_statis in city-super/Scaffold-GS scene/gaussian_model.py. No code copied.
+    """
+
+    def __init__(self, cfg: ScaffoldConfig, primitive: str, voxel_size: float = 0.0, verbose: bool = False):
+        self.cfg = cfg
+        self.primitive = primitive
+        self.voxel_size = voxel_size
+        self.verbose = verbose
+
+        # 2DGS backward writes .absgrad on means2d only, never on the gradient_2dgs tensor
+        # DefaultStrategy reads, so the key must follow the primitive or accumulation is all zeros
+        self.key_for_gradient = "means2d" if primitive == "3dgs" else "gradient_2dgs"
+
+    def initialize_state(self, n_slots: int) -> dict[str, Tensor]:
+        """
+        Per-slot accumulators; n_slots = n_anchors x n_offsets.
+        """
+        return {
+            "grad_accum": torch.zeros(n_slots),
+            "denom": torch.zeros(n_slots),
+            "opacity_accum": torch.zeros(n_slots),
+        }
+
+    def accumulate(self, state: dict, info: dict, decode_index: Tensor, opacities: Tensor) -> None:
+        """
+        Scatter this view's screen-space gradient norms and opacities into the per-slot accumulators.
+
+        - Gradients are renormalised to [-1, 1] screen space exactly as gsplat's DefaultStrategy does
+          (strategy/default.py:243-249), which is what makes Scaffold's published grad_threshold
+          directly usable here.
+        - A step whose gradient never reached the tensor (nothing rendered) is skipped, not counted.
+        """
+        grads = info[self.key_for_gradient].grad
+        if grads is None:
+            return
+        grads = grads.detach().clone()
+        grads[..., 0] *= info["width"] / 2.0 * info["n_cameras"]
+        grads[..., 1] *= info["height"] / 2.0 * info["n_cameras"]
+        grad_norm = grads.reshape(-1, 2).norm(dim=-1)
+
+        device = state["grad_accum"].device
+        index = decode_index.to(device)
+        state["grad_accum"].index_add_(0, index, grad_norm.to(device))
+        state["denom"].index_add_(0, index, torch.ones_like(index, dtype=state["denom"].dtype))
+        state["opacity_accum"].index_add_(0, index, opacities.detach().to(device))

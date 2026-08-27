@@ -285,3 +285,60 @@ def test_render_gradient_reaches_the_anchor_features():
     render["rgb"].sum().backward()
     assert field.params["anchor_feat"].grad is not None
     assert torch.isfinite(field.params["anchor_feat"].grad).all()
+
+
+########################################
+# Densification
+########################################
+
+
+def test_gradient_key_follows_the_primitive():
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    assert AnchorStrategy(ScaffoldConfig(), primitive="3dgs").key_for_gradient == "means2d"
+    assert AnchorStrategy(ScaffoldConfig(), primitive="2dgs").key_for_gradient == "gradient_2dgs"
+
+
+def test_accumulation_renormalises_gradients_like_gsplat():
+    """gsplat's DefaultStrategy scales means2d grads to [-1, 1] screen space before thresholding."""
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
+    state = strategy.initialize_state(n_slots=8)
+
+    means2d = torch.zeros(1, 3, 2)
+    means2d.grad = torch.tensor([[[1e-3, 0.0], [0.0, 2e-3], [0.0, 0.0]]])
+    info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1}
+    decode_index = torch.tensor([0, 5, 7])
+
+    strategy.accumulate(state, info, decode_index, opacities=torch.tensor([0.5, 0.5, 0.5]))
+    assert state["grad_accum"][0] == pytest.approx(1e-3 * 400.0)
+    assert state["grad_accum"][5] == pytest.approx(2e-3 * 300.0)
+    assert state["denom"][0] == 1
+    assert state["denom"][1] == 0
+    assert state["opacity_accum"][0] == pytest.approx(0.5)
+
+
+def test_accumulation_is_additive_over_steps():
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
+    state = strategy.initialize_state(n_slots=4)
+    means2d = torch.zeros(1, 1, 2)
+    means2d.grad = torch.tensor([[[1e-3, 0.0]]])
+    info = {"means2d": means2d, "width": 800, "height": 600, "n_cameras": 1}
+    for _ in range(3):
+        strategy.accumulate(state, info, torch.tensor([2]), opacities=torch.tensor([0.25]))
+    assert state["denom"][2] == 3
+    assert state["grad_accum"][2] == pytest.approx(3 * 1e-3 * 400.0)
+    assert state["opacity_accum"][2] == pytest.approx(0.75)
+
+
+def test_accumulation_without_a_gradient_is_a_no_op():
+    from collab_splats.splats.scaffold import AnchorStrategy
+
+    strategy = AnchorStrategy(ScaffoldConfig(n_offsets=2, feat_dim=8), primitive="3dgs")
+    state = strategy.initialize_state(n_slots=4)
+    info = {"means2d": torch.zeros(1, 1, 2), "width": 800, "height": 600, "n_cameras": 1}
+    strategy.accumulate(state, info, torch.tensor([2]), opacities=torch.tensor([0.25]))
+    assert state["denom"].sum() == 0

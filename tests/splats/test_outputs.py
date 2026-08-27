@@ -171,3 +171,64 @@ def test_scaffold_ply_loads_with_the_expected_field_set(tmp_path_factory):
     assert {"x", "y", "z", "opacity", "f_dc_0", "f_dc_1", "f_dc_2"} <= fields
     assert {"scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"} <= fields
     assert len(ply["vertex"]) > 0
+
+
+@cuda
+def test_scaffold_report_records_the_decoded_gaussian_count(tmp_path_factory):
+    """Scaffold's primitive count is per view: the report carries the measured mean, not just anchors."""
+    images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
+    cfg = SplatsConfig.from_dict(
+        {
+            "representation": "scaffold",
+            "primitive": "3dgs",
+            "max_steps": 30,
+            "log_every": 10,
+            "scaffold": {"n_offsets": 2, "feat_dim": 8, "update_from": 10, "update_until": 20, "refine_every": 10},
+        }
+    )
+    out_dir = tmp_path_factory.mktemp("scaffold_decoded_count")
+    train(cfg, images, world_to_cam, intrinsics, points, colors, out_dir, depth_targets=depths)
+
+    report = json.loads((out_dir / "splats_quality_report.json").read_text())
+    summary = report["summary"]
+    n_anchors = summary["n_gaussians"]
+
+    # Every view decodes at most n_anchors x n_offsets Gaussians (frustum culling and the opacity
+    # gate only ever remove), so the mean sits inside that bound and is reported per frame too
+    assert summary["n_decoded_mean"] > 0
+    assert summary["n_decoded_mean"] <= n_anchors * cfg.scaffold_config.n_offsets
+    assert all(frame["n_decoded"] > 0 for frame in report["per_frame"])
+
+
+@cuda
+def test_vanilla_report_has_no_decoded_count(tmp_path_factory):
+    """A vanilla run's primitive count is exact, so there is nothing to average."""
+    images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=3)
+    cfg = SplatsConfig.from_dict({"max_steps": 20, "log_every": 10})
+    out_dir = tmp_path_factory.mktemp("vanilla_decoded_count")
+    train(cfg, images, world_to_cam, intrinsics, points, colors, out_dir, depth_targets=depths)
+
+    report = json.loads((out_dir / "splats_quality_report.json").read_text())
+    assert "n_decoded_mean" not in report["summary"]
+    assert all("n_decoded" not in frame for frame in report["per_frame"])
+
+
+@cuda
+def test_bake_never_returns_zero_gaussians_when_every_offset_is_closed():
+    """An empty bake cannot be serialised: export_splats reshapes shN by the splat count."""
+    from collab_splats.splats.outputs import bake_anchor_gaussians
+
+    field = _scaffold_field()
+    cam_to_world = torch.eye(4, device="cuda")[None].repeat(3, 1, 1)
+    cam_to_world[:, 2, 3] = -4.0
+    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device="cuda")[None].repeat(3, 1, 1)
+
+    # Drive every neural opacity negative: the tanh head saturates at -1 for a large negative bias
+    with torch.no_grad():
+        field.mlps.mlp_opacity[-2].bias.fill_(-50.0)
+        field.mlps.mlp_opacity[-2].weight.zero_()
+
+    baked = bake_anchor_gaussians(field, cam_to_world, intrinsics, width=64, height=64)
+    assert len(baked["means"]) == 1
+    assert baked["sh0"].shape == (1, 1, 3)
+    assert baked["shN"].shape == (1, 0, 3)

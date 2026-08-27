@@ -51,7 +51,7 @@ def render_all_views(
     - With an appearance module each view gets its learned colour correction (train views only).
     - With ``anchor_field`` the view's Gaussians are decoded from the anchors instead (post-activation
       RGB, so there is no SH degree to render at): these renders ARE the scaffold model, unlike the ply.
-    - Returns per-frame psnr/ssim.
+    - Returns per-frame psnr/ssim, plus ``n_decoded`` per frame under ``anchor_field``.
     """
     n_views, height, width = images.shape[:3]
     device = cam_to_world.device
@@ -123,7 +123,13 @@ def render_all_views(
             mse = F.mse_loss(rendered_rgb, target_rgb).item()
             ssim_distance = ssim_loss(rendered_nchw, target_nchw).item()
             psnr = 10 * np.log10(1.0 / max(mse, 1e-12))
-            per_frame.append({"image_id": view, "psnr": psnr, "ssim": 1.0 - ssim_distance})
+            frame = {"image_id": view, "psnr": psnr, "ssim": 1.0 - ssim_distance}
+
+            # Scaffold's primitive count is a per-view quantity — frustum culling and the opacity
+            # gate decide it every frame — so it is measured here rather than inferred from anchors
+            if anchor_field is not None:
+                frame["n_decoded"] = int(len(decoded["means"]))
+            per_frame.append(frame)
 
             # Stream the render into its chunk
             rgb_uint8 = (rendered_rgb[0] * 255).round().byte()
@@ -189,6 +195,13 @@ def bake_anchor_gaussians(
         scaling = torch.exp(anchor_field.params["scaling"].detach())
         offsets = anchor_field.params["offsets"].detach()
         keep = (neural_opacity > 0).reshape(-1)
+
+        # An all-closed decode would write an empty ply, which gsplat's export_splats cannot
+        # serialise (its shN reshape needs at least one splat). Keep the most opaque offset,
+        # mirroring the same guard in AnchorField.decode.
+        if not bool(keep.any()):
+            keep = torch.zeros_like(keep)
+            keep[neural_opacity.reshape(-1).argmax()] = True
 
         means = (anchors[:, None, :] + offsets * scaling[:, None, :3]).reshape(-1, 3)[keep]
         cov = cov.reshape(-1, 7)[keep]
@@ -291,22 +304,31 @@ def write_splat_outputs(
     mean_ssim = float(np.mean([frame["ssim"] for frame in per_frame]))
     # Primitive count: gaussians for vanilla, anchors for scaffold (the decoded count is per view)
     n_gaussians = int(len(gaussians["anchors" if anchor_field is not None else "means"]))
-    report = {
-        "summary": {
-            "psnr": mean_psnr,
-            "ssim": mean_ssim,
-            "n_gaussians": n_gaussians,
-            "seconds": round(train_seconds, 1),
-            "final_losses": final_losses,
-            "config": config_dict,
-        },
-        "per_frame": per_frame,
+    summary = {
+        "psnr": mean_psnr,
+        "ssim": mean_ssim,
+        "n_gaussians": n_gaussians,
+        "seconds": round(train_seconds, 1),
+        "final_losses": final_losses,
+        "config": config_dict,
     }
+
+    # Scaffold: n_gaussians above counts ANCHORS, so the rendered primitive count needs its own
+    # number — the mean over views of what the decode actually handed the rasterizer
+    if anchor_field is not None:
+        summary["n_decoded_mean"] = float(np.mean([frame["n_decoded"] for frame in per_frame]))
+    report = {"summary": summary, "per_frame": per_frame}
     report_path = out_dir / "splats_quality_report.json"
     report_path.write_text(json.dumps(report, indent=2))
+
+    # Scaffold counts anchors, so the log names the unit and carries the decoded mean beside it
+    unit = "gaussians" if anchor_field is None else "anchors"
+    decoded_note = "" if anchor_field is None else f" ({summary['n_decoded_mean']:.0f} decoded/view)"
     logger.info(
-        "splats: %d gaussians, psnr %.2f, ssim %.3f, %.0fs -> %s",
+        "splats: %d %s%s, psnr %.2f, ssim %.3f, %.0fs -> %s",
         n_gaussians,
+        unit,
+        decoded_note,
         mean_psnr,
         mean_ssim,
         train_seconds,

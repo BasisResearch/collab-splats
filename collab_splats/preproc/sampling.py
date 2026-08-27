@@ -268,9 +268,8 @@ def _sample_by_quality(
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
     # Window radius: half the target spacing, capped at search_radius. This does NOT
-    # make the windows disjoint — the no-grid path takes spacing from the FIRST target
-    # gap only, and grid mode takes an average, so irregular targets still overlap.
-    # The dedup pass below is what keeps the index map one-frame-one-row.
+    # make the windows disjoint — grid mode takes an average spacing, so irregular
+    # targets still overlap. The dedup pass below keeps the index map one-frame-one-row.
     if candidates is not None:
         # Grid mode: spacing and radius are counted in grid steps, and each target
         # snaps to the first grid member at or after it before the window is cut.
@@ -292,7 +291,9 @@ def _sample_by_quality(
         positions = np.clip(np.searchsorted(grid, targets), 0, grid.size - 1)
         windows = [grid[max(0, p - radius) : p + radius + 1].tolist() for p in positions]
     else:
-        spacing = targets[1] - targets[0] if len(targets) > 1 else total
+        # The narrowest gap, not the first one: irregular targets whose first gap is the
+        # widest would otherwise cut windows that overlap and collapse onto one frame
+        spacing = int(np.diff(np.asarray(targets)).min()) if len(targets) > 1 else total
         radius = min(max((spacing - 1) // 2, 0), search_radius)
         windows = [sorted({min(max(t + o, 0), total - 1) for o in range(-radius, radius + 1)}) for t in targets]
 

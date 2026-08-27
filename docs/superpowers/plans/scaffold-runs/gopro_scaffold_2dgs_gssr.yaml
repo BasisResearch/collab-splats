@@ -1,0 +1,57 @@
+# Scaffold-GS on 2dgs at GS-SR's own parameters (Task 13, stage-2 run of the scaffold-gs plan).
+# Upstream reference: method_configs["scaffold-2dgs"] = Scaffold2DGSSceneConfig + ScaffoldGaussianConfig
+# (yanxian-ll/GS-SR gssr/configs/method_config.py:104-109) — every scaffold default, plus
+# TwoDGSSceneConfig's lambda_normal 0.05 from step 7000, lambda_dist 0.0 and depth_ratio 0.0
+# (gssr/scene/twodgs_scene.py:14-34), plus lambda_scaling 0.01 on the decoded scales, which under
+# scaffold-2dgs is the 2-channel area (gssr/scene/scaffold_2dgs_scene.py:25).
+#
+# Scene: GH010229_undist_r7 (where the 2dgs baseline was measured). Baseline — do NOT rerun it:
+#   vanilla 2dgs splats_combined2dgs  psnr 20.805  ssim 0.6776  1,875,613 gaussians  803 s
+#
+# Deliberate differences from that baseline, both because upstream has no such term:
+#   - no depth loss (baseline: depth 0.01 decaying to 0.001 by 12000 against the SfM depth targets)
+#   - distortion off (baseline: 0.01 from step 3000; upstream ships lambda_dist = 0.0)
+# Kept from the baseline because they are pipeline knobs, not scaffold ones: 12000 steps (the budget
+# the baseline was measured at, not upstream's 30000), pose_opt, no c2f, normalize_scene.
+# appearance_opt is off — upstream's appearance path IS the embedding.
+preproc:
+  fps: 2.0
+  min_frames: null
+  max_frames: 300
+  n_workers: 4
+  undistort: true
+pointcloud:
+  method: sfm
+  backend: instantsfm
+  instantsfm:
+    retriangulation: true
+semantics:
+  enabled: false
+mesh:
+  enabled: false            # parity is PSNR / primitive count first; meshing is the follow-up question
+splats:
+  enabled: true
+  primitive: 2dgs
+  representation: scaffold
+  appearance_opt: false     # Scaffold's embedding is the whole appearance path, as upstream
+  pose_opt: true
+  max_steps: 12000          # the baseline's budget; upstream's own iterations = 30000
+  num_downscales: 0         # the 2dgs baseline ran without c2f, and upstream has no c2f either
+  resolution_schedule: 3000
+  normalize_scene: true
+  scaffold:
+    n_offsets: 10
+    feat_dim: 32
+    appearance_dim: 32
+  # configs/base.yaml's loss block deep-merges into this one, so every term upstream does NOT
+  # have has to be zeroed by name here or it silently keeps training.
+  losses:
+    normal_consistency: {weight: 0.05, start: 7000}   # lambda_normal, gated at 7000 upstream
+    distortion: {weight: 0.0}                         # lambda_dist = 0.0 upstream
+    depth: {weight: 0.0}                              # base.yaml ships 0.01; upstream has no depth term
+    # scale_reg IS upstream's lambda_scaling: 0.01 x the decoded 2-channel area. Our 2dgs default
+    # loss set carries no scale_reg at all, so it has to be named here or the term never fires.
+    scale_reg: {weight: 0.01}
+    # opacity_reg stays off under scaffold: opacity is decoded per view and its SIGN is the offset
+    # visibility mask, so pulling it toward zero shuts offsets instead of thinning gaussians.
+    opacity_reg: {weight: 0.0}

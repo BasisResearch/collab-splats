@@ -121,7 +121,7 @@ def test_flat_dir_name_reproduces_names_already_in_the_bucket(relative, expected
 
 
 ########
-# plan_pairs
+# plan_videos
 ########
 
 
@@ -147,16 +147,16 @@ def tree(tmp_path):
     # Pair with an extension AND case difference: .mp4 edit, .MP4 original
     _touch(root / "2026-07-15" / "Goprosplat" / "GH010228.mp4")
     _touch(root / "2026-07-15" / "Goprosplat" / "src" / "GH010228.MP4")
-    # Edit with no original in src/: skipped
+    # No src/ counterpart: an un-edited camera original, curated on its own
     _touch(root / "2026-07-15" / "Goprosplat" / "GH010229.mp4")
-    # Original with no edit: skipped
+    # A video left in src/ with nothing above it: an orphan, skipped and logged
     _touch(root / "2026-06-29" / "GoproSplat" / "src" / "GH010221.MP4")
     # Spaces in the parent name, and a .mp4 edit against a .MOV original
     _touch(root / "2026-06-29" / "Phone pics and splat videos" / "IMG_4085.mp4")
     _touch(root / "2026-06-29" / "Phone pics and splat videos" / "src" / "IMG_4085.MOV")
-    # Videos directly in a date folder with no src/ anywhere: camera originals, skipped
+    # A video directly in a date folder with no src/ anywhere: another original
     _touch(root / "2026-06-03" / "GH010218.MP4")
-    # An undated top-level folder: walked like any other, because the pairing rule is the
+    # An undated top-level folder: walked like any other, because the src/ rule is the
     # only structural assumption made about the tree
     _touch(root / "scratch" / "whatever.mp4")
     _touch(root / "scratch" / "src" / "whatever.MP4")
@@ -166,83 +166,110 @@ def tree(tmp_path):
     return root
 
 
-def test_plan_pairs_returns_only_videos_with_a_src_counterpart(tree):
-    names = [p.name for p in preproc.plan_pairs(tree)]
-    assert names == [
+def test_plan_videos_returns_every_video_outside_src(tree):
+    # Both edits and un-edited originals are in scope; only what sits inside src/ is not
+    assert [name for _, _, name in preproc.plan_videos(tree)] == [
+        "2026_06_03-GH010218",
         "2026_06_29-Phone_pics_and_splat_videos-IMG_4085",
         "2026_07_15-Goprosplat-GH010228",
+        "2026_07_15-Goprosplat-GH010229",
         "scratch-whatever",
     ]
 
 
-def test_plan_pairs_matches_across_case(tree):
-    pair = next(p for p in preproc.plan_pairs(tree) if p.name.endswith("GH010228"))
-    assert pair.edit.name == "GH010228.mp4"
-    assert pair.source.name == "GH010228.MP4"
+def test_plan_videos_pairs_an_edit_with_its_source(tree):
+    video, source, _ = next(e for e in preproc.plan_videos(tree) if e[2].endswith("GH010228"))
+    assert video.name == "GH010228.mp4"
+    assert source.name == "GH010228.MP4"
 
 
-def test_plan_pairs_matches_across_extension(tree):
-    pair = next(p for p in preproc.plan_pairs(tree) if p.name.endswith("IMG_4085"))
-    assert pair.edit.suffix == ".mp4"
-    assert pair.source.suffix == ".MOV"
+def test_plan_videos_gives_an_original_a_null_source(tree):
+    # No src/ counterpart means the video is its own source: nothing to align, nothing to inject
+    video, source, _ = next(e for e in preproc.plan_videos(tree) if e[2].endswith("GH010229"))
+    assert video.name == "GH010229.mp4"
+    assert source is None
 
 
-def test_plan_pairs_walks_undated_top_level_dirs(tree):
-    # No date gate: a folder pairs on the src/ rule alone, whatever it is called
-    assert "scratch-whatever" in [p.name for p in preproc.plan_pairs(tree)]
+def test_plan_videos_matches_across_case(tree):
+    video, source, _ = next(e for e in preproc.plan_videos(tree) if e[2].endswith("GH010228"))
+    assert video.suffix == ".mp4"
+    assert source.suffix == ".MP4"
 
 
-def test_plan_pairs_walks_videos_directly_in_a_date_folder(tmp_path):
+def test_plan_videos_matches_across_extension(tree):
+    video, source, _ = next(e for e in preproc.plan_videos(tree) if e[2].endswith("IMG_4085"))
+    assert video.suffix == ".mp4"
+    assert source.suffix == ".MOV"
+
+
+def test_plan_videos_walks_undated_top_level_dirs(tree):
+    # No date gate: a folder is walked whatever it is called
+    assert "scratch-whatever" in [name for _, _, name in preproc.plan_videos(tree)]
+
+
+def test_plan_videos_walks_videos_directly_in_a_date_folder(tmp_path):
     # The old plan_copies never looked here, so 2026-06-03/GH010218-220.MP4 were invisible
     root = tmp_path / "gdrive-src"
     _touch(root / "2026-06-03" / "GH010218.mp4")
     _touch(root / "2026-06-03" / "src" / "GH010218.MP4")
-    assert [p.name for p in preproc.plan_pairs(root)] == ["2026_06_03-GH010218"]
+    assert [name for _, _, name in preproc.plan_videos(root)] == ["2026_06_03-GH010218"]
 
 
-def test_plan_pairs_walks_arbitrarily_deep_trees(tmp_path):
+def test_plan_videos_walks_arbitrarily_deep_trees(tmp_path):
     # The audiomoth-only-deployments shape: four levels, and a .mov edit on a .MP4 original
     root = tmp_path / "gdrive-src"
     deep = root / "audiomoth-only-deployments" / "20260810-20260831" / "boston-ringerpark-west" / "splat_videos"
     _touch(deep / "GH010247.mov")
     _touch(deep / "src" / "GH010247.MP4")
     expected = "audiomoth_only_deployments-20260810_20260831-boston_ringerpark_west-splat_videos-GH010247"
-    assert [p.name for p in preproc.plan_pairs(root)] == [expected]
+    assert [name for _, _, name in preproc.plan_videos(root)] == [expected]
 
 
-def test_plan_pairs_never_treats_a_src_video_as_an_edit(tmp_path):
-    # A video inside src/ is a camera original even if src/src/ somehow existed
+def test_plan_videos_skips_a_video_orphaned_inside_src(tmp_path):
+    # A video inside src/ with nothing above it is never curated: its flat name would bake in
+    # "src", and where it really belongs is a judgement call
     root = tmp_path / "gdrive-src"
     _touch(root / "2026-07-15" / "Goprosplat" / "src" / "GH010228.MP4")
-    assert preproc.plan_pairs(root) == []
+    assert preproc.plan_videos(root) == []
 
 
-def test_plan_pairs_prunes_src_at_any_depth(tmp_path):
-    # GH010252 sits in a src/ four levels down with no edit above it: never a candidate
+def test_plan_videos_logs_every_orphan_by_name(tmp_path, caplog):
+    # The whole point of skipping them: a human has to see which files need filing
+    root = tmp_path / "gdrive-src"
+    _touch(root / "2026-06-03" / "src" / "GH010220.MP4")
+    _touch(root / "2026-07-22" / "splats" / "src" / "GH010233.MP4")
+    with caplog.at_level("WARNING"):
+        preproc.plan_videos(root)
+    assert "GH010220.MP4" in caplog.text
+    assert "GH010233.MP4" in caplog.text
+
+
+def test_plan_videos_prunes_src_at_any_depth(tmp_path):
+    # GH010252 sits in a src/ four levels down with no video above it: an orphan, not an edit
     root = tmp_path / "gdrive-src"
     deep = root / "audiomoth-only-deployments" / "20260817-20260824" / "site" / "splat_videos"
     _touch(deep / "src" / "GH010252.MP4")
-    assert preproc.plan_pairs(root) == []
+    assert preproc.plan_videos(root) == []
 
 
-def test_plan_pairs_never_pairs_two_appledouble_files(tmp_path):
+def test_plan_videos_never_pairs_two_appledouble_files(tmp_path):
     # macOS writes ._X.MP4 beside X.MP4 on SD cards. Both halves present, stems match, and
     # without the dotfile filter two 4 KB metadata blobs are handed to ffmpeg as footage.
     root = tmp_path / "gdrive-src"
     folder = root / "2024-07-09" / "SplatsSD"
     _touch(folder / "._C0104.MP4")
     _touch(folder / "src" / "._C0104.MP4")
-    assert preproc.plan_pairs(root) == []
+    assert preproc.plan_videos(root) == []
 
 
-def test_plan_pairs_raises_on_name_collision(tmp_path):
+def test_plan_videos_raises_on_name_collision(tmp_path):
     # "gopro splat" and "gopro-splat" both sanitize to gopro_splat
     root = tmp_path / "gdrive-src"
     for parent in ("gopro splat", "gopro-splat"):
         _touch(root / "2026-07-15" / parent / "GH010228.mp4")
         _touch(root / "2026-07-15" / parent / "src" / "GH010228.MP4")
     with pytest.raises(ValueError, match="collision"):
-        preproc.plan_pairs(root)
+        preproc.plan_videos(root)
 
 
 ########
@@ -313,8 +340,7 @@ def test_needs_copy_is_true_on_a_fresh_destination(tmp_path):
     edit = tmp_path / "GH010228.mp4"
     _touch(src)
     edit.write_bytes(b"video")
-    pair = preproc.Pair(edit, src, "scene")
-    assert preproc.needs_copy(pair, tmp_path / "out") is True
+    assert preproc.needs_copy(edit, tmp_path / "out") is True
 
 
 def test_needs_copy_is_false_when_the_recorded_source_still_matches(tmp_path):
@@ -327,11 +353,10 @@ def test_needs_copy_is_false_when_the_recorded_source_still_matches(tmp_path):
     dest = tmp_path / "out"
     dest.mkdir()
     (dest / "GH010228.mp4").write_bytes(b"video plus an injected gpmd track")
-    pair = preproc.Pair(edit, src, "scene")
     preproc.write_metadata(dest, edit, {"source": preproc.source_fingerprint(edit)})
 
-    assert preproc.needs_copy(pair, dest) is False
-    assert preproc.needs_copy(pair, dest, force=True) is True
+    assert preproc.needs_copy(edit, dest) is False
+    assert preproc.needs_copy(edit, dest, force=True) is True
 
 
 def test_needs_copy_is_true_when_the_source_changed(tmp_path):
@@ -342,11 +367,10 @@ def test_needs_copy_is_true_when_the_source_changed(tmp_path):
     dest = tmp_path / "out"
     dest.mkdir()
     (dest / "GH010228.mp4").write_bytes(b"video")
-    pair = preproc.Pair(edit, src, "scene")
     preproc.write_metadata(dest, edit, {"source": preproc.source_fingerprint(edit)})
 
     edit.write_bytes(b"a re-exported, different edit")
-    assert preproc.needs_copy(pair, dest) is True
+    assert preproc.needs_copy(edit, dest) is True
 
 
 ########
@@ -460,10 +484,10 @@ def test_solve_offset_recovers_a_known_trim():
     source = np.concatenate([head, body, tail])
 
     result = preproc.solve_offset(body, source)
-    assert result.ok is True
-    assert result.r == pytest.approx(1.0, abs=1e-4)
+    assert result["ok"] is True
+    assert result["r"] == pytest.approx(1.0, abs=1e-4)
     # Within one audio sample of the true 1.0 s offset
-    assert abs(result.offset_s - 1.0) <= 1.0 / preproc.AUDIO_RATE
+    assert abs(result["offset_s"] - 1.0) <= 1.0 / preproc.AUDIO_RATE
 
 
 def test_solve_offset_is_unaffected_by_a_gain_change():
@@ -473,8 +497,8 @@ def test_solve_offset_is_unaffected_by_a_gain_change():
     source = np.concatenate([rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32), body])
 
     result = preproc.solve_offset(body * 0.25, source)
-    assert result.ok is True
-    assert result.r == pytest.approx(1.0, abs=1e-4)
+    assert result["ok"] is True
+    assert result["r"] == pytest.approx(1.0, abs=1e-4)
 
 
 def test_solve_offset_rejects_uncorrelated_audio():
@@ -483,8 +507,8 @@ def test_solve_offset_rejects_uncorrelated_audio():
     source = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
 
     result = preproc.solve_offset(edit, source)
-    assert result.ok is False
-    assert result.r < preproc.DEFAULT_ALIGN_MIN_R
+    assert result["ok"] is False
+    assert result["r"] < preproc.DEFAULT_ALIGN_MIN_R
 
 
 def test_solve_offset_rejects_an_edit_longer_than_its_source():
@@ -493,15 +517,15 @@ def test_solve_offset_rejects_an_edit_longer_than_its_source():
     source = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
 
     result = preproc.solve_offset(edit, source)
-    assert result.ok is False
-    assert result.offset_s == 0.0
+    assert result["ok"] is False
+    assert result["offset_s"] == 0.0
 
 
 def test_solve_offset_rejects_silence():
     # A constant signal has zero variance, so correlation is undefined rather than perfect
     source = np.zeros(preproc.AUDIO_RATE * 3, dtype=np.float32)
     result = preproc.solve_offset(np.zeros(preproc.AUDIO_RATE, dtype=np.float32), source)
-    assert result.ok is False
+    assert result["ok"] is False
 
 
 def test_solve_offset_survives_a_silent_source_window():
@@ -513,9 +537,9 @@ def test_solve_offset_survives_a_silent_source_window():
     source = np.concatenate([np.zeros(preproc.AUDIO_RATE, dtype=np.float32), body])
 
     result = preproc.solve_offset(body, source)
-    assert result.ok is True
-    assert abs(result.offset_s - 1.0) <= 1.0 / preproc.AUDIO_RATE
-    assert np.isfinite(result.r)
+    assert result["ok"] is True
+    assert abs(result["offset_s"] - 1.0) <= 1.0 / preproc.AUDIO_RATE
+    assert np.isfinite(result["r"])
 
 
 def test_solve_offset_threshold_is_overridable():
@@ -523,7 +547,7 @@ def test_solve_offset_threshold_is_overridable():
     edit = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
     source = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
 
-    assert preproc.solve_offset(edit, source, min_r=0.0).ok is True
+    assert preproc.solve_offset(edit, source, min_r=0.0)["ok"] is True
 
 
 def test_solve_offset_recovers_a_lag_that_overruns_the_source_end():
@@ -540,8 +564,8 @@ def test_solve_offset_recovers_a_lag_that_overruns_the_source_end():
     assert preproc.AUDIO_RATE > len(source) - len(edit)
 
     result = preproc.solve_offset(edit, source)
-    assert result.ok is True
-    assert abs(result.offset_s - 1.0) <= 1.0 / preproc.AUDIO_RATE
+    assert result["ok"] is True
+    assert abs(result["offset_s"] - 1.0) <= 1.0 / preproc.AUDIO_RATE
 
 
 def test_solve_offset_rejects_an_edit_longer_than_the_source_plus_tolerance():
@@ -551,8 +575,8 @@ def test_solve_offset_rejects_an_edit_longer_than_the_source_plus_tolerance():
     source = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
 
     result = preproc.solve_offset(edit, source)
-    assert result.ok is False
-    assert result.offset_s == 0.0
+    assert result["ok"] is False
+    assert result["offset_s"] == 0.0
 
 
 ########
@@ -616,9 +640,9 @@ def test_iter_documents_groups_by_key_prefix():
     assert main["Model"] == "GoPro Max"
     # A key with no prefix at all is a whole-file fact like any other Main tag
     assert main["SourceFile"] == "/x/src/GH010218.MP4"
-    assert [chunk.number for chunk in chunks] == [1, 2, 3, 4]
-    assert chunks[0].tags["SampleTime"] == 0.0
-    assert chunks[1].subs == [{"GPSLatitude": 42.3533, "GPSLongitude": -71.0660, "GPSAltitude": 15.55}]
+    assert [number for number, _, _ in chunks] == [1, 2, 3, 4]
+    assert chunks[0][1]["SampleTime"] == 0.0
+    assert chunks[1][2] == [{"GPSLatitude": 42.3533, "GPSLongitude": -71.0660, "GPSAltitude": 15.55}]
 
 
 def test_iter_documents_orders_chunks_numerically_not_lexically():
@@ -632,9 +656,9 @@ def test_iter_documents_orders_chunks_numerically_not_lexically():
         }
     ]
     _, chunks = preproc.iter_documents(dump)
-    assert [chunk.number for chunk in chunks] == [2, 10]
+    assert [number for number, _, _ in chunks] == [2, 10]
     # And the sub-samples run in their own numeric order within the parent chunk
-    assert [sub["GPSLatitude"] for sub in chunks[0].subs] == [42.3532, 42.3533]
+    assert [sub["GPSLatitude"] for sub in chunks[0][2]] == [42.3532, 42.3533]
 
 
 def test_exif_dump_asks_for_the_binary_payloads(monkeypatch):
@@ -740,151 +764,67 @@ def test_first_fix_reads_a_sub_sample_inside_the_chunk_window():
     assert fix["source_time"] == pytest.approx(1.5015)
 
 
-def test_build_payload_satisfies_the_index_contract():
-    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
-    payload = preproc.build_payload(
-        pair,
-        _DUMP,
-        preproc.Alignment(4.2, 0.997, True),
-        duration_s=131.4,
-        unique_id="2026_07_22-splats-GH010234",
-        has_imu=True,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
-    assert payload["unique_id"] == "2026_07_22-splats-GH010234"
-    assert payload["gps"]["latitude"] == pytest.approx(42.3532)
-    assert payload["alignment"] == {"offset_s": 4.2, "r": 0.997, "ok": True}
-    assert payload["source"] == {"size_bytes": 5, "mtime": 1.0}
-    assert payload["has_imu"] is True
-    # Cuts plus colour correction only, so lens geometry still describes the exported pixels
-    assert payload["intrinsics"]["valid_for_edit"] is True
+def test_gps_payload_falls_back_to_the_whole_source_when_the_cut_has_no_fix():
     # No locked fix at or after 4.2 s in _DUMP, so this exercises the whole-source fallback
+    payload = preproc.gps_payload(_DUMP, {"offset_s": 4.2, "r": 0.997, "ok": True})
+    assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is True
 
 
-def test_build_payload_records_a_missing_fix_as_null():
-    pair = preproc.Pair(Path("/x/PXL.mp4"), Path("/x/src/PXL.mp4"), "2026_06_29-Phone-PXL")
-    payload = preproc.build_payload(
-        pair,
-        [{"Main:Model": "Pixel 9 Pro"}],
-        preproc.Alignment(0.0, 0.99, True),
-        duration_s=44.2,
-        unique_id="2026_06_29-Phone-PXL",
-        has_imu=False,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
+def test_gps_payload_records_a_missing_fix_as_null():
+    payload = preproc.gps_payload([{"Main:Model": "Pixel 9 Pro"}], {"offset_s": 0.0, "r": 0.99, "ok": True})
     assert payload["gps"] is None
-    assert payload["has_imu"] is False
     # No fix anywhere, so the flag must not claim an approximate fix exists
     assert payload["gps_source_anchored"] is False
 
 
-def test_build_payload_marks_a_fix_inside_the_cut_as_exact():
+def test_gps_payload_marks_a_fix_inside_the_cut_as_exact():
     # The cut starts at 0.5 s and _DUMP has a locked fix at 1.001 s, so the fix comes
     # from inside the trim and must not be labelled source-anchored
-    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
-    payload = preproc.build_payload(
-        pair,
-        _DUMP,
-        preproc.Alignment(0.5, 0.997, True),
-        duration_s=131.4,
-        unique_id="2026_07_22-splats-GH010234",
-        has_imu=True,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
+    payload = preproc.gps_payload(_DUMP, {"offset_s": 0.5, "r": 0.997, "ok": True})
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is False
 
 
-def test_build_payload_does_not_anchor_a_container_only_fix():
+def test_gps_payload_does_not_anchor_a_container_only_fix():
     # A phone clip has one untimed whole-file coordinate reported at 0, so any non-zero offset
     # skips it and falls through to the whole-source search. That is not a lost timed fix, and
     # labelling it source-anchored stamped the flag on every phone clip in the tree.
-    pair = preproc.Pair(Path("/x/PXL.mp4"), Path("/x/src/PXL.mp4"), "2026_06_29-Phone-PXL")
-    payload = preproc.build_payload(
-        pair,
-        [{"Main:Model": "Pixel 9 Pro", "Main:GPSLatitude": 42.3532, "Main:GPSLongitude": -71.0659}],
-        preproc.Alignment(4.2, 0.99, True),
-        duration_s=44.2,
-        unique_id="2026_06_29-Phone-PXL",
-        has_imu=False,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
+    dump = [{"Main:Model": "Pixel 9 Pro", "Main:GPSLatitude": 42.3532, "Main:GPSLongitude": -71.0659}]
+    payload = preproc.gps_payload(dump, {"offset_s": 4.2, "r": 0.99, "ok": True})
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is False
 
 
-def test_build_payload_records_the_gpmd_chunk_residual():
+def test_gps_payload_records_the_gpmd_chunk_residual():
     # GPMF chunks are 1 Hz, so the injected track starts on the first boundary at or after the
     # cut. The residual is what a consumer needs to line the injected track up with the Parquet.
-    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
-    payload = preproc.build_payload(
-        pair,
-        _DUMP,
-        preproc.Alignment(0.4, 0.997, True),
-        duration_s=131.4,
-        unique_id="2026_07_22-splats-GH010234",
-        has_imu=True,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
+    payload = preproc.gps_payload(_DUMP, {"offset_s": 0.4, "r": 0.997, "ok": True})
     # _DUMP has chunks at 0.0 and 1.001; the first at or after 0.4 is 1.001
     assert payload["gpmd_first_chunk_s"] == pytest.approx(1.001)
     assert payload["gpmd_residual_s"] == pytest.approx(0.601)
 
 
-def test_build_payload_records_a_null_residual_without_a_gpmd_track():
-    pair = preproc.Pair(Path("/x/PXL.mp4"), Path("/x/src/PXL.mp4"), "2026_06_29-Phone-PXL")
-    payload = preproc.build_payload(
-        pair,
-        [{"Main:Model": "Pixel 9 Pro"}],
-        preproc.Alignment(0.0, 0.99, True),
-        duration_s=44.2,
-        unique_id="2026_06_29-Phone-PXL",
-        has_imu=False,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
+def test_gps_payload_records_a_null_residual_without_a_gpmd_track():
+    payload = preproc.gps_payload([{"Main:Model": "Pixel 9 Pro"}], {"offset_s": 0.0, "r": 0.99, "ok": True})
     assert payload["gpmd_first_chunk_s"] is None
     assert payload["gpmd_residual_s"] is None
 
 
-def test_build_payload_reaches_the_csv_index_through_the_real_sidecar(tmp_path):
-    # The seam every other index test skips by hand-building its sidecar: rename `latitude` in
-    # build_payload and those tests all stay green while every GPS cell in the CSV goes blank
-    unique_id = "2026_07_22-splats-GH010234"
-    video = Path("GH010234.mp4")
-    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), unique_id)
-    payload = preproc.build_payload(
-        pair,
-        _DUMP,
-        preproc.Alignment(0.5, 0.997, True),
-        duration_s=131.4,
-        unique_id=unique_id,
-        has_imu=True,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
-    preproc.write_metadata(tmp_path / unique_id, video, payload)
-
-    rows = preproc.index_rows(tmp_path)
-
-    assert rows == [(unique_id, "42 deg 21' 11.52\" N, 71 deg 3' 57.24\" W")]
-
-
-def test_build_payload_marks_a_rejected_alignment_as_source_anchored():
+def test_gps_payload_marks_a_rejected_alignment_as_source_anchored():
     # Alignment failed, so the trim window is unknown and the fix is taken from the
     # whole source; the flag records that the value is approximate
-    pair = preproc.Pair(Path("/x/GH010234.mp4"), Path("/x/src/GH010234.MP4"), "2026_07_22-splats-GH010234")
-    payload = preproc.build_payload(
-        pair,
-        _DUMP,
-        preproc.Alignment(0.0, 0.21, False),
-        duration_s=131.4,
-        unique_id="2026_07_22-splats-GH010234",
-        has_imu=True,
-        fingerprint={"size_bytes": 5, "mtime": 1.0},
-    )
+    payload = preproc.gps_payload(_DUMP, {"offset_s": 0.0, "r": 0.21, "ok": False})
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is True
-    assert payload["alignment"]["ok"] is False
+
+
+def test_gps_payload_reads_an_original_at_its_own_start():
+    # An original is its own source: the identity alignment puts the whole file inside the
+    # "cut", so the first locked fix is exact rather than source-anchored
+    payload = preproc.gps_payload(_DUMP, {"offset_s": 0.0, "r": 1.0, "ok": True})
+    assert payload["gps"]["latitude"] == pytest.approx(42.3532)
+    assert payload["gps_source_anchored"] is False
 
 
 ########
@@ -1049,7 +989,7 @@ def test_expand_gpmf_parallel_ignores_the_untimed_container_document():
 
 
 def test_telemetry_table_carries_both_time_axes():
-    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+    table = preproc.telemetry_table(_IMU_DUMP, 0.5, duration_s=1.0)
     columns = table.column_names
     assert "source_time" in columns and "edit_time" in columns and "in_edit" in columns
     assert "accl_x" in columns and "gyro_z" in columns
@@ -1060,7 +1000,7 @@ def test_telemetry_table_carries_both_time_axes():
 
 
 def test_telemetry_table_marks_samples_outside_the_cut():
-    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+    table = preproc.telemetry_table(_IMU_DUMP, 0.5, duration_s=1.0)
     in_edit = table.column("in_edit").to_pylist()
     # The cut runs 0.5 s to 1.5 s in source time, so the first and last samples fall outside
     assert in_edit[0] is False
@@ -1069,19 +1009,19 @@ def test_telemetry_table_marks_samples_outside_the_cut():
 
 
 def test_telemetry_table_nulls_edit_time_when_alignment_failed():
-    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.0, 0.2, False), duration_s=1.0)
+    table = preproc.telemetry_table(_IMU_DUMP, None, duration_s=1.0)
     assert set(table.column("edit_time").to_pylist()) == {None}
     assert set(table.column("in_edit").to_pylist()) == {None}
 
 
 def test_telemetry_table_is_none_without_imu():
-    assert preproc.telemetry_table([{"Main:Model": "Pixel 9 Pro"}], preproc.Alignment(0.0, 0.99, True), 44.2) is None
+    assert preproc.telemetry_table([{"Main:Model": "Pixel 9 Pro"}], 0.0, 44.2) is None
 
 
 def test_telemetry_table_populates_the_gps_columns():
     # The regression this guards: gps was read as one 5-wide "GPSTrack", which is exiftool's
     # scalar heading, so every chunk was skipped as ragged and gps_* was always null
-    table = preproc.telemetry_table(_GPS_DUMP, preproc.Alignment(0.0, 0.99, True), duration_s=1.0)
+    table = preproc.telemetry_table(_GPS_DUMP, 0.0, duration_s=1.0)
     assert {"gps_lat", "gps_lon", "gps_alt", "gps_speed2d", "gps_speed3d"} <= set(table.column_names)
     assert table.column("gps_lat").to_pylist() == [pytest.approx(42.3532), pytest.approx(42.3533)]
     assert table.column("gps_speed3d").to_pylist() == [pytest.approx(1.6), pytest.approx(1.8)]
@@ -1090,7 +1030,7 @@ def test_telemetry_table_populates_the_gps_columns():
 def test_telemetry_table_carries_more_gps_rows_than_chunks():
     # Bug A on the telemetry side: one fix per chunk gave a 1 Hz GPS column out of a ~18 Hz
     # stream. Two chunks holding three fixes each must produce six populated rows, not two.
-    table = preproc.telemetry_table(_GPS_SUBSAMPLE_DUMP, preproc.Alignment(0.0, 0.99, True), duration_s=2.0)
+    table = preproc.telemetry_table(_GPS_SUBSAMPLE_DUMP, 0.0, duration_s=2.0)
     populated = [value for value in table.column("gps_lat").to_pylist() if value is not None]
     assert len(populated) == 6
     assert table.num_rows == 6
@@ -1099,7 +1039,7 @@ def test_telemetry_table_carries_more_gps_rows_than_chunks():
 def test_telemetry_table_never_reads_gps_as_a_ragged_wide_tag(caplog):
     # A wrong tag name announces itself as a ragged-chunk warning; there must be none
     with caplog.at_level("WARNING"):
-        preproc.telemetry_table(_GPS_DUMP, preproc.Alignment(0.0, 0.99, True), duration_s=1.0)
+        preproc.telemetry_table(_GPS_DUMP, 0.0, duration_s=1.0)
     assert "ragged" not in caplog.text
 
 
@@ -1107,7 +1047,7 @@ def test_telemetry_table_logs_the_row_count_and_fill_ratio(caplog):
     # The streams do not share a time axis, so the union is sparse; the log is how a reader
     # learns that a half-null column is expected rather than a bug
     with caplog.at_level("INFO"):
-        preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+        preproc.telemetry_table(_IMU_DUMP, 0.5, duration_s=1.0)
     assert "rows on the union time axis" in caplog.text
     assert "accl_x=100%" in caplog.text
 
@@ -1123,7 +1063,7 @@ def test_telemetry_table_columns_are_sparse_on_a_disjoint_axis():
             "Doc1:Gyroscope": "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9",
         }
     ]
-    table = preproc.telemetry_table(dump, preproc.Alignment(0.0, 0.99, True), duration_s=1.0)
+    table = preproc.telemetry_table(dump, 0.0, duration_s=1.0)
     # 2 accelerometer samples at 0, 0.5 and 3 gyro samples at 0, 1/3, 2/3: union is 4 instants
     assert table.num_rows == 4
     assert table.column("accl_x").null_count == 2
@@ -1131,7 +1071,7 @@ def test_telemetry_table_columns_are_sparse_on_a_disjoint_axis():
 
 
 def test_write_telemetry_names_the_file_after_the_video(tmp_path):
-    table = preproc.telemetry_table(_IMU_DUMP, preproc.Alignment(0.5, 0.99, True), duration_s=1.0)
+    table = preproc.telemetry_table(_IMU_DUMP, 0.5, duration_s=1.0)
     path = preproc.write_telemetry(table, tmp_path, Path("GH010234.mp4"))
     assert path.name == "GH010234_telemetry.parquet"
     assert path.is_file()
@@ -1229,7 +1169,7 @@ def test_inject_warns_on_an_exiftool_warning_despite_a_zero_exit(tmp_path, monke
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "1 image files updated\n", stderr),
     )
     with caplog.at_level("WARNING"):
-        injected = preproc.inject(curated, tmp_path / "src.MP4", preproc.Alignment(0.0, 0.2, False), 1.0, {})
+        injected = preproc.inject(curated, tmp_path / "src.MP4", None, 1.0, {})
 
     assert injected is False
     assert "PrintConvInv" in caplog.text
@@ -1245,7 +1185,7 @@ def test_inject_logs_a_non_zero_exiftool_exit_as_an_error(tmp_path, monkeypatch,
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "Error: nothing to write\n"),
     )
     with caplog.at_level("WARNING"):
-        preproc.inject(curated, tmp_path / "src.MP4", preproc.Alignment(0.0, 0.2, False), 1.0, {})
+        preproc.inject(curated, tmp_path / "src.MP4", None, 1.0, {})
 
     assert "static tags failed" in caplog.text
     assert any(record.levelname == "ERROR" for record in caplog.records)
@@ -1334,7 +1274,7 @@ def test_inject_really_grafts_a_gpmd_track_onto_the_curated_video(tmp_path):
     before = curated.stat().st_size
     assert "gpmd" not in _stream_tags(curated)
 
-    injected = preproc.inject(curated, source, preproc.Alignment(0.0, 0.99, True), 1.0, {"Model": "GoPro Max"})
+    injected = preproc.inject(curated, source, 0.0, 1.0, {"Model": "GoPro Max"})
 
     assert injected is True
     assert "gpmd" in _stream_tags(curated)
@@ -1353,7 +1293,7 @@ def test_inject_really_writes_raw_gps_static_tags(tmp_path):
     preproc.inject(
         curated,
         source,
-        preproc.Alignment(0.0, 0.99, True),
+        0.0,
         1.0,
         {"Model": "GoPro Max", "GPSCoordinates": "42.3532 -71.0659 5.2"},
     )
@@ -1395,7 +1335,7 @@ def test_require_binaries_passes_when_everything_is_present(monkeypatch):
 def test_main_dry_run_copies_nothing(tree, tmp_path, monkeypatch):
     monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
     out = tmp_path / "curated"
-    assert preproc.main(["--source-root", str(tree), "--output-root", str(out), "--dry-run"]) == 0
+    assert preproc.main([str(tree), "--output-root", str(out), "--dry-run"]) == 0
     assert not out.exists()
 
 
@@ -1412,51 +1352,65 @@ def test_main_only_filters_to_one_clip(tree, tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
     out = tmp_path / "curated"
     with caplog.at_level("INFO"):
-        preproc.main(["--source-root", str(tree), "--output-root", str(out), "--only", "GH010228", "--dry-run"])
+        preproc.main([str(tree), "--output-root", str(out), "--only", "GH010228", "--dry-run"])
     assert "GH010228" in caplog.text
     assert "IMG_4085" not in caplog.text
 
 
 ########
-# process_pair
+# process_video
 ########
 
 
 @pytest.fixture
 def stub_externals(monkeypatch):
-    """Replace the ffmpeg/exiftool/ffprobe calls so process_pair runs without real media."""
-    calls = {"inject": 0}
+    """Replace the ffmpeg/exiftool/ffprobe calls so process_video runs without real media."""
+    calls = {"inject": 0, "align": 0}
 
-    def fake_inject(curated, source, alignment, duration_s, tags):
+    def fake_inject(curated, source, offset_s, duration_s, tags):
         calls["inject"] += 1
         # Injection grows the curated file past its source: the idempotency trap itself
         curated.write_bytes(curated.read_bytes() + b"-gpmd-track")
         return True
 
-    monkeypatch.setattr(preproc, "align", lambda pair, **kw: preproc.Alignment(0.5, 0.99, True))
+    def fake_align(video, source, name, **kw):
+        calls["align"] += 1
+        return {"offset_s": 0.5, "r": 0.99, "ok": True}
+
+    monkeypatch.setattr(preproc, "align", fake_align)
     monkeypatch.setattr(preproc, "exif_dump", lambda path: _IMU_DUMP)
     monkeypatch.setattr(preproc, "probe_duration", lambda path: 1.0)
     monkeypatch.setattr(preproc, "inject", fake_inject)
     return calls
 
 
-def _pair(tmp_path):
-    """Build a Pair whose edit and camera original both exist on disk."""
-    edit = tmp_path / "GH010234.mp4"
+NAME = "2026_07_22-splats-GH010234"
+
+
+def _edit(tmp_path):
+    """Write an export and the camera original it was cut from, and return both paths."""
+    video = tmp_path / "GH010234.mp4"
     source = tmp_path / "src" / "GH010234.MP4"
     source.parent.mkdir(parents=True, exist_ok=True)
-    edit.write_bytes(b"edited video")
+    video.write_bytes(b"edited video")
     source.write_bytes(b"camera original")
-    return preproc.Pair(edit, source, "2026_07_22-splats-GH010234")
+    return video, source
 
 
-def test_process_pair_writes_video_sidecar_and_telemetry(tmp_path, stub_externals):
-    pair = _pair(tmp_path)
+def _original(tmp_path):
+    """Write an un-edited camera original with no src/ counterpart."""
+    video = tmp_path / "GH010234.mp4"
+    video.write_bytes(b"camera original")
+    return video
+
+
+def test_process_video_writes_video_sidecar_and_telemetry(tmp_path, stub_externals):
+    video, source = _edit(tmp_path)
     out = tmp_path / "curated"
 
-    record = preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
 
-    folder = out / pair.name
+    folder = out / NAME
     assert record["status"] == "processed"
     assert record["imu"] is True
     assert record["injected"] is True
@@ -1465,41 +1419,163 @@ def test_process_pair_writes_video_sidecar_and_telemetry(tmp_path, stub_external
     assert (folder / "GH010234_telemetry.parquet").is_file()
 
 
-def test_process_pair_skips_a_second_run_over_an_injected_file(tmp_path, stub_externals):
+def test_process_video_skips_a_second_run_over_an_injected_file(tmp_path, stub_externals):
     # The trap this pipeline exists to avoid: injection left the curated mp4 larger than
     # its source, so a destination-size check would re-copy and re-inject forever
-    pair = _pair(tmp_path)
+    video, source = _edit(tmp_path)
     out = tmp_path / "curated"
-    preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
-    after_first = (out / pair.name / "GH010234.mp4").read_bytes()
+    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    after_first = (out / NAME / "GH010234.mp4").read_bytes()
 
-    record = preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
 
-    assert record == {"name": pair.name, "status": "skipped"}
+    assert record == {"name": NAME, "status": "skipped"}
     assert stub_externals["inject"] == 1
-    assert (out / pair.name / "GH010234.mp4").read_bytes() == after_first
+    assert (out / NAME / "GH010234.mp4").read_bytes() == after_first
 
 
-def test_process_pair_reinjects_from_the_pristine_edit_under_force(tmp_path, stub_externals):
-    pair = _pair(tmp_path)
+def test_process_video_reinjects_from_the_pristine_edit_under_force(tmp_path, stub_externals):
+    video, source = _edit(tmp_path)
     out = tmp_path / "curated"
-    preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
 
-    record = preproc.process_pair(pair, out, preproc.DEFAULT_ALIGN_MIN_R, force=True)
+    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=True)
 
     assert record["status"] == "processed"
     assert stub_externals["inject"] == 2
     # The forced re-copy starts from the pristine edit, so the track is not injected twice
-    assert (out / pair.name / "GH010234.mp4").read_bytes() == b"edited video-gpmd-track"
+    assert (out / NAME / "GH010234.mp4").read_bytes() == b"edited video-gpmd-track"
 
 
-def test_process_pair_records_a_rejected_alignment(tmp_path, stub_externals, monkeypatch):
-    monkeypatch.setattr(preproc, "align", lambda pair, **kw: preproc.Alignment(0.0, 0.2, False))
-    pair = _pair(tmp_path)
+def test_process_video_records_a_rejected_alignment(tmp_path, stub_externals, monkeypatch):
+    monkeypatch.setattr(preproc, "align", lambda video, source, name, **kw: {"offset_s": 0.0, "r": 0.2, "ok": False})
+    video, source = _edit(tmp_path)
 
-    record = preproc.process_pair(pair, tmp_path / "curated", preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, tmp_path / "curated", preproc.DEFAULT_ALIGN_MIN_R, force=False)
 
     assert record["aligned"] is False
+
+
+def test_process_video_curates_an_original(tmp_path, stub_externals):
+    # No src/ counterpart: the file is curated on its own, sidecars and all
+    video = _original(tmp_path)
+    out = tmp_path / "curated"
+
+    record = preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    folder = out / NAME
+    assert record["status"] == "processed"
+    assert (folder / "GH010234.mp4").is_file()
+    assert (folder / "GH010234_metadata.json").is_file()
+    assert (folder / "GH010234_telemetry.parquet").is_file()
+
+
+def test_process_video_never_aligns_or_injects_an_original(tmp_path, stub_externals):
+    # An original is its own source: there is no cut to locate and its gpmd track is already
+    # on the right time axis, so both external passes are skipped rather than run on identity
+    video = _original(tmp_path)
+
+    record = preproc.process_video(video, None, NAME, tmp_path / "curated", preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    assert stub_externals["align"] == 0
+    assert stub_externals["inject"] == 0
+    assert record["injected"] is False
+
+
+def test_process_video_leaves_an_originals_bytes_untouched(tmp_path, stub_externals):
+    video = _original(tmp_path)
+    out = tmp_path / "curated"
+
+    preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    assert (out / NAME / "GH010234.mp4").read_bytes() == b"camera original"
+
+
+def test_an_originals_sidecar_records_it_as_unedited_and_natively_timed(tmp_path, stub_externals):
+    # gpmd_injected alone would read as "no telemetry in this mp4", which is exactly wrong
+    # for an original: the track is there and was never touched
+    video = _original(tmp_path)
+    out = tmp_path / "curated"
+
+    preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    payload = json.loads((out / NAME / "GH010234_metadata.json").read_text())
+    assert payload["edited"] is False
+    assert payload["gpmd_native"] is True
+    assert payload["gpmd_injected"] is False
+    assert payload["source_path"] == str(video)
+    assert payload["alignment"] == {"offset_s": 0.0, "r": 1.0, "ok": True}
+
+
+def test_an_edits_sidecar_records_it_as_edited_against_its_source(tmp_path, stub_externals):
+    video, source = _edit(tmp_path)
+    out = tmp_path / "curated"
+
+    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    payload = json.loads((out / NAME / "GH010234_metadata.json").read_text())
+    assert payload["edited"] is True
+    assert payload["source_path"] == str(source)
+    assert "gpmd_native" not in payload
+    assert payload["alignment"]["offset_s"] == 0.5
+
+
+def test_process_video_writes_a_sidecar_the_csv_index_can_read(tmp_path, stub_externals, monkeypatch):
+    # The seam every index test skips by hand-building its sidecar: rename `latitude` in the
+    # payload and those tests all stay green while every GPS cell in the CSV goes blank
+    monkeypatch.setattr(preproc, "exif_dump", lambda path: _DUMP)
+    video, source = _edit(tmp_path)
+    out = tmp_path / "curated"
+
+    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    assert preproc.index_rows(out) == [(NAME, "42 deg 21' 11.52\" N, 71 deg 3' 57.24\" W")]
+
+
+def test_process_video_refreshes_a_sidecar_whose_recorded_source_is_gone(tmp_path, stub_externals):
+    # The 16 duplicates: curated as pairs, then their src/ copy is pruned away. The video on
+    # disk never changes, so the fingerprint alone would call this up to date and leave the
+    # sidecar pointing at a file that no longer exists.
+    video, source = _edit(tmp_path)
+    out = tmp_path / "curated"
+    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    curated_bytes = (out / NAME / "GH010234.mp4").read_bytes()
+    shutil.rmtree(source.parent)
+
+    record = preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    payload = json.loads((out / NAME / "GH010234_metadata.json").read_text())
+    assert record["status"] == "refreshed"
+    assert payload["edited"] is False
+    assert payload["source_path"] == str(video)
+    # Provenance is corrected without re-copying or re-injecting byte-identical footage
+    assert stub_externals["inject"] == 1
+    assert (out / NAME / "GH010234.mp4").read_bytes() == curated_bytes
+
+
+def test_process_video_refreshes_a_sidecar_written_before_the_edited_field(tmp_path, stub_externals):
+    video, source = _edit(tmp_path)
+    out = tmp_path / "curated"
+    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    path = out / NAME / "GH010234_metadata.json"
+    payload = json.loads(path.read_text())
+    del payload["edited"]
+    path.write_text(json.dumps(payload))
+
+    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    assert record["status"] == "refreshed"
+    assert json.loads(path.read_text())["edited"] is True
+
+
+def test_process_video_leaves_a_current_sidecar_alone(tmp_path, stub_externals):
+    video, source = _edit(tmp_path)
+    out = tmp_path / "curated"
+    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+
+    assert record["status"] == "skipped"
 
 
 def test_main_warns_about_every_unaligned_clip(tree, tmp_path, monkeypatch, caplog):
@@ -1507,9 +1583,9 @@ def test_main_warns_about_every_unaligned_clip(tree, tmp_path, monkeypatch, capl
     monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(
         preproc,
-        "process_pair",
-        lambda pair, out, min_r, force: {
-            "name": pair.name,
+        "process_video",
+        lambda video, source, name, out, min_r, force: {
+            "name": name,
             "status": "processed",
             "aligned": False,
             "r": 0.2,
@@ -1518,9 +1594,9 @@ def test_main_warns_about_every_unaligned_clip(tree, tmp_path, monkeypatch, capl
         },
     )
     with caplog.at_level("WARNING"):
-        preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out")])
+        preproc.main([str(tree), "--output-root", str(tmp_path / "out")])
 
-    assert caplog.text.count("alignment rejected") == 3
+    assert caplog.text.count("alignment rejected") == 5
 
 
 def test_main_survives_a_clip_that_raises(tree, tmp_path, monkeypatch, caplog):
@@ -1528,19 +1604,19 @@ def test_main_survives_a_clip_that_raises(tree, tmp_path, monkeypatch, caplog):
     # exception left main after gigabytes had already been copied: no index, no summary.
     monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
 
-    def explode_on_one(pair, out, min_r, force):
-        if "GH010228" in pair.name:
+    def explode_on_one(video, source, name, out, min_r, force):
+        if "GH010228" in name:
             raise subprocess.CalledProcessError(1, ["ffmpeg"], stderr="Output file does not contain any stream")
-        return {"name": pair.name, "status": "processed", "aligned": True, "r": 0.99, "imu": True, "injected": True}
+        return {"name": name, "status": "processed", "aligned": True, "r": 0.99, "imu": True, "injected": True}
 
-    monkeypatch.setattr(preproc, "process_pair", explode_on_one)
+    monkeypatch.setattr(preproc, "process_video", explode_on_one)
     out = tmp_path / "curated"
     with caplog.at_level("INFO"):
-        assert preproc.main(["--source-root", str(tree), "--output-root", str(out)]) == 0
+        assert preproc.main([str(tree), "--output-root", str(out)]) == 0
 
-    # The run finished: the index was still written and the survivor still counted
+    # The run finished: the index was still written and the survivors still counted
     assert (out / "index.csv").is_file()
-    assert "2 processed, 0 skipped, 1 failed" in caplog.text
+    assert "4 processed, 0 refreshed, 0 skipped, 1 failed" in caplog.text
     # And the casualty is named individually, not buried in a count
     assert "processing failed, nothing curated: 2026_07_15-Goprosplat-GH010228" in caplog.text
 
@@ -1551,7 +1627,7 @@ def test_main_dry_run_forwards_the_flag_to_the_push_script(tree, tmp_path, monke
     calls = []
     monkeypatch.setattr(preproc, "push", lambda root, dry_run=False: calls.append(dry_run))
 
-    preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out"), "--dry-run", "--push"])
+    preproc.main([str(tree), "--output-root", str(tmp_path / "out"), "--dry-run", "--push"])
 
     assert calls == [True]
 
@@ -1580,6 +1656,132 @@ def test_main_index_only_does_not_demand_the_media_tools(tmp_path, monkeypatch):
 def test_main_says_when_only_matched_nothing(tree, tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
     with caplog.at_level("WARNING"):
-        preproc.main(["--source-root", str(tree), "--output-root", str(tmp_path / "out"), "--only", "nope"])
+        preproc.main([str(tree), "--output-root", str(tmp_path / "out"), "--only", "nope"])
 
-    assert "no pairs matched" in caplog.text
+    assert "no videos matched" in caplog.text
+
+
+########
+# Pruning redundant src/ copies
+########
+
+
+def _duplicate(root, folder="2026-03-27/videos_for_splats", stem="PXL_1", payload=b"identical bytes"):
+    """Write a video and a byte-for-byte identical copy of it inside src/."""
+    parent = root.joinpath(*folder.split("/"))
+    video = parent / f"{stem}.mp4"
+    source = parent / "src" / f"{stem}.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(payload)
+    source.write_bytes(payload)
+    return video, source
+
+
+def test_is_redundant_sees_a_byte_identical_copy(tmp_path):
+    video, source = _duplicate(tmp_path / "gdrive-src")
+    assert preproc.is_redundant(video, source) is True
+
+
+def test_is_redundant_rejects_a_same_size_re_encode(tmp_path):
+    # A full-length export with no trim is still a Resolve export: same duration, same byte
+    # count if you are unlucky, different bytes, and its metadata really was stripped
+    video, source = _duplicate(tmp_path / "gdrive-src")
+    source.write_bytes(b"re-encoded byte")
+    assert video.stat().st_size == source.stat().st_size
+    assert preproc.is_redundant(video, source) is False
+
+
+def test_is_redundant_rejects_a_trimmed_export(tmp_path):
+    video, source = _duplicate(tmp_path / "gdrive-src")
+    video.write_bytes(b"short cut")
+    assert preproc.is_redundant(video, source) is False
+
+
+def test_prune_src_reports_both_paths_without_deleting(tmp_path):
+    root = tmp_path / "gdrive-src"
+    video, source = _duplicate(root)
+    removed = preproc.prune_src(root, apply=False)
+    assert removed == 0
+    assert source.is_file()
+    assert video.is_file()
+
+
+def test_prune_src_apply_deletes_the_copy_and_keeps_the_video(tmp_path):
+    root = tmp_path / "gdrive-src"
+    video, source = _duplicate(root)
+
+    removed = preproc.prune_src(root, apply=True)
+
+    assert removed == 1
+    assert not source.exists()
+    assert video.read_bytes() == b"identical bytes"
+
+
+def test_prune_src_apply_removes_a_src_left_empty(tmp_path):
+    root = tmp_path / "gdrive-src"
+    _, source = _duplicate(root)
+
+    preproc.prune_src(root, apply=True)
+
+    assert not source.parent.exists()
+
+
+def test_prune_src_keeps_a_src_that_still_holds_an_orphan(tmp_path):
+    root = tmp_path / "gdrive-src"
+    _, source = _duplicate(root)
+    orphan = source.parent / "GH010233.MP4"
+    orphan.write_bytes(b"an original whose export was never made")
+
+    preproc.prune_src(root, apply=True)
+
+    assert not source.exists()
+    assert orphan.is_file()
+
+
+def test_prune_src_leaves_a_real_export_alone(tmp_path):
+    root = tmp_path / "gdrive-src"
+    video, source = _duplicate(root)
+    video.write_bytes(b"a genuinely different, trimmed export")
+
+    removed = preproc.prune_src(root, apply=True)
+
+    assert removed == 0
+    assert source.is_file()
+
+
+def test_prune_src_honours_only(tmp_path):
+    root = tmp_path / "gdrive-src"
+    _, kept = _duplicate(root, folder="2026-03-27/videos_for_splats", stem="PXL_1")
+    _, pruned = _duplicate(root, folder="2026-07-22/splats", stem="GH010234")
+
+    preproc.prune_src(root, only="2026_07_22", apply=True)
+
+    assert not pruned.exists()
+    assert kept.is_file()
+
+
+def test_prune_src_reverifies_immediately_before_deleting(tmp_path, monkeypatch):
+    # The tree is Drive-synced: a file that matched during the scan may have been replaced by
+    # the time the unlink runs, and a stale match must never authorize a deletion
+    root = tmp_path / "gdrive-src"
+    _, source = _duplicate(root)
+    answers = iter([True, False])
+    monkeypatch.setattr(preproc, "is_redundant", lambda video, src: next(answers))
+
+    removed = preproc.prune_src(root, apply=True)
+
+    assert removed == 0
+    assert source.is_file()
+
+
+def test_main_prune_src_is_a_report_unless_applied(tmp_path, monkeypatch):
+    # Pruning reads sidecar-free bytes only, so it must work on a machine with no ffmpeg
+    monkeypatch.setattr(preproc.shutil, "which", lambda name: None)
+    root = tmp_path / "gdrive-src"
+    _, source = _duplicate(root)
+
+    assert preproc.main([str(root), "--prune-src"]) == 0
+    assert source.is_file()
+
+    assert preproc.main([str(root), "--prune-src", "--apply"]) == 0
+    assert not source.exists()

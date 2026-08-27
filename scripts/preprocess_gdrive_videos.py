@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
 """Flatten the Google Drive capture tree and carry capture metadata into the curated videos.
 
+Every video in the tree is curated. A video is an *edit* when ``<parent>/src/<stem>.*``
+exists, matched on stem only, case-insensitively, across any video extension; otherwise it is
+an un-edited camera original. That is the only structural assumption made about the tree, and
+the walk is depth-agnostic, so a new capture drop at any depth is curated with no code change.
+
 DaVinci Resolve strips every timed data track and container tag on export: the camera
 original carries ``tmcd + gpmd + fdsc``, GPS and the GoPro UserData block, while the export
-carries ``tmcd`` alone. This script pairs each export against its original, copies it into
-the flat curated layout, solves the trim offset from audio, and writes the metadata back —
-as static tags plus a retimed ``gpmd`` track inside the mp4, and as a full-rate Parquet
-sidecar next to it.
+carries ``tmcd`` alone. For an edit, this script pairs it against its original, copies it into
+the flat curated layout, solves the trim offset from audio, and writes the metadata back — as
+static tags plus a retimed ``gpmd`` track inside the mp4, and as a full-rate Parquet sidecar
+next to it. An original is its own source: there is no cut to locate and its ``gpmd`` track is
+already on the right time axis, so it is copied and read, never aligned or remuxed.
 
 The source tree may nest to any depth, and neither folder names nor their meaning are stable
 across drops (``GoproSplat``, ``Goprosplat``, ``splats``, ``Phone pics and splat videos``,
 and a deployment window over a site over ``splat_videos``)::
 
-    <source-root>/<...any nesting...>/<stem>.mp4       <- Resolve export (the edit)
-                                     /src/<stem>.MP4   <- camera original
+    <source-root>/<...any nesting...>/<stem>.mp4       <- an edit when src/<stem>.* exists,
+                                     /src/<stem>.MP4      otherwise an un-edited original
 
-A video is an *edit* if and only if ``<parent>/src/<stem>.*`` exists, matched on stem only,
-case-insensitively, across any video extension. That is the only structural assumption made
-about the tree, so a new capture drop at any depth is curated with no code change. Only pairs
-are processed; an original with no export is skipped and logged, and enters scope
-automatically once it is edited.
+A video left inside ``src/`` with nothing above it is an orphan — its export was never made or
+has been deleted. It is skipped and named in the log, because where it belongs is a judgement
+call. ``--prune-src`` reports, and with ``--apply`` deletes, ``src/`` copies that are
+bit-for-bit duplicates of the video above them: those were never edits at all, and once the
+copy is gone the video plans as the original it always was.
 
-Output layout — one flat folder per pair, named by joining the video's directory components::
+Output layout — one flat folder per video, named by joining its directory components::
 
     <output-root>/<component>-<component>-...-<stem>/
-        <stem>.mp4                  edit + static tags + retimed gpmd track
+        <stem>.mp4                  the video, plus static tags and a retimed gpmd track when edited
         <stem>_metadata.json        static tags, provenance, alignment scores
         <stem>_telemetry.parquet    ~200 Hz IMU and GPS samples (only when IMU exists)
     <output-root>/index.csv         unique_id,gps — regenerated from the sidecars
@@ -33,6 +39,8 @@ Usage:
     python scripts/preprocess_gdrive_videos.py --dry-run
     python scripts/preprocess_gdrive_videos.py
     python scripts/preprocess_gdrive_videos.py --only GH010234
+    python scripts/preprocess_gdrive_videos.py --prune-src
+    python scripts/preprocess_gdrive_videos.py --prune-src --apply
     python scripts/preprocess_gdrive_videos.py --index-only
     python scripts/preprocess_gdrive_videos.py --push
 """
@@ -41,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import logging
 import os
@@ -49,7 +58,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import NamedTuple
 
 import numpy as np
 import pyarrow as pa
@@ -141,14 +149,6 @@ def flat_dir_name(video, source_root):
 ########
 
 
-class Pair(NamedTuple):
-    """One Resolve export and the camera original it was cut from."""
-
-    edit: Path
-    source: Path
-    name: str
-
-
 def find_source(video):
     """Return the camera original for `video`, or None if it has no src/ counterpart.
 
@@ -165,10 +165,19 @@ def find_source(video):
     return None
 
 
-def walk_folders(root):
-    """Yield `root` and every directory beneath it that may hold edits, depth-first.
+def find_orphans(folder):
+    """Return videos inside `folder`/src that have no counterpart in `folder` itself."""
+    src_dir = folder / SRC_DIR_NAME
+    if not src_dir.is_dir():
+        return []
+    stems = {video.stem.lower() for video in find_videos(folder)}
+    return [candidate for candidate in find_videos(src_dir) if candidate.stem.lower() not in stems]
 
-    Prunes src/ so a camera original is never mistaken for an edit at any depth, and dotted
+
+def walk_folders(root):
+    """Yield `root` and every directory beneath it that may hold videos, depth-first.
+
+    Prunes src/ so its contents are reached only through the folder above them, and dotted
     directories so macOS bookkeeping is never descended into.
     """
     yield root
@@ -178,35 +187,41 @@ def walk_folders(root):
         yield from walk_folders(child)
 
 
-def plan_pairs(source_root):
-    """Walk the capture tree and return every (edit, source) pair, sorted by flat name.
+def plan_videos(source_root):
+    """Walk the capture tree and return every (video, source_or_None, flat_name), sorted by name.
 
-    A video is an edit iff <parent>/src/<stem>.* exists. That rule is the only structural
-    assumption made about the tree: the walk is depth-agnostic, so a new capture drop nesting
-    at any depth is curated with no code change. Videos with no counterpart are camera
-    originals that have not been edited yet; they are skipped and logged, and enter scope
-    automatically once exported. Raises ValueError on a flat-name collision, which would
-    otherwise silently overwrite one capture with another.
+    Every video outside a src/ directory is curated. A video with a `<parent>/src/<stem>.*`
+    counterpart is a Resolve export and carries that counterpart as its source; a video
+    without one is an un-edited camera original and is its own source, reported here as None.
+    That rule is the only structural assumption made about the tree: the walk is
+    depth-agnostic, so a new capture drop nesting at any depth is curated with no code change.
+
+    A video left inside src/ with nothing above it is an orphan — the export it belonged to
+    was never made or has been deleted. It is skipped and named in the log, because curating
+    it in place would bake "src" into its flat name and where it really belongs is a
+    judgement call. Raises ValueError on a flat-name collision, which would otherwise
+    silently overwrite one capture with another.
     """
-    pairs = []
-    skipped = 0
+    entries = []
+    orphans = 0
     for folder in walk_folders(source_root):
         for video in find_videos(folder):
-            source = find_source(video)
-            if source is None:
-                logger.info("skip %s: no src/ counterpart (unedited original)", video.name)
-                skipped += 1
-                continue
-            pairs.append(Pair(video, source, flat_dir_name(video, source_root)))
+            entries.append((video, find_source(video), flat_dir_name(video, source_root)))
+        for orphan in find_orphans(folder):
+            logger.warning("orphan %s: left in src/ with no video above it, not curated", orphan)
+            orphans += 1
 
     seen = {}
-    for pair in pairs:
-        if pair.name in seen:
-            raise ValueError(f"flat name collision {pair.name!r}: {seen[pair.name]} and {pair.edit}")
-        seen[pair.name] = pair.edit
+    for video, _, name in entries:
+        if name in seen:
+            raise ValueError(f"flat name collision {name!r}: {seen[name]} and {video}")
+        seen[name] = video
 
-    logger.info("%d pairs, %d originals skipped", len(pairs), skipped)
-    return sorted(pairs, key=lambda p: p.name)
+    edits = sum(1 for _, source, _ in entries if source is not None)
+    logger.info(
+        "%d videos: %d edits, %d originals; %d orphans skipped", len(entries), edits, len(entries) - edits, orphans
+    )
+    return sorted(entries, key=lambda entry: entry[2])
 
 
 ########
@@ -263,7 +278,7 @@ def source_fingerprint(path):
     return {"size_bytes": stat.st_size, "mtime": stat.st_mtime}
 
 
-def needs_copy(pair, dest_dir, force=False):
+def needs_copy(video, dest_dir, force=False):
     """Return True when the curated copy is missing or its recorded source has changed.
 
     The comparison is against the fingerprint stored in the JSON sidecar, never against the
@@ -273,12 +288,29 @@ def needs_copy(pair, dest_dir, force=False):
     """
     if force:
         return True
-    if not (dest_dir / pair.edit.name).is_file():
+    if not (dest_dir / video.name).is_file():
         return True
-    recorded = (read_metadata(dest_dir, pair.edit) or {}).get("source")
+    recorded = (read_metadata(dest_dir, video) or {}).get("source")
     if not recorded:
         return True
-    return recorded != source_fingerprint(pair.edit)
+    return recorded != source_fingerprint(video)
+
+
+def needs_refresh(video, source, dest_dir):
+    """Return True when the curated copy is current but its sidecar no longer describes it.
+
+    A video reclassified from edit to original — its redundant src/ copy pruned away — keeps
+    the same bytes and the same fingerprint, so needs_copy alone reports it up to date and
+    leaves a sidecar pointing at a file that no longer exists. Metadata is rewritten in place
+    instead: no re-copy, no re-injection, no re-upload of byte-identical footage.
+    """
+    recorded = read_metadata(dest_dir, video)
+    if recorded is None:
+        return True
+    if recorded.get("edited") != (source is not None):
+        return True
+    recorded_source = recorded.get("source_path")
+    return recorded_source is None or not Path(recorded_source).exists()
 
 
 ########
@@ -354,16 +386,11 @@ def write_index(curated_root):
 ########
 
 
-class Alignment(NamedTuple):
-    """Where the edit sits inside its source, and how well the audio matched."""
-
-    offset_s: float
-    r: float
-    ok: bool
-
-
 def solve_offset(edit, source, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
-    """Locate `edit` inside `source` by normalized cross-correlation.
+    """Locate `edit` inside `source` by normalized cross-correlation; return an alignment.
+
+    The alignment is a plain dict — {"offset_s", "r", "ok"} — which is exactly the shape the
+    JSON sidecar stores, so it is written through verbatim with no repacking step.
 
     Resolve cuts and colour-corrects but never alters audio content, so the edit's audio is
     a literal subsegment of the source and a true match correlates near 1.0. A wrong lag
@@ -383,7 +410,7 @@ def solve_offset(edit, source, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
     n, m = len(edit), len(source)
     if n == 0 or n > m:
         logger.warning("alignment impossible: edit has %d samples, source has %d", n, m)
-        return Alignment(0.0, 0.0, False)
+        return {"offset_s": 0.0, "r": 0.0, "ok": False}
 
     # Remove the DC component from both so the correlation measures shape, not offset
     e = np.asarray(edit, dtype=np.float64) - np.mean(edit)
@@ -391,7 +418,7 @@ def solve_offset(edit, source, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
     e_energy = float(np.sqrt(np.dot(e, e)))
     if e_energy == 0.0:
         logger.warning("alignment impossible: the edit's audio has no variance (silence)")
-        return Alignment(0.0, 0.0, False)
+        return {"offset_s": 0.0, "r": 0.0, "ok": False}
 
     # Correlation at every feasible lag; "valid" gives exactly m - n + 1 positions
     numerator = signal.fftconvolve(s, e[::-1], mode="valid")
@@ -404,7 +431,7 @@ def solve_offset(edit, source, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
 
     lag = int(np.argmax(r))
     peak = float(r[lag])
-    return Alignment(lag / rate, peak, peak >= min_r)
+    return {"offset_s": lag / rate, "r": peak, "ok": peak >= min_r}
 
 
 def decode_audio(path, rate=AUDIO_RATE):
@@ -428,13 +455,13 @@ def decode_audio(path, rate=AUDIO_RATE):
     return np.frombuffer(result.stdout, dtype=np.float32)
 
 
-def align(pair, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
+def align(video, source, name, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
     """Solve where the edit sits inside its camera original, from audio alone."""
-    result = solve_offset(decode_audio(pair.edit, rate), decode_audio(pair.source, rate), rate, min_r)
-    if result.ok:
-        logger.info("%s: offset %.3f s (r=%.4f)", pair.name, result.offset_s, result.r)
+    result = solve_offset(decode_audio(video, rate), decode_audio(source, rate), rate, min_r)
+    if result["ok"]:
+        logger.info("%s: offset %.3f s (r=%.4f)", name, result["offset_s"], result["r"])
     else:
-        logger.warning("%s: alignment rejected (r=%.4f < %.2f)", pair.name, result.r, min_r)
+        logger.warning("%s: alignment rejected (r=%.4f < %.2f)", name, result["r"], min_r)
     return result
 
 
@@ -443,16 +470,8 @@ def align(pair, rate=AUDIO_RATE, min_r=DEFAULT_ALIGN_MIN_R):
 ########
 
 
-class Chunk(NamedTuple):
-    """One `DocN` GPMF document group and the `DocN-M` GPS sub-samples nested inside it."""
-
-    number: int
-    tags: dict
-    subs: list
-
-
 def iter_documents(dump):
-    """Regroup an exiftool -G3 dump into (container tags, chunks in document order).
+    """Regroup an exiftool -G3 dump into (container tags, [(number, tags, subs), ...]).
 
     exiftool returns exactly ONE JSON object for the whole file and encodes the embedded
     document in each key's *prefix*: `Main:Model` is the container, `Doc7:Accelerometer` is the
@@ -478,7 +497,7 @@ def iter_documents(dump):
     nested = {number: [] for number in chunks}
     for parent, index in sorted(subs):
         nested.setdefault(parent, []).append(subs[(parent, index)])
-    return main, [Chunk(number, chunks.get(number, {}), nested[number]) for number in sorted(nested)]
+    return main, [(number, chunks.get(number, {}), nested[number]) for number in sorted(nested)]
 
 
 def gps_fixes(chunk):
@@ -489,13 +508,14 @@ def gps_fixes(chunk):
     has a SampleTime. The fixes are therefore spread evenly across the chunk's window, the same
     placement expand_gpmf uses for the IMU streams.
     """
-    fixes = [chunk.tags] if "GPSLatitude" in chunk.tags or "GPSLongitude" in chunk.tags else []
-    fixes += chunk.subs
+    _, tags, subs = chunk
+    fixes = [tags] if "GPSLatitude" in tags or "GPSLongitude" in tags else []
+    fixes += subs
     if not fixes:
         return []
-    start = float(chunk.tags.get("SampleTime", 0.0))
-    step = float(chunk.tags.get("SampleDuration", 1.0)) / len(fixes)
-    return [(start + i * step, tags) for i, tags in enumerate(fixes)]
+    start = float(tags.get("SampleTime", 0.0))
+    step = float(tags.get("SampleDuration", 1.0)) / len(fixes)
+    return [(start + i * step, fix) for i, fix in enumerate(fixes)]
 
 
 def exif_dump(path):
@@ -589,7 +609,7 @@ def first_fix(dump, start_s=0.0):
     iPhone) fall back to the single container fix, which has no time and is reported at 0.
     """
     main, chunks = iter_documents(dump)
-    for chunk in sorted(chunks, key=lambda c: float(c.tags.get("SampleTime", 0.0))):
+    for chunk in sorted(chunks, key=lambda c: float(c[1].get("SampleTime", 0.0))):
         for when, tags in gps_fixes(chunk):
             if when < start_s:
                 continue
@@ -617,27 +637,28 @@ def _coordinate(tags, when):
 def has_gps_track(dump):
     """Return True when the dump carries timed GPS samples rather than one container fix."""
     _, chunks = iter_documents(dump)
-    return any("SampleTime" in chunk.tags and gps_fixes(chunk) for chunk in chunks)
+    return any("SampleTime" in chunk[1] and gps_fixes(chunk) for chunk in chunks)
 
 
 def first_chunk_at_or_after(dump, start_s):
     """Return the smallest GPMF SampleTime at or after `start_s`, or None when there is none."""
     _, chunks = iter_documents(dump)
-    later = [float(chunk.tags["SampleTime"]) for chunk in chunks if "SampleTime" in chunk.tags]
+    later = [float(tags["SampleTime"]) for _, tags, _ in chunks if "SampleTime" in tags]
     later = [when for when in later if when >= start_s]
     return min(later) if later else None
 
 
-def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerprint):
-    """Assemble the JSON sidecar for one pair.
+def gps_payload(dump, alignment):
+    """Derive the GPS and gpmd-timing block of the sidecar from one exiftool dump.
 
     `gps` is the first locked fix inside the trimmed edit when alignment succeeded, and the
     first fix anywhere in the source when it did not — the edit window is unknown in that
     case, and `gps_source_anchored` records it so the value is never mistaken for exact. A
     successful alignment whose own window never locks (satellite fix acquired just after the
     cut, say) falls back to that same whole-source search rather than reporting no GPS at all.
+    An original is its own source and aligns as the identity, so its whole file is the window.
     """
-    fix = first_fix(dump, start_s=alignment.offset_s) if alignment.ok else None
+    fix = first_fix(dump, start_s=alignment["offset_s"]) if alignment["ok"] else None
     anchored = fix is None
     if anchored:
         fix = first_fix(dump, start_s=0.0)
@@ -649,24 +670,12 @@ def build_payload(pair, dump, alignment, duration_s, unique_id, has_imu, fingerp
     # GPMF chunks are 1 Hz, so the injected track starts on the first chunk boundary at or
     # after the cut, up to ~1 s late. The residual is what a consumer needs to reconcile the
     # injected track against the Parquet sidecar, which stays on the true source time axis.
-    first_chunk = first_chunk_at_or_after(dump, alignment.offset_s)
+    first_chunk = first_chunk_at_or_after(dump, alignment["offset_s"])
     return {
-        "unique_id": unique_id,
-        "edit": str(pair.edit),
-        "source": fingerprint,
-        "source_path": str(pair.source),
-        "duration_s": duration_s,
-        "has_imu": has_imu,
         "gps": fix,
         "gps_source_anchored": anchored,
         "gpmd_first_chunk_s": first_chunk,
-        "gpmd_residual_s": None if first_chunk is None else first_chunk - alignment.offset_s,
-        "alignment": {"offset_s": alignment.offset_s, "r": alignment.r, "ok": alignment.ok},
-        "static_tags": static_tags(dump),
-        # The edits are cuts plus colour correction with no geometric transform, so lens
-        # geometry still describes the exported pixels. If a clip is ever reframed or
-        # stabilized, this flag is what has to flip.
-        "intrinsics": {"valid_for_edit": True, "reason": "cuts and colour correction only, no reframe"},
+        "gpmd_residual_s": None if first_chunk is None else first_chunk - alignment["offset_s"],
     }
 
 
@@ -714,8 +723,8 @@ def expand_gpmf(dump, key, components):
     """
     times, values = [], []
     _, chunks = iter_documents(dump)
-    for chunk in chunks:
-        raw = chunk.tags.get(key)
+    for _, chunk_tags, _ in chunks:
+        raw = chunk_tags.get(key)
         if raw is None:
             continue
         try:
@@ -729,8 +738,8 @@ def expand_gpmf(dump, key, components):
             logger.warning("skipping ragged %s chunk: %d values for %d components", key, len(numbers), components)
             continue
         count = len(numbers) // components
-        start = float(chunk.tags.get("SampleTime", 0.0))
-        step = float(chunk.tags.get("SampleDuration", 1.0)) / count
+        start = float(chunk_tags.get("SampleTime", 0.0))
+        step = float(chunk_tags.get("SampleDuration", 1.0)) / count
         for i in range(count):
             times.append(start + i * step)
             values.append(tuple(numbers[i * components : (i + 1) * components]))
@@ -750,7 +759,7 @@ def expand_gpmf_parallel(dump, keys):
     times, values = [], []
     _, chunks = iter_documents(dump)
     for chunk in chunks:
-        if "SampleTime" not in chunk.tags:
+        if "SampleTime" not in chunk[1]:
             continue
         for when, tags in gps_fixes(chunk):
             row = tuple(None if tags.get(key) is None else float(tags[key]) for key in keys)
@@ -761,7 +770,7 @@ def expand_gpmf_parallel(dump, keys):
     return times, values
 
 
-def telemetry_table(dump, alignment, duration_s):
+def telemetry_table(dump, offset_s, duration_s):
     """Build the per-sample telemetry table, or None when no configured stream produced data.
 
     The streams do not share a time axis. Each GPMF chunk carries its own sample count, so the
@@ -772,8 +781,8 @@ def telemetry_table(dump, alignment, duration_s):
     resampled — a null means "this stream has no sample at this instant", not missing data. The
     fill ratio of each column is logged so that sparsity is observable rather than a surprise.
 
-    `edit_time` and `in_edit` are null when alignment failed: the cut window is unknown, so any
-    value would be a guess.
+    `offset_s` is None when the cut window is unknown — alignment was rejected — and both
+    `edit_time` and `in_edit` are then null, because any value would be a guess.
     """
     streams = {}
     for prefix, (key, components) in _GPMF_STREAMS.items():
@@ -793,10 +802,10 @@ def telemetry_table(dump, alignment, duration_s):
         for i, name in enumerate(axes):
             columns[f"{prefix}_{name}"] = [lookup[t][i] if t in lookup else None for t in axis]
 
-    if alignment.ok:
-        columns["edit_time"] = [t - alignment.offset_s for t in axis]
-        end = alignment.offset_s + duration_s
-        columns["in_edit"] = [alignment.offset_s <= t <= end for t in axis]
+    if offset_s is not None:
+        columns["edit_time"] = [t - offset_s for t in axis]
+        end = offset_s + duration_s
+        columns["in_edit"] = [offset_s <= t <= end for t in axis]
     else:
         columns["edit_time"] = [None] * len(axis)
         columns["in_edit"] = [None] * len(axis)
@@ -912,18 +921,19 @@ def _last_stderr_line(text):
     return lines[-1] if lines else "(no stderr)"
 
 
-def inject(curated, source, alignment, duration_s, tags):
+def inject(curated, source, offset_s, duration_s, tags):
     """Write metadata back into the curated video; return True when a gpmd track landed.
 
     Order matters. ffmpeg runs first because it rewrites the container; exiftool runs second
     to write tags into the final one. Reversed, ffmpeg drops the tags. The remux goes to a
     temporary file that is only moved into place on success, so a failure leaves the curated
     video exactly as it was. A failure in either external tool is logged and the run continues;
-    the return value reports only whether a gpmd track landed.
+    the return value reports only whether a gpmd track landed. `offset_s` is None when the cut
+    window is unknown, and nothing can be grafted without it.
     """
     injected = False
-    gpmd_index = find_gpmd_index(source) if alignment.ok else None
-    if not alignment.ok:
+    gpmd_index = find_gpmd_index(source) if offset_s is not None else None
+    if offset_s is None:
         logger.warning("%s: no gpmd injected, alignment was rejected", curated.name)
     elif gpmd_index is None:
         logger.info("%s: no gpmd track in the source, writing static tags only", curated.name)
@@ -932,7 +942,7 @@ def inject(curated, source, alignment, duration_s, tags):
         # the final suffix, and "GH010234.mp4.inject" makes it exit 1 with "Unable to find a
         # suitable output format" before it reads a single frame.
         temp = curated.with_suffix(".inject" + curated.suffix)
-        command = gpmd_command(curated, source, alignment.offset_s, duration_s, gpmd_index, temp)
+        command = gpmd_command(curated, source, offset_s, duration_s, gpmd_index, temp)
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode == 0:
             os.replace(temp, curated)
@@ -955,6 +965,85 @@ def inject(curated, source, alignment, duration_s, tags):
 
 
 ########
+# Pruning redundant src/ copies
+########
+
+
+def file_digest(path, chunk_size=1 << 20):
+    """Return the SHA-256 of `path`, read in chunks so a 4 GB video never lands in memory."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def is_redundant(video, source):
+    """Return True when the src/ copy is a bit-for-bit duplicate of the video above it.
+
+    Size is compared first because it is free and settles all but a handful of candidates;
+    only genuinely equal-sized files are read in full. Nothing weaker than a full hash is
+    accepted: a head-and-tail probe screens a tree, it does not authorize a deletion. A
+    re-encoded export of the same duration differs in bytes, so it stays an edit and is still
+    aligned and injected.
+    """
+    if video.stat().st_size != source.stat().st_size:
+        return False
+    return file_digest(video) == file_digest(source)
+
+
+def prune_src(source_root, only=None, apply=False):
+    """Report src/ copies identical to the video above them; delete them when `apply`.
+
+    Returns the number of files deleted, which is zero for a report. The copy inside src/ is
+    what goes; the top-level video is never touched, and afterwards it plans as an un-edited
+    original with no special-case code. A src/ left holding no videos is removed, but one
+    still holding an orphan or a real camera original is kept.
+    """
+    candidates = 0
+    candidate_bytes = 0
+    removed = 0
+    freed = 0
+    for video, source, name in plan_videos(source_root):
+        if source is None or (only and only not in name):
+            continue
+        if not is_redundant(video, source):
+            continue
+        candidates += 1
+        size = source.stat().st_size
+        candidate_bytes += size
+        logger.info("redundant %s == %s (%.2f GB, sha256 %s)", source, video, size / 1e9, file_digest(source)[:16])
+        if not apply:
+            continue
+        # The tree is Drive-synced and may have changed since the scan above, so the match is
+        # re-established immediately before the unlink rather than trusted from a moment ago
+        if not is_redundant(video, source):
+            logger.warning("%s changed since the scan, not deleted", source)
+            continue
+        src_dir = source.parent
+        source.unlink()
+        removed += 1
+        freed += size
+        logger.info("deleted %s", source)
+        # An emptied src/ is bookkeeping with nothing left to hold; a src/ still carrying an
+        # orphan, a real source, or anything else at all is left exactly as it is
+        if not find_videos(src_dir):
+            try:
+                src_dir.rmdir()
+                logger.info("removed empty %s", src_dir)
+            except OSError:
+                logger.info("%s holds non-video files, kept", src_dir)
+
+    if apply:
+        logger.info("prune: %d deleted, %.2f GB freed", removed, freed / 1e9)
+    else:
+        logger.info(
+            "prune: %d redundant copies, %.2f GB, nothing deleted (pass --apply)", candidates, candidate_bytes / 1e9
+        )
+    return removed
+
+
+########
 # Pipeline
 ########
 
@@ -974,41 +1063,77 @@ def push(output_root, dry_run=False):
     subprocess.run(command, check=True)
 
 
-def process_pair(pair, output_root, min_r, force):
-    """Run copy, align, extract and inject for one pair; return a summary record."""
-    dest_dir = output_root / pair.name
-    curated = dest_dir / pair.edit.name
+def process_video(video, source, name, output_root, min_r, force):
+    """Curate one video — copy, extract, and for an edit align and inject; return a summary.
 
-    if needs_copy(pair, dest_dir, force=force):
-        copy_video(pair.edit, dest_dir, force=True)
+    `source` is the camera original an edit was cut from, or None when the video is itself an
+    un-edited original. An original is its own metadata source: there is no cut to locate, so
+    the alignment is the identity, and its gpmd track is already on the right time axis, so
+    nothing is grafted on. Both of those are the expensive passes, which is why an original
+    costs roughly a copy rather than a full reprocess.
+    """
+    dest_dir = output_root / name
+    curated = dest_dir / video.name
+    edited = source is not None
+    # An original is its own source, so every metadata read below points at the same file
+    meta_source = source if edited else video
+
+    if needs_copy(video, dest_dir, force=force):
+        copy_video(video, dest_dir, force=True)
+        status = "processed"
+    elif needs_refresh(video, source, dest_dir):
+        # The copy is current but the sidecar no longer describes it: rewrite metadata alone
+        logger.info("%s: refreshing stale metadata", name)
+        status = "refreshed"
     else:
-        # needs_copy already returns True whenever force is set, so reaching here means
-        # the copy is current and not forced: there is nothing left to do
-        logger.info("%s: up to date", pair.name)
-        return {"name": pair.name, "status": "skipped"}
+        logger.info("%s: up to date", name)
+        return {"name": name, "status": "skipped"}
 
-    alignment = align(pair, min_r=min_r)
-    dump = exif_dump(pair.source)
+    alignment = align(video, source, name, min_r=min_r) if edited else {"offset_s": 0.0, "r": 1.0, "ok": True}
+    dump = exif_dump(meta_source)
     duration_s = probe_duration(curated)
 
-    table = telemetry_table(dump, alignment, duration_s)
+    # A rejected alignment leaves the cut window unknown, which downstream reads as None
+    offset_s = alignment["offset_s"] if alignment["ok"] else None
+    table = telemetry_table(dump, offset_s, duration_s)
     if table is not None:
-        write_telemetry(table, dest_dir, pair.edit)
+        write_telemetry(table, dest_dir, video)
 
-    payload = build_payload(
-        pair, dump, alignment, duration_s, pair.name, table is not None, source_fingerprint(pair.edit)
-    )
-    injected = inject(curated, pair.source, alignment, duration_s, payload["static_tags"])
-    payload["gpmd_injected"] = injected
-    write_metadata(dest_dir, pair.edit, payload)
+    payload = {
+        "unique_id": name,
+        "edit": str(video),
+        "source_path": str(meta_source),
+        "source": source_fingerprint(video),
+        "edited": edited,
+        "duration_s": duration_s,
+        "has_imu": table is not None,
+        "alignment": alignment,
+        "static_tags": static_tags(dump),
+        # The edits are cuts plus colour correction with no geometric transform, so lens
+        # geometry still describes the exported pixels. If a clip is ever reframed or
+        # stabilized, this flag is what has to flip.
+        "intrinsics": {"valid_for_edit": True, "reason": "cuts and colour correction only, no reframe"},
+        **gps_payload(dump, alignment),
+    }
+
+    # Injection only ever applies to an edit, and only to a fresh copy: a refresh rewrites
+    # metadata beside a curated file that already carries whatever track it is going to carry
+    if edited and status == "processed":
+        payload["gpmd_injected"] = inject(curated, source, offset_s, duration_s, payload["static_tags"])
+    elif edited:
+        payload["gpmd_injected"] = read_metadata(dest_dir, video).get("gpmd_injected", False)
+    else:
+        # Not injected and not missing: the track was there all along and was never touched
+        payload["gpmd_injected"], payload["gpmd_native"] = False, True
+    write_metadata(dest_dir, video, payload)
 
     return {
-        "name": pair.name,
-        "status": "processed",
-        "aligned": alignment.ok,
-        "r": alignment.r,
+        "name": name,
+        "status": status,
+        "aligned": alignment["ok"],
+        "r": alignment["r"],
         "imu": table is not None,
-        "injected": injected,
+        "injected": payload["gpmd_injected"],
     }
 
 
@@ -1020,12 +1145,14 @@ def process_pair(pair, output_root, min_r, force):
 def main(argv=None):
     """Parse args and run the curation pipeline."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--source-root", type=Path, default=DEFAULT_SOURCE_ROOT, help="nested capture tree to read")
+    parser.add_argument("source_root", type=Path, nargs="?", default=DEFAULT_SOURCE_ROOT, help="capture tree to read")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT, help="flat curated tree to write")
-    parser.add_argument("--only", help="process only pairs whose flat name contains this substring")
+    parser.add_argument("--only", help="process only videos whose flat name contains this substring")
     parser.add_argument("--dry-run", action="store_true", help="log the plan and total size, change nothing")
     parser.add_argument("--force", action="store_true", help="re-copy and re-inject even when up to date")
     parser.add_argument("--index-only", action="store_true", help="rebuild index.csv from the sidecars and stop")
+    parser.add_argument("--prune-src", action="store_true", help="report src/ copies identical to the video above")
+    parser.add_argument("--apply", action="store_true", help="with --prune-src, actually delete what it reports")
     parser.add_argument("--push", action="store_true", help="run scripts/push_curated.sh after processing")
     parser.add_argument("--align-min-r", type=float, default=DEFAULT_ALIGN_MIN_R, help="minimum correlation to accept")
     args = parser.parse_args(argv)
@@ -1036,26 +1163,31 @@ def main(argv=None):
         write_index(args.output_root)
         return 0
 
-    require_binaries()
-
     if not args.source_root.is_dir():
         parser.error(f"source root does not exist: {args.source_root}")
 
-    pairs = plan_pairs(args.source_root)
+    # Pruning compares bytes and deletes files; it reads no media and needs no media tools
+    if args.prune_src:
+        prune_src(args.source_root, only=args.only, apply=args.apply)
+        return 0
+
+    require_binaries()
+
+    entries = plan_videos(args.source_root)
     if args.only:
-        pairs = [p for p in pairs if args.only in p.name]
-    if not pairs:
+        entries = [entry for entry in entries if args.only in entry[2]]
+    if not entries:
         if args.only:
-            logger.warning("no pairs matched --only %r under %s", args.only, args.source_root)
+            logger.warning("no videos matched --only %r under %s", args.only, args.source_root)
         else:
-            logger.warning("no pairs found under %s", args.source_root)
+            logger.warning("no videos found under %s", args.source_root)
         return 0
 
     if args.dry_run:
-        total = sum(p.edit.stat().st_size for p in pairs)
-        for pair in pairs:
-            logger.info("%s/%s  <- %s", pair.name, pair.edit.name, pair.source)
-        logger.info("dry run: %d pairs, %.1f GB", len(pairs), total / 1e9)
+        total = sum(video.stat().st_size for video, _, _ in entries)
+        for video, source, name in entries:
+            logger.info("%s/%s  <- %s", name, video.name, source or "(original)")
+        logger.info("dry run: %d videos, %.1f GB", len(entries), total / 1e9)
         # A dry run that was also asked to push forwards the flag rather than dropping it
         if args.push:
             push(args.output_root, dry_run=True)
@@ -1065,24 +1197,25 @@ def main(argv=None):
     # multi-hour run that has already copied gigabytes. Record the failure and keep going, so
     # write_index and the summary still run.
     records = []
-    for pair in pairs:
+    for video, source, name in entries:
         try:
-            records.append(process_pair(pair, args.output_root, args.align_min_r, args.force))
+            records.append(process_video(video, source, name, args.output_root, args.align_min_r, args.force))
         except Exception:
-            logger.exception("%s: failed, skipping", pair.name)
-            records.append({"name": pair.name, "status": "failed"})
+            logger.exception("%s: failed, skipping", name)
+            records.append({"name": name, "status": "failed"})
     write_index(args.output_root)
 
-    processed = [r for r in records if r["status"] == "processed"]
+    written = [r for r in records if r["status"] in ("processed", "refreshed")]
     failed = [r["name"] for r in records if r["status"] == "failed"]
-    unaligned = [r["name"] for r in processed if not r["aligned"]]
+    unaligned = [r["name"] for r in written if not r["aligned"]]
     logger.info(
-        "done: %d processed, %d skipped, %d failed, %d with IMU, %d injected",
-        len(processed),
+        "done: %d processed, %d refreshed, %d skipped, %d failed, %d with IMU, %d injected",
+        sum(1 for r in records if r["status"] == "processed"),
+        sum(1 for r in records if r["status"] == "refreshed"),
         sum(1 for r in records if r["status"] == "skipped"),
         len(failed),
-        sum(1 for r in processed if r["imu"]),
-        sum(1 for r in processed if r["injected"]),
+        sum(1 for r in written if r["imu"]),
+        sum(1 for r in written if r["injected"]),
     )
     # Surfaced loudly: these clips carry source-time telemetry and no injected track
     for name in unaligned:

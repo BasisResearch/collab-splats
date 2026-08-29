@@ -39,16 +39,36 @@ PLY, while leaving `mesh.ply` exactly as it is today.
   the pipeline's rule that thresholds are fractions of a scene scale, never world distances.
   A number, not a percentile: the simplifier takes a bound; the report measures the
   resulting deviation percentiles.
-- **Libraries.** Decimation: **meshoptimizer** (new dependency; pure-C wheel, no CUDA).
-  It is the simplifier with a true absolute-error stop (`SIMPLIFY_ERROR_ABSOLUTE` +
-  `target_error`, returns `result_error`) and is what production glTF/engine toolchains use.
-  Open3D's legacy `simplify_quadric_decimation(maximum_error=...)` was tried first and
-  rejected by measurement: its error is an accumulated quadric sum that grows with region
-  size (a noisy plane never flattens, a sphere over-collapses), so it is not a distance.
-  pymeshlab's QEM stops only on face count. Smoothing: Open3D legacy `filter_smooth_taubin`
-  (only maintained shrink-free smoother in an installed lib). UV atlas + projection: Open3D
-  tensor API (only numpy-native option). nvdiffrast is out of scope until measured seams
-  justify it.
+- **Decimator: meshoptimizer** (new dependency, pinned exactly — PyPI releases are
+  alpha-tagged, `0.2.30a0`; official bindings from the upstream repo, pure-C wheel, no CUDA,
+  coexists with open3d in-process). Chosen on measurement, all candidates on the same metric
+  (fused vertices → decimated surface, voxel 0.2, `scaffold2dgs_500f_50k_mesh`):
+
+  | decimator | stop | faces | p90 | p99 | max | > 1 voxel | time |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | meshoptimizer | abs error 0.05 | 497k | 0.033 | 0.066 | 0.73 | 0.09% | 2.9 s |
+  | Open3D QEM | count 497k | 497k | 0.027 | 0.120 | 1.04 | 0.49% | 29.5 s |
+  | pymeshlab QEM, planar | count 497k | 497k | 0.044 | 0.358 | 2.88 | 2.88% | 43 s |
+  | VTK DecimatePro | abs error 0.05 | 86k | 0.167 | 0.400 | 2.12 | 6.98% | 22 s |
+  | VTK QuadricDecimation | count 497k | 2.0M (target never reached) | — | — | — | — | 9 s |
+
+  Only meshoptimizer and DecimatePro offer an absolute-error stop, and DecimatePro's is loose
+  (p99 at 8x its target). Open3D's `maximum_error` is an accumulated quadric sum, not a
+  distance (a noisy plane never flattens, a sphere over-collapses). **pymeshlab is excluded
+  outright**: it segfaults whenever open3d is loaded in the same process, in either import
+  order, once open3d touches a mesh — the whole mesh module is open3d, so it would need a
+  subprocess per call, for the worst QEM in the table.
+- **Where Open3D limits us, and what replaces it.** Open3D stays for what it does adequately
+  — Taubin smoothing (legacy), UV atlas (`compute_uvatlas`; xatlas is installed as the
+  fallback if UVAtlas is slow at 500k faces), image projection (tensor API, the only
+  numpy-native projector). Two hard limits: (a) its OBJ writer, legacy and tensor, emits an
+  MTL with no `map_Kd` and never writes the texture image (verified), so the textured OBJ is
+  written by **trimesh** (`TextureVisuals` → `mesh.obj` + `material.mtl` + PNG, verified);
+  (b) `project_images_to_albedo` is a visibility-weighted average with no per-face view
+  selection, no seam levelling, no exposure compensation, CPU-only. Approach 1 keeps it
+  because it is the cheapest thing to measure. The escalation path if seams are visible is
+  MVS-Texturing (`texrecon`, Waechter 2014 — the photogrammetry standard; C++ CLI via
+  subprocess with camera files), not nvdiffrast.
 - **Approach 1 of 3** (Open3D blend, no seam solving, no view selection, no inpainting).
   Measure first; escalate only on evidence.
 
@@ -62,7 +82,7 @@ mesh.ply ──► geometry pass ──► UV atlas ──► albedo / normal pr
                                                                            └─► bake-back ──► mesh_baked.ply
 ```
 
-### Geometry pass (legacy `o3d.geometry.TriangleMesh`)
+### Geometry pass (Open3D legacy for cleanup/smoothing, meshoptimizer on numpy for decimation)
 
 1. `remove_non_manifold_edges`, `remove_degenerate_triangles`, `remove_unreferenced_vertices`
    — QEM needs a clean edge structure; TSDF output has neither.
@@ -89,16 +109,17 @@ run; deviation = original vertices → decimated surface (Open3D `RaycastingScen
 
 1. `compute_uvatlas(size=tex_size)` on the decimated mesh.
 2. Images: `splats` → `splats.zarr/rgb`; `frames` → `FrameStore.image(i)` for each row `i` of
-   `splats.zarr.attrs["image_ids"]`, with `K` rescaled from render to frame resolution when
-   they differ. Cameras: `splats.zarr/c2w` inverted to extrinsics, `splats.zarr/K`.
+   `splats.zarr.attrs["image_ids"]` (same shape as the renders — see the guard below, so
+   `K` is used as stored). Cameras: `splats.zarr/c2w` inverted to extrinsics, `splats.zarr/K`.
 3. `project_images_to_albedo(images, K, w2c, tex_size)` → `albedo.png`.
 4. Normal map: same projector on `splats.zarr/normal` (world-frame, `(n+1)/2*255` uint8,
    renormalised after decode) → `normal_world.png`. **World-space, not tangent-space** — a
    `map_bump` reader that assumes tangent space will shade wrongly; the name and the MTL
    comment say so. Splat normals serve both sources (frames carry none). Skipped when the
    store has no `normal` array.
-5. `o3d.t.io.write_triangle_mesh("mesh.obj")`; MTL carries `map_Kd albedo.png` and
-   `map_bump normal_world.png`.
+5. Export via trimesh: `TextureVisuals(uv, image=albedo)` → `mesh.obj` + `mesh.mtl`
+   (`map_Kd albedo.png`); `map_bump normal_world.png` appended to the MTL by hand (trimesh
+   writes only the albedo). Open3D cannot write a textured OBJ (see decisions).
 
 All views integrate — 500 frames at 1920x1080 is ~3 GB uint8 per array, well inside the
 46 GB cap. `frames` guard: `frames.zarr` image shape must equal `splats.zarr/rgb` shape
@@ -156,7 +177,8 @@ raises the same error for either source.
 - `docs/examples/texture_mesh.py`: standalone entry — `mesh.ply` path + `splats.zarr`
   (+ `frames.zarr`) + config → `texture/<source>/`; how the measurement runs on
   `/workspace/outputs/scaffold2dgs_500f_50k_mesh/mesh_clean.ply` without a Reconstructor.
-- New dependency: `meshoptimizer` in `pyproject.toml`. `Pillow` (already present) writes PNGs.
+- New dependency: `meshoptimizer==0.2.30a0` in `pyproject.toml` (exact pin, alpha tag).
+  `Pillow` (already present) writes PNGs.
 
 ## Outputs
 
@@ -189,7 +211,9 @@ backend_dir/
 On `scaffold2dgs_500f_50k_mesh` (voxel 0.2):
 
 1. Both sources at defaults. Renders of OBJ (textured) vs `mesh_clean.ply` from 5 scene
-   cameras; side-by-side crops on a wall, a pole, and text.
+   cameras; side-by-side crops on a wall, a pole, and text. Wall-time and peak RSS of
+   `project_images_to_albedo` at 500 views x 8192² (CPU-only, unmeasured) — this decides
+   whether the `tex_size` default holds.
 2. `decimate_max_error` at 0.25 / 0.5 / 1.0: renders of the textured OBJ on the pole crop
    (face counts and deviation already tabulated above).
 3. `smooth_iterations` at 0 / 5 / 10 on the pole crop.
@@ -199,7 +223,8 @@ a row in that table.
 
 ## Out of scope
 
-- Seam-aware view selection, texture inpainting, differentiable baking (nvdiffrast).
+- Seam-aware view selection / seam levelling (MVS-Texturing), texture inpainting,
+  differentiable baking (nvdiffrast).
 - Novel-view splat renders as a texture source (approach C in brainstorming) — follow-up if
   texel coverage on oblique surfaces is poor.
 - Any change to `mesh.ply` or its readers.

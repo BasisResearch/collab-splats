@@ -31,19 +31,24 @@ PLY, while leaving `mesh.ply` exactly as it is today.
   `splats` (rendered RGB in `splats.zarr`, view-consistent, pose-opt deltas included) and
   `frames` (raw `frames.zarr` pixels, sharpest but exposure/pose seams). Cameras always come
   from `splats.zarr` (`c2w`, `K`); only the image array differs.
-- **Error-bounded decimation, not a face budget.** QEM stops when the next collapse's
-  quadric error exceeds `(decimate_error_frac * voxel_size)^2`. Marching cubes cannot place a
-  surface more accurately than ~`voxel_size`, so collapses under that bound remove
-  quantisation noise, not signal. The bound derives from a value already in the config; no
-  per-scene face count. This is a geometric proxy for visual retention, so the report also
-  renders decimated vs original from scene cameras and records PSNR/SSIM.
-- **Libraries: Open3D only.** The legacy `o3d.geometry` API is the only place an
-  error-bounded QEM (`simplify_quadric_decimation(maximum_error=...)`) and Taubin smoothing
-  exist; the tensor `o3d.t.geometry` API is the only place UV-atlas generation and image
-  projection exist. pymeshlab was considered (better QEM knobs, raster texturing) and dropped:
-  its QEM has no error bound, and its raster projection wants MLP project files on disk.
-  nvdiffrast (differentiable bake) is not installed and is out of scope until the measured
-  seams justify it.
+- **Error-bounded decimation, not a face budget.** QEM stops when the next collapse would
+  move the surface more than `decimate_max_error * voxel_size` (absolute deviation, scene
+  units). Marching cubes cannot place a surface more accurately than ~`voxel_size`, so
+  collapses well under that remove quantisation noise, not signal. Expressed in voxel units
+  so it means the same thing on a metric scene (voxel 0.0025) and a scaffold scene (0.2) —
+  the pipeline's rule that thresholds are fractions of a scene scale, never world distances.
+  A number, not a percentile: the simplifier takes a bound; the report measures the
+  resulting deviation percentiles.
+- **Libraries.** Decimation: **meshoptimizer** (new dependency; pure-C wheel, no CUDA).
+  It is the simplifier with a true absolute-error stop (`SIMPLIFY_ERROR_ABSOLUTE` +
+  `target_error`, returns `result_error`) and is what production glTF/engine toolchains use.
+  Open3D's legacy `simplify_quadric_decimation(maximum_error=...)` was tried first and
+  rejected by measurement: its error is an accumulated quadric sum that grows with region
+  size (a noisy plane never flattens, a sphere over-collapses), so it is not a distance.
+  pymeshlab's QEM stops only on face count. Smoothing: Open3D legacy `filter_smooth_taubin`
+  (only maintained shrink-free smoother in an installed lib). UV atlas + projection: Open3D
+  tensor API (only numpy-native option). nvdiffrast is out of scope until measured seams
+  justify it.
 - **Approach 1 of 3** (Open3D blend, no seam solving, no view selection, no inpainting).
   Measure first; escalate only on evidence.
 
@@ -64,10 +69,21 @@ mesh.ply ──► geometry pass ──► UV atlas ──► albedo / normal pr
 2. `filter_smooth_taubin(number_of_iterations=smooth_iterations)` — shrink-free. Default 0
    (off): it rounds box edges and text as readily as poles. Runs before decimation so QEM sees
    the smoothed surface.
-3. `simplify_quadric_decimation(target_number_of_triangles=1, maximum_error=(frac*voxel)^2)`
-   — `target=1` makes the error bound the only stop. `decimate_error_frac: null` skips
-   decimation entirely.
-4. `compute_vertex_normals` — needed by the OBJ writer and the render comparison.
+3. `meshoptimizer.simplify(target_index_count=3, target_error=decimate_max_error*voxel_size,
+   options=SIMPLIFY_ERROR_ABSOLUTE)` — the tiny index target makes the error bound the only
+   stop; vertices are never moved, only removed. `decimate_max_error: null` skips decimation.
+4. `compute_vertex_normals` — needed by the OBJ writer.
+
+Measured on `scaffold2dgs_500f_50k_mesh/mesh_clean.ply` (3.05M faces, voxel 0.2), 2.2 s per
+run; deviation = original vertices → decimated surface (Open3D `RaycastingScene`):
+
+| bound (voxels) | faces | p90 | p99 | max | > 1 voxel |
+| --- | --- | --- | --- | --- | --- |
+| 0.25 | 497k (16%) | 0.033 | 0.066 | 0.73 | 0.09% |
+| 0.5 | 232k (7.6%) | 0.060 | 0.138 | 2.15 | 0.48% |
+| 1.0 | 74k (2.4%) | 0.127 | 0.343 | 2.67 | 3.4% |
+
+`result_error` tracks p99 within ~1.5x. Default 0.25.
 
 ### Texture pass (tensor `o3d.t.geometry.TriangleMesh`)
 
@@ -76,11 +92,18 @@ mesh.ply ──► geometry pass ──► UV atlas ──► albedo / normal pr
    `splats.zarr.attrs["image_ids"]`, with `K` rescaled from render to frame resolution when
    they differ. Cameras: `splats.zarr/c2w` inverted to extrinsics, `splats.zarr/K`.
 3. `project_images_to_albedo(images, K, w2c, tex_size)` → `albedo.png`.
-4. Normal map: same projector on `splats.zarr/normal` (world-frame, `(n+1)/2*255` uint8)
-   → `normal.png`. Splat normals serve both sources (frames carry none). Skipped when the
+4. Normal map: same projector on `splats.zarr/normal` (world-frame, `(n+1)/2*255` uint8,
+   renormalised after decode) → `normal_world.png`. **World-space, not tangent-space** — a
+   `map_bump` reader that assumes tangent space will shade wrongly; the name and the MTL
+   comment say so. Splat normals serve both sources (frames carry none). Skipped when the
    store has no `normal` array.
 5. `o3d.t.io.write_triangle_mesh("mesh.obj")`; MTL carries `map_Kd albedo.png` and
-   `map_bump normal.png`.
+   `map_bump normal_world.png`.
+
+All views integrate — 500 frames at 1920x1080 is ~3 GB uint8 per array, well inside the
+46 GB cap. `frames` guard: `frames.zarr` image shape must equal `splats.zarr/rgb` shape
+(splats may have trained on undistorted or resized frames), else raise pointing at
+`source: splats`.
 
 ### Bake-back
 
@@ -92,11 +115,9 @@ UV, writes `mesh_baked.ply`. Normal map does not survive into the PLY (vertex-co
 ### Report — `texture_report.json`
 
 - faces / vertices: fused, after cleanup, after decimation, baked
-- `decimate_error`: the bound used, and Hausdorff distance decimated→fused as a fraction of
-  scene scale (`_scene_scale` of the vertices, already in `mesh/utils.py`)
-- render comparison: decimated vs fused mesh, normal-shaded (no texture), Open3D offscreen,
-  from up to 8 evenly spaced `splats.zarr` cameras — per-view PSNR/SSIM and the mean. One
-  `OffscreenRenderer` per process (known constraint).
+- decimation: bound in voxels and scene units, meshoptimizer `result_error`, and measured
+  deviation (fused vertices → decimated surface) p50 / p90 / p99 / max plus fraction beyond
+  one voxel — the table above, per run
 - UV atlas: chart count, texel fill fraction (non-zero alpha in the albedo)
 - wall-time per step
 
@@ -110,7 +131,7 @@ mesh:
   texture:
     enabled: false
     source: splats            # splats | frames — images only; cameras always from splats.zarr
-    decimate_error_frac: 1.0  # QEM stops at collapse error > (frac * voxel_size)^2; null = off
+    decimate_max_error: 0.25  # max surface deviation in voxel_size units; null = no decimation
     smooth_iterations: 0      # Taubin passes before decimation; 0 = off
     tex_size: 8192            # albedo / normal map side in texels
     bake_target_faces: 500000 # bake-back subdivides until at least this many faces
@@ -132,7 +153,10 @@ raises the same error for either source.
 - `collab_splats/wrapper/reconstructor.py`: `mesh()` passes `mesh_cfg["texture"]` through
   `_run_tsdf_mesh`; both source branches reach it.
 - `configs/base.yaml`, `configs/README.md`: the block above.
-- No new dependencies. `Pillow` (already present via trimesh/open3d) writes the PNGs.
+- `docs/examples/texture_mesh.py`: standalone entry — `mesh.ply` path + `splats.zarr`
+  (+ `frames.zarr`) + config → `texture/<source>/`; how the measurement runs on
+  `/workspace/outputs/scaffold2dgs_500f_50k_mesh/mesh_clean.ply` without a Reconstructor.
+- New dependency: `meshoptimizer` in `pyproject.toml`. `Pillow` (already present) writes PNGs.
 
 ## Outputs
 
@@ -141,7 +165,7 @@ backend_dir/
   mesh.ply                       # unchanged
   texture/<source>/
     mesh.obj  mesh.mtl           # decimated, UV-mapped
-    albedo.png  normal.png
+    albedo.png  normal_world.png
     mesh_baked.ply               # collab-data contract
     texture_report.json
 ```
@@ -153,11 +177,12 @@ backend_dir/
 - Synthetic textured cube: one rendered view (Open3D offscreen) of a solid-colour cube →
   full chain → face count ≤ fused count, albedo non-black at the visible face's texels, baked
   PLY vertex colours on that face match the source colour within 8/255.
-- Error bound: a flat plane subdivided to 10k faces decimates to ≤ 4 faces at `frac=1.0`;
-  a sphere at the same setting keeps > 50% of its faces.
-- `decimate_error_frac: null` leaves face count unchanged.
+- Error bound: noisy plane (σ = 0.25 bound) and sphere decimate with measured p99 deviation
+  ≤ 1.5x the bound, and the plane ends with fewer faces than the sphere.
+- `decimate_max_error: null` leaves face count unchanged.
+- `frames` source with mismatched frame shape raises.
 - Bake-back: the two collab-data tests ported (texel orientation, subdivision count).
-- Missing `normal` array → `normal.png` absent, no error.
+- Missing `normal` array → `normal_world.png` absent, no error.
 
 ## Measurement plan (before defaults are final)
 
@@ -165,7 +190,8 @@ On `scaffold2dgs_500f_50k_mesh` (voxel 0.2):
 
 1. Both sources at defaults. Renders of OBJ (textured) vs `mesh_clean.ply` from 5 scene
    cameras; side-by-side crops on a wall, a pole, and text.
-2. `decimate_error_frac` at 0.5 / 1.0 / 2.0: face count, Hausdorff, render PSNR/SSIM.
+2. `decimate_max_error` at 0.25 / 0.5 / 1.0: renders of the textured OBJ on the pole crop
+   (face counts and deviation already tabulated above).
 3. `smooth_iterations` at 0 / 5 / 10 on the pole crop.
 
 Results and the chosen defaults are appended to this spec; nothing ships as default without

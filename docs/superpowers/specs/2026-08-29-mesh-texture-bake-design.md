@@ -52,6 +52,11 @@ PLY, while leaving `mesh.ply` exactly as it is today.
   | VTK DecimatePro | abs error 0.05 | 86k | 0.167 | 0.400 | 2.12 | 6.98% | 22 s |
   | VTK QuadricDecimation | count 497k | 2.0M (target never reached) | — | — | — | — | 9 s |
 
+  Gmsh (curvature-driven surface *remeshing* rather than decimation) was also tried:
+  `classifySurfaces` on the 74k-face decimated mesh did not finish in 10 minutes (791k
+  "Partitioning face ... changing tolerance" warnings) — it needs a parametrisable CAD-like
+  surface, which a scan mesh is not; it also needs X11 libs headless and carries no
+  attribute transfer. Rejected.
   Only meshoptimizer and DecimatePro offer an absolute-error stop, and DecimatePro's is loose
   (p99 at 8x its target). Open3D's `maximum_error` is an accumulated quadric sum, not a
   distance (a noisy plane never flattens, a sphere over-collapses). **pymeshlab is excluded

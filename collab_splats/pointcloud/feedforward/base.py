@@ -765,8 +765,8 @@ def build_pycolmap_reconstruction(
     Creates one camera and one image per entry in ``image_names``.  Points are
     added as free 3D points with no ``Point2D`` track observations — feedforward
     methods do not produce feature matches, so there are no 2D-3D correspondences
-    to record.  This means the reconstruction is valid for writing to disk and
-    converting to ``transforms.json``, but cannot be used as input to COLMAP BA.
+    to record.  This means the reconstruction is valid for writing to disk, but
+    cannot be used as input to COLMAP BA.
 
     Args:
         pts3d:        (P, 3) float32 or float64 world-space point positions.

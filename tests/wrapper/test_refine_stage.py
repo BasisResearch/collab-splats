@@ -118,8 +118,7 @@ def test_refine_poses_refines_and_persists(tmp_path):
 
     fake_result = MagicMock()
     with patch("collab_splats.geometry.bundle_adjustment.BundleAdjustment.refine", fake_refine), \
-         patch.object(Reconstructor, "_load_pointcloud_from_disk", return_value=fake_result), \
-         patch.object(Reconstructor, "_write_transforms_json") as mock_tj:
+         patch.object(Reconstructor, "_load_pointcloud_from_disk", return_value=fake_result):
         out = r.refine_poses()
 
     # COLMAP rewritten with refined poses
@@ -127,9 +126,8 @@ def test_refine_poses_refines_and_persists(tmp_path):
     # zarr extrinsics updated in place — never diverges from COLMAP
     store = zarr_mod.open(str(r.backend_dir / "pointcloud.zarr"), mode="r")
     np.testing.assert_allclose(store["extrinsics"][:, 0, 3], ff.extrinsics[:, 0, 3] + 1.0)
-    # standard writers refreshed the derived artifacts
+    # the standard writer refreshed the derived artifact
     fake_result.write_ply.assert_called_once_with(r.backend_dir / "sparse_pc.ply")
-    mock_tj.assert_called_once_with(fake_result)
     # marker doubles as provenance
     marker = json.loads((r.backend_dir / "colmap" / "refine.json").read_text())
     assert "config" in marker and "loss_history" in marker

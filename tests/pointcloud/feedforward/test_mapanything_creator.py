@@ -379,7 +379,7 @@ def test_mapanything_reconstruct_smoke(tmp_path):
     result = c.reconstruct(image_dir, tmp_path / "out")
     assert isinstance(result, PointcloudResult)
     assert result.points.shape[1] == 3
-    assert (tmp_path / "out" / "sparse_pc.ply").exists()  # transforms.json is written by Reconstructor, not the creator
+    assert (tmp_path / "out" / "sparse_pc.ply").exists()
     assert (tmp_path / "out" / "colmap" / "sparse" / "0" / "cameras.bin").exists()
 
 

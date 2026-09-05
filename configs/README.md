@@ -235,7 +235,7 @@ relative-pose stats, per-frame track survival and reprojection error), and `data
   `rv_histogram((counts, bin_edges)).cdf(x/(1+abs(x)))`.
 
 `refine` (LM bundle adjustment) rewrites the reconstruction's poses in place —
-COLMAP, `transforms.json`, `sparse_pc.ply`, and the pose-derived arrays in
+COLMAP, `sparse_pc.ply`, and the pose-derived arrays in
 `pointcloud.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the
 localization DB built under the old poses: after `--stages refine`, re-run those
 stages with `overwrite` if pose-sensitive outputs matter. Provenance for the last
@@ -500,7 +500,7 @@ VDA metric weights are CC-BY-NC-4.0.
   colmap/sparse/0/*.bin        ← InstantSfM global-mapper model, image names = frame stems
   pointcloud.zarr              ← depth/images/poses/K at model res; world_points unprojected from VDA depth;
                                ←   no `confidence`, no `mv_*` (absent, never zeros); attrs: method, backend, instantsfm_version
-  sparse_pc.ply, transforms.json
+  sparse_pc.ply
 ```
 
 `colmap/instantsfm.db` has its own name so it never collides with the `verify` stage's
@@ -552,7 +552,6 @@ A processed scene (`environments-processed/<scene>/`) carries:
 |---|---|
 | `<backend>/sparse_pc.ply` | any pipeline — binary little-endian, float32 xyz + uchar rgb |
 | `<backend>/mesh.ply` | any pipeline |
-| `<backend>/transforms.json` | `camera_model` + `frames` (frame_idx-keyed against frames.zarr; fl_x/fl_y/cx/cy, OpenCV c2w `transform_matrix`) |
 | `<backend>/semantics/<extractor>_lifted.zarr` | per-point latent codes (`semantics.n_components`-D) |
 | `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |
@@ -613,15 +612,15 @@ estimate.
 #### A published scene has no `images/` directory, by design
 
 Any loader that resolves `frame["file_path"]` or `data/images/{name}` off disk needs real
-image files. Our `transforms.json` frames key on `frame_idx` against `frames.zarr` instead,
-and there is no `images/` directory — it was removed in the frame-store migration. No
-`images/` export will be added. Downstream consumers get `sparse_pc.ply` + the mesh + the
-features + the raw COLMAP binaries, and read poses via `pycolmap`.
+image files. There is no `images/` directory — it was removed in the frame-store migration,
+and frames live in `frames.zarr` keyed by `frame_idx`. No `images/` export will be added.
+Downstream consumers get `sparse_pc.ply` + the mesh + the features + the raw COLMAP
+binaries, and read poses via `pycolmap`.
 
 #### Splats train from the published COLMAP + frames.zarr
 
 `--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
-`frames.zarr` — no image directory, no transforms.json round-trip. Every `splats/` artifact is in
+`frames.zarr` — no image directory. Every `splats/` artifact is in
 the COLMAP world frame; nothing is normalised. `mesh` fuses `pointcloud.zarr` by default;
 `mesh.source: splats` fuses the renders instead (alpha as confidence, poses as rendered).
 

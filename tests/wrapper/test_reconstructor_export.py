@@ -34,8 +34,7 @@ def test_build_pointcloud_writes_sparse_pc_ply(tmp_path):
     """
     The pointcloud stage lands a binary PLY of the final result at backend_dir/sparse_pc.ply.
     """
-    # clean disabled so the result reaching the writer is the one the backend returned;
-    # transforms.json is a separate writer with its own tests.
+    # clean disabled so the result reaching the writer is the one the backend returned.
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
@@ -44,10 +43,7 @@ def test_build_pointcloud_writes_sparse_pc_ply(tmp_path):
     rec = Reconstructor(config)
     result = _pointcloud_result(3)
 
-    with (
-        patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(result, None)),
-        patch.object(Reconstructor, "_write_transforms_json"),
-    ):
+    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(result, None)):
         rec.build_pointcloud(overwrite=True)
 
     # The path is the contract: downstream stages and the remote sync both look here by name

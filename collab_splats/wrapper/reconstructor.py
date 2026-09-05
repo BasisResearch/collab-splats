@@ -1014,9 +1014,6 @@ class Reconstructor:
         # the creator wrote its own copy.
         result.write_ply(self.backend_dir / "sparse_pc.ply")
 
-        # Write the pose+intrinsics transforms.json alongside the COLMAP model
-        self._write_transforms_json(result)
-
         self.pointcloud = result
         return result
 
@@ -1067,46 +1064,6 @@ class Reconstructor:
 
         logger.info("Pointcloud after cleaning: %d points", result.reconstruction.num_points3D())
         return result
-
-    def _write_transforms_json(self, result: "PointcloudResult") -> None:
-        """Write pose+intrinsics frames to backend_dir/transforms.json.
-
-        Frames are frame_idx-keyed against frames.zarr, not file_path-keyed against an
-        images/ dir, so a stock file_path-keyed dataparser cannot load this file as-is.
-        """
-        # Nothing to write if there are no registered frames
-        extrinsics = result.extrinsics  # (N, 4, 4) w2c
-        if extrinsics is None or len(extrinsics) == 0:
-            return
-
-        image_paths = result.image_paths
-
-        intrinsics = result.intrinsics  # (N, 3, 3)
-
-        # c2w = inv(w2c): invert each 4x4 pose into camera-to-world convention
-        c2w = np.linalg.inv(extrinsics)  # (N, 4, 4)
-
-        # Frames live in the canonical frames.zarr store (no images/ dir); pose+intrinsics only.
-        frames = []
-        for img_path, K, pose in zip(image_paths, intrinsics, c2w):
-            frames.append(
-                {
-                    "frame_idx": FrameStore.frame_idx_from_path(img_path),
-                    "fl_x": float(K[0, 0]),
-                    "fl_y": float(K[1, 1]),
-                    "cx": float(K[0, 2]),
-                    "cy": float(K[1, 2]),
-                    "transform_matrix": pose.tolist(),
-                }
-            )
-
-        self.backend_dir.mkdir(parents=True, exist_ok=True)
-        out = self.backend_dir / "transforms.json"
-
-        # Poses are OpenCV c2w straight from the COLMAP model; no applied_transform
-        payload = {"camera_model": "PINHOLE", "frames": frames}
-        out.write_text(json.dumps(payload, indent=2))
-        logger.info("transforms.json written to %s", out)
 
     def _run_sfm(self) -> "PointcloudResult":
         """
@@ -1461,10 +1418,9 @@ class Reconstructor:
             ).astype(np.float32)
             store["world_points"][:] = wp
 
-        # Refresh the remaining derived artifacts through the standard writers
+        # Refresh the remaining derived artifact through the standard writer
         result = self._load_pointcloud_from_disk()
         result.write_ply(self.backend_dir / "sparse_pc.ply")
-        self._write_transforms_json(result)
 
         # Marker + provenance in one file: BA config and per-step LM loss history
         marker.parent.mkdir(parents=True, exist_ok=True)

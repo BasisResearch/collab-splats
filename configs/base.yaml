@@ -44,15 +44,6 @@ preproc:
                               # win. frames.zarr reuse is by EXISTENCE — toggling this on an
                               # existing scene needs preprocess(overwrite=True). Localization
                               # QUERY images are NOT undistorted (they never pass through here).
-  vda_context_fps: null       # sfm only: run VDA over a contiguous grid at this rate instead
-                              # of over the keyframes, keeping only the keyframe rows. VDA is
-                              # temporal, so a sparse subsample is out of distribution. Setting
-                              # it also restricts keyframe selection (and blur substitution) to
-                              # the same grid, so keyframes are grid members by construction.
-                              # Measured 2026-08-26 at 8.56 FPS: per-frame depth CV 0.409 ->
-                              # 0.401, co-visible sep-50 disagreement 34.5% -> 25.3%.
-                              # Incompatible with frame_selection: optical_flow.
-                              # null = keyframe-only VDA.
 
 pointcloud:
   method: feedforward         # feedforward | sfm

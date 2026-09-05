@@ -43,11 +43,9 @@ from collab_splats.preproc.sampling import (
     sample_uniform,
 )
 from collab_splats.preproc.undistort import (
-    DistortionProfile,
     estimate_camera_distortion,
     undistort_frames,
 )
-from collab_splats.preproc.video import context_indices, decode_context
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.utils import (
     extract_feature_cache,
@@ -132,57 +130,6 @@ def _apply_undistortion(frame_arrays: list[np.ndarray], prov: dict) -> list[np.n
     return frame_arrays
 
 
-def _context_keep_rows(grid: Sequence[int], keyframe_indices: Sequence[int]) -> list[int] | None:
-    """
-    Positions of each keyframe within the context grid, or None when they do not line up.
-
-    - Keyframes selected through preproc's candidate grid are grid members by construction;
-      a scene whose frames.zarr predates that change is not, and gets the keyframe-only VDA
-      path rather than a silently misaligned depth stack.
-    """
-    # np.unique, matching decode_context's sorted({...}): searchsorted needs a sorted grid, and
-    # the two must agree on row order or positions point at the wrong frames
-    grid_array = np.unique(np.asarray(grid, dtype=np.int64))
-    if grid_array.size == 0:
-        logger.warning("VDA context grid is empty — falling back to keyframe-only VDA")
-        return None
-
-    # searchsorted clips past-the-end keyframes onto the last member, so the equality check
-    # below — not the search — is what decides whether a keyframe is really on the grid
-    keyframes = np.asarray(keyframe_indices, dtype=np.int64)
-    positions = np.clip(np.searchsorted(grid_array, keyframes), 0, grid_array.size - 1)
-    off_grid = grid_array[positions] != keyframes
-    if off_grid.any():
-        logger.warning(
-            "%d of %d keyframes are off the context grid (first: %d) — falling back to "
-            "keyframe-only VDA. Re-run preprocess with preproc.vda_context_fps set to align them.",
-            int(off_grid.sum()), len(keyframes), int(keyframes[off_grid][0]),
-        )
-        return None
-
-    return [int(p) for p in positions]
-
-
-def _video_unchanged(video_path: Path, provenance: dict) -> bool:
-    """
-    Check that the video on disk is still the one frames.zarr was built from.
-
-    - The context grid is indexed against that specific decode; a re-encoded or replaced clip
-      at the same path shifts every index, pairing keyframes with other frames' depth.
-    - Both grids start at 0, so a mismatch is not self-announcing — nothing downstream errors.
-    - Missing provenance (a store written before the stamp existed) is treated as unchanged.
-    """
-    recorded_mtime = provenance.get("video_mtime")
-    if recorded_mtime is not None and abs(float(recorded_mtime) - video_path.stat().st_mtime) > 1.0:
-        logger.warning(
-            "%s was modified since frames.zarr was written (mtime %s -> %s)",
-            video_path, recorded_mtime, video_path.stat().st_mtime,
-        )
-        return False
-
-    return True
-
-
 def extract_frames(
     input_path: Path,
     frames_zarr: Path,
@@ -193,7 +140,6 @@ def extract_frames(
     n_workers: int = 1,
     undistort: bool = False,
     search_radius: int = 3,
-    vda_context_fps: float | None = None,
 ) -> int:
     """
     Extract frames from video or image dir into frames.zarr (sole persistent store).
@@ -206,9 +152,6 @@ def extract_frames(
     - undistort=True self-calibrates one shared OPENCV camera and undistorts every
       selected frame before writing (alpha=0 crop changes frame dims; profile,
       K_new and roi are stamped into provenance["undistort"]).
-    - vda_context_fps restricts every selected frame (target and blur substitute) to the
-      constant-rate grid the sfm stage runs VDA over, so the keyframes are grid members by
-      construction and their depth rows map back by position. Video input only.
     """
     input_path = Path(input_path)
 
@@ -226,30 +169,12 @@ def extract_frames(
             "method": "dir",
             "fps": None,
             "max_frames": max_frames,
-            "vda_context_fps": None,
         }
 
-        # An image directory has no frame rate to build a grid on, and _run_sfm gates the
-        # context stream on a video FILE, so the knob is inert here — say so rather than
-        # letting it look honoured
-        if vda_context_fps:
-            logger.warning(
-                "preproc.vda_context_fps=%s ignored for image-directory input %s — "
-                "the context stream needs a video to decode",
-                vda_context_fps, input_path,
-            )
         if undistort:
             frame_arrays = _apply_undistortion(frame_arrays, prov)
         FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
         return len(frame_arrays)
-
-    # Config error, not a path error: check the combination before the probe so a bad
-    # frame_selection does not surface as an ffprobe failure
-    if vda_context_fps and frame_selection == "optical_flow":
-        raise ValueError(
-            "preproc.vda_context_fps requires frame_selection 'fps' or 'uniform' — "
-            "optical_flow picks frames by motion and cannot be restricted to a grid."
-        )
 
     # Fail loud on an unreadable/empty video — 0 total frames means a bad path or a
     # codec ffmpeg can't decode, which otherwise silently yields an empty store.
@@ -269,17 +194,6 @@ def extract_frames(
         workers=n_workers,
     )
 
-    # Context grid: when the VDA context stream is enabled the keyframes must be grid
-    # members, so the depth rows map back to them by position (see _context_keep_rows).
-    # context_indices is range(0, total, step), so the grid always spans the whole video.
-    candidates = None
-    if vda_context_fps:
-        candidates = context_indices(str(input_path), target_fps=vda_context_fps)
-        logger.info(
-            "VDA context grid: %d frames at %.2f fps; keyframes will be drawn from it",
-            len(candidates), vda_context_fps,
-        )
-
     # Video — 'fps' samples at a constant wall-clock rate (band-bounded), 'uniform'
     # spreads exactly max_frames over the whole video, 'optical_flow' picks high-motion
     # frames. Each method gets only its own knobs.
@@ -291,12 +205,10 @@ def extract_frames(
             max_frames=max_frames,
             report=report,
             search_radius=search_radius,
-            candidates=candidates,
         )
     elif frame_selection == "uniform":
         frame_arrays, records = sample_uniform(
             str(input_path), max_frames=max_frames, report=report, search_radius=search_radius,
-            candidates=candidates,
         )
     elif frame_selection == "optical_flow":
         frame_arrays, records = sample_optical_flow(str(input_path), max_frames=max_frames, report=report)
@@ -321,7 +233,6 @@ def extract_frames(
         "method": method,
         "fps": fps,
         "max_frames": max_frames,
-        "vda_context_fps": vda_context_fps,
     }
     if undistort:
         frame_arrays = _apply_undistortion(frame_arrays, prov)
@@ -961,7 +872,6 @@ class Reconstructor:
             n_workers=pre_cfg["n_workers"],
             undistort=pre_cfg["undistort"],
             search_radius=pre_cfg["search_radius"],
-            vda_context_fps=pre_cfg["vda_context_fps"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",
@@ -1068,8 +978,16 @@ class Reconstructor:
             store.export(image_dir, ext="jpg")
             logger.info("Staged %d keyframes to %s", len(names), image_dir)
 
-        # VDA metric depth for every keyframe — cached across runs, stamped with what made it
-        self._ensure_vda_depth(backend_dir, store, names)
+        # VDA metric depth for every keyframe. Gate on the written map set BEFORE reading
+        # frames.zarr: generate_vda_depth is idempotent, but store.images() materialises the
+        # whole keyframe stack (~1.9 GB for 300 frames at 1080p) to reach that check.
+        if not vda_depth_complete(backend_dir, names):
+            generate_vda_depth(
+                np.ascontiguousarray(store.images()),
+                fps=float(self.config["preproc"]["fps"]),
+                out_dir=backend_dir,
+                names=names,
+            )
 
         # Global SfM via the upstream python API; writes colmap/instantsfm.db + colmap/sparse/0
         creator = InstantSfMCreator(
@@ -1110,117 +1028,6 @@ class Reconstructor:
             reconstruction=recon,
             image_paths=outputs.image_paths,
         )
-
-    def _ensure_vda_depth(self, backend_dir: Path, store: FrameStore, names: list[str]) -> None:
-        """
-        Write depth_vda/images/npy/<stem>.npy for every keyframe, reusing what is already there.
-
-        - Regenerates when the recorded generating inputs differ from this run's; an absent
-          sidecar means the maps predate the stamp and are trusted.
-        - Runs VDA over the contiguous context grid when preproc.vda_context_fps is set and the
-          source video still matches, keeping only the keyframe rows; falls back to keyframes.
-        """
-        # VDA metric depth — the only shipped mode (use_depths=True). Gate on the npy set BEFORE
-        # decoding anything (300 x 1080p is ~1.9 GB).
-        context_fps = self.config["preproc"]["vda_context_fps"]
-
-        # vda_depth_complete keys on `names` alone, but the depth CONTENT also depends on the
-        # context grid, and `names` is always the same sequential frame_NNNNNN set — so changing
-        # vda_context_fps leaves the stem set identical and would silently reuse stale depth. A
-        # sidecar records the generating inputs; an ABSENT one means the maps predate this stamp
-        # and are trusted, so only a present-and-different stamp invalidates.
-        depth_sidecar = backend_dir / "depth_vda" / "inputs.json"
-        keyframe_fps = self.config["preproc"]["fps"]
-        signature = {
-            "context_fps": float(context_fps) if context_fps else None,
-            "keyframe_fps": float(keyframe_fps) if keyframe_fps else None,
-            "n_names": len(names),
-        }
-
-        # write_text is not atomic and runs here get OOM-killed, so a half-written stamp is
-        # realistic; an unreadable one is treated as a mismatch because regenerating is always safe
-        cached_signature, unreadable = None, False
-        if depth_sidecar.exists():
-            try:
-                cached_signature = json.loads(depth_sidecar.read_text())
-            except (json.JSONDecodeError, OSError):
-                logger.warning("VDA depth sidecar %s is unreadable — regenerating depth", depth_sidecar)
-                unreadable = True
-        stale = unreadable or (cached_signature is not None and cached_signature != signature)
-        if stale:
-            logger.info(
-                "VDA depth cache invalidated: generating inputs changed %s -> %s", cached_signature, signature,
-            )
-
-            # generate_vda_depth early-returns on a complete stem set, and none of these inputs
-            # change that set — so the superseded maps must be REMOVED, not merely out-stamped
-            shutil.rmtree(backend_dir / "depth_vda", ignore_errors=True)
-
-        if stale or not vda_depth_complete(backend_dir, names):
-            keep_rows, context_frames = None, None
-
-            # Context stream: VDA is temporal, so run it over a contiguous constant-rate grid and
-            # keep only the keyframe rows. Falls back to the keyframe path whenever the source
-            # video is gone (rerun-from-processed, image-dir input) or the keyframes are off-grid.
-            if context_fps:
-                provenance = store.provenance()
-                video_path = provenance.get("video_path")
-                same_video = bool(video_path) and Path(video_path).is_file() and _video_unchanged(
-                    Path(video_path), provenance,
-                )
-                if same_video:
-                    # The keyframes were drawn from the grid recorded at preproc time; a
-                    # different rate here is only caught when it happens to push them off-grid
-                    sampled_at = provenance.get("vda_context_fps")
-                    if sampled_at is not None and float(sampled_at) != float(context_fps):
-                        logger.warning(
-                            "preproc.vda_context_fps is %.2f but frames.zarr was sampled against a "
-                            "%.2f fps grid — keyframes may not be members of the grid VDA runs on",
-                            float(context_fps), float(sampled_at),
-                        )
-
-                    grid = context_indices(video_path, target_fps=float(context_fps))
-                    keep_rows = _context_keep_rows(grid, [int(fi) for fi in store.frame_indices()])
-                    if keep_rows is not None:
-                        # Decode with the same distortion profile frames.zarr was written with,
-                        # or the context frames and the keyframes disagree on K_new and the crop
-                        profile = None
-                        if provenance.get("undistort"):
-                            profile = DistortionProfile.from_dict(provenance["undistort"]["profile"])
-                        logger.info(
-                            "VDA context stream: decoding %d frames at %.2f fps from %s",
-                            len(grid), float(context_fps), video_path,
-                        )
-                        context_frames = decode_context(video_path, grid, profile=profile)
-                else:
-                    logger.warning(
-                        "preproc.vda_context_fps is set but the source video is unavailable or no longer "
-                        "matches the one frames.zarr was built from (%s) — falling back to keyframe-only VDA",
-                        video_path,
-                    )
-
-            # One VDA pass either way; the context branch writes only the keyframe rows out.
-            # used_context_fps is bound HERE, not read back after the branch: `del context_frames`
-            # unbinds the name, and it is the resolved rate the sidecar has to record anyway.
-            if context_frames is not None:
-                used_context_fps = float(context_fps)
-                generate_vda_depth(
-                    context_frames, fps=float(context_fps), out_dir=backend_dir, names=names, keep_rows=keep_rows,
-                )
-                del context_frames
-            else:
-                used_context_fps = None
-                frames = np.ascontiguousarray(store.images())
-                generate_vda_depth(frames, fps=float(self.config["preproc"]["fps"]), out_dir=backend_dir, names=names)
-                del frames
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-
-            # Stamp what actually produced these maps: both fallbacks above land here, so a
-            # requested context rate that never ran must not be recorded as if it had
-            depth_sidecar.parent.mkdir(parents=True, exist_ok=True)
-            depth_sidecar.write_text(json.dumps({**signature, "context_fps": used_context_fps}))
 
     def _sfm_result_from_reconstruction(
         self, recon: "pycolmap.Reconstruction", backend_dir: Path, store: FrameStore

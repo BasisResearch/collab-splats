@@ -2,7 +2,7 @@
 
 ## 2026-09-05 — env drift: `tests/wrapper` cannot collect 2 modules, `gsplat.losses` missing
 
-`tests/wrapper/test_splats_stage.py` and `tests/wrapper/test_vda_context.py` both fail at
+`tests/wrapper/test_splats_stage.py` and `tests/wrapper/test_sfm_stage.py` both fail at
 COLLECTION, so any full `tests/wrapper` run aborts with `Interrupted: 2 errors during
 collection` and reports no tests:
 
@@ -11,7 +11,7 @@ E   ImportError: cannot import name 'losses' from 'gsplat'
       (/opt/venv/reconstruction/lib/python3.11/site-packages/gsplat/__init__.py)
 ```
 
-One root cause, two modules: `test_vda_context.py` only fails because it imports
+One root cause, two modules: `test_sfm_stage.py` only fails because it imports
 `_stub_reconstructor` from `test_splats_stage.py`.
 
 The venv holds released **gsplat 1.4.0 from PyPI**, which has no `gsplat.losses`.
@@ -22,8 +22,18 @@ committed and correct.
 
 Not a code regression — no repo change causes it, and it predates the pointcloud-cleanup
 work. Workaround for a green run: `--ignore=tests/wrapper/test_splats_stage.py
---ignore=tests/wrapper/test_vda_context.py`. Real fix: rebuild gsplat from the pinned rev
+--ignore=tests/wrapper/test_sfm_stage.py`. Real fix: rebuild gsplat from the pinned rev
 in the venv.
+
+`test_sfm_stage.py` was `test_vda_context.py` until 2026-09-05, when the VDA context
+stream was deleted and the surviving `_run_sfm` tests were renamed with the file.
+
+Second, independent env gap in the same module: `instantsfm` is not installed in the venv
+at all, so the four `_run_sfm` tests there fail on
+`importlib.metadata.version("instantsfm")` (`PackageNotFoundError`) even once `gsplat` is
+fixed. Also not a code regression — that line is unchanged since before the cleanup, and
+`import instantsfm` raises `ModuleNotFoundError`. The five config-validation and
+conf_percentile tests in the module pass.
 
 ## 2026-08-23 — pre-existing on `refactor/cu121-uv-migration`: 2 `test_qa` OpenCV-cannot-fit tests + 4 env/working-tree failures
 

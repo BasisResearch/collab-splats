@@ -17,7 +17,6 @@ import subprocess
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -256,91 +255,3 @@ def extract_frame(video_path: str | Path, frame_idx: int, *, info: dict | None =
         raise ValueError(f"extract_frame: frame {frame_idx} not found in {video_path}: {err}")
 
     return np.frombuffer(raw[: w * h * 3], dtype=np.uint8).reshape(h, w, 3).copy()
-
-
-def decode_context(
-    video_path: str | Path,
-    indices: Sequence[int],
-    *,
-    profile=None,
-    out_short_side: int = 518,
-    chunk_size: int = 64,
-) -> np.ndarray:
-    """
-    Decode a context frame grid as RGB, undistorted at native resolution, then downscaled.
-
-    - `indices` come from `context_indices`; the return is (N, h, w, 3) uint8 RGB in that order.
-    - `profile` is the DistortionProfile frames.zarr was written with (None = raw frames).
-      Undistortion runs at the SOURCE resolution before any downscale, or the alpha=0 crop
-      and K_new stop matching the keyframes.
-    - `out_short_side` is the model's native grid (VDA resizes the short side to 518 and
-      upscales anything smaller, so decoding below that loses detail without saving GPU).
-    - One ffmpeg pass over the whole grid, flushed in batches: iter_frames still demuxes from
-      frame 0, so a pass per chunk would cost O(chunks x video length).
-    - Refuses a short decode: rows are consumed positionally downstream, so a missing
-      index raises rather than silently shifting every later row against its image.
-    """
-    # Lazy import: undistort pulls pycolmap, which video.py otherwise never needs
-    from collab_splats.preproc.undistort import undistort_frames
-
-    ordered = sorted({int(i) for i in indices})
-    if not ordered:
-        # Degenerate on purpose: guessing a square frame here would look plausible and be
-        # wrong for every real video, so refuse to imply dimensions we never decoded
-        return np.zeros((0, 0, 0, 3), dtype=np.uint8)
-
-    # Written into a preallocated (N, h, w, 3) buffer rather than a list of frames: a
-    # 2000-frame grid stacked from a list holds the list AND the stack at once
-    frames_out: np.ndarray | None = None
-
-    def flush(bgr_frames: list[np.ndarray], write_at: int) -> None:
-        nonlocal frames_out
-
-        # Undistort at native resolution — the crop is what makes the context aspect
-        # ratio match the keyframes'
-        if profile is not None:
-            bgr_frames, _K_new, _roi = undistort_frames(bgr_frames, profile)
-
-        # Downscale to the model grid (INTER_AREA: this is always a shrink), then BGR -> RGB
-        height, width = bgr_frames[0].shape[:2]
-        scale = out_short_side / min(height, width)
-        target = (int(round(width * scale)), int(round(height * scale)))
-        if frames_out is None:
-            frames_out = np.empty((len(ordered), target[1], target[0], 3), dtype=np.uint8)
-
-        for offset, bgr in enumerate(bgr_frames):
-            small = cv2.resize(bgr, target, interpolation=cv2.INTER_AREA)
-            frames_out[write_at + offset] = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-
-    # Rows are consumed positionally downstream (keyframe rows are picked out of this stack
-    # by position), so a frame arriving out of order — or not at all — would shift every
-    # later row against its image. Refuse rather than return a misaligned stack.
-    pending: list[np.ndarray] = []
-    cursor = 0
-    for index, bgr in iter_frames(video_path, indices=ordered):
-        # An overrun has no request row to align against, and ordered[cursor] is past the end
-        if cursor >= len(ordered):
-            raise ValueError(
-                f"decode_context: {video_path} yielded frame {index} beyond the {len(ordered)} requested frames"
-            )
-        if index != ordered[cursor]:
-            raise ValueError(
-                f"decode_context: {video_path} yielded frame {index} where {ordered[cursor]} was "
-                f"expected (position {cursor} of {len(ordered)})"
-            )
-
-        pending.append(bgr)
-        cursor += 1
-        if len(pending) == chunk_size:
-            flush(pending, cursor - len(pending))
-            pending.clear()
-
-    if pending:
-        flush(pending, cursor - len(pending))
-    if cursor != len(ordered):
-        raise ValueError(
-            f"decode_context: {video_path} returned {cursor}/{len(ordered)} requested frames; "
-            f"first missing index {ordered[cursor]}"
-        )
-
-    return frames_out

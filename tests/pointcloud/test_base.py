@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -85,8 +86,6 @@ def test_coordinate_frame_values():
 
 
 def test_base_creator_abstract_method_is_reconstruct():
-    import inspect
-
     abstract_methods = BasePointcloudCreator.__abstractmethods__
     assert "reconstruct" in abstract_methods
     assert "create" not in abstract_methods
@@ -135,8 +134,8 @@ def test_write_ply_roundtrips_through_open3d(tmp_path):
     result.write_ply(out)
 
     pcd = o3d.io.read_point_cloud(str(out))
-    np.testing.assert_allclose(np.asarray(pcd.points), [[1.0, 2.0, 3.0]], atol=1e-5)
-    np.testing.assert_allclose(np.asarray(pcd.colors), [[10 / 255, 20 / 255, 30 / 255]], atol=2e-3)
+    np.testing.assert_allclose(np.asarray(pcd.points), [[1.0, 2.0, 3.0]], atol=1e-6)
+    np.testing.assert_allclose(np.asarray(pcd.colors), [[10 / 255, 20 / 255, 30 / 255]], atol=1e-6)
 
 
 def test_from_colmap_reads_the_model_and_keeps_caller_order(tmp_path):
@@ -162,3 +161,11 @@ def test_from_colmap_rejects_names_missing_from_the_model(tmp_path):
 
     with pytest.raises(ValueError, match="frame_000001"):
         PointcloudResult.from_colmap(colmap_dir, [Path("frame_000000"), Path("frame_000001")])
+
+
+def test_from_colmap_raises_when_the_model_was_never_written(tmp_path):
+    """
+    A colmap_dir with no sparse/0 is an error, not an empty reconstruction.
+    """
+    with pytest.raises(ValueError):
+        PointcloudResult.from_colmap(tmp_path / "colmap", [Path("frame_000000")])

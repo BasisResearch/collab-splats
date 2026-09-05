@@ -257,7 +257,7 @@ import numpy as np
 import open3d as o3d
 import pycolmap
 
-from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
 
 
 def test_build_pointcloud_ply_is_readable_by_open3d(tmp_path):
@@ -278,7 +278,12 @@ def test_build_pointcloud_ply_is_readable_by_open3d(tmp_path):
         )
 
     out = tmp_path / "backend" / "sparse_pc.ply"
-    PointcloudResult(reconstruction=recon, image_paths=[Path("frame_000000")]).write_ply(out)
+    result = PointcloudResult(
+        reconstruction=recon,
+        frame=CoordinateFrame.COLMAP,
+        image_paths=[Path("frame_000000")],
+    )
+    result.write_ply(out)
 
     pcd = o3d.io.read_point_cloud(str(out))
     assert np.asarray(pcd.points).shape == (3, 3)
@@ -291,7 +296,10 @@ def test_build_pointcloud_ply_is_readable_by_open3d(tmp_path):
 /opt/venv/reconstruction/bin/python -m pytest tests/wrapper/test_reconstructor_export.py -x -q
 ```
 
-Expected: FAIL — `TypeError: PointcloudResult.__init__() missing 1 required positional argument: 'frame'` is *not* what you should see (Task 1 gave `frame` a default); the real failure is that the old file's three tests referencing `export_max_points` are gone and the new one passes. If it passes immediately, that is fine — this step's purpose is the baseline; go to Step 3.
+Expected: PASS. There is no red phase here: Task 1 already added `write_ply`, and Step 1 replaced
+the whole file, so the three old tests that exercised `export_max_points` are already gone. This step
+is the baseline proving the new test drives `PointcloudResult.write_ply` and not the doomed
+`export.py` path. `frame` is still a required field until Task 3, which is why the test passes it.
 
 - [ ] **Step 3: Delete `export.py` and its tests**
 
@@ -333,9 +341,15 @@ with:
 
 ```python
         # Write the binary sparse_pc.ply
-        result = PointcloudResult(reconstruction=recon, image_paths=o.image_paths)
+        result = PointcloudResult(
+            reconstruction=recon,
+            frame=CoordinateFrame.COLMAP,
+            image_paths=o.image_paths,
+        )
         result.write_ply(Path(output_dir) / "sparse_pc.ply")
 ```
+
+Only the last line changes — `frame` is still a required field until Task 3 drops it.
 
 - [ ] **Step 6: Switch the wrapper over**
 
@@ -433,7 +447,7 @@ them alone.
 - Modify: `collab_splats/pointcloud/feedforward/base.py:42`
 - Modify: `collab_splats/wrapper/reconstructor.py:1148,1210`
 - Modify: `collab_splats/pointcloud/utils.py:6` (comment), `collab_splats/geometry/transforms.py:5` (comment)
-- Test: `tests/pointcloud/test_base.py`, `tests/pointcloud/test_sfm_creator.py:7,70`, `tests/pointcloud/test_vggtx_creator.py:8,39`, `tests/pointcloud/feedforward/test_mapanything_creator.py`, `tests/integration/test_pipeline_cu121.py:70,95,101,255,276,293`
+- Test: `tests/pointcloud/test_base.py`, `tests/wrapper/test_reconstructor_export.py`, `tests/pointcloud/test_sfm_creator.py:7,70`, `tests/pointcloud/test_vggtx_creator.py:8,39`, `tests/pointcloud/feedforward/test_mapanything_creator.py`, `tests/integration/test_pipeline_cu121.py:70,95,101,255,276,293`
 
 - [ ] **Step 1: Delete the frame-related tests and the `frame=` kwargs from the surviving ones**
 
@@ -458,6 +472,8 @@ The known hits are:
 | `collab_splats/pointcloud/__init__.py:2,79` | drop from import and from `__all__` |
 | `collab_splats/pointcloud/sfm.py:21,95,215` | drop from import and both `PointcloudResult(...)` calls |
 | `collab_splats/pointcloud/feedforward/base.py:42` | drop from the `..base` import |
+| `collab_splats/pointcloud/feedforward/base.py` (the `PointcloudResult(...)` in the PLY writer) | drop the `frame=` kwarg |
+| `tests/wrapper/test_reconstructor_export.py` | drop from the import and from the `PointcloudResult(...)` call (both added in Task 2) |
 | `collab_splats/wrapper/reconstructor.py:1148,1210` | drop from the function-local import and the `PointcloudResult(...)` in `_run_sfm` |
 | `tests/pointcloud/test_sfm_creator.py:7,70` | drop import + `assert result.frame == CoordinateFrame.COLMAP` |
 | `tests/pointcloud/test_vggtx_creator.py:8,39` | same |

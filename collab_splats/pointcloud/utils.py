@@ -44,12 +44,13 @@ def clean_pointcloud(
     Statistical-outlier keep-mask over a (P, 3) world-point array.
 
     - Returns a (P,) bool array: True for the points open3d keeps.
-    - All-True when there are not enough points to form the neighbourhood statistic.
+    - All-True whenever open3d rejects everything — too few points, or a degenerate cloud
+      with no spread for the neighbourhood statistic to separate.
     """
     pts = np.asarray(points, dtype=np.float64)
 
-    # remove_statistical_outlier needs more points than neighbours or it throws; a cloud that
-    # small has no outlier structure to find anyway.
+    # open3d returns an EMPTY keep set on clouds this small (measured: n<=2 -> 0 kept, o3d 0.19.0)
+    # rather than raising, so clamp to all-True instead of silently deleting the cloud.
     if len(pts) <= nb_neighbors:
         return np.ones(len(pts), dtype=bool)
 
@@ -59,6 +60,13 @@ def clean_pointcloud(
 
     keep = np.zeros(len(pts), dtype=bool)
     keep[np.asarray(keep_idx, dtype=int)] = True
+
+    # Nothing survived: a degenerate or duplicate cloud, not a cloud of outliers. Keep everything
+    # rather than emptying the reconstruction (same policy as confidence_mask).
+    if not keep.any():
+        logger.warning("clean_pointcloud: outlier removal rejected all %d points; keeping all", len(pts))
+        return np.ones(len(pts), dtype=bool)
+
     return keep
 
 

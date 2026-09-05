@@ -31,11 +31,31 @@ def test_clean_pointcloud_masks_the_far_outlier():
 
 def test_clean_pointcloud_keeps_everything_when_too_few_points():
     """
-    Below the neighbourhood size open3d cannot form a statistic — keep all rather than throw.
+    Below the neighbourhood size open3d rejects the whole cloud — keep all instead.
     """
     keep = clean_pointcloud(np.zeros((5, 3), dtype=np.float32))
 
     assert keep.shape == (5,)
+    assert keep.all()
+
+
+def test_clean_pointcloud_empty_cloud():
+    """
+    An empty cloud yields an empty mask, not an error.
+    """
+    keep = clean_pointcloud(np.zeros((0, 3)))
+
+    assert keep.shape == (0,)
+
+
+def test_clean_pointcloud_degenerate_cloud_keeps_all():
+    """
+    Duplicate points above the neighbourhood size: open3d rejects every point, so the
+    all-rejected guard keeps the cloud rather than emptying the reconstruction.
+    """
+    keep = clean_pointcloud(np.tile([1.0, 2.0, 3.0], (50, 1)))
+
+    assert keep.shape == (50,)
     assert keep.all()
 
 

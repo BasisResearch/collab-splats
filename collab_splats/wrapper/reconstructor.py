@@ -1007,11 +1007,12 @@ class Reconstructor:
             self.viewer = viewer
 
         # Statistical outlier removal on the final sparse set. Rejected point3D IDs are deleted
-        # from the reconstruction in place, so the PLY and the zarr agree with the model.
+        # from the reconstruction in place, so the re-exported PLY matches the model.
+        # (pointcloud.zarr was already written from the dense FeedforwardResult and is unaffected.)
         if pc_cfg["clean"]["enabled"] and result.reconstruction.points3D:
             point3d_ids = list(result.reconstruction.points3D.keys())
             keep = clean_pointcloud(result.points)
-            for pid, keep_this in zip(point3d_ids, keep):
+            for pid, keep_this in zip(point3d_ids, keep, strict=True):
                 if not keep_this:
                     result.reconstruction.delete_point3D(pid)
             logger.info("Pointcloud after cleaning: %d points", result.reconstruction.num_points3D())

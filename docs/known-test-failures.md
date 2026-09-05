@@ -1,5 +1,30 @@
 # Known Test Failures
 
+## 2026-09-05 — env drift: `tests/wrapper` cannot collect 2 modules, `gsplat.losses` missing
+
+`tests/wrapper/test_splats_stage.py` and `tests/wrapper/test_vda_context.py` both fail at
+COLLECTION, so any full `tests/wrapper` run aborts with `Interrupted: 2 errors during
+collection` and reports no tests:
+
+```
+E   ImportError: cannot import name 'losses' from 'gsplat'
+      (/opt/venv/reconstruction/lib/python3.11/site-packages/gsplat/__init__.py)
+```
+
+One root cause, two modules: `test_vda_context.py` only fails because it imports
+`_stub_reconstructor` from `test_splats_stage.py`.
+
+The venv holds released **gsplat 1.4.0 from PyPI**, which has no `gsplat.losses`.
+`pyproject.toml:259` pins the source build instead — `rev = "d2f5c0f"`, upstream main
+@ 2026-07-09, version string 1.5.3, which does have it. A plain `uv sync` or a stray
+`pip install gsplat` replaces the source build with the PyPI wheel; the pin itself is
+committed and correct.
+
+Not a code regression — no repo change causes it, and it predates the pointcloud-cleanup
+work. Workaround for a green run: `--ignore=tests/wrapper/test_splats_stage.py
+--ignore=tests/wrapper/test_vda_context.py`. Real fix: rebuild gsplat from the pinned rev
+in the venv.
+
 ## 2026-08-23 — pre-existing on `refactor/cu121-uv-migration`: 2 `test_qa` OpenCV-cannot-fit tests + 4 env/working-tree failures
 
 `tests/preproc/test_qa.py::test_compute_parallax_is_nan_when_opencv_cannot_fit` and

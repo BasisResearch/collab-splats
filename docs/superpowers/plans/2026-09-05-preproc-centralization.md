@@ -26,6 +26,86 @@ Read these before Task 1. They apply to every task.
 
 ---
 
+## Parallel Execution Schedule
+
+The 28 tasks are not a straight line. Their file sets are disjoint in two big
+places, and exploiting that collapses the critical path from 28 slots to ~18.
+
+**Every wave runs in its own git worktree, one per task.** The main checkout at
+`/workspace/collab-splats` is shared with other sessions and its git index is
+shared with every worktree — two agents committing there at once sweep each
+other's staged AND unstaged work. A worktree gives each agent its own index, so
+broad `git commit --only <dir>` paths become safe again.
+
+### Worktree protocol
+
+```bash
+# integration branch, forked once per wave from the previous wave's merge
+git worktree add /workspace/collab-splats/.worktrees/preproc-t<N> -b preproc/t<N> <base-sha>
+```
+
+Inside a worktree, **`PYTHONPATH` is mandatory**. The venv installs
+`collab_splats` editable through a finder that hardcodes
+`/workspace/collab-splats`, so a bare `pytest` in a worktree silently tests the
+MAIN tree's code and reports success on work that was never applied:
+
+```bash
+cd /workspace/collab-splats/.worktrees/preproc-t<N>
+PYTHONPATH=/workspace/collab-splats/.worktrees/preproc-t<N> \
+  /opt/venv/reconstruction/bin/python -m pytest tests/preproc/ -v
+```
+
+Every `pytest`, every `python -c`, every dashboard smoke run inside a worktree
+carries that prefix. A task that reports green without it has verified nothing.
+
+### The waves
+
+| wave | tasks | notes |
+|---|---|---|
+| **0** | **25, 26, 19, 1, 24a** | fully independent; nothing here depends on anything else |
+| **1** | **2, 4, 5, 6, 7, 8** | all need Task 1's `frames.py`; file sets disjoint from each other |
+| 2 | 3 (reference, no code), 9 | 9 needs all of 4-8 merged |
+| 3 | 10 -> 11 -> 12 -> 13 -> 14 | serial: one file, each builds on the last's helpers |
+| 4 | 15 -> 16 -> 17 -> 18 | serial: `undistort.py` then `reconstructor.py` |
+| 5 | 20 -> 21 -> 22 -> 23 -> 24b | serial: one file, cumulative |
+| 6 | 27 -> 28 | 27 sweeps every module the earlier waves touched |
+
+**Task 25 moves to wave 0, and this is not only a scheduling choice.**
+`preproc/viz.py` imports `FrameStore` and `plot_quality_examples` is its only
+consumer. No Phase A task converts `viz.py` — Task 7 is semantics/geometry/mesh,
+Task 8 is dashboard/evals/notebooks — so Task 9's step-1 verification grep would
+return `collab_splats/preproc/viz.py` and block. Deleting the function first
+closes the gap for free. `plot_selection` and `plot_frame_extremes` never touch
+the store.
+
+**Task 24 splits.** 24a declares `av` in `pyproject.toml` and runs at wave 0 —
+it already resolves transitively, so declaring it early breaks nothing and makes
+wave 5's imports legal. 24b sweeps the dead `info=` and needs Tasks 21 and 22.
+
+### What cannot be parallelised, and why
+
+Four single-file chains, each task consuming the previous one's helpers:
+`sampling.py` (10-13), `video.py` (20-23), `undistort.py` (15-16).
+`reconstructor.py` is the cross-lane lock — Tasks 4, 13, 17 and 18 all edit it
+across three different waves, so those four never overlap.
+
+Tasks 15 and 16 have no file overlap with the wave-3 chain and could run beside
+it. They stay after Task 14 anyway: the gate exists so a human approves the
+selection change before more breaking work lands, and jumping it buys one slot.
+
+### Merging a wave
+
+Each task's branch merges back into the wave's integration branch, in task
+order, then the full suite and the dashboard smoke run **once** on the merged
+result before the next wave forks. Individual task branches are green in
+isolation; only the merge proves they are green together.
+
+Serialise the heavy ones even within a wave: Task 8 re-runs six notebooks and
+binds the dashboard smoke port, and Task 15's tests run real SIFT plus
+incremental mapping. The container cap is 46.6 GB.
+
+---
+
 ## File Structure
 
 **Created:**
@@ -1001,6 +1081,8 @@ git grep -n 'frame_store\|FrameStore' -- 'collab_splats/*' 'evals/*' 'scripts/*'
 ```
 
 Expected: only `collab_splats/preproc/frame_store.py`, `collab_splats/preproc/__init__.py` and `tests/preproc/test_frame_store.py`. Anything else is an unconverted call site — go back and convert it.
+
+If `collab_splats/preproc/viz.py` appears, Task 25 has not run. It is the only `FrameStore` consumer no Phase A task converts; run Task 25 rather than writing a conversion for a function that is about to be deleted.
 
 - [ ] **Step 2: Delete and rewire**
 
@@ -3315,6 +3397,10 @@ git commit --only pyproject.toml uv.lock collab_splats tests \
 ---
 
 ### Task 25: delete `plot_disparity_sensitivity` and `plot_quality_examples`
+
+> **Runs in wave 0, before Task 9.** `plot_quality_examples` is the only `FrameStore`
+> consumer in `viz.py`, and no Phase A task converts that file. Deleting it here is
+> what lets Task 9's verification grep come back clean.
 
 **Files:**
 - Modify: `collab_splats/preproc/viz.py:102-188`, `tests/preproc/test_viz.py`, `docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb`, `docs/known-test-failures.md`

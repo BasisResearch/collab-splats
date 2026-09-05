@@ -151,18 +151,14 @@ def test_make_creator_no_wrappers():
     assert isinstance(creator, VGGTXCreator)
 
 
-def test_loop_closure_wraps_a_registry_creator():
+def test_make_creator_rejects_the_removed_lc_kwargs():
     """
-    make_creator builds the base creator; LoopClosure wrapping is the caller's job.
+    use_lc / lc_config are gone; a stale caller fails loudly instead of silently regaining them.
     """
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
     from collab_splats.pointcloud import make_creator
-    from collab_splats.pointcloud.feedforward import VGGTXCreator
 
-    creator = LoopClosure(make_creator("vggtx"))
-
-    assert isinstance(creator, LoopClosure)
-    assert isinstance(creator.base, VGGTXCreator)
+    with pytest.raises(TypeError):
+        make_creator("vggtx", use_lc=True)
 
 
 def test_make_creator_unknown_name():
@@ -175,6 +171,20 @@ def test_make_creator_unknown_name():
 ########################################################
 ########## LoopClosure delegation tests ###############
 ########################################################
+
+
+def test_loop_closure_wraps_a_registry_creator():
+    """
+    make_creator builds the base creator; LoopClosure wrapping is the caller's job.
+    """
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+    from collab_splats.pointcloud import make_creator
+    from collab_splats.pointcloud.feedforward import VGGTXCreator
+
+    creator = LoopClosure(make_creator("vggtx"))
+
+    assert isinstance(creator, LoopClosure)
+    assert isinstance(creator.base, VGGTXCreator)
 
 
 def test_loop_closure_constructor_defaults():

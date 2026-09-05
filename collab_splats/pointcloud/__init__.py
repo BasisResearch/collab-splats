@@ -43,9 +43,10 @@ def get_creator(name: str) -> type[BasePointcloudCreator]:
     """
     Look up a pointcloud creator class by registry name.
 
-    - name: one of _REGISTRY's keys (colmap, hloc, mapanything, vggtx, plus vggt_omega /
-      vggt_spark / loger when their optional deps are installed).
-    - Returns the class; raises KeyError with the available names when unknown.
+    - name: colmap, hloc, mapanything or vggtx, plus vggt_omega / vggt_spark / loger
+      when their optional deps are installed.
+    - Returns the class.
+    - Raises KeyError listing the available names when the key is unknown.
     """
     if name not in _REGISTRY:
         raise KeyError(f"unknown pointcloud backend '{name}'. Available: {sorted(_REGISTRY)}")
@@ -58,7 +59,8 @@ def make_creator(name: str, **kwargs) -> BasePointcloudCreator:
 
     - name: registry key; see get_creator.
     - kwargs: forwarded to the creator's constructor.
-    - Returns the creator instance. Wrap it in LoopClosure yourself if you want loop closure.
+    - Returns the creator instance.
+    - For loop closure, wrap it yourself: ``collab_splats.geometry.LoopClosure(creator, config=...)``.
     """
     return get_creator(name)(**kwargs)
 

@@ -151,12 +151,16 @@ def test_make_creator_no_wrappers():
     assert isinstance(creator, VGGTXCreator)
 
 
-def test_make_creator_with_lc():
+def test_loop_closure_wraps_a_registry_creator():
+    """
+    make_creator builds the base creator; LoopClosure wrapping is the caller's job.
+    """
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
     from collab_splats.pointcloud import make_creator
     from collab_splats.pointcloud.feedforward import VGGTXCreator
 
-    creator = make_creator("vggtx", use_lc=True)
+    creator = LoopClosure(make_creator("vggtx"))
+
     assert isinstance(creator, LoopClosure)
     assert isinstance(creator.base, VGGTXCreator)
 

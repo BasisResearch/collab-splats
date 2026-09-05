@@ -443,8 +443,9 @@ def _run_sfm(self) -> PointcloudResult:
     store = FrameStore.open(self.frames_zarr)
     names = [f"frame_{int(fi):06d}.jpg" for fi in store.frame_indices()]
 
-    # Stage keyframes as jpgs; a different staged set also drops the SIFT DB keyed on it
-    self._stage_keyframes(store, names)          # today's staging block, unchanged
+    # Stage keyframes as jpgs via store.export; a different staged set also drops the SIFT
+    # DB keyed on it (today's inline block, unchanged; shown collapsed here)
+    ...
 
     # VDA depth (cached per stem), global SfM, dense result, alignment to the COLMAP world
     frames = store.images()

@@ -6,7 +6,7 @@ from unittest.mock import patch
 import numpy as np
 import pycolmap
 
-from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 
@@ -26,7 +26,6 @@ def _pointcloud_result(n_points):
         )
     return PointcloudResult(
         reconstruction=recon,
-        frame=CoordinateFrame.COLMAP,
         image_paths=[Path("frame_000000")],
     )
 

@@ -1,5 +1,5 @@
 # collab_splats/pointcloud/__init__.py
-from .base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
+from .base import BasePointcloudCreator, PointcloudResult
 from .feedforward import BaseFeedforwardCreator, MapAnythingCreator, VGGTXCreator
 from .sfm import ColmapCreator, HlocCreator
 
@@ -68,7 +68,6 @@ def make_creator(name: str, **kwargs) -> BasePointcloudCreator:
 __all__ = [
     "BasePointcloudCreator",
     "BaseFeedforwardCreator",
-    "CoordinateFrame",
     "ColmapCreator",
     "HlocCreator",
     "MapAnythingCreator",

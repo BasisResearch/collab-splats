@@ -67,7 +67,7 @@ def test_build_pycolmap_reconstruction_roundtrip():
       add_camera_with_trivial_rig + add_image_with_trivial_frame + add_point3D.
     """
     from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
-    from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
+    from collab_splats.pointcloud.base import PointcloudResult
 
     P = 30
     rng = np.random.default_rng(42)
@@ -92,13 +92,11 @@ def test_build_pycolmap_reconstruction_roundtrip():
 
     result = PointcloudResult(
         reconstruction=recon,
-        frame=CoordinateFrame.COLMAP,
         image_paths=image_paths,
     )
     assert result.points.shape == (P, 3), f"Expected points shape ({P}, 3), got {result.points.shape}"
     assert result.extrinsics.shape == (N_FRAMES, 4, 4)
     assert result.intrinsics.shape == (N_FRAMES, 3, 3)
-    assert result.frame == CoordinateFrame.COLMAP
 
 
 def test_feedforward_result_save_load(tmp_path):
@@ -252,7 +250,7 @@ def test_tsdf_mesh_synthetic(tmp_path):
 def test_pointcloudresult_new_api():
     """PointcloudResult takes reconstruction as primary; exposes points/colors/extrinsics/intrinsics as properties."""
     from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
-    from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
+    from collab_splats.pointcloud.base import PointcloudResult
 
     P = 10
     rng = np.random.default_rng(7)
@@ -273,7 +271,6 @@ def test_pointcloudresult_new_api():
 
     result = PointcloudResult(
         reconstruction=recon,
-        frame=CoordinateFrame.COLMAP,
         image_paths=image_paths,
     )
 
@@ -290,5 +287,4 @@ def test_pointcloudresult_new_api():
 
     # reconstruction is always set
     assert result.reconstruction is recon
-    assert result.frame == CoordinateFrame.COLMAP
     assert len(result.image_paths) == N_FRAMES

@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 
 import numpy as np
@@ -13,25 +12,17 @@ import pycolmap
 logger = logging.getLogger(__name__)
 
 
-class CoordinateFrame(str, Enum):
-    COLMAP = "colmap"  # w2c, OpenCV axes, world -Y up
-    NERFSTUDIO = "nerfstudio"  # c2w, OpenGL axes, world +Z up
-
-
 @dataclass
 class PointcloudResult:
-    """Sparse reconstruction output: pycolmap.Reconstruction + scene metadata.
+    """
+    Sparse reconstruction output: a pycolmap.Reconstruction plus its canonical frame order.
 
-    reconstruction is the primary store for cameras, images, and 3D points.
-    frame declares the coordinate system of the world origin in reconstruction.
-    image_paths defines the canonical frame ordering for extrinsics/intrinsics.
+    - ``reconstruction`` is the primary store for cameras, images, and 3D points.
+    - ``image_paths`` defines the ordering of ``extrinsics``/``intrinsics``.
     """
 
     reconstruction: pycolmap.Reconstruction  # primary — always set
-    frame: CoordinateFrame  # coord system of world origin
     image_paths: list[Path]  # canonical frame ordering (N entries)
-    confidence: np.ndarray | None = None  # (P,) float32 — feedforward per-point
-    world_transform: np.ndarray | None = None  # (3, 4) applied COLMAP→nerfstudio axis swap
 
     @classmethod
     def from_colmap(cls, colmap_dir: Path, image_paths: list[Path]) -> PointcloudResult:
@@ -58,7 +49,7 @@ class PointcloudResult:
                 f"{sparse_dir} (first: {missing[0]}); the model registers {len(registered)} images."
             )
 
-        return cls(reconstruction=recon, frame=CoordinateFrame.COLMAP, image_paths=list(image_paths))
+        return cls(reconstruction=recon, image_paths=list(image_paths))
 
     def write_ply(self, path: Path) -> None:
         """
@@ -98,7 +89,7 @@ class PointcloudResult:
         """(N, 4, 4) float32 w2c transforms, ordered by image_paths.
 
         Convention: x_cam = E @ x_world (homogeneous). OpenCV camera axes
-        (X right, Y down, Z into scene). Frame is declared by self.frame.
+        (X right, Y down, Z into scene).
         """
         name_to_image = {img.name: img for img in self.reconstruction.images.values()}
         result = []

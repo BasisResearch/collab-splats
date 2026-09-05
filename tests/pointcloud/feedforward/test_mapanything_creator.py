@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import (
     BaseFeedforwardCreator,
     MapAnythingCreator,
@@ -378,7 +378,6 @@ def test_mapanything_reconstruct_smoke(tmp_path):
     c = MapAnythingCreator()
     result = c.reconstruct(image_dir, tmp_path / "out")
     assert isinstance(result, PointcloudResult)
-    assert result.frame == CoordinateFrame.COLMAP
     assert result.points.shape[1] == 3
     assert (tmp_path / "out" / "sparse_pc.ply").exists()  # transforms.json is written by Reconstructor, not the creator
     assert (tmp_path / "out" / "colmap" / "sparse" / "0" / "cameras.bin").exists()

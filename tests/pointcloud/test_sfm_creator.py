@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from PIL import Image
 from collab_splats.pointcloud.sfm import ColmapCreator, InstantSfMCreator
-from collab_splats.pointcloud.base import PointcloudResult, CoordinateFrame
+from collab_splats.pointcloud.base import PointcloudResult
 
 
 @pytest.fixture
@@ -67,7 +67,6 @@ def test_colmap_creator_smoke(tiny_image_dir, tmp_path):
     try:
         result = creator.reconstruct(tiny_image_dir, out)
         assert isinstance(result, PointcloudResult)
-        assert result.frame == CoordinateFrame.COLMAP
         assert result.points.shape[1] == 3
         assert result.extrinsics.shape[1:] == (4, 4)
     except RuntimeError as e:

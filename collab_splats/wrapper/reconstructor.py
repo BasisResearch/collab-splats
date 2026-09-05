@@ -1118,7 +1118,7 @@ class Reconstructor:
           depth resolution → pointcloud.zarr with provenance attrs, returns the PointcloudResult
           for the shared tail.
         """
-        from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
+        from collab_splats.pointcloud.base import PointcloudResult
 
         pc_cfg = self.config["pointcloud"]
         backend = pc_cfg["backend"]
@@ -1180,7 +1180,6 @@ class Reconstructor:
 
         return PointcloudResult(
             reconstruction=recon,
-            frame=CoordinateFrame.COLMAP,
             image_paths=outputs.image_paths,
         )
 

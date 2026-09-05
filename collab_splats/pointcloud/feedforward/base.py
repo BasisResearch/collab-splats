@@ -39,7 +39,7 @@ from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_
 from collab_splats.geometry.verification import PairStats
 from collab_splats.preproc.frame_store import FrameStore
 
-from ..base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
+from ..base import BasePointcloudCreator, PointcloudResult
 from ..utils import cross_frame_attention_ratio, reproject_pixels
 
 console = Console()
@@ -1157,7 +1157,6 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         # Write the binary sparse_pc.ply
         result = PointcloudResult(
             reconstruction=recon,
-            frame=CoordinateFrame.COLMAP,
             image_paths=o.image_paths,
         )
         result.write_ply(Path(output_dir) / "sparse_pc.ply")

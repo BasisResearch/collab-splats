@@ -3,7 +3,7 @@
 
 Coordinate convention used throughout:
   - Input from pycolmap uses COLMAP world (Y-down) + OpenCV camera axes (X right, Y down, Z forward).
-  - All public functions that produce poses output CoordinateFrame.NERFSTUDIO (nerfstudio world frame):
+  - All public functions that produce poses output the nerfstudio world frame (c2w, OpenGL axes, +Z up):
     X right, Y up, Z backward camera axes; Z-up world.
 """
 

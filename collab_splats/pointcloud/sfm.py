@@ -18,7 +18,7 @@ import pycolmap
 import torch
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
-from .base import BasePointcloudCreator, CoordinateFrame, PointcloudResult
+from .base import BasePointcloudCreator, PointcloudResult
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,6 @@ class ColmapCreator(BasePointcloudCreator):
         )
         return PointcloudResult(
             reconstruction=recon,
-            frame=CoordinateFrame.COLMAP,
             image_paths=image_paths,
         )
 
@@ -212,7 +211,6 @@ class HlocCreator(BasePointcloudCreator):
         )
         return PointcloudResult(
             reconstruction=recon,
-            frame=CoordinateFrame.COLMAP,
             image_paths=image_paths,
         )
 

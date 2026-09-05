@@ -6,11 +6,7 @@ import open3d as o3d
 import pycolmap
 import pytest
 
-from collab_splats.pointcloud.base import (
-    BasePointcloudCreator,
-    CoordinateFrame,
-    PointcloudResult,
-)
+from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
 from collab_splats.pointcloud.utils import clean_pcd, density_filter, remove_far_points
 
@@ -30,7 +26,6 @@ def test_result_fields():
 
     r = PointcloudResult(
         reconstruction=recon,
-        frame=CoordinateFrame.COLMAP,
         image_paths=[Path("frame_0000.jpg")],
     )
     assert r.points.shape == (1, 3)
@@ -43,33 +38,6 @@ def test_base_creator_is_abstract():
         BasePointcloudCreator()
 
 
-def test_result_colmap_frame():
-    """PointcloudResult stores and returns frame as COLMAP when set explicitly."""
-    recon = pycolmap.Reconstruction()
-    r = PointcloudResult(
-        reconstruction=recon,
-        frame=CoordinateFrame.COLMAP,
-        image_paths=None,
-    )
-    assert r.frame == CoordinateFrame.COLMAP
-    assert r.world_transform is None
-
-
-def test_result_nerfstudio_frame():
-    """PointcloudResult stores NERFSTUDIO frame + world_transform."""
-    recon = pycolmap.Reconstruction()
-    wt = np.eye(3, 4, dtype=np.float32)
-    r = PointcloudResult(
-        reconstruction=recon,
-        frame=CoordinateFrame.NERFSTUDIO,
-        image_paths=None,
-        world_transform=wt,
-    )
-    assert r.frame == CoordinateFrame.NERFSTUDIO
-    assert r.world_transform is not None
-    assert r.world_transform.shape == (3, 4)
-
-
 def test_utils_clean_pcd_returns_tuple():
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3))
@@ -77,12 +45,6 @@ def test_utils_clean_pcd_returns_tuple():
     result_pcd, indices = clean_pcd(pcd)
     assert isinstance(result_pcd, o3d.geometry.PointCloud)
     assert isinstance(indices, np.ndarray)
-
-
-def test_coordinate_frame_values():
-    assert CoordinateFrame.COLMAP == "colmap"
-    assert CoordinateFrame.NERFSTUDIO == "nerfstudio"
-    assert isinstance(CoordinateFrame.COLMAP, str)
 
 
 def test_base_creator_abstract_method_is_reconstruct():
@@ -126,7 +88,6 @@ def test_write_ply_roundtrips_through_open3d(tmp_path):
     """
     result = PointcloudResult(
         reconstruction=_recon_with_images(),
-        frame=CoordinateFrame.COLMAP,
         image_paths=[Path("frame_000000")],
     )
     out = tmp_path / "nested" / "sparse_pc.ply"

@@ -16,15 +16,12 @@ head trained with a weighted cosine loss — e.g. DINOv2 regularizing a MaskCLIP
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import zarr
 from torch import Tensor
 from tqdm.auto import tqdm
 
@@ -355,37 +352,3 @@ def find_lifted_extractor(out_dir: Path) -> Optional[str]:
     if len(stems) > 1:
         raise ValueError(f"{out_dir} holds several lifted stores {stems} — pass the extractor explicitly")
     return stems[0]
-
-
-def write_point_features(
-    out_dir: Path, extractor: str, codes: np.ndarray, ae: Optional[FeatureAutoencoder] = None
-) -> None:
-    """Write the per-point pair: ``out_dir/<extractor>_lifted.zarr`` (+ ``_ae.pt`` when compressed).
-
-    Single writer for every lifting path. Records input_dim/latent_dim on the zarr group's attrs
-    so the artifact is self-describing: equal widths (ae=None) mean full-dim codes that need no
-    weights, unequal widths mean the weights are REQUIRED to decode them. Without that marker a
-    missing autoencoder is ambiguous — uncompressed-by-design vs latent codes orphaned by a
-    crash — and a reader would have to guess, silently handing back undecoded codes.
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    codes = np.asarray(codes)
-    lifted_zarr = lifted_store_path(out_dir, extractor)
-
-    # Codes first, then attrs, then weights; a failure anywhere after the store is created
-    # removes it again so no half-pair (unreadable codes) is ever left behind on disk.
-    try:
-        store = zarr.open(str(lifted_zarr), mode="w")
-        store["features"] = codes
-        store.attrs.update(
-            {
-                "input_dim": int(ae.input_dim) if ae is not None else int(codes.shape[1]),
-                "latent_dim": int(ae.latent_dim) if ae is not None else int(codes.shape[1]),
-            }
-        )
-        if ae is not None:
-            ae.save(out_dir, extractor)
-    except Exception:
-        shutil.rmtree(lifted_zarr, ignore_errors=True)
-        raise

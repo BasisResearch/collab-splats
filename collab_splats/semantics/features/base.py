@@ -10,8 +10,6 @@ Provides:
 import logging
 import os
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -22,7 +20,6 @@ import torchvision.transforms as T
 from PIL import Image
 from transformers import AutoModel
 
-from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.semantics.utils import (
     compute_semantic_contrast,
     get_device,
@@ -82,78 +79,6 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
             f"{type(self).__name__} is not registered — use @BaseFeatureExtractor.register('name')"
         )
 
-    def extract_and_cache(
-        self,
-        image_paths: list[Path],
-        cache_dir: Path,
-        batch_size: int = 1,
-        skip_existing: bool = True,
-    ) -> Path:
-        """Extract patch features for all images and write to cache_dir/{name}.zarr.
-
-        Returns the zarr store path. Re-entrant: if skip_existing=True and the
-        cache on disk matches extractor name and frame count, returns immediately.
-        Layout: features (N, D, H_p, W_p), chunks=(1, D, H_p, W_p) — one chunk per frame.
-        """
-        import zarr
-
-        zarr_path = Path(cache_dir) / f"{self.name}.zarr"
-
-        # Validate existing cache before running extraction
-        if skip_existing and zarr_path.exists():
-            try:
-                z = zarr.open(str(zarr_path), mode="r")
-                # Cache is valid if extractor name and frame count match
-                if (
-                    z.attrs.get("extractor") == self.name
-                    and z.attrs.get("n_frames") == len(image_paths)
-                ):
-                    logger.info("Feature cache valid, skipping extraction: %s", zarr_path)
-                    return zarr_path
-            except Exception:
-                # Corrupt or unreadable cache — fall through to re-extract
-                logger.warning("Cache at %s is corrupt or unreadable, re-extracting", zarr_path)
-
-        # Extract first frame to learn feature shape (D, H_p, W_p) before allocating store
-        first_img = Image.open(image_paths[0]).convert("RGB")
-        with torch.no_grad():
-            [first_feat] = self.forward([first_img])
-        D, H_p, W_p = first_feat.shape
-        N = len(image_paths)
-
-        # Open zarr store in write mode; write metadata attrs before filling data
-        store = zarr.open(str(zarr_path), mode="w")
-        store.attrs.update({
-            "extractor": self.name,
-            "patch_size": self.patch_size,
-            "n_frames": N,
-            "feature_dim": D,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        # One chunk per frame: reading frame i loads exactly 1 disk chunk
-        arr = store.create_array(
-            "features",
-            shape=(N, D, H_p, W_p),
-            chunks=(1, D, H_p, W_p),
-            dtype="float32",
-            fill_value=0,
-        )
-        # Write first frame (already extracted for shape probe)
-        arr[0] = first_feat.cpu().float().numpy()
-
-        # Extract and write remaining frames sequentially
-        for i in range(1, N):
-            pil_img = Image.open(image_paths[i]).convert("RGB")
-            with torch.no_grad():
-                [feat] = self.forward([pil_img])
-            arr[i] = feat.cpu().float().numpy()
-            # Periodic progress log so long runs remain observable
-            if i % 10 == 0:
-                logger.info("extract_and_cache: %d/%d frames written", i + 1, N)
-
-        logger.info("Feature cache written: %s  shape=%s", zarr_path, tuple(arr.shape))
-        return zarr_path
-
     @staticmethod
     def features_to_rgb(feat: "torch.Tensor") -> "np.ndarray":
         """Project a feature map onto its top-3 PCs to produce an RGB display image.
@@ -173,82 +98,6 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         rgb -= rgb.min()
         rgb /= rgb.max() + 1e-8
         return (rgb.reshape(H_p, W_p, 3) * 255).astype(np.uint8)
-
-    def extract_and_cache_from_zarr(
-        self,
-        frames_zarr_path: Path,
-        cache_dir: Path,
-        batch_size: int = 1,
-        skip_existing: bool = True,
-    ) -> Path:
-        """Extract patch features from a frames zarr store and write to cache_dir/{name}.zarr.
-
-        Iterates frames lazily (one chunk at a time) — never holds all frames in RAM.
-        Output zarr layout is identical to extract_and_cache.
-        """
-        import zarr
-        from PIL import Image as _PILImage
-
-        zarr_path = Path(cache_dir) / f"{self.name}.zarr"
-        # Read through FrameStore, not raw zarr keys: the store's arrays are `images`/`frame_idx`
-        # and its attrs are record_keys/provenance/schema_version. Indexing an invented `frames`
-        # key or an `n_frames` attr is how this path stayed broken — both look plausible and
-        # neither exists.
-        frames = FrameStore.open(frames_zarr_path)
-        N = len(frames)
-
-        # Validate existing cache before running extraction
-        if skip_existing and zarr_path.exists():
-            try:
-                z = zarr.open(str(zarr_path), mode="r")
-                if z.attrs.get("extractor") == self.name and z.attrs.get("n_frames") == N:
-                    logger.info("Feature cache valid, skipping extraction: %s", zarr_path)
-                    return zarr_path
-            except Exception:
-                # Corrupt or unreadable cache — fall through to re-extract
-                logger.warning("Cache at %s is corrupt or unreadable, re-extracting", zarr_path)
-
-        Path(cache_dir).mkdir(parents=True, exist_ok=True)
-
-        # Probe first frame to learn output shape (D, H_p, W_p) before allocating store
-        first_frame = _PILImage.fromarray(frames.image(0)).convert("RGB")
-        with torch.no_grad():
-            [first_feat] = self.forward([first_frame])
-        D, H_p, W_p = first_feat.shape
-
-        # Open output zarr store in write mode; write metadata before filling data
-        store = zarr.open(str(zarr_path), mode="w")
-        store.attrs.update({
-            "extractor": self.name,
-            "patch_size": self.patch_size,
-            "n_frames": N,
-            "feature_dim": D,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        # One chunk per frame: reading frame i loads exactly 1 disk chunk
-        arr = store.create_array(
-            "features",
-            shape=(N, D, H_p, W_p),
-            chunks=(1, D, H_p, W_p),
-            dtype="float32",
-            fill_value=0,
-        )
-
-        # Write first frame (already extracted for shape probe)
-        arr[0] = first_feat.cpu().float().numpy()
-
-        # Iterate remaining frames lazily — never loads more than one frame into RAM
-        for i in range(1, N):
-            pil_img = _PILImage.fromarray(frames.image(i)).convert("RGB")
-            with torch.no_grad():
-                [feat] = self.forward([pil_img])
-            arr[i] = feat.cpu().float().numpy()
-            # Periodic progress log so long runs remain observable
-            if i % 10 == 0:
-                logger.info("extract_and_cache_from_zarr: %d/%d frames written", i + 1, N)
-
-        logger.info("Feature cache written: %s  shape=%s", zarr_path, tuple(arr.shape))
-        return zarr_path
 
     def _build_positional_basis(self, H_p: int, W_p: int) -> None:
         """Estimate the positional subspace from a zero-pixel image using SVD (INSID3 algorithm).

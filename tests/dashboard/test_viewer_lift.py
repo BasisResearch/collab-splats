@@ -33,7 +33,8 @@ def test_lift_point_features_normalises():
 
     with (
         patch("collab_splats.pointcloud.utils.lift_features", fake_lift),
-        patch("collab_splats.dashboard.pipeline.load_feature_maps", return_value=["sentinel-map"]),
+        patch("collab_splats.semantics.utils.load_feature_maps", return_value=["sentinel-map"]),
+        patch("collab_splats.semantics.utils.cache_store_path", return_value=object()),
     ):
         out = lift_point_features(result=object(), semantics_dir=object())
     norms = np.linalg.norm(out, axis=1)
@@ -84,7 +85,8 @@ def test_lift_point_features_reloads_dense_on_demand(tmp_path):
 
     with (
         patch("collab_splats.pointcloud.utils.lift_features", fake_lift),
-        patch("collab_splats.dashboard.pipeline.load_feature_maps", return_value=[]),
+        patch("collab_splats.semantics.utils.load_feature_maps", return_value=[]),
+        patch("collab_splats.semantics.utils.cache_store_path", return_value=tmp_path),
     ):
         lift_point_features(lean, tmp_path)
     assert seen["dense"] is True
@@ -120,10 +122,8 @@ def test_ensure_lifted_relifts_when_cached_codes_lack_weights(tmp_path, monkeypa
     """
     import collab_splats.dashboard.viewer as viewer_mod
     from collab_splats.dashboard.viewer import SplitViewer
-    from collab_splats.semantics.compression import (
-        FeatureAutoencoder,
-        write_point_features,
-    )
+    from collab_splats.semantics.compression import FeatureAutoencoder
+    from collab_splats.semantics.utils import write_point_features
 
     # Half-written pair: latent codes on disk, the weights that decode them missing.
     _write_2d_cache(tmp_path)
@@ -220,3 +220,16 @@ def test_ensure_lifted_failure_does_not_write_artifacts(tmp_path, monkeypatch):
     assert viewer._point_features is None
     assert not (tmp_path / f"{EXTRACTOR}_lifted.zarr").exists()
     assert not (tmp_path / f"{EXTRACTOR}_ae.pt").exists()
+
+
+def test_viewer_lift_routes_through_the_shared_loader(tmp_path):
+    """viewer.lift_point_features must use the ONE loader, not a private re-implementation."""
+    from collab_splats.dashboard import viewer as viewer_mod
+
+    with (
+        patch("collab_splats.semantics.utils.load_feature_maps", return_value=[]) as loader,
+        patch("collab_splats.pointcloud.utils.lift_features", return_value=torch.zeros(3, 4)),
+        patch("collab_splats.semantics.utils.cache_store_path", return_value=tmp_path / "x.zarr"),
+    ):
+        viewer_mod.lift_point_features(object(), tmp_path)
+    assert loader.call_count == 1

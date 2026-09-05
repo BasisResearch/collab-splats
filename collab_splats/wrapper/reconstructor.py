@@ -47,9 +47,11 @@ from collab_splats.preproc.undistort import (
     undistort_frames,
 )
 from collab_splats.preproc.video import context_indices, decode_context
-from collab_splats.semantics.compression import (
-    FeatureAutoencoder,
+from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.utils import (
+    extract_feature_cache,
     lifted_store_path,
+    load_feature_maps,
     write_point_features,
 )
 
@@ -530,13 +532,18 @@ def _extract_2d_features(
 ) -> Path:
     """Extract 2D features for all frames straight from the canonical store.
 
-    Delegates to BaseFeatureExtractor.extract_and_cache_from_zarr, which iterates the
-    frames zarr lazily (one chunk at a time) and writes cache_dir/{name}.zarr — no temp
-    JPG export, no full-RAM load.
+    Args:
+        extractor_name: registry key of the extractor to run.
+        frames_zarr: path to the scene's canonical frames.zarr.
+        cache_dir: directory the `<extractor>.zarr` patch cache is written into.
+
+    Returns:
+        Path of the written 2D patch cache.
     """
-    extractor = _get_extractor(extractor_name)
+    # extract_feature_cache iterates the frames zarr lazily, one chunk at a time — no temp
+    # JPG export, no full-RAM load.
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return extractor.extract_and_cache_from_zarr(frames_zarr, cache_dir)
+    return extract_feature_cache(_get_extractor(extractor_name), frames_zarr, cache_dir)
 
 
 def _lift_and_save(
@@ -568,10 +575,8 @@ def _lift_and_save(
             "Run build_pointcloud() with a feedforward backend first."
         )
 
-    # Load feature maps from zarr cache: (N, D, H_p, W_p)
-    store = zarr.open(str(zarr_path), mode="r")
-    features_arr = store["features"]
-    feature_maps = [torch.from_numpy(np.array(features_arr[i])) for i in range(features_arr.shape[0])]
+    # Load feature maps from the 2D cache: one (D, H_p, W_p) tensor per frame
+    feature_maps = load_feature_maps(zarr_path)
 
     # Load FeedforwardResult with depth/pixel data for lifting
     ff_result = FeedforwardResult.load_zarr(pointcloud_zarr)

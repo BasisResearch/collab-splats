@@ -36,11 +36,11 @@ def lift_point_features(result, semantics_dir) -> np.ndarray:
     Legacy path for scenes with no cached lifted store. Returns FULL-dim
     features (no autoencoder involved), directly comparable to text embeddings.
     """
-    # Lazy import: pointcloud.utils and dashboard.pipeline both pull the heavy feedforward
-    # stack; load_feature_maps is the single shared definition (dashboard.pipeline owns it).
-    from collab_splats.dashboard.pipeline import load_feature_maps
+    # Lazy import: pointcloud.utils pulls the heavy feedforward stack, and semantics.utils
+    # runs semantics/__init__, which pulls the extractors and SAM (~20s of the app's import).
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.pointcloud.utils import lift_features
+    from collab_splats.semantics.utils import cache_store_path, load_feature_maps
 
     # The display path loads the result lean (dense arrays skipped). Lifting needs
     # pixel_indices/depth/confidence — reload them from the source zarr on demand.
@@ -49,7 +49,7 @@ def lift_point_features(result, semantics_dir) -> np.ndarray:
         # world_points/features are unused by the lift; skip them to halve peak memory.
         result = FeedforwardResult.load_zarr(result._zarr_path, load_world_points=False, load_features=False)
 
-    feature_maps = load_feature_maps(semantics_dir)
+    feature_maps = load_feature_maps(cache_store_path(semantics_dir))
     lifted = lift_features(feature_maps, result)
     lifted = lifted.detach().cpu().numpy().astype(np.float32)
     norms = np.linalg.norm(lifted, axis=1, keepdims=True)
@@ -68,18 +68,11 @@ def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None)
     target_cosine early-stops with max_epochs only as a ceiling, so this is bounded work on a
     query path, not a 100-epoch stall — a 768->64 fit normally reaches 0.95 in a few epochs.
     """
-    # Lazy import: semantics.compression re-exports through semantics/__init__, which pulls
-    # the extractors and SAM (~14s), and dashboard.pipeline pulls the feedforward stack —
-    # the same costs the other lazy imports here avoid.
-    from collab_splats.dashboard.pipeline import (
-        cache_extractor_name,
-        resolve_latent_dim,
-        semantics_ae_policy,
-    )
-    from collab_splats.semantics.compression import (
-        FeatureAutoencoder,
-        write_point_features,
-    )
+    # Lazy import: dashboard.pipeline pulls the feedforward stack at module import, and
+    # semantics.* runs semantics/__init__, which pulls the extractors and SAM (~20s).
+    from collab_splats.dashboard.pipeline import resolve_latent_dim, semantics_ae_policy
+    from collab_splats.semantics.compression import FeatureAutoencoder
+    from collab_splats.semantics.utils import cache_store_path, write_point_features
 
     feats = torch.from_numpy(np.asarray(features, dtype=np.float32))
     if torch.cuda.is_available():
@@ -91,7 +84,12 @@ def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None)
         codes = ae.per_point_encode(feats)
     # Shared writer: codes + attrs + weights, and it cleans the zarr up if the weights fail
     # to save — orphaned codes would make this scene look cached and unreadable.
-    write_point_features(Path(semantics_dir), cache_extractor_name(semantics_dir), codes.detach().cpu().numpy(), ae)
+    write_point_features(
+        Path(semantics_dir),
+        cache_store_path(semantics_dir).stem,
+        codes.detach().cpu().numpy(),
+        ae,
+    )
     # Unlike the old np.save cache this round-trips through encode/decode, so record how
     # well it reconstructs. Training-set-measured -> "fit cosine", not a quality claim.
     msg = f"fit cosine {ae.recon_cosine:.4f} after {ae.epochs_run} epochs (target {policy.target_cosine})"
@@ -243,8 +241,8 @@ class SplitViewer:
         # point_features_cached, not a bare exists(): a lifted store whose required weights are
         # missing is unreadable, and falling through re-lifts and rewrites the pair (self-heal)
         # instead of leaving the scene permanently stuck on an unusable cache.
-        # Lazy: pipeline pulls the heavy feedforward stack at module import.
-        from collab_splats.dashboard.pipeline import (
+        # Lazy: semantics.utils runs semantics/__init__, which pulls the extractors and SAM.
+        from collab_splats.semantics.utils import (
             load_point_features,
             point_features_cached,
         )

@@ -1,4 +1,5 @@
-"""Tests for BaseFeatureExtractor.features_to_rgb and extract_and_cache_from_zarr."""
+"""Tests for BaseFeatureExtractor.features_to_rgb and semantics.utils.extract_feature_cache."""
+
 from __future__ import annotations
 
 import tempfile
@@ -10,10 +11,12 @@ import zarr
 
 from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.semantics.features.base import BaseFeatureExtractor
+from collab_splats.semantics.utils import extract_feature_cache
 
 ########################################################################
 # Minimal concrete extractor for tests — no model weights needed
 ########################################################################
+
 
 @BaseFeatureExtractor.register("_test_extractor")
 class _TestExtractor(BaseFeatureExtractor):
@@ -35,7 +38,7 @@ def _make_frames_zarr(n: int, H: int, W: int, tmp_dir: str) -> Path:
     """Write a frames.zarr of n random uint8 frames using the real writer.
 
     Must go through FrameStore.create, not a hand-rolled zarr: the previous fixture invented
-    an `n_frames` attr and a `frames` array, so extract_and_cache_from_zarr passed its tests
+    an `n_frames` attr and a `frames` array, so extract_feature_cache passed its tests
     while crashing on every real store (which has `images` + record_keys).
     """
     zarr_path = Path(tmp_dir) / "frames.zarr"
@@ -48,6 +51,7 @@ def _make_frames_zarr(n: int, H: int, W: int, tmp_dir: str) -> Path:
 ########################################################################
 # features_to_rgb
 ########################################################################
+
 
 def test_features_to_rgb_shape():
     feat = torch.randn(16, 6, 8)  # (D, H_p, W_p)
@@ -71,43 +75,43 @@ def test_features_to_rgb_constant_returns_zero():
 
 
 ########################################################################
-# extract_and_cache_from_zarr
+# extract_feature_cache
 ########################################################################
 
-def test_extract_and_cache_from_zarr_creates_zarr():
+
+def test_extract_feature_cache_creates_zarr():
     extractor = _TestExtractor()
     with tempfile.TemporaryDirectory() as tmp:
         frames_zarr = _make_frames_zarr(n=3, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "semantics"
-        result = extractor.extract_and_cache_from_zarr(frames_zarr, cache_dir)
+        cache_dir = Path(tmp) / "cache"
+        result = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        assert result == cache_dir / "_test_extractor.zarr"
         assert result.exists()
-        z = zarr.open(str(result), mode="r")
-        assert z["features"].shape[0] == 3
-        assert z.attrs["extractor"] == "_test_extractor"
-        assert z.attrs["n_frames"] == 3
 
 
-def test_extract_and_cache_from_zarr_feature_shape():
+def test_extract_feature_cache_feature_shape():
     extractor = _TestExtractor()
     with tempfile.TemporaryDirectory() as tmp:
-        frames_zarr = _make_frames_zarr(n=4, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "semantics"
-        result = extractor.extract_and_cache_from_zarr(frames_zarr, cache_dir)
-        z = zarr.open(str(result), mode="r")
-        N, D, H_p, W_p = z["features"].shape
-        assert N == 4
-        assert D == extractor._D
-        assert H_p == extractor._H_p
-        assert W_p == extractor._W_p
+        frames_zarr = _make_frames_zarr(n=3, H=64, W=64, tmp_dir=tmp)
+        cache_dir = Path(tmp) / "cache"
+        result = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        store = zarr.open(str(result), mode="r")
+        assert store["features"].shape[0] == 3
+        assert store.attrs["extractor"] == "_test_extractor"
+        assert store.attrs["n_frames"] == 3
+        assert store.attrs["patch_size"] == 16
+        # created_at / feature_dim were dropped — nothing read them
+        assert "created_at" not in store.attrs
+        assert "feature_dim" not in store.attrs
 
 
-def test_extract_and_cache_from_zarr_skip_existing():
+def test_extract_feature_cache_reuses_a_matching_cache():
     extractor = _TestExtractor()
     with tempfile.TemporaryDirectory() as tmp:
-        frames_zarr = _make_frames_zarr(n=2, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "semantics"
-        result1 = extractor.extract_and_cache_from_zarr(frames_zarr, cache_dir)
-        mtime1 = result1.stat().st_mtime
-        result2 = extractor.extract_and_cache_from_zarr(frames_zarr, cache_dir)
+        frames_zarr = _make_frames_zarr(n=3, H=64, W=64, tmp_dir=tmp)
+        cache_dir = Path(tmp) / "cache"
+        result1 = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        mtime = result1.stat().st_mtime_ns
+        result2 = extract_feature_cache(extractor, frames_zarr, cache_dir)
         assert result1 == result2
-        assert result2.stat().st_mtime == mtime1
+        assert result2.stat().st_mtime_ns == mtime  # untouched -> extraction was skipped

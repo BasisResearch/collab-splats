@@ -12,7 +12,8 @@ import zarr
 
 from collab_splats.dashboard import pipeline as pl
 from collab_splats.dashboard.config import RunConfig
-from collab_splats.semantics.compression import FeatureAutoencoder, write_point_features
+from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.utils import write_point_features
 
 
 def _fake_frames(n=3):
@@ -346,7 +347,6 @@ def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tm
         expected = torch.nn.functional.normalize(ae.per_point_decode(codes), dim=1).numpy()
 
     # Shrink the batch so 37 points genuinely span several calls, and count them.
-    monkeypatch.setattr(pl, "_DECODE_BATCH_SIZE", 5)
     sizes = []
     real_decode = FeatureAutoencoder.per_point_decode
 
@@ -355,7 +355,7 @@ def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tm
         return real_decode(self, x)
 
     monkeypatch.setattr(FeatureAutoencoder, "per_point_decode", counting_decode)
-    out = pl.load_point_features(sem_dir)
+    out = pl.load_point_features(sem_dir, batch_size=5)
 
     np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
     assert len(sizes) == 8 and max(sizes) <= 5  # 37 = 7*5 + 2; never the whole array at once
@@ -366,13 +366,13 @@ def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tm
 ########
 
 
-def test_extract_semantics_returns_nothing(tmp_path):
-    """Its only caller discards the value — the wrapper must not pretend to hand one back."""
-    extractor = MagicMock()
-    extractor.extract_and_cache_from_zarr.return_value = tmp_path / "talk2dino.zarr"
-    with patch.object(pl.BaseFeatureExtractor, "get", return_value=lambda: extractor):
-        assert pl._extract_semantics("talk2dino", tmp_path / "frames.zarr", tmp_path / "semantics") is None
-    extractor.extract_and_cache_from_zarr.assert_called_once()
+def test_extract_semantics_returns_nothing(tmp_path, monkeypatch):
+    """_extract_semantics drops the cache path — every consumer re-resolves it by glob."""
+    calls = []
+    monkeypatch.setattr(pl, "extract_feature_cache", lambda extractor, frames, out: calls.append((frames, out)))
+    monkeypatch.setattr(pl.BaseFeatureExtractor, "get", staticmethod(lambda name: lambda: object()))
+    assert pl._extract_semantics("talk2dino", tmp_path / "frames.zarr", tmp_path) is None
+    assert len(calls) == 1
 
 
 def _make_localized_zarr(tmp_path, extractor="loma", n=2):

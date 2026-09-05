@@ -1,14 +1,20 @@
 """Tests for collab_splats.semantics.utils — torch/model utilities."""
 
+from pathlib import Path
+
+import numpy as np
 import pytest
 import torch
+import zarr
 
 from collab_splats.semantics.utils import (
-    compute_semantic_contrast,
-    interpolate_to_patch_size,
-    pytorch_gc,
-    infer_batch_size,
     batch_iterator,
+    cache_store_path,
+    compute_semantic_contrast,
+    infer_batch_size,
+    interpolate_to_patch_size,
+    load_feature_maps,
+    pytorch_gc,
 )
 
 
@@ -146,3 +152,50 @@ def test_batch_iterator_multiple_args():
 def test_batch_iterator_mismatched_raises():
     with pytest.raises(AssertionError):
         list(batch_iterator(2, [1, 2], [3]))
+
+
+########################################################################
+# On-disk layout: the 2D patch cache vs the lifted per-point store
+########################################################################
+
+
+def _write_both_stores(tmp_path):
+    """Write a `talk2dino.zarr` 2D cache and a `talk2dino_lifted.zarr` per-point store side by side."""
+    cache = zarr.open(str(tmp_path / "talk2dino.zarr"), mode="w")
+    cache["features"] = np.zeros((2, 4, 3, 3), dtype=np.float32)
+    cache.attrs.update({"extractor": "talk2dino", "patch_size": 14, "n_frames": 2})
+
+    lifted = zarr.open(str(tmp_path / "talk2dino_lifted.zarr"), mode="w")
+    lifted["features"] = np.zeros((6, 4), dtype=np.float32)
+    lifted.attrs.update({"input_dim": 4, "latent_dim": 4})
+
+
+def _force_lifted_first(monkeypatch, tmp_path):
+    """Make `Path.glob` yield the lifted store first, so suffix filtering is what does the work."""
+    real_glob = Path.glob
+
+    def ordered(self, pattern):
+        return sorted(real_glob(self, pattern), key=lambda p: "_lifted" not in p.name)
+
+    monkeypatch.setattr(Path, "glob", ordered)
+
+
+def test_cache_store_path_ignores_the_lifted_store(tmp_path, monkeypatch):
+    _write_both_stores(tmp_path)
+    _force_lifted_first(monkeypatch, tmp_path)
+    assert cache_store_path(tmp_path).name == "talk2dino.zarr"
+    # Callers read the extractor name off `.stem`; "talk2dino_lifted" would be the answer
+    # if the lifted store were picked up
+    assert cache_store_path(tmp_path).stem == "talk2dino"
+
+
+def test_cache_store_path_raises_when_there_is_no_2d_cache(tmp_path):
+    with pytest.raises(FileNotFoundError, match="no 2D feature cache"):
+        cache_store_path(tmp_path)
+
+
+def test_load_feature_maps_takes_a_store_path(tmp_path):
+    _write_both_stores(tmp_path)
+    maps = load_feature_maps(cache_store_path(tmp_path))
+    assert len(maps) == 2
+    assert maps[0].shape == (4, 3, 3)

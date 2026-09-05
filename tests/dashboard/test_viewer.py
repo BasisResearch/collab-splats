@@ -477,7 +477,7 @@ def test_ensure_lifted_uses_cached_lifted_store_fast_path(tmp_path):
     The cached artifact is LATENT codes, so the fast path must hand back DECODED full-dim
     features — score_queries compares them against full-dim text embeddings.
     """
-    from collab_splats.dashboard.pipeline import load_point_features
+    from collab_splats.semantics.utils import load_point_features
 
     sem_dir = tmp_path / "semantics"
     sem_dir.mkdir()

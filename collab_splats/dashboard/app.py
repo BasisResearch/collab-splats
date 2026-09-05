@@ -740,10 +740,8 @@ class SplatsApp(param.Parameterized):
         # point_features_cached, not a bare exists(): a lifted store missing the weights that
         # decode it is unreadable, and reporting it as cached starves the re-lift of the dense
         # members it needs — the scene would be stuck with no way to recover.
-        from collab_splats.dashboard.pipeline import (
-            point_features_cached,
-            resolve_semantics_dir,
-        )
+        from collab_splats.dashboard.pipeline import resolve_semantics_dir
+        from collab_splats.semantics.utils import point_features_cached
 
         semantics_dir = resolve_semantics_dir(out)
         if semantics_dir is not None and point_features_cached(semantics_dir):
@@ -777,10 +775,8 @@ class SplatsApp(param.Parameterized):
         # Lazy: dashboard.pipeline pulls the heavy feedforward stack at module import.
         # A lifted store whose weights are missing is not a completed lift — deleting the
         # dense members on the strength of it would leave the scene with nothing to re-lift from.
-        from collab_splats.dashboard.pipeline import (
-            point_features_cached,
-            resolve_semantics_dir,
-        )
+        from collab_splats.dashboard.pipeline import resolve_semantics_dir
+        from collab_splats.semantics.utils import point_features_cached
 
         semantics_dir = resolve_semantics_dir(out)
         if semantics_dir is None or not point_features_cached(semantics_dir):

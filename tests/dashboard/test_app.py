@@ -779,10 +779,8 @@ def _write_cached_features(sem_dir, *, weights=True, extractor="talk2dino"):
     """Write a semantics dir the way the pipeline does: <extractor>_lifted.zarr (+ _ae.pt)."""
     import numpy as np
 
-    from collab_splats.semantics.compression import (
-        FeatureAutoencoder,
-        write_point_features,
-    )
+    from collab_splats.semantics.compression import FeatureAutoencoder
+    from collab_splats.semantics.utils import write_point_features
 
     ae = FeatureAutoencoder(input_dim=8, latent_dim=4)
     write_point_features(sem_dir, extractor, np.zeros((4, 4), dtype=np.float32), ae)

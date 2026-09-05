@@ -484,35 +484,31 @@ def test_extract_semantics_skips_if_lifted_exists(tmp_path):
 
 
 def test_extract_2d_features_reads_zarr_directly(tmp_path):
-    """_extract_2d_features delegates straight to extract_and_cache_from_zarr — no temp-JPG bridge."""
+    """_extract_2d_features delegates straight to extract_feature_cache — no temp-JPG bridge."""
     from collab_splats.wrapper import reconstructor as rec_mod
 
     frames_zarr = tmp_path / "frames.zarr"
     cache_dir = tmp_path / "semantics"
     sentinel = cache_dir / "dinov2.zarr"
-
-    # Fake extractor records the call and returns a sentinel cache path
-    class _FakeExtractor:
-        def __init__(self):
-            self.calls = []
-
-        def extract_and_cache_from_zarr(self, frames_zarr_path, cache_dir):
-            self.calls.append((frames_zarr_path, cache_dir))
-            return sentinel
-
-    fake = _FakeExtractor()
+    extractor = object()
+    calls = []
 
     with (
-        patch.object(rec_mod, "_get_extractor", return_value=fake) as mock_get,
+        patch.object(rec_mod, "_get_extractor", return_value=extractor) as mock_get,
         patch.object(rec_mod, "FrameStore") as mock_fs,
+        patch.object(
+            rec_mod,
+            "extract_feature_cache",
+            lambda ext, frames, cache: calls.append((ext, frames, cache)) or sentinel,
+        ),
     ):
         result = rec_mod._extract_2d_features("dinov2", frames_zarr, cache_dir)
 
     # Extractor resolved by name, then fed the frames.zarr path + cache dir directly. The dir
     # is used as given: the extractor names the store, so no per-extractor subdir is joined on.
     mock_get.assert_called_once_with("dinov2")
-    assert fake.calls == [(frames_zarr, cache_dir)]
-    # No temp-export bridge: FrameStore is never touched
+    assert calls == [(extractor, frames_zarr, cache_dir)]
+    # No temp-export bridge: the reconstructor never touches FrameStore on this path
     mock_fs.open.assert_not_called()
     # Sentinel cache path is propagated back unchanged
     assert result == sentinel
@@ -871,7 +867,9 @@ def test_run_pipeline_default_uses_config_enabled(tmp_path):
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
     # report is always on and has no config flag, so a config-derived run always includes it
-    rec.reconstruction_quality_report = lambda overwrite=False: calls.append("reconstruction_quality_report") or tmp_path
+    rec.reconstruction_quality_report = (
+        lambda overwrite=False: calls.append("reconstruction_quality_report") or tmp_path
+    )
 
     rec.run_pipeline()  # no stages arg — uses config
     assert "semantics" in calls
@@ -1261,7 +1259,7 @@ def test_stage_output_exists_mesh(tmp_path):
 
 def test_stage_output_exists_semantics_is_per_extractor(tmp_path):
     """The marker is this run's extractor — another extractor's lifted store must not satisfy it."""
-    from collab_splats.semantics.compression import lifted_store_path
+    from collab_splats.semantics.utils import lifted_store_path
 
     config = _make_config(tmp_path, {"semantics": {"extractor": "dinov2"}})
     rec = Reconstructor(config)
@@ -1480,8 +1478,10 @@ def test_report_runs_verify_only_when_the_flag_allows_it(tmp_path, flag, verific
         verification_json.parent.mkdir(parents=True, exist_ok=True)
         verification_json.write_text("{}")
 
-    with patch.object(rec, "verify") as verify, \
-            patch("collab_splats.geometry.metrics.build_reconstruction_quality_report") as build:
+    with (
+        patch.object(rec, "verify") as verify,
+        patch("collab_splats.geometry.metrics.build_reconstruction_quality_report") as build,
+    ):
         rec.reconstruction_quality_report()
 
     assert verify.called is expect_verify
@@ -1491,7 +1491,7 @@ def test_report_runs_verify_only_when_the_flag_allows_it(tmp_path, flag, verific
 
 
 def test_report_is_still_written_when_verify_raises(tmp_path):
-    """"Never fails a reconstruction" has to hold for the one thing report calls that can."""
+    """ "Never fails a reconstruction" has to hold for the one thing report calls that can."""
     config = _make_config(tmp_path, {"pointcloud": {"geometric_verification": True}})
     rec = Reconstructor(config)
     rec._resolve_result = lambda: object()
@@ -1500,8 +1500,10 @@ def test_report_is_still_written_when_verify_raises(tmp_path):
         Path(kwargs["output_path"]).parent.mkdir(parents=True, exist_ok=True)
         Path(kwargs["output_path"]).write_text('{"measurements": {}}')
 
-    with patch.object(rec, "verify", side_effect=RuntimeError("pycolmap exploded")), \
-            patch("collab_splats.geometry.metrics.build_reconstruction_quality_report", side_effect=_write):
+    with (
+        patch.object(rec, "verify", side_effect=RuntimeError("pycolmap exploded")),
+        patch("collab_splats.geometry.metrics.build_reconstruction_quality_report", side_effect=_write),
+    ):
         out = rec.reconstruction_quality_report()
 
     # The exception did not propagate and did not cost the other two measurements.

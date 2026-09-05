@@ -32,17 +32,17 @@ from collab_splats.preproc.sampling import (
     sample_uniform,
 )
 from collab_splats.remote import PULL_EXCLUDES, SceneSource
-from collab_splats.semantics.compression import (
-    LIFTED_SUFFIX,
-    FeatureAutoencoder,
-    ae_path,
-    find_lifted_extractor,
-    lifted_store_path,
+from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.features.base import BaseFeatureExtractor
+from collab_splats.semantics.utils import (
+    cache_store_path,
+    extract_feature_cache,
+    load_feature_maps,
+    load_point_features,
+    point_features_cached,
     write_point_features,
 )
-from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.utils.image import open_image
-from collab_splats.utils.torch_utils import batch_iterator
 
 # VGGTOmegaCreator requires the vggt-omega submodule; only available when installed.
 try:
@@ -95,44 +95,14 @@ def _build_creator(env_model: str, conf: float):
 def _extract_semantics(extractor_name: str, frames_zarr: Path, out_dir: Path) -> None:
     """Extract + cache patch features straight from frames.zarr — no JPG export.
 
-    The cache path the extractor returns is deliberately dropped: every consumer resolves
-    the store by glob (load_feature_maps), including the viewer's legacy lift, which has no
-    handle to thread through.
+    Args:
+        extractor_name: registry key of the extractor to run.
+        frames_zarr: path to the scene's canonical frames.zarr.
+        out_dir: the scene's semantics dir.
     """
-    extractor = BaseFeatureExtractor.get(extractor_name)()
-    extractor.extract_and_cache_from_zarr(frames_zarr, out_dir)
-
-
-# Decode chunk for load_point_features. A one-shot per_point_decode of a 500k-point scene
-# materialises ~2.3 GB of float32 at 768-D on the CPU; the container cap is 46.6 GB shared
-# with concurrent work, so the decode streams into a preallocated output instead.
-_DECODE_BATCH_SIZE = 65_536
-
-
-def cache_store_path(semantics_dir: Path) -> Path:
-    """The 2D patch cache store in semantics_dir — `{extractor}.zarr`.
-
-    The flat dashboard layout keeps the 2D cache and the lifted per-point store side by side in
-    one dir, so the `_lifted` suffix is the ONLY thing separating them; a bare `*.zarr` glob
-    picks either at random. Its stem is the extractor name, which is how the write paths here
-    (which are handed a directory, never an extractor) recover it.
-    """
-    sem_dir = Path(semantics_dir)
-    store = next((p for p in sem_dir.glob("*.zarr") if not p.name.endswith(LIFTED_SUFFIX)), None)
-    if store is None:
-        raise FileNotFoundError(f"no 2D feature cache (*.zarr) in {sem_dir} — extract this scene's semantics first")
-    return store
-
-
-def cache_extractor_name(semantics_dir: Path) -> str:
-    """Extractor whose 2D cache is in semantics_dir — the name both lifted-pair halves carry."""
-    return cache_store_path(semantics_dir).stem
-
-
-def load_feature_maps(semantics_dir: Path) -> list[torch.Tensor]:
-    """Load per-frame dense feature maps (D, H_p, W_p) from the cached semantics zarr."""
-    arr = zarr.open(str(cache_store_path(semantics_dir)), mode="r")["features"]  # (N, D, H_p, W_p)
-    return [torch.from_numpy(np.asarray(arr[i])) for i in range(arr.shape[0])]
+    # The returned cache path is deliberately dropped: every consumer resolves the store by
+    # glob (cache_store_path), including the viewer's legacy lift, which has no handle to thread.
+    extract_feature_cache(BaseFeatureExtractor.get(extractor_name)(), frames_zarr, out_dir)
 
 
 ########
@@ -209,76 +179,6 @@ def resolve_semantics_dir(scene_dir: Path) -> "Path | None":
     return flat if flat.is_dir() else None
 
 
-def _is_full_dim(attrs) -> bool:
-    """True when the lifted store's self-describing attrs say the stored codes are full-dim.
-
-    Written by every producer; `latent_dim == input_dim` is the uncompressed
-    (`semantics.n_components: null`) case, which legitimately has no weights.
-    """
-    input_dim, latent_dim = attrs.get("input_dim"), attrs.get("latent_dim")
-    return input_dim is not None and latent_dim is not None and int(latent_dim) >= int(input_dim)
-
-
-def point_features_cached(semantics_dir: Path) -> bool:
-    """True when the lifted store exists AND is readable (weights present, or full-dim)."""
-    sem_dir = Path(semantics_dir)
-    extractor = find_lifted_extractor(sem_dir)
-    if extractor is None:
-        return False
-    store_path = lifted_store_path(sem_dir, extractor)
-    if ae_path(sem_dir, extractor).exists():
-        return True
-    # No weights: usable only if the codes describe themselves as full-dim. Anything else is a
-    # half-written pair (crash between the two writes) — report NOT cached so the caller re-lifts.
-    try:
-        return _is_full_dim(zarr.open(str(store_path), mode="r").attrs)
-    except Exception:
-        return False
-
-
-def load_point_features(semantics_dir: Path, *, decode: bool = True) -> np.ndarray:
-    """Read the lifted per-point store; decode latent codes back to full dim by default.
-
-    Consumers that compare features across scenes must decode — the 64-D bases of two
-    independently-trained autoencoders are not aligned, the decoded space is.
-    """
-    sem_dir = Path(semantics_dir)
-    extractor = find_lifted_extractor(sem_dir)
-    if extractor is None:
-        raise FileNotFoundError(f"no *{LIFTED_SUFFIX} store in {sem_dir} — lift this scene's features first")
-    store = zarr.open(str(lifted_store_path(sem_dir, extractor)), mode="r")
-    codes = np.asarray(store["features"])
-    if not decode:
-        return codes
-    # Weights present -> always decode, even when the attrs report equal widths: an
-    # equal-width autoencoder still encodes (see _save_point_features's latent_dim clamp),
-    # so its codes are not full-dim features. Weights absent is the ambiguous case the
-    # attrs disambiguate: full-dim-by-design vs latent codes orphaned by a crashed write.
-    if not ae_path(sem_dir, extractor).exists():
-        if _is_full_dim(store.attrs):
-            return torch.nn.functional.normalize(torch.from_numpy(codes), dim=1).cpu().numpy()
-        raise FileNotFoundError(
-            f"{lifted_store_path(sem_dir, extractor)} holds {codes.shape[1]}-D per-point codes but the "
-            f"autoencoder that decodes them ({ae_path(sem_dir, extractor)}) is missing — the pair "
-            "was written only halfway (interrupted run). Returning the raw codes would be silent "
-            f"garbage; re-lift this scene's semantic features instead (delete "
-            f"{lifted_store_path(sem_dir, extractor)} and re-run the semantics step)."
-        )
-    ae = FeatureAutoencoder.load(sem_dir, extractor)
-    # Streamed decode into a preallocated output: peak stays at (result + one chunk) instead
-    # of holding codes, decoded and normalized copies of the whole cloud at once. Row-wise
-    # normalize and the decoder's linear layers are both row-independent, so chunking is exact.
-    codes_t = torch.from_numpy(codes)
-    decoded = torch.empty((codes_t.shape[0], ae.input_dim), dtype=torch.float32)
-    with torch.no_grad():
-        start = 0
-        for (chunk,) in batch_iterator(_DECODE_BATCH_SIZE, codes_t):
-            end = start + len(chunk)
-            decoded[start:end] = torch.nn.functional.normalize(ae.per_point_decode(chunk), dim=1)
-            start = end
-    return decoded.numpy()
-
-
 def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> None:
     """Train a feature-compression autoencoder, lift COMPRESSED maps to points, cache latent codes.
 
@@ -289,7 +189,7 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     decode to D happens on read (load_point_features). Everything except the lift runs on the GPU.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    feature_maps = load_feature_maps(semantics_dir)  # list of (D, H_p, W_p) on CPU
+    feature_maps = load_feature_maps(cache_store_path(semantics_dir))  # list of (D, H_p, W_p) on CPU
     input_dim = feature_maps[0].shape[0]
 
     # Train the AE on flattened 2D patch features (all frames) — GPU; stream loss to the log.
@@ -317,7 +217,10 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     # Persist LATENT codes + weights (not decoded 768-D): same artifact pair the
     # Reconstructor path writes, ~12x smaller, and decodable on read.
     write_point_features(
-        Path(semantics_dir), cache_extractor_name(semantics_dir), compressed_pts.detach().cpu().numpy(), ae
+        Path(semantics_dir),
+        cache_store_path(semantics_dir).stem,
+        compressed_pts.detach().cpu().numpy(),
+        ae,
     )
     op_log.append_line(f"semantics: lift + encode + cache in {time.perf_counter() - t:.1f}s")
 

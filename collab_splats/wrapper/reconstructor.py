@@ -1418,7 +1418,8 @@ class Reconstructor:
             ).astype(np.float32)
             store["world_points"][:] = wp
 
-        # Refresh the remaining derived artifact through the standard writer
+        # Reload the refined model from disk — it is both the returned result and the source
+        # for the refreshed sparse_pc.ply
         result = self._load_pointcloud_from_disk()
         result.write_ply(self.backend_dir / "sparse_pc.ply")
 

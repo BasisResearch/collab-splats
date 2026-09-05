@@ -569,6 +569,12 @@ latent code is only meaningful next to the point set it indexes. `frames.zarr` s
 scene root instead: the keyframes are decoded once from the video and shared by every
 backend that reconstructs the scene.
 
+**Migration (2026-09-05):** `<backend>/transforms.json` is no longer written. Because
+`push_outputs` is `rclone copy` with no `--delete` and `verify_push` is `--one-way`, scenes
+published before this change keep a stale remote copy frozen at that run's poses. Nothing in
+this repo reads it; drop it when convenient with
+`rclone delete <remote>:environments-processed --include "**/transforms.json"`.
+
 - `<backend>/pointcloud.zarr` — the unified reconstruction artifact for every
   `pointcloud.method` (feedforward and sfm). Store attrs carry provenance:
   `method`, `backend`, and for instantsfm the installed upstream version
@@ -609,13 +615,19 @@ decoded space is. Each scene's `recon_cosine` is measured on the **training set*
 held-out split, so treat it as an upper bound on fidelity rather than a generalisation
 estimate.
 
-#### A published scene has no `images/` directory, by design
+#### A published scene has no `images/` export, by design
 
 Any loader that resolves `frame["file_path"]` or `data/images/{name}` off disk needs real
-image files. There is no `images/` directory — it was removed in the frame-store migration,
-and frames live in `frames.zarr` keyed by `frame_idx`. No `images/` export will be added.
-Downstream consumers get `sparse_pc.ply` + the mesh + the features + the raw COLMAP
-binaries, and read poses via `pycolmap`.
+image files. Feedforward backends publish none — the `images/` directory was removed in the
+frame-store migration, and frames live in `frames.zarr` keyed by `frame_idx`. No `images/`
+export will be added. Downstream consumers get `sparse_pc.ply` + the mesh + the features +
+the raw COLMAP binaries, and read poses via `pycolmap`.
+
+`instantsfm/` is the one exception, and it is not an export: `_run_sfm` stages the keyframes
+to `<backend>/images/frame_NNNNNN.jpg` because the COLMAP/InstantSfM tools are path-locked to
+a directory. It is a local build artifact that `PUSH_EXCLUDES` does not currently filter, so
+it rides along to `environments-processed`. Do not build a consumer on it — re-derive frames
+from `frames.zarr`.
 
 #### Splats train from the published COLMAP + frames.zarr
 

@@ -144,6 +144,13 @@ hundred entries and a reader wants one frame's record, not one column.
 | `read_frames(dir, idxs=None) -> np.ndarray` | `images`, `image`, `image_by_frame_idx` |
 | `read_manifest(dir) -> dict` | `record`, `provenance` |
 
+All four take the scene's `images/` directory as `dir`. Frames are RGB uint8
+`(H, W, 3)` at both boundaries — `write_frames` converts to BGR for
+`cv2.imwrite` and `read_frames` converts back, so no caller handles BGR.
+`read_frames(dir)` returns `(N, H, W, 3)` in filename order; `idxs` selects by
+`frame_idx`, not by position, and raises on an index the directory does not
+hold.
+
 `frame_idx_from_path` moves here unchanged. `has_frame_idx` is dropped — its two
 callers become a membership test against `frame_paths`.
 
@@ -174,6 +181,9 @@ dependency hop buys nothing.
 ```python
 def filter_frame_quality(report, *, sharpness_k=2.0, max_clipped_frac=0.25) -> np.ndarray
 ```
+
+Returns a boolean mask over the report's rows, `True` = keep, indexed by report
+row (which is source frame order). Both rules must pass.
 
 **Sharpness — robust z-score on log(laplacian).** Cut a frame when
 `log(lap) < median(log lap) - k * MAD`, MAD scaled by 1.4826. Laplacian variance
@@ -229,7 +239,8 @@ if candidates is not None:
 Then:
 
 - **`sample_uniform(max_frames=N)`** — N evenly spaced picks from `eligible`.
-  The COUNT stays the contract.
+  The COUNT stays the contract; a pool smaller than N returns the whole pool
+  and logs the shortfall.
 - **`sample_fps(fps=f)`** — constant-time targets from `context_indices`, each
   snapped to the nearest eligible index. The SPACING stays the contract, and
   the `[min_frames, max_frames]` re-spread band is unchanged.
@@ -442,7 +453,20 @@ version asserts the pool model — that no ineligible frame is ever selected, th
 `uniform` returns exactly N when the pool allows, and that `fps` preserves its
 spacing contract.
 
-`test_public_api_surface`'s exact-set assertion is updated to the new `__all__`.
+`test_public_api_surface`'s exact-set assertion is updated to the new `__all__`,
+which loses `FrameStore`, `DistortionProfile` and `estimate_camera_distortion`
+(the last folded into `undistort_frames`) and gains the five `frames.py`
+functions:
+
+```python
+__all__ = [
+    "analysis_gray", "compute_video_quality", "extract_frame",
+    "filter_frame_quality", "frame_idx_from_path", "frame_paths",
+    "get_video_info", "iter_frames", "load_video_quality", "read_frames",
+    "read_manifest", "sample_fps", "sample_optical_flow", "sample_uniform",
+    "undistort_frames", "write_frames",
+]
+```
 
 New: a test that `filter_frame_quality` actually cuts frames on a fixture with a
 soft tail — the regression this whole section exists to prevent.

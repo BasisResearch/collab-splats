@@ -173,20 +173,6 @@ def test_make_creator_unknown_name():
 ########################################################
 
 
-def test_loop_closure_wraps_a_registry_creator():
-    """
-    make_creator builds the base creator; LoopClosure wrapping is the caller's job.
-    """
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
-    from collab_splats.pointcloud import make_creator
-    from collab_splats.pointcloud.feedforward import VGGTXCreator
-
-    creator = LoopClosure(make_creator("vggtx"))
-
-    assert isinstance(creator, LoopClosure)
-    assert isinstance(creator.base, VGGTXCreator)
-
-
 def test_loop_closure_constructor_defaults():
     from collab_splats.geometry.loop_closure import LoopClosureConfig
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure

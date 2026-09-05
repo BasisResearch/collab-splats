@@ -653,7 +653,7 @@ lines in `build_pointcloud`. (`voxel_size` in the old wrapper method was already
 plus the rewritten `clean_pointcloud`.
 
 **Files:**
-- Modify: `collab_splats/pointcloud/utils.py` (delete lines 23, 35-40, 48-175, 244-298, 344-499, 535-695; rewrite 176-243; hoist imports)
+- Modify: `collab_splats/pointcloud/utils.py` (delete lines 23, 35-40, 48-175, 244-298, 344-499, 535-695; rewrite 176-243; hoist imports — including the function-local `from collab_splats.geometry.transforms import rotation_align_vectors` at `:514`, which duplicates the module-scope import already at `:21`)
 - Modify: `collab_splats/pointcloud/__init__.py:23,85,86`
 - Modify: `collab_splats/wrapper/reconstructor.py:1005-1007,1052-1086`
 - Modify: `configs/base.yaml:103-107`
@@ -2696,9 +2696,17 @@ git commit -m "refactor(pointcloud): split sfm.py into the sfm/ backend package"
 
 `pointcloud/__init__.py` reaches into `collab_splats.geometry` through a deferred import whose
 only reason to exist is the cycle it dodges: `geometry.loop_closure.wrapper` imports
-`pointcloud.feedforward`, so `geometry` cannot be imported at `pointcloud` load time. One test
-is the only caller. Delete the wrapping and the cycle goes with it; the Reconstructor and the
-tutorials already build `LoopClosure(base, config=...)` themselves.
+`pointcloud.feedforward`. One test is the only caller. Delete the wrapping; the Reconstructor and
+the tutorials already build `LoopClosure(base, config=...)` themselves.
+
+This does **not** break the cycle, and no commit message or CHANGELOG entry should say it does.
+`pointcloud` already imports the geometry package root from `utils.py:21`, `feedforward/base.py:37-39`
+and four feedforward backends, and `geometry/loop_closure/wrapper.py:35-38` still imports back into
+`pointcloud.feedforward`. The cycle is held open by two pre-existing lazy hooks —
+`geometry/__init__.py:16-33` and `geometry/loop_closure/__init__.py:18-29` — that this plan does not
+touch. What this task achieves is narrower and still worth having: it removes the last import of the
+geometry **package root** from `collab_splats/pointcloud/`, leaving only geometry leaf modules
+(`transforms`, `metrics`, `verification`), none of which import back.
 
 Tasks 3 and 5 already trimmed `CoordinateFrame`, `compute_obb_from_points` and
 `get_points_in_mask` out of this file; this task finishes it.
@@ -2769,9 +2777,9 @@ def get_creator(name: str) -> type[BasePointcloudCreator]:
     return _REGISTRY[name]
 ```
 
-- [ ] **Step 4: Confirm the cycle is gone**
+- [ ] **Step 4: Confirm this file no longer reaches the geometry root**
 
-Both import orders must work with no deferred-import trick anywhere:
+Both import orders must work, with no deferred-import trick left in this file:
 
 ```bash
 /opt/venv/reconstruction/bin/python -c "import collab_splats.geometry.loop_closure; import collab_splats.pointcloud; print('ok')"

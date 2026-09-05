@@ -7,7 +7,6 @@ import pytest
 
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
-from collab_splats.pointcloud.utils import clean_pcd, density_filter, remove_far_points
 
 
 def test_result_fields():
@@ -40,15 +39,6 @@ def test_result_fields():
 def test_base_creator_is_abstract():
     with pytest.raises(TypeError):
         BasePointcloudCreator()
-
-
-def test_utils_clean_pcd_returns_tuple():
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3))
-    pcd.colors = o3d.utility.Vector3dVector(np.random.rand(100, 3))
-    result_pcd, indices = clean_pcd(pcd)
-    assert isinstance(result_pcd, o3d.geometry.PointCloud)
-    assert isinstance(indices, np.ndarray)
 
 
 def test_base_creator_abstract_method_is_reconstruct():

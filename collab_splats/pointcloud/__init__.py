@@ -23,7 +23,6 @@ try:
     _LOGER_AVAILABLE = True
 except ImportError:
     _LOGER_AVAILABLE = False
-from .utils import compute_obb_from_points, get_points_in_mask
 
 _REGISTRY: dict[str, type[BasePointcloudCreator]] = {
     "colmap": ColmapCreator,
@@ -73,8 +72,6 @@ __all__ = [
     "MapAnythingCreator",
     "PointcloudResult",
     "VGGTXCreator",
-    "compute_obb_from_points",
-    "get_points_in_mask",
     "get_creator",
     "make_creator",
 ]

@@ -165,8 +165,8 @@ def test_mapanything_postprocess_pipeline(tmp_path):
 
     Since d6177bc, _postprocess builds the per-frame point/color grids inline from
     postprocess_model_outputs_for_inference's pred dicts and applies the shared
-    compute_multiview_depth_confidence filter — collect_pts3d_from_outputs and
-    voxel_downsample are gone. We mock postprocess_model_outputs_for_inference to
+    compute_multiview_depth_confidence filter — collect_pts3d_from_outputs and the
+    voxel-downsample step are gone. We mock postprocess_model_outputs_for_inference to
     return ready-to-consume pred dicts and stub mv-conf so no model download runs.
     """
     from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator

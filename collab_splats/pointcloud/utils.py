@@ -1,299 +1,65 @@
 # collab_splats/pointcloud/utils.py
-"""Geometric pointcloud utilities: filtering, downsampling, and coordinate conversion.
+"""Geometric pointcloud utilities: outlier masking, subsampling, plane fitting, feature lifting.
 
 Coordinate convention used throughout:
   - Input from pycolmap uses COLMAP world (Y-down) + OpenCV camera axes (X right, Y down, Z forward).
-  - World-space outputs (``reproject_pixels``, ``get_points_in_mask``) stay in the caller's input
-    frame — COLMAP world, Y-down. Nothing here converts to nerfstudio/OpenGL.
+  - World-space output (``reproject_pixels``) stays in the caller's input frame — COLMAP world,
+    Y-down. Nothing here converts to nerfstudio/OpenGL.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
-import pycolmap
+import open3d as o3d
 import torch
 import torch.nn.functional as F
-from tqdm.auto import trange
 
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
-
-from .base import PointcloudResult
+from collab_splats.geometry.transforms import (
+    extrinsics_to_homogeneous,
+    invert_poses,
+    rotation_align_vectors,
+)
 
 if TYPE_CHECKING:
     from .feedforward.base import FeedforwardResult
 
-try:
-    from collab_splats.semantics.features import BaseFeatureExtractor
-except ImportError:
-    BaseFeatureExtractor = None  # type: ignore[assignment]
-
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DOWNSAMPLE_KWARGS: dict = {"voxel_size": 0.015, "adaptive": True}
-_DEFAULT_OUTLIER_KWARGS: dict = {"nb_neighbors": 20, "std_ratio": 2.0}
-_DEFAULT_DISTANCE_KWARGS: dict = {"method": "radial", "max_distance": 50.0}
-
-# Sentinel to distinguish "use defaults" from "skip this step"
-_UNSET = object()
-
 
 ########################################################
-########## Confidence masking helpers ##################
-########################################################
-
-
-def _radial_mask(
-    points: np.ndarray,
-    max_distance: Optional[float] = None,
-    n_points: Optional[int] = None,
-    reference: str = "centroid",
-) -> np.ndarray:
-    """Compute a boolean keep-mask using Euclidean distance from a reference point.
-
-    Args:
-        points:       (N, 3) float32 world-space point coordinates.
-        max_distance: Keep points within this Euclidean distance from reference.
-                      At least one of max_distance / n_points must be provided.
-        n_points:     Keep the N closest points to reference.
-        reference:    'centroid' uses points.mean(axis=0); 'origin' uses [0,0,0].
-
-    Returns:
-        (N,) boolean array; True = keep.
-
-    Raises:
-        ValueError: If both max_distance and n_points are None, or reference is unknown.
-    """
-    if max_distance is None and n_points is None:
-        raise ValueError("_radial_mask requires max_distance or n_points.")
-    if reference == "centroid":
-        ref = points.mean(axis=0)
-    elif reference == "origin":
-        ref = np.zeros(3)
-    else:
-        raise ValueError("reference must be 'centroid' or 'origin'")
-    distances = np.linalg.norm(points - ref, axis=1)
-    if max_distance is not None:
-        mask = distances <= max_distance
-    else:
-        if n_points > len(points):
-            raise ValueError(f"n_points ({n_points}) is greater than the number of points ({len(points)}).")
-        sorted_idx = np.argsort(distances)
-        mask = np.zeros(len(points), dtype=bool)
-        mask[sorted_idx[:n_points]] = True
-    return mask
-
-
-def _bbox_mask(
-    points: np.ndarray,
-    percentile_range: Tuple[float, float] = (1.0, 99.0),
-    max_extent: Optional[float] = None,
-) -> np.ndarray:
-    """Compute a boolean keep-mask using a per-axis percentile bounding box.
-
-    Computes per-axis min/max from percentile_range, then optionally clips the
-    box to max_extent around its centre.
-
-    Args:
-        points:           (N, 3) float32 world-space point coordinates.
-        percentile_range: (min_pct, max_pct) used to derive per-axis bounds.
-                          E.g., (1.0, 99.0) removes the outermost 1 % on each axis.
-        max_extent:       If set, clips the percentile box to this absolute size
-                          around the box centre (world units).
-
-    Returns:
-        (N,) boolean array; True = keep.
-    """
-    pmin, pmax = percentile_range
-    bbox_min = np.percentile(points, pmin, axis=0)
-    bbox_max = np.percentile(points, pmax, axis=0)
-    if max_extent is not None:
-        center = (bbox_min + bbox_max) / 2
-        half = max_extent / 2
-        bbox_min = np.maximum(bbox_min, center - half)
-        bbox_max = np.minimum(bbox_max, center + half)
-    mask = np.all((points >= bbox_min) & (points <= bbox_max), axis=1)
-    return mask
-
-
-########################################################
-########## Distance and density filters ################
-########################################################
-
-
-def filter_distance(
-    pcd,
-    method: str = "radial",
-    *,
-    max_distance: Optional[float] = None,
-    n_points: Optional[int] = None,
-    reference: str = "centroid",
-    percentile_range: Tuple[float, float] = (1.0, 99.0),
-    max_extent: Optional[float] = None,
-    return_mask: bool = False,
-):
-    """Filter an Open3D point cloud by distance from a reference or bounding box.
-
-    Args:
-        pcd:              Open3D PointCloud to filter.
-        method:           ``"radial"`` — Euclidean sphere filter; ``"bbox"`` — axis-aligned box.
-        max_distance:     (radial) Keep points within this distance from reference.
-        n_points:         (radial) Keep the N closest points.
-        reference:        (radial) ``"centroid"`` or ``"origin"``.
-        percentile_range: (bbox) (min_pct, max_pct) percentile bounds per axis.
-        max_extent:       (bbox) Optional absolute max half-extent clamp around center.
-        return_mask:      When True, return ``(pcd, mask)`` instead of just ``pcd``.
-
-    Returns:
-        Filtered Open3D PointCloud, or ``(pcd, mask)`` if ``return_mask=True``.
-    """
-    import open3d as o3d
-
-    points = np.asarray(pcd.points)
-
-    if method == "radial":
-        mask = _radial_mask(points, max_distance, n_points, reference)
-    elif method == "bbox":
-        if len(points) == 0:
-            mask = np.zeros(0, dtype=bool)
-            filtered = pcd.select_by_index([])
-            return (filtered, mask) if return_mask else filtered
-        mask = _bbox_mask(points, percentile_range, max_extent)
-    else:
-        raise ValueError(f"Unknown filter_distance method: {method!r}. Use 'radial' or 'bbox'.")
-
-    filtered = pcd.select_by_index(np.where(mask)[0])
-    return (filtered, mask) if return_mask else filtered
-
-
-########################################################
-########## Primary cleaning pipeline ##################
+########## Cleaning and subsampling ####################
 ########################################################
 
 
 def clean_pointcloud(
-    pcd,
-    downsample_kwargs: Optional[dict] = _UNSET,
-    outlier_kwargs: Optional[dict] = _UNSET,
-    distance_kwargs: Optional[dict] = _UNSET,
-) -> tuple[Any, np.ndarray]:
-    """Clean an Open3D point cloud via composable filter steps.
-
-    Applies up to three steps in order:
-      1. Voxel downsampling (``voxel_downsample``)
-      2. Statistical outlier removal (``pcd.remove_statistical_outlier``)
-      3. Distance-based removal (``filter_distance``)
-
-    Each step is enabled by passing a dict of kwargs (merged over module defaults)
-    and disabled by passing ``None``.
-
-    Args:
-        pcd:               Open3D PointCloud to clean.
-        downsample_kwargs: kwargs for ``voxel_downsample``, or None to skip.
-        outlier_kwargs:    kwargs for ``remove_statistical_outlier``, or None to skip.
-        distance_kwargs:   kwargs for ``filter_distance``, or None to skip.
-
-    Returns:
-        ``(cleaned_pcd, index_mapping)`` where ``index_mapping`` maps each output
-        point back to its original index.
+    points: np.ndarray,
+    *,
+    nb_neighbors: int = 20,
+    std_ratio: float = 2.0,
+) -> np.ndarray:
     """
-    # Resolve defaults (None = skip step, _UNSET = use module defaults)
-    if downsample_kwargs is _UNSET:
-        downsample_kwargs = _DEFAULT_DOWNSAMPLE_KWARGS
-    if outlier_kwargs is _UNSET:
-        outlier_kwargs = _DEFAULT_OUTLIER_KWARGS
-    if distance_kwargs is _UNSET:
-        distance_kwargs = _DEFAULT_DISTANCE_KWARGS
+    Statistical-outlier keep-mask over a (P, 3) world-point array.
 
-    n_start = len(pcd.points)
-    indices = np.arange(n_start)
-    logger.debug("clean_pointcloud: start %d points", n_start)
-
-    if downsample_kwargs is not None and len(pcd.points) > 0:
-        n_before = len(pcd.points)
-        kwargs = {**_DEFAULT_DOWNSAMPLE_KWARGS, **downsample_kwargs}
-        pcd, idx_map = voxel_downsample(pcd, **kwargs)
-        indices = indices[idx_map]
-        logger.debug("downsample: %d → %d (%d removed)", n_before, len(pcd.points), n_before - len(pcd.points))
-
-    if outlier_kwargs is not None and len(pcd.points) > 0:
-        n_before = len(pcd.points)
-        kwargs = {**_DEFAULT_OUTLIER_KWARGS, **outlier_kwargs}
-        pcd, ind = pcd.remove_statistical_outlier(**kwargs)
-        indices = indices[ind]
-        logger.debug("outlier_removal: %d → %d (%d removed)", n_before, len(pcd.points), n_before - len(pcd.points))
-
-    if distance_kwargs is not None and len(pcd.points) > 0:
-        n_before = len(pcd.points)
-        kwargs = {**_DEFAULT_DISTANCE_KWARGS, **distance_kwargs}
-        pcd, mask = filter_distance(pcd, return_mask=True, **kwargs)
-        indices = indices[mask]
-        logger.debug("distance_removal: %d → %d (%d removed)", n_before, len(pcd.points), n_before - len(pcd.points))
-
-    logger.debug(
-        "clean_pointcloud: done %d → %d (%d total removed)",
-        n_start,
-        len(pcd.points),
-        n_start - len(pcd.points),
-    )
-    return pcd, indices
-
-
-def voxel_downsample(
-    pcd: Any,
-    voxel_size: float = 0.015,
-    radius: float = 0.05,
-    adaptive: bool = True,
-) -> tuple[Any, np.ndarray]:
-    """Voxel-downsample an Open3D point cloud, returning the cloud and index mapping.
-
-    Args:
-        pcd:        Open3D PointCloud to downsample.
-        voxel_size: Base voxel size in metres (used when ``adaptive=False``).
-        radius:     Radius for adaptive density estimation (used when ``adaptive=True``).
-        adaptive:   When True, scale voxel_size by local point density.
-
-    Returns:
-        (downsampled_pcd, index_mapping) where index_mapping maps each voxel
-        representative back to its original index.
+    - Returns a (P,) bool array: True for the points open3d keeps.
+    - All-True when there are not enough points to form the neighbourhood statistic.
     """
-    import open3d as o3d
+    pts = np.asarray(points, dtype=np.float64)
 
-    points = np.asarray(pcd.points)
+    # remove_statistical_outlier needs more points than neighbours or it throws; a cloud that
+    # small has no outlier structure to find anyway.
+    if len(pts) <= nb_neighbors:
+        return np.ones(len(pts), dtype=bool)
 
-    # Compute adaptive voxel size scaled to point density
-    if adaptive and len(points) > 0:
-        # Estimate local density and adapt voxel size
-        tree = o3d.geometry.KDTreeFlann(pcd)
-        sample_size = min(500, len(points))
-        densities = []
-        for i in range(sample_size):
-            [k, _, _] = tree.search_radius_vector_3d(points[i], radius * 2)
-            densities.append(k)
-        avg_density = float(np.mean(densities))
-        effective_voxel_size = voxel_size * max(0.5, min(2.0, 50.0 / max(1e-6, avg_density)))
-    else:
-        effective_voxel_size = voxel_size
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pts)
+    _, keep_idx = pcd.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
 
-    min_bound = points.min(axis=0) if len(points) > 0 else np.zeros(3)
-    max_bound = points.max(axis=0) if len(points) > 0 else np.zeros(3)
-
-    # Voxel downsample with trace to preserve original point indices
-    downsampled, trace_indices, _ = pcd.voxel_down_sample_and_trace(
-        voxel_size=effective_voxel_size,
-        min_bound=min_bound,
-        max_bound=max_bound,
-        approximate_class=False,
-    )
-
-    index_mapping = np.array(
-        [inds[inds >= 0][0] if np.any(inds >= 0) else -1 for inds in trace_indices],
-        dtype=np.int64,
-    )
-
-    return downsampled, index_mapping
+    keep = np.zeros(len(pts), dtype=bool)
+    keep[np.asarray(keep_idx, dtype=int)] = True
+    return keep
 
 
 def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
@@ -317,9 +83,9 @@ def subsample_points(
 ) -> tuple[np.ndarray, Optional[np.ndarray]]:
     """Confidence-filter then randomly cap a point set to max_points.
 
-    Unlike voxel_downsample (voxel-size-based, output count varies with scene
-    extent), this guarantees an exact point budget — needed for scenes balanced
-    across submaps. Returns (points, colors) index-aligned; colors may be None.
+    Unlike voxel-size-based downsampling (output count varies with scene extent),
+    this guarantees an exact point budget — needed for scenes balanced across
+    submaps. Returns (points, colors) index-aligned; colors may be None.
     """
     # Drop points at/below the conf cutoff (see confidence_mask for the edge-case semantics)
     if conf is not None and len(conf) > 0:
@@ -337,163 +103,7 @@ def subsample_points(
 
 
 ########################################################
-########## Legacy cleaning utilities ##################
-########################################################
-
-
-def clean_pcd(
-    pcd,
-    voxel_size: float = 0.015,
-    radius: float = 0.05,
-    max_distance: float = 1.0,
-    downsample: bool = True,
-    outlier_removal: bool = True,
-    distance_removal: bool = True,
-    reference: str = "centroid",
-):
-    """
-    Enhanced cleaning with opacity and scale-based filtering.
-    """
-    import open3d as o3d
-
-    indices = np.arange(len(pcd.points))
-
-    # 3. Adaptive voxel downsampling based on point density
-    if downsample:
-        # Calculate local density to adapt voxel size
-        points = np.asarray(pcd.points)
-        if len(points) > 10000:  # For large point clouds, use adaptive voxel size
-            tree = o3d.geometry.KDTreeFlann(pcd)
-            densities = []
-            for i in range(min(1000, len(points))):  # Sample subset for density estimation
-                [k, idx, _] = tree.search_radius_vector_3d(points[i], radius * 2)
-                densities.append(k)
-            avg_density = float(np.mean(densities))
-            adaptive_voxel_size = voxel_size * max(0.5, min(2.0, 50.0 / max(1e-6, avg_density)))
-        else:
-            adaptive_voxel_size = voxel_size
-
-        min_bound = points.min(axis=0)
-        max_bound = points.max(axis=0)
-
-        logger.debug("voxel_downsample: adaptive size %.4f", adaptive_voxel_size)
-
-        pcd, trace_indices, _ = pcd.voxel_down_sample_and_trace(
-            voxel_size=adaptive_voxel_size,
-            min_bound=min_bound,
-            max_bound=max_bound,
-            approximate_class=False,
-        )
-
-        voxel_indices = np.array([inds[inds >= 0][0] if np.any(inds >= 0) else -1 for inds in trace_indices])
-        valid_mask = voxel_indices >= 0
-        voxel_indices = voxel_indices[valid_mask]
-
-        pcd.points = o3d.utility.Vector3dVector(np.asarray(pcd.points)[valid_mask])
-        indices = indices[voxel_indices]
-
-    # 4. Statistical outlier removal (more robust than radius-based)
-    if outlier_removal:
-        pcd, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-        indices = indices[ind]
-        logger.debug("clean_pcd: removed %d statistical outliers", len(indices) - len(ind))
-
-    # 5. Distance-based removal
-    if distance_removal:
-        pcd, mask = remove_far_points(pcd, max_distance=max_distance, reference=reference, return_mask=True)
-        indices = indices[mask]
-
-    logger.debug("clean_pcd: %d points after cleaning", len(indices))
-    return pcd, indices
-
-
-def remove_far_points(
-    pcd,
-    max_distance: Optional[float] = None,
-    n_points: Optional[int] = None,
-    reference: str = "centroid",
-    return_mask: bool = False,
-):
-    """
-    Removes farthest points from a point cloud based on either a distance threshold
-    or by keeping a fixed number of closest points to a reference point.
-
-    Returns:
-        - Point cloud with filtered points
-        - (optional) Boolean mask of selected points
-    """
-    import open3d as o3d
-
-    if max_distance is None and n_points is None:
-        raise ValueError("You must specify either `max_distance` or `n_points`.")
-
-    points = np.asarray(pcd.points)
-
-    # Reference point
-    if reference == "centroid":
-        ref_point = np.mean(points, axis=0)
-    elif reference == "origin":
-        ref_point = np.zeros(3)
-    else:
-        raise ValueError("reference must be 'origin' or 'centroid'")
-
-    distances = np.linalg.norm(points - ref_point, axis=1)
-
-    if max_distance is not None:
-        mask = distances <= max_distance
-    else:
-        if n_points is not None and n_points > len(points):
-            raise ValueError("n_points is greater than the number of points in the cloud.")
-        sorted_indices = np.argsort(distances)
-        mask = np.zeros_like(distances, dtype=bool)
-        if n_points is None:
-            n_points = len(points)
-        mask[sorted_indices[:n_points]] = True
-
-    filtered_points = points[mask]
-
-    filtered_pcd = o3d.geometry.PointCloud()
-    filtered_pcd.points = o3d.utility.Vector3dVector(filtered_points)
-
-    if pcd.has_colors():
-        filtered_pcd.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[mask])
-    if pcd.has_normals():
-        filtered_pcd.normals = o3d.utility.Vector3dVector(np.asarray(pcd.normals)[mask])
-
-    return (filtered_pcd, mask) if return_mask else filtered_pcd
-
-
-def density_filter(pcd, radius=0.03, percentile=10):
-    """
-    Remove points in sparse regions using local density.
-    """
-    import open3d as o3d
-
-    # Find points in sparse regions using local density
-    logger.debug("density_filter: estimating densities")
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-    densities = []
-
-    for i in trange(len(pcd.points), desc="Estimating point densities"):
-        [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], radius=radius)
-        densities.append(k)
-
-    densities = np.array(densities)
-    logger.debug("density_filter: min=%d max=%d mean=%.1f", np.min(densities), np.max(densities), np.mean(densities))
-
-    # Remove points in very sparse regions (bottom 10% by density)
-    density_threshold = np.percentile(densities, percentile)  # Adjust percentage as needed
-    dense_mask = densities >= density_threshold
-    pcd_dense = pcd.select_by_index(np.where(dense_mask)[0])
-    logger.debug(
-        "density_filter: removed %d sparse points (threshold %.3f)",
-        len(pcd.points) - len(pcd_dense.points),
-        density_threshold,
-    )
-
-
-########################################################
-########## Geometry: OBB + mask lifting ################
+########## Geometry: plane fitting #####################
 ########################################################
 
 
@@ -509,10 +119,6 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         R: (3, 3) rotation matrix aligning floor normal to [0, 0, 1].
         t: (3,) translation placing floor at z=0 after rotation is applied.
     """
-    import open3d as o3d  # optional heavy dep
-
-    from collab_splats.geometry.transforms import rotation_align_vectors
-
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
     plane_model, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
@@ -530,162 +136,6 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     # After R, floor is at z = -d_norm. Translate by d_norm to bring to z = 0.
     t = np.array([0.0, 0.0, d_norm])
     return R.astype(np.float64), t.astype(np.float64)
-
-
-def compute_obb_from_points(
-    points: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute oriented bounding box for a Nx3 point cloud via PCA.
-
-    Returns:
-        center   : (3,) world-space OBB center
-        extent   : (3,) box side lengths along principal axes
-        rotation : (3,3) rotation matrix, columns = principal axes
-    """
-    assert points.ndim == 2 and points.shape[1] == 3, "Input must be Nx3"
-
-    # Strip NaN/Inf rows before any computation
-    points = points[np.isfinite(points).all(axis=1)]
-    if len(points) == 0:
-        raise ValueError("Point cloud is empty or invalid")
-
-    # Compute centroid and center the cloud
-    centroid = points.mean(axis=0)
-    centered = points - centroid
-
-    # PCA via covariance matrix eigenvectors
-    cov = np.cov(centered, rowvar=False)
-    eigvals, eigvecs = np.linalg.eigh(cov)
-
-    # Sort axes by descending variance
-    order = np.argsort(eigvals)[::-1]
-    eigvecs = eigvecs[:, order]
-    rotation = eigvecs
-
-    # Project points into PCA frame and compute axis-aligned extents
-    points_local = centered @ rotation
-    min_corner = points_local.min(axis=0)
-    max_corner = points_local.max(axis=0)
-    extent = max_corner - min_corner
-
-    # Map local center back to world space
-    center_local = 0.5 * (min_corner + max_corner)
-    center = centroid + center_local @ rotation.T
-
-    return center, extent, rotation
-
-
-def get_points_in_mask(
-    frame_idx: int,
-    mask: np.ndarray,
-    points: np.ndarray,
-    pixel_indices: np.ndarray,
-) -> np.ndarray:
-    """Return world-space points whose source pixel falls within a 2D mask.
-
-    Args:
-        frame_idx:     Frame to query.
-        mask:          (H, W) bool array — True for pixels of interest.
-        points:        (P, 3) float32 world-space point positions.
-        pixel_indices: (P, 3) int32 [frame_id, row, col] per point.
-
-    Returns:
-        (M, 3) float32 — subset of points with source pixel inside mask, M <= P.
-    """
-    # Select only points that belong to the requested frame
-    frame_mask = pixel_indices[:, 0] == frame_idx
-    rows = pixel_indices[frame_mask, 1]
-    cols = pixel_indices[frame_mask, 2]
-
-    # Index mask at each point's pixel location
-    in_mask = mask[rows, cols]
-    return points[frame_mask][in_mask]
-
-
-def voxel_downsample_point_cloud(
-    points: np.ndarray,
-    colors: np.ndarray,
-    voxel_fraction: float = 0.01,
-    voxel_size: Optional[float] = None,
-    verbose: bool = True,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Downsample point cloud with scene-adaptive or explicit voxel size (pure numpy).
-
-    If voxel_size is provided, it is used directly. Otherwise, the voxel size
-    is computed adaptively using the interquartile range (IQR) of point positions:
-        voxel_size = iqr_extent * voxel_fraction
-
-    Using IQR instead of full bounding box extent makes the method robust to
-    outliers and large depth variations (e.g., landscape scenes with 1m to 1000m depth).
-
-    Args:
-        points: (N, 3) array of 3D points
-        colors: (N, 3) array of RGB colors (0-255 uint8 or 0-1 float)
-        voxel_fraction: Fraction of IQR extent to use as voxel size (default: 0.01 = 1%)
-        voxel_size: Explicit voxel size in meters (overrides voxel_fraction if provided)
-        verbose: Whether to print downsampling information
-
-    Returns:
-        Tuple of (downsampled_points, downsampled_colors)
-            - downsampled_points: (M, 3) array of downsampled 3D points
-            - downsampled_colors: (M, 3) array of corresponding colors (uint8)
-    """
-    if len(points) == 0:
-        return points, colors
-
-    if voxel_size is not None:
-        # Use explicit voxel size
-        if verbose:
-            logger.debug("voxel_downsample_point_cloud: explicit size %.4f m", voxel_size)
-    else:
-        # Compute scene extent using IQR (robust to outliers)
-        q25 = np.percentile(points, 25, axis=0)
-        q75 = np.percentile(points, 75, axis=0)
-        iqr_extent = (q75 - q25).max()
-
-        # Also compute full extent for reference
-        bbox_min = points.min(axis=0)
-        bbox_max = points.max(axis=0)
-        full_extent = (bbox_max - bbox_min).max()
-
-        # Use IQR-based extent if valid, otherwise fall back to full extent
-        if iqr_extent > 0:
-            # Scale up IQR to approximate useful scene range
-            # IQR covers ~50% of data, so multiply by 2 for better coverage
-            scene_extent = iqr_extent * 2
-        else:
-            scene_extent = full_extent
-
-        # Compute adaptive voxel size
-        voxel_size = scene_extent * voxel_fraction
-
-        # Ensure voxel size is positive
-        if voxel_size <= 0:
-            voxel_size = 0.01  # Fallback to 1cm if extent is zero
-
-        if verbose:
-            logger.debug(
-                "voxel_downsample_point_cloud: scene extent IQR=%.3f m, full=%.3f m", scene_extent, full_extent
-            )
-            logger.debug("voxel_downsample_point_cloud: adaptive size %.4f m", voxel_size)
-
-    # Pure numpy voxel downsampling
-    points_float = points.astype(np.float64)
-
-    # Compute voxel grid coordinates
-    voxel_coords = np.floor(points_float / voxel_size).astype(np.int32)
-
-    # Find unique voxels and get one representative point per voxel
-    _, unique_indices = np.unique(voxel_coords, axis=0, return_index=True)
-
-    # Extract downsampled points and colors using the indices
-    downsampled_points = points[unique_indices]
-    downsampled_colors = colors[unique_indices]
-
-    if verbose:
-        logger.debug("voxel_downsample_point_cloud: %d → %d points", len(points), len(downsampled_points))
-
-    return downsampled_points, downsampled_colors
 
 
 ########################################################

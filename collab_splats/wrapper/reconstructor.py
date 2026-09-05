@@ -32,6 +32,7 @@ from collab_splats.pointcloud.sfm import (
     generate_vda_depth,
     vda_depth_complete,
 )
+from collab_splats.pointcloud.utils import clean_pointcloud
 from collab_splats.preproc import get_video_info
 from collab_splats.preproc import viz as preproc_viz
 from collab_splats.preproc.frame_store import FrameStore
@@ -1005,10 +1006,15 @@ class Reconstructor:
             )
             self.viewer = viewer
 
-        # Apply cleaning step if enabled
-        clean_cfg = pc_cfg["clean"]
-        if clean_cfg["enabled"]:
-            result = self._clean_pointcloud(result, clean_cfg)
+        # Statistical outlier removal on the final sparse set. Rejected point3D IDs are deleted
+        # from the reconstruction in place, so the PLY and the zarr agree with the model.
+        if pc_cfg["clean"]["enabled"] and result.reconstruction.points3D:
+            point3d_ids = list(result.reconstruction.points3D.keys())
+            keep = clean_pointcloud(result.points)
+            for pid, keep_this in zip(point3d_ids, keep):
+                if not keep_this:
+                    result.reconstruction.delete_point3D(pid)
+            logger.info("Pointcloud after cleaning: %d points", result.reconstruction.num_points3D())
 
         # Re-export the PLY from the FINAL result — clean may have dropped points since
         # the creator wrote its own copy.
@@ -1028,42 +1034,6 @@ class Reconstructor:
         frame_indices = FrameStore.open(self.frames_zarr).frame_indices()
         image_paths = [Path(f"frame_{int(fi):06d}") for fi in frame_indices]
         return PointcloudResult.from_colmap(self.backend_dir / "colmap", image_paths)
-
-    def _clean_pointcloud(self, result: "PointcloudResult", cfg: dict) -> "PointcloudResult":
-        """Apply open3d outlier removal to PointcloudResult.
-
-        Removes outlier point3D IDs from reconstruction in-place.
-        """
-        import open3d as o3d
-
-        # Skip cleaning if reconstruction has no 3D points
-        if not result.reconstruction.points3D:
-            return result
-
-        # Build ordered list of point3D IDs that matches result.points ordering
-        point3d_ids = list(result.reconstruction.points3D.keys())
-        pts = result.points  # (P, 3)
-        colors = result.colors  # (P, 3) uint8
-
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pts.astype(float))
-        pcd.colors = o3d.utility.Vector3dVector(colors.astype(float) / 255.0)
-
-        # Statistical outlier removal — remove outlier point3D IDs from reconstruction in-place
-        if cfg["outlier_removal"]:
-            _, inlier_idx = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-            inlier_set = set(inlier_idx)
-            for i, pid in enumerate(point3d_ids):
-                if i not in inlier_set:
-                    result.reconstruction.delete_point3D(pid)
-
-        # Optional voxel downsampling (affects visualization/density; no structural change)
-        voxel_size = cfg["voxel_size"]
-        if voxel_size is not None:
-            pcd = pcd.voxel_down_sample(voxel_size)
-
-        logger.info("Pointcloud after cleaning: %d points", result.reconstruction.num_points3D())
-        return result
 
     def _run_sfm(self) -> "PointcloudResult":
         """

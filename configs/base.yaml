@@ -98,10 +98,7 @@ pointcloud:
   # (global BA; tracks cached in <backend>/).
   bundle_adjustment: false
   clean:
-    enabled: true
-    outlier_removal: true
-    voxel_size: null          # null = adaptive per-scene
-    confidence_threshold: null  # NOT YET READ by the clean step
+    enabled: true              # statistical outlier removal on the final sparse point set
   # InstantSfM (method: sfm, backend: instantsfm) config surface.
   instantsfm:
     features: colmap          # feature/matching handler; v0.3.0 upstream supports only colmap

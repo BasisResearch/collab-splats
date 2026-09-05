@@ -63,7 +63,7 @@ tests/pointcloud/
 | `tests/pointcloud/test_export_wiring.py` | tests a deleted module |
 | `tests/pointcloud/test_instantsfm.py` | split into `test_vda.py` + `test_depth_align.py` + `sfm/test_instantsfm.py` |
 | `tests/pointcloud/test_sfm_creator.py` | split into `tests/pointcloud/sfm/test_{colmap,hloc,instantsfm}.py` |
-| `tests/wrapper/test_sfm_result.py` | result-assembly cases move to `test_depth_align.py`; the rename case is replaced by a creator-level test in `sfm/test_instantsfm.py` |
+| `tests/wrapper/test_sfm_result.py` | result-assembly cases move to `test_depth_align.py`; the rename case moves to `sfm/test_instantsfm.py` with the helper it covers |
 | `tests/wrapper/test_vda_context.py` | the VDA context stream is deleted |
 | `tests/wrapper/test_transforms_json.py` | `transforms.json` is no longer written |
 
@@ -191,7 +191,7 @@ In `collab_splats/pointcloud/base.py`, insert these two methods into `Pointcloud
                 f"describe different runs."
             )
 
-        return cls(reconstruction=recon, image_paths=list(image_paths))
+        return cls(reconstruction=recon, frame=CoordinateFrame.COLMAP, image_paths=list(image_paths))
 
     def write_ply(self, path: Path) -> None:
         """
@@ -202,23 +202,10 @@ In `collab_splats/pointcloud/base.py`, insert these two methods into `Pointcloud
         self.reconstruction.export_PLY(str(path))
 ```
 
-Note: `from_colmap` passes no `frame=` — the field still exists in this task and has no default, so **temporarily** give it one while Task 3 is pending. Change the field line to:
-
-```python
-    frame: CoordinateFrame = CoordinateFrame.COLMAP  # coord system of world origin (deleted in Task 3)
-```
-
-and move it below `image_paths` so the dataclass field order stays legal:
-
-```python
-    reconstruction: pycolmap.Reconstruction  # primary — always set
-    image_paths: list[Path]  # canonical frame ordering (N entries)
-    frame: CoordinateFrame = CoordinateFrame.COLMAP  # coord system of world origin (deleted in Task 3)
-    confidence: np.ndarray | None = None  # (P,) float32 — feedforward per-point
-    world_transform: np.ndarray | None = None  # (3, 4) applied COLMAP→nerfstudio axis swap
-```
-
-Every existing construction site passes `reconstruction=`/`frame=`/`image_paths=` by keyword, so reordering is safe.
+Note: `frame` is still a required field in this task (Task 3 deletes it), so `from_colmap`
+passes `frame=CoordinateFrame.COLMAP` — the value every existing construction site already
+passes. `CoordinateFrame` is defined in this same module (`base.py:13`), so no import moves.
+The dataclass itself is untouched here; Task 3 drops both the field and this argument.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -509,6 +496,8 @@ class PointcloudResult:
     image_paths: list[Path]  # canonical frame ordering (N entries)
 ```
 
+- In `from_colmap` (Task 1), drop the now-dead argument so the return reads
+  `return cls(reconstruction=recon, image_paths=list(image_paths))`.
 - In the `extrinsics` docstring, delete the trailing sentence `Frame is declared by self.frame.`
   so it reads:
 
@@ -1079,11 +1068,6 @@ logger = logging.getLogger(__name__)
 # Repo root -> third_party clone (setup.sh owns creation); module-level so tests can monkeypatch
 VDA_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "Video-Depth-Anything"
 
-# Upstream weights live on the hub, not in the clone — DepthAnything/Video-Depth-Anything @ 4f5ae23
-_VDA_REPO_ID = "depth-anything/Metric-Video-Depth-Anything-Large"
-_VDA_FILENAME = "metric_video_depth_anything_vitl.pth"
-
-
 def _load_vda_model(device: str):
     """
     Construct the VDA metric vitl model on `device` from the hub checkpoint.
@@ -1105,7 +1089,11 @@ def _load_vda_model(device: str):
         sys.path.insert(0, str(VDA_ROOT))
     from video_depth_anything.video_depth import VideoDepthAnything
 
-    ckpt = hf_hub_download(repo_id=_VDA_REPO_ID, filename=_VDA_FILENAME)
+    # Upstream weights live on the hub, not in the clone — DepthAnything/Video-Depth-Anything @ 4f5ae23
+    ckpt = hf_hub_download(
+        repo_id="depth-anything/Metric-Video-Depth-Anything-Large",
+        filename="metric_video_depth_anything_vitl.pth",
+    )
 
     # metric=True loads the metric head AND disables infer_video_depth's cross-window
     # scale-and-shift chaining (video_depth.py:135), so consecutive windows are stitched on the
@@ -1775,24 +1763,22 @@ def _fit_depth_scales(
     - s_i = median(d_colmap / d_vda) per frame; frames with fewer than `min_obs` valid pairs
       inherit the global median of the fitted scales; zero fitted frames raises.
     - Returns (scales, stats): (N,) float64 depth multipliers, and a stats dict with the global
-      scale, fallback frames, per-frame obs counts, and the pooled ratio spread before/after
-      alignment (the after-spread is the unit-level success check).
+      scale, fallback frames, and the pooled ratio spread before/after alignment (the
+      after-spread is the unit-level success check).
     """
     n_frames = depth.shape[0]
     scales = np.full(n_frames, np.nan)
-    obs_counts = np.zeros(n_frames, dtype=np.int64)
     pooled_ratios: list[np.ndarray] = []
     pooled_rows: list[np.ndarray] = []
 
     # One robust scale per frame from its track observations; below the obs floor, don't fit
     for row, (d_colmap, d_vda) in enumerate(_depth_correspondences(reconstruction, image_names, depth)):
-        obs_counts[row] = len(d_colmap)
-        if obs_counts[row] == 0:
+        if len(d_colmap) == 0:
             continue
         ratios = d_colmap / d_vda
         pooled_ratios.append(ratios)
         pooled_rows.append(np.full(len(ratios), row))
-        if obs_counts[row] >= min_obs:
+        if len(ratios) >= min_obs:
             scales[row] = np.median(ratios)
 
     fitted = ~np.isnan(scales)
@@ -1819,7 +1805,6 @@ def _fit_depth_scales(
         "global_scale": global_scale,
         "n_fallback": len(fallback_frames),
         "fallback_frames": fallback_frames,
-        "obs_counts": obs_counts.tolist(),
         "ratio_p10_p50_p90_before": [float(x) for x in np.percentile(ratios_all / global_scale, [10, 50, 90])],
         "ratio_p10_p50_p90_after": [float(x) for x in np.percentile(ratios_all / scales[rows_all], [10, 50, 90])],
     }
@@ -2052,11 +2037,12 @@ git rm tests/wrapper/test_sfm_result.py
 ```
 
 (its scaling / resolution / partial-registration / name-mismatch cases were ported into
-`tests/pointcloud/test_depth_align.py` in Step 1.
-Its `test_rename_images_to_stems_round_trips_through_write_binary` case is not ported: the
-rename moves into `InstantSfMCreator.reconstruct` in Task 9, which writes a fresh test against
-the creator's public contract instead of the deleted wrapper helper. The helper and its test
-therefore both die — the helper in Task 9 Step 8, the test here.)
+`tests/pointcloud/test_depth_align.py` in Step 1; its
+`test_rename_images_to_stems_round_trips_through_write_binary` case is ported verbatim into
+`tests/pointcloud/sfm/test_instantsfm.py` in Task 9 Step 3, where the helper it covers lands.
+Nothing this file tested is lost. `_rename_images_to_stems` is uncovered for the span between
+this task and Task 9 Step 3 — it is untouched code in that window, and Task 9 re-covers it
+before changing it.)
 
 - [ ] **Step 9: Run the suite**
 
@@ -2375,82 +2361,45 @@ def test_sift_database_valid_is_false_for_an_empty_database(tmp_path):
 ########################################################
 
 
-def test_reconstruct_returns_stem_named_images(tmp_path, monkeypatch):
+def _recon(names):
     """
-    InstantSfM registers frame_000000.jpg; the pipeline contract is the extension-less stem,
-    and the rename must land on both the returned model and the model written to disk.
+    One PINHOLE camera, one image per name, one point3D observed in every image.
     """
-    (tmp_path / "images").mkdir(parents=True)
-    sparse_dir = tmp_path / "colmap" / "sparse" / "0"
-    _stub_instantsfm_pipeline(monkeypatch, sparse_dir, ["frame_000000.jpg", "frame_000001.jpg"])
-
-    recon = instantsfm.InstantSfMCreator(use_depths=False).reconstruct(tmp_path)
-
-    assert sorted(im.name for im in recon.images.values()) == ["frame_000000", "frame_000001"]
-    reread = pycolmap.Reconstruction(str(sparse_dir))
-    assert sorted(im.name for im in reread.images.values()) == ["frame_000000", "frame_000001"]
-```
-
-with the two helpers above them:
-
-```python
-def _write_named_model(sparse_dir, names):
-    """
-    Write a minimal binary COLMAP model at sparse_dir with one image per name.
-    """
-    sparse_dir.mkdir(parents=True, exist_ok=True)
     recon = pycolmap.Reconstruction()
-    cam = pycolmap.Camera(model="PINHOLE", width=8, height=6, params=[4.0, 4.0, 4.0, 3.0], camera_id=1)
+    cam = pycolmap.Camera(model="PINHOLE", width=64, height=48, params=[50.0, 50.0, 32.0, 24.0], camera_id=1)
     recon.add_camera_with_trivial_rig(cam)
+    track = pycolmap.Track()
     for i, name in enumerate(names):
         im = pycolmap.Image(name=name, camera_id=1, image_id=i + 1)
-        pose = pycolmap.Rigid3d(pycolmap.Rotation3d(np.eye(3)), np.zeros(3))
+        im.points2D = [pycolmap.Point2D(np.array([40.0, 20.0]))]
+        pose = pycolmap.Rigid3d(pycolmap.Rotation3d(np.eye(3)), np.array([0.0, 0.0, float(i)]))
         recon.add_image_with_trivial_frame(im, pose)
-    recon.write_binary(str(sparse_dir))
+        track.add_element(i + 1, 0)
+    recon.add_point3D(np.array([0.0, 0.0, 5.0]), track, np.array([10, 20, 30], dtype=np.uint8))
+    return recon
 
 
-def _stub_instantsfm_pipeline(monkeypatch, sparse_dir, names):
-    """
-    Replace every upstream instantsfm call in reconstruct() so the test exercises our code only.
-
-    - reconstruct() wipes colmap/sparse/ before the solve, so the model is written by the
-      WriteGlomapReconstruction stub — exactly where and when upstream would write it.
-    """
-    import types
-
-    path_info = types.SimpleNamespace(database_path="", output_path="", image_path="", depth_path="")
-
-    for name in (
-        "_patch_instantsfm_track_ids",
-        "_patch_pypose_robustmodel_target",
-        "_patch_bae_pcg_column_shape",
-        "_patch_instantsfm_colmap_write",
-        "_generate_sift_database",
-    ):
-        monkeypatch.setattr(instantsfm, name, lambda *a, **k: None)
-    monkeypatch.setattr(instantsfm, "_sift_database_valid", lambda p: True)
-    monkeypatch.setattr(
-        instantsfm.InstantSfMCreator,
-        "_build_config",
-        lambda self: types.SimpleNamespace(OPTIONS={}, RUNTIME_OPTIONS={}),
-    )
-    monkeypatch.setattr(instantsfm, "ReadData", lambda d: path_info, raising=False)
-    monkeypatch.setattr(
-        instantsfm, "ReadColmapDatabase", lambda p: ("vg", "cams", "imgs", "sift", None), raising=False
-    )
-    monkeypatch.setattr(
-        instantsfm, "SolveGlobalMapper", lambda *a, **k: ("cams", "imgs", ["t"]), raising=False
-    )
-    monkeypatch.setattr(
-        instantsfm,
-        "WriteGlomapReconstruction",
-        lambda *a, **k: _write_named_model(sparse_dir, names),
-        raising=False,
-    )
+def test_rename_images_to_stems_round_trips_through_write_binary(tmp_path):
+    # InstantSfM names (frame_000000.jpg) -> contract stems, persisted in the rewritten model
+    recon = _recon(["frame_000000.jpg", "frame_000003.jpg"])
+    sparse_dir = tmp_path / "sparse" / "0"
+    sparse_dir.mkdir(parents=True)
+    instantsfm._rename_images_to_stems(recon, sparse_dir)
+    assert sorted(im.name for im in recon.images.values()) == ["frame_000000", "frame_000003"]
+    reread = pycolmap.Reconstruction(str(sparse_dir))
+    assert sorted(im.name for im in reread.images.values()) == ["frame_000000", "frame_000003"]
+    assert reread.num_points3D() == 1
 ```
 
-`reconstruct` imports the upstream names inside the function today, so the stubs above only bite
-once those imports are hoisted to module scope in Step 4 — which is why the test fails first.
+This case is `tests/wrapper/test_sfm_result.py:115-125` moved verbatim — only the call is
+retargeted (`_rename_images_to_stems` -> `instantsfm._rename_images_to_stems`), because Step 5
+moves the helper itself out of the wrapper and into the creator. Its `_recon` helper
+(`test_sfm_result.py:17`) comes with it, with `ORIG_W`/`ORIG_H`/`K_PARAMS` inlined since nothing
+else in this file uses them.
+
+The file needs `import pycolmap` at the top alongside `import numpy as np` — the surviving
+tests only used pycolmap inside `test_colmap_write_patch_produces_pycolmap_readable_model`
+(a function-local import), and two users make it a module import.
 
 - [ ] **Step 4: Run them to verify they fail**
 
@@ -2458,47 +2407,40 @@ once those imports are hoisted to module scope in Step 4 — which is why the te
 /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/sfm/test_instantsfm.py -x -q
 ```
 
-Expected: FAIL — `AttributeError: <module 'collab_splats.pointcloud.sfm.instantsfm'> does not
-have the attribute 'ReadData'` for the rename test, and `AttributeError: module has no attribute
-'sqlite3'`-class failures / wrong booleans for the DB cases.
+Expected: one failure — `AttributeError: module 'collab_splats.pointcloud.sfm.instantsfm'
+has no attribute '_rename_images_to_stems'`.
+
+The three `_sift_database_valid` cases pass against the old `sqlite3` implementation on
+purpose: they pin the observable contract (missing / unreadable / empty DB all -> False) across
+Step 5's swap to `pycolmap.Database.open`. A characterisation test that went red here would
+mean the rewrite changed behaviour, not that it worked.
 
 - [ ] **Step 5: Rewrite the InstantSfM pieces**
 
 In `collab_splats/pointcloud/sfm/instantsfm.py`:
 
-1. Hoist the upstream imports to module scope, guarded, so tests can monkeypatch them and a
-   missing optional dep still gives an actionable message:
+1. Move `_rename_images_to_stems` here from `collab_splats/wrapper/reconstructor.py:506-517`,
+   unchanged apart from the docstring's cross-reference — the rename is the creator's output
+   contract, not the Reconstructor's:
 
 ```python
-# InstantSfM is an optional dep (CUDA extensions, CC-BY-NC-4.0, pinned in setup.sh); the module
-# must still import without it so the registry and `import collab_splats.pointcloud` work
-try:
-    from instantsfm.controllers.config import Config
-    from instantsfm.controllers.data_reader import (
-        ReadColmapDatabase,
-        ReadData,
-        ReadDepthsIntoFeatures,
-    )
-    from instantsfm.controllers.global_mapper import SolveGlobalMapper
-    from instantsfm.controllers.reconstruction_writer import WriteGlomapReconstruction
-except ImportError as _err:  # pragma: no cover - exercised only without the optional dep
-    _INSTANTSFM_IMPORT_ERROR = _err
-    Config = ReadColmapDatabase = ReadData = ReadDepthsIntoFeatures = None
-    SolveGlobalMapper = WriteGlomapReconstruction = None
-else:
-    _INSTANTSFM_IMPORT_ERROR = None
+def _rename_images_to_stems(recon: pycolmap.Reconstruction, sparse_dir: Path) -> None:
+    """
+    Rename COLMAP images to their filename stems and rewrite the binary model in place.
+
+    - InstantSfM registers images under their filenames (frame_000000.jpg); the pipeline
+      contract is frame_{source_idx:06d} with NO extension (see PointcloudResult.from_colmap).
+    - pycolmap.Image.name is settable by reference, so the rename lands on the model itself.
+    """
+    for im in recon.images.values():
+        im.name = Path(im.name).stem
+    recon.write_binary(str(sparse_dir))
 ```
 
-and open `reconstruct` with:
-
-```python
-        if _INSTANTSFM_IMPORT_ERROR is not None:
-            raise ImportError(
-                "instantsfm is not installed — see setup.sh (cre185/InstantSfM, CC-BY-NC-4.0)"
-            ) from _INSTANTSFM_IMPORT_ERROR
-```
-
-replacing both function-local import blocks (in `_build_config` and `reconstruct`).
+The upstream `instantsfm.*` imports stay function-local in `_build_config` and `reconstruct`.
+CLAUDE.md's "imports at top" rule exempts optional heavy deps, instantsfm is not installed in
+this venv, and hoisting them behind a `try/except` would buy nothing here — no test in this
+file calls `reconstruct`, so nothing needs those names monkeypatchable at module scope.
 
 2. Replace `_sift_database_valid` — `pycolmap.Database` reads the same file colmap wrote, so
    the hand-rolled SQL and the `sqlite3` import both go:
@@ -2622,13 +2564,9 @@ backend), the `_generate_sift_database` call loses its third positional argument
 `reconstruct` ends with the rename instead of returning straight after the read-back:
 
 ```python
-        # Read back the written model, then rename images to their filename stems: InstantSfM
-        # registers frame_000000.jpg, the pipeline contract is frame_NNNNNN with no extension.
-        # Image.name is settable by reference, so the rename lands on the model itself.
+        # Read back the written model, then rename its images to the pipeline's stem contract
         recon = pycolmap.Reconstruction(str(sparse_dst))
-        for im in recon.images.values():
-            im.name = Path(im.name).stem
-        recon.write_binary(str(sparse_dst))
+        _rename_images_to_stems(recon, sparse_dst)
         logger.info("InstantSfM: %d registered images, %d points3D", recon.num_reg_images(), recon.num_points3D())
         return recon
 ```
@@ -2676,7 +2614,8 @@ In `collab_splats/wrapper/reconstructor.py`:
 1. Delete `_INSTANTSFM_FEATURES = {"colmap"}` (line 78).
 2. Delete the `features` allowlist check in `validate_config` (lines 881-883) and the
    `features = ...` lookup feeding it.
-3. Delete `_rename_images_to_stems` (lines 506-517).
+3. Delete `_rename_images_to_stems` (lines 506-517) — Step 5 moved it into
+   `sfm/instantsfm.py`.
 4. In `_run_sfm`, the creator construction and the rename call become:
 
 ```python
@@ -2717,11 +2656,14 @@ Expected: PASS.
 - [ ] **Step 11: Confirm the old module and the dropped fields are gone**
 
 ```bash
-rtk proxy grep -rn "pointcloud\.sfm\b\|pointcloud/sfm\.py\|_rename_images_to_stems\|_INSTANTSFM_FEATURES\|single_camera=\|_SIFT_NUM_THREADS" collab_splats tests configs evals docs/source
+rtk proxy grep -rn "pointcloud\.sfm\b\|pointcloud/sfm\.py\|_INSTANTSFM_FEATURES\|single_camera=\|_SIFT_NUM_THREADS" collab_splats tests configs evals docs/source
+rtk proxy grep -rn "_rename_images_to_stems" collab_splats tests
 ```
 
-Expected: only `from collab_splats.pointcloud.sfm import ...` package imports and
-`ColmapCreator.single_camera` (which keeps the field).
+Expected: from the first, only `from collab_splats.pointcloud.sfm import ...` package imports
+and `ColmapCreator.single_camera` (which keeps the field). From the second, only
+`collab_splats/pointcloud/sfm/instantsfm.py` (definition + call) and
+`tests/pointcloud/sfm/test_instantsfm.py` — nothing under `collab_splats/wrapper/`.
 
 - [ ] **Step 12: Format and commit**
 
@@ -2852,55 +2794,13 @@ does, and four pointcloud symbols are still imported inside function bodies agai
 
 **Files:**
 - Modify: `collab_splats/wrapper/reconstructor.py:23,25-34,562,1021-1023,1148-1160,1431,1769`
-- Test: `tests/wrapper/test_reconstructor.py`, `tests/wrapper/test_sfm_wiring.py`
+- Test (regression net, unchanged): `tests/wrapper/test_reconstructor.py`,
+  `tests/wrapper/test_sfm_wiring.py`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Hoist the pointcloud imports**
 
-Append to `tests/wrapper/test_reconstructor.py`:
-
-```python
-def test_reconstructor_imports_pointcloud_at_module_scope():
-    """
-    Pointcloud symbols are top-level imports — the cycle that forced function-local ones is gone.
-
-    - Guards the repo rule (CLAUDE.md "imports at top") against a silent regression: a
-      function-local import re-added here would still pass every behavioural test.
-    """
-    import ast
-    import inspect
-
-    from collab_splats.wrapper import reconstructor
-
-    tree = ast.parse(inspect.getsource(reconstructor))
-    top_level = {n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))}
-    nested = [
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node not in top_level and node.module
-    ]
-    offenders = [
-        m
-        for m in nested
-        if m.startswith("collab_splats.pointcloud")
-        and not m.endswith(("feedforward", "feedforward.base"))
-    ]
-
-    assert offenders == [], f"function-local pointcloud imports: {offenders}"
-```
-
-(`feedforward.base` stays function-local — it pulls torch model code and is the wrapper pass's
-to fix, listed as out of scope in the spec.)
-
-- [ ] **Step 2: Run it to verify it fails**
-
-```bash
-/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/test_reconstructor.py::test_reconstructor_imports_pointcloud_at_module_scope -x -q
-```
-
-Expected: FAIL — `function-local pointcloud imports: ['collab_splats.pointcloud.utils',
-'collab_splats.pointcloud.base', 'collab_splats.pointcloud.utils']`.
-
-- [ ] **Step 3: Hoist them**
+Pure refactor, no new test: Step 2 catches the one failure a hoist can actually cause (a
+resurrected import cycle), and the wrapper suite in Step 4 covers the behaviour.
 
 In `collab_splats/wrapper/reconstructor.py`, make the pointcloud import block read:
 
@@ -2930,16 +2830,17 @@ then delete these function-local lines:
 (line 59) and change every `-> "PointcloudResult"` annotation in the file to
 `-> PointcloudResult`.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 2: Verify the module imports both ways**
 
 ```bash
-/opt/venv/reconstruction/bin/python -m pytest tests/wrapper/test_reconstructor.py::test_reconstructor_imports_pointcloud_at_module_scope -x -q
 /opt/venv/reconstruction/bin/python -c "import collab_splats.wrapper.reconstructor; print('ok')"
+/opt/venv/reconstruction/bin/python -c "import collab_splats.pointcloud, collab_splats.wrapper.reconstructor; print('ok')"
 ```
 
-Expected: PASS, then `ok`.
+Expected: `ok` twice. A resurrected `pointcloud -> geometry.loop_closure -> pointcloud` cycle
+surfaces here as an ImportError at import time, not in any test.
 
-- [ ] **Step 5: Bring `_run_sfm` to its final shape**
+- [ ] **Step 3: Bring `_run_sfm` to its final shape**
 
 Replace the whole method with:
 
@@ -3007,7 +2908,7 @@ Replace the whole method with:
         return PointcloudResult(reconstruction=recon, image_paths=outputs.image_paths)
 ```
 
-- [ ] **Step 6: Run the wrapper suite**
+- [ ] **Step 4: Run the wrapper suite**
 
 ```bash
 /opt/venv/reconstruction/bin/python -m pytest tests/wrapper -x -q
@@ -3015,12 +2916,12 @@ Replace the whole method with:
 
 Expected: PASS.
 
-- [ ] **Step 7: Format and commit**
+- [ ] **Step 5: Format and commit**
 
 ```bash
-/opt/venv/reconstruction/bin/black collab_splats/wrapper/reconstructor.py tests/wrapper/test_reconstructor.py
-/opt/venv/reconstruction/bin/isort collab_splats/wrapper/reconstructor.py tests/wrapper/test_reconstructor.py
-git add collab_splats/wrapper/reconstructor.py tests/wrapper/test_reconstructor.py
+/opt/venv/reconstruction/bin/black collab_splats/wrapper/reconstructor.py
+/opt/venv/reconstruction/bin/isort collab_splats/wrapper/reconstructor.py
+git add collab_splats/wrapper/reconstructor.py
 git commit -m "refactor(wrapper): _run_sfm orchestrates only; hoist pointcloud imports to module scope"
 ```
 
@@ -3157,18 +3058,10 @@ Reduced `collab_splats/pointcloud/` to the one SfM path that ships.
   the `pointcloud -> geometry.loop_closure` cycle is gone (`make_creator` lost `use_lc`).
 ```
 
-- [ ] **Step 7: Remove the in-flight entry from `CLAUDE.md`**
+Nothing leaves `CLAUDE.md`'s `## In-Flight Work` list: this work was specced and planned in
+one pass, so it never had an entry there.
 
-The `## In-Flight Work` list carries no `pointcloud-cleanup` line (this work was specced and
-planned in one pass), so there is nothing to remove — confirm with:
-
-```bash
-rtk proxy grep -n "pointcloud-cleanup" CLAUDE.md
-```
-
-Expected: no output. If a line is present, delete it — completed work lives in the CHANGELOG.
-
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A configs docs CLAUDE.md setup.sh collab_splats
@@ -3217,7 +3110,7 @@ Expected: pass, modulo the documented known failures.
 Every name this refactor deleted, in one pass:
 
 ```bash
-rtk proxy grep -rn "CoordinateFrame\|world_transform\|write_pointcloud_ply\|_write_ply\|_export_pointcloud_ply\|_write_transforms_json\|_load_pointcloud_from_disk\|_clean_pointcloud\|_ensure_vda_depth\|_context_keep_rows\|_video_unchanged\|decode_context\|vda_depth_complete\|VDA_CHECKPOINT\|apply_depth_alignment\|align_depth_affine\|align_depth_to_reconstruction\|DEPTH_ALIGN_MODELS\|DepthAlignModel\|_sfm_result_from_reconstruction\|_rename_images_to_stems\|_INSTANTSFM_FEATURES\|_SIFT_NUM_THREADS\|clean_pcd\|remove_far_points\|density_filter\|voxel_downsample_point_cloud\|compute_obb_from_points\|get_points_in_mask\|filter_distance" collab_splats tests evals configs docs/source setup.sh CLAUDE.md
+rtk proxy grep -rn "CoordinateFrame\|world_transform\|write_pointcloud_ply\|_write_ply\|_export_pointcloud_ply\|_write_transforms_json\|_load_pointcloud_from_disk\|_clean_pointcloud\|_ensure_vda_depth\|_context_keep_rows\|_video_unchanged\|decode_context\|vda_depth_complete\|VDA_CHECKPOINT\|apply_depth_alignment\|align_depth_affine\|align_depth_to_reconstruction\|DEPTH_ALIGN_MODELS\|DepthAlignModel\|_sfm_result_from_reconstruction\|_INSTANTSFM_FEATURES\|_SIFT_NUM_THREADS\|clean_pcd\|remove_far_points\|density_filter\|voxel_downsample_point_cloud\|compute_obb_from_points\|get_points_in_mask\|filter_distance" collab_splats tests evals configs docs/source setup.sh CLAUDE.md
 ```
 
 Expected: no output. Hits inside `docs/superpowers/` are expected and excluded above.

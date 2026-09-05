@@ -3,8 +3,8 @@
 
 Coordinate convention used throughout:
   - Input from pycolmap uses COLMAP world (Y-down) + OpenCV camera axes (X right, Y down, Z forward).
-  - All public functions that produce poses output the nerfstudio world frame (c2w, OpenGL axes, +Z up):
-    X right, Y up, Z backward camera axes; Z-up world.
+  - World-space outputs (``reproject_pixels``, ``get_points_in_mask``) stay in the caller's input
+    frame — COLMAP world, Y-down. Nothing here converts to nerfstudio/OpenGL.
 """
 
 from __future__ import annotations

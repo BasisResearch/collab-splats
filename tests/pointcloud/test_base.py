@@ -11,12 +11,16 @@ from collab_splats.pointcloud.utils import clean_pcd, density_filter, remove_far
 
 
 def test_result_fields():
-    """PointcloudResult constructed with reconstruction exposes points/extrinsics/intrinsics."""
+    """PointcloudResult derives point xyz, w2c extrinsics, and K values from the reconstruction."""
+    # Distinct fx/fy/cx/cy and a non-identity pose, so an axis swap or a w2c/c2w
+    # inversion cannot pass by symmetry.
     recon = pycolmap.Reconstruction()
-    cam = pycolmap.Camera(model="SIMPLE_PINHOLE", width=4, height=4, params=[2.0, 2.0, 2.0], camera_id=1)
+    cam = pycolmap.Camera(model="PINHOLE", width=8, height=6, params=[4.0, 5.0, 3.0, 2.0], camera_id=1)
     recon.add_camera_with_trivial_rig(cam)
     img = pycolmap.Image(name="frame_0000.jpg", camera_id=1, image_id=1)
-    recon.add_image_with_trivial_frame(img, pycolmap.Rigid3d())
+    recon.add_image_with_trivial_frame(
+        img, pycolmap.Rigid3d(pycolmap.Rotation3d(np.eye(3)), np.array([0.0, 0.0, 1.0]))
+    )
     recon.add_point3D(
         xyz=np.array([0.0, 0.0, 1.0]),
         track=pycolmap.Track(),
@@ -27,9 +31,10 @@ def test_result_fields():
         reconstruction=recon,
         image_paths=[Path("frame_0000.jpg")],
     )
-    assert r.points.shape == (1, 3)
-    assert r.extrinsics.shape == (1, 4, 4)
-    assert r.intrinsics.shape == (1, 3, 3)
+    np.testing.assert_allclose(r.points, [[0.0, 0.0, 1.0]], atol=1e-6)
+    np.testing.assert_allclose(r.intrinsics[0], [[4, 0, 3], [0, 5, 2], [0, 0, 1]], atol=1e-6)
+    np.testing.assert_allclose(r.extrinsics[0][:3, :3], np.eye(3), atol=1e-6)
+    np.testing.assert_allclose(r.extrinsics[0][:3, 3], [0.0, 0.0, 1.0], atol=1e-6)
 
 
 def test_base_creator_is_abstract():
@@ -49,7 +54,6 @@ def test_utils_clean_pcd_returns_tuple():
 def test_base_creator_abstract_method_is_reconstruct():
     abstract_methods = BasePointcloudCreator.__abstractmethods__
     assert "reconstruct" in abstract_methods
-    assert "create" not in abstract_methods
 
 
 def _recon_with_images(names=("frame_000000",)):

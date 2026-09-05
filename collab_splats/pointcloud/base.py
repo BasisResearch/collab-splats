@@ -17,12 +17,13 @@ class PointcloudResult:
     """
     Sparse reconstruction output: a pycolmap.Reconstruction plus its canonical frame order.
 
-    - ``reconstruction`` is the primary store for cameras, images, and 3D points.
+    - ``reconstruction`` holds the cameras, images, and 3D points; ``points``/``colors``/
+      ``extrinsics``/``intrinsics`` are derived from it on each access.
     - ``image_paths`` defines the ordering of ``extrinsics``/``intrinsics``.
     """
 
-    reconstruction: pycolmap.Reconstruction  # primary — always set
-    image_paths: list[Path]  # canonical frame ordering (N entries)
+    reconstruction: pycolmap.Reconstruction
+    image_paths: list[Path]
 
     @classmethod
     def from_colmap(cls, colmap_dir: Path, image_paths: list[Path]) -> PointcloudResult:
@@ -89,7 +90,7 @@ class PointcloudResult:
         """(N, 4, 4) float32 w2c transforms, ordered by image_paths.
 
         Convention: x_cam = E @ x_world (homogeneous). OpenCV camera axes
-        (X right, Y down, Z into scene).
+        (X right, Y down, Z into scene); world axes follow COLMAP (Y-down).
         """
         name_to_image = {img.name: img for img in self.reconstruction.images.values()}
         result = []

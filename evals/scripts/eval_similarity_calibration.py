@@ -44,14 +44,13 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 
-from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
-
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 # Repo root on path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
 
 ########################################
 ####### Aggregation helpers ############

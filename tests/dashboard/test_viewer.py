@@ -477,14 +477,14 @@ def test_ensure_lifted_uses_cached_lifted_store_fast_path(tmp_path):
     The cached artifact is LATENT codes, so the fast path must hand back DECODED full-dim
     features — score_queries compares them against full-dim text embeddings.
     """
-    from collab_splats.semantics.utils import load_point_features
+    from collab_splats.semantics.utils import ae_path, load_point_features
 
     sem_dir = tmp_path / "semantics"
     sem_dir.mkdir()
     codes = np.random.rand(20, 8).astype(np.float32)
     store = zarr.open(str(sem_dir / "talk2dino_lifted.zarr"), mode="w")
     store["features"] = codes
-    FeatureAutoencoder(input_dim=32, latent_dim=8).save(sem_dir, "talk2dino")
+    FeatureAutoencoder(input_dim=32, latent_dim=8).save(ae_path(sem_dir, "talk2dino"))
 
     v = SplitViewer(off_screen=True)
     v.load(_FakeResult(p=20), mesh_path=None, semantics_dir=sem_dir)  # no point_features passed

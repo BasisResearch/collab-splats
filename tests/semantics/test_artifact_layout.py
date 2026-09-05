@@ -18,14 +18,14 @@ def test_load_features_and_decode_round_trip(tmp_path):
     store["features"] = latent.numpy()
 
     ae = FeatureAutoencoder(input_dim=32, latent_dim=8)
-    ae.save(tmp_path, "talk2dino")
+    ae.save(tmp_path / "talk2dino_ae.pt")
 
     assert (tmp_path / "talk2dino_ae.pt").is_file()
 
     codes = np.asarray(zarr.open(str(tmp_path / "talk2dino_lifted.zarr"), mode="r")["features"])
     assert codes.shape == (64, 8)
 
-    decoded = FeatureAutoencoder.load(tmp_path, "talk2dino").per_point_decode(torch.from_numpy(codes))
+    decoded = FeatureAutoencoder.load(tmp_path / "talk2dino_ae.pt").per_point_decode(torch.from_numpy(codes))
     assert decoded.shape == (64, 32)
 
 
@@ -62,7 +62,7 @@ def test_write_point_features_leaves_no_orphan_codes_when_weights_fail(tmp_path,
     nothing, which is how a scene gets permanently stuck rather than simply re-lifting.
     """
 
-    def boom(self, path, extractor):
+    def boom(self, path):
         raise OSError("disk full")
 
     ae = FeatureAutoencoder(input_dim=32, latent_dim=8)

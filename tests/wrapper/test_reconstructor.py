@@ -545,8 +545,9 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
 def test_lift_and_save_writes_weights_beside_codes(tmp_path):
     """The real writer lands semantics/<extractor>_ae.pt — not a compressor.pt directory.
 
-    FeatureAutoencoder.save() mkdirs the path it is given, so passing a filename silently
-    creates a DIRECTORY of that name and no consumer can load the weights.
+    FeatureAutoencoder.save() takes the weights FILE path and mkdirs its parent. The earlier
+    dir+extractor form mkdir'd whatever it was handed, so passing a filename silently created
+    a DIRECTORY of that name and no consumer could load the weights.
     """
     import zarr
 

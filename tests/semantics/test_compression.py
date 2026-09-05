@@ -1,9 +1,9 @@
-"""Tests for FeatureAutoencoder — image branch (encode/decode) and point branch (per_point_*)."""
+"""Tests for FeatureAutoencoder — encode (spatial + point) and per_point_decode."""
 
+import inspect
 import tempfile
 from pathlib import Path
 
-import pytest
 import torch
 import torch.nn.functional as F
 
@@ -12,10 +12,8 @@ from collab_splats.semantics.compression import FeatureAutoencoder
 # Small dims so all tests run fast on CPU
 INPUT_DIM = 32
 LATENT_DIM = 4
-REG_DIM = 16
 N = 64
 H, W = 8, 8
-REG_KWARGS = {"dim": REG_DIM, "weight": 0.1}
 
 
 def _make_ae() -> FeatureAutoencoder:
@@ -48,12 +46,6 @@ def test_encode_spatial_shape():
     ae = _make_ae()
     out = ae.encode(torch.randn(INPUT_DIM, H, W))
     assert out.shape == (LATENT_DIM, H, W)
-
-
-def test_decode_spatial_shape():
-    ae = _make_ae()
-    out = ae.decode(torch.randn(LATENT_DIM, H, W))
-    assert out.shape == (INPUT_DIM, H, W)
 
 
 ########################################################################
@@ -116,8 +108,9 @@ def test_save_load_roundtrip():
         expected = ae.per_point_encode(x)
 
     with tempfile.TemporaryDirectory() as tmp:
-        ae.save(Path(tmp), "talk2dino")
-        ae2 = FeatureAutoencoder.load(Path(tmp), "talk2dino")
+        weights = Path(tmp) / "talk2dino_ae.pt"
+        ae.save(weights)
+        ae2 = FeatureAutoencoder.load(weights)
 
     with torch.no_grad():
         actual = ae2.per_point_encode(x)
@@ -125,80 +118,21 @@ def test_save_load_roundtrip():
     assert torch.allclose(expected, actual, atol=1e-6), "encode output changed after save/load"
 
 
-########################################################################
-# Regularization head
-########################################################################
+def test_save_creates_the_parent_dir_not_a_dir_named_after_the_file():
+    """save() takes a FILE path: it mkdirs the parent, never the path itself.
 
-
-def test_reg_head_exists():
-    ae = FeatureAutoencoder(
-        input_dim=INPUT_DIM,
-        latent_dim=LATENT_DIM,
-        regularization_kwargs=REG_KWARGS,
-    )
-    assert ae.reg_head is not None
-    assert ae.reg_head.out_features == REG_DIM
-
-
-def test_no_reg_head_when_no_kwargs():
+    The old dir+extractor signature mkdir'd whatever it was handed, so passing a filename
+    silently produced a DIRECTORY of that name and the weights went inside it.
+    """
     ae = _make_ae()
-    assert ae.reg_head is None
-
-
-def test_fit_with_reg_target():
-    """fit() with reg_target runs without error and reduces main loss."""
-    torch.manual_seed(42)
-    features = torch.randn(N, INPUT_DIM)
-    reg_target = torch.randn(N, REG_DIM)
-
-    ae = FeatureAutoencoder(
-        input_dim=INPUT_DIM,
-        latent_dim=LATENT_DIM,
-        regularization_kwargs=REG_KWARGS,
-    )
-    with torch.no_grad():
-        sim_before = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
-
-    ae.fit(features, reg_target=reg_target, epochs=30, batch_size=N, lr=1e-2)
-
-    with torch.no_grad():
-        sim_after = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
-
-    assert sim_after > sim_before, f"cosine sim did not improve: {sim_before:.3f} → {sim_after:.3f}"
-
-
-def test_fit_reg_target_on_pure_ae_raises():
-    ae = _make_ae()
-    with pytest.raises(ValueError, match="no reg_head configured"):
-        ae.fit(torch.randn(N, INPUT_DIM), reg_target=torch.randn(N, REG_DIM))
-
-
-def test_save_load_roundtrip_with_reg():
-    """Save + load preserves reg_head and encode output."""
-    torch.manual_seed(99)
-    features = torch.randn(N, INPUT_DIM)
-    reg_target = torch.randn(N, REG_DIM)
-
-    ae = FeatureAutoencoder(
-        input_dim=INPUT_DIM,
-        latent_dim=LATENT_DIM,
-        regularization_kwargs=REG_KWARGS,
-    )
-    ae.fit(features, reg_target=reg_target, epochs=2, batch_size=N)
-
-    x = torch.randn(N, INPUT_DIM)
-    with torch.no_grad():
-        expected = ae.per_point_encode(x)
-
     with tempfile.TemporaryDirectory() as tmp:
-        ae.save(Path(tmp), "talk2dino")
-        ae2 = FeatureAutoencoder.load(Path(tmp), "talk2dino")
+        weights = Path(tmp) / "nested" / "talk2dino_ae.pt"
+        ae.save(weights)
+        assert weights.is_file()
+        assert weights.parent.is_dir()
 
-    assert ae2.reg_head is not None
-    assert ae2.reg_head.out_features == REG_DIM
-    assert ae2._reg_weight == 0.1
 
-    with torch.no_grad():
-        actual = ae2.per_point_encode(x)
-
-    assert torch.allclose(expected, actual, atol=1e-6), "encode output changed after save/load"
+def test_hidden_dim_is_not_a_constructor_arg():
+    """Width is derived from latent_dim — an override nothing passed is not a parameter."""
+    params = inspect.signature(FeatureAutoencoder.__init__).parameters
+    assert list(params) == ["self", "input_dim", "latent_dim"]

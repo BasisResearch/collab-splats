@@ -25,18 +25,11 @@ import zarr
 from PIL import Image
 
 from collab_splats.preproc.frame_store import FrameStore
-from collab_splats.semantics.compression import (
-    FeatureAutoencoder,
-    ae_path,
-    find_lifted_extractor,
-    lifted_store_path,
-)
+from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.utils.torch_utils import batch_iterator
 
 logger = logging.getLogger(__name__)
 
-# The three path helpers are re-exported so every caller reaches the layout through one module.
-# Task 2 moves the definitions here; they stay in compression.py while save()/load() call ae_path.
 __all__ = [
     "ae_path",
     "cache_store_path",
@@ -49,6 +42,65 @@ __all__ = [
     "point_features_cached",
     "write_point_features",
 ]
+
+
+########################################################
+########## Artifact paths ##############################
+########################################################
+
+# `_lifted` is load-bearing, not decorative: the flat layout puts the 2D patch cache
+# (`<extractor>.zarr`) and the lifted per-point codes in the SAME dir, so the filename is the
+# only thing that can tell them apart there.
+
+
+def lifted_store_path(out_dir: Path, extractor: str) -> Path:
+    """
+    Path of one extractor's per-point latent store.
+
+    Args:
+        out_dir: the scene's semantics dir.
+        extractor: extractor name.
+
+    Returns:
+        `out_dir/<extractor>_lifted.zarr`.
+    """
+    return Path(out_dir) / f"{extractor}_lifted.zarr"
+
+
+def ae_path(out_dir: Path, extractor: str) -> Path:
+    """
+    Path of the autoencoder that decodes `lifted_store_path`'s codes.
+
+    Args:
+        out_dir: the scene's semantics dir.
+        extractor: extractor name.
+
+    Returns:
+        `out_dir/<extractor>_ae.pt`.
+    """
+    return Path(out_dir) / f"{extractor}_ae.pt"
+
+
+def find_lifted_extractor(out_dir: Path) -> Optional[str]:
+    """
+    Name of the single lifted extractor in a dir, or None when there is none.
+
+    Args:
+        out_dir: the scene's semantics dir.
+
+    Returns:
+        The extractor name, or None.
+
+    Raises:
+        ValueError: when the dir holds more than one lifted store — guessing would pair one
+            extractor's codes with another's decoder.
+    """
+    stems = sorted(p.name[: -len("_lifted.zarr")] for p in Path(out_dir).glob("*_lifted.zarr"))
+    if not stems:
+        return None
+    if len(stems) > 1:
+        raise ValueError(f"{out_dir} holds several lifted stores {stems} — pass the extractor explicitly")
+    return stems[0]
 
 
 ########################################################
@@ -307,7 +359,7 @@ def write_point_features(
             }
         )
         if ae is not None:
-            ae.save(out_dir, extractor)
+            ae.save(ae_path(out_dir, extractor))
     except Exception:
         shutil.rmtree(lifted_zarr, ignore_errors=True)
         raise
@@ -380,9 +432,7 @@ def load_point_features(semantics_dir: Path, batch_size: int = 65_536) -> np.nda
             f"scene's semantic features instead (delete {lifted_zarr} and re-run the semantics step)."
         )
 
-    # Task 2 collapses this to `FeatureAutoencoder.load(weights)`; the dir+extractor form is
-    # still the API at this commit.
-    ae = FeatureAutoencoder.load(sem_dir, extractor)
+    ae = FeatureAutoencoder.load(weights)
     # Streamed decode into a preallocated output: peak stays at (result + one chunk). Row-wise
     # normalize and the decoder's linear layers are both row-independent, so chunking is exact.
     codes_t = torch.from_numpy(codes)

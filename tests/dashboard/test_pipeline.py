@@ -13,7 +13,7 @@ import zarr
 from collab_splats.dashboard import pipeline as pl
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.utils import write_point_features
+from collab_splats.semantics.utils import ae_path, write_point_features
 
 
 def _fake_frames(n=3):
@@ -342,7 +342,7 @@ def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tm
 
     # Reference: decode every code in ONE call through the same weights.
     codes = torch.from_numpy(np.asarray(zarr.open(str(sem_dir / "talk2dino_lifted.zarr"), mode="r")["features"]))
-    ae = FeatureAutoencoder.load(sem_dir, "talk2dino")
+    ae = FeatureAutoencoder.load(ae_path(sem_dir, "talk2dino"))
     with torch.no_grad():
         expected = torch.nn.functional.normalize(ae.per_point_decode(codes), dim=1).numpy()
 

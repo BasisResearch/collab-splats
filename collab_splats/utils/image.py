@@ -7,6 +7,18 @@ from typing import Union
 import numpy as np
 from PIL import Image
 
+########################################################
+########## Normalization constants #####################
+########################################################
+
+# ImageNet stats — DINOv2/DINOv3 training preprocessing, and DINO-SALAD retrieval
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
+# CLIP stats — from maskclip_onnx/clip.py _transform()
+CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
+CLIP_STD = [0.26862954, 0.26130258, 0.27577711]
+
 
 def open_image(image: Union[str, Path, np.ndarray, Image.Image]) -> Image.Image:
     """Coerce various image representations to a PIL Image.

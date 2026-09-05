@@ -19,6 +19,9 @@ from collab_splats.semantics.features import (
 class _MockQueryable(BaseQueryableExtractor):
     """Minimal queryable extractor — no external deps needed."""
 
+    def __init__(self):
+        super().__init__("max_size", 512)
+
     def encode_text(self, texts: List[str]) -> torch.Tensor:
         return torch.randn(len(texts), 64)
 

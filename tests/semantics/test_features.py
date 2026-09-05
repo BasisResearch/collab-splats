@@ -11,6 +11,9 @@ D = 8  # feature dimension for the fake extractor
 class _FakeExtractor(BaseQueryableExtractor):
     """Minimal concrete extractor — avoids loading real model weights."""
 
+    def __init__(self):
+        super().__init__("max_size", 512)
+
     def encode_text(self, texts):
         emb = torch.randn(len(texts), D)
         return emb / emb.norm(dim=-1, keepdim=True)

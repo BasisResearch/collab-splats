@@ -28,7 +28,7 @@ class _FakeExtractor(BaseFeatureExtractor):
     patch_size = 14
 
     def __init__(self, feature_dim: int = 16, h_p: int = 4, w_p: int = 4, **kwargs):
-        super().__init__(**kwargs)  # passes svd_components and future base params through
+        super().__init__("max_size", 512, **kwargs)  # resize/resolution unused: forward is synthetic
         self._feature_dim = feature_dim  # D: output patch feature dimensionality
         self._h_p = h_p                  # H_p: fixed patch grid height (regardless of input size)
         self._w_p = w_p                  # W_p: fixed patch grid width
@@ -190,6 +190,6 @@ def test_missing_patch_size_raises():
         def forward(self, images: list) -> list:
             return []
 
-    extractor = _NoPatchSizeExtractor()
+    extractor = _NoPatchSizeExtractor("max_size", 512)
     with pytest.raises(AttributeError, match="patch_size"):
         extractor._build_positional_basis(4, 4)

@@ -29,6 +29,9 @@ _requires_talk2dino = pytest.mark.skipif(
 class _ConcreteExtractor(BaseQueryableExtractor):
     """Minimal concrete subclass for testing the base class contract."""
 
+    def __init__(self):
+        super().__init__("max_size", 512)
+
     def encode_text(self, texts):
         # Returns normalized random embeddings of shape (N, 8)
         n = len(texts)

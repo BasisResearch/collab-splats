@@ -184,7 +184,7 @@ def _make_fake_talk2dino(resize_mode="max_size", image_resolution=512, patch_siz
 
     mock_model = MagicMock()
     mock_model.model = mock_backbone
-    mock_model.patch_embed.proj.stride = [patch_size, patch_size]
+    mock_backbone.patch_embed.proj.stride = (patch_size, patch_size)
 
     # Provide a real Normalize as image_transforms.transforms[-1]
     mock_model.image_transforms = T.Compose([
@@ -234,3 +234,49 @@ def test_talk2dino_no_dual_forward_methods():
     src = open(t2d_mod.__file__).read()
     assert "_forward_max_size" not in src
     assert "_forward_square" not in src
+
+
+########################################################################
+# Shared preprocess
+########################################################################
+
+
+def test_preprocess_is_defined_once_on_the_base():
+    """All three extractors share BaseFeatureExtractor.preprocess — no per-backend copies."""
+    from collab_splats.semantics.features.base import BaseFeatureExtractor
+    from collab_splats.semantics.features.dino import DINOFeatureExtractor
+    from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
+    from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
+
+    for cls in (DINOFeatureExtractor, MaskCLIPExtractor, Talk2DinoExtractor):
+        assert "preprocess" not in vars(cls), f"{cls.__name__} still overrides preprocess"
+        assert cls.preprocess is BaseFeatureExtractor.preprocess
+
+
+def test_each_extractor_keeps_its_own_default_resolution():
+    """Hoisting the plumbing must not flatten the per-backbone defaults."""
+    import inspect
+
+    from collab_splats.semantics.features.dino import DINOFeatureExtractor
+    from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
+    from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
+
+    defaults = {
+        DINOFeatureExtractor: 800,
+        MaskCLIPExtractor: 1024,
+        Talk2DinoExtractor: 512,
+    }
+    for cls, expected in defaults.items():
+        params = inspect.signature(cls.__init__).parameters
+        assert params["image_resolution"].default == expected
+        assert params["resize_mode"].default == "max_size"
+        assert "kwargs" not in params, f"{cls.__name__} still takes **kwargs"
+
+
+def test_svd_components_still_reaches_the_base():
+    """insid3 constructs DINOFeatureExtractor(svd_components=...) — the path must survive."""
+    import inspect
+
+    from collab_splats.semantics.features.dino import DINOFeatureExtractor
+
+    assert inspect.signature(DINOFeatureExtractor.__init__).parameters["svd_components"].default == 500

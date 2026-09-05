@@ -11,6 +11,7 @@ import torchvision.transforms as T
 from salad.models_salad.aggregators.salad import SALAD
 from salad.models_salad.backbones.dinov2 import DINOv2
 
+from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
 from collab_splats.utils.torch_utils import RegistryMixin
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
         self._transform = T.Compose([
             T.Resize((self._INPUT_SIZE, self._INPUT_SIZE)),
             T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ])
 
     def forward(self, images: list | torch.Tensor) -> torch.Tensor:

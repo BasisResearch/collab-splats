@@ -56,3 +56,13 @@ def test_resize_image_square():
     img = Image.new("RGB", (200, 200))
     resized = resize_image(img, longest_edge=100)
     assert resized.size == (100, 100)
+
+
+def test_normalization_constants():
+    """The stats extractors normalize with live next to the resize helpers that feed them."""
+    from collab_splats.utils.image import CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD
+
+    assert IMAGENET_MEAN == [0.485, 0.456, 0.406]
+    assert IMAGENET_STD == [0.229, 0.224, 0.225]
+    assert CLIP_MEAN == [0.48145466, 0.4578275, 0.40821073]
+    assert CLIP_STD == [0.26862954, 0.26130258, 0.27577711]

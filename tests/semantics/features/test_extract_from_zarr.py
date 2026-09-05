@@ -26,7 +26,7 @@ class _TestExtractor(BaseFeatureExtractor):
     patch_size = 16
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__("max_size", 512, **kwargs)
         self._D = 8
         self._H_p = 4
         self._W_p = 4

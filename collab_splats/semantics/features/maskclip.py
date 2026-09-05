@@ -5,20 +5,13 @@ from typing import List, Optional
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
-from PIL import Image
 
-from collab_splats.utils.image import open_image, resize_image
-from collab_splats.semantics.utils import get_device, _tokens_to_feature_map
-from .base import BaseQueryableExtractor, TORCH_HOME
+from collab_splats.semantics.utils import _tokens_to_feature_map, get_device
+from collab_splats.utils.image import CLIP_MEAN, CLIP_STD
+
+from .base import TORCH_HOME, BaseQueryableExtractor
 
 logger = logging.getLogger(__name__)
-
-########################################################################
-# CLIP normalization constants — from maskclip_onnx/clip.py _transform()
-########################################################################
-
-_CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
-_CLIP_STD  = [0.26862954, 0.26130258, 0.27577711]
 
 
 @BaseQueryableExtractor.register("maskclip")
@@ -31,6 +24,7 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         image_resolution: Longest-edge target (max_size) or square side length (square). Default 1024.
         cache_dir: Directory to cache model weights. Defaults to TORCH_HOME.
         device: Torch device string. Defaults to auto-detected device.
+        svd_components: Top singular vectors kept for positional debiasing. Default 500.
     """
 
     def __init__(
@@ -40,13 +34,11 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         image_resolution: int = 1024,
         cache_dir: str = TORCH_HOME,
         device: Optional[str] = None,
-        **kwargs,
+        svd_components: int = 500,
     ):
         if device is None:
             device = get_device()
-        super().__init__(**kwargs)
-        self._resize_mode = resize_mode
-        self._image_resolution = image_resolution
+        super().__init__(resize_mode, image_resolution, svd_components)
 
         # Lazy import: maskclip_onnx depends on pkg_resources.packaging which was removed
         # in setuptools>=71. Import here so the module is importable even if maskclip_onnx
@@ -64,7 +56,7 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         self._device = torch.device(device)
 
         # CLIP normalization — matches maskclip_onnx/clip.py _transform() stats
-        self._normalize = T.Normalize(_CLIP_MEAN, _CLIP_STD)
+        self._normalize = T.Normalize(CLIP_MEAN, CLIP_STD)
 
     ########################################################################
     # Properties
@@ -74,38 +66,6 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
     def device(self) -> torch.device:
         """Device of the underlying model parameters."""
         return self._device
-
-    ########################################################################
-    # Preprocessing
-    ########################################################################
-
-    def preprocess(self, image) -> torch.Tensor:
-        """Resize and normalize image to patch-aligned dims.
-
-        Returns:
-            ``(C, H, W)`` float32 tensor on CPU. H and W are multiples of ``patch_size``.
-        """
-        img = open_image(image).convert("RGB")
-
-        if self._resize_mode == "square":
-            # Center-crop to square, then resize to target resolution
-            w, h = img.size
-            crop = min(w, h)
-            img = img.crop(((w - crop) // 2, (h - crop) // 2,
-                             (w + crop) // 2, (h + crop) // 2))
-            img = img.resize((self._image_resolution, self._image_resolution), Image.BILINEAR)
-        else:
-            # Proportional longest-edge resize
-            img = resize_image(img, longest_edge=self._image_resolution)
-
-        # Round H and W to nearest patch_size multiple
-        w, h = img.size
-        ph = round(h / self.patch_size) * self.patch_size
-        pw = round(w / self.patch_size) * self.patch_size
-        if (ph, pw) != (h, w):
-            img = img.resize((pw, ph), Image.BILINEAR)
-
-        return self._normalize(T.ToTensor()(img))
 
     ########################################################################
     # Forward pass

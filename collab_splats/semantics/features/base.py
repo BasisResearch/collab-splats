@@ -54,11 +54,25 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
     _registry: Dict[str, type["BaseFeatureExtractor"]] = {}
     _FALLBACK_MEM_GB: float = 2.0
 
-    def __init__(self, svd_components: int = 500, **kwargs) -> None:
-        # svd_components: number of top singular vectors kept for the positional subspace.
-        # 500 matches the INSID3 default (see reference implementation).
-        super().__init__(**kwargs)  # passes remaining kwargs up to nn.Module
-        self.svd_components = svd_components  # stored so _build_positional_basis can read it later
+    def __init__(self, resize_mode: str, image_resolution: int, svd_components: int = 500) -> None:
+        """
+        Store the shared preprocessing and debiasing configuration.
+
+        Subclasses must set `self._normalize` (a `T.Normalize`) and `self.patch_size` before
+        `preprocess` is called — the stats and stride are backbone-specific.
+
+        Args:
+            resize_mode: "max_size" (proportional longest-edge) or "square" (center-crop + resize).
+            image_resolution: longest-edge target for "max_size", square side for "square".
+            svd_components: top singular vectors kept for the positional subspace. 500 matches
+                the INSID3 default (see reference implementation).
+        """
+        super().__init__()
+
+        self._resize_mode = resize_mode
+        self._image_resolution = image_resolution
+        self.svd_components = svd_components
+
         # Caches keyed by (H_p, W_p) so different input resolutions each get their own basis.
         self._pos_basis_cache: dict = {}   # (H_p, W_p) → Tensor(D, K) positional subspace basis
         self._zero_feats_cache: dict = {}  # (H_p, W_p) → Tensor(D, H_p, W_p) zero-image features for viz
@@ -67,6 +81,37 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
     def forward(self, images: list) -> list[torch.Tensor]:
         """Preprocess, run inference, reshape. Returns one feature tensor per image."""
         ...
+
+    def preprocess(self, image) -> torch.Tensor:
+        """
+        Resize to the configured resolution, round to patch multiples, and normalize.
+
+        Args:
+            image: anything `open_image` accepts — path, ndarray, or PIL image.
+
+        Returns:
+            (C, H, W) float32 CPU tensor. H and W are multiples of `patch_size`.
+        """
+        img = open_image(image).convert("RGB")
+
+        if self._resize_mode == "square":
+            # Center-crop to square, then resize to target resolution
+            w, h = img.size
+            crop = min(w, h)
+            img = img.crop(((w - crop) // 2, (h - crop) // 2, (w + crop) // 2, (h + crop) // 2))
+            img = img.resize((self._image_resolution, self._image_resolution), Image.BILINEAR)
+        else:
+            # Proportional longest-edge resize
+            img = resize_image(img, longest_edge=self._image_resolution)
+
+        # Round H and W to the nearest patch_size multiple
+        w, h = img.size
+        ph = round(h / self.patch_size) * self.patch_size
+        pw = round(w / self.patch_size) * self.patch_size
+        if (ph, pw) != (h, w):
+            img = img.resize((pw, ph), Image.BILINEAR)
+
+        return self._normalize(T.ToTensor()(img))
 
     @property
     def name(self) -> str:

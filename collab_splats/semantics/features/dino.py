@@ -4,22 +4,14 @@ from typing import Optional
 
 import torch
 import torchvision.transforms as T
-from PIL import Image
 from transformers import AutoModel
 
-from collab_splats.utils.image import open_image, resize_image
-from collab_splats.semantics.utils import get_device, _tokens_to_feature_map
+from collab_splats.semantics.utils import _tokens_to_feature_map, get_device
+from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
+
 from .base import BaseFeatureExtractor
 
 logger = logging.getLogger(__name__)
-
-########################################################################
-########## Constants ###################################################
-########################################################################
-
-# ImageNet normalization — matches DINOv2 training preprocessing
-_IMAGENET_MEAN = [0.485, 0.456, 0.406]
-_IMAGENET_STD  = [0.229, 0.224, 0.225]
 
 
 ########################################################################
@@ -35,6 +27,7 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         resize_mode: ``"max_size"`` (proportional longest-edge) or ``"square"`` (center-crop + resize).
         image_resolution: Longest-edge target (max_size) or square side length (square). Default 800.
         device: Torch device string (``"cpu"`` or ``"cuda"``).
+        svd_components: Top singular vectors kept for positional debiasing. Default 500.
     """
 
     def __init__(
@@ -43,20 +36,18 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         resize_mode: str = "max_size",
         image_resolution: int = 800,
         device: Optional[str] = None,
-        **kwargs,
+        svd_components: int = 500,
     ):
         if device is None:
             device = get_device()
-        super().__init__(**kwargs)
+        super().__init__(resize_mode, image_resolution, svd_components)
         self.model_name = model_name
-        self._resize_mode = resize_mode
-        self._image_resolution = image_resolution
 
         # Load DINOv2 from HuggingFace and move to device
         self.model = AutoModel.from_pretrained(model_name).to(device).eval()
 
         # ImageNet normalization — correct stats for DINOv2
-        self._normalize = T.Normalize(_IMAGENET_MEAN, _IMAGENET_STD)
+        self._normalize = T.Normalize(IMAGENET_MEAN, IMAGENET_STD)
         self._device = torch.device(device)
 
     @property
@@ -68,34 +59,6 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
     def patch_size(self) -> int:
         """Patch size read from the model config at call time."""
         return self.model.config.patch_size
-
-    def preprocess(self, image) -> torch.Tensor:
-        """Resize, normalize, and pad image to patch-aligned dims.
-
-        Returns:
-            ``(C, H, W)`` float32 tensor on CPU. H and W are multiples of ``patch_size``.
-        """
-        img = open_image(image).convert("RGB")
-
-        if self._resize_mode == "square":
-            # Center-crop to square, then resize to target resolution
-            w, h = img.size
-            crop = min(w, h)
-            img = img.crop(((w - crop) // 2, (h - crop) // 2,
-                             (w + crop) // 2, (h + crop) // 2))
-            img = img.resize((self._image_resolution, self._image_resolution), Image.BILINEAR)
-        else:
-            # Proportional longest-edge resize
-            img = resize_image(img, longest_edge=self._image_resolution)
-
-        # Round H and W to nearest patch_size multiple
-        w, h = img.size
-        ph = round(h / self.patch_size) * self.patch_size
-        pw = round(w / self.patch_size) * self.patch_size
-        if (ph, pw) != (h, w):
-            img = img.resize((pw, ph), Image.BILINEAR)
-
-        return self._normalize(T.ToTensor()(img))
 
     def forward(self, images: list) -> list[torch.Tensor]:
         """Extract patch-level DINOv2 features from a list of images."""

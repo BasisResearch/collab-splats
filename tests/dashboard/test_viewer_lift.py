@@ -233,3 +233,6 @@ def test_viewer_lift_routes_through_the_shared_loader(tmp_path):
     ):
         viewer_mod.lift_point_features(object(), tmp_path)
     assert loader.call_count == 1
+    # The loader takes a STORE path, not the semantics dir — assert the argument, or dropping
+    # the cache_store_path() wrap would still leave both mocks fired and the test green.
+    assert loader.call_args.args == (tmp_path / "x.zarr",)

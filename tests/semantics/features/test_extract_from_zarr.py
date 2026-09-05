@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 import zarr
 
@@ -119,3 +120,34 @@ def test_extract_feature_cache_reuses_a_matching_cache():
         result2 = extract_feature_cache(extractor, frames_zarr, cache_dir)
         assert result1 == result2
         assert result2.stat().st_mtime_ns == mtime  # untouched -> extraction was skipped
+
+
+def test_extract_feature_cache_marks_validity_only_after_every_frame_is_written():
+    """A run that dies mid-extraction must not leave a store the validity guard accepts."""
+    extractor = _TestExtractor()
+    real_forward = extractor.forward
+    calls = []
+
+    def dying_forward(images):
+        # Probe + frame 0 + frame 1 succeed; frame 2 of 4 blows up
+        calls.append(1)
+        if len(calls) > 2:
+            raise RuntimeError("GPU fell over at frame 2")
+        return real_forward(images)
+
+    extractor.forward = dying_forward
+    with tempfile.TemporaryDirectory() as tmp:
+        frames_zarr = _make_frames_zarr(n=4, H=64, W=64, tmp_dir=tmp)
+        cache_dir = Path(tmp) / "cache"
+        with pytest.raises(RuntimeError):
+            extract_feature_cache(extractor, frames_zarr, cache_dir)
+
+        # The half-written store must not advertise itself as complete
+        store = zarr.open(str(cache_dir / "_test_extractor.zarr"), mode="r")
+        assert "extractor" not in store.attrs
+        assert "n_frames" not in store.attrs
+
+        # ...so the next run re-extracts instead of serving the zero-filled planes
+        extractor.forward = real_forward
+        result = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        assert zarr.open(str(result), mode="r")["features"][3].max() == 1.0

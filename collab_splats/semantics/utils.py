@@ -186,6 +186,8 @@ def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path
     Extract patch features from a frames zarr into `cache_dir/<extractor>.zarr`.
 
     Re-entrant: a cache whose extractor name and frame count both match is returned untouched.
+    The attrs that make a store look valid are written LAST, after every frame is on disk, so a
+    run that dies mid-extraction leaves an attr-less store that the next run re-extracts.
 
     Args:
         extractor: a BaseFeatureExtractor instance — supplies `.name`, `.patch_size`, `.forward`.
@@ -221,7 +223,6 @@ def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path
     D, H_p, W_p = first_feat.shape
 
     store = zarr.open(str(zarr_path), mode="w")
-    store.attrs.update({"extractor": extractor.name, "patch_size": extractor.patch_size, "n_frames": N})
     # One chunk per frame: reading frame i loads exactly 1 disk chunk
     arr = store.create_array(
         "features",
@@ -240,6 +241,10 @@ def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path
         arr[i] = feat.cpu().float().numpy()
         if i % 10 == 0:
             logger.info("extract_feature_cache: %d/%d frames written", i + 1, N)
+
+    # Marker last: until these attrs land the store cannot pass the validity check above, so a
+    # crash mid-loop can never leave zero-filled planes behind a store that claims to be complete.
+    store.attrs.update({"extractor": extractor.name, "patch_size": extractor.patch_size, "n_frames": N})
 
     logger.info("Feature cache written: %s  shape=%s", zarr_path, tuple(arr.shape))
     return zarr_path
@@ -331,6 +336,7 @@ def point_features_cached(semantics_dir: Path) -> bool:
         attrs = zarr.open(str(lifted_store_path(sem_dir, extractor)), mode="r").attrs
         return int(attrs["latent_dim"]) >= int(attrs["input_dim"])
     except Exception:
+        logger.warning("Lifted store for %s in %s is corrupt or unreadable, reporting not cached", extractor, sem_dir)
         return False
 
 
@@ -363,7 +369,7 @@ def load_point_features(semantics_dir: Path, batch_size: int = 65_536) -> np.nda
     if not weights.exists():
         try:
             full_dim = int(store.attrs["latent_dim"]) >= int(store.attrs["input_dim"])
-        except KeyError:
+        except (KeyError, TypeError, ValueError):
             full_dim = False
         if full_dim:
             return F.normalize(torch.from_numpy(codes), dim=1).cpu().numpy()

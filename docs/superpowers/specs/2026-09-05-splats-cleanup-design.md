@@ -44,7 +44,7 @@ collab_splats/splats/
   losses.py     schedule, validation, compute_losses; loss fns; registry   ~350
   pgsr.py       plane / NCC helpers, select_near_views, render_neighbour   484 → ~420
   rendering.py  render_gaussians, render_views, write_outputs, load_checkpoint   rendering + outputs
-  cameras.py    CameraOptModule, AppearanceModule, PoseAndAppearance             cameras + appearance
+  cameras.py    CameraOptModule, AppearanceModule, PoseAppearance             cameras + appearance
   utils.py      scene scale/normalisation, downscale, target prep, sampler new, ~120
 ```
 
@@ -111,7 +111,7 @@ lets both representations share one hook.
   1. Setup: point-count and per-view checks; `compute_scene_scale`; optional
      `scene_normalization` of cameras, points, depth targets and the distortion weight
      (3-line dict update, inline as today); `model = Gaussians(...)` or `Scaffold(...)`;
-     `refine = PoseAndAppearance.from_config(...)`; `near_ids = select_near_views(...)` when a PGSR
+     `refine = PoseAppearance.from_config(...)`; `near_ids = select_near_views(...)` when a PGSR
      loss is active (3dgs only, validated in losses).
   2. Loop per step: `next(views)` → `downscale_factor` / `downscale_view` / `prepare_target` →
      `c2w = refine.camera(cam_to_world[id], id)` → `render, info = model.render(...)` →
@@ -211,12 +211,12 @@ training from a checkpoint.
 ### cameras.py (cameras + appearance)
 
 - `rotation_6d_to_matrix`, `CameraOptModule`, `AppearanceModule` unchanged, citations kept.
-- `@dataclass PoseAndAppearance`: fields `pose: CameraOptModule | None`,
+- `@dataclass PoseAppearance`: fields `pose: CameraOptModule | None`,
   `appearance: AppearanceModule | None`, `optimizers: list`, `schedulers: list`. Methods
   `camera(cam_to_world, ids)` (identity passthrough when `pose` is None) and
   `colour(rgb, ids)` (passthrough when `appearance` is None). Nothing else. It exists to
   replace eight `if x is not None` sites and four extra function parameters with one object.
-- `PoseAndAppearance.from_config(cfg, n_views, world_extent, scene_scale, lr_gamma, device, *, weight_decay=1e-6)`
+- `PoseAppearance.from_config(cfg, n_views, world_extent, scene_scale, lr_gamma, device, *, weight_decay=1e-6)`
   builds the pose module (rotation lr × world_extent, translation lr × scene_scale, Adam with
   `weight_decay`, `ExponentialLR(lr_gamma)`) and the appearance module as today.
 
@@ -281,7 +281,7 @@ Not changed: `splats.ply` (external viewers), `splats_quality_report.json`, TSDF
   uses it, documented under `Args`. No module-level tunables, no defaults dicts, no registries
   of defaults. Full list: `train(min_points=100, lr_decay=0.01)`;
   `Gaussians(knn=4, adam_eps=1e-15)`; `make_strategy(prune_opa=0.1, prune_scale3d=0.5, refine_scale2d_stop_iter=4000)`;
-  `PoseAndAppearance.from_config(weight_decay=1e-6)`; `AnchorStrategy.prune(scale_cap=0.05)`;
+  `PoseAppearance.from_config(weight_decay=1e-6)`; `AnchorStrategy.prune(scale_cap=0.05)`;
   `select_near_views(theta0=5.0, sigma_below=1.0, sigma_above=10.0)`;
   `plane_depth(min_cosine=1e-4)`; `project(min_depth=1e-6)`; `compute_scene_scale(margin=1.1)`;
   `view_order(seed=42)`; `compute_losses(l1_weight=0.8, ssim_weight=0.2)`.
@@ -310,7 +310,7 @@ asserted was deleted; only imports and file placement move.
 | Today | After |
 |-------|-------|
 | `test_trainer.py` | config/`train` tests stay; scene-scale, normalisation, downscale, sampler, target tests → `test_utils.py`; init, strategy, denormalize tests → `test_gaussian.py` |
-| `test_cameras.py` + `test_appearance.py` | `test_cameras.py` (adds `PoseAndAppearance` passthrough tests) |
+| `test_cameras.py` + `test_appearance.py` | `test_cameras.py` (adds `PoseAppearance` passthrough tests) |
 | `test_outputs.py` + `test_rendering.py` | `test_rendering.py`; zarr-layout tests replaced by ckpt-key and `load_checkpoint` round-trip tests (render from checkpoint matches render from the live model) |
 | `tests/mesh/test_splats_adapter.py` | fixtures write a small `ckpt.pt` instead of a zarr store |
 | `test_scaffold.py` | same file; `_frustum_anchors` tests deleted; visibility tests marked `cuda`; `expon_lr` tests become `LambdaLR` value checks at steps 0, mid, end |

@@ -44,6 +44,8 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 
+from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
+
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -106,13 +108,11 @@ def sample_pairs(
 
 
 def _salad_input_transform(image_size: int = 224) -> T.Compose:
-    MEAN = [0.485, 0.456, 0.406]
-    STD = [0.229, 0.224, 0.225]
     return T.Compose(
         [
             T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR),
             T.ToTensor(),
-            T.Normalize(mean=MEAN, std=STD),
+            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 

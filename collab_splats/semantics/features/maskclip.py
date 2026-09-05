@@ -38,7 +38,7 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
     ):
         if device is None:
             device = get_device()
-        super().__init__(resize_mode, image_resolution, svd_components)
+        super().__init__(resize_mode=resize_mode, image_resolution=image_resolution, svd_components=svd_components)
 
         # Lazy import: maskclip_onnx depends on pkg_resources.packaging which was removed
         # in setuptools>=71. Import here so the module is importable even if maskclip_onnx

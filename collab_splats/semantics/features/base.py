@@ -10,7 +10,8 @@ Provides:
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -82,7 +83,7 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         """Preprocess, run inference, reshape. Returns one feature tensor per image."""
         ...
 
-    def preprocess(self, image) -> torch.Tensor:
+    def preprocess(self, image: Union[str, Path, np.ndarray, Image.Image]) -> torch.Tensor:
         """
         Resize to the configured resolution, round to patch multiples, and normalize.
 

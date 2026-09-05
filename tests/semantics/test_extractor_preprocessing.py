@@ -38,7 +38,7 @@ from unittest.mock import MagicMock, patch
 import torchvision.transforms as T
 
 
-def _make_fake_dino(resize_mode="max_size", image_resolution=224, patch_size=14):
+def _make_fake_dino(resize_mode="max_size", image_resolution=224, patch_size=14, svd_components=500):
     """Build a DINOFeatureExtractor with a mocked backbone (no weights download)."""
     from collab_splats.semantics.features.dino import DINOFeatureExtractor
 
@@ -60,6 +60,7 @@ def _make_fake_dino(resize_mode="max_size", image_resolution=224, patch_size=14)
             resize_mode=resize_mode,
             image_resolution=image_resolution,
             device="cpu",
+            svd_components=svd_components,
         )
     ext.model = mock_model
     return ext
@@ -274,9 +275,25 @@ def test_each_extractor_keeps_its_own_default_resolution():
 
 
 def test_svd_components_still_reaches_the_base():
-    """insid3 constructs DINOFeatureExtractor(svd_components=...) — the path must survive."""
+    """A non-default svd_components passed to DINOFeatureExtractor lands on the base attribute."""
     import inspect
 
     from collab_splats.semantics.features.dino import DINOFeatureExtractor
 
+    # Mirrors the production call site at semantics/segmentation/insid3.py:248,
+    # which passes svd_components explicitly. A dropped argument in the concrete
+    # extractor's super().__init__() would silently pin every run to the default.
+    ext = _make_fake_dino(svd_components=37)
+    assert ext.svd_components == 37
+
+    # The default itself is the INSID3 reference value and must not drift.
     assert inspect.signature(DINOFeatureExtractor.__init__).parameters["svd_components"].default == 500
+
+
+def test_preprocess_square_mode_center_crops_to_square():
+    """A non-square input under the `square` resize mode comes back square at the target side."""
+    # 400x300 differs from the target on both axes, so the "square" branch and the
+    # longest-edge branch cannot produce the same tensor — the assertion discriminates.
+    ext = _make_fake_dino(resize_mode="square", image_resolution=196, patch_size=14)
+    t = ext.preprocess(Image.new("RGB", (400, 300)))
+    assert t.shape[1] == t.shape[2] == 196

@@ -4,7 +4,14 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from collab_splats.utils.image import open_image, resize_image
+from collab_splats.utils.image import (
+    CLIP_MEAN,
+    CLIP_STD,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    open_image,
+    resize_image,
+)
 
 
 def test_open_image_pil_passthrough():
@@ -59,9 +66,7 @@ def test_resize_image_square():
 
 
 def test_normalization_constants():
-    """The stats extractors normalize with live next to the resize helpers that feed them."""
-    from collab_splats.utils.image import CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD
-
+    """The shared normalization constants hold the standard ImageNet and CLIP values."""
     assert IMAGENET_MEAN == [0.485, 0.456, 0.406]
     assert IMAGENET_STD == [0.229, 0.224, 0.225]
     assert CLIP_MEAN == [0.48145466, 0.4578275, 0.40821073]

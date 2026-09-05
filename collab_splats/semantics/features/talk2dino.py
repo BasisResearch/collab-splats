@@ -46,7 +46,7 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         """
         if device is None:
             device = get_device()
-        super().__init__(resize_mode, image_resolution, svd_components)
+        super().__init__(resize_mode=resize_mode, image_resolution=image_resolution, svd_components=svd_components)
 
         # low_cpu_mem_usage=False avoids meta-tensor init: Talk2DINO's HF code calls
         # load_state_dict() without assign=True, so weight copies would silently no-op.
@@ -57,7 +57,9 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         # Normalize transform from the model's own image_transforms — correct stats per backbone
         self._normalize: T.Normalize = _loaded.image_transforms.transforms[-1]
 
-        # patch_size from the backbone conv stride — the config key is absent on some variants
+        # patch_size from the backbone conv stride — Conv2d normalizes stride to a tuple, and
+        # stride (not kernel_size) is what sets the token grid. Both supported checkpoints
+        # (Talk2DINOv3-ViTB, Talk2DINO-ViTB) expose model.patch_embed.proj.
         self.patch_size: int = _loaded.model.patch_embed.proj.stride[0]
 
         # Move to device after extracting metadata

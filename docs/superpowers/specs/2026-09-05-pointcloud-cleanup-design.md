@@ -1,8 +1,8 @@
 # Pointcloud module cleanup — design
 
 Date: 2026-09-05
-Status: draft, revision 3 (backends kept, CPU SIFT kept, Reconstructor delegates to the
-module), awaiting user review
+Status: draft, revision 4 (simplicity pass: one VDA function, one depth-align function,
+no HF constants), awaiting user review
 
 Scope: `collab_splats/pointcloud/` excluding `feedforward/` (separate pass). Consumers are
 touched only where the module's API changes or where pointcloud logic was living inline:
@@ -141,16 +141,14 @@ class PointcloudResult:
         - returns: PointcloudResult; raises ValueError naming the first path not registered.
         """
 
-    def write_ply(self, path: Path) -> Path:
+    def write_ply(self, path: Path) -> None:
         """
         Write the sparse points as a binary little-endian PLY (float xyz, uchar rgb).
 
         - path: output file; parent directories are created.
-        - returns: path.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         self.reconstruction.export_PLY(str(path))
-        return path
 
 
 class BasePointcloudCreator(ABC):
@@ -209,11 +207,10 @@ collab_splats/pointcloud/
   __init__.py       registry: colmap, hloc, mapanything, vggtx (+ optional feedforward entries)
   base.py           BasePointcloudCreator, PointcloudResult (.from_colmap, .write_ply)
   utils.py          lift_features, reproject_pixels, clean_pointcloud, subsample_points, ...
-  vda.py            generate_vda_depth, load_vda_depth — Video-Depth-Anything metric depth
-                    <-> depth_vda/images/npy layout
-  depth_align.py    result_from_reconstruction (model + depth maps -> FeedforwardResult),
-                    apply_depth_alignment (per-frame scale), tracked_point3d_ids,
-                    pixel_indices_from_reconstruction
+  vda.py            generate_vda_depth — Video-Depth-Anything metric depth, written to
+                    depth_vda/images/npy and returned as a stack
+  depth_align.py    result_from_reconstruction — model + depth stack -> FeedforwardResult
+                    in the model's scale (per-frame scale fit); private helpers
   sfm/
     __init__.py     re-exports ColmapCreator, HlocCreator, InstantSfMCreator
     colmap.py       ColmapCreator — pycolmap SIFT + exhaustive + incremental mapping
@@ -294,8 +291,6 @@ removed, SIFT DB reused when valid, `ReadDepthsIntoFeatures` when `use_depths`,
 
 ```python
 VDA_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "Video-Depth-Anything"
-VDA_HF_REPO = "depth-anything/Metric-Video-Depth-Anything-Large"
-VDA_HF_FILE = "metric_video_depth_anything_vitl.pth"
 
 
 def _load_vda_model(device: str):
@@ -308,12 +303,15 @@ def _load_vda_model(device: str):
     # Clone root first on sys.path only while importing: the package imports a top-level
     # `utils` from its own root. Same pattern as feedforward/loger.py and vggt_spark_creator.py.
     ...
-    checkpoint = hf_hub_download(repo_id=VDA_HF_REPO, filename=VDA_HF_FILE)
+    checkpoint = hf_hub_download(
+        repo_id="depth-anything/Metric-Video-Depth-Anything-Large",
+        filename="metric_video_depth_anything_vitl.pth",
+    )
 
 
 def generate_vda_depth(
     frames: np.ndarray, out_dir: Path, names: list[str], *, depth_width: int = 518, device: str = "cuda",
-) -> Path:
+) -> np.ndarray:
     """
     Run Video-Depth-Anything metric depth over keyframes and write InstantSfM's depth layout.
 
@@ -322,19 +320,13 @@ def generate_vda_depth(
     - names: staged image filenames, one per written map, in order.
     - depth_width: written map width; height keeps aspect (nearest resize).
     - device: torch device for inference.
-    - returns: out_dir/depth_vda. No-op when every stem already has a map.
-    """
-
-
-def load_vda_depth(out_dir: Path, names: list[str]) -> np.ndarray:
-    """
-    Read the maps generate_vda_depth wrote, in the given order.
-
-    - out_dir: scene dir passed to generate_vda_depth.
-    - names: staged image filenames; stems select the maps.
-    - returns: (N, h, w) float32 metric depth.
+    - returns: (N, h, w) float32 metric depth in `names` order. When every stem already
+      has a map, inference is skipped and the maps are read back.
     """
 ```
+
+One public function: the maps are written for InstantSfM's reader and returned for result
+assembly, so no separate loader exists and the wrapper never touches the layout.
 
 Deleted: `VDA_CHECKPOINT` and the `setup.sh` `wget` block (L88–95; `hf_hub_download`
 caches under `HF_HOME` and is the standard route for this file), `_VDA_MODEL_CONFIGS` and
@@ -342,52 +334,64 @@ the `encoder` parameter (only `vitl` exists; the config dict is inlined), `input
 (never passed; 518 inlined), `fps` (upstream's `infer_video_depth` returns `target_fps`
 unchanged and resamples nothing; a literal is passed), `keep_rows` and the one-to-one
 validation (context stream, item 5 above), and `vda_depth_complete` (callers call
-`generate_vda_depth`, which already returns early on a complete stem set). `VDA_ROOT`
-stays: the model code cannot be a standard install without a fork carrying build
-metadata, and the clone root must be on `sys.path` while the package imports.
+`generate_vda_depth`, which skips inference on a complete stem set). The Hub repo and
+filename are literals in `_load_vda_model` (tests monkeypatch `hf_hub_download`, not the
+names). `VDA_ROOT` stays: the model code cannot be a standard install without a fork
+carrying build metadata, the clone root must be on `sys.path` while the package imports,
+and tests point it at fixtures.
 
-**`depth_align.py`** — the scale model only, plus result assembly:
+**`depth_align.py`** — one public function; dense depth goes in, a result in the model's
+scale comes out:
 
 ```python
-def tracked_point3d_ids(reconstruction) -> np.ndarray: ...
-def pixel_indices_from_reconstruction(reconstruction, point3d_ids, name_to_row, scale_x, scale_y, depth_hw): ...
-
-
 def result_from_reconstruction(
-    reconstruction: pycolmap.Reconstruction, depths: np.ndarray, images: np.ndarray, names: list[str],
-) -> FeedforwardResult:
+    reconstruction: pycolmap.Reconstruction,
+    depths: np.ndarray,
+    images: np.ndarray,
+    names: list[str],
+    *,
+    min_obs: int = 20,
+) -> tuple[FeedforwardResult, dict]:
     """
-    Assemble a FeedforwardResult from a COLMAP model and per-frame dense depth.
+    Assemble a FeedforwardResult from a COLMAP model and dense depth scaled into the model's frame.
 
     - reconstruction: fully registered model; image names are the stems of `names`.
-    - depths: (N, h, w) float32, one per name; defines the model-resolution grid.
+    - depths: (N, h, w) float32 metric depth, one per name; defines the model-resolution grid.
     - images: (N, H, W, 3) uint8 RGB at the COLMAP camera resolution, same order.
     - names: staged image filenames in store order.
-    - returns: FeedforwardResult with K and pixel_indices rescaled to (h, w), dense
-      world_points from unprojection, no confidence. Raises RuntimeError on partial
-      registration, ValueError on a name or camera-resolution mismatch.
+    - min_obs: tracked observations a frame needs for its own scale; fewer -> global median.
+    - returns: (result, attrs). result: K, pixel_indices and depth at (h, w), world_points
+      unprojected from the scaled depth, no confidence. attrs: {"depth_scale": "colmap",
+      "depth_scales": [...], "depth_scale_fallback_frames": [...]} for the zarr.
+      Raises RuntimeError on partial registration, ValueError on a name or camera-resolution
+      mismatch.
     """
 
 
+def _tracked_point3d_ids(reconstruction) -> list[int]: ...
+def _pixel_indices_from_reconstruction(reconstruction, point3d_ids, name_to_row, scale_x, scale_y, depth_hw) -> np.ndarray: ...
 def _depth_correspondences(reconstruction, image_names, depth) -> list[tuple[np.ndarray, np.ndarray]]: ...
-def align_depth_to_reconstruction(reconstruction, image_names, depth, *, min_obs: int = 20) -> tuple[np.ndarray, list[int]]: ...
-def apply_depth_alignment(result: FeedforwardResult, reconstruction, *, min_obs: int = 20) -> dict: ...
+def _fit_depth_scales(reconstruction, image_names, depth, *, min_obs) -> tuple[np.ndarray, list[int]]: ...
 ```
 
-`result_from_reconstruction` is today's `Reconstructor._sfm_result_from_reconstruction`
-with arrays in place of the `FrameStore` and `backend_dir` (the caller loads depths via
-`load_vda_depth` and images from the store); its three checks and error texts move with
-it, naming the arguments instead of `self.frames_zarr`.
-`align_depth_to_reconstruction` returns `(scales, fallback_frames)` — the per-frame median
-ratio with the global-median fallback, exactly today's scale branch. The stats dict shrinks
-to what is logged: global scale, ratio p10/p50/p90 before and after, fallback count.
-`apply_depth_alignment` rescales `result.depth` in place, recomputes `world_points`, and
-returns `{"depth_scale": "colmap", "depth_scales": [...], "depth_scale_fallback_frames":
-[...]}` (the `depth_align_model` attr goes with the option; `depth_scale` is the key the
-Reconstructor checks when it loads a store). Deleted: `DepthAlignModel`,
-`DEPTH_ALIGN_MODELS`, `align_depth_affine`, `_solve_disparity`, `_fit_affine_disparity`,
-`_apply_affine_depth`, `MIN_ALIGN_OBS` (→ `min_obs=20`), `MIN_AFFINE_OBS`,
-`AFFINE_REJECT_ROUNDS`, `AFFINE_MIN_FAR_DISPARITY_FRAC`.
+Today this is two steps in the Reconstructor: `_sfm_result_from_reconstruction` builds a
+result (unprojecting `world_points` from unscaled depth), then `apply_depth_alignment`
+rescales `depth` in place and unprojects again. The un-aligned result is never consumed,
+and with the affine option gone the scale fit is unconditional, so the two collapse into
+one function: check, fit scales (`_fit_depth_scales` is today's
+`align_depth_to_reconstruction`, per-frame median ratio with the global-median fallback),
+scale the depth stack, build the result once. The three checks and their error texts move
+with it, naming the arguments instead of `self.frames_zarr`. The stats dict shrinks to
+what is logged: global scale, ratio p10/p50/p90 before and after, fallback count.
+`depth_scale` stays the attr key the Reconstructor checks when it loads a store.
+The helpers keep their underscore names: nothing outside the module calls them once the
+Reconstructor stops assembling results itself.
+
+Deleted: `apply_depth_alignment`, `align_depth_to_reconstruction` (folded in),
+`DepthAlignModel`, `DEPTH_ALIGN_MODELS`, `align_depth_affine`, `_solve_disparity`,
+`_fit_affine_disparity`, `_apply_affine_depth`, `MIN_ALIGN_OBS` (→ `min_obs=20`),
+`MIN_AFFINE_OBS`, `AFFINE_REJECT_ROUNDS`, `AFFINE_MIN_FAR_DISPARITY_FRAC`, and the
+`depth_align_model` attr.
 
 ### 5. `utils.py`
 
@@ -429,8 +433,8 @@ imported at the top of `reconstructor.py`:
 | `_export_pointcloud_ply` + `export.write_pointcloud_ply` | `result.write_ply(self.backend_dir / "sparse_pc.ply")` |
 | `_load_pointcloud_from_disk` | `PointcloudResult.from_colmap(self.backend_dir / "colmap/sparse/0", image_paths)` with `image_paths` built from the store's frame indices |
 | `_rename_images_to_stems` | inside `InstantSfMCreator.reconstruct` |
-| `_ensure_vda_depth` + `_context_keep_rows` + `_video_unchanged` + sidecar | `generate_vda_depth(store.images(), self.backend_dir, names)` |
-| `_sfm_result_from_reconstruction` | `result_from_reconstruction(recon, load_vda_depth(self.backend_dir, names), store.images(), names)` |
+| `_ensure_vda_depth` + `_context_keep_rows` + `_video_unchanged` + sidecar | `depths = generate_vda_depth(frames, self.backend_dir, names)` |
+| `_sfm_result_from_reconstruction` + `apply_depth_alignment` | `outputs, align_attrs = result_from_reconstruction(recon, depths, frames, names)` |
 | `_write_transforms_json` | deleted — nerfstudio-format artifact with no reader (confirm item 5) |
 
 `_run_sfm` after the change, in full:
@@ -447,15 +451,14 @@ def _run_sfm(self) -> PointcloudResult:
     # DB keyed on it (today's inline block, unchanged; shown collapsed here)
     ...
 
-    # VDA depth (cached per stem), global SfM, dense result, alignment to the COLMAP world
+    # VDA depth (cached per stem), global SfM, dense result scaled into the COLMAP world
     frames = store.images()
-    generate_vda_depth(frames, self.backend_dir, names)
+    depths = generate_vda_depth(frames, self.backend_dir, names)
     recon = InstantSfMCreator(
         retriangulation=pc_cfg["instantsfm"]["retriangulation"],
         random_seed=pc_cfg["instantsfm"]["random_seed"],
     ).reconstruct(self.backend_dir)
-    outputs = result_from_reconstruction(recon, load_vda_depth(self.backend_dir, names), frames, names)
-    align_attrs = apply_depth_alignment(outputs, recon)
+    outputs, align_attrs = result_from_reconstruction(recon, depths, frames, names)
 
     outputs.save_zarr(
         self.backend_dir / "pointcloud.zarr",
@@ -472,8 +475,8 @@ files on disk, config reads, and zarr provenance are the wrapper's job and stay.
 
 **`wrapper/reconstructor.py`**
 - Top imports: `PointcloudResult`, `confidence_mask`, `lift_features`, `clean_pointcloud`,
-  `generate_vda_depth`, `load_vda_depth`, `result_from_reconstruction`,
-  `apply_depth_alignment`, `InstantSfMCreator`; drop `write_pointcloud_ply`,
+  `generate_vda_depth`, `result_from_reconstruction`, `InstantSfMCreator`; drop
+  `write_pointcloud_ply`, `apply_depth_alignment`,
   `CoordinateFrame`, `DEPTH_ALIGN_MODELS`, `vda_depth_complete`, `context_indices`,
   `decode_context`, `_tracked_point3d_ids`, `_pixel_indices_from_reconstruction`,
   `unproject_depth_map_to_point_map` (if `refine_poses` is its only other user it stays
@@ -497,8 +500,10 @@ stream); `context_indices` stays (`preproc/sampling.py` uses it).
 `result.write_ply(Path(output_dir) / "sparse_pc.ply")`; the `transforms.json` mention at
 L769 goes.
 
-**`evals/scripts/eval.py`** — `generate_vda_depth(frames, output_dir, names)`; drop the
-`vda_depth_complete` import and guard (L358–360).
+**`evals/scripts/eval.py`** — `generate_vda_depth(frames, output_dir, names)` (return
+ignored; InstantSfM reads the maps from disk); drop the `vda_depth_complete` import and
+guard (L358–360). `InstantSfMCreator(use_depths=...)` is unchanged — the eval's two
+conditions are the one caller of that flag.
 
 **`setup.sh`** — delete the checkpoint `wget` block (L88–95) and the `VDA_CKPT` variable;
 the clone + pin block stays; the comment at L74 names `pointcloud/vda.py`.
@@ -541,6 +546,10 @@ automodule with `sfm.colmap`, `sfm.hloc`, `sfm.instantsfm`, `vda`, `depth_align`
   `pointcloud.clean.outlier_removal` / `.voxel_size` / `.confidence_threshold`.
 - Zarr attrs: `depth_align_model` no longer written; `depth_scale`, `depth_scales`,
   `depth_scale_fallback_frames` unchanged.
+- `generate_vda_depth` returns the `(N, h, w)` depth stack instead of a path.
+- `apply_depth_alignment` and `align_depth_to_reconstruction` are folded into
+  `result_from_reconstruction`; world points are unprojected once, from scaled depth
+  (same values as today's second unprojection).
 - Signatures: `InstantSfMCreator(features=, single_camera=)`, `generate_vda_depth(fps,
   encoder=, input_size=, keep_rows=)`, `vda_depth_complete`, `make_creator(use_lc=,
   lc_config=)`, `decode_context` removed; `clean_pointcloud` as in section 5; ten utils
@@ -560,11 +569,11 @@ the symbol (`collab_splats.pointcloud.sfm.colmap.pycolmap.extract_features`,
 |---|---|
 | `tests/pointcloud/test_base.py` | drop NERFSTUDIO / `world_transform` / enum / `clean_pcd` tests; construct without `frame=`; add `from_colmap` (round-trip + missing-name ValueError) and `write_ply` (open3d reads it back) |
 | `tests/pointcloud/test_export.py`, `test_export_wiring.py`, `tests/wrapper/test_vda_context.py`, `tests/wrapper/test_transforms_json.py` | deleted |
-| `tests/wrapper/test_sfm_result.py` | cases move: rename -> `tests/pointcloud/sfm/test_instantsfm.py`, result assembly -> `tests/pointcloud/test_depth_align.py` (`result_from_reconstruction` on arrays) |
+| `tests/wrapper/test_sfm_result.py` | cases move: rename -> `tests/pointcloud/sfm/test_instantsfm.py`, result assembly + checks -> `tests/pointcloud/test_depth_align.py` (`result_from_reconstruction` on arrays) |
 | `tests/pointcloud/test_pointcloud_utils.py` | keep `subsample_points`, `confidence_mask`, `fit_dominant_plane`, lift/reproject cases; one `clean_pointcloud` mask case; delete voxel / distance / bbox / OBB / mask cases |
 | `tests/pointcloud/test_registry.py` | unchanged |
-| `tests/pointcloud/test_depth_align.py` | keep scale, correspondence, fallback, track/pixel-index cases; delete affine cases and the `model=` dispatch test |
-| `tests/pointcloud/test_vda.py` | drop `keep_rows` / `fps` / context cases; add `load_vda_depth`; `hf_hub_download` monkeypatched to a temp file |
+| `tests/pointcloud/test_depth_align.py` | keep correspondence, scale-fit, fallback, track/pixel-index cases on the private helpers; the two surviving `apply_depth_alignment` cases (attrs stamped; world points from scaled depth) become `result_from_reconstruction` cases; delete affine cases and the `model=` dispatch test |
+| `tests/pointcloud/test_vda.py` | drop `keep_rows` / `fps` / context cases; assert the returned stack, and that a complete stem set is read back without inference; `hf_hub_download` monkeypatched to a temp file |
 | `tests/pointcloud/sfm/test_instantsfm.py` | `InstantSfMCreator()`; CPU-fallback cases keep passing `num_threads`; `_sift_database_valid` cases on a pycolmap-written DB; stem rename asserted on the returned model |
 | `tests/pointcloud/sfm/test_colmap.py`, `test_hloc.py` | split from `test_sfm_creator.py`; drop `frame` asserts |
 | `tests/test_cu121_migration.py` | add `collab_splats.pointcloud.sfm.colmap`, `.sfm.hloc`, `.sfm.instantsfm`, `.vda`, `.depth_align` |
@@ -624,9 +633,10 @@ fallback; the Reconstructor imports from the module instead of re-implementing.
 5. **Delete `_write_transforms_json`** and stop writing `transforms.json` (nerfstudio
    format, no reader in the repo, not loadable by nerfstudio either per its docstring).
    Flip this and it becomes `PointcloudResult.write_transforms_json(path)`.
-6. **Result assembly lives in `depth_align.py`** as `result_from_reconstruction`, taking
-   arrays; `load_vda_depth` in `vda.py` reads the maps. Alternative: both inside
-   `sfm/instantsfm.py` as creator methods.
+6. **Result assembly and scale alignment are one function**, `result_from_reconstruction`
+   in `depth_align.py`, taking arrays and returning `(result, attrs)`;
+   `generate_vda_depth` returns the depth stack so no loader exists. Alternative: keep
+   today's two-step assemble-then-align shape.
 7. **Delete `compute_obb_from_points`, `get_points_in_mask`, `voxel_downsample_point_cloud`,
    the legacy trio, `voxel_downsample`, `filter_distance`.**
 8. **Drop `export_max_points`** rather than reimplement thinning on top of `write_ply`.

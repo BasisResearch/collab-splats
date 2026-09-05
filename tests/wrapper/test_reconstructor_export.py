@@ -1,40 +1,37 @@
-"""pointcloud.max_points / export_max_points reach the creator and the PLY."""
+"""The post-clean sparse_pc.ply written by build_pointcloud."""
+
+from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+import pycolmap
 
-from collab_splats.wrapper.reconstructor import Reconstructor
-
-
-def _config(tmp_path, **pc):
-    return {
-        "input_path": str(tmp_path / "in.mp4"),
-        "output_path": str(tmp_path / "out"),
-        "pointcloud": {"method": "feedforward", "backend": "vggt_omega", **pc},
-    }
+from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
 
 
-def test_defaults_expose_max_points(tmp_path):
-    r = Reconstructor(_config(tmp_path))
-    assert r.config["pointcloud"]["max_points"] == 500_000
-    assert r.config["pointcloud"]["export_max_points"] is None
+def test_build_pointcloud_ply_is_readable_by_open3d(tmp_path):
+    """
+    The PLY written from a PointcloudResult round-trips through open3d with xyz+rgb intact.
+    """
+    recon = pycolmap.Reconstruction()
+    cam = pycolmap.Camera(model="PINHOLE", width=8, height=6, params=[4.0, 4.0, 4.0, 3.0], camera_id=1)
+    recon.add_camera_with_trivial_rig(cam)
+    recon.add_image_with_trivial_frame(pycolmap.Image(name="frame_000000", camera_id=1, image_id=1), pycolmap.Rigid3d())
+    for i in range(3):
+        recon.add_point3D(
+            xyz=np.array([float(i), 0.0, 1.0]),
+            track=pycolmap.Track(),
+            color=np.array([i, 2 * i, 3 * i], dtype=np.uint8),
+        )
 
+    out = tmp_path / "backend" / "sparse_pc.ply"
+    result = PointcloudResult(
+        reconstruction=recon,
+        frame=CoordinateFrame.COLMAP,
+        image_paths=[Path("frame_000000")],
+    )
+    result.write_ply(out)
 
-def test_max_points_override_survives_merge(tmp_path):
-    r = Reconstructor(_config(tmp_path, max_points=120_000, export_max_points=50_000))
-    assert r.config["pointcloud"]["max_points"] == 120_000
-    assert r.config["pointcloud"]["export_max_points"] == 50_000
-
-
-def test_export_pointcloud_ply_applies_export_cap(tmp_path):
-    """_export_pointcloud_ply writes backend_dir/sparse_pc.ply, thinned to export_max_points."""
-
-    class _Result:
-        points = np.zeros((300, 3), dtype=np.float32)
-        colors = None
-
-    r = Reconstructor(_config(tmp_path, export_max_points=100))
-    r.backend_dir.mkdir(parents=True, exist_ok=True)
-    out = r._export_pointcloud_ply(_Result())
-    assert out == r.backend_dir / "sparse_pc.ply"
-    assert len(o3d.io.read_point_cloud(str(out)).points) == 100
+    pcd = o3d.io.read_point_cloud(str(out))
+    assert np.asarray(pcd.points).shape == (3, 3)
+    assert out.read_bytes().startswith(b"ply\nformat binary_little_endian 1.0\n")

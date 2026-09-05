@@ -88,9 +88,6 @@ pointcloud:
   # Reports only — never gates the pipeline or mutates model outputs (pointcloud.zarr,
   # sparse_pc.ply, mesh untouched). Off until the first measured report justifies a default.
   geometric_verification: false
-  # Export density for sparse_pc.ply. null = write every reconstructed point (default);
-  # set an int to thin the exported file only — inference is unaffected.
-  export_max_points: null
   viz:
     enabled: false          # instantiate the viser Viewer during loop closure
     port: 8080              # viser server port

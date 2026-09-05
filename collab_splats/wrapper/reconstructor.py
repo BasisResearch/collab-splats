@@ -22,7 +22,7 @@ import zarr
 from mergedeep import merge
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
-from collab_splats.pointcloud.export import write_pointcloud_ply
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.sfm import (
     DEPTH_ALIGN_MODELS,
     InstantSfMCreator,
@@ -58,7 +58,6 @@ from collab_splats.semantics.utils import (
 if TYPE_CHECKING:
     import pycolmap
 
-    from collab_splats.pointcloud.base import PointcloudResult
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.viewer import Viewer
 
@@ -1012,8 +1011,8 @@ class Reconstructor:
             result = self._clean_pointcloud(result, clean_cfg)
 
         # Re-export the PLY from the FINAL result — clean may have dropped points since
-        # the creator wrote its copy. Density is opt-in via pointcloud.export_max_points.
-        self._export_pointcloud_ply(result)
+        # the creator wrote its own copy.
+        result.write_ply(self.backend_dir / "sparse_pc.ply")
 
         # Write the pose+intrinsics transforms.json alongside the COLMAP model
         self._write_transforms_json(result)
@@ -1022,37 +1021,16 @@ class Reconstructor:
         return result
 
     def _load_pointcloud_from_disk(self) -> "PointcloudResult":
-        """Load PointcloudResult from COLMAP reconstruction on disk."""
-        import pycolmap
-
-        from collab_splats.pointcloud.base import CoordinateFrame, PointcloudResult
-
-        colmap_dir = self.backend_dir / "colmap" / "sparse" / "0"
-        recon = pycolmap.Reconstruction()
-        recon.read(str(colmap_dir))
+        """
+        Load the written COLMAP model into a PointcloudResult in frames.zarr order.
+        """
         # Rebuild image_paths from frames.zarr in store order, so it lines up with the per-frame
-        # arrays the downstream stages index. The feedforward creators register COLMAP images as
-        # frame_{source_idx:06d} with NO extension (vggt_omega.py, vggtx.py, mapanything.py) — the
-        # frame_*.jpg spelling elsewhere is the zarr/localization id namespace, not this one.
+        # arrays the downstream stages index. The creators register COLMAP images as
+        # frame_{source_idx:06d} with NO extension — the frame_*.jpg spelling elsewhere is the
+        # zarr/localization id namespace, not this one.
         frame_indices = FrameStore.open(self.frames_zarr).frame_indices()
         image_paths = [Path(f"frame_{int(fi):06d}") for fi in frame_indices]
-        # That naming is a contract between the store and the reconstruction, and nothing enforces
-        # it at write time. Check it here: unchecked, a mismatch surfaces as a bare KeyError from
-        # PointcloudResult.extrinsics, several frames into a stage and — on the remote path — after
-        # a multi-GB pull that says nothing about which two artifacts disagree.
-        registered = {img.name for img in recon.images.values()}
-        missing = [p.name for p in image_paths if p.name not in registered]
-        if missing:
-            raise ValueError(
-                f"{len(missing)} of {len(image_paths)} frames in {self.frames_zarr} are not "
-                f"registered in {colmap_dir} (first: {missing[0]}); the frame store and the "
-                f"reconstruction describe different runs."
-            )
-        return PointcloudResult(
-            reconstruction=recon,
-            frame=CoordinateFrame.COLMAP,
-            image_paths=image_paths,
-        )
+        return PointcloudResult.from_colmap(self.backend_dir / "colmap", image_paths)
 
     def _clean_pointcloud(self, result: "PointcloudResult", cfg: dict) -> "PointcloudResult":
         """Apply open3d outlier removal to PointcloudResult.
@@ -1089,16 +1067,6 @@ class Reconstructor:
 
         logger.info("Pointcloud after cleaning: %d points", result.reconstruction.num_points3D())
         return result
-
-    def _export_pointcloud_ply(self, result: "PointcloudResult") -> Path:
-        """Write backend_dir/sparse_pc.ply (binary) from the post-clean result."""
-        self.backend_dir.mkdir(parents=True, exist_ok=True)
-        return write_pointcloud_ply(
-            result.points,
-            result.colors,
-            self.backend_dir / "sparse_pc.ply",
-            self.config["pointcloud"]["export_max_points"],
-        )
 
     def _write_transforms_json(self, result: "PointcloudResult") -> None:
         """Write pose+intrinsics frames to backend_dir/transforms.json.
@@ -1496,7 +1464,7 @@ class Reconstructor:
 
         # Refresh the remaining derived artifacts through the standard writers
         result = self._load_pointcloud_from_disk()
-        self._export_pointcloud_ply(result)
+        result.write_ply(self.backend_dir / "sparse_pc.ply")
         self._write_transforms_json(result)
 
         # Marker + provenance in one file: BA config and per-step LM loss history

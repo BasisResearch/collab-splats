@@ -137,22 +137,10 @@ class BasePointcloudCreator(ABC):
 
         Produces:
             {output_dir}/colmap/sparse/0/{cameras,images,points3D}.bin
-            {output_dir}/sparse_pc.ply   (binary little-endian from the feedforward path; see pointcloud/export.py)
-
-        transforms.json is written by Reconstructor._write_transforms_json from the returned result.
+            {output_dir}/sparse_pc.ply   (binary little-endian; PointcloudResult.write_ply)
 
         Raises:
             RuntimeError: if reconstruction fails
             FileNotFoundError: if image_dir does not exist
         """
         ...
-
-    def _write_ply(self, result: PointcloudResult, output_dir: Path, max_points: int | None = None) -> Path:
-        """
-        Write the binary little-endian sparse_pc.ply next to the COLMAP model.
-        """
-        # Inline, not top-level: export.py -> pointcloud/utils.py -> `from .base import
-        # PointcloudResult` cycles back to this module, so a module-top import fails at import time.
-        from collab_splats.pointcloud.export import write_pointcloud_ply
-
-        return write_pointcloud_ply(result.points, result.colors, Path(output_dir) / "sparse_pc.ply", max_points)

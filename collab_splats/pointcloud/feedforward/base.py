@@ -1160,7 +1160,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             frame=CoordinateFrame.COLMAP,
             image_paths=o.image_paths,
         )
-        self._write_ply(result, Path(output_dir))
+        result.write_ply(Path(output_dir) / "sparse_pc.ply")
         console.log(f"  done in {time.perf_counter() - t0:.1f}s")
         return result
 

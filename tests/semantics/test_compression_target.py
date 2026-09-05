@@ -86,14 +86,30 @@ def test_metrics_survive_save_load(tmp_path):
 
 
 def test_load_legacy_checkpoint_without_metrics(tmp_path):
-    """Checkpoints predating the metric keys still load, defaulting to the untrained values."""
-    ae = FeatureAutoencoder(input_dim=32, latent_dim=8)
-
-    # Hand-write a pre-metrics payload: the three metric keys are simply absent
-    payload = {"input_dim": 32, "latent_dim": 8, "state_dict": ae.state_dict()}
+    """A checkpoint already on disk still loads: literal keys, no metrics, two dead payload keys."""
+    # Hand-written, NOT built from the current class: state_dict keys are spelled out so merging
+    # decoder_hidden/decoder_out, or changing the derived width, fails here instead of on a user's
+    # weights file. hidden_dim and regularization_kwargs are keys the old save() wrote and load ignores.
+    payload = {
+        "input_dim": 32,
+        "latent_dim": 8,
+        "hidden_dim": 64,
+        "regularization_kwargs": {},
+        "state_dict": {
+            "encoder.0.weight": torch.zeros(64, 32),
+            "encoder.0.bias": torch.zeros(64),
+            "encoder.2.weight": torch.zeros(8, 64),
+            "encoder.2.bias": torch.zeros(8),
+            "decoder_hidden.0.weight": torch.zeros(64, 8),
+            "decoder_hidden.0.bias": torch.zeros(64),
+            "decoder_out.weight": torch.zeros(32, 64),
+            "decoder_out.bias": torch.zeros(32),
+        },
+    }
     weights = tmp_path / "talk2dino_ae.pt"
     torch.save(payload, weights)
 
+    # The three metric keys are absent, so they must default to the untrained values
     loaded = FeatureAutoencoder.load(weights)
     assert loaded.recon_cosine == 0.0
     assert loaded.recon_mse == 0.0

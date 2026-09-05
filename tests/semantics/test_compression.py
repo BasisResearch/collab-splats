@@ -1,9 +1,9 @@
 """Tests for FeatureAutoencoder — encode (spatial + point) and per_point_decode."""
 
-import inspect
 import tempfile
 from pathlib import Path
 
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -132,7 +132,32 @@ def test_save_creates_the_parent_dir_not_a_dir_named_after_the_file():
         assert weights.parent.is_dir()
 
 
-def test_hidden_dim_is_not_a_constructor_arg():
-    """Width is derived from latent_dim — an override nothing passed is not a parameter."""
-    params = inspect.signature(FeatureAutoencoder.__init__).parameters
-    assert list(params) == ["self", "input_dim", "latent_dim"]
+def test_save_restores_the_device_when_the_write_fails(monkeypatch):
+    """A failed write must not strand the model on CPU — save() restores in a finally."""
+    # Discriminating on a CUDA box; on CPU it still pins "the device is what it was"
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    ae = _make_ae().to(device)
+
+    # Fail the write itself, after save() has already moved the model to CPU to serialise it
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(torch, "save", boom)
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(OSError, match="disk full"):
+            ae.save(Path(tmp) / "talk2dino_ae.pt")
+
+    # The caller's model is still on its own device, and still usable there
+    assert next(ae.parameters()).device == device
+    ae.per_point_encode(torch.randn(N, INPUT_DIM, device=device))
+
+
+########################################################################
+# Architecture
+########################################################################
+
+
+def test_hidden_width_is_derived_from_latent_dim():
+    """Width is max(64, 2 * latent_dim) — the shape on-disk checkpoints were written with."""
+    assert FeatureAutoencoder(input_dim=INPUT_DIM, latent_dim=8).encoder[0].out_features == 64
+    assert FeatureAutoencoder(input_dim=INPUT_DIM, latent_dim=64).encoder[0].out_features == 128

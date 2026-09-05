@@ -218,21 +218,26 @@ class FeatureAutoencoder(nn.Module):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Serialise from CPU so the checkpoint is device-agnostic, then restore the device
+        # Serialise from CPU so the checkpoint is device-agnostic. The restore is in a finally
+        # because a failed write must not strand the caller's model on CPU — the next forward
+        # pass would then raise a device mismatch far from the save that caused it.
         device = next(self.parameters()).device
         self.cpu()
-        torch.save(
-            {
-                "input_dim": self.input_dim,
-                "latent_dim": self.latent_dim,
-                "state_dict": self.state_dict(),
-                "recon_cosine": self.recon_cosine,
-                "recon_mse": self.recon_mse,
-                "epochs_run": self.epochs_run,
-            },
-            path,
-        )
-        self.to(device)
+        try:
+            torch.save(
+                {
+                    "input_dim": self.input_dim,
+                    "latent_dim": self.latent_dim,
+                    "state_dict": self.state_dict(),
+                    "recon_cosine": self.recon_cosine,
+                    "recon_mse": self.recon_mse,
+                    "epochs_run": self.epochs_run,
+                },
+                path,
+            )
+        finally:
+            self.to(device)
+
         logger.info("saved autoencoder → %s", path)
 
     @classmethod

@@ -95,7 +95,8 @@ def find_lifted_extractor(out_dir: Path) -> Optional[str]:
         ValueError: when the dir holds more than one lifted store — guessing would pair one
             extractor's codes with another's decoder.
     """
-    stems = sorted(p.name[: -len("_lifted.zarr")] for p in Path(out_dir).glob("*_lifted.zarr"))
+    suffix = "_lifted.zarr"
+    stems = sorted(p.name.removesuffix(suffix) for p in Path(out_dir).glob(f"*{suffix}"))
     if not stems:
         return None
     if len(stems) > 1:

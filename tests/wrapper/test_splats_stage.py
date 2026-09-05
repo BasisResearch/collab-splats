@@ -155,6 +155,35 @@ def test_splats_stage_skips_when_output_exists(tmp_path):
     train.assert_not_called()
 
 
+def test_splats_conf_percentile_log_reports_the_masked_fraction(tmp_path, caplog):
+    """
+    An SfM zarr has no confidence channel; the log must say so AND quantify the masking
+    that depth alignment already applied, rather than claiming the depth is unmasked.
+    """
+    recon = _stub_reconstructor(tmp_path)
+
+    # Quarter of the target pixels zeroed, exactly what affine alignment writes past its
+    # evidence horizon
+    depth = np.ones((3, 4, 4), np.float32)
+    depth[:, 0, :] = 0.0
+    feedforward = SimpleNamespace(
+        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
+        depth=depth,
+        confidence=None,
+    )
+    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
+
+    with (
+        patch("collab_splats.splats.trainer.train"),
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        caplog.at_level("INFO"),
+    ):
+        recon.splats()
+
+    assert "conf_percentile=20 not applied (no confidence channel)" in caplog.text
+    assert "masks 25.00% of target pixels" in caplog.text
+
+
 def _write_minimal_splats_zarr(path, n_views=3, height=4, width=5):
     """
     splats.zarr with the array set the mesh adapter reads; all-ones alpha so nothing is dropped.

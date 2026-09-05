@@ -189,9 +189,8 @@ def context_indices(video_path: str | Path, *, target_fps: float, info: dict | N
     """
     Source frame indices on a constant-rate grid at target_fps.
 
-    - `sampling.sample_fps` calls this for its own targets, so a keyframe grid and a
-      context grid built at the same rate agree frame-for-frame and keyframes are a
-      subset by construction.
+    - `sampling.sample_fps` calls this for its own targets, so it is the single source of
+      the stride: any two callers asking for the same rate get the same grid, frame for frame.
     - Stride floors at 1: a rate above the source rate cannot sample sub-frame.
     """
     # target_fps is the contract here, so an absent one is a config error, not a default

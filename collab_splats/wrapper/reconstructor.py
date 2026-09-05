@@ -978,10 +978,14 @@ class Reconstructor:
             store.export(image_dir, ext="jpg")
             logger.info("Staged %d keyframes to %s", len(names), image_dir)
 
-        # VDA metric depth for every keyframe. Gate on the written map set BEFORE reading
-        # frames.zarr: generate_vda_depth is idempotent, but store.images() materialises the
-        # whole keyframe stack (~1.9 GB for 300 frames at 1080p) to reach that check.
+        # VDA metric depth for every keyframe. Gate on the written map set before materialising
+        # anything: generate_vda_depth is idempotent, but store.images() pulls the whole keyframe
+        # stack into RAM at once (~1.9 GB for 300 frames at 1080p) just to reach that check.
+        # On a miss, drop depth_vda/ first — generate_vda_depth only ever adds maps, so a stem
+        # left over from a different keyframe set would keep the set-equality gate false forever
+        # and re-run the full GPU inference on every subsequent run.
         if not vda_depth_complete(backend_dir, names):
+            shutil.rmtree(backend_dir / "depth_vda", ignore_errors=True)
             generate_vda_depth(
                 np.ascontiguousarray(store.images()),
                 fps=float(self.config["preproc"]["fps"]),

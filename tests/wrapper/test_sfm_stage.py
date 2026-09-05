@@ -1,8 +1,10 @@
 """
-Reconstructor wiring for the sfm stage: the depth alignment model and the SfM seed.
+Reconstructor wiring for the sfm stage: the VDA depth cache and the late-consumed knobs.
 
-- `_run_sfm` forwards `depth_align` / `random_seed` from the config to the legs that
-  consume them long after the run has started.
+- `_run_sfm` gates VDA inference on the written map set, and drops `depth_vda/` on a gate
+  miss so a stem from a previous keyframe set cannot hold the gate false forever.
+- It forwards `depth_align` / `random_seed` from the config to the legs that consume them
+  long after the run has started.
 - Both knobs are also validated at config load, so a typo fails before the SIFT pass.
 """
 
@@ -11,15 +13,21 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import cv2
 import numpy as np
 import pytest
 
 from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.wrapper.reconstructor import Reconstructor
-from tests.wrapper.test_splats_stage import _stub_reconstructor
 
 RECONSTRUCTOR = "collab_splats.wrapper.reconstructor"
+
+# _run_sfm never opens the video: input_path only reaches config validation (a presence check)
+# and the store's provenance stamp, so a stand-in path is enough — no encoded fixture needed.
+VIDEO_PATH = "/nonexistent/tiny.mp4"
+
+# Source frame indices the fake store is built on. Non-contiguous on purpose: a leg that
+# confused source frame indices with store rows would show up.
+FRAME_IDX = (0, 9, 30, 57)
 
 
 ########################################################################
@@ -27,57 +35,16 @@ RECONSTRUCTOR = "collab_splats.wrapper.reconstructor"
 ########################################################################
 
 
-@pytest.fixture(scope="module")
-def tiny_video(tmp_path_factory):
+def _sfm_reconstructor(tmp_path, *, depth_align="scale", random_seed=None):
     """
-    A 60-frame 320x240 30 fps mp4 — the same shape tests/preproc's fixture builds.
-    """
-    path = tmp_path_factory.mktemp("t11_vid") / "tiny.mp4"
-    width, height = 320, 240
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (width, height))
-    rng = np.random.default_rng(0)
-    noise = (rng.random((height, width, 3)) * 255).astype(np.uint8)
-
-    for i in range(60):
-        frame = noise.copy()
-        cv2.rectangle(frame, (10 + i * 4, 60), (70 + i * 4, 140), (0, 255, 0), -1)
-        writer.write(frame)
-
-    writer.release()
-    return str(path)
-
-
-def _clean_report(n=60):
-    """
-    A quality report shaped like compute_video_quality's, with every frame passing the gate.
-    """
-    return {
-        "available": True,
-        "frames": {
-            "frame_idx": list(range(n)),
-            "laplacian": [200.0] * n,
-            "exposure_mean": [128.0] * n,
-            "exposure_std": [40.0] * n,
-            "blur": [0.3] * n,
-        },
-    }
-
-
-def _sfm_reconstructor(
-    tmp_path,
-    *,
-    video_path,
-    depth_align="scale",
-    random_seed=None,
-    frame_idx=(0, 9, 30, 57),
-):
-    """
-    A method:sfm Reconstructor backed by a real frames.zarr holding `frame_idx` keyframes.
+    A method:sfm Reconstructor backed by a real frames.zarr holding FRAME_IDX keyframes.
     """
     config = {
-        "input_path": str(video_path),
+        "input_path": VIDEO_PATH,
         "output_path": str(tmp_path / "out"),
-        "preproc": {"fps": 2.0},
+        # 3.0, not base.yaml's own 2.0 default, so an fps assertion pins the config read
+        # rather than a value the merged defaults would have supplied anyway
+        "preproc": {"fps": 3.0},
         "pointcloud": {
             "method": "sfm",
             "backend": "instantsfm",
@@ -86,22 +53,22 @@ def _sfm_reconstructor(
     }
     recon = Reconstructor(config)
 
-    # Real store: _run_sfm reads frame_indices(), provenance() and images() off it
-    frames = [np.full((8, 8, 3), i, np.uint8) for i in frame_idx]
-    records = [{"frame_idx": int(i), "blur_score": 1.0} for i in frame_idx]
+    # Real store: _run_sfm reads frame_indices() off it and exports its images to backend_dir
+    frames = [np.full((8, 8, 3), i, np.uint8) for i in FRAME_IDX]
+    records = [{"frame_idx": int(i), "blur_score": 1.0} for i in FRAME_IDX]
     FrameStore.create(
         recon.frames_zarr,
         frames,
         records,
         provenance={
-            "video_path": str(video_path),
+            "video_path": VIDEO_PATH,
             "method": "uniform",
         },
     )
     return recon
 
 
-def _patched_sfm(recon):
+def _patched_sfm(recon, *, depth_complete=True):
     """
     Patch every heavy leg of _run_sfm; returns the name -> patcher dict, unstarted.
     """
@@ -110,12 +77,19 @@ def _patched_sfm(recon):
     outputs.image_paths = [Path("frame_000000.jpg")]
 
     patches = {
-        "vda_depth_complete": patch(f"{RECONSTRUCTOR}.vda_depth_complete", return_value=True),
+        "vda_depth_complete": patch(f"{RECONSTRUCTOR}.vda_depth_complete", return_value=depth_complete),
         "generate_vda_depth": patch(f"{RECONSTRUCTOR}.generate_vda_depth"),
         "InstantSfMCreator": patch(f"{RECONSTRUCTOR}.InstantSfMCreator"),
         "_rename_images_to_stems": patch(f"{RECONSTRUCTOR}._rename_images_to_stems"),
         "apply_depth_alignment": patch(f"{RECONSTRUCTOR}.apply_depth_alignment", return_value={}),
         "torch": patch(f"{RECONSTRUCTOR}.torch", SimpleNamespace(cuda=MagicMock(is_available=lambda: False))),
+        # The zarr provenance stamp reads instantsfm's installed version. It is a hard dependency
+        # of the real path but absent from some dev venvs, and none of these tests assert on it —
+        # stub it so a missing package cannot take the wiring coverage down with it.
+        "importlib": patch(
+            f"{RECONSTRUCTOR}.importlib",
+            SimpleNamespace(metadata=SimpleNamespace(version=lambda _package: "0.0.0")),
+        ),
         "_sfm_result_from_reconstruction": patch.object(
             Reconstructor, "_sfm_result_from_reconstruction", return_value=outputs
         ),
@@ -123,11 +97,11 @@ def _patched_sfm(recon):
     return patches
 
 
-def _run_sfm_with_mocks(recon):
+def _run_sfm_with_mocks(recon, *, depth_complete=True):
     """
     Execute _run_sfm against the patched heavy legs; returns the mock dict for assertions.
     """
-    patches = _patched_sfm(recon)
+    patches = _patched_sfm(recon, depth_complete=depth_complete)
 
     # ExitStack, not start()-in-a-comprehension: a patch that fails to apply must not leak
     # the ones already started into the rest of the session
@@ -138,67 +112,80 @@ def _run_sfm_with_mocks(recon):
     return started
 
 
+def _npy_dir(recon):
+    """
+    The VDA map directory the completeness gate reads.
+    """
+    return recon.backend_dir / "depth_vda" / "images" / "npy"
+
+
+########################################################################
+# _run_sfm: the VDA depth cache gate
+########################################################################
+
+
+def test_run_sfm_skips_vda_inference_when_the_map_set_is_complete(tmp_path):
+    recon = _sfm_reconstructor(tmp_path)
+
+    # A cached map on the hit path must survive untouched — the prune belongs to the miss branch
+    npy_dir = _npy_dir(recon)
+    npy_dir.mkdir(parents=True)
+    (npy_dir / "frame_000000.npy").write_bytes(b"cached")
+
+    mocks = _run_sfm_with_mocks(recon, depth_complete=True)
+
+    mocks["generate_vda_depth"].assert_not_called()
+    assert (npy_dir / "frame_000000.npy").read_bytes() == b"cached"
+
+
+def test_run_sfm_regenerates_vda_depth_and_drops_stale_maps_on_a_gate_miss(tmp_path):
+    recon = _sfm_reconstructor(tmp_path)
+
+    # A stem from a previous keyframe set. generate_vda_depth has no delete path, so leaving
+    # this behind would keep vda_depth_complete's set equality false on every subsequent run
+    # and re-run the full GPU inference forever.
+    npy_dir = _npy_dir(recon)
+    npy_dir.mkdir(parents=True)
+    stale = npy_dir / "stale.npy"
+    stale.write_bytes(b"stale")
+
+    mocks = _run_sfm_with_mocks(recon, depth_complete=False)
+
+    assert mocks["generate_vda_depth"].call_count == 1
+    kwargs = mocks["generate_vda_depth"].call_args.kwargs
+    assert kwargs["fps"] == 3.0  # float(config["preproc"]["fps"]), not a source literal
+    assert kwargs["out_dir"] == recon.backend_dir
+    assert kwargs["names"] == [f"frame_{i:06d}.jpg" for i in FRAME_IDX]
+    assert not stale.exists()
+
+
 ########################################################################
 # _run_sfm: config pass-through
 ########################################################################
 
 
-def test_run_sfm_forwards_depth_align_from_the_config(tiny_video, tmp_path):
-    recon = _sfm_reconstructor(tmp_path, video_path=tiny_video, depth_align="affine")
+def test_run_sfm_forwards_depth_align_from_the_config(tmp_path):
+    recon = _sfm_reconstructor(tmp_path, depth_align="affine")
     mocks = _run_sfm_with_mocks(recon)
     assert mocks["apply_depth_alignment"].call_args.kwargs["model"] == "affine"
 
 
-def test_run_sfm_defaults_depth_align_to_scale(tiny_video, tmp_path):
-    recon = _sfm_reconstructor(tmp_path, video_path=tiny_video)
+def test_run_sfm_defaults_depth_align_to_scale(tmp_path):
+    recon = _sfm_reconstructor(tmp_path)
     mocks = _run_sfm_with_mocks(recon)
     assert mocks["apply_depth_alignment"].call_args.kwargs["model"] == "scale"
 
 
-def test_run_sfm_forwards_random_seed_from_the_config(tiny_video, tmp_path):
-    recon = _sfm_reconstructor(tmp_path, video_path=tiny_video, random_seed=7)
+def test_run_sfm_forwards_random_seed_from_the_config(tmp_path):
+    recon = _sfm_reconstructor(tmp_path, random_seed=7)
     mocks = _run_sfm_with_mocks(recon)
     assert mocks["InstantSfMCreator"].call_args.kwargs["random_seed"] == 7
 
 
-def test_run_sfm_random_seed_defaults_to_none(tiny_video, tmp_path):
-    recon = _sfm_reconstructor(tmp_path, video_path=tiny_video)
+def test_run_sfm_random_seed_defaults_to_none(tmp_path):
+    recon = _sfm_reconstructor(tmp_path)
     mocks = _run_sfm_with_mocks(recon)
     assert mocks["InstantSfMCreator"].call_args.kwargs["random_seed"] is None
-
-
-########################################################################
-# The splats stage's conf_percentile report
-########################################################################
-
-
-def test_splats_conf_percentile_log_reports_the_masked_fraction(tmp_path, caplog):
-    """
-    An SfM zarr has no confidence channel; the log must say so AND quantify the masking
-    that depth alignment already applied, rather than claiming the depth is unmasked.
-    """
-    recon = _stub_reconstructor(tmp_path)
-
-    # Quarter of the target pixels zeroed, exactly what affine alignment writes past its
-    # evidence horizon
-    depth = np.ones((3, 4, 4), np.float32)
-    depth[:, 0, :] = 0.0
-    feedforward = SimpleNamespace(
-        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
-        depth=depth,
-        confidence=None,
-    )
-    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
-
-    with (
-        patch("collab_splats.splats.trainer.train"),
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
-        caplog.at_level("INFO"),
-    ):
-        recon.splats()
-
-    assert "conf_percentile=20 not applied (no confidence channel)" in caplog.text
-    assert "masks 25.00% of target pixels" in caplog.text
 
 
 ########################################################################

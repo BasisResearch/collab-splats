@@ -388,7 +388,7 @@ def test_bundle_adjustment_does_not_import_loop_closure():
 
     import collab_splats.geometry.bundle_adjustment as ba_mod
 
-    tree = ast.parse(pathlib.Path(ba_mod.__file__).read_text())
+    tree = ast.parse(pathlib.Path(ba_mod.__file__).read_text(encoding="utf-8"))
     imported = [
         node.module
         for node in ast.walk(tree)

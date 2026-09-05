@@ -1,7 +1,7 @@
 # Splats module cleanup — design
 
 **Date:** 2026-09-05
-**Scope:** `collab_splats/splats/`, `tests/splats/`, `tests/test_cu121_migration.py`, `docs/splats.md`, `CLAUDE.md` tree line, `configs/base.yaml` comments.
+**Scope:** `collab_splats/splats/`, `tests/splats/`, `tests/test_cu121_migration.py`, `docs/splats.md`, `CLAUDE.md` tree line, `configs/base.yaml` comments; plus the `splats.zarr` retirement, which touches `collab_splats/mesh/utils.py`, `collab_splats/wrapper/reconstructor.py`, `evals/scripts/analyze_splats.py`, `tests/mesh/test_splats_adapter.py`, two tutorial notebooks and `configs/README.md`.
 **Branch:** `refactor/cu121-uv-migration`.
 **Status:** approved design, awaiting plan.
 
@@ -12,9 +12,10 @@ concern in one file, and make every docstring say what a function does, what it 
 what it returns. Behaviour is preserved: any yaml that trains today trains the same model
 afterwards (numerically equivalent, see Verification).
 
-Frozen public surface: `SplatsConfig`, `train`, the `splats:` yaml block, and every artifact
-(`splats.ply`, `ckpt.pt`, `splats.zarr`, `splats_quality_report.json`) byte-layout and key set.
-Everything else in the package may be renamed or moved.
+Frozen public surface: `SplatsConfig`, `train`, the `splats:` yaml block, `splats.ply` and
+`splats_quality_report.json`. `ckpt.pt` becomes self-contained (gains cameras, drops
+`pose_adjust`) and `splats.zarr` is retired — see "Retire splats.zarr". Everything else in the
+package may be renamed or moved.
 
 ## Audit findings that drive the design
 
@@ -30,6 +31,7 @@ Everything else in the package may be renamed or moved.
 | 8 | `cameras.py` (88 lines) and `appearance.py` (28 lines) are both per-camera learned corrections | `AppearanceModule` moves into `cameras.py`; `appearance.py` deleted |
 | 9 | `rendering.py` and `outputs.py` split one concern (render a view / render all views and write) and `outputs.py` repeats the vanilla-vs-scaffold render branch | Merge into `rendering.py`; the model interface removes the branch |
 | 10 | `scaffold.py` inherits gsplat `Strategy` for nothing, carries a `verbose` flag, a CPU frustum fallback, a passed-around `state` dict, its own lr-schedule code, and leaks `log_scales`/`visible_ids` through the render dict | Drop base class, flag, fallback, state dict, custom schedule; `Scaffold.render` puts regulariser inputs in `render` and densifier inputs in `info` |
+| 11 | `splats.zarr` is a render cache of the model that `ckpt.pt` already holds: ~70 lines of writer, ~60 of reader in mesh, a cross-check in the reconstructor, a symlink trap, and a second place a stale model can hide | Retire it; ckpt carries cameras; mesh and evals render from the checkpoint |
 
 ## File layout
 
@@ -41,8 +43,8 @@ collab_splats/splats/
   scaffold.py   ScaffoldConfig, ScaffoldMLPs, Scaffold, AnchorStrategy     774 → ~550
   losses.py     schedule, validation, compute_losses; loss fns; registry   ~350
   pgsr.py       plane / NCC helpers, select_near_views, render_neighbour   484 → ~420
-  rendering.py  render_gaussians, render_all_views, write_outputs          rendering + outputs
-  cameras.py    CameraOptModule, AppearanceModule, Corrections             cameras + appearance
+  rendering.py  render_gaussians, render_views, write_outputs, load_checkpoint   rendering + outputs
+  cameras.py    CameraOptModule, AppearanceModule, PoseAndAppearance             cameras + appearance
   utils.py      scene scale/normalisation, downscale, target prep, sampler new, ~120
 ```
 
@@ -66,23 +68,30 @@ n_primitives: int                     # len(params["means"]) | len(params["ancho
 
 def render(self, cam_to_world, intrinsics, width, height, camera_id, step=None,
            render_normals=True, render_plane=False) -> tuple[dict, dict]
+def pre_backward(self, step, info) -> None
 def post_backward(self, step, info) -> None
 def denormalize(self, center, scale) -> None
 def export_gaussians(self, cam_to_world, intrinsics) -> dict
 def checkpoint(self) -> dict
+
+@classmethod
+def from_checkpoint(cls, ckpt, device) -> Self
 ```
 
-Five methods, three attributes. `render` returns gsplat's `info` dict with any gradient the
-densifier needs already retained, so there is no pre-backward hook.
+Six methods plus one constructor, three attributes. `pre_backward` / `post_backward` mirror
+gsplat's `Strategy.step_pre_backward` / `step_post_backward` by name, so `render` stays a pure
+render and the densifier's two hooks sit where an upstream reader expects them.
 
 | Method | Gaussians | Scaffold |
 |--------|-----------|----------|
 | `__init__(cfg, points, colors, scene_scale, n_views, device, *, knn=4, adam_eps=1e-15, lr_decay=0.01)` | kNN log-scales, SH DC colour, random quats, `logit(init_opacity)`; one Adam per tensor; means lr × scene_scale with `ExponentialLR(gamma=lr_decay ** (1/max_steps))`; `make_strategy(cfg, n_views, *, prune_opa=0.1, prune_scale3d=0.5, refine_scale2d_stop_iter=4000)` | voxelise seed points, anchors/offsets/feat/scaling/rotation, per-tensor Adams, MLP heads; every group's schedule is a `LambdaLR` lambda `lr_final/lr_init ** min(step/lr_max_steps, 1)` (replaces `expon_lr`, `lr_schedule`, `update_learning_rate`); `knn`/`adam_eps`/`lr_decay` are not taken — ScaffoldConfig owns its rates |
-| `render(...)` | activate params; `sh_degree = min(step // sh_degree_interval, sh_degree)`, `None` → full degree; `absgrad` from strategy; DefaultStrategy: `info["gradient_2dgs"].retain_grad()` before returning | decode visible anchors through MLPs, render with `sh_degree=None`; writes `render["log_scales"]` and `render["opacities"]` for the regularisers; adds `decode_index`, `visible_ids`, `opacities` to `info` and retains the grad on `info[key_for_gradient]`; `step` ignored |
+| `render(...)` | activate params; `sh_degree = min(step // sh_degree_interval, sh_degree)`, `None` → full degree; `absgrad` from strategy | decode visible anchors through MLPs, render with `sh_degree=None`; writes `render["log_scales"]` and `render["opacities"]` for the regularisers; adds `decode_index`, `visible_ids`, `opacities` to `info`; `step` ignored |
+| `pre_backward(step, info)` | `strategy.step_pre_backward(...)` for DefaultStrategy (retains the 2D-means gradient); nothing for MCMC, which has no pre-hook | `info[key_for_gradient].retain_grad()` |
 | `post_backward(step, info)` | `strategy.step_post_backward(...)`, passing `lr=` the current means lr for MCMC, `packed=False` for Default | `strategy.accumulate(info)` (returns early outside the statistics window), then `strategy.refine(self, step)` (today's `step_post_backward`) |
 | `denormalize(center, scale)` | `means / scale + center`, `scales -= log(scale)` | `anchors / scale + center`, `scaling -= log(scale)`; offsets are scale-free |
 | `export_gaussians(cam_to_world, intrinsics)` | returns `params` (arguments unused) | today's `bake_anchor_gaussians`: decode under the mean observed view direction, unseen anchors from the nearest camera |
 | `checkpoint()` | `{"splats": params}` | `{"splats": params, "mlps": state_dict, "voxel_size": float}` |
+| `from_checkpoint(ckpt, device)` | rebuild `params` from `ckpt["splats"]`; no optimizers or strategy (render-only) | rebuild anchors and MLP heads from `ckpt["splats"]`, `ckpt["mlps"]`, `ckpt["voxel_size"]`; render-only |
 
 **Ordering note for Scaffold.** Today `accumulate` runs between `backward()` and the optimizer
 step, behind a comment saying the optimizers would zero the gradient. They would not: it reads
@@ -102,19 +111,20 @@ lets both representations share one hook.
   1. Setup: point-count and per-view checks; `compute_scene_scale`; optional
      `scene_normalization` of cameras, points, depth targets and the distortion weight
      (3-line dict update, inline as today); `model = Gaussians(...)` or `Scaffold(...)`;
-     `corrections = make_corrections(...)`; `near_ids = select_near_views(...)` when a PGSR
+     `refine = PoseAndAppearance.from_config(...)`; `near_ids = select_near_views(...)` when a PGSR
      loss is active (3dgs only, validated in losses).
   2. Loop per step: `next(views)` → `downscale_factor` / `downscale_view` / `prepare_target` →
-     `c2w = corrections.camera(cam_to_world[id], id)` → `render, info = model.render(...)` →
-     `render["rgb"] = corrections.colour(render["rgb"], id)` and `render["appearance"]` when
+     `c2w = refine.camera(cam_to_world[id], id)` → `render, info = model.render(...)` →
+     `render["rgb"] = refine.colour(render["rgb"], id)` and `render["appearance"]` when
      appearance is on → random-background composite → when PGSR is active, downscale and
      pose-correct the neighbour view with the same two calls and set
-     `render["pgsr_neighbour"] = render_neighbour(model, image, c2w, K)` → `compute_losses` →
-     `loss.backward()` → step every optimizer in `model.optimizers + corrections.optimizers`
-     and `zero_grad(set_to_none=True)` → step every scheduler → `model.post_backward(step, info)`
-     → log every `log_every` steps with `type(model).__name__` and `model.n_primitives`.
+     `render["pgsr_neighbour"] = render_neighbour(model, image, c2w, K)` →
+     `model.pre_backward(step, info)` → `compute_losses` → `loss.backward()` → step every
+     optimizer in `model.optimizers + refine.optimizers` and `zero_grad(set_to_none=True)` →
+     step every scheduler → `model.post_backward(step, info)` → log every `log_every` steps
+     with `type(model).__name__` and `model.n_primitives`.
   3. Finish: if normalised, `denormalize_cameras(cam_to_world, center, scale)`,
-     `model.denormalize(center, scale)`, `corrections.pose.translation.weight /= scale` when a
+     `model.denormalize(center, scale)`, `refine.pose.translation.weight /= scale` when a
      pose module exists; then `write_outputs(...)`.
 - Module docstring: four lines — what the module trains, the two axes
   (`primitive` × `representation`), inputs, outputs. The dated measurements move to the
@@ -168,24 +178,45 @@ lets both representations share one hook.
 ### rendering.py (rendering + outputs)
 
 - Keep `gaussian_normals_in_camera_frame` and `render_gaussians(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, absgrad, render_normals, render_plane)`.
-- `render_all_views(model, corrections, images, cam_to_world, intrinsics, store)` — one loop
-  over views calling `model.render(step=None)` and `corrections.camera`/`colour`. Zarr arrays
-  (`rgb` uint8, `depth`, `normal`, `alpha`, `median_depth` for 2dgs), chunking, `c2w`, `K`,
-  per-frame psnr/ssim, and `n_decoded` are unchanged — `collab_splats/mesh/utils.py` reads
-  this store.
-- `write_outputs(cfg, model, corrections, images, cam_to_world, intrinsics, out_dir, seconds, final_losses)`
-  — ply via `gsplat.export_splats(**model.export_gaussians(...))`; `ckpt.pt` with keys
-  `pose_adjust`, `appearance`, `config` merged over `model.checkpoint()`; zarr attrs
-  and `splats_quality_report.json` schema identical to today.
+- `render_views(model, appearance, cam_to_world, intrinsics, height, width)` — a generator
+  yielding one render dict per view (`rgb`, `depth`, `alpha`, `normal`, `median_depth` for
+  2dgs) from `model.render(step=None)` with the appearance affine applied. Cameras are
+  already pose-corrected. Used at train end for the quality report and by mesh / evals after
+  `load_checkpoint`.
+- `write_outputs(cfg, model, refine, images, image_ids, cam_to_world, intrinsics, out_dir, seconds, final_losses)`
+  — ply via `gsplat.export_splats(**model.export_gaussians(...))`; `ckpt.pt` as below;
+  `splats_quality_report.json` schema identical to today, its per-frame psnr/ssim computed
+  from `render_views` in memory.
+- `load_checkpoint(path, device) -> tuple[model, appearance | None, cam_to_world, intrinsics, image_ids, (height, width)]`
+  — `torch.load`, `SplatsConfig.from_dict(ckpt["config"])`, `Gaussians.from_checkpoint` or
+  `Scaffold.from_checkpoint` by `config["representation"]`, `AppearanceModule` from its state
+  when present.
+
+`ckpt.pt` keys after this change:
+
+| Key | Value |
+|-----|-------|
+| `splats` | `model.params`, cpu tensors |
+| `config` | `SplatsConfig` as a yaml-shaped dict |
+| `cam_to_world` | `(N, 4, 4)` float32, pose-corrected, world units |
+| `intrinsics` | `(N, 3, 3)` float32 |
+| `image_ids` | `list[str]` |
+| `image_size` | `(height, width)` |
+| `appearance` | `AppearanceModule.state_dict()` or `None` |
+| `mlps`, `voxel_size` | scaffold only |
+
+`pose_adjust` is dropped: its deltas are folded into `cam_to_world`, and nothing resumes
+training from a checkpoint.
 
 ### cameras.py (cameras + appearance)
 
 - `rotation_6d_to_matrix`, `CameraOptModule`, `AppearanceModule` unchanged, citations kept.
-- `@dataclass Corrections`: fields `pose: CameraOptModule | None`,
+- `@dataclass PoseAndAppearance`: fields `pose: CameraOptModule | None`,
   `appearance: AppearanceModule | None`, `optimizers: list`, `schedulers: list`. Methods
   `camera(cam_to_world, ids)` (identity passthrough when `pose` is None) and
-  `colour(rgb, ids)` (passthrough when `appearance` is None). Nothing else.
-- `make_corrections(cfg, n_views, world_extent, scene_scale, lr_gamma, device, *, weight_decay=1e-6) -> Corrections`
+  `colour(rgb, ids)` (passthrough when `appearance` is None). Nothing else. It exists to
+  replace eight `if x is not None` sites and four extra function parameters with one object.
+- `PoseAndAppearance.from_config(cfg, n_views, world_extent, scene_scale, lr_gamma, device, *, weight_decay=1e-6)`
   builds the pose module (rotation lr × world_extent, translation lr × scene_scale, Adam with
   `weight_decay`, `ExponentialLR(lr_gamma)`) and the appearance module as today.
 
@@ -213,13 +244,44 @@ one-line pose fix-up in the trainer.
   also sets `render["world_to_cam"]` and `render["intrinsics"]` for the current view as it
   does now.
 
+## Retire splats.zarr
+
+`splats.zarr` stored one render per training view (`rgb`, `depth`, `normal`, `alpha`,
+`median_depth`, `c2w`, `K`) so the mesh stage could fuse without touching the model. The
+checkpoint already holds the model; with cameras added it holds everything the zarr did, and
+rendering 300 views takes seconds on the GPU the splats stage already needs. Two artifacts
+that describe one model is one too many, and the zarr is where a stale render could disagree
+with the checkpoint it came from.
+
+Changes:
+
+- **splats**: `write_outputs` stops writing the store; `ckpt.pt` gains `cam_to_world`,
+  `intrinsics`, `image_ids`, `image_size` and drops `pose_adjust`. `render_views` and
+  `load_checkpoint` (rendering.py) are the public way to get renders back.
+- **mesh** (`collab_splats/mesh/utils.py::_splats_to_tsdf_inputs`): takes the `ckpt.pt` path,
+  calls `load_checkpoint` then `render_views`, and builds the same `(depths, rgbs, c2w, intrinsics)`
+  tuple it builds today, picking `depth` or `median_depth` from each render dict by
+  `mesh.splat_depth` and using render `alpha` where it used the zarr `alpha`. Streams one view
+  at a time; never holds all renders.
+- **reconstructor**: `mesh.source: splats` looks for `splats/ckpt.pt`; the view-count
+  cross-check against `pointcloud.zarr` is deleted (the checkpoint carries its own cameras).
+  `run_splats` returns the checkpoint path where it returned the zarr path.
+- **evals** (`evals/scripts/analyze_splats.py`): `analyze_normals` renders from the checkpoint
+  with the same two calls instead of reading arrays.
+- **docs**: `docs/splats.md` output table; tutorials `03_splats/train_splats.ipynb` and
+  `06_mesh/splats_mesh.ipynb` cells that read or describe the store; `configs/README.md`
+  artifact list.
+- **tests**: see the Tests table.
+
+Not changed: `splats.ply` (external viewers), `splats_quality_report.json`, TSDF fusion itself.
+
 ## Constants rule
 
 - A literal that tunes behaviour is a keyword argument with a default on the function that
   uses it, documented under `Args`. No module-level tunables, no defaults dicts, no registries
   of defaults. Full list: `train(min_points=100, lr_decay=0.01)`;
   `Gaussians(knn=4, adam_eps=1e-15)`; `make_strategy(prune_opa=0.1, prune_scale3d=0.5, refine_scale2d_stop_iter=4000)`;
-  `make_corrections(weight_decay=1e-6)`; `AnchorStrategy.prune(scale_cap=0.05)`;
+  `PoseAndAppearance.from_config(weight_decay=1e-6)`; `AnchorStrategy.prune(scale_cap=0.05)`;
   `select_near_views(theta0=5.0, sigma_below=1.0, sigma_above=10.0)`;
   `plane_depth(min_cosine=1e-4)`; `project(min_depth=1e-6)`; `compute_scene_scale(margin=1.1)`;
   `view_order(seed=42)`; `compute_losses(l1_weight=0.8, ssim_weight=0.2)`.
@@ -248,8 +310,9 @@ asserted was deleted; only imports and file placement move.
 | Today | After |
 |-------|-------|
 | `test_trainer.py` | config/`train` tests stay; scene-scale, normalisation, downscale, sampler, target tests → `test_utils.py`; init, strategy, denormalize tests → `test_gaussian.py` |
-| `test_cameras.py` + `test_appearance.py` | `test_cameras.py` (adds `Corrections` passthrough tests) |
-| `test_outputs.py` + `test_rendering.py` | `test_rendering.py` |
+| `test_cameras.py` + `test_appearance.py` | `test_cameras.py` (adds `PoseAndAppearance` passthrough tests) |
+| `test_outputs.py` + `test_rendering.py` | `test_rendering.py`; zarr-layout tests replaced by ckpt-key and `load_checkpoint` round-trip tests (render from checkpoint matches render from the live model) |
+| `tests/mesh/test_splats_adapter.py` | fixtures write a small `ckpt.pt` instead of a zarr store |
 | `test_scaffold.py` | same file; `_frustum_anchors` tests deleted; visibility tests marked `cuda`; `expon_lr` tests become `LambdaLR` value checks at steps 0, mid, end |
 | `test_losses.py` | same file; validation tests move here from `test_trainer.py` |
 | `test_pgsr.py` | same file; add a `render_neighbour` key/shape test |
@@ -257,7 +320,7 @@ asserted was deleted; only imports and file placement move.
 | `tests/wrapper/*`, `tests/mesh/test_absent_confidence.py` | unchanged (`collab_splats.splats.trainer.train` patch target survives) |
 
 New interface test: one parametrised test builds `Gaussians` and `Scaffold` on the synthetic
-scene and asserts both expose the three attributes and five methods in the interface table.
+scene and asserts both expose the three attributes and six methods in the interface table.
 
 ## Docs and config
 
@@ -271,9 +334,12 @@ scene and asserts both expose the three attributes and five methods in the inter
 
 ## Error handling
 
-Unchanged: every validation error raised today (`ValueError` from `from_dict` /
-`validate_schedule`, point-count and per-view count checks in `train`, coincident cameras in
-`scene_normalization`) is raised with the same message from its new home. No new error paths.
+Every validation error raised today (`ValueError` from `from_dict` / `validate_schedule`,
+point-count and per-view count checks in `train`, coincident cameras in `scene_normalization`)
+is raised with the same message from its new home. Mesh errors move with the artifact: a
+missing `ckpt.pt` raises the "run the splats stage first" `FileNotFoundError`;
+`mesh.splat_depth: median` on a 3dgs checkpoint raises the same `ValueError` as today's
+missing-array check, decided from `config["primitive"]` instead of a zarr key.
 
 ## Verification
 
@@ -296,13 +362,17 @@ Unchanged: every validation error raised today (`ValueError` from `from_dict` /
 5. `pgsr.py` tidy and `render_neighbour`.
 6. Docstring and comment sweep; remaining literals to kwargs.
 7. Tests, `docs/splats.md`, `CLAUDE.md`, `base.yaml` comments, CHANGELOG; graphify update.
+8. Retire `splats.zarr` (section below): ckpt schema, `load_checkpoint`, mesh adapter,
+   reconstructor, `analyze_splats.py`, notebooks, `configs/README.md`, tests.
 
-Parity check (Verification 1) runs after phases 3, 4 and 7.
+Parity check (Verification 1) runs after phases 3, 4, 7 and 8 (phase 8 compares the mesh
+adapter's `(depths, rgbs, c2w, intrinsics)` tuple from the checkpoint against the tuple the
+zarr path produced from the same run, captured before the phase).
 
 ## Out of scope
 
 - Any change to `SplatsConfig` keys, defaults, or the yaml schema.
-- Any change to artifact formats read downstream (`splats.zarr` by `mesh/utils.py`).
+- Any change to `splats.ply` or `splats_quality_report.json`.
 - Tuning: no default changes, no new losses or strategies.
 - `.worktrees/streaming/collab_splats/nerfstudio/` — a different branch, untouched.
 - The other in-flight modules (preproc, semantics, pointcloud) have their own specs.

@@ -1,6 +1,7 @@
 # collab_splats/pointcloud/base.py
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -8,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 import pycolmap
+
+logger = logging.getLogger(__name__)
 
 
 class CoordinateFrame(str, Enum):
@@ -63,6 +66,10 @@ class PointcloudResult:
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         self.reconstruction.export_PLY(path)
+
+        # Three call sites write into two directories — the log is the only record of which
+        # file got how many points.
+        logger.info("wrote %s (%d points)", path, self.reconstruction.num_points3D())
 
     @property
     def points(self) -> np.ndarray:

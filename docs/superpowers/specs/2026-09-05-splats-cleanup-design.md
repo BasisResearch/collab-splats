@@ -29,7 +29,7 @@ Everything else in the package may be renamed or moved.
 | 7 | `losses.py` has `compute_losses` at the bottom, hardcoded l1/ssim weights, stale worktree path in a comment | Reorder: schedule + validation + `compute_losses` on top, loss functions below, registry at bottom |
 | 8 | `cameras.py` (88 lines) and `appearance.py` (28 lines) are both per-camera learned corrections | `AppearanceModule` moves into `cameras.py`; `appearance.py` deleted |
 | 9 | `rendering.py` and `outputs.py` split one concern (render a view / render all views and write) and `outputs.py` repeats the vanilla-vs-scaffold render branch | Merge into `rendering.py`; the model interface removes the branch |
-| 10 | `scaffold.py` inherits gsplat `Strategy` for nothing, carries a `verbose` flag, a CPU frustum fallback, its own lr-schedule code, and leaks `log_scales`/`visible_ids` through the render dict | Drop base class, flag, fallback, custom schedule; stash regulariser inputs inside `Scaffold.render` |
+| 10 | `scaffold.py` inherits gsplat `Strategy` for nothing, carries a `verbose` flag, a CPU frustum fallback, a passed-around `state` dict, its own lr-schedule code, and leaks `log_scales`/`visible_ids` through the render dict | Drop base class, flag, fallback, state dict, custom schedule; `Scaffold.render` puts regulariser inputs in `render` and densifier inputs in `info` |
 
 ## File layout
 
@@ -62,27 +62,27 @@ No base class; the trainer calls them identically and tests assert the interface
 params: torch.nn.ParameterDict        # tensors densification grows/prunes; saved as ckpt["splats"]
 optimizers: list[torch.optim.Optimizer]
 schedulers: list[torch.optim.lr_scheduler.LRScheduler]
-unit: str                             # "gaussians" | "anchors", for the log line
 n_primitives: int                     # len(params["means"]) | len(params["anchors"])
 
 def render(self, cam_to_world, intrinsics, width, height, camera_id, step=None,
            render_normals=True, render_plane=False) -> tuple[dict, dict]
-def pre_backward(self, step, info) -> None
 def post_backward(self, step, info) -> None
 def denormalize(self, center, scale) -> None
 def export_gaussians(self, cam_to_world, intrinsics) -> dict
-def checkpoint_extras(self) -> dict
+def checkpoint(self) -> dict
 ```
+
+Five methods, three attributes. `render` returns gsplat's `info` dict with any gradient the
+densifier needs already retained, so there is no pre-backward hook.
 
 | Method | Gaussians | Scaffold |
 |--------|-----------|----------|
 | `__init__(cfg, points, colors, scene_scale, n_views, device, *, knn=4, adam_eps=1e-15, lr_decay=0.01)` | kNN log-scales, SH DC colour, random quats, `logit(init_opacity)`; one Adam per tensor; means lr × scene_scale with `ExponentialLR(gamma=lr_decay ** (1/max_steps))`; `make_strategy(cfg, n_views, *, prune_opa=0.1, prune_scale3d=0.5, refine_scale2d_stop_iter=4000)` | voxelise seed points, anchors/offsets/feat/scaling/rotation, per-tensor Adams, MLP heads; every group's schedule is a `LambdaLR` lambda `lr_final/lr_init ** min(step/lr_max_steps, 1)` (replaces `expon_lr`, `lr_schedule`, `update_learning_rate`); `knn`/`adam_eps`/`lr_decay` are not taken — ScaffoldConfig owns its rates |
-| `render(...)` | activate params; `sh_degree = min(step // sh_degree_interval, sh_degree)`, `None` → full degree; `absgrad` from strategy | decode visible anchors through MLPs, render with `sh_degree=None`; writes `render["log_scales"]` and `render["opacities"]` for the regularisers; keeps `decode_index`, `visible_ids`, decoded opacities on `self` for `post_backward`; `step` ignored |
-| `pre_backward(step, info)` | `strategy.step_pre_backward(...)` (DefaultStrategy retains the 2D-means gradient; MCMC no-op) | `info[key_for_gradient].retain_grad()` |
-| `post_backward(step, info)` | `strategy.step_post_backward(...)`, passing `lr=` the current means lr for MCMC, `packed=False` for Default | `strategy.accumulate(...)` if inside the statistics window, then `strategy.refine(step)` (today's `step_post_backward`) |
+| `render(...)` | activate params; `sh_degree = min(step // sh_degree_interval, sh_degree)`, `None` → full degree; `absgrad` from strategy; DefaultStrategy: `info["gradient_2dgs"].retain_grad()` before returning | decode visible anchors through MLPs, render with `sh_degree=None`; writes `render["log_scales"]` and `render["opacities"]` for the regularisers; adds `decode_index`, `visible_ids`, `opacities` to `info` and retains the grad on `info[key_for_gradient]`; `step` ignored |
+| `post_backward(step, info)` | `strategy.step_post_backward(...)`, passing `lr=` the current means lr for MCMC, `packed=False` for Default | `strategy.accumulate(info)` (returns early outside the statistics window), then `strategy.refine(self, step)` (today's `step_post_backward`) |
 | `denormalize(center, scale)` | `means / scale + center`, `scales -= log(scale)` | `anchors / scale + center`, `scaling -= log(scale)`; offsets are scale-free |
 | `export_gaussians(cam_to_world, intrinsics)` | returns `params` (arguments unused) | today's `bake_anchor_gaussians`: decode under the mean observed view direction, unseen anchors from the nearest camera |
-| `checkpoint_extras()` | `{}` | `{"mlps": state_dict, "voxel_size": float}` |
+| `checkpoint()` | `{"splats": params}` | `{"splats": params, "mlps": state_dict, "voxel_size": float}` |
 
 **Ordering note for Scaffold.** Today `accumulate` runs between `backward()` and the optimizer
 step, behind a comment saying the optimizers would zero the gradient. They would not: it reads
@@ -104,14 +104,15 @@ lets both representations share one hook.
      (3-line dict update, inline as today); `model = Gaussians(...)` or `Scaffold(...)`;
      `corrections = make_corrections(...)`; `near_ids = select_near_views(...)` when a PGSR
      loss is active (3dgs only, validated in losses).
-  2. Loop per step: `ViewSampler` → `downscale_factor` / `downscale_view` / `prepare_target` →
+  2. Loop per step: `next(views)` → `downscale_factor` / `downscale_view` / `prepare_target` →
      `c2w = corrections.camera(cam_to_world[id], id)` → `render, info = model.render(...)` →
      `render["rgb"] = corrections.colour(render["rgb"], id)` and `render["appearance"]` when
-     appearance is on → random-background composite → `render["pgsr_neighbour"] =
-     render_neighbour(...)` when PGSR is active → `model.pre_backward` → `compute_losses` →
+     appearance is on → random-background composite → when PGSR is active, downscale and
+     pose-correct the neighbour view with the same two calls and set
+     `render["pgsr_neighbour"] = render_neighbour(model, image, c2w, K)` → `compute_losses` →
      `loss.backward()` → step every optimizer in `model.optimizers + corrections.optimizers`
-     and `zero_grad(set_to_none=True)` → step every scheduler → `model.post_backward` → log
-     every `log_every` steps using `model.unit` / `model.n_primitives`.
+     and `zero_grad(set_to_none=True)` → step every scheduler → `model.post_backward(step, info)`
+     → log every `log_every` steps with `type(model).__name__` and `model.n_primitives`.
   3. Finish: if normalised, `denormalize_cameras(cam_to_world, center, scale)`,
      `model.denormalize(center, scale)`, `corrections.pose.translation.weight /= scale` when a
      pose module exists; then `write_outputs(...)`.
@@ -137,11 +138,14 @@ lets both representations share one hook.
 - `Scaffold` (renamed from `AnchorField`) gains the interface methods above.
   `visible_anchors` uses `fully_fused_projection` only; `_frustum_anchors` is deleted and the
   tests that exercised the CPU path are marked `cuda`.
-- `AnchorStrategy` no longer subclasses gsplat `Strategy` and drops `verbose`. Methods:
-  `initialize_state`, `should_accumulate`, `accumulate`, `refine(step)` (grow + prune on the
-  refine cadence), `grow`, `prune(*, scale_cap=0.05)`, `_candidate_cells`, `_append_anchors`.
-  `grow` is split into `_candidate_cells` (per-level voxel candidates not already occupied)
-  and `_append_anchors`; numerics unchanged.
+- `AnchorStrategy` no longer subclasses gsplat `Strategy` and drops `verbose`. With no base
+  class there is no reason to pass a `state` dict around: the strategy owns its accumulators
+  (`grad_accum`, `denom`, `opacity_accum`, `visit_count`) as attributes, so `initialize_state`
+  and `should_accumulate` are deleted (the window check is an early return in `accumulate`).
+  Methods: `accumulate(info)`, `refine(scaffold, step)` (grow + prune on the refine cadence),
+  `grow`, `prune(*, scale_cap=0.05)`, `_candidate_cells`, `_append_anchors`. `grow` is split
+  into `_candidate_cells` (per-level voxel candidates not already occupied) and
+  `_append_anchors`; numerics unchanged.
 - `Scaffold.export_gaussians` is today's `outputs.bake_anchor_gaussians`.
 
 ### losses.py (top to bottom)
@@ -171,7 +175,7 @@ lets both representations share one hook.
   this store.
 - `write_outputs(cfg, model, corrections, images, cam_to_world, intrinsics, out_dir, seconds, final_losses)`
   — ply via `gsplat.export_splats(**model.export_gaussians(...))`; `ckpt.pt` with keys
-  `splats`, `pose_adjust`, `appearance`, `config` plus `model.checkpoint_extras()`; zarr attrs
+  `pose_adjust`, `appearance`, `config` merged over `model.checkpoint()`; zarr attrs
   and `splats_quality_report.json` schema identical to today.
 
 ### cameras.py (cameras + appearance)
@@ -190,7 +194,9 @@ lets both representations share one hook.
 `compute_scene_scale(cam_to_world, *, margin=1.1)`, `scene_normalization(cam_to_world)`,
 `denormalize_cameras(cam_to_world, center, scale)`, `downscale_factor(step, num_downscales, resolution_schedule)`,
 `downscale_view(image, intrinsics, factor)`, `prepare_target(image, depth, device)`,
-`ViewSampler(n_views, *, seed=42)`. All moved from trainer.py; `denormalize_outputs` and
+`view_order(n_views, *, seed=42)` — a generator replacing the `ViewSampler` class: shuffle
+`range(n_views)` with `random.Random(seed)`, `yield from reversed(order)`, repeat; the
+sequence is identical to today's shuffle-and-pop. All moved from trainer.py; `denormalize_outputs` and
 `denormalize_anchors` are replaced by `denormalize_cameras` + `model.denormalize` + the
 one-line pose fix-up in the trainer.
 
@@ -201,10 +207,11 @@ one-line pose fix-up in the trainer.
   `plane_depth(..., *, min_cosine=1e-4)`, `project(..., *, min_depth=1e-6)`.
 - `pixel_rays` builds on `pixel_grid`; `_normalise_pixels` is inlined into `sample_at_pixels`
   so one function normalises pixel coordinates.
-- New `render_neighbour(model, corrections, images, view_id, cam_to_world, intrinsics, factor, step) -> dict`
-  returning `{"plane_depth", "gray", "world_to_cam", "intrinsics"}` — today's ~50-line block
-  in the trainer loop. The trainer also sets `render["world_to_cam"]` and
-  `render["intrinsics"]` for the current view as it does now.
+- New `render_neighbour(model, image, cam_to_world, intrinsics) -> dict` returning
+  `{"plane_depth", "gray", "world_to_cam", "intrinsics"}` for one already-downscaled,
+  pose-corrected neighbour view — today's ~50-line block in the trainer loop. The trainer
+  also sets `render["world_to_cam"]` and `render["intrinsics"]` for the current view as it
+  does now.
 
 ## Constants rule
 
@@ -215,7 +222,7 @@ one-line pose fix-up in the trainer.
   `make_corrections(weight_decay=1e-6)`; `AnchorStrategy.prune(scale_cap=0.05)`;
   `select_near_views(theta0=5.0, sigma_below=1.0, sigma_above=10.0)`;
   `plane_depth(min_cosine=1e-4)`; `project(min_depth=1e-6)`; `compute_scene_scale(margin=1.1)`;
-  `ViewSampler(seed=42)`; `compute_losses(l1_weight=0.8, ssim_weight=0.2)`.
+  `view_order(seed=42)`; `compute_losses(l1_weight=0.8, ssim_weight=0.2)`.
 - Mathematical facts stay named at module top and are derived, not typed: `SH_C0`. `VIEW_DIM`
   is deleted (it is the size of an xyz vector, inlined with a comment).
 - `SplatsConfig` and `configs/base.yaml` gain no new keys.
@@ -250,7 +257,7 @@ asserted was deleted; only imports and file placement move.
 | `tests/wrapper/*`, `tests/mesh/test_absent_confidence.py` | unchanged (`collab_splats.splats.trainer.train` patch target survives) |
 
 New interface test: one parametrised test builds `Gaussians` and `Scaffold` on the synthetic
-scene and asserts both expose every attribute and method in the interface table.
+scene and asserts both expose the three attributes and five methods in the interface table.
 
 ## Docs and config
 

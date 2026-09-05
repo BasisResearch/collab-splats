@@ -96,7 +96,11 @@ def test_extract_feature_cache_feature_shape():
         cache_dir = Path(tmp) / "cache"
         result = extract_feature_cache(extractor, frames_zarr, cache_dir)
         store = zarr.open(str(result), mode="r")
-        assert store["features"].shape[0] == 3
+        N, D, H_p, W_p = store["features"].shape
+        assert N == 3
+        assert D == extractor._D
+        assert H_p == extractor._H_p
+        assert W_p == extractor._W_p
         assert store.attrs["extractor"] == "_test_extractor"
         assert store.attrs["n_frames"] == 3
         assert store.attrs["patch_size"] == 16

@@ -64,7 +64,6 @@ from collab_splats.utils.torch_utils import (  # noqa: E402,F401
     pytorch_gc,
 )
 
-
 ########################################################
 ########## Contrastive scoring #########################
 ########################################################
@@ -113,12 +112,9 @@ def compute_semantic_contrast(
             scores.append(stacked.div(temperature).softmax(dim=0)[0])
         return torch.stack(scores).max(dim=0).values
 
-    if reduction == "pool":
-        avg_pos = pos.mean(dim=0, keepdim=True)
-        stacked = torch.cat([avg_pos, neg], dim=0)
-        return stacked.div(temperature).softmax(dim=0)[0]
-
-    raise ValueError(f"Unknown reduction '{reduction}'. Choose 'max' or 'pool'.")
+    avg_pos = pos.mean(dim=0, keepdim=True)
+    stacked = torch.cat([avg_pos, neg], dim=0)
+    return stacked.div(temperature).softmax(dim=0)[0]
 
 
 ########################################################################
@@ -126,15 +122,12 @@ def compute_semantic_contrast(
 ########################################################################
 
 
-def _tokens_to_feature_map(
-    tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int
-) -> torch.Tensor:
+def _tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int) -> torch.Tensor:
     """Reshape (N, D) patch tokens to (D, H_p, W_p), L2-normalized along channel dim."""
     ph = input_h // patch_size
     pw = input_w // patch_size
     assert tokens.shape[0] == ph * pw, (
-        f"Expected {ph * pw} tokens for {input_h}x{input_w} "
-        f"(patch_size={patch_size}), got {tokens.shape[0]}"
+        f"Expected {ph * pw} tokens for {input_h}x{input_w} " f"(patch_size={patch_size}), got {tokens.shape[0]}"
     )
     feat = tokens.reshape(ph, pw, -1).permute(2, 0, 1)  # (D, H_p, W_p)
     return F.normalize(feat, dim=0)
@@ -145,9 +138,7 @@ def _tokens_to_feature_map(
 ########################################################
 
 
-def interpolate_to_patch_size(
-    img_bchw: torch.Tensor, patch_size: int
-) -> Tuple[torch.Tensor, int, int]:
+def interpolate_to_patch_size(img_bchw: torch.Tensor, patch_size: int) -> Tuple[torch.Tensor, int, int]:
     """Interpolate image tensor so H and W are evenly divisible by patch_size.
 
     Args:
@@ -160,9 +151,7 @@ def interpolate_to_patch_size(
     _, _, H, W = img_bchw.shape
     target_H = H // patch_size * patch_size
     target_W = W // patch_size * patch_size
-    img_bchw = F.interpolate(
-        img_bchw, size=(target_H, target_W), mode="bilinear", align_corners=False
-    )
+    img_bchw = F.interpolate(img_bchw, size=(target_H, target_W), mode="bilinear", align_corners=False)
     return img_bchw, target_H, target_W
 
 

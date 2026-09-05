@@ -30,6 +30,40 @@ class PointcloudResult:
     confidence: np.ndarray | None = None  # (P,) float32 — feedforward per-point
     world_transform: np.ndarray | None = None  # (3, 4) applied COLMAP→nerfstudio axis swap
 
+    @classmethod
+    def from_colmap(cls, colmap_dir: Path, image_paths: list[Path]) -> "PointcloudResult":
+        """
+        Load a written COLMAP model from ``<colmap_dir>/sparse/0`` in the caller's frame order.
+
+        - ``image_paths`` is the canonical ordering; every entry must be registered in the model.
+        - Names are matched on ``Path.name``, the same key ``extrinsics``/``intrinsics`` use.
+        """
+        sparse_dir = Path(colmap_dir) / "sparse" / "0"
+        recon = pycolmap.Reconstruction()
+        recon.read(str(sparse_dir))
+
+        # The frame-store naming is a contract nothing enforces at write time. Check it here:
+        # unchecked, a mismatch surfaces as a bare KeyError from .extrinsics several frames into
+        # a downstream stage, saying nothing about which two artifacts disagree.
+        registered = {img.name for img in recon.images.values()}
+        missing = [p.name for p in image_paths if p.name not in registered]
+        if missing:
+            raise ValueError(
+                f"{len(missing)} of {len(image_paths)} requested frames are not registered in "
+                f"{sparse_dir} (first: {missing[0]}); the frame store and the reconstruction "
+                f"describe different runs."
+            )
+
+        return cls(reconstruction=recon, frame=CoordinateFrame.COLMAP, image_paths=list(image_paths))
+
+    def write_ply(self, path: Path) -> None:
+        """
+        Write the binary little-endian sparse_pc.ply for this reconstruction's point set.
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.reconstruction.export_PLY(str(path))
+
     @property
     def points(self) -> np.ndarray:
         """(P, 3) float32 world XYZ of the tracked sparse point set, ordered by point3D_id.

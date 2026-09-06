@@ -1,17 +1,16 @@
-"""Base classes and shared constants for feature extractors.
+"""
+Base classes and shared constants for feature extractors.
 
 Provides:
   BaseFeatureExtractor     — abstract registry-based extractor with caching and debiasing
   BaseQueryableExtractor   — extends base with text-query scoring
-  TORCH_HOME               — resolved torch cache directory
   _DEBIAS_VALIDATED        — set of extractor class names with validated debiasing
 """
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -19,18 +18,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
 from PIL import Image
-from transformers import AutoModel
 
-from collab_splats.semantics.utils import (
-    compute_semantic_contrast,
-    get_device,
-    interpolate_to_patch_size,
-)
+from collab_splats.semantics.utils import compute_semantic_contrast
 from collab_splats.utils.image import open_image, resize_image
 from collab_splats.utils.torch_utils import RegistryMixin
-
-# TORCH_HOME: respects $TORCH_HOME env var, falls back to ~/.cache/torch (torch default)
-TORCH_HOME = os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +37,14 @@ _DEBIAS_VALIDATED: frozenset = frozenset({"DINOFeatureExtractor", "Talk2DinoExtr
 
 
 class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
-    """Abstract base for image feature extractors with a name-based registry.
+    """
+    Abstract base for image feature extractors with a name-based registry.
 
-    Register subclasses via ``@BaseFeatureExtractor.register("name")``.
-    Retrieve with ``BaseFeatureExtractor.get("name")``.
+    - Register subclasses via `@BaseFeatureExtractor.register("name")`, retrieve with `.get("name")`.
+    - Subclasses set `self._normalize` and `self.patch_size`; `preprocess` is shared.
     """
 
     _registry: Dict[str, type["BaseFeatureExtractor"]] = {}
-    _FALLBACK_MEM_GB: float = 2.0
 
     def __init__(self, resize_mode: str, image_resolution: int, svd_components: int = 500) -> None:
         """
@@ -80,7 +71,15 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
     @abstractmethod
     def forward(self, images: list) -> list[torch.Tensor]:
-        """Preprocess, run inference, reshape. Returns one feature tensor per image."""
+        """
+        Preprocess, run inference, and reshape to patch grids.
+
+        Args:
+            images: anything `open_image` accepts, one entry per frame.
+
+        Returns:
+            One (D, H_p, W_p) tensor per image, on CPU.
+        """
         ...
 
     def preprocess(self, image: Union[str, Path, np.ndarray, Image.Image]) -> torch.Tensor:
@@ -116,7 +115,15 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
     @property
     def name(self) -> str:
-        """Registry key for this extractor — reverses the _registry dict lookup."""
+        """
+        Registry key this extractor was registered under.
+
+        Returns:
+            The key string — also the stem of its `.zarr` cache.
+
+        Raises:
+            AttributeError: if the class was never registered.
+        """
         # Walk the registry to find the key that maps to this concrete class
         for key, cls in self._registry.items():
             if cls is type(self):
@@ -127,13 +134,14 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
     @staticmethod
     def features_to_rgb(feat: "torch.Tensor") -> "np.ndarray":
-        """Project a feature map onto its top-3 PCs to produce an RGB display image.
+        """
+        Project a feature map onto its top-3 PCs for display.
 
         Args:
-            feat: (D, H_p, W_p) float tensor — output of forward() for one frame.
+            feat: (D, H_p, W_p) float tensor — one frame's output from forward().
 
         Returns:
-            np.ndarray of shape (H_p, W_p, 3) dtype uint8.
+            (H_p, W_p, 3) uint8 ndarray. All-zero when the features have no variance.
         """
         D, H_p, W_p = feat.shape
         E = feat.reshape(D, -1).T.float()  # (N, D) where N = H_p * W_p
@@ -146,7 +154,8 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         return (rgb.reshape(H_p, W_p, 3) * 255).astype(np.uint8)
 
     def _build_positional_basis(self, H_p: int, W_p: int) -> None:
-        """Estimate the positional subspace from a zero-pixel image using SVD (INSID3 algorithm).
+        """
+        Estimate the positional subspace from a zero-pixel image using SVD (INSID3 algorithm).
 
         A black (zero-pixel) image, after each extractor's own normalization, produces features
         driven entirely by the model's positional embeddings — no semantic content to interfere.
@@ -207,7 +216,8 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         self._pos_basis_cache[(H_p, W_p)] = U[:, : self.svd_components].contiguous()  # (D, K)
 
     def _apply_debias(self, fmap: torch.Tensor) -> torch.Tensor:
-        """Project fmap onto the orthogonal complement of the positional subspace.
+        """
+        Project fmap onto the orthogonal complement of the positional subspace.
 
         Removes the positional component from each patch feature vector, then re-normalizes
         L2 so downstream cosine-similarity comparisons remain well-defined.
@@ -235,7 +245,8 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         return X_deb.reshape(D, H_p, W_p)  # restore spatial layout
 
     def get_bias_visualization(self, H_p: int, W_p: int) -> "np.ndarray":
-        """Return an RGB heatmap of the positional bias at a given patch grid resolution.
+        """
+        Return an RGB heatmap of the positional bias at a given patch grid resolution.
 
         Uses PCA (via SVD, no sklearn required) to project the zero-image features onto the
         top 3 principal components, producing an image where color encodes the dominant axes
@@ -280,7 +291,8 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         return (rgb.reshape(H_p, W_p, 3) * 255).astype(np.uint8)  # scale to uint8 RGB for display
 
     def debias(self, features: list[torch.Tensor]) -> list[torch.Tensor]:
-        """Remove positional bias from extracted patch features using SVD projection (INSID3 algorithm).
+        """
+        Remove positional bias from extracted patch features using SVD projection (INSID3 algorithm).
 
         Operates on features already returned by forward(). Builds and caches the positional
         basis from a zero-pixel image (using this extractor's own forward()) on first call at
@@ -314,25 +326,24 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
 
 class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
-    """Abstract base for feature extractors that support text-conditioned similarity queries.
+    """
+    Feature extractor that also embeds text, for cosine queries against patch features.
 
-    Subclasses must implement encode_text() and forward(). compute_similarity()
-    and score_queries() are provided here and shared across all queryable extractors.
-    All subclasses accept model_name as the first __init__ parameter.
+    - Subclasses implement `encode_text` and `forward`; `compute_similarity` and
+      `score_queries` are shared.
+    - All subclasses take `model_name` as their first constructor parameter.
     """
 
     @abstractmethod
     def encode_text(self, texts: List[str]) -> torch.Tensor:
-        """Return normalized text embeddings of shape (N, D)."""
-        ...
+        """
+        Embed text into the same space as the patch features.
 
-    @abstractmethod
-    def forward(self, images: list) -> list:
-        """Preprocess, run inference, reshape. Returns one (C, H, W) feature tensor per image.
+        Args:
+            texts: query strings.
 
-        Subclasses may accept additional optional keyword arguments (e.g., resolution)
-        as extensions of this contract. Callers using the base type receive the standard
-        no-kwarg interface; callers with concrete type access extensions directly.
+        Returns:
+            (N, D) L2-normalized embeddings.
         """
         ...
 
@@ -341,7 +352,8 @@ class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
         features: torch.Tensor,
         queries: List[str],
     ) -> torch.Tensor:
-        """Raw cosine similarities between features and text queries.
+        """
+        Raw cosine similarities between features and text queries.
 
         Args:
             features: (C, H, W) patch feature map, or (P, D) point feature array.
@@ -368,7 +380,8 @@ class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
         temperature: float = 0.05,
         reduction: str = "max",
     ) -> torch.Tensor:
-        """Score positive queries against negative queries using contrastive softmax.
+        """
+        Score positive queries against negative queries using contrastive softmax.
 
         Args:
             features: (C, H, W) patch feature map, or (P, D) point feature array.
@@ -378,7 +391,7 @@ class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
                 used. Pass [] to skip contrast and return raw cosine similarities directly
                 (not recommended for visualization).
             temperature: Softmax temperature. Lower = sharper. Defaults to 0.05.
-            reduction: How to reduce across positive queries. "max" or "mean". Defaults to "max".
+            reduction: How to reduce across positive queries. "max" or "pool". Defaults to "max".
 
         Returns:
             (H, W) score map in [0, 1] when input is (C, H, W).

@@ -6,7 +6,11 @@ import torch
 import zarr
 
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.utils import find_lifted_extractor, write_point_features
+from collab_splats.semantics.utils import (
+    find_lifted_extractor,
+    lifted_store_path,
+    write_point_features,
+)
 
 
 def test_load_features_and_decode_round_trip(tmp_path):
@@ -76,10 +80,6 @@ def test_write_point_features_leaves_no_orphan_codes_when_weights_fail(tmp_path,
 
 
 def test_write_point_features_returns_the_lifted_store_path(tmp_path):
-    import numpy as np
-
-    from collab_splats.semantics.utils import lifted_store_path
-
     out = write_point_features(tmp_path, "talk2dino", np.zeros((4, 8), dtype=np.float32))
     assert out == lifted_store_path(tmp_path, "talk2dino")
     assert out.exists()

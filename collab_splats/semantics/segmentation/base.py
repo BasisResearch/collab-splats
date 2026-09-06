@@ -1,4 +1,5 @@
-"""Base class and mask utilities for segmentation backends.
+"""
+Base class and mask utilities for segmentation backends.
 
 Provides:
   BaseSegmentation         — abstract registry-based segmentation interface
@@ -30,27 +31,39 @@ logger = logging.getLogger(__name__)
 
 
 class BaseSegmentation(RegistryMixin, ABC):
-    """Abstract base for segmentation backends with name-based registry.
+    """
+    Abstract base for segmentation backends with a name-based registry.
 
-    Register subclasses via ``@BaseSegmentation.register("name")``.
-    Retrieve with ``BaseSegmentation.get("name")``.
+    Register subclasses via `@BaseSegmentation.register("name")`, retrieve with `.get("name")`.
     """
 
     _registry: dict[str, type["BaseSegmentation"]] = {}
 
     @abstractmethod
-    def segment(self, image) -> tuple[torch.Tensor, Any]:
-        """Class-agnostic segmentation. Returns (masks, metadata)."""
+    def segment(self, image) -> tuple[torch.Tensor, Any] | None:
+        """
+        Class-agnostic segmentation with no prompt.
 
-    def segment_with_text(
-        self,
-        image,
-        prompt: str,
-        confidence_threshold: float = 0.5,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Text-prompted segmentation → (masks, boxes, scores).
+        Args:
+            image: (H, W, 3) uint8 array or PIL Image, per backend.
 
-        Raises NotImplementedError for backends that don't support text prompts.
+        Returns:
+            (masks, metadata) — masks rank and dtype are backend-specific: (H, W) bool
+            for insid3, (N, H, W) float32 for mobilesamv2, (N, 1, H, W) float32 for
+            sam3, and mobilesamv2 returns None outright when nothing is detected.
+            metadata is backend-specific.
+        """
+
+    def segment_with_text(self, image, prompt: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Text-prompted segmentation → (masks, boxes, scores).
+
+        Args:
+            image: PIL Image.
+            prompt: text prompt.
+
+        Raises:
+            NotImplementedError: for backends without text prompts.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support text-prompted segmentation. "
@@ -64,7 +77,8 @@ class BaseSegmentation(RegistryMixin, ABC):
 
 
 def create_patch_mask(image, num_patches: int = 32):
-    """Divide image into a spatial patch grid; return boolean occupancy tensor.
+    """
+    Divide image into a spatial patch grid; return boolean occupancy tensor.
 
     Args:
         image: Array of shape (H, W, ...) — only H and W are used.
@@ -96,7 +110,8 @@ def create_patch_mask(image, num_patches: int = 32):
 
 
 def create_composite_mask(results, confidence_threshold=0.85):
-    """Merge SAM segment results into a single (H, W) uint8 mask with integer IDs.
+    """
+    Merge SAM segment results into a single (H, W) uint16 mask with integer IDs.
 
     Args:
         results: List of dicts from a SAM mask generator; each must have
@@ -104,7 +119,9 @@ def create_composite_mask(results, confidence_threshold=0.85):
         confidence_threshold: Masks with iou below this value are discarded.
 
     Returns:
-        (H, W) uint8 array — pixel value is the mask ID (1-indexed); 0 = background.
+        (H, W) uint16 array — pixel value is the mask ID (1-indexed); 0 = background.
+        uint16 preserves IDs > 255: SAM's 32x32 point grid routinely clears 256 proposals,
+        and numpy>=2 raises OverflowError on the 256th rather than wrapping around.
     """
     selected_masks = []
     for mask in results:
@@ -113,36 +130,42 @@ def create_composite_mask(results, confidence_threshold=0.85):
         selected_masks.append((mask["segmentation"], mask["predicted_iou"]))
 
     if not selected_masks:
-        return np.zeros_like(results[0]["segmentation"], dtype=np.uint8) if results else np.zeros((0, 0), dtype=np.uint8)
+        return (
+            np.zeros_like(results[0]["segmentation"], dtype=np.uint16) if results else np.zeros((0, 0), dtype=np.uint16)
+        )
     masks, confs = zip(*selected_masks)
 
     H, W = masks[0].shape[:2]
-    mask_id = np.zeros((H, W), dtype=np.uint8)
+    mask_id = np.zeros((H, W), dtype=np.uint16)
 
     sorted_idxs = np.argsort(confs)
     for i, idx in enumerate(sorted_idxs, start=1):
-        current_mask = masks[idx - 1]
+        current_mask = masks[idx]
         mask_id[current_mask == 1] = i
 
     mask_indices = np.unique(mask_id)
     mask_indices = np.setdiff1d(mask_indices, [0])
 
-    composite_mask = np.zeros((H, W), dtype=np.uint8)
+    composite_mask = np.zeros((H, W), dtype=np.uint16)
 
     for i, idx in enumerate(mask_indices, start=1):
         mask = mask_id == idx
         logger.debug("Mask %d has %d pixels", i, mask.sum())
-        if mask.sum() > 0 and (mask.sum() / masks[idx - 1].sum()) > 0.1:
+
+        # Paint ID `idx` was written from masks[sorted_idxs[idx - 1]] — not masks[idx - 1],
+        # which is a different mask whenever the confidences are not already ascending.
+        if mask.sum() > 0 and (mask.sum() / masks[sorted_idxs[idx - 1]].sum()) > 0.1:
             composite_mask[mask] = i
 
     return composite_mask
 
 
 def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
-    """Expand an integer-ID mask to a (N, H, W) boolean array.
+    """
+    Expand an integer-ID mask to a (N, H, W) boolean array.
 
     Args:
-        composite_mask: (H, W) uint8 array where each unique positive integer
+        composite_mask: (H, W) uint16 array where each unique positive integer
                         represents a separate object mask.
 
     Returns:
@@ -155,7 +178,8 @@ def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
 
 
 def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
-    """Remap sequential mask IDs to matched label IDs.
+    """
+    Remap sequential mask IDs to matched label IDs.
 
     Args:
         labels: (N,) tensor of matched labels, one per mask ID.
@@ -185,7 +209,8 @@ def aggregate_masked_features(
     resolution: Tuple[int, int],
     final_resolution: Tuple[int, int],
 ) -> torch.Tensor:
-    """Pool image features per segment mask and return a spatial feature map.
+    """
+    Pool image features per segment mask and return a spatial feature map.
 
     Args:
         features: (C, H, W) image feature tensor.

@@ -27,11 +27,11 @@ from .utils import (
     compute_semantic_contrast,
     extract_feature_cache,
     find_lifted_extractor,
-    interpolate_to_patch_size,
     lifted_store_path,
     load_feature_maps,
     load_point_features,
     point_features_cached,
+    tokens_to_feature_map,
     write_point_features,
 )
 
@@ -46,7 +46,7 @@ __all__ = [
     "Talk2DinoExtractor",
     # semantic helpers + artifact layout
     "compute_semantic_contrast",
-    "interpolate_to_patch_size",
+    "tokens_to_feature_map",
     "cache_store_path",
     "extract_feature_cache",
     "load_feature_maps",

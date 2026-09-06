@@ -37,7 +37,7 @@ def lift_point_features(result, semantics_dir) -> np.ndarray:
     features (no autoencoder involved), directly comparable to text embeddings.
     """
     # Lazy import: pointcloud.utils pulls the heavy feedforward stack, and semantics.utils
-    # runs semantics/__init__, which pulls the extractors and SAM (~20s of the app's import).
+    # runs semantics/__init__, which pulls the extractors and SAM (~10s warm, measured).
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.pointcloud.utils import lift_features
     from collab_splats.semantics.utils import cache_store_path, load_feature_maps
@@ -69,7 +69,7 @@ def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None)
     query path, not a 100-epoch stall — a 768->64 fit normally reaches 0.95 in a few epochs.
     """
     # Lazy import: dashboard.pipeline pulls the feedforward stack at module import, and
-    # semantics.* runs semantics/__init__, which pulls the extractors and SAM (~20s).
+    # semantics.* runs semantics/__init__, which pulls the extractors and SAM (~10s warm, measured).
     from collab_splats.dashboard.pipeline import resolve_latent_dim, semantics_ae_policy
     from collab_splats.semantics.compression import FeatureAutoencoder
     from collab_splats.semantics.utils import cache_store_path, write_point_features

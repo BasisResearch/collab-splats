@@ -9,7 +9,8 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from transformers import AutoModel
 
-from collab_splats.semantics.utils import _tokens_to_feature_map, get_device
+from collab_splats.semantics.utils import tokens_to_feature_map
+from collab_splats.utils.torch_utils import get_device
 
 from .base import BaseQueryableExtractor
 
@@ -88,7 +89,7 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         results = []
         for i, t in enumerate(preprocessed):
             _, H, W = t.shape
-            results.append(_tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size))
+            results.append(tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size))
         return results
 
     def encode_text(self, texts: List[str]) -> torch.Tensor:

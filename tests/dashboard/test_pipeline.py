@@ -13,7 +13,7 @@ import zarr
 from collab_splats.dashboard import pipeline as pl
 from collab_splats.dashboard.config import RunConfig
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.utils import ae_path, write_point_features
+from collab_splats.semantics.utils import write_point_features
 
 
 def _fake_frames(n=3):
@@ -207,38 +207,6 @@ def test_lift_and_compress_caches_latent_codes_not_decoded(tmp_path):
     assert pl.load_point_features(sem_dir).shape == (8, 80)
 
 
-def test_load_point_features_full_dim_pair_needs_no_weights(tmp_path):
-    """semantics.n_components: null writes full-dim codes and no autoencoder — still readable."""
-    feats = np.random.default_rng(0).random((6, 5), dtype=np.float32)
-    write_point_features(tmp_path, "talk2dino", feats)  # ae=None -> uncompressed
-
-    assert not (tmp_path / "talk2dino_ae.pt").exists()
-    assert pl.point_features_cached(tmp_path)
-    out = pl.load_point_features(tmp_path)
-    # Returned as-is apart from the L2 normalization every consumer expects
-    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-6)
-
-
-def test_load_point_features_rejects_latent_codes_without_weights(tmp_path):
-    """Half-written pair (codes, no weights): raise, never hand back undecoded codes."""
-    _write_semantics(tmp_path, n_points=4, latent=2, input_dim=5)
-    (tmp_path / "talk2dino_ae.pt").unlink()  # crash between the two writes
-
-    assert not pl.point_features_cached(tmp_path)  # -> caller re-lifts instead of getting stuck
-    with pytest.raises(FileNotFoundError, match="re-lift"):
-        pl.load_point_features(tmp_path)
-
-
-def test_load_point_features_rejects_legacy_codes_without_weights(tmp_path):
-    """Pre-attrs scenes with no weights are indistinguishable from orphans — raise, don't guess."""
-    store = zarr.open(str(tmp_path / "talk2dino_lifted.zarr"), mode="w")
-    store["features"] = np.zeros((4, 2), dtype=np.float32)  # no dim attrs
-
-    assert not pl.point_features_cached(tmp_path)
-    with pytest.raises(FileNotFoundError, match="re-lift"):
-        pl.load_point_features(tmp_path)
-
-
 ########
 # Autoencoder policy: ONE gate, sourced from configs/base.yaml, shared by both fit paths
 ########
@@ -331,48 +299,23 @@ def test_resolve_latent_dim_treats_none_as_no_compression(caplog):
 
 
 ########
-# Batched decode (item 11): a full (P, input_dim) one-shot decode is GBs of resident CPU RAM
-########
-
-
-def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tmp_path, monkeypatch):
-    """Batched decode must be numerically identical to the one-shot decode it replaces."""
-    sem_dir = tmp_path / "semantics"
-    _write_semantics(sem_dir, n_points=37, latent=8, input_dim=32)
-
-    # Reference: decode every code in ONE call through the same weights.
-    codes = torch.from_numpy(np.asarray(zarr.open(str(sem_dir / "talk2dino_lifted.zarr"), mode="r")["features"]))
-    ae = FeatureAutoencoder.load(ae_path(sem_dir, "talk2dino"))
-    with torch.no_grad():
-        expected = torch.nn.functional.normalize(ae.per_point_decode(codes), dim=1).numpy()
-
-    # Shrink the batch so 37 points genuinely span several calls, and count them.
-    sizes = []
-    real_decode = FeatureAutoencoder.per_point_decode
-
-    def counting_decode(self, x):
-        sizes.append(len(x))
-        return real_decode(self, x)
-
-    monkeypatch.setattr(FeatureAutoencoder, "per_point_decode", counting_decode)
-    out = pl.load_point_features(sem_dir, batch_size=5)
-
-    np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
-    assert len(sizes) == 8 and max(sizes) <= 5  # 37 = 7*5 + 2; never the whole array at once
-
-
-########
 # Ignored return value (item 13)
 ########
 
 
 def test_extract_semantics_returns_nothing(tmp_path, monkeypatch):
     """_extract_semantics drops the cache path — every consumer re-resolves it by glob."""
+    images_dir = tmp_path / "images"
+    extractor = object()
     calls = []
-    monkeypatch.setattr(pl, "extract_feature_cache", lambda extractor, images, out: calls.append((images, out)))
-    monkeypatch.setattr(pl.BaseFeatureExtractor, "get", staticmethod(lambda name: lambda: object()))
-    assert pl._extract_semantics("talk2dino", tmp_path / "images", tmp_path) is None
-    assert calls == [(tmp_path / "images", tmp_path)]
+
+    monkeypatch.setattr(pl, "extract_feature_cache", lambda ext, images, out: calls.append((ext, images, out)))
+    monkeypatch.setattr(pl.BaseFeatureExtractor, "get", staticmethod(lambda name: lambda: extractor))
+
+    assert pl._extract_semantics("talk2dino", images_dir, tmp_path) is None
+    # The registry-resolved extractor, the images dir and the semantics dir all arrive
+    # unchanged — `len(calls) == 1` alone would pass for any three arguments whatsoever.
+    assert calls == [(extractor, images_dir, tmp_path)]
 
 
 def _make_localized_zarr(tmp_path, extractor="loma", n=2):

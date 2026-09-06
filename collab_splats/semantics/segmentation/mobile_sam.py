@@ -1,4 +1,5 @@
-"""MobileSAMv2 segmentation backend.
+"""
+MobileSAMv2 segmentation backend.
 
 Provides:
   load_mobile_sam       — load MobileSAMV2 model weights from torchhub
@@ -13,7 +14,7 @@ import numpy as np
 import torch
 from mobile_sam import SamAutomaticMaskGenerator
 
-from collab_splats.semantics.utils import batch_iterator, load_torchhub_model
+from collab_splats.utils.torch_utils import batch_iterator, load_torchhub_model
 
 from .base import BaseSegmentation
 
@@ -28,7 +29,12 @@ logger = logging.getLogger(__name__)
 def load_mobile_sam(
     mobilesam_encoder_name: str = "mobilesamv2_efficientvit_l2", device: str = "cpu"
 ):
-    """Load MobileSAMV2 models from torchhub.
+    """
+    Load the MobileSAMV2 model trio from torchhub.
+
+    Args:
+        mobilesam_encoder_name: encoder variant published by RogerQi/MobileSAMV2.
+        device: torch device string for the SAM model.
 
     Returns:
         (mobilesamv2, ObjAwareModel, predictor) — SAM model, YOLOv8 detector, SAMPredictor.
@@ -49,13 +55,13 @@ def load_mobile_sam(
 
 @BaseSegmentation.register("mobilesamv2")
 class MobileSAMSegmentation(BaseSegmentation):
-    """MobileSAMv2 class-agnostic segmentation with 'auto' or 'object' strategy.
+    """
+    MobileSAMv2 class-agnostic segmentation.
 
     Args:
-        strategy: 'object' uses YOLOv8 bounding boxes to prompt SAM (default).
-                  'auto' runs SAM's automatic mask generator with no prompts.
-        device: Torch device string.
-        mobilesam_encoder_name: Encoder variant to load from torchhub.
+        strategy: "object" prompts SAM with YOLOv8 boxes; "auto" runs SAM's mask generator.
+        device: torch device string.
+        mobilesam_encoder_name: encoder variant to load from torchhub.
     """
 
     def __init__(
@@ -69,7 +75,19 @@ class MobileSAMSegmentation(BaseSegmentation):
         )
         self.strategy = strategy
 
-    def segment(self, image) -> tuple[torch.Tensor, Any]:
+    def segment(self, image) -> tuple[torch.Tensor, Any] | None:
+        """
+        Segment one frame with the configured strategy.
+
+        Args:
+            image: (H, W, 3) uint8 array.
+
+        Returns:
+            (masks, metadata) — masks is (N, H, W) float32. None when nothing is detected.
+
+        Raises:
+            ValueError: if `strategy` is neither "object" nor "auto".
+        """
         if self.strategy == "object":
             return self._segment_object(image)
         elif self.strategy == "auto":
@@ -80,7 +98,15 @@ class MobileSAMSegmentation(BaseSegmentation):
             )
 
     def _segment_auto(self, image) -> tuple[torch.Tensor, Any] | None:
-        """Auto strategy: SAM automatic mask generator with no prompts."""
+        """
+        SAM's automatic mask generator, no prompts.
+
+        Args:
+            image: (H, W, 3) uint8 array.
+
+        Returns:
+            (masks, raw results), or None when the generator returns nothing.
+        """
         mask_generator = SamAutomaticMaskGenerator(model=self.seg_model)
         results = mask_generator.generate(image)
 
@@ -93,7 +119,16 @@ class MobileSAMSegmentation(BaseSegmentation):
         return masks, results
 
     def _segment_object(self, image, batch_size: int = 320) -> tuple[torch.Tensor, Any] | None:
-        """Object strategy: YOLOv8 bounding boxes prompt SAM for each detected object."""
+        """
+        YOLOv8 boxes prompt SAM once per detected object.
+
+        Args:
+            image: (H, W, 3) uint8 array.
+            batch_size: boxes per SAM decoder call.
+
+        Returns:
+            (masks, raw results), or None when the detector finds no objects.
+        """
         height, width = image.shape[:2]
 
         obj_results = self.object_model(image)

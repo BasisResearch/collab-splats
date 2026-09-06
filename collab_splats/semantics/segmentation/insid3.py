@@ -1,5 +1,5 @@
-# collab_splats/semantics/segmentation/insid3.py
-"""INSID3 in-context segmentation backend.
+"""
+INSID3 in-context segmentation backend.
 
 Provides:
   INSID3Segmentation — training-free in-context segmentation via frozen DINOv2 features
@@ -12,6 +12,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
+from sklearn.cluster import AgglomerativeClustering
+
+from collab_splats.semantics.features.dino import DINOFeatureExtractor
 
 from .base import BaseSegmentation
 
@@ -24,7 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 def _agglomerative_clustering(X: torch.Tensor, tau: float) -> torch.Tensor:
-    """Partition N patches into clusters via cosine-distance agglomerative clustering.
+    """
+    Partition N patches into clusters via cosine-distance agglomerative clustering.
 
     Args:
         X: (N, D) L2-normalized patch features.
@@ -33,7 +37,6 @@ def _agglomerative_clustering(X: torch.Tensor, tau: float) -> torch.Tensor:
     Returns:
         (N,) long tensor of integer cluster labels on the same device as X.
     """
-    from sklearn.cluster import AgglomerativeClustering
     # Compute cosine similarity matrix; clamp for numerical stability
     S = (X @ X.T).clamp(-1, 1)
     D = (1.0 - S).cpu().numpy()
@@ -48,7 +51,8 @@ def _agglomerative_clustering(X: torch.Tensor, tau: float) -> torch.Tensor:
 
 
 def _cluster_prototypes(X: torch.Tensor, labels: torch.Tensor, K: int) -> torch.Tensor:
-    """Compute an L2-normalized prototype (mean) for each cluster.
+    """
+    Compute an L2-normalized prototype (mean) for each cluster.
 
     Args:
         X: (N, D) patch features.
@@ -73,7 +77,8 @@ def _cluster_prototypes(X: torch.Tensor, labels: torch.Tensor, K: int) -> torch.
 
 
 def _downsample_mask(mask: torch.Tensor, h: int, w: int) -> torch.Tensor:
-    """Downsample (H, W) bool mask to (h, w) with fallback for tiny masks.
+    """
+    Downsample (H, W) bool mask to (h, w) with fallback for tiny masks.
 
     Tries bilinear → nearest → single center pixel to ensure non-empty output.
     """
@@ -99,7 +104,9 @@ def _downsample_mask(mask: torch.Tensor, h: int, w: int) -> torch.Tensor:
 
 
 def _upsample_mask(mask: torch.Tensor, H: int, W: int) -> torch.Tensor:
-    """Bilinear upsample (h, w) bool mask to (H, W)."""
+    """
+    Bilinear upsample (h, w) bool mask to (H, W).
+    """
     return F.interpolate(
         mask.float().unsqueeze(0).unsqueeze(0),
         size=(H, W),
@@ -109,7 +116,9 @@ def _upsample_mask(mask: torch.Tensor, H: int, W: int) -> torch.Tensor:
 
 
 def _tensor_to_pil(t: torch.Tensor) -> Image.Image:
-    """Convert (C, H, W) float tensor in [0, 1] to PIL Image."""
+    """
+    Convert (C, H, W) float tensor in [0, 1] to PIL Image.
+    """
     arr = (t.cpu().float().clamp(0, 1) * 255).byte().permute(1, 2, 0).numpy()
     return Image.fromarray(arr)
 
@@ -125,7 +134,8 @@ def _locate_candidates(
     ref_mask_down: torch.Tensor,  # (Hr, Wr) bool — ref mask at patch resolution
     prototype: torch.Tensor,      # (D,) L2-normalized ref prototype
 ) -> torch.Tensor:                # (Ht, Wt) bool candidate mask
-    """Forward+backward candidate localization.
+    """
+    Forward+backward candidate localization.
 
     Forward: target patches with positive cosine sim to prototype.
     Backward: for each target patch, its nearest ref patch must be inside ref_mask_down.
@@ -168,7 +178,8 @@ def _seed_and_aggregate(
     K: int,
     merge_threshold: float,
 ) -> torch.Tensor:                  # (H_p, W_p) bool
-    """Select seed cluster and aggregate remaining clusters by combined similarity score.
+    """
+    Select seed cluster and aggregate remaining clusters by combined similarity score.
 
     Returns empty mask if no clusters overlap the candidate region.
     """
@@ -225,7 +236,8 @@ def _seed_and_aggregate(
 
 @BaseSegmentation.register("insid3")
 class INSID3Segmentation(BaseSegmentation):
-    """Training-free in-context segmentation using frozen DINOv2 features.
+    """
+    Training-free in-context segmentation using frozen DINOv2 features.
 
     Call set_context(ref_image, ref_mask) once per semantic category, then segment()
     for each target frame. Context is cached — ref features are extracted only once.
@@ -244,7 +256,6 @@ class INSID3Segmentation(BaseSegmentation):
         merge_threshold: float = 0.2,
         device: str = "cuda",
     ) -> None:
-        from collab_splats.semantics.features.dino import DINOFeatureExtractor
         self._extractor = DINOFeatureExtractor(svd_components=svd_components, device=device)
         self._tau = tau
         self._merge_threshold = merge_threshold
@@ -257,7 +268,8 @@ class INSID3Segmentation(BaseSegmentation):
         ref_image: "Image.Image | torch.Tensor",
         ref_mask: "np.ndarray | torch.Tensor",
     ) -> None:
-        """Extract and cache ref features + prototype. Must call before segment().
+        """
+        Extract and cache ref features + prototype. Must call before segment().
 
         Args:
             ref_image: Reference image as PIL Image or (C, H, W) float tensor in [0, 1].
@@ -299,13 +311,16 @@ class INSID3Segmentation(BaseSegmentation):
         self._ref_mask_down = mask_down
 
     def clear_context(self) -> None:
-        """Reset cached context state."""
+        """
+        Reset cached context state.
+        """
         self._prototype = None
         self._ref_feat_deb = None
         self._ref_mask_down = None
 
     def segment(self, image: "Image.Image | torch.Tensor") -> tuple[torch.Tensor, dict]:
-        """Segment image using cached context.
+        """
+        Segment image using cached context.
 
         Raises RuntimeError if no context is set — call set_context() first.
         Returns (pred_mask (H, W) bool, metadata dict).
@@ -368,7 +383,8 @@ class INSID3Segmentation(BaseSegmentation):
         ref_image: "Image.Image | torch.Tensor",
         ref_mask: "np.ndarray | torch.Tensor",
     ) -> tuple[torch.Tensor, dict]:
-        """One-shot in-context segmentation: set_context → segment → clear_context.
+        """
+        One-shot in-context segmentation: set_context → segment → clear_context.
 
         Args:
             image: Target image to segment.

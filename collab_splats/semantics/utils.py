@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch
@@ -40,6 +40,7 @@ __all__ = [
     "load_feature_maps",
     "load_point_features",
     "point_features_cached",
+    "tokens_to_feature_map",
     "write_point_features",
 ]
 
@@ -105,19 +106,6 @@ def find_lifted_extractor(out_dir: Path) -> Optional[str]:
 
 
 ########################################################
-########## Re-exports from collab_splats.utils.torch_utils
-########################################################
-
-# Canonical location: collab_splats.utils.torch_utils
-from collab_splats.utils.torch_utils import (  # noqa: E402,F401
-    get_device,
-    infer_batch_size,
-    load_hf_weights,
-    load_torchhub_model,
-    pytorch_gc,
-)
-
-########################################################
 ########## Contrastive scoring #########################
 ########################################################
 
@@ -128,7 +116,8 @@ def compute_semantic_contrast(
     temperature: float = 0.05,
     reduction: str = "max",
 ) -> torch.Tensor:
-    """Contrastive scoring: how strongly positive queries match relative to negatives.
+    """
+    Contrastive scoring: how strongly positive queries match relative to negatives.
 
     When no negatives are present (num_positive == raw_similarities.shape[0]),
     falls back to raw reduction over positives — contrastive scoring is undefined
@@ -175,8 +164,22 @@ def compute_semantic_contrast(
 ########################################################################
 
 
-def _tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int) -> torch.Tensor:
-    """Reshape (N, D) patch tokens to (D, H_p, W_p), L2-normalized along channel dim."""
+def tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int) -> torch.Tensor:
+    """
+    Reshape (N, D) patch tokens to (D, H_p, W_p), L2-normalized along the channel dim.
+
+    Args:
+        tokens: (N, D) patch tokens, N == (input_h // patch_size) * (input_w // patch_size).
+        input_h: preprocessed image height in pixels.
+        input_w: preprocessed image width in pixels.
+        patch_size: pixel stride of one patch token.
+
+    Returns:
+        (D, H_p, W_p) feature map with unit-norm patch vectors.
+
+    Raises:
+        AssertionError: when the token count does not match the implied patch grid.
+    """
     ph = input_h // patch_size
     pw = input_w // patch_size
     assert tokens.shape[0] == ph * pw, (
@@ -184,28 +187,6 @@ def _tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, pat
     )
     feat = tokens.reshape(ph, pw, -1).permute(2, 0, 1)  # (D, H_p, W_p)
     return F.normalize(feat, dim=0)
-
-
-########################################################
-########## Patch alignment #############################
-########################################################
-
-
-def interpolate_to_patch_size(img_bchw: torch.Tensor, patch_size: int) -> Tuple[torch.Tensor, int, int]:
-    """Interpolate image tensor so H and W are evenly divisible by patch_size.
-
-    Args:
-        img_bchw: Image tensor of shape (B, C, H, W).
-        patch_size: Patch dimension to align to.
-
-    Returns:
-        Tuple of (resized_tensor, target_H, target_W).
-    """
-    _, _, H, W = img_bchw.shape
-    target_H = H // patch_size * patch_size
-    target_W = W // patch_size * patch_size
-    img_bchw = F.interpolate(img_bchw, size=(target_H, target_W), mode="bilinear", align_corners=False)
-    return img_bchw, target_H, target_W
 
 
 ########################################################
@@ -385,11 +366,16 @@ def point_features_cached(semantics_dir: Path) -> bool:
         return False
     if ae_path(sem_dir, extractor).exists():
         return True
+
     # No weights: usable only if the codes describe themselves as full-dim. Anything else is a
     # half-written pair (crash between the two writes) — report NOT cached so the caller re-lifts.
     try:
         attrs = zarr.open(str(lifted_store_path(sem_dir, extractor)), mode="r").attrs
         return int(attrs["latent_dim"]) >= int(attrs["input_dim"])
+    # Broad on purpose, unlike load_point_features' narrow (KeyError, TypeError, ValueError):
+    # this is a bool predicate that dashboard/app.py calls to pick UI state, so an unreadable
+    # store must answer False rather than raise. PermissionError, chunk-IO errors and TOCTOU
+    # races all escape the narrow tuple and would surface as a crash in the caller.
     except Exception:
         logger.warning("Lifted store for %s in %s is corrupt or unreadable, reporting not cached", extractor, sem_dir)
         return False

@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import zarr
 
+from collab_splats.dashboard import viewer as viewer_mod
 from collab_splats.dashboard.viewer import lift_point_features
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
@@ -224,8 +225,6 @@ def test_ensure_lifted_failure_does_not_write_artifacts(tmp_path, monkeypatch):
 
 def test_viewer_lift_routes_through_the_shared_loader(tmp_path):
     """viewer.lift_point_features must use the ONE loader, not a private re-implementation."""
-    from collab_splats.dashboard import viewer as viewer_mod
-
     with (
         patch("collab_splats.semantics.utils.load_feature_maps", return_value=[]) as loader,
         patch("collab_splats.pointcloud.utils.lift_features", return_value=torch.zeros(3, 4)),

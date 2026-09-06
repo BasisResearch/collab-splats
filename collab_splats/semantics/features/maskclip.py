@@ -1,15 +1,17 @@
 """MaskCLIP feature extractor backend."""
 import logging
+import os
 from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
 
-from collab_splats.semantics.utils import _tokens_to_feature_map, get_device
+from collab_splats.semantics.utils import tokens_to_feature_map
 from collab_splats.utils.image import CLIP_MEAN, CLIP_STD
+from collab_splats.utils.torch_utils import get_device
 
-from .base import TORCH_HOME, BaseQueryableExtractor
+from .base import BaseQueryableExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,7 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         model_name: CLIP model variant. Defaults to ``"ViT-L/14@336px"``.
         resize_mode: ``"max_size"`` (proportional longest-edge) or ``"square"`` (center-crop + resize).
         image_resolution: Longest-edge target (max_size) or square side length (square). Default 1024.
-        cache_dir: Directory to cache model weights. Defaults to TORCH_HOME.
+        cache_dir: Directory to cache model weights. Defaults to $TORCH_HOME, else ~/.cache/torch.
         device: Torch device string. Defaults to auto-detected device.
         svd_components: Top singular vectors kept for positional debiasing. Default 500.
     """
@@ -32,12 +34,17 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         model_name: str = "ViT-L/14@336px",
         resize_mode: str = "max_size",
         image_resolution: int = 1024,
-        cache_dir: str = TORCH_HOME,
+        cache_dir: Optional[str] = None,
         device: Optional[str] = None,
         svd_components: int = 500,
     ):
         if device is None:
             device = get_device()
+
+        # Resolved here, not in the signature, so $TORCH_HOME is read at call time
+        # rather than frozen at import. Falls back to torch's own default cache dir.
+        cache_dir = cache_dir or os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
+
         super().__init__(resize_mode=resize_mode, image_resolution=image_resolution, svd_components=svd_components)
 
         # Lazy import: maskclip_onnx depends on pkg_resources.packaging which was removed
@@ -89,9 +96,7 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         results = []
         for i, t in enumerate(preprocessed):
             _, H, W = t.shape
-            results.append(
-                _tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size)
-            )
+            results.append(tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size))
         return results
 
     ########################################################################

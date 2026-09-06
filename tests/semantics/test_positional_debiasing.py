@@ -5,14 +5,15 @@ the infrastructure in BaseFeatureExtractor without requiring GPU or HuggingFace 
 """
 
 import logging
+
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from collab_splats.semantics.features import BaseFeatureExtractor, _DEBIAS_VALIDATED
-
+from collab_splats.semantics.features import BaseFeatureExtractor
+from collab_splats.semantics.features.base import _DEBIAS_VALIDATED
 
 # ---------------------------------------------------------------------------
 # Fake extractor: minimal concrete implementation for testing base-class logic

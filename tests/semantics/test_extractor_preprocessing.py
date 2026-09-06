@@ -1,10 +1,19 @@
 """Tests for unified extractor preprocessing utilities and interface."""
-import torch
-import torch.nn.functional as F
+
+import inspect
+from unittest.mock import MagicMock, patch
+
 import pytest
+import torch
+import torchvision.transforms as T
 from PIL import Image
 
-from collab_splats.semantics.utils import _tokens_to_feature_map
+from collab_splats.semantics.features import talk2dino as t2d_mod
+from collab_splats.semantics.features.base import BaseFeatureExtractor
+from collab_splats.semantics.features.dino import DINOFeatureExtractor
+from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
+from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
+from collab_splats.semantics.utils import tokens_to_feature_map
 
 
 def test_tokens_to_feature_map_shape():
@@ -13,7 +22,7 @@ def test_tokens_to_feature_map_shape():
     D = 8
     ph, pw = H // patch_size, W // patch_size
     tokens = torch.randn(ph * pw, D)
-    out = _tokens_to_feature_map(tokens, H, W, patch_size)
+    out = tokens_to_feature_map(tokens, H, W, patch_size)
     assert out.shape == (D, ph, pw)
 
 
@@ -23,25 +32,19 @@ def test_tokens_to_feature_map_l2_normalized():
     D = 8
     ph, pw = H // patch_size, W // patch_size
     tokens = torch.randn(ph * pw, D) * 10  # large values
-    out = _tokens_to_feature_map(tokens, H, W, patch_size)
-    # F.normalize(feat, dim=0) normalizes along channel dim per spatial position
+    out = tokens_to_feature_map(tokens, H, W, patch_size)
+    # tokens_to_feature_map L2-normalizes along the channel dim per spatial position
     norms = out.norm(dim=0)  # (H_p, W_p)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-5)
 
 
 def test_tokens_to_feature_map_wrong_count_raises():
     with pytest.raises(AssertionError):
-        _tokens_to_feature_map(torch.randn(99, 8), 196, 196, 14)
-
-
-from unittest.mock import MagicMock, patch
-import torchvision.transforms as T
+        tokens_to_feature_map(torch.randn(99, 8), 196, 196, 14)
 
 
 def _make_fake_dino(resize_mode="max_size", image_resolution=224, patch_size=14, svd_components=500):
     """Build a DINOFeatureExtractor with a mocked backbone (no weights download)."""
-    from collab_splats.semantics.features.dino import DINOFeatureExtractor
-
     mock_model = MagicMock()
     mock_model.config.patch_size = patch_size
 
@@ -111,9 +114,6 @@ def test_dino_forward_returns_list_of_maps():
 
 def _make_fake_maskclip(resize_mode="max_size", image_resolution=336, patch_size=14):
     """Build MaskCLIPExtractor with mocked model (no weights download)."""
-    from unittest.mock import MagicMock, patch
-    from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
-
     mock_model = MagicMock()
     mock_model.visual.patch_size = patch_size
 
@@ -169,10 +169,6 @@ def test_maskclip_forward_returns_list_of_maps():
 
 def _make_fake_talk2dino(resize_mode="max_size", image_resolution=512, patch_size=14):
     """Build Talk2DinoExtractor with mocked backbone (no weights download)."""
-    import torchvision.transforms as T
-    from unittest.mock import MagicMock, patch
-    from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
-
     mock_backbone = MagicMock()
 
     def fake_forward_features(batch):
@@ -231,7 +227,6 @@ def test_talk2dino_forward_single_path():
 
 def test_talk2dino_no_dual_forward_methods():
     """_forward_max_size and _forward_square must not exist after refactor."""
-    from collab_splats.semantics.features import talk2dino as t2d_mod
     src = open(t2d_mod.__file__).read()
     assert "_forward_max_size" not in src
     assert "_forward_square" not in src
@@ -244,11 +239,6 @@ def test_talk2dino_no_dual_forward_methods():
 
 def test_preprocess_is_defined_once_on_the_base():
     """All three extractors share BaseFeatureExtractor.preprocess — no per-backend copies."""
-    from collab_splats.semantics.features.base import BaseFeatureExtractor
-    from collab_splats.semantics.features.dino import DINOFeatureExtractor
-    from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
-    from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
-
     for cls in (DINOFeatureExtractor, MaskCLIPExtractor, Talk2DinoExtractor):
         assert "preprocess" not in vars(cls), f"{cls.__name__} still overrides preprocess"
         assert cls.preprocess is BaseFeatureExtractor.preprocess
@@ -256,12 +246,6 @@ def test_preprocess_is_defined_once_on_the_base():
 
 def test_each_extractor_keeps_its_own_default_resolution():
     """Hoisting the plumbing must not flatten the per-backbone defaults."""
-    import inspect
-
-    from collab_splats.semantics.features.dino import DINOFeatureExtractor
-    from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
-    from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
-
     defaults = {
         DINOFeatureExtractor: 800,
         MaskCLIPExtractor: 1024,
@@ -276,10 +260,6 @@ def test_each_extractor_keeps_its_own_default_resolution():
 
 def test_svd_components_still_reaches_the_base():
     """A non-default svd_components passed to DINOFeatureExtractor lands on the base attribute."""
-    import inspect
-
-    from collab_splats.semantics.features.dino import DINOFeatureExtractor
-
     # Mirrors the production call site at semantics/segmentation/insid3.py:248,
     # which passes svd_components explicitly. A dropped argument in the concrete
     # extractor's super().__init__() would silently pin every run to the default.

@@ -1,11 +1,11 @@
-import pytest
 import numpy as np
+import pytest
 import torch
-from pathlib import Path
 from PIL import Image
-import collab_splats.semantics.features as feat_mod
+
+from collab_splats.semantics.utils import compute_semantic_contrast
 from collab_splats.utils.image import open_image
-from collab_splats.semantics.utils import compute_semantic_contrast, pytorch_gc
+from collab_splats.utils.torch_utils import pytorch_gc
 
 
 def test_maskclip_onnx_importable():

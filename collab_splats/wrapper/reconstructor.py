@@ -516,8 +516,8 @@ def _extract_2d_features(
     Returns:
         Path of the written 2D patch cache.
     """
-    # extract_feature_cache iterates the frames zarr lazily, one chunk at a time — no temp
-    # JPG export, no full-RAM load.
+    # extract_feature_cache reads the keyframe JPGs from images/ one at a time — no full-RAM
+    # load of the frame set.
     cache_dir.mkdir(parents=True, exist_ok=True)
     return extract_feature_cache(_get_extractor(extractor_name), images_dir, cache_dir)
 

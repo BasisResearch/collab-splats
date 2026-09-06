@@ -1189,9 +1189,9 @@ When one is frozen, run Tasks 3, 5 and 6 with these substitutions:
 
 | | `clean/pointcloud` | `clean/splats` | `clean/mesh` |
 |---|---|---|---|
-| Frozen SHA | re-read at freeze time (was `1d7c4734`, in review) | re-read at freeze time (was `02d9a693`) | re-read at freeze time (was `30326769`) |
-| Backup ref | `refs/backup/clean-pointcloud-20260906-013531` | `refs/backup/clean-splats-20260906-013531` | none yet — create one before squashing |
-| Merge base | measured `2ef1c7bb` @ `1d7c4734` (17 copies / 20 branch-only) — **re-derive at freeze** | derive it — last `COPY-OF-TRUNK` (Task 5) | n/a if rebased |
+| Frozen SHA | **LANDED `560a0a7f`** — see the squash record below | re-read at freeze time (was `02d9a693`) | re-read at freeze time (was `30326769`) |
+| Backup ref | `refs/backup/clean-pointcloud-20260906-141930` (the `-013531` ref is a stale earlier tip) | `refs/backup/clean-splats-20260906-013531` | none yet — create one before squashing |
+| Merge base | `2ef1c7bb` (17 copies / 24 branch-only at the frozen tip) | derive it — last `COPY-OF-TRUNK` (Task 5) | n/a if rebased |
 | Expected conflict | the VDA collision; consult `$SCRATCH/vda-resolution-ref/`. 34-file footprint, **15 of them already touched by `clean/final`** — see below | `docs/known-test-failures.md` | to be measured |
 | Scope | recompute as `rtk proxy git diff --name-only <last-copy> <branch> -- tests/`, union with the existing scope | same | same |
 
@@ -1267,3 +1267,89 @@ efforts' entries, as was done for semantics.
 
 Trunk replacement is out of scope for this plan and gets its own spec once all
 five efforts have landed.
+
+### `clean/pointcloud` squash — landed 2026-09-06
+
+`clean/final` = `25c05ad7`, squashed from `clean/pointcloud @ 560a0a7f` over
+merge base `2ef1c7bb` (24 branch-only commits; 17 already in the base).
+
+The branch moved twice more after the reconnaissance above — `5c16ec0b` →
+`1d7c4734` → `560a0a7f`. The freeze re-check is what caught the second move.
+The derived base `2ef1c7bb` stayed stable across all three readings.
+
+Refs:
+
+- `refs/backup/clean-pointcloud-20260906-141930` → the frozen branch tip.
+- `refs/backup/clean-pointcloud-merge-20260906-141930` → a real merge commit
+  with both parents and the same tree as the squash, so the merge stays
+  inspectable even though the squash records no ancestry.
+
+**Eight conflicts, and the reconnaissance predicted all of them.** Resolutions
+are in the squash commit message. Two are worth repeating here:
+
+- The predicted cross-effort break was real. `FrameStore.open(self.frames_zarr)`
+  survived the auto-merge into `wrapper/reconstructor.py::_run_sfm` — preproc had
+  deleted `FrameStore`. Resolved by taking preproc's read-in-place `images/`
+  design. The local variable `frames` then shadowed the `preproc.frames` module
+  and was renamed `keyframes`.
+- The store writes **PNGs** (`preproc.frames.write_frames`), so
+  `tests/wrapper/test_sfm_stage.py`'s name assertions are `.png`. Taking
+  `clean/pointcloud`'s side verbatim would have asserted `.jpg` — a green-looking
+  gate over the wrong contract. Stale `frames.zarr` / staged-JPEG wording in
+  `vda.py`, `depth_align.py` and `sfm/instantsfm.py` was retargeted for the same
+  reason.
+
+**Proofs.** Tree equality holds (`25c05ad7^{tree}` == the real-merge tree
+`59c27786`), plus three footprint proofs, each of which is worth running on the
+remaining efforts:
+
+```bash
+# A. no contamination — the squash must touch exactly the branch's own file set
+comm -23 <(git diff --cached --name-only | sort)          <(git diff --name-only <base> <branch> | sort)     # must be empty
+
+# B. no drift — files only the branch touched must be bit-identical to it
+#    (differences must each be a deliberate carry-over)
+
+# C. nothing lost — for a file BOTH sides touched and git auto-merged,
+#    diff(branch, merged) must equal diff(base, HEAD), after stripping
+#    `index ` lines and `@@` line numbers
+```
+
+A, B and C all passed; C's only two inexact matches were context lines
+`clean/pointcloud` had itself rewritten (the `sfm/instantsfm.py` path, the
+config-validation wording).
+
+**Gate: `NEW failures (0)`, `FIXED (0)`, skips 9 = 9.** 23 failed / 1754 passed
+at `25c05ad7` against 23 failed / 1777 passed at the `2d8f4cc1` control,
+identical failure sets. All 23 are inherited: 17 `tests/localization/`
+(environment), 3 stale `base.yaml` mesh asserts owed to the mesh owner, 3
+`test_splats_stage.py` mesh-fuse. Zero in `tests/pointcloud` (353 passed).
+
+Run as three chunks — `tests/pointcloud` | `tests/wrapper` | the other eleven
+paths. `tests/pointcloud` and `tests/wrapper` in one process is OOM exit 137.
+The chunks are disjoint and their union is the derived scope.
+
+**A shrinking test count needs accounting, not a shrug.** Passed dropped by 23,
+which is 76 collected tests removed against 53 added. Every removal was matched
+to a rename, a move or a deliberate feature deletion by diffing the
+`--collect-only` id sets on both trees:
+
+| Removed | Where it went |
+|---|---|
+| 24 affine tests in `test_depth_align.py` | feature deleted (measured −0.076 dB) |
+| 5 `keep_rows` tests | VDA context stream deleted (refuted 2026-08-26) |
+| 4 `depth_align` config tests in `test_sfm_stage.py` | key retired |
+| 19 in `test_instantsfm.py` | split across `sfm/test_instantsfm.py`, `test_vda.py`, `test_depth_align.py` |
+| 12 in `test_sfm_creator.py` | split into `sfm/test_colmap.py`, `sfm/test_hloc.py`, `sfm/test_instantsfm.py` |
+| 7 in `test_sfm_result.py` | 4 builder tests → `test_depth_align.py::test_result_from_reconstruction_*`; the other 3 carried into `sfm/test_instantsfm.py` |
+| 4 renamed-in-place | `..._skips_vda_inference_when_the_map_set_is_complete`, `..._is_valid_sfm_backend`, `..._colmap_hloc_still_not_implemented`, `..._reports_the_masked_fraction` |
+| **1 with no replacement** | `test_instantsfm_features_allowlist` — see below |
+
+**Open item for the user.** The base validated
+`pointcloud.instantsfm.features` and `pointcloud.instantsfm.depth_align` at
+config load. `clean/pointcloud` deleted both features, so both guards went with
+them and `validate_config` now silently ignores those keys where the base
+raised. `configs/base.yaml` no longer ships them and `configs/README.md` records
+the retirement, so this only bites a hand-written config still carrying
+`depth_align: affine` — it loads silently and does nothing. That matches how
+every other retired key behaves; flagged, not fixed.

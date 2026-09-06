@@ -941,9 +941,14 @@ git commit -m "refactor(pointcloud): prune utils to the shipping set; clean_poin
 
 `generate_vda_depth` loses `fps`, `encoder`, `input_size` and `keep_rows`, returns the resized
 depth stack instead of a directory, and gets its checkpoint from the Hugging Face hub instead of a
-`setup.sh` `wget`. The public `vda_depth_complete` and the one-entry `_VDA_MODEL_CONFIGS` table
-both go; the idempotent skip survives as a private check inside `generate_vda_depth` that loads
-the existing maps and returns them.
+`setup.sh` `wget`. The one-entry `_VDA_MODEL_CONFIGS` table goes, and the idempotent skip
+survives as a check inside `generate_vda_depth` that loads the existing maps and returns them.
+
+> **Shipped deviation (bd0dcfe7).** `vda_depth_complete` STAYS public. Making the skip private
+> cannot save the work it exists to save: the new signature takes `frames` first positionally, so
+> the caller must materialise `store.images()` (~1.9 GB for 300 frames at 1080p) just to make the
+> call. `_run_sfm` and `evals/scripts/eval.py` therefore keep their own gate around it. Task 13's
+> dead-symbol sweep excludes the name for this reason.
 
 **Files:**
 - Create: `collab_splats/pointcloud/vda.py`
@@ -2100,7 +2105,13 @@ Tests move with the code, so the tree stays green inside this one task.
 **Files:**
 - Create: `collab_splats/pointcloud/sfm/__init__.py`, `sfm/colmap.py`, `sfm/hloc.py`, `sfm/instantsfm.py`
 - Delete: `collab_splats/pointcloud/sfm.py`
-- Modify: `collab_splats/wrapper/reconstructor.py:78,506-517,882-883,1174-1177`
+- Modify: `collab_splats/wrapper/reconstructor.py` — locate the four edit sites BY CONTENT, not
+  by offset. Task 8 rewrites this file immediately before this task and a concurrent session
+  holds an uncommitted black-reformat of it, so every line number here is stale by construction.
+  As of the last measurement the sites were `_INSTANTSFM_FEATURES` (`:77`), `_rename_images_to_stems`
+  (`:436`, called at `:1013`) and the `features` allowlist inside `validate_config` (`:806-808`).
+(`docs/source/api/pointcloud.rst:10` also names the old module, but Task 12 Step 2 owns that
+file — do not touch it here. Step 11's grep flags it on purpose.)
 - Test: `tests/pointcloud/sfm/{__init__,test_colmap,test_hloc,test_instantsfm}.py` (created), `tests/pointcloud/test_sfm_creator.py` + `tests/pointcloud/test_instantsfm.py` (deleted), `tests/test_cu121_migration.py:99`
 
 - [ ] **Step 1: Create the package skeleton and move the two classical backends**
@@ -2321,13 +2332,18 @@ Expected: `ok`, and no pyflakes output.
 Create `tests/pointcloud/sfm/__init__.py` (empty) and
 `tests/pointcloud/sfm/test_instantsfm.py`. Move into it, unchanged except for the import line,
 every surviving test from `tests/pointcloud/test_instantsfm.py`:
-`test_creator_config_copy_prevents_module_dict_leak` (137),
-`test_creator_retriangulation_flag_flips_skip_retriangulation` (150),
-`test_track_id_patch_renumbers_packed_64bit_ids` (161),
-`test_pypose_robustmodel_target_patch_defaults_none` (195),
-`test_bae_pcg_patch_keeps_column_shape` (214),
-`test_colmap_write_patch_produces_pycolmap_readable_model` (242),
-`test_nudge_edge_keypoints_pulls_exact_edge_inward_only` (302).
+`test_creator_config_copy_prevents_module_dict_leak` (80),
+`test_creator_retriangulation_flag_flips_skip_retriangulation` (93),
+`test_track_id_patch_renumbers_packed_64bit_ids` (104),
+`test_pypose_robustmodel_target_patch_defaults_none` (138),
+`test_bae_pcg_patch_keeps_column_shape` (157),
+`test_colmap_write_patch_produces_pycolmap_readable_model` (185),
+`test_nudge_edge_keypoints_pulls_exact_edge_inward_only` (245).
+
+These seven are the whole file once Task 8 has taken its three tests out. Match on the NAMES —
+Task 8 removes `_recon_with_keypoint` (`:7`) and the three tests above it, so the offsets shift
+again before this task runs. `_recon_with_keypoint` is used only by the tests Task 8 moves; none
+of these seven touch it.
 The import becomes:
 
 ```python
@@ -2407,7 +2423,10 @@ def test_rename_images_to_stems_round_trips_through_write_binary(tmp_path):
     assert reread.num_points3D() == 1
 ```
 
-This case is `tests/wrapper/test_sfm_result.py:115-125` moved verbatim — only the call is
+Task 8 deletes `tests/wrapper/test_sfm_result.py`, so recover this case from git rather than
+from the working tree: `git show <task-8-commit>~1:tests/wrapper/test_sfm_result.py`, then take
+lines 115-125 and the `_recon` helper at `:17`. This case is that file's `:115-125` moved
+verbatim — only the call is
 retargeted (`_rename_images_to_stems` -> `instantsfm._rename_images_to_stems`), because Step 5
 moves the helper itself out of the wrapper and into the creator. Its `_recon` helper
 (`test_sfm_result.py:17`) comes with it, with `ORIG_W`/`ORIG_H`/`K_PARAMS` inlined since nothing
@@ -2598,7 +2617,10 @@ Expected: PASS.
 - [ ] **Step 7: Split the creator tests**
 
 Create `tests/pointcloud/sfm/test_colmap.py` from `tests/pointcloud/test_sfm_creator.py` lines
-1-75 (the `tiny_image_dir` fixture and the five `test_colmap_creator_*` tests), with the imports
+1-75 (the `tiny_image_dir` fixture and the six `test_colmap_creator_*` tests — `defaults` (18),
+`single_camera` (24), `output_path` (29), `no_reconstruction_raises` (47),
+`missing_image_dir_raises` (57) and the `@pytest.mark.gpu` `smoke` (63); do not drop the gpu
+one), with the imports
 rewritten to:
 
 ```python
@@ -2607,15 +2629,17 @@ from collab_splats.pointcloud.base import PointcloudResult
 ```
 
 and every patch target retargeted from `collab_splats.pointcloud.sfm.pycolmap.*` to
-`collab_splats.pointcloud.sfm.colmap.pycolmap.*` (lines 38-40 and 49-51). Drop the
-`CoordinateFrame` import and any `result.frame` assertion (Task 3 removed the field).
+`collab_splats.pointcloud.sfm.colmap.pycolmap.*` (lines 38-40 and 49-51 — both verified live).
+The plan previously told you to drop a `CoordinateFrame` import and a `result.frame` assertion
+here; neither survives in the file (Task 3 already removed them), so that instruction is a no-op
+— do not go looking for them.
 
 Create `tests/pointcloud/sfm/test_hloc.py` from lines 77-200 (the three `test_hloc_creator_*`
 tests), copying the `tiny_image_dir` fixture in verbatim — the two files are independent —
 importing `from collab_splats.pointcloud.sfm import HlocCreator`, and retargeting every
 `collab_splats.pointcloud.sfm.<name>` patch to `collab_splats.pointcloud.sfm.hloc.<name>`.
 
-Move lines 202-221 (`test_instantsfm_random_seed_defaults_to_none`,
+Move lines 201-220 (`test_instantsfm_random_seed_defaults_to_none`,
 `test_instantsfm_random_seed_reaches_runtime_options`) into
 `tests/pointcloud/sfm/test_instantsfm.py`.
 
@@ -2627,10 +2651,14 @@ git rm tests/pointcloud/test_sfm_creator.py tests/pointcloud/test_instantsfm.py
 
 In `collab_splats/wrapper/reconstructor.py`:
 
-1. Delete `_INSTANTSFM_FEATURES = {"colmap"}` (line 78).
-2. Delete the `features` allowlist check in `validate_config` (lines 881-883) and the
+Every line number below was re-measured against live source and is given only as a hint: Task 8
+rewrites this file first, and a concurrent session holds an uncommitted reformat of it. Locate
+each site by content.
+
+1. Delete `_INSTANTSFM_FEATURES = {"colmap"}` (`:77`).
+2. Delete the `features` allowlist check in `validate_config` (`:806-808`) and the
    `features = ...` lookup feeding it.
-3. Delete `_rename_images_to_stems` (lines 506-517) — Step 5 moved it into
+3. Delete `_rename_images_to_stems` (defined at `:436`, called at `:1013`) — Step 5 moved it into
    `sfm/instantsfm.py`.
 4. In `_run_sfm`, the creator construction and the rename call become:
 
@@ -2650,7 +2678,8 @@ In `collab_splats/wrapper/reconstructor.py`:
 
 - [ ] **Step 9: Update the import-coverage list**
 
-In `tests/test_cu121_migration.py`, replace `"collab_splats.pointcloud.sfm",` (line 99) with:
+In `tests/test_cu121_migration.py`, replace `"collab_splats.pointcloud.sfm",` — it sits at
+`:107`, inside `test_import_all_modules`'s `modules` list (the list opens at `:99`) — with:
 
 ```python
         "collab_splats.pointcloud.sfm",
@@ -2663,11 +2692,18 @@ In `tests/test_cu121_migration.py`, replace `"collab_splats.pointcloud.sfm",` (l
 
 - [ ] **Step 10: Run the suite**
 
+`tests/pointcloud` and `tests/wrapper` OOM-kill each other in one process (exit 137) — run them
+separately, and give each pytest call a Bash `timeout` of 600000:
+
 ```bash
-/opt/venv/reconstruction/bin/python -m pytest tests/pointcloud tests/wrapper tests/test_cu121_migration.py -x -q
+/opt/venv/reconstruction/bin/python -u -m pytest tests/pointcloud tests/test_cu121_migration.py -q
+/opt/venv/reconstruction/bin/python -u -m pytest tests/wrapper --ignore=tests/wrapper/test_splats_stage.py -q
 ```
 
-Expected: PASS.
+Expected: `tests/pointcloud` green; `tests/wrapper` at its 3-failed baseline (stale
+`configs/base.yaml` defaults in `test_reconstructor.py`, pre-existing and not this task's).
+`test_splats_stage.py` is ignored because the venv holds gsplat 1.4.0 against a pinned 1.5.3 and
+collection dies on `gsplat.losses`.
 
 - [ ] **Step 11: Confirm the old module and the dropped fields are gone**
 
@@ -2676,18 +2712,49 @@ rtk proxy grep -rn "pointcloud\.sfm\b\|pointcloud/sfm\.py\|_INSTANTSFM_FEATURES\
 rtk proxy grep -rn "_rename_images_to_stems" collab_splats tests
 ```
 
-Expected: from the first, only `from collab_splats.pointcloud.sfm import ...` package imports
-and `ColmapCreator.single_camera` (which keeps the field). From the second, only
+Expected: from the first, only `from collab_splats.pointcloud.sfm import ...` package imports,
+the two `ColmapCreator(single_camera=True)` call sites that Step 7 carried over into
+`tests/pointcloud/sfm/test_colmap.py` (they were `test_sfm_creator.py:25,66`; the field itself
+is declared `single_camera: bool = False` and so never matches this pattern), and these six
+pre-existing hits on
+`collab_splats/preproc/undistort.py`'s OWN `_SIFT_NUM_THREADS` — a separate constant for the
+pycolmap calibration path, not the one this task removes:
+`undistort.py:83` (comment), `:84` (definition), `:132`, `:136`, and
+`tests/preproc/test_undistort.py:14,124-125`.
+
+One further expected hit, deferred by design: `docs/source/api/pointcloud.rst:10`
+(`.. automodule:: collab_splats.pointcloud.sfm`). It still RESOLVES after the split — the package
+`__init__` re-exports all three creators — so nothing breaks, and Task 12 Step 2 replaces it with
+the three submodule entries. Leave it alone here.
+
+Retarget the `:83` comment — it says "Mirrors
+`pointcloud/sfm.py::_SIFT_NUM_THREADS`", and this task deletes that constant. Point it at the
+keyword default's new home instead. From the second, only
 `collab_splats/pointcloud/sfm/instantsfm.py` (definition + call) and
 `tests/pointcloud/sfm/test_instantsfm.py` — nothing under `collab_splats/wrapper/`.
 
 - [ ] **Step 12: Format and commit**
 
+Do NOT run `black` or `isort`: the venv's versions are newer than this repo's formatting and
+reformat unrelated code — every complaint they raise reproduces on an untouched
+`git show HEAD:<file>` copy. Lint with pyflakes instead; the real line limit is 120 (the
+`[tool.flake8]` block in `pyproject.toml` is never read, so flake8 fires E501 at 79).
+
+Do NOT use `git add -A`: the working tree and index are shared with concurrent sessions, and
+`collab_splats/wrapper/reconstructor.py` in particular carries a foreign uncommitted reformat.
+Stage explicit paths, gate on `git diff --cached --name-only`, and commit with `--only`. If
+`reconstructor.py` is still dirty from another session, stage it as a blob instead: write your
+edits to the working file, copy `git show HEAD:<path>` to a scratch file, replay ONLY your edits
+onto that copy by content, `diff -u` to prove the delta, then
+`git hash-object -w` + `git update-index --cacheinfo 100644,<sha>,<path>`.
+
 ```bash
-/opt/venv/reconstruction/bin/black collab_splats/pointcloud/sfm collab_splats/wrapper/reconstructor.py tests/pointcloud/sfm tests/wrapper/test_sfm_config.py tests/test_cu121_migration.py
-/opt/venv/reconstruction/bin/isort collab_splats/pointcloud/sfm collab_splats/wrapper/reconstructor.py tests/pointcloud/sfm tests/wrapper/test_sfm_config.py tests/test_cu121_migration.py
-git add -A collab_splats tests configs
-git commit -m "refactor(pointcloud): split sfm.py into the sfm/ backend package"
+/opt/venv/reconstruction/bin/python -m pyflakes collab_splats/pointcloud/sfm tests/pointcloud/sfm
+git add collab_splats/pointcloud/sfm tests/pointcloud/sfm docs/source/api/pointcloud.rst
+git commit --only collab_splats/pointcloud/sfm collab_splats/wrapper/reconstructor.py \
+  tests/pointcloud/sfm tests/wrapper/test_sfm_config.py tests/test_cu121_migration.py \
+  configs/base.yaml configs/README.md docs/source/api/pointcloud.rst \
+  -m "refactor(pointcloud): split sfm.py into the sfm/ backend package"
 ```
 
 ---
@@ -2817,7 +2884,12 @@ does, and four pointcloud symbols are still imported inside function bodies agai
 `make_creator(use_lc=)` (Task 10).
 
 **Files:**
-- Modify: `collab_splats/wrapper/reconstructor.py:23,25-34,562,1021-1023,1148-1160,1431,1769`
+- Modify: `collab_splats/wrapper/reconstructor.py` — locate every site BY CONTENT. Task 8
+  rewrites this file immediately before this task and a concurrent session holds an uncommitted
+  reformat of it, so the offsets below are hints, not addresses. Measured mid-Task-8, the local
+  imports were `lift_features` (`:489`), `PointcloudResult` in `_run_sfm` (`:954`),
+  `confidence_mask` (`:1363`) and `unproject_depth_map_to_point_map` (`:1037`); Task 8 has
+  already hoisted the five-line pointcloud import block to `:24-28`.
 - Test (regression net, unchanged): `tests/wrapper/test_reconstructor.py`,
   `tests/wrapper/test_sfm_wiring.py`
 
@@ -2846,13 +2918,27 @@ then delete these function-local lines:
   (line 1023) and its `import pycolmap` (1021) if Task 2's rewrite left either behind
 - `from collab_splats.pointcloud.base import PointcloudResult` in `_run_sfm` (line 1148)
 - `from collab_splats.pointcloud.utils import confidence_mask` in the splats stage (line 1769)
-- the duplicate `from vggt.utils.geometry import unproject_depth_map_to_point_map` in
-  `refine_poses` (line 1431) — the module-level one at line 23 stays, `refine_poses` is now its
-  only user.
+- `from vggt.utils.geometry import unproject_depth_map_to_point_map` — **read this one before
+  acting; the plan originally had it backwards.** At HEAD there were two: a module-level import
+  (`:23`) feeding the inline depth-alignment block in `_run_sfm` (`:1101`), and a function-local
+  duplicate in `refine_poses` (`:1136`) feeding `:1192`. Task 8 moves the alignment block into
+  `depth_align.py` and takes the module-level import with it, leaving `refine_poses`'s local
+  import as the file's ONLY one. So do not "delete the duplicate and keep the module-level one" —
+  there is no module-level one left, and deleting the local would leave `refine_poses` calling an
+  undefined name. Hoist it instead: put it back at module scope beside the other top-level
+  imports and delete the function-local line. Confirm which of the two actually exists when you
+  start; the invariant to preserve is that `refine_poses`'s call site resolves.
 
-`PointcloudResult` is imported for real now, so drop it from the `TYPE_CHECKING` block
-(line 59) and change every `-> "PointcloudResult"` annotation in the file to
-`-> PointcloudResult`.
+`PointcloudResult` is imported for real now, so it must leave the `TYPE_CHECKING` block and
+every `-> "PointcloudResult"` annotation in the file loses its quotes. Measured mid-Task-8:
+Task 8 has already emptied the `TYPE_CHECKING` block down to `import pycolmap` and
+`from collab_splats.viewer import Viewer`, so the first half is likely a no-op by the time you
+run — check, do not assume. The six quoted annotations were still there, at `:278`, `:525`,
+`:878`, `:932`, `:944` and `:1025`.
+
+`importlib.metadata.version("instantsfm")` inside `_run_sfm` is pre-existing and stays. Note
+that `instantsfm` is not installed in this venv, so `_run_sfm` cannot be exercised end-to-end
+here by any task in this plan — the wrapper tests reach it only through mocks.
 
 - [ ] **Step 2: Verify the module imports both ways**
 
@@ -2958,23 +3044,31 @@ comments that still name `pointcloud/sfm.py`, `export.py` or the deleted knobs. 
 lines a future reader would trust and be wrong.
 
 **Files:**
-- Modify: `configs/README.md:355,491`
+- Modify: `configs/README.md` — the `pointcloud.backend` row (`:354`, NOT `:355`, which is the
+  `pointcloud.<backend>` per-creator-kwargs row) and the "Unsupported with sfm" paragraph
+  (`:489-492`). Tasks 8 and 9 each delete a table row above them, so both shift; match on content.
 - Modify: `docs/source/api/pointcloud.rst:10-12`
-- Modify: `CLAUDE.md:57-59`
-- Modify: `collab_splats/preproc/undistort.py:83`
+- Modify: `CLAUDE.md:57-59` — verified live, but a concurrent session holds `CLAUDE.md`
+  uncommitted, so re-check the offsets and stage it explicitly (never `git add -A`). A
+  PreToolUse hook (`.claude/hooks/claude-md-guard.py`) rejects the file past 40,000 chars; this
+  edit is net-neutral in size, but do not add prose beyond the block below.
+- Verify (already edited by Task 9, do not re-edit): `collab_splats/preproc/undistort.py:83`
 - Modify: `collab_splats/remote/sources.py:71`
 - Modify: `setup.sh:74`
 - Modify: `docs/superpowers/CHANGELOG.md`
 
 - [ ] **Step 1: Fix the `configs/README.md` backend row and the sfm prose**
 
-Line 355 — replace `pointcloud/sfm.py` with the package path:
+The `pointcloud.backend` row (`:354` as last measured) — replace `pointcloud/sfm.py` with the
+package path:
 
 ```markdown
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm/` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
 ```
 
-Line 491 — the `instantsfm.features` clause described a check Task 9 deleted:
+The "Unsupported with sfm" paragraph (`:489-492` as last measured, four lines ending
+"`instantsfm.features` other than `colmap`.") — that clause described a check Task 9 deleted.
+Replace the whole paragraph with:
 
 ```markdown
 **Unsupported with sfm (all `ValueError` at config validation):** `bundle_adjustment: true`
@@ -3024,9 +3118,11 @@ Replace lines 57-59 with:
 one-line pipeline summary above the tree: `sfm: InstantSfM + VDA depth` is still accurate, so it
 stays.
 
-- [ ] **Step 4: Fix the three stale code comments**
+- [ ] **Step 4: Fix the stale code comments**
 
-`collab_splats/preproc/undistort.py:83`:
+`collab_splats/preproc/undistort.py:83` is Task 9's — its Step 11 retargets that comment,
+because Task 9 is what deletes the `pointcloud/sfm.py::_SIFT_NUM_THREADS` the comment points at.
+Verify it reads as below and move on; do not edit it twice:
 
 ```python
 # pointcloud/sfm/instantsfm.py::_generate_sift_database.
@@ -3087,10 +3183,23 @@ one pass, so it never had an entry there.
 
 - [ ] **Step 7: Commit**
 
+The index and working tree are shared with concurrent sessions, and `CLAUDE.md` is dirty from
+one of them — `git add -A` would sweep their work into your commit. Stage explicit paths, gate
+on `git diff --cached --name-only`, and commit with `--only`:
+
 ```bash
-git add -A configs docs CLAUDE.md setup.sh collab_splats
-git commit -m "docs(pointcloud): retarget paths at the sfm package; changelog entry"
+git add configs/README.md docs/source/api/pointcloud.rst docs/superpowers/CHANGELOG.md \
+  CLAUDE.md setup.sh collab_splats/remote/sources.py
+git diff --cached --name-only     # must list exactly those six
+git commit --only configs/README.md docs/source/api/pointcloud.rst \
+  docs/superpowers/CHANGELOG.md CLAUDE.md setup.sh collab_splats/remote/sources.py \
+  -m "docs(pointcloud): retarget paths at the sfm package; changelog entry"
 ```
+
+If `CLAUDE.md` still carries another session's uncommitted edit at that point, stage it as a
+blob instead: apply your edit to the working file, copy `git show HEAD:CLAUDE.md` to a scratch
+file, replay ONLY your edit onto that copy by content, `diff -u` to prove the delta, then
+`git hash-object -w` + `git update-index --cacheinfo 100644,<sha>,CLAUDE.md`.
 
 ---
 
@@ -3134,10 +3243,24 @@ Expected: pass, modulo the documented known failures.
 Every name this refactor deleted, in one pass:
 
 ```bash
-rtk proxy grep -rn "CoordinateFrame\|world_transform\|write_pointcloud_ply\|_write_ply\|_export_pointcloud_ply\|_write_transforms_json\|_load_pointcloud_from_disk\|_clean_pointcloud\|_ensure_vda_depth\|_context_keep_rows\|_video_unchanged\|decode_context\|vda_depth_complete\|VDA_CHECKPOINT\|apply_depth_alignment\|align_depth_affine\|align_depth_to_reconstruction\|DEPTH_ALIGN_MODELS\|DepthAlignModel\|_sfm_result_from_reconstruction\|_INSTANTSFM_FEATURES\|_SIFT_NUM_THREADS\|clean_pcd\|remove_far_points\|density_filter\|voxel_downsample_point_cloud\|compute_obb_from_points\|get_points_in_mask\|filter_distance" collab_splats tests evals configs docs/source setup.sh CLAUDE.md
+rtk proxy grep -rn "CoordinateFrame\|world_transform\|write_pointcloud_ply\|\b_write_ply\b\|_export_pointcloud_ply\|_write_transforms_json\|\b_clean_pointcloud\b\|_ensure_vda_depth\|_context_keep_rows\|_video_unchanged\|decode_context\|VDA_CHECKPOINT\|apply_depth_alignment\|align_depth_affine\|align_depth_to_reconstruction\|DEPTH_ALIGN_MODELS\|DepthAlignModel\|_sfm_result_from_reconstruction\|_INSTANTSFM_FEATURES\|_SIFT_NUM_THREADS\|clean_pcd\|remove_far_points\|density_filter\|voxel_downsample_point_cloud\|compute_obb_from_points\|get_points_in_mask\|filter_distance" collab_splats tests evals configs docs/source setup.sh CLAUDE.md
 ```
 
-Expected: no output. Hits inside `docs/superpowers/` are expected and excluded above.
+Three entries were corrected here rather than left to fail against correct code:
+`_load_pointcloud_from_disk` is GONE from the sweep — Task 3 Step 4 explicitly keeps the method
+("tests call this method by name, so the method itself stays") and only replaces its body, so
+sweeping for it contradicted the plan and produced 13 hits. `_write_ply` and `_clean_pointcloud`
+are now `\b`-anchored: unanchored they matched the test FUNCTION NAMES
+`test_write_ply_roundtrips_through_open3d` and `test_clean_pointcloud_*`, which test the surviving
+public `write_ply` / cleaning entry points and are not residue.
+
+One real edit this step must make: `tests/wrapper/test_reconstructor.py:400`'s comment still says
+"which `write_pointcloud_ply` rejects" — retarget it to `PointcloudResult.write_ply`.
+
+Expected: only `collab_splats/preproc/undistort.py:84,132,136` and
+`tests/preproc/test_undistort.py:14,124-125` — preproc's independent `_SIFT_NUM_THREADS` for the
+pycolmap calibration path, which this refactor never owned. Everything else: no output. Hits
+inside `docs/superpowers/` are expected and excluded above.
 
 - [ ] **Step 5: Lint the touched files**
 

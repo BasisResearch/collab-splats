@@ -394,7 +394,8 @@ def _make_mock_pointcloud_result(tmp_path):
     result.image_paths = [tmp_path / "images" / "frame_0001.jpg"]
     # Match the real PointcloudResult.points/.colors shape for an empty reconstruction
     # (pointcloud/base.py) — a bare MagicMock's default __len__/__iter__ produces a
-    # malformed (0,) array instead of (0, 3), which write_pointcloud_ply rejects.
+    # malformed (0,) array instead of the (0, 3) that this result's consumers
+    # (clean_pointcloud, the splats train call) expect.
     result.points = np.zeros((0, 3), dtype=np.float32)
     result.colors = np.zeros((0, 3), dtype=np.uint8)
     return result
@@ -521,7 +522,9 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
 
     with (
         patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", MagicMock()),
-        patch("collab_splats.pointcloud.utils.lift_features", return_value=torch.rand(n_points, dim)),
+        # Patch the reconstructor's own binding: lift_features is imported at module scope,
+        # so patching collab_splats.pointcloud.utils would not reach the name it calls.
+        patch.object(rec_mod, "lift_features", return_value=torch.rand(n_points, dim)),
     ):
         # Both training args are required; these tests assert file layout, so no early stop
         rec_mod._lift_and_save(

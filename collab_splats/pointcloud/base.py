@@ -65,7 +65,15 @@ class PointcloudResult:
 
     @property
     def points(self) -> np.ndarray:
-        """(P, 3) float32 world XYZ of the tracked sparse point set, ordered by point3D_id.
+        """(P, 3) float32 world XYZ of the tracked sparse point set, in `reconstruction.points3D`
+        iteration order — NOT sorted by point3D_id.
+
+        To map a row back to an id, pair this with `list(reconstruction.points3D.keys())`, which
+        iterates in the same order as the `.values()` this builds from (the keep-mask zip in
+        `Reconstructor`'s pointcloud stage does exactly that). Building the ids with
+        `sorted(reconstruction.points3D)` misaligns the rows and silently touches the wrong
+        points. Note that `depth_align._tracked_point3d_ids` DOES return sorted ids — a different
+        convention on a different result set, so never carry one over to the other.
 
         P is the filtered sparse set — smaller than FeedforwardResult.points which
         contains all feedforward model output including untracked points.

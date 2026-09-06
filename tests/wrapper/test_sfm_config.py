@@ -25,11 +25,11 @@ def _base_config():
     return cfg
 
 
-def test_instantsfm_is_valid_sfm_backend():
+def test_instantsfm_is_the_only_sfm_backend():
     """
-    instantsfm joins colmap/hloc in the sfm backend allowlist.
+    instantsfm is the sole sfm backend on the allowlist — colmap/hloc are not wired into _run_sfm.
     """
-    assert "instantsfm" in _SFM_BACKENDS
+    assert _SFM_BACKENDS == {"instantsfm"}
 
 
 def test_sfm_instantsfm_config_validates():
@@ -54,27 +54,13 @@ def test_sfm_rejects_bundle_adjustment():
         Reconstructor.validate_config(cfg)
 
 
-def test_instantsfm_features_allowlist():
-    """
-    pointcloud.instantsfm.features must be in the installed-version allowlist.
-    """
-    cfg = _base_config()
-    cfg["pointcloud"]["method"] = "sfm"
-    cfg["pointcloud"]["backend"] = "instantsfm"
-    cfg["pointcloud"]["instantsfm"]["features"] = "superglue"
-    with pytest.raises(ValueError, match="features"):
-        Reconstructor.validate_config(cfg)
-
-
 def test_base_yaml_has_instantsfm_block():
     """
     base.yaml carries the instantsfm sub-block with its documented defaults.
     """
     cfg = _base_config()
     assert cfg["pointcloud"]["instantsfm"] == {
-        "features": "colmap",
         "retriangulation": False,
-        "depth_align": "scale",
         "random_seed": None,
     }
 
@@ -108,15 +94,31 @@ def test_sfm_rejects_loop_closure():
         Reconstructor.validate_config(cfg)
 
 
-def test_run_sfm_colmap_hloc_still_not_implemented(tmp_path):
+@pytest.mark.parametrize("backend", ["colmap", "hloc"])
+def test_sfm_rejects_unwired_backends_at_config_load(backend):
     """
-    _run_sfm only implements backend: instantsfm; colmap/hloc raise NotImplementedError naming it.
+    colmap/hloc are refused at validation, before any stage runs — not mid-run after preproc.
+    """
+    cfg = _base_config()
+    cfg["pointcloud"]["method"] = "sfm"
+    cfg["pointcloud"]["backend"] = backend
+    with pytest.raises(ValueError, match="pointcloud.backend"):
+        Reconstructor.validate_config(cfg)
+
+
+def test_run_sfm_still_guards_non_instantsfm_backends(tmp_path):
+    """
+    _run_sfm keeps its own NotImplementedError as defence in depth behind validate_config.
+
+    Constructed with instantsfm (the allowlist rejects anything else) then mutated, since the
+    guard now only fires for a direct _run_sfm call, never through a validated config.
     """
     cfg = _base_config()
     cfg["input_path"] = str(tmp_path / "video.mp4")
     cfg["output_path"] = str(tmp_path / "out")
     cfg["pointcloud"]["method"] = "sfm"
-    cfg["pointcloud"]["backend"] = "colmap"
+    cfg["pointcloud"]["backend"] = "instantsfm"
     r = Reconstructor(cfg)
+    r.config["pointcloud"]["backend"] = "colmap"
     with pytest.raises(NotImplementedError, match="instantsfm"):
         r._run_sfm()

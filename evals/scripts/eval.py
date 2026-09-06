@@ -66,11 +66,8 @@ from collab_splats.geometry.loop_closure.eval import (
 )
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 from collab_splats.pointcloud import get_creator
-from collab_splats.pointcloud.sfm import (
-    InstantSfMCreator,
-    generate_vda_depth,
-    vda_depth_complete,
-)
+from collab_splats.pointcloud.sfm import InstantSfMCreator
+from collab_splats.pointcloud.vda import generate_vda_depth, vda_depth_complete
 
 # InstantSfM conditions: condition name -> use_depths. Classical global SfM (system colmap
 # SIFT + InstantSfM global mapper), not a feedforward backbone — --backbone and --submap_size
@@ -353,11 +350,11 @@ def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.nda
     for link_name, target in new_links:
         (staged_dir / link_name).symlink_to(target)
 
-    # Depth priors: VDA over the staged frames. infer_video_depth only echoes target_fps back
-    # (video_depth.py:70,162 — no temporal resampling), so the rate is informational; 1.0 here.
+    # Depth priors: VDA over the staged frames. Gate before the decode — generate_vda_depth is
+    # idempotent, but building `frames` reads every staged image into RAM to reach that check.
     if use_depths and not vda_depth_complete(output_dir, names):
         frames = np.stack([np.asarray(Image.open(p).convert("RGB")) for p in image_paths])
-        generate_vda_depth(frames, fps=1.0, out_dir=output_dir, names=names)
+        generate_vda_depth(frames, output_dir, names)
         del frames
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -366,17 +363,20 @@ def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.nda
     # Global SfM: colmap/instantsfm.db + colmap/sparse/0 under output_dir
     recon = InstantSfMCreator(use_depths=use_depths).reconstruct(output_dir)
 
-    # Every staged image must be registered — partial models leave frames without poses
+    # Every staged image must be registered — partial models leave frames without poses.
+    # The creator renames registered images to their filename stems (its output contract),
+    # so the staged names are matched stem-wise here.
     by_name = {im.name: im for im in recon.images.values()}
-    missing = [n for n in names if n not in by_name]
+    stems = [p.stem for p in image_paths]
+    missing = [n for n in stems if n not in by_name]
     if missing:
         raise RuntimeError(
-            f"InstantSfM registered {len(by_name)}/{len(names)} images — partial registration is not "
+            f"InstantSfM registered {len(by_name)}/{len(stems)} images — partial registration is not "
             f"supported (unregistered: {missing[:10]}{' ...' if len(missing) > 10 else ''})"
         )
 
     # w2c 4x4 per image, in the sorted-name order the GT poses follow
-    return np.stack([np.vstack([by_name[n].cam_from_world().matrix(), [0.0, 0.0, 0.0, 1.0]]) for n in names]).astype(
+    return np.stack([np.vstack([by_name[n].cam_from_world().matrix(), [0.0, 0.0, 0.0, 1.0]]) for n in stems]).astype(
         np.float32
     )
 

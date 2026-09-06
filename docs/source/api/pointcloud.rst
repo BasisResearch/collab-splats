@@ -7,7 +7,23 @@ Structure-from-motion and feedforward reconstruction.
    :members:
    :show-inheritance:
 
-.. automodule:: collab_splats.pointcloud.sfm
+.. automodule:: collab_splats.pointcloud.sfm.colmap
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.pointcloud.sfm.hloc
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.pointcloud.sfm.instantsfm
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.pointcloud.vda
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.pointcloud.depth_align
    :members:
    :show-inheritance:
 
@@ -24,5 +40,9 @@ Structure-from-motion and feedforward reconstruction.
    :show-inheritance:
 
 .. automodule:: collab_splats.pointcloud.feedforward.loger
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.pointcloud.utils
    :members:
    :show-inheritance:

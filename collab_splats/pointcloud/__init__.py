@@ -44,6 +44,8 @@ def get_creator(name: str) -> type[BasePointcloudCreator]:
 
     - name: colmap, hloc, mapanything or vggtx, plus vggt_omega / vggt_spark / loger
       when their optional deps are installed.
+    - Not the `pointcloud.method: sfm` allowlist: colmap/hloc resolve here, but
+      Reconstructor.validate_config rejects them as sfm backends.
     - Returns the class.
     - Raises KeyError listing the available names when the key is unknown.
     """

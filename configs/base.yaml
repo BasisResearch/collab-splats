@@ -89,22 +89,9 @@ pointcloud:
     enabled: true              # statistical outlier removal on the final sparse point set
   # InstantSfM (method: sfm, backend: instantsfm) config surface.
   instantsfm:
-    features: colmap          # feature/matching handler; v0.3.0 upstream supports only colmap
-                               # (CPU SIFT + exhaustive matching) — the value is validated but
-                               # not yet dispatched on.
     retriangulation: false    # GLOMAP-style post-BA refinement: retriangulate tracks from the
                                # full pre-filter set + up to 5 further BA rounds (upstream
                                # skip_retriangulation flag). Costs extra runtime.
-    depth_align: scale        # scale | affine — how VDA metric depth is mapped to the
-                              # COLMAP world. 'scale' fits one robust multiplier per frame.
-                              # 'affine' fits 1/d_colmap ~= a*(1/d_vda) + b per frame, the
-                              # space gsplat's depth_l1_loss is actually paid in; measured
-                              # 2026-08-26 it cuts the irreducible depth-loss floor 18.9%
-                              # pooled and 28.8% in the near field. 'affine' also writes 0
-                              # (= no target) for pixels past its saturation horizon and past
-                              # the furthest surviving track observation — one-sided, far side
-                              # only, because tracks do not cover close surfaces and a
-                              # near-side bound would delete the near field this sharpens.
     random_seed: null         # seed InstantSfM's RUNTIME_OPTIONS (numpy/random/torch/cuda).
                               # InitializeRandomPositions draws unseeded, so two runs of the
                               # same scene differ. null = upstream behaviour (unseeded).

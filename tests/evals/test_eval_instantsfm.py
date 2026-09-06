@@ -64,7 +64,7 @@ def test_run_instantsfm_nodepth_stages_symlinks_and_orders_by_name(tmp_path, mon
         def reconstruct(self, data_dir):
             seen["data_dir"] = Path(data_dir)
             # Registration order differs from name order — the result must follow names
-            return _FakeRecon(["000002.png", "000000.png", "000001.png"])
+            return _FakeRecon(["000002", "000000", "000001"])
 
     monkeypatch.setattr(eval_gt, "InstantSfMCreator", _Creator)
     monkeypatch.setattr(eval_gt, "generate_vda_depth", lambda *a, **k: pytest.fail("VDA must not run"))
@@ -90,15 +90,15 @@ def test_run_instantsfm_depth_generates_vda_then_reconstructs(tmp_path, monkeypa
     paths = _write_pngs(tmp_path / "imgs", 2)
     calls = []
 
-    def _fake_vda(frames, fps, out_dir, names):
-        calls.append(("vda", frames.shape, frames.dtype, fps, Path(out_dir), list(names)))
+    def _fake_vda(frames, out_dir, names):
+        calls.append(("vda", frames.shape, frames.dtype, Path(out_dir), list(names)))
 
     class _Creator:
         def __init__(self, **kw):
             calls.append(("creator", kw))
 
         def reconstruct(self, data_dir):
-            return _FakeRecon([p.name for p in paths])
+            return _FakeRecon([p.stem for p in paths])
 
     monkeypatch.setattr(eval_gt, "generate_vda_depth", _fake_vda)
     monkeypatch.setattr(eval_gt, "InstantSfMCreator", _Creator)
@@ -107,7 +107,7 @@ def test_run_instantsfm_depth_generates_vda_then_reconstructs(tmp_path, monkeypa
     extr = eval_gt._run_instantsfm("instantsfm", tmp_path / "imgs", out)
 
     # VDA ran first over uint8 RGB frames keyed by the staged names, then the depth-aware creator
-    assert calls[0] == ("vda", (2, 8, 6, 3), np.uint8, 1.0, out, ["000000.png", "000001.png"])
+    assert calls[0] == ("vda", (2, 8, 6, 3), np.uint8, out, ["000000.png", "000001.png"])
     assert calls[1] == ("creator", {"use_depths": True})
     assert extr.shape == (2, 4, 4)
 
@@ -120,11 +120,33 @@ def test_run_instantsfm_partial_registration_names_missing(tmp_path, monkeypatch
             pass
 
         def reconstruct(self, data_dir):
-            return _FakeRecon(["000000.png", "000002.png"])
+            return _FakeRecon(["000000", "000002"])
 
     monkeypatch.setattr(eval_gt, "InstantSfMCreator", _Creator)
-    with pytest.raises(RuntimeError, match="000001.png"):
+    with pytest.raises(RuntimeError, match="000001"):
         eval_gt._run_instantsfm("instantsfm_nodepth", tmp_path / "imgs", tmp_path / "out")
+
+
+def test_run_instantsfm_multi_dot_name_matches_on_full_stem(tmp_path, monkeypatch):
+    # Matching is Path.stem (last suffix only), not a split on the first dot: frame.0.png -> frame.0
+    image_dir = tmp_path / "imgs"
+    image_dir.mkdir()
+    for i in range(2):
+        Image.fromarray(np.full((8, 6, 3), i * 10, dtype=np.uint8)).save(image_dir / f"frame.{i}.png")
+
+    class _Creator:
+        def __init__(self, **kw):
+            pass
+
+        def reconstruct(self, data_dir):
+            return _FakeRecon(["frame.0", "frame.1"])
+
+    monkeypatch.setattr(eval_gt, "InstantSfMCreator", _Creator)
+    extr = eval_gt._run_instantsfm("instantsfm_nodepth", image_dir, tmp_path / "out")
+
+    # Both stems resolved -> no partial-registration raise, poses in sorted-name order
+    assert extr.shape == (2, 4, 4)
+    assert extr[:, 0, 3].tolist() == [0.0, 1.0]
 
 
 def test_run_instantsfm_changed_name_set_drops_sift_db(tmp_path, monkeypatch):
@@ -139,7 +161,7 @@ def test_run_instantsfm_changed_name_set_drops_sift_db(tmp_path, monkeypatch):
             pass
 
         def reconstruct(self, data_dir):
-            return _FakeRecon(["000000.png", "000001.png"])
+            return _FakeRecon(["000000", "000001"])
 
     monkeypatch.setattr(eval_gt, "InstantSfMCreator", _Creator)
 
@@ -165,7 +187,7 @@ def test_run_instantsfm_same_names_different_source_drops_caches(tmp_path, monke
             pass
 
         def reconstruct(self, data_dir):
-            return _FakeRecon(["000000.png", "000001.png"])
+            return _FakeRecon(["000000", "000001"])
 
     monkeypatch.setattr(eval_gt, "InstantSfMCreator", _Creator)
 

@@ -1,10 +1,8 @@
 import numpy as np
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 from PIL import Image
-from collab_splats.pointcloud.sfm import ColmapCreator, InstantSfMCreator
-from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.sfm import HlocCreator
 
 
 @pytest.fixture
@@ -13,67 +11,6 @@ def tiny_image_dir(tmp_path):
         arr = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
         Image.fromarray(arr).save(tmp_path / f"frame_{i:04d}.jpg")
     return tmp_path
-
-
-def test_colmap_creator_defaults():
-    c = ColmapCreator()
-    assert c.camera_model == "SIMPLE_RADIAL"
-    assert c.single_camera is False
-
-
-def test_colmap_creator_single_camera():
-    c = ColmapCreator(single_camera=True)
-    assert c.single_camera is True
-
-
-def test_colmap_creator_output_path(tiny_image_dir, tmp_path):
-    """ColmapCreator must write binary files to output_dir/colmap/sparse/0/."""
-    out = tmp_path / "out"
-
-    mock_recon = MagicMock()
-    mock_recon.images = {}
-    mock_recon.cameras = {}
-    mock_recon.points3D = {}
-
-    with patch("collab_splats.pointcloud.sfm.pycolmap.extract_features"), \
-         patch("collab_splats.pointcloud.sfm.pycolmap.match_exhaustive"), \
-         patch("collab_splats.pointcloud.sfm.pycolmap.incremental_mapping", return_value={0: mock_recon}):
-        creator = ColmapCreator()
-        creator.reconstruct(tiny_image_dir, out)
-        sparse_dir = out / "colmap" / "sparse" / "0"
-        mock_recon.write_binary.assert_called_once_with(str(sparse_dir))
-
-
-def test_colmap_creator_no_reconstruction_raises(tiny_image_dir, tmp_path):
-    out = tmp_path / "out"
-    with patch("collab_splats.pointcloud.sfm.pycolmap.extract_features"), \
-         patch("collab_splats.pointcloud.sfm.pycolmap.match_exhaustive"), \
-         patch("collab_splats.pointcloud.sfm.pycolmap.incremental_mapping", return_value={}):
-        creator = ColmapCreator()
-        with pytest.raises(RuntimeError, match="reconstruction failed"):
-            creator.reconstruct(tiny_image_dir, out)
-
-
-def test_colmap_creator_missing_image_dir_raises(tmp_path):
-    creator = ColmapCreator()
-    with pytest.raises(FileNotFoundError):
-        creator.reconstruct(tmp_path / "nonexistent", tmp_path / "out")
-
-
-@pytest.mark.gpu
-def test_colmap_creator_smoke(tiny_image_dir, tmp_path):
-    out = tmp_path / "out"
-    creator = ColmapCreator(single_camera=True)
-    try:
-        result = creator.reconstruct(tiny_image_dir, out)
-        assert isinstance(result, PointcloudResult)
-        assert result.points.shape[1] == 3
-        assert result.extrinsics.shape[1:] == (4, 4)
-    except RuntimeError as e:
-        assert "reconstruction failed" in str(e).lower()
-
-
-from collab_splats.pointcloud.sfm import HlocCreator
 
 
 def test_hloc_creator_defaults():
@@ -196,25 +133,3 @@ def test_hloc_creator_missing_image_dir_raises(tmp_path):
             sys.modules.pop('hloc', None)
         else:
             sys.modules['hloc'] = old_hloc
-
-
-def test_instantsfm_random_seed_defaults_to_none():
-    assert InstantSfMCreator().random_seed is None
-
-
-def test_instantsfm_random_seed_reaches_runtime_options():
-    pytest.importorskip("instantsfm")
-    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
-    from instantsfm.controllers.config import RUNTIME_OPTIONS
-
-    # Upstream SolveGlobalMapper reads RUNTIME_OPTIONS['random_seed'] with .get(key, None),
-    # so an unset seed must leave the key ABSENT rather than write a default in
-    assert "random_seed" not in InstantSfMCreator()._build_config().RUNTIME_OPTIONS
-
-    # A set seed must reach the option verbatim — a hardcoded or coerced value silently
-    # makes every scene reproduce to the same wrong reconstruction
-    seeded = InstantSfMCreator(random_seed=1234)._build_config()
-    assert seeded.RUNTIME_OPTIONS["random_seed"] == 1234
-
-    # Config aliases the module-level dict; the seed must not leak out of this instance
-    assert "random_seed" not in RUNTIME_OPTIONS

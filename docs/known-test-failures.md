@@ -1,5 +1,29 @@
 # Known Test Failures
 
+## 2026-09-06 — 3 `test_splats_stage` mesh failures: stale stub config, unmasked by the gsplat repair (OPEN)
+
+`tests/wrapper/test_splats_stage.py::test_mesh_source_splats_fuses_from_splats_zarr`,
+`::test_mesh_sfm_aligned_zarr_fuses` and `::test_mesh_stage_forwards_splat_depth_from_the_config`
+fail identically with `KeyError: 'splat_max_depth_frac'` raised from `_run_tsdf_mesh`
+(`collab_splats/wrapper/reconstructor.py`, the `splat_max_depth_frac=mesh_cfg[...]` line).
+Measured 2026-09-06 on `clean/pointcloud`: **3 failed, 14 passed**.
+
+Dated to `ddd8ddea` (2026-08-27, *feat(mesh): cut unconstrained and discontinuous depth before splat
+TSDF fusion*), which added two `mesh_cfg["splat_max_depth_frac"]` / `["splat_max_depth_grad"]` reads
+to `_run_tsdf_mesh`. **The cause is the test's stub, not the yaml:** `ddd8ddea` did add both keys to
+`configs/base.yaml` (they are present, `null`/`null`), but the only test file it touched was
+`tests/mesh/test_splats_adapter.py`. `test_splats_stage.py::_stub_reconstructor` builds its Reconstructor via
+`Reconstructor.__new__(Reconstructor)` and a hand-written `config["mesh"]` literal, so it never sees
+the base.yaml merge and still carries the pre-`ddd8ddea` key set. The fix is two keys in that stub
+dict, not a config change.
+
+Invisible until 2026-09-06 because the whole file was a **collection error** under the venv's retired
+`gsplat-rade` 1.4.0 (no `gsplat.losses`); the venv now holds the pinned upstream `1.5.3 @ d2f5c0f8`,
+the file collects, and these three surface. Same debt and same owner (the mesh owner) as the 6
+`tests/wrapper/test_reconstructor.py` + `tests/wrapper/test_reconstructor_loger_kwargs.py`
+base.yaml-assert failures tracked below. Not a pointcloud-cleanup regression — reproduces
+on the base checkout.
+
 ## 2026-09-05 — `av` is declared but missing from `uv.lock`, and `uv lock` cannot regenerate
 
 `pyproject.toml:35` declares `"av>=17.0"` — PyAV is a hard runtime dependency of
@@ -33,7 +57,7 @@ owner change touching a file three concurrent sessions build against — deliber
 done from the preproc session. Until then, do not hand-edit `uv.lock`: its entries carry
 hashes and a hand-added block will not match what a re-lock produces.
 
-## 2026-09-05 — env drift: `tests/wrapper/test_splats_stage.py` cannot collect, `gsplat.losses` missing
+## 2026-09-05 — env drift: `tests/wrapper/test_splats_stage.py` cannot collect, `gsplat.losses` missing (SUPERSEDED 2026-09-06 — venv rebuilt to the pinned `1.5.3 @ d2f5c0f`)
 
 `tests/wrapper/test_splats_stage.py` fails at COLLECTION, so any full `tests/wrapper` run
 either aborts or needs `--continue-on-collection-errors` to report the rest:
@@ -139,7 +163,7 @@ and the two in `test_reconstructor_loger_kwargs.py`) do pass now.
 
 The original entry follows.
 
-## 2026-08-21 — transient: 6 reconstructor/base.yaml failures from a concurrent session's working tree
+## 2026-08-21 — transient: 6 reconstructor/base.yaml failures from a concurrent session's working tree (SUPERSEDED 2026-09-06)
 
 `tests/wrapper/test_reconstructor.py` (`test_init_fills_defaults_from_base_yaml`,
 `test_mesh_clean_repair_defaults_off`, `test_build_localization_db_runs_when_missing`,
@@ -150,6 +174,9 @@ mesh defaults (`voxel_size`, `sdf_trunc`, `clean_repair: true`, `conf_percentile
 `native_resolution: true`, `color_map_iterations: 300`) that these tests assert. Working-tree
 state, not repo state: at HEAD the tests' targets exist. Resolves when that session commits
 (with test updates) or reverts. Do not "fix" the tests or the yaml from another session.
+
+**Superseded 2026-09-06:** the yaml did commit; these are stale asserts, not working-tree
+state, and they are durable debt owned by the mesh owner (see the 2026-09-06 entry above).
 
 ## 2026-08-18 — RESOLVED: 3 BA `test_optimize_*` xfails (bae/pypose target bug)
 

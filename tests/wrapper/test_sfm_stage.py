@@ -1,11 +1,11 @@
 """
 Reconstructor wiring for the sfm stage: the VDA depth cache and the late-consumed knobs.
 
-- `_run_sfm` gates VDA inference on the written map set, and drops `depth_vda/` on a gate
-  miss so a stem from a previous keyframe set cannot hold the gate false forever.
-- It forwards `depth_align` / `random_seed` from the config to the legs that consume them
-  long after the run has started.
-- Both knobs are also validated at config load, so a typo fails before the SIFT pass.
+- `_run_sfm` drops `depth_vda/` on a gate miss so a stem from a previous keyframe set
+  cannot hold `vda_depth_complete`'s set equality false forever; a complete set is loaded
+  by `generate_vda_depth` itself rather than re-inferred.
+- It forwards `random_seed` from the config to the leg that consumes it long after the run
+  has started, and validates it at config load so a typo fails before the SIFT pass.
 """
 
 from contextlib import ExitStack
@@ -35,20 +35,17 @@ FRAME_IDX = (0, 9, 30, 57)
 ########################################################################
 
 
-def _sfm_reconstructor(tmp_path, *, depth_align="scale", random_seed=None):
+def _sfm_reconstructor(tmp_path, *, random_seed=None):
     """
     A method:sfm Reconstructor backed by a real images/ store holding FRAME_IDX keyframes.
     """
     config = {
         "input_path": VIDEO_PATH,
         "output_path": str(tmp_path / "out"),
-        # 3.0, not base.yaml's own 2.0 default, so an fps assertion pins the config read
-        # rather than a value the merged defaults would have supplied anyway
-        "preproc": {"fps": 3.0},
         "pointcloud": {
             "method": "sfm",
             "backend": "instantsfm",
-            "instantsfm": {"depth_align": depth_align, "random_seed": random_seed},
+            "instantsfm": {"random_seed": random_seed},
         },
     }
     recon = Reconstructor(config)
@@ -77,8 +74,6 @@ def _patched_sfm(recon, *, depth_complete=True):
         "vda_depth_complete": patch(f"{RECONSTRUCTOR}.vda_depth_complete", return_value=depth_complete),
         "generate_vda_depth": patch(f"{RECONSTRUCTOR}.generate_vda_depth"),
         "InstantSfMCreator": patch(f"{RECONSTRUCTOR}.InstantSfMCreator"),
-        "_rename_images_to_stems": patch(f"{RECONSTRUCTOR}._rename_images_to_stems"),
-        "apply_depth_alignment": patch(f"{RECONSTRUCTOR}.apply_depth_alignment", return_value={}),
         "torch": patch(f"{RECONSTRUCTOR}.torch", SimpleNamespace(cuda=MagicMock(is_available=lambda: False))),
         # The zarr provenance stamp reads instantsfm's installed version. It is a hard dependency
         # of the real path but absent from some dev venvs, and none of these tests assert on it —
@@ -87,8 +82,8 @@ def _patched_sfm(recon, *, depth_complete=True):
             f"{RECONSTRUCTOR}.importlib",
             SimpleNamespace(metadata=SimpleNamespace(version=lambda _package: "0.0.0")),
         ),
-        "_sfm_result_from_reconstruction": patch.object(
-            Reconstructor, "_sfm_result_from_reconstruction", return_value=outputs
+        "result_from_reconstruction": patch(
+            f"{RECONSTRUCTOR}.result_from_reconstruction", return_value=(outputs, {})
         ),
     }
     return patches
@@ -116,12 +111,19 @@ def _npy_dir(recon):
     return recon.backend_dir / "depth_vda" / "images" / "npy"
 
 
+def _expected_frames():
+    """
+    The keyframe stack the store holds, in store order.
+    """
+    return np.stack([np.full((8, 8, 3), i, np.uint8) for i in FRAME_IDX])
+
+
 ########################################################################
 # _run_sfm: the VDA depth cache gate
 ########################################################################
 
 
-def test_run_sfm_skips_vda_inference_when_the_map_set_is_complete(tmp_path):
+def test_run_sfm_keeps_a_complete_vda_map_set(tmp_path):
     recon = _sfm_reconstructor(tmp_path)
 
     # A cached map on the hit path must survive untouched — the prune belongs to the miss branch
@@ -131,7 +133,14 @@ def test_run_sfm_skips_vda_inference_when_the_map_set_is_complete(tmp_path):
 
     mocks = _run_sfm_with_mocks(recon, depth_complete=True)
 
-    mocks["generate_vda_depth"].assert_not_called()
+    # generate_vda_depth is still called — it loads a complete set rather than re-inferring —
+    # and the depth stack it returns is what the result builder is handed, alongside the frames
+    # (re-read after the solve, so still the store stack) and the staged names
+    assert mocks["generate_vda_depth"].call_count == 1
+    args = mocks["result_from_reconstruction"].call_args.args
+    assert args[1] is mocks["generate_vda_depth"].return_value
+    np.testing.assert_array_equal(args[2], _expected_frames())
+    assert args[3] == [f"frame_{i:06d}.png" for i in FRAME_IDX]
     assert (npy_dir / "frame_000000.npy").read_bytes() == b"cached"
 
 
@@ -149,28 +158,18 @@ def test_run_sfm_regenerates_vda_depth_and_drops_stale_maps_on_a_gate_miss(tmp_p
     mocks = _run_sfm_with_mocks(recon, depth_complete=False)
 
     assert mocks["generate_vda_depth"].call_count == 1
-    kwargs = mocks["generate_vda_depth"].call_args.kwargs
-    assert kwargs["fps"] == 3.0  # float(config["preproc"]["fps"]), not a source literal
-    assert kwargs["out_dir"] == recon.backend_dir
-    assert kwargs["names"] == [f"frame_{i:06d}.png" for i in FRAME_IDX]
+    keyframes, out_dir, names = mocks["generate_vda_depth"].call_args.args
+    assert out_dir == recon.backend_dir
+    assert names == [f"frame_{i:06d}.png" for i in FRAME_IDX]
+
+    # The frame stack is the store read back in place, in store order — not a re-decode of the video
+    np.testing.assert_array_equal(keyframes, _expected_frames())
     assert not stale.exists()
 
 
 ########################################################################
 # _run_sfm: config pass-through
 ########################################################################
-
-
-def test_run_sfm_forwards_depth_align_from_the_config(tmp_path):
-    recon = _sfm_reconstructor(tmp_path, depth_align="affine")
-    mocks = _run_sfm_with_mocks(recon)
-    assert mocks["apply_depth_alignment"].call_args.kwargs["model"] == "affine"
-
-
-def test_run_sfm_defaults_depth_align_to_scale(tmp_path):
-    recon = _sfm_reconstructor(tmp_path)
-    mocks = _run_sfm_with_mocks(recon)
-    assert mocks["apply_depth_alignment"].call_args.kwargs["model"] == "scale"
 
 
 def test_run_sfm_forwards_random_seed_from_the_config(tmp_path):
@@ -216,13 +215,3 @@ def test_random_seed_accepts_null_and_an_in_range_int():
     assert _validated_sfm_config(random_seed=None)["pointcloud"]["instantsfm"]["random_seed"] is None
     assert _validated_sfm_config(random_seed=2**32 - 1)["pointcloud"]["instantsfm"]["random_seed"] == 2**32 - 1
 
-
-def test_depth_align_rejects_an_unknown_model_at_config_load():
-    # apply_depth_alignment raises too, but only once the model is solved
-    with pytest.raises(ValueError, match=r"depth_align='affinne'"):
-        _validated_sfm_config(depth_align="affinne")
-
-
-def test_depth_align_accepts_both_shipped_models():
-    for model in ("scale", "affine"):
-        assert _validated_sfm_config(depth_align=model)["pointcloud"]["instantsfm"]["depth_align"] == model

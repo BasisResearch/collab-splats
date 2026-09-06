@@ -354,10 +354,8 @@ parameter and raises.
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
 | `preproc.undistort` | bool | `false` | Self-calibrate one shared OPENCV camera (pycolmap, ≤60 frames) and undistort every selected frame (cv2, alpha=0 crop) before `images/` is written. `images/` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
-| `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm.py` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
+| `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` only — `colmap`/`hloc` are rejected at config validation. `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm/` but nothing dispatches to them. |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
-| `pointcloud.instantsfm.features` | str | `colmap` | sfm only: feature/matching handler. `colmap` (SIFT + exhaustive; GPU when CUDA is available, capped CPU threads otherwise) is the only allowed value — anything else raises at validation |
-| `pointcloud.instantsfm.depth_align` | str | `scale` | How VDA metric depth is mapped into the COLMAP world. `scale` fits one robust multiplier per frame. `affine` fits `1/d_colmap ≈ a·(1/d_vda) + b` per frame — the disparity space gsplat's `depth_l1_loss` is actually paid in; measured 2026-08-26 on GH010229, it cuts the irreducible depth-loss floor 18.9% pooled and 28.8% in the near field. Frames whose fit would send a p99 depth non-positive fall back to `scale`. |
 | `pointcloud.instantsfm.random_seed` | int\|null | `null` | Seed InstantSfM's `RUNTIME_OPTIONS` (numpy/random/torch/cuda). Upstream `InitializeRandomPositions` draws unseeded, so two runs of one scene differ. `null` = upstream behaviour |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`) |
 | `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`) |
@@ -397,6 +395,28 @@ parameter and raises.
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
 | `localization.matcher` | str | `loma` | vismatch model name (`loma`, `xfeat`, `disk-lightglue`, `aliked-lightglue`, …) |
 | `localization.top_k` | int | `8` | Reference frames matched per query |
+
+**Migration (2026-09-06):** the pointcloud cleanup retired eight keys from `base.yaml`, and
+they are **not refused** — a published `run_config.yaml` that still sets them deep-merges and
+re-runs with the values silently ignored. Retired: `preproc.vda_context_fps`,
+`pointcloud.export_max_points`, `pointcloud.clean.outlier_removal`, `pointcloud.clean.voxel_size`,
+`pointcloud.clean.confidence_threshold`, `pointcloud.instantsfm.depth_align`,
+`pointcloud.instantsfm.features` and `pointcloud.instantsfm.single_camera`.
+
+`pointcloud.clean.outlier_removal` is the only one that can change output. It used to gate the
+point3D deletions; the clean step now runs whenever `pointcloud.clean.enabled` is true. The old
+default was `true`, so the **default path is unchanged** — but a saved config carrying
+`outlier_removal: false` now deletes points and writes a **different `sparse_pc.ply`** on re-run.
+Set `pointcloud.clean.enabled: false` to get the old `outlier_removal: false` behaviour.
+
+The rest were already inert, and are listed only so a reader of an old config knows the value is
+dead: `export_max_points` defaulted to `null` so the export cap never fired; `voxel_size`'s
+downsampled cloud was computed and then discarded; `confidence_threshold` was annotated "NOT YET
+READ by the clean step" in `base.yaml` itself; `depth_align` chose between the `scale` and
+`affine` fits and the affine model is gone, so per-frame scale alignment is the only path;
+`features` had one supported value (`colmap`) and was validated but never dispatched on; and `single_camera` was an `InstantSfMCreator` field that was never set
+`False` — the sfm path stages one video, so the single-camera branch is now hard-coded
+(`pointcloud/sfm/instantsfm.py`).
 
 ### Localization matchers
 
@@ -472,15 +492,18 @@ pointcloud:
   method: sfm
   backend: instantsfm
   instantsfm:
-    features: colmap     # the only allowed value (validated; upstream v0.3.0 has no other handler)
+    retriangulation: false   # GLOMAP-style post-BA refinement: denser tracks, extra runtime
+    random_seed: null        # seed RUNTIME_OPTIONS; null = upstream (unseeded) behaviour
 ```
 
 **Install.** `setup.sh` installs `instantsfm` from a pinned git commit with `--no-deps`
 (upstream pins `numpy==1.26.4`, the lock runs numpy 2.x), plus `pyceres==2.3`,
 `scikit-sparse==0.4.15` (needs `libsuitesparse-dev`) and `easydict==1.13`; it clones
-Video-Depth-Anything into `third_party/Video-Depth-Anything` at commit `4f5ae23` and
-downloads `checkpoints/metric_video_depth_anything_vitl.pth` (~1.5 GB, best-effort — a
-no-network build skips it and the first sfm run fails fast with `FileNotFoundError`). A
+Video-Depth-Anything into `third_party/Video-Depth-Anything` at commit `4f5ae23` (source
+only — no weights). The metric checkpoint is pulled from the Hugging Face hub on first use
+(`depth-anything/Metric-Video-Depth-Anything-Large`, ~1.5 GB) and cached under `HF_HOME`
+(`/workspace/models` in the image), so a build needs no network for it and a machine that
+has none at run time fails on the first sfm run with a `RuntimeError` naming the repo. A
 system `colmap` binary must be on `PATH`. Plain `uv sync` prunes the `--no-deps` packages;
 re-run the setup.sh block afterwards.
 
@@ -488,9 +511,8 @@ re-run the setup.sh block afterwards.
 VDA metric weights are CC-BY-NC-4.0.
 
 **Unsupported with sfm (all `ValueError` at config validation):** `bundle_adjustment: true`
-(InstantSfM runs its own global BA; `refine_poses` / `--stages refine` also refuse),
-`loop_closure` (global mapper, not a sequential submap pipeline), and any
-`instantsfm.features` other than `colmap`.
+(InstantSfM runs its own global BA; `refine_poses` / `--stages refine` also refuse) and
+`loop_closure` (global mapper, not a sequential submap pipeline).
 
 **Output layout** (`<backend>` is `instantsfm/`):
 

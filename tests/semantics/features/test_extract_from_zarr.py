@@ -10,7 +10,7 @@ import pytest
 import torch
 import zarr
 
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.semantics.utils import extract_feature_cache
 
@@ -35,18 +35,28 @@ class _TestExtractor(BaseFeatureExtractor):
         return [torch.ones(self._D, self._H_p, self._W_p) for _ in images]
 
 
-def _make_frames_zarr(n: int, H: int, W: int, tmp_dir: str) -> Path:
-    """Write a frames.zarr of n random uint8 frames using the real writer.
-
-    Must go through FrameStore.create, not a hand-rolled zarr: the previous fixture invented
-    an `n_frames` attr and a `frames` array, so extract_feature_cache passed its tests
-    while crashing on every real store (which has `images` + record_keys).
+def _make_images_dir(n: int, H: int, W: int, tmp_dir: str) -> Path:
     """
-    zarr_path = Path(tmp_dir) / "frames.zarr"
+    Write an images/ directory of n random uint8 frames using the real writer.
+
+    Must go through fr.write_frames, not hand-rolled PNGs: a hand-rolled fixture is free to
+    invent a naming scheme the reader never sees in production, which is how this path once
+    passed its tests while crashing on every real store.
+
+    Args:
+        n: number of frames to write.
+        H: frame height in pixels.
+        W: frame width in pixels.
+        tmp_dir: directory the images/ subdirectory is created under.
+
+    Returns:
+        Path to the written images/ directory.
+    """
+    images_dir = Path(tmp_dir) / "images"
     frames = [np.random.randint(0, 255, (H, W, 3), dtype=np.uint8) for _ in range(n)]
     records = [{"frame_idx": i} for i in range(n)]
-    FrameStore.create(zarr_path, frames, records, provenance={"source": "test"})
-    return zarr_path
+    fr.write_frames(images_dir, frames, records, {"source": "test"})
+    return images_dir
 
 
 ########################################################################
@@ -83,9 +93,9 @@ def test_features_to_rgb_constant_returns_zero():
 def test_extract_feature_cache_creates_zarr():
     extractor = _TestExtractor()
     with tempfile.TemporaryDirectory() as tmp:
-        frames_zarr = _make_frames_zarr(n=3, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "cache"
-        result = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        images_dir = _make_images_dir(n=3, H=64, W=64, tmp_dir=tmp)
+        cache_dir = Path(tmp) / "semantics"
+        result = extract_feature_cache(extractor, images_dir, cache_dir)
         assert result == cache_dir / "_test_extractor.zarr"
         assert result.exists()
 
@@ -93,9 +103,9 @@ def test_extract_feature_cache_creates_zarr():
 def test_extract_feature_cache_feature_shape():
     extractor = _TestExtractor()
     with tempfile.TemporaryDirectory() as tmp:
-        frames_zarr = _make_frames_zarr(n=3, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "cache"
-        result = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        images_dir = _make_images_dir(n=3, H=64, W=64, tmp_dir=tmp)
+        cache_dir = Path(tmp) / "semantics"
+        result = extract_feature_cache(extractor, images_dir, cache_dir)
         store = zarr.open(str(result), mode="r")
         N, D, H_p, W_p = store["features"].shape
         assert N == 3
@@ -113,11 +123,11 @@ def test_extract_feature_cache_feature_shape():
 def test_extract_feature_cache_reuses_a_matching_cache():
     extractor = _TestExtractor()
     with tempfile.TemporaryDirectory() as tmp:
-        frames_zarr = _make_frames_zarr(n=3, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "cache"
-        result1 = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        images_dir = _make_images_dir(n=2, H=64, W=64, tmp_dir=tmp)
+        cache_dir = Path(tmp) / "semantics"
+        result1 = extract_feature_cache(extractor, images_dir, cache_dir)
         mtime = result1.stat().st_mtime_ns
-        result2 = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        result2 = extract_feature_cache(extractor, images_dir, cache_dir)
         assert result1 == result2
         assert result2.stat().st_mtime_ns == mtime  # untouched -> extraction was skipped
 
@@ -137,10 +147,10 @@ def test_extract_feature_cache_marks_validity_only_after_every_frame_is_written(
 
     extractor.forward = dying_forward
     with tempfile.TemporaryDirectory() as tmp:
-        frames_zarr = _make_frames_zarr(n=4, H=64, W=64, tmp_dir=tmp)
+        images_dir = _make_images_dir(n=4, H=64, W=64, tmp_dir=tmp)
         cache_dir = Path(tmp) / "cache"
         with pytest.raises(RuntimeError):
-            extract_feature_cache(extractor, frames_zarr, cache_dir)
+            extract_feature_cache(extractor, images_dir, cache_dir)
 
         # The half-written store must not advertise itself as complete
         store = zarr.open(str(cache_dir / "_test_extractor.zarr"), mode="r")
@@ -149,5 +159,5 @@ def test_extract_feature_cache_marks_validity_only_after_every_frame_is_written(
 
         # ...so the next run re-extracts instead of serving the zero-filled planes
         extractor.forward = real_forward
-        result = extract_feature_cache(extractor, frames_zarr, cache_dir)
+        result = extract_feature_cache(extractor, images_dir, cache_dir)
         assert zarr.open(str(result), mode="r")["features"][3].max() == 1.0

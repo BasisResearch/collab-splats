@@ -16,6 +16,7 @@ from collab_splats.dashboard.localize import (
     subsample_step,
 )
 from collab_splats.dashboard.operation_log import OperationLog
+from collab_splats.preproc import frames as fr
 
 # Flat curated scene ids: reconstruction scene + the scene supplying the query video.
 SCENE = "2026_05_07-birds-clip_03"
@@ -454,7 +455,7 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
 
 
 def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
-    """Non-empty match path: each ranked ref resolves to an RGB array (store for reconstruction
+    """Non-empty match path: each ranked ref resolves to an RGB array (images/ for reconstruction
     frames, disk for localized) and its correspondences arrive pre-sliced as plain arrays."""
     import cv2
     import matplotlib.figure
@@ -474,14 +475,12 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("collab_splats.localization.viz.plot_correspondences", _capture)
 
-    # Fake store: reconstruction frames resolve to a known RGB array, no real zarr needed
+    # Real images/ store: the reconstruction ref frame resolves to a known RGB array
     store_pixels = np.full((4, 4, 3), 7, np.uint8)
-    monkeypatch.setattr(
-        "collab_splats.preproc.frame_store.FrameStore.open",
-        classmethod(lambda cls, path: SimpleNamespace(image_by_frame_idx=lambda fi: store_pixels)),
-    )
+    images_dir = tmp_path / "images"
+    fr.write_frames(images_dir, [store_pixels], [{"frame_idx": 0}], {"video_path": "x"})
 
-    # ref 0 = reconstruction (store branch); ref 1 = localized (disk branch — write a real JPG)
+    # ref 0 = reconstruction (images/ branch); ref 1 = localized (disk branch — write a real JPG)
     localized_jpg = tmp_path / "localized_0001.jpg"
     cv2.imwrite(str(localized_jpg), np.zeros((4, 4, 3), np.uint8))
 
@@ -501,11 +500,11 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
         query_frame=np.zeros((4, 4, 3), np.uint8),
         query_intrinsics=500.0 * np.eye(3, dtype=np.float32),
         intrinsics_source="estimated (experimental)",
-        ref_image_paths=["frame_000000.jpg", str(localized_jpg)],
+        ref_image_paths=["frame_000000.png", str(localized_jpg)],
         ref_extrinsics=np.eye(4, dtype=np.float32)[None],
         frame_sources=["reconstruction", "localized"],
     )
-    figs = page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"), frames_zarr=tmp_path / "frames.zarr")
+    figs = page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"), images_dir=images_dir)
 
     # Both ranked refs produced a figure with per-frame pre-sliced correspondence arrays
     assert len(figs["match_figs"]) == 2
@@ -513,5 +512,5 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
     for ref_image, q_px, r_px, mask in calls:
         assert isinstance(ref_image, np.ndarray) and ref_image.ndim == 3
         assert len(q_px) == len(r_px) == len(mask)
-    # Reconstruction frame came from the store (known pixel value), not disk
+    # Reconstruction frame came from images/ (known pixel value), not the localized JPG
     assert np.array_equal(calls[0][0], store_pixels)

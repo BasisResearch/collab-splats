@@ -49,9 +49,12 @@ PULL_EXCLUDES = (
 # video itself — the remote driver fetches it into the same scene dir it later pushes, and
 # it already lives in environments-curated, so uploading it would just duplicate the
 # largest file in the tree and make every verify re-hash it.
-# frames.zarr IS pushed: it is the sole persistent keyframe store, so a pulled processed
-# scene must carry it to be localizable without re-running preproc — which is exactly what
-# PULL_EXCLUDES above already assumes. Excluding it here made pulling it impossible.
+# The scene-root images/ store IS pushed: it is the sole persistent keyframe store, so a pulled
+# processed scene must carry it to be localizable without re-running preproc — which is exactly
+# what PULL_EXCLUDES above already assumes. Excluding it here made pulling it impossible.
+# PULL_EXCLUDES' "pointcloud.zarr/images/**" does not reach it: that pattern has two path
+# components, so it needs a pointcloud.zarr parent. A BARE "images/**" in either tuple would —
+# see the anchoring note below — so anything added for images/ must carry a leading slash.
 # Bracket classes rather than bare `*.mp4`: rclone globs are case sensitive and camera
 # files are commonly uppercase (C0043.MP4).
 # The 2D-cache pattern MUST keep its leading slash. rclone matches an unanchored pattern at ANY
@@ -389,7 +392,7 @@ class SceneSource:
     ) -> Path:
         """rclone-copy processed outputs to dest_dir; return the local dir.
 
-        excludes: rclone --exclude patterns (e.g. "frames.zarr/**") to skip artifacts a
+        excludes: rclone --exclude patterns (e.g. "/images/**") to skip artifacts a
         consumer does not need. on_line, if given, receives each --stats progress line.
         """
         dest_dir = Path(dest_dir)
@@ -470,7 +473,7 @@ class SceneSource:
                 remote,
                 "--one-way",
                 "--gcs-bucket-policy-only",
-                # frames.zarr is pushed, so this walks thousands of small chunk files: list
+                # images/ is pushed, so this walks one PNG per keyframe: list
                 # recursively (one request per prefix instead of one per directory) and widen the
                 # checker pool. Deliberately NO --size-only/--checksum downgrade — this gates a
                 # destructive local delete, so it must stay a full content comparison.

@@ -378,7 +378,7 @@ class SplatsApp(param.Parameterized):
     def _update_max_frames_bound(self, scene: str) -> None:
         """Set the Max-frames bound to the scene video's frame count — fetch/probe off the IOLoop.
 
-        ffprobe is a subprocess even for local files; never run it inline in a watcher.
+        The container parse is blocking IO even for local files; never run it inline in a watcher.
         """
         if not scene:
             return

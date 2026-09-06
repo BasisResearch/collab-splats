@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 RECONSTRUCTOR = "collab_splats.wrapper.reconstructor"
@@ -37,7 +37,7 @@ FRAME_IDX = (0, 9, 30, 57)
 
 def _sfm_reconstructor(tmp_path, *, depth_align="scale", random_seed=None):
     """
-    A method:sfm Reconstructor backed by a real frames.zarr holding FRAME_IDX keyframes.
+    A method:sfm Reconstructor backed by a real images/ store holding FRAME_IDX keyframes.
     """
     config = {
         "input_path": VIDEO_PATH,
@@ -53,17 +53,14 @@ def _sfm_reconstructor(tmp_path, *, depth_align="scale", random_seed=None):
     }
     recon = Reconstructor(config)
 
-    # Real store: _run_sfm reads frame_indices() off it and exports its images to backend_dir
+    # Real store: _run_sfm reads the frame paths, the manifest provenance and the PNGs off it
     frames = [np.full((8, 8, 3), i, np.uint8) for i in FRAME_IDX]
     records = [{"frame_idx": int(i), "blur_score": 1.0} for i in FRAME_IDX]
-    FrameStore.create(
-        recon.frames_zarr,
+    fr.write_frames(
+        recon.images_dir,
         frames,
         records,
-        provenance={
-            "video_path": VIDEO_PATH,
-            "method": "uniform",
-        },
+        {"video_path": VIDEO_PATH, "method": "uniform"},
     )
     return recon
 
@@ -155,7 +152,7 @@ def test_run_sfm_regenerates_vda_depth_and_drops_stale_maps_on_a_gate_miss(tmp_p
     kwargs = mocks["generate_vda_depth"].call_args.kwargs
     assert kwargs["fps"] == 3.0  # float(config["preproc"]["fps"]), not a source literal
     assert kwargs["out_dir"] == recon.backend_dir
-    assert kwargs["names"] == [f"frame_{i:06d}.jpg" for i in FRAME_IDX]
+    assert kwargs["names"] == [f"frame_{i:06d}.png" for i in FRAME_IDX]
     assert not stale.exists()
 
 

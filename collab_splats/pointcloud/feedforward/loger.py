@@ -292,8 +292,8 @@ class LoGeRCreator(BaseFeedforwardCreator):
     def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
         """Resize decoded frames to LoGeR's patch-aligned budget; return (N,3,H,W) in [0,1]."""
         # Windows and overlap stitching assume temporal order, and equal indices would
-        # additionally collide in the frame_{idx:06d} labels below. frames.zarr is ordered
-        # by construction today, so this guards an assumption rather than a known bug.
+        # additionally collide in the frame_{idx:06d} labels below. The images/ store is
+        # ordered by construction today, so this guards an assumption rather than a known bug.
         # Report the offending pair, not frame_idxs itself: at the 300-frame budget that
         # would put a 300-element list in the traceback and bury the one bad index.
         for i, (a, b) in enumerate(zip(frame_idxs, frame_idxs[1:])):

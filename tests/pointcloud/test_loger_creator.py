@@ -870,12 +870,23 @@ _FF_DEFAULTS = dict(
 
 
 def _call_run_feedforward(tmp_path, *, n_frames=10, **overrides):
-    """Invoke _run_feedforward with the frame store and every creator class stubbed out.
-
-    The stub creator records its kwargs and the store it was handed, and runs to completion
-    rather than raising — an early abort would skip the reconstruct call, and the store is
-    opened for that call. Returns a namespace of (seen, store, sources).
     """
+    Invoke _run_feedforward against a real images/ dir with every creator class stubbed out.
+
+    - The frame count is the only thing _run_feedforward reads off disk (the LoGeR
+      advisory), and frame_paths only lists and sorts — so empty files are enough and
+      nothing decodes them.
+    - The stub creator records its kwargs and the source it was handed, and runs to
+      completion rather than raising: an early abort would skip the reconstruct call.
+
+    Returns:
+        A namespace of (seen, images_dir, sources).
+    """
+    images_dir = tmp_path / "images"
+    images_dir.mkdir(exist_ok=True)
+    for i in range(n_frames):
+        (images_dir / f"frame_{i:06d}.png").touch()
+
     seen = {}
     sources = []
 
@@ -890,22 +901,19 @@ def _call_run_feedforward(tmp_path, *, n_frames=10, **overrides):
             sources.append(source)
             return MagicMock()
 
-    # Patch all four creators, not just LoGeR, so `backend` can vary freely. FrameStore is
-    # patched on the reconstructor module because that is where the name is looked up.
+    # Patch all four creators, not just LoGeR, so `backend` can vary freely.
     with (
-        patch.object(R, "FrameStore") as mock_store,
         patch.object(ff_mod, "LoGeRCreator", _StubCreator),
         patch.object(ff_mod, "VGGTXCreator", _StubCreator),
         patch.object(ff_mod, "VGGTOmegaCreator", _StubCreator),
         patch.object(ff_mod, "MapAnythingCreator", _StubCreator),
     ):
-        mock_store.open.return_value.__len__.return_value = n_frames
         R._run_feedforward(
-            frames_zarr=tmp_path / "frames.zarr",
+            images_dir=images_dir,
             output_dir=tmp_path / "out",
             **{**_FF_DEFAULTS, **overrides},
         )
-    return types.SimpleNamespace(seen=seen, store=mock_store, sources=sources)
+    return types.SimpleNamespace(seen=seen, images_dir=images_dir, sources=sources)
 
 
 def test_loger_is_a_recognised_feedforward_backend():
@@ -932,20 +940,20 @@ def test_loop_closure_with_loger_is_refused(tmp_path):
 
 
 def test_loop_closure_refusal_precedes_touching_the_filesystem(tmp_path):
-    # Deliberately does NOT patch FrameStore: the point is that an unsupported config is
-    # refused without a readable frames.zarr. Reachable with --stages pointcloud before
-    # preproc has run. If the refusal ever moves below the store open, this gets a
-    # FileNotFoundError and sends the user to fix their environment instead of their config.
+    # Deliberately points at a directory that does not exist: the point is that an
+    # unsupported config is refused without a readable images/ store. Reachable with
+    # --stages pointcloud before preproc has run. If the refusal ever moves below the
+    # directory read, this sends the user to fix their environment, not their config.
     with pytest.raises(Exception) as excinfo:
         R._run_feedforward(
-            frames_zarr=tmp_path / "definitely-absent.zarr",
+            images_dir=tmp_path / "definitely-absent",
             output_dir=tmp_path / "out",
             **{**_FF_DEFAULTS, "loop_closure": True},
         )
 
     assert isinstance(
         excinfo.value, ValueError
-    ), f"config must be refused before the store is opened, got {type(excinfo.value).__name__}: {excinfo.value}"
+    ), f"config must be refused before the store is read, got {type(excinfo.value).__name__}: {excinfo.value}"
     assert "loop closure" in str(excinfo.value)
 
 
@@ -1004,15 +1012,14 @@ def test_creator_kwargs_may_not_redeclare_a_reserved_key(tmp_path, reserved):
 ########################################
 
 
-def test_frame_store_is_opened_once_and_handed_to_the_creator(tmp_path):
-    # The advisory needs a frame count and inference needs the store; opening twice was
-    # duplicated work and left the advisory guarding an error that is fatal regardless.
-    # The stub creator must run to completion for this to mean anything — an early abort
-    # would skip reconstruct, and reconstruct is where the second open used to happen.
+def test_the_images_dir_is_handed_to_the_creator_unchanged(tmp_path):
+    # Creators read the scene's images/ directory in place. Nothing is staged, exported or
+    # wrapped in a handle on the way, so the path the creator gets must be the one that came
+    # in. The stub must run to completion for this to mean anything — an early abort would
+    # skip reconstruct entirely.
     res = _call_run_feedforward(tmp_path, max_frames=500)
 
-    assert res.store.open.call_count == 1, f"frames.zarr opened {res.store.open.call_count}x, expected once"
-    assert res.sources == [res.store.open.return_value], "the creator was handed a different store"
+    assert res.sources == [res.images_dir], f"the creator was handed {res.sources}, not the images dir"
 
 
 def test_max_frames_advisory_fires_at_the_ceiling(tmp_path, caplog):

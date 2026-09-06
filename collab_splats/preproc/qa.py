@@ -39,7 +39,14 @@ def analysis_gray(frame_bgr: np.ndarray, *, width: int = 480) -> np.ndarray:
     """
     Grayscale copy downscaled to `width` for scoring.
 
-    - Bounds LK flow and Laplacian cost regardless of source resolution.
+    Bounds LK flow and Laplacian cost regardless of source resolution.
+
+    Args:
+        frame_bgr: (H, W, 3) uint8 BGR frame.
+        width: target width in pixels; a narrower frame is passed through untouched.
+
+    Returns:
+        (h, w) uint8 grayscale, aspect ratio preserved, w <= width.
     """
     scale = min(1.0, width / frame_bgr.shape[1])
     small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame_bgr
@@ -167,108 +174,93 @@ def detect_orb(gray: np.ndarray, *, n_features: int = 1000) -> tuple[tuple, np.n
     return cv2.ORB_create(nfeatures=n_features).detectAndCompute(gray, None)
 
 
-def match_descriptors(feat_a: tuple, feat_b: tuple) -> tuple[np.ndarray, np.ndarray]:
+def compute_pair_motion(feat_a: tuple, feat_b: tuple, *, ransac_thresh_px: float = 3.0) -> dict:
     """
-    Mutually-matched keypoint coordinates between two detect_orb results, as Nx2 float32.
+    Match two frames' ORB features and measure the motion between them.
 
-    - crossCheck makes both sides injective, which is what the downstream RANSAC
-      wants, but it bounds nothing about whether the frames show the same scene:
+    - feat_a, feat_b: (keypoints, descriptors) from detect_orb, earlier frame first.
+    - ransac_thresh_px: inlier threshold shared by the homography and fundamental
+      fits behind parallax. A first-order lever, not a detail: measured over 99
+      tutorial pairs, 1.0 against 3.0 moves parallax by 0.19 on average and
+      reorders the pairs (Spearman 0.708), while 3.0 against 5.0 barely does
+      (0.053, 0.945). Loosening it lets a homography explain more, so parallax
+      falls monotonically.
+    - Returns {n_matches, translation_px, parallax}. translation_px is the median
+      match displacement; parallax is one minus the homography/fundamental inlier
+      ratio, so a value near 0 means the pair carries no depth information.
+    - Both measures are in the pixels of whatever grid detect_orb ran on. The
+      report feeds it analysis_gray output, so the shipped columns are
+      analysis-grid pixels, comparable within a report and NOT across videos of
+      differing width — ORB detects different keypoints at different resolutions,
+      so rescaling does not convert them (measured on data/tutorial, 1080x1920
+      portrait at factor 2.25: native-over-analysis is 2.37 on one pair and 3.28
+      on another).
+    - Unmeasurable is nan, never 0.0 — 0.0 reads as "the camera held perfectly
+      still", the opposite conclusion. translation_px is nan with no matches;
+      parallax is additionally nan below 8 correspondences (the linear 8-point
+      minimum), when either fit raises (USAC asserts on configurations it cannot
+      estimate rather than returning an empty model, at any size — measured on a
+      real 720-correspondence pair whose matches were 97.5% zero-displacement),
+      and when the fundamental fit finds no inliers at all.
+    - crossCheck bounds nothing about whether the frames show the same scene:
       mutual-best still returns a full set of matches on unrelated frames.
-    - Measured on two independent noise images: 373 matches at 92 px median
-      displacement, against 539 at 17 px for a true 17 px shift. A scene cut
-      therefore reads as large CONFIDENT motion, and neither the match count nor
-      a nan reveals it. Descriptor distance is what separates the two cases
-      (median Hamming 80 against 32) and this function does not return it.
+      Measured on two independent noise images, 373 matches at 92 px median
+      displacement against 539 at 17 px for a true 17 px shift — so a scene cut
+      reads as large CONFIDENT motion, and neither n_matches nor a nan reveals it.
+      Descriptor distance separates the two cases (median Hamming 80 against 32)
+      and is not returned here.
     """
     kp_a, desc_a = feat_a
     kp_b, desc_b = feat_b
 
-    # A featureless frame yields no descriptors at all. Return empty rather than
-    # raise: zero matches is a fact about the video, not an error.
-    empty = (np.empty((0, 2), np.float32), np.empty((0, 2), np.float32))
-    if desc_a is None or desc_b is None:
-        return empty
+    # A featureless frame yields no descriptors at all. Report zero matches rather
+    # than raise: an unmatchable pair is a fact about the video, not an error.
+    unmeasured = {"n_matches": 0, "translation_px": float("nan"), "parallax": float("nan")}
+    if desc_a is None or desc_b is None or len(desc_a) == 0 or len(desc_b) == 0:
+        return unmeasured
 
-    # ORB descriptors are binary, hence Hamming. crossCheck keeps only mutual
-    # best matches, which removes the need for a Lowe ratio test.
+    # ORB descriptors are binary, hence Hamming. crossCheck keeps only mutual best
+    # matches, which removes the need for a Lowe ratio test.
     matches = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(desc_a, desc_b)
     if not matches:
-        return empty
+        return unmeasured
 
     # Pull the pixel coordinates behind each match into two aligned Nx2 arrays
     pts_a = np.array([kp_a[m.queryIdx].pt for m in matches], np.float32).reshape(-1, 2)
     pts_b = np.array([kp_b[m.trainIdx].pt for m in matches], np.float32).reshape(-1, 2)
 
-    return pts_a, pts_b
-
-
-def compute_translation(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
-    """
-    Median match displacement in pixels — how far image content moved between the pair.
-
-    - Pixels of whatever grid detect_orb ran on. The report feeds it
-      analysis_gray output, so the shipped column is analysis-grid pixels.
-    - **It does not convert to source pixels by scaling**: ORB detects different
-      keypoints at different resolutions, so the ratio is not the resize factor.
-      Measured on data/tutorial (1080x1920 portrait, factor 2.25),
-      native-over-analysis is 2.37 on one pair and 3.28 on another.
-    - Comparable within a report, not across videos of differing width — the same
-      caveat compute_frame_quality carries for blur, for the same reason.
-    """
-    # nan, not 0.0: with no matches the displacement is unknown, and 0.0 would
-    # read as "the camera held perfectly still", the opposite conclusion.
-    if len(pts_a) == 0:
-        return float("nan")
-
-    # Median over per-match displacement, so a handful of bad matches cannot
-    # drag the number the way a mean would.
-    return float(np.median(np.linalg.norm(pts_b - pts_a, axis=1)))
-
-
-def compute_parallax(pts_a: np.ndarray, pts_b: np.ndarray, *, ransac_thresh_px: float = 3.0) -> float:
-    """
-    One minus the homography/fundamental inlier ratio — how far the pair departs from a plane.
-
-    - A homography explains rotation-only motion and planar scenes exactly, so a
-      ratio near 1 (parallax near 0) means the pair carries no depth information.
-      Read it alongside translation: a flat scene under real translation also
-      reads 0.
-    - ransac_thresh_px is a first-order lever, not a detail: measured over 99
-      tutorial pairs, 1.0 against 3.0 moves parallax by 0.19 on average and
-      reorders the pairs (Spearman 0.708), while 3.0 against 5.0 barely does
-      (0.053, 0.945). Loosening it lets a homography explain more, so parallax
-      falls monotonically. Same grid as the points, i.e. the analysis grid for
-      the report.
-    - nan below 8 correspondences — the linear 8-point algorithm's minimum.
-      (MAGSAC's 7-point solver does return an F at exactly 7, and OpenCV raises
-      below that, but 8 is the floor this reports against.)
-    - nan when either fit raises: USAC asserts on configurations it cannot
-      estimate rather than returning an empty model, and it does so at any size —
-      measured on a real 720-correspondence pair whose matches were 97.5%
-      zero-displacement. That is a fact about the pair, so it is a nan, not an
-      exception that throws away every other frame in a multi-minute run.
-    """
+    # Translation is a median over per-match displacement, so a handful of bad
+    # matches cannot drag the number the way a mean would. Parallax starts nan and
+    # is filled in only if every fit below succeeds.
+    row = {
+        "n_matches": len(matches),
+        "translation_px": float(np.median(np.linalg.norm(pts_b - pts_a, axis=1))),
+        "parallax": float("nan"),
+    }
     if len(pts_a) < 8:
-        return float("nan")
+        return row
 
-    # Fit both models to the same correspondences. H can only explain a plane or
-    # a pure rotation; F can additionally explain translation through depth, so
-    # the gap between their inlier counts IS the depth information in the pair.
+    # Fit both models to the same correspondences. H can only explain a plane or a
+    # pure rotation; F can additionally explain translation through depth, so the
+    # gap between their inlier counts IS the depth information in the pair.
     try:
         _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
         _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
     except cv2.error:
-        return float("nan")
+        return row
+
     n_h = int(h_inliers.sum()) if h_inliers is not None else 0
     n_f = int(f_inliers.sum()) if f_inliers is not None else 0
 
-    # No F inliers means the pair is unexplained by any two-view geometry
+    # No F inliers means the pair is unexplained by any two-view geometry. The
+    # min() below guards the case where H outfits F on a degenerate pair, which
+    # would otherwise push the complement negative.
     if n_f == 0:
-        return float("nan")
+        return row
 
-    # min() guards the case where H outfits F on a degenerate pair, which would
-    # otherwise push the complement negative.
-    return float(1.0 - min(1.0, n_h / n_f))
+    row["parallax"] = float(1.0 - min(1.0, n_h / n_f))
+
+    return row
 
 
 ########################################################################
@@ -286,7 +278,7 @@ def _measure_photometry_and_motion(args: tuple) -> tuple[list[dict], list[dict]]
       concatenates them — nothing to deduplicate.
     - Runs at module scope because ProcessPoolExecutor pickles by qualified name.
     """
-    video_path, start, count, emit_from, stride, info = args
+    video_path, start, count, emit_from, stride = args
 
     # THE THREAD PIN IS LOAD-BEARING. cv2 and numpy each fan out over every core,
     # so the "serial" baseline is already parallel and naive process fan-out
@@ -302,7 +294,7 @@ def _measure_photometry_and_motion(args: tuple) -> tuple[list[dict], list[dict]]
     # time, so memory does not track range length.
     pending: dict[int, tuple] = {}
 
-    for idx, bgr in iter_frames(video_path, start=start, count=count, info=info):
+    for idx, bgr in iter_frames(video_path, start=start, count=count):
         # The lead-in frames belong to the previous range, which is already
         # measuring them. They are decoded here only to be somebody's partner,
         # so skip the photometry rather than compute a row and drop it.
@@ -318,15 +310,11 @@ def _measure_photometry_and_motion(args: tuple) -> tuple[list[dict], list[dict]]
         partner = idx - stride
 
         if partner in pending:
-            pts_a, pts_b = match_descriptors(pending[partner], pending[idx])
-
             pair_rows.append(
                 {
                     "frame_idx_a": partner,
                     "frame_idx_b": idx,
-                    "n_matches": int(len(pts_a)),
-                    "translation_px": compute_translation(pts_a, pts_b),
-                    "parallax": compute_parallax(pts_a, pts_b),
+                    **compute_pair_motion(pending[partner], pending[idx]),
                 }
             )
 
@@ -345,19 +333,31 @@ def compute_video_quality(
     """
     Measure per-frame photometry and per-pair motion across a whole video.
 
-    - video_path is decoded in full; every frame is measured. output_path=None
-      returns the report without touching disk.
-    - motion_stride: frames between the two members of each measured pair, >= 1.
-      None means round(fps) — one second of video, the pair spacing a
-      reconstruction sees under the shipping fps: 1.0 sampling rate.
-    - workers: decode+measure this many contiguous frame ranges in parallel.
-      1 = serial. Measured end to end on a 2388-frame 1080x1920 video (96-core
-      host): 180.1 s at 1 against 93.9 s at 4, so 1.92x, with byte-identical
-      reports. NOT auto-derived — see the design doc, section 5.2.
+    Report-only: it carries measurements, never verdicts. filter_frame_quality
+    turns its columns into a keep mask.
+
     - HYPOTHESIS, not a measurement: the shortfall against the standalone
       harness's 3.04x prediction is likely ffmpeg. Each worker pins cv2, OMP and
       OpenBLAS to one thread but not ffmpeg's own decode threads, so the serial
       baseline already fans out over cores and has less headroom to win back.
+
+    Args:
+        video_path: source video, decoded in full — every frame is measured.
+        output_path: where to write the report as JSON; None returns it without
+            touching disk.
+        motion_stride: frames between the two members of each measured pair, >= 1.
+            None means round(fps) — one second of video, the pair spacing a
+            reconstruction sees under the shipping fps: 1.0 sampling rate.
+        workers: decode and measure this many contiguous frame ranges in parallel;
+            1 is serial. Measured end to end on a 2388-frame 1080x1920 video
+            (96-core host): 180.1 s at 1 against 93.9 s at 4, so 1.92x, with
+            byte-identical reports. NOT auto-derived — see the design doc, 5.2.
+
+    Returns:
+        {"available": True, "video": {path, mtime, **get_video_info},
+        "params": {"motion_stride": int}, "frames": {column -> list, one entry per
+        source frame}, "pairs": {column -> list, one entry per measured pair}}.
+        An unreadable video gives {"available": False, "reason": str} instead.
     """
     # `is not None`, not truthiness: 0 is an explicit value, and letting it fall
     # through to the fps default silently measures a stride of 30 instead. A
@@ -391,7 +391,7 @@ def compute_video_quality(
     total = info["total_frames"]
 
     if workers == 1 or total <= stride * 2:
-        ranges = [(str(video_path), 0, None, 0, stride, info)]
+        ranges = [(str(video_path), 0, None, 0, stride)]
     else:
         per = total // workers
         ranges = []
@@ -399,7 +399,7 @@ def compute_video_quality(
             emit_from = k * per
             start = max(emit_from - stride, 0)
             end = total if k == workers - 1 else (k + 1) * per
-            ranges.append((str(video_path), start, end - start, emit_from, stride, info))
+            ranges.append((str(video_path), start, end - start, emit_from, stride))
 
     started = time.perf_counter()
 
@@ -494,8 +494,17 @@ def load_video_quality(
     """
     The quality report at report_path, measuring and writing it first if absent.
 
-    Reuse is by existence, the same rule frames.zarr follows — so a re-run of a
+    Reuse is by existence, the same rule images/ follows — so a re-run of a
     scene never re-measures, and nothing needs a staleness check.
+
+    Args:
+        video_path: source video, measured only when report_path is missing.
+        report_path: the JSON report; read as-is when it already exists.
+        workers: parallel decode ranges, forwarded to compute_video_quality.
+        motion_stride: pair spacing, forwarded to compute_video_quality.
+
+    Returns:
+        The report dict compute_video_quality produces.
     """
     report_path = Path(report_path)
 

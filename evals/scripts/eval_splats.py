@@ -6,9 +6,10 @@ read back from splats_quality_report.json. No COLMAP is needed — the zarr carr
 points, colours and depth. Optional GT depth error (--seq, 7-Scenes) scores the rendered
 splats.zarr depth where alpha > 0.5 after median alignment, via the eval_multiview_conf helpers.
 
-Resolution: like the pipeline's splats stage, training uses the NATIVE frames from frames.zarr
-(found beside pointcloud.zarr, or via --frames-zarr) with the zarr's model-res K rescaled to
-native size; --model-res trains on the model-res images stored in the zarr instead (ablation row).
+Resolution: like the pipeline's splats stage, training uses the NATIVE frames from the scene's
+images/ directory (found beside pointcloud.zarr, or via --images-dir) with the zarr's model-res K
+rescaled to native size; --model-res trains on the model-res images stored in the zarr instead
+(ablation row).
 Depth targets stay model-res either way — the trainer nearest-resizes them to the frame size.
 
 CLI/tmux only (GPU training). Results under evals/results/ (gitignored).
@@ -32,7 +33,7 @@ from PIL import Image
 
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import confidence_mask
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.splats.trainer import SplatsConfig, train
 from evals.scripts.eval_multiview_conf import load_7scenes_depth, median_align, retained_error
 
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONF_PERCENTILE = 20.0  # matches base.yaml mesh.conf_percentile
 ALPHA_THRESHOLD = 0.5  # rendered pixels below this have no surface to score
-AUTO_FRAMES_ZARR = "auto"  # sentinel: use <zarr>.parent / frames.zarr when it exists, else model res
+AUTO_IMAGES_DIR = "auto"  # sentinel: use <zarr>.parent / images when it exists, else model res
 
 
 @dataclass
@@ -70,29 +71,29 @@ def _model_res_images(result: FeedforwardResult) -> np.ndarray:
 
 
 def _native_images_and_intrinsics(
-    result: FeedforwardResult, frames_zarr: Path, zarr_path: Path
+    result: FeedforwardResult, images_dir: Path, zarr_path: Path
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Native frames from frames.zarr in ``result.image_paths`` order, with K rescaled model-res -> native.
+    Native frames from images/ in ``result.image_paths`` order, with K rescaled model-res -> native.
 
     - Mirrors ``Reconstructor.splats()`` for the frames and ``_rescale_reconstruction_to_original_dimensions``
       for K: per frame ``scale = orig / model`` from ``original_coords[i, -2:]``; no crop offset.
-    - Raises ValueError when the frames.zarr resolution differs from the zarr's recorded original size.
+    - Raises ValueError when the images/ resolution differs from the zarr's recorded original size.
     """
-    # Frames looked up by the frame index encoded in each image name
-    store = FrameStore.open(frames_zarr)
-    frame_indices = [FrameStore.frame_idx_from_path(path) for path in result.image_paths]
-    images = np.stack([store.image_by_frame_idx(frame_idx) for frame_idx in frame_indices])
+    # Frames looked up by the frame index encoded in each image name; read_frames returns them
+    # in the order the indices are given, so the stack stays aligned with result.image_paths
+    frame_indices = [fr.frame_idx_from_path(path) for path in result.image_paths]
+    images = fr.read_frames(images_dir, idxs=frame_indices)
     frame_height, frame_width = images.shape[1:3]
 
-    # Every frame's recorded original size must be the frames.zarr size, else K would be wrong
+    # Every frame's recorded original size must be the images/ size, else K would be wrong
     original_sizes = result.original_coords[:, -2:]
     orig_w = original_sizes[:, 0]
     orig_h = original_sizes[:, 1]
     if np.any(orig_w != frame_width) or np.any(orig_h != frame_height):
         recorded = sorted({(int(h), int(w)) for h, w in zip(orig_h, orig_w)})
         raise ValueError(
-            f"{frames_zarr} frames are (H, W) ({frame_height}, {frame_width}) but {zarr_path} "
+            f"{images_dir} frames are (H, W) ({frame_height}, {frame_width}) but {zarr_path} "
             f"records original sizes (H, W) {recorded}"
         )
 
@@ -110,12 +111,12 @@ def _native_images_and_intrinsics(
 def inputs_from_pointcloud_zarr(
     path: Path,
     conf_percentile: float | None = DEFAULT_CONF_PERCENTILE,
-    frames_zarr: Path | str | None = AUTO_FRAMES_ZARR,
+    images_dir: Path | str | None = AUTO_IMAGES_DIR,
 ) -> SplatInputs:
     """
     Load a pointcloud.zarr into trainer inputs.
 
-    - frames_zarr: ``AUTO_FRAMES_ZARR`` uses ``path.parent / frames.zarr`` when it exists (native
+    - images_dir: ``AUTO_IMAGES_DIR`` uses ``path.parent / images`` when it exists (native
       resolution, as the pipeline's splats stage does); an explicit Path forces it; None trains on
       the zarr's model-res images. K always matches the chosen images' resolution.
     - model-res images: stored (N, 3, H, W) float; VGGT writes [0, 255] while MapAnything writes
@@ -124,24 +125,24 @@ def inputs_from_pointcloud_zarr(
       or unmasked when ``conf_percentile`` is None. Always model-res; the trainer nearest-resizes.
     """
     path = Path(path)
-    load_images = frames_zarr is None or frames_zarr == AUTO_FRAMES_ZARR
+    load_images = images_dir is None or images_dir == AUTO_IMAGES_DIR
     result = FeedforwardResult.load_zarr(path, load_images=load_images, load_world_points=False)
 
-    # Resolve the sentinel: native when a sibling frames.zarr exists, else fall back to model res
-    if frames_zarr == AUTO_FRAMES_ZARR:
-        candidate = path.parent / "frames.zarr"
-        frames_zarr = candidate if candidate.exists() else None
-        if frames_zarr is None:
-            logger.info("no frames.zarr beside %s; training at model resolution", path)
+    # Resolve the sentinel: native when a sibling images/ exists, else fall back to model res
+    if images_dir == AUTO_IMAGES_DIR:
+        candidate = path.parent / "images"
+        images_dir = candidate if candidate.is_dir() else None
+        if images_dir is None:
+            logger.info("no images/ beside %s; training at model resolution", path)
 
     # Images + matching K at the chosen resolution
-    if frames_zarr is None:
+    if images_dir is None:
         images = _model_res_images(result)
         intrinsics = result.intrinsics.astype(np.float32)
     else:
-        images, intrinsics = _native_images_and_intrinsics(result, Path(frames_zarr), path)
+        images, intrinsics = _native_images_and_intrinsics(result, Path(images_dir), path)
     height, width = images.shape[1:3]
-    source = "model-res zarr images" if frames_zarr is None else f"native frames from {frames_zarr}"
+    source = "model-res zarr images" if images_dir is None else f"native frames from {images_dir}"
     logger.info(
         "training images: %s at %dx%d (model res %dx%d)", source, width, height, result.model_width, result.model_height
     )
@@ -242,16 +243,16 @@ def main() -> None:
     )
     ap.add_argument("--seq", type=Path, default=None, help="7-Scenes sequence dir with .depth.png (optional)")
     ap.add_argument("--pose-opt", action="store_true")
-    ap.add_argument("--frames-zarr", type=Path, default=None, help="frames.zarr override (default: beside --zarr)")
-    ap.add_argument("--model-res", action="store_true", help="ignore frames.zarr; train on the zarr's model-res images")
+    ap.add_argument("--images-dir", type=Path, default=None, help="images/ override (default: beside --zarr)")
+    ap.add_argument("--model-res", action="store_true", help="ignore images/; train on the zarr's model-res images")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     # Inputs are shared across primitives; only the config differs per run
-    # --model-res wins over --frames-zarr; neither means the auto sentinel (sibling frames.zarr)
-    frames_zarr = None if args.model_res else (args.frames_zarr or AUTO_FRAMES_ZARR)
-    inputs = inputs_from_pointcloud_zarr(args.zarr, conf_percentile=args.conf_percentile, frames_zarr=frames_zarr)
+    # --model-res wins over --images-dir; neither means the auto sentinel (sibling images/)
+    images_dir = None if args.model_res else (args.images_dir or AUTO_IMAGES_DIR)
+    inputs = inputs_from_pointcloud_zarr(args.zarr, conf_percentile=args.conf_percentile, images_dir=images_dir)
     n_frames, height, width, _ = inputs.images.shape
     n_points = inputs.points.shape[0]
     logger.info("%d frames at %dx%d, %d init points", n_frames, width, height, n_points)

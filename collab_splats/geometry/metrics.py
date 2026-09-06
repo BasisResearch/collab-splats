@@ -18,12 +18,12 @@ from scipy import stats
 from tqdm.auto import tqdm
 
 from collab_splats.geometry.verification import clean_for_json
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames
 
 logger = logging.getLogger(__name__)
 
-# FrameStore writes keyframes as frame_{idx:06d}. Matching that shape is the whole guard on the
-# source-frame join: FrameStore.frame_idx_from_path is int(stem.split("_")[-1]), which happily
+# The preprocess stage writes keyframes as frame_{idx:06d}. Matching that shape is the whole guard
+# on the source-frame join: frames.frame_idx_from_path is int(stem.split("_")[-1]), which happily
 # reads IMG_1234 as 1234 and 00019 as 19 — a confidently wrong index, which is worse here than a
 # missing one, because a downstream join silently pairs real frames with the wrong rows. Six or
 # more digits, so the contract does not break at a million frames.
@@ -455,32 +455,42 @@ def compute_photometric_ncc(
     }
 
 
-def extract_photometric(result, frames_zarr: Path, n: int) -> dict:
-    """Extract the photometric channel from a scene: read the RGB, then correlate it.
+def extract_photometric(result, images_dir: Path, n: int) -> dict:
+    """
+    Extract the photometric channel from a scene: read the RGB, then correlate it.
 
     The whole channel behind one call — unlike epipolar, whose numbers verify already computed,
     this is where the photometric measurement actually happens, and the 0.6s read is a rounding
     error against the correlation that follows it.
 
-    Never fatal. A report must not fail a reconstruction, so a missing store or any exception
-    below disables this one measurement and leaves the other two standing.
+    Never fatal. A report must not fail a reconstruction, so a missing image directory or any
+    exception below disables this one measurement and leaves the other two standing.
 
     The correlation itself stays in compute_photometric_ncc, which takes plain arrays and is
     pinned by 31 tests that must not need a scene on disk to run.
+
+    Args:
+        result: the FeedforwardResult supplying depth, intrinsics, extrinsics and crop boxes.
+        images_dir: the scene's images/ directory of original-resolution keyframes.
+        n: reconstruction frame count; the read is capped at the first n frames.
+
+    Returns:
+        The photometric measurement block, or {"available": False, "reason": ...} when the
+        images are missing or the measurement raises.
     """
-    if not Path(frames_zarr).exists():
-        logger.info("Photometric NCC: unavailable — frames.zarr not found at %s", frames_zarr)
+    if not frames.frame_paths(images_dir):
+        logger.info("Photometric NCC: unavailable — no frame images at %s", images_dir)
         return {"available": False, "grid": "original",
-                "reason": f"frames.zarr not found at {frames_zarr}"}
+                "reason": f"no frame images at {images_dir}"}
     try:
-        # images() returns the selected frames in row order, which is the order the
-        # reconstruction indexes by. frame_indices() is NOT that — it holds source-video
-        # positions, so using it to index would silently mispair depth with RGB.
+        # read_frames returns the selected frames in FILENAME order, which is the order the
+        # reconstruction indexes by. The frame_idx encoded in each name is NOT that — it holds
+        # source-video positions, so slicing by it would silently mispair depth with RGB.
         t0 = time.perf_counter()
-        rgbs = FrameStore.open(Path(frames_zarr)).images()[:n].astype(np.float32)
+        rgbs = frames.read_frames(images_dir)[:n].astype(np.float32)
         m = len(rgbs)
         logger.info("Photometric NCC: read %d original-resolution frames from %s in %.2fs",
-                    m, frames_zarr, time.perf_counter() - t0)
+                    m, images_dir, time.perf_counter() - t0)
         # No resolution argument: compute_photometric_ncc derives it from `rgbs` itself, so the
         # stamped grid cannot disagree with the grid the numbers were measured on.
         return compute_photometric_ncc(
@@ -529,14 +539,14 @@ def _running_error(rows: list[dict], key: str) -> dict:
 
 
 def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path,
-                                        frames_zarr: Path, output_path: Path,
+                                        images_dir: Path, output_path: Path,
                                         backend: str) -> dict:
     """Run every measurement that can run and write reconstruction_quality_report.json.
 
     Never raises on a dead measurement.
 
     Measurements are attempted independently: a missing confidence array, an absent
-    verification.json or an unreadable frames.zarr each disable exactly one of them.
+    verification.json or an unreadable images/ directory each disable exactly one of them.
 
     Nothing here grades the scene, names a cause or flags a frame. Absolute thresholds that
     would justify a verdict are exactly what this stage exists to inform, so inventing them
@@ -609,7 +619,7 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
                       "source": str(verification_json), "n_pairs": len(epi_pairs),
                       "pairs": epi_pairs, "frames": epi_frames}
 
-    photometric_m = extract_photometric(r, frames_zarr, n)
+    photometric_m = extract_photometric(r, images_dir, n)
 
     # Per-frame median |residual| — the column both the confidence check and the ranks read.
     # Scanning every pair per frame makes this O(N * pairs) = O(N^3), so it carries a bar.
@@ -670,15 +680,15 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
     # Reconstruction index -> SOURCE video frame index. Every per-frame block above is keyed
     # 0..N-1, which is not the source index once sampling skips frames, so without this map
     # nothing keyed on the source video can be joined to this report at all. Derived from
-    # image_paths rather than FrameStore.frame_indices() because image_paths is always on the
-    # result while frames.zarr is optional here. The stem must match the documented contract
-    # BEFORE it is parsed — FrameStore.frame_idx_from_path guesses on any numeric tail, and a
-    # guessed index is worse than no index. A name off-contract yields None rather than killing
+    # image_paths rather than the images/ filenames because image_paths is always on the
+    # result while the image directory is optional here. The stem must match the documented
+    # contract BEFORE it is parsed — frames.frame_idx_from_path guesses on any numeric tail, and
+    # a guessed index is worse than no index. A name off-contract yields None rather than killing
     # the report: the join degrades per frame instead of disappearing.
     source_frame_indices: list[int | None] = []
     for p in r.image_paths:
         m = _FRAME_STEM_RE.fullmatch(Path(str(p)).stem)
-        source_frame_indices.append(FrameStore.frame_idx_from_path(p) if m else None)
+        source_frame_indices.append(frames.frame_idx_from_path(p) if m else None)
 
     report = {
         "scene": {"backend": backend, "n_frames": n, "model_resolution": model_res,

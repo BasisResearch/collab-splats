@@ -40,7 +40,7 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher, load_fn=None):
         images={1: SimpleNamespace(name="frame_000003"), 2: SimpleNamespace(name="frame_000007")}
     )
     r = Reconstructor.__new__(Reconstructor)
-    # backend_dir / frames_zarr are config-derived properties — stub via config
+    # backend_dir / images_dir are config-derived properties — stub via config
     r.config = {
         "output_path": str(tmp_path),
         "pointcloud": {"backend": "vggtx"},
@@ -51,7 +51,7 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher, load_fn=None):
     rebuilds = []
     r.build_localization_db = lambda **kw: rebuilds.append(kw)
 
-    # Collaborators: feature cache read, matcher resolution, frame store, verification entry
+    # Collaborators: feature cache read, matcher resolution, images/ read, verification entry
     if load_fn is None:
         load_fn = lambda path, name: (  # noqa: E731
             ["f0", "f1"],
@@ -62,47 +62,46 @@ def _stub_verify_call(tmp_path, monkeypatch, matcher, load_fn=None):
     # verify() imports LocalMatcher from the extractors module inline — patch it with a
     # factory returning the stub (no isinstance dispatch remains in verify()).
     monkeypatch.setattr("collab_splats.localization.extractors.LocalMatcher", lambda name: matcher)
-    accesses = []
+    reads = []
 
-    def _image_by_frame_idx(fi):
-        accesses.append(fi)
-        return np.full((4, 4, 3), fi, dtype=np.uint8)
+    def _scene_frames(images_dir):
+        reads.append(Path(images_dir))
+        return np.stack([np.full((4, 4, 3), fi, dtype=np.uint8) for fi in (3, 7)])
 
-    store = SimpleNamespace(frame_indices=lambda: [3, 7], image_by_frame_idx=_image_by_frame_idx)
-    monkeypatch.setattr("collab_splats.preproc.frame_store.FrameStore.open", lambda path: store)
+    monkeypatch.setattr("collab_splats.wrapper.reconstructor._scene_frames", _scene_frames)
     captured = {}
     monkeypatch.setattr(
         "collab_splats.geometry.verification.verify_reconstruction",
         lambda **kw: captured.update(kw),
     )
     r.verify()
-    return captured, accesses, rebuilds
+    return captured, reads, rebuilds
 
 
-def test_verify_passes_frame_store_images_to_pairwise_matcher(tmp_path, monkeypatch):
-    """For a LocalMatcher, verify() hands over lazy cache-extraction frames as images=."""
+def test_verify_passes_scene_images_to_pairwise_matcher(tmp_path, monkeypatch):
+    """For a LocalMatcher, verify() hands over the scene's images/ frames as images=."""
     matcher = MagicMock(spec=LocalMatcher)
     matcher.has_stable_indices = True
-    captured, accesses, _ = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    captured, reads, _ = _stub_verify_call(tmp_path, monkeypatch, matcher)
     assert captured["matcher"] is matcher
-    # Lazy handoff: nothing was decoded yet at the verify_reconstruction call boundary
-    assert accesses == []
-    # Frames resolve on access, in frame_indices() order (the cache-build order)
+    # The scene's own images/ is the source, read once
+    assert reads == [Path(tmp_path) / "images"]
+    # Frames arrive in filename order — the order the cache was extracted in
     images = captured["images"]
     assert len(images) == 2
     assert [int(images[i][0, 0, 0]) for i in range(2)] == [3, 7]
 
 
-def test_verify_hands_images_lazily_for_any_matcher(tmp_path, monkeypatch):
-    """images= is always the lazy FrameStore view now — nothing decodes at handoff.
+def test_verify_hands_images_for_any_matcher(tmp_path, monkeypatch):
+    """images= is always the images/ stack now, matcher kind notwithstanding.
 
     (Pre-retirement, descriptor matchers got images=None; verify_reconstruction's
-    descriptor branch ignores `images`, so the unconditional lazy handoff is free.)"""
+    descriptor branch ignores `images`, so the unconditional handoff is harmless.)"""
     matcher = SimpleNamespace()  # duck-typed descriptor stub, not a LocalMatcher
-    captured, accesses, _ = _stub_verify_call(tmp_path, monkeypatch, matcher)
+    captured, reads, _ = _stub_verify_call(tmp_path, monkeypatch, matcher)
     assert captured["matcher"] is matcher
     assert captured["images"] is not None and len(captured["images"]) == 2
-    assert accesses == []  # still zero decodes at the call boundary
+    assert reads == [Path(tmp_path) / "images"]
 
 
 def test_verify_rebuilds_db_when_loma_payload_missing(tmp_path, monkeypatch):

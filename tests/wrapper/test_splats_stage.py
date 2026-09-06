@@ -17,15 +17,14 @@ import torch
 import yaml
 import zarr
 
-from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.splats.trainer import SplatsConfig
 from collab_splats.wrapper.reconstructor import (
     _STAGE_DEPS,
     _STAGE_ORDER,
     LEAF_STAGES,
-    Reconstructor,
     _run_tsdf_mesh,
 )
+from tests.wrapper._stubs import _stub_reconstructor
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
@@ -48,43 +47,6 @@ def test_base_yaml_defaults():
     for field in SplatsConfig.__dataclass_fields__:
         assert getattr(parsed, field) == getattr(defaults, field), field
         assert type(getattr(parsed, field)) is type(getattr(defaults, field)), field
-
-
-def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
-    """
-    Reconstructor with config + frames.zarr + a fake PointcloudResult; image_paths reversed to prove index lookup.
-    """
-    recon = Reconstructor.__new__(Reconstructor)
-    recon.config = {
-        "output_path": str(tmp_path),
-        "pointcloud": {"method": "feedforward", "backend": "vggtx"},
-        "mesh": {
-            "voxel_size": 0.01,
-            "sdf_trunc": 0.04,
-            "depth_trunc": 1.0,
-            "clean_repair": False,
-            "conf_percentile": 20,
-            "native_resolution": False,
-            "color_map_iterations": 0,
-            "splat_depth": "expected",
-            "source": "feedforward",
-        },
-        "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
-    }
-    recon._stage_output_exists = lambda stage: False
-
-    frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
-    records = [{"frame_idx": view} for view in range(n_views)]
-    FrameStore.create(recon.frames_zarr, frames, records, provenance={"video_path": "v"})
-    image_paths = [Path(f"frame_{view:06d}.jpg") for view in reversed(range(n_views))]
-    recon._resolve_result = lambda: SimpleNamespace(
-        image_paths=image_paths,
-        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1)),
-        intrinsics=np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1)),
-        points=np.zeros((200, 3), np.float32),
-        colors=np.zeros((200, 3), np.uint8),
-    )
-    return recon
 
 
 def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):

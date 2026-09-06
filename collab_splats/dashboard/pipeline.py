@@ -24,7 +24,7 @@ from collab_splats.pointcloud.feedforward import (
 )
 from collab_splats.pointcloud.utils import lift_features
 from collab_splats.preproc import extract_frame
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.preproc.qa import load_video_quality
 from collab_splats.preproc.sampling import (
     sample_fps,
@@ -57,18 +57,28 @@ logger = logging.getLogger(__name__)
 ########
 
 
-def _write_frames_zarr(
+def _write_images_dir(
     frames: list[np.ndarray],
     records: list[dict],
-    path: Path,
+    images_dir: Path,
     *,
     video_path: Path,
     method: str,
     fps: float | None,
     max_frames: int,
 ) -> None:
-    """Write the canonical frames.zarr (FrameStore schema) — feeds CameraLocalizer.from_feedforward
-    so pixel reads bypass ff.image_paths (which may point at a directory this session doesn't own)."""
+    """
+    Write the scene's canonical images/ directory and its frames.json manifest.
+
+    Args:
+        frames: RGB uint8 keyframes, one per record.
+        records: selection records carrying the source 'frame_idx'.
+        images_dir: <scene>/images, the sole persistent frame store.
+        video_path: source video, stamped into provenance with its mtime.
+        method: sampling method name.
+        fps: target fps when method is 'fps', else None.
+        max_frames: selection cap the sampler ran under.
+    """
     prov = {
         "video_path": str(video_path),
         "video_mtime": Path(video_path).stat().st_mtime,
@@ -76,7 +86,7 @@ def _write_frames_zarr(
         "fps": fps,
         "max_frames": max_frames,
     }
-    FrameStore.create(path, frames, records, provenance=prov)
+    fr.write_frames(images_dir, frames, records, prov)
 
 
 def _build_creator(env_model: str, conf: float):
@@ -92,17 +102,17 @@ def _build_creator(env_model: str, conf: float):
     raise ValueError(f"unknown env_model: {env_model}")
 
 
-def _extract_semantics(extractor_name: str, frames_zarr: Path, out_dir: Path) -> None:
-    """Extract + cache patch features straight from frames.zarr — no JPG export.
+def _extract_semantics(extractor_name: str, images_dir: Path, out_dir: Path) -> None:
+    """Extract + cache patch features straight from the scene's images/ directory.
 
     Args:
         extractor_name: registry key of the extractor to run.
-        frames_zarr: path to the scene's canonical frames.zarr.
+        images_dir: the scene's images/ directory of keyframes.
         out_dir: the scene's semantics dir.
     """
     # The returned cache path is deliberately dropped: every consumer resolves the store by
     # glob (cache_store_path), including the viewer's legacy lift, which has no handle to thread.
-    extract_feature_cache(BaseFeatureExtractor.get(extractor_name)(), frames_zarr, out_dir)
+    extract_feature_cache(BaseFeatureExtractor.get(extractor_name)(), images_dir, out_dir)
 
 
 ########
@@ -338,19 +348,19 @@ def run_pipeline(
             t = time.perf_counter()
             frames, records = _sample(Path(video_path), config, out_dir, op_log)
             sampling_method = config.sampling_method
-            _write_frames_zarr(
+            images_dir = out_dir / "images"
+            _write_images_dir(
                 frames,
                 records,
-                out_dir / "frames.zarr",
+                images_dir,
                 video_path=video_path,
                 method=sampling_method,
                 fps=config.fps if sampling_method == "fps" else None,
                 max_frames=config.max_frames,
             )
-            # frames.zarr is the sole frame store: setup_inference and semantics extraction both
+            # images/ is the sole frame store: setup_inference and semantics extraction both
             # read it directly, and localization ref thumbnails resolve pixels through it (see
-            # _build_result_figures's frames_zarr threading). No JPG export.
-            frames_zarr = out_dir / "frames.zarr"
+            # _build_result_figures's images_dir threading). No second staged copy.
             config.frame_indices = [r["frame_idx"] for r in records]
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 
@@ -364,7 +374,7 @@ def run_pipeline(
             op_log.append_line(f"pointcloud: model loaded in {time.perf_counter() - t:.1f}s")
             t = time.perf_counter()
             op_log.update_progress(32, "pointcloud: preprocessing images")
-            creator.setup_inference(frames_zarr)
+            creator.setup_inference(images_dir)
             op_log.append_line(f"pointcloud: preprocessed in {time.perf_counter() - t:.1f}s")
             t = time.perf_counter()
             op_log.update_progress(42, "pointcloud: running inference")
@@ -399,7 +409,7 @@ def run_pipeline(
             # Extract and cache semantic patch features
             op_log.update_progress(72, f"semantics: extracting features ({config.semantic_extractor})")
             t = time.perf_counter()
-            _extract_semantics(config.semantic_extractor, frames_zarr, out_dir / "semantics")
+            _extract_semantics(config.semantic_extractor, images_dir, out_dir / "semantics")
             op_log.append_line(f"semantics: extracted in {time.perf_counter() - t:.1f}s")
 
             # Lift features to points + train compression autoencoder eagerly (instant queries later);
@@ -494,7 +504,7 @@ def _build_localizer(
     op_log: OperationLog,
     cache=None,
     scene_key=None,
-    frames_zarr: "Path | None" = None,
+    images_dir: "Path | None" = None,
 ):
     """Load (or build, with progress) the feature DB; keep the localizer warm in the
     SceneCache so consecutive runs skip index reload and extractor model load."""
@@ -516,17 +526,11 @@ def _build_localizer(
             log=False,
         )
 
-    # Boundary adapter: build (images, ids) from the canonical store when present, else from
-    # the result's export paths. Lazy genexpr → zero reads on a cache hit.
-    if frames_zarr is not None:
-        store = FrameStore.open(frames_zarr)
-        frame_indices = store.frame_indices()
-        images = (store.image_by_frame_idx(fi) for fi in frame_indices)
-        ids = [f"frame_{int(fi):06d}.jpg" for fi in frame_indices]
-    else:
-        paths = [Path(p) for p in result.image_paths]
-        images = (np.asarray(open_image(p).convert("RGB")) for p in paths)
-        ids = [p.name for p in paths]
+    # Boundary adapter: build (images, ids) from the scene's images/ directory when present,
+    # else from the result's export paths. Lazy genexpr → zero reads on a cache hit.
+    paths = fr.frame_paths(images_dir) if images_dir is not None else [Path(p) for p in result.image_paths]
+    images = (np.asarray(open_image(p).convert("RGB")) for p in paths)
+    ids = [p.name for p in paths]
 
     localizer = CameraLocalizer.from_feedforward(
         result,
@@ -549,15 +553,6 @@ def _resolve_query_intrinsics(config: LocalizationConfig) -> np.ndarray | None:
         return np.asarray(data["K"], dtype=np.float32).reshape(3, 3)
     # No calibration → let CameraLocalizer.localize seed K from image proportions.
     return None
-
-
-def _local_ref_paths(localizer, out_dir: Path) -> list:
-    """Remap DB image paths (recorded on the machine that built the DB) to local files."""
-    paths = []
-    for p, src in zip(localizer.image_paths, localizer.frame_sources):
-        sub = "frames" if src == "reconstruction" else "localized_frames"
-        paths.append(Path(out_dir) / sub / Path(p).name)
-    return paths
 
 
 @dataclass
@@ -638,9 +633,9 @@ def run_localization(
             # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
             op_log.update_progress(25, f"localize: loading DB ({config.matcher})")
             with op_log.step(f"localize: DB ({config.matcher})"):
-                # frames.zarr is the sole persistent frame store and is now pulled for processed
+                # images/ is the sole persistent frame store and is now pulled for processed
                 # scenes too; guard defensively so any legacy scene without it falls back to image_paths.
-                frames_zarr = out_dir / "frames.zarr"
+                images_dir = out_dir / "images"
                 localizer = _build_localizer(
                     result,
                     config,
@@ -648,7 +643,7 @@ def run_localization(
                     op_log,
                     cache=cache,
                     scene_key=scene,
-                    frames_zarr=frames_zarr if frames_zarr.exists() else None,
+                    images_dir=images_dir if images_dir.is_dir() else None,
                 )
             _stamp_db_provenance(out_dir / "pointcloud.zarr", config.matcher, out_dir)
 
@@ -689,12 +684,19 @@ def run_localization(
                 op_log.update_progress(92, "localize: pushing to environments-processed (background)")
                 _push_async(source, out_dir, scene, op_log)
 
+            # DB ids are basenames recorded on the machine that built the DB; resolve each to a
+            # local file — reconstruction frames live in images/, localized ones in localized_frames/.
+            ref_image_paths = [
+                out_dir / ("images" if src == "reconstruction" else "localized_frames") / Path(p).name
+                for p, src in zip(localizer.image_paths, localizer.frame_sources)
+            ]
+
             output = LocalizationRunOutput(
                 result=loc,
                 query_frame=frame,
                 query_intrinsics=K,
                 intrinsics_source=intr_source,
-                ref_image_paths=_local_ref_paths(localizer, out_dir),
+                ref_image_paths=ref_image_paths,
                 ref_extrinsics=localizer.extrinsics,
                 frame_sources=localizer.frame_sources,
             )

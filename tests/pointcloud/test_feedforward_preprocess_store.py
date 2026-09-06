@@ -1,4 +1,4 @@
-"""BaseFeedforwardCreator decodes inference frames from a FrameStore in memory."""
+"""BaseFeedforwardCreator decodes inference frames from a scene's images/ directory in memory."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +12,7 @@ from collab_splats.pointcloud.feedforward import (
     build_pycolmap_reconstruction,
 )
 from collab_splats.pointcloud.feedforward.base import _decode_dir_to_frames
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 
 
 @dataclass
@@ -40,33 +40,44 @@ class _EchoCreator(BaseFeedforwardCreator):
         return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
 
 
-def _make_store(tmp_path) -> FrameStore:
-    frames = [np.full((32, 48, 3), i, dtype=np.uint8) for i in range(4)]
-    records = [{"frame_idx": i, "blur_score": 1.0} for i in range(4)]
-    FrameStore.create(tmp_path / "frames.zarr", frames, records, provenance={"video_path": "v"})
-    return FrameStore.open(tmp_path / "frames.zarr")
+# Gappy source indices: a quality filter drops frames, so row position and frame_idx
+# diverge and a label taken from the wrong one is visible here.
+_FRAME_IDXS = [0, 3, 7, 9]
 
 
-def test_setup_inference_accepts_frame_store(tmp_path):
-    store = _make_store(tmp_path)
+def _make_images_dir(tmp_path) -> Path:
+    """Write a scene images/ directory whose frame indices are non-contiguous."""
+    frames = [np.full((32, 48, 3), idx, dtype=np.uint8) for idx in _FRAME_IDXS]
+    records = [{"frame_idx": idx, "blur_score": 1.0} for idx in _FRAME_IDXS]
+    images_dir = tmp_path / "images"
+    fr.write_frames(images_dir, frames, records, {"video_path": "v"})
+    return images_dir
+
+
+def test_setup_inference_accepts_images_dir(tmp_path):
+    images_dir = _make_images_dir(tmp_path)
     creator = _EchoCreator()
 
-    creator.setup_inference(store)
+    creator.setup_inference(images_dir)
 
-    # Labels are the store's source frame indices, formatted stably for COLMAP
-    assert [p.name for p in creator.image_paths] == [f"frame_{i:06d}" for i in range(4)]
-    # Frames are decoded from the store (no temp files) at their native dims
-    assert creator.views.shape == (4, 32, 48, 3)
+    # Labels are the source frame indices carried by the filenames, formatted stably
+    # for COLMAP — never the row position, which would misjoin poses to frames.json
+    assert [p.name for p in creator.image_paths] == [f"frame_{i:06d}" for i in _FRAME_IDXS]
+    # Frames are decoded straight from images/ (no staged copy) at their native dims
+    assert len(creator.views) == 4
+    assert [f.shape for f in creator.views] == [(32, 48, 3)] * 4
     assert creator.original_coords.shape == (4, 6)
 
 
-def test_setup_inference_accepts_zarr_path(tmp_path):
-    _make_store(tmp_path)
+def test_setup_inference_reads_pixels_in_filename_order(tmp_path):
+    """Frame N's pixels land at row N — a reorder would shift every pose against its frame."""
+    images_dir = _make_images_dir(tmp_path)
     creator = _EchoCreator()
 
-    creator.setup_inference(tmp_path / "frames.zarr")
+    creator.setup_inference(images_dir)
 
-    assert [p.name for p in creator.image_paths] == [f"frame_{i:06d}" for i in range(4)]
+    # _make_images_dir paints each frame with its own source index
+    assert [int(f[0, 0, 0]) for f in creator.views] == _FRAME_IDXS
 
 
 def test_setup_inference_accepts_image_dir(tmp_path):

@@ -94,10 +94,11 @@ collab_splats/
     compression.py         # FeatureAutoencoder: per-point encode/decode + recon_cosine
     segmentation/          # BaseSegmentation; registered insid3, mobilesamv2, sam3
   preproc/                 # video preprocessing: measure (qa) then select (sampling)
-    video.py               # ffmpeg/ffprobe decode: get_video_info, iter_frames, extract_frame
+    video.py               # PyAV decode: get_video_info, iter_frames, extract_frame
     qa.py                  # report-only capture quality: compute_video_quality, load_video_quality
-    sampling.py            # sample_fps | sample_uniform | sample_optical_flow + filter_frame_quality
-    frame_store.py         # frames.zarr: the decode-once keyframe store
+    sampling.py            # context_indices + sample_fps | sample_uniform | sample_optical_flow, all from filter_frame_quality's eligible pool
+    frames.py              # images/frame_NNNNNN.png + frames.json: the COLMAP-style keyframe store
+    undistort.py           # calibrate_camera (pycolmap) + undistort_frames (pycolmap framing, cv2 pixels)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)
   mesh/                    # TSDF + Poisson meshing (base, poisson, tsdf, utils)
   splats/                  # Gaussian-splat training on upstream gsplat: cameras, losses, rendering, trainer, outputs
@@ -117,7 +118,7 @@ evals/
 - **Imports at top:** all imports at the top of the file — no inline imports inside functions or methods (scripts and notebooks). Exception: optional heavy deps that would break the module on missing install may be imported inside the function that needs them, with a clear `ImportError` message.
 - **Inline block comments:** each logical block of code gets a short comment explaining what it does. Comment at block level, not every line. Examples: `# Sort images by filename; reject non-image extensions`, `# Populate BA fields: subsampled world-point grid for track extraction`. Existing comments that meet this standard are kept; missing block comments are added.
 - **Section dividers:** use `########`-style dividers to separate major sections in long files (constants, helpers, classes, etc.). Keeps files scannable without opening a doc.
-- **Docstrings:** every public function and class gets a one-line summary docstring. The `"""` open and close on their own lines — summary starts on the line after the opening quotes, never on the same line. Multi-line docstrings put a blank line between the summary and the bullets that follow. Bullets, not prose blocks. No restating the function name. No padding.
+- **Docstrings:** every public function and class gets a one-line summary docstring. The `"""` open and close on their own lines — summary starts on the line after the opening quotes, never on the same line. Multi-line docstrings put a blank line between the summary and what follows. A function with parameters documents every one under `Args:`; a function that returns something documents it under `Returns:`. Bullets or Args/Returns, not prose blocks. No restating the function name. No padding. `tests/preproc/test_docstrings.py` enforces this for `preproc`; extend it as other modules are cleaned up.
 - **Blank lines between blocks:** a run of statements that does one thing is separated from the next run, and every block comment gets a blank line above it. Walls of undifferentiated code are not human-readable.
 - **Don't over-complicate:** prefer the simplest implementation that solves the problem. No premature abstractions, no dead branches for hypothetical future use, no wrapper layers that add no value. If a param is always default, ask whether it should exist.
 - `logging` not `print()` — use `logger.debug()` / `logger.info()` throughout module code

@@ -7,17 +7,13 @@ import numpy as np
 import pytest
 
 from collab_splats.preproc import viz as viz_module
-
-from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.preproc.viz import (
     plot_correlation,
-    plot_disparity_sensitivity,
     plot_frame_extremes,
     plot_frame_grid,
     plot_frame_scores,
     plot_motion,
     plot_photometric,
-    plot_quality_examples,
     plot_selection,
 )
 
@@ -47,35 +43,6 @@ def _fake_records(n=30):
     ]
 
 
-def _fake_report(n=30, soft=(), badly_exposed=()):
-    """
-    A compute_video_quality-shaped report; `soft` frames fail sharpness, `badly_exposed` exposure.
-    """
-    frames = {
-        "frame_idx": list(range(n)),
-        "laplacian": [200.0] * n,
-        "exposure_mean": [120.0] * n,
-        "exposure_std": [40.0] * n,
-        "blur": [0.3] * n,
-    }
-    for i in soft:
-        frames["laplacian"][i] = 1.0
-    for i in badly_exposed:
-        frames["exposure_mean"][i] = 250.0
-
-    return {"available": True, "frames": frames}
-
-
-def _fake_store(tmp_path, n=30, h=24, w=32):
-    """
-    FrameStore covering source indices 0..n-1; each frame filled with its own index value.
-    """
-    frames = [np.full((h, w, 3), i % 256, dtype=np.uint8) for i in range(n)]
-    records = [{"frame_idx": i, "blur_score": float(i)} for i in range(n)]
-    FrameStore.create(tmp_path / "frames.zarr", frames, records, provenance={"video_path": "v.mp4"})
-    return FrameStore.open(tmp_path / "frames.zarr")
-
-
 def test_plot_frame_grid_smoke():
     frames = [np.zeros((24, 32, 3), dtype=np.uint8)] * 4
     plot_frame_grid(frames, "grid")
@@ -96,52 +63,14 @@ def test_plot_frame_scores_empty_input():
     plot_frame_scores([])  # must not raise
 
 
-def test_plot_disparity_sensitivity_monotonic():
-    # Higher disparity threshold → same or fewer frames selected
-    records = _fake_records(60)
-    plot_disparity_sensitivity(records, [10.0, 50.0, 200.0])
-    ax = plt.gcf().axes[0]
-    counts = ax.lines[0].get_ydata()
-    assert all(counts[i] >= counts[i + 1] for i in range(len(counts) - 1))
+def test_dead_plots_are_gone():
+    """
+    Both were broken or approximate, and nothing outside the notebook called them.
+    """
+    from collab_splats.preproc import viz
 
-
-def test_plot_quality_examples_three_rows(tmp_path):
-    store = _fake_store(tmp_path)
-    report = _fake_report(soft=(1, 4, 7, 10), badly_exposed=(2, 5, 8, 11))
-    plot_quality_examples(store, report, n_examples=3)
-    # One row per non-empty category (usable / soft / exposure), n_examples cols
-    axes = plt.gcf().axes
-    assert len(axes) == 9
-    # Displayed pixels for each axis must match the store's frame at that source index
-    for ax in axes:
-        frame_idx = int(ax.get_title().split()[0].lstrip("#"))
-        displayed = np.asarray(ax.images[0].get_array())
-        np.testing.assert_array_equal(displayed, store.image_by_frame_idx(frame_idx))
-
-
-def test_plot_quality_examples_skips_empty_categories(tmp_path):
-    store = _fake_store(tmp_path)
-    report = _fake_report(soft=(1, 4, 7, 10))  # nothing badly exposed
-    plot_quality_examples(store, report, n_examples=3)
-    assert len(plt.gcf().axes) == 6  # usable + soft rows only
-    row_labels = {t.get_text() for ax in plt.gcf().axes for t in ax.texts}
-    assert "Usable" in row_labels
-    assert "Rejected: soft" in row_labels
-    assert "Rejected: exposure" not in row_labels
-
-
-def test_plot_quality_examples_reads_only_frames_the_store_holds(tmp_path):
-    # The report covers the whole video; frames.zarr holds only the keyframes, so
-    # a plot that indexed the report directly would raise on the first gap.
-    store = _fake_store(tmp_path, n=4)
-    plot_quality_examples(store, _fake_report(n=30), n_examples=3)
-    titles = [int(ax.get_title().split()[0].lstrip("#")) for ax in plt.gcf().axes]
-    assert titles and all(i < 4 for i in titles)
-
-
-def test_plot_quality_examples_empty_input(tmp_path):
-    store = _fake_store(tmp_path, n=1)
-    plot_quality_examples(store, _fake_report(n=0))  # must not raise
+    assert not hasattr(viz, "plot_disparity_sensitivity")
+    assert not hasattr(viz, "plot_quality_examples")
 
 
 ########################################################################

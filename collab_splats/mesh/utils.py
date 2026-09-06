@@ -20,6 +20,7 @@ from collab_splats.geometry.transforms import invert_poses
 from collab_splats.mesh.base import MeshResult
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import confidence_mask
+from collab_splats.preproc import frames
 
 try:
     import meshlib.mrmeshnumpy as mn
@@ -579,22 +580,32 @@ def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_r
 def _feedforward_to_tsdf_inputs(
     result: FeedforwardResult,
     conf_percentile: float | None = None,
-    frame_store=None,
+    images_dir: Path | None = None,
     native_intrinsics: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Unpack a FeedforwardResult into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
+    """
+    Unpack a FeedforwardResult into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
 
     Default: everything at model resolution, mutually pixel-aligned, straight off the forward
     pass. `conf_percentile` zeroes depth below that confidence percentile (0 = no
     observation to Open3D); if the result has no confidence (e.g. an SfM-derived
-    reconstruction), the gate is skipped and fusion proceeds unmasked. `frame_store` +
-    `native_intrinsics` switch to native resolution: original-res uint8 RGB from frames.zarr,
-    depth guided-upsampled into the model crop region (see guided_upsample_depth), and the
-    caller's original-res K (the COLMAP camera).
+    reconstruction), the gate is skipped and fusion proceeds unmasked. `images_dir` +
+    `native_intrinsics` switch to native resolution: original-res uint8 RGB from the scene's
+    images/ directory, depth guided-upsampled into the model crop region (see
+    guided_upsample_depth), and the caller's original-res K (the COLMAP camera).
+
+    Args:
+        result: reconstruction to unpack; needs depth, and images unless images_dir is given.
+        conf_percentile: drop depth below this confidence percentile; None fuses unmasked.
+        images_dir: the scene's images/ directory — switches to the native-resolution path.
+        native_intrinsics: original-res (N, 3, 3) K, required whenever images_dir is given.
+
+    Returns:
+        (depths, rgbs, c2w, intrinsics), mutually pixel-aligned at whichever resolution ran.
 
     Raises:
-        ValueError: depth/images missing; frame_store length != frame count;
-                    frame_store without native_intrinsics.
+        ValueError: depth/images missing; images_dir frame count or resolution disagrees with
+                    the reconstruction; images_dir without native_intrinsics.
     """
     # depth is the model's own output — all three backends populate it, so a fallback
     # derivation here would be dead code (and was measurably worse: see the design doc)
@@ -634,23 +645,28 @@ def _feedforward_to_tsdf_inputs(
     c2w = invert_poses(result.extrinsics).astype(np.float32)
 
     # Native-resolution path: original-res RGB + guided-upsampled depth + caller's K
-    if frame_store is not None:
+    if images_dir is not None:
         if native_intrinsics is None:
-            raise ValueError("frame_store requires native_intrinsics (the original-res COLMAP K)")
+            raise ValueError("images_dir requires native_intrinsics (the original-res COLMAP K)")
         n = depths.shape[0]
-        if len(frame_store) != n:
+
+        # Count the filenames before decoding any of them: a mismatched directory is caught
+        # for the price of a listdir instead of a full-resolution read of every frame.
+        paths = frames.frame_paths(images_dir)
+        if len(paths) != n:
             raise ValueError(
-                f"Frame-count mismatch: frames.zarr has {len(frame_store)} frames but the "
+                f"Frame-count mismatch: {images_dir} has {len(paths)} frames but the "
                 f"reconstruction has {n} — they are from different runs."
             )
-        rgbs = np.ascontiguousarray(frame_store.images())  # (N, H, W, 3) uint8
+
+        rgbs = np.ascontiguousarray(frames.read_frames(images_dir))  # (N, H, W, 3) uint8
         out_hw = tuple(rgbs.shape[1:3])
-        # frames.zarr must be the resolution the crop boxes were computed against — a
-        # same-count store at a different res would silently misplace every crop.
+        # The images must be the resolution the crop boxes were computed against — a
+        # same-count directory at a different res would silently misplace every crop.
         expected_hw = (int(result.original_coords[0, 5]), int(result.original_coords[0, 4]))
         if out_hw != expected_hw:
             raise ValueError(
-                f"frames.zarr resolution {out_hw} != reconstruction original resolution "
+                f"{images_dir} resolution {out_hw} != reconstruction original resolution "
                 f"{expected_hw} (original_coords) — they are from different preprocessing runs."
             )
         native_depths = np.zeros((n, *out_hw), dtype=np.float32)
@@ -896,7 +912,7 @@ def pointcloud_to_mesh(
     output_dir: Path,
     method: str = "open3d_tsdf",
     conf_percentile: float | None = None,
-    frame_store=None,
+    images_dir: Path | None = None,
     native_intrinsics: np.ndarray | None = None,
     color_map_iterations: int = 0,
     **mesher_kwargs,
@@ -914,10 +930,10 @@ def pointcloud_to_mesh(
         method:            Registry key — "open3d_tsdf", "depth_normal_poisson", "gaussians_poisson".
         conf_percentile:   Forwarded to _feedforward_to_tsdf_inputs — zero out depth below this
                            confidence percentile before fusion.
-        frame_store:       Forwarded to _feedforward_to_tsdf_inputs — switches to native-resolution
-                           fusion using this FrameStore's RGB.
+        images_dir:        Forwarded to _feedforward_to_tsdf_inputs — switches to native-resolution
+                           fusion using the original-res RGB in this images/ directory.
         native_intrinsics: Forwarded to _feedforward_to_tsdf_inputs — original-res K required
-                           alongside frame_store.
+                           alongside images_dir.
         color_map_iterations: Rigid color-map optimization iterations run on mesh.ply after
                            fusion + clean_repair (0 = off). Only "open3d_tsdf" supports it.
         **mesher_kwargs:   Forwarded to the mesh creator constructor (voxel_size, sdf_trunc, etc.).
@@ -933,7 +949,7 @@ def pointcloud_to_mesh(
     depths, rgbs, c2w, intrinsics = _feedforward_to_tsdf_inputs(
         result,
         conf_percentile=conf_percentile,
-        frame_store=frame_store,
+        images_dir=images_dir,
         native_intrinsics=native_intrinsics,
     )
     return mesh_from_tsdf_inputs(

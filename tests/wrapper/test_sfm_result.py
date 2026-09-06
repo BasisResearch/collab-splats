@@ -6,10 +6,10 @@ import numpy as np
 import pycolmap
 import pytest
 
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import Reconstructor, _rename_images_to_stems
 
-ORIG_W, ORIG_H = 64, 48  # staged-jpg / store resolution
+ORIG_W, ORIG_H = 64, 48  # images/ store resolution
 DEPTH_W, DEPTH_H = 16, 12  # VDA depth grid (4x downscale)
 K_PARAMS = [50.0, 50.0, 32.0, 24.0]  # fx, fy, cx, cy at ORIG res
 
@@ -35,11 +35,16 @@ def _recon(names):
 
 def _store(tmp_path, frame_idxs):
     """
-    frames.zarr with one flat-coloured uint8 frame per source index.
+    images/ directory with one flat-coloured uint8 frame per source index.
+
+    Returns:
+        The images directory the builder reads.
     """
     frames = [np.full((ORIG_H, ORIG_W, 3), 40 * (i + 1), dtype=np.uint8) for i in range(len(frame_idxs))]
     records = [{"frame_idx": fi} for fi in frame_idxs]
-    return FrameStore.create(tmp_path / "frames.zarr", frames, records, provenance={})
+    images_dir = tmp_path / "images"
+    fr.write_frames(images_dir, frames, records, {})
+    return images_dir
 
 
 def _write_depths(backend_dir, names):
@@ -61,10 +66,10 @@ def _reconstructor(tmp_path):
 def test_sfm_result_builder_shapes_and_scaling(tmp_path):
     names = ["frame_000000", "frame_000003"]
     recon = _recon(names)
-    store = _store(tmp_path, [0, 3])
+    images_dir = _store(tmp_path, [0, 3])
     _write_depths(tmp_path, names)
 
-    out = _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, store)
+    out = _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, images_dir)
 
     # Depth grid defines the model resolution
     assert out.depth.shape == (2, DEPTH_H, DEPTH_W)
@@ -76,7 +81,7 @@ def test_sfm_result_builder_shapes_and_scaling(tmp_path):
     assert out.intrinsics[0, 0, 0] == pytest.approx(K_PARAMS[0] * DEPTH_W / ORIG_W)
     assert out.intrinsics[0, 1, 2] == pytest.approx(K_PARAMS[3] * DEPTH_H / ORIG_H)
 
-    # Poses homogeneous w2c, rows in store order
+    # Poses homogeneous w2c, rows in images/ filename order
     assert out.extrinsics.shape == (2, 4, 4)
     assert np.allclose(out.extrinsics[:, 3], [0, 0, 0, 1])
     assert out.extrinsics[1, 2, 3] == pytest.approx(1.0)
@@ -106,10 +111,11 @@ def test_sfm_result_builder_refuses_camera_resolution_mismatch(tmp_path):
     names = ["frame_000000", "frame_000003"]
     recon = _recon(names)
     frames = [np.zeros((ORIG_H // 2, ORIG_W // 2, 3), dtype=np.uint8)] * 2
-    store = FrameStore.create(tmp_path / "frames.zarr", frames, [{"frame_idx": 0}, {"frame_idx": 3}], provenance={})
+    images_dir = tmp_path / "images"
+    fr.write_frames(images_dir, frames, [{"frame_idx": 0}, {"frame_idx": 3}], {})
     _write_depths(tmp_path, names)
     with pytest.raises(ValueError, match="camera resolution"):
-        _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, store)
+        _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, images_dir)
 
 
 def test_rename_images_to_stems_round_trips_through_write_binary(tmp_path):
@@ -128,17 +134,40 @@ def test_sfm_result_builder_refuses_partial_registration(tmp_path):
     # 3 store frames, only 2 registered
     names = ["frame_000000", "frame_000003"]
     recon = _recon(names)
-    store = _store(tmp_path, [0, 3, 6])
+    images_dir = _store(tmp_path, [0, 3, 6])
     _write_depths(tmp_path, names)
     with pytest.raises(RuntimeError, match="partial registration"):
-        _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, store)
+        _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, images_dir)
 
 
 def test_sfm_result_builder_refuses_name_mismatch(tmp_path):
     # Same count, but the registered names are not the store's frame indices
     names = ["frame_000000", "frame_000004"]
     recon = _recon(names)
-    store = _store(tmp_path, [0, 3])
+    images_dir = _store(tmp_path, [0, 3])
     _write_depths(tmp_path, names)
     with pytest.raises(ValueError, match="different runs"):
-        _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, store)
+        _reconstructor(tmp_path)._sfm_result_from_reconstruction(recon, tmp_path, images_dir)
+
+
+def test_sfm_points_at_the_scene_images_dir_and_stages_nothing(tmp_path):
+    """
+    InstantSfM reads <scene>/images directly; no instantsfm/images/ copy is written.
+    """
+    from collab_splats.pointcloud.sfm import _sfm_image_dir
+
+    scene = tmp_path / "scene"
+    (scene / "images").mkdir(parents=True)
+
+    assert _sfm_image_dir(scene / "images") == scene / "images"
+    assert not (scene / "instantsfm" / "images").exists()
+
+
+def test_sfm_image_dir_refuses_a_missing_directory(tmp_path):
+    """
+    A scene that was never preprocessed fails at the image dir, not deep inside InstantSfM.
+    """
+    from collab_splats.pointcloud.sfm import _sfm_image_dir
+
+    with pytest.raises(FileNotFoundError, match="image directory"):
+        _sfm_image_dir(tmp_path / "scene" / "images")

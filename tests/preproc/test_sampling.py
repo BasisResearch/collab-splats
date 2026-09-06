@@ -1,3 +1,4 @@
+import inspect
 import logging
 import subprocess as sp
 import sys
@@ -5,15 +6,18 @@ import sys
 import numpy as np
 import pytest
 
+from collab_splats.preproc import sampling
 from collab_splats.preproc.qa import compute_video_quality
 from collab_splats.preproc.sampling import (
     OpticalFlowFrameSelector,
+    _eligible,
+    context_indices,
     filter_frame_quality,
     sample_fps,
     sample_optical_flow,
     sample_uniform,
 )
-from collab_splats.preproc.video import context_indices, iter_frames
+from collab_splats.preproc.video import iter_frames
 
 ########################################################################
 # Fixtures
@@ -30,11 +34,27 @@ def _synthetic_report(n=20, bad=()):
         "exposure_mean": [128.0] * n,
         "exposure_std": [40.0] * n,
         "blur": [0.3] * n,
+        "clipped_low_frac": [0.0] * n,
+        "clipped_high_frac": [0.0] * n,
     }
     for i in bad:
         frames["laplacian"][i] = 1.0
 
     return {"available": True, "frames": frames}
+
+
+def _report(laplacian, *, clipped_low=None, clipped_high=None):
+    """
+    Minimal quality report carrying only the columns the filter reads.
+    """
+    n = len(laplacian)
+    return {
+        "frames": {
+            "laplacian": list(laplacian),
+            "clipped_low_frac": list(clipped_low if clipped_low is not None else [0.0] * n),
+            "clipped_high_frac": list(clipped_high if clipped_high is not None else [0.0] * n),
+        }
+    }
 
 
 @pytest.fixture
@@ -96,37 +116,85 @@ def test_selector_combine_is_monotonic_in_disparity():
 ########################################################################
 
 
-def test_filter_frame_quality_flags_soft_frames():
-    mask = filter_frame_quality(_synthetic_report(10, bad=(3, 7)))
+def test_filter_cuts_the_soft_frame_in_an_otherwise_sharp_run():
+    """
+    One frame two orders of magnitude softer than its neighbours is cut.
+    """
+    mask = filter_frame_quality(_report([400.0] * 20 + [3.0] + [400.0] * 20))
 
-    assert mask.tolist() == [True, True, True, False, True, True, True, False, True, True]
-
-
-def test_filter_frame_quality_flags_bad_exposure():
-    report = _synthetic_report(4)
-    report["frames"]["exposure_mean"][1] = 250.0  # blown
-    report["frames"]["exposure_std"][2] = 2.0  # no contrast
-
-    assert filter_frame_quality(report).tolist() == [True, False, False, True]
+    assert mask[20] == False  # noqa: E712 — the soft frame
+    assert mask.sum() == 40
 
 
-def test_filter_frame_quality_blur_max_is_off_by_default():
-    report = _synthetic_report(3)
-    report["frames"]["blur"] = [1.0, 1.0, 1.0]  # Crete-Roffet saturated
+def test_filter_is_scale_free():
+    """
+    Multiplying every laplacian by a constant cannot change the mask.
 
-    assert filter_frame_quality(report).all()
-    assert not filter_frame_quality(report, blur_max=0.5).any()
+    - That invariance is the whole point of a robust z-score on the log.
+    """
+    lap = [400.0, 380.0, 410.0, 3.0, 395.0, 405.0] * 8
+    a = filter_frame_quality(_report(lap))
+    b = filter_frame_quality(_report([x * 1000.0 for x in lap]))
+
+    assert np.array_equal(a, b)
+
+
+def test_filter_keeps_everything_when_sharpness_is_uniform():
+    """
+    Zero spread must not divide-by-zero into an all-False mask.
+    """
+    assert filter_frame_quality(_report([250.0] * 30)).all()
+
+
+def test_filter_cuts_a_clipped_frame():
+    """
+    Clipping is an absolute rule: >25% destroyed pixels is out regardless of sharpness.
+    """
+    lap = [400.0] * 10
+    low = [0.0] * 9 + [0.30]
+    mask = filter_frame_quality(_report(lap, clipped_low=low))
+
+    assert mask[9] == False  # noqa: E712
+    assert mask[:9].all()
+
+
+def test_filter_clipping_is_the_sum_of_both_tails():
+    """
+    0.15 crushed + 0.15 blown is 0.30 destroyed, over the 0.25 ceiling.
+    """
+    mask = filter_frame_quality(
+        _report([400.0] * 4, clipped_low=[0.0, 0.0, 0.0, 0.15], clipped_high=[0.0, 0.0, 0.0, 0.15])
+    )
+
+    assert mask[3] == False  # noqa: E712
+
+
+def test_filter_handles_an_empty_report():
+    """
+    A report with no rows returns an empty mask, not an exception.
+    """
+    assert filter_frame_quality(_report([])).shape == (0,)
+
+
+def test_filter_no_longer_takes_the_deleted_thresholds():
+    """
+    laplacian_min et al are gone; passing one is a TypeError, not a silent no-op.
+    """
+    for dead in ("laplacian_min", "exposure_mean_range", "exposure_min_std", "blur_max"):
+        with pytest.raises(TypeError):
+            filter_frame_quality(_report([400.0] * 5), **{dead: 1})
 
 
 ########################################################################
-# Target positions — search_radius=0 pins each pick to its target, so these
-# assert the position arithmetic without the window substitution on top of it.
+# Target positions — uniform spreads evenly over the eligible pool, and fps snaps
+# its targets to that same pool, so on an all-usable report both assert the position
+# arithmetic with nothing on top of it.
 ########################################################################
 
 
 def test_uniform_spans_endpoints(tiny_video, clean_report):
     # "N frames spanning the video": first and last source frames are both included
-    _, records = sample_uniform(tiny_video, max_frames=5, report=clean_report, search_radius=0)
+    _, records = sample_uniform(tiny_video, max_frames=5, report=clean_report)
     idxs = [r["frame_idx"] for r in records]
 
     assert len(idxs) == 5
@@ -136,7 +204,7 @@ def test_uniform_spans_endpoints(tiny_video, clean_report):
 
 def test_uniform_caps_at_total(tiny_video, clean_report):
     # Asking for more frames than exist yields every frame, not duplicates
-    _, records = sample_uniform(tiny_video, max_frames=100, report=clean_report, search_radius=0)
+    _, records = sample_uniform(tiny_video, max_frames=100, report=clean_report)
 
     assert [r["frame_idx"] for r in records] == list(range(60))
 
@@ -147,7 +215,7 @@ def test_uniform_zero_max_frames_returns_empty(tiny_video, clean_report):
 
 def test_fps_uses_constant_stride(tiny_video, clean_report):
     # "a frame every 1/fps seconds": 30 fps source at 10 fps → stride 3
-    _, records = sample_fps(tiny_video, fps=10.0, report=clean_report, search_radius=0)
+    _, records = sample_fps(tiny_video, fps=10.0, report=clean_report)
 
     assert [r["frame_idx"] for r in records] == list(range(0, 60, 3))
 
@@ -155,14 +223,14 @@ def test_fps_uses_constant_stride(tiny_video, clean_report):
 def test_fps_does_not_stretch_to_last_frame(tiny_video, clean_report):
     # Stride-anchored, NOT endpoint-anchored: spacing is the contract, so the last
     # target is wherever the stride lands — this is what distinguishes fps from uniform.
-    _, records = sample_fps(tiny_video, fps=10.0, report=clean_report, search_radius=0)
+    _, records = sample_fps(tiny_video, fps=10.0, report=clean_report)
 
     assert records[-1]["frame_idx"] == 57  # not 59
 
 
 def test_fps_clamps_stride_to_one(tiny_video, clean_report):
     # Requesting a rate above the source rate cannot sample sub-frame; stride floors at 1
-    _, records = sample_fps(tiny_video, fps=120.0, report=clean_report, search_radius=0)
+    _, records = sample_fps(tiny_video, fps=120.0, report=clean_report)
 
     assert [r["frame_idx"] for r in records] == list(range(60))
 
@@ -183,9 +251,9 @@ def test_sample_uniform_takes_the_report(tiny_video):
     assert [r["frame_idx"] for r in records] == sorted(r["frame_idx"] for r in records)
 
 
-def test_sample_uniform_substitutes_a_neighbour_for_a_bad_frame(tiny_video):
+def test_sample_uniform_avoids_the_frames_the_report_condemns(tiny_video):
     """
-    A frame the report condemns must be replaced from within its window, keeping the count.
+    A frame the report condemns leaves the pool, so the picks move and the count survives.
     """
     report = compute_video_quality(tiny_video, motion_stride=2)
     clean = [r["frame_idx"] for r in sample_uniform(tiny_video, max_frames=4, report=report)[1]]
@@ -200,15 +268,16 @@ def test_sample_uniform_substitutes_a_neighbour_for_a_bad_frame(tiny_video):
     assert [r["frame_idx"] for r in records] != clean
 
 
-def test_sample_uniform_keeps_count_when_the_report_condemns_everything(tiny_video, clean_report):
-    # Best-effort: with no usable frame anywhere the window still yields its
-    # sharpest candidate, so the count stays exact rather than collapsing.
+def test_sample_uniform_raises_when_the_report_condemns_everything(tiny_video, clean_report):
+    # An empty pool is a config error, not an empty scene written silently — there is no
+    # window left to take a best-effort argmax over. Condemnation is spelled with the
+    # clipping rule because the sharpness rule is relative: a uniformly soft video has no
+    # outlier to cut.
     for i in range(60):
-        clean_report["frames"]["laplacian"][i] = 0.0
+        clean_report["frames"]["clipped_low_frac"][i] = 1.0
 
-    frames, _ = sample_uniform(tiny_video, max_frames=8, report=clean_report)
-
-    assert len(frames) == 8
+    with pytest.raises(ValueError, match="no eligible frames"):
+        sample_uniform(tiny_video, max_frames=8, report=clean_report)
 
 
 def test_sample_uniform_decodes_in_one_select_pass(tiny_video, clean_report, monkeypatch):
@@ -294,9 +363,9 @@ def test_sample_fps_within_band_is_untouched(tiny_video, clean_report):
     frames, records = sample_fps(tiny_video, fps=10.0, min_frames=5, max_frames=40, report=clean_report)
 
     assert len(frames) == 20
-    # Stride 3 preserved: successive picks stay one validation window (radius 1) off it
+    # Stride 3 preserved: every frame is eligible, so each target snaps onto itself
     idxs = [r["frame_idx"] for r in records]
-    assert all(abs(idx - 3 * i) <= 1 for i, idx in enumerate(idxs))
+    assert idxs == [3 * i for i in range(20)]
 
 
 def test_sample_fps_warns_when_the_band_binds(tiny_video, clean_report, caplog):
@@ -337,14 +406,27 @@ def test_sample_optical_flow_respects_max_frames(tiny_video, clean_report):
     assert len(frames) <= 2
 
 
-def test_sample_optical_flow_skips_report_rejected_frames(tiny_video):
+def test_sample_optical_flow_skips_frames_outside_the_pool(tiny_video):
+    # The first ten frames leave the pool, so the selector never sees them — not as picks
+    # and not as the reference the frames after them are scored against.
+    report = compute_video_quality(tiny_video, motion_stride=2)
+    for i in range(10):
+        report["frames"]["clipped_low_frac"][i] = 1.0
+
+    _frames, records = sample_optical_flow(tiny_video, report=report)
+
+    assert records and all(r["frame_idx"] >= 10 for r in records)
+
+
+def test_sample_optical_flow_empty_pool_is_a_hard_error(tiny_video):
+    # Every sampler shares the pool, so an all-condemned video is the same config error
+    # here as it is for uniform — never an empty scene written silently.
     report = compute_video_quality(tiny_video, motion_stride=2)
     for i in range(len(report["frames"]["frame_idx"])):
-        report["frames"]["laplacian"][i] = 0.0
+        report["frames"]["clipped_low_frac"][i] = 1.0
 
-    frames, records = sample_optical_flow(tiny_video, report=report)
-
-    assert frames == [] and records == []
+    with pytest.raises(ValueError, match="no eligible frames"):
+        sample_optical_flow(tiny_video, report=report)
 
 
 def test_samplers_require_a_report(tiny_video):
@@ -360,26 +442,30 @@ def test_samplers_require_a_report(tiny_video):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 14 public names — viz is opt-in and must NOT be re-exported.
+    # Exactly the 17 public names — viz is opt-in and must NOT be re-exported.
     # The surface is the two-step contract: qa measures the whole video into a
     # report (compute_video_quality / load_video_quality), filter_frame_quality
     # turns it into a usability mask, and the three samplers select from it.
+    # frames.py's five flat functions are the images/ keyframe store itself.
     # iter_frames is public because it is the one streamed-decode entry point.
     assert set(preproc.__all__) == {
-        "DistortionProfile",
-        "FrameStore",
         "analysis_gray",
+        "calibrate_camera",
         "compute_video_quality",
-        "estimate_camera_distortion",
         "extract_frame",
         "filter_frame_quality",
+        "frame_idx_from_path",
+        "frame_paths",
         "get_video_info",
         "iter_frames",
         "load_video_quality",
+        "read_frames",
+        "read_manifest",
         "sample_fps",
         "sample_optical_flow",
         "sample_uniform",
         "undistort_frames",
+        "write_frames",
     }
     assert not hasattr(preproc, "plot_frame_scores")
     # The report is the deliverable; the primitives that build it stay behind
@@ -389,8 +475,8 @@ def test_public_api_surface():
         "compute_blur",
         "compute_exposure",
         "compute_frame_quality",
-        "compute_translation",
-        "compute_parallax",
+        "compute_pair_motion",
+        "detect_orb",
     ):
         assert not hasattr(preproc, primitive), primitive
 
@@ -403,143 +489,164 @@ def test_importing_preproc_does_not_import_matplotlib():
     assert result.returncode == 0
 
 
-########################################################################
-# search_radius: window half-width, capped below half the target spacing
-########################################################################
-
-
-def test_search_radius_capped_by_spacing(tiny_video):
-    # Stride 3 (10 fps of 30) caps the window at +-1 however large the radius: frame 2
-    # is claimed by target 3 only; an uncapped +-7 would hand it to targets 0 and 6 too
-    report = _synthetic_report(n=60)
-    report["frames"]["laplacian"][2] = 900.0
-    _, records = sample_fps(tiny_video, fps=10.0, report=report, search_radius=7)
-    idxs = [r["frame_idx"] for r in records]
-    assert idxs[:2] == [0, 2] and len(idxs) == len(set(idxs))
-
-
-def test_search_radius_picks_sharpest_in_wide_window(tiny_video):
-    # Stride 15 (2 fps): radius 7 reaches a sharp frame 6 away, radius 3 does not
-    report = _synthetic_report(n=60)
-    report["frames"]["laplacian"][15] = 300.0
-    report["frames"]["laplacian"][21] = 900.0
-    _, wide = sample_fps(tiny_video, fps=2.0, report=report, search_radius=7)
-    _, narrow = sample_fps(tiny_video, fps=2.0, report=report, search_radius=3)
-    assert [r["frame_idx"] for r in wide][:2] == [0, 21]
-    assert [r["frame_idx"] for r in narrow][:2] == [0, 15]
-
-
 def test_sample_fps_targets_lie_on_the_context_grid(tiny_video, clean_report):
     # The guarantee the VDA context stream rests on: keyframes picked at a given rate are
-    # all members of the context grid built at that same rate. search_radius=0 pins the
-    # picks to the targets, so this tests the stride rule and nothing else.
+    # all members of the context grid built at that same rate. Every frame is usable here,
+    # so the snap is the identity and this tests the stride rule and nothing else.
     grid = set(context_indices(tiny_video, target_fps=2.0))
-    _frames, records = sample_fps(tiny_video, fps=2.0, report=clean_report, search_radius=0)
+    _frames, records = sample_fps(tiny_video, fps=2.0, report=clean_report)
     assert {r["frame_idx"] for r in records} <= grid
 
 
 ########################################################################
-# candidates: keyframes and their blur substitutes drawn from a fixed grid
+# The eligible pool — the quality mask
 ########################################################################
 
 
-def test_candidates_restrict_chosen_frames_to_the_grid(tiny_video, clean_report):
-    # 60-frame video, grid every 3rd frame, 10 keyframes -> every pick is a grid member
-    grid = list(range(0, 60, 3))
-    _frames, records = sample_uniform(tiny_video, max_frames=10, report=clean_report, search_radius=7, candidates=grid)
-    chosen = [r["frame_idx"] for r in records]
-    assert set(chosen) <= set(grid)
-    assert len(chosen) == len(set(chosen))
+def test_eligible_drops_the_frames_the_mask_condemns():
+    """
+    The pool is the quality mask's keep-set, ascending.
+    """
+    report = _report([400.0] * 20 + [3.0] + [400.0] * 9)
+    pool = _eligible(report, quality=None)
+
+    # 20 is the only frame the mask condemns
+    assert np.array_equal(pool, np.array([i for i in range(30) if i != 20]))
 
 
-def test_candidates_substitute_a_blurry_target_within_the_grid(tiny_video):
-    # Grid every 3rd frame (20 members), 5 targets -> grid spacing 4 -> radius 1, so each
-    # window is 3 grid members wide and substitution is actually possible. Target 30 is an
-    # exact grid member and unusable, so the pick must move to 27 or 33 — never to 29 or 31.
-    report = _synthetic_report(60, bad=(30,))
-    grid = list(range(0, 60, 3))
-    _frames, records = sample_uniform(tiny_video, max_frames=5, report=report, search_radius=7, candidates=grid)
-    chosen = [r["frame_idx"] for r in records]
-    assert 30 not in chosen
-    assert {27, 33} & set(chosen)
-    assert set(chosen) <= set(grid)
+def test_eligible_raises_when_the_pool_is_empty():
+    """
+    An empty pool is a config error, not an empty scene written silently.
+    """
+    # Every frame fully clipped — sharp, but nothing recoverable in the pixels
+    with pytest.raises(ValueError, match="no eligible frames"):
+        _eligible(_report([400.0] * 10, clipped_high=[0.9] * 10), quality=None)
 
 
-def test_candidates_none_is_byte_identical_to_today(tiny_video, clean_report):
-    _f1, r1 = sample_uniform(tiny_video, max_frames=10, report=clean_report, search_radius=3)
-    _f2, r2 = sample_uniform(tiny_video, max_frames=10, report=clean_report, search_radius=3, candidates=None)
-    assert [r["frame_idx"] for r in r1] == [r["frame_idx"] for r in r2]
+def test_sample_uniform_spans_the_eligible_pool(monkeypatch, tmp_path):
+    """
+    Picks are evenly spaced in POOL index, and never land on a condemned frame.
+    """
+    # 30 frames, the middle 10 blurred out
+    report = _report([400.0] * 10 + [2.0] * 10 + [400.0] * 10)
 
-
-def test_sample_fps_accepts_candidates(tiny_video, clean_report):
-    grid = list(range(0, 60, 3))
-    _frames, records = sample_fps(tiny_video, fps=5.0, report=clean_report, search_radius=7, candidates=grid)
-    assert set(r["frame_idx"] for r in records) <= set(grid)
-
-
-def test_candidates_keep_a_target_that_is_already_a_grid_member(tiny_video, clean_report):
-    # A target that IS a grid member must snap to itself, not forward to the next one —
-    # sample_fps's targets are grid members by construction, so a forward-biased snap
-    # would shift every keyframe one grid step later.
-    grid = list(range(0, 60, 3))
-    _frames, records = sample_uniform(tiny_video, max_frames=2, report=clean_report, search_radius=0, candidates=grid)
-    assert [r["frame_idx"] for r in records] == [0, 57]
-
-
-def test_fps_targets_survive_the_grid_unchanged(tiny_video, clean_report):
-    # The property the whole context stream rests on, end to end: keyframes at 2 fps drawn
-    # from a 6 fps grid are the SAME frames as without the grid.
-    grid = context_indices(tiny_video, target_fps=6.0)
-    _f1, plain = sample_fps(tiny_video, fps=2.0, report=clean_report, search_radius=0)
-    _f2, gridded = sample_fps(tiny_video, fps=2.0, report=clean_report, search_radius=0, candidates=grid)
-    assert [r["frame_idx"] for r in gridded] == [r["frame_idx"] for r in plain]
-
-
-def test_candidates_coarser_than_the_budget_dedups_and_warns(tiny_video, clean_report, caplog):
-    # 5 grid members, 10 keyframes: targets collapse. The store must never see a frame twice —
-    # a duplicate makes len(store) != len(_idx_to_row) and hands out a zero-baseline pair.
-    grid = list(range(0, 60, 12))
-    with caplog.at_level(logging.WARNING, logger="collab_splats.preproc.sampling"):
-        _frames, records = sample_uniform(
-            tiny_video, max_frames=10, report=clean_report, search_radius=0, candidates=grid
-        )
-
-    chosen = [r["frame_idx"] for r in records]
-    assert chosen == sorted(set(chosen))
-    assert len(chosen) <= len(grid)
-    assert any("collapsed" in r.getMessage() for r in caplog.records)
-
-
-def test_candidates_empty_grid_is_a_hard_error(tiny_video, clean_report):
-    # An empty grid has no member to snap to; returning nothing would look like a short video.
-    with pytest.raises(ValueError, match="candidates is empty"):
-        sample_uniform(tiny_video, max_frames=5, report=clean_report, candidates=[])
-
-
-def test_candidates_need_not_be_sorted_or_unique(tiny_video, clean_report):
-    # The grid is a SET of source indices, so caller order and duplicates must not move a pick.
-    grid = list(range(0, 60, 3))
-    _f1, a = sample_uniform(tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=grid)
-    _f2, b = sample_uniform(
-        tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=list(reversed(grid)) + grid
+    # Only the decode is stubbed: the pool comes from the report, so uniform sampling
+    # never probes the video. A re-added probe would see a path that does not exist.
+    monkeypatch.setattr(
+        sampling,
+        "iter_frames",
+        lambda p, indices=None: [(i, np.full((4, 4, 3), i, np.uint8)) for i in indices],
     )
-    assert [r["frame_idx"] for r in a] == [r["frame_idx"] for r in b]
+
+    frames, records = sampling.sample_uniform(str(tmp_path / "v.mp4"), max_frames=4, report=report)
+
+    picked = [r["frame_idx"] for r in records]
+    assert len(frames) == 4
+    assert all(i < 10 or i >= 20 for i in picked), picked
+    assert picked == sorted(picked)
 
 
-def test_candidates_outside_the_video_are_rejected(tiny_video, clean_report):
-    # The grid indexes the report's per-frame columns, so a member past `total` is a bug
-    # in the caller's grid, not a frame to clamp. The error must name the offending span.
-    with pytest.raises(ValueError, match="outside the video's 60 frames"):
-        sample_uniform(
-            tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=list(range(-6, 90, 3))
-        )
+def test_sample_uniform_returns_the_whole_pool_when_it_is_short(monkeypatch, tmp_path, caplog):
+    """
+    A pool smaller than max_frames returns the pool and logs the shortfall.
+    """
+    report = _report([400.0] * 3)
+    monkeypatch.setattr(
+        sampling,
+        "iter_frames",
+        lambda p, indices=None: [(i, np.full((4, 4, 3), i, np.uint8)) for i in indices],
+    )
+
+    with caplog.at_level("WARNING"):
+        frames, records = sampling.sample_uniform(str(tmp_path / "v.mp4"), max_frames=10, report=report)
+
+    assert [r["frame_idx"] for r in records] == [0, 1, 2]
+    assert "eligible" in caplog.text
 
 
-def test_candidates_below_zero_are_rejected(tiny_video, clean_report):
-    # The silent-corruption half: usable[-3] wraps round to frame 57, so frame 57's sharpness
-    # is attributed to index -3 and frame_idx -3 reaches frames.zarr, matching no context row.
-    # A grid running past `total` at least raised an IndexError; a negative one raised nothing.
-    with pytest.raises(ValueError, match=r"candidates span \[-6, 57\], outside the video's 60 frames"):
-        sample_uniform(
-            tiny_video, max_frames=5, report=clean_report, search_radius=7, candidates=list(range(-6, 60, 3))
-        )
+########################################################################
+# fps snapping — targets land on the pool, and the band re-spreads over it
+########################################################################
+
+
+def test_sample_fps_snaps_targets_to_the_nearest_eligible_frame(monkeypatch, tmp_path):
+    """
+    Constant-rate targets land on the closest eligible index, never on a condemned one.
+    """
+    # 60 frames at 30 fps; frames 10-14 blurred out. fps=3 targets 0, 10, 20, ...
+    report = _report([400.0] * 10 + [2.0] * 5 + [400.0] * 45)
+
+    monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": 60, "fps": 30.0})
+    monkeypatch.setattr(
+        sampling,
+        "iter_frames",
+        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
+    )
+
+    frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
+    picked = [r["frame_idx"] for r in records]
+
+    # Target 10 is condemned; 9 is one frame away and 15 is five, so 9 wins
+    assert 10 not in picked
+    assert 9 in picked
+    assert picked == sorted(set(picked))
+
+
+def test_sample_fps_respreads_outside_the_band(monkeypatch, tmp_path, caplog):
+    """
+    A count outside [min_frames, max_frames] re-spreads over the whole pool, never truncates.
+    """
+    report = _report([400.0] * 60)
+    monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": 60, "fps": 30.0})
+    monkeypatch.setattr(
+        sampling,
+        "iter_frames",
+        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
+    )
+
+    with caplog.at_level("WARNING"):
+        frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=15.0, report=report, max_frames=6)
+
+    picked = [r["frame_idx"] for r in records]
+    assert len(picked) == 6
+    assert picked[-1] >= 55, "re-spread must still span the video, not truncate at frame 6"
+    assert "re-spread" in caplog.text
+
+
+def test_context_indices_lives_in_sampling():
+    """
+    It computes a selection grid, so it belongs to this module — and a supplied probe
+    short-circuits the real one, which a nonexistent path proves.
+    """
+    assert context_indices("x.mp4", target_fps=2.0, info={"total_frames": 10, "fps": 10.0}) == [0, 5]
+
+
+def test_context_indices_matches_sample_fps_stride(tiny_video):
+    # tiny_video is 60 frames @ 30 fps -> fps=10 gives stride 3
+    grid = context_indices(tiny_video, target_fps=10.0)
+
+    assert grid[:4] == [0, 3, 6, 9]
+    assert len(grid) == 20
+
+
+def test_context_indices_floors_stride_at_one(tiny_video):
+    # A target rate above the source rate cannot sample sub-frame
+    assert context_indices(tiny_video, target_fps=1000.0) == list(range(60))
+
+
+def test_context_indices_rejects_a_nonpositive_fps(tiny_video):
+    with pytest.raises(ValueError, match="positive target_fps"):
+        context_indices(tiny_video, target_fps=0)
+
+
+def test_context_indices_empty_video_returns_no_indices(tiny_video):
+    # A probe reporting zero frames short-circuits before any stride arithmetic
+    assert context_indices(tiny_video, target_fps=2.0, info={"total_frames": 0, "fps": 30.0}) == []
+
+
+def test_samplers_no_longer_take_search_radius():
+    """
+    The window search is gone; the pool replaced it.
+    """
+    for fn in (sampling.sample_uniform, sampling.sample_fps, sampling.sample_optical_flow):
+        assert "search_radius" not in inspect.signature(fn).parameters, fn.__name__

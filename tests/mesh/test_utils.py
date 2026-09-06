@@ -6,6 +6,7 @@ import pytest
 
 from collab_splats.mesh.tsdf import Open3DTSDFFusion
 from collab_splats.mesh.utils import optimize_color_map, pointcloud_to_mesh
+from collab_splats.preproc import frames as fr
 
 
 def test_find_depth_edges_shape():
@@ -365,6 +366,24 @@ def _tiny_ff_result(with_confidence=True):
     )
 
 
+def _write_images_dir(images_dir: Path, n: int, hw: int, value: int = 128) -> Path:
+    """
+    Write n constant-valued frames as a real images/ directory for the native-res adapter.
+
+    Args:
+        images_dir: directory to create; frame_NNNNNN.png plus frames.json land beside it.
+        n: number of frames to write.
+        hw: square frame side in pixels.
+        value: the uint8 level every pixel is filled with.
+
+    Returns:
+        The images_dir that was written.
+    """
+    stack = np.full((n, hw, hw, 3), value, dtype=np.uint8)
+    fr.write_frames(images_dir, stack, [{"frame_idx": i} for i in range(n)], {"source": "test"})
+    return images_dir
+
+
 def test_tsdf_inputs_conf_percentile_zeroes_low_confidence_depth():
     from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
 
@@ -396,54 +415,37 @@ def test_tsdf_inputs_defaults_unchanged():
     np.testing.assert_array_equal(K, ff.intrinsics)
 
 
-def test_tsdf_inputs_native_resolution_uses_store_rgb_and_upsampled_depth():
+def test_tsdf_inputs_native_resolution_uses_images_dir_rgb_and_upsampled_depth(tmp_path):
     from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
 
-    class FakeStore:  # FrameStore duck-type: len + images()
-        def __len__(self):
-            return 2
-
-        def images(self):
-            return np.full((2, 16, 16, 3), 128, dtype=np.uint8)
-
+    images_dir = _write_images_dir(tmp_path / "images", n=2, hw=16)
     ff = _tiny_ff_result()
     native_K = ff.intrinsics * np.array([[2, 1, 2], [1, 2, 2], [1, 1, 1]], np.float32)
-    depths, rgbs, _, K = _feedforward_to_tsdf_inputs(ff, frame_store=FakeStore(), native_intrinsics=native_K)
+    depths, rgbs, _, K = _feedforward_to_tsdf_inputs(ff, images_dir=images_dir, native_intrinsics=native_K)
     assert depths.shape == (2, 16, 16)
     assert rgbs.dtype == np.uint8 and rgbs.shape == (2, 16, 16, 3)
     np.testing.assert_array_equal(K, native_K)
     assert (depths > 0).all()  # full-frame crop, no masking → fully populated
 
 
-def test_tsdf_inputs_native_resolution_frame_count_mismatch_raises():
+def test_tsdf_inputs_native_resolution_frame_count_mismatch_raises(tmp_path):
     from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
 
-    class ShortStore:
-        def __len__(self):
-            return 1
-
-        def images(self):
-            return np.zeros((1, 16, 16, 3), dtype=np.uint8)
-
+    images_dir = _write_images_dir(tmp_path / "images", n=1, hw=16)
     ff = _tiny_ff_result()
     with pytest.raises(ValueError, match="[Ff]rame"):
-        _feedforward_to_tsdf_inputs(ff, frame_store=ShortStore(), native_intrinsics=ff.intrinsics)
+        _feedforward_to_tsdf_inputs(ff, images_dir=images_dir, native_intrinsics=ff.intrinsics)
 
 
-def test_tsdf_inputs_native_resolution_wrong_store_resolution_raises():
+def test_tsdf_inputs_native_resolution_wrong_image_resolution_raises(tmp_path):
     """Same frame count but different resolution than original_coords → loud failure."""
     from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
 
-    class WrongResStore:
-        def __len__(self):
-            return 2
-
-        def images(self):
-            return np.zeros((2, 32, 32, 3), dtype=np.uint8)  # original_coords say 16x16
-
+    # original_coords say 16x16; these frames are 32x32
+    images_dir = _write_images_dir(tmp_path / "images", n=2, hw=32, value=0)
     ff = _tiny_ff_result()
     with pytest.raises(ValueError, match="resolution"):
-        _feedforward_to_tsdf_inputs(ff, frame_store=WrongResStore(), native_intrinsics=ff.intrinsics)
+        _feedforward_to_tsdf_inputs(ff, images_dir=images_dir, native_intrinsics=ff.intrinsics)
 
 
 ########

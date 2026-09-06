@@ -14,8 +14,8 @@ input_path: null
 output_path: null
 
 preproc:
-  # Output: <output_path>/frames.zarr — canonical decode-once keyframe store
-  # (chunked images + selection records + provenance); no images/ JPG dir.
+  # Output: <output_path>/images/frame_NNNNNN.png (COLMAP-style image directory,
+  # lossless PNG) + <output_path>/frames.json (selection records + provenance).
   #
   # Each method has ONE density knob. max_frames is the frame budget: the target
   # COUNT for 'uniform', a ceiling for 'fps' and 'optical_flow'.
@@ -35,13 +35,10 @@ preproc:
                               # auto-derived — os.cpu_count() reports HOST cores inside a
                               # container and ignores the cgroup quota. Set to 1 while a GPU
                               # eval run is using the machine (CLAUDE.md: OOM risk).
-  search_radius: 7            # fps/uniform: each target is replaced by the sharpest usable
-                              # frame within +-search_radius, auto-capped below half the target
-                              # spacing (2 fps on 30 fps video -> spacing 15 -> +-7 is the max).
   undistort: false            # self-calibrate one shared OPENCV camera (pycolmap, <=60 frames)
                               # and undistort every selected frame (cv2, alpha=0 crop) before
-                              # frames.zarr is written. Off until the GH010229 A/B measures the
-                              # win. frames.zarr reuse is by EXISTENCE — toggling this on an
+                              # images/ is written. Off until the GH010229 A/B measures the
+                              # win. images/ reuse is by EXISTENCE — toggling this on an
                               # existing scene needs preprocess(overwrite=True). Localization
                               # QUERY images are NOT undistorted (they never pass through here).
 
@@ -135,7 +132,7 @@ mesh:
   depth_trunc: 1.5          # drop depth samples beyond this range (metres)
   clean_repair: true       # drop out-of-bounds components + fill small holes, rewriting mesh.ply
   conf_percentile: 20    # mask depth below this global confidence percentile (null = off)
-  native_resolution: true # fuse at original frame resolution (frames.zarr RGB + upsampled depth)
+  native_resolution: true # fuse at original frame resolution (images/ RGB + upsampled depth)
   color_map_iterations: 300  # rigid color-map optimization iterations after fusion (0 = off)
   splat_depth: expected    # source: splats only — 'expected' (alpha-weighted rendered
                            # depth) or 'median' (RaDe-GS surface depth; 2dgs renders only).

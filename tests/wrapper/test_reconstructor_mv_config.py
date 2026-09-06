@@ -1,7 +1,7 @@
 """use_multiview_confidence reaches the creator the same way max_points does."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -12,16 +12,12 @@ CONFIGS = Path(__file__).resolve().parents[2] / "configs"
 
 
 def _run(tmp_path, **kwargs):
-    """Call _run_feedforward with the creator class and frame store patched out."""
-    with (
-        patch("collab_splats.pointcloud.feedforward.VGGTOmegaCreator") as mock_cls,
-        patch("collab_splats.wrapper.reconstructor.FrameStore") as mock_store,
-    ):
+    """Call _run_feedforward with the creator class patched out."""
+    with patch("collab_splats.pointcloud.feedforward.VGGTOmegaCreator") as mock_cls:
         mock_cls.return_value.outputs = None
-        mock_store.open.return_value = MagicMock()
         _run_feedforward(
             backend="vggt_omega",
-            frames_zarr=tmp_path / "frames.zarr",
+            images_dir=tmp_path / "images",
             output_dir=tmp_path,
             loop_closure=False,
             viz_enabled=False,

@@ -322,7 +322,7 @@ def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.nda
     """
     Run an InstantSfM condition over image_dir, return w2c extrinsics (N,4,4) in sorted-name order.
 
-    Mirrors Reconstructor._run_sfm on the eval's image dir instead of frames.zarr:
+    Mirrors Reconstructor._run_sfm on the eval's image dir instead of the scene's images/ dir:
     - Stages image_dir/* as symlinks into output_dir/images/ (InstantSfM's data_dir contract;
       colmap SIFT reads png/jpg alike). Staged (name, link-target) pairs key the caches: eval
       names are positional, so a same-count rerun from a different source keeps the name set —

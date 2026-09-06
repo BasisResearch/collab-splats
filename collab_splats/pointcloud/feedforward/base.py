@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import time
 from abc import abstractmethod
 from contextlib import contextmanager
@@ -37,7 +38,7 @@ from zarr.codecs import BloscCodec
 from collab_splats.geometry.metrics import bounded_residual, residual_bin_edges
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
 from collab_splats.geometry.verification import PairStats
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 
 from ..base import BasePointcloudCreator, PointcloudResult
 from ..utils import cross_frame_attention_ratio, reproject_pixels
@@ -939,7 +940,7 @@ def frames_as_pil_source(frames: Any):
     instead returns ``Image.fromarray(frame)`` for each frame in order — this is
     bit-identical to opening the source file, because ``frames`` holds the exact
     decoded RGB pixels ``Image.open(path).convert("RGB")`` would have produced.
-    That lets the FrameStore/decoder be the sole IO path while every upstream
+    That lets the decoder be the sole IO path while every upstream
     resize/crop/normalise step stays byte-for-byte unchanged (no temp files).
 
     Single-threaded use only: it patches the process-global ``PIL.Image.open`` and
@@ -958,18 +959,45 @@ def frames_as_pil_source(frames: Any):
         PIL.Image.open = original_open
 
 
-def _decode_dir_to_frames(image_dir: Path) -> tuple[list[np.ndarray], list[int]]:
-    """Decode an image directory to (frames, labels) — the legacy eval IO path.
+# The keyframe store names every image frame_{idx:06d}; a legacy eval dir names its
+# images freely (7-Scenes writes frame-000012.color.png), and guessing an index off
+# those would mislabel poses silently. Match the store's convention exactly.
+_STORE_FRAME_NAME = re.compile(r"^frame_\d+$")
 
-    Returns per-image (H, W, 3) uint8 RGB arrays sorted by filename, plus integer
-    labels 0..N-1 matching that order.
+
+def _source_frame_idxs(paths: list[Path]) -> list[int]:
     """
-    image_dir = Path(image_dir)
-    paths = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"})
+    Source video frame index of each frame image.
+
+    Args:
+        paths: frame image paths, in load order.
+
+    Returns:
+        The frame_NNNNNN index of every path, or sort-order labels 0..N-1 when the
+        names carry no such index.
+    """
+    if all(_STORE_FRAME_NAME.match(p.stem) for p in paths):
+        return [fr.frame_idx_from_path(p) for p in paths]
+    return list(range(len(paths)))
+
+
+def _decode_dir_to_frames(image_dir: Path) -> tuple[list[np.ndarray], list[int]]:
+    """
+    Decode a frame directory into the (frames, frame_idxs) pair _preprocess takes.
+
+    Args:
+        image_dir: the scene's images/ directory, or a legacy eval image dir.
+
+    Returns:
+        Per-image (H, W, 3) uint8 RGB arrays in filename order, plus the source
+        frame index of each.
+    """
+    paths = fr.frame_paths(image_dir)
     if not paths:
         raise FileNotFoundError(f"No images found in {image_dir}")
-    frames = [np.asarray(PIL.Image.open(p).convert("RGB"), dtype=np.uint8) for p in paths]
-    return frames, list(range(len(paths)))
+
+    decoded = [np.asarray(PIL.Image.open(p).convert("RGB"), dtype=np.uint8) for p in paths]
+    return decoded, _source_frame_idxs(paths)
 
 
 # ── Abstract pipeline ─────────────────────────────────────────────────────────
@@ -1057,10 +1085,10 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
 
     # ── Pipeline orchestration ────────────────────────────────────────────────
 
-    def reconstruct(self, source: FrameStore | Path, output_dir: Path) -> PointcloudResult:
-        # source is a FrameStore (canonical keyframe store) or a legacy image dir
+    def reconstruct(self, source: Path, output_dir: Path) -> PointcloudResult:
+        # source is the scene's images/ directory, or a legacy eval image dir
         output_dir = Path(output_dir)
-        if not isinstance(source, FrameStore) and not Path(source).exists():
+        if not Path(source).exists():
             raise FileNotFoundError(f"image source not found: {source}")
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1070,7 +1098,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         self.postprocess()
         return self.build_colmap(output_dir)
 
-    def run(self, source: FrameStore | Path, device: str | None = None) -> FeedforwardResult:
+    def run(self, source: Path, device: str | None = None) -> FeedforwardResult:
         """Run the full inference pipeline and return outputs.
 
         Convenience wrapper for load_model → setup_inference → run_inference → postprocess.
@@ -1089,27 +1117,39 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         self.model = self._load_model(device)
         console.log(f"  done in {time.perf_counter() - t0:.1f}s")
 
-    def setup_inference(self, source: FrameStore | Path) -> None:
-        # Decode the source (FrameStore, frames.zarr, or legacy image dir) into an
-        # in-memory frame batch, then run the model-specific in-memory preprocess.
+    def setup_inference(self, source: Path) -> None:
+        # Decode the source directory (the scene's images/, or a legacy eval image dir)
+        # into an in-memory frame batch, then run the model-specific in-memory preprocess.
         t0 = time.perf_counter()
         console.log("Preprocessing images...")
         frames, frame_idxs = self._decode_source(source)
         self.views, self.image_paths, self.original_coords = self._preprocess(frames, frame_idxs)
         console.log(f"  → {len(self.image_paths)} images  done in {time.perf_counter() - t0:.1f}s")
 
-    def _decode_source(self, source: FrameStore | Path) -> tuple[Any, list[int]]:
-        """Decode any inference source into (frames, frame_idxs) for _preprocess.
-
-        FrameStore / frames.zarr → the store's decode-once keyframes; legacy image
-        dir → PIL-decoded arrays with integer sort-order labels.
+    @staticmethod
+    def _source_paths(images_dir: Path) -> list[Path]:
         """
-        if isinstance(source, FrameStore):
-            return source.images(), source.frame_indices().tolist()
-        if Path(source).suffix == ".zarr":
-            store = FrameStore.open(source)
-            return store.images(), store.frame_indices().tolist()
-        return _decode_dir_to_frames(Path(source))
+        Frame image paths a path-locked model preprocessor reads.
+
+        Args:
+            images_dir: the scene's images/ directory.
+
+        Returns:
+            Image paths in filename order.
+        """
+        return fr.frame_paths(images_dir)
+
+    def _decode_source(self, images_dir: Path) -> tuple[Any, list[int]]:
+        """
+        Decode an inference source directory into (frames, frame_idxs) for _preprocess.
+
+        Args:
+            images_dir: the scene's images/ directory, or a legacy eval image dir.
+
+        Returns:
+            (per-image (H, W, 3) uint8 RGB arrays, their source frame indices).
+        """
+        return _decode_dir_to_frames(Path(images_dir))
 
     def run_inference(self, **kwargs: Any) -> None:
         t0 = time.perf_counter()

@@ -31,6 +31,8 @@ dependencies = [
     "zarr>=2.16",
     "numcodecs",
     "scipy>=1.11",
+    # av — PyAV, the decode path in preproc/video.py (was transitive via other deps)
+    "av>=17.0",
     "lightning",
     "pillow",
     "regex",

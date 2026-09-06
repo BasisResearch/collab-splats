@@ -36,7 +36,6 @@ from collab_splats.localization import BaseRetrievalExtractor
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import FeedforwardResult, _raw_to_world_points
 from collab_splats.pointcloud.utils import subsample_points
-from collab_splats.preproc.frame_store import FrameStore
 
 from .graph import PoseGraph
 from .map import GraphMap
@@ -168,8 +167,8 @@ class LoopClosure:
     def raw_outputs(self) -> Any:
         return self.base.raw_outputs
 
-    def reconstruct(self, source: FrameStore | Path, output_dir: Path) -> PointcloudResult:
-        # source is a FrameStore (canonical keyframe store) or a legacy image dir
+    def reconstruct(self, source: Path, output_dir: Path) -> PointcloudResult:
+        # source is the scene's images/ directory — the one keyframe store
         output_dir = Path(output_dir)
         self.load_model()
         self.setup_inference(source)
@@ -177,7 +176,7 @@ class LoopClosure:
         self.postprocess()
         return self.build_colmap(output_dir)
 
-    def run(self, source: FrameStore | Path) -> FeedforwardResult:
+    def run(self, source: Path) -> FeedforwardResult:
         """Run inference pipeline without COLMAP; return FeedforwardResult.
 
         For the LC path the output is assembled directly from the GraphMap dense

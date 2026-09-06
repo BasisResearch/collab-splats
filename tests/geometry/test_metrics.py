@@ -20,7 +20,7 @@ from collab_splats.geometry.metrics import (
     residual_bin_edges,
 )
 from collab_splats.geometry.verification import PairStats, _distribution, clean_for_json
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import LEAF_STAGES, _STAGE_DEPS, _STAGE_ORDER
 
 
@@ -781,7 +781,7 @@ def test_images_that_are_not_the_canvas_the_crops_were_cut_from_are_a_refusal():
     """The crop boxes are in ORIGINAL pixels, so a different-resolution image set misplaces
     every one of them. Same check and same refusal as the native-resolution mesh path.
 
-    Without it the frames.zarr-vs-reconstruction mismatch is silent: the crop still indexes
+    Without it the images/-vs-reconstruction mismatch is silent: the crop still indexes
     (it is in range on the smaller canvas) and simply cuts the wrong region of every frame.
     """
     img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
@@ -1006,11 +1006,11 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
 
 
 def _build(tmp_path, image_names, with_confidence=True):
-    """build_reconstruction_quality_report over _write_tiny_scene with no verification.json and no frames.zarr."""
+    """build_reconstruction_quality_report over _write_tiny_scene with no verification.json and no images/."""
     return build_reconstruction_quality_report(
         zarr_path=_write_tiny_scene(tmp_path, image_names, with_confidence),
         verification_json=tmp_path / "absent" / "verification.json",
-        frames_zarr=tmp_path / "absent" / "frames.zarr",
+        images_dir=tmp_path / "absent" / "images",
         output_path=tmp_path / "reconstruction_quality_report.json",
         backend="vggtx",
     )
@@ -1019,15 +1019,15 @@ def _build(tmp_path, image_names, with_confidence=True):
 def test_the_source_index_join_rests_on_the_frame_stem_naming_contract():
     """build_reconstruction_quality_report derives its index map with this parser; a naming change must break loudly.
 
-    frame_{idx:06d} is what FrameStore.export writes and what a reconstruction's image_paths
+    frame_{idx:06d} is what the images/ store writes and what a reconstruction's image_paths
     carry. If that convention ever moves, every row of this report silently mispairs with
     every row of anything joined to it by source frame index — so the contract is pinned here
     rather than left to be discovered downstream.
     """
-    assert FrameStore.frame_idx_from_path(Path("frame_000000.jpg")) == 0
-    assert FrameStore.frame_idx_from_path(Path("/a/b/frame_002388.png")) == 2388
+    assert fr.frame_idx_from_path(Path("frame_000000.jpg")) == 0
+    assert fr.frame_idx_from_path(Path("/a/b/frame_002388.png")) == 2388
     # Zero padding is presentation only: the join key is the integer, not the string.
-    assert FrameStore.frame_idx_from_path(Path("frame_000019.jpg")) == 19
+    assert fr.frame_idx_from_path(Path("frame_000019.jpg")) == 19
 
 
 def test_build_reconstruction_quality_report_maps_recon_index_to_SOURCE_frame_index(tmp_path):
@@ -1042,7 +1042,7 @@ def test_build_reconstruction_quality_report_maps_recon_index_to_SOURCE_frame_in
     report = _build(tmp_path, names)
     assert report["source_frame_indices"] == [0, 7, 19]
     # It is derived through the same parser, not re-implemented alongside it.
-    assert report["source_frame_indices"] == [FrameStore.frame_idx_from_path(Path(p)) for p in names]
+    assert report["source_frame_indices"] == [fr.frame_idx_from_path(Path(p)) for p in names]
     # The join happens against the FILE, so the map has to survive serialisation.
     written = json.loads((tmp_path / "reconstruction_quality_report.json").read_text())
     assert written["source_frame_indices"] == [0, 7, 19]
@@ -1053,7 +1053,7 @@ def test_build_reconstruction_quality_report_maps_recon_index_to_SOURCE_frame_in
 def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_path):
     """A guessed source index is worse than a missing one, so the contract is checked first.
 
-    FrameStore.frame_idx_from_path is int(stem.split("_")[-1]): it raises only on a non-numeric
+    fr.frame_idx_from_path is int(stem.split("_")[-1]): it raises only on a non-numeric
     tail, so IMG_1234 reads as 1234 and 00019 as 19 — plausible integers that are simply wrong.
     Those are the cases the map exists to prevent, because a downstream join then pairs real
     frames with the wrong rows and nothing looks broken. A null is visibly absent instead.
@@ -1063,9 +1063,9 @@ def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_pa
     guess and the report.
     """
     # The parser on its own would hand back a confident, wrong answer for all three of these.
-    assert FrameStore.frame_idx_from_path(Path("IMG_1234.jpg")) == 1234
-    assert FrameStore.frame_idx_from_path(Path("00019.jpg")) == 19
-    assert FrameStore.frame_idx_from_path(Path("x_frame_000007.jpg")) == 7
+    assert fr.frame_idx_from_path(Path("IMG_1234.jpg")) == 1234
+    assert fr.frame_idx_from_path(Path("00019.jpg")) == 19
+    assert fr.frame_idx_from_path(Path("x_frame_000007.jpg")) == 7
 
     # Through build_reconstruction_quality_report, all three come back null; the one on-contract name still resolves,
     # so the guard rejects by shape and is not just disabling the map wholesale. The prefixed
@@ -1112,7 +1112,7 @@ def test_running_error_says_unavailable_rather_than_shipping_empty_arrays(tmp_pa
 
 
 def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):
-    """No verification.json and no frames.zarr: depth still ships, the other two say why not."""
+    """No verification.json and no images/: depth still ships, the other two say why not."""
     report = _build(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
     assert report["measurements_available"] == ["depth"]
     assert report["measurements"]["depth"]["available"] is True

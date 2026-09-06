@@ -15,7 +15,7 @@ def test_paths_are_repo_relative_and_correct():
     assert ns["VIDEO_PATH"] == REPO_ROOT / "data/tutorial/tutorial_example-video.mp4"
     assert ns["QUERY_IMAGE"] == REPO_ROOT / "data/tutorial/tutorial_example-frame.jpg"
     assert ns["OUTPUT_DIR"] == REPO_ROOT / "data/outputs"
-    assert ns["FRAMES_ZARR"] == REPO_ROOT / "data/outputs/frames.zarr"
+    assert ns["IMAGES_DIR"] == REPO_ROOT / "data/outputs/images"
     assert ns["RECON"] == REPO_ROOT / "data/outputs/pointcloud.zarr"
     assert ns["TUTORIAL_CACHE"] == REPO_ROOT / "data/outputs/tutorial_cache"
     assert ns["MAX_FRAMES"] == 30
@@ -23,5 +23,5 @@ def test_paths_are_repo_relative_and_correct():
 
 def test_no_retired_names():
     ns = _load()
-    for gone in ("DATASET", "BASE_DIR", "FRAMES", "_infer_video_path"):
+    for gone in ("DATASET", "BASE_DIR", "FRAMES", "FRAMES_ZARR", "_infer_video_path"):
         assert gone not in ns, f"{gone} should be removed"

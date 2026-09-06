@@ -18,6 +18,8 @@ import pycolmap
 import torch
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
+from collab_splats.preproc.frames import frame_paths
+
 from .base import BasePointcloudCreator, PointcloudResult
 
 logger = logging.getLogger(__name__)
@@ -290,7 +292,7 @@ def generate_vda_depth(
     """
     Run Video Depth Anything metric depth over keyframes; write InstantSfM's depth layout.
 
-    - frames: (N, H, W, 3) uint8 RGB (frames.zarr order).
+    - frames: (N, H, W, 3) uint8 RGB (images/ order).
     - keep_rows: when set, `frames` is a CONTEXT stream (a contiguous constant-rate grid)
       and only these rows are written, one per entry of `names`, in order. VDA is temporal,
       so inference sees the whole stream and only the write is filtered.
@@ -878,13 +880,39 @@ def _nudge_edge_keypoints(features: np.ndarray, width: int, height: int) -> np.n
     return nudged
 
 
-def _sift_database_valid(database_path: Path) -> bool:
+def _sfm_image_dir(images_dir: Path) -> Path:
     """
-    True when the SIFT DB holds both extraction and matching output.
+    Image directory InstantSfM reads.
+
+    Args:
+        images_dir: the scene's images/ directory.
+
+    Returns:
+        The same directory — the store IS the COLMAP image layout, so nothing is staged.
+    """
+    images_dir = Path(images_dir)
+    if not images_dir.is_dir():
+        raise FileNotFoundError(f"InstantSfM expects an image directory at {images_dir} — run preprocess first")
+    return images_dir
+
+
+def _sift_database_valid(database_path: Path, image_names: list[str]) -> bool:
+    """
+    True when the SIFT DB holds extraction and matching output for exactly `image_names`.
+
+    Args:
+        database_path: the scene's colmap/instantsfm.db.
+        image_names: filenames this run is about to reconstruct, in any order.
+
+    Returns:
+        False when the DB is missing, partial, or keyed on a different image set.
 
     - A crashed colmap subprocess (e.g. OOM-killed under the cgroup cap) leaves a
       partial DB behind; an existence-only check would cache-hit on it and feed
       ReadColmapDatabase zero tracks.
+    - Nothing stages a per-run image copy any more, so the DB's own `images` table is
+      what says which selection it was extracted from. Without this the caller would
+      reuse SIFT features for frames that are no longer in the scene.
     """
     if not database_path.exists():
         return False
@@ -892,8 +920,19 @@ def _sift_database_valid(database_path: Path) -> bool:
         with sqlite3.connect(database_path) as conn:
             keypoints = conn.execute("SELECT COUNT(*) FROM keypoints").fetchone()[0]
             geometries = conn.execute("SELECT COUNT(*) FROM two_view_geometries").fetchone()[0]
+            registered = {row[0] for row in conn.execute("SELECT name FROM images")}
     except sqlite3.Error:
         return False
+
+    if registered != set(image_names):
+        logger.info(
+            "SIFT database %s holds %d images against this run's %d — rebuilding",
+            database_path,
+            len(registered),
+            len(image_names),
+        )
+        return False
+
     return keypoints > 0 and geometries > 0
 
 
@@ -1173,15 +1212,22 @@ class InstantSfMCreator:
 
         return config
 
-    def reconstruct(self, data_dir: Path) -> pycolmap.Reconstruction:
+    def reconstruct(self, data_dir: Path, images_dir: Path | None = None) -> pycolmap.Reconstruction:
         """
-        Run InstantSfM over data_dir (must hold images/; depth_vda/ from generate_vda_depth when use_depths).
+        Run InstantSfM over data_dir (depth_vda/ from generate_vda_depth when use_depths).
+
+        Args:
+            data_dir: working directory — colmap/ and depth_vda/ live here.
+            images_dir: COLMAP-shaped image directory to read; defaults to data_dir/images.
+                The pipeline passes the scene's own images/ so nothing is staged.
+
+        Returns:
+            The pycolmap.Reconstruction read back from the written model.
 
         - Works in the contract layout directly: SIFT DB at data_dir/colmap/instantsfm.db
           (reused on re-runs; GCS push excludes it; its own name so geometry/verification.py's
           colmap/database.db can never be mistaken for it), COLMAP binary at
           data_dir/colmap/sparse/0.
-        - Returns the pycolmap.Reconstruction read back from the written model.
         """
         # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
         from instantsfm.controllers.data_reader import (
@@ -1202,12 +1248,14 @@ class InstantSfMCreator:
         _patch_bae_pcg_column_shape()
         _patch_instantsfm_colmap_write()
 
-        # ReadData falls back to data_dir itself as the image dir when images/ is
-        # absent — refuse that silently-wrong layout up front
+        # ReadData derives every path from data_dir, falling back to data_dir itself as the
+        # image dir when images/ is absent. The keyframe store is already a COLMAP image
+        # directory, so image_path is redirected straight at it — the same PathInfo override
+        # the database and output paths get below, and it removes the staged JPEG copy.
         data_dir = Path(data_dir)
-        if not (data_dir / "images").is_dir():
-            raise FileNotFoundError(f"InstantSfM expects {data_dir / 'images'} — stage keyframes first")
+        image_dir = _sfm_image_dir(data_dir / "images" if images_dir is None else images_dir)
         path_info = ReadData(str(data_dir))
+        path_info.image_path = str(image_dir)
 
         # Depth is the shipped mode; the nodepth path exists only for the eval ablation
         if self.use_depths and not path_info.depth_path:
@@ -1228,10 +1276,11 @@ class InstantSfMCreator:
         shutil.rmtree(Path(path_info.output_path), ignore_errors=True)
         sparse_dst = Path(path_info.output_path) / "0"
 
-        # SIFT database: reuse a complete one (idempotent re-runs); a partial DB left by
-        # a crashed colmap run is rebuilt from scratch (build failures raise RuntimeError)
+        # SIFT database: reuse a complete one extracted from THIS image set (idempotent
+        # re-runs); a partial DB left by a crashed colmap run, or one keyed on a previous
+        # frame selection, is rebuilt from scratch (build failures raise RuntimeError)
         db_path = Path(path_info.database_path)
-        if not _sift_database_valid(db_path):
+        if not _sift_database_valid(db_path, [p.name for p in frame_paths(image_dir)]):
             db_path.unlink(missing_ok=True)
             logger.info("InstantSfM: building COLMAP feature database (SIFT, exhaustive)")
             _generate_sift_database(Path(path_info.image_path), db_path, self.single_camera)

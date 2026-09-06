@@ -9,13 +9,13 @@ import logging
 import shutil
 import time
 import warnings
-from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
+import pycolmap
 import torch
 import yaml
 import zarr
@@ -33,19 +33,15 @@ from collab_splats.pointcloud.sfm import (
     vda_depth_complete,
 )
 from collab_splats.pointcloud.utils import clean_pointcloud
-from collab_splats.preproc import get_video_info
+from collab_splats.preproc import frames, get_video_info
 from collab_splats.preproc import viz as preproc_viz
-from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.preproc.qa import load_video_quality
 from collab_splats.preproc.sampling import (
     sample_fps,
     sample_optical_flow,
     sample_uniform,
 )
-from collab_splats.preproc.undistort import (
-    estimate_camera_distortion,
-    undistort_frames,
-)
+from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.utils import (
     extract_feature_cache,
@@ -55,8 +51,6 @@ from collab_splats.semantics.utils import (
 )
 
 if TYPE_CHECKING:
-    import pycolmap
-
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
     from collab_splats.viewer import Viewer
 
@@ -88,7 +82,7 @@ _STAGE_DEPS: dict[str, list[str]] = {
     # (configs/README.md). Inline runs are ordered refine-before-dependents, so never stale.
     "refine": ["pointcloud"],
     "semantics": ["pointcloud"],
-    # splats: trains on COLMAP poses/points + frames.zarr; leaf — nothing reads it yet
+    # splats: trains on COLMAP poses/points + images/; leaf — nothing reads it yet
     "splats": ["pointcloud"],
     "mesh": ["pointcloud"],
     "localize": ["pointcloud"],
@@ -112,91 +106,104 @@ LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in
 ########################################
 
 
-def _apply_undistortion(frame_arrays: list[np.ndarray], prov: dict) -> list[np.ndarray]:
+def _camera_provenance(camera: pycolmap.Camera) -> dict:
     """
-    Self-calibrate + undistort selected frames in place of the raw ones; stamp provenance.
+    A pycolmap.Camera as a json.dumps-able dict that Camera(**d) reads back.
+
+    Args:
+        camera: any pycolmap.Camera.
+
+    Returns:
+        {"model", "width", "height", "params"} — model as its name and params as floats,
+        because Camera.todict() hands back a CameraModelId enum and an ndarray, neither
+        of which json.dumps can write.
     """
-    profile = estimate_camera_distortion(frame_arrays)
-    frame_arrays, K_new, roi = undistort_frames(frame_arrays, profile)
-    logger.info(
-        "undistort: k1=%.4f k2=%.4f p1=%.4f p2=%.4f; alpha=0 crop roi=%s (frames now %dx%d)",
-        profile.k1, profile.k2, profile.p1, profile.p2, roi, roi[2], roi[3],
-    )
-    prov["undistort"] = {
-        "profile": profile.to_dict(),
-        "K_new": K_new.tolist(),
-        "roi": list(roi),
+    return {
+        "model": camera.model.name,
+        "width": camera.width,
+        "height": camera.height,
+        "params": [float(p) for p in camera.params],
     }
-    return frame_arrays
 
 
-def extract_frames(
+def _apply_undistortion(frame_arrays: np.ndarray, images_dir: Path, prov: dict) -> np.ndarray:
+    """
+    Calibrate from the written frames and undistort them onto COLMAP's framing.
+
+    Args:
+        frame_arrays: (N, H, W, 3) uint8 RGB, as selected.
+        images_dir: where those frames were written — calibration reads them from here.
+        prov: provenance dict, stamped with both cameras under "undistort".
+
+    Returns:
+        (N, H', W', 3) uint8 RGB on the undistorted framing.
+    """
+    camera = calibrate_camera(images_dir)
+    undistorted, new_camera = undistort_frames(frame_arrays, camera)
+
+    # Both cameras, as COLMAP writes them — no local mirror of the same numbers
+    prov["undistort"] = {
+        "camera": _camera_provenance(camera),
+        "undistorted_camera": _camera_provenance(new_camera),
+    }
+    return undistorted
+
+
+def _frames_from_dir(input_path: Path, *, max_frames: int | None) -> tuple[list[np.ndarray], list[dict], dict]:
+    """
+    Every image in a directory, in filename order.
+
+    Args:
+        input_path: directory of images.
+        max_frames: recorded in provenance only — a directory is always taken whole.
+
+    Returns:
+        (frames, records, provenance) — records carry a NaN blur score, since a directory
+        has no quality report to read one from.
+    """
+    # Read source images from directory; reject non-image extensions
+    source_paths = frames.frame_paths(input_path)
+    if not source_paths:
+        raise ValueError(f"No images ({list(frames.IMAGE_EXTS)}) found in directory {input_path}")
+
+    frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in source_paths]
+    records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
+    prov = {
+        "video_path": str(input_path),
+        "video_mtime": None,
+        "method": "dir",
+        "fps": None,
+        "max_frames": max_frames,
+    }
+    return frame_arrays, records, prov
+
+
+def _frames_from_video(
     input_path: Path,
-    frames_zarr: Path,
+    *,
     frame_selection: str,
     fps: float | None,
     min_frames: int | None,
     max_frames: int | None,
-    n_workers: int = 1,
-    undistort: bool = False,
-    search_radius: int = 3,
-) -> int:
+    report: dict,
+) -> tuple[list[np.ndarray], list[dict], dict]:
     """
-    Extract frames from video or image dir into frames.zarr (sole persistent store).
+    Frames selected from a video by one of the three sampling methods.
 
-    Two steps for video input: measure the whole video into
-    video_quality_report.json, then select from it. An image directory takes
-    every image and needs no report. frames.zarr is the canonical decode-once
-    keyframe store; no JPEG dir is written. Returns the number of frames stored.
+    Args:
+        input_path: source video.
+        frame_selection: "fps" | "uniform" | "optical_flow".
+        fps: target rate for frame_selection="fps".
+        min_frames: floor for the fps re-spread band.
+        max_frames: cap; the contract for frame_selection="uniform".
+        report: quality report, already measured by load_video_quality.
 
-    - undistort=True self-calibrates one shared OPENCV camera and undistorts every
-      selected frame before writing (alpha=0 crop changes frame dims; profile,
-      K_new and roi are stamped into provenance["undistort"]).
+    Returns:
+        (frames, records, provenance).
     """
-    input_path = Path(input_path)
-
-    if input_path.is_dir():
-        # Read source images from directory; reject non-image extensions
-        exts = {".jpg", ".jpeg", ".png"}
-        frames = sorted(p for p in input_path.iterdir() if p.suffix.lower() in exts)
-        if not frames:
-            raise ValueError(f"No images ({sorted(exts)}) found in directory {input_path}")
-        frame_arrays = [cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in frames]
-        records = [{"frame_idx": i, "blur_score": float("nan")} for i in range(len(frame_arrays))]
-        prov = {
-            "video_path": str(input_path),
-            "video_mtime": None,
-            "method": "dir",
-            "fps": None,
-            "max_frames": max_frames,
-        }
-
-        if undistort:
-            frame_arrays = _apply_undistortion(frame_arrays, prov)
-        FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
-        return len(frame_arrays)
-
-    # Fail loud on an unreadable/empty video — 0 total frames means a bad path or a
-    # codec ffmpeg can't decode, which otherwise silently yields an empty store.
-    total_frames = get_video_info(str(input_path))["total_frames"]
-    if total_frames == 0:
-        raise ValueError(
-            f"No frames decoded from {input_path} (0 total frames). "
-            "Check the path exists and is a video ffmpeg can read."
-        )
-
-    # Measure before selecting. The report lands beside frames.zarr and is reused by
-    # existence, so a re-run never re-measures. Report-only: it carries no verdicts —
-    # filter_frame_quality applies the thresholds inside the samplers.
-    report = load_video_quality(
-        input_path,
-        frames_zarr.parent / "video_quality_report.json",
-        workers=n_workers,
-    )
-
-    # Video — 'fps' samples at a constant wall-clock rate (band-bounded), 'uniform'
-    # spreads exactly max_frames over the whole video, 'optical_flow' picks high-motion
-    # frames. Each method gets only its own knobs.
+    # 'fps' samples at a constant wall-clock rate (band-bounded), 'uniform' spreads exactly
+    # max_frames over the eligible pool (the quality mask), 'optical_flow' picks
+    # high-motion frames. Each method gets only its own knobs.
     if frame_selection == "fps":
         frame_arrays, records = sample_fps(
             str(input_path),
@@ -204,56 +211,118 @@ def extract_frames(
             min_frames=min_frames,
             max_frames=max_frames,
             report=report,
-            search_radius=search_radius,
         )
     elif frame_selection == "uniform":
         frame_arrays, records = sample_uniform(
-            str(input_path), max_frames=max_frames, report=report, search_radius=search_radius,
+            str(input_path),
+            max_frames=max_frames,
+            report=report,
         )
     elif frame_selection == "optical_flow":
         frame_arrays, records = sample_optical_flow(str(input_path), max_frames=max_frames, report=report)
     else:
         raise ValueError(f"preproc.frame_selection must be 'fps', 'uniform' or 'optical_flow', got {frame_selection!r}")
 
-    method = frame_selection
-
-    # Every candidate failed the quality filter (or the selector rejected all) — refuse
-    # to write an empty store that would only surface as a downstream FileNotFound.
-    if not frame_arrays:
-        raise ValueError(
-            f"0 frames selected from {input_path} ({total_frames} decoded) with "
-            f"frame_selection={frame_selection!r}. Every frame failed the quality filter — "
-            f"check {frames_zarr.parent / 'video_quality_report.json'} for the measurements."
-        )
-
-    # Write the canonical frames.zarr (decode-once keyframe store)
     prov = {
         "video_path": str(input_path),
         "video_mtime": input_path.stat().st_mtime,
-        "method": method,
+        "method": frame_selection,
         "fps": fps,
         "max_frames": max_frames,
     }
-    if undistort:
-        frame_arrays = _apply_undistortion(frame_arrays, prov)
-    FrameStore.create(frames_zarr, frame_arrays, records, provenance=prov)
+    return frame_arrays, records, prov
 
-    # Render the report beside frames.zarr with the kept frames marked. Written
-    # whenever frames are, so the PNGs never go stale against the store.
-    out_dir = frames_zarr.parent
-    selected = [r["frame_idx"] for r in records]
-    written = [
-        preproc_viz.plot_photometric(report, out_dir, selected=selected),
-        preproc_viz.plot_motion(report, out_dir, selected=selected),
-    ]
-    logger.info("video quality: wrote %d plots to %s", sum(p is not None for p in written), out_dir)
+
+def extract_frames(
+    input_path: Path,
+    images_dir: Path,
+    frame_selection: str,
+    fps: float | None,
+    min_frames: int | None,
+    max_frames: int | None,
+    n_workers: int = 1,
+    undistort: bool = False,
+) -> int:
+    """
+    Extract frames from video or image dir into images/ (sole persistent store).
+
+    Two steps for video input: measure the whole video into
+    video_quality_report.json, then select from it. An image directory takes
+    every image and needs no report. images/frame_NNNNNN.png plus frames.json
+    beside it is the canonical decode-once keyframe store. Returns the number
+    of frames stored.
+
+    - undistort=True self-calibrates one shared OPENCV camera from the written frames
+      and rewrites them undistorted (COLMAP's framing grows the canvas, so frame dims
+      change; both cameras are stamped into provenance["undistort"]).
+    """
+    input_path = Path(input_path)
+    report = None
+
+    if input_path.is_dir():
+        frame_arrays, records, prov = _frames_from_dir(input_path, max_frames=max_frames)
+    else:
+        # Fail loud on an unreadable/empty video — 0 total frames means a bad path or a
+        # codec ffmpeg can't decode, which otherwise silently yields an empty store.
+        total_frames = get_video_info(str(input_path))["total_frames"]
+        if total_frames == 0:
+            raise ValueError(
+                f"No frames decoded from {input_path} (0 total frames). "
+                "Check the path exists and is a video ffmpeg can read."
+            )
+
+        # Measure before selecting. The report lands beside images/ and is reused by
+        # existence, so a re-run never re-measures. Report-only: it carries no verdicts —
+        # filter_frame_quality turns its columns into a keep mask inside the samplers,
+        # with a robust MAD cut on log(laplacian) and an absolute clipping cut.
+        report = load_video_quality(
+            input_path,
+            images_dir.parent / "video_quality_report.json",
+            workers=n_workers,
+        )
+
+        frame_arrays, records, prov = _frames_from_video(
+            input_path,
+            frame_selection=frame_selection,
+            fps=fps,
+            min_frames=min_frames,
+            max_frames=max_frames,
+            report=report,
+        )
+
+        # Every candidate failed the quality filter (or the selector rejected all) — refuse
+        # to write an empty store that would only surface as a downstream FileNotFound.
+        if not frame_arrays:
+            raise ValueError(
+                f"0 frames selected from {input_path} ({total_frames} decoded) with "
+                f"frame_selection={frame_selection!r}. Every frame failed the quality filter — "
+                f"check {images_dir.parent / 'video_quality_report.json'} for the measurements."
+            )
+
+    # Write once so calibration has images to read, then rewrite the undistorted stack
+    frames.write_frames(images_dir, frame_arrays, records, prov)
+    if undistort:
+        frame_arrays = _apply_undistortion(frame_arrays, images_dir, prov)
+        frames.write_frames(images_dir, frame_arrays, records, prov)
+
+    # Render the report beside images/ with the kept frames marked. Written whenever frames
+    # are, so the PNGs never go stale against the store. Video only — a directory has no
+    # report to plot.
+    if report is not None:
+        out_dir = images_dir.parent
+        selected = [r["frame_idx"] for r in records]
+        written = [
+            preproc_viz.plot_photometric(report, out_dir, selected=selected),
+            preproc_viz.plot_motion(report, out_dir, selected=selected),
+        ]
+        logger.info("video quality: wrote %d plots to %s", sum(p is not None for p in written), out_dir)
 
     return len(frame_arrays)
 
 
 def _run_feedforward(
     backend: str,
-    frames_zarr: Path,
+    images_dir: Path,
     output_dir: Path,
     loop_closure: bool | dict,
     viz_enabled: bool,
@@ -317,10 +386,10 @@ def _run_feedforward(
     # lc_enabled, not the raw arg — loop_closure={"enabled": False} is a truthy object with
     # falsy intent, and refusing an explicit disable would be wrong.
     #
-    # Keep this ahead of the store open, and do NOT merge it into the advisory block below:
-    # validate config before touching the filesystem. A config error is the user's to fix,
-    # an IO error is environmental, and reporting the environmental one first sends them to
-    # the wrong place. Reachable with --stages pointcloud when preproc has not run.
+    # Keep this ahead of any filesystem read, and do NOT merge it into the advisory block
+    # below: validate config before touching the filesystem. A config error is the user's to
+    # fix, an IO error is environmental, and reporting the environmental one first sends them
+    # to the wrong place. Reachable with --stages pointcloud when preproc has not run.
     if backend == "loger" and lc_enabled:
         raise ValueError(
             "pointcloud.loop_closure is not supported with backend 'loger'. LoGeR's windowed "
@@ -328,19 +397,14 @@ def _run_feedforward(
             "thresholds are calibrated per backbone. Use vggt_omega, vggtx, or mapanything."
         )
 
-    # Open the canonical decode-once keyframe store once and reuse it: the LoGeR advisory
-    # below needs the frame count and inference needs the store itself. The handle is zarr
-    # mode="r" — immutable, lazy, and cheap to hold across the span.
-    store = FrameStore.open(frames_zarr)
-
     # preproc.max_frames is a VGGT-Omega GPU property applied in the preproc stage,
     # which has already run by the time we get here. Flipping to loger under that same
     # ceiling therefore processes exactly as many frames as Omega would, and LoGeR appears
     # to buy nothing. Warn rather than change behaviour — LoGeR's true ceiling is unmeasured.
     # None means no ceiling was configured, so there is no advice to give. Unlike the refusal
-    # above, this genuinely needs the store, so it belongs after the open.
+    # above, this one reads the store, so it stays below the config validation.
     if backend == "loger":
-        n_frames = len(store)
+        n_frames = len(frames.frame_paths(images_dir))
         if max_frames is not None and n_frames <= max_frames:
             logger.warning(
                 "LoGeR is running on %d frames, at or under the preproc.max_frames "
@@ -388,9 +452,9 @@ def _run_feedforward(
             # ATE is identical either way — this is purely the live-build experience.
             creator.config.loop_edge_timing = "live"
 
-    # Feed inference frames from the canonical decode-once store (temp-exported for path-locked
-    # model preprocessing); build_colmap appends colmap/sparse/0 under output_dir internally
-    result = creator.reconstruct(store, output_dir)
+    # Creators read the scene's images/ directory in place — no staging, no temp export;
+    # build_colmap appends colmap/sparse/0 under output_dir internally
+    result = creator.reconstruct(images_dir, output_dir)
 
     # Persist FeedforwardResult to pointcloud.zarr — required by semantics lift + mesh stages
     ff_outputs = getattr(creator, "outputs", None)
@@ -438,14 +502,15 @@ def _get_extractor(name: str):
 
 def _extract_2d_features(
     extractor_name: str,
-    frames_zarr: Path,
+    images_dir: Path,
     cache_dir: Path,
 ) -> Path:
-    """Extract 2D features for all frames straight from the canonical store.
+    """
+    Extract 2D features for all frames straight from the scene's images/ directory.
 
     Args:
         extractor_name: registry key of the extractor to run.
-        frames_zarr: path to the scene's canonical frames.zarr.
+        images_dir: the scene's images/ directory of keyframes.
         cache_dir: directory the `<extractor>.zarr` patch cache is written into.
 
     Returns:
@@ -454,7 +519,7 @@ def _extract_2d_features(
     # extract_feature_cache iterates the frames zarr lazily, one chunk at a time — no temp
     # JPG export, no full-RAM load.
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return extract_feature_cache(_get_extractor(extractor_name), frames_zarr, cache_dir)
+    return extract_feature_cache(_get_extractor(extractor_name), images_dir, cache_dir)
 
 
 def _lift_and_save(
@@ -523,7 +588,7 @@ def _run_tsdf_mesh(
     conf_percentile: float | None = None,
     native_resolution: bool = False,
     color_map_iterations: int = 0,
-    frames_zarr: Path | None = None,
+    images_dir: Path | None = None,
     source: str = "feedforward",
     splats_zarr: Path | None = None,
     splat_depth: str = "expected",
@@ -577,7 +642,7 @@ def _run_tsdf_mesh(
         return mesh_result.mesh_path
 
     # world_points is the largest array in the store and the mesh path no longer reads it.
-    # native_resolution skips the zarr's model-res RGB too — it comes from frames.zarr instead.
+    # native_resolution skips the zarr's model-res RGB too — it comes from images/ instead.
     ff = FeedforwardResult.load_zarr(
         pointcloud_zarr, load_images=not native_resolution, load_world_points=False
     )
@@ -596,15 +661,16 @@ def _run_tsdf_mesh(
         )
     ff.extrinsics = result.extrinsics
 
-    # Native path: original-res RGB from frames.zarr, COLMAP's original-res K as intrinsics
-    frame_store = None
+    # Native path: original-res RGB from images/, COLMAP's original-res K as intrinsics.
+    # pointcloud_to_mesh reads the directory itself, so only the path travels.
+    native_images_dir = None
     native_intrinsics = None
     if native_resolution:
-        if frames_zarr is None or not frames_zarr.exists():
+        if images_dir is None or not images_dir.exists():
             raise FileNotFoundError(
-                f"native_resolution requires frames.zarr (looked at {frames_zarr})"
+                f"native_resolution requires the scene's images/ directory (looked at {images_dir})"
             )
-        frame_store = FrameStore.open(frames_zarr)
+        native_images_dir = images_dir
         native_intrinsics = result.intrinsics  # original-res by contract (build_colmap)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -617,7 +683,7 @@ def _run_tsdf_mesh(
         depth_trunc=depth_trunc,
         clean_repair=clean_repair,
         conf_percentile=conf_percentile,
-        frame_store=frame_store,
+        images_dir=native_images_dir,
         native_intrinsics=native_intrinsics,
         color_map_iterations=color_map_iterations,
     )
@@ -642,7 +708,7 @@ def _localization_db_exists(pointcloud_zarr: Path, extractor_name: str) -> bool:
 def _build_localization_db(
     pointcloud_zarr: Path,
     extractor_name: str,
-    frames_zarr: Path,
+    images_dir: Path,
     top_k: int = 8,
     overwrite: bool = False,
 ) -> Path:
@@ -656,7 +722,6 @@ def _build_localization_db(
     from collab_splats.localization.extractors import LocalMatcher
     from collab_splats.localization.localizer import CameraLocalizer
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-    from collab_splats.preproc.frame_store import FrameStore
 
     # overwrite: drop the stale reconstruction group so from_feedforward's cache check
     # misses and the index is re-extracted + re-saved (from_feedforward has no
@@ -670,11 +735,19 @@ def _build_localization_db(
     ff = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=True, load_world_points=True)
     extractor = LocalMatcher(extractor_name)
 
-    # Boundary adapter: canonical store → (images, ids) core objects. Lazy genexpr → zero
-    # reads on a cache hit; one partial-read per frame on a miss.
-    store = FrameStore.open(frames_zarr)
-    frame_indices = store.frame_indices()
-    images = (store.image_by_frame_idx(fi) for fi in frame_indices)
+    # Boundary adapter: images/ directory → (images, ids) core objects. Lazy genexpr → zero
+    # reads on a cache hit; one imread per frame on a miss. frame_paths fixes the order, and
+    # both lists are built from that one call so they stay index-aligned.
+    paths = frames.frame_paths(images_dir)
+    frame_indices = [frames.frame_idx_from_path(p) for p in paths]
+    images = (cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in paths)
+
+    # The .jpg suffix is deliberate and stays even though the store writes .png. These ids are
+    # opaque labels: CameraLocalizer stores them verbatim in the zarr attrs, every consumer
+    # joins on the frame_NNNNNN stem (verify() here, geometry/metrics.py), and nothing reads
+    # the extension or resolves an id to a file. Rewriting it to .png would make
+    # from_feedforward's whole-string staleness check miss against every localization DB
+    # already on disk and under environments-processed/ — a migration, not a rename.
     ids = [f"frame_{int(fi):06d}.jpg" for fi in frame_indices]
     CameraLocalizer.from_feedforward(
         ff,
@@ -689,20 +762,18 @@ def _build_localization_db(
     return pointcloud_zarr
 
 
-class _LazyFrames(Sequence):
-    """Lazy len/indexable view over FrameStore frames — never materializes the whole video."""
+@lru_cache(maxsize=1)
+def _scene_frames(images_dir: Path) -> np.ndarray:
+    """
+    Every frame of a scene as one RGB stack, cached per directory.
 
-    def __init__(self, store: FrameStore, frame_indices):
-        self._frame_indices = list(frame_indices)
-        # Sequential pairing touches each frame ~2x overlap times with strong locality —
-        # a small LRU keeps peak memory at a handful of frames, not N full-res images.
-        self._get = lru_cache(maxsize=32)(store.image_by_frame_idx)
+    Args:
+        images_dir: the scene's images/ directory.
 
-    def __len__(self) -> int:
-        return len(self._frame_indices)
-
-    def __getitem__(self, i: int) -> np.ndarray:
-        return self._get(self._frame_indices[i])
+    Returns:
+        (N, H, W, 3) uint8 RGB.
+    """
+    return frames.read_frames(images_dir)
 
 
 ########################################
@@ -827,9 +898,9 @@ class Reconstructor:
         return Path(self.config["output_path"]) / self.config["pointcloud"]["backend"]
 
     @property
-    def frames_zarr(self) -> Path:
-        """output_path / frames.zarr — canonical decode-once keyframe store for this run."""
-        return Path(self.config["output_path"]) / "frames.zarr"
+    def images_dir(self) -> Path:
+        """output_path / images — canonical decode-once keyframe store for this run."""
+        return Path(self.config["output_path"]) / "images"
 
     @property
     def pointcloud_zarr(self) -> Path:
@@ -852,33 +923,32 @@ class Reconstructor:
     ########################################
 
     def preprocess(self, overwrite: bool = False) -> Path:
-        """Extract frames from input video/dir into frames.zarr (sole persistent store)."""
+        """Extract frames from input video/dir into images/ (sole persistent store)."""
         # Skip if the store already exists and overwrite not requested
-        if not overwrite and self.frames_zarr.exists():
-            logger.info("Frames already extracted at %s, skipping preprocess", self.frames_zarr)
-            return self.frames_zarr
+        if not overwrite and self.images_dir.exists():
+            logger.info("Frames already extracted at %s, skipping preprocess", self.images_dir)
+            return self.images_dir
 
-        if overwrite and self.frames_zarr.exists():
-            shutil.rmtree(self.frames_zarr)
+        if overwrite and self.images_dir.exists():
+            shutil.rmtree(self.images_dir)
 
         pre_cfg = self.config["preproc"]
         n_frames = extract_frames(
             input_path=Path(self.config["input_path"]),
-            frames_zarr=self.frames_zarr,
+            images_dir=self.images_dir,
             frame_selection=pre_cfg["frame_selection"],
             fps=pre_cfg["fps"],
             min_frames=pre_cfg["min_frames"],
             max_frames=pre_cfg["max_frames"],
             n_workers=pre_cfg["n_workers"],
             undistort=pre_cfg["undistort"],
-            search_radius=pre_cfg["search_radius"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",
             n_frames,
-            self.frames_zarr,
+            self.images_dir,
         )
-        return self.frames_zarr
+        return self.images_dir
 
     def build_pointcloud(self, overwrite: bool = False) -> "PointcloudResult":
         """Run pointcloud stage. Sets self.pointcloud, returns PointcloudResult."""
@@ -904,7 +974,7 @@ class Reconstructor:
         else:
             result, viewer = _run_feedforward(
                 backend=pc_cfg["backend"],
-                frames_zarr=self.frames_zarr,
+                images_dir=self.images_dir,
                 output_dir=self.backend_dir,
                 loop_closure=pc_cfg["loop_closure"],
                 viz_enabled=pc_cfg["viz"]["enabled"],
@@ -936,13 +1006,13 @@ class Reconstructor:
 
     def _load_pointcloud_from_disk(self) -> "PointcloudResult":
         """
-        Load the written COLMAP model into a PointcloudResult in frames.zarr order.
+        Load the written COLMAP model into a PointcloudResult in images/ order.
         """
-        # Rebuild image_paths from frames.zarr in store order, so it lines up with the per-frame
+        # Rebuild image_paths from images/ in filename order, so it lines up with the per-frame
         # arrays the downstream stages index. The creators register COLMAP images as
         # frame_{source_idx:06d} with NO extension — the frame_*.jpg spelling elsewhere is the
-        # zarr/localization id namespace, not this one.
-        frame_indices = FrameStore.open(self.frames_zarr).frame_indices()
+        # localization id namespace, not this one.
+        frame_indices = [frames.frame_idx_from_path(p) for p in frames.frame_paths(self.images_dir)]
         image_paths = [Path(f"frame_{int(fi):06d}") for fi in frame_indices]
         return PointcloudResult.from_colmap(self.backend_dir / "colmap", image_paths)
 
@@ -950,7 +1020,7 @@ class Reconstructor:
         """
         SfM pointcloud path (backend: instantsfm) — VDA metric depth + InstantSfM global mapping.
 
-        - Stages frames.zarr keyframes to backend_dir/images/ (InstantSfM reads a dir).
+        - Points InstantSfM at the scene's own images/ directory — nothing is staged.
         - Generates depth_vda/images/npy/<stem>.npy (skipped when present), runs InstantSfMCreator,
           renames COLMAP images to the frame_NNNNNN contract, builds a FeedforwardResult at VDA
           depth resolution → pointcloud.zarr with provenance attrs, returns the PointcloudResult
@@ -964,30 +1034,24 @@ class Reconstructor:
             raise NotImplementedError(f"sfm backend {backend!r} is not implemented — only 'instantsfm' is")
         backend_dir = self.backend_dir
         backend_dir.mkdir(parents=True, exist_ok=True)
-        store = FrameStore.open(self.frames_zarr)
-        names = [f"frame_{int(fi):06d}.jpg" for fi in store.frame_indices()]
 
-        # Stage keyframes as jpgs — exactly what FrameStore.export writes, so a complete staged set
-        # is reused as-is. Any other set (partial, or from a different selection) is re-staged,
-        # and the SIFT database keyed on it is dropped so InstantSfM cannot reuse stale features.
-        image_dir = backend_dir / "images"
-        staged = sorted(p.name for p in image_dir.iterdir()) if image_dir.is_dir() else []
-        if staged != names:
-            shutil.rmtree(image_dir, ignore_errors=True)
-            (backend_dir / "colmap" / "instantsfm.db").unlink(missing_ok=True)
-            store.export(image_dir, ext="jpg")
-            logger.info("Staged %d keyframes to %s", len(names), image_dir)
+        # The scene's images/ is already the COLMAP image layout InstantSfM wants, so it is read
+        # in place — no JPEG copy is staged, and COLMAP sees the lossless PNGs the store holds.
+        # `names` are those filenames, taken from the directory rather than reconstructed from a
+        # hardcoded extension; only their stems reach VDA (depth_vda/images/npy/<stem>.npy).
+        images_dir = self.images_dir
+        names = [p.name for p in frames.frame_paths(images_dir)]
 
-        # VDA metric depth for every keyframe. Gate on the written map set before materialising
-        # anything: generate_vda_depth is idempotent, but store.images() pulls the whole keyframe
-        # stack into RAM at once (~1.9 GB for 300 frames at 1080p) just to reach that check.
+        # VDA metric depth for every keyframe. Gate on the written map set BEFORE reading the
+        # images/ store: generate_vda_depth is idempotent, but read_frames materialises the
+        # whole keyframe stack (~1.9 GB for 300 frames at 1080p) to reach that check.
         # On a miss, drop depth_vda/ first — generate_vda_depth only ever adds maps, so a stem
         # left over from a different keyframe set would keep the set-equality gate false forever
         # and re-run the full GPU inference on every subsequent run.
         if not vda_depth_complete(backend_dir, names):
             shutil.rmtree(backend_dir / "depth_vda", ignore_errors=True)
             generate_vda_depth(
-                np.ascontiguousarray(store.images()),
+                np.ascontiguousarray(frames.read_frames(images_dir)),
                 fps=float(self.config["preproc"]["fps"]),
                 out_dir=backend_dir,
                 names=names,
@@ -999,7 +1063,7 @@ class Reconstructor:
             retriangulation=pc_cfg["instantsfm"]["retriangulation"],
             random_seed=pc_cfg["instantsfm"]["random_seed"],
         )
-        recon = creator.reconstruct(backend_dir)
+        recon = creator.reconstruct(backend_dir, images_dir=images_dir)
         del creator
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -1009,7 +1073,7 @@ class Reconstructor:
         _rename_images_to_stems(recon, backend_dir / "colmap" / "sparse" / "0")
 
         # Unified pointcloud.zarr at VDA depth res, with provenance from the installed package
-        outputs = self._sfm_result_from_reconstruction(recon, backend_dir, store)
+        outputs = self._sfm_result_from_reconstruction(recon, backend_dir, images_dir)
 
         # Align VDA depth to the COLMAP world before anything persists — the zarr and the
         # model must share one scale (splat depth targets, mesh fusion, localization lookup).
@@ -1034,29 +1098,31 @@ class Reconstructor:
         )
 
     def _sfm_result_from_reconstruction(
-        self, recon: "pycolmap.Reconstruction", backend_dir: Path, store: FrameStore
+        self, recon: "pycolmap.Reconstruction", backend_dir: Path, images_dir: Path
     ) -> "FeedforwardResult":
         """
         Build a FeedforwardResult from an InstantSfM COLMAP model + VDA depth maps.
 
-        - Rows follow store order; image names must already be the frame_NNNNNN contract.
+        - Rows follow images/ filename order; image names must already be the frame_NNNNNN
+          contract.
         - Depth maps define the (h, w) grid; K, images and pixel_indices are scaled to it.
         - confidence / mv_* stay absent — SfM has no learned per-pixel confidence.
         """
         from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
         # Every store frame must be registered — a partial model would leave rows without poses
-        if len(recon.images) != len(store):
+        frame_paths = frames.frame_paths(images_dir)
+        if len(recon.images) != len(frame_paths):
             raise RuntimeError(
-                f"InstantSfM registered {len(recon.images)}/{len(store)} frames — partial "
+                f"InstantSfM registered {len(recon.images)}/{len(frame_paths)} frames — partial "
                 "registration is not supported; re-run with more overlap"
             )
         images_sorted = sorted(recon.images.values(), key=lambda im: im.name)
-        expected = [f"frame_{int(fi):06d}" for fi in store.frame_indices()]
+        expected = [f"frame_{frames.frame_idx_from_path(p):06d}" for p in frame_paths]
         registered = [im.name for im in images_sorted]
         if registered != expected:
             raise ValueError(
-                f"registered image names do not match {self.frames_zarr} frame indices "
+                f"registered image names do not match {images_dir} frame indices "
                 f"(first registered: {registered[0]}, first expected: {expected[0]}); the frame "
                 "store and the reconstruction describe different runs."
             )
@@ -1076,11 +1142,14 @@ class Reconstructor:
         # rescaled to it — pairing original-res K with model-res depth is the 2026-08-11
         # mesh-regression class (see _feedforward_to_tsdf_inputs). The COLMAP cameras must be at
         # the store's resolution, else the staged set / SIFT DB came from a different store.
-        orig_h, orig_w = store.image(0).shape[:2]
+        # One directory read for the whole method — read_frames re-reads every file per call,
+        # so it must never be called inside the resize loop below.
+        keyframes = frames.read_frames(images_dir)
+        orig_h, orig_w = keyframes.shape[1:3]
         cam_dims = {(recon.cameras[im.camera_id].width, recon.cameras[im.camera_id].height) for im in images_sorted}
         if cam_dims != {(orig_w, orig_h)}:
             raise ValueError(
-                f"COLMAP camera resolution {sorted(cam_dims)} does not match {self.frames_zarr} "
+                f"COLMAP camera resolution {sorted(cam_dims)} does not match {images_dir} "
                 f"({orig_w}x{orig_h}); the staged images / SIFT database came from a different store."
             )
         sx, sy = w / orig_w, h / orig_h
@@ -1100,7 +1169,7 @@ class Reconstructor:
         )
 
         # RGB at depth res as (N, 3, H, W) float32 in [0, 1] — the feedforward images convention
-        images_arr = np.stack([cv2.resize(store.image(i), (w, h), interpolation=cv2.INTER_AREA) for i in range(n)])
+        images_arr = np.stack([cv2.resize(keyframes[i], (w, h), interpolation=cv2.INTER_AREA) for i in range(n)])
         images_arr = images_arr.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
 
         # Dense world points by unprojecting depth through the rescaled K and w2c poses
@@ -1250,7 +1319,7 @@ class Reconstructor:
         zarr_path = self.semantics_cache_dir / f"{extractor_name}.zarr"
         if overwrite or not zarr_path.exists():
             logger.info("Extracting 2D features with %s", extractor_name)
-            zarr_path = _extract_2d_features(extractor_name, self.frames_zarr, self.semantics_cache_dir)
+            zarr_path = _extract_2d_features(extractor_name, self.images_dir, self.semantics_cache_dir)
         else:
             logger.info("2D feature cache hit: %s", zarr_path)
 
@@ -1338,7 +1407,7 @@ class Reconstructor:
             splat_depth=mesh_cfg["splat_depth"],
             splat_max_depth_frac=mesh_cfg["splat_max_depth_frac"],
             splat_max_depth_grad=mesh_cfg["splat_max_depth_grad"],
-            frames_zarr=self.frames_zarr,
+            images_dir=self.images_dir,
             source=source,
             splats_zarr=splats_zarr,
         )
@@ -1369,7 +1438,7 @@ class Reconstructor:
         return _build_localization_db(
             pointcloud_zarr,
             extractor_name,
-            self.frames_zarr,
+            self.images_dir,
             top_k=loc_cfg["top_k"],
             overwrite=overwrite,
         )
@@ -1436,17 +1505,15 @@ class Reconstructor:
             )
         # Pairwise matchers re-match images, not cached descriptors. The images MUST be
         # the exact frames the cache was extracted from — _build_localization_db feeds
-        # FrameStore frames to extract() — because match-time index recovery lands on the
+        # images/ frames to extract() — because match-time index recovery lands on the
         # extract-time keypoint tables (the probe's cross-call condition holds for
         # identical inputs only), and those tables are what verification exports to the
         # COLMAP DB. Model-res ff.images would index a different table entirely.
         # verify_reconstruction itself hard-refuses index-incapable pairwise matchers.
-        # Handed over lazily (_LazyFrames): frames decode on access under a small LRU,
-        # so peak memory stays bounded instead of N full-res frames at once. (The
-        # descriptor branch in verify_reconstruction ignores `images` — passing them
-        # unconditionally is free until a frame is actually accessed.)
-        store = FrameStore.open(self.frames_zarr)
-        images = _LazyFrames(store, store.frame_indices())
+        # _scene_frames caches the stack per directory, so a second verify() in the same
+        # process re-reads nothing. (The descriptor branch in verify_reconstruction
+        # ignores `images`, so the read is wasted work only on that path.)
+        images = _scene_frames(self.images_dir)
         # Sequential pairs only in v1 (pycolmap SequentialPairGenerator inside).
         # Loop pairs are a follow-on: COLMAP's own loop_detection needs a SIFT vocab
         # tree (unusable with learned descriptors) and retrieval descriptors are not
@@ -1482,11 +1549,22 @@ class Reconstructor:
 
         cfg = SplatsConfig.from_dict(self.config["splats"])
 
-        # Frames in COLMAP image order, looked up in frames.zarr by the frame index in each name
-        store = FrameStore.open(self.frames_zarr)
-        frame_indices = [FrameStore.frame_idx_from_path(path) for path in result.image_paths]
+        # Frames in COLMAP image order, looked up in images/ by the frame index in each name.
+        # _scene_frames caches the whole-directory stack, so a verify() earlier in the same
+        # process re-reads nothing; rows are then picked by position out of that stack.
+        frame_indices = [frames.frame_idx_from_path(path) for path in result.image_paths]
+        rows_by_frame_idx = {
+            frames.frame_idx_from_path(p): row for row, p in enumerate(frames.frame_paths(self.images_dir))
+        }
+        unknown = [fi for fi in frame_indices if fi not in rows_by_frame_idx]
+        if unknown:
+            raise KeyError(
+                f"{len(unknown)} reconstruction frames are not in {self.images_dir} "
+                f"(frame_idx {unknown[:5]}); the images/ store and the reconstruction describe "
+                "different runs."
+            )
         # CPU-resident by design: train() moves one view to the GPU at a time
-        images = np.stack([store.image_by_frame_idx(frame_idx) for frame_idx in frame_indices])
+        images = _scene_frames(self.images_dir)[[rows_by_frame_idx[fi] for fi in frame_indices]]
 
         # Depth targets: model-res pointcloud.zarr depth masked like the mesh stage masks it (0 = no
         # target); train() resizes each view to the frame's resolution with nearest sampling
@@ -1517,7 +1595,7 @@ class Reconstructor:
             # Feedforward rows follow the zarr's own image_paths order; align to result.image_paths
             # by frame index so depth (and confidence, before masking) match the frames above
             feedforward_rows = {
-                FrameStore.frame_idx_from_path(path): row for row, path in enumerate(feedforward.image_paths)
+                frames.frame_idx_from_path(path): row for row, path in enumerate(feedforward.image_paths)
             }
             missing = [frame_idx for frame_idx in frame_indices if frame_idx not in feedforward_rows]
             if missing:
@@ -1596,7 +1674,7 @@ class Reconstructor:
         build_reconstruction_quality_report(
             zarr_path=self.pointcloud_zarr,
             verification_json=verification_json,
-            frames_zarr=self.frames_zarr,
+            images_dir=self.images_dir,
             output_path=out_json,
             backend=self.config["pointcloud"]["backend"],
         )
@@ -1606,7 +1684,7 @@ class Reconstructor:
     def _stage_output_exists(self, stage: str) -> bool:
         """True if `stage`'s on-disk output is already present (lets deps be reused across runs)."""
         if stage == "preproc":
-            return self.frames_zarr.exists()
+            return self.images_dir.exists()
         if stage == "pointcloud":
             colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
             zarr_done = self.pointcloud_zarr.exists()
@@ -1688,7 +1766,7 @@ class Reconstructor:
 
         # Validate stage dependencies before starting any work. A dependency is
         # satisfied when it's in this run's stages OR its output already exists on
-        # disk — so `--stages pointcloud` reuses a prior preprocess's frames.zarr.
+        # disk — so `--stages pointcloud` reuses a prior preprocess's images/.
         stages_set = set(stages)
         for stage in stages:
             for dep in _STAGE_DEPS.get(stage, []):

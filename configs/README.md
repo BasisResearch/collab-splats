@@ -48,7 +48,8 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
 ```
 <output-root>/2024_02_06/C0043/
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
-  frames.zarr                  ← decode-once keyframe store (there is no images/ dir)
+  images/frame_NNNNNN.png      ← decode-once keyframe store (COLMAP-style dir, lossless PNG)
+  frames.json                  ← selection records + provenance for those frames
   video_quality_report.json    ← per-frame photometry + per-pair motion of the source video
   photometric.png              ← the report rendered: blur / laplacian / exposure / clipped fractions
   motion.png                   ←   per-pair translation / parallax (failed pairs = red | at 0) / matches
@@ -286,7 +287,7 @@ large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in
 Preproc runs in two steps: **measure**, then **select**.
 
 1. **Measure.** `compute_video_quality` decodes the video once and writes
-   `video_quality_report.json` beside `frames.zarr` — per-frame photometry (blur,
+   `video_quality_report.json` beside `images/` — per-frame photometry (blur,
    exposure, clipping) and per-pair motion (matches, translation, parallax). The
    report is **report-only**: it carries measurements, never thresholds and never
    a usable/unusable verdict. It is reused **by existence** — if the file is
@@ -298,8 +299,10 @@ Preproc runs in two steps: **measure**, then **select**.
    frames are extracted and never otherwise — scenes processed before 2026-08-23
    have no PNGs until `preprocess(overwrite=True)` re-extracts.
 2. **Select.** The sampler reads that report through `filter_frame_quality`,
-   which is where every threshold lives. Changing sampling policy never re-decodes
-   the video.
+   which cuts on a robust MAD z-score over `log(laplacian)` (`sharpness_k`, default
+   2.0 — relative to the video's own sharpness spread, not an absolute value) plus an
+   absolute ceiling on `clipped_low_frac + clipped_high_frac` (`max_clipped_frac`,
+   default 0.25). Changing sampling policy never re-decodes the video.
 
 `preproc.n_workers` affects **only** step 1 — it parallelises the measurement
 decode and has no effect on which frames get selected. The report is byte-
@@ -349,7 +352,7 @@ parameter and raises.
 | `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
-| `preproc.undistort` | bool | `false` | Self-calibrate one shared OPENCV camera (pycolmap, ≤60 frames) and undistort every selected frame (cv2, alpha=0 crop) before `frames.zarr` is written. `frames.zarr` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
+| `preproc.undistort` | bool | `false` | Self-calibrate one shared OPENCV camera (pycolmap, ≤60 frames) and undistort every selected frame (cv2, alpha=0 crop) before `images/` is written. `images/` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` (`colmap`/`hloc` validate — `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm.py` — but are not wired into `Reconstructor._run_sfm`, which raises `NotImplementedError`) |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
@@ -368,7 +371,7 @@ parameter and raises.
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
 | `mesh.splat_depth` | str | `expected` | `source: splats` only: `expected` (alpha-weighted rendered depth) or `median` (RaDe-GS surface depth, sharper across depth discontinuities — 2dgs renders only) |
-| `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `frames.zarr` (opt-in) |
+| `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
 | `splats.pose_opt` | bool | `true` | Refine camera poses jointly (`CameraOptModule`) |
@@ -493,7 +496,6 @@ VDA metric weights are CC-BY-NC-4.0.
 
 ```
 <scene>/instantsfm/
-  images/frame_NNNNNN.jpg      ← frames.zarr staged for the path-locked COLMAP/InstantSfM tools
   depth_vda/images/npy/<stem>.npy ← VDA metric depth, 518-wide model res (skipped when complete)
   colmap/instantsfm.db         ← SIFT database (local build artifact, NOT pushed)
   colmap/sparse/0/*.bin        ← InstantSfM global-mapper model, image names = frame stems
@@ -502,6 +504,8 @@ VDA metric weights are CC-BY-NC-4.0.
   sparse_pc.ply
 ```
 
+InstantSfM reads the scene-root `images/` store directly — nothing stages a per-run image
+copy any more (`pointcloud/sfm.py`), so the COLMAP image names are the keyframe filenames.
 `colmap/instantsfm.db` has its own name so it never collides with the `verify` stage's
 `colmap/database.db`; both are anchored in `PUSH_EXCLUDES` and stay local. Downstream
 stages — `mesh`, `splats` (depth loss), `semantics`, `localize`, `verify` — consume
@@ -523,9 +527,10 @@ Not changed yet.
 ```
 <output_path>/
   run_config.yaml              ← full merged config (exact settings used — for reproducibility)
-  frames.zarr                  ← canonical decode-once keyframe store (chunked images + records + provenance)
+  images/frame_NNNNNN.png      ← canonical decode-once keyframe store (COLMAP-style dir, lossless PNG)
+  frames.json                  ← selection records + provenance for those frames
   video_quality_report.json    ← source-video quality measurements (report-only)
-  photometric.png, motion.png  ← the report rendered (two files, written with frames.zarr)
+  photometric.png, motion.png  ← the report rendered (two files, written with images/)
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
@@ -559,12 +564,12 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
 | `<backend>/pointcloud.zarr` | further processing inside this repo (depth, poses, confidence when the method produces it) — see below |
-| `frames.zarr` | the keyframes the reconstruction was built from; required to localize |
+| `images/` + `frames.json` | the keyframes the reconstruction was built from; required to localize |
 | `run_config.yaml` | exact settings used |
 
 Every geometry-derived artifact sits under `<backend>/`, including `sparse_pc.ply` and the
 per-point semantics. One scene may be reconstructed by several backends, so a per-point
-latent code is only meaningful next to the point set it indexes. `frames.zarr` sits at the
+latent code is only meaningful next to the point set it indexes. `images/` sits at the
 scene root instead: the keyframes are decoded once from the video and shared by every
 backend that reconstructs the scene.
 
@@ -604,7 +609,7 @@ which is what keeps `<backend>/semantics/**` in the push), the source video, whi
 driver fetches into the very scene dir it later pushes and which already lives in
 `environments-curated`, and the two COLMAP match databases — `<backend>/colmap/database.db`
 (verify) and `<backend>/colmap/instantsfm.db` (instantsfm SIFT), both rebuildable local
-artifacts. `frames.zarr` **is** pushed — it is the sole persistent keyframe
+artifacts. The scene-root `images/` store **is** pushed — it is the sole persistent keyframe
 store, so localization or a correspondence plot against a published scene works directly,
 with no re-decode of the curated video.
 
@@ -614,24 +619,19 @@ decoded space is. Each scene's `recon_cosine` is measured on the **training set*
 held-out split, so treat it as an upper bound on fidelity rather than a generalisation
 estimate.
 
-#### A published scene has no `images/` export, by design
+#### A published scene ships `images/`, but no `transforms.json`
 
 Any loader that resolves `frame["file_path"]` or `data/images/{name}` off disk needs real
-image files. Feedforward backends publish none — the `images/` directory was removed in the
-frame-store migration, and frames live in `frames.zarr` keyed by `frame_idx`. No `images/`
-export will be added. Downstream consumers get `sparse_pc.ply` + the mesh + the features +
-the raw COLMAP binaries, and read poses via `pycolmap`.
+image files. A published scene now ships them — `images/frame_NNNNNN.png` at the scene root,
+the canonical keyframe store every stage reads. What it does not ship is `transforms.json`:
+nothing writes one any more, so a stock file_path-keyed dataparser still needs its poses built
+first. Downstream consumers get `sparse_pc.ply` + the mesh + the features + the raw COLMAP
+binaries, and read poses via `pycolmap`.
 
-`instantsfm/` is the one exception, and it is not an export: `_run_sfm` stages the keyframes
-to `<backend>/images/frame_NNNNNN.jpg` because the COLMAP/InstantSfM tools are path-locked to
-a directory. It is a local build artifact that `PUSH_EXCLUDES` does not currently filter, so
-it rides along to `environments-processed`. Do not build a consumer on it — re-derive frames
-from `frames.zarr`.
-
-#### Splats train from the published COLMAP + frames.zarr
+#### Splats train from the published COLMAP + images/
 
 `--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
-`frames.zarr` — no image directory. Every `splats/` artifact is in
+the scene-root `images/` store — no transforms.json round-trip. Every `splats/` artifact is in
 the COLMAP world frame; nothing is normalised. `mesh` fuses `pointcloud.zarr` by default;
 `mesh.source: splats` fuses the renders instead (alpha as confidence, poses as rendered).
 

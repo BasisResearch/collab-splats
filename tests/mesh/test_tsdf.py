@@ -140,21 +140,15 @@ def test_create_fuses_adapter_native_output(tmp_path):
     """The native-res adapter's uint8 output fuses without the float-range guard firing."""
     from collab_splats.mesh.tsdf import Open3DTSDFFusion
     from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
-    from tests.mesh.test_utils import _tiny_ff_result
+    from tests.mesh.test_utils import _tiny_ff_result, _write_images_dir
 
-    class FakeStore:
-        def __len__(self):
-            return 2
-
-        def images(self):
-            return np.full((2, 16, 16, 3), 128, dtype=np.uint8)
-
+    images_dir = _write_images_dir(tmp_path / "images", n=2, hw=16)
     ff = _tiny_ff_result()
     native_K = np.tile(
         np.array([[16, 0, 8], [0, 16, 8], [0, 0, 1]], dtype=np.float32), (2, 1, 1)
     )
     depths, rgbs, c2w, K = _feedforward_to_tsdf_inputs(
-        ff, frame_store=FakeStore(), native_intrinsics=native_K
+        ff, images_dir=images_dir, native_intrinsics=native_K
     )
     result = Open3DTSDFFusion(output_dir=tmp_path, voxel_size=0.05, sdf_trunc=0.2).create(
         depths, rgbs, c2w, K

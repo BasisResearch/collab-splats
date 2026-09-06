@@ -6,10 +6,15 @@ identical to the legacy path-based ``load_and_preprocess_images`` output, otherw
 every backbone's poses (and ATE) would shift.
 """
 
+import tempfile
+
+import cv2
 import numpy as np
 import pytest
 import torch
 from PIL import Image
+
+from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
 
 
 def _write_pngs(tmp_path, sizes):
@@ -21,7 +26,7 @@ def _write_pngs(tmp_path, sizes):
         p = tmp_path / f"frame_{i:06d}.png"
         Image.fromarray(arr).save(p)
         paths.append(p)
-        # frames = the exact decoded pixels a FrameStore would hold
+        # frames = the exact decoded pixels the images/ store holds
         frames.append(np.asarray(Image.open(p).convert("RGB"), dtype=np.uint8))
     return paths, frames, list(range(len(sizes)))
 
@@ -86,3 +91,19 @@ def test_mapanything_preprocess_bit_equivalent(tmp_path):
         assert torch.equal(o["img"], n["img"])
     assert [p.name for p in image_paths] == [f"frame_{i:06d}" for i in frame_idxs]
     assert coords.shape == (2, 6) and coords.dtype == np.float32
+
+
+def test_decode_source_takes_an_images_dir_and_makes_no_tempdir(tmp_path, monkeypatch):
+    """
+    Path-locked model preprocessing reads the scene's images/ directly.
+    """
+    images = tmp_path / "images"
+    images.mkdir()
+    for i in (0, 5):
+        cv2.imwrite(str(images / f"frame_{i:06d}.png"), np.full((8, 12, 3), i + 5, np.uint8))
+
+    # Any TemporaryDirectory here means a copy is still being staged
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda *a, **k: pytest.fail("staged a temporary copy"))
+
+    paths = BaseFeedforwardCreator._source_paths(images)
+    assert [p.name for p in paths] == ["frame_000000.png", "frame_000005.png"]

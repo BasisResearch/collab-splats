@@ -1,79 +1,33 @@
 """
-Camera undistortion at the frames.zarr boundary: OPENCV-model self-calibration
-(pycolmap) + splatfacto-exact cv2 undistort/crop.
+Camera calibration and undistortion at the images/ boundary.
 
-Every downstream consumer (feedforward backbones, InstantSfM SIFT, splat
-trainer, localization DB export) assumes pinhole; undistorting once here fixes
-all of them. Port of nerfstudio full_images_datamanager._undistort_image
-(nerfstudio @ 50e0e3c): getOptimalNewCameraMatrix(alpha=0) -> cv2.undistort ->
-ROI crop -> K rewritten by the crop offset.
+pycolmap self-calibrates one shared OPENCV camera from the scene's images and cv2
+moves the pixels. The camera IS a pycolmap.Camera — nothing round-trips through a
+local dataclass mirroring the same numbers.
+
+Every downstream consumer (feedforward backbones, InstantSfM SIFT, splat trainer,
+localization DB export) assumes pinhole; undistorting once here fixes all of them.
+COLMAP picks the undistorted framing (pycolmap.undistort_camera) and cv2 moves the
+pixels; there is no crop, so the principal point cannot drift out of step with it.
 """
 
 from __future__ import annotations
 
 import logging
 import tempfile
-from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pycolmap
+
+from collab_splats.preproc.frames import frame_paths
 
 logger = logging.getLogger(__name__)
 
 
 ########################################
-# Profile
-########################################
-
-
-@dataclass(frozen=True)
-class DistortionProfile:
-    """
-    OPENCV camera model (k1 k2 p1 p2) + calibrated pinhole K + input dims.
-    """
-
-    k1: float
-    k2: float
-    p1: float
-    p2: float
-    fx: float
-    fy: float
-    cx: float
-    cy: float
-    width: int
-    height: int
-
-    def to_dict(self) -> dict:
-        """
-        JSON-serialisable dict (frames.zarr provenance payload).
-        """
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> DistortionProfile:
-        """
-        Inverse of to_dict.
-        """
-        return cls(**d)
-
-    @property
-    def K(self) -> np.ndarray:
-        """
-        3x3 pinhole intrinsics of the calibration.
-        """
-        return np.array([[self.fx, 0.0, self.cx], [0.0, self.fy, self.cy], [0.0, 0.0, 1.0]])
-
-    @property
-    def dist_coeffs(self) -> np.ndarray:
-        """
-        cv2-ordered distortion vector (k1, k2, p1, p2).
-        """
-        return np.array([self.k1, self.k2, self.p1, self.p2])
-
-
-########################################
-# Estimation (pycolmap self-calibration)
+# Calibration (pycolmap self-calibration)
 ########################################
 
 # CPU SIFT threads: pycolmap 4.0.4 here is a CPU-only wheel (has_cuda False), so the
@@ -83,50 +37,48 @@ class DistortionProfile:
 # pointcloud/sfm.py::_SIFT_NUM_THREADS.
 _SIFT_NUM_THREADS = 8
 
+# Below this share of the calibration subset the solve has not seen the lens
+_MIN_REGISTERED_FRACTION = 0.6
 
-def estimate_camera_distortion(frames: list[np.ndarray], max_frames: int = 60) -> DistortionProfile:
+# Two-view initialisation plus a margin; fewer images cannot constrain k1 k2 p1 p2
+_MIN_CALIBRATION_IMAGES = 8
+
+
+def calibrate_camera(images_dir: Path, *, max_frames: int = 60) -> pycolmap.Camera:
     """
-    Self-calibrate one shared OPENCV camera from selected frames via pycolmap.
+    Self-calibrate one shared OPENCV camera from a scene's images.
 
-    - Runs SIFT + exhaustive matching + incremental mapping on <= max_frames
-      evenly spaced frames (shared camera, ba_refine_extra_params on by default).
-    - Raises ValueError when mapping fails or registers < 60% of the subset
-      (too weak a solve to trust the distortion params).
+    Args:
+        images_dir: the scene's images/ directory, read in place.
+        max_frames: how many evenly spaced images to calibrate from.
+
+    Returns:
+        The pycolmap.Camera (model OPENCV) of the largest reconstruction, carrying
+        fx fy cx cy and k1 k2 p1 p2 at the images' own resolution.
     """
-    try:
-        import pycolmap
-    except ImportError as e:
-        raise ImportError(
-            "pycolmap is required for preproc.undistort.estimate_camera_distortion; "
-            "install it in the reconstruction env"
-        ) from e
+    paths = frame_paths(images_dir)
+    if len(paths) < _MIN_CALIBRATION_IMAGES:
+        raise ValueError(
+            f"calibrate_camera needs at least {_MIN_CALIBRATION_IMAGES} images, found {len(paths)} in {images_dir}"
+        )
 
-    if not frames:
-        raise ValueError("estimate_camera_distortion: no frames given")
+    # Evenly spaced subset: calibration wants baseline, not every frame
+    idxs = np.unique(np.linspace(0, len(paths) - 1, min(max_frames, len(paths))).round().astype(int))
+    names = [paths[int(i)].name for i in idxs]
 
-    n = len(frames)
-    idxs = np.unique(np.linspace(0, n - 1, min(max_frames, n)).round().astype(int))
+    # The database and sparse output are scratch; the images are read from images_dir
+    # in place, so nothing stages a second copy of the pixels
+    with tempfile.TemporaryDirectory(prefix="calibrate_camera_") as tmp:
+        database = Path(tmp) / "database.db"
+        sparse = Path(tmp) / "sparse"
+        sparse.mkdir()
 
-    with tempfile.TemporaryDirectory(prefix="undistort_calib_") as tmp:
-        tmp_path = Path(tmp)
-        image_dir = tmp_path / "images"
-        image_dir.mkdir()
-        out_dir = tmp_path / "sparse"
-        out_dir.mkdir()
-        database = tmp_path / "database.db"
-
-        # Stage the calibration subset; store holds RGB, cv2 writes BGR
-        for i in idxs:
-            cv2.imwrite(
-                str(image_dir / f"calib_{int(i):06d}.jpg"),
-                cv2.cvtColor(frames[int(i)], cv2.COLOR_RGB2BGR),
-            )
-
-        # One shared OPENCV camera across the subset; mapper refines k1 k2 p1 p2.
+        # One shared OPENCV camera across the subset; the mapper refines k1 k2 p1 p2.
         # camera_model lives on reader_options, not as a top-level kwarg (pycolmap 4.0.4 API).
         pycolmap.extract_features(
             database,
-            image_dir,
+            images_dir,
+            image_names=names,
             camera_mode=pycolmap.CameraMode.SINGLE,
             reader_options=pycolmap.ImageReaderOptions(camera_model="OPENCV"),
             extraction_options=pycolmap.FeatureExtractionOptions(num_threads=_SIFT_NUM_THREADS),
@@ -135,88 +87,80 @@ def estimate_camera_distortion(frames: list[np.ndarray], max_frames: int = 60) -
             database,
             matching_options=pycolmap.FeatureMatchingOptions(num_threads=_SIFT_NUM_THREADS),
         )
-        reconstructions = pycolmap.incremental_mapping(database, image_dir, out_dir)
+        reconstructions = pycolmap.incremental_mapping(database, images_dir, sparse)
 
         if not reconstructions:
-            raise ValueError(
-                f"undistort: self-calibration failed — pycolmap registered no model from {len(idxs)} frames"
+            raise RuntimeError(
+                f"calibrate_camera: no model registered from {len(names)} images in {images_dir} — "
+                "the footage may be featureless or the motion degenerate"
             )
+
+        # dict[int, Reconstruction] keyed by model id: take the largest, not key 0
         recon = max(reconstructions.values(), key=lambda r: r.num_reg_images())
-        if recon.num_reg_images() < 0.6 * len(idxs):
-            raise ValueError(
-                f"undistort: self-calibration too weak — {recon.num_reg_images()}/{len(idxs)} frames "
-                "registered; distortion params not trustworthy"
+        registered = recon.num_reg_images()
+        if registered < _MIN_REGISTERED_FRACTION * len(names):
+            raise RuntimeError(
+                f"calibrate_camera: only {registered} of {len(names)} images registered "
+                f"(need {_MIN_REGISTERED_FRACTION:.0%}); the distortion params are not trustworthy"
             )
 
-        # Shared camera: exactly the largest model's camera params, OPENCV order
         camera = next(iter(recon.cameras.values()))
-        fx, fy, cx, cy, k1, k2, p1, p2 = (float(v) for v in camera.params)
 
-    height, width = frames[0].shape[:2]
-    profile = DistortionProfile(
-        k1=k1,
-        k2=k2,
-        p1=p1,
-        p2=p2,
-        fx=fx,
-        fy=fy,
-        cx=cx,
-        cy=cy,
-        width=width,
-        height=height,
-    )
     logger.info(
-        "undistort: calibrated k1=%.5f k2=%.5f p1=%.5f p2=%.5f over %d/%d frames",
-        k1,
-        k2,
-        p1,
-        p2,
-        recon.num_reg_images(),
-        len(idxs),
+        "calibrated %s from %d/%d images: %s",
+        images_dir,
+        registered,
+        len(names),
+        camera,
     )
-    return profile
+    return camera
 
 
 ########################################
-# Undistortion (splatfacto-exact cv2 path)
+# Undistortion (COLMAP framing, cv2 remap)
 ########################################
 
 
-def undistort_frames(
-    frames: list[np.ndarray], profile: DistortionProfile
-) -> tuple[list[np.ndarray], np.ndarray, tuple[int, int, int, int]]:
+def undistort_frames(frames_in: np.ndarray, camera: pycolmap.Camera) -> tuple[np.ndarray, pycolmap.Camera]:
     """
-    Undistort frames with alpha=0 crop; returns (frames, K_new, roi).
+    Undistort a stack of frames onto COLMAP's undistorted framing.
 
-    - roi is (x, y, w, h) with w/h forced even (codec/model friendliness);
-      K_new is the optimal new camera matrix shifted by the crop offset.
-    - Raises ValueError when frame dims disagree with the profile.
+    Args:
+        frames_in: (N, H, W, 3) uint8; H, W must match the camera.
+        camera: a distorted pycolmap.Camera from calibrate_camera.
+
+    Returns:
+        - (N, H', W', 3) uint8, same channel order in as out.
+        - The PINHOLE camera for that canvas: focal preserved, canvas grown to hold
+          the corners, so the centre stays 1:1 and nothing is resampled down to fit.
     """
-    if not frames:
-        raise ValueError("undistort_frames: no frames given")
+    frames_in = np.asarray(frames_in)
+    if frames_in.ndim != 4 or frames_in.shape[1:3] != (camera.height, camera.width):
+        raise ValueError(
+            f"undistort_frames: frames are {frames_in.shape}, camera is (N, {camera.height}, {camera.width}, 3)"
+        )
 
-    # Every frame must match the profile's calibrated dims; name the first offender
-    for i, frame in enumerate(frames):
-        height, width = frame.shape[:2]
-        if (width, height) != (profile.width, profile.height):
-            raise ValueError(
-                f"undistort: frame {i} dims {width}x{height} != profile dims {profile.width}x{profile.height}"
-            )
+    # COLMAP picks the framing: focal fixed, canvas sized to hold the corners
+    new_camera = pycolmap.undistort_camera(pycolmap.UndistortCameraOptions(), camera)
 
-    # Loop guarantees every frame equals the profile dims
-    width, height = profile.width, profile.height
+    # cv2 moves the pixels: one dst->src map, built once, reused for every frame
+    map1, map2 = cv2.initUndistortRectifyMap(
+        camera.calibration_matrix(),
+        np.asarray(camera.params[4:], dtype=np.float64),
+        None,
+        new_camera.calibration_matrix(),
+        (new_camera.width, new_camera.height),
+        cv2.CV_32FC1,
+    )
+    out = np.stack([cv2.remap(frame, map1, map2, cv2.INTER_LINEAR) for frame in frames_in])
 
-    # alpha=0: zoom so the valid (distortion-free) region fills the ROI
-    K_new, roi = cv2.getOptimalNewCameraMatrix(profile.K, profile.dist_coeffs, (width, height), 0)
-    x, y, w, h = roi
-    w -= w % 2
-    h -= h % 2
-
-    # Per-frame: remap to the new camera, crop to the even ROI
-    out = [cv2.undistort(frame, profile.K, profile.dist_coeffs, None, K_new)[y : y + h, x : x + w] for frame in frames]
-
-    # Principal point moves with the crop
-    K_out = K_new.copy()
-    K_out[0, 2] -= x
-    K_out[1, 2] -= y
-    return out, K_out, (x, y, w, h)
+    logger.info(
+        "undistorted %d frames: %dx%d -> %dx%d, f=%.1f preserved",
+        len(out),
+        camera.width,
+        camera.height,
+        new_camera.width,
+        new_camera.height,
+        new_camera.focal_length_x,
+    )
+    return out, new_camera

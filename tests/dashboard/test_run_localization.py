@@ -110,7 +110,7 @@ def wired(monkeypatch, tmp_path):
         lambda out_dir, load_world_points=False, load_images=False: _FakeResult(),
     )
     # MagicMock (not a lambda) so tests can assert on call_args — in particular that
-    # frames_zarr is threaded through to the real from_feedforward call site.
+    # images_dir is threaded through to the real from_feedforward call site.
     build_localizer_mock = MagicMock(return_value=fake_localizer)
     monkeypatch.setattr(pipeline, "_build_localizer", build_localizer_mock)
     fake_localizer.build_localizer_mock = build_localizer_mock
@@ -184,11 +184,11 @@ def test_no_append_on_failed_pose(tmp_path, wired):
     assert not source.pushed
 
 
-def test_ref_paths_remapped_to_local_frames_dir(tmp_path, wired):
-    """Reconstruction frames map to frames/; localized frames map to localized_frames/."""
+def test_ref_paths_remapped_to_local_images_dir(tmp_path, wired):
+    """Reconstruction frames map to images/; localized frames map to localized_frames/."""
     out, _ = _run(tmp_path, wired)
     out_dir = tmp_path / SCENE
-    assert out.ref_image_paths[0] == out_dir / "frames" / "00000.jpg"
+    assert out.ref_image_paths[0] == out_dir / "images" / "00000.jpg"
     assert out.ref_image_paths[2] == out_dir / "localized_frames" / "cam_f000007.jpg"
 
 
@@ -204,28 +204,28 @@ def test_pull_targets_the_scene_id_and_its_local_dir(tmp_path, wired):
     assert source.pull_args == (SCENE, tmp_path / SCENE)
 
 
-def test_build_localizer_receives_scene_frames_zarr(tmp_path, wired):
-    """frames_zarr must be threaded into _build_localizer (-> from_feedforward) as the
-    scene's own frames.zarr, not dropped or left implicit — this is what lets a cache
+def test_build_localizer_receives_scene_images_dir(tmp_path, wired):
+    """images_dir must be threaded into _build_localizer (-> from_feedforward) as the
+    scene's own images/ directory, not dropped or left implicit — this is what lets a cache
     miss read pixels from the store instead of a possibly-stale ff.image_paths."""
     out_dir = tmp_path / SCENE
     # Present locally, as it would be for a scene that ran preprocessing on this machine.
-    (out_dir / "frames.zarr").mkdir(parents=True)
+    (out_dir / "images").mkdir(parents=True)
 
     _run(tmp_path, wired)
 
     wired.build_localizer_mock.assert_called_once()
     kwargs = wired.build_localizer_mock.call_args.kwargs
-    assert kwargs["frames_zarr"] == out_dir / "frames.zarr"
+    assert kwargs["images_dir"] == out_dir / "images"
 
 
-def test_build_localizer_gets_no_frames_zarr_when_absent(tmp_path, wired):
-    """Pulled scenes have no local frames.zarr (excluded from PULL_EXCLUDES) — must pass
-    None, not a dangling path FrameStore.open() would fail to open."""
+def test_build_localizer_gets_no_images_dir_when_absent(tmp_path, wired):
+    """Pulled scenes have no local images/ (excluded from PULL_EXCLUDES) — must pass
+    None, not a dangling path frame_paths() would silently read as empty."""
     _run(tmp_path, wired)
 
     kwargs = wired.build_localizer_mock.call_args.kwargs
-    assert kwargs["frames_zarr"] is None
+    assert kwargs["images_dir"] is None
 
 
 def test_stamp_db_provenance_writes_attrs(tmp_path):

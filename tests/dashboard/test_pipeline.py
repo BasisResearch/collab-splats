@@ -62,7 +62,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
         patch.object(pl, "load_video_quality", return_value={"available": True, "frames": {}}),
-        patch.object(pl, "_write_frames_zarr") as wz,
+        patch.object(pl, "_write_images_dir") as wz,
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "pointcloud_to_mesh") as mesh,
         patch.object(pl, "_extract_semantics") as sem,
@@ -109,7 +109,7 @@ def test_run_pipeline_does_not_push_on_failure(tmp_path):
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
         patch.object(pl, "load_video_quality", return_value={"available": True, "frames": {}}),
-        patch.object(pl, "_write_frames_zarr"),
+        patch.object(pl, "_write_images_dir"),
         patch.object(pl, "_build_creator", side_effect=RuntimeError("boom")),
     ):
         with pytest.raises(RuntimeError):
@@ -369,10 +369,10 @@ def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tm
 def test_extract_semantics_returns_nothing(tmp_path, monkeypatch):
     """_extract_semantics drops the cache path — every consumer re-resolves it by glob."""
     calls = []
-    monkeypatch.setattr(pl, "extract_feature_cache", lambda extractor, frames, out: calls.append((frames, out)))
+    monkeypatch.setattr(pl, "extract_feature_cache", lambda extractor, images, out: calls.append((images, out)))
     monkeypatch.setattr(pl.BaseFeatureExtractor, "get", staticmethod(lambda name: lambda: object()))
-    assert pl._extract_semantics("talk2dino", tmp_path / "frames.zarr", tmp_path) is None
-    assert len(calls) == 1
+    assert pl._extract_semantics("talk2dino", tmp_path / "images", tmp_path) is None
+    assert calls == [(tmp_path / "images", tmp_path)]
 
 
 def _make_localized_zarr(tmp_path, extractor="loma", n=2):

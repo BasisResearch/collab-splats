@@ -50,18 +50,29 @@ def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
         )
     )
     stack.enter_context(patch("collab_splats.localization.extractors.LocalMatcher", return_value=MagicMock()))
-    frame_store = MagicMock()
-    frame_store.frame_indices.return_value = [0, 1]
-    stack.enter_context(patch("collab_splats.preproc.frame_store.FrameStore.open", return_value=frame_store))
+
+
+def _images_dir(tmp_path: Path) -> Path:
+    """
+    A two-frame images/ directory for _build_localization_db to list.
+
+    - Only the filenames are read here (frame_indices and ids come from them); the images
+      genexpr is never consumed because from_feedforward is stubbed, so empty files do.
+    """
+    images_dir = tmp_path / "images"
+    images_dir.mkdir(exist_ok=True)
+    for i in (0, 1):
+        (images_dir / f"frame_{i:06d}.png").touch()
+    return images_dir
 
 
 def test_overwrite_true_drops_stale_group_before_rebuild(tmp_path):
     pc_zarr = _make_stale_store(tmp_path)
-    frames = tmp_path / "frames.zarr"
+    images_dir = _images_dir(tmp_path)
     seen = {}
     with ExitStack() as stack:
         _patch_heavy_deps(stack, pc_zarr, seen)
-        out = _build_localization_db(pc_zarr, "loma", frames, top_k=8, overwrite=True)
+        out = _build_localization_db(pc_zarr, "loma", images_dir, top_k=8, overwrite=True)
     # The stale group must be gone when from_feedforward runs, so its cache check misses
     assert seen["rec_group_present"] is False
     assert out == pc_zarr
@@ -69,11 +80,11 @@ def test_overwrite_true_drops_stale_group_before_rebuild(tmp_path):
 
 def test_overwrite_false_keeps_existing_group(tmp_path):
     pc_zarr = _make_stale_store(tmp_path)
-    frames = tmp_path / "frames.zarr"
+    images_dir = _images_dir(tmp_path)
     seen = {}
     with ExitStack() as stack:
         _patch_heavy_deps(stack, pc_zarr, seen)
-        _build_localization_db(pc_zarr, "loma", frames, top_k=8, overwrite=False)
+        _build_localization_db(pc_zarr, "loma", images_dir, top_k=8, overwrite=False)
     # Default path is untouched: the existing group is still there for the cache hit
     assert seen["rec_group_present"] is True
 
@@ -90,4 +101,4 @@ def test_reconstructor_passes_overwrite_through(tmp_path):
     pc_zarr.mkdir(parents=True)
     with patch.object(R, "_build_localization_db") as build:
         rec.build_localization_db(overwrite=True)
-    build.assert_called_once_with(pc_zarr, "loma", rec.frames_zarr, top_k=8, overwrite=True)
+    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, top_k=8, overwrite=True)

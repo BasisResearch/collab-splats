@@ -25,7 +25,8 @@ preproc:
   fps: 2.3                  # 218.8 s x 2.3 = 503 candidates, then bounded to exactly 500
   min_frames: 500           # min == max forces sample_fps to re-spread evenly over the whole video
   max_frames: 500
-  search_radius: 7          # the "_r7" the 2dgs baseline scene is named for
+  # The "_r7" in the scene name was preproc.search_radius: 7, a key that no longer exists —
+  # the samplers now select from the quality-filtered pool instead of searching a window.
   n_workers: 1          # a concurrent session is holding the machine; quality-report decode stays serial
   undistort: true
 pointcloud:

@@ -18,7 +18,7 @@ import torch
 from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import lift_features
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 
@@ -92,9 +92,10 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
     }
     recon._stage_output_exists = lambda stage: False
 
+    # The scene's images/ directory sits directly under output_path, which is tmp_path here
     frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
     records = [{"frame_idx": view} for view in range(n_views)]
-    FrameStore.create(recon.frames_zarr, frames, records, provenance={"video_path": "v"})
+    fr.write_frames(tmp_path / "images", frames, records, {"video_path": "v"})
     image_paths = [Path(f"frame_{view:06d}.jpg") for view in range(n_views)]
     recon._resolve_result = lambda: SimpleNamespace(
         image_paths=image_paths,

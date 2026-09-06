@@ -1,3 +1,5 @@
+import sqlite3
+
 import numpy as np
 import pytest
 
@@ -381,3 +383,45 @@ def test_keep_rows_none_writes_every_frame_in_order(tmp_path, monkeypatch):
     assert sorted(p.name for p in npy_dir.iterdir()) == ["frame_000000.npy", "frame_000001.npy"]
     assert np.all(np.load(npy_dir / "frame_000000.npy") == 1.0)
     assert np.all(np.load(npy_dir / "frame_000001.npy") == 2.0)
+
+
+########################################################################
+# SIFT database reuse
+########################################################################
+
+
+def _sift_db(path, names, *, keypoints=1, geometries=1):
+    """
+    A COLMAP-shaped SIFT DB holding `names` plus the two row counts reuse is gated on.
+    """
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE images (image_id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("CREATE TABLE keypoints (image_id INTEGER)")
+        conn.execute("CREATE TABLE two_view_geometries (pair_id INTEGER)")
+        conn.executemany("INSERT INTO images (name) VALUES (?)", [(n,) for n in names])
+        conn.executemany("INSERT INTO keypoints VALUES (?)", [(i,) for i in range(keypoints)])
+        conn.executemany("INSERT INTO two_view_geometries VALUES (?)", [(i,) for i in range(geometries)])
+    return path
+
+
+def test_sift_database_is_reused_for_the_same_image_set(tmp_path):
+    db = _sift_db(tmp_path / "instantsfm.db", _NAMES)
+    assert sfm._sift_database_valid(db, list(reversed(_NAMES))) is True
+
+
+def test_sift_database_is_rebuilt_when_the_image_set_changed(tmp_path):
+    # Nothing stages a per-run image copy any more, so the DB's own images table is the
+    # only record of which selection its features came from
+    db = _sift_db(tmp_path / "instantsfm.db", _NAMES)
+    assert sfm._sift_database_valid(db, _NAMES + ["frame_000002.jpg"]) is False
+
+
+def test_sift_database_is_rebuilt_when_matching_never_ran(tmp_path):
+    db = _sift_db(tmp_path / "instantsfm.db", _NAMES, geometries=0)
+    assert sfm._sift_database_valid(db, _NAMES) is False
+
+
+def test_sift_database_absent_is_not_valid(tmp_path):
+    assert sfm._sift_database_valid(tmp_path / "nope.db", _NAMES) is False
+
+

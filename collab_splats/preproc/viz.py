@@ -15,12 +15,7 @@ import numpy as np
 import seaborn as sns
 from scipy.stats import spearmanr
 
-from collab_splats.preproc.frame_store import FrameStore
 from collab_splats.preproc.video import extract_frame, get_video_info
-from collab_splats.preproc.sampling import (
-    OpticalFlowFrameSelector,
-    filter_frame_quality,
-)
 
 
 def plot_frame_grid(frames: list, title: str, n_cols: int = 6) -> None:
@@ -99,101 +94,13 @@ def plot_frame_scores(frame_scores: list) -> None:
     plt.show()
 
 
-def plot_disparity_sensitivity(frame_scores: list, disparity_values: list) -> None:
-    """
-    Approximate selected-frame count vs the min_disparity threshold.
-
-    Re-thresholds precomputed records through the selector's own formula, so the
-    plot cannot drift from selection. Approximate: it ignores the stateful
-    keyframe updates a true re-run would perform.
-    """
-    # Re-score each threshold from the recorded raw signals
-    counts = []
-    for threshold in disparity_values:
-        selector = OpticalFlowFrameSelector(min_disparity=threshold)
-        counts.append(
-            sum(1 for d in frame_scores if selector.combine(d["disparity"], d["histogram_similarity"]) >= 0.5)
-        )
-
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(disparity_values, counts, marker="o", color="steelblue", linewidth=1.5)
-    ax.set_xlabel("min_disparity threshold (px)")
-    ax.set_ylabel("Frames selected (approx.)")
-    ax.set_title("Frame count vs disparity threshold")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    plt.show()
-
-
-def plot_quality_examples(store: FrameStore, report: dict, n_examples: int = 4) -> None:
-    """
-    Example frames per quality-filter outcome: usable / soft / badly exposed.
-
-    Takes a qa.compute_video_quality report and reads only the displayed frames
-    from frames.zarr (no re-decode). Empty categories are dropped from the grid;
-    counts still show in the title.
-    """
-    f = report["frames"]
-    lap = np.asarray(f["laplacian"], float)
-    mean = np.asarray(f["exposure_mean"], float)
-    usable = filter_frame_quality(report)
-
-    def rows_for(mask):
-        return [
-            {"frame_idx": int(i), "blur_score": lap[i], "exposure_mean": mean[i]}
-            for i in np.flatnonzero(mask)
-            if store.has_frame_idx(int(i))
-        ]
-
-    # Reason per rejected frame: sharpness is checked first, matching the filter
-    soft = ~usable & (lap < 50.0)
-
-    categories = [
-        ("Usable", rows_for(usable)),
-        ("Rejected: soft", rows_for(soft)),
-        ("Rejected: exposure", rows_for(~usable & ~soft)),
-    ]
-
-    counts = " · ".join(f"{key}: {len(recs)}" for key, (_, recs) in zip(("usable", "soft", "exposure"), categories))
-
-    # Spread picks evenly across each non-empty category rather than taking the first n
-    rows = []
-    for label, recs in categories:
-        if recs:
-            picks = [recs[i] for i in np.linspace(0, len(recs) - 1, min(n_examples, len(recs))).astype(int)]
-            rows.append((label, picks))
-    if not rows:
-        fig, ax = plt.subplots(figsize=(8, 2))
-        ax.axis("off")
-        ax.text(0.5, 0.5, f"No records ({counts})", ha="center", va="center")
-        plt.show()
-        return
-    # Gather every picked frame_idx across all rows; read each once from the store
-    all_idxs = sorted({d["frame_idx"] for _, recs in rows for d in recs})
-    frame_by_idx = {i: store.image_by_frame_idx(i) for i in all_idxs}
-    fig, axes = plt.subplots(len(rows), n_examples, figsize=(n_examples * 2.6, len(rows) * 2.4), squeeze=False)
-    for row_axes, (label, recs) in zip(axes, rows):
-        for ax, d in zip(row_axes, recs):
-            ax.imshow(frame_by_idx[d["frame_idx"]])
-            ax.set_title(f"#{d['frame_idx']}  blur {d['blur_score']:.0f} · mean {d['exposure_mean']:.0f}", fontsize=8)
-        for ax in row_axes:
-            ax.axis("off")
-        # Row label survives axis("off") because it's a plain text artist
-        row_axes[0].text(
-            -0.06, 0.5, label, transform=row_axes[0].transAxes, rotation=90, va="center", ha="center", fontsize=10
-        )
-    fig.suptitle(f"Quality filter examples  ({counts})", fontsize=11)
-    fig.tight_layout()
-    plt.show()
-
-
 ########################################################################
 # Video quality report plots
 #
 # One PNG per measurement family of qa.compute_video_quality's report. Every
 # plotter draws EVERY frame / pair in the report as shipped — raw columns, no
 # thresholds, no verdicts. `selected` only marks which frames made it into
-# frames.zarr. Headless: save and close, never plt.show(). Title, overlay and
+# images/. Headless: save and close, never plt.show(). Title, overlay and
 # save are inlined in each plotter on purpose — five short duplicates beat a
 # helper layer.
 ########################################################################

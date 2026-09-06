@@ -619,10 +619,10 @@ class LocalizePage(param.Parameterized):
                 cache=self._cache,  # keeps the localizer (and its extractor) warm across runs
             )
             # Figures + mesh read are slow — build them here so on_done only assigns panes.
-            frames_zarr = self._base_dir / scene / "frames.zarr"
+            images_dir = self._base_dir / scene / "images"
             with self._op_log.step("building result figures"):
                 figs = self._build_result_figures(
-                    out, config, frames_zarr=frames_zarr if frames_zarr.exists() else None
+                    out, config, images_dir=images_dir if images_dir.is_dir() else None
                 )
             mesh = self._ensure_scene_mesh(scene, mesh_path)
             return (out, figs, mesh)
@@ -640,16 +640,16 @@ class LocalizePage(param.Parameterized):
 
     # ---- rendering -----------------------------------------------------
 
-    def _build_result_figures(self, out, config: LocalizationConfig, frames_zarr: "Path | None" = None) -> dict:
+    def _build_result_figures(self, out, config: LocalizationConfig, images_dir: "Path | None" = None) -> dict:
         """Build all matplotlib figures + stats HTML for a run output (worker thread — pure).
 
         Runs on the worker with the Agg backend. Figures are pyplot-managed (Gcf), so
         there is a theoretical cross-thread window vs the IOLoop's plt.close — benign
         under CPython/Agg; migrate viz to direct Figure() construction if it ever bites.
 
-        frames_zarr: canonical frames.zarr for this scene, when present. Only used for
+        images_dir: this scene's canonical images/ directory, when present. Only used for
         'reconstruction'-sourced ref frames — 'localized' frames live in localized_frames/
-        JPGs only (never written to frames.zarr), so they always fall back to disk reads.
+        JPGs only (never written to images/), so they always fall back to disk reads.
         """
         from collab_splats.localization.viz import (
             correspondences_for_ref,
@@ -673,20 +673,21 @@ class LocalizePage(param.Parameterized):
         )
 
         # Top-k match-pair figures, best-first. Boundary adapter: resolve each ranked ref frame's
-        # pixels to an RGB array — 'reconstruction' frames from the canonical store, 'localized'
-        # frames from their on-disk JPG (never written to frames.zarr).
-        from collab_splats.preproc.frame_store import FrameStore
+        # pixels to an RGB array — 'reconstruction' frames from the canonical images/ directory,
+        # 'localized' frames from their on-disk JPG (never written to images/).
+        from collab_splats.preproc import frames as fr
         from collab_splats.utils.image import open_image
 
-        store = FrameStore.open(frames_zarr) if frames_zarr is not None else None
         match_figs = []
         for ref in loc.ranked_ref_frames[: config.top_k_viz]:
             is_reconstruction = ref < len(out.frame_sources) and out.frame_sources[ref] == "reconstruction"
-            if is_reconstruction and store is not None:
-                fi = FrameStore.frame_idx_from_path(out.ref_image_paths[ref])
-                ref_image = store.image_by_frame_idx(fi)
+            if is_reconstruction and images_dir is not None:
+                # Looked up by source frame index, so a DB whose ids carry a different
+                # extension than the store on disk still resolves.
+                fi = fr.frame_idx_from_path(out.ref_image_paths[ref])
+                ref_image = fr.read_frames(images_dir, idxs=[fi])[0]
             else:
-                # localized/ frame → disk (never written to frames.zarr)
+                # localized/ frame → disk (never written to images/)
                 if not Path(out.ref_image_paths[ref]).exists():
                     continue
                 ref_image = np.asarray(open_image(out.ref_image_paths[ref]).convert("RGB"))

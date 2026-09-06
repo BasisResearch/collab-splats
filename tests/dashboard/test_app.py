@@ -658,7 +658,7 @@ def test_restore_selection_accepts_a_processed_only_scene(tmp_path):
 
 
 def test_autoload_current_noop_on_blank_selection(tmp_path, monkeypatch):
-    """Blank selection ('— select a scene —') must probe nothing: no ffprobe, no rclone."""
+    """Blank selection ('— select a scene —') must probe nothing: no container parse, no rclone."""
     app, source = _app(tmp_path)
     probed = []
     monkeypatch.setattr(app, "_update_max_frames_bound", probed.append)

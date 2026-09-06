@@ -3,21 +3,24 @@ Keyframe selection: which frames to keep, and the three methods that pick them.
 
 sample_fps, sample_uniform and sample_optical_flow each take a quality report
 from preproc.qa and filter it through filter_frame_quality — the one place a
-threshold meets the report. qa measures; this module decides. Decoding and
-video metadata live in preproc.video.
+threshold meets the report. qa measures; this module decides. context_indices
+builds the constant-rate grid both the fps sampler and the VDA context stream
+select on. Decoding and video metadata live in preproc.video.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Callable
 
 import cv2
 import numpy as np
+from scipy.stats import median_abs_deviation
 
 from collab_splats.preproc.qa import analysis_gray
-from collab_splats.preproc.video import context_indices, get_video_info, iter_frames
+from collab_splats.preproc.video import get_video_info, iter_frames
 from collab_splats.utils.progress import progress
 
 logger = logging.getLogger(__name__)
@@ -32,48 +35,44 @@ logger = logging.getLogger(__name__)
 def filter_frame_quality(
     report: dict,
     *,
-    laplacian_min: float = 50.0,
-    exposure_mean_range: tuple[float, float] = (20.0, 235.0),
-    exposure_min_std: float = 10.0,
-    blur_max: float | None = None,
+    sharpness_k: float = 2.0,
+    max_clipped_frac: float = 0.25,
 ) -> np.ndarray:
     """
     Per-frame usability mask over a quality report's photometry columns.
 
-    - Returns one bool per frame, True = usable. Positive polarity, matching the
-      name: a filter_* reports what survives.
-    - Indexed by frame index directly — compute_video_quality enumerates every
-      frame, so frame_idx is contiguous 0..N-1.
-    - blur_max is OFF by default. Crete-Roffet `blur` saturates at 1.0 on any
-      low-detail frame (a flat field and a single sharp edge both score 1.0), so
-      thresholding it discards sharp frames of plain surfaces. `laplacian` is the
-      sharpness gate; `blur` is there for a caller who knows the trap.
-
     Args:
-        laplacian_min: Laplacian variance below which a frame is soft.
-        exposure_mean_range: brightness band; outside is crushed or blown.
-        exposure_min_std: contrast floor; below it the frame is flat.
-        blur_max: optional Crete-Roffet ceiling, higher = blurrier.
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        sharpness_k: robust z-score cut on log(laplacian); larger keeps more.
+        max_clipped_frac: ceiling on clipped_low_frac + clipped_high_frac.
+
+    Returns:
+        (N,) bool, True = keep, indexed by source frame index.
     """
     f = report["frames"]
     lap = np.asarray(f["laplacian"], dtype=float)
-    mean = np.asarray(f["exposure_mean"], dtype=float)
-    std = np.asarray(f["exposure_std"], dtype=float)
-    lo, hi = exposure_mean_range
+    if lap.size == 0:
+        return np.zeros(0, dtype=bool)
 
-    # Sharp enough: Laplacian variance, not Crete-Roffet blur (which saturates)
-    sharp = lap >= laplacian_min
+    # Sharpness is relative: laplacian variance scales with resolution, texture and
+    # content, so the cut is a robust z-score on the log rather than an absolute value.
+    log_lap = np.log(np.clip(lap, 1e-6, None))
+    centre = float(np.median(log_lap))
+    spread = float(median_abs_deviation(log_lap, scale="normal"))
 
-    # Exposed usably: inside the brightness band AND carrying some contrast
-    exposed = (mean >= lo) & (mean <= hi) & (std >= exposure_min_std)
+    # A constant column means every frame is equally sharp — there is nothing to
+    # cut. A zero MAD on a column that is NOT constant only means over half the
+    # frames sit exactly on the median; the cut then falls on the median itself,
+    # which is still the right answer and still divides by nothing.
+    if log_lap.min() == log_lap.max():
+        sharp = np.ones_like(lap, dtype=bool)
+    else:
+        sharp = log_lap >= centre - sharpness_k * spread
 
-    usable = sharp & exposed
+    # Clipping is absolute: a pixel at 0 or 255 recorded nothing recoverable.
+    clipped = np.asarray(f["clipped_low_frac"], dtype=float) + np.asarray(f["clipped_high_frac"], dtype=float)
 
-    # Optional perceptual-blur ceiling, off unless the caller asks for it
-    if blur_max is not None:
-        usable &= np.asarray(f["blur"], dtype=float) <= blur_max
-
-    return usable
+    return sharp & (clipped <= max_clipped_frac)
 
 
 ########################################################################
@@ -231,93 +230,88 @@ class OpticalFlowFrameSelector:
 
 
 ########################################################################
+# Selection grid — constant-rate source indices, shared by the keyframe
+# sampler and the VDA context stream so the two agree by construction.
+########################################################################
+
+
+def context_indices(video_path: str | Path, *, target_fps: float, info: dict | None = None) -> list[int]:
+    """
+    Source frame indices on a constant-rate grid at target_fps.
+
+    Args:
+        video_path: source video.
+        target_fps: grid rate; must be positive.
+        info: a get_video_info dict, to hoist the probe out of a loop.
+
+    Returns:
+        Ascending source frame indices. Stride floors at 1 — a rate above the
+        source rate cannot sample sub-frame.
+    """
+    # target_fps is the contract here, so an absent one is a config error, not a default
+    if target_fps is None or target_fps <= 0:
+        raise ValueError(f"context_indices needs a positive target_fps, got {target_fps!r}")
+
+    # Reuse a caller's probe when given — a fresh one costs a container parse
+    info = info if info is not None else get_video_info(video_path)
+    total = info["total_frames"]
+    if total == 0:
+        return []
+
+    native_fps = info["fps"] or 30.0
+    step = max(1, int(round(native_fps / target_fps)))
+    return list(range(0, total, step))
+
+
+########################################################################
 # Report-driven samplers
 ########################################################################
 
 
-def _sample_by_quality(
+def _eligible(report: dict, *, quality: dict | None) -> np.ndarray:
+    """
+    Source frame indices a sampler may select from.
+
+    Args:
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        quality: overrides for filter_frame_quality's thresholds.
+
+    Returns:
+        (M,) int64, ascending.
+    """
+    pool = np.flatnonzero(filter_frame_quality(report, **(quality or {})))
+
+    if pool.size == 0:
+        raise ValueError("no eligible frames: the quality filter rejected every frame")
+
+    return pool
+
+
+def _decode_selection(
     video_path: str,
-    targets: list[int],
+    chosen: Sequence[int],
     *,
-    total: int,
     report: dict,
-    quality: dict | None,
-    search_radius: int,
     on_progress,
     desc: str,
-    candidates: Sequence[int] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
-    Pick one frame per target from its window, then decode exactly those.
+    Decode exactly the selected frames, in one pass, as RGB.
 
-    - The report supplies sharpness for every frame, so the winner is chosen
-      BEFORE any decode: this touches len(targets) frames where the pre-report
-      code decoded the whole union of windows, ~(2*search_radius + 1) times more.
-    - Quality picks the winner WITHIN each window only. The targets come from the
-      caller, so it never decides which regions of the video get sampled — a
-      stretch of unusable footage still contributes its share of frames.
-    - candidates restricts BOTH the target and its substitutes to a fixed index grid
-      (the VDA context grid), so every keyframe is a grid member by construction. The
-      window radius is then counted in grid steps, not source frames.
+    Args:
+        video_path: source video.
+        chosen: ascending source frame indices.
+        report: the quality report the blur_score column is read from.
+        on_progress: optional (done, total) callback.
+        desc: progress-bar label.
+
+    Returns:
+        (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
     """
-    if not targets:
-        return [], []
-
-    # Thresholds meet the report here, once, on behalf of every caller
-    usable = filter_frame_quality(report, **(quality or {}))
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
-    # Window radius: half the target spacing, capped at search_radius. This does NOT
-    # make the windows disjoint — grid mode takes an average spacing, so irregular
-    # targets still overlap. The dedup pass below keeps the index map one-frame-one-row.
-    if candidates is not None:
-        # Grid mode: spacing and radius are counted in grid steps, and each target
-        # snaps to the first grid member at or after it before the window is cut.
-        grid = np.asarray(sorted({int(c) for c in candidates}), dtype=np.int64)
-        if grid.size == 0:
-            raise ValueError("_sample_by_quality: candidates is empty")
-
-        # The grid indexes `usable`/`laplacian` directly, so an out-of-range member is
-        # not a lookup error but silent corruption: a negative one wraps to the far end
-        # of the video and writes a negative frame_idx no downstream row can match.
-        if grid[0] < 0 or grid[-1] >= total:
-            raise ValueError(
-                f"_sample_by_quality: candidates span [{int(grid[0])}, {int(grid[-1])}], "
-                f"outside the video's {total} frames"
-            )
-
-        spacing = grid.size / len(targets) if len(targets) > 1 else grid.size
-        radius = min(max(int((spacing - 1) // 2), 0), search_radius)
-        positions = np.clip(np.searchsorted(grid, targets), 0, grid.size - 1)
-        windows = [grid[max(0, p - radius) : p + radius + 1].tolist() for p in positions]
-    else:
-        # The narrowest gap, not the first one: irregular targets whose first gap is the
-        # widest would otherwise cut windows that overlap and collapse onto one frame
-        spacing = int(np.diff(np.asarray(targets)).min()) if len(targets) > 1 else total
-        radius = min(max((spacing - 1) // 2, 0), search_radius)
-        windows = [sorted({min(max(t + o, 0), total - 1) for o in range(-radius, radius + 1)}) for t in targets]
-
-    # Per target, prefer a usable frame and break ties on sharpness. max() over an
-    # ascending range returns the FIRST maximal element, matching the old strict
-    # `key > best` comparison — the tie-break is parity-critical.
-    chosen: list[int] = [max(window, key=lambda i: (bool(usable[i]), float(laplacian[i]))) for window in windows]
-
-    # Two targets can land on one frame: overlapping search windows when the target gaps
-    # are irregular, or a candidate grid coarser than the frame budget. Keep the first
-    # and say so rather than writing the same frame into the store twice.
-    deduped = list(dict.fromkeys(chosen))
-    if len(deduped) != len(chosen):
-        logger.warning(
-            "%d of %d targets collapsed onto an already-chosen frame (overlapping search "
-            "windows, or a candidate grid too coarse for the frame budget); keeping %d unique frames",
-            len(chosen) - len(deduped),
-            len(chosen),
-            len(deduped),
-        )
-        chosen = deduped
-
     # One ffmpeg select pass over exactly the frames we keep
-    decoded = dict(iter_frames(video_path, indices=chosen))
+    decoded = dict(iter_frames(video_path, indices=list(chosen)))
 
     frames: list[np.ndarray] = []
     records: list[dict] = []
@@ -341,41 +335,36 @@ def sample_uniform(
     *,
     max_frames: int,
     report: dict,
-    search_radius: int = 3,
     quality: dict | None = None,
     on_progress: Callable[[int, int], None] | None = None,
-    candidates: Sequence[int] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
-    Exactly max_frames evenly-spaced frames spanning the whole video.
+    Exactly max_frames evenly-spaced picks from the eligible pool.
 
-    - The COUNT is the contract; spacing falls out of the video length.
-    - The count can come in short if two targets pick the same frame; a warning
-      names the cause. Duplicates are dropped, never written to the store twice.
-    - report is required — a quality report from qa.compute_video_quality or
-      qa.load_video_quality. quality= overrides filter_frame_quality's thresholds.
-    - candidates: restrict every selected frame to this index grid (see _sample_by_quality).
+    Args:
+        video_path: source video.
+        max_frames: how many frames to keep — the COUNT is the contract.
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        quality: overrides for filter_frame_quality's thresholds.
+        on_progress: optional (done, total) callback.
+
+    Returns:
+        (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
     """
-    info = get_video_info(str(video_path))
-    total = info["total_frames"]
-    if total == 0 or max_frames <= 0:
+    if max_frames <= 0:
         return [], []
 
-    # N evenly-spaced indices spanning the video, endpoint-anchored. Cap at the
-    # source length then dedup: rounding collides as max_frames approaches total.
-    targets = np.unique(np.linspace(0, total - 1, min(max_frames, total)).round().astype(int)).tolist()
+    pool = _eligible(report, quality=quality)
 
-    return _sample_by_quality(
-        video_path,
-        targets,
-        total=total,
-        report=report,
-        quality=quality,
-        search_radius=search_radius,
-        on_progress=on_progress,
-        desc="Uniform sampling",
-        candidates=candidates,
-    )
+    # Spacing is even in POOL index, not in time: budget is not spent inside
+    # footage the filter just condemned.
+    if pool.size <= max_frames:
+        logger.warning("max_frames=%d but only %d eligible frames; keeping the whole pool", max_frames, pool.size)
+        chosen = pool.tolist()
+    else:
+        chosen = pool[np.linspace(0, pool.size - 1, max_frames).round().astype(int)].tolist()
+
+    return _decode_selection(video_path, chosen, report=report, on_progress=on_progress, desc="Uniform sampling")
 
 
 def sample_fps(
@@ -385,22 +374,23 @@ def sample_fps(
     report: dict,
     min_frames: int | None = None,
     max_frames: int | None = None,
-    search_radius: int = 3,
     quality: dict | None = None,
     on_progress: Callable[[int, int], None] | None = None,
-    candidates: Sequence[int] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
-    One frame every 1/fps seconds; re-spread if the count falls outside the band.
+    One frame every 1/fps seconds, each snapped to the nearest eligible frame.
 
-    - The SPACING is the contract, so the baseline between consecutive frames is
-      fixed regardless of video length and the count floats.
-    - Outside [min_frames, max_frames] the targets are re-spread evenly over the
-      WHOLE video, never truncated — truncation would hand the reconstructor half
-      a scene.
-    - The band binds on TARGETS, not on the result: the count can still come in
-      under min_frames if two targets pick the same frame; a warning names the cause.
-    - candidates: restrict every selected frame to this index grid (see _sample_by_quality).
+    Args:
+        video_path: source video.
+        fps: target rate — the SPACING is the contract, the count floats.
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        min_frames: floor; a count below it re-spreads over the whole video.
+        max_frames: ceiling; a count above it re-spreads over the whole video.
+        quality: overrides for filter_frame_quality's thresholds.
+        on_progress: optional (done, total) callback.
+
+    Returns:
+        (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
     """
     # fps is the contract here, so an absent one is a config error, not a default
     if fps is None or fps <= 0:
@@ -411,11 +401,14 @@ def sample_fps(
     if total == 0:
         return [], []
 
-    # One source of truth for the stride: passing the probe through means a context grid
-    # built at this same rate contains these targets by construction, not by coincidence
+    pool = _eligible(report, quality=quality)
+
+    # One source of truth for the stride: a context grid built at this same rate
+    # contains these targets by construction, not by coincidence
     targets = context_indices(video_path, target_fps=fps, info=info)
 
-    # Clamp the floating count into the band by re-spreading, never by truncating
+    # Clamp the floating count into the band by re-spreading over the pool, never by
+    # truncating — truncation would hand the reconstructor half a scene
     requested = len(targets)
     bounded = requested
     if max_frames is not None:
@@ -424,7 +417,7 @@ def sample_fps(
         bounded = max(bounded, min(min_frames, total))
 
     if bounded != requested:
-        targets = np.unique(np.linspace(0, total - 1, min(bounded, total)).round().astype(int)).tolist()
+        targets = pool[np.linspace(0, pool.size - 1, min(bounded, pool.size)).round().astype(int)].tolist()
         logger.warning(
             "fps=%.3f wanted %d frames, outside [min_frames=%s, max_frames=%s]; re-spread to "
             "%d frames over the whole video (effective %.3f fps)",
@@ -436,17 +429,16 @@ def sample_fps(
             (info["fps"] or 30.0) * len(targets) / total,
         )
 
-    return _sample_by_quality(
-        video_path,
-        targets,
-        total=total,
-        report=report,
-        quality=quality,
-        search_radius=search_radius,
-        on_progress=on_progress,
-        desc="fps sampling",
-        candidates=candidates,
-    )
+    # Snap each target to the nearest eligible frame, then dedup: two targets either
+    # side of an excised stretch can snap to the same survivor. The clip to
+    # [1, pool.size - 1] keeps both pos - 1 and pos in range for a one-frame pool,
+    # where they collapse onto the same index and the choice is the same either way.
+    pos = np.clip(np.searchsorted(pool, targets), 1, pool.size - 1)
+    left, right = pool[pos - 1], pool[pos]
+    snapped = np.where(np.abs(targets - left) <= np.abs(right - targets), left, right)
+    chosen = sorted(set(snapped.tolist()))
+
+    return _decode_selection(video_path, chosen, report=report, on_progress=on_progress, desc="fps sampling")
 
 
 def sample_optical_flow(
@@ -465,15 +457,27 @@ def sample_optical_flow(
     """
     Keyframes by motion (LK disparity + rotation) and coverage (histogram diversity).
 
-    - Runs its own decode pass: LK disparity is measured against a MOVING keyframe
-      reference, which the report's fixed-stride pairs cannot supply. It does not
-      re-measure blur or exposure — those come from the report.
-    - A frame the report condemns is skipped as it arrives: the selector never
-      scores it and never adopts it as its reference, so it moves to the next.
-    - max_frames caps the result; frames scoring >= select_threshold are selected.
+    Runs its own decode pass: LK disparity is measured against a MOVING keyframe
+    reference, which the report's fixed-stride pairs cannot supply. Blur comes from
+    the report, not a recompute.
+
+    Args:
+        video_path: source video.
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        max_frames: cap on the result; None keeps every selected frame.
+        min_disparity: pixel motion scoring a full translation component.
+        select_threshold: score at or above which a frame is selected.
+        rotation_threshold_deg: rotation scoring a full rotation component.
+        lk_params: overrides for cv2.calcOpticalFlowPyrLK.
+        feature_params: overrides for cv2.goodFeaturesToTrack.
+        quality: overrides for filter_frame_quality's thresholds.
+        on_progress: optional (done, total) callback.
+
+    Returns:
+        (frames, records) — (H, W, 3) uint8 RGB arrays and their per-frame score rows.
     """
     info = get_video_info(str(video_path))
-    usable = filter_frame_quality(report, **(quality or {}))
+    pool = set(_eligible(report, quality=quality).tolist())
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
     selector = OpticalFlowFrameSelector(
@@ -492,9 +496,9 @@ def sample_optical_flow(
         desc="Optical flow selection",
         on_progress=on_progress,
     ):
-        # Report gate first: an unusable frame never reaches the selector, so it
+        # Pool gate first: an ineligible frame never reaches the selector, so it
         # cannot become the reference the next frames are scored against.
-        if idx >= len(usable) or not usable[idx]:
+        if idx not in pool:
             continue
 
         score, components = selector.score_frame(analysis_gray(bgr))

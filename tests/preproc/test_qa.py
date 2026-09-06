@@ -12,14 +12,11 @@ from collab_splats.preproc.qa import (
     compute_blur,
     compute_exposure,
     compute_frame_quality,
-    compute_parallax,
-    compute_translation,
+    compute_pair_motion,
     compute_video_quality,
     detect_orb,
     load_video_quality,
-    match_descriptors,
 )
-from collab_splats.preproc.video import get_video_info, iter_frames
 
 
 def _raise_usac_error(*args, **kwargs):
@@ -29,11 +26,27 @@ def _raise_usac_error(*args, **kwargs):
     raise cv2.error("USAC: bad model")
 
 
-def match_orb(gray_a, gray_b, *, n_features=1000):
+def _descriptors(n, seed=7):
     """
-    Detect both frames then match — a test convenience, not a module function.
+    n ORB-shaped 32-byte descriptors, random so mutual-best matching is the identity.
     """
-    return match_descriptors(detect_orb(gray_a, n_features=n_features), detect_orb(gray_b, n_features=n_features))
+    return np.random.default_rng(seed).integers(0, 256, (n, 32), dtype=np.uint8)
+
+
+def _pair_motion(pts_a, pts_b, **kwargs):
+    """
+    compute_pair_motion over two synthetic point sets that correspond by index.
+
+    Both sides share one descriptor table, so crossCheck pairs row i with row i and
+    the correspondences the function sees are exactly the inputs, in order. That is
+    what lets the geometry assertions below drive projected points, which no real
+    image pair produces on demand.
+    """
+    desc = _descriptors(len(pts_a))
+    feat_a = (tuple(cv2.KeyPoint(float(x), float(y), 1.0) for x, y in pts_a), desc)
+    feat_b = (tuple(cv2.KeyPoint(float(x), float(y), 1.0) for x, y in pts_b), desc)
+
+    return compute_pair_motion(feat_a, feat_b, **kwargs)
 
 
 ########################################################################
@@ -218,37 +231,52 @@ def test_compute_frame_quality_forwards_its_tuning(clipped_bgr):
 ########################################################################
 
 
-def test_match_orb_returns_paired_float32_arrays(noise_gray):
-    pts_a, pts_b = match_orb(noise_gray, np.roll(noise_gray, 17, axis=1))
-    assert pts_a.shape == pts_b.shape
-    assert pts_a.shape[1] == 2
-    assert pts_a.dtype == np.float32
-    assert len(pts_a) > 200
+def test_compute_pair_motion_returns_all_three_measures():
+    """
+    One call per pair, replacing match + translation + parallax.
+    """
+    rng = np.random.default_rng(0)
+    canvas = rng.integers(0, 255, (300, 400), dtype=np.uint8)
+    a, b = canvas[:240, :320], canvas[10:250, 8:328]
+
+    row = compute_pair_motion(detect_orb(a), detect_orb(b))
+
+    assert set(row) == {"n_matches", "translation_px", "parallax"}
+    assert row["n_matches"] > 20
+    assert 8.0 < row["translation_px"] < 20.0
+    # int, not np.int64: the report is serialised to JSON straight from this dict
+    assert isinstance(row["n_matches"], int)
 
 
-def test_match_orb_respects_n_features(noise_gray):
-    few, _ = match_orb(noise_gray, np.roll(noise_gray, 5, axis=1), n_features=50)
-    many, _ = match_orb(noise_gray, np.roll(noise_gray, 5, axis=1), n_features=1000)
-    assert len(few) < len(many)
+def test_compute_pair_motion_respects_n_features(noise_gray):
+    shifted = np.roll(noise_gray, 5, axis=1)
+    few = compute_pair_motion(detect_orb(noise_gray, n_features=50), detect_orb(shifted, n_features=50))
+    many = compute_pair_motion(detect_orb(noise_gray, n_features=1000), detect_orb(shifted, n_features=1000))
+    assert few["n_matches"] < many["n_matches"]
 
 
-def test_match_orb_on_featureless_frames_returns_empty():
-    # A flat image has no corners, so ORB returns no descriptors at all
-    flat = np.zeros((50, 50), np.uint8)
-    pts_a, pts_b = match_orb(flat, flat)
-    assert len(pts_a) == 0 and len(pts_b) == 0
-    assert pts_a.shape == (0, 2)
-
-
-def test_compute_translation_recovers_known_shift(noise_gray):
+def test_compute_pair_motion_recovers_known_shift(noise_gray):
     # Roll the image 17 px right; the median match displacement must be 17 px
-    pts_a, pts_b = match_orb(noise_gray, np.roll(noise_gray, 17, axis=1))
-    assert compute_translation(pts_a, pts_b) == pytest.approx(17.0, abs=1.0)
+    row = compute_pair_motion(detect_orb(noise_gray), detect_orb(np.roll(noise_gray, 17, axis=1)))
+    assert row["translation_px"] == pytest.approx(17.0, abs=1.0)
 
 
-def test_compute_translation_is_nan_without_matches():
-    empty = np.empty((0, 2), np.float32)
-    assert np.isnan(compute_translation(empty, empty))
+def test_compute_pair_motion_on_an_unmatchable_pair():
+    """
+    Two unrelated frames give zero matches and nan measures, not an exception.
+    """
+    # A flat frame has no corners, so ORB returns no descriptors at all. nan, not
+    # 0.0: with no matches the displacement is unknown, and 0.0 would read as "the
+    # camera held perfectly still", the opposite conclusion. compute_video_quality
+    # serialises these two columns as JSON null, which 0.0 would silently replace.
+    a = np.zeros((240, 320), np.uint8)
+    b = np.full((240, 320), 255, np.uint8)
+
+    row = compute_pair_motion(detect_orb(a), detect_orb(b))
+
+    assert row["n_matches"] == 0
+    assert np.isnan(row["translation_px"])
+    assert np.isnan(row["parallax"])
 
 
 def _project(points_3d):
@@ -267,37 +295,37 @@ def synthetic_scenes():
     return volume, plane
 
 
-def test_compute_parallax_high_when_depth_varies(synthetic_scenes):
+def test_parallax_high_when_depth_varies(synthetic_scenes):
     # Translation across a scene with real depth spread: a homography cannot
     # explain the pair, so most H inliers are lost relative to F.
     volume, _ = synthetic_scenes
-    pts_a, pts_b = _project(volume), _project(volume - np.array([0.8, 0.0, 0.0]))
-    assert compute_parallax(pts_a, pts_b) > 0.5
+    row = _pair_motion(_project(volume), _project(volume - np.array([0.8, 0.0, 0.0])))
+    assert row["parallax"] > 0.5
 
 
-def test_compute_parallax_zero_for_rotation_only(synthetic_scenes):
+def test_parallax_zero_for_rotation_only(synthetic_scenes):
     # A pure rotation is exactly a homography no matter how much depth exists
     volume, _ = synthetic_scenes
     theta = np.deg2rad(5.0)
     rot = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
-    pts_a, pts_b = _project(volume), _project(volume @ rot.T)
-    assert compute_parallax(pts_a, pts_b) < 0.1
+    row = _pair_motion(_project(volume), _project(volume @ rot.T))
+    assert row["parallax"] < 0.1
     # ...and the image content really did move, so translation alone cannot tell
     # this case apart from the planar one below.
-    assert compute_translation(pts_a, pts_b) > 10.0
+    assert row["translation_px"] > 10.0
 
 
-def test_compute_parallax_zero_for_translating_over_a_plane(synthetic_scenes):
+def test_parallax_zero_for_translating_over_a_plane(synthetic_scenes):
     # THE TRAP: a flat scene reads parallax 0.0 even under real translation,
     # because a plane is also exactly a homography. parallax alone cannot
     # distinguish "camera did not move" from "scene has no depth".
     _, plane = synthetic_scenes
-    pts_a, pts_b = _project(plane), _project(plane - np.array([0.8, 0.0, 0.0]))
-    assert compute_parallax(pts_a, pts_b) < 0.1
-    assert compute_translation(pts_a, pts_b) > 10.0
+    row = _pair_motion(_project(plane), _project(plane - np.array([0.8, 0.0, 0.0])))
+    assert row["parallax"] < 0.1
+    assert row["translation_px"] > 10.0
 
 
-def test_compute_parallax_is_nan_when_opencv_cannot_fit(monkeypatch):
+def test_parallax_is_nan_when_opencv_cannot_fit(monkeypatch):
     # USAC asserts instead of returning an empty model on configurations it cannot
     # estimate, and it does so at any size — not only below the 8-point floor.
     # Measured on frames 40/41 of tiny_video: 720 matches, 97.5% of them
@@ -308,16 +336,23 @@ def test_compute_parallax_is_nan_when_opencv_cannot_fit(monkeypatch):
     pts = (np.random.default_rng(0).random((50, 2)) * 100).astype(np.float32)
     monkeypatch.setattr(cv2, "findFundamentalMat", _raise_usac_error)
 
-    assert np.isnan(compute_parallax(pts, pts + 1.0))
+    row = _pair_motion(pts, pts + 1.0)
+
+    # The pair still reports its matches and its translation — only the fit is lost
+    assert np.isnan(row["parallax"])
+    assert row["n_matches"] == 50
+    assert row["translation_px"] == pytest.approx(np.sqrt(2.0), abs=1e-4)
 
 
-def test_compute_parallax_is_nan_below_eight_matches():
+def test_parallax_is_nan_below_eight_matches():
     # Eight is the fundamental matrix minimum; fewer is not a small sample, it is undefined
     pts = (np.random.default_rng(0).random((7, 2)) * 100).astype(np.float32)
-    assert np.isnan(compute_parallax(pts, pts + 1.0))
+    row = _pair_motion(pts, pts + 1.0)
+    assert np.isnan(row["parallax"])
+    assert row["n_matches"] == 7
 
 
-def test_compute_parallax_falls_as_the_ransac_threshold_loosens(synthetic_scenes):
+def test_parallax_falls_as_the_ransac_threshold_loosens(synthetic_scenes):
     # Bounds are not worth asserting — 1 - min(1, n_h/n_f) is in [0, 1] by
     # construction, and this fixture's >0.5 case already pins it harder. What is
     # worth pinning is that ransac_thresh_px reaches both fits and moves the
@@ -326,11 +361,19 @@ def test_compute_parallax_falls_as_the_ransac_threshold_loosens(synthetic_scenes
     # 0.7033 / 0.0333 at 1 / 3 / 5 / 50 px, with zero spread across MAGSAC draws.
     volume, _ = synthetic_scenes
     pts_a, pts_b = _project(volume), _project(volume - np.array([0.8, 0.0, 0.0]))
-    ladder = [compute_parallax(pts_a, pts_b, ransac_thresh_px=t) for t in (1.0, 3.0, 5.0, 50.0)]
+    ladder = [_pair_motion(pts_a, pts_b, ransac_thresh_px=t)["parallax"] for t in (1.0, 3.0, 5.0, 50.0)]
     assert ladder == sorted(ladder, reverse=True), ladder
     assert ladder[0] > 0.9 and ladder[-1] < 0.1
     # The default is 3.0, so the keyword-free call sits on the second rung
-    assert compute_parallax(pts_a, pts_b) == pytest.approx(ladder[1])
+    assert _pair_motion(pts_a, pts_b)["parallax"] == pytest.approx(ladder[1])
+
+
+def test_the_three_collapsed_helpers_are_gone():
+    """
+    match_descriptors/compute_translation/compute_parallax had one caller between them.
+    """
+    for dead in ("match_descriptors", "compute_translation", "compute_parallax"):
+        assert not hasattr(qa, dead), dead
 
 
 ########################################################################
@@ -519,11 +562,11 @@ def test_detect_orb_is_deterministic_so_the_cached_pair_loop_is_safe(noise_gray)
     """
     other = np.roll(noise_gray, 5, axis=1)
 
-    once_a, once_b = match_descriptors(detect_orb(noise_gray), detect_orb(other))
-    twice_a, twice_b = match_descriptors(detect_orb(noise_gray), detect_orb(other))
+    once = compute_pair_motion(detect_orb(noise_gray), detect_orb(other))
+    twice = compute_pair_motion(detect_orb(noise_gray), detect_orb(other))
 
-    assert np.array_equal(once_a, twice_a)
-    assert np.array_equal(once_b, twice_b)
+    assert once["n_matches"] == twice["n_matches"]
+    assert once["translation_px"] == twice["translation_px"]
 
 
 def test_detect_orb_on_a_featureless_frame_returns_no_descriptors():
@@ -557,11 +600,9 @@ def test_measure_photometry_and_motion_emits_only_the_frames_it_owns(tiny_video)
     """
     A range's lead-in frames are decoded to be somebody's partner, not measured.
     """
-    info = get_video_info(tiny_video)
-
     # A range owning frames 20-59, decoding from 18 so the pair straddling the
     # boundary has a partner: start=18, count=42, emit_from=20, stride=2.
-    frames, pairs = _measure_photometry_and_motion((tiny_video, 18, 42, 20, 2, info))
+    frames, pairs = _measure_photometry_and_motion((tiny_video, 18, 42, 20, 2))
 
     # The two lead-in frames produce no photometry row
     assert [row["frame_idx"] for row in frames] == list(range(20, 60))

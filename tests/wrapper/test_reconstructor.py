@@ -1,10 +1,7 @@
 import importlib.util
-import shutil
-import subprocess
 import types
-import warnings
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import cv2
 import numpy as np
@@ -19,7 +16,9 @@ from collab_splats.pointcloud.feedforward.base import (
     FeedforwardResult,
     build_pycolmap_reconstruction,
 )
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
+from collab_splats.preproc.undistort import calibrate_camera
+from collab_splats.wrapper import reconstructor as R
 from collab_splats.wrapper.reconstructor import Reconstructor
 
 # Import ConfigLoader directly from config.py to avoid wrapper/__init__.py
@@ -181,27 +180,26 @@ def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
     video.touch()
 
     # fps: rate + both band bounds
-    R.extract_frames(video, out / "a.zarr", "fps", 2.0, 5, 50)
+    R.extract_frames(video, out / "a" / "images", "fps", 2.0, 5, 50)
     assert calls == {
         "sampler": "fps",
         "fps": 2.0,
         "min_frames": 5,
         "max_frames": 50,
         "report": report,
-        "search_radius": 3,
     }
 
-    # uniform: max_frames is the count; no fps, no floor
-    R.extract_frames(video, out / "b.zarr", "uniform", None, 5, 50)
+    # uniform: max_frames is the count, with no fps and no floor — it spreads exactly
+    # that many picks over the eligible pool
+    R.extract_frames(video, out / "b" / "images", "uniform", None, 5, 50)
     assert calls == {
         "sampler": "uniform",
         "max_frames": 50,
         "report": report,
-        "search_radius": 3,
     }
 
     # optical_flow: max_frames caps the selector
-    R.extract_frames(video, out / "c.zarr", "optical_flow", None, 5, 50)
+    R.extract_frames(video, out / "c" / "images", "optical_flow", None, 5, 50)
     assert calls == {"sampler": "optical_flow", "max_frames": 50, "report": report}
 
 
@@ -213,12 +211,12 @@ def test_extract_frames_rejects_unknown_selection(tmp_path, monkeypatch):
     video = tmp_path / "v.mp4"
     video.touch()
     with pytest.raises(ValueError, match="frame_selection"):
-        R.extract_frames(video, tmp_path / "out.zarr", "balanced", None, 5, 50)
+        R.extract_frames(video, tmp_path / "out" / "images", "balanced", None, 5, 50)
 
 
 def test_extract_frames_records_fps_in_provenance(tmp_path, monkeypatch):
     """
-    frames.zarr must record the rate a scene was sampled at, not just the cap.
+    frames.json must record the rate a scene was sampled at, not just the cap.
     """
     from collab_splats.wrapper import reconstructor as R
 
@@ -246,10 +244,9 @@ def test_extract_frames_records_fps_in_provenance(tmp_path, monkeypatch):
 
     video = tmp_path / "v.mp4"
     video.touch()
-    R.extract_frames(video, tmp_path / "out" / "frames.zarr", "fps", 2.0, None, 50)
+    R.extract_frames(video, tmp_path / "out" / "images", "fps", 2.0, None, 50)
 
-    store = R.FrameStore.open(tmp_path / "out" / "frames.zarr")
-    prov = dict(store._store.attrs["provenance"])
+    prov = fr.read_manifest(tmp_path / "out" / "images")["provenance"]
     assert prov["fps"] == 2.0
     assert prov["method"] == "fps"
 
@@ -338,12 +335,12 @@ def test_reconstructor_backend_dir(tmp_path):
     assert rec.backend_dir == tmp_path / "out" / "vggtx"
 
 
-def test_reconstructor_no_images_dir(tmp_path):
-    """images/ JPG dir is retired — frames.zarr is the sole persistent frame store."""
+def test_reconstructor_images_dir(tmp_path):
+    """images/ is the one keyframe store — nothing derives a frames.zarr path any more."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    assert not hasattr(rec, "images_dir")
-    assert rec.frames_zarr == tmp_path / "out" / "frames.zarr"
+    assert rec.images_dir == tmp_path / "out" / "images"
+    assert not hasattr(rec, "frames_zarr")
 
 
 def test_reconstructor_semantics_cache_dir(tmp_path):
@@ -353,20 +350,20 @@ def test_reconstructor_semantics_cache_dir(tmp_path):
     assert rec.semantics_cache_dir == tmp_path / "out" / "semantics"
 
 
-def test_preprocess_skips_if_frames_zarr_exists(tmp_path):
-    """Skip extraction when frames.zarr already exists and overwrite=False."""
+def test_preprocess_skips_if_images_dir_exists(tmp_path):
+    """Skip extraction when images/ already exists and overwrite=False."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    rec.frames_zarr.mkdir(parents=True)
+    rec.images_dir.mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor.extract_frames") as mock_extract:
         result = rec.preprocess(overwrite=False)
 
     mock_extract.assert_not_called()
-    assert result == rec.frames_zarr
+    assert result == rec.images_dir
 
 
-def test_preprocess_runs_if_frames_zarr_missing(tmp_path):
+def test_preprocess_runs_if_images_dir_missing(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
 
@@ -375,13 +372,13 @@ def test_preprocess_runs_if_frames_zarr_missing(tmp_path):
         result = rec.preprocess(overwrite=False)
 
     mock_extract.assert_called_once()
-    assert result == rec.frames_zarr
+    assert result == rec.images_dir
 
 
 def test_preprocess_overwrite_reruns(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    rec.frames_zarr.mkdir(parents=True)
+    rec.images_dir.mkdir(parents=True)
 
     with patch("collab_splats.wrapper.reconstructor.extract_frames") as mock_extract:
         mock_extract.return_value = 1
@@ -481,11 +478,11 @@ def test_extract_semantics_skips_if_lifted_exists(tmp_path):
     mock_lift.assert_not_called()
 
 
-def test_extract_2d_features_reads_zarr_directly(tmp_path):
-    """_extract_2d_features delegates straight to extract_feature_cache — no temp-JPG bridge."""
+def test_extract_2d_features_forwards_the_images_dir(tmp_path):
+    """_extract_2d_features hands the scene's images/ dir straight to extract_feature_cache."""
     from collab_splats.wrapper import reconstructor as rec_mod
 
-    frames_zarr = tmp_path / "frames.zarr"
+    images_dir = tmp_path / "images"
     cache_dir = tmp_path / "semantics"
     sentinel = cache_dir / "dinov2.zarr"
     extractor = object()
@@ -493,21 +490,18 @@ def test_extract_2d_features_reads_zarr_directly(tmp_path):
 
     with (
         patch.object(rec_mod, "_get_extractor", return_value=extractor) as mock_get,
-        patch.object(rec_mod, "FrameStore") as mock_fs,
         patch.object(
             rec_mod,
             "extract_feature_cache",
-            lambda ext, frames, cache: calls.append((ext, frames, cache)) or sentinel,
+            lambda ext, images, cache: calls.append((ext, images, cache)) or sentinel,
         ),
     ):
-        result = rec_mod._extract_2d_features("dinov2", frames_zarr, cache_dir)
+        result = rec_mod._extract_2d_features("dinov2", images_dir, cache_dir)
 
-    # Extractor resolved by name, then fed the frames.zarr path + cache dir directly. The dir
-    # is used as given: the extractor names the store, so no per-extractor subdir is joined on.
+    # Extractor resolved by name, then fed the images/ dir + cache dir directly. The dir is
+    # used as given: the extractor names the store, so no per-extractor subdir is joined on.
     mock_get.assert_called_once_with("dinov2")
-    assert calls == [(extractor, frames_zarr, cache_dir)]
-    # No temp-export bridge: the reconstructor never touches FrameStore on this path
-    mock_fs.open.assert_not_called()
+    assert calls == [(extractor, images_dir, cache_dir)]
     # Sentinel cache path is propagated back unchanged
     assert result == sentinel
 
@@ -629,7 +623,7 @@ def test_mesh_runs_tsdf(tmp_path):
 
     with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
         mock_mesh.return_value = rec.backend_dir / "mesh.ply"
-        result = rec.mesh(result=mock_result, overwrite=True)
+        rec.mesh(result=mock_result, overwrite=True)
 
     mock_mesh.assert_called_once()
 
@@ -796,7 +790,7 @@ def test_run_pipeline_calls_stages_in_order(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.images_dir
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
     rec.mesh = lambda result=None, overwrite=False: calls.append("mesh") or tmp_path
@@ -810,7 +804,7 @@ def test_run_pipeline_subset(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.images_dir
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
 
     rec.run_pipeline(stages=["preproc", "pointcloud"])
@@ -829,13 +823,13 @@ def test_run_pipeline_dep_validation(tmp_path):
 
 
 def test_run_pipeline_dep_satisfied_by_existing_output(tmp_path):
-    """`--stages pointcloud` alone runs when a prior preprocess's frames.zarr exists on disk."""
+    """`--stages pointcloud` alone runs when a prior preprocess's images/ exists on disk."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
     calls = []
 
     # Preprocess output already present → dependency is satisfied without re-running it.
-    rec.frames_zarr.mkdir(parents=True, exist_ok=True)
+    rec.images_dir.mkdir(parents=True, exist_ok=True)
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
 
     rec.run_pipeline(stages=["pointcloud"])
@@ -843,7 +837,7 @@ def test_run_pipeline_dep_satisfied_by_existing_output(tmp_path):
 
 
 def test_run_pipeline_missing_dep_output_still_raises(tmp_path):
-    """pointcloud with no frames.zarr and no preproc stage → hard error."""
+    """pointcloud with no images/ and no preproc stage → hard error."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
 
@@ -862,7 +856,7 @@ def test_run_pipeline_default_uses_config_enabled(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.frames_zarr
+    rec.preprocess = lambda overwrite=False: calls.append("preprocess") or rec.images_dir
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.extract_semantics = lambda result=None, overwrite=False: calls.append("semantics") or tmp_path
     # report is always on and has no config flag, so a config-derived run always includes it
@@ -1013,11 +1007,10 @@ def test_run_feedforward_attaches_viewer_when_enabled(tmp_path):
         patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
         patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
         patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
-        patch.object(R, "FrameStore"),
     ):
         R._run_feedforward(
             backend="vggtx",
-            frames_zarr=tmp_path / "frames.zarr",
+            images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
             loop_closure=True,
             viz_enabled=True,
@@ -1042,11 +1035,10 @@ def test_run_feedforward_builds_lc_config_from_dict(tmp_path):
     with (
         patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
         patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
-        patch.object(R, "FrameStore"),
     ):
         R._run_feedforward(
             backend="vggtx",
-            frames_zarr=tmp_path / "frames.zarr",
+            images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
             loop_closure={"enabled": True, "submap_size": 32, "submap_overlap": 2},
             viz_enabled=False,
@@ -1071,11 +1063,10 @@ def test_run_feedforward_dict_enabled_false_skips_lc(tmp_path):
     with (
         patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
         patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure") as mock_lc_cls,
-        patch.object(R, "FrameStore"),
     ):
         R._run_feedforward(
             backend="vggtx",
-            frames_zarr=tmp_path / "frames.zarr",
+            images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
             loop_closure={"enabled": False, "submap_size": 32},
             viz_enabled=False,
@@ -1093,12 +1084,11 @@ def test_run_feedforward_invalid_lc_knob_raises(tmp_path):
 
     with (
         patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=MagicMock()),
-        patch.object(R, "FrameStore"),
     ):
         with pytest.raises(ValueError, match="Invalid pointcloud.loop_closure knob"):
             R._run_feedforward(
                 backend="vggtx",
-                frames_zarr=tmp_path / "frames.zarr",
+                images_dir=tmp_path / "images",
                 output_dir=tmp_path / "out",
                 loop_closure={"bogus_knob": 1},
                 viz_enabled=False,
@@ -1119,11 +1109,10 @@ def test_run_feedforward_no_viewer_when_viz_disabled(tmp_path):
         patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
         patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance),
         patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
-        patch.object(R, "FrameStore"),
     ):
         R._run_feedforward(
             backend="vggtx",
-            frames_zarr=tmp_path / "frames.zarr",
+            images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
             loop_closure=True,
             viz_enabled=False,
@@ -1145,11 +1134,10 @@ def test_run_feedforward_no_loop_closure_no_viewer(tmp_path):
         patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
         patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure") as mock_lc_cls,
         patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
-        patch.object(R, "FrameStore"),
     ):
         R._run_feedforward(
             backend="vggtx",
-            frames_zarr=tmp_path / "frames.zarr",
+            images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
             loop_closure=False,
             viz_enabled=True,
@@ -1175,7 +1163,7 @@ def test_build_localization_db_runs_when_missing(tmp_path):
     ):
         rec.build_localization_db(overwrite=False)
     # top_k comes from base.yaml's localization.top_k default (pairwise/vismatch fan-out)
-    build.assert_called_once_with(pc_zarr, "loma", rec.frames_zarr, top_k=8, overwrite=False)
+    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, top_k=8, overwrite=False)
 
 
 ########################################
@@ -1196,12 +1184,12 @@ def test_leaf_stages_derived_from_dep_graph():
 
 
 def _seed_disk_reconstruction(rec, frame_idxs, image_names):
-    """Write a frames.zarr and a COLMAP reconstruction the way a finished run leaves them."""
-    FrameStore.create(
-        rec.frames_zarr,
+    """Write an images/ store and a COLMAP reconstruction the way a finished run leaves them."""
+    fr.write_frames(
+        rec.images_dir,
         [np.zeros((4, 6, 3), dtype=np.uint8) for _ in frame_idxs],
         [{"frame_idx": fi} for fi in frame_idxs],
-        provenance={"video_path": "v.mp4"},
+        {"video_path": "v.mp4"},
     )
     n = len(frame_idxs)
     recon = build_pycolmap_reconstruction(
@@ -1364,7 +1352,7 @@ def test_run_pipeline_named_upstream_stages_resume_instead_of_refusing(tmp_path)
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
     # Both upstream stages already complete on disk; only the named leaf still has work.
-    rec.frames_zarr.mkdir(parents=True, exist_ok=True)
+    rec.images_dir.mkdir(parents=True, exist_ok=True)
     _seed_pointcloud_markers(rec)
     calls = []
     rec.preprocess = lambda overwrite=False: calls.append("preproc")
@@ -1384,7 +1372,7 @@ def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
     _seed_pointcloud_markers(rec)
     (rec.backend_dir / "mesh.ply").touch()
     calls = []
-    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.images_dir
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
     rec.mesh = lambda result=None, overwrite=False: calls.append("mesh")
     rec.reconstruction_quality_report = lambda overwrite=False: calls.append("reconstruction_quality_report")
@@ -1425,7 +1413,7 @@ def test_report_is_appended_with_no_config_boolean_to_turn_it_off(tmp_path):
     )
     rec = Reconstructor(config)
     calls = []
-    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.frames_zarr
+    rec.preprocess = lambda overwrite=False: calls.append("preproc") or rec.images_dir
     rec.build_pointcloud = lambda overwrite=False: calls.append("pointcloud")
     rec.reconstruction_quality_report = lambda overwrite=False: calls.append("reconstruction_quality_report")
 
@@ -1555,7 +1543,7 @@ def test_nerfstudio_method_rejected():
 
 def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):
     """
-    The video branch renders all five report PNGs beside frames.zarr; the dir branch none.
+    The video branch renders all five report PNGs beside images/; the dir branch none.
     """
     from collab_splats.wrapper import reconstructor as R
 
@@ -1592,7 +1580,7 @@ def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):
     out = tmp_path / "scene"
     video = tmp_path / "v.mp4"
     video.touch()
-    R.extract_frames(video, out / "frames.zarr", "fps", 1.0, None, 50)
+    R.extract_frames(video, out / "images", "fps", 1.0, None, 50)
 
     expected = {"photometric.png", "motion.png"}
     assert {p.name for p in out.glob("*.png")} == expected
@@ -1604,5 +1592,30 @@ def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):
     img_dir.mkdir()
     cv2.imwrite(str(img_dir / "a.jpg"), np.zeros((4, 4, 3), dtype=np.uint8))
     out2 = tmp_path / "scene2"
-    R.extract_frames(img_dir, out2 / "frames.zarr", "fps", 1.0, None, 50)
+    R.extract_frames(img_dir, out2 / "images", "fps", 1.0, None, 50)
     assert list(out2.glob("*.png")) == []
+
+
+def test_undistort_provenance_records_the_camera_not_a_profile(tmp_path, monkeypatch):
+    # Provenance carries pycolmap's cameras and no roi: the alpha=0 crop is gone, so
+    # there is no crop offset left for a reader to reapply to the principal point.
+    camera = pycolmap.Camera(
+        model="OPENCV", width=64, height=48, params=[60.0, 60.0, 32.0, 24.0, -0.2, 0.0, 0.0, 0.0]
+    )
+
+    # autospec, not a bare lambda: calibrate_camera(images_dir, *, max_frames) takes a
+    # DIRECTORY now, and a signature-blind stub stays green through a wrong call site
+    stub = create_autospec(calibrate_camera, return_value=camera)
+    monkeypatch.setattr(R, "calibrate_camera", stub)
+
+    prov = {}
+    out = R._apply_undistortion(np.zeros((3, 48, 64, 3), np.uint8), tmp_path, prov)
+
+    stub.assert_called_once_with(tmp_path)
+    assert "roi" not in prov["undistort"] and "profile" not in prov["undistort"]
+    assert prov["undistort"]["camera"]["model"] == "OPENCV"
+    assert prov["undistort"]["undistorted_camera"]["model"] == "PINHOLE"
+    assert out.shape[1:3] == (
+        prov["undistort"]["undistorted_camera"]["height"],
+        prov["undistort"]["undistorted_camera"]["width"],
+    )

@@ -1,11 +1,11 @@
 Preprocessing
 =============
 
-Video preprocessing: the canonical keyframe store, ffmpeg decode and video
-metadata (``video``), capture-quality measurement (``qa``), and keyframe
+Video preprocessing: the canonical keyframe store (``frames``), ffmpeg decode and
+video metadata (``video``), capture-quality measurement (``qa``), and keyframe
 selection (``sampling``).
 
-.. automodule:: collab_splats.preproc.frame_store
+.. automodule:: collab_splats.preproc.frames
    :members:
    :show-inheritance:
 
@@ -25,44 +25,49 @@ Quickstart
 ----------
 
 The preprocess stage decodes the source video exactly once and writes
-``output_path/frames.zarr`` — chunked-per-frame RGB images, columnar
-selection records, and provenance attrs. This is the sole persistent frame
-artifact; there is no ``output_path/images/`` JPG directory. Every pixel
-consumer (pointcloud, semantics, localization, dashboard) reads frames from
-this store instead of re-decoding the video. Path-locked consumers (e.g.
-model preprocessing that requires a real image directory) use
-``FrameStore.export()`` to materialize a transient JPG dir that the caller
-deletes after use.
+``output_path/images/frame_NNNNNN.png`` — a COLMAP-style directory of lossless
+PNGs named by SOURCE video frame index — beside ``output_path/frames.json``,
+which holds the selection records and the provenance COLMAP has no slot for.
+This is the sole persistent frame artifact. Every pixel consumer (pointcloud,
+semantics, localization, dashboard) reads the directory instead of re-decoding
+the video, and path-locked consumers take the directory itself, so nothing
+stages a second copy.
 
 .. code-block:: python
 
-   from collab_splats.preproc import FrameStore
+   from collab_splats.preproc import frame_paths, read_frames, read_manifest
 
-   store = FrameStore.open(run_dir / "frames.zarr")
-   img = store.image_by_frame_idx(120)   # (H,W,3) RGB, by source video index
-   paths = store.export(tmp_dir)          # transient JPGs for path-locked tools
+   paths = frame_paths(run_dir / "images")       # sorted, one path per selected frame
+   imgs = read_frames(run_dir / "images")        # (N, H, W, 3) uint8 RGB
+   manifest = read_manifest(run_dir / "images")  # selection records + provenance
+
+Every function in this module takes and returns **RGB**; the BGR conversions
+``cv2`` needs happen inside ``frames.py`` and nowhere else.
 
 ``pointcloud.zarr`` (written by the pointcloud stage) keeps its own
-model-resolution ``images`` tensor — that is not a duplicate of
-``frames.zarr``; it is used directly by mesh extraction, bundle adjustment,
-and point colorization at the model's inference resolution.
+model-resolution ``images`` tensor — that is not a duplicate of the keyframe
+directory; it is used directly by mesh extraction, bundle adjustment, and point
+colorization at the model's inference resolution.
 
 See ``docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb`` for
 the full frame-selection walkthrough (uniform vs. optical-flow sampling,
 blur/exposure gating).
 
+Migration
+---------
+
+Scenes written before this format hold a ``frames.zarr`` store and no ``images/``
+directory. ``read_manifest`` raises ``FileNotFoundError`` on them rather than
+falling back to the old store. Convert one without re-decoding the video::
+
+   python scripts/migrate_frames_zarr.py <scene_dir> [<scene_dir> ...]
+   python scripts/migrate_frames_zarr.py --all <processed_root>
+
 Known limitations
 ------------------
 
-- **No ``frames/`` JPG dir is written.** ``frames.zarr`` is the sole frame
-  store: ``creator.setup_inference`` takes the store path directly, and
-  semantic feature extraction streams from it via
-  ``BaseFeatureExtractor.extract_and_cache_from_zarr`` — neither consumer is
-  path-locked any more, so the JPG export (and the ``_write_frames_jpegs``
-  helper that produced it) is gone. Path-locked third-party tools get
-  transient JPGs on demand from ``FrameStore.export(tmp_dir)``. Dashboard
-  localization reference thumbnails (``_build_result_figures`` in
-  ``collab_splats/dashboard/localize.py``) read pixels from ``frames.zarr``
-  via ``plot_correspondences(..., frames_zarr=...)`` for reconstruction-
-  sourced frames; ``localized`` frames (appended post-hoc, never written to
-  ``frames.zarr``) still read from ``localized_frames/`` on disk.
+- **Dashboard localization thumbnails read two directories.** Reference frames
+  that came from the reconstruction live in ``images/``; ``localized`` frames are
+  appended post-hoc and are never written there, so they are read from
+  ``localized_frames/`` instead (``_build_result_figures`` in
+  ``collab_splats/dashboard/localize.py``).

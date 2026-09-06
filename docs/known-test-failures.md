@@ -1,9 +1,42 @@
 # Known Test Failures
 
+## 2026-09-05 — `av` is declared but missing from `uv.lock`, and `uv lock` cannot regenerate
+
+`pyproject.toml:35` declares `"av>=17.0"` — PyAV is a hard runtime dependency of
+`collab_splats/preproc/video.py` since the decode rewrite. **`uv.lock` has no `av` entry at
+all** (`grep '^name = "av"' uv.lock` → nothing), so a fresh `uv sync` produces an environment
+where importing `collab_splats.preproc` raises `ModuleNotFoundError: No module named 'av'`.
+The current venv is fine (`av 17.0.1`, installed out of band); only a from-lock install breaks.
+
+**The obvious fix does not work.** `uv lock` fails before it can add anything:
+
+```
+× Failed to build `bae @ git+https://github.com/pypose/bae.git@0.2.4`
+├─▶ The build backend returned an error
+hint: ... `bae` depends on `torch`, but doesn't declare it as a build dependency
+```
+
+`bae` needs `torch` at build time and does not declare it, so uv's build isolation cannot
+resolve the graph at all. `uv lock --offline` fails earlier still — it cannot fetch the pinned
+git commits. Neither failure has anything to do with `av`; the lock is simply not regenerable
+in this container as `pyproject.toml` currently stands.
+
+Unblocking it means adding
+
+```toml
+[tool.uv.extra-build-dependencies]
+bae = ["torch"]
+```
+
+to `pyproject.toml` and re-locking, which rewrites the whole lockfile. That is a dependency-
+owner change touching a file three concurrent sessions build against — deliberately **not**
+done from the preproc session. Until then, do not hand-edit `uv.lock`: its entries carry
+hashes and a hand-added block will not match what a re-lock produces.
+
 ## 2026-09-05 — env drift: `tests/wrapper/test_splats_stage.py` cannot collect, `gsplat.losses` missing
 
-`tests/wrapper/test_splats_stage.py` fails at COLLECTION, so a full `tests/wrapper` run
-aborts with `Interrupted: 1 error during collection` and reports no tests:
+`tests/wrapper/test_splats_stage.py` fails at COLLECTION, so any full `tests/wrapper` run
+either aborts or needs `--continue-on-collection-errors` to report the rest:
 
 ```
 E   ImportError: cannot import name 'losses' from 'gsplat'
@@ -17,20 +50,34 @@ The venv holds released **gsplat 1.4.0 from PyPI**, which has no `gsplat.losses`
 committed and correct.
 
 Not a code regression — no repo change causes it, and it predates the pointcloud-cleanup
-work. Workaround for a green run: `--ignore=tests/wrapper/test_splats_stage.py`. Real fix:
-rebuild gsplat from the pinned rev in the venv.
+work. Workaround for a green run: `--continue-on-collection-errors`, or
+`--ignore=tests/wrapper/test_splats_stage.py`. Real fix: rebuild gsplat from the pinned rev
+in the venv.
 
 `tests/wrapper/test_sfm_stage.py` was `test_vda_context.py` until 2026-09-05, when the VDA
 context stream was deleted and the surviving `_run_sfm` tests were renamed with the file. It
 used to be caught by both env gaps — it imported `_stub_reconstructor` from
 `test_splats_stage.py`, so it failed the same collection, and its `_run_sfm` tests then died
 on `importlib.metadata.version("instantsfm")` (`PackageNotFoundError`; `instantsfm` is not
-installed in this venv at all). Neither applies any more: the misfiled splats test moved back
-to `test_splats_stage.py`, dropping the cross-module import, and `_patched_sfm` stubs the
-version lookup alongside every other leg of that same dependency. The module collects and
-passes standalone in this venv — 10 tests, no ignore needed.
+installed in this venv at all). Neither applies any more: the shared stub moved to
+`tests/wrapper/_stubs.py` (`9c09585b`), the misfiled splats test moved back to
+`test_splats_stage.py`, dropping the cross-module import, and `_patched_sfm` stubs the version
+lookup alongside every other leg of that same dependency. The module collects and passes
+standalone in this venv — 10 tests, no ignore needed.
+
+One test lost coverage in that move rather than gaining it:
+`test_splats_conf_percentile_log_reports_the_masked_fraction` now lives in
+`test_splats_stage.py`, which is the module that cannot collect. It passed while it was
+misfiled in `test_sfm_stage.py` and does not run at all now — it is not a failure, it is
+simply not executed until gsplat is rebuilt from the pinned rev.
 
 ## 2026-08-23 — pre-existing on `refactor/cu121-uv-migration`: 2 `test_qa` OpenCV-cannot-fit tests + 4 env/working-tree failures
+
+**The two `test_qa` entries are RESOLVED as of 2026-09-05** — both pass on this branch
+(measured 52/52 in `tests/preproc/test_qa.py` before the Task 26 collapse), and
+`compute_parallax` no longer exists: the pair-motion helpers collapsed into
+`qa.compute_pair_motion`, so the first test is now
+`::test_parallax_is_nan_when_opencv_cannot_fit`. The original entry follows.
 
 `tests/preproc/test_qa.py::test_compute_parallax_is_nan_when_opencv_cannot_fit` and
 `::test_compute_video_quality_survives_a_pair_opencv_cannot_fit` fail identically on the base
@@ -62,6 +109,35 @@ same process.
 combo repro passes 2/2 post-fix. Production is unaffected by design — it always runs with
 feedforward imported (TF32 on), where a ±2 near-threshold match difference is not a
 correctness issue; parity is asserted at full precision, where the paths are byte-equal.
+
+## 2026-08-21 — NOT transient after all: 3 reconstructor/base.yaml failures, now committed state
+
+**2026-09-05 correction.** The entry below called these a concurrent session's *uncommitted*
+`configs/base.yaml` edit and predicted they would resolve when that session committed. The
+session committed the yaml and never updated the tests, so three of the six are now a
+standing red on `refactor/cu121-uv-migration`:
+
+```
+tests/wrapper/test_reconstructor.py::test_init_fills_defaults_from_base_yaml
+    assert rec.config["preproc"]["fps"] == 1.0      ->  assert 2.0 == 1.0
+tests/wrapper/test_reconstructor.py::test_mesh_clean_repair_defaults_off
+    assert ...kwargs["clean_repair"] is False       ->  assert True is False
+tests/wrapper/test_reconstructor.py::test_base_yaml_mesh_has_fidelity_keys
+    assert cfg["mesh"]["conf_percentile"] is None   ->  assert 20 is None
+```
+
+`configs/base.yaml` carries `fps: 2.0`, `clean_repair: true`, `conf_percentile: 20` on
+`refactor/cu121-uv-migration` (`391d44fb`), on `preproc/integration`, and on their merge base
+— all three identical. The three asserts are byte-identical across the same three trees. So
+this is a stale-test failure inherited from the mesh/splats work, not a merge artefact and
+not preproc's to resolve: `test_mesh_clean_repair_defaults_off` asserts a default the shipped
+config no longer has, and its *name* encodes the dead premise, so correcting it is a rename,
+not a value edit. Owed to the mesh owner.
+
+The other three names in the original entry (`test_build_localization_db_runs_when_missing`
+and the two in `test_reconstructor_loger_kwargs.py`) do pass now.
+
+The original entry follows.
 
 ## 2026-08-21 — transient: 6 reconstructor/base.yaml failures from a concurrent session's working tree
 
@@ -137,6 +213,14 @@ Not patched here. The notebook's whole narrative is "score frames, then gate the
 which is no longer how the module works; it is rebuilt in a separate pass where it
 can demonstrate the measure-then-select flow instead of being patched to compile
 (design doc §7, `docs/superpowers/specs/2026-08-22-preproc-cleanup-design.md`).
+
+**2026-09-05 update — `plot_quality_examples` resolved by deletion.** It and
+`plot_disparity_sensitivity` are gone from `collab_splats/preproc/viz.py`, along
+with the notebook cells that called them and the `_VideoFrameLookup` shim that
+faked a `FrameStore` for them — the committed `plot_quality_examples` traceback
+goes with them. Neither had a pipeline caller. The rest of this entry still
+stands: the notebook remains broken on `sample_frames` / `score_frames`, and the
+rebuild pass must not restore the two deleted plots.
 
 ## 2026-07-20 — frame-store refactor: notebook follow-ups (RESOLVED, superseded above)
 
@@ -246,3 +330,125 @@ Only Group C is env-sensitive and it lives in `pyproject [dev]` (uv installs it)
 env-independent test/code state. **Target:** the uv env passes iff it reproduces this baseline —
 964 passed, the 3 BA xfails, the 2 env skips — and adds no new failures. Ensure the uv build keeps
 `numpy>=2` (the `--no-deps` vggt-omega install already does).
+
+## vismatch not installed (env, not a code bug) — 2026-09-05
+
+`vismatch==1.3.1` is a declared dependency (`pyproject.toml:70`) that is **absent from
+`/opt/venv/reconstruction`** — not in `site-packages`, and no source tree on disk to put
+on `PYTHONPATH` the way `collab_data` can be. It fails **16 tests** in
+`tests/localization/test_local_matcher.py`, every one with
+`ModuleNotFoundError: No module named 'vismatch'`:
+
+```
+test_extract_returns_local_features            test_match_images_no_indices_when_unstable
+test_extract_handles_tensor_outputs            test_match_images_downgrades_on_recovery_failure
+test_extract_asserts_pixel_frame               test_probe_sets_stability_flag
+test_extract_passes_chw_unit_range_tensor      test_match_mutual_nn_for_allowlisted_model
+test_descriptor_level_match_unsupported        test_match_empty_descriptors_returns_empty
+test_match_images_pre_ransac_with_indices      test_match_still_raises_for_non_listed_model
+test_split_flag_off_for_unknown_wrappers       test_loma_match_without_payload_names_the_rebuild
+test_real_loma_split_extract_parity            test_real_loma_split_match_parity_after_zarr_roundtrip
+test_real_xfeat_general_path_matches_pairwise
+```
+
+(17 names — `test_real_xfeat_general_path_matches_pairwise` is one of the 16 plus the
+separately-listed TF32 entry above, which is a different, already-fixed failure mode.)
+
+**Do not `pip install` it into this venv to make them pass.** It is shared with several
+concurrent sessions, and `vismatch` hard-pins `uniception==0.1.1` and `lightning==2.3.3`,
+which `pyproject.toml:236-240` deliberately overrides during resolution. A plain install
+fights those overrides and can break the other sessions' environments. Restoring it is a
+`uv sync` in a container of its own.
+
+Confirm with:
+
+```bash
+/opt/venv/reconstruction/bin/python -c "import vismatch" ; ls -d \
+  /opt/venv/reconstruction/lib/python3.11/site-packages/vismatch*
+```
+
+## gsplat 1.4.0 installed against a v1.5.3 pin (env, not a code bug) — 2026-09-05
+
+`collab_splats/splats/losses.py` does `from gsplat import losses`. That module exists only in
+the commit `setup.sh` pins, `d2f5c0f` (v1.5.3). The env has **gsplat 1.4.0**, so the import
+raises and these suites **cannot be collected at all** — they are collection errors, not
+failures, and a `pytest tests/ -q` run will report them as errors before any test body runs:
+
+- `tests/wrapper/test_splats_stage.py`
+- `tests/evals/test_eval_splats.py`
+- `tests/splats/` (the whole directory)
+
+`tests/wrapper/test_vda_context.py` **used to be on this list and no longer is.** It never
+imported gsplat itself — it imported the `_stub_reconstructor` helper from
+`test_splats_stage.py`, which imports `SplatsConfig` at module level, and inherited the
+dependency through that. Commit `9c09585b` moved the helper to `tests/wrapper/_stubs.py`,
+which imports nothing from `collab_splats.splats`, and the file collects 33 tests again.
+Do not re-add it to any `--ignore` list.
+
+One test in it *does* still fail on gsplat:
+`test_splats_conf_percentile_log_reports_the_masked_fraction` patches
+`collab_splats.splats.trainer.train`, and importing that package raises
+`ImportError: cannot import name 'losses' from 'gsplat'`. It surfaces as
+`AttributeError: module 'collab_splats' has no attribute 'splats'`. One test, not a
+collection error — the other 32 still run.
+
+Plus four real failures from the same cause:
+
+- `tests/mesh/test_absent_confidence.py::test_splats_depth_targets_skip_masking_when_confidence_absent`
+- `tests/test_cu121_migration.py::test_import_all_modules` — asserts on a list of import
+  failures; the five it reports are `collab_splats.splats` and its `losses`, `rendering`,
+  `trainer`, `outputs` submodules, all the same `ImportError`
+- `tests/test_cu121_migration.py::test_gsplat_upstream_pinned` — `ModuleNotFoundError: No
+  module named 'gsplat.losses'`
+- `tests/test_cu121_migration.py::test_gsplat_commit_constant_matches_pyproject`
+
+Confirm with:
+
+```bash
+/opt/venv/reconstruction/bin/python -c "import gsplat; print(gsplat.__version__); \
+  print(hasattr(gsplat, 'losses'))"
+```
+
+Expected on a correct env: `1.5.3` / `True`. Observed 2026-09-05: `1.4.0` / `False`.
+
+Fix by reinstalling the pin (`setup.sh`, or the `gsplat` git pin in `pyproject.toml`) — do not
+work around it in code. Note that gsplat is the one break here that a pip install cannot fix:
+building it needs `nvcc`, and `/usr/local/cuda-12.1` in this container is runtime-only (no
+`bin/`). Restoring the pin needs a container with the CUDA build toolkit.
+
+`_run_sfm` integration coverage is **not** blocked by this. `tests/wrapper/test_sfm_stage.py`
+(ex `test_vda_context.py`) is the only suite exercising `Reconstructor._run_sfm` end to end,
+and since `9c09585b` it collects; its `_run_sfm` tests fail on the separate `instantsfm`
+break below.
+
+## `instantsfm` not installed (env, not a code bug) — 2026-09-05
+
+`collab_splats/wrapper/reconstructor.py:1197` calls `importlib.metadata.version("instantsfm")`
+to record backend provenance, which raises:
+
+```
+importlib.metadata.PackageNotFoundError: No package metadata was found for instantsfm
+```
+
+This is what actually blocks end-to-end coverage of the SfM stage. It fails the four
+`_run_sfm` tests in `tests/wrapper/test_sfm_stage.py` (the file was `test_vda_context.py`
+until the VDA context stream was deleted on 2026-09-05). Measured on the
+`preproc/integration` x `391d44fb` merge: that module reports `5 failed`, split **4
+instantsfm + 1 gsplat**, and nothing else — the 14 earlier instantsfm failures went with
+the VDA context tests, which are deleted.
+
+Same root cause as the other env breaks — a plain `uv sync` pruned the venv and `setup.sh`'s
+post-sync blocks were never re-run; `pyproject.toml:107-109` warns about exactly this. Unlike
+gsplat it needs no CUDA toolkit, so re-running the InstantSfM block of `setup.sh` fixes it.
+
+## `collab_data` not installed (env, not a code bug) — 2026-09-05
+
+`collab_splats/remote/sources.py:14` imports `collab_data.data_dashboard.rclone_client`. The
+package is not in the venv, so these fail at collection:
+
+- `tests/remote/test_sources.py`
+- `tests/remote/test_rerun.py`
+
+Because a collection error aborts the whole pytest run, this and the gsplat break above must
+both be `--ignore`d to get any result at all from `pytest tests/`. Neither is caused by repo
+code; do not work around either in source.

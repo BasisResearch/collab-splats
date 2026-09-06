@@ -24,7 +24,7 @@ import torch.nn.functional as F
 import zarr
 from PIL import Image
 
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc.frames import IMAGE_EXTS, frame_paths
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.utils.torch_utils import batch_iterator
 
@@ -234,9 +234,9 @@ def cache_store_path(semantics_dir: Path) -> Path:
     return store
 
 
-def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path:
+def extract_feature_cache(extractor, images_dir: Path, cache_dir: Path) -> Path:
     """
-    Extract patch features from a frames zarr into `cache_dir/<extractor>.zarr`.
+    Extract patch features from a scene's images/ directory into `cache_dir/<extractor>.zarr`.
 
     Re-entrant: a cache whose extractor name and frame count both match is returned untouched.
     The attrs that make a store look valid are written LAST, after every frame is on disk, so a
@@ -244,7 +244,7 @@ def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path
 
     Args:
         extractor: a BaseFeatureExtractor instance — supplies `.name`, `.patch_size`, `.forward`.
-        frames_zarr: path to the scene's canonical frames.zarr.
+        images_dir: the scene's images/ directory of frame_NNNNNN.<ext> keyframes.
         cache_dir: directory to write the 2D patch cache into.
 
     Returns:
@@ -252,10 +252,12 @@ def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path
     """
     zarr_path = Path(cache_dir) / f"{extractor.name}.zarr"
 
-    # Read through FrameStore, not raw zarr keys: the store's arrays are `images`/`frame_idx`
-    # and its attrs are record_keys/provenance/schema_version — no `frames` key, no `n_frames`.
-    frames = FrameStore.open(frames_zarr)
-    N = len(frames)
+    # One path at a time, never one decoded stack: a 300-frame scene at original resolution must
+    # not sit in RAM while the model runs.
+    paths = frame_paths(images_dir)
+    if not paths:
+        raise FileNotFoundError(f"No frame images ({list(IMAGE_EXTS)}) in {images_dir}")
+    N = len(paths)
 
     # A cache is valid when the extractor name and frame count both match
     if zarr_path.exists():
@@ -270,7 +272,7 @@ def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
 
     # Probe the first frame to learn (D, H_p, W_p) before allocating the store
-    first_frame = Image.fromarray(frames.image(0)).convert("RGB")
+    first_frame = Image.open(paths[0]).convert("RGB")
     with torch.no_grad():
         [first_feat] = extractor.forward([first_frame])
     D, H_p, W_p = first_feat.shape
@@ -288,7 +290,7 @@ def extract_feature_cache(extractor, frames_zarr: Path, cache_dir: Path) -> Path
 
     # Iterate the rest lazily — never more than one frame in RAM
     for i in range(1, N):
-        pil_img = Image.fromarray(frames.image(i)).convert("RGB")
+        pil_img = Image.open(paths[i]).convert("RGB")
         with torch.no_grad():
             [feat] = extractor.forward([pil_img])
         arr[i] = feat.cpu().float().numpy()

@@ -489,12 +489,12 @@ def test_collect_frames_max_frames_applies_after_filter(tmp_path):
     assert [Path(p).name for p in frames] == ["f0.png", "f2.png"]
 
 
-# ------------------- Video loading via FrameStore (single decode) ------------------- #
+# ------------------- Video loading via the images/ store (single decode) ------------------- #
 
 
 def test_load_video_single_decode(tmp_path, monkeypatch):
     """
-    _load_video uses FrameStore (single decode), not extract_frames (re-decode).
+    _load_video writes the images/ store once (single decode), not extract_frames (re-decode).
     """
     # Create synthetic frames and records
     n_frames = 5
@@ -525,7 +525,7 @@ def test_load_video_single_decode(tmp_path, monkeypatch):
     # Verify result contains the expected number of images (max_frames=3)
     assert len(result.images) == 3, f"Expected 3 images, got {len(result.images)}"
     assert all(img.exists() for img in result.images), "Not all image paths exist"
-    assert all(img.suffix.lower() == ".jpg" for img in result.images), "Images should be JPEGs"
+    assert all(img.suffix.lower() == ".png" for img in result.images), "Images should be PNGs"
 
     # Verify GT poses are zeros placeholder
     assert result.gt_poses.shape == (3, 4, 4)

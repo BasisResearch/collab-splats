@@ -529,12 +529,15 @@ def test_push_excludes_raw_feature_maps():
     assert any(fnmatch.fnmatchcase("semantics/dinov2.zarr/c/0", p.lstrip("/")) for p in PUSH_EXCLUDES)
 
 
-@pytest.mark.parametrize("name", ("frames.zarr/zarr.json", "frames.zarr/images/c/0/0/0", "frames.zarr"))
-def test_push_no_longer_excludes_the_keyframe_store(name):
-    """frames.zarr is the sole persistent frame source, so a pulled processed scene must carry it —
-    PULL_EXCLUDES already assumed that, and never pushing it made pulling it impossible."""
-    assert not any(fnmatch.fnmatchcase(name, p) for p in PUSH_EXCLUDES), name
-    assert "frames.zarr/**" not in PUSH_EXCLUDES
+@pytest.mark.parametrize("name", ("images", "images/frame_000000.png", "images/frame_000123.png", "frames.json"))
+def test_push_no_longer_excludes_the_keyframe_images(name):
+    """The scene-root images/ store is the sole persistent frame source, so a pulled processed scene
+    must carry it — PULL_EXCLUDES already assumed that, and never pushing it made pulling it
+    impossible. Anchors are stripped the same way test_push_excludes_raw_feature_maps models them."""
+    assert not any(fnmatch.fnmatchcase(name, p.lstrip("/")) for p in PUSH_EXCLUDES), name
+    assert "/images/**" not in PUSH_EXCLUDES
+    # Unanchored it would also swallow pointcloud.zarr/images and every <backend>/images.
+    assert "images/**" not in PUSH_EXCLUDES
 
 
 @pytest.mark.parametrize("name", _VIDEO_NAME_CASES)
@@ -554,12 +557,12 @@ def test_push_keeps_non_video_outputs(name):
 def test_pull_processed_copies_and_passes_exclude_flags(monkeypatch, tmp_path):
     _fake_popen(monkeypatch)
     client = _FakeClient()
-    SceneSource(client).pull_processed("s", tmp_path, excludes=("frames.zarr/**",))
+    SceneSource(client).pull_processed("s", tmp_path, excludes=("/images/**",))
     cmd = client.cmds[0]
     # Must be `copy`, never `sync`: sync deletes destination files missing from the source, which
     # would wipe exactly the artifacts a caller asked to skip (the dense arrays in PULL_EXCLUDES).
     assert cmd[:3] == ["copy", f"collab-data:{PROCESSED_BUCKET}/s", str(tmp_path)]
-    assert "--exclude" in cmd and "frames.zarr/**" in cmd
+    assert "--exclude" in cmd and "/images/**" in cmd
 
 
 def test_pull_zarr_members_includes_each_bare_member(monkeypatch, tmp_path):
@@ -624,7 +627,7 @@ def test_verify_push_false_on_nonzero_exit(monkeypatch, tmp_path):
 
 
 def test_verify_push_streams_progress_and_uses_fast_list(monkeypatch, tmp_path):
-    """frames.zarr makes this a per-chunk MD5 comparison over thousands of files, and it gates an
+    """images/ makes this an MD5 comparison over one file per keyframe, and it gates an
     rmtree — so it must list recursively and must not go silent for the whole window.
 
     --stats alone is not enough: rclone logs stats at INFO while its default --log-level is NOTICE,

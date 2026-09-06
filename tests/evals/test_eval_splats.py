@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import zarr
 
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from evals.scripts.eval_splats import inputs_from_pointcloud_zarr, summarise_run
 
 
@@ -35,10 +35,10 @@ def _write_ff_zarr(path, n=2, h=4, w=6, scale=255.0, orig_hw=None):
     store.attrs["model_height"] = h
 
 
-def _write_frames_zarr(path, n, h, w):
+def _write_images_dir(path, n, h, w):
     frames = np.random.randint(0, 255, size=(n, h, w, 3), dtype=np.uint8)
     records = [{"frame_idx": i} for i in range(n)]
-    FrameStore.create(path, frames, records, provenance={"video_path": "v"})
+    fr.write_frames(path, frames, records, {"video_path": "v"})
     return frames
 
 
@@ -52,11 +52,11 @@ def test_inputs_uint8_hwc_for_both_image_scales(tmp_path):
         assert inputs.resolution == (4, 6)
 
 
-def test_inputs_native_from_frames_zarr(tmp_path):
+def test_inputs_native_from_images_dir(tmp_path):
     # Native frames are 2x the model size; K must scale with them, depth targets stay model-res
     n, h, w = 2, 4, 6
     _write_ff_zarr(tmp_path / "pointcloud.zarr", n=n, h=h, w=w, orig_hw=(2 * h, 2 * w))
-    frames = _write_frames_zarr(tmp_path / "frames.zarr", n, 2 * h, 2 * w)
+    frames = _write_images_dir(tmp_path / "images", n, 2 * h, 2 * w)
     inputs = inputs_from_pointcloud_zarr(tmp_path / "pointcloud.zarr")
     assert inputs.images.shape == (n, 2 * h, 2 * w, 3) and inputs.images.dtype == np.uint8
     np.testing.assert_array_equal(inputs.images, frames)
@@ -67,16 +67,16 @@ def test_inputs_native_from_frames_zarr(tmp_path):
     assert np.all(inputs.intrinsics[:, 1, 2] == 2 * 5.0)
     assert inputs.depth_targets.shape == (n, h, w)
 
-    # Explicit None forces model res even though a sibling frames.zarr exists
-    model_res = inputs_from_pointcloud_zarr(tmp_path / "pointcloud.zarr", frames_zarr=None)
+    # Explicit None forces model res even though a sibling images/ exists
+    model_res = inputs_from_pointcloud_zarr(tmp_path / "pointcloud.zarr", images_dir=None)
     assert model_res.images.shape == (n, h, w, 3) and model_res.intrinsics[0, 0, 0] == 2.0
 
 
 def test_inputs_native_resolution_mismatch_raises(tmp_path):
     n, h, w = 2, 4, 6
     _write_ff_zarr(tmp_path / "pointcloud.zarr", n=n, h=h, w=w, orig_hw=(2 * h, 2 * w))
-    _write_frames_zarr(tmp_path / "frames.zarr", n, 3 * h, 3 * w)
-    with pytest.raises(ValueError, match="frames.zarr"):
+    _write_images_dir(tmp_path / "images", n, 3 * h, 3 * w)
+    with pytest.raises(ValueError, match="images"):
         inputs_from_pointcloud_zarr(tmp_path / "pointcloud.zarr")
 
 

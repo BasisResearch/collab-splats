@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 from collab_splats.preproc.qa import load_video_quality
 from collab_splats.preproc.sampling import sample_uniform
 
@@ -246,7 +246,7 @@ def _load_bicycle(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
 
 def _load_video(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     """
-    Sample max_frames evenly over a video, writing to a sidecar _frames/ dir.
+    Sample max_frames evenly over a video, writing to a sidecar _frames/images/ dir.
     """
     # Output frames into <stem>_frames/ sibling directory; created if absent
     frames_dir = seq_dir.parent / (seq_dir.stem + "_frames")
@@ -258,13 +258,13 @@ def _load_video(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     # Decode video once: sample_uniform returns in-memory frames + records
     frames, records = sample_uniform(str(seq_dir), max_frames=max_frames, report=report)
 
-    store = FrameStore.create(
-        frames_dir / "frames.zarr",
+    # Write the PNGs ONCE from the in-memory frames; the returned paths ARE the dataset
+    images = fr.write_frames(
+        frames_dir / "images",
         frames,
         records,
-        provenance={"video_path": str(seq_dir), "method": "uniform", "max_frames": max_frames},
+        {"video_path": str(seq_dir), "method": "uniform", "max_frames": max_frames},
     )
-    images = store.export(frames_dir)  # write JPEGs ONCE from in-memory frames, no re-decode
     # GT poses not available for raw video; zeros placeholder
     return EvalDataset(images=images, gt_poses=np.zeros((len(images), 4, 4), dtype=np.float32))
 

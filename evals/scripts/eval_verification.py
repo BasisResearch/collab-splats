@@ -35,7 +35,7 @@ from collab_splats.pointcloud.feedforward.base import (
     FeedforwardResult,
     build_pycolmap_reconstruction,
 )
-from collab_splats.preproc.frame_store import FrameStore
+from collab_splats.preproc import frames as fr
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -139,7 +139,8 @@ def main() -> None:
         args.backend_dir / "pointcloud.zarr", args.extractor
     )
     ff = FeedforwardResult.load_zarr(args.backend_dir / "pointcloud.zarr")
-    frame_indices = FrameStore.open(args.backend_dir.parent / "frames.zarr").frame_indices()
+    images_dir = args.backend_dir.parent / "images"
+    frame_indices = np.array([fr.frame_idx_from_path(p) for p in fr.frame_paths(images_dir)])
 
     perturbed_names: list[str] = []
     if args.perturb_deg:

@@ -1177,14 +1177,22 @@ Do **not** start these without the user saying go — `clean/splats` and
 `clean/pointcloud` are still being worked on and moved three times during the
 design conversation alone.
 
+**"In code review" is not frozen.** `clean/pointcloud` entered review on
+2026-09-06 and its tip had already moved again by the time the question was
+asked (`5c16ec0b` → `1d7c4734`, the fourth reading). Review produces commits by
+construction, and rule 2 below allows exactly one squash per branch. Wait for
+the branch to stop moving. The read-only reconnaissance below can be — and was —
+done ahead of the freeze; it does not touch the branch and costs nothing if the
+tip moves again.
+
 When one is frozen, run Tasks 3, 5 and 6 with these substitutions:
 
 | | `clean/pointcloud` | `clean/splats` | `clean/mesh` |
 |---|---|---|---|
-| Frozen SHA | re-read at freeze time (was `5c16ec0b`) | re-read at freeze time (was `02d9a693`) | re-read at freeze time (was `30326769`) |
+| Frozen SHA | re-read at freeze time (was `1d7c4734`, in review) | re-read at freeze time (was `02d9a693`) | re-read at freeze time (was `30326769`) |
 | Backup ref | `refs/backup/clean-pointcloud-20260906-013531` | `refs/backup/clean-splats-20260906-013531` | none yet — create one before squashing |
-| Merge base | derive it — last `COPY-OF-TRUNK` (Task 5) | derive it — last `COPY-OF-TRUNK` (Task 5) | n/a if rebased |
-| Expected conflict | the VDA collision; consult `$SCRATCH/vda-resolution-ref/` | `docs/known-test-failures.md` | to be measured |
+| Merge base | measured `2ef1c7bb` @ `1d7c4734` (17 copies / 20 branch-only) — **re-derive at freeze** | derive it — last `COPY-OF-TRUNK` (Task 5) | n/a if rebased |
+| Expected conflict | the VDA collision; consult `$SCRATCH/vda-resolution-ref/`. 34-file footprint, **15 of them already touched by `clean/final`** — see below | `docs/known-test-failures.md` | to be measured |
 | Scope | recompute as `rtk proxy git diff --name-only <last-copy> <branch> -- tests/`, union with the existing scope | same | same |
 
 Four standing rules:
@@ -1213,6 +1221,49 @@ deleted; the port to `images_dir`/`frame_paths` already existed on the preproc
 side, so the auto-merge picked it up silently. Expect the same shape from
 pointcloud (VDA context stream) and grep the merged tree for symbols the other
 effort retired before trusting a clean merge.
+
+### `clean/pointcloud` reconnaissance (measured 2026-09-06, tip `1d7c4734`)
+
+Read-only, done while the branch was still in review. Re-run it at freeze time —
+these numbers describe a tip that is expected to move.
+
+- Boundary: **17 copies / 20 branch-only**, so the merge base is `2ef1c7bb`
+  (`fix(sfm): prune depth_vda on a gate miss; cover the VDA cache gate`).
+- Branch-only footprint: 34 files, **15 of which `clean/final` has already
+  changed**. That overlap is the whole conflict surface.
+
+**The one that is not mechanical: `pointcloud/sfm.py` is a modify/delete.**
+`clean/pointcloud` explodes the 62 KB module into a package and splits two more
+out of it:
+
+```
+D  collab_splats/pointcloud/sfm.py
+A  collab_splats/pointcloud/sfm/__init__.py
+A  collab_splats/pointcloud/sfm/colmap.py
+A  collab_splats/pointcloud/sfm/hloc.py
+A  collab_splats/pointcloud/sfm/instantsfm.py
+A  collab_splats/pointcloud/vda.py
+A  collab_splats/pointcloud/depth_align.py
+```
+
+`clean/final` meanwhile carries **+62/−13 in seven hunks** of the file pointcloud
+deletes — `generate_vda_depth`, `_nudge_edge_keypoints`, `_sift_database_valid`,
+and three inside `InstantSfMCreator`. Git will report this as
+deleted-by-them/modified-by-us and offer no useful resolution: taking either side
+loses work. Each of the seven hunks has to be hand-routed into whichever new
+module now owns that function (`vda.py` for `generate_vda_depth`,
+`sfm/instantsfm.py` for the rest — confirm, don't assume). Budget real time for
+this one; it is the only conflict in the whole integration that requires reading
+both implementations rather than picking a side.
+
+**The rest of the overlap is ordinary.** `preproc/undistort.py` is the shape to
+expect: `clean/final` rewrote it (+105/−161) while `clean/pointcloud` changed one
+comment line, repointing `_SIFT_NUM_THREADS`'s cross-reference from
+`pointcloud/sfm.py` to `pointcloud/sfm/instantsfm.py::_generate_sift_database`.
+The symbol survives the rewrite at `undistort.py:37`, so the conflict is context
+only — take pointcloud's text. Same for `docs/known-test-failures.md`,
+`docs/superpowers/CHANGELOG.md` and `CLAUDE.md`: resolve toward keeping both
+efforts' entries, as was done for semantics.
 
 Trunk replacement is out of scope for this plan and gets its own spec once all
 five efforts have landed.

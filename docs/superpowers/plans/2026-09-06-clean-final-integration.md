@@ -1353,3 +1353,46 @@ raised. `configs/base.yaml` no longer ships them and `configs/README.md` records
 the retirement, so this only bites a hand-written config still carrying
 `depth_align: affine` — it loads silently and does nothing. That matches how
 every other retired key behaves; flagged, not fixed.
+
+### Worktrees retired 2026-09-07
+
+`.worktrees/clean-semantics` and `.worktrees/clean-pointcloud` removed. Both
+efforts are squashed onto `clean/final` and both checkouts were clean, so the
+directories held nothing the repository does not.
+
+Removing a worktree does not touch its branch. `clean/semantics @ a2002db0` and
+`clean/pointcloud @ 560a0a7f` are still refs, so `git show clean/<x>:<path>` —
+which is how `clean/mesh`'s plan reads its siblings — still resolves.
+
+Checks run before removing, all of which the next retirement should repeat:
+
+- `status --porcelain -uall` empty in both.
+- No process anywhere on the box had a cwd inside either directory.
+- Every gitignored artifact was a duplicate: `evals/results/chess_seq01` (25
+  files) and `evals/baselines` (257 files) matched the main tree on name and
+  size with **zero** entries unique to a worktree. The rest was `__pycache__`,
+  `graphify-out/` (regenerate with `graphify update .`) and `third_party/*`
+  symlinks pointing into the main tree.
+- `clean-final/third_party/*` symlinks resolve to the main tree, not to a
+  worktree being removed. This matters: a dangling vendored tree does not fail
+  the gate, it makes guarded tests *skip*, which reads as green.
+- `clean-pointcloud` was `git worktree lock`ed with no reason string; unlocked
+  deliberately before removal.
+
+**Backup-ref correction.** The `History:` trailer on the semantics squash
+(`8bcbe831`) cites `refs/backup/clean-semantics-20260906-013531`, which is
+`218e7d87` — the tip *before* the branch was rebased onto `6f060dfa`. The commit
+that was actually squashed is `a2002db0`. The trailer cannot be corrected without
+rewriting `clean/final`, so the correct ref was minted instead:
+
+```
+refs/backup/clean-semantics-20260906-235900 -> a2002db0
+```
+
+Read that one, not the trailer's, when auditing the semantics squash. Every
+future squash should re-read the backup ref at commit time and confirm it equals
+the frozen tip — a ref minted before a rebase silently stops pointing at the work.
+
+`.worktrees/preproc-int` is in the same state — `clean/preproc` is squashed at
+`94d75a2d` and its backup ref `clean-preproc-20260906-013531` does equal the
+squashed tip `d46b6fdd` — but it was left in place pending the user's call.

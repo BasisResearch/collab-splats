@@ -1,13 +1,13 @@
-"""VGGT-SPARK feedforward backend: diagnostic creator for parity testing.
-
-Provides:
-  VGGTSPARKCreator  — feedforward creator using VGGT-SPARK weights/architecture
-
-Purpose: isolate whether the ATE parity gap vs VGGT-SLAM is model-specific
-(VGGT-X vs VGGT-SPARK weights/architecture) or graph-construction-specific.
-VGGT-SLAM uses VGGT-SPARK as its feedforward backbone; this creator runs the
-same SPARK module through our pipeline unchanged.
 """
+VGGT-SPARK feedforward backend: diagnostic creator for parity testing.
+
+- VGGTSPARKCreator: feedforward creator on VGGT-SPARK weights/architecture
+- purpose: tell apart an ATE parity gap vs VGGT-SLAM that is model-specific
+  (VGGT-X vs VGGT-SPARK) from one that is graph-construction-specific
+- VGGT-SLAM uses VGGT-SPARK as its backbone; this creator runs that same SPARK
+  module through our pipeline unchanged
+"""
+
 from __future__ import annotations
 
 import inspect
@@ -58,38 +58,35 @@ def _assert_loaded_from_spark(module_file: str) -> None:
 
 @dataclass
 class VGGTSPARKCreator(VGGTXCreator):
-    """Pointcloud via VGGT-SPARK feedforward pose + depth estimation.
+    """
+    Pointcloud via VGGT-SPARK feedforward pose + depth estimation.
 
-    Identical pipeline to VGGTXCreator but loads the model from the SPARK
-    source tree (``third_party/vggt_spark/``), which ships with native
-    ``compute_similarity=True`` support in ``VGGT.forward()``.
-
-    Use this creator to test whether the ATE parity gap vs VGGT-SLAM is
-    caused by model differences (VGGT-X vs VGGT-SPARK) or by our
-    graph-construction logic.
+    - identical pipeline to VGGTXCreator, but loads the model from the SPARK source tree
+      (third_party/vggt_spark/), which ships native compute_similarity=True in
+      VGGT.forward()
+    - diagnostic: tells apart an ATE parity gap vs VGGT-SLAM caused by the model
+      (VGGT-X vs VGGT-SPARK) from one caused by our graph construction
 
     Attributes:
-        Inherits all attributes from VGGTXCreator.  ``chunk_size`` is NOT
-        forwarded to ``from_pretrained`` because VGGT-SPARK's ``__init__``
-        does not accept it.
+        Inherits all attributes from VGGTXCreator. chunk_size is NOT forwarded to
+        from_pretrained because VGGT-SPARK's __init__ does not accept it.
     """
 
     # Override class identity — name used in eval output prefixes and registry
     name: ClassVar[str] = "vggt_spark"
     registry_name: ClassVar[str] = "vggt_spark"
 
-    # Do NOT inherit VGGTXCreator's hook-ratio calibration: _verify_loop_candidate
-    # below uses SPARK's NATIVE image_match_ratio (~1.02-1.05 on accepted pairs),
-    # a different score family from base.py's 0.85 hook-ratio calibration.
-    # 0.95 is spark's native-score calibration — keep this classvar, the
-    # _verify_loop_candidate signature default, and its docstring in agreement.
-    # Re-checked in the chess d5 clean-negative sweep (2026-07-10, 21 positives
-    # vs 20 GT-clean negatives, seed 42): 0.95 accepts 21/21 positives; the
-    # native score saturates (pos 0.98-1.06, neg 0.81-1.03, AUC 0.921 — no
-    # threshold separates cleanly), so the gate is weak against non-co-viewing
-    # pairs and production relies on retrieval + jump_ratio to filter those.
-    # Kept at 0.95: any stricter value drops true loops for negatives that
-    # retrieval never surfaces.
+    # Do NOT inherit VGGTXCreator's hook-ratio calibration
+    # - _verify_loop_candidate below uses SPARK's NATIVE image_match_ratio (~1.02-1.05 on
+    #   accepted pairs), a different score family from base.py's 0.85 hook-ratio calibration
+    # - 0.95 is spark's native-score calibration: keep this classvar, the
+    #   _verify_loop_candidate signature default and its docstring in agreement
+    # - re-checked in the chess d5 clean-negative sweep (2026-07-10, 21 positives vs 20
+    #   GT-clean negatives, seed 42): 0.95 accepts 21/21 positives
+    # - the native score saturates (pos 0.98-1.06, neg 0.81-1.03, AUC 0.921, no threshold
+    #   separates cleanly), so the gate is weak against non-co-viewing pairs and production
+    #   relies on retrieval + jump_ratio to filter those
+    # - kept at 0.95: anything stricter drops true loops for negatives retrieval never surfaces
     default_verify_match_ratio: ClassVar[float] = 0.95
 
     def _load_model(self, device: str) -> Any:
@@ -116,9 +113,10 @@ class VGGTSPARKCreator(VGGTXCreator):
             else torch.float16
         )
 
-        # Purge any cached `vggt*` (e.g. VGGT-X imported at module top) so the
-        # SPARK path insertion actually wins, then import SPARK. Without this,
-        # a cached `vggt` package shadows the insert → silent VGGT-X fallback.
+        # Purge any cached `vggt*` so the SPARK path insertion actually wins
+        # - e.g. VGGT-X imported at module top
+        # - without this a cached `vggt` package shadows the insert, giving a silent
+        #   VGGT-X fallback
         for _m in [m for m in list(sys.modules) if m == "vggt" or m.startswith("vggt.")]:
             del sys.modules[_m]
         _patched = _VGGT_SPARK_ROOT not in sys.path

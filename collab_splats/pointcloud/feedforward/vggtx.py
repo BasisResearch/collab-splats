@@ -22,8 +22,9 @@ from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
-# Global alignment is parked — the call site below is disabled. Re-enable both when
-# comparing VGGT-X native alignment against the LM bundle adjustment (bae-vggt-parity):
+# Global alignment is parked; the call site below is disabled
+# - re-enable both when comparing VGGT-X native alignment against the LM bundle
+#   adjustment (bae-vggt-parity):
 #   from collab_splats.geometry.global_alignment import run_global_alignment
 from .base import (
     BaseFeedforwardCreator,
@@ -39,9 +40,9 @@ from .base import (
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# VGGT-X target inference resolution (width, px). Matches upstream training default.
-# load_and_preprocess_images(mode="crop") resizes width → this value, then center-crops
-# height to the same value when height > target_size.
+# VGGT-X target inference resolution (width, px), matching upstream's training default
+# - load_and_preprocess_images(mode="crop") resizes width to this value
+# - it then center-crops height to the same value when height > target_size
 VGGTX_IMG_LOAD_RESOLUTION: int = 518
 
 
@@ -120,9 +121,10 @@ def unproject_and_filter_points(
         colors:         (P, 3) uint8 RGB.
         pixel_indices:  (P, 3) int32 — [frame_id, row, col] source pixel for each point.
     """
-    # Upstream `unproject_depth_map_to_point_map` returns points in the first-camera-anchored
-    # world frame. If we ever adopt an SL(4) per-submap loop-closure layer (VGGT-SLAM-style),
-    # this must switch to per-camera-local points — see ROADMAP "Future considerations".
+    # Upstream unproject_depth_map_to_point_map returns first-camera-anchored world points
+    # - adopting an SL(4) per-submap loop-closure layer (VGGT-SLAM-style) would require
+    #   switching to per-camera-local points
+    # - see ROADMAP "Future considerations"
     points3d = unproject_depth_map_to_point_map(depth, extrinsic, intrinsic)
 
     if hasattr(images, "cpu"):
@@ -160,11 +162,11 @@ def unproject_and_filter_points(
 
 @dataclass
 class VGGTXCreator(BaseFeedforwardCreator):
-    """Pointcloud via VGGT-X feedforward pose + depth estimation.
+    """
+    Pointcloud via VGGT-X feedforward pose + depth estimation.
 
-    Uses VGGT-X (Video Grounded Gaussian Transformer) to jointly predict camera
-    poses and per-frame depth maps.  Depth maps are then unprojected to a 3D
-    point cloud.
+    - VGGT-X (Video Grounded Gaussian Transformer) predicts camera poses and per-frame
+      depth maps jointly; the depth maps are then unprojected to a cloud
 
     Attributes:
         camera_model:         pycolmap camera model. Defaults to
@@ -179,13 +181,13 @@ class VGGTXCreator(BaseFeedforwardCreator):
                               are discarded.  35.0 = keep the top 65 %.
     """
 
-    # LC verify calibration — chess d5 full-layer sweep, 2026-07-09.
-    # 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers
-    # > half scene diameter apart AND viewing dirs > 90°, seed 42).
-    # Layer 10 separates perfectly (AUC 1.000; positives min 1.2746, negatives
-    # max 1.0658); threshold = midpoint 1.17 (±0.104 margin to both sides).
-    # The base-class layer 20 does NOT discriminate for VGGT-X (AUC 0.42 vs
-    # clean negatives). VGGTSPARKCreator overrides both (native similarity).
+    # LC verify calibration — chess d5 full-layer sweep, 2026-07-09
+    # - 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers > half scene
+    #   diameter apart AND viewing dirs > 90°, seed 42)
+    # - layer 10 separates perfectly: AUC 1.000, positives min 1.2746, negatives max 1.0658
+    # - threshold = midpoint 1.17 (±0.104 margin to both sides)
+    # - the base-class layer 20 does NOT discriminate for VGGT-X (AUC 0.42 vs clean negatives)
+    # - VGGTSPARKCreator overrides both (native similarity)
     _lc_layer_index: ClassVar[int] = 10
     default_verify_match_ratio: ClassVar[float] = 1.17
 
@@ -193,13 +195,15 @@ class VGGTXCreator(BaseFeedforwardCreator):
     model_name: str = "facebook/VGGT-1B"
     chunk_size: int = 256
     conf_threshold: float = 35.0
-    # Off by default: on 7-Scenes chess/seq-01 mv never beat the learned confidence at
-    # comparable retention — it is a complementary tail filter, not a replacement. See
-    # docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D.
+    # Off by default: mv never beat the learned confidence at comparable retention
+    # - measured on 7-Scenes chess/seq-01
+    # - it is a complementary tail filter, not a replacement
+    # - see docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D
     use_multiview_confidence: bool = False
-    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0 and is
-    # inert (99.7% retention). K=2 is the largest count that is safe on a short sequence —
-    # min_views is an absolute count, so K > N-1 empties every judged view.
+    # min_views: "at least K other views agree"
+    # - K=1 is the old mv_conf_threshold=0.0 and is inert (99.7% retention)
+    # - K=2 is the largest count safe on a short sequence: min_views is an absolute count,
+    #   so K > N-1 empties every judged view
     min_views: int = 2
     # abs_thresh stays 0.0 — VGGT depth is non-metric, so a fixed-unit tolerance is
     # meaningless and would break the scale invariance the shared function relies on.
@@ -278,10 +282,10 @@ class VGGTXCreator(BaseFeedforwardCreator):
         images = views
         device = next(model.parameters()).device
         device_type = device.type
-        # Match aggregator's internal dtype selection: bf16 on Ampere+, fp16 otherwise.
-        # Model params are fp32 but aggregator overrides dtype unconditionally at line 221;
-        # passing fp32 images causes camera/register tokens to be cast to fp32 before that
-        # override, making assembled tokens fp32 while aggregator asserts bf16 — assertion fails.
+        # Match the aggregator's internal dtype selection: bf16 on Ampere+, fp16 otherwise
+        # - model params are fp32, but the aggregator overrides dtype unconditionally at line 221
+        # - fp32 images get camera/register tokens cast to fp32 before that override
+        # - assembled tokens are then fp32 while the aggregator asserts bf16, and it fails
         dtype = (
             torch.bfloat16
             if device_type == "cuda" and torch.cuda.get_device_capability(device)[0] >= 8
@@ -337,8 +341,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
         extrinsic = raw_outputs["extrinsic"]
         intrinsic = raw_outputs.get("intrinsics_downsampled", raw_outputs.get("intrinsics"))
 
-        # Global alignment (feature matching + joint BA) is parked. Re-enable with the
-        # import at the top of this file to compare against LM BA (bae-vggt-parity):
+        # Global alignment (feature matching + joint BA) is parked
+        # - re-enable with the import at the top of this file
+        # - purpose: compare against LM BA (bae-vggt-parity)
         # extrinsic, intrinsic = run_global_alignment(
         #     raw_outputs, extrinsic, intrinsic, self.image_paths,
         # )
@@ -388,9 +393,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
         extrinsic_4x4 = extrinsics_to_homogeneous(extrinsic)
 
-        # LC merged outputs carry the deduped global poses so that
-        # FeedforwardResult.extrinsics has exactly one entry per input frame,
-        # not per submap window frame (which includes overlapping frames).
+        # LC merged outputs carry the deduped global poses
+        # - FeedforwardResult.extrinsics then has exactly one entry per input frame
+        # - not one per submap window frame, which would include overlapping frames
         extrinsic_4x4_out = raw_outputs.get("extrinsic_global_4x4", extrinsic_4x4)
 
         return FeedforwardResult(
@@ -443,29 +448,24 @@ class VGGTXCreator(BaseFeedforwardCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Hook aggregator.global_blocks[layer_index].attn.qkv; return {q, k, poses, world_points, conf}.
+        """
+        Hook aggregator.global_blocks[layer_index].attn.qkv on a 2-frame forward.
 
-        Runs a 2-frame VGGT-X forward with a per-call hook on the QKV projection of the
-        specified global attention block.  Captures q and k tensors, then decodes the
-        VGGT-X pose encoding to fresh (2, 4, 4) camera extrinsics — so
-        _verify_loop_candidate gets accurate relative poses without a second forward pass.
-
-        The hook is removed in a finally block — guaranteed cleanup even if the forward
-        raises.  No persistent state is left on the model or its layers.
+        - captures q/k, then decodes the VGGT-X pose encoding to fresh (2, 4, 4) extrinsics, so
+          _verify_loop_candidate gets accurate relative poses without a second forward
+        - the hook is removed in a finally block, so a raising forward still cleans up; no
+          persistent state is left on the model or its layers
 
         Args:
             frames:      (2, C, H, W) preprocessed frames (float16/32 on CPU or GPU).
-            layer_index: Which global attention block to tap.  -1 = last (default,
-                         matches VGGT-SPARK).  Valid range: [-len(blocks), len(blocks)-1].
-            **kwargs:    Unused (kept for interface compatibility with MapAnything).
+            layer_index: Which global attention block to tap. -1 = last, matching VGGT-SPARK.
+                         Valid range [-len(blocks), len(blocks)-1].
+            **kwargs:    Unused; kept for interface compatibility with MapAnything.
 
         Returns:
-            dict with keys:
-              "q":     (B, heads, N_tokens, head_dim) query projections
-              "k":     (B, heads, N_tokens, head_dim) key projections
-              "poses": (2, 4, 4) float32 np.ndarray — decoded camera extrinsics
-              "world_points": (2, H, W, 3) float32 np.ndarray — unprojected depth
-              "conf": (2, H, W) float32 np.ndarray — depth confidence
+            dict with "q" and "k" (B, heads, N_tokens, head_dim) projections, "poses"
+            (2, 4, 4) float32 decoded camera extrinsics, "world_points" (2, H, W, 3)
+            unprojected depth and "conf" (2, H, W) depth confidence.
         """
         device = next(self.model.parameters()).device
         dtype = next(self.model.parameters()).dtype

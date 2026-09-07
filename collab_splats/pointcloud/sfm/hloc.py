@@ -1,4 +1,10 @@
-# collab_splats/pointcloud/sfm/hloc.py
+"""
+hloc SfM backend: retrieval-gated learned features and matching into COLMAP's mapper.
+
+- hloc is a third_party clone, not a locked dependency — imported inside reconstruct
+- unwired — nothing dispatches to HlocCreator, see sfm/__init__.py
+"""
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +34,17 @@ class HlocCreator(BasePointcloudCreator):
     def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
         """
         Retrieval-gated learned matching and COLMAP incremental mapping over image_dir.
+
+        Args:
+            image_dir:  Directory of input images; must exist.
+            output_dir: Run directory. The binary model lands in colmap/sparse/0, hloc
+                intermediates in colmap/hloc/.
+
+        Returns:
+            PointcloudResult wrapping the reconstructed model.
+
+        Raises:
+            ImportError: hloc is not installed (a third_party clone, not a locked dependency).
         """
         # hloc is a third_party clone, not a locked dependency — import inside the one method
         # that needs it so the module (and the registry) import without it installed

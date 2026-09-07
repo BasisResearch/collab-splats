@@ -198,14 +198,21 @@ def result_from_reconstruction(
     """
     Build a COLMAP-scale FeedforwardResult from an InstantSfM model + VDA depth maps.
 
-    - names: keyframe filenames (frame_NNNNNN.png); the model registers their stems, in this order.
-    - depths: (N, h, w) VDA metric depth; images: (N, H, W, 3) uint8 RGB at keyframe resolution.
-    - The depth grid is the result's model resolution: K, images and pixel_indices are scaled to
-      it (pairing original-res K with model-res depth is the 2026-08-11 mesh-regression class).
-    - Depth is rescaled to the COLMAP world before anything is derived from it, so the zarr and
-      the model share one scale (splat depth targets, mesh fusion, localization lookup).
-    - confidence / mv_* stay absent — SfM has no learned per-pixel confidence.
-    - Returns (result, attrs) where attrs are the alignment provenance for save_zarr.
+    - the depth grid is the result's model resolution: K, images and pixel_indices are scaled to
+      it (pairing original-res K with model-res depth is the 2026-08-11 mesh-regression class)
+    - depth is rescaled to the COLMAP world before anything is derived from it, so the zarr and
+      the model share one scale (splat depth targets, mesh fusion, localization lookup)
+    - confidence / mv_* stay absent — SfM has no learned per-pixel confidence
+
+    Args:
+        reconstruction: Registered InstantSfM model; its image stems must equal `names`' stems.
+        depths:         (N, h, w) VDA metric depth.
+        images:         (N, H, W, 3) uint8 RGB at keyframe resolution.
+        names:          Keyframe filenames (frame_NNNNNN.png), in registration order.
+        min_obs:        Minimum valid track-depth pairs a frame needs to get its own scale.
+
+    Returns:
+        (result, attrs) — attrs is the alignment provenance for save_zarr.
     """
     stems = [Path(n).stem for n in names]
 
@@ -216,9 +223,9 @@ def result_from_reconstruction(
             "registration is not supported; re-run with more overlap"
         )
 
-    # Rows of depths/images follow `names`; everything derived from the model follows sorted
-    # image name. Requiring the two to be the same order is what keeps them aligned — the
-    # pipeline's frame_NNNNNN naming already guarantees it, so a mismatch is a real bug.
+    # Two orderings must agree or the rows silently misalign
+    # - depths/images rows follow `names`; model-derived arrays follow sorted image name
+    # - the pipeline's frame_NNNNNN naming already guarantees it, so a mismatch is a real bug
     images_sorted = sorted(reconstruction.images.values(), key=lambda im: im.name)
     registered = [im.name for im in images_sorted]
     if registered != stems:
@@ -242,9 +249,9 @@ def result_from_reconstruction(
         [np.vstack([im.cam_from_world().matrix(), [0.0, 0.0, 0.0, 1.0]]) for im in images_sorted]
     ).astype(np.float32)
 
-    # COLMAP K is at keyframe (original) resolution; rescale it to the depth grid. The COLMAP
-    # cameras must be at the frames' resolution, else the keyframe set / SIFT DB came from
-    # a different store.
+    # COLMAP K is at keyframe (original) resolution, rescale it to the depth grid
+    # - the COLMAP cameras must be at the frames' resolution
+    # - otherwise the keyframe set / SIFT DB came from a different store
     orig_h, orig_w = images.shape[1:3]
     cam_dims = {
         (reconstruction.cameras[im.camera_id].width, reconstruction.cameras[im.camera_id].height)

@@ -115,7 +115,7 @@ def test_inference_result_is_resized_and_written(tmp_path, monkeypatch):
             # One step edge per frame, mirrored between them: a two-valued map makes the
             # interpolation mode observable (bilinear would emit a blended third value), and
             # the mirroring makes the two frames distinguishable so stem/content pairing is
-            # checkable. The edge sits off-centre on purpose: a centred one lands between two
+            # checkable. The edge sits off-center on purpose: a centered one lands between two
             # same-valued bilinear taps, so even INTER_LINEAR would blend nothing.
             n, h, w = frames.shape[:3]
             maps = np.full((n, h, w), 1.0, dtype=np.float32)

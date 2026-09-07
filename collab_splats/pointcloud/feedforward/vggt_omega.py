@@ -99,11 +99,12 @@ def _compute_omega_original_coords(sizes: list[tuple[int, int]]) -> np.ndarray:
 
 @dataclass
 class VGGTOmegaCreator(BaseFeedforwardCreator):
-    """Pointcloud via VGGT-Omega feedforward pose + depth estimation.
+    """
+    Pointcloud via VGGT-Omega feedforward pose + depth estimation.
 
-    Uses VGGT-Omega to jointly predict camera poses and per-frame depth maps,
-    which are then unprojected to a 3D point cloud.  Supports BundleAdjustment
-    and LoopClosure wrappers via the standard BaseFeedforwardCreator interface.
+    - predicts camera poses and per-frame depth maps jointly, then unprojects to a cloud
+    - BundleAdjustment and LoopClosure wrappers work through the standard
+      BaseFeedforwardCreator interface
 
     Attributes:
         camera_model:          pycolmap camera model.  Defaults to ``"PINHOLE"`` because
@@ -127,18 +128,18 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
                                ``resolution=256`` when ``resolution`` is ``None``.
     """
 
-    # LC verify calibration — chess d5 clean-negative sweep, 2026-07-10.
-    # 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers
-    # > half scene diameter apart AND viewing dirs > 90°, seed 42), all 24
-    # inter_frame_blocks hooked in one forward per pair. Layer 13 separates
-    # perfectly (AUC 1.000; positives min 1.8385, negatives max 1.2620);
-    # threshold = midpoint 1.55. Old layer 16 / 1.16 had AUC 0.824 and
-    # rejected 6/21 true loops while passing 6/20 clean negatives.
-    # Note: production token_offset=5 (inherited) technically miscounts
-    # Omega's 17 special tokens (1 camera + 16 register; patch-16 backbone),
-    # but the offset-17 re-sweep is near-identical at layer 13 (mid 1.5505),
-    # so the inherited offset is kept. max_jump_ratio=0.3 enables geometric
-    # sanity check (default inf disables it) for repetitive chess-texture scenes.
+    # LC verify calibration — chess d5 clean-negative sweep, 2026-07-10
+    # - 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers > half scene
+    #   diameter apart AND viewing dirs > 90°, seed 42), all 24 inter_frame_blocks hooked
+    #   in one forward per pair
+    # - layer 13 separates perfectly: AUC 1.000, positives min 1.8385, negatives max 1.2620
+    # - threshold = midpoint 1.55; the old layer 16 / 1.16 had AUC 0.824 and rejected 6/21
+    #   true loops while passing 6/20 clean negatives
+    # - production token_offset=5 (inherited) technically miscounts Omega's 17 special
+    #   tokens (1 camera + 16 register, patch-16 backbone), but the offset-17 re-sweep is
+    #   near-identical at layer 13 (mid 1.5505), so the inherited offset is kept
+    # - max_jump_ratio=0.3 enables the geometric sanity check (default inf disables it)
+    #   for repetitive chess-texture scenes
     _lc_layer_index: ClassVar[int] = 13
     default_verify_match_ratio: ClassVar[float] = 1.55
     default_max_jump_ratio: ClassVar[float] = 0.3
@@ -150,13 +151,15 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     resolution: int | None = None  # None → auto (512 standard, 256 text-aligned); explicit overrides
     resize_mode: str = "balanced"  # mode= passed to load_and_preprocess_images
     conf_threshold: float = 50.0
-    # Off by default: on 7-Scenes chess/seq-01 mv never beat the learned confidence at
-    # comparable retention — it is a complementary tail filter, not a replacement. See
-    # docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D.
+    # Off by default: mv never beat the learned confidence at comparable retention
+    # - measured on 7-Scenes chess/seq-01
+    # - it is a complementary tail filter, not a replacement
+    # - see docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D
     use_multiview_confidence: bool = False
-    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0 and is
-    # inert (99.9% retention). K=2 is the largest count that is safe on a short sequence —
-    # min_views is an absolute count, so K > N-1 empties every judged view.
+    # min_views: "at least K other views agree"
+    # - K=1 is the old mv_conf_threshold=0.0 and is inert (99.9% retention)
+    # - K=2 is the largest count safe on a short sequence: min_views is an absolute count,
+    #   so K > N-1 empties every judged view
     min_views: int = 2
     # abs_thresh stays 0.0 — VGGT depth is non-metric, so a fixed-unit tolerance is
     # meaningless and would break the scale invariance the shared function relies on.
@@ -229,9 +232,9 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         with torch.no_grad():
             predictions = model(images)
 
-        # Decode poses at model resolution only — matches upstream demo_gradio.run_model.
-        # Original-res decode removed: no downstream consumer requires it and it was the
-        # root cause of cx > model_W in result.intrinsics.
+        # Decode poses at model resolution only, matching upstream demo_gradio.run_model
+        # - the original-res decode is removed: no downstream consumer requires it
+        # - it was the root cause of cx > model_W in result.intrinsics
         ext, intr = encoding_to_camera(predictions["pose_enc"], image_shape)
 
         # Move to CPU float32 for downstream numpy ops; squeeze the batch dim (always 1)
@@ -342,7 +345,24 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Hook inter_frame_blocks[layer_index].attn.qkv; return {q, k, poses, world_points, conf}."""
+        """
+        Hook inter_frame_blocks[layer_index].attn.qkv on a 2-frame forward.
+
+        - captures q/k, then decodes the pose encoding to fresh w2c extrinsics, so
+          _verify_loop_candidate needs no second forward
+        - the hook is removed in a finally block, so a raising forward still cleans up; no
+          persistent state is left on the model or its layers
+
+        Args:
+            frames:      (2, C, H, W) preprocessed frames on CPU or GPU.
+            layer_index: Which inter-frame block to tap. -1 = last.
+            **kwargs:    Unused; kept for interface compatibility.
+
+        Returns:
+            dict with "q" and "k" (B, heads, N_tokens, head_dim) projections, "poses"
+            (2, 4, 4) float32 w2c extrinsics, "world_points" (2, H, W, 3) unprojected depth
+            and "conf" (2, H, W) depth confidence.
+        """
         device = next(self.model.parameters()).device
 
         # VGGTOmega manages bf16/f16 autocast internally — device-only cast matches _forward

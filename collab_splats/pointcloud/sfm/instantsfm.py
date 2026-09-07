@@ -1,4 +1,12 @@
-# collab_splats/pointcloud/sfm/instantsfm.py
+"""
+InstantSfM global SfM: the one backend `pointcloud.method: sfm` dispatches to.
+
+- drives the upstream python API (cre185/InstantSfM @ 0.3.0), never their CLI
+- SIFT database is built here with system colmap; upstream's own DB step is bypassed
+- four upstream monkeypatches live here (_patch_*), each documented at its definition
+- output contract: image names are filename stems, model at <data_dir>/colmap/sparse/0
+"""
+
 from __future__ import annotations
 
 import logging
@@ -116,9 +124,10 @@ def _generate_sift_database(image_path: Path, database_path: Path, *, num_thread
     if not use_gpu:
         env["CUDA_VISIBLE_DEVICES"] = ""
 
-    # One shared SIMPLE_RADIAL camera over the whole set: the sfm path stages frames from a
-    # single video/scene, so single_camera holds by construction (it was a creator field once
-    # and was never set False). Per-image cameras leave every intrinsic solved from one view.
+    # One shared SIMPLE_RADIAL camera over the whole set
+    # - the sfm path stages frames from a single video/scene, so single_camera holds by
+    #   construction (it was a creator field once and was never set False)
+    # - per-image cameras would leave every intrinsic solved from one view
     extractor_cmd = [
         "colmap",
         "feature_extractor",
@@ -373,24 +382,27 @@ class InstantSfMCreator:
         # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
         from instantsfm.controllers.config import Config
 
-        # The handler name is inert at v0.3.0: upstream's DB step ignores it and always runs
-        # colmap SIFT + exhaustive matching (_generate_sift_database above), so "colmap" is the
-        # only value that means anything today — a constant, not a knob.
+        # The handler name is inert at v0.3.0
+        # - upstream's DB step ignores it and always runs colmap SIFT + exhaustive matching
+        #   (_generate_sift_database above)
+        # - "colmap" is the only value that means anything today: a constant, not a knob
         config = Config("colmap")
         config.OPTIONS = dict(config.OPTIONS)
         config.RUNTIME_OPTIONS = dict(config.RUNTIME_OPTIONS)
 
-        # Optional GLOMAP-style refinement: retriangulate from the full pre-filter track
-        # set, then up to ba_global_max_refinements (5) further BA rounds. Upstream
-        # defaults skip_retriangulation True; this is their only post-BA refinement knob.
+        # Optional GLOMAP-style refinement
+        # - retriangulate from the full pre-filter track set, then up to
+        #   ba_global_max_refinements (5) further BA rounds
+        # - upstream defaults skip_retriangulation True; this is their only post-BA knob
         config.OPTIONS["skip_retriangulation"] = not self.retriangulation
 
-        # InitializeRandomPositions draws camera translations and track xyzs from an unseeded
-        # np.random.uniform(-1, 1) (cre185/InstantSfM @ 0.3.0 instantsfm/processors/
-        # global_positioning.py:229-243), so two runs of the same scene differ. random_seed is
-        # an upstream RUNTIME_OPTION read by SolveGlobalMapper (instantsfm/controllers/
-        # global_mapper.py:25) that seeds numpy/random/torch/cuda; neither we nor upstream's
-        # CLI sets it by default, so an absent key must stay absent
+        # InstantSfM is nondeterministic unless random_seed is set
+        # - InitializeRandomPositions draws camera translations and track xyzs from an
+        #   unseeded np.random.uniform(-1, 1) (cre185/InstantSfM @ 0.3.0,
+        #   instantsfm/processors/global_positioning.py:229-243), so two runs differ
+        # - random_seed is an upstream RUNTIME_OPTION read by SolveGlobalMapper
+        #   (instantsfm/controllers/global_mapper.py:25) that seeds numpy/random/torch/cuda
+        # - neither we nor upstream's CLI sets it by default, so an absent key stays absent
         if self.random_seed is not None:
             config.RUNTIME_OPTIONS["random_seed"] = int(self.random_seed)
 
@@ -400,18 +412,17 @@ class InstantSfMCreator:
         """
         Run InstantSfM over data_dir (depth_vda/ from generate_vda_depth when use_depths).
 
+        - works in the contract layout directly: SIFT DB at data_dir/colmap/instantsfm.db (reused on
+          re-runs; GCS push excludes it; its own name so geometry/verification.py's colmap/database.db
+          can never be mistaken for it), COLMAP binary at data_dir/colmap/sparse/0
+
         Args:
-            data_dir: working directory — colmap/ and depth_vda/ live here.
+            data_dir:   Working directory — colmap/ and depth_vda/ live here.
             images_dir: COLMAP-shaped image directory to read; defaults to data_dir/images.
                 The pipeline passes the scene's own images/ so nothing is staged.
 
         Returns:
             The pycolmap.Reconstruction read back from the written model.
-
-        - Works in the contract layout directly: SIFT DB at data_dir/colmap/instantsfm.db
-          (reused on re-runs; GCS push excludes it; its own name so geometry/verification.py's
-          colmap/database.db can never be mistaken for it), COLMAP binary at
-          data_dir/colmap/sparse/0.
         """
         # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
         from instantsfm.controllers.data_reader import (
@@ -424,18 +435,22 @@ class InstantSfMCreator:
             WriteGlomapReconstruction,
         )
 
-        # Upstream compat fixes: packed 64-bit track ids vs int32 storage (numpy 2),
-        # bae LM.step vs pypose-0.7.5 RobustModel.forward(target), PCG 1-D step vs
-        # TrustRegion.update, COLMAP writer emitting a model pycolmap can't read
+        # Upstream compat fixes
+        # - packed 64-bit track ids vs int32 storage (numpy 2)
+        # - bae LM.step vs pypose-0.7.5 RobustModel.forward(target)
+        # - PCG 1-D step vs TrustRegion.update
+        # - COLMAP writer emitting a model pycolmap cannot read
         _patch_instantsfm_track_ids()
         _patch_pypose_robustmodel_target()
         _patch_bae_pcg_column_shape()
         _patch_instantsfm_colmap_write()
 
-        # ReadData derives every path from data_dir, falling back to data_dir itself as the
-        # image dir when images/ is absent. The keyframe store is already a COLMAP image
-        # directory, so image_path is redirected straight at it — the same PathInfo override
-        # the database and output paths get below, and it removes the staged JPEG copy.
+        # Point ReadData's image dir straight at the keyframe store
+        # - ReadData derives every path from data_dir, falling back to data_dir itself as
+        #   the image dir when images/ is absent
+        # - the keyframe store is already a COLMAP image directory
+        # - same PathInfo override the database and output paths get below; it removes the
+        #   staged JPEG copy
         data_dir = Path(data_dir)
         image_dir = _sfm_image_dir(data_dir / "images" if images_dir is None else images_dir)
         path_info = ReadData(str(data_dir))
@@ -445,14 +460,16 @@ class InstantSfMCreator:
         if self.use_depths and not path_info.depth_path:
             raise RuntimeError(f"no depth_vda/ under {data_dir} — generate_vda_depth must run first")
 
-        # Redirect upstream's flat data_dir/{database.db,sparse} into the contract layout
-        # colmap/ (PathInfo is a plain mutable class) — the DB then survives for re-runs
-        # instead of being re-extracted, and no post-hoc moves are needed. The DB is named
-        # instantsfm.db: colmap/database.db belongs to the verify stage (loma/xfeat matches),
-        # which unlinks and rewrites it, and reusing that as the SIFT DB would feed
-        # ReadColmapDatabase the wrong features. The whole stale sparse/ tree is removed (not
-        # just 0/) so a re-run never mixes models and leftover sibling cluster dirs (sparse/1)
-        # cannot trip the multi-cluster warning below.
+        # Redirect upstream's flat data_dir/{database.db,sparse} into the contract colmap/
+        # - PathInfo is a plain mutable class, so the paths are simply reassigned
+        # - the DB then survives for re-runs instead of being re-extracted, and no post-hoc
+        #   moves are needed
+        # - named instantsfm.db: colmap/database.db belongs to the verify stage (loma/xfeat
+        #   matches), which unlinks and rewrites it, and reusing that as the SIFT DB would
+        #   feed ReadColmapDatabase the wrong features
+        # - the whole stale sparse/ tree is removed, not just 0/, so a re-run never mixes
+        #   models and a leftover sibling cluster dir (sparse/1) cannot trip the
+        #   multi-cluster warning below
         colmap_dir = data_dir / "colmap"
         colmap_dir.mkdir(parents=True, exist_ok=True)
         path_info.database_path = str(colmap_dir / "instantsfm.db")
@@ -460,9 +477,11 @@ class InstantSfMCreator:
         shutil.rmtree(Path(path_info.output_path), ignore_errors=True)
         sparse_dst = Path(path_info.output_path) / "0"
 
-        # SIFT database: reuse a complete one extracted from THIS image set (idempotent
-        # re-runs); a partial DB left by a crashed colmap run, or one keyed on a previous
-        # frame selection, is rebuilt from scratch (build failures raise RuntimeError)
+        # SIFT database: reuse a complete one extracted from THIS image set
+        # - that is what makes re-runs idempotent
+        # - a partial DB from a crashed colmap run, or one keyed on a previous frame
+        #   selection, is rebuilt from scratch
+        # - build failures raise RuntimeError
         db_path = Path(path_info.database_path)
         if not _sift_database_valid(db_path, [p.name for p in frame_paths(image_dir)]):
             db_path.unlink(missing_ok=True)
@@ -483,10 +502,11 @@ class InstantSfMCreator:
                 images.features[idx] = _nudge_edge_keypoints(images.features[idx], camera.width, camera.height)
             ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
 
-        # Global mapping. Upstream raises a raw IndexError on several failure paths
-        # (numpy-2 empty float64 mask in scene/defs.py filter_by_mask once every track is
-        # filtered; empty images.depths when depth priors did not load) — log the
-        # traceback and re-raise with an honest pointer to the chained cause.
+        # Global mapping; upstream raises a raw IndexError on several failure paths
+        # - numpy-2 empty float64 mask in scene/defs.py filter_by_mask once every track
+        #   is filtered
+        # - empty images.depths when depth priors did not load
+        # - log the traceback and re-raise with an honest pointer to the chained cause
         try:
             cameras, images, tracks = SolveGlobalMapper(view_graph, cameras, images, config, visualizer=None)
         except IndexError as err:

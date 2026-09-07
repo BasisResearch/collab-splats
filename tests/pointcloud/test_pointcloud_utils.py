@@ -31,7 +31,7 @@ def test_clean_pointcloud_masks_the_far_outlier():
 
 def test_clean_pointcloud_keeps_everything_when_too_few_points():
     """
-    Below the neighbourhood size open3d rejects the whole cloud — keep all instead.
+    Below the neighborhood size open3d rejects the whole cloud — keep all instead.
     """
     keep = clean_pointcloud(np.zeros((5, 3), dtype=np.float32))
 
@@ -50,7 +50,7 @@ def test_clean_pointcloud_empty_cloud():
 
 def test_clean_pointcloud_degenerate_cloud_keeps_all():
     """
-    Duplicate points above the neighbourhood size: open3d rejects every point, so the
+    Duplicate points above the neighborhood size: open3d rejects every point, so the
     all-rejected guard keeps the cloud rather than emptying the reconstruction.
     """
     keep = clean_pointcloud(np.tile([1.0, 2.0, 3.0], (50, 1)))

@@ -141,7 +141,7 @@ def _make_lift_result(
 ) -> FeedforwardResult:
     """Build a minimal FeedforwardResult sufficient for lift_features.
 
-    Uses identity world-to-cam extrinsics and a pinhole intrinsics centred at (w/2, h/2).
+    Uses identity world-to-cam extrinsics and a pinhole intrinsics centered at (w/2, h/2).
     """
     extrinsics_3x4 = np.tile(
         np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]], dtype=np.float32), (n, 1, 1)

@@ -1,14 +1,14 @@
 """
 Camera calibration and undistortion at the images/ boundary.
 
-pycolmap self-calibrates one shared OPENCV camera from the scene's images and cv2
-moves the pixels. The camera IS a pycolmap.Camera — nothing round-trips through a
-local dataclass mirroring the same numbers.
-
-Every downstream consumer (feedforward backbones, InstantSfM SIFT, splat trainer,
-localization DB export) assumes pinhole; undistorting once here fixes all of them.
-COLMAP picks the undistorted framing (pycolmap.undistort_camera) and cv2 moves the
-pixels; there is no crop, so the principal point cannot drift out of step with it.
+- pycolmap self-calibrates one shared OPENCV camera from the scene's images; cv2 moves
+  the pixels
+- the camera IS a pycolmap.Camera — nothing round-trips through a local dataclass
+  mirroring the same numbers
+- every downstream consumer assumes pinhole (feedforward backbones, InstantSfM SIFT,
+  splat trainer, localization DB export), so undistorting once here fixes all of them
+- COLMAP picks the undistorted framing (pycolmap.undistort_camera) and there is no crop,
+  so the principal point cannot drift out of step with it
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ _SIFT_NUM_THREADS = 8
 # Below this share of the calibration subset the solve has not seen the lens
 _MIN_REGISTERED_FRACTION = 0.6
 
-# Two-view initialisation plus a margin; fewer images cannot constrain k1 k2 p1 p2
+# Two-view initialization plus a margin; fewer images cannot constrain k1 k2 p1 p2
 _MIN_CALIBRATION_IMAGES = 8
 
 
@@ -133,7 +133,7 @@ def undistort_frames(frames_in: np.ndarray, camera: pycolmap.Camera) -> tuple[np
     Returns:
         - (N, H', W', 3) uint8, same channel order in as out.
         - The PINHOLE camera for that canvas: focal preserved, canvas grown to hold
-          the corners, so the centre stays 1:1 and nothing is resampled down to fit.
+          the corners, so the center stays 1:1 and nothing is resampled down to fit.
     """
     frames_in = np.asarray(frames_in)
     if frames_in.ndim != 4 or frames_in.shape[1:3] != (camera.height, camera.width):

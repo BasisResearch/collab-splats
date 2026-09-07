@@ -47,9 +47,10 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
 
         super().__init__(resize_mode=resize_mode, image_resolution=image_resolution, svd_components=svd_components)
 
-        # Lazy import: maskclip_onnx depends on pkg_resources.packaging which was removed
-        # in setuptools>=71. Import here so the module is importable even if maskclip_onnx
-        # has broken transitive deps — failures only surface when MaskCLIPExtractor is used.
+        # Lazy import: maskclip_onnx needs pkg_resources.packaging
+        # - that was removed in setuptools>=71
+        # - imported here so the module loads even with broken transitive deps
+        # - failures then surface only when MaskCLIPExtractor is actually used
         import maskclip_onnx  # noqa: PLC0415
 
         # Load the MaskCLIP model; discard the library's default preprocess (square crop)
@@ -71,7 +72,12 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
 
     @property
     def device(self) -> torch.device:
-        """Device of the underlying model parameters."""
+        """
+        Device of the underlying model parameters.
+
+        Returns:
+            The torch device the model was moved to at construction.
+        """
         return self._device
 
     ########################################################################
@@ -79,7 +85,15 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
     ########################################################################
 
     def forward(self, images: list) -> list[torch.Tensor]:
-        """Extract patch-level CLIP features from a list of images."""
+        """
+        Extract patch-level CLIP features from a list of images.
+
+        Args:
+            images: anything `preprocess` accepts — paths, ndarrays or PIL images.
+
+        Returns:
+            One (D, H_p, W_p) float32 CPU tensor per input image, L2-normalized per patch.
+        """
         logger.debug("[%s] Extracting features: %d images", type(self).__name__, len(images))
 
         # Preprocess all images and stack into a single batch
@@ -104,7 +118,15 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
     ########################################################################
 
     def encode_text(self, text: List[str]) -> torch.Tensor:
-        """Compute normalized CLIP embeddings for a list of text queries."""
+        """
+        Compute normalized CLIP embeddings for a list of text queries.
+
+        Args:
+            text: query strings, tokenized by CLIP's own tokenizer.
+
+        Returns:
+            (N, D) float32 embeddings on this extractor's device, unit-norm per row.
+        """
         tokens = self._maskclip_onnx.clip.tokenize(text).to(self._device)
         embed = self.model.encode_text(tokens).float()
         embed /= embed.norm(dim=-1, keepdim=True)

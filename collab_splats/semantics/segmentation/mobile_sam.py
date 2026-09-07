@@ -1,9 +1,8 @@
 """
 MobileSAMv2 segmentation backend.
 
-Provides:
-  load_mobile_sam       — load MobileSAMV2 model weights from torchhub
-  MobileSAMSegmentation — registry backend with 'auto' and 'object' strategies
+- load_mobile_sam: load MobileSAMV2 weights from torchhub
+- MobileSAMSegmentation: registry backend with 'auto' and 'object' strategies
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def load_mobile_sam(
     mobilesam_encoder_name: str = "mobilesamv2_efficientvit_l2", device: str = "cpu"
-):
+) -> tuple[Any, Any, Any]:
     """
     Load the MobileSAMV2 model trio from torchhub.
 
@@ -75,7 +74,7 @@ class MobileSAMSegmentation(BaseSegmentation):
         )
         self.strategy = strategy
 
-    def segment(self, image) -> tuple[torch.Tensor, Any] | None:
+    def segment(self, image: np.ndarray) -> tuple[torch.Tensor, Any] | None:
         """
         Segment one frame with the configured strategy.
 

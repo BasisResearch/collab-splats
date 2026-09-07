@@ -1,11 +1,12 @@
 """
 Canonical keyframe store: a COLMAP-style images/ directory plus frames.json.
 
-The preprocess stage decodes a video once and writes images/frame_NNNNNN.png
-(lossless, PNG compression 1) beside frames.json, which holds the selection
-records and provenance COLMAP has no slot for. Every pixel consumer reads the
-directory; path-locked consumers take the directory itself, so nothing stages
-a second copy.
+- the preprocess stage decodes a video once and writes images/frame_NNNNNN.png,
+  lossless at PNG compression 1
+- frames.json sits beside it, holding the selection records and provenance COLMAP has
+  no slot for
+- every pixel consumer reads the directory; path-locked consumers take the directory
+  itself, so nothing stages a second copy
 """
 
 from __future__ import annotations

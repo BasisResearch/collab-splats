@@ -33,7 +33,7 @@ def test_creator_exposes_min_views_and_rel_thresh(module_path, cls_name):
 
 
 def test_mapanything_ships_min_views_one():
-    """K=1 is exactly the old threshold=0.0, so MapAnything's behaviour is preserved."""
+    """K=1 is exactly the old threshold=0.0, so MapAnything's behavior is preserved."""
     creator = _creator("collab_splats.pointcloud.feedforward.mapanything", "MapAnythingCreator")
     assert creator.min_views == 1
     assert creator.use_multiview_confidence is True

@@ -1,15 +1,14 @@
 """
 Video decode and probe.
 
-Metadata comes from a PyAV container parse and every decode runs in-process —
-no subprocess, no full demux, and nothing required on PATH.
-
-Holds no measurement logic and no quality-driven selection, so both preproc.qa
-and preproc.sampling can depend on it without a cycle. The constant-rate index
-grid lives here rather than in sampling because sampling delegates to it.
-
-Colour convention: iter_frames yields BGR (what cv2 wants), extract_frame
-returns RGB (what its consumers store). Both are uint8 HWC.
+- metadata comes from a PyAV container parse and every decode runs in-process: no
+  subprocess, no full demux, nothing required on PATH
+- holds no measurement logic and no quality-driven selection, so preproc.qa and
+  preproc.sampling can both depend on it without a cycle
+- the constant-rate index grid lives here rather than in sampling, because sampling
+  delegates to it
+- color convention: iter_frames yields BGR (what cv2 wants), extract_frame returns RGB
+  (what its consumers store); both uint8 HWC
 """
 
 import logging
@@ -23,7 +22,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Clockwise display rotation -> the cv2 op that applies it. Keyed the way
-# _rotation_degrees reports, so 0 (and anything unrecognised) means "no rotate".
+# _rotation_degrees reports, so 0 (and anything unrecognized) means "no rotate".
 _ROTATE_CODES = {
     90: cv2.ROTATE_90_CLOCKWISE,
     180: cv2.ROTATE_180,

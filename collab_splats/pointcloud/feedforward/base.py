@@ -16,6 +16,7 @@ import logging
 import re
 import time
 from abc import abstractmethod
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -52,30 +53,32 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FeedforwardResult:
-    """Typed output from a feedforward creator's ``_postprocess`` step.
+    """
+    Typed output from a feedforward creator's _postprocess step.
 
-    All arrays are float32 unless noted. Shapes assume N images and P output points.
-    Optional fields ``images``, ``confidence``, ``world_points`` are always populated by
-    feedforward creators and consumed by ``BundleAdjustment``.
+    - all arrays float32 unless the field comment says otherwise
+    - shapes assume N images and P output points
+    - images / confidence / world_points are optional on the type but always populated by
+      feedforward creators, and consumed by BundleAdjustment
     """
 
     points: np.ndarray  # (P, 3) float32 — world-space XYZ points
     colors: np.ndarray  # (P, 3) uint8 — RGB, range [0, 255]
     extrinsics: np.ndarray  # (N, 4, 4) float32 — world-to-camera homogeneous transform
-    #   rows 0-2: [R|t], row 3: [0, 0, 0, 1]
+    # - rows 0-2: [R|t], row 3: [0, 0, 0, 1]
     intrinsics: np.ndarray  # (N, 3, 3) float32 — camera intrinsics K
     image_paths: list[Path]  # length N — source image paths, ordered to match extrinsics
     original_coords: np.ndarray  # (N, 6) float32 — [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
-    #   tl = model crop top-left in original pixels
-    #   cr = model crop bottom-right in original pixels
-    #   orig_w/h = full original image dimensions
+    # - tl = model crop top-left in original pixels
+    # - cr = model crop bottom-right in original pixels
+    # - orig_w/h = full original image dimensions
     model_width: int  # model inference resolution width (pixels)
     model_height: int  # model inference resolution height (pixels)
     # Populated by feedforward creators; consumed by BundleAdjustment wrapper.
-    images: "torch.Tensor | None" = None  # (N, 3, H, W) normalised RGB for track extraction
+    images: "torch.Tensor | None" = None  # (N, 3, H, W) normalized RGB for track extraction
     confidence: "torch.Tensor | None" = None  # (N, H, W) confidence scores
     world_points: "np.ndarray | None" = None  # (N, H, W, 3) world-space points per pixel
-    depth: "np.ndarray | None" = None  # (N, H, W) float32 depth maps (normalised to 3-D across backends)
+    depth: "np.ndarray | None" = None  # (N, H, W) float32 depth maps (normalized to 3-D across backends)
     features: "np.ndarray | None" = None  # (P, D) float32 — feature vector per point, index-aligned with points
     pixel_indices: "np.ndarray | None" = None  # (P, 3) int32 — [frame_id, row, col] source pixel for each point
     # Geometric cross-view depth consistency, populated only when mv was computed.
@@ -86,7 +89,15 @@ class FeedforwardResult:
     _zarr_path: "Path | None" = field(default=None, init=False, repr=False, compare=False)
 
     def save(self, path: Path) -> None:
-        """Save to compressed .npz. images/confidence/world_points excluded (too large)."""
+        """
+        Save to compressed .npz.
+
+        - images / confidence / world_points are excluded — too large for this format
+        - features and pixel_indices are written only when populated
+
+        Args:
+            path: Destination .npz path.
+        """
         # Collect required arrays into a flat dict for np.savez_compressed
         arrays: dict = dict(
             points=self.points,
@@ -107,7 +118,17 @@ class FeedforwardResult:
 
     @classmethod
     def load(cls, path: Path) -> "FeedforwardResult":
-        """Load from .npz saved by save(). images/confidence/world_points will be None."""
+        """
+        Load from a .npz written by save().
+
+        - images / confidence / world_points come back None; use the zarr path if you need them
+
+        Args:
+            path: Source .npz path.
+
+        Returns:
+            FeedforwardResult with every persisted field restored.
+        """
         # Deserialize all saved keys; optional keys default to None if absent
         d = np.load(path, allow_pickle=False)
         return cls(
@@ -124,15 +145,16 @@ class FeedforwardResult:
         )
 
     def save_zarr(self, path: Path, extra_attrs: dict | None = None) -> None:
-        """Save to a zarr v3 store with lz4 compression.
+        """
+        Save to a zarr v3 store with lz4 compression.
 
-        Unlike save(), this backend also persists world_points (chunked by frame),
-        confidence (chunked by frame), and images (tensor → numpy, chunked by frame).
-        images is excluded from load_zarr to avoid loading large tensors inadvertently.
+        - unlike save(), persists world_points, confidence and images as well, each chunked by frame
+        - images (tensor -> numpy) is written but excluded from load_zarr's defaults, so a load never
+          pulls the large tensor by accident
 
         Args:
-            path: Directory path for the zarr store (created if absent).
-            extra_attrs: optional provenance attrs (method, backend, upstream version) merged into store.attrs.
+            path:        Directory for the zarr store, created if absent.
+            extra_attrs: Provenance attrs (method, backend, upstream version) merged into store.attrs.
         """
         lz4 = BloscCodec(cname="lz4")
         store = zarr.open(str(path), mode="w")
@@ -186,9 +208,10 @@ class FeedforwardResult:
             chunks = (1, conf_np.shape[1], conf_np.shape[2])
             store.create_array("confidence", data=conf_np, chunks=chunks, compressors=lz4)
 
-        # Save mv confidence arrays (N, H, W) chunked by frame. Absent entirely when mv was
-        # not computed — never a zeros array, which a consumer cannot distinguish from
-        # "every pixel disagreed". Existing scenes are not backfilled.
+        # Save mv confidence arrays (N, H, W), chunked by frame
+        # - absent entirely when mv was not computed, never a zeros array, which a consumer
+        #   cannot tell apart from "every pixel disagreed"
+        # - existing scenes are not backfilled
         for name, arr in (
             ("mv_ratio", self.mv_ratio),
             ("mv_inlier_count", self.mv_inlier_count),
@@ -219,25 +242,25 @@ class FeedforwardResult:
         load_features: bool = True,
         load_pixel_indices: bool = True,
     ) -> "FeedforwardResult":
-        """Load from a zarr v3 store saved by save_zarr().
+        """
+        Load from a zarr v3 store written by save_zarr().
 
-        images defaults to None (large tensor; skipped to avoid accidental loads).
-        Pass load_images=True to restore the (N, 3, H, W) tensor — required for
-        post-load feature lifting so the extractor sees the same FOV as the depth map.
-        confidence is restored as a torch.Tensor if present in the store.
-
-        The remaining dense per-pixel/per-point arrays default to loaded (back-compat);
-        pass load_<name>=False to skip decoding an array a consumer never reads — the
-        dashboard's display path skips all of them (they can be GBs per scene).
+        - every dense array defaults to loaded, for back-compat; skip the ones a consumer never
+          reads — they can be GBs per scene, and the dashboard's display path skips all of them
+        - confidence comes back as a torch.Tensor when present in the store
 
         Args:
-            path: Directory path of the zarr store.
-            load_images: If True and "images" is in the store, load and return as a torch.Tensor.
-            load_depth / load_world_points / load_confidence / load_features /
-                load_pixel_indices: If False, skip decoding that array (field → None).
+            path:               Directory of the zarr store.
+            load_images:        Restore the (N, 3, H, W) tensor. Off by default; required for
+                post-load feature lifting, so the extractor sees the depth map's FOV.
+            load_depth:         Decode the depth maps.
+            load_world_points:  Decode the per-pixel world points.
+            load_confidence:    Decode the confidence maps.
+            load_features:      Decode the per-point features.
+            load_pixel_indices: Decode the per-point source pixels.
 
         Returns:
-            FeedforwardResult with all requested persisted fields restored.
+            FeedforwardResult with the requested persisted fields restored; skipped fields are None.
         """
         store = zarr.open(str(path), mode="r")
         attrs = dict(store.attrs)
@@ -283,10 +306,17 @@ class FeedforwardResult:
         return result
 
     def reproject(self) -> "FeedforwardResult":
-        """Re-project points under current extrinsics using stored source pixels and depth.
+        """
+        Re-project points under the current extrinsics, from stored source pixels and depth.
 
-        ``intrinsics``, ``depth``, and ``pixel_indices`` all live in model-resolution
-        space — no scaling required.
+        - intrinsics, depth and pixel_indices all live in model-resolution space, so nothing scales
+        - deterministic: the point set stays index-aligned with colors and features
+
+        Returns:
+            A new FeedforwardResult with points replaced.
+
+        Raises:
+            ValueError: depth or pixel_indices is absent.
         """
         if self.depth is None or self.pixel_indices is None:
             raise ValueError(
@@ -442,10 +472,12 @@ def _aabbs_overlap(a: torch.Tensor, b: torch.Tensor) -> bool:
 
 @dataclass
 class MultiviewConfidence:
-    """Per-pixel cross-view depth agreement, with the raw accumulators kept.
+    """
+    Per-pixel cross-view depth agreement, with the raw accumulators kept.
 
-    ``ratio`` is upstream-compatible (inlier / valid). The counts are free — both
-    accumulators already exist in the loop — and downstream filtering thresholds on them.
+    - ratio is upstream-compatible (inlier / valid)
+    - the counts are free — both accumulators already exist in the loop — and downstream
+      filtering thresholds on them
     """
 
     ratio: np.ndarray  # (N, H, W) float32 — inlier_count / valid_count, 0 where valid_count == 0
@@ -455,26 +487,28 @@ class MultiviewConfidence:
 
 
 def multiview_mask(mv: MultiviewConfidence, valid_depth: np.ndarray, min_views: int = 1) -> np.ndarray:
-    """Boolean keep-mask from multiview confidence: at least min_views other views agree.
+    """
+    Keep-mask from multiview confidence: at least min_views other views agree.
 
-    A count, not a ratio or a percentile. The ratio is a quantized k/N with a large atom at
-    1.0, so percentile thresholds collapse, and a ratio moves with sequence length while
-    "2 views agree" does not.
-
-    Unjudged views — those with no overlapping partners — keep their valid pixels. Absence
-    of evidence is not evidence of absence.
-
-    The same principle bounds K per pixel: a pixel seen by fewer than K other views is asked
-    to satisfy every partner it has, not an unreachable count. Without this, K=2 on a 3-frame
-    scene deletes the whole reconstruction — the count is absolute, so K > partners is
-    unsatisfiable, and the measured optimum (K=16) is exactly the setting that empties a short
-    sequence. K=1 is unaffected: min(1, valid_count) == 1 wherever a view is judged at all,
-    so the old threshold=0.0 equivalence still holds exactly.
+    - a count, not a ratio or a percentile. The ratio is a quantized k/N with a large atom at
+      1.0, so percentile thresholds collapse, and a ratio moves with sequence length while
+      "2 views agree" does not
+    - unjudged views — no overlapping partners — keep their valid pixels. Absence of evidence
+      is not evidence of absence
+    - K is bounded per pixel: a pixel seen by fewer than K other views must satisfy every
+      partner it has, not an unreachable count. Without that, K=2 on a 3-frame scene deletes
+      the reconstruction, and the measured optimum (K=16) is exactly what empties a short
+      sequence
+    - K=1 is unaffected: min(1, valid_count) == 1 wherever a view is judged at all, so the old
+      threshold=0.0 equivalence still holds exactly
 
     Args:
         mv:          Output of compute_multiview_depth_confidence.
         valid_depth: (N, H, W) bool — pixels eligible before mv filtering.
         min_views:   K in "at least K other views agree". K=1 is the old threshold=0.0.
+
+    Returns:
+        (N, H, W) bool keep-mask.
     """
     required = np.minimum(min_views, mv.valid_count)
     return np.where(
@@ -506,22 +540,24 @@ def compute_multiview_depth_confidence(
     collect: dict | None = None,
     device: str = "cuda",
 ) -> MultiviewConfidence:
-    """Geometric cross-view depth consistency confidence per pixel.
+    """
+    Geometric cross-view depth consistency confidence per pixel.
 
-    For each source pixel, projects it into all other frames and checks whether
-    the reprojected and sampled depths agree within abs_thresh + rel_thresh * depth.
-    Returns per-pixel inlier ratio across overlapping views, in [0, 1].
+    - each source pixel projects into every other frame; reprojected and sampled depth must
+      agree within abs_thresh + rel_thresh * depth
+    - the per-pixel inlier ratio across overlapping views lands in [0, 1]
 
     Contract — violating any of these produces silent garbage, so the last two are asserted:
-      * depth is **Z-depth** along the camera's +Z axis. NOT ray length, NOT disparity, NOT
-        shifted-affine. The VGGT family and MapAnything both satisfy this.
-      * Scale invariance holds only with abs_thresh=0.0: multiply all depth and translations
-        by s and expected_d, sampled_d and the tolerance all scale together. This is what
-        lets one function serve every backbone despite their different depth scales.
-      * depth, intrinsics and extrinsics are pixel-aligned at ONE resolution, OpenCV
-        convention, +Z forward. Mixing model-res depth with original-res K is the bug class
-        behind the 2026-08-11 mesh regression.
-      * N agrees across all three arrays.
+
+    - depth is Z-depth along the camera's +Z axis. NOT ray length, NOT disparity, NOT
+      shifted-affine. The VGGT family and MapAnything both satisfy this
+    - scale invariance holds only at abs_thresh=0.0: multiply all depth and translations by s
+      and expected_d, sampled_d and the tolerance all scale together. That is what lets one
+      function serve every backbone despite their different depth scales
+    - depth, intrinsics and extrinsics are pixel-aligned at ONE resolution, OpenCV convention,
+      +Z forward. Mixing model-res depth with original-res K is the 2026-08-11 mesh-regression
+      bug class
+    - N agrees across all three arrays
 
     Args:
         depth:       (N, H, W) float32 Z-depth per frame.
@@ -530,19 +566,24 @@ def compute_multiview_depth_confidence(
         depth_masks: (N, H, W) bool — source pixels to include; None = all valid depth.
         abs_thresh:  Absolute depth tolerance (depth units). 0.0 for non-metric depth.
         rel_thresh:  Relative depth tolerance as fraction of expected depth.
-        pair_gate:   Skip view pairs whose depth frusta cannot overlap. Cost optimisation
+        pair_gate:   Skip view pairs whose depth frusta cannot overlap. Cost optimization
                      only — the AABB test is conservative, so results are unchanged.
-        collect: Optional dict, filled IN PLACE with the signed residual and parallax angle
-                 this loop already computes and would otherwise discard. Keys: "pairs"
-                 (list[PairStats], keyed on frame index), "rel_depth_error_counts" (np.int64 counts) and
-                 "rel_depth_error_edges" (the edges those counts are against, sized from this scene's own
-                 sample count). The residual is the one per-pixel quantity, so it is the one
-                 that has to bin rather than ship raw. The return value is the same either
-                 way, so the four production creators are unaffected.
+        collect:     Optional dict, filled IN PLACE with the signed residual and parallax angle
+                     this loop already computes and would otherwise discard. Keys: "pairs"
+                     (list[PairStats], keyed on frame index), "rel_depth_error_counts"
+                     (np.int64 counts) and "rel_depth_error_edges" (the edges those counts are
+                     against, sized from this scene's own sample count). The residual is the one
+                     per-pixel quantity, so it is the one that has to bin rather than ship raw.
+                     The return value is the same either way, so the four production creators
+                     are unaffected.
         device:      Torch device for computation.
 
     Returns:
         MultiviewConfidence — ratio plus both accumulators and a per-view judged flag.
+
+    Raises:
+        ValueError: N disagrees across the arrays, or the principal point falls outside the
+            depth grid (model-res depth paired with original-res intrinsics).
     """
     dev = torch.device(device if device != "cuda" or torch.cuda.is_available() else "cpu")
     N, H, W = depth.shape
@@ -553,10 +594,10 @@ def compute_multiview_depth_confidence(
         raise ValueError(
             f"length mismatch: depth has {N} frames, intrinsics {len(intrinsics)}, " f"extrinsics {len(extrinsics)}"
         )
-    # The principal point must land strictly inside the depth grid. This is the tightest
-    # bound that still admits any legitimately off-centre crop, and it is tight enough to
-    # matter: pairing model-res depth with an original-res K that is only 2x larger puts
-    # cx at exactly W, so anything looser than "strictly inside" would miss the common case.
+    # Principal point must land strictly inside the depth grid
+    # - tightest bound that still admits any legitimate off-center crop
+    # - model-res depth paired with an original-res K only 2x larger puts cx at exactly W
+    # - anything looser than "strictly inside" would miss that common case
     cx, cy = float(intrinsics[0][0, 2]), float(intrinsics[0][1, 2])
     if not (0 < cx < W and 0 < cy < H):
         raise ValueError(
@@ -593,25 +634,26 @@ def compute_multiview_depth_confidence(
     else:
         depth_masks_t = None
 
-    # Collection is opt-in and fills the caller's dict. The loop already holds everything
-    # below; only the plumbing is new. The return contract does not move, because four
-    # production creators depend on it.
+    # Collection is opt-in and fills the caller's dict
+    # - the loop already holds everything below, so only the plumbing is new
+    # - the return contract does not move: four production creators depend on it
     if collect is not None:
-        # Bin resolution comes from how many residuals there will be, which is exact and known
-        # here: every pair contributes at most one per pixel. Nothing is hardcoded, and nothing
-        # needs a pre-pass over the data — the pre-pass is the cost the histogram exists to avoid.
-        # The pair loop below is ORDERED (both (i, j) and (j, i) run and both feed this one
-        # histogram), so the sample count is N*(N-1)*H*W, not the unordered N*(N-1)//2*H*W.
-        # Rice's rule takes a cube root, so halving n here would cost ~1.26x in bin count.
+        # Bin count from the exact residual count, nothing hardcoded, no pre-pass
+        # - every pair contributes at most one residual per pixel, so n is known here
+        # - a pre-pass over the data is the cost this histogram exists to avoid
+        # - the pair loop below is ORDERED — (i, j) and (j, i) both feed this one histogram —
+        #   so n = N*(N-1)*H*W, not the unordered N*(N-1)//2*H*W
+        # - Rice's rule cube-roots n, so halving it would cost ~1.26x in bin count
         edges = residual_bin_edges(N * (N - 1) * H * W)
         collect["pairs"] = []
         collect["rel_depth_error_edges"] = edges
         collect["rel_depth_error_counts"] = np.zeros(len(edges) - 1, dtype=np.int64)
         cam_centers = cam2world[:, :3, 3]  # (N, 3) world-space camera positions
 
-    # O(N^2) pair loop with no output of its own until it finishes, and the dominant cost of any
-    # caller that enables it, so it carries a bar. Unit is the source frame; each one is checked
-    # against every other, hence the pair count in the label.
+    # O(N^2) pair loop, silent until it finishes, so it carries a progress bar
+    # - it is the dominant cost of any caller that enables it
+    # - unit is the source frame; each is checked against every other, hence the pair count
+    #   in the label
     t_pairs = time.perf_counter()
     for i in tqdm(range(N), desc=f"Cross-view depth check ({N * (N - 1)} pair directions)",
                   unit="frame", leave=False):
@@ -644,7 +686,7 @@ def compute_multiview_depth_confidence(
             z_j = proj_j[:, 2:3].clamp(min=1e-6)
             px_j = proj_j[:, :2] / z_j  # (H*W, 2)
 
-            # Normalise pixel coords to [-1, 1] for grid_sample
+            # Normalize pixel coords to [-1, 1] for grid_sample
             px_norm = torch.stack(
                 [px_j[:, 0] / (W - 1) * 2 - 1, px_j[:, 1] / (H - 1) * 2 - 1],
                 dim=-1,
@@ -652,13 +694,13 @@ def compute_multiview_depth_confidence(
             in_bounds = (px_norm[:, 0] >= -1) & (px_norm[:, 0] <= 1) & (px_norm[:, 1] >= -1) & (px_norm[:, 1] <= 1)
             valid_ij = src_valid & in_front & in_bounds  # (H*W,)
 
-            # Sample frame-j depth at projected locations. NEAREST, matching upstream
-            # mapanything/utils/multiview_confidence.py: bilinear across a depth
-            # discontinuity returns a value lying on no surface (blending 2.0 and 8.0
-            # yields 4.4), manufacturing both false outliers and false inliers. Meta
-            # calibrated abs=0.02, rel=0.02 against nearest.
-            # Reshape to (1, H, W, 2): px_norm is ordered as the flattened source meshgrid,
-            # so grid[0, r, c, :] = the normalised target coord where source pixel (r, c) projects.
+            # Sample frame-j depth at the projected locations
+            # - NEAREST, matching upstream mapanything/utils/multiview_confidence.py
+            # - bilinear across a depth discontinuity returns a value lying on no surface
+            #   (2.0 blended with 8.0 yields 4.4), manufacturing false outliers AND inliers
+            # - Meta calibrated abs=0.02, rel=0.02 against nearest
+            # - reshape to (1, H, W, 2): px_norm is ordered as the flattened source meshgrid,
+            #   so grid[0, r, c, :] is the normalized coord where source pixel (r, c) projects
             grid = px_norm.reshape(1, H, W, 2)
             sampled_d = F.grid_sample(
                 depth_t[j].unsqueeze(0).unsqueeze(0),  # (1, 1, H, W)
@@ -669,12 +711,12 @@ def compute_multiview_depth_confidence(
             ).squeeze()  # (H, W)
             sampled_d_flat = sampled_d.reshape(-1)  # (H*W,)
 
-            # The two directions of disagreement mean opposite things:
-            #   sampled < expected - tol  → something is in front: the view is OCCLUDED.
-            #                               Evidence absent, so drop it from the denominator.
-            #   sampled > expected + tol  → nothing is there: a FREE-SPACE VIOLATION.
-            #                               Real evidence against, so keep it as an outlier.
-            # Counting occlusion as disagreement punishes correct geometry for being hidden.
+            # The two directions of disagreement mean opposite things
+            # - sampled < expected - tol: something in front, the view is OCCLUDED —
+            #   evidence absent, so drop it from the denominator
+            # - sampled > expected + tol: nothing is there, a FREE-SPACE VIOLATION —
+            #   real evidence against, so keep it as an outlier
+            # - counting occlusion as disagreement punishes correct geometry for being hidden
             tol = abs_thresh + rel_thresh * expected_d.abs()
             has_depth = sampled_d_flat > 0
             inlier = (torch.abs(expected_d - sampled_d_flat) < tol) & valid_ij & has_depth
@@ -687,31 +729,32 @@ def compute_multiview_depth_confidence(
             if collect is None:
                 continue
 
-            # Signed relative residual. The sign carries scale bias, the spread carries
-            # geometric noise. Same pixels the ratio counts: occluded pixels are absent
-            # evidence, and letting them in would drag the bias negative.
-            # Near-zero expected depth is dropped for the same reason rather than divided
-            # through: the quotient there is arbitrarily large and lands in the histogram
-            # indistinguishably from a real disagreement. It also fixes the parallax, since
-            # ||v_j|| >= expected_d — as expected_d -> 0 the ray direction degenerates and
-            # arccos drifts to ~90 deg, fabricating parallax that median_parallax_deg reports.
+            # Signed relative residual: sign carries scale bias, spread carries noise
+            # - same pixels the ratio counts: occluded pixels are absent evidence, and
+            #   letting them in would drag the bias negative
+            # - near-zero expected depth is dropped, not divided through: the quotient is
+            #   arbitrarily large and lands in the histogram like a real disagreement
+            # - that drop also fixes parallax, since ||v_j|| >= expected_d — as expected_d -> 0
+            #   the ray direction degenerates and arccos drifts to ~90 deg, fabricating
+            #   parallax that median_parallax_deg would report
             sel = counted & has_depth & (expected_d > 1e-6)
             if not bool(sel.any()):
                 continue
             rel = (sampled_d_flat[sel] - expected_d[sel]) / expected_d[sel]
 
-            # Parallax from the two ray directions, not from f*B/Z. The pinhole form needs a
-            # focal length, and focal is exactly what is not comparable across backbones
-            # (11% fx spread on omega alone). Ray directions are scale-free.
+            # Parallax from the two ray directions, not from f*B/Z
+            # - the pinhole form needs a focal length, and focal is exactly what is not
+            #   comparable across backbones (11% fx spread on omega alone)
+            # - ray directions are scale-free
             pw = pts_world[sel]
             v_i = pw - cam_centers[i]
             v_j = pw - cam_centers[j]
             cos_a = (v_i * v_j).sum(-1) / (v_i.norm(dim=-1) * v_j.norm(dim=-1)).clamp(min=1e-12)
             par = torch.rad2deg(torch.arccos(cos_a.clamp(-1.0, 1.0)))
 
-            # The one histogram: too many per-pixel residuals to hold, so they accumulate
-            # here. bounded_residual puts them on a finite axis first, so nothing is clipped
-            # and nothing is dropped however large the residual.
+            # The one histogram: too many per-pixel residuals to hold, so they accumulate here
+            # - bounded_residual puts them on a finite axis first
+            # - so nothing is clipped and nothing is dropped, however large the residual
             v = rel.detach().cpu().numpy()
             collect["rel_depth_error_counts"] += np.histogram(bounded_residual(v), bins=edges)[0]
 
@@ -729,10 +772,11 @@ def compute_multiview_depth_confidence(
                 )
             )
 
-    # ratio is 0 where no view overlapped; the judged flag distinguishes "no evidence"
-    # from "evidence against", which the mask helper needs and a bare ratio cannot express.
-    # valid_sum > 0 already guards the division; the discarded branch needs a finite
-    # denominator only to keep the division from emitting NaN into an unselected slot.
+    # ratio is 0 where no view overlapped, same as where every view disagreed
+    # - the judged flag separates "no evidence" from "evidence against"; the mask helper
+    #   needs that split and a bare ratio cannot express it
+    # - valid_sum > 0 already guards the division; the discarded branch needs a finite
+    #   denominator only to stop NaN landing in an unselected slot
     safe_denom = torch.where(valid_sum > 0, valid_sum, torch.ones_like(valid_sum))
     ratio = torch.where(valid_sum > 0, inlier_sum / safe_denom, torch.zeros_like(inlier_sum))
     judged = (valid_sum.reshape(N, -1).sum(dim=1) > 0).cpu().numpy()
@@ -761,32 +805,31 @@ def build_pycolmap_reconstruction(
     image_names: list[str],
     camera_model: str = "PINHOLE",
 ) -> pycolmap.Reconstruction:
-    """Build a pycolmap Reconstruction from pointcloud + camera data.
+    """
+    Build a pycolmap Reconstruction from pointcloud + camera data.
 
-    Creates one camera and one image per entry in ``image_names``.  Points are
-    added as free 3D points with no ``Point2D`` track observations — feedforward
-    methods do not produce feature matches, so there are no 2D-3D correspondences
-    to record.  This means the reconstruction is valid for writing to disk, but
-    cannot be used as input to COLMAP BA.
+    - one camera and one image per entry in image_names
+    - points are added as free 3D points with no Point2D track observations — feedforward
+      methods produce no feature matches, so there are no 2D-3D correspondences to record
+    - valid to write to disk; NOT valid as input to COLMAP BA
 
     Args:
         pts3d:        (P, 3) float32 or float64 world-space point positions.
-        colors:       (P, 3) uint8 or float32 [0,1] RGB colors.
-                      Float inputs are clipped and scaled to uint8 automatically.
-        extrinsics:   (N, 3, 4) or (N, 4, 4) float32 world-to-camera matrices.
-                      The first 3 rows are used; the 4th row is ignored.
+        colors:       (P, 3) uint8 or float32 [0,1] RGB colors. Float inputs are clipped and
+                      scaled to uint8 automatically.
+        extrinsics:   (N, 3, 4) or (N, 4, 4) float32 world-to-camera matrices. The first 3 rows
+                      are used; the 4th is ignored.
         intrinsics:   (N, 3, 3) float32 camera intrinsics K per image.
         image_width:  Width in pixels of the model inference resolution.
         image_height: Height in pixels of the model inference resolution.
         image_names:  Length-N list of image filenames (basename only, no path).
-        camera_model: pycolmap camera model string.
-                      ``"PINHOLE"`` — params [fx, fy, cx, cy].
-                      ``"SIMPLE_PINHOLE"`` — params [f, cx, cy], f = mean(fx, fy).
+        camera_model: pycolmap camera model string. "PINHOLE" — params [fx, fy, cx, cy].
+                      "SIMPLE_PINHOLE" — params [f, cx, cy], f = mean(fx, fy).
 
     Returns:
-        pycolmap.Reconstruction with cameras, images, and 3D points.
-        Call ``_rescale_reconstruction_to_original_dimensions`` before writing
-        to disk if the model resolution differs from the original image size.
+        pycolmap.Reconstruction with cameras, images and 3D points. Call
+        _rescale_reconstruction_to_original_dimensions before writing to disk if the model
+        resolution differs from the original image size.
     """
     recon = pycolmap.Reconstruction()
     exts = extrinsics[:, :3, :] if extrinsics.shape[1] == 4 else extrinsics
@@ -825,9 +868,9 @@ def build_pycolmap_reconstruction(
         cam_from_world = pycolmap.Rigid3d(pycolmap.Rotation3d(R), t)
 
         image = pycolmap.Image(name=name, camera_id=camera_id, image_id=image_id)
-        # add_image_with_trivial_frame creates image + frame and registers the
-        # pose atomically — required by pycolmap >=4.0 (cam_from_world is now
-        # read-only; it lives on the Frame, not the Image).
+        # add_image_with_trivial_frame registers image + frame + pose atomically
+        # - required by pycolmap >=4.0, where cam_from_world is read-only
+        # - the pose lives on the Frame, not the Image
         recon.add_image_with_trivial_frame(image, cam_from_world)
 
     return recon
@@ -863,7 +906,7 @@ def _rescale_reconstruction_to_original_dimensions(
         console.log(f"Rescaling reconstruction from {image_size[0]}x{image_size[1]} " f"to original dimensions")
         console.log(f"  Original image sizes (WxH): {int(original_width)}x{int(original_height)}")
 
-    # Initialise per-loop shared-camera bookkeeping (used only when shared_camera=True)
+    # Initialize per-loop shared-camera bookkeeping (used only when shared_camera=True)
     rescale_camera = True
     shared_intrinsics = None
     shared_width = None
@@ -879,9 +922,9 @@ def _rescale_reconstruction_to_original_dimensions(
         pred_params = copy.deepcopy(pycamera.params)
 
         real_image_size = original_image_sizes[pyimageid - 1, -2:]
-        # scale_x/scale_y: ratio of original image size to model inference size.
-        # Multiplying camera params by these factors maps from model-resolution
-        # pixel coordinates back to original-resolution pixel coordinates.
+        # scale_x/scale_y: ratio of original image size to model inference size
+        # - multiplying camera params by them maps model-resolution pixel coordinates back
+        #   to original-resolution pixel coordinates
         scale_x = real_image_size[0] / image_size[0]
         scale_y = real_image_size[1] / image_size[1]
 
@@ -932,23 +975,26 @@ def _rescale_reconstruction_to_original_dimensions(
 
 
 @contextmanager
-def frames_as_pil_source(frames: Any):
-    """Feed decoded RGB frames to a path-based image loader in memory.
+def frames_as_pil_source(frames: Any) -> Iterator[None]:
+    """
+    Feed decoded RGB frames to a path-based image loader in memory.
 
-    The upstream loaders (VGGT / VGGT-Omega / MapAnything) open every input path
-    via ``PIL.Image.open``.  While this context is active, ``PIL.Image.open``
-    instead returns ``Image.fromarray(frame)`` for each frame in order — this is
-    bit-identical to opening the source file, because ``frames`` holds the exact
-    decoded RGB pixels ``Image.open(path).convert("RGB")`` would have produced.
-    That lets the decoder be the sole IO path while every upstream
-    resize/crop/normalise step stays byte-for-byte unchanged (no temp files).
-
-    Single-threaded use only: it patches the process-global ``PIL.Image.open`` and
-    hands out frames via one shared positional counter, so it assumes the loader
-    opens each frame exactly once, in list order (all supported loaders do).
+    - upstream loaders (VGGT / VGGT-Omega / MapAnything) open every input path via
+      PIL.Image.open; while this context is active that call returns Image.fromarray(frame)
+      for each frame in order
+    - bit-identical to opening the source file — `frames` holds the exact decoded RGB pixels
+      Image.open(path).convert("RGB") would produce
+    - lets the decoder be the sole IO path while every upstream resize/crop/normalize step
+      stays byte-for-byte unchanged, with no temp files
+    - single-threaded only: patches the process-global PIL.Image.open and hands out frames on
+      one shared positional counter, so it assumes the loader opens each frame exactly once,
+      in list order (all supported loaders do)
 
     Args:
-        frames: sequence of (H, W, 3) uint8 RGB arrays, in load order.
+        frames: Sequence of (H, W, 3) uint8 RGB arrays, in load order.
+
+    Yields:
+        None — the patch is active for the duration of the with-block.
     """
     imgs = iter(PIL.Image.fromarray(np.ascontiguousarray(f)) for f in frames)
     original_open = PIL.Image.open
@@ -959,9 +1005,9 @@ def frames_as_pil_source(frames: Any):
         PIL.Image.open = original_open
 
 
-# The keyframe store names every image frame_{idx:06d}; a legacy eval dir names its
-# images freely (7-Scenes writes frame-000012.color.png), and guessing an index off
-# those would mislabel poses silently. Match the store's convention exactly.
+# Match the keyframe store's frame_{idx:06d} convention exactly
+# - a legacy eval dir names its images freely (7-Scenes writes frame-000012.color.png)
+# - guessing an index off those names would mislabel poses silently
 _STORE_FRAME_NAME = re.compile(r"^frame_\d+$")
 
 
@@ -1005,64 +1051,50 @@ def _decode_dir_to_frames(image_dir: Path) -> tuple[list[np.ndarray], list[int]]
 
 @dataclass
 class BaseFeedforwardCreator(BasePointcloudCreator):
-    """Template Method pipeline for feedforward pointcloud creators.
+    """
+    Template Method pipeline for feedforward pointcloud creators.
 
-    Runs a fixed 5-step pipeline: load_model → setup_inference → run_inference
-    → postprocess → build_colmap.  Subclasses implement the four abstract methods
-    below; the base class handles device detection, GPU memory cleanup, state
-    storage, and COLMAP reconstruction (shared across all feedforward methods).
+    - fixed 5 steps: load_model -> setup_inference -> run_inference -> postprocess -> build_colmap
+    - the base handles device detection, GPU memory cleanup, state storage and the COLMAP
+      reconstruction, all shared across feedforward methods
+    - subclasses implement the abstract methods below
 
-    Abstract methods — contract each subclass must satisfy:
+    Abstract contract each subclass satisfies:
 
-    ``_load_model(device: str) -> Any``
-        Load the model from a pretrained checkpoint, move to ``device``, set to
-        eval mode, and return it.  Do not store GPU state outside the returned
-        model object.
-
-    ``_preprocess(frames, frame_idxs) -> tuple[Any, list[Path], np.ndarray]``
-        Preprocess in-memory decoded ``frames`` ((N, H, W, 3) uint8, or a list of
-        per-image arrays) whose source indices are ``frame_idxs``.  Return:
-          views           — model-specific input batch (tensor or list of dicts)
-          image_paths     — ordered ``frame_{idx:06d}`` Paths (length N)
-          original_coords — (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
-
-    ``_forward(model, views, **kwargs) -> Any``
-        Run the model forward pass under ``torch.no_grad()``.  Return raw outputs
-        as a dict or any structure ``_postprocess`` expects.  The base class calls
-        ``torch.cuda.empty_cache()`` immediately after this returns.
-
-    ``_postprocess(raw_outputs, **kwargs) -> FeedforwardResult``
-        Convert raw model outputs to a ``FeedforwardResult``.  This is where
-        depth unprojection, confidence filtering, and optional postprocessing
-        (e.g., global alignment) happen.
-
-    ``_verify_loop_candidate(frame1, frame2, verify_match_ratio) -> tuple[bool, dict | None]``
-        Re-run model on a 2-frame pair to verify a loop closure candidate.
-        Return (accepted, lc_data) or (False, None) if rejected.  On accept,
-        lc_data is ``{"poses": (2, 4, 4) w2c float32 np.ndarray,
-        "world_points": (2, H, W, 3) np.ndarray | None,
-        "conf": (2, H, W) np.ndarray | None}`` — poses is required (every
-        accepting backend supplies it from the verify forward it already runs);
-        world_points/conf are populated where the backend exposes them cheaply.
+    - _load_model(device) -> Any: load from a pretrained checkpoint, move to `device`, set eval
+      mode, return it. Keep no GPU state outside the returned model object.
+    - _preprocess(frames, frame_idxs) -> (views, image_paths, original_coords): `frames` is
+      (N, H, W, 3) uint8 or a list of per-image arrays, `frame_idxs` their source indices.
+      views = model-specific input batch; image_paths = ordered frame_{idx:06d} Paths (length N);
+      original_coords = (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h].
+    - _forward(model, views, **kwargs) -> Any: the forward pass under torch.no_grad(), returning
+      whatever _postprocess expects. The base calls torch.cuda.empty_cache() right after.
+    - _postprocess(raw_outputs, **kwargs) -> FeedforwardResult: depth unprojection, confidence
+      filtering, and any optional postprocessing such as global alignment.
+    - _verify_loop_candidate(frame1, frame2, verify_match_ratio) -> (accepted, lc_data): re-runs
+      the model on a 2-frame pair. On accept, lc_data is {"poses": (2, 4, 4) w2c float32,
+      "world_points": (2, H, W, 3) | None, "conf": (2, H, W) | None}; poses is required — every
+      accepting backend has it from the verify forward it already runs — and the other two are
+      filled where the backend exposes them cheaply. Rejection is (False, None).
 
     Attributes:
-        camera_model: pycolmap camera model string for COLMAP reconstruction.
-                      Use ``"PINHOLE"`` (fx, fy, cx, cy) or ``"SIMPLE_PINHOLE"``
-                      (f, cx, cy — single focal length).
+        camera_model: pycolmap camera model string for the COLMAP reconstruction. "PINHOLE"
+                      (fx, fy, cx, cy) or "SIMPLE_PINHOLE" (f, cx, cy — single focal length).
     """
 
     # Threshold for cross_frame_attention_ratio LC verification gate; subclasses
     # override with their own calibrated value (see per-creator classvars).
     default_verify_match_ratio: ClassVar[float] = 0.85
 
-    # Global block index to tap for Q/K in _verify_loop_candidate.
-    # VGGT-SPARK uses target_layer=20 (of 24 global blocks); -1 (last) gives
-    # systematically lower scores (~0.66 vs ~1.02) due to different attention distribution.
+    # Global block index to tap for Q/K in _verify_loop_candidate
+    # - VGGT-SPARK uses target_layer=20 of 24 global blocks
+    # - -1 (last) gives systematically lower scores (~0.66 vs ~1.02): different attention
+    #   distribution
     _lc_layer_index: ClassVar[int] = 20
 
-    # Token offset passed to cross_frame_attention_ratio — skip special tokens
-    # that precede patch tokens. VGGT has 5 (1 camera + 4 register). Models
-    # without special tokens (e.g. MapAnything) should override to 0.
+    # Token offset passed to cross_frame_attention_ratio: skip the special tokens
+    # - they precede the patch tokens; VGGT has 5 (1 camera + 4 register)
+    # - models without special tokens (e.g. MapAnything) should override to 0
     _lc_token_offset: ClassVar[int] = 5
 
     def _lc_collate_outputs(self, raw: Any) -> Any:
@@ -1087,6 +1119,19 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
 
     def reconstruct(self, source: Path, output_dir: Path) -> PointcloudResult:
         # source is the scene's images/ directory, or a legacy eval image dir
+        """
+        Full pipeline to disk: inference, then a written COLMAP model and sparse_pc.ply.
+
+        Args:
+            source:     The scene's images/ directory, or a legacy eval image dir.
+            output_dir: Run directory; colmap/sparse/0 and sparse_pc.ply are written here.
+
+        Returns:
+            PointcloudResult wrapping the reconstruction, at original image resolution.
+
+        Raises:
+            FileNotFoundError: `source` does not exist.
+        """
         output_dir = Path(output_dir)
         if not Path(source).exists():
             raise FileNotFoundError(f"image source not found: {source}")
@@ -1099,10 +1144,18 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         return self.build_colmap(output_dir)
 
     def run(self, source: Path, device: str | None = None) -> FeedforwardResult:
-        """Run the full inference pipeline and return outputs.
+        """
+        Run the full inference pipeline and return the result.
 
-        Convenience wrapper for load_model → setup_inference → run_inference → postprocess.
-        Use reconstruct() instead if you also need COLMAP output written to disk.
+        - wraps load_model -> setup_inference -> run_inference -> postprocess
+        - use reconstruct() instead when COLMAP output must land on disk
+
+        Args:
+            source: The scene's images/ directory, or a legacy eval image dir.
+            device: Torch device; None picks cuda when available.
+
+        Returns:
+            The FeedforwardResult produced by _postprocess.
         """
         self.load_model(device=device)
         self.setup_inference(source)
@@ -1111,6 +1164,12 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         return self.outputs
 
     def load_model(self, device: str | None = None) -> None:
+        """
+        Step 1: load the subclass's model onto `device`.
+
+        Args:
+            device: Torch device; None picks cuda when available.
+        """
         device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         t0 = time.perf_counter()
         console.log(f"Loading model ({device})...")
@@ -1120,6 +1179,14 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     def setup_inference(self, source: Path) -> None:
         # Decode the source directory (the scene's images/, or a legacy eval image dir)
         # into an in-memory frame batch, then run the model-specific in-memory preprocess.
+        """
+        Step 2: decode the source directory and run the model-specific preprocess.
+
+        - populates views, image_paths and original_coords
+
+        Args:
+            source: The scene's images/ directory, or a legacy eval image dir.
+        """
         t0 = time.perf_counter()
         console.log("Preprocessing images...")
         frames, frame_idxs = self._decode_source(source)
@@ -1152,6 +1219,12 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         return _decode_dir_to_frames(Path(images_dir))
 
     def run_inference(self, **kwargs: Any) -> None:
+        """
+        Step 3: the forward pass, then free the CUDA cache before postprocessing.
+
+        Args:
+            **kwargs: Passed through to the subclass's _forward.
+        """
         t0 = time.perf_counter()
         console.log("Running inference...")
         self.raw_outputs = self._forward(self.model, self.views, **kwargs)
@@ -1161,6 +1234,12 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         console.log(f"  done in {time.perf_counter() - t0:.1f}s")
 
     def postprocess(self, **kwargs: Any) -> None:
+        """
+        Step 4: convert raw model outputs to a FeedforwardResult on self.outputs.
+
+        Args:
+            **kwargs: Passed through to the subclass's _postprocess.
+        """
         t0 = time.perf_counter()
         console.log("Postprocessing...")
         self.outputs = self._postprocess(self.raw_outputs, **kwargs)
@@ -1168,6 +1247,18 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         console.log(f"  → {n_pts:,} pts  done in {time.perf_counter() - t0:.1f}s")
 
     def build_colmap(self, output_dir: Path) -> PointcloudResult:
+        """
+        Step 5: build the COLMAP model at original resolution and write it out.
+
+        - intrinsics and image dims are rescaled from model resolution before writing
+        - writes colmap/sparse/0 (binary) and sparse_pc.ply
+
+        Args:
+            output_dir: Run directory to write into.
+
+        Returns:
+            PointcloudResult wrapping the written reconstruction.
+        """
         t0 = time.perf_counter()
         console.log("Building COLMAP reconstruction...")
         o = self.outputs
@@ -1221,32 +1312,28 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Capture cross-frame transformer activations via a per-call forward hook.
+        """
+        Capture cross-frame transformer activations via a per-call forward hook.
 
-        Register a forward hook on the QKV projection of the cross-frame attention
-        block at ``layer_index``, run the model on ``frames``, capture activations,
-        then remove the hook.  The hook is removed in a finally block — guaranteed
-        even if the forward raises.
+        - hooks the QKV projection of the cross-frame attention block at `layer_index`
+        - runs the model on `frames`, captures activations, removes the hook
+        - removal is in a finally block, so it survives a raising forward
 
         Args:
             frames:      (N, C, H, W) preprocessed frames on the correct device.
-            layer_index: Cross-frame block index.  -1 = last block (default).
-                         VGGTx indexes into aggregator.global_blocks;
-                         MapAnything into info_sharing.self_attention_blocks.
+            layer_index: Cross-frame block index. -1 = last block. VGGTx indexes into
+                         aggregator.global_blocks; MapAnything into
+                         info_sharing.self_attention_blocks.
             **kwargs:    Backend-specific forward kwargs.
-                         MapAnything: minibatch_size (int),
-                                      memory_efficient_inference (bool).
+                         MapAnything: minibatch_size (int), memory_efficient_inference (bool).
                          VGGTx: unused.
 
         Returns:
-            dict with at minimum:
-              "q":  (B, heads, N_tokens, head_dim) — query projections
-              "k":  (B, heads, N_tokens, head_dim) — key projections
-            VGGTx and MapAnything additionally include:
-              "poses": (2, 4, 4) float32 np.ndarray — pre-decoded w2c extrinsics
-              (VGGTx via pose_enc decode; MapAnything via postprocessed camera_poses).
-            Optional "world_points" (2, H, W, 3) / "conf" (2, H, W) keys are folded
-            into lc_data by _verify_loop_candidate when present.
+            dict carrying at minimum "q" and "k", both (B, heads, N_tokens, head_dim) projections.
+            VGGTx and MapAnything add "poses" — (2, 4, 4) float32 pre-decoded w2c extrinsics
+            (VGGTx via pose_enc decode, MapAnything via postprocessed camera_poses). Optional
+            "world_points" (2, H, W, 3) and "conf" (2, H, W) are folded into lc_data by
+            _verify_loop_candidate when present.
         """
         ...
 
@@ -1290,9 +1377,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             logger.info("LC verify: ratio=%.4f < threshold=%.4f → rejected", ratio, verify_match_ratio)
             return False, None
         logger.info("LC verify: ratio=%.4f >= threshold=%.4f → accepted", ratio, verify_match_ratio)
-        # Wrap fresh joint poses (+ optional geometry) into the lc_data contract.
-        # Every accepting backend supplies "poses"; None here is a contract violation
-        # the caller guards against.
+        # Wrap fresh joint poses (+ optional geometry) into the lc_data contract
+        # - every accepting backend supplies "poses"
+        # - None here is a contract violation the caller guards against
         poses = features.get("poses")
         if poses is None:
             return True, None
@@ -1303,11 +1390,18 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
         }
 
     def reproject(self, result: "FeedforwardResult") -> "FeedforwardResult":
-        """Re-extract pts3d/colors via full depth unprojection under refined poses.
+        """
+        Re-extract pts3d/colors by full depth unprojection under refined poses.
 
-        Uses self.raw_outputs from the last run() or run_inference() call.
-        Prefer result.reproject() when depth and pixel_indices are populated —
-        no creator state needed, deterministic point set.
+        - reads self.raw_outputs from the last run() or run_inference()
+        - prefer result.reproject() when depth and pixel_indices are populated: no creator state,
+          deterministic point set
+
+        Args:
+            result: Result whose extrinsics/intrinsics carry the refined poses.
+
+        Returns:
+            A copy of `result` with points and colors replaced.
         """
         pts3d, colors = self._reproject(self.raw_outputs, result.extrinsics[:, :3, :], result.intrinsics)
         return replace(result, points=pts3d, colors=colors)

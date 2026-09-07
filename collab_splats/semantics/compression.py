@@ -1,10 +1,11 @@
 """
 Lightweight feature autoencoder for compressing patch features before 3D lifting.
 
-Trained once on keyframe features, then used to reduce the dimensionality of the semantic
-features stored per point. Compression happens on either shape, decompression only on points:
-  encode                  — spatial patch maps (D, H, W) -> (latent_dim, H, W)
-  per_point_encode/decode — flat point arrays  (P, D)    <-> (P, latent_dim)
+- trained once on keyframe features, then used to cut the dimensionality of the
+  semantic features stored per point
+- compression takes either shape, decompression only points
+- encode: spatial patch maps (D, H, W) -> (latent_dim, H, W)
+- per_point_encode / per_point_decode: flat point arrays (P, D) <-> (P, latent_dim)
 """
 
 from __future__ import annotations
@@ -218,9 +219,9 @@ class FeatureAutoencoder(nn.Module):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Serialise from CPU so the checkpoint is device-agnostic. The restore is in a finally
-        # because a failed write must not strand the caller's model on CPU — the next forward
-        # pass would then raise a device mismatch far from the save that caused it.
+        # Serialize from CPU so the checkpoint is device-agnostic
+        # - the restore sits in a finally: a failed write must not strand the model on CPU
+        # - the next forward pass would raise a device mismatch far from the save that caused it
         device = next(self.parameters()).device
         self.cpu()
         try:

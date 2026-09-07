@@ -1,10 +1,12 @@
 # collab_splats/pointcloud/utils.py
-"""Geometric pointcloud utilities: outlier masking, subsampling, plane fitting, feature lifting.
+"""
+Geometric pointcloud utilities: outlier masking, subsampling, plane fitting, feature lifting.
 
-Coordinate convention used throughout:
-  - Input from pycolmap uses COLMAP world (Y-down) + OpenCV camera axes (X right, Y down, Z forward).
-  - World-space output (``reproject_pixels``) stays in the caller's input frame — COLMAP world,
-    Y-down. Nothing here converts to nerfstudio/OpenGL.
+Coordinate convention, everywhere in this module:
+
+- input from pycolmap is COLMAP world (Y-down) + OpenCV camera axes (X right, Y down, Z forward)
+- world output (reproject_pixels) stays in the caller's frame — COLMAP world, Y-down
+- nothing here converts to nerfstudio/OpenGL
 """
 
 from __future__ import annotations
@@ -41,11 +43,18 @@ def clean_pointcloud(
     std_ratio: float = 2.0,
 ) -> np.ndarray:
     """
-    Statistical-outlier keep-mask over a (P, 3) world-point array.
+    Statistical-outlier keep-mask over a world-point array.
 
-    - Returns a (P,) bool array: True for the points open3d keeps.
-    - All-True whenever open3d rejects everything — too few points, or a degenerate cloud
-      with no spread for the neighbourhood statistic to separate.
+    - all-True whenever open3d rejects everything — too few points, or a degenerate cloud
+      with no spread for the neighborhood statistic to separate
+
+    Args:
+        points:       (P, 3) world points.
+        nb_neighbors: Neighbors open3d averages over per point.
+        std_ratio:    Distance cutoff in standard deviations of that average.
+
+    Returns:
+        (P,) bool array, True for the points open3d keeps.
     """
     pts = np.asarray(points, dtype=np.float64)
 
@@ -71,11 +80,19 @@ def clean_pointcloud(
 
 
 def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
-    """Boolean keep-mask: conf strictly above the global percentile cutoff; all-True if none is.
+    """
+    Keep-mask for confidence strictly above a global percentile cutoff.
 
-    Strict > so a cutoff equal to the minimum still filters, while uniform conf (nothing
-    above the cutoff) keeps everything rather than deleting everything. Shape-agnostic —
-    the pointcloud path calls it on (P,) point confidences, the mesh path on (N, H, W) maps.
+    - strict `>`, so a cutoff equal to the minimum still filters
+    - uniform conf (nothing above the cutoff) keeps everything rather than deleting everything
+    - shape-agnostic: (P,) point confidences on the pointcloud path, (N, H, W) maps on the mesh path
+
+    Args:
+        conf:       Confidence array of any shape.
+        percentile: Cutoff percentile over all of `conf`.
+
+    Returns:
+        Bool array of `conf`'s shape; all-True if nothing clears the cutoff.
     """
     cutoff = np.percentile(conf, percentile)
     above = conf > cutoff
@@ -89,11 +106,22 @@ def subsample_points(
     max_points: int = 50_000,
     conf_percentile: float = 20.0,
 ) -> tuple[np.ndarray, Optional[np.ndarray]]:
-    """Confidence-filter then randomly cap a point set to max_points.
+    """
+    Confidence-filter then randomly cap a point set to a fixed budget.
 
-    Unlike voxel-size-based downsampling (output count varies with scene extent),
-    this guarantees an exact point budget — needed for scenes balanced across
-    submaps. Returns (points, colors) index-aligned; colors may be None.
+    - exact point budget, unlike voxel downsampling whose count varies with scene extent
+    - needed for scenes balanced across submaps
+    - rng is seeded, so the cap is reproducible
+
+    Args:
+        points:          (P, 3) world points.
+        colors:          (P, 3) colors, index-aligned with `points`, or None.
+        conf:            (P,) per-point confidence, or None to skip filtering.
+        max_points:      Point budget after filtering.
+        conf_percentile: Cutoff passed to confidence_mask.
+
+    Returns:
+        (points, colors) index-aligned; colors is None if none was given.
     """
     # Drop points at/below the conf cutoff (see confidence_mask for the edge-case semantics)
     if conf is not None and len(conf) > 0:
@@ -116,16 +144,18 @@ def subsample_points(
 
 
 def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Fit dominant plane via RANSAC; return (R_3x3, t_3) aligning plane to Z-up.
+    """
+    RANSAC floor plane, as the rigid transform that puts it at Z-up, z=0.
 
-    Uses Open3D's segment_plane on the full point cloud. No heuristic percentile —
-    the dominant plane (largest inlier set) is taken as the floor.
+    - open3d segment_plane over the full cloud; largest inlier set is taken as the floor
+    - no heuristic percentile
 
     Args:
-        points: (N, 3) float32 or float64 point cloud.
+        points: (N, 3) point cloud.
+
     Returns:
-        R: (3, 3) rotation matrix aligning floor normal to [0, 0, 1].
-        t: (3,) translation placing floor at z=0 after rotation is applied.
+        R: (3, 3) rotation taking the floor normal onto [0, 0, 1].
+        t: (3,) translation placing the floor at z=0 after that rotation.
     """
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
@@ -159,7 +189,7 @@ def _grid_sample_at_pixels(
 ) -> torch.Tensor:
     """Bilinear-sample fmap (D, H_p, W_p) at the given (rows, cols) in image_size frame.
 
-    Returns (P_i, D) float32 tensor on CPU. Normalises pixel centres to [-1, 1]
+    Returns (P_i, D) float32 tensor on CPU. Normalizes pixel centers to [-1, 1]
     using align_corners=False convention so the same coords work for any (H_p, W_p).
     """
     H, W = image_size
@@ -209,24 +239,22 @@ def lift_features(
     *,
     depth_tol: float = 0.05,
 ) -> torch.Tensor:
-    """Multi-view confidence-weighted lift of dense feature maps to per-point features.
+    """
+    Multi-view confidence-weighted lift of dense feature maps to per-point features.
 
-    For each 3D point in result.points, projects into every frame, masks by
-    in-bounds + depth-consistency (|z_proj - depth| / |z_proj| < depth_tol),
-    weights by confidence at the projected pixel, and returns the weighted-mean
-    feature. Points never visible in any frame fall back to a source-frame
-    sample at their pixel_indices entry.
+    - each point in result.points projects into every frame
+    - masked by in-bounds + depth consistency (|z_proj - depth| / |z_proj| < depth_tol)
+    - weighted by confidence at the projected pixel, then mean-reduced
+    - points visible nowhere fall back to a source-frame sample at their pixel_indices entry
 
     Args:
-        feature_maps: List of (D, H_p, W_p) per-frame dense features. Caller runs
-            the extractor (and optional AE encode) before calling.
-        result:       FeedforwardResult with points, pixel_indices, depth,
-            extrinsics, intrinsics, model_height, model_width populated.
-            `confidence` is optional — SfM-derived results carry none, and
-            absent confidence falls back to uniform per-pixel visibility weights.
-            Reload zarr with load_images=True before re-extracting features so
-            the extractor sees the same FOV as the depth map.
-        depth_tol:    Relative depth tolerance for visibility test.
+        feature_maps: List of (D, H_p, W_p) per-frame dense features. Caller runs the
+            extractor (and optional AE encode) first.
+        result:       Carries points, pixel_indices, depth, extrinsics, intrinsics,
+            model_height, model_width. `confidence` is optional — SfM results carry none
+            and fall back to uniform per-pixel weights. Reload zarr with load_images=True
+            before re-extracting so the extractor sees the depth map's FOV.
+        depth_tol:    Relative depth tolerance for the visibility test.
 
     Returns:
         (P, D) float32 tensor of per-point features, aligned with result.points.
@@ -327,16 +355,17 @@ def reproject_pixels(
     extrinsics_3x4: np.ndarray,
     intrinsics: np.ndarray,
 ) -> np.ndarray:
-    """Reproject points to world space using stored source pixels and (new) poses.
+    """
+    Reproject points to world space from stored source pixels and new poses.
 
-    Use this instead of re-running unproject_and_filter_points after BA — stored
-    pixel_indices bypass the stochastic conf_mask subsampling so the point set
-    stays aligned with pre-BA features and colors.
+    - use after BA instead of re-running unproject_and_filter_points
+    - stored pixel_indices bypass the stochastic conf_mask subsampling, so the point set
+      stays aligned with pre-BA features and colors
 
     Args:
         depth:          (N, H, W, 1) or (N, H, W) float32 depth maps.
         pixel_indices:  (P, 3) int32 — [frame_id, row, col] source pixel per point.
-        extrinsics_3x4: (N, 3, 4) world-to-camera extrinsics (e.g. refined by BA).
+        extrinsics_3x4: (N, 3, 4) world-to-camera extrinsics, e.g. refined by BA.
         intrinsics:     (N, 3, 3) camera intrinsics.
 
     Returns:
@@ -386,25 +415,23 @@ def cross_frame_attention_ratio(
     q: torch.Tensor,
     token_offset: int = 5,
 ) -> float:
-    """Cross-frame attention ratio between two frames' QKV tensors.
+    """
+    How hard frame B attends to frame A, against A's own self-attention peak.
 
-    Measures how much frame B's tokens attend to frame A relative to frame A's
-    self-attention peak.  Port of VGGT-SPARK get_similarity().  Used to gate loop
-    closure candidate acceptance — high ratio means the two frames share coherent
-    overlapping geometry.
+    - port of VGGT-SPARK get_similarity()
+    - gates loop-closure candidates: high ratio = coherent overlapping geometry
 
     Args:
-        k:            (B, heads, N_tokens, head_dim) key projections.  N_tokens covers
-                      both frames concatenated, so tokens_per_img = N_tokens // 2.
+        k:            (B, heads, N_tokens, head_dim) key projections. N_tokens spans both
+                      frames concatenated, so tokens_per_img = N_tokens // 2.
         q:            (B, heads, N_tokens, head_dim) query projections, same layout.
-        token_offset: Skip the first N tokens per frame (camera + register tokens
-                      that precede patch tokens in VGGT-style models).  Default 5.
+        token_offset: Patch tokens start here — skips the camera + register tokens that
+                      precede them in VGGT-style models.
 
     Returns:
-        Scalar float in [0, ∞), mean of the top-25% normalised cross-frame attention
-        values (mean_top_quarter aggregation, matching VGGT-SPARK get_similarity()).
-        Values >= 0.85 match the VGGT-SPARK acceptance threshold calibrated on VGGT-1B.
-        Returns 0.0 if token_offset >= tokens_per_img (no patch tokens to measure).
+        Scalar in [0, inf): mean of the top-25% normalized cross-frame attention values
+        (mean_top_quarter, matching VGGT-SPARK). >= 0.85 is the VGGT-SPARK acceptance
+        threshold calibrated on VGGT-1B. 0.0 when token_offset >= tokens_per_img.
     """
     tokens_per_img = q.shape[2] // 2
     # Slice only the patch tokens from frame A (skip camera+register tokens)
@@ -427,9 +454,9 @@ def cross_frame_attention_ratio(
     normalized = attn_to_second / (max_self.unsqueeze(-1) + 1e-8)
     ratio = normalized.max(dim=1)[0]  # (B, N_second)
 
-    # Aggregate: mean of top-25% values — matches VGGT-SPARK mean_top_quarter().
-    # Previously used np.percentile(90) which gives a lower scalar and caused
-    # VGGT-X scores (~0.74) to fall below the 0.85 threshold calibrated for VGGT-1B.
+    # Aggregate: mean of top-25% values, matching VGGT-SPARK mean_top_quarter()
+    # - np.percentile(90) was used before and gives a lower scalar
+    # - that dropped VGGT-X scores (~0.74) below the 0.85 threshold calibrated for VGGT-1B
     ratio_np = ratio.cpu().float().numpy().ravel()
     if ratio_np.size == 0:
         return 0.0

@@ -242,7 +242,7 @@ def test_loger_pinhole_k_round_trips_to_original_resolution():
     scale_x, scale_y = model_w / orig_w, model_h / orig_h
     fx_model, fy_model = f * scale_x, f * scale_y
 
-    # The anisotropy is real, not a rounding artefact — guard the premise of the test
+    # The anisotropy is real, not a rounding artifact — guard the premise of the test
     assert fx_model != pytest.approx(fy_model, rel=1e-3)
 
     # build_colmap's PINHOLE branch keeps both focals

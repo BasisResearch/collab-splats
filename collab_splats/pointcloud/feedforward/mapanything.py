@@ -106,10 +106,11 @@ _MA_RESIZE_MODE_MAP: dict[str, str] = {
 
 @dataclass
 class MapAnythingCreator(BaseFeedforwardCreator):
-    """Pointcloud via MapAnything feedforward depth + pose estimation.
+    """
+    Pointcloud via MapAnything feedforward depth + pose estimation.
 
-    Uses Facebook's MapAnything model to jointly predict per-image depth maps
-    and camera poses in a single forward pass without requiring any SfM.
+    - Facebook's MapAnything predicts per-image depth maps and camera poses jointly
+    - one forward pass, no SfM
 
     Attributes:
         model_name:               HuggingFace model ID to load via
@@ -119,7 +120,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                                   ``use_multiview_confidence=True``.
         use_multiview_confidence: When True, ANDs a geometric cross-view depth
                                   consistency mask onto the learned-confidence mask.
-        mv_conf_abs_thresh:       Absolute depth tolerance (metres) passed to
+        mv_conf_abs_thresh:       Absolute depth tolerance (meters) passed to
                                   ``compute_multiview_depth_confidence`` when
                                   ``use_multiview_confidence=True``. Calibrated
                                   for MapAnything metric depth scale.
@@ -142,30 +143,28 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         resolution:               Lookup-table selector for ``"fixed"`` (518 or 512); target
                                   size in pixels for ``"longest_side"`` and ``"square"``.
 
-    Multiview confidence and the learned confidence percentile are INTERSECTED, not
-    substituted. Upstream replaces the learned confidence with the mv ratio
-    (mapanything/utils/inference.py:401-402); we keep both filters and AND them, which is
-    strictly more conservative.
-
-    Do not reintroduce a percentile threshold on the mv output. mv confidence is a quantized
-    inlier ratio k/N: most pixels reach exactly 1.0 when views agree, so ``torch.quantile``
-    collapses to 1.0 for any percentile where more than 0% of pixels sit at the atom, and a
-    strict ``conf > threshold`` then excludes every pixel including those at exactly 1.0.
-    ``min_views`` thresholds the integer count instead, which is where the discreteness
-    actually lives. ``min_views=1`` is exactly equivalent to the old ``mv_conf_threshold=0.0``.
+    - mv confidence and the learned percentile are INTERSECTED, not substituted: upstream
+      swaps learned confidence for the mv ratio (mapanything/utils/inference.py:401-402),
+      we AND both filters, which is strictly more conservative
+    - never reintroduce a percentile threshold on the mv output: mv confidence is a
+      quantized inlier ratio k/N, so most pixels sit exactly at 1.0 when views agree,
+      ``torch.quantile`` collapses to 1.0 for any percentile above that atom, and a strict
+      ``conf > threshold`` then drops every pixel including those at 1.0
+    - ``min_views`` thresholds the integer count instead, which is where the discreteness
+      actually lives; ``min_views=1`` == the old ``mv_conf_threshold=0.0``
     """
 
     # MapAnything info_sharing blocks have no special tokens (no camera/register
     # tokens prepended). token_offset must be 0 — not 5 as the VGGT default.
     _lc_token_offset: ClassVar[int] = 0
-    # LC verify calibration — chess d5 clean-negative sweep, 2026-07-10.
-    # 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers
-    # > half scene diameter apart AND viewing dirs > 90°, seed 42), all 16
-    # self_attention_blocks hooked in one forward per pair. Layer 4 CONFIRMED
-    # best (AUC 1.000; positives min 1.4741, negatives max 1.4405); threshold
-    # = midpoint 1.46 (margins +0.014 pos / -0.020 neg — narrow but zero
-    # overlap). The old 1.65 (positives-only formula) rejected 9/21 true loops.
-    # MapAnything cross-frame attention peaks early (~25% depth) unlike VGGT models.
+    # LC verify calibration — chess d5 clean-negative sweep, 2026-07-10
+    # - 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers > half scene
+    #   diameter apart AND viewing dirs > 90°, seed 42), all 16 self_attention_blocks
+    #   hooked in one forward per pair
+    # - layer 4 CONFIRMED best: AUC 1.000, positives min 1.4741, negatives max 1.4405
+    # - threshold = midpoint 1.46 (margins +0.014 pos / -0.020 neg, narrow but zero overlap)
+    # - the old 1.65 (positives-only formula) rejected 9/21 true loops
+    # - MapAnything cross-frame attention peaks early (~25% depth), unlike VGGT models
     default_verify_match_ratio: ClassVar[float] = 1.46
     _lc_layer_index: ClassVar[int] = 4
 
@@ -175,10 +174,11 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     # MapAnything depth is metric, so a 2 cm absolute floor is meaningful here and only here.
     mv_conf_abs_thresh: float = 0.02
     mv_conf_rel_thresh: float = 0.02
-    # K=1 is exactly the old mv_conf_threshold=0.0 — this preserves shipping behaviour. The
-    # Step D sweep leaves it alone deliberately: MapAnything gains least from mv of the three
-    # swept backbones (out10 −4% even at K=16), so tightening here would cost parity for
-    # nothing. The VGGT-family creators carry the calibrated rel=0.01, K=2 instead.
+    # K=1 is exactly the old mv_conf_threshold=0.0, preserving shipping behavior
+    # - the Step D sweep leaves it alone deliberately
+    # - MapAnything gains least from mv of the three swept backbones (out10 −4% even at K=16)
+    # - tightening here would cost parity for nothing
+    # - the VGGT-family creators carry the calibrated rel=0.01, K=2 instead
     min_views: int = 1
     minibatch_size: int = 1
     resize_mode: str = "fixed"  # "fixed" (aspect-ratio lookup table), "longest_side", "square"
@@ -201,9 +201,9 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         # Stable synthetic labels — no files on disk; the store/decoder is the sole IO path
         image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
 
-        # Run MapAnything's loader in-memory (bit-identical to path load); .png names
-        # satisfy load_images' extension check while PIL.Image.open is intercepted.
-        # Map our public resize_mode to load_images' upstream name; pass resolution as the right kwarg
+        # Run MapAnything's loader in-memory, bit-identical to a path load
+        # - .png names satisfy load_images' extension check while PIL.Image.open is intercepted
+        # - our public resize_mode maps to load_images' upstream name, resolution to its own kwarg
         loader_names = [f"{p.name}.png" for p in image_paths]
         upstream_mode = _MA_RESIZE_MODE_MAP[self.resize_mode]
         with frames_as_pil_source(frames):
@@ -228,9 +228,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             dtype=np.float32,
         )
 
-        # Validate views meet MapAnything input requirements, then convert to the
-        # internal format model.forward() expects (ray directions, metric scale, etc.).
-        # Kept on CPU here; transferred to model device in _forward.
+        # Validate views against MapAnything's input requirements, then convert
+        # - target is the internal format model.forward() expects (ray directions,
+        #   metric scale, etc.)
+        # - kept on CPU here; transferred to the model device in _forward
         validated = validate_input_views_for_inference(views)
         self._processed_views = preprocess_input_views_for_inference(validated)
 
@@ -240,9 +241,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         device = next(model.parameters()).device
         device_type = device.type
 
-        # Determine whether this call is a full-sequence pass or an LC window slice.
-        # Full-sequence: views is self.views (same object or same length as _processed_views
-        # and same id). LC window: a shorter list slice or a Tensor batch.
+        # Decide whether this call is a full-sequence pass or an LC window slice
+        # - full-sequence: views is self.views (same object, or same length and id as
+        #   _processed_views)
+        # - LC window: a shorter list slice, or a Tensor batch
         _is_full_sequence = (
             not isinstance(views, torch.Tensor) and self._processed_views is not None and views is self.views
         )
@@ -261,9 +263,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             self._lc_window_views = window_views  # consumed by _lc_collate_outputs
             console.log(f"  → {len(window_views)} images (LC window), minibatch_size={self.minibatch_size}")
         elif not _is_full_sequence:
-            # LC window path (list): views is a raw-dict slice from self.views. Preprocess
-            # the window slice on-the-fly — same logic as the Tensor branch but starting
-            # from already-loaded load_images dicts instead of raw tensor frames.
+            # LC window path (list): views is a raw-dict slice from self.views
+            # - preprocess the window slice on the fly
+            # - same logic as the Tensor branch, but starting from already-loaded
+            #   load_images dicts instead of raw tensor frames
             window_views = preprocess_input_views_for_inference(validate_input_views_for_inference(views))
             # Transfer window views to model device
             for view in window_views:
@@ -274,10 +277,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             self._lc_window_views = window_views  # consumed by _lc_collate_outputs
             console.log(f"  → {len(window_views)} images (LC window, list), minibatch_size={self.minibatch_size}")
         else:
-            # Full-sequence path: views is the list returned by _preprocess; use
-            # already-preprocessed self._processed_views (avoids redundant work).
-            # Transfer preprocessed views to model device; kept on CPU in _preprocess
-            # to avoid holding GPU memory during image loading and validation.
+            # Full-sequence path: reuse the already-preprocessed views
+            # - views is the list returned by _preprocess, held in self._processed_views
+            # - they stay on CPU in _preprocess so image loading and validation hold no GPU
+            #   memory; the transfer to the model device happens here
             for view in self._processed_views:
                 for k, v in view.items():
                     if isinstance(v, torch.Tensor):
@@ -313,11 +316,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             pred["pts3d_cam"] = pred["pts3d_cam"].float()
             pred["pts3d"] = pred["pts3d"].float()
 
-        # Run minimal postprocess to populate camera_poses and intrinsics keys.
-        # apply_mask=False: LC only needs poses, not masked point clouds.
-        # Use window-specific views stored by _forward (Tensor branch) so the
-        # view context matches the actual window frames, not the first-K frames
-        # of the full sequence.
+        # Minimal postprocess to populate the camera_poses and intrinsics keys
+        # - apply_mask=False: LC needs poses only, not masked point clouds
+        # - uses the window-specific views stored by _forward (Tensor branch), so the view
+        #   context matches the actual window frames, not the first-K of the full sequence
         if self._lc_window_views is None:
             raise RuntimeError(
                 "_lc_window_views is None in _lc_collate_outputs — "
@@ -335,26 +337,27 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         exts = np.stack([invert_poses(p["camera_poses"][0].cpu().float().numpy())[:3, :4] for p in processed])
         intrs = np.stack([p["intrinsics"][0].cpu().float().numpy() for p in processed])
 
-        # Emit depth + confidence under the shared keys consumed by _raw_to_world_points.
-        # Depth is at model resolution (= frame resolution), so the same intrinsics
-        # describe the depth-map grid — matching the VGGT-family convention where
-        # 'intrinsics_downsampled' corresponds to the depth grid.
+        # Emit depth + confidence under the shared keys _raw_to_world_points consumes
+        # - depth is at model resolution (= frame resolution), so one K describes both
+        # - matches the VGGT-family convention where 'intrinsics_downsampled' is the
+        #   depth grid's K
         out = {
             "extrinsic": exts,
             "intrinsics": intrs,
             "intrinsics_downsampled": intrs,
         }
-        # Per-pixel RGB from the postprocessed denormalized image. The window's 'img' is
-        # dinov2/ImageNet-normalized (range ~[-2.1, 2.6]), unusable as color; img_no_norm
-        # is [0, 1] at model (= depth) resolution — added by postprocess_model_outputs_for_inference
-        # (respects each view's data_norm_type), same source _postprocess/_reproject use.
-        # The wrapper prefers these over its frame-tensor color heuristic when present.
+        # Per-pixel RGB from the postprocessed denormalized image
+        # - the window's 'img' is dinov2/ImageNet-normalized (~[-2.1, 2.6]), unusable as color
+        # - img_no_norm is [0, 1] at model (= depth) resolution, added by
+        #   postprocess_model_outputs_for_inference, which respects each view's data_norm_type
+        # - same source _postprocess/_reproject use
+        # - the wrapper prefers these over its frame-tensor color heuristic when present
         out["colors"] = np.stack(
             [(p["img_no_norm"][0].cpu().float().numpy() * 255.0).astype(np.uint8) for p in processed]
         )
-        # Guard: postprocess variants may omit depth_z/conf — warn and omit the
-        # geometry keys (same posture as the LC-side pts3d handling) so LC still
-        # runs; anchor/sequential scale then falls back without submap points.
+        # Postprocess variants may omit depth_z/conf
+        # - warn and omit the geometry keys, same posture as the LC-side pts3d handling
+        # - LC still runs; anchor/sequential scale then falls back without submap points
         if all("depth_z" in p and "conf" in p for p in processed):
             out["depth"] = np.stack([p["depth_z"][0].cpu().float().numpy() for p in processed])
             out["depth_conf"] = np.stack([p["conf"][0].cpu().float().numpy() for p in processed])
@@ -376,9 +379,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             lc_corrected_extrinsics = raw_outputs.get("extrinsic_global_4x4")
             raw_outputs = raw_outputs["_raw_list"]
 
-        # Cast bf16 tensors to float32 before postprocessing. model.forward() runs
-        # under bf16 autocast; postprocess_model_outputs_for_inference calls
-        # F.grid_sample which requires matching dtypes (torch 2.4 strict enforcement).
+        # Cast bf16 tensors to float32 before postprocessing
+        # - model.forward() runs under bf16 autocast
+        # - postprocess_model_outputs_for_inference calls F.grid_sample, which requires
+        #   matching dtypes (torch 2.4 strict enforcement)
         for pred in raw_outputs:
             if "pts3d_cam" in pred:
                 pred["pts3d_cam"] = pred["pts3d_cam"].float()
@@ -395,9 +399,11 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             confidence_percentile=self.confidence_percentile,
         )
 
-        # Build per-frame masks + point/color grids in one pass — mirrors VGGTX conf_mask pattern.
-        # pred["mask"] has non_ambiguous + edge masking baked in. When use_multiview_confidence
-        # is True, we additionally apply mv_conf > 0 (keep pixels verified by ≥1 other view).
+        # Build per-frame masks + point/color grids in one pass
+        # - mirrors the VGGTX conf_mask pattern
+        # - pred["mask"] has non_ambiguous + edge masking baked in
+        # - use_multiview_confidence=True additionally applies mv_conf > 0, keeping pixels
+        #   verified by >= 1 other view
         masks, pts3d_grid, colors_grid = [], [], []
         images_list, conf_list, depth_list = [], [], []
         extrinsics_list, intrinsics_list = [], []
@@ -497,32 +503,27 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Hook info_sharing...blocks[layer_index].attn.qkv; return {q, k, poses, ...}.
+        """
+        Hook info_sharing.self_attention_blocks[layer_index].attn.qkv on a 2-frame forward.
 
-        Wraps the 2 input frames into MapAnything's view format, runs a forward pass
-        with a per-call hook on the cross-frame self-attention block at ``layer_index``,
-        then removes the hook.  The forward's predictions are kept and postprocessed
-        via the ``_lc_collate_outputs`` recipe (postprocess → camera_poses → invert)
-        so _verify_loop_candidate gets fresh w2c poses without a second forward.
-
-        The hook is removed in a finally block — guaranteed cleanup even if the forward
-        raises.  No persistent state is left on the model or its layers.
+        - wraps the 2 input frames into MapAnything's view format and runs one forward with a
+          per-call hook on the cross-frame self-attention block
+        - the forward's predictions are kept and postprocessed via the _lc_collate_outputs recipe
+          (postprocess -> camera_poses -> invert), so _verify_loop_candidate gets fresh w2c poses
+          without a second forward
+        - the hook is removed in a finally block, so a raising forward still cleans up; no
+          persistent state is left on the model or its layers
 
         Args:
             frames:      (2, C, H, W) preprocessed frames on CPU or GPU.
-            layer_index: Which self_attention_block to tap.  -1 = last (default).
-            **kwargs:    minibatch_size (int, default 1),
-                         memory_efficient_inference (bool, default False).
+            layer_index: Which self_attention_block to tap. -1 = last.
+            **kwargs:    minibatch_size (int, default 1), memory_efficient_inference (bool,
+                         default False).
 
         Returns:
-            dict with keys:
-              "q":            (B, heads, N_tokens, head_dim) query projections
-              "k":            (B, heads, N_tokens, head_dim) key projections
-              "poses":        (2, 4, 4) float32 np.ndarray — w2c extrinsics
-              "world_points": (2, H, W, 3) float32 np.ndarray — world-frame points
-                              (present when the postprocessed output exposes pts3d)
-              "conf":         (2, H, W) float32 np.ndarray — per-point confidence
-                              (present when the postprocessed output exposes conf)
+            dict with "q" and "k" (B, heads, N_tokens, head_dim) projections and "poses"
+            (2, 4, 4) float32 w2c extrinsics. "world_points" (2, H, W, 3) and "conf" (2, H, W)
+            are present when the postprocessed output exposes pts3d / conf.
         """
         minibatch_size = kwargs.get("minibatch_size", 1)
         memory_efficient = kwargs.get("memory_efficient_inference", False)
@@ -542,10 +543,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         hook = block.attn.qkv.register_forward_hook(_hook)
         try:
             with torch.no_grad():
-                # Wrap frames into MapAnything's {"img": (1,C,H,W)} view dicts,
-                # preprocess them, then run a standard forward pass
-                # "data_norm_type" is required by preprocess_input_views_for_inference.
-                # load_images() defaults to "dinov2" and sets data_norm_type=[norm_type].
+                # Wrap frames into MapAnything's {"img": (1,C,H,W)} view dicts
+                # - preprocess them, then run a standard forward pass
+                # - "data_norm_type" is required by preprocess_input_views_for_inference
+                # - load_images() defaults to "dinov2" and sets data_norm_type=[norm_type]
                 raw_views = [{"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]} for f in frames.cpu()]
                 views = preprocess_input_views_for_inference(raw_views)
                 # Move all tensor values to model device — _forward() does this too;
@@ -564,9 +565,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
             # Always remove the hook — no persistent state left on the model
             hook.remove()
 
-        # Derive fresh w2c poses from the SAME forward via the _lc_collate_outputs
-        # recipe: float-cast pointmaps → postprocess (apply_mask=False) → invert
-        # camera_poses (c2w) to w2c. Frame 0 is at identity (first-frame canonical).
+        # Derive fresh w2c poses from the SAME forward, via the _lc_collate_outputs recipe
+        # - float-cast pointmaps, postprocess (apply_mask=False), then invert camera_poses
+        #   (c2w) to w2c
+        # - frame 0 is at identity (first-frame canonical)
         with torch.no_grad():
             for pred in preds:
                 pred["pts3d_cam"] = pred["pts3d_cam"].float()
@@ -577,9 +579,10 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         ).astype(
             np.float32
         )  # (2, 4, 4) w2c
-        # Pointmaps + confidence are already in the postprocessed output — include
-        # them for LC anchor-scale estimation; warn loudly if a key is missing
-        # (verify contract tolerates world_points=None, but scale degrades to 1.0).
+        # Pointmaps + confidence are already in the postprocessed output
+        # - include them for LC anchor-scale estimation
+        # - warn loudly if a key is missing: the verify contract tolerates
+        #   world_points=None, but scale then degrades to 1.0
         if all("pts3d" in p for p in processed):
             captured["world_points"] = np.stack(
                 [p["pts3d"][0].cpu().float().numpy() for p in processed]

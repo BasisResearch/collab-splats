@@ -12,7 +12,7 @@ from collab_splats.pointcloud.feedforward.base import (
 
 
 def _make_intrinsics(H: int, W: int) -> np.ndarray:
-    """Simple pinhole K with focal = W, principal at image centre."""
+    """Simple pinhole K with focal = W, principal at image center."""
     return np.array(
         [[float(W), 0.0, W / 2.0], [0.0, float(H), H / 2.0], [0.0, 0.0, 1.0]],
         dtype=np.float32,
@@ -256,7 +256,7 @@ def test_positive_mask_invariant_across_occlusion_policy(seed):
 
 
 def test_pair_gate_does_not_change_output():
-    """The gate is a cost optimisation: gated and ungated results must be identical."""
+    """The gate is a cost optimization: gated and ungated results must be identical."""
     N, H, W = 4, 8, 8
     rng = np.random.default_rng(7)
     depth = (rng.random((N, H, W)).astype(np.float32) + 1.0) * 3.0
@@ -444,7 +444,7 @@ def _collect(depth, K, extr, **kw):
     A constant-depth plane has near == far, so its world AABB is degenerate in z. Two planes
     at 4.0 and 4.4 therefore have DISJOINT boxes and _aabbs_overlap gates the pair out before
     any residual exists — the gate is correct (real depth has range), the fixture is the
-    artificial one. pair_gate is a cost optimisation and changes no result, so turning it off
+    artificial one. pair_gate is a cost optimization and changes no result, so turning it off
     here isolates what these tests are actually about.
     """
     out = {}
@@ -593,7 +593,7 @@ def test_invalid_sampled_depth_is_excluded_not_counted_as_minus_one():
 
 
 def test_near_zero_expected_depth_is_excluded_not_divided_through():
-    """A pixel that reprojects onto camera j's centre has no measurable residual or parallax.
+    """A pixel that reprojects onto camera j's center has no measurable residual or parallax.
 
     Cameras are co-located here on purpose: with a sideways baseline a near-zero-depth point
     projects thousands of pixels off-frame and the in_bounds test hides the case. Co-located,

@@ -1,11 +1,12 @@
 """
 Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
 
-Two steps: qa.compute_video_quality measures the whole video into a report, then
-the samplers select from it. Selected keyframes land in the canonical images/
-directory via frames.py (COLMAP-style frame_NNNNNN.png plus frames.json). Plots
-live in collab_splats.preproc.viz and are deliberately not re-exported (keeps
-matplotlib out of pipeline imports).
+- two steps: qa.compute_video_quality measures the whole video into a report, then the
+  samplers select from it
+- selected keyframes land in the canonical images/ directory via frames.py —
+  COLMAP-style frame_NNNNNN.png plus frames.json
+- plots live in collab_splats.preproc.viz, deliberately not re-exported, which keeps
+  matplotlib out of pipeline imports
 """
 
 from collab_splats.preproc.frames import (

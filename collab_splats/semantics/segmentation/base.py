@@ -1,13 +1,12 @@
 """
 Base class and mask utilities for segmentation backends.
 
-Provides:
-  BaseSegmentation         — abstract registry-based segmentation interface
-  create_patch_mask        — divide image into spatial patch grid
-  create_composite_mask    — merge SAM results into a single integer-ID mask
-  mask_id_to_binary_mask   — expand integer-ID mask to (N, H, W) boolean array
-  convert_matched_mask     — remap sequential IDs to matched label IDs
-  aggregate_masked_features — pool features per segment mask
+- BaseSegmentation: abstract registry-based segmentation interface
+- create_patch_mask: divide an image into a spatial patch grid
+- create_composite_mask: merge SAM results into a single integer-ID mask
+- mask_id_to_binary_mask: expand an integer-ID mask to an (N, H, W) boolean array
+- convert_matched_mask: remap sequential IDs to matched label IDs
+- aggregate_masked_features: pool features per segment mask
 """
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ from typing import Any, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image
 
 from collab_splats.utils.torch_utils import RegistryMixin
 
@@ -34,13 +34,14 @@ class BaseSegmentation(RegistryMixin, ABC):
     """
     Abstract base for segmentation backends with a name-based registry.
 
-    Register subclasses via `@BaseSegmentation.register("name")`, retrieve with `.get("name")`.
+    - register subclasses via `@BaseSegmentation.register("name")`
+    - retrieve with `.get("name")`
     """
 
     _registry: dict[str, type["BaseSegmentation"]] = {}
 
     @abstractmethod
-    def segment(self, image) -> tuple[torch.Tensor, Any] | None:
+    def segment(self, image: np.ndarray | Image.Image) -> tuple[torch.Tensor, Any] | None:
         """
         Class-agnostic segmentation with no prompt.
 
@@ -54,13 +55,18 @@ class BaseSegmentation(RegistryMixin, ABC):
             metadata is backend-specific.
         """
 
-    def segment_with_text(self, image, prompt: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def segment_with_text(
+        self, image: Image.Image, prompt: str
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Text-prompted segmentation → (masks, boxes, scores).
+        Text-prompted segmentation.
 
         Args:
-            image: PIL Image.
+            image: the frame to segment.
             prompt: text prompt.
+
+        Returns:
+            (masks, boxes, scores) from the backend.
 
         Raises:
             NotImplementedError: for backends without text prompts.
@@ -76,16 +82,16 @@ class BaseSegmentation(RegistryMixin, ABC):
 ########################################################
 
 
-def create_patch_mask(image, num_patches: int = 32):
+def create_patch_mask(image: np.ndarray, num_patches: int = 32) -> torch.Tensor:
     """
-    Divide image into a spatial patch grid; return boolean occupancy tensor.
+    Divide an image into a spatial patch grid; return a boolean occupancy tensor.
 
     Args:
-        image: Array of shape (H, W, ...) — only H and W are used.
-        num_patches: Number of patches along each axis.
+        image: (H, W, ...) array — only H and W are read.
+        num_patches: patches along each axis.
 
     Returns:
-        (num_patches, num_patches, H*W) bool tensor — True where pixel belongs to patch.
+        (num_patches, num_patches, H*W) bool tensor — True where a pixel belongs to a patch.
     """
     H, W = image.shape[:2]
 
@@ -109,19 +115,20 @@ def create_patch_mask(image, num_patches: int = 32):
     return flatten_patch_mask
 
 
-def create_composite_mask(results, confidence_threshold=0.85):
+def create_composite_mask(results: list[dict], confidence_threshold: float = 0.85) -> np.ndarray:
     """
-    Merge SAM segment results into a single (H, W) uint16 mask with integer IDs.
+    Merge SAM segment results into a single (H, W) uint16 mask of integer IDs.
+
+    - uint16 preserves IDs > 255: SAM's 32x32 point grid routinely clears 256 proposals
+    - numpy>=2 raises OverflowError on the 256th rather than wrapping around
 
     Args:
-        results: List of dicts from a SAM mask generator; each must have
-                 ``"segmentation"`` (H, W) bool and ``"predicted_iou"`` float.
-        confidence_threshold: Masks with iou below this value are discarded.
+        results: dicts from a SAM mask generator; each needs "segmentation" (H, W) bool
+            and "predicted_iou" float.
+        confidence_threshold: masks with iou below this are discarded.
 
     Returns:
-        (H, W) uint16 array — pixel value is the mask ID (1-indexed); 0 = background.
-        uint16 preserves IDs > 255: SAM's 32x32 point grid routinely clears 256 proposals,
-        and numpy>=2 raises OverflowError on the 256th rather than wrapping around.
+        (H, W) uint16 array — pixel value is the 1-indexed mask ID, 0 is background.
     """
     selected_masks = []
     for mask in results:

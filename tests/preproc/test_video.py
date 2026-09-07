@@ -129,7 +129,7 @@ def test_video_module_uses_no_subprocess(tiny_video, monkeypatch):
 
 def test_iter_frames_yields_bgr(tiny_video):
     """
-    Colour convention is unchanged: iter_frames is BGR, extract_frame is RGB.
+    Color convention is unchanged: iter_frames is BGR, extract_frame is RGB.
     """
     _, bgr = next(iter(iter_frames(tiny_video)))
     rgb = extract_frame(tiny_video, 0)
@@ -276,7 +276,7 @@ def test_extract_frame_shape_and_dtype(synth_video):
 @requires_ffmpeg
 def test_extract_frame_lands_near_target_index(synth_video):
     # testsrc's content changes every frame; a correctly-seeked decode must differ
-    # less from its immediate neighbour than from a distant frame (catches gross
+    # less from its immediate neighbor than from a distant frame (catches gross
     # seek errors, e.g. landing many frames off target).
     frame_30 = extract_frame(synth_video, 30)
     frame_31 = extract_frame(synth_video, 31)

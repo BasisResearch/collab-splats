@@ -80,7 +80,7 @@ def plot_frame_scores(frame_scores: list) -> None:
     """
     3-panel timeseries of per-frame signals: disparity / rotation / histogram similarity.
 
-    - selected frames are marked with vertical grey lines
+    - selected frames are marked with vertical gray lines
 
     Args:
         frame_scores: per-frame score records from sample_optical_flow.
@@ -104,7 +104,7 @@ def plot_frame_scores(frame_scores: list) -> None:
             ax.axvline(x, color="gray", alpha=0.25, linewidth=0.6)
         ax.set_ylabel(ylabel, fontsize=9)
     axes[-1].set_xlabel("Frame index")
-    fig.suptitle("Per-frame optical flow scores  (grey lines = selected frames)", fontsize=11)
+    fig.suptitle("Per-frame optical flow scores  (gray lines = selected frames)", fontsize=11)
     fig.tight_layout()
     plt.show()
 

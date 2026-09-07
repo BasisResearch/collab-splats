@@ -118,7 +118,7 @@ def test_selector_combine_is_monotonic_in_disparity():
 
 def test_filter_cuts_the_soft_frame_in_an_otherwise_sharp_run():
     """
-    One frame two orders of magnitude softer than its neighbours is cut.
+    One frame two orders of magnitude softer than its neighbors is cut.
     """
     mask = filter_frame_quality(_report([400.0] * 20 + [3.0] + [400.0] * 20))
 

@@ -53,16 +53,35 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
 
     @property
     def device(self) -> torch.device:
-        """Device of the underlying model parameters."""
+        """
+        Device of the underlying model parameters.
+
+        Returns:
+            The torch device the model was moved to at construction.
+        """
         return self._device
 
     @property
     def patch_size(self) -> int:
-        """Patch size read from the model config at call time."""
+        """
+        Patch size read from the model config at call time.
+
+        Returns:
+            Side length in pixels of one DINOv2 patch.
+        """
         return self.model.config.patch_size
 
     def forward(self, images: list) -> list[torch.Tensor]:
-        """Extract patch-level DINOv2 features from a list of images."""
+        """
+        Extract patch-level DINOv2 features from a list of images.
+
+        Args:
+            images: anything `preprocess` accepts — paths, ndarrays or PIL images.
+
+        Returns:
+            One (D, H_p, W_p) float32 CPU tensor per input image. Per-image shape, because
+            `preprocess` preserves aspect ratio and the grids differ.
+        """
         logger.debug("[%s] Extracting features: %d images", type(self).__name__, len(images))
 
         # Preprocess all images and stack into a single batch

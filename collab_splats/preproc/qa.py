@@ -3,15 +3,17 @@ Video capture quality: how good is the source footage, per frame and per pair.
 
 Two measurement families:
 
-    Photometry — per frame: is this frame sharp and correctly exposed?
-                 blur, laplacian, exposure_{mean,median,std}, clipped_{low,high}_frac
-    Motion     — per pair:  how far did the camera move between two frames?
-                 n_matches, translation_px, parallax
+- photometry, per frame — is this frame sharp and correctly exposed?
+  blur, laplacian, exposure_{mean,median,std}, clipped_{low,high}_frac
+- motion, per pair — how far did the camera move between two frames?
+  n_matches, translation_px, parallax
 
-REPORT-ONLY. Nothing here selects, rejects, ranks or scores a frame against a
-threshold. Selection policy lives in preproc.sampling.filter_frame_quality.
-Measured evidence for every column is in
-docs/superpowers/specs/2026-08-20-video-quality-report-measured.md.
+REPORT-ONLY:
+
+- nothing here selects, rejects, ranks or scores a frame against a threshold
+- selection policy lives in preproc.sampling.filter_frame_quality
+- measured evidence for every column:
+  docs/superpowers/specs/2026-08-20-video-quality-report-measured.md
 """
 
 import json
@@ -80,7 +82,7 @@ def compute_blur(gray: np.ndarray, *, h_size: int = 11) -> dict:
     Raises:
         ValueError: when `gray` is not 2-D.
     """
-    # A colour frame is a caller mistake, not a measurement
+    # A color frame is a caller mistake, not a measurement
     # - skimage reads the channel axis as spatial and returns nan
     # - cv2.Laplacian returns a perfectly plausible number anyway
     # - so the row would read as a failed capture

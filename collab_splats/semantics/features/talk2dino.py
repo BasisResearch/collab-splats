@@ -22,11 +22,11 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
     """
     Talk2DINO patch features and text-conditioned similarity, from HuggingFace Hub.
 
-    - Supports DINOv3 ("lorebianchi98/Talk2DINOv3-ViTB", default) and DINOv2 ("lorebianchi98/Talk2DINO-ViTB").
-    - forward_features is called directly, bypassing encode_image's internal resize — preprocess()
-      has already produced patch-aligned tensors.
-
-    Algorithm from Talk2DINO (https://github.com/lorebianchi98/Talk2DINO).
+    - supports DINOv3 ("lorebianchi98/Talk2DINOv3-ViTB", default) and DINOv2
+      ("lorebianchi98/Talk2DINO-ViTB")
+    - forward_features is called directly, bypassing encode_image's internal resize:
+      preprocess() has already produced patch-aligned tensors
+    - algorithm from Talk2DINO (https://github.com/lorebianchi98/Talk2DINO)
     """
 
     def __init__(
@@ -58,9 +58,10 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         # Normalize transform from the model's own image_transforms — correct stats per backbone
         self._normalize: T.Normalize = _loaded.image_transforms.transforms[-1]
 
-        # patch_size from the backbone conv stride — Conv2d normalizes stride to a tuple, and
-        # stride (not kernel_size) is what sets the token grid. Both supported checkpoints
-        # (Talk2DINOv3-ViTB, Talk2DINO-ViTB) expose model.patch_embed.proj.
+        # patch_size comes from the backbone conv stride
+        # - Conv2d normalizes stride to a tuple
+        # - stride, not kernel_size, is what sets the token grid
+        # - both supported checkpoints (Talk2DINOv3-ViTB, Talk2DINO-ViTB) expose model.patch_embed.proj
         self.patch_size: int = _loaded.model.patch_embed.proj.stride[0]
 
         # Move to device after extracting metadata
@@ -69,11 +70,24 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
 
     @property
     def device(self) -> torch.device:
-        """Device of the underlying model."""
+        """
+        Device of the underlying model parameters.
+
+        Returns:
+            The torch device the model was moved to at construction.
+        """
         return self._device
 
     def forward(self, images: list) -> list[torch.Tensor]:
-        """Extract patch-level Talk2DINO features from a list of images."""
+        """
+        Extract patch-level Talk2DINO features from a list of images.
+
+        Args:
+            images: anything `preprocess` accepts — paths, ndarrays or PIL images.
+
+        Returns:
+            One (D, H_p, W_p) float32 CPU tensor per input image.
+        """
         logger.debug("[%s] Extracting features: %d images", type(self).__name__, len(images))
 
         # Preprocess all images and stack into a single batch
@@ -93,10 +107,14 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
         return results
 
     def encode_text(self, texts: List[str]) -> torch.Tensor:
-        """Encode text queries to normalized embeddings.
+        """
+        Encode text queries to normalized embeddings.
+
+        Args:
+            texts: query strings, encoded by the Talk2DINO text tower.
 
         Returns:
-            ``(N, D)`` normalized embeddings.
+            (N, D) normalized embeddings.
         """
         with torch.no_grad():
             embeddings = self._model.encode_text(texts)

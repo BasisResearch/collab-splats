@@ -1,8 +1,7 @@
 """
 INSID3 in-context segmentation backend.
 
-Provides:
-  INSID3Segmentation — training-free in-context segmentation via frozen DINOv2 features
+- INSID3Segmentation: training-free in-context segmentation on frozen DINOv2 features
 """
 from __future__ import annotations
 
@@ -239,14 +238,15 @@ class INSID3Segmentation(BaseSegmentation):
     """
     Training-free in-context segmentation using frozen DINOv2 features.
 
-    Call set_context(ref_image, ref_mask) once per semantic category, then segment()
-    for each target frame. Context is cached — ref features are extracted only once.
+    - call set_context(ref_image, ref_mask) once per semantic category, then segment()
+      for each target frame
+    - context is cached: reference features are extracted only once
 
     Args:
-        svd_components: SVD rank for positional debiasing (default 500, matches INSID3).
-        tau: Agglomerative clustering similarity threshold (default 0.6).
-        merge_threshold: Minimum combined score to include a cluster (default 0.2).
-        device: Torch device string.
+        svd_components: SVD rank for positional debiasing. 500 matches INSID3.
+        tau: agglomerative clustering similarity threshold.
+        merge_threshold: minimum combined score for a cluster to be included.
+        device: torch device string.
     """
 
     def __init__(
@@ -320,11 +320,17 @@ class INSID3Segmentation(BaseSegmentation):
 
     def segment(self, image: "Image.Image | torch.Tensor") -> tuple[torch.Tensor, dict]:
         """
-        Segment image using cached context.
+        Segment an image against the cached context.
 
-        Raises RuntimeError if no context is set — call set_context() first.
-        Returns (pred_mask (H, W) bool, metadata dict).
-        Metadata keys: candidate_mask (H_p, W_p), cluster_labels (H_p, W_p), n_clusters (int).
+        Args:
+            image: the frame to segment, resized by the extractor.
+
+        Returns:
+            (pred_mask, metadata) — pred_mask (H, W) bool at the input resolution; metadata
+            carries candidate_mask (H_p, W_p), cluster_labels (H_p, W_p) and n_clusters.
+
+        Raises:
+            RuntimeError: when no context is set — call set_context() first.
         """
         if self._prototype is None or self._ref_feat_deb is None or self._ref_mask_down is None:
             raise RuntimeError(

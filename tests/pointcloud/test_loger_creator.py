@@ -108,7 +108,7 @@ def test_zero_area_raises_instead_of_silently_returning_a_tile():
     # 14x14 image the model would consume without complaint. Our caller passes frame
     # store dimensions, positive by construction, so a zero here means the store is
     # corrupt and a traceback naming the division is more useful than a silent tile.
-    # This is the only behaviour in this function that intentionally differs from the
+    # This is the only behavior in this function that intentionally differs from the
     # vendored loader, so it gets a test rather than a comment.
     with pytest.raises(ZeroDivisionError):
         _compute_target_size(0, 1080, pixel_limit=255_000)
@@ -199,7 +199,7 @@ def test_load_model_rejects_unknown_model_config_key(tmp_path, monkeypatch, stub
     # (github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589), so a naive
     # "filter to constructor signature" would discard it and run the wrong alignment
     # mode with no error. se3 is therefore routed explicitly, and anything else
-    # unrecognised must stop the run rather than be dropped.
+    # unrecognized must stop the run rather than be dropped.
     #
     # The stub_pi3 fixture is load-bearing here, not convenience: _LOGER_ROOT is
     # redirected at a tmp dir with no loger/ package, so without it this raises
@@ -325,7 +325,7 @@ def _loaded_creator(se3: bool = False, **kwargs) -> LoGeRCreator:
 def _synthetic_local_points(h: int, w: int, fx: float, fy: float, z: float = 2.0) -> np.ndarray:
     """Exact pinhole camera-frame pointmap, so a K fit over it must recover (fx, fy)."""
     # The principal point must match the one estimate_intrinsics_from_points assumes —
-    # cx=(W-1)/2, cy=(H-1)/2 — set by the centred-pixel-grid meshgrid inside
+    # cx=(W-1)/2, cy=(H-1)/2 — set by the centered-pixel-grid meshgrid inside
     # estimate_intrinsics_from_points (collab_splats/geometry/transforms.py), NOT w/2.
     # Off-by-half-a-pixel here biases the recovered focal, and the assertions below would
     # then be pinning the bias rather than the fit.
@@ -721,7 +721,7 @@ def test_extract_intermediate_features_refuses():
 _PARITY_VIDEO = Path(__file__).resolve().parents[2] / "data" / "tutorial" / "tutorial_example-video.mp4"
 _PARITY_FRAME_IDXS = list(range(0, 192, 24))
 
-# 3:4 centre crop of the 1080x1920 portrait source. The crop is the point: uncropped,
+# 3:4 center crop of the 1080x1920 portrait source. The crop is the point: uncropped,
 # _compute_target_size maps 1080x1920 -> 378x672 with sx == sy == 0.35 EXACTLY, so the
 # separately fitted fx and fy can never disagree and the measurement is vacuous. Cropped,
 # 810x1080 -> 434x574 with sx 0.535802 vs sy 0.531481 — 0.81% anisotropy, which is what
@@ -730,14 +730,14 @@ _PARITY_CROP_W, _PARITY_CROP_H = 810, 1080
 
 
 def _tutorial_frames() -> np.ndarray:
-    """Fixed tutorial-video frames, 3:4 centre-cropped, as (N, H, W, 3) uint8 RGB."""
+    """Fixed tutorial-video frames, 3:4 center-cropped, as (N, H, W, 3) uint8 RGB."""
     # Probe once for the whole batch: get_video_info demuxes for the packet count,
     # the seek itself does not, so hoisting it out of the loop is 8x cheaper than
     # letting extract_frame probe per call.
     info = get_video_info(str(_PARITY_VIDEO))
     frames = np.stack([extract_frame(_PARITY_VIDEO, idx, info=info) for idx in _PARITY_FRAME_IDXS])
 
-    # Centre-crop both axes. Assert first: a silently clamped slice would change the
+    # Center-crop both axes. Assert first: a silently clamped slice would change the
     # aspect ratio and therefore the anisotropy this fixture exists to produce.
     assert frames.shape[1] >= _PARITY_CROP_H and frames.shape[2] >= _PARITY_CROP_W, (
         f"tutorial video is {frames.shape[2]}x{frames.shape[1]}, too small for the "
@@ -916,7 +916,7 @@ def _call_run_feedforward(tmp_path, *, n_frames=10, **overrides):
     return types.SimpleNamespace(seen=seen, images_dir=images_dir, sources=sources)
 
 
-def test_loger_is_a_recognised_feedforward_backend():
+def test_loger_is_a_recognized_feedforward_backend():
     # vggt_spark is in _REGISTRY but absent here, so it is unreachable from
     # Reconstructor. loger must be in both.
     assert "loger" in _FEEDFORWARD_BACKENDS
@@ -959,7 +959,7 @@ def test_loop_closure_refusal_precedes_touching_the_filesystem(tmp_path):
 
 def test_loop_closure_disabled_by_dict_is_not_refused(tmp_path):
     # loop_closure is bool|dict, and {"enabled": False} is a truthy object with falsy
-    # intent. The refusal reads the normalised lc_enabled, so this config must get past it
+    # intent. The refusal reads the normalized lc_enabled, so this config must get past it
     # and reach the creator — reaching the creator is exactly what "not refused" means.
     res = _call_run_feedforward(tmp_path, loop_closure={"enabled": False})
 

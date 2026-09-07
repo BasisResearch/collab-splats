@@ -68,10 +68,10 @@ def _make_rgb_image(h: int = 64, w: int = 64, value: int = 100) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
-# Task 1: smoke test — base class state is initialised
+# Task 1: smoke test — base class state is initialized
 # ---------------------------------------------------------------------------
 
-def test_base_state_initialised():
+def test_base_state_initialized():
     """BaseFeatureExtractor.__init__ must set svd_components, _pos_basis_cache, _zero_feats_cache."""
     extractor = _FakeExtractor(feature_dim=16, h_p=4, w_p=4, svd_components=8)
     assert extractor.svd_components == 8

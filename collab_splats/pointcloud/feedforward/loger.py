@@ -1,32 +1,32 @@
-"""LoGeR feedforward backend: resize rule and creator.
+"""
+LoGeR feedforward backend: resize rule and creator.
 
-LoGeR is a Pi3 backbone plus a TTT fast-weight memory, run with sliding-window
-inference and overlap stitching.  Unlike every other backend we run it predicts no
-camera intrinsics, so K is fitted from its camera-frame pointmap by
-``collab_splats.geometry.transforms.estimate_intrinsics_from_points``.
+- Pi3 backbone plus a TTT fast-weight memory, sliding-window inference, overlap stitching
+- alone among our backends it predicts no camera intrinsics, so K is fitted from its
+  camera-frame pointmap by geometry.transforms.estimate_intrinsics_from_points
 
-Upstream sources.  Two forks are involved and they are NOT interchangeable.  Neither
-ships a LICENSE, so nothing here is taken from either as an artifact — the forks are
-cited as prior art and as the behavioural reference we match.  One honest caveat:
-``_compute_target_size`` is written to a behavioural spec, but a greedy decrement to
-an area budget has close to one natural form, so its arithmetic necessarily converges
-on upstream's line for line.  That convergence is disclosed rather than disguised, and
-it is measured by a parity test instead of asserted.  Citations carry repo, commit,
-file, and line because third_party/ is gitignored and cannot be read from this repo
-alone:
+Upstream: two forks, NOT interchangeable, neither shipping a LICENSE:
 
-  * VENDORED — the tree we actually execute against
-    (setup/loger.sh clones it into third_party/LoGeR/):
-      github.com/Junyi42/LoGeR @ 7685b7a
-  * PRIOR ART — read for reference, not vendored, not a dependency, nothing copied:
-      github.com/PolyCam/LoGeR @ 5d7c1a7
+- nothing here is taken from either as an artifact — they are cited as prior art and as
+  the behavioral reference we match
+- caveat: _compute_target_size is written to a behavioral spec, but a greedy decrement to
+  an area budget has close to one natural form, so its arithmetic necessarily converges on
+  upstream's line for line. Disclosed rather than disguised, and measured by a parity test
+  instead of asserted
+- citations carry repo, commit, file and line because third_party/ is gitignored and
+  cannot be read from this repo alone
+- VENDORED, the tree we execute against (setup/loger.sh clones it into
+  third_party/LoGeR/): github.com/Junyi42/LoGeR @ 7685b7a
+- PRIOR ART, read for reference, not vendored, not a dependency, nothing copied:
+  github.com/PolyCam/LoGeR @ 5d7c1a7
 
 Provides:
-  LOGER_HF_REPO        — HuggingFace repo holding both checkpoints
-  LOGER_VARIANTS       — the two shipped variants
-  LOGER_CONF_THRESHOLD — confidence floor for the K fit, measured not inherited
-  _compute_target_size — patch-aligned resize matching the vendored loader
-  LoGeRCreator         — feedforward creator using LoGeR depth + pose
+
+- LOGER_HF_REPO — HuggingFace repo holding both checkpoints
+- LOGER_VARIANTS — the two shipped variants
+- LOGER_CONF_THRESHOLD — confidence floor for the K fit, measured not inherited
+- _compute_target_size — patch-aligned resize matching the vendored loader
+- LoGeRCreator — feedforward creator using LoGeR depth + pose
 """
 
 from __future__ import annotations
@@ -69,13 +69,14 @@ logger = logging.getLogger(__name__)
 LOGER_HF_REPO = "Junyi42/LoGeR"
 LOGER_VARIANTS = ("LoGeR", "LoGeR_star")
 
-# Confidence floor for the K fit, passed explicitly to estimate_intrinsics_from_points
-# instead of taking its 0.1 default. LoGeR's conf head is uncalibrated: measured logits
-# span -4.257..-2.019, so the post-sigmoid band is [0.0140, 0.1172] and 0.1 is its 92nd
-# percentile — the default keeps 7.9% of pixels (12,217/155,232 on an 8-frame run) and a
-# marginally duller scene keeps none, raising. 0.02 sits just above the band floor, so it
-# rejects only what the model calls junk; the confidence WEIGHTING inside the median is
-# what actually discriminates. Re-measure this if the checkpoint changes.
+# Confidence floor for the K fit, not estimate_intrinsics_from_points' 0.1 default
+# - LoGeR's conf head is uncalibrated: measured logits span -4.257..-2.019, so the
+#   post-sigmoid band is [0.0140, 0.1172] and 0.1 is its 92nd percentile
+# - at 0.1 only 7.9% of pixels survive (12,217/155,232 on an 8-frame run), and a
+#   marginally duller scene keeps none, raising
+# - 0.02 sits just above the band floor, rejecting only what the model calls junk
+# - the confidence WEIGHTING inside the median is what actually discriminates
+# - re-measure if the checkpoint changes
 LOGER_CONF_THRESHOLD = 0.02
 
 # Vendored tree, populated by setup/loger.sh.  parents[3] resolves
@@ -95,9 +96,9 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
 
     Unlike the rest of this module this one is not free to differ from upstream: the
     model is trained on images preprocessed this way, so a different rule would feed
-    it out-of-distribution input.  The rule is therefore written to a *behavioural*
+    it out-of-distribution input.  The rule is therefore written to a *behavioral*
     spec — area budget, both axes multiples of 14, shrink whichever axis overshoots
-    the target aspect until the budget is met — and that behaviour is pinned by
+    the target aspect until the budget is met — and that behavior is pinned by
     a measured parity test against the vendored loader
     (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/utils/basic.py:55-61``, inside
     ``load_images_as_tensor``, whose signature is at ``basic.py:11``), not asserted.
@@ -117,16 +118,15 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
     shrink loop never runs because ``0 > pixel_limit`` is false, and the ``max(1, ...)``
     clamp resurrects that axis to a single patch — returning slightly more area than
     asked for, up to 9x at 100000:1.  A ``pixel_limit`` under 196 likewise always
-    returns 14x14.  Both are upstream's behaviour and are kept deliberately; the
+    returns 14x14.  Both are upstream's behavior and are kept deliberately; the
     ``w * h <= pixel_limit`` assertion in the tests holds for every real image shape,
     not for every input.
     """
-    # Area-budget scale factor. Upstream guards this against zero area and falls through
-    # to a 14x14 image; we do not carry that over, because the caller this exists for
-    # (`_preprocess`, Task 6) passes frame store dimensions, which are positive by
-    # construction. A zero here means the store is corrupt, and a ZeroDivisionError
-    # naming this line is a more useful failure than a silent 14x14 tensor that the
-    # model would happily consume.
+    # Area-budget scale factor, deliberately unguarded against zero area
+    # - upstream guards it and falls through to a 14x14 image; not carried over
+    # - the only caller (`_preprocess`) passes frame store dimensions, positive by construction
+    # - a zero here means the store is corrupt, and a ZeroDivisionError naming this line
+    #   beats a silent 14x14 tensor the model would happily consume
     scale = math.sqrt(pixel_limit / (orig_w * orig_h))
     w_target, h_target = orig_w * scale, orig_h * scale
 
@@ -149,13 +149,13 @@ def _compute_target_size(orig_w: int, orig_h: int, pixel_limit: int) -> tuple[in
 
 @dataclass
 class LoGeRCreator(BaseFeedforwardCreator):
-    """Pointcloud via LoGeR: Pi3 backbone + TTT memory + sliding-window inference.
+    """
+    Pointcloud via LoGeR: Pi3 backbone + TTT memory + sliding-window inference.
 
-    Built for long sequences — the window bounds model memory regardless of sequence
-    length, where the set-based VGGT family OOMs past a few hundred frames.
-
-    Unlike every other backend, LoGeR predicts no intrinsics; K is solved from its
-    camera-frame pointmap by ``estimate_intrinsics_from_points`` and shared across frames.
+    - built for long sequences: the window bounds model memory regardless of sequence
+      length, where the set-based VGGT family OOMs past a few hundred frames
+    - alone among the backends it predicts no intrinsics; K is solved from its camera-frame
+      pointmap by estimate_intrinsics_from_points and shared across frames
 
     Attributes:
         camera_model:   pycolmap camera model.  ``"PINHOLE"``, not ``"SIMPLE_PINHOLE"``,
@@ -184,10 +184,10 @@ class LoGeRCreator(BaseFeedforwardCreator):
     model_path: str | None = None
     model_repo: str = LOGER_HF_REPO
 
-    # Window knobs. These do NOT come from the shipped yaml: both original_config.yaml
-    # files contain only a model: key, so build_forward_kwargs
-    # (github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164) always falls through
-    # to its own fallbacks, which are these values.
+    # Window knobs do NOT come from the shipped yaml
+    # - both original_config.yaml files contain only a model: key
+    # - so build_forward_kwargs (github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164)
+    #   always falls through to its own fallbacks, which are these values
     window_size: int = 32
     overlap_size: int = 3
     reset_every: int = 0
@@ -195,24 +195,27 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
     pixel_limit: int = 255_000
     conf_threshold: float = 50.0
-    # Off by default. LoGeR was not in the Step D sweep; it inherits the VGGT-family
-    # calibration because rel_thresh is scale-invariant and all three swept backbones
-    # optimised at the same grid corner. Sweep it before trusting these on LoGeR.
+    # Off by default: LoGeR was not in the Step D sweep
+    # - it inherits the VGGT-family calibration because rel_thresh is scale-invariant and
+    #   all three swept backbones optimized at the same grid corner
+    # - sweep it before trusting these values on LoGeR
     use_multiview_confidence: bool = False
-    # min_views: "at least K other views agree". K=1 is the old mv_conf_threshold=0.0 and is
-    # inert. K=2 is the largest count that is safe on a short sequence — min_views is an
-    # absolute count, so K > N-1 empties every judged view.
+    # min_views: "at least K other views agree"
+    # - K=1 is the old mv_conf_threshold=0.0 and is inert
+    # - K=2 is the largest count safe on a short sequence: min_views is an absolute count,
+    #   so K > N-1 empties every judged view
     min_views: int = 2
     # abs_thresh stays 0.0 — LoGeR depth is non-metric, so a fixed-unit tolerance is
     # meaningless and would break the scale invariance the shared function relies on.
     mv_conf_abs_thresh: float = 0.0
     mv_conf_rel_thresh: float = 0.01
 
-    # Resolved in _load_model from the variant's yaml. se3 is declared under model:
-    # but is a forward kwarg, so it cannot ride along in the constructor kwargs. None
-    # means _load_model has not run yet; False is a valid post-load value, so reusing
-    # it as the unset sentinel would let an unset flag silently read as LoGeR mode.
-    # Task 7's _forward must treat None as a contract violation, not default it.
+    # se3 needs its own unset sentinel, resolved in _load_model from the variant's yaml
+    # - declared under model: but consumed as a forward kwarg, so it cannot ride along in
+    #   the constructor kwargs
+    # - None means _load_model has not run; False is a valid post-load value, so reusing
+    #   False as the sentinel would let an unset flag read silently as LoGeR mode
+    # - _forward must treat None as a contract violation, never default it
     _se3: bool | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -229,27 +232,30 @@ class LoGeRCreator(BaseFeedforwardCreator):
                 f"LoGeR config not found: {cfg_path}. Run `bash setup/loger.sh` to vendor the tree."
             )
 
-        # `or {}` twice: an empty file parses to None, and `model:` with no body parses to
-        # None under the key. Neither can be allowed through — an empty model_cfg builds Pi3
-        # on constructor defaults, which is a DIFFERENT architecture (ttt_inter_multi is 4 in
-        # both shipped configs and 2 in the constructor), so the run fails 278 state_dict keys
-        # later, after a 5 GB download, with an error that names none of this.
+        # `or {}` twice: two separate ways the yaml yields None
+        # - an empty file parses to None; `model:` with no body parses to None under the key
+        # - an empty model_cfg builds Pi3 on constructor defaults, a DIFFERENT architecture
+        #   (ttt_inter_multi is 4 in both shipped configs, 2 in the constructor)
+        # - the run then fails 278 state_dict keys later, after a 5 GB download, with an
+        #   error that names none of this
         model_cfg = dict((yaml.safe_load(cfg_path.read_text()) or {}).get("model") or {})
         if not model_cfg:
             raise ValueError(f"{cfg_path} has no 'model:' block; the config is empty or truncated")
 
-        # se3 sits under model: but is not a Pi3.__init__ parameter — it is popped
-        # inside forward (github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:589).
-        # Route it out before validating the rest, or the check below would reject it.
+        # se3 sits under model: but is not a Pi3.__init__ parameter
+        # - it is popped inside forward (github.com/Junyi42/LoGeR @ 7685b7a,
+        #   loger/models/pi3.py:589)
+        # - route it out before validating the rest, or the check below would reject it
         self._se3 = bool(model_cfg.pop("se3", False))
 
-        # The vendored tree is not pip-installed, so the module has to be reached via
-        # sys.path rather than a top-of-file import. The flag keeps the finally
-        # idempotent: without it a nested load would pop a path its caller installed.
-        # sys.path is released before the download/checkpoint load below, not held across
-        # them — the house pattern (the sys.path try/finally in VGGTSparkCreator._load_model,
-        # collab_splats/pointcloud/feedforward/vggt_spark_creator.py) closes it immediately
-        # after the import + construction that actually need it.
+        # Vendored tree is not pip-installed, so it is reached via sys.path
+        # - a top-of-file import cannot work; the path is installed here instead
+        # - the flag keeps the finally idempotent: without it a nested load would pop a
+        #   path its caller installed
+        # - sys.path is released before the download/checkpoint load below, not held across
+        #   them, matching the house pattern (the try/finally in
+        #   VGGTSparkCreator._load_model, feedforward/vggt_spark_creator.py), which closes
+        #   it right after the import + construction that actually need it
         root = str(_LOGER_ROOT)
         _patched = root not in sys.path
         if _patched:
@@ -257,9 +263,10 @@ class LoGeRCreator(BaseFeedforwardCreator):
         try:
             from loger.models.pi3 import Pi3
 
-            # Every remaining model: key must be a real constructor parameter. Raise
-            # rather than drop — a silent drop is how a future forward-only key would
-            # degrade the run invisibly, exactly as se3 would have.
+            # Every remaining model: key must be a real constructor parameter
+            # - raise rather than drop
+            # - a silent drop is how a future forward-only key would degrade the run
+            #   invisibly, exactly as se3 would have
             unknown = sorted(set(model_cfg) - set(inspect.signature(Pi3.__init__).parameters))
             if unknown:
                 raise ValueError(
@@ -278,9 +285,10 @@ class LoGeRCreator(BaseFeedforwardCreator):
                 sys.path.remove(root)
 
         ckpt = self.model_path or hf_hub_download(repo_id=self.model_repo, filename=f"{self.variant}/latest.pt")
-        # weights_only=True: torch 2.5.1 still defaults to False and warns. The
-        # checkpoint comes from a third-party HuggingFace repo, so restricting the
-        # unpickler is worth one kwarg. Verified against both real checkpoints.
+        # weights_only=True: torch 2.5.1 still defaults to False and warns
+        # - the checkpoint comes from a third-party HuggingFace repo, so restricting the
+        #   unpickler is worth one kwarg
+        # - verified against both real checkpoints
         state = torch.load(str(ckpt), map_location="cpu", weights_only=True)
         state = state.get("model_state_dict", state)
         state = {k.removeprefix("module."): v for k, v in state.items()}
@@ -291,11 +299,13 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
     def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
         """Resize decoded frames to LoGeR's patch-aligned budget; return (N,3,H,W) in [0,1]."""
-        # Windows and overlap stitching assume temporal order, and equal indices would
-        # additionally collide in the frame_{idx:06d} labels below. The images/ store is
-        # ordered by construction today, so this guards an assumption rather than a known bug.
-        # Report the offending pair, not frame_idxs itself: at the 300-frame budget that
-        # would put a 300-element list in the traceback and bury the one bad index.
+        # Frame indices must be strictly increasing
+        # - windows and overlap stitching assume temporal order
+        # - equal indices would also collide in the frame_{idx:06d} labels below
+        # - the images/ store is ordered by construction today, so this guards an
+        #   assumption rather than a known bug
+        # - report the offending pair, not frame_idxs: at the 300-frame budget the full
+        #   list in a traceback buries the one bad index
         for i, (a, b) in enumerate(zip(frame_idxs, frame_idxs[1:])):
             if b <= a:
                 raise ValueError(
@@ -303,10 +313,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
                     f"got frame_idxs[{i}]={a} >= frame_idxs[{i + 1}]={b}; sort before calling"
                 )
 
-        # LoGeR derives the target size from frame 0 alone
-        # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:53-54, inside
-        # load_images_as_tensor at basic.py:11). Rather than inherit that silent
-        # assumption, refuse mixed sizes.
+        # Refuse mixed frame sizes rather than inherit a silent assumption
+        # - LoGeR derives the target size from frame 0 alone (github.com/Junyi42/LoGeR @
+        #   7685b7a, loger/utils/basic.py:53-54, inside load_images_as_tensor at basic.py:11)
         shapes = {(int(f.shape[0]), int(f.shape[1])) for f in frames}
         if len(shapes) != 1:
             raise ValueError(
@@ -318,27 +327,27 @@ class LoGeRCreator(BaseFeedforwardCreator):
         target_w, target_h = _compute_target_size(orig_w, orig_h, self.pixel_limit)
         logger.debug("LoGeRCreator: %dx%d -> %dx%d", orig_w, orig_h, target_w, target_h)
 
-        # Resize in memory with PIL directly. No frames_as_pil_source (in
-        # collab_splats/pointcloud/feedforward/base.py): that helper monkeypatches the
-        # process-global PIL.Image.open to drive path-based loaders, and LoGeR's
-        # load_images_as_tensor enumerates a directory with os.listdir
-        # (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:21, inside
-        # load_images_as_tensor), which patching Image.open cannot reach.
+        # Resize in memory with PIL, not via frames_as_pil_source
+        # - frames_as_pil_source (feedforward/base.py) monkeypatches the process-global
+        #   PIL.Image.open to drive path-based loaders
+        # - LoGeR's load_images_as_tensor enumerates a directory with os.listdir
+        #   (github.com/Junyi42/LoGeR @ 7685b7a, loger/utils/basic.py:21)
+        # - patching Image.open cannot reach an os.listdir walk
         resized = np.stack([np.asarray(Image.fromarray(f).resize((target_w, target_h), Image.LANCZOS)) for f in frames])
-        # div_ rather than `/ 255.0`: the out-of-place divide would hold two full float32
-        # copies at once, and this is the backend built for long sequences — measured at
-        # 300 frames of 1080p that second copy is 914 MB. Safe in place because `resized`
-        # is uint8 (PIL RGB always decodes to uint8), so .float() always allocates a fresh
-        # tensor and never aliases the numpy buffer.
+        # div_ rather than `/ 255.0`: the out-of-place divide doubles peak memory
+        # - it would hold two full float32 copies at once, and this is the long-sequence backend
+        # - measured at 300 frames of 1080p, that second copy is 914 MB
+        # - safe in place because `resized` is uint8 (PIL RGB always decodes to uint8), so
+        #   .float() always allocates a fresh tensor and never aliases the numpy buffer
         views = torch.from_numpy(resized).permute(0, 3, 1, 2).float().div_(255.0)
 
         # Stable synthetic labels — the frame store is the sole IO path, no filenames exist
         image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
 
-        # Pure resize, no crop, so every row is the full original frame. Layout is
-        # [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], consumed by
-        # _rescale_reconstruction_to_original_dimensions in
-        # collab_splats/pointcloud/feedforward/base.py.
+        # Pure resize, no crop, so every row is the full original frame
+        # - layout [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
+        # - consumed by _rescale_reconstruction_to_original_dimensions in
+        #   collab_splats/pointcloud/feedforward/base.py
         original_coords = np.tile(
             np.array([0, 0, orig_w, orig_h, orig_w, orig_h], dtype=np.float32), (len(image_paths), 1)
         )
@@ -347,19 +356,19 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
     def _forward_kwargs(self) -> dict:
         """Kwargs for one Pi3 forward pass — the single definition, shared with the parity test."""
-        # _se3 is populated by _load_model from the variant's yaml. None means we were
-        # reached without it — refuse rather than pick a default, because both values are
-        # legitimate (LoGeR is False, LoGeR_star is True) and guessing runs the wrong
-        # alignment mode with no error anywhere downstream.
+        # Refuse an unset _se3 rather than pick a default
+        # - _load_model populates it from the variant's yaml; None means we got here without it
+        # - both values are legitimate (LoGeR is False, LoGeR_star is True)
+        # - guessing runs the wrong alignment mode with no error anywhere downstream
         if self._se3 is None:
             raise RuntimeError("LoGeRCreator._forward requires _load_model to have run (se3 unset)")
 
-        # Mirrors build_forward_kwargs in github.com/PolyCam/LoGeR @ 5d7c1a7,
-        # run_loger.py:149-164, so behaviour matches upstream exactly; each name is popped in
-        # Pi3.forward at github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:584-593.
-        # sim3 stays False unconditionally: it and se3 are mutually exclusive and raise
-        # together (same file, :595-596), so LoGeR_star's se3=True has no valid sim3
-        # counterpart.
+        # Forward kwargs mirror upstream's build_forward_kwargs exactly
+        # - upstream: github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:149-164
+        # - each name is popped in Pi3.forward (github.com/Junyi42/LoGeR @ 7685b7a,
+        #   loger/models/pi3.py:584-593)
+        # - sim3 stays False unconditionally: sim3 and se3 are mutually exclusive and raise
+        #   together (same file, :595-596), so LoGeR_star's se3=True has no sim3 counterpart
         return dict(
             window_size=self.window_size,
             overlap_size=self.overlap_size,
@@ -391,13 +400,13 @@ class LoGeRCreator(BaseFeedforwardCreator):
 
         local_points = preds["local_points"].squeeze(0).cpu().float().numpy()  # (N,H,W,3)
 
-        # conf_head is a bare LinearPts3d with NO output activation —
-        # github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:172 — so the model emits
-        # logits, and upstream activates at the call site (github.com/PolyCam/LoGeR @
-        # 5d7c1a7, run_loger.py:481). This must run before the K fit, whose conf gate is a
-        # threshold on a probability. Measured on the Task 1 run, the raw logits span
-        # -4.257..-2.019 — entirely negative — so skipping the sigmoid does not merely
-        # shift the gate, it admits ZERO pixels and the fit raises.
+        # conf_head emits logits, so the sigmoid belongs at the call site
+        # - bare LinearPts3d with NO output activation (github.com/Junyi42/LoGeR @ 7685b7a,
+        #   loger/models/pi3.py:172); upstream activates at its call site too
+        #   (github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:481)
+        # - must run before the K fit, whose conf gate thresholds a probability
+        # - measured raw logits span -4.257..-2.019, entirely negative, so skipping the
+        #   sigmoid does not merely shift the gate: it admits ZERO pixels and the fit raises
         depth_conf = torch.sigmoid(preds["conf"]).squeeze(0).cpu().float().numpy()
         if depth_conf.ndim == 4:
             depth_conf = depth_conf.squeeze(-1)  # (N,H,W)
@@ -406,9 +415,10 @@ class LoGeRCreator(BaseFeedforwardCreator):
         camera_poses = preds["camera_poses"].squeeze(0).cpu().float().numpy()  # (N,4,4) c2w
         extrinsic = invert_poses(camera_poses)[:, :3, :].astype(np.float32)  # (N,3,4) w2c
 
-        # LoGeR predicts no intrinsics — solve one shared K and broadcast it per frame. The
-        # threshold is passed EXPLICITLY rather than inheriting estimate_intrinsics_from_points'
-        # 0.1 default, which this uncalibrated conf head cannot clear; see LOGER_CONF_THRESHOLD.
+        # LoGeR predicts no intrinsics: solve one shared K and broadcast it per frame
+        # - the threshold is passed EXPLICITLY, not inherited from
+        #   estimate_intrinsics_from_points' 0.1 default
+        # - this uncalibrated conf head cannot clear 0.1; see LOGER_CONF_THRESHOLD
         k = estimate_intrinsics_from_points(local_points, depth_conf, LOGER_CONF_THRESHOLD)
         intrinsic = np.broadcast_to(k, (local_points.shape[0], 3, 3)).copy()
 
@@ -446,20 +456,20 @@ class LoGeRCreator(BaseFeedforwardCreator):
             )
             mv_mask = multiview_mask(mv_conf, depth_np > 0, min_views=self.min_views)
 
-        # Unproject to filtered world-space points and per-point colors. conf_threshold > 1.0
-        # is read as a percentile by unproject_and_filter_points' threshold branch (in
-        # collab_splats/pointcloud/feedforward/vggtx.py), which is why the default 50.0 is a
-        # percentile and not a probability.
+        # Unproject to filtered world-space points and per-point colors
+        # - unproject_and_filter_points (collab_splats/pointcloud/feedforward/vggtx.py)
+        #   reads conf_threshold > 1.0 as a percentile
+        # - which is why the default 50.0 is a percentile and not a probability
         pts3d, colors, pixel_indices = unproject_and_filter_points(
             depth=raw_outputs["depth"],
             depth_conf=raw_outputs["depth_conf"],
             images=raw_outputs["images"],
             extrinsic=extrinsic,
-            # The same local K that becomes result.intrinsics below, NOT the
-            # "intrinsics_downsampled" alias. _forward binds both names to one array today,
-            # so this is a no-op; it stops being one the moment a genuinely downsampled K
-            # lands, at which point the current spelling would unproject the cloud with the
-            # downsampled K while result.intrinsics reported full-res — silently.
+            # Use the local K that becomes result.intrinsics, NOT "intrinsics_downsampled"
+            # - _forward binds both names to one array today, so this is a no-op now
+            # - it stops being one the moment a genuinely downsampled K lands
+            # - the other spelling would then unproject the cloud with the downsampled K
+            #   while result.intrinsics reported full-res, silently
             intrinsic=intrinsic,
             conf_threshold=self.conf_threshold,
             max_points=self.max_points,
@@ -473,18 +483,19 @@ class LoGeRCreator(BaseFeedforwardCreator):
             depth = depth.squeeze(-1)  # (N,H,W)
         model_h, model_w = int(depth.shape[1]), int(depth.shape[2])
 
-        # BA fields: dense world-point grid, matching vggtx and vggt_omega. LoGeR's own
-        # `points` is NOT used here — it can encode non-pinhole geometry that the fitted
-        # K cannot reproduce, so feeding it to BA alongside that K makes BA fight the
-        # model. The parity test measures the gap between the two clouds.
+        # BA fields: dense world-point grid, matching vggtx and vggt_omega
+        # - LoGeR's own `points` is NOT used: it can encode non-pinhole geometry the fitted
+        #   K cannot reproduce, so feeding it to BA alongside that K makes BA fight the model
+        # - the parity test measures the gap between the two clouds
         world_pts_flat, _ = _raw_to_world_points(raw_outputs, subsample=1)
         world_points = (
             world_pts_flat.reshape(world_pts_flat.shape[0], model_h, model_w, 3) if world_pts_flat is not None else None
         )
 
-        # confidence is a torch.Tensor and depth an np.ndarray by declaration on
-        # FeedforwardResult (collab_splats/pointcloud/feedforward/base.py); the asymmetry
-        # is the dataclass contract, not an oversight.
+        # confidence is a torch.Tensor while depth is an np.ndarray
+        # - both are declared that way on FeedforwardResult
+        #   (collab_splats/pointcloud/feedforward/base.py)
+        # - the asymmetry is the dataclass contract, not an oversight
         return FeedforwardResult(
             points=pts3d,
             colors=colors,
@@ -507,9 +518,9 @@ class LoGeRCreator(BaseFeedforwardCreator):
         self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Re-derive world-space points using bundle-adjusted camera poses."""
-        # The pose/K arguments, NOT raw_outputs' stored copies: BundleAdjustment calls this
-        # precisely because it has just refined them, so reading the raw dict would silently
-        # return the pre-BA cloud.
+        # Use the pose/K arguments, NOT raw_outputs' stored copies
+        # - BundleAdjustment calls this precisely because it has just refined them
+        # - reading the raw dict would silently return the pre-BA cloud
         pts3d, colors, _pixel_indices = unproject_and_filter_points(
             depth=raw_outputs["depth"],
             depth_conf=raw_outputs["depth_conf"],
@@ -524,11 +535,24 @@ class LoGeRCreator(BaseFeedforwardCreator):
     def extract_intermediate_features(
         self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
     ) -> dict[str, Any]:
-        """Not supported — LoGeR carries its own windowed TTT memory across frames."""
-        # Satisfying the ABC contract, not a courtesy stub: the class will not instantiate
-        # without it, and _verify_loop_candidate (concrete on the base class in
-        # collab_splats/pointcloud/feedforward/base.py) calls it. Reaching here means the
-        # Reconstructor-level loop closure refusal was bypassed.
+        """
+        Not supported — LoGeR carries its own windowed TTT memory across frames.
+
+        - present to satisfy the ABC contract: the class will not instantiate without it, and
+          _verify_loop_candidate (concrete on the base) calls it
+        - reaching this body means the Reconstructor-level loop-closure refusal was bypassed
+
+        Args:
+            frames:      Unused.
+            layer_index: Unused.
+            **kwargs:    Unused.
+
+        Returns:
+            Never returns.
+
+        Raises:
+            NotImplementedError: always.
+        """
         raise NotImplementedError(
             "LoGeR does not support loop closure feature extraction. Its windowed TTT "
             "fast-weight memory already carries state across frames, and LC verification "

@@ -48,7 +48,7 @@ def test_base_creator_abstract_method_is_reconstruct():
 
 def _recon_with_images(names=("frame_000000",)):
     """
-    PINHOLE camera + one image per name (translation z = index) + one coloured point3D.
+    PINHOLE camera + one image per name (translation z = index) + one colored point3D.
     """
     recon = pycolmap.Reconstruction()
     cam = pycolmap.Camera(model="PINHOLE", width=8, height=6, params=[4.0, 4.0, 4.0, 3.0], camera_id=1)

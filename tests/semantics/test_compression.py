@@ -138,7 +138,7 @@ def test_save_restores_the_device_when_the_write_fails(monkeypatch):
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     ae = _make_ae().to(device)
 
-    # Fail the write itself, after save() has already moved the model to CPU to serialise it
+    # Fail the write itself, after save() has already moved the model to CPU to serialize it
     def boom(*args, **kwargs):
         raise OSError("disk full")
 

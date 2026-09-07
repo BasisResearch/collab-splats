@@ -106,7 +106,7 @@ def test_compute_blur_saturates_on_sparse_detail(noise_gray):
     assert compute_blur(edge)["laplacian"] > 100.0
 
 
-def test_compute_blur_rejects_colour_input(noise_gray):
+def test_compute_blur_rejects_color_input(noise_gray):
     # skimage returns nan on a 3-channel array while cv2.Laplacian returns a
     # plausible number, so the row would be half-valid and read as a real
     # failed measurement rather than a bad call. Refuse instead.
@@ -177,7 +177,7 @@ def test_compute_exposure_median_separates_from_mean():
 
 @pytest.fixture(scope="module")
 def clipped_bgr():
-    """640x480 mid-grey BGR with 300 scattered saturated pixels.
+    """640x480 mid-gray BGR with 300 scattered saturated pixels.
 
     Scattered, not a block: a saturated block survives downscaling because the
     interpolation window is entirely white, so it would not exercise the bug.
@@ -244,7 +244,7 @@ def test_compute_pair_motion_returns_all_three_measures():
     assert set(row) == {"n_matches", "translation_px", "parallax"}
     assert row["n_matches"] > 20
     assert 8.0 < row["translation_px"] < 20.0
-    # int, not np.int64: the report is serialised to JSON straight from this dict
+    # int, not np.int64: the report is serialized to JSON straight from this dict
     assert isinstance(row["n_matches"], int)
 
 
@@ -268,7 +268,7 @@ def test_compute_pair_motion_on_an_unmatchable_pair():
     # A flat frame has no corners, so ORB returns no descriptors at all. nan, not
     # 0.0: with no matches the displacement is unknown, and 0.0 would read as "the
     # camera held perfectly still", the opposite conclusion. compute_video_quality
-    # serialises these two columns as JSON null, which 0.0 would silently replace.
+    # serializes these two columns as JSON null, which 0.0 would silently replace.
     a = np.zeros((240, 320), np.uint8)
     b = np.full((240, 320), 255, np.uint8)
 
@@ -441,7 +441,7 @@ def test_compute_video_quality_writes_json(tiny_video, tmp_path):
     assert json.loads(out.read_text()) == report
 
 
-def test_compute_video_quality_serialises_unmatched_pairs_as_null(tmp_path):
+def test_compute_video_quality_serializes_unmatched_pairs_as_null(tmp_path):
     # A featureless video is the case that produces nan: ORB finds no corners,
     # so every pair has 0 matches and nan translation/parallax. nan is not valid
     # JSON, and it is also the interesting measurement — it must survive as null.
@@ -472,7 +472,7 @@ def test_compute_video_quality_reports_unavailable_for_an_undecodable_file(tmp_p
 
 def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, caplog):
     # A silent multi-minute run is indistinguishable from a hung one, so the
-    # announce-then-summarise pair is a contract, not a nicety.
+    # announce-then-summarize pair is a contract, not a nicety.
     with caplog.at_level(logging.INFO, logger="collab_splats.preproc.qa"):
         compute_video_quality(tiny_video, motion_stride=5)
     messages = [r.getMessage() for r in caplog.records]

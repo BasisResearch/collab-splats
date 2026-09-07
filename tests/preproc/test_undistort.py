@@ -20,7 +20,7 @@ from collab_splats.wrapper.reconstructor import _camera_provenance, extract_fram
 
 
 def _distorted_camera(width=1920, height=1080):
-    # Barrel-distorted OPENCV camera (k1=-0.25), centred principal point
+    # Barrel-distorted OPENCV camera (k1=-0.25), centered principal point
     return pycolmap.Camera(
         model="OPENCV",
         width=width,

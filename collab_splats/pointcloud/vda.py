@@ -31,12 +31,13 @@ def _load_vda_model(device: str):
 
     - Split out from generate_vda_depth so the write path is testable without a GPU or the clone.
     """
-    # Lazy heavy import — VDA lives in a third_party clone (its root on sys.path), not
-    # site-packages. Upstream HEAD (4f5ae23) has no metric_depth/ subdir: `video_depth_anything/`
-    # sits at the clone root and `video_depth.py:27` imports a TOP-LEVEL `utils` namespace package
-    # (`utils/util.py`) from the same root. Probed 2026-08-23: no foreign top-level `utils` in the
-    # venv — a regular `utils` package anywhere on sys.path would shadow VDA's namespace one
-    # regardless of insert order, so re-probe if a dependency ever ships one.
+    # Lazy heavy import: VDA lives in a third_party clone, not site-packages
+    # - its clone root goes on sys.path; upstream HEAD (4f5ae23) has no metric_depth/ subdir
+    # - `video_depth_anything/` sits at the clone root, and `video_depth.py:27` imports a
+    #   TOP-LEVEL `utils` namespace package (`utils/util.py`) from that same root
+    # - probed 2026-08-23: no foreign top-level `utils` in the venv
+    # - a regular `utils` package anywhere on sys.path would shadow VDA's namespace one
+    #   regardless of insert order, so re-probe if a dependency ever ships one
     if not (VDA_ROOT / "video_depth_anything").is_dir():
         raise ImportError(
             f"Video-Depth-Anything clone not found at {VDA_ROOT} — run setup.sh (clones the repo at 4f5ae23)"
@@ -45,9 +46,10 @@ def _load_vda_model(device: str):
         sys.path.insert(0, str(VDA_ROOT))
     from video_depth_anything.video_depth import VideoDepthAnything
 
-    # Upstream weights live on the hub, not in the clone — the clone carries source only.
-    # hub failures (no network, or offline with a cold cache) name neither VDA nor a remedy,
-    # so re-raise with both; the download is ~1.5 GB and lands in the HF_HOME cache.
+    # Upstream weights live on the hub; the clone carries source only
+    # - hub failures (no network, or offline with a cold cache) name neither VDA nor a remedy
+    # - so re-raise with both
+    # - the download is ~1.5 GB and lands in the HF_HOME cache
     try:
         ckpt = hf_hub_download(
             repo_id="depth-anything/Metric-Video-Depth-Anything-Large",
@@ -59,11 +61,13 @@ def _load_vda_model(device: str):
             f"~1.5 GB, cached under HF_HOME): {exc}"
         ) from exc
 
-    # metric=True loads the metric head AND disables infer_video_depth's cross-window
-    # scale-and-shift chaining (video_depth.py:135), so consecutive windows are stitched on the
-    # head's own absolute output rather than fitted to each other. Measured 2026-08-26: this is
-    # why a full-video pass does not improve metric contiguity.
-    # Constructor values: run.py:45-49 model_configs["vitl"].
+    # metric=True does two things, not one
+    # - loads the metric head
+    # - disables infer_video_depth's cross-window scale-and-shift chaining
+    #   (video_depth.py:135), so consecutive windows are stitched on the head's own
+    #   absolute output rather than fitted to each other
+    # - measured 2026-08-26: this is why a full-video pass does not improve metric contiguity
+    # - constructor values: run.py:45-49 model_configs["vitl"]
     model = VideoDepthAnything(encoder="vitl", features=256, out_channels=[256, 512, 1024, 1024], metric=True)
     model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=True)
     return model.to(device).eval()
@@ -76,16 +80,22 @@ def _load_vda_model(device: str):
 
 def vda_depth_complete(out_dir: Path, names: list[str]) -> bool:
     """
-    True when out_dir/depth_vda/images/npy holds exactly one .npy per stem in `names`.
+    True when the VDA depth cache holds exactly one .npy per requested stem.
 
-    - Public so a caller can prune a stale depth_vda/ BEFORE generating: generate_vda_depth only
-      ever ADDS maps, so a stem left over from a different keyframe set would keep this
-      set-equality gate false forever and re-run the full GPU inference on every subsequent run.
-      That is what Reconstructor._run_sfm uses it for; it does NOT gate on this before
-      materialising `frames`, which it builds unconditionally. evals/scripts/eval.py does gate
-      its own image decode on it.
-    - Never needed to skip redundant inference: generate_vda_depth applies this same check itself
-      and returns the cached stack.
+    - public so a caller can prune a stale depth_vda/ BEFORE generating: generate_vda_depth only
+      ever ADDS maps, so a stem left over from a different keyframe set holds this set-equality
+      gate false forever and re-runs the full GPU inference every time
+    - that is Reconstructor._run_sfm's use; it does NOT gate `frames` on this, which it builds
+      unconditionally. evals/scripts/eval.py does gate its own image decode on it
+    - never needed to skip redundant inference — generate_vda_depth applies the same check itself
+      and returns the cached stack
+
+    Args:
+        out_dir: Run directory holding depth_vda/images/npy.
+        names:   Keyframe filenames; only the stems are compared.
+
+    Returns:
+        True if the cached stem set equals the requested one.
     """
     npy_dir = Path(out_dir) / "depth_vda" / "images" / "npy"
     return npy_dir.is_dir() and {p.stem for p in npy_dir.glob("*.npy")} == {Path(n).stem for n in names}
@@ -100,23 +110,29 @@ def generate_vda_depth(
     device: str = "cuda",
 ) -> np.ndarray:
     """
-    Run VDA metric depth over the keyframes; write InstantSfM's depth layout and return the stack.
+    Run VDA metric depth over the keyframes, write InstantSfM's layout, return the stack.
 
-    - frames: (N, H, W, 3) uint8 RGB in images/ order; names: one filename per frame.
-    - Writes out_dir/depth_vda/images/npy/<stem>.npy — the layout instantsfm's
-      ReadDepthsIntoFeatures single-camera branch consumes (data_reader.py:404-407).
-    - depth_width: VDA returns depth at input resolution (300 x 1080p = 2.5 GB), too heavy for
-      pointcloud.zarr; each map is nearest-resized to this width (no blending across depth
-      discontinuities). 518 matches the feedforward model-res convention so downstream stages
-      see the same resolution class. Any depth resolution is valid for SfM — instantsfm's
-      sample_depth_at_pixel normalises keypoints by camera w/h.
-    - Returns (N, h, depth_width) float32, the same maps that were written.
-    - Idempotent: an exact per-stem npy set is loaded and returned without running inference.
-      A complete cached set wins outright — depth_width is NOT re-applied to it, so the returned
-      width is whatever the run that wrote the cache used.
+    - writes out_dir/depth_vda/images/npy/<stem>.npy — the layout instantsfm's
+      ReadDepthsIntoFeatures single-camera branch consumes (data_reader.py:404-407)
+    - idempotent: an exact per-stem npy set is loaded and returned without inference. A complete
+      cache wins outright — depth_width is NOT re-applied, so the returned width is whatever the
+      run that wrote the cache used
+    - attribution: inference pattern follows
+      https://github.com/DepthAnything/Video-Depth-Anything @ 4f5ae23 run.py:45-57
 
-    Attribution: inference pattern follows
-    https://github.com/DepthAnything/Video-Depth-Anything @ 4f5ae23 run.py:45-57.
+    Args:
+        frames:      (N, H, W, 3) uint8 RGB in images/ order.
+        out_dir:     Run directory; depth_vda/ is written under it.
+        names:       One filename per frame, consumed positionally against `frames`.
+        depth_width: Nearest-resize width for each map. VDA returns depth at input resolution
+            (300 x 1080p = 2.5 GB), too heavy for pointcloud.zarr; nearest avoids blending across
+            depth discontinuities. 518 matches the feedforward model-res convention so downstream
+            stages see the same resolution class. Any depth resolution is valid for SfM —
+            instantsfm's sample_depth_at_pixel normalizes keypoints by camera w/h.
+        device:      Torch device for inference.
+
+    Returns:
+        (N, h, depth_width) float32 — the same maps that were written.
     """
     # Names are consumed positionally against the frame stack, so the two must be one-to-one
     if len(names) != len(frames):
@@ -132,10 +148,11 @@ def generate_vda_depth(
 
     model = _load_vda_model(device)
 
-    # Metric inference over the whole sequence, at upstream's own 518 input resolution (the same
-    # model-res convention depth_width follows). target_fps reaches nothing: infer_video_depth
-    # only echoes it back (4f5ae23 video_depth.py:70 signature, :162 return) and resamples
-    # nothing, so any value does — named here so that is obvious at the call site.
+    # Metric inference over the whole sequence at upstream's own 518 input resolution
+    # - same model-res convention depth_width follows
+    # - target_fps reaches nothing: infer_video_depth only echoes it back (4f5ae23
+    #   video_depth.py:70 signature, :162 return) and resamples nothing
+    # - any value does; it is named here so that is obvious at the call site
     logger.info("VDA metric inference: %d frames (writing %d maps)", len(frames), len(names))
     depths, _fps = model.infer_video_depth(frames, target_fps=1.0, input_size=518, device=device, fp32=False)
     depths = np.asarray(depths, dtype=np.float32)

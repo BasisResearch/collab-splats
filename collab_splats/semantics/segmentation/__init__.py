@@ -1,6 +1,7 @@
-"""Segmentation backends and mask utilities.
+"""
+Segmentation backends and mask utilities.
 
-Import from here — submodule structure is an implementation detail.
+- import from here; the submodule structure is an implementation detail
 """
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
-"""SAM3 text-prompted segmentation backend.
+"""
+SAM3 text-prompted segmentation backend.
 
-Provides:
-  SAM3Segmentation — text-prompted segmentation via facebook/sam3 (gated HF model)
+- SAM3Segmentation: text-prompted segmentation via facebook/sam3, a gated HF model
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 import torch
+from PIL import Image
 
 from .base import BaseSegmentation
 
@@ -50,14 +51,24 @@ class SAM3Segmentation(BaseSegmentation):
         sam3_model = build_sam3_image_model()
         self._processor = Sam3Processor(sam3_model, confidence_threshold=confidence_threshold)
 
-    def segment(self, image) -> tuple[torch.Tensor, Any]:
-        """Auto-segment all objects without a text prompt."""
+    def segment(self, image: Image.Image) -> tuple[torch.Tensor, Any]:
+        """
+        Auto-segment all objects without a text prompt.
+
+        Args:
+            image: the frame to segment.
+
+        Returns:
+            (masks, output) — masks (N, 1, H, W) float32; output is the raw processor dict.
+        """
         state = self._processor.set_image(image)
         # SAM3 has no promptless auto-segment path; "object" is the generic catch-all
         output = self._processor.set_text_prompt(state=state, prompt="object")
         return output["masks"], output
 
-    def segment_with_text(self, image, prompt: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def segment_with_text(
+        self, image: Image.Image, prompt: str
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Text-prompted segmentation.
 

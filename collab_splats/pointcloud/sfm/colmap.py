@@ -1,4 +1,10 @@
-# collab_splats/pointcloud/sfm/colmap.py
+"""
+Classical COLMAP SfM backend: SIFT, exhaustive matching, incremental mapping.
+
+- pycolmap end to end; no learned components
+- unwired — nothing dispatches to ColmapCreator, see sfm/__init__.py
+"""
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +34,14 @@ class ColmapCreator(BasePointcloudCreator):
     def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
         """
         SIFT extraction, exhaustive matching and incremental mapping over image_dir.
+
+        Args:
+            image_dir:  Directory of input images; must exist.
+            output_dir: Run directory. The binary model lands in colmap/sparse/0, the SIFT
+                database in colmap/database.db.
+
+        Returns:
+            PointcloudResult wrapping the largest reconstructed model.
         """
         image_dir, output_dir = Path(image_dir), Path(output_dir)
         if not image_dir.exists():

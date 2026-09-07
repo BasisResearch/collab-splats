@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
@@ -27,6 +27,10 @@ from PIL import Image
 from collab_splats.preproc.frames import IMAGE_EXTS, frame_paths
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.utils.torch_utils import batch_iterator
+
+# Type-only: features/base.py imports this module, so a runtime import would cycle
+if TYPE_CHECKING:
+    from collab_splats.semantics.features.base import BaseFeatureExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +53,10 @@ __all__ = [
 ########## Artifact paths ##############################
 ########################################################
 
-# `_lifted` is load-bearing, not decorative: the flat layout puts the 2D patch cache
-# (`<extractor>.zarr`) and the lifted per-point codes in the SAME dir, so the filename is the
-# only thing that can tell them apart there.
+# `_lifted` is load-bearing, not decorative
+# - the flat layout puts the 2D patch cache (`<extractor>.zarr`) and the lifted
+#   per-point codes in the SAME dir
+# - the filename is the only thing that can tell them apart there
 
 
 def lifted_store_path(out_dir: Path, extractor: str) -> Path:
@@ -119,24 +124,26 @@ def compute_semantic_contrast(
     """
     Contrastive scoring: how strongly positive queries match relative to negatives.
 
-    When no negatives are present (num_positive == raw_similarities.shape[0]),
-    falls back to raw reduction over positives — contrastive scoring is undefined
-    without a negative to push against.
+    - with no negatives (num_positive == raw_similarities.shape[0]) it falls back to a raw
+      reduction over positives — contrastive scoring is undefined with nothing to push against
 
     Args:
         raw_similarities: (N_queries, N) dot-product similarities per patch.
-        num_positive: rows [0:num_positive] are positive queries; rest are negative.
-        temperature: scaling parameter τ. Lower = sharper. Ignored when no negatives.
-        reduction: aggregation over positive queries:
-            "max"  — each positive independently scored against all negatives via
-                     binary softmax; max over per-positive scores. Use for distinct
-                     concepts where any match counts.
-            "pool" — positives averaged in similarity space before softmax; one
-                     representative competes against all negatives. Use for synonymous
-                     concepts that should be treated as one combined query.
+        num_positive: rows [0:num_positive] are positive queries; the rest are negative.
+        temperature: scaling parameter τ. Lower = sharper. Ignored when there are no negatives.
+        reduction: aggregation over positive queries —
+            "max": each positive scored independently against all negatives via binary
+            softmax, then max over the per-positive scores; use for distinct concepts where
+            any match counts.
+            "pool": positives averaged in similarity space before softmax, so one
+            representative competes against all negatives; use for synonymous concepts that
+            should read as one query.
 
     Returns:
         (N,) contrastive scores in [0, 1].
+
+    Raises:
+        ValueError: when `reduction` is neither "max" nor "pool".
     """
     if reduction not in ("max", "pool"):
         raise ValueError(f"Unknown reduction '{reduction}'. Choose 'max' or 'pool'.")
@@ -215,21 +222,26 @@ def cache_store_path(semantics_dir: Path) -> Path:
     return store
 
 
-def extract_feature_cache(extractor, images_dir: Path, cache_dir: Path) -> Path:
+def extract_feature_cache(
+    extractor: BaseFeatureExtractor, images_dir: Path, cache_dir: Path
+) -> Path:
     """
-    Extract patch features from a scene's images/ directory into `cache_dir/<extractor>.zarr`.
+    Extract patch features from a scene's images/ into `cache_dir/<extractor>.zarr`.
 
-    Re-entrant: a cache whose extractor name and frame count both match is returned untouched.
-    The attrs that make a store look valid are written LAST, after every frame is on disk, so a
-    run that dies mid-extraction leaves an attr-less store that the next run re-extracts.
+    - re-entrant: a cache whose extractor name and frame count both match is returned untouched
+    - the attrs that make a store look valid are written LAST, after every frame is on disk
+    - so a run that dies mid-extraction leaves an attr-less store the next run re-extracts
 
     Args:
-        extractor: a BaseFeatureExtractor instance — supplies `.name`, `.patch_size`, `.forward`.
+        extractor: supplies `.name`, `.patch_size` and `.forward`.
         images_dir: the scene's images/ directory of frame_NNNNNN.<ext> keyframes.
         cache_dir: directory to write the 2D patch cache into.
 
     Returns:
         Path of the store; `features` is (N, D, H_p, W_p) float32, one chunk per frame.
+
+    Raises:
+        FileNotFoundError: when `images_dir` holds no frame images.
     """
     zarr_path = Path(cache_dir) / f"{extractor.name}.zarr"
 
@@ -328,11 +340,12 @@ def write_point_features(
     codes = np.asarray(codes)
     lifted_zarr = lifted_store_path(out_dir, extractor)
 
-    # input_dim == latent_dim marks full-dim-by-design codes that need no weights; unequal
-    # widths mark codes the weights are REQUIRED to decode. Without the marker a missing
-    # _ae.pt is ambiguous — uncompressed vs orphaned by a crash — and a reader must guess.
-    # Codes, then attrs, then weights; any failure after the store exists removes it again
-    # so no half-pair (unreadable codes) is ever left behind on disk.
+    # The width marker is what disambiguates a missing _ae.pt
+    # - input_dim == latent_dim: full-dim-by-design codes that need no weights
+    # - unequal widths: codes the weights are REQUIRED to decode
+    # - without it a missing _ae.pt reads as uncompressed OR orphaned by a crash
+    # - write order is codes, attrs, weights; any failure after the store exists removes it
+    #   again, so no half-pair (unreadable codes) is left behind on disk
     try:
         store = zarr.open(str(lifted_zarr), mode="w")
         store["features"] = codes
@@ -372,10 +385,11 @@ def point_features_cached(semantics_dir: Path) -> bool:
     try:
         attrs = zarr.open(str(lifted_store_path(sem_dir, extractor)), mode="r").attrs
         return int(attrs["latent_dim"]) >= int(attrs["input_dim"])
-    # Broad on purpose, unlike load_point_features' narrow (KeyError, TypeError, ValueError):
-    # this is a bool predicate that dashboard/app.py calls to pick UI state, so an unreadable
-    # store must answer False rather than raise. PermissionError, chunk-IO errors and TOCTOU
-    # races all escape the narrow tuple and would surface as a crash in the caller.
+    # Broad except on purpose, unlike load_point_features' narrow tuple
+    # - this is a bool predicate dashboard/app.py calls to pick UI state, so an unreadable
+    #   store must answer False rather than raise
+    # - PermissionError, chunk-IO errors and TOCTOU races all escape
+    #   (KeyError, TypeError, ValueError) and would surface as a crash in the caller
     except Exception:
         logger.warning("Lifted store for %s in %s is corrupt or unreadable, reporting not cached", extractor, sem_dir)
         return False

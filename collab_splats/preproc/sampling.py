@@ -1,11 +1,13 @@
 """
 Keyframe selection: which frames to keep, and the three methods that pick them.
 
-sample_fps, sample_uniform and sample_optical_flow each take a quality report
-from preproc.qa and filter it through filter_frame_quality — the one place a
-threshold meets the report. qa measures; this module decides. context_indices
-builds the constant-rate grid both the fps sampler and the VDA context stream
-select on. Decoding and video metadata live in preproc.video.
+- sample_fps, sample_uniform and sample_optical_flow each take a quality report from
+  preproc.qa and filter it through filter_frame_quality
+- filter_frame_quality is the one place a threshold meets the report: qa measures,
+  this module decides
+- context_indices builds the constant-rate grid both the fps sampler and the VDA
+  context stream select on
+- decoding and video metadata live in preproc.video
 """
 
 from __future__ import annotations
@@ -57,7 +59,7 @@ def filter_frame_quality(
     # Sharpness is relative: laplacian variance scales with resolution, texture and
     # content, so the cut is a robust z-score on the log rather than an absolute value.
     log_lap = np.log(np.clip(lap, 1e-6, None))
-    centre = float(np.median(log_lap))
+    center = float(np.median(log_lap))
     spread = float(median_abs_deviation(log_lap, scale="normal"))
 
     # A zero MAD is two different situations, both safe
@@ -67,7 +69,7 @@ def filter_frame_quality(
     if log_lap.min() == log_lap.max():
         sharp = np.ones_like(lap, dtype=bool)
     else:
-        sharp = log_lap >= centre - sharpness_k * spread
+        sharp = log_lap >= center - sharpness_k * spread
 
     # Clipping is absolute: a pixel at 0 or 255 recorded nothing recoverable.
     clipped = np.asarray(f["clipped_low_frac"], dtype=float) + np.asarray(f["clipped_high_frac"], dtype=float)
@@ -173,7 +175,7 @@ class OpticalFlowFrameSelector:
         # Fixed motion/coverage weighting
         motion_weight, coverage_weight = 0.6, 0.4
 
-        # Motion: max of the normalised translation and rotation components
+        # Motion: max of the normalized translation and rotation components
         translation_score = min(disparity / max(self.min_disparity, 1e-6), 1.0)
         rotation_score = min(rotation / self.rotation_threshold_deg, 1.0)
         motion_score = max(translation_score, rotation_score)

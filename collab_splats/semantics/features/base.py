@@ -1,10 +1,9 @@
 """
 Base classes and shared constants for feature extractors.
 
-Provides:
-  BaseFeatureExtractor     — abstract registry-based extractor with caching and debiasing
-  BaseQueryableExtractor   — extends base with text-query scoring
-  _DEBIAS_VALIDATED        — set of extractor class names with validated debiasing
+- BaseFeatureExtractor: abstract registry-based extractor with caching and debiasing
+- BaseQueryableExtractor: extends the base with text-query scoring
+- _DEBIAS_VALIDATED: extractor class names whose debiasing has been validated
 """
 
 import logging
@@ -25,9 +24,9 @@ from collab_splats.utils.torch_utils import RegistryMixin
 
 logger = logging.getLogger(__name__)
 
-# Extractors where positional debiasing has been empirically validated against DINO-family models.
-# Add a class name here after verifying that debiasing improves quality for that model family.
-# Extractors NOT in this set still work with debias() but receive a warning at call time.
+# Extractors where positional debiasing is empirically validated (DINO-family)
+# - add a class name here after verifying debiasing improves that model family
+# - extractors NOT listed still work with debias(), but warn at call time
 _DEBIAS_VALIDATED: frozenset = frozenset({"DINOFeatureExtractor", "Talk2DinoExtractor"})
 
 
@@ -182,10 +181,10 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         H_img = H_p * patch_size  # image height that produces H_p patch rows under stride-exact preprocessing
         W_img = W_p * patch_size  # image width  that produces W_p patch cols under stride-exact preprocessing
 
-        # Zero-pixel (black) image — matches INSID3's torch.zeros approach, expressed as a PIL Image
-        # so it passes naturally through each subclass's own forward() without special-casing.
-        # After normalization inside forward(), zero pixels become a fixed non-semantic input
-        # that elicits the model's positional response with no image-content signal.
+        # Zero-pixel (black) image, matching INSID3's torch.zeros approach
+        # - expressed as a PIL Image so it passes through each subclass's own forward()
+        # - after forward()'s normalization, zero pixels are a fixed non-semantic input,
+        #   eliciting the model's positional response with no image-content signal
         zero_arr = np.zeros((H_img, W_img, 3), dtype=np.uint8)
         zero_pil = Image.fromarray(zero_arr)  # PIL Image so forward() preprocessing runs unchanged
 
@@ -246,23 +245,22 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
     def get_bias_visualization(self, H_p: int, W_p: int) -> "np.ndarray":
         """
-        Return an RGB heatmap of the positional bias at a given patch grid resolution.
+        RGB heatmap of the positional bias at one patch-grid resolution.
 
-        Uses PCA (via SVD, no sklearn required) to project the zero-image features onto the
-        top 3 principal components, producing an image where color encodes the dominant axes
-        of positional variation. Useful for verifying that debiasing captures spatial structure.
-
-        Requires a prior debias() call at this (H_p, W_p) resolution to populate the cache.
+        - PCA via SVD (no sklearn): zero-image features projected onto the top 3 components
+        - color therefore encodes the dominant axes of positional variation
+        - use it to check that debiasing actually captured spatial structure
+        - needs a prior debias() call at this (H_p, W_p) to populate the cache
 
         Args:
-            H_p: Patch grid height — must match a resolution used in a prior debias() call.
-            W_p: Patch grid width — must match a resolution used in a prior debias() call.
+            H_p: patch grid height — must match a resolution used in a prior debias() call.
+            W_p: patch grid width — same constraint.
 
         Returns:
-            np.ndarray of shape (H_p, W_p, 3) dtype uint8 — PCA-derived RGB visualization.
+            (H_p, W_p, 3) uint8 RGB visualization.
 
         Raises:
-            KeyError: if (H_p, W_p) has not been cached — call debias() at this resolution first.
+            KeyError: when (H_p, W_p) is not cached — call debias() at this resolution first.
         """
         if (H_p, W_p) not in self._zero_feats_cache:
             raise KeyError(
@@ -292,18 +290,17 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
     def debias(self, features: list[torch.Tensor]) -> list[torch.Tensor]:
         """
-        Remove positional bias from extracted patch features using SVD projection (INSID3 algorithm).
+        Remove positional bias from patch features by SVD projection (INSID3 algorithm).
 
-        Operates on features already returned by forward(). Builds and caches the positional
-        basis from a zero-pixel image (using this extractor's own forward()) on first call at
-        each patch-grid resolution, then reuses the cached basis for all subsequent calls.
+        - operates on features already returned by forward()
+        - the positional basis comes from a zero-pixel image through this extractor's own forward()
+        - built once per patch-grid resolution, then cached and reused
 
         Args:
-            features: list of (D, H_p, W_p) tensors — output of forward(). All tensors must
-                      have the same spatial resolution (H_p, W_p).
+            features: (D, H_p, W_p) tensors from forward(); all must share (H_p, W_p).
 
         Returns:
-            list of (D, H_p, W_p) tensors with positional bias removed and L2 re-normalized.
+            The same list with positional bias removed and each patch column L2 re-normalized.
         """
         if type(self).__name__ not in _DEBIAS_VALIDATED:
             # Algorithm is general but has only been verified for DINO-family models.

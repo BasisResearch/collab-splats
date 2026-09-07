@@ -26,7 +26,7 @@ migrate_scene = _migrate_mod.migrate_scene
 
 def _frames(n=3, h=8, w=12):
     """
-    n deterministic RGB frames, each a different flat colour.
+    n deterministic RGB frames, each a different flat color.
     """
     return [np.full((h, w, 3), i * 40 + 5, dtype=np.uint8) for i in range(n)]
 

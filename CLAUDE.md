@@ -107,8 +107,36 @@ evals/
 
 - **Imports at top:** all imports at the top of the file — no inline imports inside functions or methods (scripts and notebooks). Exception: optional heavy deps that would break the module on missing install may be imported inside the function that needs them, with a clear `ImportError` message.
 - **Inline block comments:** each logical block of code gets a short comment explaining what it does. Comment at block level, not every line. Examples: `# Sort images by filename; reject non-image extensions`, `# Populate BA fields: subsampled world-point grid for track extraction`. Existing comments that meet this standard are kept; missing block comments are added.
+- **Comment runs are a header then bullets:** any `#` run of three lines or more states the problem in 5-10 words on its own line, then gives the detail as `- ` bullets — never a wrapped paragraph. Bullets are fragments, not sentences.
+
+  ```python
+  # splatfacto's non-default DefaultStrategy args
+  # - upstream: nerfstudio-project/nerfstudio @ 50e0e3c, splatfacto.py:264-280
+  # - absgrad=False: 2dgs backward writes .absgrad on means2d, not gradient_2dgs
+  # - grow_grad2d 2e-4: measured-good non-absgrad threshold
+  ```
 - **Section dividers:** use `########`-style dividers to separate major sections in long files (constants, helpers, classes, etc.). Keeps files scannable without opening a doc.
-- **Docstrings:** every public function and class gets a one-line summary docstring. The `"""` open and close on their own lines — summary starts on the line after the opening quotes, never on the same line. Multi-line docstrings put a blank line between the summary and what follows. A function with parameters documents every one under `Args:`; a function that returns something documents it under `Returns:`. Bullets or Args/Returns, not prose blocks. No restating the function name. No padding. `tests/preproc/test_docstrings.py` enforces this for `preproc`; extend it as other modules are cleaned up.
+- **Docstrings follow the same shape.** Every module, public class and public function gets one. The `"""` open and close on their own lines — the summary starts on the line after the opening quotes, never on the same line, is one line of at most 100 chars, and does not restate the name. A blank line, then `- ` bullets, then the named sections. Never a prose paragraph.
+- **Types live in the signature, meanings in the docstring.** Every parameter and return is annotated; `Args:` entries carry the name and what it means, never a duplicated type. A function with parameters documents every one under `Args:`; one that returns something documents it under `Returns:`, or `Yields:` if it is a generator.
+
+  ```python
+  def sample_optical_flow(frames: np.ndarray, *, max_frames: int = 100) -> np.ndarray:
+      """
+      Keyframes chosen by cumulative optical-flow magnitude.
+
+      - one frame per fixed flow budget, so slow pans yield fewer frames
+      - budget is derived from max_frames, not a fixed stride
+
+      Args:
+          frames: decoded frames, (N, H, W, 3) uint8.
+          max_frames: ceiling on the returned count.
+
+      Returns:
+          Indices into `frames`, ascending.
+      """
+  ```
+
+  `tests/test_docstring_contract.py` enforces all of the above — docstrings, annotations and comment runs — for `preproc`, `semantics` and `pointcloud`. Add a package to its `PACKAGES` tuple as it is cleaned up.
 - **Blank lines between blocks:** a run of statements that does one thing is separated from the next run, and every block comment gets a blank line above it. Walls of undifferentiated code are not human-readable.
 - **Don't over-complicate:** prefer the simplest implementation that solves the problem. No premature abstractions, no dead branches for hypothetical future use, no wrapper layers that add no value. If a param is always default, ask whether it should exist.
 - `logging` not `print()` — use `logger.debug()` / `logger.info()` throughout module code

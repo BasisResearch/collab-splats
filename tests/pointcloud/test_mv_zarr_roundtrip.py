@@ -44,5 +44,5 @@ def test_zarr_roundtrip_mv_arrays(tmp_path):
     np.testing.assert_array_equal(store["mv_inlier_count"][:], inlier)
     np.testing.assert_array_equal(store["mv_valid_count"][:], valid)
     assert store["mv_inlier_count"].dtype == np.int32
-    # chunked by frame, like its neighbours
+    # chunked by frame, like its neighbors
     assert store["mv_ratio"].chunks == (1, H, W)

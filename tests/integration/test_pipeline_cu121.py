@@ -66,8 +66,8 @@ def test_build_pycolmap_reconstruction_roundtrip():
     Exercises the full pycolmap 4.0.4 path:
       add_camera_with_trivial_rig + add_image_with_trivial_frame + add_point3D.
     """
-    from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
     from collab_splats.pointcloud.base import PointcloudResult
+    from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
 
     P = 30
     rng = np.random.default_rng(42)
@@ -224,33 +224,32 @@ def test_mapanything_postprocess_pipeline(tmp_path):
 
 
 def test_tsdf_mesh_synthetic(tmp_path):
-    """Open3DTSDFFusion.create with synthetic depth + RGB frames.
-
-    rgbs must be float32 [0, 1] per Open3DTSDFFusion.create docstring.
     """
-    from collab_splats.mesh.tsdf import Open3DTSDFFusion
+    fuse_tsdf over synthetic depth + RGB frames.
+
+    rgbs must be uint8 [0, 255] — fuse_tsdf rejects float color outright.
+    """
+    from collab_splats.mesh import fuse_tsdf
 
     n, h, w = 4, 64, 64
     rng = np.random.default_rng(1)
     depths = np.full((n, h, w), 2.0, dtype=np.float32)
-    # create() multiplies by 255 internally: pass float32 [0,1]
-    rgbs = rng.random((n, h, w, 3)).astype(np.float32)
+    rgbs = rng.integers(0, 256, size=(n, h, w, 3), dtype=np.uint8)
     c2w = np.tile(np.eye(4), (n, 1, 1)).astype(np.float32)
     for i in range(n):
         c2w[i, 2, 3] = i * 0.05
     K = np.array([[50, 0, 32], [0, 50, 32], [0, 0, 1]], dtype=np.float32)
     intrinsics = np.tile(K, (n, 1, 1))
 
-    fusion = Open3DTSDFFusion(output_dir=tmp_path, clean_repair=False)
-    mesh_result = fusion.create(depths=depths, rgbs=rgbs, c2w=c2w, intrinsics=intrinsics)
-    assert mesh_result is not None
-    assert isinstance(mesh_result.mesh_path, Path)
+    mesh_path = fuse_tsdf(depths, rgbs, c2w, intrinsics, tmp_path, voxel_size=0.05, depth_trunc=5.0)
+    assert isinstance(mesh_path, Path)
+    assert mesh_path.exists()
 
 
 def test_pointcloudresult_new_api():
     """PointcloudResult takes reconstruction as primary; exposes points/colors/extrinsics/intrinsics as properties."""
-    from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
     from collab_splats.pointcloud.base import PointcloudResult
+    from collab_splats.pointcloud.feedforward.base import build_pycolmap_reconstruction
 
     P = 10
     rng = np.random.default_rng(7)

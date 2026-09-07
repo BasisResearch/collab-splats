@@ -117,10 +117,11 @@ MODULES = [
     "collab_splats.semantics.segmentation",
     "collab_splats.semantics.utils",
     "collab_splats.mesh",
-    "collab_splats.mesh.base",
-    "collab_splats.mesh.poisson",
+    "collab_splats.mesh.io",
     "collab_splats.mesh.tsdf",
-    "collab_splats.mesh.utils",
+    "collab_splats.mesh.clean",
+    "collab_splats.mesh.texture",
+    "collab_splats.mesh.features",
     "collab_splats.splats",
     "collab_splats.splats.cameras",
     "collab_splats.splats.gaussian",
@@ -178,7 +179,6 @@ def test_flagged_package_imports():
         "mobile_sam": "import mobile_sam",
         "maskclip_onnx": "import maskclip_onnx",
         "uniception": "import uniception",
-        "meshlib": "import meshlib.mrmeshpy as mrmeshpy",
     }
     failed = []
     for name, stmt in packages.items():

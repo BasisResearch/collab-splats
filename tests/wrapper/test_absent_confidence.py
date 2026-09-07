@@ -3,7 +3,7 @@ Absent-confidence seams.
 
 A pointcloud.zarr may carry no confidence array (absent, never zeros — e.g. one
 written by an SfM backend). Three seams must tolerate that: mesh fusion
-(_feedforward_to_tsdf_inputs), feature lifting (lift_features), and the splats
+(_run_tsdf_mesh), feature lifting (lift_features), and the splats
 depth-targets block in Reconstructor.splats() (sfm scenes use the same zarr
 path once depth is aligned (depth_scale attr)).
 """
@@ -15,11 +15,10 @@ from unittest.mock import patch
 import numpy as np
 import torch
 
-from collab_splats.mesh.utils import _feedforward_to_tsdf_inputs
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import lift_features
 from collab_splats.preproc import frames as fr
-from collab_splats.wrapper.reconstructor import Reconstructor
+from collab_splats.wrapper.reconstructor import Reconstructor, _run_tsdf_mesh
 
 
 def _result_no_confidence():
@@ -39,14 +38,42 @@ def _result_no_confidence():
     )
 
 
-def test_tsdf_inputs_skip_masking_when_confidence_absent(caplog):
-    """conf_percentile set + no confidence -> proceed unmasked with a log, not ValueError."""
+def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
+    """
+    conf_percentile set + no confidence -> fuse unmasked with a log, not ValueError.
+    """
     result = _result_no_confidence()
-    with caplog.at_level("INFO"):
-        out = _feedforward_to_tsdf_inputs(result, conf_percentile=20)
-    assert out is not None
-    depths, _, _, _ = out
-    np.testing.assert_array_equal(depths, result.depth)  # unmasked
+    fused = {}
+
+    def spy_fuse(depths, rgbs, c2w, K, out_dir, **kwargs):
+        fused["depths"] = depths
+        return tmp_path / "mesh.ply"
+
+    with (
+        patch.object(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: result)),
+        patch(
+            "collab_splats.wrapper.reconstructor.frames.read_frames",
+            return_value=np.zeros((2, 8, 8, 3), np.uint8),
+        ),
+        patch("collab_splats.wrapper.reconstructor.upsample_depths", side_effect=lambda d, r, b: d),
+        patch("collab_splats.wrapper.reconstructor.fuse_tsdf", side_effect=spy_fuse),
+        patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
+        caplog.at_level("INFO"),
+    ):
+        _run_tsdf_mesh(
+            result=SimpleNamespace(
+                extrinsics=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
+                intrinsics=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], np.float32), (2, 1, 1)),
+            ),
+            pointcloud_zarr=tmp_path / "pointcloud.zarr",
+            output_dir=tmp_path,
+            images_dir=tmp_path / "images",
+            voxel_size=0.01,
+            depth_trunc=2.0,
+            conf_percentile=20,
+        )
+
+    np.testing.assert_array_equal(fused["depths"], result.depth)  # unmasked
     assert any("no confidence" in r.message for r in caplog.records)
 
 

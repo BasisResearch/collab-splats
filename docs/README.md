@@ -16,6 +16,8 @@ Driver flags, output layout, and the processed-scene contract: [../configs/READM
 
 - [pointcloud/](pointcloud/) — pointcloud + bundle adjustment + ground-truth evals
 - [semantics/](semantics/) — feature extraction, MaskCLIP, Talk2DINO
+- [mesh.md](mesh.md) — TSDF fusion, cleaning, texturing, vertex features
+- [splats.md](splats.md) — Gaussian-splat training on upstream gsplat
 
 ## Internal
 

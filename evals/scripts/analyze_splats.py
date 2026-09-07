@@ -25,26 +25,19 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
-from collab_splats.mesh.utils import (
-    _feedforward_to_tsdf_inputs,
-    _splats_to_tsdf_inputs,
-    mesh_from_tsdf_inputs,
-)
+from collab_splats.geometry.transforms import invert_poses
+from collab_splats.mesh import clean_repair_mesh, fuse_tsdf
+from collab_splats.mesh.io import render_tsdf_inputs
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.splats.rendering import load_checkpoint, render_views
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Mirrors Reconstructor._run_tsdf_mesh's splats branch; values pinned for the comparison
-MESH_KWARGS = {
-    "method": "open3d_tsdf",
-    "color_map_iterations": 0,
-    "voxel_size": 0.0025,
-    "sdf_trunc": 0.01,
-    "depth_trunc": 1.5,
-    "clean_repair": True,
-}
+# Mirrors Reconstructor._run_tsdf_mesh; pinned so both sources fuse identically.
+# sdf_trunc is derived (4 x voxel_size) and clean_repair always runs — neither is a knob.
+MESH_KWARGS = {"voxel_size": 0.0025, "depth_trunc": 1.5}
 ALPHA_MIN = 0.5
 NORM_RANGE = (0.9, 1.1)
 
@@ -185,19 +178,30 @@ def mesh_stats(mesh_path: Path) -> dict:
 
 
 def build_mesh(name: str, inputs: tuple, results_dir: Path) -> dict:
-    """Fuse one (depths, rgbs, c2w, K) tuple, move mesh.ply to <results>/mesh_<name>.ply, return stats."""
+    """
+    Fuse and clean one (depths, rgbs, c2w, K) tuple, then flatten the PLY to mesh_<name>.ply.
+
+    Args:
+        name: source label — both the row's "source" field and the PLY's filename suffix.
+        inputs: (depths, rgbs, c2w, K) exactly as fuse_tsdf takes them.
+        results_dir: directory that receives mesh_<name>.ply.
+    Returns:
+        Stats dict: vertices, triangles, components, largest_component_fraction, source,
+        seconds, path.
+    """
     depths, rgbs, c2w, intrinsics = inputs
     work_dir = results_dir / f"_mesh_{name}"
-    work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Fuse with the pinned settings and time the whole call
+    # Time fusion AND cleaning — clean_repair is not optional in the pipeline, so a
+    # fuse-only number would understate what the mesh actually costs
     start = time.perf_counter()
-    mesh_result = mesh_from_tsdf_inputs(depths, rgbs, c2w, intrinsics, work_dir, **MESH_KWARGS)
+    mesh_path = fuse_tsdf(depths, rgbs, c2w, intrinsics, work_dir, **MESH_KWARGS)
+    clean_repair_mesh(mesh_path)
     seconds = time.perf_counter() - start
 
     # Move the PLY to its flat name; the work dir is only ever the mesher's scratch
     out_path = results_dir / f"mesh_{name}.ply"
-    shutil.move(str(mesh_result.mesh_path), str(out_path))
+    shutil.move(str(mesh_path), str(out_path))
     shutil.rmtree(work_dir, ignore_errors=True)
 
     stats = mesh_stats(out_path)
@@ -277,17 +281,26 @@ def main() -> None:
     # Table 1
     normal_rows = [analyze_normals(ckpt_path, primitive) for primitive, ckpt_path in available]
 
-    # Table 2: feedforward first, then each primitive's renders
-    feedforward = FeedforwardResult.load_zarr(args.zarr, load_images=True)
-    mesh_rows = [
-        build_mesh(
-            "feedforward",
-            _feedforward_to_tsdf_inputs(feedforward, conf_percentile=args.conf_percentile),
-            args.results,
-        )
-    ]
+    # Table 2: feedforward first, then each primitive's renders.
+    # Model-resolution fusion — depth, images and K all come off the same forward pass, so
+    # nothing is lifted here and no COLMAP camera is involved.
+    ff = FeedforwardResult.load_zarr(args.zarr, load_images=True)
+    depths = np.ascontiguousarray(ff.depth, dtype=np.float32)
+
+    # Confidence gate before fusion; a reconstruction without confidence (sfm) fuses unmasked
+    if args.conf_percentile is not None and ff.confidence is not None:
+        keep = confidence_mask(np.asarray(ff.confidence), args.conf_percentile)
+        depths = np.where(keep, depths, 0.0)
+
+    # images is (N, 3, H, W) float in [0, 1]; fuse_tsdf takes (N, H, W, 3) uint8
+    rgbs = np.asarray(ff.images).transpose(0, 2, 3, 1)
+    rgbs = np.ascontiguousarray((np.clip(rgbs, 0.0, 1.0) * 255).round().astype(np.uint8))
+
+    mesh_rows = [build_mesh("feedforward", (depths, rgbs, invert_poses(ff.extrinsics), ff.intrinsics), args.results)]
+
+    # Splat renders leave the checkpoint at frame resolution carrying their own poses
     for primitive, ckpt_path in available:
-        mesh_rows.append(build_mesh(primitive, _splats_to_tsdf_inputs(ckpt_path, args.conf_percentile), args.results))
+        mesh_rows.append(build_mesh(primitive, render_tsdf_inputs(ckpt_path), args.results))
 
     # Persist and print
     analysis = {

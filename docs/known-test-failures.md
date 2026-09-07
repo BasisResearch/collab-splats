@@ -171,7 +171,7 @@ combo repro passes 2/2 post-fix. Production is unaffected by design — it alway
 feedforward imported (TF32 on), where a ±2 near-threshold match difference is not a
 correctness issue; parity is asserted at full precision, where the paths are byte-equal.
 
-## 2026-08-21 — NOT transient after all: 3 reconstructor/base.yaml failures, now committed state
+## 2026-08-21 — RESOLVED 2026-09-07: 3 reconstructor/base.yaml failures, now committed state
 
 **2026-09-05 correction.** The entry below called these a concurrent session's *uncommitted*
 `configs/base.yaml` edit and predicted they would resolve when that session committed. The
@@ -195,6 +195,13 @@ not preproc's to resolve: `test_mesh_clean_repair_defaults_off` asserts a defaul
 config no longer has, and its *name* encodes the dead premise, so correcting it is a rename,
 not a value edit. Owed to the mesh owner.
 
+**2026-09-07 resolution.** The mesh owner took all three, in `df3017a7`.
+`test_mesh_clean_repair_defaults_off` is deleted — cleaning is unconditional now, there is no
+`clean_repair` key and so no default to assert. `test_base_yaml_mesh_has_fidelity_keys` asserts
+the exact six-key set the shipped block carries (`enabled`, `source`, `voxel_size`,
+`depth_trunc`, `conf_percentile`, `texture`). `test_init_fills_defaults_from_base_yaml` now
+reads `fps == 2.0`, matching the committed yaml. All three pass; this entry is closed.
+
 The other three names in the original entry (`test_build_localization_db_runs_when_missing`
 and the two in `test_reconstructor_loger_kwargs.py`) do pass now.
 
@@ -213,7 +220,8 @@ state, not repo state: at HEAD the tests' targets exist. Resolves when that sess
 (with test updates) or reverts. Do not "fix" the tests or the yaml from another session.
 
 **Superseded 2026-09-06:** the yaml did commit; these are stale asserts, not working-tree
-state, and they are durable debt owned by the mesh owner (see the 2026-09-06 entry above).
+state, and they were owed to the mesh owner. All three are resolved — see the 2026-09-06
+resolution note in the entry above.
 
 ## 2026-08-18 — RESOLVED: 3 BA `test_optimize_*` xfails (bae/pypose target bug)
 
@@ -458,7 +466,7 @@ collection error — the other 32 still run.
 
 Plus four real failures from the same cause:
 
-- `tests/mesh/test_absent_confidence.py::test_splats_depth_targets_skip_masking_when_confidence_absent`
+- `tests/wrapper/test_absent_confidence.py::test_splats_depth_targets_skip_masking_when_confidence_absent`
 - `tests/test_cu121_migration.py::test_import_all_modules` — asserts on a list of import
   failures; the five it reports are `collab_splats.splats` and its `losses`, `rendering`,
   `trainer`, `outputs` submodules, all the same `ImportError`

@@ -17,6 +17,7 @@ from collab_splats.dashboard.viz_utils import (
     compute_view_transform,
     pointcloud_to_polydata,
 )
+from collab_splats.mesh.features import features2vertex
 
 # NB: lift_features (pointcloud.utils) and BaseQueryableExtractor (semantics.features)
 # pull in the heavy feedforward stack (~14s import). They are imported lazily inside the
@@ -284,9 +285,6 @@ class SplitViewer:
             return
         if self._point_features is None or self._mesh_polydata is None:
             return
-        # Lazy import: mesh.utils pulls the heavy feedforward stack (matches lift_point_features).
-        from collab_splats.mesh.utils import features2vertex
-
         if op_log is not None:
             op_log.append_line("query: transferring features to mesh vertices (first mesh query)")
         # Vertices come straight from the cached PolyData — no second disk read of the .ply.

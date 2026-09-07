@@ -47,7 +47,16 @@ dependencies = [
     "trame",
     "trame-vuetify",
     "trame-vtk",
-    "meshlib>=3.1",
+    "plyfile",
+    # Texture bake: nvdiffrast rasterizes the UV atlas, Warp ray-casts occlusion and runs the
+    # per-texel projection kernel, meshoptimizer decimates.
+    # meshoptimizer's only published wheel is a pre-release; the explicit ==a0 pin is what
+    # makes uv accept it without a global --prerelease flag.
+    # nvdiffrast ships no wheel; it builds its CUDA extension at first use and so needs a real
+    # nvcc on PATH (apt cuda-nvcc-12-1, installed by setup.sh — the pip wheels are ptxas-only).
+    "warp-lang==1.14.0",
+    "meshoptimizer==0.2.30a0",
+    "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast@253ac4fcea7de5f396371124af597e6cc957bfae",
     "python-dotenv",
     "hydra-core",
     "omegaconf",
@@ -115,7 +124,6 @@ feedforward = [
     "natsort",
     "orjson",
     "pillow-heif",
-    "plyfile",
     "tensorboard",
     "python-box",
     "open3d",
@@ -211,7 +219,7 @@ exclude = "build"
 # importlib mode: avoids prepending test parent dirs to sys.path.
 # --doctest-modules removed: no doctests in codebase; it scanned all importable
 # CUDA modules causing multi-minute startup.
-addopts = "--ignore=tests/test_meshlib.py --import-mode=importlib"
+addopts = "--import-mode=importlib"
 testpaths = ["./tests"]
 pythonpath = ["."]
 markers = [

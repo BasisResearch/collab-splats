@@ -1,7 +1,13 @@
+"""
+Depth + RGB views fused into a mesh.
+
+  - fuse_tsdf: the entry point, Open3D ScalableTSDFVolume then extract
+  - writes out_dir/mesh.ply, the one name every reader probes
+"""
+
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -9,123 +15,77 @@ import open3d as o3d
 from tqdm.auto import tqdm
 
 from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
-from collab_splats.mesh.base import BaseMeshCreator, MeshResult
-from collab_splats.mesh.utils import clean_repair_mesh
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class Open3DTSDFFusion(BaseMeshCreator):
-    """TSDF fusion via Open3D ScalableTSDFVolume.
-
-    Accepts rendered depth + RGB frames as numpy arrays.
+def fuse_tsdf(depths, rgbs, c2w, K, out_dir, voxel_size, depth_trunc, sdf_trunc=None):
     """
+    Integrate depth + RGB views into a ScalableTSDFVolume and write the extracted mesh.
 
-    output_dir: Path
-    voxel_size: float = 0.01
-    sdf_trunc: float = 0.04
-    depth_trunc: float = 20.0
-    depth_scale: float = 1.0
-    # Opt-in: cleanup rewrites the fused mesh and costs a second pass over it, so a caller asks
-    # for it rather than getting it silently. Config-driven runs reach this default — that is why
-    # it is the value that works, not the one that raises.
-    clean_repair: bool = False
-    # Cleanup thresholds are fractions of the mesh's own scene scale, not world distances —
-    # see clean_repair_mesh. A backend's units never make a default mean something else.
-    clean_min_area_frac: float = 6e-6
-    clean_max_gap_frac: float = 0.01
-    clean_max_hole_frac: float = 0.014
-    clean_max_edge_splits: int = 1_000_000  # global subdivision budget across all hole patches
+    Args:
+        depths: (N, H, W) float depth in world units, 0 = no observation.
+        rgbs: (N, H, W, 3) uint8 RGB at the same resolution as depths.
+        c2w: (N, 4, 4) camera-to-world poses.
+        K: (N, 3, 3) intrinsics at the depth resolution.
+        out_dir: Path or str, directory to create; the mesh is written to out_dir/mesh.ply.
+        voxel_size: float, TSDF voxel edge in world units.
+        depth_trunc: float, depth beyond this (world units) is ignored.
+        sdf_trunc: float or None, truncation band in world units; None = 4 × voxel_size.
+    Returns:
+        Path to out_dir/mesh.ply.
+    """
+    depths = np.asarray(depths)
+    rgbs = np.asarray(rgbs)
+    c2w = np.asarray(c2w)
+    K = np.asarray(K)
 
-    def create(
-        self,
-        depths: np.ndarray,
-        rgbs: np.ndarray,
-        c2w: np.ndarray,
-        intrinsics: np.ndarray,
-        **kwargs,
-    ) -> MeshResult:
-        """Fuse depth+RGB frames into a mesh via TSDF.
-
-        Args:
-            depths:     (N, H, W) float32, metres
-            rgbs:       (N, H, W, 3) uint8, or float32 in [0, 1]
-            c2w:        (N, 4, 4) float32, cam-to-world OpenCV
-            intrinsics: (N, 3, 3) float32
-        """
-        # uint8 passes through untouched; float must be [0, 1] — [0, 255] float would wrap
-        # to a black mesh instead of failing, which is how the Reconstructor path shipped
-        # black meshes unnoticed
-        is_uint8 = rgbs.dtype == np.uint8
-        if not is_uint8 and rgbs.size and float(np.nanmax(rgbs)) > 1.5:
-            raise ValueError(
-                f"rgbs must be uint8 or float in [0, 1], got float max {float(np.nanmax(rgbs)):.3f}. "
-                "Pass FeedforwardResult.images directly — it is already normalised."
-            )
-
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        N, H, W = depths.shape
-
-        # The principal point must land inside the depth grid — the mismatched-resolution
-        # pairing (original-res K with model-res depth, or vice versa) fuses a collapsed
-        # mesh silently otherwise (the 2026-08-11 regression class)
-        cx, cy = intrinsics[:, 0, 2], intrinsics[:, 1, 2]
-        if not (np.all(cx > 0) and np.all(cx < W) and np.all(cy > 0) and np.all(cy < H)):
-            raise ValueError(
-                f"Principal point outside the {W}x{H} depth grid "
-                f"(cx range [{cx.min():.0f}, {cx.max():.0f}], cy range [{cy.min():.0f}, {cy.max():.0f}]) "
-                "— intrinsics and depth are at different resolutions."
-            )
-
-        volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=self.voxel_size,
-            sdf_trunc=self.sdf_trunc,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
+    # Input contract: uint8 color, one view count, K at the depth resolution
+    if rgbs.dtype != np.uint8:
+        raise ValueError(f"rgbs must be uint8 in [0, 255], got {rgbs.dtype}")
+    n, h, w = depths.shape
+    if rgbs.shape != (n, h, w, 3) or c2w.shape != (n, 4, 4) or K.shape != (n, 3, 3):
+        raise ValueError(f"views disagree: depths {depths.shape}, rgbs {rgbs.shape}, c2w {c2w.shape}, K {K.shape}")
+    cx, cy = K[:, 0, 2], K[:, 1, 2]
+    if cx.min() < 0 or cx.max() > w or cy.min() < 0 or cy.max() > h:
+        raise ValueError(
+            f"Principal point outside the {w}x{h} depth grid (cx range [{cx.min():.1f}, {cx.max():.1f}], "
+            f"cy range [{cy.min():.1f}, {cy.max():.1f}]) — intrinsics and depth are at different resolutions."
         )
+    if sdf_trunc is None:
+        sdf_trunc = 4 * voxel_size
 
-        w2c = invert_poses(c2w)  # (N, 4, 4) — precompute all at once
+    # Integrate every view; Open3D wants world-to-camera extrinsics
+    volume = o3d.pipelines.integration.ScalableTSDFVolume(
+        voxel_length=float(voxel_size),
+        sdf_trunc=float(sdf_trunc),
+        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
+    )
+    w2c = invert_poses(c2w)
+    for i in tqdm(range(n), desc="TSDF integration"):
+        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            o3d.geometry.Image(np.ascontiguousarray(rgbs[i])),
+            o3d.geometry.Image(np.ascontiguousarray(depths[i], dtype=np.float32)),
+            depth_scale=1.0,
+            depth_trunc=float(depth_trunc),
+            convert_rgb_to_intensity=False,
+        )
+        fx, fy, cx_i, cy_i = extract_intrinsics(K[i])
+        intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx_i, cy_i)
+        volume.integrate(rgbd, intrinsic, np.asarray(w2c[i], dtype=np.float64))
 
-        for i in tqdm(range(N), desc="TSDF integration"):
-            rgb_u8 = (
-                np.ascontiguousarray(rgbs[i]) if is_uint8 else (np.ascontiguousarray(rgbs[i]) * 255).astype(np.uint8)
-            )
-            depth_f32 = np.ascontiguousarray(depths[i]).astype(np.float32)
-
-            rgb_o3d = o3d.geometry.Image(rgb_u8)
-            depth_o3d = o3d.geometry.Image(depth_f32)
-
-            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                rgb_o3d,
-                depth_o3d,
-                depth_scale=self.depth_scale,
-                depth_trunc=self.depth_trunc,
-                convert_rgb_to_intensity=False,
-            )
-
-            fx, fy, cx, cy = extract_intrinsics(intrinsics[i])
-            intrinsic_o3d = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fy, cx, cy)
-            extrinsic = w2c[i]
-
-            volume.integrate(rgbd, intrinsic=intrinsic_o3d, extrinsic=extrinsic)
-
-        mesh = volume.extract_triangle_mesh()
-
-        # Filename matches Reconstructor.mesh()'s skip-check and the dashboard's mesh lookup
-        mesh_path = self.output_dir / "mesh.ply"
-        o3d.io.write_triangle_mesh(str(mesh_path), mesh)
-
-        # Opt-in cleanup, rewriting in place: mesh.ply is the one name every reader in this repo
-        # uses (Reconstructor's skip-check, the dashboard, the remote push), and a separate
-        # mesh_clean.ply would mean each of them needs a second probe and a precedence rule.
-        if self.clean_repair:
-            clean_repair_mesh(
-                mesh_path,
-                min_area_frac=self.clean_min_area_frac,
-                max_gap_frac=self.clean_max_gap_frac,
-                max_hole_frac=self.clean_max_hole_frac,
-                max_edge_splits=self.clean_max_edge_splits,
-            )
-
-        return MeshResult(mesh_path=mesh_path)
+    # Extract and write
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    mesh = volume.extract_triangle_mesh()
+    mesh_path = out_dir / "mesh.ply"
+    o3d.io.write_triangle_mesh(str(mesh_path), mesh)
+    logger.info(
+        "fuse_tsdf: %d views, voxel=%.4f sdf_trunc=%.4f -> %s (%d vertices)",
+        n,
+        voxel_size,
+        sdf_trunc,
+        mesh_path,
+        len(mesh.vertices),
+    )
+    return mesh_path

@@ -31,11 +31,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **mesh-cleanup** (2026-09-07)
 - **splats-cleanup** (2026-09-06)
 - **pointcloud-cleanup** (2026-09-06)
 - **semantics-cleanup** (2026-09-05)
 - **preproc-centralization** (2026-09-05)
-- **scaffold-gs** (2026-08-27)
 
 Known test failures: `docs/known-test-failures.md`
 
@@ -89,7 +89,7 @@ collab_splats/
     frames.py              # images/frame_NNNNNN.png + frames.json: the COLMAP-style keyframe store
     undistort.py           # calibrate_camera (pycolmap) + undistort_frames (pycolmap framing, cv2 pixels)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)
-  mesh/                    # TSDF + Poisson meshing (base, poisson, tsdf, utils)
+  mesh/                    # TSDF meshing from arrays: io, tsdf, clean, texture, features
   splats/                  # gsplat training: trainer, gaussian, scaffold, losses, rendering, cameras, pgsr, utils
   wrapper/                 # stage orchestration: Reconstructor (config-driven pipeline), batch drivers
   remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed

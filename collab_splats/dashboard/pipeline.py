@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import open3d as o3d
 import torch
 import yaml
 import zarr
@@ -17,7 +18,10 @@ from PIL import Image
 
 from collab_splats.dashboard.config import LocalizationConfig, RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
-from collab_splats.mesh.utils import persist_mesh_vertex_features, pointcloud_to_mesh
+from collab_splats.geometry.transforms import invert_poses
+from collab_splats.mesh.clean import clean_repair_mesh
+from collab_splats.mesh.features import features2vertex
+from collab_splats.mesh.tsdf import fuse_tsdf
 from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
     VGGTXCreator,
@@ -252,7 +256,11 @@ def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: flo
     # compares against full-dim text embeddings. Matches viewer.ensure_mesh_features,
     # which derives the same array from decoded point features on legacy scenes.
     point_features = load_point_features(sem_dir)
-    persist_mesh_vertex_features(mesh_path, result.points, point_features, k=k, sdf_trunc=sdf_trunc)
+    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+    vertex_features = features2vertex(
+        np.asarray(mesh.vertices), result.points, point_features, k=k, sdf_trunc=sdf_trunc
+    )
+    np.save(Path(out_dir) / "vertex_features.npy", vertex_features)
 
 
 def _sample(video_path: Path, config: RunConfig, out_dir: Path, op_log: OperationLog):
@@ -392,18 +400,31 @@ def run_pipeline(
                 extra_attrs={"method": "feedforward", "backend": config.env_model},
             )
 
-            # Mesh from TSDF depth fusion
+            # Mesh from TSDF depth fusion. The dashboard fuses at model resolution: depth,
+            # RGB and K all come off the same FeedforwardResult grid.
             op_log.update_progress(60, "mesh: tsdf fusion")
             t = time.perf_counter()
-            pointcloud_to_mesh(
-                result,
+            depths = np.ascontiguousarray(result.depth, dtype=np.float32)
+            # images is the forward pass's own tensor — it can still be on the GPU and in
+            # bfloat16, neither of which np.asarray accepts. Land it on the CPU as float32.
+            images = result.images
+            if isinstance(images, torch.Tensor):
+                images = images.detach().to("cpu", torch.float32).numpy()
+            images = np.asarray(images)
+            # images is [0, 255] on VGGT-X but [0, 1] on MapAnything — decide the scale once
+            # off the whole array, never per frame (a dark frame reads as [0, 1] and blows up).
+            rgb_scale = 255.0 if images.max() <= 1.0 else 1.0
+            rgbs = (images.transpose(0, 2, 3, 1) * rgb_scale).clip(0, 255).astype(np.uint8)
+            mesh_path = fuse_tsdf(
+                depths,
+                rgbs,
+                invert_poses(result.extrinsics),
+                result.intrinsics,
                 out_dir,
-                method="open3d_tsdf",
                 voxel_size=config.mesh_voxel_size,
-                sdf_trunc=config.mesh_sdf_trunc,
                 depth_trunc=config.mesh_depth_trunc,
-                clean_repair=config.mesh_clean_repair,
             )
+            clean_repair_mesh(mesh_path)
             op_log.append_line(f"mesh: tsdf in {time.perf_counter() - t:.1f}s")
 
             # Extract and cache semantic patch features

@@ -11,7 +11,7 @@ import torch
 import yaml
 from mergedeep import merge
 
-from collab_splats.mesh.tsdf import Open3DTSDFFusion
+from collab_splats.mesh import fuse_tsdf
 from collab_splats.pointcloud.feedforward.base import (
     FeedforwardResult,
     build_pycolmap_reconstruction,
@@ -35,7 +35,7 @@ def test_config_load_base_defaults(tmp_path):
         "preproc": {"frame_selection": "fps", "fps": 1.0, "min_frames": 300},
         "pointcloud": {"method": "feedforward", "backend": "vggtx", "bundle_adjustment": False, "loop_closure": False},
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 1024},
-        "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
+        "mesh": {"enabled": False, "voxel_size": 0.01, "depth_trunc": 1.0},
         "localization": {"enabled": False, "matcher": "loma"},
     }
     (tmp_path / "base.yaml").write_text(yaml.dump(base))
@@ -110,7 +110,7 @@ def _make_config(tmp_path, overrides=None):
             "clean": {"enabled": False},
         },
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
-        "mesh": {"enabled": False, "voxel_size": 0.01, "sdf_trunc": 0.04, "depth_trunc": 1.0},
+        "mesh": {"enabled": False, "voxel_size": 0.01, "depth_trunc": 1.0},
         "localization": {"enabled": False},
     }
     if overrides:
@@ -271,8 +271,8 @@ def test_init_fills_defaults_from_base_yaml(tmp_path):
     rec = Reconstructor(partial)
     # min_frames is null in base.yaml so fps is honoured literally, NOT a stale code default
     assert rec.config["preproc"]["min_frames"] is None
-    # fps comes from base.yaml (1.0), and fps is the default selection method
-    assert rec.config["preproc"]["fps"] == 1.0
+    # fps comes from base.yaml (2.0), and fps is the default selection method
+    assert rec.config["preproc"]["fps"] == 2.0
     assert rec.config["preproc"]["frame_selection"] == "fps"
     # backend comes from base.yaml (vggt_omega)
     assert rec.config["pointcloud"]["backend"] == "vggt_omega"
@@ -570,7 +570,7 @@ def test_lift_and_save_uncompressed_writes_full_dim_and_no_weights(tmp_path):
 
 
 def test_mesh_skips_if_ply_exists(tmp_path):
-    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}})
+    config = _make_config(tmp_path, {"mesh": {"enabled": True}})
     rec = Reconstructor(config)
     mesh_path = rec.backend_dir / "mesh.ply"
     mesh_path.parent.mkdir(parents=True)
@@ -589,18 +589,24 @@ def test_mesh_skip_check_matches_tsdf_writer_filename(tmp_path):
     Neither filename is hardcoded here: the mesher writes the file and mesh() looks for it,
     so the test breaks if either side renames the mesh independently of the other.
     """
-    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}})
+    config = _make_config(tmp_path, {"mesh": {"enabled": True}})
     rec = Reconstructor(config)
 
     # Genuine write path: a tiny synthetic TSDF run produces the mesh file itself
-    fusion = Open3DTSDFFusion(output_dir=rec.backend_dir, clean_repair=False)
     depths = np.ones((2, 32, 32), dtype=np.float32)
-    rgbs = np.full((2, 32, 32, 3), 0.5, dtype=np.float32)
     c2w = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)
     intrinsics = np.eye(3, dtype=np.float32)[None].repeat(2, axis=0)
     intrinsics[:, 0, 0] = intrinsics[:, 1, 1] = 32.0
     intrinsics[:, 0, 2] = intrinsics[:, 1, 2] = 16.0
-    written = fusion.create(depths, rgbs, c2w, intrinsics).mesh_path
+    written = fuse_tsdf(
+        depths,
+        np.full((2, 32, 32, 3), 128, np.uint8),
+        c2w,
+        intrinsics,
+        rec.backend_dir,
+        voxel_size=0.05,
+        depth_trunc=2.0,
+    )
     # Pin the writer side separately: without this, a writer regression surfaces below as the
     # same "No PointcloudResult available" fall-through as a reader regression, hiding which broke
     assert written.exists()
@@ -614,9 +620,7 @@ def test_mesh_skip_check_matches_tsdf_writer_filename(tmp_path):
 
 
 def test_mesh_runs_tsdf(tmp_path):
-    config = _make_config(
-        tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04}}
-    )
+    config = _make_config(tmp_path, {"mesh": {"enabled": True, "voxel_size": 0.01}})
     rec = Reconstructor(config)
     mock_result = _make_mock_pointcloud_result(tmp_path)
     rec.pointcloud = mock_result
@@ -629,37 +633,6 @@ def test_mesh_runs_tsdf(tmp_path):
         rec.mesh(result=mock_result, overwrite=True)
 
     mock_mesh.assert_called_once()
-
-
-def test_mesh_forwards_clean_repair_from_config(tmp_path):
-    """clean_repair is reachable from a config file — the CLI/remote path is the one that meshes.
-
-    Before this key existed, only the dashboard could ask for cleanup, so a config-driven run had
-    no way to turn it on.
-    """
-    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf", "clean_repair": True}})
-    rec = Reconstructor(config)
-    mock_result = _make_mock_pointcloud_result(tmp_path)
-    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
-
-    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
-        mock_mesh.return_value = rec.backend_dir / "mesh.ply"
-        rec.mesh(result=mock_result, overwrite=True)
-
-    assert mock_mesh.call_args.kwargs["clean_repair"] is True
-
-
-def test_mesh_clean_repair_defaults_off(tmp_path):
-    """base.yaml is the sole default source, and the default must not cost every run a second pass."""
-    rec = Reconstructor(_make_config(tmp_path, {"mesh": {"enabled": True, "mesher": "tsdf"}}))
-    mock_result = _make_mock_pointcloud_result(tmp_path)
-    (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
-
-    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as mock_mesh:
-        mock_mesh.return_value = rec.backend_dir / "mesh.ply"
-        rec.mesh(result=mock_result, overwrite=True)
-
-    assert mock_mesh.call_args.kwargs["clean_repair"] is False
 
 
 def _tsdf_mesh_doubles(n_colmap=2, n_zarr=2, model_hw=(8, 8)):
@@ -686,7 +659,7 @@ def _tsdf_mesh_doubles(n_colmap=2, n_zarr=2, model_hw=(8, 8)):
         extrinsics=np.eye(4, dtype=np.float32)[None].repeat(n_zarr, axis=0),
         intrinsics=K_model,
         image_paths=[Path(f"frame_{i:04d}.png") for i in range(n_zarr)],
-        original_coords=np.tile([0, 0, W, H, W, H], (n_zarr, 1)).astype(np.float32),
+        original_coords=np.tile([0, 0, 2 * W, 2 * H, 2 * W, 2 * H], (n_zarr, 1)).astype(np.float32),
         model_width=W,
         model_height=H,
         images=torch.zeros((n_zarr, 3, H, W), dtype=torch.float32),
@@ -695,97 +668,106 @@ def _tsdf_mesh_doubles(n_colmap=2, n_zarr=2, model_hw=(8, 8)):
     return result, ff
 
 
-def test_run_tsdf_mesh_fuses_zarr_intrinsics_not_colmap(tmp_path):
-    """Regression: COLMAP K is original-res, zarr depth is model-res. Fuse with the zarr K."""
-    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
+def test_run_tsdf_mesh_fuses_colmap_intrinsics(tmp_path, monkeypatch):
+    """
+    Model-res depth is lifted onto the frame grid, so COLMAP's original-res K is the right one.
 
-    result, ff = _tsdf_mesh_doubles()
-    mock_creator = MagicMock()
-    with (
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
-        patch("collab_splats.mesh.get_mesh_creator", return_value=mock_creator),
-    ):
-        _run_tsdf_mesh(
+    Pairing the model grid's depth with the original grid's K is the 2026-08-11 collapse bug
+    (5.06M -> 75k vertices); this pins the pairing that fixed it.
+    """
+    result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
+    fuse = MagicMock(return_value=tmp_path / "mesh.ply")
+    monkeypatch.setattr(R, "fuse_tsdf", fuse)
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+
+    R._run_tsdf_mesh(
+        result=result,
+        pointcloud_zarr=tmp_path / "pointcloud.zarr",
+        output_dir=tmp_path,
+        images_dir=tmp_path / "images",
+        voxel_size=0.01,
+        depth_trunc=2.0,
+    )
+    np.testing.assert_array_equal(fuse.call_args.args[3], result.intrinsics)
+
+
+def test_run_tsdf_mesh_uses_colmap_poses(tmp_path, monkeypatch):
+    """
+    COLMAP stays the pose authority — BA and LC corrections land there, not in the zarr.
+    """
+    result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
+    fuse = MagicMock(return_value=tmp_path / "mesh.ply")
+    monkeypatch.setattr(R, "fuse_tsdf", fuse)
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+
+    R._run_tsdf_mesh(
+        result=result,
+        pointcloud_zarr=tmp_path / "pointcloud.zarr",
+        output_dir=tmp_path,
+        images_dir=tmp_path / "images",
+        voxel_size=0.01,
+        depth_trunc=2.0,
+    )
+
+    np.testing.assert_allclose(fuse.call_args.args[2], np.linalg.inv(result.extrinsics), atol=1e-5)
+
+
+def test_run_tsdf_mesh_raises_on_frame_count_mismatch(tmp_path, monkeypatch):
+    """
+    Stage re-runs can pair a COLMAP dir with a pointcloud.zarr from a different run.
+    """
+    result, ff = _tsdf_mesh_doubles(n_colmap=3, n_zarr=2, model_hw=(16, 16))
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+
+    with pytest.raises(ValueError, match="pointcloud.zarr"):
+        R._run_tsdf_mesh(
             result=result,
             pointcloud_zarr=tmp_path / "pointcloud.zarr",
             output_dir=tmp_path,
+            images_dir=tmp_path / "images",
             voxel_size=0.01,
-            sdf_trunc=0.04,
             depth_trunc=2.0,
-            clean_repair=False,
-        )
-
-    fused_K = mock_creator.create.call_args[0][3]
-    np.testing.assert_allclose(fused_K, ff.intrinsics)
-    assert not np.allclose(fused_K, result.intrinsics)
-
-
-def test_run_tsdf_mesh_uses_colmap_poses(tmp_path):
-    """COLMAP stays the pose authority — BA and LC corrections land there, not in the zarr."""
-    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
-
-    result, ff = _tsdf_mesh_doubles()
-    mock_creator = MagicMock()
-    with (
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
-        patch("collab_splats.mesh.get_mesh_creator", return_value=mock_creator),
-    ):
-        _run_tsdf_mesh(
-            result=result,
-            pointcloud_zarr=tmp_path / "pointcloud.zarr",
-            output_dir=tmp_path,
-            voxel_size=0.01,
-            sdf_trunc=0.04,
-            depth_trunc=2.0,
-            clean_repair=False,
-        )
-
-    fused_c2w = mock_creator.create.call_args[0][2]
-    np.testing.assert_allclose(fused_c2w, np.linalg.inv(result.extrinsics), atol=1e-5)
-
-
-def test_run_tsdf_mesh_raises_on_frame_count_mismatch(tmp_path):
-    """Stage re-runs can pair a COLMAP dir with a pointcloud.zarr from a different run."""
-    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
-
-    result, ff = _tsdf_mesh_doubles(n_colmap=3, n_zarr=2)
-    with (
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
-        pytest.raises(ValueError, match="pointcloud.zarr"),
-    ):
-        _run_tsdf_mesh(
-            result=result,
-            pointcloud_zarr=tmp_path / "pointcloud.zarr",
-            output_dir=tmp_path,
-            voxel_size=0.01,
-            sdf_trunc=0.04,
-            depth_trunc=2.0,
-            clean_repair=False,
         )
 
 
-def test_run_tsdf_mesh_passes_clean_repair_to_the_fusion(tmp_path):
-    """The flag has to survive the last hop too — mesh() → _run_tsdf_mesh → the mesh creator."""
-    from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
+def test_run_tsdf_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
+    """
+    conf_percentile zeroes the depth under the percentile before it reaches the fusion.
+    """
+    result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
+    ff.confidence = np.tile(np.linspace(0.0, 1.0, 16 * 16).reshape(16, 16), (2, 1, 1))
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    seen = {}
 
-    result, ff = _tsdf_mesh_doubles()
-    mock_creator = MagicMock()
-    with (
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=ff),
-        patch("collab_splats.mesh.get_mesh_creator", return_value=mock_creator) as mock_get,
-    ):
-        _run_tsdf_mesh(
-            result=result,
-            pointcloud_zarr=tmp_path / "pointcloud.zarr",
-            output_dir=tmp_path,
-            voxel_size=0.01,
-            sdf_trunc=0.04,
-            depth_trunc=1.0,
-            clean_repair=True,
-        )
+    def spy_upsample(depths, rgbs, boxes):
+        seen["depths"] = depths
+        return np.ones((2, 32, 32), np.float32)
 
-    assert mock_get.call_args.kwargs["clean_repair"] is True
-    assert mock_get.call_args.kwargs["depth_trunc"] == 1.0
+    monkeypatch.setattr(R, "upsample_depths", spy_upsample)
+    monkeypatch.setattr(R, "fuse_tsdf", MagicMock(return_value=tmp_path / "mesh.ply"))
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+
+    R._run_tsdf_mesh(
+        result=result,
+        pointcloud_zarr=tmp_path / "pointcloud.zarr",
+        output_dir=tmp_path,
+        images_dir=tmp_path / "images",
+        voxel_size=0.01,
+        depth_trunc=2.0,
+        conf_percentile=20,
+    )
+
+    # The bottom 20% of a linear ramp is zeroed, the rest is untouched
+    masked = seen["depths"]
+    assert (masked == 0).mean() == pytest.approx(0.2, abs=0.02)
+    assert masked.max() == ff.depth.max()
 
 
 def test_run_pipeline_calls_stages_in_order(tmp_path):
@@ -1085,9 +1067,7 @@ def test_run_feedforward_invalid_lc_knob_raises(tmp_path):
     """An unknown loop_closure knob fails loud with the valid-key list."""
     from collab_splats.wrapper import reconstructor as R
 
-    with (
-        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=MagicMock()),
-    ):
+    with (patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=MagicMock()),):
         with pytest.raises(ValueError, match="Invalid pointcloud.loop_closure knob"):
             R._run_feedforward(
                 backend="vggtx",
@@ -1385,11 +1365,20 @@ def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
 
 
 def test_base_yaml_mesh_has_fidelity_keys():
-    """New mesh keys exist and default OFF — shipping output stays byte-identical."""
+    """
+    The mesh block is six keys and nothing else — every knob a user can reach.
+    """
     cfg = yaml.safe_load((Path(__file__).parents[2] / "configs" / "base.yaml").read_text())
-    assert cfg["mesh"]["conf_percentile"] is None
-    assert cfg["mesh"]["native_resolution"] is False
-    assert cfg["mesh"]["color_map_iterations"] == 0
+    assert set(cfg["mesh"]) == {
+        "enabled",
+        "source",
+        "voxel_size",
+        "depth_trunc",
+        "conf_percentile",
+        "texture",
+    }
+    assert cfg["mesh"]["source"] == "feedforward"
+    assert cfg["mesh"]["texture"] is False
 
 
 ########################################
@@ -1602,9 +1591,7 @@ def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):
 def test_undistort_provenance_records_the_camera_not_a_profile(tmp_path, monkeypatch):
     # Provenance carries pycolmap's cameras and no roi: the alpha=0 crop is gone, so
     # there is no crop offset left for a reader to reapply to the principal point.
-    camera = pycolmap.Camera(
-        model="OPENCV", width=64, height=48, params=[60.0, 60.0, 32.0, 24.0, -0.2, 0.0, 0.0, 0.0]
-    )
+    camera = pycolmap.Camera(model="OPENCV", width=64, height=48, params=[60.0, 60.0, 32.0, 24.0, -0.2, 0.0, 0.0, 0.0])
 
     # autospec, not a bare lambda: calibrate_camera(images_dir, *, max_frames) takes a
     # DIRECTORY now, and a signature-blind stub stays green through a wrong call site

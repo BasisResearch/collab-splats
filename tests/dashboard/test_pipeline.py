@@ -54,6 +54,12 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
 
     fake_result = MagicMock()
     fake_result.points = list(range(10))  # len() used in the pointcloud step log line
+    # Real arrays: the mesh block reads images.max() and transposes, which a MagicMock
+    # would answer with another MagicMock and fail on the comparison.
+    fake_result.depth = np.ones((3, 4, 4), np.float32)
+    fake_result.images = np.zeros((3, 3, 4, 4), np.float32)
+    fake_result.extrinsics = np.tile(np.eye(4), (3, 1, 1))
+    fake_result.intrinsics = np.tile(np.eye(3), (3, 1, 1))
     creator = MagicMock()
     # Pipeline decomposes run() into load_model→setup_inference→run_inference→postprocess;
     # result comes from creator.outputs after postprocess.
@@ -64,7 +70,8 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
         patch.object(pl, "load_video_quality", return_value={"available": True, "frames": {}}),
         patch.object(pl, "_write_images_dir") as wz,
         patch.object(pl, "_build_creator", return_value=creator),
-        patch.object(pl, "pointcloud_to_mesh") as mesh,
+        patch.object(pl, "fuse_tsdf") as mesh,
+        patch.object(pl, "clean_repair_mesh"),
         patch.object(pl, "_extract_semantics") as sem,
         patch.object(pl, "_lift_and_compress") as liftc,
         patch.object(pl.threading, "Thread", _InlineThread),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 import yaml
@@ -34,9 +34,7 @@ class RunConfig:
 
     # Mesh (TSDF) params
     mesh_voxel_size: float = 0.005
-    mesh_sdf_trunc: float = 0.02
     mesh_depth_trunc: float = 1.0
-    mesh_clean_repair: bool = False
 
     # Provenance — filled by the pipeline, not the UI
     frame_indices: list[int] = field(default_factory=list)
@@ -51,9 +49,14 @@ class RunConfig:
 
     @classmethod
     def from_yaml(cls, path: Path) -> "RunConfig":
-        """Load config from a YAML file."""
+        """Load config from a YAML file; keys this version no longer defines are dropped."""
         data = yaml.safe_load(Path(path).read_text()) or {}
-        return cls(**data)
+
+        # run_config.yaml is permanent per-scene provenance, so a file on disk can name knobs
+        # that have since been retired (mesh_sdf_trunc, mesh_clean_repair). Passing those to
+        # __init__ is a TypeError that would make every pre-existing scene unreadable.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 ########

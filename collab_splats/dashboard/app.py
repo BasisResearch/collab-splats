@@ -188,9 +188,7 @@ class SplatsApp(param.Parameterized):
         self.run_query_btn = pn.widgets.Button(label="Run query", button_type="primary")
         self.min_disparity = pn.widgets.FloatInput(name="min_disparity", value=s.get("min_disparity", 50.0))
         self.mesh_voxel = pn.widgets.FloatInput(name="voxel_size", value=s.get("mesh_voxel", 0.005))
-        self.mesh_sdf = pn.widgets.FloatInput(name="sdf_trunc", value=s.get("mesh_sdf", 0.02))
         self.mesh_depth = pn.widgets.FloatInput(name="depth_trunc", value=s.get("mesh_depth", 1.0))
-        self.mesh_clean = pn.widgets.Checkbox(name="clean_repair", value=s.get("mesh_clean", False))
         self.max_display_points = pn.widgets.IntInput(
             name="Max display points", value=s.get("max_display_points", 500_000), step=50_000
         )
@@ -234,9 +232,7 @@ class SplatsApp(param.Parameterized):
             "neg_query": self.neg_query,
             "min_disparity": self.min_disparity,
             "mesh_voxel": self.mesh_voxel,
-            "mesh_sdf": self.mesh_sdf,
             "mesh_depth": self.mesh_depth,
-            "mesh_clean": self.mesh_clean,
             "max_display_points": self.max_display_points,
             "normalize_view": self.normalize_view,
         }
@@ -258,9 +254,7 @@ class SplatsApp(param.Parameterized):
             pn.Card(
                 self.extractor, self.pos_query, self.neg_query, self.run_query_btn, title="Semantics", collapsed=False
             ),
-            pn.Card(
-                self.mesh_voxel, self.mesh_sdf, self.mesh_depth, self.mesh_clean, title="Mesh params", collapsed=True
-            ),
+            pn.Card(self.mesh_voxel, self.mesh_depth, title="Mesh params", collapsed=True),
             self.max_display_points,
             "### View",
             self.view_mode,
@@ -444,9 +438,7 @@ class SplatsApp(param.Parameterized):
             query_positive=self.pos_query.value,
             query_negative=self.neg_query.value,
             mesh_voxel_size=self.mesh_voxel.value,
-            mesh_sdf_trunc=self.mesh_sdf.value,
             mesh_depth_trunc=self.mesh_depth.value,
-            mesh_clean_repair=self.mesh_clean.value,
         )
 
     def _ensure_local_video(self, scene: str) -> Path:

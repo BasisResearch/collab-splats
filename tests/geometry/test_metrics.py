@@ -675,7 +675,7 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
 
 
 def test_the_upsample_guide_is_normalised_whatever_the_backbones_image_scale(monkeypatch):
-    """guided_upsample_depth documents a uint8 guide and divides it by 255 internally.
+    """upsample_depths documents a uint8 guide and divides it by 255 internally.
 
     FeedforwardResult.images is [0, 255] on VGGT-X and [0, 1] on MapAnything, so an uncoerced
     guide is ~255x too flat on one backbone — measured by the reviewer at 0.398 max / 0.013
@@ -686,17 +686,17 @@ def test_the_upsample_guide_is_normalised_whatever_the_backbones_image_scale(mon
     the guided filter only consults the guide where depth varies, so a constant map returns the
     same answer under any guide at all and could not see this.
     """
-    from collab_splats.mesh import utils as mesh_utils
+    from collab_splats.mesh import io as mesh_io
 
-    real = mesh_utils.guided_upsample_depth
+    real = mesh_io.upsample_depths
     lifted = []
 
-    def spy(depth, rgb_full, *args, **kwargs):
-        out = real(depth, rgb_full, *args, **kwargs)
+    def spy(depths, rgbs, crop_boxes):
+        out = real(depths, rgbs, crop_boxes)
         lifted.append(out)
         return out
 
-    monkeypatch.setattr(mesh_utils, "guided_upsample_depth", spy)
+    monkeypatch.setattr(mesh_io, "upsample_depths", spy)
     img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
     model_d = np.stack([np.concatenate(
         [np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)], axis=1)] * 2)
@@ -706,13 +706,14 @@ def test_the_upsample_guide_is_normalised_whatever_the_backbones_image_scale(mon
     compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords, max_separation=1)
     compute_photometric_ncc(img / 255.0, model_d, model_K, e, original_coords=coords,
                             max_separation=1)
-    assert len(lifted) == 4
-    np.testing.assert_array_equal(lifted[0], lifted[2])
-    np.testing.assert_array_equal(lifted[1], lifted[3])
+    # One call per compute, each lifting the whole stack
+    assert len(lifted) == 2
+    assert lifted[0].shape == (2, 64, 64) and lifted[1].shape == (2, 64, 64)
+    np.testing.assert_array_equal(lifted[0], lifted[1])
     # Anchor: the guide really is load-bearing on this fixture, so the equality above is not
     # two runs of a filter that ignores its guide.
-    flat_guide = real(model_d[0], np.zeros((64, 64, 3), np.uint8), (16, 8, 48, 40), (64, 64))
-    assert not np.array_equal(lifted[0], flat_guide)
+    flat_guide = real(model_d[:1], np.zeros((1, 64, 64, 3), np.uint8), coords[:1, :4])[0]
+    assert not np.array_equal(lifted[0][0], flat_guide)
 
 
 def _scene_with_a_dark_frame(dark_factor=0.0035, near=2.0, far=8.0):

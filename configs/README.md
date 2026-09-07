@@ -60,6 +60,7 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
                                ←   (+ local_features/<extractor>/reconstruction if localize ran)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
+    texture/                   ← mesh.ply (UV-carrying) + albedo.png (only if mesh.texture=true)
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × latent_dim)
       <extractor>_ae.pt        ← autoencoder weights (if semantics.n_components set)
@@ -363,12 +364,12 @@ parameter and raises.
 | `semantics.enabled` | bool | `true` | Extract and lift semantic features |
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
-| `mesh.enabled` | bool | `false` | Build TSDF/Poisson mesh (opt-in) |
-| `mesh.source` | str | `feedforward` | `feedforward` fuses pointcloud.zarr depth; `splats` re-renders the splats stage's `ckpt.pt` and fuses that (needs the splats stage; `native_resolution` ignored) |
-| `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
-| `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
-| `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
-| `mesh.splat_depth` | str | `expected` | `source: splats` only: `expected` (alpha-weighted rendered depth) or `median` (RaDe-GS surface depth, sharper across depth discontinuities — 2dgs renders only) |
+| `mesh.enabled` | bool | `true` | Fuse a TSDF mesh after the pointcloud stage, writing `<backend>/mesh.ply` |
+| `mesh.source` | str | `feedforward` | `feedforward` fuses `pointcloud.zarr` depth lifted onto the original frames; `splats` fuses depth and color rendered from the splats stage's `ckpt.pt` (needs the splats stage, which is never auto-run) |
+| `mesh.voxel_size` | float | `0.0025` | TSDF voxel edge, world units. `sdf_trunc` is derived as `4 × voxel_size` and is not separately settable — halving this buys finer geometry for roughly 8× the memory |
+| `mesh.depth_trunc` | float | `1.5` | Ignore depth beyond this, world units. Feedforward depth is not metric, so this is in the reconstruction's own scale, not meters |
+| `mesh.conf_percentile` | float\|null | `20` | Drop depth below this global confidence percentile before fusing (`null` = off). `source: feedforward` only; a reconstruction that carries no confidence (sfm) fuses unmasked and logs that it did |
+| `mesh.texture` | bool | `false` | Also decimate, UV-unwrap and project the fused views into `<backend>/texture/` (`albedo.png` beside a UV-carrying `mesh.ply`). Needs a GPU |
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
@@ -559,6 +560,7 @@ Not changed yet.
     pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
+    texture/                   ← mesh.ply (UV-carrying) + albedo.png (only if mesh.texture=true)
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × n_components)
       <extractor>_ae.pt        ← autoencoder weights, needed to decode them (if n_components set)
@@ -578,6 +580,7 @@ A processed scene (`environments-processed/<scene>/`) carries:
 |---|---|
 | `<backend>/sparse_pc.ply` | any pipeline — binary little-endian, float32 xyz + uchar rgb |
 | `<backend>/mesh.ply` | any pipeline |
+| `<backend>/texture/mesh.ply` + `albedo.png` | any pipeline — textured mesh (only if `mesh.texture: true`) |
 | `<backend>/semantics/<extractor>_lifted.zarr` | per-point latent codes (`semantics.n_components`-D) |
 | `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |

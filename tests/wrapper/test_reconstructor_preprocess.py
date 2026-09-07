@@ -47,7 +47,7 @@ def _make_config(tmp_path, video_path):
             "clean": {"enabled": False},
         },
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
-        "mesh": {"enabled": False, "mesher": "tsdf", "voxel_size": 0.01, "sdf_trunc": 0.04},
+        "mesh": {"enabled": False, "voxel_size": 0.01, "depth_trunc": 1.0},
         "localization": {"enabled": False},
     }
 

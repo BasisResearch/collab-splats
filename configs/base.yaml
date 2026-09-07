@@ -113,25 +113,11 @@ semantics:
 
 mesh:
   enabled: true
-  source: feedforward     # feedforward (model depth) | splats (rendered depth; alpha = confidence)
-  voxel_size: 0.0025         # dashboard-parity TSDF defaults
-  sdf_trunc: 0.01
-  depth_trunc: 1.5          # drop depth samples beyond this range (metres)
-  clean_repair: true       # drop out-of-bounds components + fill small holes, rewriting mesh.ply
-  conf_percentile: 20    # mask depth below this global confidence percentile (null = off)
-  native_resolution: true # fuse at original frame resolution (images/ RGB + upsampled depth)
-  color_map_iterations: 300  # rigid color-map optimization iterations after fusion (0 = off)
-  splat_depth: expected    # source: splats only — 'expected' (alpha-weighted rendered
-                           # depth) or 'median' (RaDe-GS surface depth; 2dgs renders only).
-  # source: splats only — opt-in pre-fusion depth cuts, both ratios rather than distances.
-  # Both ship off: measured on GH010229, clean_repair already removes everything they remove.
-  # frac cuts depth past that fraction of the camera trajectory's extent, but depth_trunc
-  # above is the tighter of the two far gates unless it is set beyond the trajectory. grad
-  # cuts neighbor pairs jumping by more than that fraction of their own depth — it must
-  # clear the scene's real grazing-angle gradient (~0.03 here) or it deletes whole surfaces
-  # instead of silhouettes; 0.05 removed visible patches of good mesh.
-  splat_max_depth_frac: null
-  splat_max_depth_grad: null
+  source: feedforward      # feedforward | splats
+  voxel_size: 0.0025       # TSDF voxel, world units; sdf_trunc = 4 x voxel_size
+  depth_trunc: 1.5         # ignore depth beyond this, world units
+  conf_percentile: 20      # drop depth below this confidence percentile (null = off); feedforward only
+  texture: false           # decimate + UV atlas + project the fused views; writes mesh/texture/
 
 # Gaussian splats trained from the pointcloud stage (leaf stage `splats`, upstream gsplat).
 # Photometric (0.8 L1 + 0.2 (1 - SSIM)) is always on; each loss below is active iff weight > 0 and

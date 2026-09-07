@@ -22,8 +22,12 @@ import zarr
 from mergedeep import merge
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
+from collab_splats.geometry.transforms import invert_poses
+from collab_splats.mesh import clean_repair_mesh, fuse_tsdf, texture_mesh
+from collab_splats.mesh.io import render_tsdf_inputs, upsample_depths
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.depth_align import result_from_reconstruction
+from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.sfm import InstantSfMCreator
 from collab_splats.pointcloud.utils import (
     clean_pointcloud,
@@ -66,8 +70,17 @@ _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 # die mid-run, after preproc had already burned its time.
 _SFM_BACKENDS = {"instantsfm"}
 _VALID_METHODS = {"feedforward", "sfm"}
-_STAGE_ORDER = ["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify",
-                "reconstruction_quality_report"]
+_STAGE_ORDER = [
+    "preproc",
+    "pointcloud",
+    "refine",
+    "semantics",
+    "splats",
+    "mesh",
+    "localize",
+    "verify",
+    "reconstruction_quality_report",
+]
 _STAGE_DEPS: dict[str, list[str]] = {
     "preproc": [],
     "pointcloud": ["preproc"],
@@ -525,7 +538,6 @@ def _lift_and_save(
     # Kept local to match this file's per-stage-method import convention — not because it
     # defers load cost. feedforward.base is already resident by the time this module finishes
     # importing (depth_align pulls it in at module scope), so this local import saves nothing.
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     # Validate pointcloud zarr exists before attempting load
     if not pointcloud_zarr.exists():
@@ -564,108 +576,83 @@ def _run_tsdf_mesh(
     result: PointcloudResult,
     pointcloud_zarr: Path,
     output_dir: Path,
+    images_dir: Path,
     voxel_size: float,
-    sdf_trunc: float,
     depth_trunc: float,
-    clean_repair: bool = False,
     conf_percentile: float | None = None,
-    native_resolution: bool = False,
-    color_map_iterations: int = 0,
-    images_dir: Path | None = None,
     source: str = "feedforward",
     splats_ckpt: Path | None = None,
-    splat_depth: str = "expected",
-    splat_max_depth_frac: float | None = None,
-    splat_max_depth_grad: float | None = None,
+    texture: bool = False,
 ) -> Path:
-    """Fuse depth + RGB from pointcloud.zarr (COLMAP poses) or from a splats ckpt.pt (its own poses)."""
-    from collab_splats.mesh.utils import pointcloud_to_mesh
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    """
+    Fuse depth and RGB into a TSDF mesh, clean it, and optionally texture it.
 
-    # Splats source: rendered depth/RGB/alpha + the poses actually rendered; no native path
+    Args:
+        result: PointcloudResult; supplies COLMAP poses and original-res K on the feedforward path.
+        pointcloud_zarr: the scene's pointcloud.zarr; read on the feedforward path only.
+        output_dir: receives mesh.ply, and texture/ when texture is set.
+        images_dir: the scene's images/ directory of original-resolution keyframes.
+        voxel_size: TSDF voxel edge, world units; sdf_trunc = 4 x voxel_size.
+        depth_trunc: ignore depth beyond this, world units.
+        conf_percentile: drop depth below this confidence percentile (None = off); feedforward only.
+        source: "feedforward" (zarr depth lifted to frame resolution) or "splats" (checkpoint renders).
+        splats_ckpt: the splats stage's ckpt.pt; required when source is "splats".
+        texture: also decimate, unwrap and project the fused views into output_dir/texture/.
+    Returns:
+        Path to output_dir/mesh.ply.
+    """
+    # Splats source: renders come out at frame resolution carrying the poses they were rendered
+    # with, pose-opt deltas included, so nothing here has to be lifted or re-posed.
     if source == "splats":
-        from collab_splats.mesh.utils import (
-            _splats_to_tsdf_inputs,
-            mesh_from_tsdf_inputs,
-        )
-
-        if native_resolution:
-            logger.info(
-                "mesh.native_resolution ignored: splats renders are already at frame resolution"
+        depths, rgbs, c2w, intrinsics = render_tsdf_inputs(splats_ckpt, images_dir)
+    else:
+        ff = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
+        if ff.depth is None:
+            raise ValueError(f"{pointcloud_zarr} has no depth — cannot mesh.")
+        if result.extrinsics.shape[0] != ff.depth.shape[0]:
+            raise ValueError(
+                f"Frame-count mismatch: COLMAP reconstruction has {result.extrinsics.shape[0]} "
+                f"images but {pointcloud_zarr} has {ff.depth.shape[0]}. They are from different "
+                "runs — re-run the pointcloud stage, or point --stages mesh at the matching scene."
             )
-        # No frame-count cross-check against `result`: the checkpoint carries the poses it was
-        # trained with and the fusion uses those, so a COLMAP model from another run cannot make
-        # this fusion wrong. `result` is read only on the feedforward branch below.
-        depths, rgbs, c2w, intrinsics = _splats_to_tsdf_inputs(
-            splats_ckpt,
-            conf_percentile=conf_percentile,
-            splat_depth=splat_depth,
-            max_depth_frac=splat_max_depth_frac,
-            max_depth_grad=splat_max_depth_grad,
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        mesh_result = mesh_from_tsdf_inputs(
-            depths,
-            rgbs,
-            c2w,
-            intrinsics,
-            output_dir,
-            method="open3d_tsdf",
-            voxel_size=voxel_size,
-            sdf_trunc=sdf_trunc,
-            depth_trunc=depth_trunc,
-            clean_repair=clean_repair,
-            color_map_iterations=color_map_iterations,
-        )
-        return mesh_result.mesh_path
 
-    # world_points is the largest array in the store and the mesh path no longer reads it.
-    # native_resolution skips the zarr's model-res RGB too — it comes from images/ instead.
-    ff = FeedforwardResult.load_zarr(
-        pointcloud_zarr, load_images=not native_resolution, load_world_points=False
-    )
+        # Confidence masking first, on the model grid the confidence was predicted on.
+        # Absent confidence is a property of the method (sfm, and any backend that ships none),
+        # not an error — fuse unmasked and say so.
+        depth = np.asarray(ff.depth)
+        if conf_percentile is not None:
+            if ff.confidence is None:
+                logger.info(
+                    "mesh.conf_percentile=%s but %s has no confidence array — fusing unmasked",
+                    conf_percentile,
+                    pointcloud_zarr,
+                )
+            else:
+                keep = confidence_mask(np.asarray(ff.confidence), conf_percentile)
+                depth = np.where(keep, depth, 0.0)
 
-    # COLMAP is the pose authority — BA and loop-closure corrections land in the reconstruction,
-    # not back in the zarr. On the model-res path intrinsics stay the zarr's (build_colmap
-    # rescaled COLMAP's camera to original resolution, while the zarr's depth and RGB are at
-    # model resolution); the native path swaps in COLMAP's original-res K below.
-    if ff.depth is None:
-        raise ValueError(f"{pointcloud_zarr} has no depth — cannot mesh.")
-    if result.extrinsics.shape[0] != ff.depth.shape[0]:
-        raise ValueError(
-            f"Frame-count mismatch: COLMAP reconstruction has {result.extrinsics.shape[0]} "
-            f"images but {pointcloud_zarr} has {ff.depth.shape[0]}. They are from different "
-            "runs — re-run the pointcloud stage, or point --stages mesh at the matching scene."
-        )
-    ff.extrinsics = result.extrinsics
-
-    # Native path: original-res RGB from images/, COLMAP's original-res K as intrinsics.
-    # pointcloud_to_mesh reads the directory itself, so only the path travels.
-    native_images_dir = None
-    native_intrinsics = None
-    if native_resolution:
-        if images_dir is None or not images_dir.exists():
-            raise FileNotFoundError(
-                f"native_resolution requires the scene's images/ directory (looked at {images_dir})"
-            )
-        native_images_dir = images_dir
-        native_intrinsics = result.intrinsics  # original-res by contract (build_colmap)
+        # Lift model-res depth onto the original frame grid so COLMAP's original-res K is the
+        # right one to fuse with. Pairing one grid's depth with the other grid's K is the
+        # 2026-08-11 collapse bug (5.06M -> 75k vertices).
+        rgbs = frames.read_frames(images_dir)
+        depths = upsample_depths(depth, rgbs, np.asarray(ff.original_coords)[:, :4])
+        c2w = invert_poses(result.extrinsics)
+        intrinsics = result.intrinsics
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    mesh_result = pointcloud_to_mesh(
-        ff,
+    mesh_path = fuse_tsdf(
+        depths,
+        rgbs,
+        c2w,
+        intrinsics,
         output_dir,
-        method="open3d_tsdf",
         voxel_size=voxel_size,
-        sdf_trunc=sdf_trunc,
         depth_trunc=depth_trunc,
-        clean_repair=clean_repair,
-        conf_percentile=conf_percentile,
-        images_dir=native_images_dir,
-        native_intrinsics=native_intrinsics,
-        color_map_iterations=color_map_iterations,
     )
-    return mesh_result.mesh_path
+    clean_repair_mesh(mesh_path)
+    if texture:
+        texture_mesh(mesh_path, output_dir / "texture", rgbs, c2w, intrinsics, voxel_size=voxel_size)
+    return mesh_path
 
 
 def _localization_db_exists(pointcloud_zarr: Path, extractor_name: str) -> bool:
@@ -699,7 +686,6 @@ def _build_localization_db(
     # Heavy deps kept inline so the module imports without GPU/model libs
     from collab_splats.localization.extractors import LocalMatcher
     from collab_splats.localization.localizer import CameraLocalizer
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
     # overwrite: drop the stale reconstruction group so from_feedforward's cache check
     # misses and the index is re-extracted + re-saved (from_feedforward has no
@@ -795,8 +781,7 @@ class Reconstructor:
         # environments-processed/ carries the old name.
         if "preprocessing" in config:
             raise ValueError(
-                "config key 'preprocessing' was renamed to 'preproc' (2026-08-22); "
-                "rename the section in your config"
+                "config key 'preprocessing' was renamed to 'preproc' (2026-08-22); " "rename the section in your config"
             )
 
         # Single-arg .get() returns None if absent — the membership checks below reject None,
@@ -1133,9 +1118,9 @@ class Reconstructor:
         store["intrinsics"][:] = ff.intrinsics
         store["points"][:] = ff.points
         if "world_points" in store and ff.depth is not None:
-            wp = unproject_depth_map_to_point_map(
-                ff.depth[..., None], ff.extrinsics[:, :3, :], ff.intrinsics
-            ).astype(np.float32)
+            wp = unproject_depth_map_to_point_map(ff.depth[..., None], ff.extrinsics[:, :3, :], ff.intrinsics).astype(
+                np.float32
+            )
             store["world_points"][:] = wp
 
         # Reload the refined model from disk — it is both the returned result and the source
@@ -1148,10 +1133,7 @@ class Reconstructor:
         marker.write_text(
             json.dumps(
                 {
-                    "config": {
-                        k: str(v) if isinstance(v, Path) else v
-                        for k, v in dataclasses.asdict(cfg).items()
-                    },
+                    "config": {k: str(v) if isinstance(v, Path) else v for k, v in dataclasses.asdict(cfg).items()},
                     "loss_history": ba._last_loss_history,
                     "n_frames": len(ff.image_paths),
                 },
@@ -1213,9 +1195,10 @@ class Reconstructor:
     ) -> Path:
         """Build a TSDF mesh from `mesh.source` depth: pointcloud.zarr (default) or splats ckpt.pt renders.
 
-        COLMAP is the pose authority on the feedforward path; the splats path fuses the poses
-        the splats were actually rendered with (including pose-opt deltas) and uses alpha as
-        confidence. The splats stage is never auto-run — `source: splats` requires it on disk.
+        COLMAP is the pose authority on the feedforward path; the splats path fuses the
+        checkpoint's own renders — the poses the splats were rendered with (pose-opt deltas
+        included), with alpha as confidence — so splats.zarr is not an input. The splats stage
+        is never auto-run — `source: splats` requires ckpt.pt on disk.
         Returns path to mesh.ply.
         """
         mesh_path = self.backend_dir / "mesh.ply"
@@ -1233,17 +1216,14 @@ class Reconstructor:
         mesh_cfg = self.config["mesh"]
         source = mesh_cfg["source"]
         if source not in ("feedforward", "splats"):
-            raise ValueError(
-                f"mesh.source must be 'feedforward' or 'splats', got {source!r}"
-            )
+            raise ValueError(f"mesh.source must be 'feedforward' or 'splats', got {source!r}")
         pointcloud_zarr = self.pointcloud_zarr
         splats_ckpt = None
         if source == "splats":
             splats_ckpt = self.backend_dir / "splats" / "ckpt.pt"
             if not splats_ckpt.exists():
                 raise ValueError(
-                    f"mesh.source: splats needs {splats_ckpt} — run the splats stage first "
-                    "(it is never auto-run)"
+                    f"mesh.source: splats needs {splats_ckpt} — run the splats stage first " "(it is never auto-run)"
                 )
         elif not pointcloud_zarr.exists():
             raise FileNotFoundError(
@@ -1266,19 +1246,13 @@ class Reconstructor:
             result=result,
             pointcloud_zarr=pointcloud_zarr,
             output_dir=self.backend_dir,
-            voxel_size=mesh_cfg["voxel_size"],
-            sdf_trunc=mesh_cfg["sdf_trunc"],
-            depth_trunc=mesh_cfg["depth_trunc"],
-            clean_repair=mesh_cfg["clean_repair"],
-            conf_percentile=mesh_cfg["conf_percentile"],
-            native_resolution=mesh_cfg["native_resolution"],
-            color_map_iterations=mesh_cfg["color_map_iterations"],
-            splat_depth=mesh_cfg["splat_depth"],
-            splat_max_depth_frac=mesh_cfg["splat_max_depth_frac"],
-            splat_max_depth_grad=mesh_cfg["splat_max_depth_grad"],
             images_dir=self.images_dir,
+            voxel_size=mesh_cfg["voxel_size"],
+            depth_trunc=mesh_cfg["depth_trunc"],
+            conf_percentile=mesh_cfg["conf_percentile"],
             source=source,
             splats_ckpt=splats_ckpt,
+            texture=mesh_cfg["texture"],
         )
         logger.info("Mesh saved to %s", out)
         return out
@@ -1344,24 +1318,18 @@ class Reconstructor:
         matcher = LocalMatcher(extractor_name)
         logger.info("verify(): LocalMatcher construction took %.1f s", time.perf_counter() - t)
         t = time.perf_counter()
-        features, ids, _ = load_localization_db(
-            self.pointcloud_zarr, extractor_name
-        )
+        features, ids, _ = load_localization_db(self.pointcloud_zarr, extractor_name)
         logger.info("verify(): load_localization_db took %.1f s", time.perf_counter() - t)
         # Loma matches from stored features (keypoints_normalized). A cache from before
         # that array existed gets rebuilt once (~1 min) — no degraded fallback path.
         # getattr: duck-typed test stubs and non-split matchers lack the attribute.
-        if getattr(matcher, "_split_loma_forward", False) and any(
-            f.keypoints_normalized is None for f in features
-        ):
+        if getattr(matcher, "_split_loma_forward", False) and any(f.keypoints_normalized is None for f in features):
             logger.info("verify(): feature cache lacks keypoints_normalized — rebuilding localization DB")
             t = time.perf_counter()
             self.build_localization_db(overwrite=True)
             logger.info("verify(): build_localization_db(overwrite=True) took %.1f s", time.perf_counter() - t)
             t = time.perf_counter()
-            features, ids, _ = load_localization_db(
-                self.pointcloud_zarr, extractor_name
-            )
+            features, ids, _ = load_localization_db(self.pointcloud_zarr, extractor_name)
             logger.info("verify(): load_localization_db (rebuilt) took %.1f s", time.perf_counter() - t)
         # The cache ids are frame_XXXXXX.jpg, the reconstruction registers frame_XXXXXX
         # (no extension) — compare stems so a reordered/rebuilt cache cannot slip through.
@@ -1412,7 +1380,6 @@ class Reconstructor:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
         # gsplat is CUDA-only; import lazily so Reconstructor stays importable without it
-        from collab_splats.pointcloud.feedforward.base import FeedforwardResult
         from collab_splats.splats.trainer import SplatsConfig, train
 
         cfg = SplatsConfig.from_dict(self.config["splats"])
@@ -1491,7 +1458,13 @@ class Reconstructor:
                 )
 
         train(
-            cfg, images, result.extrinsics, result.intrinsics, result.points, result.colors, out_dir,
+            cfg,
+            images,
+            result.extrinsics,
+            result.intrinsics,
+            result.points,
+            result.colors,
+            out_dir,
             depth_targets=depth_targets,
         )
         logger.info("Splats saved to %s", out_dir)

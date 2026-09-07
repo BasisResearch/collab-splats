@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -39,14 +41,14 @@ _PNG_COMPRESSION = 1
 ########################
 
 
-def _manifest_path(dir) -> Path:
+def _manifest_path(dir: Path | str) -> Path:
     """
     frames.json, which sits beside the images directory rather than inside it.
     """
     return Path(dir).parent / _MANIFEST_NAME
 
 
-def _jsonable(value):
+def _jsonable(value: Any) -> Any:
     """
     numpy scalar or NaN -> a plain JSON value (NaN becomes null).
     """
@@ -65,7 +67,7 @@ def _jsonable(value):
 ########################
 
 
-def frame_idx_from_path(path) -> int:
+def frame_idx_from_path(path: Path | str) -> int:
     """
     Source frame index encoded in a frame_{idx:06d}.<ext> filename.
 
@@ -78,7 +80,7 @@ def frame_idx_from_path(path) -> int:
     return int(Path(path).stem.split("_")[-1])
 
 
-def frame_paths(dir) -> list[Path]:
+def frame_paths(dir: Path | str) -> list[Path]:
     """
     Image paths in a frame directory, in filename order.
 
@@ -94,7 +96,12 @@ def frame_paths(dir) -> list[Path]:
     return sorted(p for p in dir.iterdir() if p.suffix.lower() in IMAGE_EXTS)
 
 
-def write_frames(dir, frames, records, provenance) -> list[Path]:
+def write_frames(
+    dir: Path | str,
+    frames: Sequence[np.ndarray] | np.ndarray,
+    records: Sequence[dict],
+    provenance: dict,
+) -> list[Path]:
     """
     Write frames as PNGs and the manifest beside them.
 
@@ -143,7 +150,7 @@ def write_frames(dir, frames, records, provenance) -> list[Path]:
     return paths
 
 
-def read_frames(dir, idxs=None) -> np.ndarray:
+def read_frames(dir: Path | str, idxs: Sequence[int] | None = None) -> np.ndarray:
     """
     Read frames from an images directory as one RGB stack.
 
@@ -171,7 +178,7 @@ def read_frames(dir, idxs=None) -> np.ndarray:
     return np.stack([cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in paths])
 
 
-def read_manifest(dir) -> dict:
+def read_manifest(dir: Path | str) -> dict:
     """
     Selection records and provenance written beside an images directory.
 

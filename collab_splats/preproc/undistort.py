@@ -30,11 +30,12 @@ logger = logging.getLogger(__name__)
 # Calibration (pycolmap self-calibration)
 ########################################
 
-# CPU SIFT threads: pycolmap 4.0.4 here is a CPU-only wheel (has_cuda False), so the
-# default num_threads (-1) spawns one thread per HOST core — 96 on this machine — and
-# per-thread RAM on 1920x1080 frames blows past the 46.6 GB container cgroup cap
-# (measured: SIGKILL during calibration on a 300-frame GoPro scene). Mirrors
-# pointcloud/sfm/instantsfm.py::_generate_sift_database's num_threads default.
+# CPU SIFT threads must be capped or calibration OOMs
+# - pycolmap 4.0.4 here is a CPU-only wheel (has_cuda False)
+# - default num_threads (-1) spawns one thread per HOST core, 96 on this machine
+# - per-thread RAM on 1920x1080 frames blows past the 46.6 GB container cgroup cap
+# - measured: SIGKILL during calibration on a 300-frame GoPro scene
+# - mirrors pointcloud/sfm/instantsfm.py::_generate_sift_database's num_threads default
 _SIFT_NUM_THREADS = 8
 
 # Below this share of the calibration subset the solve has not seen the lens

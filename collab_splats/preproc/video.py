@@ -56,8 +56,8 @@ def get_video_info(video_path: str | Path) -> dict:
     """
     Video metadata from a PyAV container parse.
 
-    The count is exact and cheap: the container carries it, so there is no
-    cheap/expensive split and no full demux to opt out of.
+    - the count is exact and cheap: the container carries it
+    - so no cheap/expensive split, and no full demux to opt out of
 
     Args:
         video_path: source video.
@@ -77,9 +77,9 @@ def get_video_info(video_path: str | Path) -> dict:
             fps = float(stream.average_rate) if stream.average_rate else 0.0
             width, height = stream.codec_context.width, stream.codec_context.height
 
-            # stream.frames is the container's own nb_frames, exact for every format
-            # this repo ingests (mp4/mov/avi); containers that omit it (mkv, mpeg-ts)
-            # report 0 and fall back to duration x rate
+            # Frame count comes from the container when it carries one
+            # - stream.frames is nb_frames, exact for mp4/mov/avi — every format this repo ingests
+            # - mkv / mpeg-ts omit it, report 0, and fall back to duration x rate
             total = int(stream.frames)
             if total == 0 and container.duration:
                 total = int(round(container.duration / av.time_base * fps))
@@ -141,8 +141,9 @@ def iter_frames(
     """
     Yield (frame_idx, BGR uint8 HWC) from one in-process PyAV decode pass.
 
-    Three modes, one decode loop. Passed nothing it walks the whole video;
-    indices and start/count select a subset and are mutually exclusive.
+    - three modes, one decode loop
+    - passed nothing, walks the whole video
+    - `indices` and `start`/`count` each select a subset and are mutually exclusive
 
     Args:
         video_path: source video. An unopenable path yields nothing rather than
@@ -193,9 +194,9 @@ def iter_frames(
         cursor = 0
         resync = False
 
-        # Contiguous windows keep the input seek the ffmpeg pipe had. Seeking
-        # backward (the default) lands on the keyframe at or before the target
-        # and the loop below drops whatever precedes `start`.
+        # Contiguous windows keep the input seek the ffmpeg pipe had
+        # - a backward seek (the default) lands on the keyframe at or before the target
+        # - the loop below drops whatever precedes `start`
         if wanted is None and start:
             if not fps:
                 raise ValueError(f"iter_frames: cannot seek {video_path} without fps")

@@ -1,18 +1,21 @@
 """
 Matplotlib plots for frame sampling analysis — notebook use only.
 
-Deliberately NOT re-exported from collab_splats.preproc.__init__ so pipeline
-consumers never import matplotlib. Import explicitly:
-`from collab_splats.preproc.viz import plot_frame_scores`.
+- deliberately NOT re-exported from collab_splats.preproc.__init__, so pipeline consumers
+  never import matplotlib
+- import explicitly: `from collab_splats.preproc.viz import plot_frame_scores`
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from scipy.stats import spearmanr
 
 from collab_splats.preproc.video import extract_frame, get_video_info
@@ -21,6 +24,11 @@ from collab_splats.preproc.video import extract_frame, get_video_info
 def plot_frame_grid(frames: list, title: str, n_cols: int = 6) -> None:
     """
     Display a grid of RGB frames.
+
+    Args:
+        frames: (H, W, 3) uint8 RGB frames.
+        title: figure suptitle.
+        n_cols: columns in the grid; rows follow from the frame count.
     """
     n = len(frames)
     n_cols = min(n_cols, n)
@@ -44,6 +52,11 @@ def plot_selection(
 ) -> None:
     """
     Vertical-line timeline of selected frame indices; two panels when both sets given.
+
+    Args:
+        total_frames: source frame count, setting the x extent.
+        fps_indices: indices chosen by fixed-rate sampling; None omits the panel.
+        of_indices: indices chosen by optical-flow sampling; None omits the panel.
     """
     sets = [
         (fps_indices, "Uniform", "steelblue"),
@@ -67,8 +80,10 @@ def plot_frame_scores(frame_scores: list) -> None:
     """
     3-panel timeseries of per-frame signals: disparity / rotation / histogram similarity.
 
-    Takes sample_optical_flow() records; selected frames marked with vertical
-    grey lines.
+    - selected frames are marked with vertical grey lines
+
+    Args:
+        frame_scores: per-frame score records from sample_optical_flow.
     """
     if not frame_scores:
         plt.subplots(3, 1, figsize=(12, 6))
@@ -97,12 +112,13 @@ def plot_frame_scores(frame_scores: list) -> None:
 ########################################################################
 # Video quality report plots
 #
-# One PNG per measurement family of qa.compute_video_quality's report. Every
-# plotter draws EVERY frame / pair in the report as shipped — raw columns, no
-# thresholds, no verdicts. `selected` only marks which frames made it into
-# images/. Headless: save and close, never plt.show(). Title, overlay and
-# save are inlined in each plotter on purpose — five short duplicates beat a
-# helper layer.
+# - one PNG per measurement family of qa.compute_video_quality's report
+# - every plotter draws EVERY frame / pair as shipped: raw columns, no
+#   thresholds, no verdicts
+# - `selected` only marks which frames made it into images/
+# - headless: save and close, never plt.show()
+# - title, overlay and save are inlined in each plotter on purpose — five
+#   short duplicates beat a helper layer
 ########################################################################
 
 _FIG_WIDTH_IN = 12
@@ -112,9 +128,13 @@ _THUMB_DPI = 150  # frame montages: blur has to be visible in the thumbnails
 _HIST_BINS = 40
 
 
-def _marginal_hist(ax_hist, values):
+def _marginal_hist(ax_hist: Axes, values: np.ndarray) -> None:
     """
     Marginal distribution flush against a timeseries panel (shares its y axis), JointGrid style.
+
+    Args:
+        ax_hist: the marginal axis to draw into.
+        values: the panel's y values; non-finite entries are dropped.
     """
     finite = values[np.isfinite(values)]
     sns.histplot(y=finite, bins=_HIST_BINS, ax=ax_hist, color="gray", edgecolor=None, alpha=0.6)
@@ -125,9 +145,15 @@ def _marginal_hist(ax_hist, values):
     sns.despine(ax=ax_hist, left=True, bottom=True)
 
 
-def _timeseries_grid(n_panels):
+def _timeseries_grid(n_panels: int) -> tuple[Figure, list[Axes], list[Axes]]:
     """
     n_panels rows of [timeseries | marginal histogram]; x shared down the column, y across each row.
+
+    Args:
+        n_panels: number of timeseries rows.
+
+    Returns:
+        (figure, timeseries axes, marginal axes) — one axis per panel in each array.
     """
     fig, grid = plt.subplots(
         n_panels,
@@ -138,15 +164,24 @@ def _timeseries_grid(n_panels):
         width_ratios=[8, 1],
         squeeze=False,
     )
-    axes, hists = grid[:, 0], grid[:, 1]
+    axes, hists = list(grid[:, 0]), list(grid[:, 1])
     for ax in axes:
         ax.margins(x=0)
     return fig, axes, hists
 
 
-def plot_photometric(report: dict, out_dir: str | Path, *, selected=None) -> Path:
+def plot_photometric(report: dict, out_dir: str | Path, *, selected: Sequence[int] | None = None) -> Path:
     """
     Per-frame photometry vs seconds: blur, laplacian variance, exposure, clipped fractions.
+
+    Args:
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        out_dir: directory the PNG is written into; created if absent.
+        selected: source frame indices to mark; None marks none. Report-only — this marks
+            which frames were kept, it does not judge them.
+
+    Returns:
+        Path to the written PNG.
     """
     # Unpack columns
     frames, video = report["frames"], report["video"]
@@ -209,11 +244,22 @@ def plot_photometric(report: dict, out_dir: str | Path, *, selected=None) -> Pat
     return path
 
 
-def plot_motion(report: dict, out_dir: str | Path, *, selected=None) -> Path | None:
+def plot_motion(
+    report: dict,
+    out_dir: str | Path,
+    *,
+    selected: Sequence[int] | None = None,
+) -> Path | None:
     """
     Per-pair motion vs seconds: translation, parallax (failed pairs as red ticks at 0), match count.
 
-    - None (no file) when the report has no pairs.
+    Args:
+        report: a quality report carrying a "pairs" block.
+        out_dir: directory the PNG is written into; created if absent.
+        selected: source frame indices to mark; None marks none.
+
+    Returns:
+        Path to the written PNG, or None when the report has no pairs.
     """
     # Unpack columns: None (failed pair) -> nan in one place
     pairs, video = report["pairs"], report["video"]
@@ -275,11 +321,20 @@ def plot_frame_extremes(
     """
     The n highest and n lowest frames of one per-frame report column, decoded from the video.
 
-    - column is any key of report["frames"] except frame_idx (blur, laplacian, exposure_mean, ...).
-    - Top row = highest values, bottom row = lowest; each thumbnail is captioned with
-      frame index, wall-clock time and the value, so a reader can judge what the number
-      means on this footage.
-    - One ffmpeg seek per thumbnail (2n decodes); meant for notebooks and spot checks.
+    - top row = highest values, bottom row = lowest
+    - each thumbnail is captioned with frame index, wall-clock time and the value, so a reader
+      can judge what the number means on this footage
+    - one ffmpeg seek per thumbnail (2n decodes) — for notebooks and spot checks
+
+    Args:
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        video_path: the source video the report was measured on.
+        out_dir: directory the PNG is written into; created if absent.
+        column: any key of report["frames"] except frame_idx — blur, laplacian, exposure_mean, ...
+        n: thumbnails per row.
+
+    Returns:
+        Path to the written PNG.
     """
     # Unpack columns and rank
     frames, video = report["frames"], report["video"]
@@ -314,13 +369,21 @@ def plot_frame_extremes(
 
 def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path) -> Path | None:
     """
-    seaborn jointplot (regression + marginal histograms) of two report columns; r and ρ written in the corner.
+    seaborn jointplot of two report columns, with r and rho in the corner.
 
-    - x and y name any column of report["frames"] or report["pairs"] (blur, laplacian,
-      exposure_mean, translation_px, parallax, n_matches, ...).
-    - A per-frame column compared with a per-pair column is read at the pair's first frame
-      (frame_idx_a), so blur vs translation_px compares directly, sample for sample.
-    - Null entries (failed pairs) are dropped from the scatter, the fit and the statistics.
+    - regression line plus marginal histograms
+    - a per-frame column compared with a per-pair column is read at the pair's first frame
+      (frame_idx_a), so blur vs translation_px compares sample for sample
+    - null entries (failed pairs) are dropped from the scatter, the fit and the statistics
+
+    Args:
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        x: any column of report["frames"] or report["pairs"] — blur, translation_px, ...
+        y: the column plotted against x.
+        out_dir: directory the PNG is written into; created if absent.
+
+    Returns:
+        Path to the written PNG, or None when the two columns share no usable samples.
     """
     # Resolve each name to one sample per pair (or per frame when both are per-frame)
     frames, pairs, video = report["frames"], report["pairs"], report["video"]
@@ -346,9 +409,10 @@ def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path) -> Path 
     pearson = np.corrcoef(xs, ys)[0, 1]
     rho = spearmanr(xs, ys).statistic
 
-    # Panel: seaborn JointGrid — square regression joint with filled KDE marginals,
-    # statistics bottom right. Full seaborn theme (white, deep palette, notebook
-    # context) scoped to this figure so the timeseries plotters keep matplotlib's look.
+    # Panel: seaborn JointGrid, statistics bottom right
+    # - square regression joint with filled KDE marginals
+    # - full seaborn theme (white, deep palette, notebook) scoped to this figure only,
+    #   so the timeseries plotters keep matplotlib's look
     with sns.axes_style("white"), sns.plotting_context("notebook"), sns.color_palette("deep"):
         grid = sns.JointGrid(x=xs, y=ys, height=6.5)
         grid.plot_joint(

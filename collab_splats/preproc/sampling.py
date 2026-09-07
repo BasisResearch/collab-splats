@@ -60,10 +60,10 @@ def filter_frame_quality(
     centre = float(np.median(log_lap))
     spread = float(median_abs_deviation(log_lap, scale="normal"))
 
-    # A constant column means every frame is equally sharp — there is nothing to
-    # cut. A zero MAD on a column that is NOT constant only means over half the
-    # frames sit exactly on the median; the cut then falls on the median itself,
-    # which is still the right answer and still divides by nothing.
+    # A zero MAD is two different situations, both safe
+    # - constant column: every frame equally sharp, nothing to cut
+    # - non-constant column: over half the frames sit exactly on the median
+    # - the cut then falls on the median itself — right answer, and divides by nothing
     if log_lap.min() == log_lap.max():
         sharp = np.ones_like(lap, dtype=bool)
     else:
@@ -84,14 +84,13 @@ class OpticalFlowFrameSelector:
     """
     Streaming keyframe selector: motion (LK flow + rotation) and coverage scoring.
 
-    Holds the reference keyframe between calls — score each candidate with
-    score_frame(), promote selected frames with accept_frame(). Construct fresh
-    per video.
-
-    No cv2/kornia/open3d equivalent exists for the streaming "is this frame
-    different enough from the last one I kept" policy; the pieces it is built
-    from (goodFeaturesToTrack, calcOpticalFlowPyrLK, estimateAffinePartial2D,
-    calcHist/compareHist) are all cv2's.
+    - holds the reference keyframe between calls — score with score_frame(), promote with
+      accept_frame()
+    - construct one per video
+    - no cv2/kornia/open3d equivalent exists for the streaming "is this frame different enough
+      from the last one I kept" policy
+    - the pieces it is built from are all cv2's: goodFeaturesToTrack, calcOpticalFlowPyrLK,
+      estimateAffinePartial2D, calcHist/compareHist
     """
 
     def __init__(
@@ -105,9 +104,10 @@ class OpticalFlowFrameSelector:
         self.min_disparity = min_disparity
         self.rotation_threshold_deg = rotation_threshold_deg
 
-        # Built here, not as defaults: a mutable dict default is shared across
-        # every instance in the process, which is a Python trap, not a style call.
-        # Lucas-Kanade sparse flow.
+        # Built here, not as defaults
+        # - a mutable dict default is shared across every instance in the process
+        # - Python trap, not a style call
+        # - params below are Lucas-Kanade sparse flow
         self.lk_params = lk_params or dict(
             winSize=(21, 21),
             maxLevel=3,
@@ -125,12 +125,16 @@ class OpticalFlowFrameSelector:
         """
         Score a grayscale frame against the current keyframe.
 
-        Returns (score in [0, 1], components). The first frame scores 1.0 and
-        seeds the keyframe state. Components:
+        - the first frame scores 1.0 and seeds the keyframe state
 
-            disparity            median LK pixel motion since last kept frame
-            rotation             in-plane rotation vs last kept frame, degrees
-            histogram_similarity intensity-histogram correlation with last kept frame
+        Args:
+            gray: (h, w) uint8 single-channel candidate frame.
+
+        Returns:
+            (score in [0, 1], components), where components is
+            {'disparity': median LK pixel motion since the last kept frame,
+            'rotation': in-plane rotation against it in degrees,
+            'histogram_similarity': intensity-histogram correlation with it}.
         """
         if self.last_keyframe_gray is None:
             self.accept_frame(gray)
@@ -157,6 +161,14 @@ class OpticalFlowFrameSelector:
     def combine(self, disparity: float, histogram_similarity: float, *, rotation: float = 0.0) -> float:
         """
         Weighted motion + coverage score in [0, 1]; >= select_threshold selects.
+
+        Args:
+            disparity: median LK pixel motion against the keyframe.
+            histogram_similarity: histogram correlation against the keyframe, 1.0 = identical.
+            rotation: in-plane rotation against the keyframe, degrees.
+
+        Returns:
+            Score in [0, 1], fixed 0.6 motion / 0.4 coverage weighting.
         """
         # Fixed motion/coverage weighting
         motion_weight, coverage_weight = 0.6, 0.4
@@ -174,6 +186,9 @@ class OpticalFlowFrameSelector:
     def accept_frame(self, gray: np.ndarray) -> None:
         """
         Make the given grayscale frame the new reference keyframe.
+
+        Args:
+            gray: (h, w) uint8 single-channel frame to promote.
         """
         self.last_keyframe_gray = gray.copy()
         self.last_keyframe_pts = cv2.goodFeaturesToTrack(gray, **self.feature_params)
@@ -429,10 +444,10 @@ def sample_fps(
             (info["fps"] or 30.0) * len(targets) / total,
         )
 
-    # Snap each target to the nearest eligible frame, then dedup: two targets either
-    # side of an excised stretch can snap to the same survivor. The clip to
-    # [1, pool.size - 1] keeps both pos - 1 and pos in range for a one-frame pool,
-    # where they collapse onto the same index and the choice is the same either way.
+    # Snap each target to the nearest eligible frame, then dedup
+    # - two targets either side of an excised stretch can snap to the same survivor
+    # - clip to [1, pool.size - 1] keeps pos - 1 and pos in range for a one-frame pool
+    # - there they collapse onto one index, so the choice is the same either way
     pos = np.clip(np.searchsorted(pool, targets), 1, pool.size - 1)
     left, right = pool[pos - 1], pool[pos]
     snapped = np.where(np.abs(targets - left) <= np.abs(right - targets), left, right)
@@ -457,9 +472,9 @@ def sample_optical_flow(
     """
     Keyframes by motion (LK disparity + rotation) and coverage (histogram diversity).
 
-    Runs its own decode pass: LK disparity is measured against a MOVING keyframe
-    reference, which the report's fixed-stride pairs cannot supply. Blur comes from
-    the report, not a recompute.
+    - runs its own decode pass: LK disparity is measured against a MOVING keyframe reference,
+      which the report's fixed-stride pairs cannot supply
+    - blur comes from the report, never a recompute
 
     Args:
         video_path: source video.
